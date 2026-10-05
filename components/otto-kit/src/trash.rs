@@ -347,6 +347,13 @@ impl Can {
         Ok(dir)
     }
 
+    /// A stable identity for the can's directory, to tell two spellings of
+    /// one can (a bind mount) apart from two cans.
+    fn identity(&self) -> Option<(u64, u64)> {
+        let stat = rfs::fstat(self.open(false).ok()?).ok()?;
+        Some((stat.st_dev, stat.st_ino))
+    }
+
     /// Drop the `directorysizes` entry for `name`, once it has left the can.
     /// The cache is advisory, so a failure is not reported.
     pub fn forget_directory_size(&self, name: &OsStr) {
@@ -514,7 +521,9 @@ fn path_key(body: &str) -> Option<PathBuf> {
 ///
 /// The mounts are read from `/proc/self/mountinfo`, leaving out the kernel's
 /// pseudo-filesystems and autofs (looking into an autofs mount point would
-/// mount it). A can that is not mounted right now is not listed.
+/// mount it), and network and FUSE-daemon filesystems, whose stat can hang.
+/// A can that is not mounted right now is not listed; one seen through two
+/// mounts (a bind mount) is listed once.
 pub fn cans() -> Vec<Can> {
     cans_in(&mount_points())
 }
@@ -524,10 +533,14 @@ pub fn cans() -> Vec<Can> {
 /// of the machine it runs on.
 pub fn cans_in(topdirs: &[PathBuf]) -> Vec<Can> {
     let mut found: Vec<Can> = Can::home().into_iter().collect();
+    // By what the can is, not how it is spelled: a bind mount shows one can
+    // under two topdirs, and listing it twice would show every item twice.
+    let mut seen: std::collections::HashSet<(u64, u64)> =
+        found.iter().filter_map(Can::identity).collect();
     let uid = uid();
     for topdir in topdirs {
         for can in existing_topdir_cans(topdir, uid) {
-            if !found.contains(&can) {
+            if can.identity().is_some_and(|id| seen.insert(id)) {
                 found.push(can);
             }
         }
@@ -559,9 +572,10 @@ pub fn trash(source: &Path) -> Result<(PathBuf, PathBuf), String> {
                 match place(source, &resolved, &can, Some(topdir)) {
                     Ok(placed) => return Ok(placed),
                     Err(err) => tracing::debug!(
-                        "trash: {} could not take {}, using the home trash: {err}",
-                        can.dir().display(),
-                        source.display()
+                        can = %can.dir().display(),
+                        source = %source.display(),
+                        error = %err,
+                        "trash: the topdir can could not take it, using the home trash"
                     ),
                 }
             }
@@ -1454,6 +1468,27 @@ mod tests {
             delete_forever_as(&top.0.join("folder"), me).is_err(),
             "not in a can"
         );
+    }
+
+    /// One can seen through two topdirs (a bind mount; here a symlink, which
+    /// a mount point may be reached through) is listed once.
+    #[test]
+    fn a_can_under_two_topdirs_is_listed_once() {
+        let me = uid();
+        let root = Tmp::new("bind");
+        let real = root.0.join("real");
+        std::fs::create_dir(&real).unwrap();
+        let bound = root.0.join("bound");
+        std::os::unix::fs::symlink(&real, &bound).unwrap();
+        topdir_can(&real, me).unwrap();
+
+        let listed = cans_in(&[real.clone(), bound.clone()]);
+
+        let topdir_cans = listed
+            .iter()
+            .filter(|can| can.dir().starts_with(&root.0))
+            .count();
+        assert_eq!(topdir_cans, 1, "{listed:?}");
     }
 
     /// The temporary `directorysizes` is created, never opened: a symlink

@@ -150,7 +150,7 @@ impl<B: Backend + 'static> Otto<B> {
         let (reader, writer) = match std::io::pipe() {
             Ok(pipe) => pipe,
             Err(err) => {
-                tracing::warn!("trash drop: no pipe for the transfer: {err}");
+                tracing::warn!(error = %err, "trash drop: no pipe for the transfer");
                 source.finished();
                 return;
             }
@@ -182,7 +182,7 @@ impl<B: Backend + 'static> Otto<B> {
                         }
                         Err(err) if err.kind() == std::io::ErrorKind::Interrupted => {}
                         Err(err) => {
-                            tracing::warn!("trash drop: reading the file list failed: {err}");
+                            tracing::warn!(error = %err, "trash drop: reading the file list failed");
                             break;
                         }
                     }
@@ -196,7 +196,7 @@ impl<B: Backend + 'static> Otto<B> {
         let token = match read {
             Ok(token) => token,
             Err(err) => {
-                tracing::warn!("trash drop: cannot watch the transfer: {err}");
+                tracing::warn!(error = %err, "trash drop: cannot watch the transfer");
                 source.finished();
                 return;
             }
@@ -226,11 +226,11 @@ fn throw_away(paths: Vec<PathBuf>) {
         .spawn(move || {
             for path in paths {
                 if let Err(err) = otto_kit::trash::trash(&path) {
-                    tracing::warn!("trash drop: {}: {err}", path.display());
+                    tracing::warn!(path = %path.display(), error = %err, "trash drop: could not trash");
                 }
             }
         });
     if let Err(err) = spawned {
-        tracing::warn!("trash drop: cannot start the move: {err}");
+        tracing::warn!(error = %err, "trash drop: cannot start the move");
     }
 }

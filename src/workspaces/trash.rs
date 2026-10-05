@@ -136,11 +136,11 @@ fn run(on_change: impl Fn(bool)) {
         return;
     }
 
-    let (tx, rx) = mpsc::channel::<()>();
+    let (tx, rx) = mpsc::channel::<Wake>();
     watch_mounts(tx.clone());
     // The read blocks, so it lives on its own thread and pokes this one; this
     // one owns the debounce and the re-arming.
-    std::thread::Builder::new()
+    let reader = std::thread::Builder::new()
         .name("otto-trash-inotify".into())
         .spawn(move || {
             let mut buffer = [0u8; 4096];
@@ -155,20 +155,28 @@ fn run(on_change: impl Fn(bool)) {
                 };
                 if read <= 0 {
                     // EINTR is worth retrying; anything else means the
-                    // descriptor is gone and so is the watch.
+                    // descriptor is gone and so is the watch. Said out loud:
+                    // the mount watcher holds a sender too, so the channel
+                    // alone would never tell.
                     if read < 0
                         && std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted
                     {
                         continue;
                     }
+                    tx.send(Wake::ReaderGone).ok();
                     return;
                 }
-                if tx.send(()).is_err() {
+                if tx.send(Wake::Changed).is_err() {
                     return;
                 }
             }
-        })
-        .ok();
+        });
+    if let Err(err) = reader {
+        tracing::warn!(error = %err, "trash watch: no reader thread, the dock icon will not follow the can");
+        // SAFETY: the descriptor this function opened, used by nobody else.
+        unsafe { libc::close(fd) };
+        return;
+    }
 
     let mut armed: HashMap<PathBuf, i32> = HashMap::new();
     loop {
@@ -202,18 +210,25 @@ fn run(on_change: impl Fn(bool)) {
         }
 
         match rx.recv() {
-            Ok(()) => {}
+            Ok(Wake::Changed) => {}
             // The reader thread is gone: the descriptor died with it.
-            Err(_) => return,
+            Ok(Wake::ReaderGone) | Err(_) => break,
         }
         // Drain the burst rather than looking once per file: keep waiting
         // until DEBOUNCE passes with nothing new.
+        let mut reader_gone = false;
         loop {
             match rx.recv_timeout(DEBOUNCE) {
-                Ok(()) => continue,
+                Ok(Wake::Changed) => continue,
                 Err(RecvTimeoutError::Timeout) => break,
-                Err(RecvTimeoutError::Disconnected) => return,
+                Ok(Wake::ReaderGone) | Err(RecvTimeoutError::Disconnected) => {
+                    reader_gone = true;
+                    break;
+                }
             }
+        }
+        if reader_gone {
+            break;
         }
 
         // One read of the mount table per burst, for both the look and the
@@ -225,11 +240,22 @@ fn run(on_change: impl Fn(bool)) {
             on_change(now);
         }
     }
+    tracing::warn!("trash watch: inotify reader stopped, the dock icon will not follow the can");
+    // SAFETY: the descriptor this function opened; its reader has returned.
+    unsafe { libc::close(fd) };
+}
+
+/// What wakes the watcher.
+enum Wake {
+    /// Something under a watched directory, or the mount table, changed.
+    Changed,
+    /// The inotify reader has stopped, and with it every watch.
+    ReaderGone,
 }
 
 /// Poke `tx` whenever something is mounted or unmounted: the kernel flags
 /// `/proc/self/mountinfo` with `POLLPRI` on every change to the mount table.
-fn watch_mounts(tx: mpsc::Sender<()>) {
+fn watch_mounts(tx: mpsc::Sender<Wake>) {
     let Ok(mounts) = std::fs::File::open("/proc/self/mountinfo") else {
         return;
     };
@@ -249,7 +275,7 @@ fn watch_mounts(tx: mpsc::Sender<()>) {
                 }
                 return;
             }
-            if poll.revents & libc::POLLPRI != 0 && tx.send(()).is_err() {
+            if poll.revents & libc::POLLPRI != 0 && tx.send(Wake::Changed).is_err() {
                 return;
             }
         })
