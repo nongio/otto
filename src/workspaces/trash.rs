@@ -137,7 +137,8 @@ fn run(on_change: impl Fn(bool)) {
     }
 
     let (tx, rx) = mpsc::channel::<Wake>();
-    watch_mounts(tx.clone());
+    // Held for as long as this function runs; dropped, it stops the thread.
+    let _mounts = watch_mounts(tx.clone());
     // The read blocks, so it lives on its own thread and pokes this one; this
     // one owns the debounce and the re-arming.
     let reader = std::thread::Builder::new()
@@ -255,31 +256,53 @@ enum Wake {
 
 /// Poke `tx` whenever something is mounted or unmounted: the kernel flags
 /// `/proc/self/mountinfo` with `POLLPRI` on every change to the mount table.
-fn watch_mounts(tx: mpsc::Sender<Wake>) {
-    let Ok(mounts) = std::fs::File::open("/proc/self/mountinfo") else {
-        return;
-    };
+///
+/// Returns the write end of a pipe the thread also polls: dropping it (when
+/// the watcher stops) hangs the pipe up, and the thread returns rather than
+/// waiting for the next mount to notice nobody is listening.
+fn watch_mounts(tx: mpsc::Sender<Wake>) -> Option<std::os::fd::OwnedFd> {
+    use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+    let mounts = std::fs::File::open("/proc/self/mountinfo").ok()?;
+    let mut ends = [0; 2];
+    // SAFETY: `ends` has room for the two descriptors pipe2 writes.
+    if unsafe { libc::pipe2(ends.as_mut_ptr(), libc::O_CLOEXEC) } != 0 {
+        return None;
+    }
+    // SAFETY: both descriptors were just opened by pipe2 and are owned here.
+    let (stop_read, stop_write) =
+        unsafe { (OwnedFd::from_raw_fd(ends[0]), OwnedFd::from_raw_fd(ends[1])) };
     std::thread::Builder::new()
         .name("otto-trash-mounts".into())
         .spawn(move || loop {
-            let mut poll = libc::pollfd {
-                fd: std::os::fd::AsRawFd::as_raw_fd(&mounts),
-                events: libc::POLLPRI,
-                revents: 0,
-            };
-            // SAFETY: one pollfd we own, for the file this closure keeps open.
-            let ready = unsafe { libc::poll(&mut poll, 1, -1) };
+            let mut polls = [
+                libc::pollfd {
+                    fd: mounts.as_raw_fd(),
+                    events: libc::POLLPRI,
+                    revents: 0,
+                },
+                libc::pollfd {
+                    fd: stop_read.as_raw_fd(),
+                    events: libc::POLLIN,
+                    revents: 0,
+                },
+            ];
+            // SAFETY: two pollfds we own, for descriptors this closure keeps open.
+            let ready = unsafe { libc::poll(polls.as_mut_ptr(), 2, -1) };
             if ready < 0 {
                 if std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted {
                     continue;
                 }
                 return;
             }
-            if poll.revents & libc::POLLPRI != 0 && tx.send(Wake::Changed).is_err() {
+            if polls[1].revents != 0 {
+                return;
+            }
+            if polls[0].revents & libc::POLLPRI != 0 && tx.send(Wake::Changed).is_err() {
                 return;
             }
         })
-        .ok();
+        .ok()?;
+    Some(stop_write)
 }
 
 /// `files`, or the nearest ancestor of it that exists.
