@@ -519,18 +519,15 @@ impl Directory {
 /// name-first pass is the next change; the snapshot shape is already what it
 /// will deliver.
 fn read_directory(path: &Path) -> Snapshot {
+    if is_trash_root(path) {
+        return Snapshot {
+            path: path.to_path_buf(),
+            entries: read_trash(),
+            error: None,
+        };
+    }
     let read = match std::fs::read_dir(path) {
         Ok(read) => read,
-        // A trash can that has never been used has no directory on disk yet.
-        // That is an empty Trash, not a folder that has gone missing, and the
-        // window must say so rather than showing a read error.
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound && is_trash_root(path) => {
-            return Snapshot {
-                path: path.to_path_buf(),
-                entries: Vec::new(),
-                error: None,
-            }
-        }
         Err(err) => {
             return Snapshot {
                 path: path.to_path_buf(),
@@ -540,24 +537,38 @@ fn read_directory(path: &Path) -> Snapshot {
         }
     };
 
-    // The sidecars, once for the whole listing rather than once per entry:
-    // the info directory is a single readdir, and reading it per file would
-    // be one open() per row on the pane's critical path. Empty for every
-    // directory that is not the trash, which costs nothing.
-    let origins = is_trash_root(path).then(read_trash_origins);
-
-    let mut entries = Vec::new();
-    for read_entry in read.flatten() {
-        let mut entry = entry_for_dir_entry(&read_entry);
-        entry.origin = origins.as_ref().and_then(|o| o.get(&entry.name).cloned());
-        entries.push(entry);
-    }
-
     Snapshot {
         path: path.to_path_buf(),
-        entries,
+        entries: read.flatten().map(|e| entry_for_dir_entry(&e)).collect(),
         error: None,
     }
+}
+
+/// Everything in the trash: the home can and the cans at the top of every
+/// other mounted filesystem (see [`otto_kit::trash::cans`]), as one listing.
+/// Each row keeps its real path in its own can, which is how Put Back and
+/// Delete Forever find its sidecar.
+///
+/// A can that has never been used has no directory on disk yet. That is an
+/// empty Trash, not a folder that has gone missing, so it lists nothing
+/// rather than an error.
+fn read_trash() -> Vec<Entry> {
+    let mut entries = Vec::new();
+    for can in otto_kit::trash::cans() {
+        let Ok(read) = std::fs::read_dir(can.files_dir()) else {
+            continue;
+        };
+        // The sidecars, once per can rather than once per entry: the info
+        // directory is a single readdir, and reading it per file would be one
+        // open() per row on the pane's critical path.
+        let origins = read_trash_origins(&can);
+        for read_entry in read.flatten() {
+            let mut entry = entry_for_dir_entry(&read_entry);
+            entry.origin = origins.get(&entry.name).cloned();
+            entries.push(entry);
+        }
+    }
+    entries
 }
 
 /// One entry, from a directory read.
@@ -1620,28 +1631,13 @@ pub fn create_folder_named(dest: &Path, name: &str) -> Result<PathBuf, String> {
 /// [`paste`] for why that is acceptable here.
 pub fn move_to_trash(paths: &[PathBuf]) -> OpResult {
     let mut result = OpResult::default();
-    let Some(trash) = otto_kit::trash::home_trash_dir() else {
-        result
-            .errors
-            .push("No home directory to trash into.".to_string());
-        return result;
-    };
-    let files_dir = trash.join("files");
-    let info_dir = trash.join("info");
-    if let Err(err) =
-        std::fs::create_dir_all(&files_dir).and_then(|_| std::fs::create_dir_all(&info_dir))
-    {
-        result
-            .errors
-            .push(format!("Couldn\u{2019}t prepare Trash: {err}"));
-        return result;
-    }
-
     for source in paths {
         let Some(name) = source.file_name() else {
             continue;
         };
-        match otto_kit::trash::trash_into(source, &trash) {
+        // The can is chosen per item: one on another filesystem goes to the
+        // trash at the top of that filesystem rather than being copied home.
+        match otto_kit::trash::trash(source) {
             Ok((to, info)) => {
                 result.trashed += 1;
                 result.changes.push(Change::Trashed {
@@ -1659,11 +1655,6 @@ pub fn move_to_trash(paths: &[PathBuf]) -> OpResult {
 }
 
 /// A trash can under a temp directory, for tests.
-///
-/// Every test in the binary shares it, and [`otto_kit::trash::trash_into`]
-/// checks for a free name and then moves, so two tests trashing a file of
-/// the same name at once can both pick it and one overwrites the other. A
-/// test that reads back what it trashed names its file after itself.
 ///
 /// Redirecting `XDG_DATA_HOME` is the only way to keep [`move_to_trash`] out
 /// of the developer's real Trash, and the environment belongs to the whole
@@ -1683,19 +1674,15 @@ pub(crate) fn test_data_home() -> &'static Path {
     })
 }
 
-/// The directory the trash's items live in: `$XDG_DATA_HOME/Trash/files`.
+/// The directory the Trash shell opens on: `$XDG_DATA_HOME/Trash/files`.
 ///
-/// This is what the Trash shell browses, so it is an ordinary path and the
-/// ordinary listing machinery reads it. Everything that makes the trash
-/// special — the origins, and what may be done to a row — hangs off
-/// [`is_trash_root`] rather than off a separate kind of column.
+/// What it lists is every can's items, not only this directory's (see
+/// [`read_trash`]); the path is what identifies the Trash as a place.
+/// Everything that makes the trash special — the origins, and what may be
+/// done to a row — hangs off [`is_trash_root`] rather than off a separate
+/// kind of column.
 pub fn trash_files_dir() -> Option<PathBuf> {
-    otto_kit::trash::home_trash_dir().map(|t| t.join("files"))
-}
-
-/// The sidecar directory: `$XDG_DATA_HOME/Trash/info`.
-pub fn trash_info_dir() -> Option<PathBuf> {
-    otto_kit::trash::home_trash_dir().map(|t| t.join("info"))
+    otto_kit::trash::Can::home().map(|can| can.files_dir())
 }
 
 /// Is `path` the trash's own directory — the one the Trash shell opens on?
@@ -1707,17 +1694,14 @@ pub fn is_trash_root(path: &Path) -> bool {
     trash_files_dir().is_some_and(|trash| path == trash)
 }
 
-/// Every sidecar in the info directory, as trashed-name → original path.
+/// Every sidecar in `can`'s info directory, as trashed-name → original path.
 ///
 /// A sidecar that cannot be read, or that carries no `Path=`, is skipped: an
 /// item whose origin is unknown is still an item in the trash, and dropping
 /// the whole listing over one unreadable file would be the wrong trade.
-fn read_trash_origins() -> std::collections::HashMap<String, PathBuf> {
+fn read_trash_origins(can: &otto_kit::trash::Can) -> std::collections::HashMap<String, PathBuf> {
     let mut origins = std::collections::HashMap::new();
-    let Some(info_dir) = trash_info_dir() else {
-        return origins;
-    };
-    let Ok(read) = std::fs::read_dir(&info_dir) else {
+    let Ok(read) = std::fs::read_dir(can.info_dir()) else {
         return origins;
     };
     for entry in read.flatten() {
@@ -1728,41 +1712,28 @@ fn read_trash_origins() -> std::collections::HashMap<String, PathBuf> {
         let Ok(body) = std::fs::read_to_string(entry.path()) else {
             continue;
         };
-        if let Some(path) = parse_trashinfo(&body) {
+        if let Some(path) = can.origin_in(&body) {
             origins.insert(name.to_string(), path);
         }
     }
     origins
 }
 
-/// The `Path=` key out of a `.trashinfo` body, percent-decoded.
-fn parse_trashinfo(body: &str) -> Option<PathBuf> {
-    body.lines()
-        .find_map(|line| line.strip_prefix("Path="))
-        .map(|encoded| otto_kit::uri::decode_path(encoded.trim()))
-}
-
 /// Put trashed items back where they came from.
 ///
-/// Each path is one of the trash's own rows; its origin comes from the
-/// sidecar, which is dropped once the item is back. An item whose origin is
-/// unknown cannot be put back — there is nowhere to put it — and says so
-/// rather than being moved somewhere invented.
+/// Each path is one of the trash's own rows, in whichever can holds it; its
+/// origin comes from the sidecar beside it, which is dropped once the item is
+/// back. An item whose origin is unknown cannot be put back — there is
+/// nowhere to put it — and says so rather than being moved somewhere
+/// invented.
 pub fn restore_from_trash(paths: &[PathBuf]) -> OpResult {
     let mut result = OpResult::default();
-    let Some(info_dir) = trash_info_dir() else {
-        result.errors.push("No trash to restore from.".to_string());
-        return result;
-    };
-
     for path in paths {
         let name = name_of(path);
-        let info = info_dir.join(format!("{name}.trashinfo"));
-        let origin = std::fs::read_to_string(&info)
-            .ok()
-            .as_deref()
-            .and_then(parse_trashinfo);
-        let Some(origin) = origin else {
+        let located = otto_kit::trash::Can::of_item(path)
+            .zip(path.file_name())
+            .and_then(|(can, file)| Some((can.origin(file)?, can.sidecar(file))));
+        let Some((origin, info)) = located else {
             result.errors.push(format!(
                 "Can\u{2019}t put \u{201c}{name}\u{201d} back \u{2014} where it came from is not recorded."
             ));
@@ -1803,7 +1774,15 @@ fn restore_one(from: &Path, origin: &Path, info: &Path) -> Result<(), String> {
     // The sidecar describes an item that is no longer in the trash; leaving
     // it would show a phantom there.
     std::fs::remove_file(info).ok();
+    forget_directory_size(from);
     Ok(())
+}
+
+/// Drop the can's `directorysizes` line for an item that has left it.
+fn forget_directory_size(item: &Path) {
+    if let (Some(can), Some(name)) = (otto_kit::trash::Can::of_item(item), item.file_name()) {
+        can.forget_directory_size(name);
+    }
 }
 
 /// Delete trashed items outright, with their sidecars.
@@ -1812,15 +1791,17 @@ fn restore_one(from: &Path, origin: &Path, info: &Path) -> Result<(), String> {
 /// caller is responsible for having asked first.
 pub fn delete_forever(paths: &[PathBuf]) -> OpResult {
     let mut result = OpResult::default();
-    let info_dir = trash_info_dir();
     for path in paths {
         let name = name_of(path);
         match remove_entry(path) {
             Ok(()) => {
                 result.deleted += 1;
-                if let Some(dir) = info_dir.as_ref() {
-                    std::fs::remove_file(dir.join(format!("{name}.trashinfo"))).ok();
+                if let (Some(can), Some(file)) =
+                    (otto_kit::trash::Can::of_item(path), path.file_name())
+                {
+                    std::fs::remove_file(can.sidecar(file)).ok();
                 }
+                forget_directory_size(path);
             }
             Err(err) => result.errors.push(format!("\u{201c}{name}\u{201d}: {err}")),
         }
@@ -1828,30 +1809,26 @@ pub fn delete_forever(paths: &[PathBuf]) -> OpResult {
     result
 }
 
-/// Delete everything in the trash.
+/// Delete everything in the trash, in every can.
 ///
 /// Listed and then deleted item by item rather than by removing the whole
 /// directory: one unremovable file must fail on its own and leave the rest
 /// emptied, and the trash's own directories have to survive so the next
 /// delete still has somewhere to go.
 pub fn empty_trash() -> OpResult {
-    let mut result = OpResult::default();
-    let Some(files_dir) = trash_files_dir() else {
-        result.errors.push("No trash to empty.".to_string());
-        return result;
-    };
-    let paths: Vec<PathBuf> = match std::fs::read_dir(&files_dir) {
-        Ok(read) => read.flatten().map(|e| e.path()).collect(),
-        // Never used, so already empty.
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return result,
-        Err(err) => {
-            result
-                .errors
-                .push(format!("Couldn\u{2019}t read Trash: {err}"));
-            return result;
+    let mut paths = Vec::new();
+    let mut errors = Vec::new();
+    for can in otto_kit::trash::cans() {
+        match std::fs::read_dir(can.files_dir()) {
+            Ok(read) => paths.extend(read.flatten().map(|e| e.path())),
+            // Never used, so already empty.
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => errors.push(format!("Couldn\u{2019}t read Trash: {err}")),
         }
-    };
-    delete_forever(&paths)
+    }
+    let mut result = delete_forever(&paths);
+    result.errors.splice(0..0, errors);
+    result
 }
 
 #[cfg(test)]
@@ -2206,7 +2183,7 @@ mod paste_tests {
     fn trash_moves_the_file_and_writes_a_sidecar() {
         let home = test_data_home();
         let t = Tmp::new("trash");
-        let victim = t.file("trash-moves.txt", "bye");
+        let victim = t.file("gone.txt", "bye");
 
         let result = move_to_trash(std::slice::from_ref(&victim));
 
@@ -2231,7 +2208,7 @@ mod paste_tests {
     fn put_back_returns_the_file_to_where_it_came_from() {
         let _home = test_data_home();
         let t = Tmp::new("restore");
-        let victim = t.file("put-back-returns.txt", "body");
+        let victim = t.file("paper.txt", "body");
 
         let trashed = move_to_trash(std::slice::from_ref(&victim));
         assert_eq!(trashed.trashed, 1, "{:?}", trashed.errors);
@@ -2256,7 +2233,7 @@ mod paste_tests {
         let _home = test_data_home();
         let t = Tmp::new("restore-gone");
         let nested = t.dir("holder");
-        let victim = nested.join("put-back-recreates.txt");
+        let victim = nested.join("paper.txt");
         std::fs::write(&victim, "body").unwrap();
 
         let trashed = move_to_trash(std::slice::from_ref(&victim));
@@ -2277,7 +2254,7 @@ mod paste_tests {
     fn put_back_refuses_to_overwrite_what_took_the_name() {
         let _home = test_data_home();
         let t = Tmp::new("restore-clash");
-        let victim = t.file("put-back-refuses.txt", "old");
+        let victim = t.file("paper.txt", "old");
 
         let trashed = move_to_trash(std::slice::from_ref(&victim));
         let Some(Change::Trashed { to, .. }) = trashed.changes.first() else {
@@ -2298,7 +2275,7 @@ mod paste_tests {
     fn delete_forever_takes_the_sidecar_with_it() {
         let _home = test_data_home();
         let t = Tmp::new("forever");
-        let victim = t.file("delete-forever.txt", "body");
+        let victim = t.file("paper.txt", "body");
 
         let trashed = move_to_trash(std::slice::from_ref(&victim));
         let Some(Change::Trashed { to, info, .. }) = trashed.changes.first() else {
@@ -2325,14 +2302,5 @@ mod paste_tests {
         let encoded = encode_path(path);
         assert!(!encoded.contains(' '), "spaces are encoded: {encoded}");
         assert_eq!(decode_path(&encoded), path);
-    }
-
-    #[test]
-    fn a_sidecar_without_a_path_is_skipped_rather_than_guessed() {
-        assert_eq!(parse_trashinfo("[Trash Info]\nDeletionDate=x\n"), None);
-        assert_eq!(
-            parse_trashinfo("[Trash Info]\nPath=/tmp/a%20b\nDeletionDate=x\n"),
-            Some(PathBuf::from("/tmp/a b"))
-        );
     }
 }

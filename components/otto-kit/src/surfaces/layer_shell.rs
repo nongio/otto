@@ -56,11 +56,16 @@ impl LayerShellSurface {
     /// * `height` - Initial height in logical pixels (0 = fill available height)
     ///
     /// # Example
+    /// `no_run`: needs a running app connected to a Wayland compositor.
+    ///
     /// ```no_run
     /// use otto_kit::surfaces::LayerShellSurface;
     /// use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_shell_v1::Layer;
     ///
+    /// # fn main() -> Result<(), otto_kit::surfaces::SurfaceError> {
     /// let surface = LayerShellSurface::new(Layer::Top, "my-panel", 1920, 32)?;
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn new(
         layer: Layer,
@@ -389,9 +394,15 @@ impl LayerShellSurface {
     /// Configure anchoring for the layer surface
     ///
     /// # Example
-    /// ```
+    /// `no_run`: needs a running app connected to a Wayland compositor.
+    ///
+    /// ```no_run
+    /// # fn demo(surface: &otto_kit::surfaces::LayerShellSurface) {
+    /// use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::Anchor;
+    ///
     /// // Anchor to top-left-right (creates a topbar)
     /// surface.set_anchor(Anchor::Top | Anchor::Left | Anchor::Right);
+    /// # }
     /// ```
     pub fn set_anchor(&self, anchor: Anchor) {
         self.inner.borrow().layer_surface.set_anchor(anchor);

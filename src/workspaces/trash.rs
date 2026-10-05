@@ -9,7 +9,13 @@
 //! The trash directory does not have to exist. A session that has never thrown
 //! anything away has no `Trash/files` at all, so the watch is placed on the
 //! deepest ancestor that does exist and moves down as the directories appear.
+//!
+//! There is more than one can: a file trashed on another filesystem goes to the
+//! can at the top of that filesystem (see [`otto_kit::trash`]). With the
+//! default `trash_path` every mounted filesystem's can counts, and the mount
+//! table is watched too, so plugging in a stick with a full can fills the bin.
 
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::time::Duration;
@@ -65,16 +71,32 @@ fn expand(path: &str) -> Option<PathBuf> {
     Some(PathBuf::from(path))
 }
 
+/// Every directory whose contents count: [`files_dir`] alone when it was
+/// pointed somewhere else, and otherwise the `files/` of every can there is,
+/// the home one first.
+fn watched_dirs() -> Vec<PathBuf> {
+    let Some(configured) = files_dir() else {
+        return Vec::new();
+    };
+    let home = otto_kit::trash::Can::home().map(|can| can.files_dir());
+    if home.as_ref() != Some(&configured) {
+        return vec![configured];
+    }
+    otto_kit::trash::cans()
+        .iter()
+        .map(otto_kit::trash::Can::files_dir)
+        .collect()
+}
+
 /// Whether the trash holds anything. A directory that does not exist is an
 /// empty trash, not an error: it is what a session that has never deleted
 /// anything looks like.
 pub fn has_content() -> bool {
-    let Some(dir) = files_dir() else {
-        return false;
-    };
-    std::fs::read_dir(dir)
-        .map(|mut entries| entries.next().is_some())
-        .unwrap_or(false)
+    watched_dirs().iter().any(|dir| {
+        std::fs::read_dir(dir)
+            .map(|mut entries| entries.next().is_some())
+            .unwrap_or(false)
+    })
 }
 
 /// Call `on_change` with the trash's state now, and again every time it
@@ -86,17 +108,13 @@ pub fn has_content() -> bool {
 pub fn watch(on_change: impl Fn(bool) + Send + 'static) {
     on_change(has_content());
 
-    let Some(files) = files_dir() else {
-        return;
-    };
-
     std::thread::Builder::new()
         .name("otto-trash-watch".into())
-        .spawn(move || run(&files, on_change))
+        .spawn(move || run(on_change))
         .ok();
 }
 
-fn run(files: &Path, on_change: impl Fn(bool)) {
+fn run(on_change: impl Fn(bool)) {
     // SAFETY: inotify_init1 takes flags and returns a descriptor or -1.
     let fd = unsafe { libc::inotify_init1(libc::IN_CLOEXEC) };
     if fd < 0 {
@@ -105,6 +123,7 @@ fn run(files: &Path, on_change: impl Fn(bool)) {
     }
 
     let (tx, rx) = mpsc::channel::<()>();
+    watch_mounts(tx.clone());
     // The read blocks, so it lives on its own thread and pokes this one; this
     // one owns the debounce and the re-arming.
     std::thread::Builder::new()
@@ -137,31 +156,34 @@ fn run(files: &Path, on_change: impl Fn(bool)) {
         })
         .ok();
 
-    let mut armed: Option<(i32, PathBuf)> = None;
+    let mut armed: HashMap<PathBuf, i32> = HashMap::new();
     let mut last = has_content();
     loop {
-        // Watch the deepest directory that exists: `Trash/files` once it is
-        // there, its parent while it is not, so its creation is itself an
-        // event.
-        let target = deepest_existing(files);
-        match (&armed, &target) {
-            (Some((_, current)), Some(target)) if current == target => {}
-            _ => {
-                if let Some((descriptor, _)) = armed.take() {
-                    // SAFETY: a descriptor this thread added and has not removed.
-                    unsafe { libc::inotify_rm_watch(fd, descriptor) };
-                }
-                if let Some(target) = target.clone() {
-                    if let Ok(c_path) =
-                        std::ffi::CString::new(target.as_os_str().as_encoded_bytes())
-                    {
-                        // SAFETY: a NUL-terminated path and a mask of inotify flags.
-                        let descriptor =
-                            unsafe { libc::inotify_add_watch(fd, c_path.as_ptr(), INTEREST) };
-                        if descriptor >= 0 {
-                            armed = Some((descriptor, target));
-                        }
-                    }
+        // Watch the deepest directory that exists for each can: `files/` once
+        // it is there, its parent while it is not, so its creation is itself
+        // an event. Recomputed after every event, since a mount may have
+        // brought a can or taken one away.
+        let targets: HashSet<PathBuf> = watched_dirs()
+            .iter()
+            .filter_map(|dir| deepest_existing(dir))
+            .collect();
+        armed.retain(|path, descriptor| {
+            let keep = targets.contains(path);
+            if !keep {
+                // SAFETY: a descriptor this thread added and has not removed.
+                unsafe { libc::inotify_rm_watch(fd, *descriptor) };
+            }
+            keep
+        });
+        for target in targets {
+            if armed.contains_key(&target) {
+                continue;
+            }
+            if let Ok(c_path) = std::ffi::CString::new(target.as_os_str().as_encoded_bytes()) {
+                // SAFETY: a NUL-terminated path and a mask of inotify flags.
+                let descriptor = unsafe { libc::inotify_add_watch(fd, c_path.as_ptr(), INTEREST) };
+                if descriptor >= 0 {
+                    armed.insert(target, descriptor);
                 }
             }
         }
@@ -187,6 +209,35 @@ fn run(files: &Path, on_change: impl Fn(bool)) {
             on_change(now);
         }
     }
+}
+
+/// Poke `tx` whenever something is mounted or unmounted: the kernel flags
+/// `/proc/self/mountinfo` with `POLLPRI` on every change to the mount table.
+fn watch_mounts(tx: mpsc::Sender<()>) {
+    let Ok(mounts) = std::fs::File::open("/proc/self/mountinfo") else {
+        return;
+    };
+    std::thread::Builder::new()
+        .name("otto-trash-mounts".into())
+        .spawn(move || loop {
+            let mut poll = libc::pollfd {
+                fd: std::os::fd::AsRawFd::as_raw_fd(&mounts),
+                events: libc::POLLPRI,
+                revents: 0,
+            };
+            // SAFETY: one pollfd we own, for the file this closure keeps open.
+            let ready = unsafe { libc::poll(&mut poll, 1, -1) };
+            if ready < 0 {
+                if std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted {
+                    continue;
+                }
+                return;
+            }
+            if poll.revents & libc::POLLPRI != 0 && tx.send(()).is_err() {
+                return;
+            }
+        })
+        .ok();
 }
 
 /// `files`, or the nearest ancestor of it that exists.

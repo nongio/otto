@@ -328,10 +328,16 @@ impl Window {
     /// The layer and all its children will be rendered when the window draws.
     ///
     /// # Example
+    /// `no_run`: needs a running app connected to a Wayland compositor.
+    ///
     /// ```no_run
+    /// # fn demo(window: &mut otto_kit::Window) {
+    /// use otto_kit::components::layers::LayerFrame;
+    ///
     /// let layer = LayerFrame::new();
     /// layer.set_size(200.0, 100.0);
     /// window.set_layer_node(layer.layer().clone());
+    /// # }
     /// ```
     pub fn set_layer_node(&mut self, layer: layers::prelude::Layer) {
         if let Some(backing) = self.layer_surface() {
@@ -360,11 +366,15 @@ impl Window {
     /// Returns None if surface style was not available when the window was created.
     ///
     /// # Example
+    /// `no_run`: needs a running app connected to a Wayland compositor.
+    ///
     /// ```no_run
+    /// # fn demo(window: &otto_kit::Window) {
     /// if let Some(surface_style) = window.surface_style() {
     ///     surface_style.set_corner_radius(24.0);
     ///     surface_style.set_opacity(0.9);
     /// }
+    /// # }
     /// ```
     pub fn surface_style(&self) -> Option<otto_surface_style_v1::OttoSurfaceStyleV1> {
         if let Some(layer) = self.layer_surface() {
@@ -954,7 +964,12 @@ impl Window {
     /// The callback receives all pointer events when they occur
     ///
     /// # Example
+    /// `no_run`: needs a running app connected to a Wayland compositor.
+    ///
     /// ```no_run
+    /// # fn demo(window: &otto_kit::Window) {
+    /// use smithay_client_toolkit::seat::pointer::PointerEventKind;
+    ///
     /// window.on_pointer_event(|events| {
     ///     for event in events {
     ///         match &event.kind {
@@ -965,6 +980,7 @@ impl Window {
     ///         }
     ///     }
     /// });
+    /// # }
     /// ```
     pub fn on_pointer_event<F>(&self, mut callback: F)
     where
@@ -993,24 +1009,6 @@ impl Window {
         });
     }
 
-    /// Start an interactive window move
-    /// Call this in response to a pointer button press to make the window draggable
-    ///
-    /// # Arguments
-    /// * `seat` - The seat that initiated the move
-    /// * `serial` - The serial from the pointer button press event
-    ///
-    /// # Example
-    /// ```no_run
-    /// window.on_pointer_event(|events| {
-    ///     for event in events {
-    ///         if let PointerEventKind::Press { serial, .. } = event.kind {
-    ///             // Start window move when pressed
-    ///             window.start_move(seat, serial);
-    ///         }
-    ///     }
-    /// });
-    /// ```
     /// Begin a compositor-driven resize from `edge`.
     ///
     /// Call it from a pointer press that landed on an edge — see
@@ -1024,6 +1022,32 @@ impl Window {
         }
     }
 
+    /// Start an interactive window move
+    /// Call this in response to a pointer button press to make the window draggable
+    ///
+    /// # Arguments
+    /// * `seat` - The seat that initiated the move
+    /// * `serial` - The serial from the pointer button press event
+    ///
+    /// # Example
+    /// `no_run`: needs a running app connected to a Wayland compositor.
+    ///
+    /// ```no_run
+    /// # use wayland_client::protocol::wl_seat::WlSeat;
+    /// # fn demo(window: &otto_kit::Window, seat: WlSeat) {
+    /// use smithay_client_toolkit::seat::pointer::PointerEventKind;
+    ///
+    /// let target = window.clone();
+    /// window.on_pointer_event(move |events| {
+    ///     for event in events {
+    ///         if let PointerEventKind::Press { serial, .. } = event.kind {
+    ///             // Start window move when pressed
+    ///             target.start_move(&seat, serial);
+    ///         }
+    ///     }
+    /// });
+    /// # }
+    /// ```
     pub fn start_move(&self, seat: &wl_seat::WlSeat, serial: u32) {
         if let Ok(surface_guard) = self.surface.read() {
             if let Some(ref surface) = *surface_guard {

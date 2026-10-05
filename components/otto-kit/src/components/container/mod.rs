@@ -3,7 +3,7 @@ pub mod stack;
 pub mod traits;
 
 pub use frame::{Frame, FrameBuilder};
-pub use stack::{Stack, StackDirection};
+pub use stack::{Stack, StackAlignment, StackDirection};
 pub use traits::{Container, ContainerBackend, DrawingBackend, SurfaceBackend};
 
 // Re-export common styling types

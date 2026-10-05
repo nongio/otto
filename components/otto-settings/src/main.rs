@@ -214,20 +214,21 @@ fn swatches_for(id: &str) -> Vec<Swatch> {
         }
     }
 
-    [
-        ("Blue", 0xFF0A84FF),
-        ("Purple", 0xFFBF5AF2),
-        ("Pink", 0xFFFF375F),
-        ("Red", 0xFFFF453A),
-        ("Orange", 0xFFFF9F0A),
-        ("Yellow", 0xFFFFD60A),
-        ("Green", 0xFF32D74B),
-        ("Teal", 0xFF40C8E0),
-        ("Graphite", 0xFF8E8E93),
-    ]
-    .into_iter()
-    .map(|(name, argb)| Swatch::new(name, Color::from(argb)))
-    .collect()
+    // The same named colours, from otto-kit's palette: a second list here
+    // would drift from the accents everything else draws.
+    otto_kit::theme::ACCENT_NAMES
+        .iter()
+        .filter_map(|name| named_color(name).map(|c| Swatch::new(capitalized(name), c)))
+        .collect()
+}
+
+/// `blue` as a swatch's label reads it: `Blue`.
+fn capitalized(name: &str) -> String {
+    let mut chars = name.chars();
+    chars
+        .next()
+        .map(|first| first.to_uppercase().chain(chars).collect())
+        .unwrap_or_default()
 }
 
 /// A palette name the compositor serves has to map to something drawable.

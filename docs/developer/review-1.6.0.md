@@ -48,11 +48,14 @@ god-objects, and kit widgets the apps never adopted.
 - [x] **otto-files text fields lack word movement / shift-selection**: four
   hand-written Keysym maps (`otto-files/src/app/keys.rs:197,263,360,431`)
   instead of `otto_kit::components::text_input::keymap::key_for`. **S** Fixed in #258.
-- [ ] **Trash is incomplete vs the freedesktop spec** (`otto-kit/src/trash.rs`,
+- [x] **Trash is incomplete vs the freedesktop spec** (`otto-kit/src/trash.rs`,
   `otto-files/src/model.rs:1667-1900`): no `$topdir/.Trash-$uid` (cross-fs
   trash copies the tree home), `.trashinfo` written after the move instead of
   reserved first with `O_EXCL`, no `directorysizes`. Fix, or adopt the `trash`
   crate. **M**
+  - *Fixed in otto-kit: `O_EXCL` sidecar first, topdir cans with relative
+    `Path`, `directorysizes`. Files, Empty Trash and the dock list every
+    mounted filesystem's can.*
 - [x] **Size formatting differs between Files and Peek**: four formatters,
   base 1000 vs 1024 (`otto-kit/src/components/attachments.rs:317`,
   `otto-kit/src/preview/mod.rs:1430`, `otto-peek/src/decode/mod.rs:370`,
@@ -96,13 +99,14 @@ otto-kit, so the portal and otto-agents need not link Skia): `xdg`, `dbus`,
   different validation (`otto-files/src/model.rs:810`,
   `otto-settings/src/panes/search.rs:444`). **M**
   - *Partly done in #261: `otto_kit::xdg` added and the listed helpers migrated; other ad-hoc `HOME`/`XDG_*` readers remain (listed in the PR).*
-- [ ] **`dbus`**: one client proxy per `org.otto.*` interface.
+- [x] **`dbus`**: one client proxy per `org.otto.*` interface.
   `org.otto.Dialog1` ×3, `org.otto.Settings` ×3 plus raw calls,
   `org.otto.ScreenCast` raw in otto-rdp, `org.otto.Shell1` raw in otto-msg,
   `org.otto.Island` raw in otto-files. The portal `Settings` proxy is declared
   6× inside otto-kit itself, each opening its own connection. **S–M**
   - *Done in the otto-dbus PR: one shared portal client in otto-kit, and the `components/otto-dbus` crate (re-exported as `otto_kit::dbus`) with every `org.otto.*` proxy; see [otto-dbus](otto-dbus.md). `org.otto.Stash1` clients (otto-files, otto-kit `stashed`) still call by name.*
   - *Done in #266 for every interface listed (new `otto-dbus` crate, re-exported as `otto_kit::dbus`, plus one shared portal Settings client); `org.otto.Stash1` callers (otto-files `stash.rs`, otto-kit `components/stashed.rs`) still call by name.*
+  - *`org.otto.Stash1` has its proxy too (`otto_dbus::stash`); otto-files, otto-kit `stashed` and the otto-stash command line use it.*
 - [ ] **`uri`**: percent-encoding hand-written ~9× (otto-kit trash/clipboard,
   otto-peek, otto-agents-client, otto-search, `src/desktop_widget.rs`); use
   `percent-encoding`/`url` (in Cargo.lock). **S**
@@ -258,10 +262,11 @@ otto-kit, so the portal and otto-agents need not link Skia): `xdg`, `dbus`,
 - [ ] Clippy without XWayland and the x11 backend at runtime were not
   exercised after #259; the x11 CI step builds `default,x11`, since
   `--no-default-features --features x11` needs `udev` code paths. **S**
-- [ ] **Trash name race**: `otto_kit::trash::trash_into` checks for a free
+- [x] **Trash name race**: `otto_kit::trash::trash_into` checks for a free
   name, then moves; two concurrent trashes of the same name collide. The
   otto-files tests work around it with unique names (#267). Part of the
   §1 trash-spec item (reserve the `.trashinfo` with `O_EXCL` first). **S**
+  - *Fixed with the §1 item; the workaround is reverted.*
 - [x] **Screencast `BufferPool` looks unsound**
   (`src/screenshare/pipewire_stream.rs`, FIXME added in #268): a buffer
   popped for rendering can be freed by `remove_buffer` during renegotiation,
@@ -286,10 +291,13 @@ otto-kit, so the portal and otto-agents need not link Skia): `xdg`, `dbus`,
 - [ ] `headless_basic::pinch_show_desktop` fails locally on main
   (tests/headless_basic.rs:237, "clicking a window should dismiss show
   desktop"); check whether CI runs it. **S**
-- [ ] About 11 otto-kit doctests fail (`stack.rs`, `window/mod.rs`, …); CI
+- [x] About 11 otto-kit doctests fail (`stack.rs`, `window/mod.rs`, …); CI
   runs `--lib` only, so they rot unseen. **S**
-- [ ] otto-settings' hard-coded accent swatch list (`main.rs` ~217-227) is a
+  - *All compile now; the ones that need a compositor are `no_run`. CI runs
+    `cargo test -p otto-kit --doc`.*
+- [x] otto-settings' hard-coded accent swatch list (`main.rs` ~217-227) is a
   third palette; its Teal `#40C8E0` is in neither (#264). **S**
+  - *Now `otto_kit::theme::ACCENT_NAMES` through the same palette lookup.*
 - [ ] zbus 4 → 5 and smithay-client-toolkit 0.19 → 0.21 (§2) are now
   unblocked: every org.otto proxy lives in `otto-dbus`. **M each**
 
