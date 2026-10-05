@@ -1660,6 +1660,11 @@ pub fn move_to_trash(paths: &[PathBuf]) -> OpResult {
 
 /// A trash can under a temp directory, for tests.
 ///
+/// Every test in the binary shares it, and [`otto_kit::trash::trash_into`]
+/// checks for a free name and then moves, so two tests trashing a file of
+/// the same name at once can both pick it and one overwrites the other. A
+/// test that reads back what it trashed names its file after itself.
+///
 /// Redirecting `XDG_DATA_HOME` is the only way to keep [`move_to_trash`] out
 /// of the developer's real Trash, and the environment belongs to the whole
 /// process — so it is set exactly once, to one value, and never unset. A test
@@ -2201,7 +2206,7 @@ mod paste_tests {
     fn trash_moves_the_file_and_writes_a_sidecar() {
         let home = test_data_home();
         let t = Tmp::new("trash");
-        let victim = t.file("gone.txt", "bye");
+        let victim = t.file("trash-moves.txt", "bye");
 
         let result = move_to_trash(std::slice::from_ref(&victim));
 
@@ -2226,7 +2231,7 @@ mod paste_tests {
     fn put_back_returns_the_file_to_where_it_came_from() {
         let _home = test_data_home();
         let t = Tmp::new("restore");
-        let victim = t.file("paper.txt", "body");
+        let victim = t.file("put-back-returns.txt", "body");
 
         let trashed = move_to_trash(std::slice::from_ref(&victim));
         assert_eq!(trashed.trashed, 1, "{:?}", trashed.errors);
@@ -2251,7 +2256,7 @@ mod paste_tests {
         let _home = test_data_home();
         let t = Tmp::new("restore-gone");
         let nested = t.dir("holder");
-        let victim = nested.join("paper.txt");
+        let victim = nested.join("put-back-recreates.txt");
         std::fs::write(&victim, "body").unwrap();
 
         let trashed = move_to_trash(std::slice::from_ref(&victim));
@@ -2272,7 +2277,7 @@ mod paste_tests {
     fn put_back_refuses_to_overwrite_what_took_the_name() {
         let _home = test_data_home();
         let t = Tmp::new("restore-clash");
-        let victim = t.file("paper.txt", "old");
+        let victim = t.file("put-back-refuses.txt", "old");
 
         let trashed = move_to_trash(std::slice::from_ref(&victim));
         let Some(Change::Trashed { to, .. }) = trashed.changes.first() else {
@@ -2293,7 +2298,7 @@ mod paste_tests {
     fn delete_forever_takes_the_sidecar_with_it() {
         let _home = test_data_home();
         let t = Tmp::new("forever");
-        let victim = t.file("paper.txt", "body");
+        let victim = t.file("delete-forever.txt", "body");
 
         let trashed = move_to_trash(std::slice::from_ref(&victim));
         let Some(Change::Trashed { to, info, .. }) = trashed.changes.first() else {

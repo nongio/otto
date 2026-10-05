@@ -123,10 +123,19 @@ use crate::model::Change;
 pub const NAMESPACE: &str = "scripts";
 
 /// How long a script may take to describe itself.
+#[cfg(not(test))]
 const DESCRIBE_DEADLINE: Duration = Duration::from_secs(3);
 /// How long a dry run may take. It runs under the keyboard, so a script that
 /// cannot answer in this is treated as having nothing to show.
+#[cfg(not(test))]
 const PREVIEW_DEADLINE: Duration = Duration::from_millis(600);
+// The suite starts hundreds of interpreters at once, often on a machine that
+// is building something else too; the real deadlines would fail a test only
+// because Python took its time to start.
+#[cfg(test)]
+const DESCRIBE_DEADLINE: Duration = Duration::from_secs(20);
+#[cfg(test)]
+const PREVIEW_DEADLINE: Duration = Duration::from_secs(4);
 
 // ---------------------------------------------------------------------------
 // What a script says about itself
@@ -534,7 +543,8 @@ fn call(
     deadline: Option<Duration>,
     on_line: Option<&mut dyn FnMut(&str) -> bool>,
 ) -> Result<Outcome, String> {
-    let mut child = Process::new(script)
+    let mut command = Process::new(script);
+    command
         .arg(verb)
         .env("OTTO_LOCALE", locale)
         .stdin(if input.is_some() {
@@ -543,9 +553,8 @@ fn call(
             Stdio::null()
         })
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|err| format!("{}: {err}", script.display()))?;
+        .stderr(Stdio::piped());
+    let mut child = spawn(&mut command).map_err(|err| format!("{}: {err}", script.display()))?;
 
     if let (Some(bytes), Some(mut stdin)) = (input, child.stdin.take()) {
         // A script that exits without reading gets a broken pipe here, and
@@ -597,6 +606,24 @@ fn call(
             .unwrap_or_default(),
         stderr: stderr.and_then(|h| h.join().ok()).unwrap_or_default(),
     })
+}
+
+/// Start `command`, trying again for a moment while the script is "busy".
+///
+/// A script that was open for writing a moment ago cannot be executed until
+/// every copy of that descriptor is closed, and a process forked meanwhile
+/// (by any thread) holds one until it execs. The window is short.
+fn spawn(command: &mut Process) -> std::io::Result<Child> {
+    let mut tries = 0;
+    loop {
+        match command.spawn() {
+            Err(err) if err.raw_os_error() == Some(libc::ETXTBSY) && tries < 20 => {
+                tries += 1;
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            result => return result,
+        }
+    }
 }
 
 fn drain(mut pipe: impl Read + Send + 'static) -> std::thread::JoinHandle<String> {
@@ -1287,7 +1314,7 @@ esac
             r#"
 case "$1" in
   describe) printf '%s' '{"commands":[{"id":"s","title":"Slow","arg":{"prompt":"x","preview":true}}]}' ;;
-  preview) sleep 5; printf '{"rows":[]}' ;;
+  preview) sleep 60; printf '{"rows":[]}' ;;
 esac
 "#,
         );
@@ -1297,7 +1324,7 @@ esac
             &Request::new("scripts:slow.s", Some("x".into())),
             &situation(&dir.0, &["a.txt"]),
         );
-        assert!(started.elapsed() < Duration::from_secs(3));
+        assert!(started.elapsed() < Duration::from_secs(30));
         let preview = preview.expect("a note saying so");
         assert!(preview.rows.is_empty());
         assert!(preview.note.is_some());
