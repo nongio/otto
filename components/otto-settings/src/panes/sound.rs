@@ -5,7 +5,7 @@
 //!
 //! Below the interface-sound settings sits a mixer laid out after
 //! pavucontrol, the reference for what it covers: a tab bar holds
-//! for pavucontrol's tabs — Playback, Recording, Output devices, Input
+//! pavucontrol's tabs — Playback, Recording, Output devices, Input
 //! devices, Configuration — and the groups under it are that tab's. Each app
 //! playing or recording has its volume, mute and device; each device its
 //! port, volume, mute and whether it is the default; each card its profile.
