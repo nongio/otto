@@ -212,7 +212,8 @@ impl TopBarApp {
         let qh = AppContext::queue_handle();
 
         let timing = scene.create_timing_function(qh, ());
-        timing.set_spring(0.5, 0.7);
+        // A small settle, not a wobble: the panel resizes on every focus change.
+        timing.set_spring(0.2, 0.0);
         let txn = scene.begin_transaction(qh, ());
         txn.set_duration(0.5);
         txn.set_timing_function(&timing);
@@ -1405,6 +1406,9 @@ impl App for TopBarApp {
                     .menu_state
                     .set_active(Some(pending.item_index + 1));
                 self.show_app_submenu(pending);
+                // close_app_menu drew the bar with nothing active; draw the
+                // open title's highlight.
+                self.redraw_left();
             } else {
                 // Menu layout itself changed — update left panel items
                 self.left

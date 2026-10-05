@@ -107,6 +107,7 @@ fn tray_menu_style() -> MenuBarStyle {
         icon_active_tint: hl.on_active,
         font_size: 13.0,
         font_weight: skia_safe::font_style::Weight::SEMI_BOLD,
+        first_item_font_weight: None,
         item_corner_radius: 4.0,
     }
 }
@@ -129,7 +130,9 @@ fn left_menu_style() -> MenuBarStyle {
         icon_tint: theme.text_primary,
         icon_active_tint: hl.on_active,
         font_size: 13.0,
-        font_weight: skia_safe::font_style::Weight::BOLD,
+        // The menu titles; the application's name ahead of them is bold.
+        font_weight: skia_safe::font_style::Weight::NORMAL,
+        first_item_font_weight: Some(skia_safe::font_style::Weight::BOLD),
         item_corner_radius: 4.0,
     }
 }
@@ -224,14 +227,20 @@ impl LeftPanel {
             self.style.font_style(),
             self.style.font_size,
         );
+        let first_font = self.style.first_item_font();
         let mut offset = LOGO_PILL_WIDTH + self.style.bar_padding_horizontal;
         self.menu_state
             .items()
             .iter()
-            .map(|item| {
+            .enumerate()
+            .map(|(index, item)| {
+                let font = match &first_font {
+                    Some(first) if index == 0 => first,
+                    _ => &font,
+                };
                 let width = self
                     .style
-                    .item_width(self.style.item_content_width(item, &font));
+                    .item_width(self.style.item_content_width(item, font));
                 let placed = (offset, width);
                 offset += width + self.style.item_spacing;
                 placed
