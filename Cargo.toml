@@ -148,6 +148,7 @@ members = [
     "components/apps-manager",
     "components/otto-rdp",
     "components/otto-kit",
+    "components/otto-dbus",
     "components/otto-auth-ui",
     "components/otto-greeter",
     "components/otto-lock",

@@ -4,11 +4,9 @@
 //! The music island uses it to bring a player's window forward by process
 //! rather than by guessing from names.
 
+use otto_kit::dbus::shell::ShellProxyBlocking;
 use serde_json::Value;
 use zbus::blocking::Connection;
-
-const SHELL_NAME: &str = "org.otto.Shell1";
-const SHELL_PATH: &str = "/org/otto/Shell1";
 
 /// One window in the compositor's tree.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -23,28 +21,15 @@ pub struct ShellWindow {
 
 /// Every window, read from `GetTree`.
 pub fn windows(conn: &Connection) -> zbus::Result<Vec<ShellWindow>> {
-    let reply = conn.call_method(
-        Some(SHELL_NAME),
-        SHELL_PATH,
-        Some(SHELL_NAME),
-        "GetTree",
-        &(),
-    )?;
-    let tree: String = reply.body().deserialize()?;
+    let tree = ShellProxyBlocking::new(conn)?.get_tree()?;
     Ok(parse_tree(&tree))
 }
 
 /// Focus the window with `con_id`, switching to its workspace. Returns
 /// whether the compositor found it.
 pub fn focus(conn: &Connection, con_id: u64) -> zbus::Result<bool> {
-    let reply = conn.call_method(
-        Some(SHELL_NAME),
-        SHELL_PATH,
-        Some(SHELL_NAME),
-        "RunCommand",
-        &(format!("[con_id={con_id}] focus"),),
-    )?;
-    let results: Vec<(bool, String)> = reply.body().deserialize()?;
+    let results =
+        ShellProxyBlocking::new(conn)?.run_command(&format!("[con_id={con_id}] focus"))?;
     Ok(results.first().is_some_and(|(success, _)| *success))
 }
 

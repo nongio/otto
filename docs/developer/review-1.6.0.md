@@ -101,6 +101,7 @@ otto-kit, so the portal and otto-agents need not link Skia): `xdg`, `dbus`,
   `org.otto.ScreenCast` raw in otto-rdp, `org.otto.Shell1` raw in otto-msg,
   `org.otto.Island` raw in otto-files. The portal `Settings` proxy is declared
   6× inside otto-kit itself, each opening its own connection. **S–M**
+  - *Done in the otto-dbus PR: one shared portal client in otto-kit, and the `components/otto-dbus` crate (re-exported as `otto_kit::dbus`) with every `org.otto.*` proxy; see [otto-dbus](otto-dbus.md). `org.otto.Stash1` clients (otto-files, otto-kit `stashed`) still call by name.*
 - [ ] **`uri`**: percent-encoding hand-written ~9× (otto-kit trash/clipboard,
   otto-peek, otto-agents-client, otto-search, `src/desktop_widget.rs`); use
   `percent-encoding`/`url` (in Cargo.lock). **S**

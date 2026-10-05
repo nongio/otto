@@ -19,7 +19,7 @@
 
 use std::path::PathBuf;
 use std::sync::{LazyLock, RwLock};
-use zbus::zvariant::{OwnedValue, Value};
+use zbus::zvariant::Value;
 
 /// The current icon theme name. Empty string means auto-detect / no preference.
 static ICON_THEME: LazyLock<RwLock<String>> = LazyLock::new(|| RwLock::new(String::new()));
@@ -72,11 +72,30 @@ pub fn spawn_icon_theme_watcher() {
         }
     }
 
-    crate::portal_runtime::spawn("icon-theme-watcher", async move {
-        if let Err(e) = run_watcher().await {
-            tracing::warn!("icon-theme watcher stopped: {e}");
-        }
-    });
+    // The rank of the key the current theme came from; a value under a less
+    // specific key does not override a more specific one. The keys are read in
+    // rank order, so the first installed theme found is also the best.
+    let mut source = PORTAL_KEYS.len();
+    crate::portal_settings::watch(
+        "icon-theme-watcher",
+        &PORTAL_KEYS,
+        move |namespace, key, value| {
+            let Some(rank) = PORTAL_KEYS
+                .iter()
+                .position(|(ns, k)| namespace == *ns && key == *k)
+            else {
+                return;
+            };
+            if rank > source {
+                return;
+            }
+            if let Some(theme) = extract_string(value).filter(|t| is_installed(t)) {
+                tracing::debug!("icon-theme from {namespace}: {theme}");
+                source = rank;
+                set_theme(theme);
+            }
+        },
+    );
 }
 
 /// Extract a string from a possibly variant-wrapped `Value`.
@@ -95,69 +114,6 @@ const PORTAL_KEYS: [(&str, &str); 3] = [
     ("org.gnome.desktop.interface", "icon-theme"),
     ("org.kde.kdeglobals.Icons", "Theme"),
 ];
-
-async fn run_watcher() -> Result<(), zbus::Error> {
-    use zbus::{proxy, Connection};
-
-    #[proxy(
-        interface = "org.freedesktop.portal.Settings",
-        default_service = "org.freedesktop.portal.Desktop",
-        default_path = "/org/freedesktop/portal/desktop"
-    )]
-    trait Settings {
-        fn read(&self, namespace: &str, key: &str) -> zbus::Result<OwnedValue>;
-        #[zbus(signal)]
-        fn setting_changed(&self, namespace: &str, key: &str, value: Value<'_>)
-            -> zbus::Result<()>;
-    }
-
-    let conn = Connection::session().await?;
-    let proxy = SettingsProxy::new(&conn).await?;
-
-    // The rank of the key the current theme came from; a change under a less
-    // specific key does not override a more specific one.
-    let mut source = PORTAL_KEYS.len();
-    for (rank, (namespace, key)) in PORTAL_KEYS.iter().enumerate() {
-        match proxy.read(namespace, key).await {
-            Ok(owned) => {
-                let val: Value<'_> = owned.into();
-                if let Some(theme) = extract_string(val).filter(|t| is_installed(t)) {
-                    tracing::debug!("icon-theme initial value from {namespace}: {theme}");
-                    set_theme(theme);
-                    source = rank;
-                    break;
-                }
-            }
-            Err(e) => tracing::debug!("icon-theme read of {namespace} failed: {e}"),
-        }
-    }
-
-    // Watch for changes via zbus signal stream.
-    let mut stream = proxy.receive_setting_changed().await?;
-    loop {
-        use futures_util::StreamExt as _;
-        let Some(signal) = stream.next().await else {
-            break;
-        };
-        let args = signal.args()?;
-        let Some(rank) = PORTAL_KEYS
-            .iter()
-            .position(|(namespace, key)| args.namespace == *namespace && args.key == *key)
-        else {
-            continue;
-        };
-        if rank > source {
-            continue;
-        }
-        if let Some(theme) = extract_string(args.value).filter(|t| is_installed(t)) {
-            tracing::debug!("icon-theme changed to: {theme}");
-            source = rank;
-            set_theme(theme);
-        }
-    }
-
-    Ok(())
-}
 
 /// The theme the running desktop wrote down for itself, if it did.
 fn desktop_file_theme() -> Option<String> {

@@ -11,6 +11,8 @@ pub mod color_scheme;
 pub mod common;
 pub mod components;
 pub mod controls_side;
+/// Typed client proxies for Otto's own `org.otto.*` D-Bus interfaces.
+pub use otto_dbus as dbus;
 pub mod corners;
 pub mod desktop_appearance;
 pub mod desktop_entry;
@@ -36,6 +38,7 @@ pub mod maximize_button;
 pub mod mime_apps;
 pub mod permission_store;
 mod portal_runtime;
+mod portal_settings;
 pub mod preview;
 pub mod protocols;
 pub mod rendering;

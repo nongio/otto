@@ -12,9 +12,10 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{LazyLock, Mutex};
 
 use futures_util::StreamExt;
+use otto_kit::dbus::shell::ShellProxy;
 use otto_kit::prelude::*;
 use skia_safe::{Canvas, Paint, RRect, Rect, TextBlob};
-use zbus::{proxy, Connection};
+use zbus::Connection;
 
 /// The layouts as the compositor last reported them.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -53,18 +54,6 @@ impl Layouts {
     pub fn active_name(&self) -> String {
         self.names.get(self.active).cloned().unwrap_or_default()
     }
-}
-
-#[proxy(
-    interface = "org.otto.Shell1",
-    default_service = "org.otto.Shell1",
-    default_path = "/org/otto/Shell1"
-)]
-trait Shell {
-    fn get_inputs(&self) -> zbus::Result<String>;
-    fn run_command(&self, command: &str) -> zbus::Result<Vec<(bool, String)>>;
-    #[zbus(signal)]
-    fn input_changed(&self, event: String) -> zbus::Result<()>;
 }
 
 static STATE: LazyLock<Mutex<Option<Layouts>>> = LazyLock::new(|| Mutex::new(None));

@@ -13,6 +13,7 @@ rust-version = "1.85"
 # equal AHP_PROTOCOL_VERSION in spec/upstream.env (enforced by tests/spec_pin.rs).
 ahp-types.workspace = true
 otto-agents-client = { path = "../otto-agents-client" }
+otto-dbus = { path = "../otto-dbus" }
 ahp.workspace = true
 ahp-ws = "=0.9.0"
 

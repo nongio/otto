@@ -28,6 +28,7 @@ tracing.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 pipewire.workspace = true
 zbus.workspace = true
+otto-dbus = { path = "../otto-dbus" }
 libc.workspace = true
 # Reading back tiled dmabufs the CPU cannot map (gpu_import).
 khronos-egl = { workspace = true, features = ["dynamic"] }

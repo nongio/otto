@@ -52,10 +52,6 @@ const ICON_SIZES: (f32, f32) = (32.0, 160.0);
 /// The slider moves in steps of this many points.
 const ICON_SIZE_STEP: f32 = 4.0;
 
-/// The desk's bus name, path and interface, served by `otto-files --desk`.
-const DESK_NAME: &str = "org.otto.Desk1";
-const DESK_PATH: &str = "/org/otto/Desk1";
-
 /// What this group shows of the `[desk]` section.
 #[derive(Debug, Clone, PartialEq)]
 struct DeskFile {
@@ -441,15 +437,7 @@ fn choose_folder() {
 /// its outline and handles until Done or Cancel.
 fn ask_for_edit_mode() {
     let result = zbus::blocking::Connection::session().and_then(|connection| {
-        connection
-            .call_method(
-                Some(DESK_NAME),
-                DESK_PATH,
-                Some(DESK_NAME),
-                "EditLayout",
-                &(),
-            )
-            .map(drop)
+        otto_kit::dbus::desk::DeskProxyBlocking::new(&connection)?.edit_layout()
     });
     if let Err(err) = result {
         eprintln!("desk: cannot reach the desk to edit its size and position: {err}");

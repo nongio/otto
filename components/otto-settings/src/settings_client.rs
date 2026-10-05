@@ -14,12 +14,9 @@ use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{OnceLock, RwLock};
 
+use otto_kit::dbus::settings::{SettingsProxyBlocking, SERVICE as BUS_NAME};
 use zbus::blocking::Connection;
 use zbus::zvariant::{OwnedValue, Type, Value as ZValue};
-
-const BUS_NAME: &str = "org.otto.Settings";
-const OBJECT_PATH: &str = "/org/otto/Settings";
-const INTERFACE: &str = "org.otto.Settings";
 
 /// A setting's value, in the shapes the contract's `type` column allows.
 #[derive(Debug, Clone, PartialEq)]
@@ -179,7 +176,7 @@ struct Store {
 }
 
 static STORE: OnceLock<RwLock<Store>> = OnceLock::new();
-static CONNECTION: OnceLock<Option<Connection>> = OnceLock::new();
+static CONNECTION: OnceLock<Option<SettingsProxyBlocking<'static>>> = OnceLock::new();
 
 fn store() -> &'static RwLock<Store> {
     STORE.get_or_init(|| RwLock::new(Store::default()))
@@ -274,11 +271,13 @@ pub fn describe(id: &str) -> Option<Desc> {
 /// Connect and populate the store. Failure is not fatal: the app stays usable
 /// against a compositor that does not serve the interface yet.
 pub fn connect() {
-    let connection = CONNECTION.get_or_init(|| match Connection::session() {
-        Ok(connection) => Some(connection),
-        Err(err) => {
-            eprintln!("settings: no session bus ({err}); running offline");
-            None
+    let connection = CONNECTION.get_or_init(|| {
+        match Connection::session().and_then(|bus| SettingsProxyBlocking::new(&bus)) {
+            Ok(proxy) => Some(proxy),
+            Err(err) => {
+                eprintln!("settings: no session bus ({err}); running offline");
+                None
+            }
         }
     });
 
@@ -338,23 +337,12 @@ pub fn spawn_change_listener() {
     let Some(Some(connection)) = CONNECTION.get() else {
         return;
     };
-    let connection = connection.clone();
+    let proxy = connection.clone();
 
     let spawned = std::thread::Builder::new()
         .name("settings-changed".into())
         .spawn(move || {
-            let proxy =
-                match zbus::blocking::Proxy::new(&connection, BUS_NAME, OBJECT_PATH, INTERFACE) {
-                    Ok(proxy) => proxy,
-                    Err(err) => {
-                        eprintln!(
-                            "settings: cannot watch {BUS_NAME} ({err}); \
-                             external changes will not be reflected"
-                        );
-                        return;
-                    }
-                };
-            let signals = match proxy.receive_signal("Changed") {
+            let signals = match proxy.receive_changed() {
                 Ok(signals) => signals,
                 Err(err) => {
                     eprintln!("settings: cannot subscribe to Changed ({err})");
@@ -362,9 +350,9 @@ pub fn spawn_change_listener() {
                 }
             };
 
-            for message in signals {
-                let changed: HashMap<String, OwnedValue> = match message.body().deserialize() {
-                    Ok(changed) => changed,
+            for signal in signals {
+                let changed = match signal.args() {
+                    Ok(args) => args.values,
                     Err(err) => {
                         eprintln!("settings: malformed Changed signal ({err})");
                         continue;
@@ -395,19 +383,8 @@ pub fn spawn_change_listener() {
     }
 }
 
-fn call<B, R>(connection: &Connection, method: &str, body: &B) -> zbus::Result<R>
-where
-    B: serde::ser::Serialize + zbus::zvariant::DynamicType,
-    R: serde::de::DeserializeOwned + zbus::zvariant::Type,
-{
-    connection
-        .call_method(Some(BUS_NAME), OBJECT_PATH, Some(INTERFACE), method, body)?
-        .body()
-        .deserialize()
-}
-
-fn fetch_schema(connection: &Connection) -> zbus::Result<HashMap<String, Desc>> {
-    let raw: Vec<HashMap<String, OwnedValue>> = call(connection, "Describe", &())?;
+fn fetch_schema(connection: &SettingsProxyBlocking<'_>) -> zbus::Result<HashMap<String, Desc>> {
+    let raw = connection.describe()?;
 
     Ok(raw
         .into_iter()
@@ -436,16 +413,16 @@ fn fetch_schema(connection: &Connection) -> zbus::Result<HashMap<String, Desc>> 
         .collect())
 }
 
-fn fetch_values(connection: &Connection) -> zbus::Result<HashMap<String, Value>> {
-    let raw: HashMap<String, OwnedValue> = call(connection, "GetAll", &())?;
+fn fetch_values(connection: &SettingsProxyBlocking<'_>) -> zbus::Result<HashMap<String, Value>> {
+    let raw = connection.get_all()?;
     Ok(raw
         .iter()
         .filter_map(|(id, value)| Value::from_zbus(value).map(|v| (id.clone(), v)))
         .collect())
 }
 
-fn fetch_overridden(connection: &Connection) -> zbus::Result<HashSet<String>> {
-    let raw: Vec<String> = call(connection, "GetOverridden", &())?;
+fn fetch_overridden(connection: &SettingsProxyBlocking<'_>) -> zbus::Result<HashSet<String>> {
+    let raw = connection.get_overridden()?;
     Ok(raw.into_iter().collect())
 }
 
@@ -548,7 +525,7 @@ pub fn set(id: &str, value: Value) -> SetOutcome {
         }
     }
 
-    let status: zbus::Result<String> = call(connection, "Set", &(id, value.to_zbus()));
+    let status = connection.set(id, &value.to_zbus());
 
     match status {
         Ok(status) => {
@@ -575,7 +552,7 @@ pub fn set(id: &str, value: Value) -> SetOutcome {
 /// that does not serve `ListShortcuts`.
 pub fn list_shortcuts() -> Option<Vec<(String, String)>> {
     let connection = CONNECTION.get()?.as_ref()?;
-    call(connection, "ListShortcuts", &()).ok()
+    connection.list_shortcuts().ok()
 }
 
 static CONFIG_PATH: OnceLock<Option<String>> = OnceLock::new();
@@ -594,7 +571,7 @@ pub fn resolve_config_path() {
     let path = CONNECTION
         .get()
         .and_then(|c| c.as_ref())
-        .and_then(|connection| call::<_, String>(connection, "ConfigPath", &()).ok());
+        .and_then(|connection| connection.config_path().ok());
     let _ = CONFIG_PATH.set(path);
 }
 
@@ -625,11 +602,7 @@ pub fn set_output_profile(
     let Some(Some(connection)) = CONNECTION.get() else {
         return SetOutcome::Failed("not connected to the compositor".into());
     };
-    let status: zbus::Result<String> = call(
-        connection,
-        "SetOutputProfile",
-        &(connector, width, height, refresh_hz, x, y, primary),
-    );
+    let status = connection.set_output_profile(connector, width, height, refresh_hz, x, y, primary);
     match status {
         Ok(status) if status == "pending-restart" => SetOutcome::PendingRestart,
         Ok(_) => SetOutcome::Applied,
@@ -647,11 +620,7 @@ pub fn add_virtual_output(name: &str, width: u32, height: u32, refresh_hz: f64) 
     let Some(Some(connection)) = CONNECTION.get() else {
         return SetOutcome::Failed("not connected to the compositor".into());
     };
-    match call::<_, u32>(
-        connection,
-        "AddVirtualOutput",
-        &(name, width, height, refresh_hz, false, true),
-    ) {
+    match connection.add_virtual_output(name, width, height, refresh_hz, false, true) {
         Ok(_) => SetOutcome::Applied,
         Err(err) => SetOutcome::Failed(err.to_string()),
     }
@@ -663,7 +632,7 @@ pub fn remove_virtual_output(name: &str) -> SetOutcome {
     let Some(Some(connection)) = CONNECTION.get() else {
         return SetOutcome::Failed("not connected to the compositor".into());
     };
-    match call::<_, ()>(connection, "RemoveVirtualOutput", &(name,)) {
+    match connection.remove_virtual_output(name) {
         Ok(()) => SetOutcome::Applied,
         Err(err) => SetOutcome::Failed(err.to_string()),
     }

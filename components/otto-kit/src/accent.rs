@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::LazyLock;
 
 use skia_safe::Color;
-use zbus::zvariant::{OwnedValue, Value};
+use zbus::zvariant::Value;
 
 /// The accent as ARGB, or 0 when the portal has not answered (yet or ever) —
 /// a fully transparent accent is not a colour any palette contains, so it
@@ -47,11 +47,16 @@ pub fn spawn_accent_watcher() {
         return;
     }
 
-    crate::portal_runtime::spawn("accent-watcher", async move {
-        if let Err(e) = run_watcher().await {
-            tracing::warn!("accent-color watcher stopped: {e}");
-        }
-    });
+    crate::portal_settings::watch(
+        "accent-watcher",
+        &[("org.freedesktop.appearance", "accent-color")],
+        |_, _, value| {
+            if let Some(color) = extract_accent(value) {
+                tracing::debug!("accent-color: {color:?}");
+                store(color);
+            }
+        },
+    );
 }
 
 /// Extract `(ddd)` from a possibly variant-wrapped `Value`.
@@ -85,54 +90,4 @@ fn store(color: Color) {
         | u32::from(color.b());
     ACCENT_ARGB.store(argb, Ordering::Relaxed);
     crate::portal_runtime::theme_changed();
-}
-
-async fn run_watcher() -> Result<(), zbus::Error> {
-    use zbus::{proxy, Connection};
-
-    #[proxy(
-        interface = "org.freedesktop.portal.Settings",
-        default_service = "org.freedesktop.portal.Desktop",
-        default_path = "/org/freedesktop/portal/desktop"
-    )]
-    trait Settings {
-        fn read(&self, namespace: &str, key: &str) -> zbus::Result<OwnedValue>;
-        #[zbus(signal)]
-        fn setting_changed(&self, namespace: &str, key: &str, value: Value<'_>)
-            -> zbus::Result<()>;
-    }
-
-    let conn = Connection::session().await?;
-    let proxy = SettingsProxy::new(&conn).await?;
-
-    match proxy
-        .read("org.freedesktop.appearance", "accent-color")
-        .await
-    {
-        Ok(owned) => {
-            let val: Value<'_> = owned.into();
-            if let Some(color) = extract_accent(val) {
-                tracing::debug!("accent-color initial value: {color:?}");
-                store(color);
-            }
-        }
-        Err(e) => tracing::debug!("accent-color read failed (portal absent?): {e}"),
-    }
-
-    let mut stream = proxy.receive_setting_changed().await?;
-    loop {
-        use futures_util::StreamExt as _;
-        let Some(signal) = stream.next().await else {
-            break;
-        };
-        let args = signal.args()?;
-        if args.namespace == "org.freedesktop.appearance" && args.key == "accent-color" {
-            if let Some(color) = extract_accent(args.value) {
-                tracing::debug!("accent-color changed to: {color:?}");
-                store(color);
-            }
-        }
-    }
-
-    Ok(())
 }
