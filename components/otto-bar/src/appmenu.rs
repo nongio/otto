@@ -223,12 +223,21 @@ fn refresh() {
 
 /// A new focused window, or new news about it.
 fn set_focused(focused: Option<FocusedWindow>) {
-    {
+    let other_window = {
         let mut current = FOCUSED.lock().unwrap();
         if *current == focused {
             return;
         }
+        let other = current.as_ref().map(|f| f.con_id) != focused.as_ref().map(|f| f.con_id);
         *current = focused;
+        other
+    };
+    // A different window: the old one's menu goes now, not when the new one
+    // answers (a busy app can take seconds), so its titles never sit under
+    // the new app's name or send clicks to the old app. News about the same
+    // window (its menu address arriving) keeps what is shown until the fetch.
+    if other_window {
+        clear_menu();
     }
     refresh();
 }
