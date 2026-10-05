@@ -1387,9 +1387,7 @@ impl App for TopBarApp {
             self.close_app_menu();
             self.left.set_app_name(&name);
             self.update_left_panel(true);
-
-            // Request the app menu for the newly focused app
-            crate::appmenu::request_menu_for_app(&focused.app_id, 0);
+            // The menu itself follows focus on org.otto.Shell1 (appmenu.rs).
         }
 
         // Check if app menu was fetched

@@ -132,6 +132,8 @@ and windows.
 | `urgent` | every node | always `false`; Otto has no urgency hint yet |
 | `app_id` | windows | the xdg app id |
 | `pid` | windows | the process that owns the window (an X11 window's `_NET_WM_PID`), `null` when unknown |
+| `window` | X11 windows | i3's X11 window id: what an app hands `com.canonical.AppMenu.Registrar` |
+| `otto_appmenu` | windows | Otto's own: `{service, object_path}` of the window's `com.canonical.dbusmenu`, when the app sent it over `org_kde_kwin_appmenu`; absent otherwise |
 | `window_properties` | X11 windows | `{class, instance, title}` |
 | `gaps` | workspaces | Otto's own: `{inner, outer}` when the workspace has an override, else `null` |
 
@@ -171,7 +173,7 @@ answers, plus two keys of Otto's own for a status bar:
 | Signal | Argument | When |
 | --- | --- | --- |
 | `WorkspaceChanged` | `s`, i3's `workspace` event as JSON | the current workspace changed |
-| `WindowChanged` | `s`, i3's `window` event as JSON | keyboard focus moved to another window |
+| `WindowChanged` | `s`, i3's `window` event as JSON | keyboard focus moved to another window (`change: "focus"`), or the focused window's `otto_appmenu` changed (`change: "otto_appmenu"`) |
 | `InputChanged` | `s`, sway's `input` event as JSON | the keyboard layout switched, or the keymap was rebuilt |
 
 `InputChanged` carries `change` — `"xkb_layout"` for a switch, `"xkb_keymap"`

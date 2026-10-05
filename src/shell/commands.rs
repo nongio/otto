@@ -892,7 +892,6 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         let title = window.map(|w| w.xdg_title()).unwrap_or_default();
         let app_id = window.map(|w| w.xdg_app_id()).unwrap_or_default();
         let pid = window.and_then(|w| w.client_pid(&self.display_handle));
-        #[cfg_attr(not(feature = "xwayland"), allow(unused_mut))]
         let mut node = json!({
             "id": window_con_id(id),
             "type": "con",
@@ -909,6 +908,17 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             "nodes": Vec::<Value>::new(),
             "floating_nodes": Vec::<Value>::new(),
         });
+        // Where the window's global menu lives, when it said so over
+        // org_kde_kwin_appmenu: otto-bar reads it to draw the menu.
+        if let Some(address) = window
+            .and_then(|w| w.wl_surface())
+            .and_then(|surface| crate::state::kde_appmenu::appmenu_address(&surface))
+        {
+            node["otto_appmenu"] = json!({
+                "service": address.service,
+                "object_path": address.object_path,
+            });
+        }
         // An X11 window answers to i3's `window_properties` as well, which is
         // what `for_window [class="…"]` scripts match on.
         #[cfg(feature = "xwayland")]
@@ -916,6 +926,9 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             if let Some(smithay::desktop::WindowSurface::X11(surface)) =
                 Some(window.underlying_surface())
             {
+                // i3's X11 window id, which is what an app hands
+                // `com.canonical.AppMenu.Registrar` to register its menu.
+                node["window"] = json!(surface.window_id());
                 node["window_properties"] = json!({
                     "class": surface.class(),
                     "instance": surface.instance(),

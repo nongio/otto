@@ -63,13 +63,16 @@ Not every application exports a DBusMenu. When one does not, the left zone shows
 just the application's name and the app keeps drawing its own menu bar in its
 window.
 
-- **GTK 3/4 apps.** These usually export automatically over the GTK
-  application-menu D-Bus interfaces.
-- **Qt/KDE apps.** These need `appmenu-qt5` / the `AppMenu` platform theme
-  plugin.
+- **Qt and KDE apps.** Run them with KDE's platform theme
+  (`plasma-integration`, `QT_QPA_PLATFORMTHEME=kde`). On Wayland they then
+  tell Otto where their menu is, and the bar shows it. Other themes, such as
+  `qt5ct`, keep the menu in the window.
+- **GTK apps running under XWayland.** These export through
+  `appmenu-gtk-module`: install it and start the app with
+  `GTK_MODULES=appmenu-gtk-module` and `GDK_BACKEND=x11`.
+- **GTK apps on Wayland.** These do not export a DBusMenu at all; the menu stays
+  in the window.
 - **Electron and browsers.** These mostly do not export menus.
-- **X11 apps.** These can export via `appmenu-gtk-module` and the
-  `UNITY_MENUBAR` path.
 
 The application name shown comes from the window's `app_id` mapped through the
 desktop entry database.

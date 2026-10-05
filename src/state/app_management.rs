@@ -394,6 +394,15 @@ impl<BackendData: Backend> Otto<BackendData> {
         crate::shell_service::announce_window_focus(container);
     }
 
+    /// Publish something about the focused window other than focus moving to
+    /// it, as an i3 `window` event with the given `change`.
+    pub(crate) fn announce_window_change(&self, change: &str) {
+        let container = self
+            .focused_container_node()
+            .unwrap_or(serde_json::Value::Null);
+        crate::shell_service::announce_window_event(change, container);
+    }
+
     /// Publish the current workspace on `org.otto.Shell1` as i3's `workspace`
     /// event.
     pub(crate) fn announce_workspace_focus(&self) {

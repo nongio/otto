@@ -89,6 +89,14 @@ pub fn announce_window_focus(container: serde_json::Value) {
     );
 }
 
+/// Any other change to the focused window, in i3's `window` event shape.
+pub fn announce_window_event(change: &str, container: serde_json::Value) {
+    announce(
+        EventKind::Window,
+        serde_json::json!({"change": change, "container": container}),
+    );
+}
+
 /// A workspace switch, in i3's `workspace` event shape.
 pub fn announce_workspace_focus(current: serde_json::Value) {
     announce(
