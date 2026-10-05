@@ -243,6 +243,10 @@ pub struct Column {
     /// This directory's inotify watch. Dropped with the column, which is what
     /// keeps the watch set equal to what is on screen.
     watch: crate::watch::DirWatch,
+    /// For the Trash, which lists every can rather than one directory: a
+    /// watch on each other can's `files/`, so an item trashed on a stick
+    /// shows up as one trashed at home does. Empty for any other column.
+    can_watches: Vec<crate::watch::DirWatch>,
     /// Set when a snapshot landed because the *directory* changed rather than
     /// because the user navigated. The cursor is an index, so it has to be
     /// re-derived after one of these; the selection is by key and does not.
@@ -260,6 +264,7 @@ impl Column {
         let mut loader = Directory::new();
         loader.load(&path);
         let watch = crate::watch::DirWatch::new(&path);
+        let can_watches = can_watches_for(&path);
         Self {
             path,
             snapshot: Snapshot::default(),
@@ -274,6 +279,7 @@ impl Column {
             epoch: 0,
             sorted: std::cell::RefCell::new(SortCache::default()),
             watch,
+            can_watches,
             refreshed: false,
             gone: false,
             reload_pending: false,
@@ -311,6 +317,7 @@ impl Column {
             // Dead: the sentinel is not a directory, so inotify declines it and
             // the watch reports nothing for the pane's whole life.
             watch: crate::watch::DirWatch::new(&path),
+            can_watches: Vec::new(),
             path,
             selection: std::collections::BTreeSet::new(),
             cursor: None,
@@ -365,12 +372,24 @@ impl Column {
     pub fn reload(&mut self) {
         self.loader.load(&self.path);
         self.reload_pending = true;
+        if !self.can_watches.is_empty() || is_trash_root(&self.path) {
+            // A stick plugged in since brings a can of its own.
+            self.can_watches = can_watches_for(&self.path);
+        }
     }
 
     /// Take a finished read, if one has arrived, and start a fresh one when
     /// the directory has changed underneath. Returns whether anything changed,
     /// so the caller knows to repaint.
     pub fn poll(&mut self) -> bool {
+        // Every can's watch is taken, not only until one has fired, so none
+        // is left dirty to cause a second re-read of the same change.
+        let cans_changed = self
+            .can_watches
+            .iter()
+            .filter_map(crate::watch::DirWatch::take)
+            .count()
+            > 0;
         match self.watch.take() {
             // A re-read in place: `snapshot` is replaced, and nothing the user
             // positioned — selection, scroll offset — is touched.
@@ -378,6 +397,7 @@ impl Column {
                 self.reload();
             }
             Some(crate::watch::Change::Gone) => self.gone = true,
+            None if cans_changed => self.reload(),
             None => {}
         }
         // A search batch replaces the listing whole — the worker has already
@@ -544,6 +564,26 @@ fn read_directory(path: &Path) -> Snapshot {
     }
 }
 
+/// The trash cans Files lists, watches and empties.
+#[cfg(not(test))]
+fn trash_cans() -> Vec<otto_kit::trash::Can> {
+    otto_kit::trash::cans()
+}
+
+/// In tests, the home can under [`test_data_home`] and the topdirs a test
+/// puts in [`TEST_TOPDIRS`]: never the cans of the machine's real mounts,
+/// which a test listing (or, worse, emptying) the Trash would otherwise
+/// reach.
+#[cfg(test)]
+fn trash_cans() -> Vec<otto_kit::trash::Can> {
+    let topdirs = TEST_TOPDIRS.lock().map(|t| t.clone()).unwrap_or_default();
+    otto_kit::trash::cans_in(&topdirs)
+}
+
+/// Topdirs whose cans [`trash_cans`] lists in tests.
+#[cfg(test)]
+pub(crate) static TEST_TOPDIRS: std::sync::Mutex<Vec<PathBuf>> = std::sync::Mutex::new(Vec::new());
+
 /// Everything in the trash: the home can and the cans at the top of every
 /// other mounted filesystem (see [`otto_kit::trash::cans`]), as one listing.
 /// Each row keeps its real path in its own can, which is how Put Back and
@@ -554,7 +594,7 @@ fn read_directory(path: &Path) -> Snapshot {
 /// rather than an error.
 fn read_trash() -> Vec<Entry> {
     let mut entries = Vec::new();
-    for can in otto_kit::trash::cans() {
+    for can in trash_cans() {
         let Ok(read) = std::fs::read_dir(can.files_dir()) else {
             continue;
         };
@@ -569,6 +609,20 @@ fn read_trash() -> Vec<Entry> {
         }
     }
     entries
+}
+
+/// Watches on the `files/` of every can but the one at `path`, when `path`
+/// is the Trash; nothing otherwise.
+fn can_watches_for(path: &Path) -> Vec<crate::watch::DirWatch> {
+    if !is_trash_root(path) {
+        return Vec::new();
+    }
+    trash_cans()
+        .iter()
+        .map(otto_kit::trash::Can::files_dir)
+        .filter(|files| files != path)
+        .map(|files| crate::watch::DirWatch::new(&files))
+        .collect()
 }
 
 /// One entry, from a directory read.
@@ -1825,7 +1879,7 @@ pub fn delete_forever(paths: &[PathBuf]) -> OpResult {
 pub fn empty_trash() -> OpResult {
     let mut paths = Vec::new();
     let mut errors = Vec::new();
-    for can in otto_kit::trash::cans() {
+    for can in trash_cans() {
         match std::fs::read_dir(can.files_dir()) {
             Ok(read) => paths.extend(read.flatten().map(|e| e.path())),
             // Never used, so already empty.
@@ -2344,6 +2398,53 @@ mod paste_tests {
             assert!(item.exists(), "left in the trash");
             assert!(!t.0.join("elsewhere").exists(), "nothing was made");
         }
+    }
+
+    /// The Trash lists every can, so it watches every can: an item landing
+    /// in a stick's can shows up without anybody reopening the window.
+    #[test]
+    fn the_trash_watches_every_can() {
+        use std::os::unix::fs::PermissionsExt;
+        let _home = test_data_home();
+        let t = Tmp::new("watch-cans");
+        // SAFETY: getuid cannot fail.
+        let uid = unsafe { libc::getuid() };
+        let can = t.0.join(format!(".Trash-{uid}"));
+        for dir in [can.clone(), can.join("files"), can.join("info")] {
+            std::fs::create_dir(&dir).unwrap();
+            std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        TEST_TOPDIRS.lock().unwrap().push(t.0.clone());
+        let mut column = Column::new(trash_files_dir().unwrap());
+        assert!(!column.can_watches.is_empty(), "the stick's can is watched");
+        // The first read lands before the item does, so only a watch can
+        // bring it in.
+        for _ in 0..500 {
+            column.poll();
+            if !column.loading() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert!(!column.loading());
+
+        std::fs::write(can.join("files/from-the-stick.txt"), "x").unwrap();
+        let mut seen = false;
+        for _ in 0..500 {
+            column.poll();
+            if column
+                .snapshot
+                .entries
+                .iter()
+                .any(|e| e.name == "from-the-stick.txt")
+            {
+                seen = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        TEST_TOPDIRS.lock().unwrap().retain(|top| top != &t.0);
+        assert!(seen, "the listing followed the stick's can");
     }
 
     #[test]

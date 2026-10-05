@@ -516,10 +516,17 @@ fn path_key(body: &str) -> Option<PathBuf> {
 /// pseudo-filesystems and autofs (looking into an autofs mount point would
 /// mount it). A can that is not mounted right now is not listed.
 pub fn cans() -> Vec<Can> {
+    cans_in(&mount_points())
+}
+
+/// The home trash and the topdir cans of `topdirs`, as [`cans`] lists them
+/// for the mounted filesystems: for a test, which must not reach the cans
+/// of the machine it runs on.
+pub fn cans_in(topdirs: &[PathBuf]) -> Vec<Can> {
     let mut found: Vec<Can> = Can::home().into_iter().collect();
     let uid = uid();
-    for topdir in mount_points() {
-        for can in existing_topdir_cans(&topdir, uid) {
+    for topdir in topdirs {
+        for can in existing_topdir_cans(topdir, uid) {
             if !found.contains(&can) {
                 found.push(can);
             }
