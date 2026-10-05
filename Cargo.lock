@@ -5393,8 +5393,10 @@ name = "otto-peek"
 version = "1.6.0"
 dependencies = [
  "libc",
+ "md-5 0.10.6",
  "otto-kit",
  "otto-md-kit",
+ "png",
  "skia-safe",
  "tokio",
  "tracing",

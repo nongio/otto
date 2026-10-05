@@ -241,147 +241,43 @@ fn same_mtime(recorded: &str, actual: u64) -> bool {
 // PNG text chunks
 // ---------------------------------------------------------------------------
 
-/// The value of a `tEXt`/`iTXt` chunk, by keyword.
+/// The value of a text chunk (`tEXt`, `zTXt` or `iTXt`), by keyword.
 ///
-/// Walks the chunk structure rather than decoding the image: the metadata sits
-/// before the pixel data, so a lookup that fails the mtime check never pays to
-/// decompress anything. Only the two uncompressed text chunk types are read —
-/// `zTXt` would need inflate, and no thumbnailer writes these keys compressed.
+/// Reads the header chunks only, not the image: the metadata sits before the
+/// pixel data, so a lookup that fails the mtime check never pays to
+/// decompress anything.
 fn png_text(bytes: &[u8], keyword: &str) -> Option<String> {
-    const SIGNATURE: [u8; 8] = [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
-    if bytes.len() < SIGNATURE.len() || bytes[..8] != SIGNATURE {
-        return None;
+    let reader = png::Decoder::new(bytes).read_info().ok()?;
+    let info = reader.info();
+    if let Some(chunk) = info
+        .uncompressed_latin1_text
+        .iter()
+        .find(|chunk| chunk.keyword == keyword)
+    {
+        return Some(chunk.text.clone());
     }
-
-    let mut offset = SIGNATURE.len();
-    while offset + 8 <= bytes.len() {
-        let length = u32::from_be_bytes(bytes[offset..offset + 4].try_into().ok()?) as usize;
-        let kind = &bytes[offset + 4..offset + 8];
-        let data_start = offset + 8;
-        let data_end = data_start.checked_add(length)?;
-        if data_end > bytes.len() {
-            return None;
-        }
-
-        if kind == b"tEXt" || kind == b"iTXt" {
-            let data = &bytes[data_start..data_end];
-            if let Some(split) = data.iter().position(|&b| b == 0) {
-                if data[..split] == *keyword.as_bytes() {
-                    let value = &data[split + 1..];
-                    // An `iTXt` value carries a compression flag, a
-                    // compression method and two more NUL-terminated strings
-                    // before the text itself; a `tEXt` value starts straight
-                    // away. Skipping to the last NUL-separated field handles
-                    // both without branching on the chunk type.
-                    let text = if kind == b"iTXt" {
-                        value.split(|&b| b == 0).next_back().unwrap_or(value)
-                    } else {
-                        value
-                    };
-                    return Some(String::from_utf8_lossy(text).into_owned());
-                }
-            }
-        }
-
-        // Pixel data begins here; every text chunk a thumbnailer writes comes
-        // before it, so there is nothing left to find.
-        if kind == b"IDAT" {
-            return None;
-        }
-
-        // Length, type, data, CRC.
-        offset = data_end + 4;
+    if let Some(chunk) = info
+        .compressed_latin1_text
+        .iter()
+        .find(|chunk| chunk.keyword == keyword)
+    {
+        return chunk.get_text().ok();
     }
-    None
+    info.utf8_text
+        .iter()
+        .find(|chunk| chunk.keyword == keyword)
+        .and_then(|chunk| chunk.get_text().ok())
 }
 
 // ---------------------------------------------------------------------------
-// MD5 (RFC 1321)
+// Naming
 // ---------------------------------------------------------------------------
-//
-// Written out rather than pulled in. The cache's naming scheme is fixed for
-// all time and this is the only place the workspace needs a digest at all, so
-// a dependency would be carried for sixty lines that can never need to change.
-// It is a naming scheme, not a security boundary — nothing here is trusting
-// MD5 to be hard to collide.
 
-/// Per-round left-rotation amounts.
-#[rustfmt::skip]
-const SHIFTS: [u32; 64] = [
-    7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22,
-    5,  9, 14, 20, 5,  9, 14, 20, 5,  9, 14, 20, 5,  9, 14, 20,
-    4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23,
-    6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21,
-];
-
-/// Round constants: `floor(abs(sin(i + 1)) * 2^32)`.
-const SINES: [u32; 64] = {
-    // Spelled out because `sin` is not available in a const context. These are
-    // the values RFC 1321 tabulates.
-    [
-        0xd76aa478, 0xe8c7b756, 0x242070db, 0xc1bdceee, 0xf57c0faf, 0x4787c62a, 0xa8304613,
-        0xfd469501, 0x698098d8, 0x8b44f7af, 0xffff5bb1, 0x895cd7be, 0x6b901122, 0xfd987193,
-        0xa679438e, 0x49b40821, 0xf61e2562, 0xc040b340, 0x265e5a51, 0xe9b6c7aa, 0xd62f105d,
-        0x02441453, 0xd8a1e681, 0xe7d3fbc8, 0x21e1cde6, 0xc33707d6, 0xf4d50d87, 0x455a14ed,
-        0xa9e3e905, 0xfcefa3f8, 0x676f02d9, 0x8d2a4c8a, 0xfffa3942, 0x8771f681, 0x6d9d6122,
-        0xfde5380c, 0xa4beea44, 0x4bdecfa9, 0xf6bb4b60, 0xbebfbc70, 0x289b7ec6, 0xeaa127fa,
-        0xd4ef3085, 0x04881d05, 0xd9d4d039, 0xe6db99e5, 0x1fa27cf8, 0xc4ac5665, 0xf4292244,
-        0x432aff97, 0xab9423a7, 0xfc93a039, 0x655b59c3, 0x8f0ccc92, 0xffeff47d, 0x85845dd1,
-        0x6fa87e4f, 0xfe2ce6e0, 0xa3014314, 0x4e0811a1, 0xf7537e82, 0xbd3af235, 0x2ad7d2bb,
-        0xeb86d391,
-    ]
-};
-
-/// The MD5 digest of `input`.
+/// The MD5 digest of `input`. The cache names files by it; nothing here
+/// trusts MD5 to be hard to collide.
 fn md5(input: &[u8]) -> [u8; 16] {
-    let mut state: [u32; 4] = [0x67452301, 0xefcdab89, 0x98badcfe, 0x10325476];
-
-    // Pad to a multiple of 64 bytes: a 1 bit, then zeros, then the original
-    // length in bits as a little-endian u64.
-    let mut message = input.to_vec();
-    let bit_len = (input.len() as u64).wrapping_mul(8);
-    message.push(0x80);
-    while message.len() % 64 != 56 {
-        message.push(0);
-    }
-    message.extend_from_slice(&bit_len.to_le_bytes());
-
-    for chunk in message.chunks_exact(64) {
-        let mut words = [0u32; 16];
-        for (i, word) in words.iter_mut().enumerate() {
-            *word = u32::from_le_bytes(chunk[i * 4..i * 4 + 4].try_into().unwrap());
-        }
-
-        let [mut a, mut b, mut c, mut d] = state;
-        for i in 0..64 {
-            let (mixed, index) = match i / 16 {
-                0 => ((b & c) | (!b & d), i),
-                1 => ((d & b) | (!d & c), (5 * i + 1) % 16),
-                2 => (b ^ c ^ d, (3 * i + 5) % 16),
-                _ => (c ^ (b | !d), (7 * i) % 16),
-            };
-            let rotated = a
-                .wrapping_add(mixed)
-                .wrapping_add(SINES[i])
-                .wrapping_add(words[index])
-                .rotate_left(SHIFTS[i]);
-            a = d;
-            d = c;
-            c = b;
-            b = b.wrapping_add(rotated);
-        }
-
-        state[0] = state[0].wrapping_add(a);
-        state[1] = state[1].wrapping_add(b);
-        state[2] = state[2].wrapping_add(c);
-        state[3] = state[3].wrapping_add(d);
-    }
-
-    let mut digest = [0u8; 16];
-    for (i, word) in state.iter().enumerate() {
-        digest[i * 4..i * 4 + 4].copy_from_slice(&word.to_le_bytes());
-    }
-    digest
+    use md5::{Digest, Md5};
+    Md5::digest(input).into()
 }
 
 /// Lowercase hex, which is what the cache's file names are in.
@@ -396,47 +292,6 @@ fn hex(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// RFC 1321's own test suite. If these pass, every name this module
-    /// computes agrees with every other implementation's.
-    #[test]
-    fn md5_matches_the_rfc_vectors() {
-        let cases = [
-            ("", "d41d8cd98f00b204e9800998ecf8427e"),
-            ("a", "0cc175b9c0f1b6a831c399e269772661"),
-            ("abc", "900150983cd24fb0d6963f7d28e17f72"),
-            ("message digest", "f96b697d7cb7938d525a2f31aaf161d0"),
-            (
-                "abcdefghijklmnopqrstuvwxyz",
-                "c3fcd3d76192e4007dfb496cca67e13b",
-            ),
-            (
-                "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789",
-                "d174ab98d277d9f5a5611c2c9f419d9f",
-            ),
-            (
-                "12345678901234567890123456789012345678901234567890123456789012345678901234567890",
-                "57edf4a22be3c955ac49da2e2107b67a",
-            ),
-        ];
-        for (input, expected) in cases {
-            assert_eq!(hex(&md5(input.as_bytes())), expected, "md5({input:?})");
-        }
-    }
-
-    /// A digest that straddles the padding boundary: 56 bytes is the length at
-    /// which the length field no longer fits in the final block and a second
-    /// one is needed. Off-by-one padding bugs show up here and nowhere else.
-    #[test]
-    fn md5_pads_across_a_block_boundary() {
-        for len in 54..=66 {
-            let input = vec![b'x'; len];
-            // Not a known vector — the check is that every length produces a
-            // full digest without panicking on the chunking.
-            assert_eq!(md5(&input).len(), 16);
-        }
-        assert_eq!(hex(&md5(&[b'x'; 56])), "668a72d5ba17f08e62dabcafad6db14b");
-    }
 
     #[test]
     fn uri_leaves_a_plain_path_alone() {
@@ -510,23 +365,21 @@ mod tests {
         assert!(!same_mtime("not a time", 1728803100));
     }
 
-    /// A minimal PNG carrying one `tEXt` chunk, built by hand so the parser is
+    /// A one-pixel PNG carrying `pairs` as `tEXt` chunks, so the reader is
     /// tested against bytes rather than against whatever happens to be in the
     /// user's cache.
     fn png_with_text(pairs: &[(&str, &str)]) -> Vec<u8> {
-        let mut png = vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+        let mut png = Vec::new();
+        let mut encoder = png::Encoder::new(&mut png, 1, 1);
+        encoder.set_color(png::ColorType::Grayscale);
         for (keyword, value) in pairs {
-            let mut data = keyword.as_bytes().to_vec();
-            data.push(0);
-            data.extend_from_slice(value.as_bytes());
-            png.extend_from_slice(&(data.len() as u32).to_be_bytes());
-            png.extend_from_slice(b"tEXt");
-            png.extend_from_slice(&data);
-            png.extend_from_slice(&[0, 0, 0, 0]); // CRC, unchecked.
+            encoder
+                .add_text_chunk((*keyword).to_owned(), (*value).to_owned())
+                .unwrap();
         }
-        png.extend_from_slice(&0u32.to_be_bytes());
-        png.extend_from_slice(b"IDAT");
-        png.extend_from_slice(&[0, 0, 0, 0]);
+        let mut writer = encoder.write_header().unwrap();
+        writer.write_image_data(&[0]).unwrap();
+        writer.finish().unwrap();
         png
     }
 

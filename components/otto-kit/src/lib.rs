@@ -51,6 +51,7 @@ pub mod typography;
 pub mod uri;
 pub mod utils;
 pub mod xdg;
+pub mod xml;
 
 // Re-export commonly used items
 pub use common::Renderable;

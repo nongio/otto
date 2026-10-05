@@ -368,7 +368,7 @@ fn comment_in(xml: &str, languages: &[String]) -> Option<String> {
             break;
         };
         let attributes = &after[..open_end];
-        let body = unescape_xml(after[open_end + 1..close].trim());
+        let body = crate::xml::unescape(after[open_end + 1..close].trim());
         match attributes.split_once("xml:lang=\"") {
             Some((_, lang)) => {
                 let lang = lang.split('"').next().unwrap_or_default();
@@ -405,14 +405,6 @@ fn without_script(lang: &str) -> String {
         .map(|(_, part)| part)
         .collect::<Vec<_>>()
         .join("-")
-}
-
-fn unescape_xml(text: &str) -> String {
-    text.replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&quot;", "\"")
-        .replace("&apos;", "'")
-        .replace("&amp;", "&")
 }
 
 /// Expand a MIME type into the set of name globs that match it, including
