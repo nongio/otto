@@ -544,13 +544,12 @@ pub fn trash(source: &Path) -> Result<(PathBuf, PathBuf), String> {
         .parent()
         .map(|dir| std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf()));
     if let (Some(dir), Some(name)) = (&source_dir, source.file_name()) {
-        let home_dev = nearest_existing(&home).and_then(|p| device(&p));
-        let source_dev = device(dir);
-        if source_dev.is_some() && source_dev != home_dev {
-            let topdir = topdir_of(dir, device);
-            if let Some(can) = topdir_can(&topdir, uid()) {
+        let mounts = mounts();
+        let home_at = nearest_existing(&home).map(|p| std::fs::canonicalize(&p).unwrap_or(p));
+        if let Some(topdir) = topdir_for(&mounts, dir, home_at.as_deref()) {
+            if let Some(can) = topdir_can(topdir, uid()) {
                 let resolved = dir.join(name);
-                match place(source, &resolved, &can, Some(&topdir)) {
+                match place(source, &resolved, &can, Some(topdir)) {
                     Ok(placed) => return Ok(placed),
                     Err(err) => tracing::debug!(
                         "trash: {} could not take {}, using the home trash: {err}",
@@ -737,19 +736,29 @@ fn candidate_names(name: &OsStr) -> impl Iterator<Item = OsString> + '_ {
         }))
 }
 
-/// The top directory of the filesystem `dir` is on: the highest ancestor
-/// whose device is still `dir`'s. `device` is how a path's device is read,
-/// passed in so the walk can be tested without mounting anything.
-fn topdir_of(dir: &Path, device: impl Fn(&Path) -> Option<u64>) -> PathBuf {
-    let dev = device(dir);
-    let mut top = dir;
-    while let Some(up) = top.parent() {
-        if device(up) != dev {
-            break;
-        }
-        top = up;
+/// The mount `path` is on: the one with the longest mount point that is an
+/// ancestor of it (the last such, when one is mounted over another).
+fn mount_of<'a>(mounts: &'a [Mount], path: &Path) -> Option<&'a Mount> {
+    mounts
+        .iter()
+        .filter(|mount| path.starts_with(&mount.point))
+        .max_by_key(|mount| mount.point.components().count())
+}
+
+/// The topdir whose can `dir`'s items go to, or `None` for the home trash.
+///
+/// The topdir is a mount point from the mount table, the same source
+/// [`cans`] lists from — not the highest ancestor still on `dir`'s device,
+/// which on btrfs can be a subvolume that is not mounted anywhere and whose
+/// can would then never be listed. Anything on the home trash's own mount,
+/// on a filesystem [`cans`] does not search, or on no mount at all goes home.
+fn topdir_for<'a>(mounts: &'a [Mount], dir: &Path, home: Option<&Path>) -> Option<&'a Path> {
+    let mount = mount_of(mounts, dir)?;
+    let home_mount = home.and_then(|home| mount_of(mounts, home));
+    if home_mount.is_some_and(|home| home.point == mount.point) || is_skipped(&mount.fstype) {
+        return None;
     }
-    top.to_path_buf()
+    Some(&mount.point)
 }
 
 /// The can to trash into on the filesystem whose top is `topdir`, creating
@@ -803,10 +812,6 @@ fn existing_topdir_cans(topdir: &Path, uid: u32) -> Vec<Can> {
             }
         })
         .collect()
-}
-
-fn device(path: &Path) -> Option<u64> {
-    std::fs::metadata(path).ok().map(|meta| meta.dev())
 }
 
 /// `path`, or its nearest ancestor that exists: the home trash may not have
@@ -877,23 +882,40 @@ fn is_skipped(fstype: &str) -> bool {
         || fstype.starts_with("fuse.")
 }
 
-/// The mount points in `/proc/self/mountinfo`, less the filesystems
-/// [`is_skipped`] leaves out.
-fn mount_points() -> Vec<PathBuf> {
+/// One line of `/proc/self/mountinfo`, as much of it as the trash needs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Mount {
+    point: PathBuf,
+    fstype: String,
+}
+
+/// Every mount in `/proc/self/mountinfo`.
+fn mounts() -> Vec<Mount> {
     std::fs::read_to_string("/proc/self/mountinfo")
         .map(|text| parse_mountinfo(&text))
         .unwrap_or_default()
 }
 
-fn parse_mountinfo(text: &str) -> Vec<PathBuf> {
+/// The mount points [`cans`] looks in: every one but those [`is_skipped`]
+/// leaves out.
+fn mount_points() -> Vec<PathBuf> {
+    mounts()
+        .into_iter()
+        .filter(|mount| !is_skipped(&mount.fstype))
+        .map(|mount| mount.point)
+        .collect()
+}
+
+fn parse_mountinfo(text: &str) -> Vec<Mount> {
     text.lines()
         .filter_map(|line| {
             let (before, after) = line.split_once(" - ")?;
             let fstype = after.split(' ').next()?;
-            if is_skipped(fstype) {
-                return None;
-            }
-            before.split(' ').nth(4).map(unescape_mount)
+            let point = before.split(' ').nth(4).map(unescape_mount)?;
+            Some(Mount {
+                point,
+                fstype: fstype.to_string(),
+            })
         })
         .collect()
 }
@@ -947,7 +969,7 @@ fn deletion_date() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::{HashMap, HashSet};
+    use std::collections::HashSet;
     use std::os::unix::fs::PermissionsExt;
 
     struct Tmp(PathBuf);
@@ -1068,31 +1090,52 @@ mod tests {
         assert_eq!(sidecars, 0);
     }
 
+    /// The topdir is the longest mount point above the file, not the highest
+    /// ancestor on its device: a btrfs subvolume under `/home` has a device
+    /// of its own, but its items still belong to the home trash.
     #[test]
-    fn the_topdir_is_the_highest_ancestor_on_the_same_device() {
-        let devices: HashMap<&Path, u64> = [
-            (Path::new("/"), 1),
-            (Path::new("/media"), 1),
-            (Path::new("/media/usb"), 2),
-            (Path::new("/media/usb/photos"), 2),
-            (Path::new("/media/usb/photos/2024"), 2),
-            (Path::new("/home"), 3),
-            (Path::new("/home/u"), 3),
+    fn the_topdir_is_the_mount_point_above() {
+        let mounts: Vec<Mount> = [
+            ("/", "btrfs"),
+            ("/home", "btrfs"),
+            ("/run/media/u/USB", "vfat"),
+            ("/mnt/nas", "nfs4"),
+            ("/tmp", "tmpfs"),
         ]
         .into_iter()
+        .map(|(point, fstype)| Mount {
+            point: PathBuf::from(point),
+            fstype: fstype.to_string(),
+        })
         .collect();
-        let device = |p: &Path| devices.get(p).copied();
+        let home = Some(Path::new("/home/u/.local/share/Trash"));
+        let topdir = |dir: &str| topdir_for(&mounts, Path::new(dir), home);
 
         assert_eq!(
-            topdir_of(Path::new("/media/usb/photos/2024"), device),
-            Path::new("/media/usb")
+            topdir("/run/media/u/USB/photos/2024"),
+            Some(Path::new("/run/media/u/USB"))
         );
         assert_eq!(
-            topdir_of(Path::new("/media/usb"), device),
-            Path::new("/media/usb")
+            topdir("/run/media/u/USB"),
+            Some(Path::new("/run/media/u/USB"))
         );
-        assert_eq!(topdir_of(Path::new("/home/u"), device), Path::new("/home"));
-        assert_eq!(topdir_of(Path::new("/media"), device), Path::new("/"));
+        assert_eq!(
+            topdir("/home/u/subvolume/deep"),
+            None,
+            "the home trash's mount"
+        );
+        assert_eq!(
+            topdir("/run/media/u/USBX"),
+            Some(Path::new("/")),
+            "whole components"
+        );
+        assert_eq!(topdir("/mnt/nas/share"), None, "a filesystem cans() skips");
+        assert_eq!(topdir("/tmp/x"), Some(Path::new("/tmp")));
+        assert_eq!(
+            topdir_for(&[], Path::new("/x"), home),
+            None,
+            "no mount table"
+        );
     }
 
     #[test]
@@ -1249,8 +1292,13 @@ mod tests {
 63 22 0:52 / /mnt/samba rw,relatime shared:43 - cifs //host/share rw
 64 22 8:33 / /run/media/u/NTFS rw,relatime shared:44 - fuseblk /dev/sdc1 rw
 ";
+        let searched: Vec<PathBuf> = parse_mountinfo(text)
+            .into_iter()
+            .filter(|mount| !is_skipped(&mount.fstype))
+            .map(|mount| mount.point)
+            .collect();
         assert_eq!(
-            parse_mountinfo(text),
+            searched,
             vec![
                 PathBuf::from("/"),
                 PathBuf::from("/run/media/u/MY STICK"),
