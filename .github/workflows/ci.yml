@@ -278,6 +278,12 @@ jobs:
         # otto-files has its own step below, gated on its own paths.
         if: needs.changes.outputs.compositor == 'true' || needs.changes.outputs.ui == 'true'
         run: cargo test --locked --lib --workspace --exclude otto-files
+      - name: Run toolkit doctests
+        timeout-minutes: 15
+        # `--lib` skips doctests, and otto-kit's examples are its API docs:
+        # without this run they stop compiling unseen.
+        if: needs.changes.outputs.ui == 'true'
+        run: cargo test --locked -p otto-kit --doc
       - name: Run app unit tests
         timeout-minutes: 20
         # `--lib` above skips binary targets, so the apps with no lib target —

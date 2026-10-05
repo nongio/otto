@@ -31,7 +31,7 @@ pub enum StackAlignment {
 ///
 /// # Examples
 ///
-/// ```no_run
+/// ```
 /// use otto_kit::components::container::{Stack, StackDirection, StackAlignment};
 ///
 /// let mut stack = Stack::new(StackDirection::Vertical)

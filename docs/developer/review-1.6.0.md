@@ -290,8 +290,10 @@ otto-kit, so the portal and otto-agents need not link Skia): `xdg`, `dbus`,
 - [ ] `headless_basic::pinch_show_desktop` fails locally on main
   (tests/headless_basic.rs:237, "clicking a window should dismiss show
   desktop"); check whether CI runs it. **S**
-- [ ] About 11 otto-kit doctests fail (`stack.rs`, `window/mod.rs`, …); CI
+- [x] About 11 otto-kit doctests fail (`stack.rs`, `window/mod.rs`, …); CI
   runs `--lib` only, so they rot unseen. **S**
+  - *All compile now; the ones that need a compositor are `no_run`. CI runs
+    `cargo test -p otto-kit --doc`.*
 - [ ] otto-settings' hard-coded accent swatch list (`main.rs` ~217-227) is a
   third palette; its Teal `#40C8E0` is in neither (#264). **S**
 - [ ] zbus 4 → 5 and smithay-client-toolkit 0.19 → 0.21 (§2) are now

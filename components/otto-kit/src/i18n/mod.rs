@@ -7,7 +7,7 @@
 //!
 //! # Using it
 //!
-//! ```ignore
+//! ```
 //! use otto_kit::t;
 //!
 //! let label = t!("dock-keep-in-dock");
