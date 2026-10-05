@@ -5398,7 +5398,7 @@ dependencies = [
  "md-5 0.10.6",
  "otto-kit",
  "otto-md-kit",
- "png",
+ "png 0.17.16",
  "skia-safe",
  "tokio",
  "tracing",
