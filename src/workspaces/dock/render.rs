@@ -201,10 +201,10 @@ pub fn setup_badge_layer(layer: &Layer, icon_width: f32) {
             height: taffy::Dimension::Length(badge_size),
         })
         .anchor_point(Point { x: 0.5, y: 0.5 })
-        .background_color(theme_colors().accents_red.opacity(0.9))
+        .background_color(theme_colors().accent_red.opacity(0.9))
         .border_corner_radius(BorderRadius::new_single(badge_size / 2.0))
         .opacity((0.0, None))
-        .shadow_color(theme_colors().shadow_color.opacity(0.4))
+        .shadow_color(theme_colors().shadow.opacity(0.4))
         .shadow_offset(((0.0, 0.0).into(), None))
         .shadow_radius((10.0, None))
         .shadow_spread((3.0, None))
@@ -529,7 +529,7 @@ pub fn setup_label(new_layer: &Layer, label_text: String, position: DockPosition
         })
         // The palette's tooltip material, so the balloon follows the scheme
         // like the rest of the chrome instead of sitting on one fixed grey.
-        .background_color(theme_colors().materials_controls_tooltip)
+        .background_color(theme_colors().material_tooltip)
         // The hairline follows the balloon path, arrow included.
         .border_width((otto_kit::theme::Theme::HAIRLINE_WIDTH * scale, None))
         .border_color(theme_colors().hairline)
@@ -547,7 +547,7 @@ pub fn setup_label(new_layer: &Layer, label_text: String, position: DockPosition
                 y: -label_size_height / 2.0,
             },
         })
-        .shadow_color(theme_colors().shadow_color)
+        .shadow_color(theme_colors().shadow)
         .shadow_offset(((0.0, 0.0).into(), None))
         .shadow_radius((10.0 * scale, None))
         .opacity((0.0, None))

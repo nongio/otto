@@ -21,11 +21,11 @@ god-objects, and kit widgets the apps never adopted.
   `components/otto-files/src/model.rs:901` turns epoch seconds into a date with
   no timezone offset. `otto-search/src/dates.rs` already has `local_offset`;
   or use `chrono` (already in the workspace). **S** Fixed in #258.
-- [ ] **Same hex colour, different colours** *(verified)*. otto-bar reads
+- [x] **Same hex colour, different colours** *(verified)*. otto-bar reads
   8 digits as `#AARRGGBB` (`components/otto-bar/src/config.rs:180`),
   otto-input-overlay as `#RRGGBBAA` (`components/otto-input-overlay/src/main.rs:252`),
   otto-auth-ui likewise. Six parsers in total, see §3. **S**
-  - *Partly done in #261: one `otto_kit::color::parse_hex` (alpha last); otto-bar keeps `#AARRGGBB` via `parse_hex_argb` because its README documents it. Switching it is a breaking change to decide.*
+  - *Done: #261 added one `otto_kit::color::parse_hex` (alpha last); otto-bar switched to it too (breaking for 8-digit bar colours) and `parse_hex_argb` is gone.*
 - [x] **otto-bar logs nothing by default** *(verified)*. Fallback filter is
   `otto_topbar=info` (`components/otto-bar/src/main.rs:21`); the crate is
   `otto_bar`. **S** Fixed in #261.
@@ -108,9 +108,9 @@ otto-kit, so the portal and otto-agents need not link Skia): `xdg`, `dbus`,
 - [x] **hex colours**: one `otto_kit::theme::parse_hex` (see §1). **S** Fixed in #261.
 - [x] **`logging`**: the same `tracing_subscriber` block in 14–15 `main.rs`,
   with inconsistent default filters; `otto_kit::init()` doing logging + i18n. **S** Fixed in #261.
-- [ ] **Colour palette exists twice**: `src/theme/colors_{light,dark}.rs` and
+- [x] **Colour palette exists twice**: `src/theme/colors_{light,dark}.rs` and
   `otto-kit/src/theme.rs:169-230`. Make otto-kit the only table. **S**
-  - *Not done: the values differ (table in #261), and the compositor light/dark menu colours look swapped. Decide the palette first.*
+  - *Done: otto-kit's palette is canonical; the compositor converts it and `colors_{light,dark}.rs` are gone, which also drops the swapped menu colours. otto-settings and otto-auth-ui resolve accent names through it too.*
 - [ ] **`toplevels`**: three zwlr-foreign-toplevel trackers
   (`otto-kit/src/utils/focus_watcher.rs`, `otto-launcher/src/windows.rs`,
   `otto-emoji/src/target.rs`). **S–M**

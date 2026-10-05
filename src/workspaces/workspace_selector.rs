@@ -1452,7 +1452,7 @@ fn render_workspace_selector_view(
                                 None,
                             ))
                             .background_color(crate::theme::chrome_material(
-                                theme_colors().materials_ultrathick,
+                                theme_colors().material_ultrathick,
                             ))
                             .blend_mode(crate::theme::chrome_blend_mode())
                             .border_corner_radius(BorderRadius::new_single(25.0))
@@ -1526,10 +1526,10 @@ fn render_workspace_selector_view(
             None,
         ))
         .background_color(crate::theme::chrome_material(
-            theme_colors().materials_medium,
+            theme_colors().material_medium,
         ))
         .blend_mode(crate::theme::chrome_blend_mode())
-        .shadow_color(theme_colors().shadow_color)
+        .shadow_color(theme_colors().shadow)
         .shadow_offset(((0.0, -5.0).into(), None))
         .shadow_radius((20.0, None))
         .children({
@@ -1765,7 +1765,7 @@ fn draw_carried_label(text: &str, ui_scale: f32) -> Option<ContentDrawFunction> 
 
     // The same material the selector's own surfaces use, so the plate is light
     // on a light theme and dark on a dark one without asking which is on.
-    let plate_color = theme_colors().materials_medium;
+    let plate_color = theme_colors().material_medium;
     let pad_x_px = 10.0 * ui_scale;
     let pad_y_px = 5.0 * ui_scale;
     let radius_px = otto_kit::corners::radius(8.0 * ui_scale);

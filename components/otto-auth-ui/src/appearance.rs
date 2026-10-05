@@ -101,29 +101,16 @@ struct ConfigFile {
     theme_scheme: Option<String>,
 }
 
-/// Otto's named accents. Kept in step with `src/theme/colors_light.rs` in the
-/// compositor, which is where these values come from.
+/// Otto's named accents, from otto-kit's light palette — the one the
+/// compositor resolves `accent_color` against in the light scheme.
 fn accent_color(name: &str) -> Color {
-    let hex = match name.trim().to_ascii_lowercase().as_str() {
-        "red" => "#FF453A",
-        "orange" => "#FF9500",
-        "yellow" => "#FFCC00",
-        "green" => "#28CD41",
-        "mint" => "#00C7BE",
-        "teal" => "#59ADC4",
-        "cyan" => "#55BEF0",
-        "indigo" => "#5856D6",
-        "purple" => "#AF52DE",
-        "pink" => "#FF2D55",
-        "gray" => "#8E8E93",
-        "brown" => "#A2845E",
+    let name = name.trim().to_ascii_lowercase();
+    otto_kit::theme::Theme::light_palette()
+        .named_accent(&name)
         // An unknown name falls back to blue, as the compositor's theme does;
         // a literal colour is also accepted so a greeter can be themed alone.
-        other => return parse_hex(other).unwrap_or(Color::from_argb(255, 10, 132, 255)),
-        // "blue" lands here through the fallback, which resolves to the same
-        // value, so it needs no arm of its own.
-    };
-    parse_hex(hex).unwrap_or(Color::from_argb(255, 10, 132, 255))
+        .or_else(|| parse_hex(&name))
+        .unwrap_or(Color::from_argb(255, 10, 132, 255))
 }
 
 #[cfg(test)]

@@ -175,14 +175,11 @@ pub fn battery_config() -> &'static BatteryConfig {
     &CONFIG.battery
 }
 
-/// Parse `#RGB`, `#RRGGBB` or `#AARRGGBB`. Returns None for anything else,
-/// so a typo leaves the default colour rather than painting the glyph black.
-///
-/// Alpha first, unlike every other colour setting (`#RRGGBBAA`): the
-/// battery colours were documented that way before the desktop settled on
-/// CSS's order, and existing configs keep meaning what they meant.
+/// Parse `#RGB`, `#RRGGBB` or `#RRGGBBAA`, alpha last like every other
+/// colour setting on the desktop. Returns None for anything else, so a typo
+/// leaves the default colour rather than painting the glyph black.
 fn parse_color(raw: &str) -> Option<skia_safe::Color> {
-    otto_kit::color::parse_hex_argb(raw)
+    otto_kit::color::parse_hex(raw)
 }
 
 /// Read a command as either a bare string or an argv array, so both

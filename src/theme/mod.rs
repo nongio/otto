@@ -9,19 +9,6 @@ use std::sync::LazyLock;
 
 use crate::config::Config;
 
-// Macro to define a Lazy group of colors
-macro_rules! define_colors {
-    ($init_name:ident, { $($name:ident => $hex:expr),* $(,)? }) => {
-        use layers::types::Color;
-        use std::sync::LazyLock;
-        use crate::theme::ThemeColors;
-        // Lazy static initialization of the group
-        pub static $init_name: LazyLock<ThemeColors> = LazyLock::new(|| ThemeColors {
-            $($name: Color::new_hex($hex)),*
-        });
-    };
-}
-
 pub fn text_style_with_size_and_weight(
     size: f32,
     weight: layers::skia::font_style::Weight,
@@ -44,80 +31,72 @@ macro_rules! define_text_styles {
         pub fn $name() -> TextStyle {text_style_with_size_and_weight($size, $weight)})*
     };
 }
-#[allow(unused)]
+
+/// The colours the compositor's own chrome paints with: otto-kit's palette,
+/// converted to the scene graph's colour type.
+///
+/// otto-kit's [`otto_kit::theme::Theme`] is the only palette table. The
+/// compositor draws next to otto-kit-drawn windows and menus, so a second
+/// table here is how the dock and the window beside it ended up in two
+/// different greys. Field names follow otto-kit's.
 pub struct ThemeColors {
-    pub accents_red: Color,
-    pub accents_orange: Color,
-    pub accents_yellow: Color,
-    pub accents_green: Color,
-    pub accents_mint: Color,
-    pub accents_teal: Color,
-    pub accents_cyan: Color,
-    pub accents_blue: Color,
-    pub accents_indigo: Color,
-    pub accents_purple: Color,
-    pub accents_pink: Color,
-    pub accents_gray: Color,
-    pub accents_brown: Color,
-    pub accents_vibrant_red: Color,
-    pub accents_vibrant_orange: Color,
-    pub accents_vibrant_yellow: Color,
-    pub accents_vibrant_green: Color,
-    pub accents_vibrant_mint: Color,
-    pub accents_vibrant_teal: Color,
-    pub accents_vibrant_cyan: Color,
-    pub accents_vibrant_blue: Color,
-    pub accents_vibrant_indigo: Color,
-    pub accents_vibrant_purple: Color,
-    pub accents_vibrant_pink: Color,
-    pub accents_vibrant_brown: Color,
-    pub accents_vibrant_gray: Color,
-    pub fills_primary: Color,
-    pub fills_secondary: Color,
-    pub fills_tertiary: Color,
-    pub fills_quaternary: Color,
-    pub fills_quinary: Color,
-    pub fills_vibrant_primary: Color,
-    pub fills_vibrant_secondary: Color,
-    pub fills_vibrant_tertiary: Color,
-    pub fills_vibrant_quaternary: Color,
-    pub fills_vibrant_quinary: Color,
+    pub accent_blue: Color,
+    pub accent_red: Color,
+    pub fill_primary: Color,
     pub text_primary: Color,
     pub text_secondary: Color,
     pub text_tertiary: Color,
-    pub text_quaternary: Color,
-    pub text_quinary: Color,
-    pub text_vibrant_primary: Color,
-    pub text_vibrant_secondary: Color,
-    pub text_vibrant_tertiary: Color,
-    pub text_vibrant_quaternary: Color,
-    pub text_vibrant_quinary: Color,
-    pub materials_ultrathick: Color,
-    pub materials_thick: Color,
-    pub materials_medium: Color,
-    pub materials_thin: Color,
-    pub materials_ultrathin: Color,
-    pub materials_highlight: Color,
-    pub materials_controls_menu: Color,
-    pub materials_controls_popover: Color,
-    pub materials_controls_title_bar: Color,
-    pub materials_controls_sidebar: Color,
-    pub materials_controls_selection_focused: Color,
-    pub materials_controls_selection_unfocused: Color,
-    pub materials_controls_header_view: Color,
-    pub materials_controls_tooltip: Color,
-    pub materials_controls_under_window_background: Color,
-    pub materials_controls_fullscreen: Color,
-    pub materials_controls_hud: Color,
-    pub shadow_color: Color,
+    pub material_medium: Color,
+    pub material_thin: Color,
+    pub material_ultrathick: Color,
+    pub material_tooltip: Color,
+    pub shadow: Color,
     /// The line that closes the edge of a floating surface — the dock bar, a
-    /// label balloon, a menu. Matches otto-kit's `Theme::hairline`, so a
-    /// window the compositor frames and the dock beside it draw the same line.
+    /// label balloon, a menu. otto-kit's `Theme::hairline`, so a window the
+    /// compositor frames and the dock beside it draw the same line.
     pub hairline: Color,
+    /// The palette itself, for what is looked up by name (the accents).
+    kit: otto_kit::theme::Theme,
 }
 
-mod colors_dark;
-mod colors_light;
+impl ThemeColors {
+    fn from_kit(kit: otto_kit::theme::Theme) -> Self {
+        Self {
+            accent_blue: layers_color(kit.accent_blue),
+            accent_red: layers_color(kit.accent_red),
+            fill_primary: layers_color(kit.fill_primary),
+            text_primary: layers_color(kit.text_primary),
+            text_secondary: layers_color(kit.text_secondary),
+            text_tertiary: layers_color(kit.text_tertiary),
+            material_medium: layers_color(kit.material_medium),
+            material_thin: layers_color(kit.material_thin),
+            material_ultrathick: layers_color(kit.material_ultrathick),
+            material_tooltip: layers_color(kit.material_tooltip),
+            shadow: layers_color(kit.shadow),
+            hairline: layers_color(kit.hairline),
+            kit,
+        }
+    }
+
+    /// The palette's colour for an accent name; see [`ACCENT_NAMES`].
+    pub fn named_accent(&self, name: &str) -> Option<Color> {
+        self.kit.named_accent(name).map(layers_color)
+    }
+}
+
+/// An otto-kit (skia) colour as the scene graph's.
+fn layers_color(c: otto_kit::skia::Color) -> Color {
+    Color::new_rgba255(c.r(), c.g(), c.b(), c.a())
+}
+
+// The palettes as designed, not `Theme::light()`/`dark()`: those fold in the
+// portal's accent and solid materials for clients without blur, and the
+// compositor decides both itself (`accent_color`, `chrome_material`).
+static LIGHT: LazyLock<ThemeColors> =
+    LazyLock::new(|| ThemeColors::from_kit(otto_kit::theme::Theme::light_palette()));
+static DARK: LazyLock<ThemeColors> =
+    LazyLock::new(|| ThemeColors::from_kit(otto_kit::theme::Theme::dark_palette()));
+
 pub mod text_styles;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -139,48 +118,29 @@ pub fn kit_theme() -> otto_kit::theme::Theme {
     }
 }
 
-pub fn theme_colors() -> &'static LazyLock<ThemeColors> {
+pub fn theme_colors() -> &'static ThemeColors {
     Config::with(|c| match c.theme_scheme {
-        ThemeScheme::Light => &colors_light::COLORS,
-        ThemeScheme::Dark => &colors_dark::COLORS,
+        ThemeScheme::Light => &LIGHT,
+        ThemeScheme::Dark => &DARK,
     })
 }
 
 /// Every accent colour a user can choose, in the order they are offered.
 ///
 /// The settings schema serves this list as the choices for `accent_color`, so
-/// a name that is not here cannot be set — `accent_by_name` and the schema
-/// cannot drift apart.
-pub const ACCENT_NAMES: &[&str] = &[
-    "blue", "purple", "pink", "red", "orange", "yellow", "green", "mint", "teal", "cyan", "indigo",
-    "brown", "gray",
-];
+/// a name that is not here cannot be set. otto-kit owns both the list and the
+/// colours, so `accent_by_name` and the schema cannot drift apart.
+pub use otto_kit::theme::ACCENT_NAMES;
 
 /// Resolve an accent name against the current scheme's palette.
 pub fn accent_by_name(name: &str) -> Option<Color> {
-    let colors = theme_colors();
-    Some(match name {
-        "red" => colors.accents_red,
-        "orange" => colors.accents_orange,
-        "yellow" => colors.accents_yellow,
-        "green" => colors.accents_green,
-        "mint" => colors.accents_mint,
-        "teal" => colors.accents_teal,
-        "cyan" => colors.accents_cyan,
-        "blue" => colors.accents_blue,
-        "indigo" => colors.accents_indigo,
-        "purple" => colors.accents_purple,
-        "pink" => colors.accents_pink,
-        "gray" => colors.accents_gray,
-        "brown" => colors.accents_brown,
-        _ => return None,
-    })
+    theme_colors().named_accent(name)
 }
 
 /// Read a `#RGB`, `#RRGGBB` or `#RRGGBBAA` literal; see
 /// [`otto_kit::color::parse_hex`].
 pub fn parse_hex(text: &str) -> Option<Color> {
-    otto_kit::color::parse_hex(text).map(|c| Color::new_rgba255(c.r(), c.g(), c.b(), c.a()))
+    otto_kit::color::parse_hex(text).map(layers_color)
 }
 
 /// Resolve whatever the `accent_color` setting holds: a palette name, or a
@@ -206,7 +166,7 @@ pub fn accent_from(text: &str) -> Option<Color> {
 /// fallback.
 pub fn accent_color() -> Color {
     match otto_kit::accent::current_accent() {
-        Some(color) => Color::new_rgba255(color.r(), color.g(), color.b(), color.a()),
+        Some(color) => layers_color(color),
         None => publish_accent(),
     }
 }
@@ -270,7 +230,7 @@ pub fn publish_accent() -> Color {
     // configuration again for the palette, and `Config::with` is not
     // re-entrant.
     let name = Config::with(|c| c.accent_color.clone());
-    let color = accent_from(&name).unwrap_or_else(|| theme_colors().accents_blue);
+    let color = accent_from(&name).unwrap_or_else(|| theme_colors().accent_blue);
     otto_kit::accent::set_accent(color.c4f().to_color());
     color
 }

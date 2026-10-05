@@ -14,31 +14,17 @@ use skia_safe::Color;
 /// name. Surrounding whitespace is ignored. Anything else is `None`, so a typo
 /// leaves the caller's default rather than painting black.
 pub fn parse_hex(text: &str) -> Option<Color> {
-    parse_digits(text.trim().strip_prefix('#')?, AlphaPosition::Last)
+    parse_digits(text.trim().strip_prefix('#')?)
 }
 
 /// [`parse_hex`], with the `#` optional — for the places that have always
 /// taken bare digits (`background_color = "1a1a2e"`, a command-line flag).
 pub fn parse_hex_lenient(text: &str) -> Option<Color> {
     let text = text.trim();
-    parse_digits(text.strip_prefix('#').unwrap_or(text), AlphaPosition::Last)
+    parse_digits(text.strip_prefix('#').unwrap_or(text))
 }
 
-/// [`parse_hex`], except that eight digits are `#AARRGGBB`, alpha first.
-///
-/// Only for otto-bar's battery colours, which documented that order before
-/// the desktop settled on CSS's; new settings take [`parse_hex`].
-pub fn parse_hex_argb(text: &str) -> Option<Color> {
-    parse_digits(text.trim().strip_prefix('#')?, AlphaPosition::First)
-}
-
-#[derive(Clone, Copy)]
-enum AlphaPosition {
-    First,
-    Last,
-}
-
-fn parse_digits(digits: &str, alpha: AlphaPosition) -> Option<Color> {
+fn parse_digits(digits: &str) -> Option<Color> {
     // Checked up front: it keeps the byte slicing below on char boundaries,
     // and `from_str_radix` alone would take a leading `+`.
     if !digits.bytes().all(|b| b.is_ascii_hexdigit()) {
@@ -55,10 +41,7 @@ fn parse_digits(digits: &str, alpha: AlphaPosition) -> Option<Color> {
             Some(Color::from_argb(0xFF, nibble(0)?, nibble(1)?, nibble(2)?))
         }
         6 => Some(Color::from_argb(0xFF, byte(0)?, byte(2)?, byte(4)?)),
-        8 => Some(match alpha {
-            AlphaPosition::Last => Color::from_argb(byte(6)?, byte(0)?, byte(2)?, byte(4)?),
-            AlphaPosition::First => Color::from_argb(byte(0)?, byte(2)?, byte(4)?, byte(6)?),
-        }),
+        8 => Some(Color::from_argb(byte(6)?, byte(0)?, byte(2)?, byte(4)?)),
         _ => None,
     }
 }
@@ -96,14 +79,5 @@ mod tests {
         assert_eq!(parse_hex_lenient("#1a1a2e"), parse_hex("#1a1a2e"));
         assert_eq!(parse_hex_lenient("ff000080"), parse_hex("#ff000080"));
         assert!(parse_hex_lenient("blue").is_none());
-    }
-
-    #[test]
-    fn argb_form_puts_alpha_first() {
-        assert_eq!(
-            parse_hex_argb("#80FF0000"),
-            Some(Color::from_argb(0x80, 0xFF, 0, 0))
-        );
-        assert_eq!(parse_hex_argb("#34C759"), parse_hex("#34C759"));
     }
 }

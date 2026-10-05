@@ -162,6 +162,8 @@ low_level = 20
 critical_level = 10
 width = 28
 height = 13
+# Colours are "#RGB", "#RRGGBB" or "#RRGGBBAA", alpha last as in CSS:
+# "#34C75980" is the green at half opacity.
 color_normal = "#34C759"
 color_low = "#FF9F0A"
 color_critical = "#FF3B30"

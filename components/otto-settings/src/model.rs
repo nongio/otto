@@ -293,25 +293,17 @@ fn decimals(step: Option<f64>) -> usize {
 
 /// The compositor's accent palette, keyed by the name it stores.
 ///
-/// These are the values `src/theme/colors_dark.rs` paints with, so the swatch
-/// the user picks is the colour they get.
+/// otto-kit's dark palette, the one the compositor paints with in the dark
+/// scheme, so the swatch the user picks is the colour they get.
 pub fn named_argb(name: &str) -> Option<u32> {
-    Some(match name.to_ascii_lowercase().as_str() {
-        "red" => 0xFFFF453A,
-        "orange" => 0xFFFF9F0A,
-        "yellow" => 0xFFFFD60A,
-        "green" => 0xFF32D74B,
-        "mint" => 0xFF66D4CF,
-        "teal" => 0xFF6AC4DC,
-        "cyan" => 0xFF5AC8F5,
-        "blue" => 0xFF0A84FF,
-        "indigo" => 0xFF5E5CE6,
-        "purple" => 0xFFBF5AF2,
-        "pink" => 0xFFFF375F,
-        "gray" | "grey" | "graphite" => 0xFF98989D,
-        "brown" => 0xFFAC8E68,
-        _ => return None,
-    })
+    let name = name.to_ascii_lowercase();
+    let name = match name.as_str() {
+        "grey" | "graphite" => "gray",
+        other => other,
+    };
+    otto_kit::theme::Theme::dark_palette()
+        .named_accent(name)
+        .map(|c| u32::from_be_bytes([c.a(), c.r(), c.g(), c.b()]))
 }
 
 fn parse_hex(text: &str) -> Option<u32> {
