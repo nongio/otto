@@ -375,7 +375,7 @@ fn select_ids() -> Vec<&'static str> {
     ids.extend_from_slice(panes::privacy::slot_ids());
     // The Sound pane's device pop-ups, whose rows only appear once the sound
     // server has answered.
-    ids.extend_from_slice(panes::sound::slot_ids());
+    ids.extend(panes::sound::slot_ids());
     ids
 }
 

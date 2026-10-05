@@ -439,17 +439,29 @@ are:
 - **Keyboard** — repeat delay and rate, the input sources (see below), then
   shortcuts.
 - **Trackpad & Mouse** — the pointer and touchpad settings.
-- **Sound** — output and input device, volume and mute for each, then
-  interface sounds enabled and theme. Each device pop-up lists ports, not
-  only devices — a laptop's one analog device carries its speakers and its
-  headphone jack — and leaves out a jack with nothing plugged in; picking one
-  makes its device the default and switches it to that port. The devices, volumes and mutes are not
-  settings: they belong to the sound server, which remembers them itself. The
-  pane reads and writes them through `pactl`, which speaks to PulseAudio or to
-  PipeWire through pipewire-pulse alike, and follows `pactl subscribe` while
-  it is on screen, so a headset plugged in or a volume key pressed shows up
-  without reopening it. With no server answering, the pane says so and keeps
-  the interface-sound rows.
+- **Sound** — interface sounds enabled and theme, then a mixer laid out
+  after pavucontrol, which is its reference. A Show pop-up stands in for
+  pavucontrol's tabs and the groups under it are that tab's:
+  - *Playback* and *Recording* — one group per app stream, titled with the
+    app and what it plays: volume, mute, and the device it plays on or
+    records from, which moves it.
+  - *Output devices* and *Input devices* — one group per device: its port
+    (speakers, headphone jack…, leaving out a jack with nothing plugged in),
+    volume, mute, and *Use as default*, which like pavucontrol's fallback
+    button is switched off only by switching another device on. Monitor
+    sources are left out, as pavucontrol leaves them out by default.
+  - *Configuration* — one group per card: the profile it runs in, among the
+    ones that can run now. HDMI audio is a profile of the same card as the
+    laptop's speakers.
+
+  It opens on Output devices. None of it is a setting: it belongs to the
+  sound server, which remembers it itself. The pane reads and writes it
+  through `pactl`, which speaks to PulseAudio or to PipeWire through
+  pipewire-pulse alike, and follows `pactl subscribe` while it is on screen,
+  so an app starting to play or a headset plugged in shows up without
+  reopening it. Volume runs to 100 %; something boosted past it shows at the
+  end of the track. With no server answering, the pane says so and keeps the
+  interface-sound rows.
 - **Power** — lid switch handling, power button action.
 - **Lock & Login** — automatic lock timeout, which locker runs the lock screen,
   which greeter runs the login screen.
