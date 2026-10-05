@@ -1971,3 +1971,46 @@ settings-pane-privacy = Privacy
 
 # A checkbox in the screen-sharing picker. { $app } is the app asking.
 screencast-picker-remember = Remember for { $app }
+
+## Users pane
+
+settings-pane-account = Users
+settings-account-picture = Picture
+settings-account-picture-detail = Shown on the login and lock screens
+settings-account-choose-picture = Choose a Picture
+settings-account-picture-unreadable = That file isn't an image Otto can read
+settings-account-full-name = Full name
+settings-account-name = Account name
+settings-account-type = Account type
+settings-account-type-administrator = Administrator
+settings-account-type-standard = Standard
+settings-account-no-accountsservice = Can't be changed here: AccountsService isn't running
+settings-account-not-permitted = The system didn't allow this change
+settings-group-password = Password
+settings-account-current-password = Current password
+settings-account-new-password = New password
+settings-account-confirm-password = Confirm new password
+settings-account-change-password = Change Password
+settings-account-change-password-ellipsis = Change Password…
+settings-account-password-detail = Used to log in, unlock the screen and approve changes
+settings-account-password-changing = Changing password…
+settings-account-password-changed = Password changed
+settings-account-password-missing = Type your current password and a new one
+settings-account-password-mismatch = The new passwords don't match
+settings-account-password-same = The new password is the same as the current one
+settings-account-password-wrong-current = The current password is wrong
+settings-account-password-failed = The password couldn't be changed
+settings-account-reset-password-ellipsis = Reset Password…
+settings-account-reset-detail = Set a new password for this account
+settings-account-working = Waiting for the system…
+settings-users-you = { $kind } · You
+settings-users-reset-title = Reset Password for { $name }
+settings-users-reset-action = Reset Password
+settings-users-add-title = Add User
+settings-users-add-action = Add User
+settings-users-delete-title = Delete { $name }?
+settings-users-delete-body = They will no longer be able to log in. Their home folder is kept.
+settings-users-delete-action = Delete User
+settings-users-invalid-name = Account names start with a lower-case letter and use only a–z, 0–9, - and _
+settings-users-name-taken = There's already an account with that name
+settings-users-password-missing = Type a password for the account

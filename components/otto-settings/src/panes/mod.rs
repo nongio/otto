@@ -4,6 +4,7 @@
 //! independently.
 
 pub mod about;
+pub mod account;
 pub mod agents;
 pub mod appearance;
 pub mod desk;

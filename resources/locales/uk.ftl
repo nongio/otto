@@ -1979,3 +1979,46 @@ privacy-store-unavailable-detail = Сховище дозволів (xdg-permissi
 settings-pane-privacy = Конфіденційність
 
 screencast-picker-remember = Запам’ятати для { $app }
+
+## Users pane
+
+settings-pane-account = Користувачі
+settings-account-picture = Зображення
+settings-account-picture-detail = Показується на екранах входу та блокування
+settings-account-choose-picture = Вибрати зображення
+settings-account-picture-unreadable = Otto не може прочитати цей файл як зображення
+settings-account-full-name = Повне ім’я
+settings-account-name = Назва облікового запису
+settings-account-type = Тип облікового запису
+settings-account-type-administrator = Адміністратор
+settings-account-type-standard = Звичайний
+settings-account-no-accountsservice = Тут це змінити не можна: AccountsService не запущено
+settings-account-not-permitted = Система не дозволила цю зміну
+settings-group-password = Пароль
+settings-account-current-password = Поточний пароль
+settings-account-new-password = Новий пароль
+settings-account-confirm-password = Підтвердьте новий пароль
+settings-account-change-password = Змінити пароль
+settings-account-change-password-ellipsis = Змінити пароль…
+settings-account-password-detail = Потрібен для входу, розблокування екрана та підтвердження змін
+settings-account-password-changing = Зміна пароля…
+settings-account-password-changed = Пароль змінено
+settings-account-password-missing = Введіть поточний пароль і новий
+settings-account-password-mismatch = Нові паролі не збігаються
+settings-account-password-same = Новий пароль такий самий, як поточний
+settings-account-password-wrong-current = Поточний пароль неправильний
+settings-account-password-failed = Не вдалося змінити пароль
+settings-account-reset-password-ellipsis = Скинути пароль…
+settings-account-reset-detail = Задати новий пароль для цього облікового запису
+settings-account-working = Очікування системи…
+settings-users-you = { $kind } · Ви
+settings-users-reset-title = Скидання пароля: { $name }
+settings-users-reset-action = Скинути пароль
+settings-users-add-title = Додати користувача
+settings-users-add-action = Додати користувача
+settings-users-delete-title = Видалити { $name }?
+settings-users-delete-body = Цей користувач більше не зможе увійти. Його домашню теку буде збережено.
+settings-users-delete-action = Видалити користувача
+settings-users-invalid-name = Назва облікового запису починається з малої латинської літери й містить лише a–z, 0–9, - та _
+settings-users-name-taken = Обліковий запис із такою назвою вже існує
+settings-users-password-missing = Введіть пароль для облікового запису

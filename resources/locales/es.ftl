@@ -1909,3 +1909,46 @@ privacy-store-unavailable-detail = El almacén de permisos (xdg-permission-store
 settings-pane-privacy = Privacidad
 
 screencast-picker-remember = Recordar para { $app }
+
+## Users pane
+
+settings-pane-account = Usuarios
+settings-account-picture = Imagen
+settings-account-picture-detail = Se muestra en las pantallas de inicio de sesión y de bloqueo
+settings-account-choose-picture = Elegir una imagen
+settings-account-picture-unreadable = Ese archivo no es una imagen que Otto pueda leer
+settings-account-full-name = Nombre completo
+settings-account-name = Nombre de la cuenta
+settings-account-type = Tipo de cuenta
+settings-account-type-administrator = Administrador
+settings-account-type-standard = Estándar
+settings-account-no-accountsservice = No se puede cambiar aquí: AccountsService no está en ejecución
+settings-account-not-permitted = El sistema no ha permitido este cambio
+settings-group-password = Contraseña
+settings-account-current-password = Contraseña actual
+settings-account-new-password = Nueva contraseña
+settings-account-confirm-password = Confirmar la nueva contraseña
+settings-account-change-password = Cambiar contraseña
+settings-account-change-password-ellipsis = Cambiar contraseña…
+settings-account-password-detail = Se usa para iniciar sesión, desbloquear la pantalla y aprobar cambios
+settings-account-password-changing = Cambiando la contraseña…
+settings-account-password-changed = Contraseña cambiada
+settings-account-password-missing = Escribe tu contraseña actual y una nueva
+settings-account-password-mismatch = Las contraseñas nuevas no coinciden
+settings-account-password-same = La contraseña nueva es igual a la actual
+settings-account-password-wrong-current = La contraseña actual no es correcta
+settings-account-password-failed = No se ha podido cambiar la contraseña
+settings-account-reset-password-ellipsis = Restablecer contraseña…
+settings-account-reset-detail = Establecer una contraseña nueva para esta cuenta
+settings-account-working = Esperando al sistema…
+settings-users-you = { $kind } · Tú
+settings-users-reset-title = Restablecer la contraseña de { $name }
+settings-users-reset-action = Restablecer contraseña
+settings-users-add-title = Añadir usuario
+settings-users-add-action = Añadir usuario
+settings-users-delete-title = ¿Eliminar a { $name }?
+settings-users-delete-body = Ya no podrá iniciar sesión. Su carpeta personal se conserva.
+settings-users-delete-action = Eliminar usuario
+settings-users-invalid-name = Los nombres de cuenta empiezan por una letra minúscula y solo usan a–z, 0–9, - y _
+settings-users-name-taken = Ya existe una cuenta con ese nombre
+settings-users-password-missing = Escribe una contraseña para la cuenta

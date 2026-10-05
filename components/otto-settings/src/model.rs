@@ -332,6 +332,7 @@ pub struct Pane {
 /// The panes from the spec, in sidebar order.
 pub fn panes() -> Vec<Pane> {
     vec![
+        panes::account::build(),
         panes::general::build(),
         panes::appearance::build(),
         panes::displays::build(),

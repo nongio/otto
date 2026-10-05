@@ -2,6 +2,7 @@
 
 use otto_kit::components::color_picker::{self, WellInteraction};
 use otto_kit::components::dropdown::{self, DropdownInteraction};
+use otto_kit::components::selection_list::{self, SelectionListHit, SelectionListLayout};
 use otto_kit::components::text_input::TextInput;
 use otto_kit::components::titlebar::{
     DecorationVariant, Titlebar, TitlebarGroup, WindowControls, WindowControlsState,
@@ -106,6 +107,15 @@ const ABOUT_HERO_HEIGHT: f32 = 24.0 + ABOUT_MARK + 20.0 + 36.0 + 22.0 + 30.0;
 /// One line of a pane's opening paragraph, and the space between the
 /// paragraph and the first group below it.
 const INTRO_LINE_H: f32 = 19.0;
+/// The users list's width beside the account detail.
+const USERS_W: f32 = 210.0;
+const USERS_GAP: f32 = 16.0;
+/// Below this much room the users list goes above the detail instead of
+/// beside it, so neither is squeezed.
+const USERS_SIDE_MIN: f32 = 560.0;
+/// The account header: the picture, the name and the Choose… button.
+const ACCOUNT_HEADER_H: f32 = 100.0;
+const ACCOUNT_AVATAR: f32 = 68.0;
 const INTRO_GAP: f32 = 14.0;
 /// A file row's preview: how tall the thumbnail box is, and the space above
 /// and below it. The width follows the image's own aspect, capped at
@@ -644,6 +654,8 @@ pub enum Pressed {
     Add,
     /// A removable row's remove button ("−" or its word), by the row's handle.
     RemoveRow(&'static str),
+    /// The users list's add or remove button.
+    User(SelectionListHit),
 }
 
 /// What a press on the shortcuts group means.
@@ -710,6 +722,11 @@ struct PaneLayout<'a> {
     arrangement: Option<Rect>,
     /// The About pane's opening band: the Otto mark, name and version.
     hero: Option<Rect>,
+    /// The users list, on the account pane.
+    users: Option<Rect>,
+    /// The account header over the detail: picture, name and Choose…. It
+    /// shares its card with the first group.
+    header: Option<Rect>,
     /// The opening paragraph, on the pane that has one: the wrapped lines and
     /// the band they occupy, laid out once so drawing and the content height
     /// cannot disagree about how tall it is.
@@ -735,12 +752,17 @@ fn preview_image(path: &str) -> Option<skia_safe::Image> {
             std::cell::RefCell::new(HashMap::new());
     }
 
+    // Keyed by when the file last changed as well as where it is: a new
+    // account picture is written over the old one at the same path, and a
+    // cache keyed by path alone would keep showing the old face.
+    let modified = std::fs::metadata(path).and_then(|m| m.modified()).ok();
+    let key = format!("{path}@{modified:?}");
     CACHE.with(|cache| {
-        if let Some(cached) = cache.borrow().get(path) {
+        if let Some(cached) = cache.borrow().get(&key) {
             return cached.clone();
         }
         let decoded = decode_preview(path);
-        cache.borrow_mut().insert(path.to_string(), decoded.clone());
+        cache.borrow_mut().insert(key, decoded.clone());
         decoded
     })
 }
@@ -833,6 +855,24 @@ enum ThemeSwatch {
 /// measured control pushes past the nominal right edge. The comparison is
 /// inclusive so a row ending exactly on the band's top edge survives, and
 /// with it the separator hairline it draws on that edge.
+/// The grouped-list card fill.
+fn card_background(dark: bool) -> Color {
+    if dark {
+        Color::from_argb(0x14, 0xFF, 0xFF, 0xFF)
+    } else {
+        Color::WHITE
+    }
+}
+
+fn choose_label() -> &'static str {
+    otto_kit::t!("settings-choose")
+}
+
+/// Where the account header's Choose… button sits, for drawing and hitting.
+fn account_choose_rect(header: Rect) -> Rect {
+    widgets::button_rects(header.right - 14.0, header.center_y(), &[choose_label()])[0]
+}
+
 fn intersects_band(rect: Rect, band: Rect) -> bool {
     rect.bottom >= band.top && rect.top <= band.bottom
 }
@@ -1144,6 +1184,31 @@ impl Settings {
             area
         });
 
+        // The account pane is a list and a detail: the users on the left —
+        // or above, in a narrow window — and the one selected beside them.
+        let account = pane.icon == "person";
+        let user_count = if account {
+            crate::panes::account::users().items.len()
+        } else {
+            0
+        };
+        let list_h = SelectionListLayout::height_for(user_count);
+        let beside = x1 - x0 >= USERS_SIDE_MIN;
+        let users_top = y;
+        let x0 = if account && beside {
+            x0 + USERS_W + USERS_GAP
+        } else {
+            if account {
+                y += list_h + GROUP_GAP;
+            }
+            x0
+        };
+        let header = account.then(|| {
+            let area = Rect::from_ltrb(x0, y, x1, y + ACCOUNT_HEADER_H);
+            y += ACCOUNT_HEADER_H;
+            area
+        });
+
         let intro = pane.intro.map(|text| {
             let lines = widgets::wrap(text, styles::SUBHEADLINE, x1 - x0);
             let height = lines.len() as f32 * INTRO_LINE_H + INTRO_GAP;
@@ -1153,14 +1218,18 @@ impl Settings {
         });
 
         let mut groups = Vec::with_capacity(pane.groups.len());
-        for group in &pane.groups {
+        for (index, group) in pane.groups.iter().enumerate() {
             let title_y = group.title.as_ref().map(|_| {
                 let top = y;
                 y += 24.0;
                 top
             });
 
-            let card_top = y;
+            // The header heads the first card when that card has no title.
+            let card_top = match header {
+                Some(header) if index == 0 && title_y.is_none() => header.top,
+                _ => y,
+            };
             let rows: Vec<_> = group
                 .rows
                 .iter()
@@ -1182,12 +1251,28 @@ impl Settings {
             });
         }
 
+        // Beside the detail the list runs down to the window's bottom edge,
+        // or the detail's, whichever is lower; above it, it is as tall as its
+        // users.
+        let users = account.then(|| {
+            if beside {
+                let floor = self.viewport().height() - CONTENT_PAD;
+                let bottom = (users_top + list_h).max(y - GROUP_GAP).max(floor);
+                Rect::from_ltrb(CONTENT_PAD, users_top, CONTENT_PAD + USERS_W, bottom)
+            } else {
+                Rect::from_ltrb(x0, users_top, x1, users_top + list_h)
+            }
+        });
+        let height = users.map_or(y, |users| y.max(users.bottom + GROUP_GAP));
+
         PaneLayout {
             arrangement,
             hero,
+            users,
+            header,
             intro,
             groups,
-            height: y,
+            height,
         }
     }
 
@@ -1304,6 +1389,15 @@ impl Settings {
         let content_width = self.width - SIDEBAR_W;
         let local = Point::new(x - viewport.left, y - viewport.top + scroll_offset);
 
+        // The account header's Choose… is the picture's file button.
+        if let Some(header) = self.pane_layout(content_width).header {
+            if crate::panes::account::header().can_choose
+                && account_choose_rect(header).contains(local)
+            {
+                return Some(crate::panes::account::PICTURE_ID);
+            }
+        }
+
         let (row, rect) = self
             .row_rects(content_width)
             .into_iter()
@@ -1315,6 +1409,24 @@ impl Settings {
         widgets::choose_rect(rect.right - 14.0, Self::control_band(row, rect).center_y())
             .contains(local)
             .then_some(id)
+    }
+
+    /// What a point on the users list lands on: an account, or the add or
+    /// remove button while it can be used.
+    pub fn users_hit(&self, x: f32, y: f32, scroll_offset: f32) -> Option<SelectionListHit> {
+        let viewport = self.viewport();
+        if !viewport.contains(Point::new(x, y)) {
+            return None;
+        }
+        let area = self.pane_layout(self.width - SIDEBAR_W).users?;
+        let view = crate::panes::account::users();
+        let hit = SelectionListLayout::compute(view.items.len(), area)
+            .hit(x - viewport.left, y - viewport.top + scroll_offset)?;
+        match hit {
+            SelectionListHit::Add if !view.can_add => None,
+            SelectionListHit::Remove if !view.can_remove => None,
+            hit => Some(hit),
+        }
     }
 
     /// The file row whose preview a point falls on, and whether it falls on
@@ -1835,6 +1947,12 @@ impl Settings {
             }
         }
 
+        if let Some(area) = layout.users {
+            if intersects_band(area, content) {
+                self.render_users(canvas, area);
+            }
+        }
+
         if let Some((lines, area)) = &layout.intro {
             if intersects_band(*area, content) {
                 for (i, line) in lines.iter().enumerate() {
@@ -1859,7 +1977,7 @@ impl Settings {
                 widgets::text_centered_y(
                     canvas,
                     title,
-                    x0 + 2.0,
+                    group.card.left + 2.0,
                     title_y + 9.0,
                     styles::SUBHEADLINE_EMPHASIZED,
                     self.theme.text_secondary,
@@ -1882,6 +2000,10 @@ impl Settings {
             border.set_stroke_width(1.0);
             border.set_color(self.theme.fill_tertiary);
             canvas.draw_rrect(rrect, &border);
+
+            if let Some(header) = layout.header.filter(|h| h.top == group.card.top) {
+                self.render_account_header(canvas, header, !group.rows.is_empty());
+            }
 
             for (i, (row, rect)) in group.rows.iter().enumerate() {
                 if !intersects_band(*rect, content) {
@@ -1922,11 +2044,115 @@ impl Settings {
                         );
                     }
                 }
-                self.render_row(canvas, row, x0, x1, rect.top, rect.height());
+                self.render_row(canvas, row, rect.left, rect.right, rect.top, rect.height());
                 if i + 1 < group.rows.len() {
-                    widgets::separator(canvas, x0 + 14.0, x1, rect.bottom, &self.theme);
+                    widgets::separator(
+                        canvas,
+                        rect.left + 14.0,
+                        rect.right,
+                        rect.bottom,
+                        &self.theme,
+                    );
                 }
             }
+        }
+    }
+
+    /// The users list, in the same card material as the groups beside it.
+    fn render_users(&self, canvas: &Canvas, area: Rect) {
+        let view = crate::panes::account::users();
+        let items: Vec<_> = view
+            .items
+            .iter()
+            .map(|item| {
+                selection_list::SelectionListItem::new(item.name.clone())
+                    .with_subtitle(item.subtitle.clone())
+            })
+            .collect();
+        let layout = SelectionListLayout::compute(items.len(), area);
+        let state = selection_list::SelectionListState {
+            selected: Some(view.selected),
+            can_add: view.can_add,
+            can_remove: view.can_remove,
+            pressed: match self.pressed {
+                Some(Pressed::User(hit)) => Some(hit),
+                _ => None,
+            },
+        };
+        selection_list::draw(
+            canvas,
+            &layout,
+            &items,
+            &state,
+            &self.theme,
+            card_background(self.dark),
+            |canvas, index, square| {
+                let item = &view.items[index];
+                let picture = (!item.picture.is_empty())
+                    .then(|| preview_image(&item.picture))
+                    .flatten();
+                otto_kit::components::avatar::draw(canvas, square, picture.as_ref(), &item.name);
+            },
+        );
+    }
+
+    /// The account header: the selected account's picture and name, and the
+    /// button that changes the picture. `rows_below` draws the separator
+    /// between it and the first row of the card it heads.
+    fn render_account_header(&self, canvas: &Canvas, area: Rect, rows_below: bool) {
+        let header = crate::panes::account::header();
+        let avatar = Rect::from_xywh(
+            area.left + 16.0,
+            area.center_y() - ACCOUNT_AVATAR / 2.0,
+            ACCOUNT_AVATAR,
+            ACCOUNT_AVATAR,
+        );
+        let picture = (!header.picture.is_empty())
+            .then(|| preview_image(&header.picture))
+            .flatten();
+        otto_kit::components::avatar::draw(canvas, avatar, picture.as_ref(), &header.name);
+
+        let choose = account_choose_rect(area);
+        let text_x = avatar.right + 14.0;
+        let room = choose.left - 12.0 - text_x;
+        widgets::text_centered_y(
+            canvas,
+            &otto_kit::typography::ellipsize(&styles::HEADLINE.font(), &header.name, room),
+            text_x,
+            area.center_y() - 10.0,
+            styles::HEADLINE,
+            self.theme.text_primary,
+        );
+        widgets::text_centered_y(
+            canvas,
+            &otto_kit::typography::ellipsize(
+                &styles::FOOTNOTE.font(),
+                otto_kit::t!("settings-account-picture-detail"),
+                room,
+            ),
+            text_x,
+            area.center_y() + 10.0,
+            styles::FOOTNOTE,
+            self.theme.text_secondary,
+        );
+        let pressed = self.pressed == Some(Pressed::Choose(crate::panes::account::PICTURE_ID));
+        widgets::buttons(
+            canvas,
+            choose.right,
+            choose.center_y(),
+            &[choose_label()],
+            pressed.then_some(0),
+            header.can_choose,
+            &self.theme,
+        );
+        if rows_below {
+            widgets::separator(
+                canvas,
+                area.left + 14.0,
+                area.right,
+                area.bottom,
+                &self.theme,
+            );
         }
     }
 
@@ -1945,7 +2171,14 @@ impl Settings {
     fn render_preview(&self, canvas: &Canvas, row: &Row, path: &str, cx: f32, y: f32) {
         let image = preview_image(path);
         let box_rect = preview_box(path, cx, y);
-        let rrect = RRect::new_rect_xy(box_rect, 6.0, 6.0);
+        // A person's picture is shown the way the greeter and the lock screen
+        // show it: round.
+        let radius = if row.id == Some(crate::panes::account::PICTURE_ID) {
+            box_rect.width().min(box_rect.height()) / 2.0
+        } else {
+            6.0
+        };
+        let rrect = RRect::new_rect_xy(box_rect, radius, radius);
 
         canvas.save();
         canvas.clip_rrect(rrect, ClipOp::Intersect, true);

@@ -1991,3 +1991,46 @@ privacy-store-unavailable-detail = Magazyn uprawnień (xdg-permission-store, cz�
 settings-pane-privacy = Prywatność
 
 screencast-picker-remember = Zapamiętaj dla { $app }
+
+## Users pane
+
+settings-pane-account = Użytkownicy
+settings-account-picture = Obraz
+settings-account-picture-detail = Widoczny na ekranie logowania i blokady
+settings-account-choose-picture = Wybierz obraz
+settings-account-picture-unreadable = Ten plik nie jest obrazem, który Otto potrafi odczytać
+settings-account-full-name = Imię i nazwisko
+settings-account-name = Nazwa konta
+settings-account-type = Typ konta
+settings-account-type-administrator = Administrator
+settings-account-type-standard = Standardowe
+settings-account-no-accountsservice = Nie można tego zmienić tutaj: AccountsService nie działa
+settings-account-not-permitted = System nie zezwolił na tę zmianę
+settings-group-password = Hasło
+settings-account-current-password = Obecne hasło
+settings-account-new-password = Nowe hasło
+settings-account-confirm-password = Potwierdź nowe hasło
+settings-account-change-password = Zmień hasło
+settings-account-change-password-ellipsis = Zmień hasło…
+settings-account-password-detail = Służy do logowania, odblokowywania ekranu i zatwierdzania zmian
+settings-account-password-changing = Zmienianie hasła…
+settings-account-password-changed = Hasło zostało zmienione
+settings-account-password-missing = Wpisz obecne hasło i nowe hasło
+settings-account-password-mismatch = Nowe hasła nie są takie same
+settings-account-password-same = Nowe hasło jest takie samo jak obecne
+settings-account-password-wrong-current = Obecne hasło jest nieprawidłowe
+settings-account-password-failed = Nie udało się zmienić hasła
+settings-account-reset-password-ellipsis = Zresetuj hasło…
+settings-account-reset-detail = Ustaw nowe hasło dla tego konta
+settings-account-working = Oczekiwanie na system…
+settings-users-you = { $kind } · Ty
+settings-users-reset-title = Zresetuj hasło użytkownika { $name }
+settings-users-reset-action = Zresetuj hasło
+settings-users-add-title = Dodaj użytkownika
+settings-users-add-action = Dodaj użytkownika
+settings-users-delete-title = Usunąć użytkownika { $name }?
+settings-users-delete-body = Ta osoba nie będzie mogła się już zalogować. Jej katalog domowy zostanie zachowany.
+settings-users-delete-action = Usuń użytkownika
+settings-users-invalid-name = Nazwy kont zaczynają się od małej litery i zawierają tylko a–z, 0–9, - i _
+settings-users-name-taken = Konto o tej nazwie już istnieje
+settings-users-password-missing = Wpisz hasło dla konta

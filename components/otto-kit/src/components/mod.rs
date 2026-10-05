@@ -1,4 +1,5 @@
 pub mod attachments;
+pub mod avatar;
 pub mod button;
 pub mod color_picker;
 pub mod container;
@@ -13,6 +14,7 @@ pub mod menu_bar;
 pub mod menu_item;
 pub mod scroll;
 pub mod selectable_text;
+pub mod selection_list;
 pub mod slider;
 pub mod source_list;
 pub mod stashed;

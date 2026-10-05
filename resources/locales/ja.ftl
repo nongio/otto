@@ -1887,3 +1887,46 @@ privacy-store-unavailable-detail = 権限ストア（xdg-desktop-portal の xdg-
 settings-pane-privacy = プライバシー
 
 screencast-picker-remember = { $app } 用に記憶する
+
+## Users pane
+
+settings-pane-account = ユーザ
+settings-account-picture = 画像
+settings-account-picture-detail = ログイン画面とロック画面に表示されます
+settings-account-choose-picture = 画像を選択
+settings-account-picture-unreadable = このファイルは Otto で読み込める画像ではありません
+settings-account-full-name = フルネーム
+settings-account-name = アカウント名
+settings-account-type = アカウントの種類
+settings-account-type-administrator = 管理者
+settings-account-type-standard = 通常
+settings-account-no-accountsservice = ここでは変更できません: AccountsService が実行されていません
+settings-account-not-permitted = システムがこの変更を許可しませんでした
+settings-group-password = パスワード
+settings-account-current-password = 現在のパスワード
+settings-account-new-password = 新しいパスワード
+settings-account-confirm-password = 新しいパスワードを確認
+settings-account-change-password = パスワードを変更
+settings-account-change-password-ellipsis = パスワードを変更…
+settings-account-password-detail = ログイン、画面のロック解除、変更の承認に使用します
+settings-account-password-changing = パスワードを変更しています…
+settings-account-password-changed = パスワードを変更しました
+settings-account-password-missing = 現在のパスワードと新しいパスワードを入力してください
+settings-account-password-mismatch = 新しいパスワードが一致しません
+settings-account-password-same = 新しいパスワードが現在のものと同じです
+settings-account-password-wrong-current = 現在のパスワードが正しくありません
+settings-account-password-failed = パスワードを変更できませんでした
+settings-account-reset-password-ellipsis = パスワードをリセット…
+settings-account-reset-detail = このアカウントに新しいパスワードを設定します
+settings-account-working = システムを待っています…
+settings-users-you = { $kind } · あなた
+settings-users-reset-title = { $name } のパスワードをリセット
+settings-users-reset-action = パスワードをリセット
+settings-users-add-title = ユーザを追加
+settings-users-add-action = ユーザを追加
+settings-users-delete-title = { $name } を削除しますか?
+settings-users-delete-body = このユーザはログインできなくなります。ホームフォルダは残ります。
+settings-users-delete-action = ユーザを削除
+settings-users-invalid-name = アカウント名は英小文字で始まり、a–z、0–9、- と _ のみ使用できます
+settings-users-name-taken = その名前のアカウントはすでにあります
+settings-users-password-missing = アカウントのパスワードを入力してください

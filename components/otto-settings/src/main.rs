@@ -19,6 +19,7 @@ mod model;
 mod panes;
 mod preview;
 mod settings_client;
+mod sheet;
 mod theme_preview;
 mod view;
 mod widgets;
@@ -34,6 +35,7 @@ use otto_kit::clipboard;
 use otto_kit::components::color_picker::{ColorPickerPopup, Swatch};
 use otto_kit::components::dropdown::DropdownMenu;
 use otto_kit::components::scroll::{Axis, ScrollContent, ScrollPane};
+use otto_kit::components::selection_list::SelectionListHit;
 use otto_kit::components::text_input::{self, KeyMods, TextInput, TextInputKey, TextInputResponse};
 use otto_kit::components::titlebar::{WindowControl, WindowControlsState};
 use otto_kit::components::window::resize;
@@ -50,6 +52,9 @@ use view::{Settings, ShortcutHit, WINDOW_H, WINDOW_W};
 
 struct SettingsApp {
     window: Option<Window>,
+    /// The Change Password sheet's surface while the sheet is up, and the
+    /// window size it was last drawn at. See [`sheet`].
+    sheet: Option<(otto_kit::surfaces::SubsurfaceSurface, (f32, f32))>,
     /// Shared with the draw and pointer callbacks, which outlive this struct's
     /// borrow of itself.
     selected: Arc<Mutex<usize>>,
@@ -562,6 +567,8 @@ fn open_menu(
     let choices: Vec<discovery::Choice> =
         if let Some(choices) = panes::privacy::menu_choices(select.id) {
             choices
+        } else if let Some(choices) = panes::account::menu_choices(select.id) {
+            choices
         } else if let Some(choices) = panes::keyboard_layouts::menu_choices(select.id) {
             choices
         } else if let Some(choices) = panes::desk::menu_choices(select.id) {
@@ -638,6 +645,7 @@ fn open_menu(
         move |index| {
             if let Some(value) = values.get(index) {
                 if panes::privacy::choose(id, value)
+                    || panes::account::choose(id, value)
                     || panes::keyboard_layouts::choose(id, value)
                     || panes::desk::choose(id, value)
                 {
@@ -688,6 +696,7 @@ fn released_on(settings: &Settings, held: view::Pressed, x: f32, y: f32, offset:
             Some(view::ShortcutHit::Remove(hit)) if hit == index
         ),
         view::Pressed::RemoveRow(id) => settings.row_remove_hit(x, y, offset) == Some(id),
+        view::Pressed::User(hit) => settings.users_hit(x, y, offset) == Some(hit),
         view::Pressed::Add => matches!(
             settings.shortcut_hit(x, y, offset),
             Some(view::ShortcutHit::Add)
@@ -710,6 +719,12 @@ fn activate(held: view::Pressed, editing: &Arc<Mutex<Option<Editing>>>) {
         view::Pressed::Button { row, button } => {
             panes::displays::press(row, button);
             panes::general::press(row, button);
+            panes::account::press(row, button);
+            // Change Password… opened the sheet: the keyboard goes straight
+            // to its first field.
+            if panes::account::take_sheet_opened() {
+                focus_sheet_field(editing, 0);
+            }
             panes::agents::press(row, button);
             panes::search::press(row, button);
             panes::desk::press(row, button);
@@ -738,6 +753,14 @@ fn activate(held: view::Pressed, editing: &Arc<Mutex<Option<Editing>>>) {
             keyboard::remove(index);
         }
         view::Pressed::Add => keyboard::add(),
+        // The users list's + and −: their sheets take the keyboard straight
+        // away, as Change Password…'s does.
+        view::Pressed::User(hit) => {
+            panes::account::activate(hit);
+            if panes::account::take_sheet_opened() {
+                focus_sheet_field(editing, 0);
+            }
+        }
         view::Pressed::RemoveRow(id) => {
             panes::keyboard_layouts::remove(id);
             panes::search::remove(id);
@@ -790,6 +813,10 @@ fn apply(id: &str, value: settings_client::Value) {
     if panes::privacy::apply(id, &value) {
         return;
     }
+    // The account picture goes to AccountsService, not to a setting.
+    if panes::account::apply(id, &value) {
+        return;
+    }
     // The desk's icon size is in files.toml, not a setting.
     if panes::desk::apply(id, &value) {
         return;
@@ -835,8 +862,8 @@ fn open_file_picker(id: &'static str) {
     let spawned = std::thread::Builder::new()
         .name("file-picker".into())
         .spawn(move || {
-            // Wallpapers are the only file setting so far, so the filter is
-            // written here. When a second one appears this belongs on the row.
+            // Both file rows — the wallpaper and the account picture — take an
+            // image, so the filter is written here rather than on the row.
             let filters: &[(&str, &[&str])] = &[
                 (
                     "Images",
@@ -845,8 +872,12 @@ fn open_file_picker(id: &'static str) {
                 ("All Files", &["*"]),
             ];
 
-            match file_picker::open_file(otto_kit::t!("settings-choose-background-image"), filters)
-            {
+            let title = if id == panes::account::PICTURE_ID {
+                otto_kit::t!("settings-account-choose-picture")
+            } else {
+                otto_kit::t!("settings-choose-background-image")
+            };
+            match file_picker::open_file(title, filters) {
                 file_picker::Outcome::Chosen(paths) => {
                     if let Some(path) = paths.first() {
                         apply(
@@ -1131,6 +1162,92 @@ fn text_input_style(dark: bool) -> TextInputStyle {
     style
 }
 
+/// Put the keyboard in the sheet's `index`th field, committing the one it
+/// was in.
+fn focus_sheet_field(editing: &Arc<Mutex<Option<Editing>>>, index: usize) {
+    let Some(&id) = panes::account::sheet_fields().get(index) else {
+        return;
+    };
+    commit_edit(editing);
+    start_edit(
+        editing,
+        EditTarget::Setting(id),
+        panes::account::field_value(id),
+        f32::MAX,
+        sheet::FIELD_W,
+        current_color_scheme() == ColorScheme::Dark,
+    );
+}
+
+/// Which of the sheet's fields has the keyboard, if one does.
+fn sheet_field_index(editing: &Arc<Mutex<Option<Editing>>>) -> Option<usize> {
+    match editing.lock().unwrap().as_ref()?.target {
+        EditTarget::Setting(id) => panes::account::sheet_fields()
+            .iter()
+            .position(|field| *field == id),
+        _ => None,
+    }
+}
+
+/// A press while the password sheet is up. The sheet is modal, so every press
+/// is its own — one on the window behind it only takes the keyboard out of
+/// the field it was in. Returns whether the sheet was up.
+fn press_sheet(
+    size: &Arc<Mutex<(f32, f32)>>,
+    editing: &Arc<Mutex<Option<Editing>>>,
+    x: f32,
+    y: f32,
+) -> bool {
+    let Some(view) = panes::account::sheet() else {
+        return false;
+    };
+    let (width, height) = *size.lock().unwrap();
+    match sheet::hit(width, height, &view, x, y) {
+        sheet::SheetHit::Field { id, local_x } => {
+            let target = EditTarget::Setting(id);
+            {
+                let mut current = editing.lock().unwrap();
+                if let Some(edit) = current.as_mut().filter(|edit| edit.target == target) {
+                    // A second press in the open field moves the caret.
+                    edit.input.on_pointer_down(local_x, 1, false);
+                    return true;
+                }
+            }
+            commit_edit(editing);
+            start_edit(
+                editing,
+                target,
+                panes::account::field_value(id),
+                local_x,
+                sheet::FIELD_W,
+                current_color_scheme() == ColorScheme::Dark,
+            );
+        }
+        sheet::SheetHit::Cancel => {
+            cancel_edit(editing);
+            panes::account::close_sheet();
+        }
+        sheet::SheetHit::Action => {
+            commit_edit(editing);
+            panes::account::submit();
+        }
+        sheet::SheetHit::Card | sheet::SheetHit::Outside => {
+            commit_edit(editing);
+        }
+    }
+    true
+}
+
+/// Give `surface` an empty input region, so the pointer passes through it to
+/// the window. The compositor copies the region, so it goes straight away.
+fn set_empty_input_region(surface: &wl_surface::WlSurface) {
+    let region = AppContext::compositor_state()
+        .wl_compositor()
+        .create_region(AppContext::queue_handle(), ());
+    surface.set_input_region(Some(&region));
+    region.destroy();
+}
+
 /// Send what a field currently holds and stop editing.
 ///
 /// Returns whether there was anything to commit, so a caller can skip a
@@ -1141,6 +1258,9 @@ fn commit_edit(editing: &Arc<Mutex<Option<Editing>>>) -> bool {
     };
     match edit.target {
         EditTarget::Setting(id) if agents::owns(id) => agents::commit_text(id, edit.input.value()),
+        EditTarget::Setting(id) if panes::account::owns(id) => {
+            panes::account::commit_text(id, edit.input.value())
+        }
         EditTarget::Setting(id) => apply(id, settings_client::text_for(id, edit.input.value())),
         // Trimmed because the compositor's trigger parser splits on `+` and
         // trims each part, so surrounding space is noise either way — better
@@ -1167,6 +1287,8 @@ fn start_edit(
 ) {
     let mut input =
         TextInput::new(value, text_input_style(dark)).with_size(width, widgets::CONTROL_H);
+    input.state.password =
+        matches!(target, EditTarget::Setting(id) if panes::account::is_secret(id));
     input.state.set_focused(true);
     input.on_pointer_down(offset_x, 1, false);
     *editing.lock().unwrap() = Some(Editing { target, input });
@@ -1185,6 +1307,80 @@ fn cancel_edit(editing: &Arc<Mutex<Option<Editing>>>) -> bool {
 const IDLE_TICK: std::time::Duration = std::time::Duration::from_millis(8);
 
 impl SettingsApp {
+    /// Bring the password sheet's surface in line with the account pane: made
+    /// when the sheet opens, dropped when it closes, and repainted when what
+    /// it shows has changed (`changed`, the pane's own repaint signal, which a
+    /// caret blink and every keystroke also raise) or the window was resized.
+    fn sync_sheet(&mut self, changed: bool) {
+        let Some(view) = panes::account::sheet() else {
+            if let Some((mut surface, _)) = self.sheet.take() {
+                surface.destroy();
+                // A field left open in a sheet that is gone has nowhere to go.
+                if sheet_field_index(&self.editing).is_some() {
+                    cancel_edit(&self.editing);
+                }
+                if let Some(window) = self.window.as_ref() {
+                    window.request_frame();
+                }
+            }
+            return;
+        };
+
+        let size = *self.size.lock().unwrap();
+        let created = self.sheet.is_none();
+        if created {
+            let Some(parent) = self.window.as_ref().and_then(Window::wl_surface) else {
+                return;
+            };
+            // Made after the pane's subsurfaces, so it is stacked above them.
+            match otto_kit::surfaces::SubsurfaceSurface::new(
+                &parent,
+                0,
+                0,
+                size.0 as i32,
+                size.1 as i32,
+            ) {
+                Ok(surface) => {
+                    set_empty_input_region(surface.base_surface().wl_surface());
+                    self.sheet = Some((surface, size));
+                }
+                Err(err) => {
+                    eprintln!("settings: cannot show the password sheet ({err})");
+                    return;
+                }
+            }
+        }
+        let Some((surface, drawn)) = self.sheet.as_mut() else {
+            return;
+        };
+        let resized = *drawn != size;
+        if resized {
+            surface.resize(size.0 as i32, size.1 as i32);
+            *drawn = size;
+        }
+        if !(created || resized || changed) {
+            return;
+        }
+
+        let dark = current_color_scheme() == ColorScheme::Dark;
+        let editing = self.editing.lock().unwrap();
+        let editor = editing.as_ref().and_then(|edit| match edit.target {
+            EditTarget::Setting(id) if panes::account::sheet_fields().contains(&id) => {
+                Some((id, &edit.input))
+            }
+            _ => None,
+        });
+        surface.draw(|canvas| sheet::paint(canvas, size.0, size.1, dark, &view, editor));
+        drop(editing);
+        // A new subsurface's place is part of the window's state, and only
+        // takes effect when the window commits.
+        if created {
+            if let Some(window) = self.window.as_ref() {
+                window.request_frame();
+            }
+        }
+    }
+
     /// Bring the pane in line with the model: where the viewport is, how tall
     /// the content is, and where the scroll has put it.
     ///
@@ -1290,6 +1486,17 @@ impl SettingsApp {
         // separate controls, so each is its own stop.
         let selected = *self.selected.lock().unwrap();
         let sidebar = view::sidebar_item_rect(selected.min(panes.saturating_sub(1)));
+
+        // A sheet is modal: nothing behind it is a stop. With the ring empty
+        // the toolkit leaves Tab alone, so it reaches the sheet's own handler,
+        // which walks the sheet's fields.
+        if panes::account::sheet().is_some() {
+            AppContext::with_focus_ring(&surface, |ring| {
+                ring.begin();
+                ring.end();
+            });
+            return;
+        }
 
         AppContext::with_focus_ring(&surface, |ring| {
             ring.begin();
@@ -1717,7 +1924,11 @@ impl App for SettingsApp {
                             continue;
                         }
 
-                        // Everything else the chrome owns is the sidebar.
+                        // Everything else the chrome owns is the sidebar,
+                        // which is behind the password sheet while it is up.
+                        if panes::account::sheet().is_some() {
+                            continue;
+                        }
                         if let Some(index) = view::pane_at(x, y) {
                             let mut current = selected.lock().unwrap();
                             if *current != index {
@@ -1752,7 +1963,13 @@ impl App for SettingsApp {
                     }
                     // A wheel anywhere over the window scrolls the pane; the
                     // pane handler leaves it to this one.
-                    PointerEventKind::Axis { vertical, .. } => handle_wheel(&pane, vertical),
+                    // Not while the password sheet is up: the pane behind it
+                    // stays where it was.
+                    PointerEventKind::Axis { vertical, .. } => {
+                        if panes::account::sheet().is_none() {
+                            handle_wheel(&pane, vertical);
+                        }
+                    }
                     PointerEventKind::Release { .. } => {
                         let win_w = size_hit.lock().unwrap().0;
                         let control = view::titlebar_control_at(x, y, win_w);
@@ -1822,6 +2039,10 @@ impl App for SettingsApp {
                 match &event.kind {
                     PointerEventKind::Press { serial, .. } => {
                         note_input_serial(*serial);
+                        if press_sheet(&size_hit, &editing_hit, x, y) {
+                            mark_pane_dirty(&pane_dirty);
+                            continue;
+                        }
                         if !in_pane(&size_hit, x, y) {
                             continue;
                         }
@@ -1971,6 +2192,17 @@ impl App for SettingsApp {
                                 event_serial(&event.kind),
                                 settings.dark,
                             );
+                            mark_pane_dirty(&pane_dirty);
+                        } else if let Some(hit) = settings.users_hit(x, y, offset) {
+                            // Picking someone in the users list shows them at
+                            // once, as the sidebar does; + and − act on
+                            // release, like every other push button.
+                            if matches!(hit, SelectionListHit::Item(_)) {
+                                commit_edit(&editing_hit);
+                                panes::account::press_list(hit);
+                            } else {
+                                *pressed_hit.lock().unwrap() = Some(view::Pressed::User(hit));
+                            }
                             mark_pane_dirty(&pane_dirty);
                         } else if let Some(id) = settings.row_remove_hit(x, y, offset) {
                             // Acts on release, like every other push button.
@@ -2302,6 +2534,7 @@ impl App for SettingsApp {
             | agents::take_service_dirty()
             | panes::search::take_dirty()
             | panes::desk::take_dirty()
+            | panes::account::take_dirty()
         {
             // Values, not chrome: only the pane has to be repainted.
             mark_pane_dirty(&self.pane_dirty);
@@ -2351,6 +2584,7 @@ impl App for SettingsApp {
         if changed || animating || self.pane_busy {
             self.sync_pane();
         }
+        self.sync_sheet(changed);
     }
 
     /// Modifier state, saved for the key press it belongs to.
@@ -2471,6 +2705,50 @@ impl App for SettingsApp {
                 window.request_frame();
             }
             return;
+        }
+
+        // The password sheet is up, and modal: Escape closes it, Tab walks its
+        // fields, Enter moves on to the next one or, from the last, changes
+        // the password. Anything else is typing for the field that has the
+        // keyboard, and nothing reaches the pane behind.
+        if panes::account::sheet().is_some() {
+            let fields = panes::account::sheet_fields().len();
+            let at = sheet_field_index(&self.editing);
+            let back = self.modifiers.lock().unwrap().shift || event.keysym == Keysym::ISO_Left_Tab;
+            let handled = match event.keysym {
+                Keysym::Escape => {
+                    cancel_edit(&self.editing);
+                    panes::account::close_sheet();
+                    true
+                }
+                Keysym::Tab | Keysym::ISO_Left_Tab if fields > 0 => {
+                    let next = match at {
+                        Some(i) if back => (i + fields - 1) % fields,
+                        Some(i) => (i + 1) % fields,
+                        None => 0,
+                    };
+                    focus_sheet_field(&self.editing, next);
+                    true
+                }
+                Keysym::Return | Keysym::KP_Enter => {
+                    match at {
+                        Some(i) if i + 1 < fields => focus_sheet_field(&self.editing, i + 1),
+                        _ => {
+                            commit_edit(&self.editing);
+                            panes::account::submit();
+                        }
+                    }
+                    true
+                }
+                _ => false,
+            };
+            if handled {
+                mark_pane_dirty(&self.pane_dirty);
+                return;
+            }
+            if at.is_none() {
+                return;
+            }
         }
 
         // Nothing is being typed into: the key belongs to whatever the keyboard
@@ -2796,6 +3074,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     AppRunner::new(SettingsApp {
         window: None,
+        sheet: None,
         selected: Arc::new(Mutex::new(first_pane)),
         pane: Rc::new(RefCell::new(None)),
         // The pane has never been painted, so the first update has to.

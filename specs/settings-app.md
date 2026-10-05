@@ -368,6 +368,60 @@ caused it.
 The window presents a list of panes and the selected pane's contents. The panes
 are:
 
+- **Users** — the first pane, and not Otto settings: everyone who can log in.
+  It is a list and a detail. The users list (otto-kit's `selection_list`) sits
+  left of the detail — above it when the pane is narrower than 560pt — with
+  you first, then the others by name; each row has the account's avatar
+  (otto-kit's `avatar`: the picture, else initials on a color picked from the
+  name), its name, and its type ("Administrator · You"). Picking one shows it
+  at once. Its footer's **+** and **−** are live for an administrator only, and
+  − never for yourself.
+  The detail opens with a header — the avatar, the name and **Choose…** for the
+  picture — in the same card as Full name, Account name and Account type
+  (Administrator or Standard), then a Password group. Names and pictures are
+  the system's, and are written through AccountsService (`SetRealName`,
+  `SetIconFile`) — where the greeter and the lock screen read them back from.
+  Your own picture is cut to a centered 256-pixel square, written to `~/.face`
+  and handed to the service from there, so display managers that read
+  `~/.face` agree; another account's is cut to a scratch file in the runtime
+  directory, handed over and removed. Where AccountsService is not running,
+  only you are listed, shown but not editable, and the name row says why.
+  For another account an administrator may also change its type (a pop-up;
+  `SetAccountType` — never your own, so the machine cannot be left without
+  one) and its password: **Reset Password…** opens a sheet with New password
+  and Confirm, hashed with `openssl passwd -6` and set with `SetPassword`.
+  **+** opens **Add User**: Full name, Account name (suggested from the full
+  name's first word while empty), Password and Confirm; the account name must
+  be one `useradd` takes and not already listed. It is created as Standard
+  with `CreateUser`, then given its password, and selected. **−** asks
+  **Delete <name>?** and deletes with `DeleteUser`, keeping the home folder.
+  Everything done to another account is user administration, which polkit
+  asks an administrator to approve through the session's agent; the sheet says
+  it is waiting meanwhile, and a refusal is shown under its fields.
+  Your own Password row's **Change Password…** button opens a sheet: a card
+  over the dimmed window with Current password, New password and Confirm new
+  password, and Cancel / Change Password. Every sheet of the pane has this
+  shape — a title, a paragraph or fields, Cancel and a default button (red for
+  Delete User). It is modal — the sidebar, the pane
+  and the scroll wheel do nothing behind it. It is drawn on a subsurface
+  stacked above the pane's, with an empty input region, so the pointer and
+  keyboard stay on the window and its fields use the app's ordinary text
+  editor in password mode (dots, no copy, no value given to assistive
+  technologies). The keyboard starts in the first field; Tab and Shift-Tab
+  walk the fields, Enter moves to the next one and from the last one presses
+  the default button, Escape cancels.
+  Change Password checks that all are filled, that the new ones match and
+  differ from the current one, then runs `passwd` on a thread of its own and
+  answers its prompts over a pipe — current password, then the new one twice.
+  A prompt is recognised by shape (output ending in a colon with no line
+  break), not wording, so the user's locale is kept and a refusal comes back
+  in their language. The passwords leave the sheet when the attempt starts and
+  are never passed as arguments. On success the sheet closes and the row says
+  so; otherwise it stays up with the reason under the fields: a wrong current
+  password (`passwd` stopping after the first answer), the quality module's
+  `BAD PASSWORD: …`, or `passwd`'s own line. A fourth prompt — a quality
+  module asking again — is not answered. Cancel and Escape do nothing while
+  the change is underway.
 - **General** — the app switcher's display, the display language, which is
   what every part of Otto localises itself against, the renderer (see below)
   and where the configuration file is. The language requires a restart to take

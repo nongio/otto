@@ -1891,3 +1891,46 @@ privacy-store-unavailable-detail = 权限存储（xdg-desktop-portal 中的 xdg-
 settings-pane-privacy = 隐私
 
 screencast-picker-remember = 为 { $app } 记住
+
+## Users pane
+
+settings-pane-account = 用户
+settings-account-picture = 头像
+settings-account-picture-detail = 显示在登录和锁屏界面上
+settings-account-choose-picture = 选择头像
+settings-account-picture-unreadable = 该文件不是 Otto 能读取的图像
+settings-account-full-name = 全名
+settings-account-name = 账户名
+settings-account-type = 账户类型
+settings-account-type-administrator = 管理员
+settings-account-type-standard = 标准
+settings-account-no-accountsservice = 无法在此更改：AccountsService 未运行
+settings-account-not-permitted = 系统不允许此更改
+settings-group-password = 密码
+settings-account-current-password = 当前密码
+settings-account-new-password = 新密码
+settings-account-confirm-password = 确认新密码
+settings-account-change-password = 更改密码
+settings-account-change-password-ellipsis = 更改密码…
+settings-account-password-detail = 用于登录、解锁屏幕和批准更改
+settings-account-password-changing = 正在更改密码…
+settings-account-password-changed = 密码已更改
+settings-account-password-missing = 请输入当前密码和新密码
+settings-account-password-mismatch = 两次输入的新密码不一致
+settings-account-password-same = 新密码与当前密码相同
+settings-account-password-wrong-current = 当前密码错误
+settings-account-password-failed = 无法更改密码
+settings-account-reset-password-ellipsis = 重置密码…
+settings-account-reset-detail = 为此账户设置新密码
+settings-account-working = 正在等待系统…
+settings-users-you = { $kind } · 你
+settings-users-reset-title = 重置 { $name } 的密码
+settings-users-reset-action = 重置密码
+settings-users-add-title = 添加用户
+settings-users-add-action = 添加用户
+settings-users-delete-title = 删除 { $name }？
+settings-users-delete-body = 该用户将无法再登录。其个人文件夹会保留。
+settings-users-delete-action = 删除用户
+settings-users-invalid-name = 账户名须以小写字母开头，且只能包含 a–z、0–9、- 和 _
+settings-users-name-taken = 已存在同名账户
+settings-users-password-missing = 请为该账户输入密码
