@@ -360,7 +360,7 @@ pub const PRIVACY_PANE: usize = 11;
 
 /// Where the Agents pane sits in [`panes`]: it watches its service only while
 /// it is on screen.
-pub const AGENTS_PANE: usize = 12;
+pub const AGENTS_PANE: usize = 13;
 
 pub(crate) fn group(title: impl Into<Cow<'static, str>>, rows: Vec<Row>) -> Group {
     Group {

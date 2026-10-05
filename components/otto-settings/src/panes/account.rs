@@ -1119,7 +1119,7 @@ fn user_proxy<'a>(
 
 fn call<B>(object: &str, method: &str, body: &B) -> Result<(), String>
 where
-    B: serde::ser::Serialize + zbus::zvariant::DynamicType,
+    B: zbus::export::serde::ser::Serialize + zbus::zvariant::DynamicType,
 {
     administer::<_, ()>(object, USER_INTERFACE, method, body).map(|_| ())
 }
@@ -1140,7 +1140,7 @@ fn administer<B, R>(
     body: &B,
 ) -> Result<Option<R>, String>
 where
-    B: serde::ser::Serialize + zbus::zvariant::DynamicType,
+    B: zbus::export::serde::ser::Serialize + zbus::zvariant::DynamicType,
     R: for<'d> zbus::zvariant::DynamicDeserialize<'d>,
 {
     let connection = zbus::blocking::Connection::system().map_err(|e| e.to_string())?;

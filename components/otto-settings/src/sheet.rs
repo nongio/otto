@@ -182,7 +182,8 @@ pub fn paint(
     canvas.save();
     canvas.clip_rrect(card, ClipOp::Intersect, true);
 
-    let title = widgets::elide_tail(&view.title, styles::HEADLINE, CARD_W - PAD * 2.0);
+    let title =
+        otto_kit::typography::ellipsize(&styles::HEADLINE.font(), &view.title, CARD_W - PAD * 2.0);
     widgets::text_centered_y(
         canvas,
         &title,

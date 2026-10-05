@@ -2117,7 +2117,7 @@ impl Settings {
         let room = choose.left - 12.0 - text_x;
         widgets::text_centered_y(
             canvas,
-            &widgets::elide_tail(&header.name, styles::HEADLINE, room),
+            &otto_kit::typography::ellipsize(&styles::HEADLINE.font(), &header.name, room),
             text_x,
             area.center_y() - 10.0,
             styles::HEADLINE,
@@ -2125,9 +2125,9 @@ impl Settings {
         );
         widgets::text_centered_y(
             canvas,
-            &widgets::elide_tail(
+            &otto_kit::typography::ellipsize(
+                &styles::FOOTNOTE.font(),
                 otto_kit::t!("settings-account-picture-detail"),
-                styles::FOOTNOTE,
                 room,
             ),
             text_x,
