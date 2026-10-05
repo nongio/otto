@@ -24,13 +24,37 @@
 //!
 //! - `.Trash-$uid`, or `$uid` under `.Trash`, is a real directory (not a
 //!   symlink), owned by the user, and not writable by group or others;
-//! - `.Trash` itself, for the shared layout, is a real, sticky directory;
+//! - `.Trash` itself, for the shared layout, is a real, sticky directory
+//!   owned by root or by the user;
 //! - `files/` and `info/`, when present, pass the same test as the can, and
 //!   `directorysizes`, when present, is a regular file of the user's.
 //!
-//! Every operation then works relative to directory descriptors opened with
-//! `O_NOFOLLOW` along that walk, so nothing can be swapped for a symlink
-//! between the check and the use.
+//! What then works by descriptor, from directories opened with `O_NOFOLLOW`
+//! along that walk, so that nothing swapped for a symlink after the check is
+//! followed:
+//!
+//! - trashing: the sidecar is created (`O_EXCL`) in the checked `info/`, the
+//!   item renamed into the checked `files/`;
+//! - deleting forever and emptying ([`delete_forever`]): a walk down from the
+//!   checked `files/` that never follows a symlink, never enters another
+//!   device and stops 512 levels down;
+//! - putting back ([`restore`]): from the topdir down to the origin's parent,
+//!   each directory opened or made without following a symlink, the item
+//!   renamed (never copied) out of the checked `files/`, nothing replaced;
+//! - reading sidecars ([`Can::origin`], [`Can::origins`]) and
+//!   `directorysizes`: opened under the checked directory with
+//!   `O_NOFOLLOW | O_NONBLOCK`, read only when a regular file under a size
+//!   cap;
+//! - rewriting `directorysizes`: a temporary created with `O_EXCL`, renamed
+//!   within the can.
+//!
+//! What still goes by path, after the check: listing a can's `files/` (a
+//! read-only `readdir` and `stat` of each entry, by whoever shows the
+//! trash), watching it with inotify, and the size walk of a freshly
+//! trashed folder (`lstat` only, never following a symlink). None of them
+//! writes or deletes anything. The home trash is the user's own, may be
+//! reached through a symlink, and is trashed into and put back from by
+//! path.
 //!
 //! The spec is <https://specifications.freedesktop.org/trash/latest/>.
 
@@ -210,8 +234,47 @@ impl Can {
     /// As [`Self::origin_in`], and [`BadOrigin::Unknown`] when there is no
     /// sidecar to read.
     pub fn origin(&self, name: &OsStr) -> Result<PathBuf, BadOrigin> {
-        let body = std::fs::read_to_string(self.sidecar(name)).map_err(|_| BadOrigin::Unknown)?;
+        let can = self.open(false).map_err(|_| BadOrigin::Unknown)?;
+        let info = self
+            .subdir(&can, "info", false)
+            .map_err(|_| BadOrigin::Unknown)?;
+        let body = read_small_at(info.as_fd(), &sidecar_name(name), SIDECAR_LIMIT)
+            .map_err(|_| BadOrigin::Unknown)?;
         self.origin_in(&body)
+    }
+
+    /// Every sidecar in the can's `info/` that records an origin this can may
+    /// send an item back to, as trashed name → origin.
+    ///
+    /// Read from the checked `info/` descriptor, one sidecar at a time, each
+    /// opened without following a symlink or blocking on a FIFO and skipped
+    /// when it is not a regular file of at most [`SIDECAR_LIMIT`] bytes. A
+    /// sidecar that cannot be read, or records nothing usable, is left out:
+    /// its item is still in the trash, just without an origin.
+    pub fn origins(&self) -> Vec<(OsString, PathBuf)> {
+        let Ok(can) = self.open(false) else {
+            return Vec::new();
+        };
+        let Ok(info) = self.subdir(&can, "info", false) else {
+            return Vec::new();
+        };
+        let Ok(dir) = rfs::Dir::read_from(&info) else {
+            return Vec::new();
+        };
+        let mut found = Vec::new();
+        for entry in dir.flatten() {
+            let file = OsStr::from_bytes(entry.file_name().to_bytes()).to_os_string();
+            let Some(name) = file.as_bytes().strip_suffix(b".trashinfo") else {
+                continue;
+            };
+            let Ok(body) = read_small_at(info.as_fd(), &file, SIDECAR_LIMIT) else {
+                continue;
+            };
+            if let Ok(origin) = self.origin_in(&body) {
+                found.push((OsStr::from_bytes(name).to_os_string(), origin));
+            }
+        }
+        found
     }
 
     /// The origin a sidecar's body records, resolved against [`Self::base`]
@@ -286,8 +349,13 @@ impl Can {
         )?;
         let parent = if *shared {
             let shared = rfs::openat(&top, ".Trash", DIR_FLAGS, Mode::empty())?;
-            if !is_sticky_dir(&rfs::fstat(&shared)?) {
-                return Err(refused("$topdir/.Trash is not a sticky directory"));
+            let stat = rfs::fstat(&shared)?;
+            // Sticky, so nobody can take this user's directory out of it,
+            // and root's or this user's own, so nobody else can rename it.
+            if !is_sticky_dir(&stat) || (stat.st_uid != 0 && stat.st_uid != *uid) {
+                return Err(refused(
+                    "$topdir/.Trash is not a sticky directory of root's or the user's",
+                ));
             }
             shared
         } else {
@@ -417,22 +485,11 @@ fn sidecar_name(name: &OsStr) -> OsString {
 /// The temporary is created with `O_EXCL | O_NOFOLLOW`, so a name planted in
 /// advance (a symlink to a file of the user's) is never written through.
 fn update_directory_sizes(can: &OwnedFd, name: &OsStr, entry: Option<(u64, i64)>) {
-    let read = rfs::openat(
-        can,
-        "directorysizes",
-        OFlags::RDONLY | OFlags::CLOEXEC | OFlags::NOFOLLOW,
-        Mode::empty(),
-    );
-    let existing = match read {
-        Ok(fd) => {
-            let mut text = String::new();
-            if File::from(fd).read_to_string(&mut text).is_err() {
-                return;
-            }
-            text
-        }
-        Err(Errno::NOENT) if entry.is_none() => return,
-        Err(Errno::NOENT) => String::new(),
+    let existing = match read_small_at(can.as_fd(), OsStr::new("directorysizes"), SIZES_LIMIT) {
+        Ok(text) => text,
+        Err(err) if err.kind() == io::ErrorKind::NotFound && entry.is_none() => return,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => String::new(),
+        // Not a file, or one too big to be a cache worth rewriting.
         Err(_) => return,
     };
     let mut out = String::with_capacity(existing.len() + 64);
@@ -483,6 +540,36 @@ fn update_directory_sizes(can: &OwnedFd, name: &OsStr, entry: Option<(u64, i64)>
         }
         return;
     }
+}
+
+/// The most a `.trashinfo` is read for: one path and a date, with room to
+/// spare. Anything larger is not a sidecar.
+const SIDECAR_LIMIT: u64 = 64 * 1024;
+
+/// The most `directorysizes` is read for. A cache larger than this is left
+/// alone rather than read into memory and rewritten.
+const SIZES_LIMIT: u64 = 4 * 1024 * 1024;
+
+/// The text of `name` under `dir`, when it is a regular file of at most
+/// `limit` bytes. Opened with `O_NOFOLLOW`, so a symlink is refused, and
+/// `O_NONBLOCK`, so a FIFO planted under the name cannot hang the reader.
+fn read_small_at(dir: BorrowedFd<'_>, name: &OsStr, limit: u64) -> io::Result<String> {
+    let fd = rfs::openat(
+        dir,
+        name,
+        OFlags::RDONLY | OFlags::CLOEXEC | OFlags::NOFOLLOW | OFlags::NONBLOCK,
+        Mode::empty(),
+    )?;
+    let stat = rfs::fstat(&fd)?;
+    if FileType::from_raw_mode(stat.st_mode) != FileType::RegularFile {
+        return Err(refused("not a regular file"));
+    }
+    if u64::try_from(stat.st_size).map_or(true, |size| size > limit) {
+        return Err(refused("too large"));
+    }
+    let mut text = String::new();
+    File::from(fd).take(limit).read_to_string(&mut text)?;
+    Ok(text)
 }
 
 /// Numbers the temporary files [`update_directory_sizes`] writes.
@@ -698,12 +785,22 @@ fn delete_forever_as(item: &Path, uid: u32) -> Result<(), String> {
         .map_err(|e| e.to_string())?;
     let mut parts: Vec<&OsStr> = relative.iter().collect();
     let name = parts.pop().ok_or_else(|| "not in the trash".to_string())?;
+    let device = rfs::fstat(&files)
+        .map_err(|e| io::Error::from(e).to_string())?
+        .st_dev;
     let mut parent = files;
     for part in parts {
         parent = rfs::openat(&parent, part, DIR_FLAGS, Mode::empty())
             .map_err(|e| io::Error::from(e).to_string())?;
+        if rfs::fstat(&parent)
+            .map_err(|e| io::Error::from(e).to_string())?
+            .st_dev
+            != device
+        {
+            return Err("a mount point inside the trash".to_string());
+        }
     }
-    remove_tree_at(parent.as_fd(), name).map_err(|e| e.to_string())?;
+    remove_tree_at(parent.as_fd(), name, device, 0).map_err(|e| e.to_string())?;
     if relative.components().count() == 1 {
         if let Ok(info) = can.subdir(&dir, "info", false) {
             rfs::unlinkat(&info, sidecar_name(name).as_os_str(), AtFlags::empty()).ok();
@@ -713,14 +810,140 @@ fn delete_forever_as(item: &Path, uid: u32) -> Result<(), String> {
     Ok(())
 }
 
+/// How deep [`remove_tree_at`] goes before giving up: each level holds a
+/// descriptor open, and nothing a person trashed is nested this far.
+const REMOVE_DEPTH_LIMIT: usize = 512;
+
+/// Put the trashed `item` back at `origin`, dropping its sidecar and its
+/// `directorysizes` line.
+///
+/// `origin` is where the item came from — [`Can::origin`]'s answer, or the
+/// path an undo remembers. Nothing that is already there, even a dangling
+/// symlink, is replaced; a missing parent directory is made.
+///
+/// From a topdir can the whole move works by descriptor: from the topdir
+/// down to `origin`'s parent, each directory is opened (or made) without
+/// following a symlink, and the item is renamed out of the checked `files/`
+/// into it — never copied, since it is on that filesystem already. A stick
+/// with `a -> ~/.config` and a sidecar saying `a/autostart/x` gets nothing
+/// into `~/.config`.
+///
+/// # Errors
+///
+/// `item` is not in a usable can, `origin` is not somewhere this can may put
+/// it, something is there already, or the move failed, as text.
+pub fn restore(item: &Path, origin: &Path) -> Result<(), String> {
+    restore_as(item, origin, uid())
+}
+
+/// What [`restore`] says when the name is taken.
+const SOMETHING_THERE: &str = "something is there now";
+
+fn restore_as(item: &Path, origin: &Path, uid: u32) -> Result<(), String> {
+    let text = |err: Errno| io::Error::from(err).to_string();
+    let (can, relative) =
+        Can::containing(item, uid).ok_or_else(|| "not in the trash".to_string())?;
+    if relative.components().count() != 1 {
+        return Err("only an item of the trash itself can be put back".to_string());
+    }
+    let name = relative.as_os_str();
+    let dir = can.open(false).map_err(|e| e.to_string())?;
+    let files = can
+        .subdir(&dir, "files", false)
+        .map_err(|e| e.to_string())?;
+    match &can.kind {
+        Kind::Home => {
+            // Not `exists`, which follows a symlink: a dangling one at the
+            // origin is still something there.
+            if std::fs::symlink_metadata(origin).is_ok() {
+                return Err(SOMETHING_THERE.to_string());
+            }
+            if let Some(parent) = origin.parent() {
+                std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            }
+            move_entry(item, origin)?;
+        }
+        Kind::Topdir { topdir, .. } => {
+            let outside = || "the place it records is outside the disk it is on".to_string();
+            let relative_origin = origin.strip_prefix(topdir).map_err(|_| outside())?;
+            let mut parts = Vec::new();
+            for part in relative_origin.components() {
+                match part {
+                    Component::Normal(part) => parts.push(part),
+                    _ => return Err(outside()),
+                }
+            }
+            let last = parts.pop().ok_or_else(outside)?;
+            let mut parent = rfs::open(
+                topdir.as_path(),
+                DIR_FLAGS.difference(OFlags::NOFOLLOW),
+                Mode::empty(),
+            )
+            .map_err(text)?;
+            for part in parts {
+                let next = match rfs::openat(&parent, part, DIR_FLAGS, Mode::empty()) {
+                    Err(Errno::NOENT) => {
+                        match rfs::mkdirat(&parent, part, Mode::RWXU | Mode::RWXG | Mode::RWXO) {
+                            Ok(()) | Err(Errno::EXIST) => {}
+                            Err(err) => return Err(text(err)),
+                        }
+                        rfs::openat(&parent, part, DIR_FLAGS, Mode::empty())
+                    }
+                    other => other,
+                };
+                parent = match next {
+                    Ok(fd) => fd,
+                    Err(Errno::LOOP | Errno::NOTDIR) => {
+                        return Err("a folder on the way back is a link or not a folder".to_string())
+                    }
+                    Err(err) => return Err(text(err)),
+                };
+            }
+            if rfs::statat(&parent, last, AtFlags::SYMLINK_NOFOLLOW).is_ok() {
+                return Err(SOMETHING_THERE.to_string());
+            }
+            match rfs::renameat_with(&files, name, &parent, last, rfs::RenameFlags::NOREPLACE) {
+                Ok(()) => {}
+                Err(Errno::EXIST) => return Err(SOMETHING_THERE.to_string()),
+                // A filesystem without RENAME_NOREPLACE: the check above is
+                // what stands in for it.
+                Err(Errno::INVAL | Errno::NOSYS) => {
+                    rfs::renameat(&files, name, &parent, last).map_err(text)?;
+                }
+                Err(Errno::XDEV) => {
+                    return Err("it is on another disk than the place it came from".to_string())
+                }
+                Err(err) => return Err(text(err)),
+            }
+        }
+    }
+    if let Ok(info) = can.subdir(&dir, "info", false) {
+        rfs::unlinkat(&info, sidecar_name(name).as_os_str(), AtFlags::empty()).ok();
+    }
+    update_directory_sizes(&dir, name, None);
+    Ok(())
+}
+
 /// Remove `name` under `parent`, and everything under it when it is a real
-/// directory. A symlink is removed, never followed.
-fn remove_tree_at(parent: BorrowedFd<'_>, name: &OsStr) -> io::Result<()> {
+/// directory. A symlink is removed, never followed; a directory on another
+/// device than `device` (something mounted inside the trash) is not entered.
+fn remove_tree_at(
+    parent: BorrowedFd<'_>,
+    name: &OsStr,
+    device: u64,
+    depth: usize,
+) -> io::Result<()> {
     let stat = rfs::statat(parent, name, AtFlags::SYMLINK_NOFOLLOW)?;
     if FileType::from_raw_mode(stat.st_mode) != FileType::Directory {
         return Ok(rfs::unlinkat(parent, name, AtFlags::empty())?);
     }
+    if depth >= REMOVE_DEPTH_LIMIT {
+        return Err(refused("nested too deep to delete"));
+    }
     let dir = rfs::openat(parent, name, DIR_FLAGS, Mode::empty())?;
+    if rfs::fstat(&dir)?.st_dev != device {
+        return Err(refused("a mount point inside the trash"));
+    }
     let mut children = Vec::new();
     for entry in rfs::Dir::read_from(&dir)? {
         let entry = entry?;
@@ -730,7 +953,7 @@ fn remove_tree_at(parent: BorrowedFd<'_>, name: &OsStr) -> io::Result<()> {
         }
     }
     for child in children {
-        remove_tree_at(dir.as_fd(), &child)?;
+        remove_tree_at(dir.as_fd(), &child, device, depth + 1)?;
     }
     Ok(rfs::unlinkat(parent, name, AtFlags::REMOVEDIR)?)
 }
@@ -1516,5 +1739,100 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&victim).unwrap(), "precious");
         let sizes = std::fs::symlink_metadata(trash.join("directorysizes"));
         assert!(sizes.map_or(true, |meta| meta.is_file()));
+    }
+
+    /// Put Back from a stick's can goes by descriptor, so a symlink the
+    /// stick carries on the way to the origin is not followed: the sidecar
+    /// cannot steer the item into `~/.config/autostart`.
+    #[test]
+    fn put_back_from_a_topdir_never_follows_a_link_on_the_way() {
+        let me = uid();
+        let top = Tmp::new("restore-link");
+        let home_config = top.0.join("outside-config");
+        std::fs::create_dir(&home_config).unwrap();
+        std::os::unix::fs::symlink(&home_config, top.0.join("a")).unwrap();
+        let can = topdir_can(&top.0, me).unwrap();
+        let source = top.0.join("evil.desktop");
+        std::fs::write(&source, "[Desktop Entry]").unwrap();
+        let (to, _) = place(&source, &source, &can, Some(&top.0)).unwrap();
+
+        let origin = top.0.join("a/autostart/evil.desktop");
+        assert!(restore_as(&to, &origin, me).is_err());
+
+        assert!(to.exists(), "still in the trash");
+        assert!(
+            !home_config.join("autostart").exists(),
+            "nothing went through"
+        );
+    }
+
+    /// Something already at the origin, even a dangling symlink, keeps its
+    /// place; with nothing there the item goes back, its folder rebuilt.
+    #[test]
+    fn put_back_from_a_topdir_replaces_nothing() {
+        let me = uid();
+        let top = Tmp::new("restore-noreplace");
+        let can = topdir_can(&top.0, me).unwrap();
+        let source = top.0.join("photos/cat.png");
+        std::fs::create_dir(top.0.join("photos")).unwrap();
+        std::fs::write(&source, "meow").unwrap();
+        let (to, info) = place(&source, &source, &can, Some(&top.0)).unwrap();
+        std::os::unix::fs::symlink(top.0.join("nowhere"), &source).unwrap();
+
+        assert!(restore_as(&to, &source, me).is_err());
+        assert!(std::fs::symlink_metadata(&source).unwrap().is_symlink());
+        assert!(to.exists());
+
+        std::fs::remove_file(&source).unwrap();
+        std::fs::remove_dir(top.0.join("photos")).unwrap();
+        restore_as(&to, &source, me).unwrap();
+        assert_eq!(std::fs::read_to_string(&source).unwrap(), "meow");
+        assert!(!to.exists());
+        assert!(!info.exists(), "the sidecar went with it");
+    }
+
+    /// A sidecar is read only when it is a small regular file: a FIFO does
+    /// not hang the listing, a symlink is not followed.
+    #[test]
+    fn only_a_plain_sidecar_is_read() {
+        let me = uid();
+        let top = Tmp::new("sidecar-kinds");
+        let can = topdir_can(&top.0, me).unwrap();
+        let source = top.0.join("plain.txt");
+        std::fs::write(&source, "x").unwrap();
+        place(&source, &source, &can, Some(&top.0)).unwrap();
+        let info = can.info_dir();
+        let outside = top.0.join("outside.trashinfo");
+        std::fs::write(&outside, "[Trash Info]\nPath=elsewhere\n").unwrap();
+        std::os::unix::fs::symlink(&outside, info.join("link.trashinfo")).unwrap();
+        let fifo =
+            std::ffi::CString::new(info.join("fifo.trashinfo").as_os_str().as_bytes()).unwrap();
+        // SAFETY: a NUL-terminated path.
+        assert_eq!(unsafe { libc::mkfifo(fifo.as_ptr(), 0o600) }, 0);
+
+        let origins = can.origins();
+
+        assert_eq!(
+            origins,
+            vec![(OsString::from("plain.txt"), top.0.join("plain.txt"))]
+        );
+        assert_eq!(can.origin(OsStr::new("link")), Err(BadOrigin::Unknown));
+        assert_eq!(can.origin(OsStr::new("fifo")), Err(BadOrigin::Unknown));
+    }
+
+    /// A sticky `.Trash` somebody other than root or the user owns could be
+    /// renamed out from under the user's can, so it is not used.
+    #[test]
+    fn a_shared_trash_of_someone_elses_is_not_used() {
+        let other = somebody_else();
+        let top = Tmp::new("shared-owner");
+        let shared = top.0.join(".Trash");
+        std::fs::create_dir(&shared).unwrap();
+        std::fs::set_permissions(&shared, std::fs::Permissions::from_mode(0o1777)).unwrap();
+
+        // Made by "us", checked as `other`: neither root's nor theirs.
+        let err = Can::topdir(&top.0, true, other).open(true).unwrap_err();
+        assert!(err.to_string().contains(".Trash"), "{err}");
+        assert!(!shared.join(other.to_string()).exists());
     }
 }

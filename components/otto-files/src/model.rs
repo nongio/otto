@@ -194,6 +194,9 @@ pub struct Snapshot {
     /// Set when the directory could not be read at all — shown in place of the
     /// listing, rather than as an empty directory.
     pub error: Option<String>,
+    /// For the Trash: the `files/` of every can listed, found on the loader
+    /// thread with the listing, for the column to watch. Empty otherwise.
+    pub can_dirs: Vec<PathBuf>,
 }
 
 /// One directory in the path stack: its contents, what is selected in it, and
@@ -245,8 +248,9 @@ pub struct Column {
     watch: crate::watch::DirWatch,
     /// For the Trash, which lists every can rather than one directory: a
     /// watch on each other can's `files/`, so an item trashed on a stick
-    /// shows up as one trashed at home does. Empty for any other column.
-    can_watches: Vec<crate::watch::DirWatch>,
+    /// shows up as one trashed at home does. Set from each snapshot's
+    /// [`Snapshot::can_dirs`]; empty for any other column.
+    can_watches: Vec<(PathBuf, crate::watch::DirWatch)>,
     /// Set when a snapshot landed because the *directory* changed rather than
     /// because the user navigated. The cursor is an index, so it has to be
     /// re-derived after one of these; the selection is by key and does not.
@@ -264,7 +268,6 @@ impl Column {
         let mut loader = Directory::new();
         loader.load(&path);
         let watch = crate::watch::DirWatch::new(&path);
-        let can_watches = can_watches_for(&path);
         Self {
             path,
             snapshot: Snapshot::default(),
@@ -279,7 +282,7 @@ impl Column {
             epoch: 0,
             sorted: std::cell::RefCell::new(SortCache::default()),
             watch,
-            can_watches,
+            can_watches: Vec::new(),
             refreshed: false,
             gone: false,
             reload_pending: false,
@@ -307,6 +310,7 @@ impl Column {
                 path: path.clone(),
                 entries,
                 error: None,
+                can_dirs: Vec::new(),
             },
             // Idle: no read is started, so nothing will arrive later and
             // replace the listing with the error of failing to open a path
@@ -372,10 +376,6 @@ impl Column {
     pub fn reload(&mut self) {
         self.loader.load(&self.path);
         self.reload_pending = true;
-        if !self.can_watches.is_empty() || is_trash_root(&self.path) {
-            // A stick plugged in since brings a can of its own.
-            self.can_watches = can_watches_for(&self.path);
-        }
     }
 
     /// Take a finished read, if one has arrived, and start a fresh one when
@@ -387,7 +387,7 @@ impl Column {
         let cans_changed = self
             .can_watches
             .iter()
-            .filter_map(crate::watch::DirWatch::take)
+            .filter_map(|(_, watch)| watch.take())
             .count()
             > 0;
         match self.watch.take() {
@@ -413,6 +413,7 @@ impl Column {
         }
         match self.loader.poll() {
             Some(snapshot) => {
+                self.watch_cans(&snapshot.can_dirs);
                 self.snapshot = snapshot;
                 self.refreshed = std::mem::take(&mut self.reload_pending);
                 // The only place the listing is ever replaced, so the only
@@ -421,6 +422,27 @@ impl Column {
                 true
             }
             None => false,
+        }
+    }
+}
+
+impl Column {
+    /// Watch `dirs` (the cans a Trash listing came from) other than this
+    /// column's own, keeping the watches already on the ones that stay: a
+    /// stick plugged in since the last read brings a can of its own.
+    fn watch_cans(&mut self, dirs: &[PathBuf]) {
+        let wanted: Vec<&PathBuf> = dirs.iter().filter(|dir| **dir != self.path).collect();
+        let current: Vec<&PathBuf> = self.can_watches.iter().map(|(dir, _)| dir).collect();
+        if wanted == current {
+            return;
+        }
+        let mut old = std::mem::take(&mut self.can_watches);
+        for dir in wanted {
+            let watch = match old.iter().position(|(kept, _)| kept == dir) {
+                Some(at) => old.swap_remove(at).1,
+                None => crate::watch::DirWatch::new(dir),
+            };
+            self.can_watches.push((dir.clone(), watch));
         }
     }
 }
@@ -540,10 +562,12 @@ impl Directory {
 /// will deliver.
 fn read_directory(path: &Path) -> Snapshot {
     if is_trash_root(path) {
+        let (entries, can_dirs) = read_trash();
         return Snapshot {
             path: path.to_path_buf(),
-            entries: read_trash(),
+            entries,
             error: None,
+            can_dirs,
         };
     }
     let read = match std::fs::read_dir(path) {
@@ -553,6 +577,7 @@ fn read_directory(path: &Path) -> Snapshot {
                 path: path.to_path_buf(),
                 entries: Vec::new(),
                 error: Some(describe_error(&err)),
+                can_dirs: Vec::new(),
             }
         }
     };
@@ -561,6 +586,7 @@ fn read_directory(path: &Path) -> Snapshot {
         path: path.to_path_buf(),
         entries: read.flatten().map(|e| entry_for_dir_entry(&e)).collect(),
         error: None,
+        can_dirs: Vec::new(),
     }
 }
 
@@ -592,9 +618,14 @@ pub(crate) static TEST_TOPDIRS: std::sync::Mutex<Vec<PathBuf>> = std::sync::Mute
 /// A can that has never been used has no directory on disk yet. That is an
 /// empty Trash, not a folder that has gone missing, so it lists nothing
 /// rather than an error.
-fn read_trash() -> Vec<Entry> {
+///
+/// Returns the `files/` of every can too, for the Trash column to watch: the
+/// mount table is read here, on the loader thread, never on the UI thread.
+fn read_trash() -> (Vec<Entry>, Vec<PathBuf>) {
     let mut entries = Vec::new();
-    for can in trash_cans() {
+    let cans = trash_cans();
+    let can_dirs = cans.iter().map(otto_kit::trash::Can::files_dir).collect();
+    for can in cans {
         let Ok(read) = std::fs::read_dir(can.files_dir()) else {
             continue;
         };
@@ -608,21 +639,7 @@ fn read_trash() -> Vec<Entry> {
             entries.push(entry);
         }
     }
-    entries
-}
-
-/// Watches on the `files/` of every can but the one at `path`, when `path`
-/// is the Trash; nothing otherwise.
-fn can_watches_for(path: &Path) -> Vec<crate::watch::DirWatch> {
-    if !is_trash_root(path) {
-        return Vec::new();
-    }
-    trash_cans()
-        .iter()
-        .map(otto_kit::trash::Can::files_dir)
-        .filter(|files| files != path)
-        .map(|files| crate::watch::DirWatch::new(&files))
-        .collect()
+    (entries, can_dirs)
 }
 
 /// One entry, from a directory read.
@@ -1625,10 +1642,10 @@ pub fn undo(changes: &[Change]) -> OpResult {
                 result.trashed += trashed.trashed;
                 result.errors.extend(trashed.errors);
             }
-            Change::Trashed { from, to, info } => {
+            Change::Trashed { from, to, .. } => {
                 // The same operation the Trash window's Put Back runs, and
                 // the same code, so a Ctrl+Z and a Put Back cannot drift.
-                match restore_one(to, from, info) {
+                match restore_one(to, from) {
                     Ok(()) => result.moved += 1,
                     Err(err) => result
                         .errors
@@ -1752,27 +1769,15 @@ pub fn is_trash_root(path: &Path) -> bool {
 ///
 /// A sidecar that cannot be read, or that carries no `Path=`, is skipped: an
 /// item whose origin is unknown is still an item in the trash, and dropping
-/// the whole listing over one unreadable file would be the wrong trade.
+/// the whole listing over one unreadable file would be the wrong trade. So is
+/// a path a stick's sidecar may not name: the row shows no origin, and Put
+/// Back says why when asked. The reading itself is the kit's, from the
+/// checked `info/` descriptor (see [`otto_kit::trash::Can::origins`]).
 fn read_trash_origins(can: &otto_kit::trash::Can) -> std::collections::HashMap<String, PathBuf> {
-    let mut origins = std::collections::HashMap::new();
-    let Ok(read) = std::fs::read_dir(can.info_dir()) else {
-        return origins;
-    };
-    for entry in read.flatten() {
-        let file = entry.file_name();
-        let Some(name) = file.to_str().and_then(|n| n.strip_suffix(".trashinfo")) else {
-            continue;
-        };
-        let Ok(body) = std::fs::read_to_string(entry.path()) else {
-            continue;
-        };
-        // A path a stick's sidecar may not name is left out, so the row
-        // shows no origin; Put Back says why when asked.
-        if let Ok(path) = can.origin_in(&body) {
-            origins.insert(name.to_string(), path);
-        }
-    }
-    origins
+    can.origins()
+        .into_iter()
+        .filter_map(|(name, origin)| Some((name.into_string().ok()?, origin)))
+        .collect()
 }
 
 /// Put trashed items back where they came from.
@@ -1788,10 +1793,10 @@ pub fn restore_from_trash(paths: &[PathBuf]) -> OpResult {
         let name = name_of(path);
         let located = otto_kit::trash::Can::of_item(path)
             .zip(path.file_name())
-            .map(|(can, file)| (can.origin(file), can.sidecar(file)));
-        let (origin, info) = match located {
-            Some((Ok(origin), info)) => (origin, info),
-            Some((Err(otto_kit::trash::BadOrigin::Outside), _)) => {
+            .map(|(can, file)| can.origin(file));
+        let origin = match located {
+            Some(Ok(origin)) => origin,
+            Some(Err(otto_kit::trash::BadOrigin::Outside)) => {
                 result.errors.push(format!(
                     "Can\u{2019}t put \u{201c}{name}\u{201d} back \u{2014} the place it records is outside the disk it is on."
                 ));
@@ -1804,7 +1809,7 @@ pub fn restore_from_trash(paths: &[PathBuf]) -> OpResult {
                 continue;
             }
         };
-        match restore_one(path, &origin, &info) {
+        match restore_one(path, &origin) {
             Ok(()) => {
                 result.restored += 1;
                 // The inverse of a restore is a trash, and `Change::Moved` is
@@ -1828,28 +1833,13 @@ pub fn restore_from_trash(paths: &[PathBuf]) -> OpResult {
 /// The origin's parent is recreated if it has gone: a file whose folder was
 /// deleted after it was trashed still has somewhere it belongs, and refusing
 /// the restore over a missing directory would strand it in the trash.
-fn restore_one(from: &Path, origin: &Path, info: &Path) -> Result<(), String> {
-    // Not `exists`, which follows a symlink: a dangling one at the origin is
-    // still something there, and a rename would silently replace it.
-    if std::fs::symlink_metadata(origin).is_ok() {
-        return Err("something is there now".to_string());
-    }
-    if let Some(parent) = origin.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
-    move_entry(from, origin)?;
-    // The sidecar describes an item that is no longer in the trash; leaving
-    // it would show a phantom there.
-    std::fs::remove_file(info).ok();
-    forget_directory_size(from);
-    Ok(())
-}
-
-/// Drop the can's `directorysizes` line for an item that has left it.
-fn forget_directory_size(item: &Path) {
-    if let (Some(can), Some(name)) = (otto_kit::trash::Can::of_item(item), item.file_name()) {
-        can.forget_directory_size(name);
-    }
+/// Nothing already at the origin, a dangling symlink included, is replaced.
+///
+/// The move is the kit's: from a can on another filesystem it goes by
+/// descriptor and never follows a symlink on the way, so a stick cannot
+/// steer an item into the home folder (see [`otto_kit::trash::restore`]).
+fn restore_one(from: &Path, origin: &Path) -> Result<(), String> {
+    otto_kit::trash::restore(from, origin)
 }
 
 /// Delete trashed items outright, with their sidecars.
@@ -2398,6 +2388,25 @@ mod paste_tests {
             assert!(item.exists(), "left in the trash");
             assert!(!t.0.join("elsewhere").exists(), "nothing was made");
         }
+
+        // A relative path through a link the stick carries is refused too:
+        // `a -> ~/.config` would otherwise land the item in autostart.
+        let config = t.0.join("config");
+        std::fs::create_dir(&config).unwrap();
+        std::os::unix::fs::symlink(&config, t.0.join("a")).unwrap();
+        let item = can.join("files/evil.desktop");
+        std::fs::write(&item, "payload").unwrap();
+        std::fs::write(
+            can.join("info/evil.desktop.trashinfo"),
+            "[Trash Info]\nPath=a/autostart/evil.desktop\nDeletionDate=2024-01-01T00:00:00\n",
+        )
+        .unwrap();
+
+        let result = restore_from_trash(std::slice::from_ref(&item));
+
+        assert_eq!(result.restored, 0, "{:?}", result.errors);
+        assert!(item.exists(), "left in the trash");
+        assert!(!config.join("autostart").exists(), "nothing went through");
     }
 
     /// The Trash lists every can, so it watches every can: an item landing
@@ -2416,7 +2425,6 @@ mod paste_tests {
         }
         TEST_TOPDIRS.lock().unwrap().push(t.0.clone());
         let mut column = Column::new(trash_files_dir().unwrap());
-        assert!(!column.can_watches.is_empty(), "the stick's can is watched");
         // The first read lands before the item does, so only a watch can
         // bring it in.
         for _ in 0..500 {
@@ -2427,6 +2435,7 @@ mod paste_tests {
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
         assert!(!column.loading());
+        assert!(!column.can_watches.is_empty(), "the stick's can is watched");
 
         std::fs::write(can.join("files/from-the-stick.txt"), "x").unwrap();
         let mut seen = false;
