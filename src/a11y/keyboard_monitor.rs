@@ -153,7 +153,6 @@ impl KeyboardMonitorHandle {
     /// `time` is the event timestamp and `repeat_delay` the configured key
     /// repeat delay; together they decide whether a second press of a grabbed
     /// modifier counts as a double-tap.
-    #[allow(clippy::too_many_arguments)]
     pub fn process_key(
         &self,
         repeat_delay: Duration,

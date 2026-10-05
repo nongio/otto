@@ -486,7 +486,7 @@ impl<BackendData: Backend> Otto<BackendData> {
         let initial_context = (initial_location, initial_location, None);
 
         // Collect all surfaces and build parent-child map
-        #[allow(clippy::mutable_key_type, clippy::type_complexity)]
+        #[allow(clippy::type_complexity)]
         let mut surface_info: std::collections::HashMap<
             smithay::reexports::wayland_server::backend::ObjectId,
             (
@@ -498,7 +498,6 @@ impl<BackendData: Backend> Otto<BackendData> {
 
         // Track per-parent child ordering as Smithay delivers it
         // (respects wl_subsurface.place_above / place_below reordering)
-        #[allow(clippy::mutable_key_type)]
         let mut children_order: std::collections::HashMap<
             smithay::reexports::wayland_server::backend::ObjectId,
             Vec<smithay::reexports::wayland_server::backend::ObjectId>,
@@ -818,7 +817,6 @@ impl<BackendData: Backend> Otto<BackendData> {
             });
 
             // Send popup to the overlay layer and register its surface layers
-            #[allow(clippy::mutable_key_type)]
             let popup_layers = self.workspaces.popup_overlay.update_popup(
                 &popup_id,
                 surface_id,

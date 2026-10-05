@@ -280,7 +280,6 @@ impl SettingsInterface {
     /// A zero width or height leaves the resolution unset, and a zero refresh
     /// leaves the rate unset, so a caller that only wants to move a display
     /// does not have to invent a mode for it.
-    #[allow(clippy::too_many_arguments)]
     async fn set_output_profile(
         &self,
         connector: &str,
@@ -336,7 +335,6 @@ impl SettingsInterface {
     /// node id the output streams to, which is what a capture client needs.
     /// `persist` also writes it to the configuration so it comes back next
     /// session.
-    #[allow(clippy::too_many_arguments)]
     async fn add_virtual_output(
         &self,
         name: &str,

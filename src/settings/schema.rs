@@ -225,8 +225,6 @@ const fn spec(
         backends: &[],
     }
 }
-
-#[allow(clippy::too_many_arguments)]
 const fn ranged(
     id: &'static str,
     ty: SettingType,

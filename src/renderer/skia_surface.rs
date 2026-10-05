@@ -36,7 +36,6 @@ impl SkiaSurface {
     /// - `context`: Optional existing GPU context to share (creates new if None)
     /// - `origin`: Coordinate system origin (TopLeft or BottomLeft)
     /// - `gl_internal_format`: OpenGL internal format constant
-    #[allow(clippy::too_many_arguments)]
     pub fn new_with_fbo(
         width: impl Into<i32>,
         height: impl Into<i32>,
@@ -102,7 +101,6 @@ impl SkiaSurface {
     /// # Safety
     ///
     /// The texture ID must be valid and compatible with the current GL context.
-    #[allow(clippy::too_many_arguments)]
     pub fn new_with_texture(
         width: impl Into<i32>,
         height: impl Into<i32>,

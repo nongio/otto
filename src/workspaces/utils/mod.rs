@@ -221,7 +221,6 @@ pub enum BalloonArrow {
 /// Only the bottom-arrow shape is built by hand; the side variants are that
 /// same path rotated a quarter turn, which keeps the rounded arrow tip and the
 /// corner radii identical whichever way the balloon points.
-#[allow(clippy::too_many_arguments)]
 pub fn draw_balloon_rect(
     x: f32,
     y: f32,

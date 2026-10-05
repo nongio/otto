@@ -42,7 +42,19 @@ pub struct BufferPool {
     pub last_rendered_fd: Option<i64>,
 }
 
-// SAFETY: pw_buffer pointers are only accessed from PipeWire thread
+// SAFETY: the raw `pw_buffer` pointers are what make this `!Send`. The main
+// thread only moves them between the pool's queues, as opaque tokens, under
+// the pool's mutex; they are dereferenced and queued only on the PipeWire
+// thread (`process`). That relies on a pointer never outliving its buffer:
+// `remove_buffer` drops every entry for a freed buffer from the pool, under
+// the same mutex.
+//
+// FIXME: that is not airtight. `render_virtual_outputs` (and the screencast
+// tap) pops an `AvailableBuffer`, renders into it with the lock released,
+// then puts its pointer into `pending`. A renegotiation (`remove_buffer`) in
+// that window frees the buffer while the main thread still holds the pointer,
+// and the next `process` dereferences it. Revalidating `to_queue` entries
+// against the stream's live buffers on the PipeWire thread would close it.
 unsafe impl Send for BufferPool {}
 unsafe impl Sync for BufferPool {}
 
@@ -150,7 +162,14 @@ struct SharedState {
     pending_size: Mutex<Option<(u32, u32)>>,
 }
 
-// SAFETY: pw_stream pointer is only used to call pw_stream_trigger_process
+// SAFETY: the raw `pw_stream` pointer is the only `!Send` field, and the main
+// thread uses it for one call, `pw_stream_trigger_process`, which PipeWire
+// documents for producers driving the graph from a helper thread. The
+// pointer is set once the stream is connected, and cleared (under the same
+// mutex `trigger_frame` holds across the call) by `PipeWireStream::drop`
+// before the PipeWire thread can destroy the stream: that thread only exits
+// after `should_stop`, which the same drop sets on the same (main) thread.
+// A PipeWire thread that panicked would leave it dangling.
 unsafe impl Send for SharedState {}
 unsafe impl Sync for SharedState {}
 
@@ -313,6 +332,9 @@ impl PipeWireStream {
     /// Trigger the process callback (call after rendering a new frame)
     pub fn trigger_frame(&self) {
         if let Some(ptr) = *self.shared.stream_ptr.lock().unwrap() {
+            // SAFETY: the stream is alive while the pointer is set and the
+            // lock is held (see `SharedState`), and this call is meant for
+            // threads other than the stream's.
             unsafe {
                 pipewire::sys::pw_stream_trigger_process(ptr);
             }
@@ -475,6 +497,8 @@ fn run_pipewire_thread(
                         tracing::debug!("Stream now streaming");
 
                         // Trigger first frame render
+                        // SAFETY: on the stream's own thread, from its own
+                        // state-changed callback, so the stream is alive.
                         unsafe {
                             use pipewire::sys::pw_stream_trigger_process;
                             pw_stream_trigger_process(stream.as_raw_ptr());
@@ -624,6 +648,11 @@ fn run_pipewire_thread(
                 let plane_count = dmabuf.num_planes();
                 tracing::debug!("Exported dmabuf with {} planes", plane_count);
 
+                // SAFETY: PipeWire hands `buffer` to this callback alive and
+                // owned by the stream. The plane count is asserted equal to
+                // `n_datas` before indexing `datas`, and the fds written into
+                // it stay open as long as the buffer: the dmabuf that owns
+                // them is kept in `state.dmabufs` until `remove_buffer`.
                 unsafe {
                     use pipewire::spa::buffer::DataType;
                     use pipewire::spa::sys::SPA_DATA_FLAG_READWRITE;
@@ -677,6 +706,8 @@ fn run_pipewire_thread(
         .remove_buffer({
             let state = stream_state.clone();
             let buffer_pool = shared.buffer_pool.clone();
+            // SAFETY: `buffer` is alive for the callback, and every buffer was
+            // given at least one data plane in `add_buffer`.
             move |_stream, _user_data, buffer| unsafe {
                 let fd = (*(*buffer).buffer).datas.read().fd;
                 let removed = state.borrow_mut().dmabufs.remove(&fd);
@@ -714,6 +745,10 @@ fn run_pipewire_thread(
                     let mut pool = buffer_pool.lock().unwrap();
                     let to_queue: Vec<_> = pool.to_queue.drain().collect();
                     for (fd, pw_buffer) in to_queue {
+                        // SAFETY: on the stream's thread, and `pw_buffer` was
+                        // dequeued from this stream and is still owned by
+                        // the pool — see the FIXME on `BufferPool` for the
+                        // window in which that does not hold.
                         unsafe {
                             let spa_buffer = (*pw_buffer).buffer;
                             let chunk = (*(*spa_buffer).datas).chunk;
@@ -775,11 +810,15 @@ fn run_pipewire_thread(
 
                 // 2. Dequeue all available buffers
                 loop {
+                    // SAFETY: on the stream's thread, from its own process
+                    // callback.
                     let buffer = unsafe { pw_stream_dequeue_buffer(stream.as_raw_ptr()) };
                     if buffer.is_null() {
                         break;
                     }
 
+                    // SAFETY: `buffer` is non-null, just dequeued and owned by
+                    // us until queued back, with at least one data plane.
                     unsafe {
                         let spa_buffer = (*buffer).buffer;
                         let fd = (*(*spa_buffer).datas).fd;
@@ -1216,6 +1255,11 @@ fn parse_negotiated_format(
                 // use. Guessing anything else here means we allocate one
                 // layout and the consumer reads another (tiled-vs-linear
                 // garbage on screen), so a wrong value is worse than failing.
+                // SAFETY: `value` is a Choice pod (checked above), so its body
+                // is a `spa_pod_choice_body` whose child header is followed
+                // by the choice's values; reading one i64 assumes the choice
+                // holds at least one value, which `(*child).size` would
+                // confirm but is not checked. The read is unaligned-safe.
                 let modifier = unsafe {
                     use pipewire::spa::sys::{spa_pod, spa_pod_choice, SPA_TYPE_Long};
                     let choice = value.as_raw_ptr() as *const spa_pod_choice;

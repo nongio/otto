@@ -45,6 +45,16 @@ pub use crate::renderer::{
 
 pub struct SkiaRenderer {
     gl_renderer: GlesRenderer,
+    /// GL entry points for `gl_renderer`'s EGL context.
+    ///
+    /// Every raw call through them (the `unsafe` blocks below that cite "the
+    /// GL invariant") assumes that context is current on the calling thread
+    /// and that every pointer argument is valid for the call. Neither GL nor
+    /// this renderer can check the first: the renderer is used on the
+    /// compositor thread only, and its context is made current when it is
+    /// created and by every `GlesRenderer` operation it delegates to — but
+    /// its own GL paths (binding a dmabuf target, blits, plane-texture
+    /// release) do not make it current themselves.
     pub(crate) gl: ffi::Gles2,
 
     target_renderer: HashMap<SkiaTarget, SkiaSurface>,
@@ -107,6 +117,9 @@ impl From<GlesRenderer> for SkiaRenderer {
     fn from(gl_renderer: GlesRenderer) -> SkiaRenderer {
         let egl = gl_renderer.egl_context();
 
+        // SAFETY: `gl_renderer` owns this context and is being moved into the
+        // new renderer on this thread, so it is not current anywhere else;
+        // the entry points are loaded once it is current here.
         let gl = unsafe {
             let res = egl.make_current();
             if res.is_err() {
@@ -441,6 +454,11 @@ impl SkiaRenderer {
         }
         let display = **self.egl_context().display().get_display_handle();
         for (tex_id, image) in released {
+            // SAFETY: the GL invariant (this runs from the frame, with the
+            // context current). Each pair was created by
+            // `create_surface_from_dmabuf` on this renderer and is queued
+            // exactly once, by its `PlaneTextureRelease`'s drop, so each
+            // texture and EGLImage is deleted once.
             unsafe {
                 self.gl.DeleteTextures(1, &tex_id);
                 smithay::backend::egl::ffi::egl::DestroyImageKHR(display, image as _);
@@ -496,6 +514,9 @@ impl SkiaRenderer {
         let tex_id = match self.import_egl_image(egl_image, false, None) {
             Ok(tex_id) => tex_id,
             Err(err) => {
+                // SAFETY: `egl_image` was created just above on this display
+                // and nothing holds it: the failed import made no texture
+                // from it.
                 unsafe {
                     smithay::backend::egl::ffi::egl::DestroyImageKHR(
                         **self.egl_context().display().get_display_handle(),
@@ -547,6 +568,10 @@ impl SkiaRenderer {
         // not a compositor abort.
         let (internal_format, read_format, read_type) =
             fourcc_to_gl_formats(format).ok_or(GlesError::UnsupportedPixelFormat(format))?;
+        // SAFETY: the GL invariant. The out-pointers are locals that outlive
+        // the calls, and `TexImage2D` gets a null data pointer (allocate
+        // only). On an incomplete framebuffer both objects are deleted before
+        // returning.
         unsafe {
             // Generate and bind the texture
             self.gl.GenTextures(1, &mut texture);
@@ -667,6 +692,10 @@ impl SkiaRenderer {
                     (tex, false)
                 };
 
+                // SAFETY: `tex_id` was just created in this context (shared
+                // with `gl_renderer`) and nothing else owns it: the
+                // `GlesTexture` takes it over and deletes it when its last
+                // clone drops.
                 let gles_texture = unsafe {
                     GlesTexture::from_raw(
                         &self.gl_renderer,
@@ -724,6 +753,11 @@ impl SkiaRenderer {
                 return true;
             }
             for image in texture.egl_images.take().into_iter().flatten() {
+                // SAFETY: the image was created on this display by
+                // `import_dmabuf_internal`, and `take()` removes it from the
+                // only entry that is ever read, so it is destroyed once.
+                // Clones handed out earlier still carry the handle, but
+                // nothing reads `egl_images` outside this cache.
                 unsafe {
                     smithay::backend::egl::ffi::egl::DestroyImageKHR(display, image);
                 }
@@ -777,6 +811,7 @@ impl SkiaRenderer {
         is_external: bool,
         tex: Option<u32>,
     ) -> Result<u32, GlesError> {
+        // SAFETY: the GL invariant; `tex` is a valid out-pointer.
         let tex = tex.unwrap_or_else(|| unsafe {
             let mut tex = 0;
             self.gl.GenTextures(1, &mut tex);
@@ -787,6 +822,10 @@ impl SkiaRenderer {
         } else {
             ffi::TEXTURE_2D
         };
+        // SAFETY: the GL invariant. `image` is a live EGLImage on this
+        // renderer's display — callers pass one they just created or a cache
+        // entry that has not been evicted — and `tex` names a texture of this
+        // context.
         unsafe {
             self.gl.BindTexture(target, tex);
             // External textures only support a subset of params; ensure valid defaults.
@@ -907,6 +946,8 @@ impl Renderer for SkiaRenderer {
                 // )
             });
 
+        // SAFETY: the GL invariant; `buffer.fbo` is the bound target's
+        // framebuffer in this context (0, the default one, for a surface).
         unsafe {
             self.gl.BindFramebuffer(ffi::FRAMEBUFFER, buffer.fbo);
             let status = self.gl.CheckFramebufferStatus(ffi::FRAMEBUFFER);
@@ -1000,6 +1041,12 @@ impl SkiaRenderer {
             x: texture.width() as f32,
             y: texture.height() as f32,
         };
+        // SAFETY: `make_gl` wraps a raw GL texture id Skia cannot validate.
+        // `texture` is a live `GlesTexture` of the context the DirectContext
+        // draws with. The image keeps only the id, so it is valid only while
+        // `texture` lives: `SkiaTexture` stores the two together, and
+        // `Backend::hold_surface_texture` keeps the texture alive for as long
+        // as a closing window still draws its last frame.
         unsafe {
             let gl_format = texture.format().map_or(ffi::RGBA8, |fourcc| {
                 fourcc_to_gl_formats(fourcc).map_or(ffi::RGBA8, |(internal, _, _)| internal)
@@ -1063,6 +1110,10 @@ impl SkiaRenderer {
         dst_tex: u32,
         size: smithay::utils::Size<i32, Buffer>,
     ) -> Result<(), GlesError> {
+        // SAFETY: the GL invariant. `image` is a live EGLImage (see
+        // `import_egl_image`) and `dst_tex` a TEXTURE_2D of this context at
+        // least `size` large; out-pointers are locals, and the temporary
+        // framebuffers and renderbuffer are deleted before returning.
         unsafe {
             // Create source renderbuffer and FBO from EGLImage
             let mut src_rbo = 0;
@@ -1199,6 +1250,9 @@ impl ImportEgl for SkiaRenderer {
         if let SkiaTarget::EGLSurface(EGLSurfaceWrapper(surface)) =
             self.current_target.as_ref().unwrap()
         {
+            // SAFETY: this renderer's own context, used on this thread only.
+            // The import above may have left it current without a surface;
+            // put the bound EGL surface back (and its default framebuffer).
             unsafe {
                 self.egl_context().make_current_with_surface(surface)?;
                 self.gl.BindFramebuffer(ffi::FRAMEBUFFER, 0);
@@ -1269,6 +1323,9 @@ impl ImportMem for SkiaRenderer {
         if let Some(SkiaTarget::EGLSurface(EGLSurfaceWrapper(surface))) =
             self.current_target.as_ref()
         {
+            // SAFETY: this renderer's own context, used on this thread only.
+            // The import above may have left it current without a surface;
+            // put the bound EGL surface back (and its default framebuffer).
             unsafe {
                 self.egl_context().make_current_with_surface(surface)?;
                 self.gl.BindFramebuffer(ffi::FRAMEBUFFER, 0);
@@ -1391,6 +1448,12 @@ impl ExportMem for SkiaRenderer {
         let len = data_ref.len();
         let ptr = data_ref.as_ptr();
 
+        // SAFETY: `ptr`/`len` describe the Vec inside `texture_mapping.data`,
+        // which lives for `'a`. The slice outlives the `RefCell` borrow it was
+        // read under, which is sound only because that Vec is never replaced
+        // or dropped while the mapping lives: it is written once, above, from
+        // `None`. `data` is a `pub` field, so nothing but convention enforces
+        // that.
         unsafe { Ok(std::slice::from_raw_parts(ptr, len)) }
     }
 
@@ -1405,6 +1468,8 @@ impl Bind<EGLSurface> for SkiaRenderer {
         surface: &mut EGLSurface,
     ) -> Result<SkiaGLesFbo, <Self as RendererSuper>::Error> {
         // Make the surface current first
+        // SAFETY: this renderer's own context, used on this thread only, and
+        // `surface` was created on its display.
         unsafe {
             self.egl_context().make_current_with_surface(surface)?;
             self.gl.BindFramebuffer(ffi::FRAMEBUFFER, 0);
@@ -1437,6 +1502,8 @@ impl Bind<Rc<EGLSurface>> for SkiaRenderer {
         &mut self,
         surface: &mut Rc<EGLSurface>,
     ) -> Result<SkiaGLesFbo, <Self as RendererSuper>::Error> {
+        // SAFETY: this renderer's own context, used on this thread only, and
+        // `surface` was created on its display.
         unsafe {
             self.egl_context().make_current_with_surface(surface)?;
             self.gl.BindFramebuffer(ffi::FRAMEBUFFER, 0);
@@ -1514,7 +1581,6 @@ impl Bind<Dmabuf> for SkiaRenderer {
         // Evict targets whose dmabuf has been dropped everywhere else. Must
         // run before the lookup below: a new allocation can reuse a dead
         // Arc's address, which would otherwise alias a stale cache entry.
-        #[allow(clippy::mutable_key_type)]
         let dead: Vec<WeakDmabuf> = self
             .buffers
             .keys()
@@ -1527,12 +1593,18 @@ impl Bind<Dmabuf> for SkiaRenderer {
             let key = SkiaTarget::Dmabuf(weak.clone());
             self.target_renderer.remove(&key);
             if let Some(fbo) = self.buffers.remove(&key) {
+                // SAFETY: the GL invariant. This framebuffer and texture were
+                // created below for a dmabuf that is now gone, and removing
+                // the entry here means they are deleted once.
                 unsafe {
                     self.gl.DeleteFramebuffers(1, &fbo.fbo);
                     self.gl.DeleteTextures(1, &fbo.tex_id);
                 }
             }
             if let Some(aux) = self.dmabuf_target_aux.remove(&weak) {
+                // SAFETY: as above for the renderbuffers; `aux.image` was
+                // created on `egl_display` when the target was bound and
+                // leaves the map here, so it is destroyed once.
                 unsafe {
                     self.gl
                         .DeleteRenderbuffers(2, [aux.rbo, aux.depth_rbo].as_ptr());
@@ -1566,6 +1638,10 @@ impl Bind<Dmabuf> for SkiaRenderer {
                 let width = size.w;
                 let height = size.h;
 
+                // SAFETY: the GL invariant. `image` was just created from
+                // `dmabuf` on this display, and the out-pointers are locals.
+                // If the framebuffer is incomplete, everything made here is
+                // deleted before returning.
                 unsafe {
                     self.gl.GenTextures(1, &mut texture);
                     self.gl.BindTexture(ffi::TEXTURE_2D, texture);
@@ -1670,6 +1746,8 @@ impl Blit for SkiaRenderer {
         filter: TextureFilter,
     ) -> Result<SyncPoint, <Self as RendererSuper>::Error> {
         // Direct FBO-to-FBO blit using OpenGL
+        // SAFETY: the GL invariant; both framebuffers come from this
+        // renderer's `create_buffer`/`bind`, so they belong to this context.
         unsafe {
             self.gl.BindFramebuffer(ffi::READ_FRAMEBUFFER, from.fbo);
             self.gl.BindFramebuffer(ffi::DRAW_FRAMEBUFFER, to.fbo);

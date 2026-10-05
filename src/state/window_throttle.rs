@@ -1,9 +1,3 @@
-// `ObjectId` wraps interior-mutable smithay internals but its `Hash`/`Eq`
-// hash only the stable protocol id, so using it as a HashMap/HashSet key is
-// safe. Clippy's `mutable_key_type` lint fires anyway — silence it for the
-// whole module since this file revolves around `HashMap<ObjectId, …>`.
-#![allow(clippy::mutable_key_type)]
-
 //! Per-window frame-callback throttling state.
 //!
 //! Classifies each mapped window into one of five states based on user visibility,
@@ -258,7 +252,6 @@ pub fn layer_surface_covered(
 /// surface in their tree committed an `ext-background-effect-v1` blur region
 /// (`Otto::background_effects`), so the wallpaper is visible through the
 /// frost and has to keep painting.
-#[allow(clippy::mutable_key_type)]
 pub fn translucent_window_ids(
     windows: &[&WindowElement],
     effect_surfaces: &HashSet<ObjectId>,
@@ -288,7 +281,6 @@ pub fn translucent_window_ids(
 /// [`translucent_window_ids`]) do not cover anything. Empty while exposé or
 /// show-desktop is active: both pull the windows away and put the desktop on
 /// screen.
-#[allow(clippy::mutable_key_type)]
 pub fn occluded_layer_surface_ids(
     workspaces: &Workspaces,
     output: &Output,

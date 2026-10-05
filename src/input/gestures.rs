@@ -49,82 +49,7 @@ impl<A: crate::renderer::active::RendererApi> crate::Otto<crate::udev::UdevData<
     ) {
         let pointer = self.pointer.clone();
         let delta = evt.delta();
-
-        match &mut self.swipe_gesture {
-            crate::state::SwipeGestureState::Detecting { accumulated } => {
-                accumulated.0 += delta.x;
-                accumulated.1 += delta.y;
-
-                let direction = crate::state::SwipeDirection::from_accumulated(
-                    accumulated.0.abs(),
-                    accumulated.1.abs(),
-                );
-
-                match direction {
-                    crate::state::SwipeDirection::Horizontal(_) => {
-                        // Detect the output under the pointer at gesture start
-                        let pointer_loc = pointer.current_location();
-                        let output_name = self
-                            .workspaces
-                            .output_under(pointer_loc)
-                            .next()
-                            .map(|o| o.name())
-                            .or_else(|| self.workspaces.primary_output().map(|o| o.name()))
-                            .unwrap_or_default();
-
-                        self.swipe_gesture = crate::state::SwipeGestureState::WorkspaceSwitching {
-                            velocity_samples: vec![delta.x],
-                            output_name: output_name.clone(),
-                        };
-                        self.workspaces
-                            .workspace_swipe_update(&output_name, delta.x as f32);
-                    }
-                    crate::state::SwipeDirection::Vertical(_) => {
-                        self.dismiss_all_popups();
-
-                        if !self.workspaces.get_show_all() {
-                            self.demote_all_scanout_windows();
-                            self.enter_expose_focus();
-                            self.workspaces.expose_gesture_start();
-                        } else {
-                            self.workspaces.expose_gesture_close_start();
-                        }
-
-                        self.swipe_gesture = crate::state::SwipeGestureState::Expose {
-                            velocity_samples: vec![-delta.y],
-                        };
-                        // Apply the current frame's delta (not accumulated)
-                        let expose_delta =
-                            (-delta.y / crate::state::EXPOSE_DELTA_MULTIPLIER) as f32;
-                        self.workspaces.expose_update(expose_delta);
-                    }
-                    crate::state::SwipeDirection::Undetermined => {}
-                }
-            }
-            crate::state::SwipeGestureState::WorkspaceSwitching {
-                velocity_samples,
-                output_name,
-            } => {
-                velocity_samples.push(delta.x);
-                if velocity_samples.len() > crate::state::VELOCITY_SAMPLE_COUNT {
-                    velocity_samples.remove(0);
-                }
-                let name = output_name.clone();
-                self.workspaces
-                    .workspace_swipe_update(&name, delta.x as f32);
-            }
-            crate::state::SwipeGestureState::Expose { velocity_samples } => {
-                // Collect velocity samples for momentum-based spring animation
-                velocity_samples.push(-delta.y);
-                if velocity_samples.len() > crate::state::VELOCITY_SAMPLE_COUNT {
-                    velocity_samples.remove(0);
-                }
-
-                let expose_delta = (-delta.y / crate::state::EXPOSE_DELTA_MULTIPLIER) as f32;
-                self.workspaces.expose_update(expose_delta);
-            }
-            crate::state::SwipeGestureState::Idle => {}
-        }
+        self.gesture_swipe_update(delta.x, delta.y);
 
         pointer.gesture_swipe_update(
             self,
@@ -138,22 +63,7 @@ impl<A: crate::renderer::active::RendererApi> crate::Otto<crate::udev::UdevData<
     pub(crate) fn on_gesture_swipe_end<B: InputBackend>(&mut self, evt: B::GestureSwipeEndEvent) {
         let serial = SCOUNTER.next_serial();
         let pointer = self.pointer.clone();
-
-        match std::mem::replace(
-            &mut self.swipe_gesture,
-            crate::state::SwipeGestureState::Idle,
-        ) {
-            crate::state::SwipeGestureState::Expose { velocity_samples } => {
-                self.gesture_swipe_end_expose(velocity_samples);
-            }
-            crate::state::SwipeGestureState::WorkspaceSwitching {
-                velocity_samples,
-                output_name,
-            } => {
-                self.gesture_swipe_end_workspace(velocity_samples, output_name, evt.cancelled());
-            }
-            _ => {}
-        }
+        self.gesture_swipe_end(evt.cancelled());
 
         pointer.gesture_swipe_end(
             self,
@@ -172,13 +82,8 @@ impl<A: crate::renderer::active::RendererApi> crate::Otto<crate::udev::UdevData<
         let serial = SCOUNTER.next_serial();
         let pointer = self.pointer.clone();
 
-        // 4-finger pinch for show desktop (don't activate if we're in a swipe gesture or expose is active)
-        let is_swiping = !matches!(self.swipe_gesture, crate::state::SwipeGestureState::Idle);
-        let is_expose_active = self.workspaces.get_show_all();
-        if evt.fingers() == 4 && !is_swiping && !is_expose_active {
-            self.is_pinching = true;
-            self.pinch_last_scale = 1.0; // Reset to baseline
-            self.workspaces.reset_show_desktop_gesture();
+        if evt.fingers() == 4 {
+            self.gesture_pinch_begin_4finger();
         }
 
         pointer.gesture_pinch_begin(
@@ -196,23 +101,7 @@ impl<A: crate::renderer::active::RendererApi> crate::Otto<crate::udev::UdevData<
         evt: B::GesturePinchUpdateEvent,
     ) {
         let pointer = self.pointer.clone();
-
-        if self.is_pinching {
-            // Scale > 1.0 = pinch out (spread fingers) = show desktop (positive delta)
-            // Scale < 1.0 = pinch in (close fingers) = hide desktop (negative delta)
-            let current_scale = evt.scale() as f32;
-            let last_scale = self.pinch_last_scale as f32;
-
-            // Calculate the change in scale since last event
-            let scale_delta = current_scale - last_scale;
-
-            // Pinching out (positive delta) should show desktop (positive)
-            // Amplify the gesture for better sensitivity (reduced from 5.0 to 2.5)
-            let delta = scale_delta * 1.5;
-
-            self.pinch_last_scale = current_scale as f64;
-            self.workspaces.expose_show_desktop(delta, false);
-        }
+        self.gesture_pinch_update(evt.scale());
 
         pointer.gesture_pinch_update(
             self,
@@ -229,10 +118,7 @@ impl<A: crate::renderer::active::RendererApi> crate::Otto<crate::udev::UdevData<
         let serial = SCOUNTER.next_serial();
         let pointer = self.pointer.clone();
 
-        if self.is_pinching {
-            self.workspaces.expose_show_desktop(0.0, true);
-            self.is_pinching = false;
-        }
+        self.gesture_pinch_end();
         pointer.gesture_pinch_end(
             self,
             &GesturePinchEndEvent {
@@ -270,18 +156,21 @@ impl<A: crate::renderer::active::RendererApi> crate::Otto<crate::udev::UdevData<
     }
 }
 
-// ── Headless / test helpers ──────────────────────────────────────────
-// These bypass InputBackend events and manipulate gesture state directly.
-// Available for any backend (not just udev).
+// ── Backend-agnostic gesture steps ───────────────────────────────────
+// These take raw values rather than InputBackend events: the udev handlers
+// above call them, and headless tests drive them directly. Available for any
+// backend (not just udev).
 impl<B: crate::state::Backend> crate::Otto<B> {
-    /// Simulate a 3-finger swipe begin gesture.
+    /// Start a 3-finger swipe: wait for enough travel to tell its direction.
     pub fn gesture_swipe_begin_3finger(&mut self) {
         self.swipe_gesture = crate::state::SwipeGestureState::Detecting {
             accumulated: (0.0, 0.0),
         };
     }
 
-    /// Simulate a swipe gesture update with raw deltas (no InputBackend needed).
+    /// Advance the swipe gesture by one update of raw deltas: detect the
+    /// direction, then drive the workspace switch or exposé. The libinput
+    /// handler forwards here; tests call it with synthetic deltas.
     pub fn gesture_swipe_update(&mut self, dx: f64, dy: f64) {
         let delta = smithay::utils::Point::<f64, smithay::utils::Logical>::from((dx, dy));
 
@@ -297,6 +186,7 @@ impl<B: crate::state::Backend> crate::Otto<B> {
 
                 match direction {
                     crate::state::SwipeDirection::Horizontal(_) => {
+                        // Detect the output under the pointer at gesture start
                         let pointer_loc = self.pointer.current_location();
                         let output_name = self
                             .workspaces
@@ -315,6 +205,7 @@ impl<B: crate::state::Backend> crate::Otto<B> {
                     }
                     crate::state::SwipeDirection::Vertical(_) => {
                         self.dismiss_all_popups();
+
                         if !self.workspaces.get_show_all() {
                             self.demote_all_scanout_windows();
                             self.enter_expose_focus();
@@ -325,6 +216,7 @@ impl<B: crate::state::Backend> crate::Otto<B> {
                         self.swipe_gesture = crate::state::SwipeGestureState::Expose {
                             velocity_samples: vec![-delta.y],
                         };
+                        // Apply the current frame's delta (not accumulated)
                         let expose_delta =
                             (-delta.y / crate::state::EXPOSE_DELTA_MULTIPLIER) as f32;
                         self.workspaces.expose_update(expose_delta);
@@ -345,6 +237,7 @@ impl<B: crate::state::Backend> crate::Otto<B> {
                     .workspace_swipe_update(&name, delta.x as f32);
             }
             crate::state::SwipeGestureState::Expose { velocity_samples } => {
+                // Collect velocity samples for momentum-based spring animation
                 velocity_samples.push(-delta.y);
                 if velocity_samples.len() > crate::state::VELOCITY_SAMPLE_COUNT {
                     velocity_samples.remove(0);
@@ -382,7 +275,8 @@ impl<B: crate::state::Backend> crate::Otto<B> {
         self.focus_top_window_or_clear(target_index);
     }
 
-    /// Simulate ending a swipe gesture (no InputBackend needed).
+    /// End the swipe gesture: settle the workspace switch or exposé with the
+    /// momentum of the last updates.
     pub fn gesture_swipe_end(&mut self, cancelled: bool) {
         match std::mem::replace(
             &mut self.swipe_gesture,
@@ -401,30 +295,38 @@ impl<B: crate::state::Backend> crate::Otto<B> {
         }
     }
 
-    /// Simulate a 4-finger pinch begin (no InputBackend needed).
+    /// Start a 4-finger pinch for show desktop — unless a swipe gesture is
+    /// under way or exposé is up.
     pub fn gesture_pinch_begin_4finger(&mut self) {
         let is_swiping = !matches!(self.swipe_gesture, crate::state::SwipeGestureState::Idle);
         let is_expose_active = self.workspaces.get_show_all();
         if !is_swiping && !is_expose_active {
             self.is_pinching = true;
-            self.pinch_last_scale = 1.0;
+            self.pinch_last_scale = 1.0; // Reset to baseline
             self.workspaces.reset_show_desktop_gesture();
         }
     }
 
-    /// Simulate a pinch gesture update with a scale value (no InputBackend needed).
+    /// Advance the pinch by the gesture's cumulative `scale`.
     pub fn gesture_pinch_update(&mut self, scale: f64) {
         if self.is_pinching {
+            // Scale > 1.0 = pinch out (spread fingers) = show desktop (positive delta)
+            // Scale < 1.0 = pinch in (close fingers) = hide desktop (negative delta)
             let current_scale = scale as f32;
             let last_scale = self.pinch_last_scale as f32;
+
+            // Calculate the change in scale since last event
             let scale_delta = current_scale - last_scale;
+
+            // Pinching out (positive delta) should show desktop (positive)
+            // Amplify the gesture for better sensitivity (reduced from 5.0 to 2.5)
             let delta = scale_delta * 1.5;
             self.pinch_last_scale = scale;
             self.workspaces.expose_show_desktop(delta, false);
         }
     }
 
-    /// Simulate ending a pinch gesture (no InputBackend needed).
+    /// End the pinch: let show desktop settle where it is heading.
     pub fn gesture_pinch_end(&mut self) {
         if self.is_pinching {
             self.workspaces.expose_show_desktop(0.0, true);
