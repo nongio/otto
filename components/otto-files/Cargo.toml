@@ -20,6 +20,7 @@ tracing.workspace = true
 libc.workspace = true
 zbus.workspace = true
 tokio = { workspace = true, features = ["full"] }
+imagesize = "0.13"
 # The sidebar's user configuration; see `places_config`.
 serde = { workspace = true, features = ["derive"] }
 toml = { workspace = true, features = ["default"] }

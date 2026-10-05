@@ -5219,6 +5219,7 @@ dependencies = [
 name = "otto-files"
 version = "1.6.0"
 dependencies = [
+ "imagesize",
  "khronos-egl",
  "laye-rs",
  "libc",
