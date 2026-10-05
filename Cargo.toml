@@ -264,13 +264,15 @@ xkbcommon = "0.9"
 # One executor for D-Bus across the workspace: tokio. Every member that awaits
 # zbus futures does so on a tokio runtime (the compositor's D-Bus services,
 # the portal's `#[tokio::main]`, the apps' worker runtimes), and the blocking
-# API runs on zbus's own internal tokio runtime, so nothing needs async-io.
+# API runs on zbus's own internal tokio runtime. async-io is still compiled in
+# (accesskit_unix and brightness enable it) but never chosen at run time.
 # With both flavours declared, feature unification used to pick tokio for any
 # binary that links otto-kit, or for the whole workspace built at once, and
 # async-io for the rest — the executor depended on how the crate was built.
 # accesskit_unix and brightness link this same zbus, so their connections run
 # on tokio too (see accesskit_unix above; brightness only uses the blocking
-# API, which runs on zbus's internal runtime). zbus 5 gates the blocking API
+# API, which starts zbus's internal runtime and so panics when called from a
+# thread inside a tokio runtime: the compositor calls it from a plain thread). zbus 5 gates the blocking API
 # behind `blocking-api`; the settings client, otto-kit and others use it.
 zbus = { version = "5.15", default-features = false, features = ["blocking-api", "tokio"] }
 zeroize = "1"

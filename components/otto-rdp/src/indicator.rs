@@ -443,7 +443,6 @@ async fn register(conn: &Connection, name: &str) {
 }
 
 async fn reregister_on_watcher_restart(conn: Connection, name: String) -> zbus::Result<()> {
-    // Via zbus rather than a direct futures-util dependency for one import.
     use futures_util::StreamExt;
 
     let dbus = zbus::fdo::DBusProxy::new(&conn).await?;
