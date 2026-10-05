@@ -12,7 +12,7 @@ use std::time::SystemTime;
 
 use otto_kit::components::scroll::ScrollView;
 use otto_kit::filetype::{self, Kind};
-use otto_kit::fs::{copy_entry, first_free_name, move_entry, remove_entry, unique_name};
+use otto_kit::fs::{copy_entry, first_free_name, move_entry, unique_name};
 use skia_safe::Rect;
 
 /// One entry in a directory.
@@ -1793,16 +1793,10 @@ pub fn delete_forever(paths: &[PathBuf]) -> OpResult {
     let mut result = OpResult::default();
     for path in paths {
         let name = name_of(path);
-        match remove_entry(path) {
-            Ok(()) => {
-                result.deleted += 1;
-                if let (Some(can), Some(file)) =
-                    (otto_kit::trash::Can::of_item(path), path.file_name())
-                {
-                    std::fs::remove_file(can.sidecar(file)).ok();
-                }
-                forget_directory_size(path);
-            }
+        // Through the can, which checks it and deletes by descriptor: a can
+        // on a stick or on /tmp may have been planted with symlinks.
+        match otto_kit::trash::delete_forever(path) {
+            Ok(()) => result.deleted += 1,
             Err(err) => result.errors.push(format!("\u{201c}{name}\u{201d}: {err}")),
         }
     }
