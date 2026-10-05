@@ -326,6 +326,19 @@ otto-kit, so the portal and otto-agents need not link Skia): `xdg`, `dbus`,
   race comment and unique-name workaround. **S**
 - [x] The Trash window watched only the home can's `files/`. **S**
   - *Every listed can's `files/` is watched.*
+- [x] Put Back from a topdir can still followed symlinks the stick carried
+  on the way to the origin (`a -> ~/.config`, `Path=a/autostart/x`) and fell
+  back to copying (#274 review). **S**
+  - *Restored by descriptor from the topdir down, `RENAME_NOREPLACE`, no
+    copy fallback.*
+- [x] Sidecars and `directorysizes` were read through symlinks and FIFOs
+  with no size cap; the Trash column listed cans on the UI thread; a sticky
+  `.Trash` of anybody's was accepted; deleting forever could cross into a
+  mount inside the trash; the dock's mount thread outlived its watcher (#274
+  review). **S**
+  - *`O_NOFOLLOW | O_NONBLOCK`, regular files under 64 KiB / 4 MiB; can list
+    from the loader thread; `.Trash` must be root's or the user's; no device
+    crossing, depth capped at 512; a hang-up pipe stops the mount thread.*
 - [x] Trash can hygiene: cans deduplicated by `(dev, ino)` for bind mounts,
   the can list injectable so `otto-files` tests never reach real mounts, the
   dock's watcher stops when its inotify reader dies, structured tracing
