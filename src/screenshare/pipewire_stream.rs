@@ -25,43 +25,223 @@ fn get_monotonic_time_ns() -> u64 {
         .as_nanos() as u64
 }
 
-/// Buffer pool shared between PipeWire thread and main thread
-#[derive(Default)]
-pub struct BufferPool {
-    /// Allocated dmabufs keyed by fd
-    pub dmabufs: HashMap<i64, Dmabuf>,
-    /// Buffers available for rendering (dequeued from PipeWire)
-    pub available: VecDeque<AvailableBuffer>,
-    /// Raw PW buffer pointers to queue back (keyed by fd)
-    pub to_queue: HashMap<i64, *mut pipewire::sys::pw_buffer>,
-    /// Rendered buffers whose GPU fence has not yet signaled. Held here (NOT in
-    /// `to_queue`) so the async process callback can't hand a still-rendering
-    /// buffer to the consumer. Moved into `to_queue` once the fence is reached.
-    pub pending: HashMap<i64, *mut pipewire::sys::pw_buffer>,
-    /// Track last rendered buffer FD to detect buffer changes
-    pub last_rendered_fd: Option<i64>,
+/// Names one buffer of a [`BufferPool`] for as long as PipeWire owns it.
+///
+/// Ids come from a counter and are never reused. Fds and `pw_buffer`
+/// addresses are: a renegotiation frees the whole buffer set and the next one
+/// can come back with the same numbers, so neither can tell a live buffer
+/// from a freed one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct BufferId(u64);
+
+/// Where a pool buffer is in its round trip between PipeWire and the main
+/// thread.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BufferState {
+    /// Queued to PipeWire: with the consumer, or not dequeued yet.
+    Queued,
+    /// Dequeued, waiting in `available` for the main thread.
+    Available,
+    /// Taken by the main thread, which is rendering into it.
+    Rendering,
+    /// Rendered, waiting for its GPU fence before it may reach the consumer.
+    Pending,
+    /// Ready for the next `process` to queue back to PipeWire.
+    ToQueue,
 }
 
-// SAFETY: the raw `pw_buffer` pointers are what make this `!Send`. The main
-// thread only moves them between the pool's queues, as opaque tokens, under
-// the pool's mutex; they are dereferenced and queued only on the PipeWire
-// thread (`process`). That relies on a pointer never outliving its buffer:
-// `remove_buffer` drops every entry for a freed buffer from the pool, under
-// the same mutex.
-//
-// FIXME: that is not airtight. `render_virtual_outputs` (and the screencast
-// tap) pops an `AvailableBuffer`, renders into it with the lock released,
-// then puts its pointer into `pending`. A renegotiation (`remove_buffer`) in
-// that window frees the buffer while the main thread still holds the pointer,
-// and the next `process` dereferences it. Revalidating `to_queue` entries
-// against the stream's live buffers on the PipeWire thread would close it.
+struct PoolBuffer {
+    fd: i64,
+    dmabuf: Dmabuf,
+    pw_buffer: *mut pipewire::sys::pw_buffer,
+    state: BufferState,
+}
+
+/// Buffer pool shared between the PipeWire thread and the main thread.
+///
+/// The main thread never sees a `pw_buffer`: it takes an [`AvailableBuffer`]
+/// (an id and the dmabuf to render into) and hands it back by id. Every hand
+/// back looks the id up under the pool's mutex and is dropped if PipeWire
+/// removed the buffer meanwhile, so a renegotiation that lands while a frame
+/// renders cannot leave a dangling pointer for `process` to queue.
+#[derive(Default)]
+pub struct BufferPool {
+    /// Every buffer PipeWire has added and not yet removed.
+    buffers: HashMap<BufferId, PoolBuffer>,
+    /// Dequeued buffers in the order the main thread should use them.
+    available: VecDeque<BufferId>,
+    next_id: u64,
+    /// The buffer the last frame went into, to detect buffer changes.
+    last_rendered: Option<BufferId>,
+}
+
+// SAFETY: the raw `pw_buffer` pointers are what make this `!Send`. The
+// invariant: a pointer is in `buffers` exactly while PipeWire owns that
+// buffer. `add_buffer` inserts it and `remove_buffer` takes it out, both on
+// the PipeWire thread and under the pool's mutex. The main thread never
+// receives a pointer, only a `BufferId`; ids are never reused, and every
+// main-thread transition (`queue`, `hold_pending`, `put_back`,
+// `release_pending`) looks its id up under the mutex and does nothing for a
+// removed buffer. Pointers are read out (`take_queue`) and dereferenced only
+// on the PipeWire thread, in `process`, which runs on the same loop as
+// `remove_buffer` and so cannot be interleaved with a removal. A buffer freed
+// while the main thread renders into it is safe for the GPU too: the main
+// thread's `Dmabuf` clone keeps the memory alive until it drops.
 unsafe impl Send for BufferPool {}
 unsafe impl Sync for BufferPool {}
 
+impl BufferPool {
+    /// Record a buffer PipeWire just added (PipeWire thread).
+    fn add(
+        &mut self,
+        fd: i64,
+        dmabuf: Dmabuf,
+        pw_buffer: *mut pipewire::sys::pw_buffer,
+    ) -> BufferId {
+        let id = BufferId(self.next_id);
+        self.next_id += 1;
+        self.buffers.insert(
+            id,
+            PoolBuffer {
+                fd,
+                dmabuf,
+                pw_buffer,
+                state: BufferState::Queued,
+            },
+        );
+        id
+    }
+
+    /// Forget the buffer with `fd`, which PipeWire is freeing (PipeWire
+    /// thread). Ids the main thread still holds for it go stale.
+    fn remove_fd(&mut self, fd: i64) -> bool {
+        let Some(id) = self.id_for_fd(fd) else {
+            return false;
+        };
+        self.buffers.remove(&id);
+        self.available.retain(|b| *b != id);
+        if self.last_rendered == Some(id) {
+            self.last_rendered = None;
+        }
+        true
+    }
+
+    /// Make a buffer PipeWire just dequeued available to the main thread
+    /// (PipeWire thread). False for a buffer the pool does not know.
+    fn dequeued(&mut self, fd: i64, pw_buffer: *mut pipewire::sys::pw_buffer) -> bool {
+        let Some(id) = self.id_for_fd(fd) else {
+            return false;
+        };
+        let buffer = self.buffers.get_mut(&id).expect("id from the map");
+        buffer.pw_buffer = pw_buffer;
+        if buffer.state != BufferState::Available {
+            buffer.state = BufferState::Available;
+            self.available.push_back(id);
+        }
+        true
+    }
+
+    /// The buffers ready to go back to PipeWire, marked queued (PipeWire
+    /// thread). Only live buffers are returned.
+    fn take_queue(&mut self) -> Vec<(i64, *mut pipewire::sys::pw_buffer)> {
+        self.buffers
+            .values_mut()
+            .filter(|b| b.state == BufferState::ToQueue)
+            .map(|b| {
+                b.state = BufferState::Queued;
+                (b.fd, b.pw_buffer)
+            })
+            .collect()
+    }
+
+    fn id_for_fd(&self, fd: i64) -> Option<BufferId> {
+        self.buffers
+            .iter()
+            .find(|(_, b)| b.fd == fd)
+            .map(|(id, _)| *id)
+    }
+
+    /// Move a buffer the main thread holds from `from` to `to`. False, and
+    /// nothing changes, when PipeWire has removed it since.
+    fn transition(&mut self, id: BufferId, from: BufferState, to: BufferState) -> bool {
+        match self.buffers.get_mut(&id) {
+            Some(buffer) if buffer.state == from => {
+                buffer.state = to;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Take the next dequeued buffer to render into.
+    pub fn take_available(&mut self) -> Option<AvailableBuffer> {
+        while let Some(id) = self.available.pop_front() {
+            let Some(buffer) = self.buffers.get_mut(&id) else {
+                continue;
+            };
+            if buffer.state != BufferState::Available {
+                continue;
+            }
+            buffer.state = BufferState::Rendering;
+            return Some(AvailableBuffer {
+                id,
+                fd: buffer.fd,
+                dmabuf: buffer.dmabuf.clone(),
+            });
+        }
+        None
+    }
+
+    /// Hand a rendered buffer to the next `process` to queue. False when
+    /// PipeWire removed it while it rendered; the frame is then dropped.
+    pub fn queue(&mut self, buffer: AvailableBuffer) -> bool {
+        self.transition(buffer.id, BufferState::Rendering, BufferState::ToQueue)
+    }
+
+    /// Hold a rendered buffer until its GPU fence signals, then
+    /// [`Self::release_pending`] it. False when PipeWire removed it.
+    pub fn hold_pending(&mut self, buffer: AvailableBuffer) -> bool {
+        self.transition(buffer.id, BufferState::Rendering, BufferState::Pending)
+    }
+
+    /// Queue every buffer held by [`Self::hold_pending`].
+    pub fn release_pending(&mut self) {
+        for buffer in self.buffers.values_mut() {
+            if buffer.state == BufferState::Pending {
+                buffer.state = BufferState::ToQueue;
+            }
+        }
+    }
+
+    /// Return a buffer the main thread did not render into. False when
+    /// PipeWire removed it.
+    pub fn put_back(&mut self, buffer: AvailableBuffer) -> bool {
+        let returned = self.transition(buffer.id, BufferState::Rendering, BufferState::Available);
+        if returned {
+            self.available.push_back(buffer.id);
+        }
+        returned
+    }
+
+    /// Note that a frame is going into `buffer`. Returns whether it is the
+    /// stream's first frame and whether the buffer differs from the last
+    /// frame's, either of which needs a full-frame render.
+    pub fn mark_rendered(&mut self, buffer: &AvailableBuffer) -> (bool, bool) {
+        let first = self.last_rendered.is_none();
+        let changed = self.last_rendered != Some(buffer.id);
+        self.last_rendered = Some(buffer.id);
+        (first, changed)
+    }
+}
+
+/// A dequeued buffer the main thread is rendering into.
+///
+/// Give it back with [`BufferPool::queue`], [`BufferPool::hold_pending`] or
+/// [`BufferPool::put_back`].
 pub struct AvailableBuffer {
+    id: BufferId,
     pub fd: i64,
     pub dmabuf: Dmabuf,
-    pub pw_buffer: *mut pipewire::sys::pw_buffer,
 }
 
 /// Backend capabilities for format negotiation.
@@ -697,7 +877,7 @@ fn run_pipewire_thread(
                     state.dmabufs.insert(fd, dmabuf.clone());
 
                     // Also store in shared pool (for main thread access)
-                    buffer_pool.lock().unwrap().dmabufs.insert(fd, dmabuf);
+                    buffer_pool.lock().unwrap().add(fd, dmabuf, buffer);
 
                     tracing::debug!("Buffer added fd={}", fd);
                 }
@@ -715,15 +895,10 @@ fn run_pipewire_thread(
                 // Drop every trace of this buffer from the shared pool too —
                 // a renegotiation (window resize) frees the whole set, and a
                 // stale entry would have the main thread blit into a buffer of
-                // the previous size that PipeWire no longer owns.
-                let mut pool = buffer_pool.lock().unwrap();
-                pool.dmabufs.remove(&fd);
-                pool.available.retain(|b| b.fd != fd);
-                pool.to_queue.remove(&fd);
-                pool.pending.remove(&fd);
-                if pool.last_rendered_fd == Some(fd) {
-                    pool.last_rendered_fd = None;
-                }
+                // the previous size that PipeWire no longer owns. A frame the
+                // main thread is rendering into it right now is discarded
+                // when handed back (see `BufferPool`).
+                buffer_pool.lock().unwrap().remove_fd(fd);
 
                 if removed.is_some() {
                     tracing::debug!("Buffer removed fd={}", fd);
@@ -743,12 +918,12 @@ fn run_pipewire_thread(
                 // 1. Queue any buffers that main thread finished rendering
                 {
                     let mut pool = buffer_pool.lock().unwrap();
-                    let to_queue: Vec<_> = pool.to_queue.drain().collect();
-                    for (fd, pw_buffer) in to_queue {
-                        // SAFETY: on the stream's thread, and `pw_buffer` was
-                        // dequeued from this stream and is still owned by
-                        // the pool — see the FIXME on `BufferPool` for the
-                        // window in which that does not hold.
+                    for (fd, pw_buffer) in pool.take_queue() {
+                        // SAFETY: on the stream's thread, with the pool
+                        // locked; `take_queue` returns only buffers PipeWire
+                        // still owns and this thread dequeued, and nothing
+                        // can remove one before this loop is done (see
+                        // `BufferPool`).
                         unsafe {
                             let spa_buffer = (*pw_buffer).buffer;
                             let chunk = (*(*spa_buffer).datas).chunk;
@@ -824,12 +999,7 @@ fn run_pipewire_thread(
                         let fd = (*(*spa_buffer).datas).fd;
 
                         let mut pool = buffer_pool.lock().unwrap();
-                        if let Some(dmabuf) = pool.dmabufs.get(&fd).cloned() {
-                            pool.available.push_back(AvailableBuffer {
-                                fd,
-                                dmabuf,
-                                pw_buffer: buffer,
-                            });
+                        if pool.dequeued(fd, buffer) {
                             tracing::trace!("Buffer fd={} available", fd);
                         } else {
                             tracing::warn!("Unknown buffer fd={}", fd);
@@ -1348,5 +1518,111 @@ fn fourcc_to_video_format(fourcc: Fourcc) -> pipewire::spa::param::video::VideoF
             tracing::warn!("Unknown fourcc {:?}, defaulting to BGRA", fourcc);
             VideoFormat::BGRA
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use smithay::backend::allocator::{dmabuf::DmabufFlags, Modifier};
+
+    fn dmabuf() -> Dmabuf {
+        let fd = std::fs::File::open("/dev/null").unwrap();
+        let mut builder = Dmabuf::builder(
+            (4, 4),
+            Fourcc::Argb8888,
+            Modifier::Linear,
+            DmabufFlags::empty(),
+        );
+        builder.add_plane(std::os::fd::OwnedFd::from(fd), 0, 16);
+        builder.build().unwrap()
+    }
+
+    /// A stand-in `pw_buffer` address; the pool never dereferences it.
+    fn pw_buffer(n: usize) -> *mut pipewire::sys::pw_buffer {
+        (n * 64) as *mut _
+    }
+
+    #[test]
+    fn rendered_buffer_reaches_the_queue() {
+        let mut pool = BufferPool::default();
+        pool.add(7, dmabuf(), pw_buffer(1));
+        assert!(pool.dequeued(7, pw_buffer(1)));
+
+        let buffer = pool.take_available().unwrap();
+        assert!(pool.take_available().is_none());
+        assert!(pool.queue(buffer));
+        assert_eq!(pool.take_queue(), vec![(7, pw_buffer(1))]);
+        assert!(pool.take_queue().is_empty());
+    }
+
+    #[test]
+    fn buffer_removed_while_rendering_is_never_queued() {
+        let mut pool = BufferPool::default();
+        pool.add(7, dmabuf(), pw_buffer(1));
+        pool.dequeued(7, pw_buffer(1));
+        let rendering = pool.take_available().unwrap();
+
+        // Renegotiation: PipeWire frees the set and allocates a new one,
+        // which reuses both the fd and the address.
+        assert!(pool.remove_fd(7));
+        pool.add(7, dmabuf(), pw_buffer(1));
+
+        assert!(!pool.queue(rendering));
+        assert!(pool.take_queue().is_empty());
+    }
+
+    #[test]
+    fn pending_buffer_removed_before_its_fence_is_dropped() {
+        let mut pool = BufferPool::default();
+        pool.add(7, dmabuf(), pw_buffer(1));
+        pool.dequeued(7, pw_buffer(1));
+        let rendering = pool.take_available().unwrap();
+        assert!(pool.hold_pending(rendering));
+
+        pool.remove_fd(7);
+        pool.release_pending();
+        assert!(pool.take_queue().is_empty());
+    }
+
+    #[test]
+    fn removed_buffer_is_not_put_back() {
+        let mut pool = BufferPool::default();
+        pool.add(7, dmabuf(), pw_buffer(1));
+        pool.dequeued(7, pw_buffer(1));
+        let rendering = pool.take_available().unwrap();
+
+        pool.remove_fd(7);
+        assert!(!pool.put_back(rendering));
+        assert!(pool.take_available().is_none());
+    }
+
+    #[test]
+    fn unknown_buffer_is_not_made_available() {
+        let mut pool = BufferPool::default();
+        assert!(!pool.dequeued(7, pw_buffer(1)));
+        assert!(pool.take_available().is_none());
+    }
+
+    #[test]
+    fn a_new_buffer_set_renders_a_full_frame() {
+        let mut pool = BufferPool::default();
+        pool.add(7, dmabuf(), pw_buffer(1));
+        pool.dequeued(7, pw_buffer(1));
+
+        let buffer = pool.take_available().unwrap();
+        assert_eq!(pool.mark_rendered(&buffer), (true, true));
+        pool.queue(buffer);
+        pool.take_queue();
+        pool.dequeued(7, pw_buffer(1));
+        let buffer = pool.take_available().unwrap();
+        assert_eq!(pool.mark_rendered(&buffer), (false, false));
+        pool.queue(buffer);
+
+        pool.remove_fd(7);
+        pool.add(7, dmabuf(), pw_buffer(1));
+        pool.dequeued(7, pw_buffer(1));
+        let buffer = pool.take_available().unwrap();
+        assert_eq!(pool.mark_rendered(&buffer), (true, true));
     }
 }
