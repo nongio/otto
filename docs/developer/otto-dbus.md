@@ -17,6 +17,7 @@ in a string.
 | `file_picker` | `org.otto.FilePicker1` | otto-files, `src/dbus.rs` |
 | `files` | `org.otto.Files1` | otto-files, `src/files_service.rs` |
 | `desk` | `org.otto.Desk1` | otto-files, `src/desk_service.rs` |
+| `stash` | `org.otto.Stash1` | otto-stash, `src/dbus.rs` |
 
 Each module also exports the bus name and object path as `SERVICE` and `PATH`,
 plus any wire tuple types the interface uses (`WireChoice`, `WireRequest`, …).

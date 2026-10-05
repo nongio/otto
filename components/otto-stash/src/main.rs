@@ -123,15 +123,17 @@ fn main() -> anyhow::Result<()> {
     let mut args = std::env::args().skip(1);
     match args.next().as_deref() {
         None => serve(&runtime),
-        Some("add") => runtime.block_on(dbus::call("Add", &())).map_err(Into::into),
+        Some("add") => runtime
+            .block_on(async { dbus::running().await?.add().await })
+            .map_err(Into::into),
         Some("add-region") => runtime
-            .block_on(dbus::call("AddRegion", &()))
+            .block_on(async { dbus::running().await?.add_region().await })
             .map_err(Into::into),
         Some("send") => runtime
-            .block_on(dbus::call("Send", &()))
+            .block_on(async { dbus::running().await?.send().await })
             .map_err(Into::into),
         Some("cancel") => runtime
-            .block_on(dbus::call("Cancel", &()))
+            .block_on(async { dbus::running().await?.cancel().await })
             .map_err(Into::into),
         Some("add-file") => {
             let path = args.next().context("add-file needs a path")?;
@@ -139,7 +141,7 @@ fn main() -> anyhow::Result<()> {
                 std::fs::canonicalize(&path).with_context(|| format!("no such file: {path}"))?;
             let path = path.to_str().context("the path is not UTF-8")?.to_owned();
             runtime
-                .block_on(dbus::call("AddFile", &(path,)))
+                .block_on(async { dbus::running().await?.add_file(&path).await })
                 .map_err(Into::into)
         }
         Some(other) => {

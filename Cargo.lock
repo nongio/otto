@@ -5482,7 +5482,6 @@ dependencies = [
  "anyhow",
  "otto-kit",
  "otto-peek",
- "serde",
  "smithay-client-toolkit 0.19.2",
  "tokio",
  "tracing",

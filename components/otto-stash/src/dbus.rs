@@ -16,7 +16,9 @@ use tokio::sync::oneshot;
 use zbus::export::futures_util::StreamExt;
 use zbus::fdo;
 
-pub use otto_kit::components::stashed::{Items, NAME, PATH};
+pub use otto_kit::components::stashed::Items;
+use otto_kit::dbus::stash::StashProxy;
+pub use otto_kit::dbus::stash::{PATH, SERVICE as NAME};
 
 /// How long Files is given to say.
 const FILES_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(300);
@@ -256,19 +258,14 @@ pub async fn serve(commands: Sender<Command>) -> zbus::Result<zbus::Connection> 
         .await
 }
 
-/// Call `method` with `body` on the running otto-stash.
+/// The running otto-stash, for the command line to call.
 ///
 /// # Errors
 ///
-/// When otto-stash isn't running or refuses the request.
-pub async fn call<B>(method: &str, body: &B) -> zbus::Result<()>
-where
-    B: serde::Serialize + zbus::zvariant::DynamicType,
-{
+/// When the session bus cannot be reached.
+pub async fn running() -> zbus::Result<StashProxy<'static>> {
     let bus = zbus::Connection::session().await?;
-    bus.call_method(Some(NAME), PATH, Some(NAME), method, body)
-        .await?;
-    Ok(())
+    StashProxy::new(&bus).await
 }
 
 /// The shortcut that opens Ask, as "Ctrl+Alt+A", or failing that the one

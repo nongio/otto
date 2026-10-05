@@ -99,13 +99,14 @@ otto-kit, so the portal and otto-agents need not link Skia): `xdg`, `dbus`,
   different validation (`otto-files/src/model.rs:810`,
   `otto-settings/src/panes/search.rs:444`). **M**
   - *Partly done in #261: `otto_kit::xdg` added and the listed helpers migrated; other ad-hoc `HOME`/`XDG_*` readers remain (listed in the PR).*
-- [ ] **`dbus`**: one client proxy per `org.otto.*` interface.
+- [x] **`dbus`**: one client proxy per `org.otto.*` interface.
   `org.otto.Dialog1` ×3, `org.otto.Settings` ×3 plus raw calls,
   `org.otto.ScreenCast` raw in otto-rdp, `org.otto.Shell1` raw in otto-msg,
   `org.otto.Island` raw in otto-files. The portal `Settings` proxy is declared
   6× inside otto-kit itself, each opening its own connection. **S–M**
   - *Done in the otto-dbus PR: one shared portal client in otto-kit, and the `components/otto-dbus` crate (re-exported as `otto_kit::dbus`) with every `org.otto.*` proxy; see [otto-dbus](otto-dbus.md). `org.otto.Stash1` clients (otto-files, otto-kit `stashed`) still call by name.*
   - *Done in #266 for every interface listed (new `otto-dbus` crate, re-exported as `otto_kit::dbus`, plus one shared portal Settings client); `org.otto.Stash1` callers (otto-files `stash.rs`, otto-kit `components/stashed.rs`) still call by name.*
+  - *`org.otto.Stash1` has its proxy too (`otto_dbus::stash`); otto-files, otto-kit `stashed` and the otto-stash command line use it.*
 - [ ] **`uri`**: percent-encoding hand-written ~9× (otto-kit trash/clipboard,
   otto-peek, otto-agents-client, otto-search, `src/desktop_widget.rs`); use
   `percent-encoding`/`url` (in Cargo.lock). **S**

@@ -22,3 +22,4 @@ pub mod island;
 pub mod screencast;
 pub mod settings;
 pub mod shell;
+pub mod stash;
