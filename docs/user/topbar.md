@@ -57,6 +57,12 @@ Menu items support labels, icons, keyboard-shortcut hints, separators,
 checkboxes, radio groups and arbitrarily nested submenus. Disabled items are
 dimmed and inert.
 
+Prefer menus in the window? Turn off **Settings ▸ Top bar ▸ Show application
+menus**, or set `show_app_menu = false` under `[topbar]` in
+`~/.config/otto/config.toml`. The bar then shows just the application's name,
+and applications you open afterwards keep their menu bar in their own window.
+One already running may need restarting before its menu comes back.
+
 ### Getting an app to export its menu
 
 Not every application exports a DBusMenu. When one does not, the left zone shows
@@ -207,7 +213,7 @@ the layout switch keys.
 
 ## Clock
 
-The clock is on the far right. **Settings ▸ Appearance ▸ Top bar clock** turns
+The clock is on the far right. **Settings ▸ Top bar ▸ Clock** turns
 it on or off and picks its format from a list, each entry showing the current
 time the way the bar will write it. Both apply at once. With the clock off,
 the battery and tray move up to the edge.

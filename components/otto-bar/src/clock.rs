@@ -18,6 +18,7 @@ use zbus::zvariant::Value;
 use zbus::Connection;
 
 use crate::config::file_clock_format;
+use crate::settings::{get_bool, unwrap_variant};
 
 /// The setting that shows or hides the clock.
 const SHOW_ID: &str = "topbar.show_clock";
@@ -169,13 +170,8 @@ async fn run_watcher() -> zbus::Result<()> {
 /// carries identifiers rather than values, so the values are asked for.
 async fn read_settings(proxy: &SettingsProxy<'_>) {
     let mut moved = false;
-    match proxy.get(SHOW_ID).await {
-        Ok(owned) => {
-            if let Value::Bool(show) = unwrap_variant(owned.into()) {
-                moved |= SHOWN.swap(show, Ordering::Relaxed) != show;
-            }
-        }
-        Err(e) => tracing::debug!("{SHOW_ID} read failed (no compositor?): {e}"),
+    if let Some(show) = get_bool(proxy, SHOW_ID).await {
+        moved |= SHOWN.swap(show, Ordering::Relaxed) != show;
     }
     match proxy.get(FORMAT_ID).await {
         Ok(owned) => {
@@ -191,14 +187,6 @@ async fn read_settings(proxy: &SettingsProxy<'_>) {
     }
     if moved {
         AppContext::request_wakeup();
-    }
-}
-
-/// Unwrap the variant a `Get` answer comes in, however deep.
-fn unwrap_variant(value: Value<'_>) -> Value<'_> {
-    match value {
-        Value::Value(inner) => unwrap_variant(*inner),
-        other => other,
     }
 }
 

@@ -383,7 +383,7 @@ are:
   accent colour, rounded corners, frosting, which end of a title bar the
   window controls sit at, the maximize button, font family and GTK theme; the
   desktop's background colour and image and the desktop widget; the desk; the cursor theme and size
-  and the icon theme; and the top bar's clock.
+  and the icon theme.
 
   The Desk group holds *Show files on the desktop* (`desk.enabled`), then
   four rows that are not `org.otto.Settings` settings but the desk's own, in
@@ -416,8 +416,23 @@ are:
   name, so the accent keeps following the light and dark schemes. A colour
   dragged out of the picker that the palette has no name for is sent as
   `#RRGGBB` and is taken as-is under both schemes.
+- **Displays** — see below.
+- **Dock** — size, position, autohide, magnification, minimise effect, and the
+  icon tint: what is tinted — the dock's icons, and whether the app switcher
+  joins in — then the colour and strength that govern both. The switcher's
+  toggle lives here rather than with the switcher's own settings because it
+  says nothing on its own: it borrows the dock's tint, and does nothing while
+  that tint is off.
+- **Top bar** — right after Dock. What otto-bar shows: the application
+  menus, then the clock.
 
-  The clock group has a toggle, *Show date and time* (`topbar.show_clock`,
+  The application menu group has one toggle, *Show application menus*
+  (`topbar.show_app_menu`, live, on by default). Off, the bar shows only the
+  focused application's name and gives up the
+  `com.canonical.AppMenu.Registrar` name, so applications opened afterwards
+  keep their menu bar in their own window; the row's detail says so.
+
+  The *Clock* group has a toggle, *Show date and time* (`topbar.show_clock`,
   live, on by default), and a *Format* pop-up (`topbar.clock_format`, live).
   The format is a `string` setting; the pop-up offers a fixed set of formats
   (time only, weekday and time, short and long date with time, each on a
@@ -429,13 +444,6 @@ are:
   force. otto-bar reads both settings over `org.otto.Settings` and follows
   `Changed`, so both apply live; the compositor has nothing to reconcile
   ([topbar.md](./topbar.md)).
-- **Displays** — see below.
-- **Dock** — size, position, autohide, magnification, minimise effect, and the
-  icon tint: what is tinted — the dock's icons, and whether the app switcher
-  joins in — then the colour and strength that govern both. The switcher's
-  toggle lives here rather than with the switcher's own settings because it
-  says nothing on its own: it borrows the dock's tint, and does nothing while
-  that tint is off.
 - **Keyboard** — repeat delay and rate, the input sources (see below), then
   shortcuts.
 - **Trackpad & Mouse** — the pointer and touchpad settings.

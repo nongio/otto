@@ -1411,8 +1411,12 @@ impl App for TopBarApp {
                 self.redraw_left();
             } else {
                 // Menu layout itself changed — update left panel items
-                self.left
-                    .set_app_menu(crate::appmenu::current_menu().as_ref());
+                let menu = crate::appmenu::current_menu();
+                if menu.is_none() {
+                    // Gone, or turned off in Settings: nothing to keep open.
+                    self.close_app_menu();
+                }
+                self.left.set_app_menu(menu.as_ref());
                 self.update_left_panel(true);
             }
         }

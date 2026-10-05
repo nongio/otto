@@ -19,6 +19,7 @@ pub mod privacy;
 pub mod search;
 pub mod sound;
 pub mod tiling;
+pub mod top_bar;
 
 /// Hand a file to the application the desktop opens its type with.
 ///

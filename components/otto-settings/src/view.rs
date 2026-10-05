@@ -2313,7 +2313,7 @@ impl Settings {
                 // the schema's human name for it where there is one.
                 let shown = match row.id {
                     Some(id) => crate::panes::keyboard_layouts::display(id, value)
-                        .or_else(|| crate::panes::appearance::display(id, value))
+                        .or_else(|| crate::panes::top_bar::display(id, value))
                         .or_else(|| crate::panes::desk::display(id, value))
                         .unwrap_or_else(|| settings_client::display_choice(id, value)),
                     None => value.clone(),
@@ -3045,28 +3045,23 @@ mod tests {
 
     #[test]
     fn hit_testing_still_reaches_a_row_that_is_only_visible_when_scrolled() {
-        // The tallest pane is not necessarily one with a toggle in it, and a
-        // toggle is what this test aims at — so pick the tallest pane that
-        // overflows its viewport AND has one, rather than assuming the two
-        // coincide (they stopped coinciding once a row was removed).
-        let settings = (0..model::panes().len())
+        // Aim at a toggle that starts out below the fold, in whichever pane
+        // has one, rather than assuming the tallest pane ends in a toggle
+        // (it stopped doing so once the clock moved to the Top bar pane).
+        let below_fold = |s: &Settings| {
+            let height = s.viewport().height();
+            s.row_rects(s.width - SIDEBAR_W)
+                .into_iter()
+                .rfind(|(row, rect)| matches!(row.control, Control::Toggle(_)) && rect.top > height)
+                .map(|(_, rect)| rect)
+        };
+        let (settings, rect) = (0..model::panes().len())
             .map(|i| Settings::new(i, false))
-            .filter(|s| s.pane_content_height() > s.viewport().height())
-            .filter(|s| {
-                s.row_rects(s.width - SIDEBAR_W)
-                    .iter()
-                    .any(|(row, _)| matches!(row.control, Control::Toggle(_)))
-            })
-            .max_by(|a, b| a.pane_content_height().total_cmp(&b.pane_content_height()))
-            .expect("a scrolling pane with a toggle in it");
+            .find_map(|s| below_fold(&s).map(|rect| (s, rect)))
+            .expect("a pane with a toggle below the fold");
         let viewport = settings.viewport();
-        let offset = settings.pane_content_height() - viewport.height();
-
-        let (_, rect) = settings
-            .row_rects(settings.width - SIDEBAR_W)
-            .into_iter()
-            .rfind(|(row, _)| matches!(row.control, Control::Toggle(_)))
-            .expect("a toggle somewhere in the pane");
+        let max_offset = settings.pane_content_height() - viewport.height();
+        let offset = (rect.bottom - viewport.height()).clamp(0.0, max_offset);
 
         let x = viewport.left + rect.right - 14.0 - widgets::TOGGLE_W / 2.0;
         let y = viewport.top + rect.center_y() - offset;

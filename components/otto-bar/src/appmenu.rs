@@ -9,16 +9,33 @@
 //!    this module serves (GTK through `appmenu-gtk-module`, Qt on xcb).
 //! 3. Its `pid`, matched against the process behind a registration: an app on
 //!    Wayland that registered anyway, with an id the bar cannot map to a window.
+//!
+//! The compositor's `topbar.show_app_menu` turns all of this off. The bar then
+//! gives up the registrar's name as well, since an app that finds no registrar
+//! keeps its menu bar in its own window rather than handing it to nobody.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{LazyLock, Mutex};
 
 use futures_util::StreamExt;
+use otto_kit::dbus::settings::SettingsProxy;
+use otto_kit::dbus::shell::ShellProxy;
 use otto_kit::AppContext;
-use zbus::{interface, proxy, Connection};
+use zbus::{interface, Connection};
 
 use crate::dbusmenu::MenuLayout;
+use crate::settings::get_bool;
+
+/// The setting that shows or hides application menus.
+const SHOW_ID: &str = "topbar.show_app_menu";
+
+/// The name apps look for to hand their menus over.
+const REGISTRAR_NAME: &str = "com.canonical.AppMenu.Registrar";
+
+/// Whether application menus are shown. On until the compositor says
+/// otherwise, so a bar running without Otto still has them.
+static SHOWN: AtomicBool = AtomicBool::new(true);
 
 // ---------------------------------------------------------------------------
 // Global shared state
@@ -154,6 +171,10 @@ fn clear_menu() {
 /// Fetch the focused window's menu again, or clear it when it has none.
 fn refresh() {
     let lookup = LOOKUP.fetch_add(1, Ordering::SeqCst) + 1;
+    if !SHOWN.load(Ordering::Relaxed) {
+        clear_menu();
+        return;
+    }
     let conn = APPMENU_CONNECTION.lock().unwrap().clone();
     let focused = FOCUSED.lock().unwrap().clone();
     let (Some(conn), Some(focused)) = (conn, focused) else {
@@ -362,17 +383,6 @@ async fn sender_pid(sender: &str) -> Option<u32> {
 // Following focus on org.otto.Shell1
 // ---------------------------------------------------------------------------
 
-#[proxy(
-    interface = "org.otto.Shell1",
-    default_service = "org.otto.Shell1",
-    default_path = "/org/otto/Shell1"
-)]
-trait Shell {
-    fn get_tree(&self) -> zbus::Result<String>;
-    #[zbus(signal)]
-    fn window_changed(&self, event: String) -> zbus::Result<()>;
-}
-
 async fn read_focus_from_tree(proxy: &ShellProxy<'_>) {
     let focused = proxy
         .get_tree()
@@ -443,18 +453,79 @@ async fn run_registrar() -> Result<(), Box<dyn std::error::Error + Send + Sync>>
         .at("/com/canonical/AppMenu/Registrar", AppMenuRegistrar)
         .await?;
 
-    // Request the well-known name
-    // No AllowReplacement: zbus 5's plain request_name would add it.
-    conn.request_name_with_flags(
-        "com.canonical.AppMenu.Registrar",
-        zbus::fdo::RequestNameFlags::ReplaceExisting | zbus::fdo::RequestNameFlags::DoNotQueue,
-    )
-    .await?;
+    // Focus is followed for the life of the bar; the registrar itself lives
+    // in zbus's loop.
+    tokio::spawn({
+        let conn = conn.clone();
+        async move {
+            if let Err(e) = follow_focus(conn).await {
+                tracing::warn!("appmenu: focus no longer followed: {e}");
+            }
+        }
+    });
 
-    // Runs for the life of the bar; the registrar itself lives in zbus's loop.
-    follow_focus(conn).await?;
-
+    follow_setting(conn).await?;
     Ok(())
+}
+
+/// Follow `topbar.show_app_menu`, holding the registrar's name only while
+/// menus are shown.
+///
+/// The setting is read before the name is first asked for, so an app that
+/// starts with the bar never hides its menu bar for a bar that will not show
+/// it.
+async fn follow_setting(conn: Connection) -> zbus::Result<()> {
+    let proxy = SettingsProxy::new(&conn).await?;
+    // Subscribed before the first read, so a change landing between the two
+    // is not lost.
+    let mut changes = proxy.receive_changed().await?;
+    // A compositor that starts after the bar, or restarts under it, is asked
+    // again.
+    let mut owners = proxy.inner().receive_owner_changed().await?;
+
+    let mut holding = false;
+    loop {
+        let shown = get_bool(&proxy, SHOW_ID)
+            .await
+            .unwrap_or_else(|| SHOWN.load(Ordering::Relaxed));
+        SHOWN.store(shown, Ordering::Relaxed);
+        if shown != holding {
+            let held = if shown {
+                // No AllowReplacement: zbus 5's plain request_name would add it.
+                conn.request_name_with_flags(
+                    REGISTRAR_NAME,
+                    zbus::fdo::RequestNameFlags::ReplaceExisting
+                        | zbus::fdo::RequestNameFlags::DoNotQueue,
+                )
+                .await
+                .map(|_| ())
+            } else {
+                conn.release_name(REGISTRAR_NAME).await.map(|_| ())
+            };
+            match held {
+                Ok(()) => holding = shown,
+                Err(e) => tracing::warn!("appmenu: registrar name: {e}"),
+            }
+            refresh();
+        }
+
+        // Wait for the next reason to read the setting again.
+        loop {
+            tokio::select! {
+                Some(signal) = changes.next() => {
+                    if signal.args().is_ok_and(|args| args.values.contains_key(SHOW_ID)) {
+                        break;
+                    }
+                }
+                Some(owner) = owners.next() => {
+                    if owner.is_some() {
+                        break;
+                    }
+                }
+                else => return Ok(()),
+            }
+        }
+    }
 }
 
 #[cfg(test)]
