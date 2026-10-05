@@ -7,7 +7,7 @@
 use otto_kit::AppContext;
 use std::collections::HashMap;
 use zbus::zvariant::Value;
-use zbus::{interface, SignalContext};
+use zbus::{interface, object_server::SignalEmitter};
 
 use crate::activity::{NotificationAction, Priority};
 use crate::notification_permission;
@@ -155,7 +155,7 @@ impl NotificationDaemon {
     async fn close_notification(
         &self,
         id: u32,
-        #[zbus(signal_context)] ctxt: SignalContext<'_>,
+        #[zbus(signal_emitter)] ctxt: SignalEmitter<'_>,
     ) -> zbus::fdo::Result<()> {
         let dismissed = {
             let mut state = self.state.lock().unwrap();
@@ -185,7 +185,7 @@ impl NotificationDaemon {
     /// 2 = dismissed by the user, 3 = closed via CloseNotification, 4 = undefined.
     #[zbus(signal)]
     pub async fn notification_closed(
-        ctxt: &SignalContext<'_>,
+        ctxt: &SignalEmitter<'_>,
         id: u32,
         reason: u32,
     ) -> zbus::Result<()>;
@@ -194,7 +194,7 @@ impl NotificationDaemon {
     /// default action by clicking the notification body).
     #[zbus(signal)]
     pub async fn action_invoked(
-        ctxt: &SignalContext<'_>,
+        ctxt: &SignalEmitter<'_>,
         id: u32,
         action_key: &str,
     ) -> zbus::Result<()>;

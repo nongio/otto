@@ -14,6 +14,7 @@ wayland-protocols-wlr = { workspace = true, features = ["client"] }
 libc.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 zbus.workspace = true
+futures-util.workspace = true
 
 [dependencies.skia-safe]
 workspace = true

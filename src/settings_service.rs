@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use tokio::sync::oneshot;
 use tracing::info;
 use zbus::zvariant::{OwnedValue, Value};
-use zbus::{interface, Connection, SignalContext};
+use zbus::{interface, object_server::SignalEmitter, Connection};
 
 use crate::config::Config;
 use crate::screenshare::CompositorCommand;
@@ -419,7 +419,7 @@ impl SettingsInterface {
     /// that called `Set` receives this too, and must not suppress its own echo.
     #[zbus(signal)]
     async fn changed(
-        context: &SignalContext<'_>,
+        context: &SignalEmitter<'_>,
         values: HashMap<String, OwnedValue>,
     ) -> zbus::Result<()>;
 }
@@ -434,7 +434,13 @@ pub async fn register_settings_interface(
         .at("/org/otto/Settings", SettingsInterface { compositor_tx })
         .await?;
 
-    connection.request_name("org.otto.Settings").await?;
+    // No AllowReplacement: zbus 5's plain request_name would add it.
+    connection
+        .request_name_with_flags(
+            "org.otto.Settings",
+            zbus::fdo::RequestNameFlags::ReplaceExisting | zbus::fdo::RequestNameFlags::DoNotQueue,
+        )
+        .await?;
 
     // Announcements originate on the compositor thread, which cannot await, so
     // they are handed to a task on this connection's runtime instead.
@@ -459,7 +465,7 @@ pub async fn register_settings_interface(
             match iface {
                 Ok(iface) => {
                     if let Err(err) =
-                        SettingsInterface::changed(iface.signal_context(), values).await
+                        SettingsInterface::changed(iface.signal_emitter(), values).await
                     {
                         tracing::warn!("Could not emit the settings Changed signal: {err}");
                     }

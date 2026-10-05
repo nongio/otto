@@ -22,9 +22,10 @@ xkbcommon.workspace = true
 thiserror = "2"
 anyhow.workspace = true
 tokio = { workspace = true, features = ["full"] }
-# Accessibility: the AT-SPI object model for Otto's own chrome. `async-io`
-# (the default) rather than the tokio executor — the adapter is driven from
-# the compositor thread, which is calloop's, not a tokio runtime's.
+# Accessibility: the AT-SPI object model for Otto's own chrome. The adapter
+# is driven from the compositor thread, which is calloop's, not a tokio
+# runtime's; accesskit_unix (tokio feature, set in the workspace) does its
+# D-Bus work on a runtime of its own, on its own thread.
 accesskit.workspace = true
 accesskit_unix.workspace = true
 fps_ticker = { version = "1.0.0", optional = true }
@@ -44,6 +45,7 @@ toml = { workspace = true, features = ["default"] }
 # a hand-editable file (see src/config/file.rs).
 toml_edit.workspace = true
 zbus.workspace = true
+futures-util.workspace = true
 pipewire.workspace = true
 brightness = "0.8.0"
 mpris = "2.0"
@@ -214,11 +216,17 @@ laye-rs = { git = "https://github.com/nongio/layers", tag = "v1.18.1", features 
 # that some member needs lean is declared with `default-features = false` and
 # the members that want the defaults ask for them back (`features = ["default"]`).
 accesskit = "0.24"
-accesskit_unix = "0.22"
+# tokio, not the default async-io: accesskit_unix links the workspace's zbus 5,
+# whose `tokio` feature (see `zbus` below) makes every zbus connection spawn
+# onto tokio. In tokio mode the adapter runs its D-Bus work on a
+# current-thread runtime of its own, on its own thread, so callers still need
+# no runtime.
+accesskit_unix = { version = "0.22", default-features = false, features = ["tokio"] }
 ahp = "=0.9.0"
 ahp-types = "=0.9.0"
 anyhow = "1"
 chrono = { version = "0.4", default-features = false }
+enumflags2 = "0.7"
 fluent-bundle = "0.15"
 freedesktop-desktop-entry = "0.7.5"
 futures-util = "0.3"
@@ -260,9 +268,11 @@ xkbcommon = "0.9"
 # With both flavours declared, feature unification used to pick tokio for any
 # binary that links otto-kit, or for the whole workspace built at once, and
 # async-io for the rest — the executor depended on how the crate was built.
-# (accesskit_unix and brightness bring their own zbus 5 on async-io; that copy
-# is independent of this one.)
-zbus = { version = "4", default-features = false, features = ["tokio"] }
+# accesskit_unix and brightness link this same zbus, so their connections run
+# on tokio too (see accesskit_unix above; brightness only uses the blocking
+# API, which runs on zbus's internal runtime). zbus 5 gates the blocking API
+# behind `blocking-api`; the settings client, otto-kit and others use it.
+zbus = { version = "5.15", default-features = false, features = ["blocking-api", "tokio"] }
 zeroize = "1"
 
 [workspace.package]

@@ -12,7 +12,7 @@ use otto_kit::AppContext;
 
 use futures_util::StreamExt;
 use zbus::zvariant::{OwnedValue, Value};
-use zbus::{interface, proxy, Connection, SignalContext};
+use zbus::{interface, object_server::SignalEmitter, proxy, Connection};
 
 /// Global shared tray state readable from the draw loop.
 static TRAY_STATE: LazyLock<TrayState> = LazyLock::new(|| Arc::new(Mutex::new(Vec::new())));
@@ -270,7 +270,7 @@ impl WatcherService {
         &mut self,
         service: &str,
         #[zbus(header)] header: zbus::message::Header<'_>,
-        #[zbus(signal_context)] ctxt: SignalContext<'_>,
+        #[zbus(signal_emitter)] ctxt: SignalEmitter<'_>,
     ) -> zbus::fdo::Result<()> {
         // service may be a bus name or an object path. Normalise.
         let (bus_name, path) = if service.starts_with('/') {
@@ -310,7 +310,7 @@ impl WatcherService {
     async fn register_status_notifier_host(
         &mut self,
         service: &str,
-        #[zbus(signal_context)] ctxt: SignalContext<'_>,
+        #[zbus(signal_emitter)] ctxt: SignalEmitter<'_>,
     ) -> zbus::fdo::Result<()> {
         self.hosts.push(service.to_string());
         Self::status_notifier_host_registered(&ctxt).await?;
@@ -334,18 +334,18 @@ impl WatcherService {
 
     #[zbus(signal)]
     async fn status_notifier_item_registered(
-        ctxt: &SignalContext<'_>,
+        ctxt: &SignalEmitter<'_>,
         service: &str,
     ) -> zbus::Result<()>;
 
     #[zbus(signal)]
     async fn status_notifier_item_unregistered(
-        ctxt: &SignalContext<'_>,
+        ctxt: &SignalEmitter<'_>,
         service: &str,
     ) -> zbus::Result<()>;
 
     #[zbus(signal)]
-    async fn status_notifier_host_registered(ctxt: &SignalContext<'_>) -> zbus::Result<()>;
+    async fn status_notifier_host_registered(ctxt: &SignalEmitter<'_>) -> zbus::Result<()>;
 }
 
 // ---------------------------------------------------------------------------
@@ -417,7 +417,12 @@ async fn run_watcher() -> Result<(), zbus::Error> {
         .await?;
 
     // Request the well-known name
-    conn.request_name("org.kde.StatusNotifierWatcher").await?;
+    // No AllowReplacement: zbus 5's plain request_name would add it.
+    conn.request_name_with_flags(
+        "org.kde.StatusNotifierWatcher",
+        zbus::fdo::RequestNameFlags::ReplaceExisting | zbus::fdo::RequestNameFlags::DoNotQueue,
+    )
+    .await?;
 
     // Also register ourselves as a host
     // (we are both the watcher and the host in this compositor)

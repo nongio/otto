@@ -223,9 +223,7 @@ async fn connect() -> zbus::Result<SettingsProxy<'static>> {
 }
 
 /// The next change, or never when there is no stream to read.
-async fn next_change(
-    changes: &mut Option<SettingChangedStream<'static>>,
-) -> Option<SettingChanged> {
+async fn next_change(changes: &mut Option<SettingChangedStream>) -> Option<SettingChanged> {
     match changes {
         Some(stream) => stream.next().await,
         None => std::future::pending().await,

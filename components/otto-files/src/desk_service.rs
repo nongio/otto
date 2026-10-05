@@ -46,8 +46,9 @@ impl DeskService {
 /// Fails when there is no session bus, or the object or the name cannot be
 /// registered on it.
 pub async fn serve() -> zbus::Result<()> {
-    let connection = zbus::ConnectionBuilder::session()?
+    let connection = zbus::connection::Builder::session()?
         .serve_at(DBUS_PATH, DeskService)?
+        .allow_name_replacements(false)
         .name(DBUS_NAME)?
         .build()
         .await?;

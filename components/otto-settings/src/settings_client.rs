@@ -71,7 +71,7 @@ impl Value {
             Value::Double(v) => ZValue::F64(*v),
             Value::Text(v) => ZValue::Str(v.clone().into()),
             Value::List(v) => {
-                let mut array = zbus::zvariant::Array::new(<&str>::signature());
+                let mut array = zbus::zvariant::Array::new(<&str>::SIGNATURE);
                 for item in v {
                     // The element type is fixed above, so this cannot fail.
                     let _ = array.append(ZValue::Str(item.clone().into()));
