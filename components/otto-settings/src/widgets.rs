@@ -289,7 +289,8 @@ pub fn tabs(canvas: &Canvas, rect: Rect, labels: &[&str], selected: usize, theme
             canvas.draw_rrect(rrect, &fill(theme.material_highlight));
             canvas.draw_rrect(rrect, &stroke(theme.hairline, 0.5));
         }
-        let text = elide_tail(label, styles::SUBHEADLINE, width - 16.0);
+        let text =
+            otto_kit::typography::ellipsize(&styles::SUBHEADLINE.font(), label, width - 16.0);
         let text_w = styles::SUBHEADLINE.font().measure_str(&text, None).0;
         text_centered_y(
             canvas,
