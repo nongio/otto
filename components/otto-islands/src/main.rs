@@ -2308,15 +2308,10 @@ fn request_focus_app(app_id: String) {
                 return;
             }
         };
-        let reply = connection
-            .call_method(
-                Some("org.otto.Compositor"),
-                "/org/otto/Compositor",
-                Some("org.otto.Compositor"),
-                "FocusApp",
-                &(app_id.as_str(),),
-            )
-            .await;
+        let reply = match otto_kit::dbus::compositor::CompositorProxy::new(&connection).await {
+            Ok(compositor) => compositor.focus_app(&app_id).await,
+            Err(e) => Err(e),
+        };
         if let Err(e) = reply {
             tracing::warn!(app_id, "focus_app D-Bus call failed: {e}");
         }

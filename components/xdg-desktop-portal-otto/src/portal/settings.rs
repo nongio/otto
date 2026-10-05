@@ -9,9 +9,9 @@ use zbus::interface;
 use zbus::zvariant::{OwnedValue, Value};
 use zbus::{Connection, SignalContext};
 
-use crate::otto_client::settings::OttoSettingsProxy;
 use crate::otto_client::OttoClient;
 use crate::portal::desktop_path;
+use otto_dbus::settings::SettingsProxy as OttoSettingsProxy;
 
 /// The settings served under `org.otto.desktop` that are read straight from
 /// the compositor's schema: the portal key, and Otto's identifier for it.

@@ -24,6 +24,7 @@ use agent_client_protocol::schema::v1::{
     RequestPermissionResponse, SelectedPermissionOutcome, ToolCallContent, ToolKind,
 };
 use fluent_bundle::FluentArgs;
+use otto_dbus::dialog::{DialogProxy, WireQuestion};
 use serde::Deserialize;
 use tokio::sync::OnceCell;
 
@@ -499,16 +500,6 @@ pub fn folder(cwd: &Path) -> String {
     crate::xdg::tilde_from_env(cwd)
 }
 
-/// A question as `org.otto.Dialog1.PresentQuestions` takes it:
-/// `(id, label, multi, [(option_id, option_label, option_icon)], default_option_ids)`.
-type WireQuestion = (
-    String,
-    String,
-    bool,
-    Vec<(String, String, String)>,
-    Vec<String>,
-);
-
 /// How the dialog should set what it is given. Only presentation: the words
 /// for getting through the questions — answer, skip, next, back, the counter,
 /// the multi-select hint — are the dialog's own, and localised there.
@@ -551,39 +542,6 @@ fn wire_questions(choices: &[Choice]) -> Vec<WireQuestion> {
             )
         })
         .collect()
-}
-
-#[zbus::proxy(
-    interface = "org.otto.Dialog1",
-    default_service = "org.otto.Island",
-    default_path = "/org/otto/Dialog",
-    gen_blocking = false
-)]
-trait Dialog {
-    /// Presents a dialog and returns once the user answers:
-    /// `(response, results)`, where `response` is `0` granted, `1` denied,
-    /// `2` ended without an answer and `3` "answer in Ask". One question a
-    /// page, single- or multi-select; `results` carries an entry per picked
-    /// option. An empty `grant_label` or `open_label` hides that button.
-    #[allow(clippy::too_many_arguments)]
-    async fn present_questions(
-        &self,
-        app_id: &str,
-        cookie: &str,
-        title: &str,
-        subtitle: &str,
-        body: &str,
-        icon: &str,
-        grant_label: &str,
-        deny_label: &str,
-        open_label: &str,
-        labels: HashMap<String, String>,
-        modal: bool,
-        questions: Vec<WireQuestion>,
-    ) -> zbus::Result<(u32, Vec<(String, String)>)>;
-
-    /// Takes down the dialog `cookie` names, answering it as ended.
-    async fn withdraw(&self, app_id: &str, cookie: &str) -> zbus::Result<bool>;
 }
 
 /// The reply a dialog's `(response, results)` stands for.
@@ -632,7 +590,7 @@ pub async fn renderer_present() -> bool {
     };
     proxy
         .name_has_owner(
-            "org.otto.Island"
+            otto_dbus::dialog::SERVICE
                 .try_into()
                 .expect("a well-formed bus name"),
         )

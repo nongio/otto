@@ -79,15 +79,17 @@ jobs:
           LOCK='^Cargo\.lock$'
           # The UI toolkit: linked by otto and by every component except the
           # RDP bridge and the portal backend, which are leaf crates (verified
-          # with `cargo tree -p <crate> | grep otto-kit`).
-          KIT='^components/otto-kit/'
+          # with `cargo tree -p <crate> | grep otto-kit`). otto-dbus, which
+          # otto-kit re-exports, counts as the toolkit, and the two leaf
+          # crates link it as well.
+          KIT='^components/(otto-kit|otto-dbus)/'
           # resources/bin and resources/plugins are installed files that no
           # crate reads; they only reach the packaging jobs. resources/locales
           # counts as UI below: the catalogues are strings, which the locales
           # job and the workspace unit tests cover, not the headless suites.
           COMPOSITOR='^(src|tests|protocols)/|^resources/(?!bin/|plugins/|locales/)|^otto_config.*\.toml$'
-          RDP='^components/otto-rdp/'
-          PORTAL='^components/xdg-desktop-portal-otto/'
+          RDP='^components/(otto-rdp|otto-dbus)/'
+          PORTAL='^components/(xdg-desktop-portal-otto|otto-dbus)/'
           # Every component except the two with their own filters above.
           UI='^components/(?!otto-rdp/|xdg-desktop-portal-otto/)|^sample-clients/|^resources/locales/'
           # The file browser and the two crates only it links (verified with

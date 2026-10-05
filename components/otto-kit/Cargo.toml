@@ -8,6 +8,7 @@ repository.workspace = true
 
 [dependencies]
 laye-rs.workspace = true
+otto-dbus = { path = "../otto-dbus" }
 otto-search = { path = "../otto-search" }
 rustix = { version = "0.38", features = ["fs", "process"], optional = true }
 smithay-client-toolkit = { workspace = true, features = ["calloop", "xkbcommon"] }

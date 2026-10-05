@@ -29,7 +29,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::LazyLock;
 
-use zbus::zvariant::{OwnedValue, Value};
+use zbus::zvariant::Value;
 
 use crate::controls_side::ControlsSide;
 
@@ -95,24 +95,8 @@ const OTTO_IDS: &[(&str, &str)] = &[
 /// one that interests us is read back — the same shape the portal's own relay
 /// uses.
 async fn run_compositor_watcher() -> Result<(), zbus::Error> {
-    use zbus::{proxy, Connection};
-
-    #[proxy(
-        interface = "org.otto.Settings",
-        default_service = "org.otto.Settings",
-        default_path = "/org/otto/Settings"
-    )]
-    trait OttoSettings {
-        fn get(&self, id: &str) -> zbus::Result<OwnedValue>;
-        #[zbus(signal)]
-        fn changed(
-            &self,
-            values: std::collections::HashMap<String, OwnedValue>,
-        ) -> zbus::Result<()>;
-    }
-
-    let conn = Connection::session().await?;
-    let proxy = OttoSettingsProxy::new(&conn).await?;
+    let conn = zbus::Connection::session().await?;
+    let proxy = otto_dbus::settings::SettingsProxy::new(&conn).await?;
     // Subscribed before the first read, so a change landing between the two is
     // seen rather than falling into the gap.
     let mut stream = proxy.receive_changed().await?;

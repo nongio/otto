@@ -6,29 +6,12 @@
 
 use std::collections::HashMap;
 
+use otto_dbus::screencast::{ScreenCastProxy, ScreenCastSessionProxy, ScreenCastStreamProxy};
 use tracing::{debug, warn};
 use zbus::zvariant::{OwnedObjectPath, OwnedValue, Value};
 use zbus::Result;
 
 use crate::otto_client::OttoClient;
-
-/// D-Bus proxy for `org.otto.ScreenCast` service.
-#[zbus::proxy(
-    interface = "org.otto.ScreenCast",
-    default_service = "org.otto.ScreenCast",
-    default_path = "/org/otto/ScreenCast"
-)]
-trait ScreenCast {
-    /// Creates a new screencast session with the given properties.
-    async fn create_session(&self, properties: HashMap<&str, Value<'_>>)
-        -> Result<OwnedObjectPath>;
-
-    /// Lists available output connectors.
-    async fn list_outputs(&self) -> Result<Vec<String>>;
-
-    /// Lists capturable windows as `(identifier, app_id, title)`.
-    async fn list_windows(&self) -> Result<Vec<(String, String, String)>>;
-}
 
 /// A capturable window as reported by the compositor.
 #[derive(Clone, Debug)]
@@ -37,48 +20,6 @@ pub struct WindowSource {
     pub id: String,
     pub app_id: String,
     pub title: String,
-}
-
-/// D-Bus proxy for `org.otto.ScreenCast.Session`.
-#[zbus::proxy(
-    interface = "org.otto.ScreenCast.Session",
-    default_service = "org.otto.ScreenCast"
-)]
-trait ScreenCastSession {
-    /// Starts recording a monitor by connector name.
-    async fn record_monitor(
-        &self,
-        connector: &str,
-        properties: HashMap<&str, Value<'_>>,
-    ) -> Result<OwnedObjectPath>;
-
-    /// Starts recording a window (not yet implemented in compositor).
-    async fn record_window(&self, properties: HashMap<&str, Value<'_>>) -> Result<OwnedObjectPath>;
-
-    /// Starts all streams in the session.
-    async fn start(&self) -> Result<()>;
-
-    /// Stops the session and all its streams.
-    async fn stop(&self) -> Result<()>;
-}
-
-/// D-Bus proxy for `org.otto.ScreenCast.Stream`.
-#[zbus::proxy(
-    interface = "org.otto.ScreenCast.Stream",
-    default_service = "org.otto.ScreenCast"
-)]
-trait ScreenCastStream {
-    /// Starts this individual stream.
-    async fn start(&self) -> Result<()>;
-
-    /// Stops this individual stream.
-    async fn stop(&self) -> Result<()>;
-
-    /// Returns PipeWire node metadata including `node-id`.
-    async fn pipe_wire_node(&self) -> Result<HashMap<String, OwnedValue>>;
-
-    /// Returns static stream metadata (mapping id, geometry, etc.).
-    async fn metadata(&self) -> Result<HashMap<String, OwnedValue>>;
 }
 
 impl OttoClient {
@@ -231,18 +172,11 @@ impl OttoClient {
         &self,
         session_path: &OwnedObjectPath,
     ) -> Result<zbus::zvariant::OwnedFd> {
-        let result: Result<zbus::zvariant::OwnedFd> = self
-            .connection
-            .call_method(
-                Some("org.otto.ScreenCast"),
-                session_path,
-                Some("org.otto.ScreenCast.Session"),
-                "OpenPipeWireRemote",
-                &HashMap::<String, Value>::new(),
-            )
-            .await?
-            .body()
-            .deserialize();
+        let proxy = ScreenCastSessionProxy::builder(&self.connection)
+            .path(session_path)?
+            .build()
+            .await?;
+        let result = proxy.open_pipe_wire_remote(HashMap::new()).await;
 
         match result {
             Ok(fd) => {

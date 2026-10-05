@@ -12,9 +12,10 @@ use std::sync::{LazyLock, Mutex};
 use chrono::format::{Item, StrftimeItems};
 use chrono::Local;
 use futures_util::StreamExt;
+use otto_kit::dbus::settings::SettingsProxy;
 use otto_kit::prelude::AppContext;
-use zbus::zvariant::{OwnedValue, Value};
-use zbus::{proxy, Connection};
+use zbus::zvariant::Value;
+use zbus::Connection;
 
 use crate::config::file_clock_format;
 
@@ -129,17 +130,6 @@ impl Clock {
     }
 }
 
-#[proxy(
-    interface = "org.otto.Settings",
-    default_service = "org.otto.Settings",
-    default_path = "/org/otto/Settings"
-)]
-trait OttoSettings {
-    fn get(&self, id: &str) -> zbus::Result<OwnedValue>;
-    #[zbus(signal)]
-    fn changed(&self, values: std::collections::HashMap<String, OwnedValue>) -> zbus::Result<()>;
-}
-
 /// Follow the clock settings. Safe to call repeatedly: only one watcher runs.
 pub fn spawn_watcher() {
     static STARTED: AtomicBool = AtomicBool::new(false);
@@ -155,7 +145,7 @@ pub fn spawn_watcher() {
 
 async fn run_watcher() -> zbus::Result<()> {
     let conn = Connection::session().await?;
-    let proxy = OttoSettingsProxy::new(&conn).await?;
+    let proxy = SettingsProxy::new(&conn).await?;
     // Subscribed before the first read, so a change landing between the two
     // is not lost.
     let mut changes = proxy.receive_changed().await?;
@@ -187,7 +177,7 @@ async fn run_watcher() -> zbus::Result<()> {
 
 /// Read both settings back and wake the bar if either moved. The signal
 /// carries identifiers rather than values, so the values are asked for.
-async fn read_settings(proxy: &OttoSettingsProxy<'_>) {
+async fn read_settings(proxy: &SettingsProxy<'_>) {
     let mut moved = false;
     match proxy.get(SHOW_ID).await {
         Ok(owned) => {

@@ -9,12 +9,9 @@
 
 use std::process::ExitCode;
 
+use otto_dbus::shell::ShellProxyBlocking;
 use serde_json::Value;
-use zbus::blocking::{Connection, Proxy};
-
-const BUS_NAME: &str = "org.otto.Shell1";
-const OBJECT_PATH: &str = "/org/otto/Shell1";
-const INTERFACE: &str = "org.otto.Shell1";
+use zbus::blocking::Connection;
 
 const USAGE: &str = "\
 Usage: otto-msg [options] [command]
@@ -61,17 +58,6 @@ impl Kind {
             "get_inputs" => Some(Kind::GetInputs),
             "subscribe" => Some(Kind::Subscribe),
             _ => None,
-        }
-    }
-
-    fn method(self) -> &'static str {
-        match self {
-            Kind::RunCommand => "RunCommand",
-            Kind::GetTree => "GetTree",
-            Kind::GetWorkspaces => "GetWorkspaces",
-            Kind::GetOutputs => "GetOutputs",
-            Kind::GetInputs => "GetInputs",
-            Kind::Subscribe => "",
         }
     }
 }
@@ -159,7 +145,7 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let proxy = match Proxy::new(&connection, BUS_NAME, OBJECT_PATH, INTERFACE) {
+    let proxy = match ShellProxyBlocking::new(&connection) {
         Ok(proxy) => proxy,
         Err(err) => {
             eprintln!("otto-msg: could not reach Otto: {err}");
@@ -174,14 +160,14 @@ fn main() -> ExitCode {
     }
 }
 
-fn run_command(proxy: &Proxy<'_>, options: &Options) -> ExitCode {
+fn run_command(proxy: &ShellProxyBlocking<'_>, options: &Options) -> ExitCode {
     let command = options.rest.join(" ");
     if command.trim().is_empty() {
         eprintln!("otto-msg: nothing to run");
         eprint!("{USAGE}");
         return ExitCode::FAILURE;
     }
-    let results: Vec<(bool, String)> = match proxy.call("RunCommand", &(command.as_str(),)) {
+    let results = match proxy.run_command(&command) {
         Ok(results) => results,
         Err(err) => {
             eprintln!("otto-msg: {err}");
@@ -220,8 +206,15 @@ fn run_command(proxy: &Proxy<'_>, options: &Options) -> ExitCode {
     }
 }
 
-fn get(proxy: &Proxy<'_>, kind: Kind, options: &Options) -> ExitCode {
-    let json: String = match proxy.call(kind.method(), &()) {
+fn get(proxy: &ShellProxyBlocking<'_>, kind: Kind, options: &Options) -> ExitCode {
+    let answer = match kind {
+        Kind::GetTree => proxy.get_tree(),
+        Kind::GetWorkspaces => proxy.get_workspaces(),
+        Kind::GetOutputs => proxy.get_outputs(),
+        Kind::GetInputs => proxy.get_inputs(),
+        Kind::RunCommand | Kind::Subscribe => unreachable!("not a query"),
+    };
+    let json = match answer {
         Ok(json) => json,
         Err(err) => {
             eprintln!("otto-msg: {err}");
@@ -244,7 +237,7 @@ fn get(proxy: &Proxy<'_>, kind: Kind, options: &Options) -> ExitCode {
 ///
 /// Without `-m` this prints the first matching event and exits, which is what
 /// `swaymsg -t subscribe` does.
-fn subscribe(proxy: &Proxy<'_>, options: &Options) -> ExitCode {
+fn subscribe(proxy: &ShellProxyBlocking<'_>, options: &Options) -> ExitCode {
     let wanted = match parse_event_list(&options.rest.join(" ")) {
         Ok(wanted) => wanted,
         Err(message) => {
@@ -252,7 +245,7 @@ fn subscribe(proxy: &Proxy<'_>, options: &Options) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let signals = match proxy.receive_all_signals() {
+    let signals = match proxy.inner().receive_all_signals() {
         Ok(signals) => signals,
         Err(err) => {
             eprintln!("otto-msg: could not subscribe: {err}");

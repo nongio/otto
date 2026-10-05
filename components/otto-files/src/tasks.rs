@@ -43,6 +43,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::OnceLock;
 use std::time::Duration;
 
+use otto_kit::dbus::island::IslandProxy;
 use tokio::sync::mpsc::{self, UnboundedSender};
 
 /// What the desktop calls this app, for grouping the activity and for finding
@@ -349,15 +350,9 @@ impl Activity {
         let Self::Live { id } = self else {
             return;
         };
-        let _ = connection
-            .call_method(
-                Some("org.otto.Island"),
-                "/org/otto/Island",
-                Some("org.otto.Island1"),
-                "SetActivityQuiet",
-                &(*id, quiet),
-            )
-            .await;
+        if let Ok(island) = IslandProxy::new(connection).await {
+            let _ = island.set_activity_quiet(*id, quiet).await;
+        }
     }
 }
 
@@ -367,42 +362,23 @@ async fn create(
     progress: f64,
     quiet: bool,
 ) -> Option<u64> {
-    let reply = connection
-        .call_method(
-            Some("org.otto.Island"),
-            "/org/otto/Island",
-            Some("org.otto.Island1"),
-            "CreateActivity",
-            // No timeout: a job ends when it ends, not when a clock says so.
-            &(
-                APP_ID, title, APP_ID, progress, 0_u32, "normal", true, quiet,
-            ),
-        )
+    IslandProxy::new(connection)
         .await
-        .ok()?;
-    reply.body().deserialize().ok()
+        .ok()?
+        // No timeout: a job ends when it ends, not when a clock says so.
+        .create_activity(APP_ID, title, APP_ID, progress, 0, "normal", true, quiet)
+        .await
+        .ok()
 }
 
 async fn update(connection: &zbus::Connection, id: u64, title: &str, progress: f64) {
-    let _ = connection
-        .call_method(
-            Some("org.otto.Island"),
-            "/org/otto/Island",
-            Some("org.otto.Island1"),
-            "UpdateActivity",
-            &(id, title, progress),
-        )
-        .await;
+    if let Ok(island) = IslandProxy::new(connection).await {
+        let _ = island.update_activity(id, title, progress).await;
+    }
 }
 
 async fn dismiss(connection: &zbus::Connection, id: u64) {
-    let _ = connection
-        .call_method(
-            Some("org.otto.Island"),
-            "/org/otto/Island",
-            Some("org.otto.Island1"),
-            "DismissActivity",
-            &(id,),
-        )
-        .await;
+    if let Ok(island) = IslandProxy::new(connection).await {
+        let _ = island.dismiss_activity(id).await;
+    }
 }

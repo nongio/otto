@@ -9,6 +9,8 @@
 use std::path::PathBuf;
 use std::sync::Mutex;
 
+use otto_kit::dbus::files::{FilesProxy, SERVICE as FILES_NAME};
+use otto_kit::dbus::settings::SettingsProxy;
 use smithay_client_toolkit::reexports::calloop::channel::Sender;
 use tokio::sync::oneshot;
 use zbus::export::futures_util::StreamExt;
@@ -16,10 +18,6 @@ use zbus::fdo;
 
 pub use otto_kit::components::stashed::{Items, NAME, PATH};
 
-/// Where Files says what is selected in its focused window.
-const FILES_NAME: &str = "org.otto.Files1";
-const FILES_PATH: &str = "/org/otto/Files1";
-const FILES_METHOD: &str = "FocusedSelection";
 /// How long Files is given to say.
 const FILES_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(300);
 
@@ -216,16 +214,12 @@ pub async fn focused_files() -> Option<Vec<PathBuf>> {
         let asks = windows.iter().map(|window| {
             let bus = &bus;
             async move {
-                let reply = bus
-                    .call_method(
-                        Some(window.as_str()),
-                        FILES_PATH,
-                        Some(FILES_NAME),
-                        FILES_METHOD,
-                        &(),
-                    )
-                    .await?;
-                reply.body().deserialize::<Vec<String>>()
+                FilesProxy::builder(bus)
+                    .destination(window.as_str())?
+                    .build()
+                    .await?
+                    .focused_selection()
+                    .await
             }
         });
         let answers = zbus::export::futures_util::future::join_all(asks).await;
@@ -282,17 +276,12 @@ where
 /// settings can't be asked.
 pub async fn send_shortcut() -> Option<String> {
     let bus = zbus::Connection::session().await.ok()?;
-    let reply = bus
-        .call_method(
-            Some("org.otto.Settings"),
-            "/org/otto/Settings",
-            Some("org.otto.Settings"),
-            "ListShortcuts",
-            &(),
-        )
+    let shortcuts = SettingsProxy::new(&bus)
+        .await
+        .ok()?
+        .list_shortcuts()
         .await
         .ok()?;
-    let shortcuts: Vec<(String, String)> = reply.body().deserialize().ok()?;
     let find = |wanted: fn(&str) -> bool| {
         shortcuts
             .iter()

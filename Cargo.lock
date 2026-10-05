@@ -5088,6 +5088,7 @@ dependencies = [
  "futures-util",
  "jiff",
  "otto-agents-client",
+ "otto-dbus",
  "serde",
  "serde_json",
  "tempfile",
@@ -5191,6 +5192,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "otto-dbus"
+version = "1.6.0"
+dependencies = [
+ "zbus 4.4.0",
+]
+
+[[package]]
 name = "otto-emoji"
 version = "1.6.0"
 dependencies = [
@@ -5291,6 +5299,7 @@ dependencies = [
  "khronos-egl",
  "laye-rs",
  "libc",
+ "otto-dbus",
  "otto-search",
  "percent-encoding",
  "resvg",
@@ -5374,6 +5383,7 @@ dependencies = [
 name = "otto-msg"
 version = "1.6.0"
 dependencies = [
+ "otto-dbus",
  "serde_json",
  "zbus 4.4.0",
 ]
@@ -5421,6 +5431,7 @@ dependencies = [
  "khronos-egl",
  "libc",
  "memfd",
+ "otto-dbus",
  "pipewire",
  "rcgen",
  "rustls",
@@ -5453,7 +5464,6 @@ dependencies = [
  "chrono",
  "otto-kit",
  "otto-search",
- "serde",
  "skia-safe",
  "smithay-client-toolkit 0.19.2",
  "toml_edit 0.25.12+spec-1.1.0",
@@ -9917,6 +9927,7 @@ name = "xdg-desktop-portal-otto"
 version = "1.6.0"
 dependencies = [
  "anyhow",
+ "otto-dbus",
  "tokio",
  "tracing",
  "tracing-subscriber",

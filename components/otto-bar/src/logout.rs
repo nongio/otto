@@ -6,35 +6,8 @@
 //! closes the windows one by one and ends the session once they have gone;
 //! see `src/state/logout.rs`.
 
+use otto_kit::dbus::dialog::DialogProxy;
 use zbus::Connection;
-
-/// A choice group as the dialog takes it:
-/// `(group_id, label, [(option_id, label, icon)], default_option_id)`.
-/// Log Out sends none.
-type WireChoice = (String, String, Vec<(String, String, String)>, String);
-
-/// `org.otto.Dialog1`, served by otto-islands.
-#[zbus::proxy(
-    interface = "org.otto.Dialog1",
-    default_service = "org.otto.Island",
-    default_path = "/org/otto/Dialog"
-)]
-trait Dialog {
-    /// Returns `(response, results)`: response 0 is the grant button.
-    #[allow(clippy::too_many_arguments)]
-    fn present_access(
-        &self,
-        app_id: &str,
-        title: &str,
-        subtitle: &str,
-        body: &str,
-        icon: &str,
-        grant_label: &str,
-        deny_label: &str,
-        modal: bool,
-        choices: Vec<WireChoice>,
-    ) -> zbus::Result<(u32, Vec<(String, String)>)>;
-}
 
 /// The dialog's grant response.
 const GRANTED: u32 = 0;
