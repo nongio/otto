@@ -1487,6 +1487,17 @@ impl SettingsApp {
         let selected = *self.selected.lock().unwrap();
         let sidebar = view::sidebar_item_rect(selected.min(panes.saturating_sub(1)));
 
+        // A sheet is modal: nothing behind it is a stop. With the ring empty
+        // the toolkit leaves Tab alone, so it reaches the sheet's own handler,
+        // which walks the sheet's fields.
+        if panes::account::sheet().is_some() {
+            AppContext::with_focus_ring(&surface, |ring| {
+                ring.begin();
+                ring.end();
+            });
+            return;
+        }
+
         AppContext::with_focus_ring(&surface, |ring| {
             ring.begin();
             ring.add(view::SIDEBAR_FOCUS, sidebar, true);
