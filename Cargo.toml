@@ -37,7 +37,7 @@ profiling = { version = "1.0" }
 renderdoc = { version = "0.11.0", optional = true }
 serde.workspace = true
 serde_json.workspace = true
-toml = "0.8.19"
+toml = { workspace = true, features = ["default"] }
 # Comment-preserving TOML editing: settings are persisted one key at a time into
 # a hand-editable file (see src/config/file.rs).
 toml_edit.workspace = true
@@ -235,7 +235,8 @@ smithay-client-toolkit = { version = "0.19", default-features = false }
 taffy = "0.5"
 tempfile = "3.13"
 tokio = "1"
-toml_edit = "0.22"
+toml = { version = "1.1", default-features = false }
+toml_edit = "0.25"
 tracing = "0.1.37"
 tracing-subscriber = "0.3.16"
 unic-langid = "0.9"

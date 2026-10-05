@@ -15,7 +15,7 @@ otto-kit = { path = "../otto-kit" }
 chrono = { workspace = true, features = ["default", "unstable-locales"] }
 taffy.workspace = true
 serde = { workspace = true, features = ["derive"] }
-toml = "0.8"
+toml = { workspace = true, features = ["default"] }
 tracing.workspace = true
 libc = { workspace = true, optional = true }
 # Wipes what was typed into the field, and every copy of it on the way out.

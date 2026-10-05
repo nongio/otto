@@ -22,7 +22,7 @@ zbus.workspace = true
 tokio = { workspace = true, features = ["full"] }
 # The sidebar's user configuration; see `places_config`.
 serde = { workspace = true, features = ["derive"] }
-toml = "0.8"
+toml = { workspace = true, features = ["default"] }
 # Writing the desk's size and position back into files.toml without losing
 # the comments and keys around them.
 toml_edit.workspace = true

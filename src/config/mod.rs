@@ -342,7 +342,7 @@ impl Config {
                     continue;
                 }
             };
-            match content.parse::<toml::Value>() {
+            match toml::from_str::<toml::Value>(&content) {
                 Ok(mut value) => {
                     if let (Some(key), Some(writable)) = (without, writable.as_ref()) {
                         if &layer == writable {
@@ -780,7 +780,7 @@ fn report_materialized_dock_keys_in_file(path: &std::path::Path) {
     let Ok(content) = std::fs::read_to_string(path) else {
         return;
     };
-    let Ok(doc) = content.parse::<toml::Value>() else {
+    let Ok(doc) = toml::from_str::<toml::Value>(&content) else {
         return; // a parse error is reported when the file is loaded
     };
 
@@ -2616,7 +2616,7 @@ mod tests {
             screen_scale = 3.0
             font_family = "Custom Font"
         "#;
-        let override_value: toml::Value = override_toml.parse().unwrap();
+        let override_value: toml::Value = toml::from_str(override_toml).unwrap();
 
         merge_value(&mut base, override_value);
 
@@ -2635,7 +2635,7 @@ mod tests {
         let override_toml = r#"
             screen_scale = 1.5
         "#;
-        let override_value: toml::Value = override_toml.parse().unwrap();
+        let override_value: toml::Value = toml::from_str(override_toml).unwrap();
 
         merge_value(&mut base, override_value);
 
@@ -3000,9 +3000,8 @@ tiling = true
 
     #[test]
     fn test_reports_the_materialized_table_old_builds_wrote() {
-        let doc: toml::Value = materialized_dock_table(&[])
-            .parse()
-            .expect("config should parse");
+        let doc: toml::Value =
+            toml::from_str(&materialized_dock_table(&[])).expect("config should parse");
         let reported = materialized_dock_keys(&doc);
 
         // Every key those builds copied in with no intent behind it.
@@ -3029,7 +3028,7 @@ tiling = true
             ("colorize_color", "\"\""),
             ("colorize_intensity", "0.0"),
         ]);
-        let doc: toml::Value = raw.parse().expect("config should parse");
+        let doc: toml::Value = toml::from_str(&raw).expect("config should parse");
         let reported = materialized_dock_keys(&doc);
 
         assert!(reported.contains(&"size"));
@@ -3046,7 +3045,7 @@ tiling = true
             ("genie_span", "10"),
             ("colorize_intensity", "1"),
         ]);
-        let doc: toml::Value = raw.parse().expect("config should parse");
+        let doc: toml::Value = toml::from_str(&raw).expect("config should parse");
 
         assert_eq!(materialized_dock_keys(&doc).len(), 6);
     }
@@ -3060,7 +3059,7 @@ tiling = true
             "[dock]\nsize = 1.0\ngenie_scale = {}\n",
             default_genie_scale()
         );
-        let doc: toml::Value = raw.parse().expect("config should parse");
+        let doc: toml::Value = toml::from_str(&raw).expect("config should parse");
 
         assert!(materialized_dock_keys(&doc).is_empty());
     }
@@ -3071,7 +3070,7 @@ tiling = true
         // written after them — by a human, or by a build that no longer
         // materialises anything.
         let raw = materialized_dock_table(&[("position", "\"left\"")]);
-        let doc: toml::Value = raw.parse().expect("config should parse");
+        let doc: toml::Value = toml::from_str(&raw).expect("config should parse");
 
         assert!(materialized_dock_keys(&doc).is_empty());
     }

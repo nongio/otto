@@ -25,7 +25,8 @@ zbus.workspace = true
 futures-util.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
-toml = { version = "0.8", default-features = false, features = ["parse"] }
+# Reads its config, never writes it: no TOML encoder.
+toml = { workspace = true, features = ["std", "serde", "parse"] }
 
 [lints]
 workspace = true
