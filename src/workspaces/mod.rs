@@ -4235,7 +4235,6 @@ impl Workspaces {
         // An app is ranked by how recently it was used, but only against the
         // apps it shares a workspace with: one whose windows are all somewhere
         // else belongs behind everything here, however recently it was used.
-        #[allow(clippy::mutable_key_type)]
         let here: HashSet<ObjectId> = self
             .focused_output_workspaces()
             .and_then(|ows| ows.spaces.get(ows.current_workspace))
@@ -5943,7 +5942,6 @@ impl Workspaces {
     /// `translucent` (blur-effect clients, see
     /// `window_throttle::translucent_window_ids`) can be occluded but never
     /// occlude: what is behind them shows through.
-    #[allow(clippy::mutable_key_type)]
     pub fn occluded_window_ids(&self, translucent: &HashSet<ObjectId>) -> HashSet<ObjectId> {
         use smithay::utils::{Physical, Rectangle};
         let mut occluded = HashSet::new();
@@ -5984,13 +5982,11 @@ impl Workspaces {
     }
 
     /// Snapshot of the windows currently flagged for scanout.
-    #[allow(clippy::mutable_key_type)]
     pub fn scanout_window_ids(&self) -> HashSet<ObjectId> {
         self.scanout_windows.read().unwrap().clone()
     }
 
     /// The promoted (direct-scanout) window set of a single output.
-    #[allow(clippy::mutable_key_type)]
     pub fn scanout_window_ids_for_output(&self, output_name: &str) -> HashSet<ObjectId> {
         self.scanout_windows_per_output
             .read()
@@ -6004,8 +6000,6 @@ impl Workspaces {
     /// unhides it for departures. Idempotent. The caller must re-import any
     /// departing window's buffer (via `update_window_view`) *after* this call
     /// so the unhidden `content_layer` shows the current frame, not a stale one.
-    #[allow(clippy::mutable_key_type)]
-    /// Update one output's desired scanout set and apply the union of all
     /// outputs' sets. Each CRTC computes its own candidates; applying them
     /// directly to the global set made two outputs demote each other's
     /// promoted windows every frame.
@@ -6200,7 +6194,6 @@ impl Workspaces {
     /// Remove one window from every output's scanout set (pre-animation
     /// demotion) and apply the new union.
     pub fn remove_scanout_window(&self, id: &ObjectId) {
-        #[allow(clippy::mutable_key_type)] // ObjectId as key — see window_throttle.rs
         let union: HashSet<ObjectId> = {
             let mut per_output = self.scanout_windows_per_output.write().unwrap();
             for set in per_output.values_mut() {
@@ -6213,9 +6206,7 @@ impl Workspaces {
     }
 
     fn set_scanout_windows(&self, ids: &[ObjectId]) {
-        #[allow(clippy::mutable_key_type)] // ObjectId as key — see window_throttle.rs
         let new_ids: HashSet<ObjectId> = ids.iter().cloned().collect();
-        #[allow(clippy::mutable_key_type)] // ObjectId as key — see window_throttle.rs
         let prev_ids = self.scanout_windows.read().unwrap().clone();
         if prev_ids == new_ids {
             return;

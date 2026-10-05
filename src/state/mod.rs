@@ -1670,14 +1670,12 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
 
             // Build both render_elements and surface_info (like windows do)
             let mut render_elements = VecDeque::new();
-            #[allow(clippy::mutable_key_type)]
             let mut surface_info: std::collections::HashMap<
                 ObjectId,
                 (WlSurface, Option<ObjectId>),
             > = std::collections::HashMap::new();
 
             // Track per-parent child ordering for subsurface reordering
-            #[allow(clippy::mutable_key_type)]
             let mut children_order: std::collections::HashMap<ObjectId, Vec<ObjectId>> =
                 std::collections::HashMap::new();
 
@@ -1999,7 +1997,6 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
     /// on stale or empty content until the next frame demotes the window.
     pub fn demote_scanout_window(&mut self, window: &WindowElement) {
         let id = window.id();
-        #[allow(clippy::mutable_key_type)] // ObjectId as key — see window_throttle.rs
         let ids = self.workspaces.scanout_window_ids();
         if ids.contains(&id) {
             tracing::info!(target: "otto::planes", "demoting {:?} from scanout (pre-animation)", id);
@@ -2019,7 +2016,6 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
     /// Demote every promoted window and re-import its buffer. Used when
     /// entering the expose overview: mirrors draw the scene content, which is
     /// blanked while a window sits on a scanout plane.
-    #[allow(clippy::mutable_key_type)]
     pub fn demote_all_scanout_windows(&mut self) {
         let ids: Vec<_> = self.workspaces.scanout_window_ids().into_iter().collect();
         for id in ids {
@@ -2126,7 +2122,6 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                 smithay::desktop::PopupKind,
                 smithay::utils::Point<i32, smithay::utils::Logical>,
             )> = PopupManager::popups_for_surface(&window_surface).collect();
-            #[allow(clippy::mutable_key_type)] // ObjectId as key — see window_throttle.rs
             let popup_offsets: std::collections::HashMap<
                 smithay::reexports::wayland_server::backend::ObjectId,
                 smithay::utils::Point<i32, smithay::utils::Logical>,
@@ -2223,7 +2218,6 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                 );
 
                 // Send popup to the overlay layer and register its surface layers
-                #[allow(clippy::mutable_key_type)]
                 let popup_layers = self.workspaces.popup_overlay.update_popup(
                     &popup_id,
                     &id,
@@ -2244,7 +2238,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             let initial_context = (initial_location, initial_location, None);
 
             // Collect all surfaces and build parent-child map
-            #[allow(clippy::mutable_key_type, clippy::type_complexity)]
+            #[allow(clippy::type_complexity)]
             let mut surface_info: std::collections::HashMap<
                 ObjectId,
                 (
@@ -2253,7 +2247,6 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                     Option<ObjectId>,
                 ),
             > = std::collections::HashMap::new();
-            #[allow(clippy::mutable_key_type)]
             let mut children_order: std::collections::HashMap<ObjectId, Vec<ObjectId>> =
                 std::collections::HashMap::new();
 

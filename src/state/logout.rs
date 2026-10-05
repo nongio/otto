@@ -86,8 +86,6 @@ fn request_close(window: &WindowElement) {
     }
 }
 
-// ObjectId as key — see window_throttle.rs.
-#[allow(clippy::mutable_key_type)]
 impl<BackendData: Backend> Otto<BackendData> {
     fn window_ids(&self) -> HashSet<ObjectId> {
         self.workspaces.windows_map.keys().cloned().collect()

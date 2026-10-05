@@ -55,11 +55,9 @@ pub struct SurfaceDmabufFeedback<'a> {
 pub struct FramePacing {
     /// Throttle tier of every mapped window, keyed by window id. A window
     /// missing from the map is paced at full rate.
-    #[allow(clippy::mutable_key_type)] // ObjectId as key — see window_throttle.rs
     pub windows: HashMap<ObjectId, WindowThrottleState>,
     /// `background`/`bottom` layer surfaces hidden behind a window, given the
     /// occluded trickle (see `window_throttle::occluded_layer_surface_ids`).
-    #[allow(clippy::mutable_key_type)] // ObjectId as key — see window_throttle.rs
     pub occluded_layers: HashSet<ObjectId>,
 }
 
@@ -78,7 +76,6 @@ impl FramePacing {
     /// - `captured_ids`: windows being screencast, pinned to full rate. Only
     ///   the DRM backend serves screencasts from its frames; the nested
     ///   backends pass an empty set.
-    #[allow(clippy::mutable_key_type)] // ObjectId as key — see window_throttle.rs
     pub fn classify(
         workspaces: &Workspaces,
         output: &Output,
@@ -142,7 +139,6 @@ pub enum Presentation {
 /// With [`Presentation::Immediate`] the feedback is presented here and `None`
 /// is returned; with [`Presentation::OnPageFlip`] it is returned (when
 /// `rendered`) for the caller to queue with the frame.
-#[allow(clippy::too_many_arguments)]
 pub fn frame_done(
     output: &Output,
     render_element_states: &RenderElementStates,

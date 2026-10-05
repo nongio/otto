@@ -362,7 +362,6 @@ fn popup_interest_rects(
 /// upper planes (overlay, switcher), rendering the active ones. The
 /// overlay composite also folds in the popup subtree (see `draw_popups`). The
 /// bg plane must already be rendered by the caller.
-#[allow(clippy::too_many_arguments)] // plane-state plumbing, all of it per-frame
 pub(super) fn update_backdrop_and_upper_planes<A: RendererApi>(
     surface: &mut SurfaceData,
     renderer: &mut UdevRenderer<'_, A>,

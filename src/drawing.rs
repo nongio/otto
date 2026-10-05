@@ -1,5 +1,3 @@
-#![allow(clippy::too_many_arguments)]
-
 use smithay::{
     backend::renderer::{
         element::surface::WaylandSurfaceRenderElement, ImportAll, ImportMem, Renderer,

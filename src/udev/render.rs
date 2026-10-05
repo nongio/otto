@@ -313,8 +313,6 @@ impl<A: RendererApi> Otto<UdevData<A>> {
             self.render_virtual_outputs();
         }
     }
-
-    #[allow(clippy::mutable_key_type)] // ObjectId as HashMap key — see window_throttle.rs
     /// Kernel reported a display FIFO underrun: the display engine could
     /// not fetch the currently-configured planes. Reduce the plane budget
     /// one step (1 = no window promotion, 2 = full GPU composite) and
@@ -543,7 +541,6 @@ impl<A: RendererApi> Otto<UdevData<A>> {
         // removals apply this frame, additions only after the candidate set
         // has been stable for the full window.
         const PROMOTE_STABLE: std::time::Duration = std::time::Duration::from_millis(500);
-        #[allow(clippy::mutable_key_type)] // ObjectId as key — see window_throttle.rs
         let current_scanout = scanout_output_name
             .as_deref()
             .map(|n| self.workspaces.scanout_window_ids_for_output(n))
@@ -584,11 +581,9 @@ impl<A: RendererApi> Otto<UdevData<A>> {
         // lay-rs content import while promoted; re-import them now (after the
         // set update unhides their content_layer) so the first composited
         // frame shows the current buffer, not a stale one.
-        #[allow(clippy::mutable_key_type)] // ObjectId as key — see window_throttle.rs
         let new_scanout_ids: std::collections::HashSet<
             smithay::reexports::wayland_server::backend::ObjectId,
         > = scanout_desired.iter().cloned().collect();
-        #[allow(clippy::mutable_key_type)] // ObjectId as key — see window_throttle.rs
         let prev_scanout_ids = scanout_output_name
             .as_deref()
             .map(|n| self.workspaces.scanout_window_ids_for_output(n))
@@ -954,8 +949,6 @@ impl<A: RendererApi> Otto<UdevData<A>> {
         );
 
         crate::render_phase_stats::log_if_due();
-
-        #[allow(clippy::mutable_key_type)] // ObjectId as key — see window_throttle.rs
         let captured_ids = crate::screenshare::screencast_window_ids(
             &self.screenshare_sessions,
             &self.workspaces,
@@ -1286,7 +1279,6 @@ impl<A: RendererApi> Otto<UdevData<A>> {
                     };
                     let out_scale = output.current_scale().fractional_scale() as f32;
                     let map = layer_map_for_output(&output);
-                    #[allow(clippy::mutable_key_type)] // ObjectId as key — see window_throttle.rs
                     let effects = &self.background_effects;
                     let mut rects: Vec<layers::skia::Rect> = Vec::new();
                     if let Some(output_geo) = self.workspaces.output_geometry(&output) {
@@ -2387,9 +2379,6 @@ impl<A: RendererApi> Otto<UdevData<A>> {
         }
     }
 }
-
-#[allow(clippy::too_many_arguments)]
-#[allow(clippy::mutable_key_type)] // ObjectId as HashMap key — see window_throttle.rs
 pub(super) fn render_output_frame<'a, A: RendererApi>(
     surface: &'a mut SurfaceData,
     renderer: &mut UdevRenderer<'a, A>,

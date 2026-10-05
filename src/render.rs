@@ -53,8 +53,6 @@ where
 
     (output_render_elements, CLEAR_COLOR)
 }
-
-#[allow(clippy::too_many_arguments)]
 pub fn render_output<'frame, R>(
     output: &Output,
     window_elements: &[&WindowElement],

@@ -1514,7 +1514,6 @@ impl Bind<Dmabuf> for SkiaRenderer {
         // Evict targets whose dmabuf has been dropped everywhere else. Must
         // run before the lookup below: a new allocation can reuse a dead
         // Arc's address, which would otherwise alias a stale cache entry.
-        #[allow(clippy::mutable_key_type)]
         let dead: Vec<WeakDmabuf> = self
             .buffers
             .keys()

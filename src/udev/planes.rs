@@ -18,7 +18,6 @@ use super::types::{SurfaceData, UdevRenderer};
 
 /// Allocate one plane element (full-screen, or a strip when `strip` is set)
 /// into `field` if it doesn't exist yet. Idempotent.
-#[allow(clippy::too_many_arguments)]
 fn ensure_plane(
     field: &mut Option<SceneDmabufElement>,
     engine: &Arc<Engine>,

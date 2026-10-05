@@ -302,7 +302,6 @@ impl<A: RendererApi> Otto<UdevData<A>> {
     }
 
     /// Sets up a desktop (normal display) connector
-    #[allow(clippy::too_many_arguments)]
     fn setup_desktop_connector(
         &mut self,
         node: DrmNode,

@@ -1,0 +1,6 @@
+# `ObjectId` is the key of most of the compositor's per-surface maps. With the
+# system libwayland backend it holds an `Arc<AtomicBool>` liveness flag, which
+# trips `mutable_key_type`, but its `Hash` and `Eq` use only the object id,
+# the resource pointer and the *address* of that flag — never its value — so
+# a key's hash cannot change while it is in a map.
+ignore-interior-mutability = ["wayland_backend::server::ObjectId"]

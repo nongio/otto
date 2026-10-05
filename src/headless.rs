@@ -1888,7 +1888,6 @@ impl HeadlessHandle {
         &self,
     ) -> std::collections::HashMap<String, crate::state::window_throttle::WindowThrottleState> {
         self.query(|state| {
-            #[allow(clippy::mutable_key_type)] // ObjectId as key — see window_throttle.rs
             let captured_ids = crate::screenshare::screencast_window_ids(
                 &state.screenshare_sessions,
                 &state.workspaces,
@@ -1897,10 +1896,8 @@ impl HeadlessHandle {
             let windows: Vec<crate::shell::WindowElement> =
                 state.workspaces.spaces_elements().cloned().collect();
             let refs: Vec<&crate::shell::WindowElement> = windows.iter().collect();
-            #[allow(clippy::mutable_key_type)] // ObjectId as key — see window_throttle.rs
             let interacting_ids =
                 crate::state::window_throttle::interacting_ids(&state.pointer_interaction);
-            #[allow(clippy::mutable_key_type)] // ObjectId as key — see window_throttle.rs
             let states = crate::state::window_throttle::classify_windows(
                 &state.workspaces,
                 &refs,
