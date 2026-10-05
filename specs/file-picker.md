@@ -48,7 +48,12 @@ picker window, and the path the user chooses comes back as a `file://` URI.
   free for the field.
 - **The location menu.** The toolbar's location capsule opens a dropdown of the
   directory being viewed and every directory above it, nearest first; choosing
-  one goes there.
+  one goes there. Each row, and the capsule, wears the theme's full-colour icon
+  for that directory: a sidebar place's own (the music folder), `user-home`,
+  `drive-harddisk` for `/`, otherwise `folder`.
+- **Not an app of its own.** The picker is parented to the requesting window,
+  so the compositor keeps it out of the dock and the app switcher; raising
+  that window raises the picker with it.
 - **New Folder.** A button beside the location capsule makes "untitled folder"
   and opens its name for editing in place. In the save modes, and in an open
   asking for directories, naming it also goes into it — that is where the user
