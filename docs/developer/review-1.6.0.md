@@ -291,7 +291,7 @@ otto-kit, so the portal and otto-agents need not link Skia): `xdg`, `dbus`,
 - [x] `ticker` / `fps_ticker` feature does not build on main: missing imports
   in `src/drawing.rs`, `FPS_NUMBERS_PNG`, `FpsElement`, `Fourcc` undefined
   (found in #265). Fix or drop the feature. **S**
-  - *Fixed; CI clippy now builds `default,ticker`.*
+  - *Fixed; CI clippy now builds `default,x11,ticker`.*
 - [ ] `headless_basic::pinch_show_desktop` fails locally on main
   (tests/headless_basic.rs:237, "clicking a window should dismiss show
   desktop"); check whether CI runs it. **S**
@@ -305,6 +305,24 @@ otto-kit, so the portal and otto-agents need not link Skia): `xdg`, `dbus`,
 - [ ] zbus 4 → 5 and smithay-client-toolkit 0.19 → 0.21 (§2) are now
   unblocked: every org.otto proxy lives in `otto-dbus`. **M each**
   - *zbus 5 done in #271; smithay-client-toolkit 0.21 still open.*
+
+Found by the post-merge review of #264-#270; fixed in this PR:
+
+- [x] `file://` links in Files' Markdown preview opened nothing (#267):
+  they went to the unregistered `x-scheme-handler/file`. **S**
+- [x] #264 flipped otto-bar's 8-digit battery colours to `#RRGGBBAA` with
+  no changelog entry (unconventional squash subject). **S**
+  - *Noted in CHANGELOG, the bar docs, and a `cliff.toml` preprocessor.*
+- [x] Renderer: `wait`/`map_texture` skipped `ensure_current`; a failed
+  Skia import leaked its EGLImage, the cached path `unwrap`ped; plane flush
+  skipped its fence when `ensure_current` failed (#270). **S**
+- [x] Ticker code was gated on `fps_ticker`, not `ticker`; CI's ticker
+  clippy now builds `default,x11,ticker`. **S**
+- [x] Stale docs: size powers in the search spec, scanout rustdoc,
+  headless "classified like udev", FocusedSelection error, Ctrl+O,
+  thumbcache, settings wrap, `ObjectId` in `clippy.toml`. **S**
+- [x] One panicking portal-settings handler ended every appearance update;
+  handlers now run under `catch_unwind`, "must not block" documented. **S**
 
 ## Checked and fine
 
