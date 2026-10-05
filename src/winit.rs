@@ -278,7 +278,7 @@ pub fn run_winit() {
     output.set_preferred(mode);
 
     #[cfg(feature = "fps_ticker")]
-    let fps_image = image::io::Reader::with_format(
+    let fps_image = image::ImageReader::with_format(
         std::io::Cursor::new(FPS_NUMBERS_PNG),
         image::ImageFormat::Png,
     )

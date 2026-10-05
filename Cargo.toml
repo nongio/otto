@@ -14,7 +14,9 @@ wayland-server = "0.31"
 wayland-scanner.workspace = true
 wayland-backend.workspace = true
 wayland-protocols-wlr = { workspace = true, features = ["server"] }
-image = { version = "0.24.5", optional = true }
+# Only decodes the fps ticker's digits, a PNG: the default format set would
+# build an AVIF encoder (rav1e) into every udev build for nothing.
+image = { version = "0.25", optional = true, default-features = false, features = ["png"] }
 xcursor = { workspace = true, optional = true }
 xkbcommon.workspace = true
 thiserror = "1"
