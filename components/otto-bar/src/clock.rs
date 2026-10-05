@@ -7,7 +7,7 @@
 //! setting, and the language's own format the fallback for that.
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{LazyLock, Mutex};
+use std::sync::Mutex;
 
 use chrono::format::{Item, StrftimeItems};
 use chrono::Local;
@@ -65,16 +65,6 @@ fn pick_format(chosen: &str, file: &str, language: &str) -> String {
         .to_string()
 }
 
-/// The locale chrono formats month and weekday names against.
-///
-/// Resolved once: it cannot change without a restart, and the lookup walks a
-/// table. Falls back to the source locale when chrono does not know the tag —
-/// an unknown locale should still produce a clock.
-static CHRONO_LOCALE: LazyLock<chrono::Locale> = LazyLock::new(|| {
-    let posix = otto_kit::i18n::posix_locale();
-    chrono::Locale::try_from(posix.as_str()).unwrap_or(chrono::Locale::en_GB)
-});
-
 /// Minimal clock state — just the current formatted time string.
 pub struct Clock {
     pub text: String,
@@ -105,7 +95,7 @@ impl Clock {
         // `format_localized` is what makes %A and %B come out in the user's
         // language; plain `format` renders English names whatever the locale.
         Local::now()
-            .format_localized(&clock_format(), *CHRONO_LOCALE)
+            .format_localized(&clock_format(), otto_kit::i18n::chrono_locale())
             .to_string()
     }
 

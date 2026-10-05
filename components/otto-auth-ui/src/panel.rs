@@ -17,7 +17,7 @@
 //! with [`Panel::update`], and paint by asking their surface to render the
 //! layer node the panel is parented to.
 
-use std::sync::{Arc, LazyLock};
+use std::sync::Arc;
 
 use layers::prelude::*;
 use layers::types::{BlendMode, Color as LayerColor, Point as LayerPoint, Size as LayerSize};
@@ -33,16 +33,6 @@ use crate::{Appearance, User};
 /// The Touch ID mark, as a Lottie animation. Shared with the fingerprint
 /// island in otto-islands, which is where it was drawn.
 static TOUCH_ID: &[u8] = include_bytes!("../assets/touch_id.json");
-
-/// The locale chrono formats the clock's month and weekday names against.
-///
-/// Resolved once — it cannot change without a restart. Falls back to the
-/// source locale when chrono does not know the tag, so an unknown locale
-/// still produces a clock.
-static CHRONO_LOCALE: LazyLock<chrono::Locale> = LazyLock::new(|| {
-    let posix = otto_kit::i18n::posix_locale();
-    chrono::Locale::try_from(posix.as_str()).unwrap_or(chrono::Locale::en_GB)
-});
 
 /// Where in the asset's timeline the mark is finished. Well short of the end:
 /// the ridges complete before the timeline does, and the tail past this is not
@@ -1591,8 +1581,11 @@ fn draw_clock(appearance: &Appearance) -> impl Fn(&Canvas, f32, f32) -> Rect + S
         let mut paint = Paint::new(Color4f::from(Color::WHITE), None);
         paint.set_anti_alias(true);
         canvas.draw_str(
-            now.format_localized(otto_kit::t!("auth-clock-time-format"), *CHRONO_LOCALE)
-                .to_string(),
+            now.format_localized(
+                otto_kit::t!("auth-clock-time-format"),
+                otto_kit::i18n::chrono_locale(),
+            )
+            .to_string(),
             (0.0, 44.0),
             &time_font,
             &paint,
@@ -1600,8 +1593,11 @@ fn draw_clock(appearance: &Appearance) -> impl Fn(&Canvas, f32, f32) -> Rect + S
 
         paint.set_color(Color::from_argb(180, 255, 255, 255));
         canvas.draw_str(
-            now.format_localized(otto_kit::t!("auth-clock-date-format"), *CHRONO_LOCALE)
-                .to_string(),
+            now.format_localized(
+                otto_kit::t!("auth-clock-date-format"),
+                otto_kit::i18n::chrono_locale(),
+            )
+            .to_string(),
             (2.0, 70.0),
             &date_font,
             &paint,

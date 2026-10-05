@@ -5291,6 +5291,7 @@ version = "1.6.0"
 dependencies = [
  "accesskit",
  "accesskit_unix",
+ "chrono",
  "fluent-bundle",
  "freedesktop-desktop-entry",
  "freedesktop-icons",
