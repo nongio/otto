@@ -262,22 +262,27 @@ otto-kit, so the portal and otto-agents need not link Skia): `xdg`, `dbus`,
   name, then moves; two concurrent trashes of the same name collide. The
   otto-files tests work around it with unique names (#267). Part of the
   §1 trash-spec item (reserve the `.trashinfo` with `O_EXCL` first). **S**
-- [ ] **Screencast `BufferPool` looks unsound**
+- [x] **Screencast `BufferPool` looks unsound**
   (`src/screenshare/pipewire_stream.rs`, FIXME added in #268): a buffer
   popped for rendering can be freed by `remove_buffer` during renegotiation,
   then the PipeWire thread dereferences the dangling pointer. **M**
-- [ ] External-format dmabuf import leaks an FBO (`src/skia_renderer.rs`,
+  - *The main thread holds a never-reused `BufferId`, not the pointer; hand
+    backs are validated under the lock and a removed buffer's frame dropped.*
+- [x] External-format dmabuf import leaks an FBO (`src/skia_renderer.rs`,
   noted in #268). **S**
-- [ ] VideoModifier Choice parse reads a value without checking the pod size
+- [x] VideoModifier Choice parse reads a value without checking the pod size
   (`src/screenshare/pipewire_stream.rs`, #268). **S**
-- [ ] GL-current invariant in `skia_renderer.rs` is assumed, not enforced;
+- [x] GL-current invariant in `skia_renderer.rs` is assumed, not enforced;
   matters with several renderers (multi-GPU) (#268). **M**
+  - *`ensure_current` at each entry point with GL work of its own: a no-op
+    when already current, otherwise binds the context (and target surface).*
 - [ ] winit and x11 never classify covered windows as occluded (only udev
   does); now an explicit `classify_occlusion` parameter in
   `src/state/frame.rs` (#268). Decide whether that is intended. **S**
-- [ ] `ticker` / `fps_ticker` feature does not build on main: missing imports
+- [x] `ticker` / `fps_ticker` feature does not build on main: missing imports
   in `src/drawing.rs`, `FPS_NUMBERS_PNG`, `FpsElement`, `Fourcc` undefined
   (found in #265). Fix or drop the feature. **S**
+  - *Fixed; CI clippy now builds `default,ticker`.*
 - [ ] `headless_basic::pinch_show_desktop` fails locally on main
   (tests/headless_basic.rs:237, "clicking a window should dismiss show
   desktop"); check whether CI runs it. **S**

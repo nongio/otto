@@ -1627,7 +1627,7 @@ impl<A: RendererApi> Otto<UdevData<A>> {
                             let buffer_pool = stream.pipewire_stream.buffer_pool();
                             let mut pool = buffer_pool.lock().unwrap();
 
-                            if let Some(available) = pool.available.pop_front() {
+                            if let Some(available) = pool.take_available() {
                                 let size = match &window_capture {
                                     // The size of the buffer PipeWire handed
                                     // us, which follows the window across
@@ -1643,11 +1643,10 @@ impl<A: RendererApi> Otto<UdevData<A>> {
                                         .unwrap_or_else(|| (1920, 1080).into()),
                                 };
 
-                                // Force full frame for first render (when last_rendered_fd is None)
-                                let is_first_frame = pool.last_rendered_fd.is_none();
-                                let buffer_changed = pool.last_rendered_fd != Some(available.fd);
-
-                                pool.last_rendered_fd = Some(available.fd);
+                                // Force full frame for the first render and
+                                // whenever the buffer changes.
+                                let (is_first_frame, buffer_changed) =
+                                    pool.mark_rendered(&available);
 
                                 // Use damage only if not first frame and same buffer
                                 let damage_to_use = if is_first_frame || buffer_changed {
@@ -1744,7 +1743,7 @@ impl<A: RendererApi> Otto<UdevData<A>> {
                                     stream.pipewire_stream.increment_frame_sequence();
                                 }
 
-                                pool.to_queue.insert(available.fd, available.pw_buffer);
+                                pool.queue(available);
                                 drop(pool);
                                 // Trigger to queue the buffer we just rendered
                                 stream.pipewire_stream.trigger_frame();
@@ -2210,13 +2209,7 @@ impl<A: RendererApi> Otto<UdevData<A>> {
                             crate::virtual_output::PENDING_FRAME_DEADLINE
                         );
                     }
-                    {
-                        let mut pool = pool_arc.lock().unwrap();
-                        let ready: Vec<_> = pool.pending.drain().collect();
-                        for (fd, buf) in ready {
-                            pool.to_queue.insert(fd, buf);
-                        }
-                    }
+                    pool_arc.lock().unwrap().release_pending();
                     self.virtual_outputs[i].pending_since = None;
                     self.virtual_outputs[i]
                         .pipewire_stream
@@ -2229,14 +2222,11 @@ impl<A: RendererApi> Otto<UdevData<A>> {
             self.virtual_outputs[i].pipewire_stream.trigger_frame();
 
             let maybe_buf = if self.virtual_outputs[i].pending_frame.is_none() {
-                let mut pool = pool_arc.lock().unwrap();
-                pool.available.pop_front()
+                pool_arc.lock().unwrap().take_available()
             } else {
                 None
             };
             if let Some(available) = maybe_buf {
-                let fd = available.fd;
-                let pw_buffer = available.pw_buffer;
                 let mut dmabuf = available.dmabuf.clone();
                 let mut rendered_sync = None;
                 {
@@ -2278,14 +2268,17 @@ impl<A: RendererApi> Otto<UdevData<A>> {
                     }
                 }
                 match rendered_sync {
+                    // A renegotiation that freed the buffer while it rendered
+                    // drops the frame.
                     Some(sync) => {
-                        pool_arc.lock().unwrap().pending.insert(fd, pw_buffer);
-                        self.virtual_outputs[i].pending_frame = Some(sync);
-                        self.virtual_outputs[i].pending_since = Some(std::time::Instant::now());
+                        if pool_arc.lock().unwrap().hold_pending(available) {
+                            self.virtual_outputs[i].pending_frame = Some(sync);
+                            self.virtual_outputs[i].pending_since = Some(std::time::Instant::now());
+                        }
                     }
                     // Render failed — return the buffer so it isn't leaked.
                     None => {
-                        pool_arc.lock().unwrap().available.push_back(available);
+                        pool_arc.lock().unwrap().put_back(available);
                     }
                 }
             }
@@ -2306,13 +2299,7 @@ impl<A: RendererApi> Otto<UdevData<A>> {
                     // 1. Resolve last cycle's frame without blocking.
                     if let Some(sync) = stream.pending_frame.take() {
                         if sync.is_reached() {
-                            {
-                                let mut pool = ss_pool.lock().unwrap();
-                                let ready: Vec<_> = pool.pending.drain().collect();
-                                for (fd, buf) in ready {
-                                    pool.to_queue.insert(fd, buf);
-                                }
-                            }
+                            ss_pool.lock().unwrap().release_pending();
                             stream.pipewire_stream.increment_frame_sequence();
                         } else {
                             stream.pending_frame = Some(sync);
@@ -2323,13 +2310,11 @@ impl<A: RendererApi> Otto<UdevData<A>> {
 
                     // 3. Render a new frame only when nothing is pending.
                     let maybe_ss_buf = if stream.pending_frame.is_none() {
-                        ss_pool.lock().unwrap().available.pop_front()
+                        ss_pool.lock().unwrap().take_available()
                     } else {
                         None
                     };
                     if let Some(ss_buf) = maybe_ss_buf {
-                        let fd = ss_buf.fd;
-                        let pw_buffer = ss_buf.pw_buffer;
                         let mut ss_dmabuf = ss_buf.dmabuf.clone();
                         let mut temp_tracker = OutputDamageTracker::from_output(&output_clone);
                         let mut rendered_sync = None;
@@ -2366,11 +2351,12 @@ impl<A: RendererApi> Otto<UdevData<A>> {
                         }
                         match rendered_sync {
                             Some(sync) => {
-                                ss_pool.lock().unwrap().pending.insert(fd, pw_buffer);
-                                stream.pending_frame = Some(sync);
+                                if ss_pool.lock().unwrap().hold_pending(ss_buf) {
+                                    stream.pending_frame = Some(sync);
+                                }
                             }
                             None => {
-                                ss_pool.lock().unwrap().available.push_back(ss_buf);
+                                ss_pool.lock().unwrap().put_back(ss_buf);
                             }
                         }
                     }

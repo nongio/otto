@@ -32,8 +32,6 @@ use crate::renderer::{
 };
 use crate::state::{Backend, Otto};
 
-#[cfg(feature = "fps_ticker")]
-use smithay::backend::renderer::ImportMem;
 use smithay::{
     backend::{
         allocator::dmabuf::Dmabuf,

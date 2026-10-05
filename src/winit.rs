@@ -12,6 +12,11 @@ use std::time::Instant;
 
 #[cfg(feature = "egl")]
 use smithay::backend::renderer::ImportEgl;
+#[cfg(feature = "fps_ticker")]
+use smithay::backend::{allocator::Fourcc, renderer::ImportMem};
+
+#[cfg(feature = "fps_ticker")]
+use crate::drawing::{FpsElement, FPS_NUMBERS_PNG};
 
 use smithay::{
     backend::{

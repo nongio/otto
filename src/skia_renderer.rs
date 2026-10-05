@@ -49,12 +49,15 @@ pub struct SkiaRenderer {
     ///
     /// Every raw call through them (the `unsafe` blocks below that cite "the
     /// GL invariant") assumes that context is current on the calling thread
-    /// and that every pointer argument is valid for the call. Neither GL nor
-    /// this renderer can check the first: the renderer is used on the
-    /// compositor thread only, and its context is made current when it is
-    /// created and by every `GlesRenderer` operation it delegates to — but
-    /// its own GL paths (binding a dmabuf target, blits, plane-texture
-    /// release) do not make it current themselves.
+    /// and that every pointer argument is valid for the call. The renderer is
+    /// used on the compositor thread only. Its context is made current when
+    /// it is created and by every `GlesRenderer` operation it delegates to,
+    /// and each entry point with GL or Skia work of its own (dmabuf import
+    /// and binding, `render`, blits, offscreen buffers, plane surfaces and
+    /// the per-frame scanout flush) calls [`Self::ensure_current`] first, so
+    /// a second renderer (another GPU) that ran in between cannot leave its
+    /// context current under this one's calls. A `SkiaFrame` relies on the
+    /// `render` that created it: nothing may switch contexts mid-frame.
     pub(crate) gl: ffi::Gles2,
 
     target_renderer: HashMap<SkiaTarget, SkiaSurface>,
@@ -308,6 +311,30 @@ impl SkiaRenderer {
         self.gl_renderer.egl_context()
     }
 
+    /// Make this renderer's context current if another one is (see
+    /// [`Self::gl`]).
+    ///
+    /// One `eglGetCurrentContext` when it already is, and an already-current
+    /// context is left alone, so an EGL surface bound with it stays bound.
+    /// When it has to switch, it binds the current target's EGL surface, or
+    /// no surface for an offscreen target.
+    fn ensure_current(&self) -> Result<(), GlesError> {
+        if self.egl_context().is_current() {
+            return Ok(());
+        }
+        // SAFETY: this renderer's own context, used on this thread only, and
+        // a target surface was created on its display.
+        unsafe {
+            match &self.current_target {
+                Some(SkiaTarget::EGLSurface(EGLSurfaceWrapper(surface))) => {
+                    self.egl_context().make_current_with_surface(surface)?
+                }
+                _ => self.egl_context().make_current()?,
+            }
+        }
+        Ok(())
+    }
+
     /// Formats a dmabuf can have to be bound as a render target.
     pub fn dmabuf_render_formats(&self) -> FormatSet {
         self.egl_context().dmabuf_render_formats().clone()
@@ -328,6 +355,10 @@ impl SkiaRenderer {
     /// Call once per frame, after the last plane render and before handing the
     /// buffers to the DRM compositor.
     pub fn flush_planes_for_scanout(&mut self) {
+        if let Err(err) = self.ensure_current() {
+            tracing::warn!("cannot make the renderer current to flush planes: {err:?}");
+            return;
+        }
         let writes = std::mem::take(&mut self.scanout_writes);
         if !self.fence_scanout_writes(&writes) {
             if let Some(context) = self.context.as_mut() {
@@ -484,6 +515,7 @@ impl SkiaRenderer {
         dmabuf: &smithay::backend::allocator::dmabuf::Dmabuf,
     ) -> Result<(SkiaSurface, PlaneTextureRelease), GlesError> {
         use smithay::backend::allocator::Buffer;
+        self.ensure_current()?;
 
         let is_external = !self
             .egl_context()
@@ -655,7 +687,7 @@ impl SkiaRenderer {
         use smithay::backend::allocator::Buffer;
         let damage = damage.map(|damage| damage.to_vec());
 
-        // self.make_current()?;
+        self.ensure_current()?;
 
         self.evict_dead_dmabuf_imports();
         let texture = self
@@ -679,18 +711,43 @@ impl SkiaRenderer {
                 let has_alpha = has_alpha(dmabuf.format().code);
 
                 // If external, resolve/blit into a TEXTURE_2D so Skia can sample it reliably.
-                let (tex_id, skia_external_flag) = if is_external {
-                    let dst = self.create_texture_and_framebuffer(
+                let tex_id = if is_external {
+                    self.create_texture_and_framebuffer(
                         dmabuf.size().w,
                         dmabuf.size().h,
                         dmabuf.format().code,
-                    )?;
-                    self.blit_eglimage_to_2d_texture(egl_image, dst.tex_id, dmabuf.size())?;
-                    (dst.tex_id, false)
+                    )
+                    .map(|dst| {
+                        // Only the texture outlives the import (the
+                        // `GlesTexture` below owns it); the blit, now and on
+                        // every refresh, brings framebuffers of its own.
+                        // SAFETY: the GL invariant; `dst.fbo` was just
+                        // created and nothing else refers to it.
+                        unsafe { self.gl.DeleteFramebuffers(1, &dst.fbo) };
+                        dst.tex_id
+                    })
+                    .and_then(|tex_id| {
+                        self.blit_eglimage_to_2d_texture(egl_image, tex_id, dmabuf.size())?;
+                        Ok(tex_id)
+                    })
                 } else {
-                    let tex = self.import_egl_image(egl_image, is_external, None)?;
-                    (tex, false)
+                    self.import_egl_image(egl_image, is_external, None)
                 };
+                let tex_id = match tex_id {
+                    Ok(tex_id) => tex_id,
+                    Err(err) => {
+                        // SAFETY: created above on this display and not
+                        // stored anywhere yet, so destroyed once.
+                        unsafe {
+                            smithay::backend::egl::ffi::egl::DestroyImageKHR(
+                                **self.egl_context().display().get_display_handle(),
+                                egl_image,
+                            );
+                        }
+                        return Err(err);
+                    }
+                };
+                let skia_external_flag = false;
 
                 // SAFETY: `tex_id` was just created in this context (shared
                 // with `gl_renderer`) and nothing else owns it: the
@@ -885,6 +942,7 @@ impl Renderer for SkiaRenderer {
     where
         'buffer: 'frame,
     {
+        self.ensure_current()?;
         let current_target = self.current_target.as_ref().unwrap();
         let buffer = self.buffers.get(current_target).unwrap();
 
@@ -1576,6 +1634,7 @@ impl Bind<GlesRenderbuffer> for SkiaRenderer {
 
 impl Bind<Dmabuf> for SkiaRenderer {
     fn bind(&mut self, dmabuf: &mut Dmabuf) -> Result<SkiaGLesFbo, <Self as RendererSuper>::Error> {
+        self.ensure_current()?;
         let egl_display = self.egl_context().display().clone();
 
         // Evict targets whose dmabuf has been dropped everywhere else. Must
@@ -1745,6 +1804,7 @@ impl Blit for SkiaRenderer {
         dst: Rectangle<i32, Physical>,
         filter: TextureFilter,
     ) -> Result<SyncPoint, <Self as RendererSuper>::Error> {
+        self.ensure_current()?;
         // Direct FBO-to-FBO blit using OpenGL
         // SAFETY: the GL invariant; both framebuffers come from this
         // renderer's `create_buffer`/`bind`, so they belong to this context.
@@ -1786,6 +1846,7 @@ impl Offscreen<SkiaGLesFbo> for SkiaRenderer {
         format: Fourcc,
         size: Size<i32, Buffer>,
     ) -> Result<SkiaGLesFbo, GlesError> {
+        self.ensure_current()?;
         self.create_texture_and_framebuffer(size.w, size.h, format)
     }
 }

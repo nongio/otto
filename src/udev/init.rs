@@ -456,6 +456,7 @@ pub fn run_udev<A: RendererApi>() {
     #[cfg(feature = "fps_ticker")]
     {
         use crate::drawing::{FpsElement, FPS_NUMBERS_PNG};
+        use smithay::backend::{allocator::Fourcc, renderer::ImportMem};
 
         let fps_image = image::ImageReader::with_format(
             std::io::Cursor::new(FPS_NUMBERS_PNG),

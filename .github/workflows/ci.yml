@@ -254,6 +254,10 @@ jobs:
         # bit-rotted unnoticed once already.
         if: needs.changes.outputs.compositor == 'true'
         run: cargo clippy --locked -p otto --features "default,x11" -- -D warnings
+      - name: Clippy (compositor fps ticker)
+        # `ticker` is opt-in like `x11`, and stopped compiling the same way.
+        if: needs.changes.outputs.compositor == 'true'
+        run: cargo clippy --locked -p otto --features "default,ticker" -- -D warnings
       - name: Clippy (components)
         # Everything with no filter of its own, sample clients included.
         # submenu-gtk is the one exception: it needs GTK development libraries
