@@ -294,8 +294,9 @@ otto-kit, so the portal and otto-agents need not link Skia): `xdg`, `dbus`,
   runs `--lib` only, so they rot unseen. **S**
   - *All compile now; the ones that need a compositor are `no_run`. CI runs
     `cargo test -p otto-kit --doc`.*
-- [ ] otto-settings' hard-coded accent swatch list (`main.rs` ~217-227) is a
+- [x] otto-settings' hard-coded accent swatch list (`main.rs` ~217-227) is a
   third palette; its Teal `#40C8E0` is in neither (#264). **S**
+  - *Now `otto_kit::theme::ACCENT_NAMES` through the same palette lookup.*
 - [ ] zbus 4 → 5 and smithay-client-toolkit 0.19 → 0.21 (§2) are now
   unblocked: every org.otto proxy lives in `otto-dbus`. **M each**
 
