@@ -1709,12 +1709,15 @@ pub fn move_to_trash(paths: &[PathBuf]) -> OpResult {
         // The can is chosen per item: one on another filesystem goes to the
         // trash at the top of that filesystem rather than being copied home.
         match otto_kit::trash::trash(source) {
-            Ok((to, info)) => {
+            Ok(trashed) => {
                 result.trashed += 1;
+                // The origin the sidecar records, not `source` as spelled:
+                // through a symlinked folder the two differ, and undo is
+                // checked against the can's topdir like Put Back is.
                 result.changes.push(Change::Trashed {
-                    from: source.clone(),
-                    to,
-                    info,
+                    from: trashed.origin,
+                    to: trashed.item,
+                    info: trashed.sidecar,
                 });
             }
             Err(err) => result

@@ -422,14 +422,6 @@ impl Can {
         Some((stat.st_dev, stat.st_ino))
     }
 
-    /// Drop the `directorysizes` entry for `name`, once it has left the can.
-    /// The cache is advisory, so a failure is not reported.
-    pub fn forget_directory_size(&self, name: &OsStr) {
-        if let Ok(can) = self.open(false) {
-            update_directory_sizes(&can, name, None);
-        }
-    }
-
     /// Record the size of the trashed directory `name` in `directorysizes`.
     ///
     /// The size is what `du -B1` would say. Walking a huge tree on the
@@ -640,24 +632,35 @@ pub fn cans_in(topdirs: &[PathBuf]) -> Vec<Can> {
 /// topdir can of its own filesystem otherwise, and the home trash again when
 /// no topdir can could be used.
 ///
-/// Returns where the item landed and where its sidecar went.
+/// Returns where the item landed, where its sidecar went, and the origin the
+/// sidecar records — see [`Trashed`].
 ///
 /// # Errors
 ///
 /// The directory creation, sidecar creation or move that failed, as text.
-pub fn trash(source: &Path) -> Result<(PathBuf, PathBuf), String> {
+pub fn trash(source: &Path) -> Result<Trashed, String> {
     let home = home_trash_dir().ok_or_else(|| "no home folder to trash into".to_string())?;
+    trash_with(source, &home, &mounts())
+}
+
+/// [`trash`], with the home trash and the mount table handed in.
+fn trash_with(source: &Path, home: &Path, mounts: &[Mount]) -> Result<Trashed, String> {
     let source_dir = source
         .parent()
         .map(|dir| std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf()));
     if let (Some(dir), Some(name)) = (&source_dir, source.file_name()) {
-        let mounts = mounts();
-        let home_at = nearest_existing(&home).map(|p| std::fs::canonicalize(&p).unwrap_or(p));
-        if let Some(topdir) = topdir_for(&mounts, dir, home_at.as_deref()) {
+        let home_at = nearest_existing(home).map(|p| std::fs::canonicalize(&p).unwrap_or(p));
+        if let Some(topdir) = topdir_for(mounts, dir, home_at.as_deref()) {
             if let Some(can) = topdir_can(topdir, uid()) {
                 let resolved = dir.join(name);
                 match place(source, &resolved, &can, Some(topdir)) {
-                    Ok(placed) => return Ok(placed),
+                    Ok((item, sidecar)) => {
+                        return Ok(Trashed {
+                            item,
+                            sidecar,
+                            origin: resolved,
+                        })
+                    }
                     Err(err) => tracing::debug!(
                         can = %can.dir().display(),
                         source = %source.display(),
@@ -668,7 +671,26 @@ pub fn trash(source: &Path) -> Result<(PathBuf, PathBuf), String> {
             }
         }
     }
-    trash_into(source, &home)
+    let (item, sidecar) = trash_into(source, home)?;
+    Ok(Trashed {
+        item,
+        sidecar,
+        origin: source.to_path_buf(),
+    })
+}
+
+/// Where [`trash`] put something.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Trashed {
+    /// The item, in its can's `files/`.
+    pub item: PathBuf,
+    /// Its `.trashinfo`.
+    pub sidecar: PathBuf,
+    /// Where it came from, as the sidecar records it: for a topdir can,
+    /// spelled through the canonical parent the topdir was found from, which
+    /// is what [`restore`] checks it against — `~/USB/x` with `~/USB` a link
+    /// to the stick is `/run/media/u/STICK/x` here. Undo puts it back there.
+    pub origin: PathBuf,
 }
 
 /// Move `source` into the trash can at `trash`, with its sidecar.
@@ -797,7 +819,7 @@ fn delete_forever_as(item: &Path, uid: u32) -> Result<(), String> {
             .st_dev
             != device
         {
-            return Err("a mount point inside the trash".to_string());
+            return Err(ON_ANOTHER_FILESYSTEM.to_string());
         }
     }
     remove_tree_at(parent.as_fd(), name, device, 0).map_err(|e| e.to_string())?;
@@ -809,6 +831,12 @@ fn delete_forever_as(item: &Path, uid: u32) -> Result<(), String> {
     }
     Ok(())
 }
+
+/// What deleting says about a folder it will not enter: one on another
+/// filesystem than the can, such as something mounted there or a btrfs
+/// subvolume, whose contents are not the trash's to delete.
+const ON_ANOTHER_FILESYSTEM: &str =
+    "part of it is on another filesystem (a mount or a btrfs subvolume), so it was left alone";
 
 /// How deep [`remove_tree_at`] goes before giving up: each level holds a
 /// descriptor open, and nothing a person trashed is nested this far.
@@ -942,7 +970,7 @@ fn remove_tree_at(
     }
     let dir = rfs::openat(parent, name, DIR_FLAGS, Mode::empty())?;
     if rfs::fstat(&dir)?.st_dev != device {
-        return Err(refused("a mount point inside the trash"));
+        return Err(refused(ON_ANOTHER_FILESYSTEM));
     }
     let mut children = Vec::new();
     for entry in rfs::Dir::read_from(&dir)? {
@@ -1483,7 +1511,8 @@ mod tests {
         let file = root.0.join("plain");
         std::fs::write(&file, "x").unwrap();
         trash_into(&file, &trash).unwrap();
-        Can::trusted(&trash).forget_directory_size(to.file_name().unwrap());
+        let can = Can::trusted(&trash).open(false).unwrap();
+        update_directory_sizes(&can, to.file_name().unwrap(), None);
         assert_eq!(
             std::fs::read_to_string(trash.join("directorysizes")).unwrap(),
             ""
@@ -1818,6 +1847,45 @@ mod tests {
         );
         assert_eq!(can.origin(OsStr::new("link")), Err(BadOrigin::Unknown));
         assert_eq!(can.origin(OsStr::new("fifo")), Err(BadOrigin::Unknown));
+    }
+
+    /// Trashed through a symlinked folder (`~/USB -> /run/media/u/STICK`),
+    /// the origin handed back is the one the sidecar records, spelled through
+    /// the stick's mount point, so undo can put it back; the path as typed
+    /// would be "outside the disk".
+    #[test]
+    fn the_origin_of_a_trash_through_a_link_is_the_recorded_one() {
+        let me = uid();
+        let root = Tmp::new("via-link");
+        let stick = root.0.join("stick");
+        std::fs::create_dir(&stick).unwrap();
+        let stick = std::fs::canonicalize(&stick).unwrap();
+        let link = root.0.join("USB");
+        std::os::unix::fs::symlink(&stick, &link).unwrap();
+        std::fs::write(stick.join("x.txt"), "x").unwrap();
+        let mounts = [
+            Mount {
+                point: PathBuf::from("/"),
+                fstype: "ext4".to_string(),
+            },
+            Mount {
+                point: stick.clone(),
+                fstype: "vfat".to_string(),
+            },
+        ];
+
+        let trashed = trash_with(
+            &link.join("x.txt"),
+            Path::new("/nonexistent-home/.local/share/Trash"),
+            &mounts,
+        )
+        .unwrap();
+
+        assert!(trashed.item.starts_with(stick.join(format!(".Trash-{me}"))));
+        assert_eq!(trashed.origin, stick.join("x.txt"));
+        assert!(restore_as(&trashed.item, &link.join("x.txt"), me).is_err());
+        restore_as(&trashed.item, &trashed.origin, me).unwrap();
+        assert_eq!(std::fs::read_to_string(link.join("x.txt")).unwrap(), "x");
     }
 
     /// A sticky `.Trash` somebody other than root or the user owns could be
