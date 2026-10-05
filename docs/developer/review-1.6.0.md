@@ -128,9 +128,10 @@ otto-kit, so the portal and otto-agents need not link Skia): `xdg`, `dbus`,
   fingerprint→password switch, queued submit and clock tick (~300 lines, tests
   copied too). `AuthSession` in otto-auth-ui. **M**
   - *Partly done in #260: `pump`, `prompt_label`, frame and clock helpers live in otto-auth-ui; the `AuthSession` state machine remains.*
-- [ ] **Chrono locale** static copied (`otto-bar/src/clock.rs:72`,
-  `otto-auth-ui/src/panel.rs:42`) → `otto_kit::i18n`. **S**
-- [ ] **Text elide/wrap** ×5 next to `typography::ellipsize`. **S**
+- [x] **Chrono locale** static copied (`otto-bar/src/clock.rs:72`,
+  `otto-auth-ui/src/panel.rs:42`) → `otto_kit::i18n`. **S** Fixed in `otto_kit::i18n::chrono_locale`.
+- [x] **Text elide/wrap** ×5 next to `typography::ellipsize`. **S** Now
+  `typography::{ellipsize, ellipsize_by, ellipsize_head, ellipsize_chars, wrap}`.
 - [ ] **PipeWire main loop** set up 6× (islands ×2, rdp ×2, compositor);
   compositor volume still shells out to `wpctl` (`src/audio/volume.rs`). **M**
 - [ ] **Two MPRIS clients on two D-Bus stacks**: `mpris` crate (libdbus) in
@@ -222,10 +223,17 @@ otto-kit, so the portal and otto-agents need not link Skia): `xdg`, `dbus`,
   (`panes/agents.rs:536`), spawns `fc-list` (Skia `FontMgr` is linked) and
   `xdg-open` (use `mime_apps::open`). **S–M**
   - *Partly done in #258: polls only while the pane is visible, `xdg-open` and `fc-list` are gone; a systemd `PropertiesChanged` subscription remains.*
-- [ ] otto-peek: hand-rolled MD5 (`thumbcache.rs:361`, `md-5` is in the lock),
+- [x] otto-peek: hand-rolled MD5 (`thumbcache.rs:361`, `md-5` is in the lock),
   PNG text-chunk parser, 3 XML-unescape copies; `imagesize.rs` (367 lines)
   duplicates the `imagesize` crate already in the lock. **S**
+  - *MD5 and PNG text now come from `md-5` and `png`; one `otto_kit::xml::unescape`
+    (quick-xml is only transitive, and its unescape rejects the unknown
+    entities xkb data carries). otto-files keeps its own JPEG (EXIF
+    orientation) and BMP (top-down, OS/2 headers) readers, which the crate gets
+    wrong; everything else goes through `imagesize`.*
 - [ ] otto-greeter: hand-written greetd IPC (567 lines) → `greetd_ipc`. **S**
+  - *Won't do: `greetd_ipc` is GPL-3.0-only (Otto is MIT), and its request type
+    holds the password in a plain `String`, which would undo the zeroizing.*
 - [ ] Portal hand-writes its D-Bus interfaces (`Request` twice); screenshots
   shell out to `grim` instead of the compositor's capture (also otto-stash). **M**
 - [ ] otto-emoji search matches names only — no CLDR keywords/shortcodes. **S–M**
@@ -233,13 +241,18 @@ otto-kit, so the portal and otto-agents need not link Skia): `xdg`, `dbus`,
 
 ## Follow-ups found while fixing
 
-- [ ] `otto_kit::mime_apps::tokenize` keeps `%%` inside a quoted Exec
+- [x] `otto_kit::mime_apps::tokenize` keeps `%%` inside a quoted Exec
   argument as two characters instead of one `%` (found in #258). **S**
-- [ ] `otto-search/src/query.rs:472` says size queries use powers of 1024
+- [x] `otto-search/src/query.rs:472` says size queries use powers of 1024
   "matching how Files shows sizes"; Files now uses 1000 everywhere (#261). **S**
-- [ ] otto-files `paste_tests` put_back tests and one `scripts` test share
+  - *`K`/`M`/`G`/`T` count in 1000s; `KiB`/`MiB`/… stay powers of 1024.*
+- [x] otto-files `paste_tests` put_back tests and one `scripts` test share
   environment variables and fail when run in parallel. **S**
-- [ ] otto-files' own `open_in_default_app` still spawns `xdg-open`. **S**
+  - *Not the environment: two tests trashing the same name raced in
+    `otto_kit::trash::trash_into` (check-then-move, the §1 Trash item), and
+    scripts hit `ETXTBSY` and Python start-up past the deadlines under load.*
+- [x] otto-files' own `open_in_default_app` still spawns `xdg-open`. **S**
+  - *Links open through `x-scheme-handler/<scheme>` with `mime_apps::open_uris`.*
 - [ ] Clippy without XWayland and the x11 backend at runtime were not
   exercised after #259; the x11 CI step builds `default,x11`, since
   `--no-default-features --features x11` needs `udev` code paths. **S**
