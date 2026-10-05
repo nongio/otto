@@ -49,6 +49,10 @@ otto-bar looks for a TOML config file in this order:
 | `profile_backend`   | `"auto"`       | `"auto"`, `"power-profiles"`, `"commands"`          |
 | `settings_command`  | `"otto-settings"` | Menu's last entry; empty string hides it         |
 
+Up to 1.6.0, eight-digit colours were `#AARRGGBB`. They are now
+`#RRGGBBAA`, alpha last: move the alpha pair to the end (`"#FF34C759"` becomes
+`"#34C759FF"`). An old value still parses, as another colour.
+
 `[[battery.profiles]]` entries define the switchable profiles. When any are
 set they take precedence over power-profiles-daemon, unless `profile_backend`
 is `"power-profiles"`. Each takes `label`, `command`

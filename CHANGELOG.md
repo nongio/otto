@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [unreleased]
+
+### 🚜 Refactor
+
+- [**breaking**] Unify hex colours and the colour palette (#264). otto-bar's `[battery] color_*` eight-digit colours are now `#RRGGBBAA` (alpha last), not `#AARRGGBB`; an old value still parses, as another colour (`"#FF34C759"`, opaque green, now reads as translucent magenta). Move the alpha pair to the end: `"#34C759FF"`.
+
 ## [1.6.0] - 2026-10-04
 
 ### 🚀 Features
