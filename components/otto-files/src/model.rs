@@ -1712,7 +1712,9 @@ fn read_trash_origins(can: &otto_kit::trash::Can) -> std::collections::HashMap<S
         let Ok(body) = std::fs::read_to_string(entry.path()) else {
             continue;
         };
-        if let Some(path) = can.origin_in(&body) {
+        // A path a stick's sidecar may not name is left out, so the row
+        // shows no origin; Put Back says why when asked.
+        if let Ok(path) = can.origin_in(&body) {
             origins.insert(name.to_string(), path);
         }
     }
@@ -1732,12 +1734,21 @@ pub fn restore_from_trash(paths: &[PathBuf]) -> OpResult {
         let name = name_of(path);
         let located = otto_kit::trash::Can::of_item(path)
             .zip(path.file_name())
-            .and_then(|(can, file)| Some((can.origin(file)?, can.sidecar(file))));
-        let Some((origin, info)) = located else {
-            result.errors.push(format!(
-                "Can\u{2019}t put \u{201c}{name}\u{201d} back \u{2014} where it came from is not recorded."
-            ));
-            continue;
+            .map(|(can, file)| (can.origin(file), can.sidecar(file)));
+        let (origin, info) = match located {
+            Some((Ok(origin), info)) => (origin, info),
+            Some((Err(otto_kit::trash::BadOrigin::Outside), _)) => {
+                result.errors.push(format!(
+                    "Can\u{2019}t put \u{201c}{name}\u{201d} back \u{2014} the place it records is outside the disk it is on."
+                ));
+                continue;
+            }
+            _ => {
+                result.errors.push(format!(
+                    "Can\u{2019}t put \u{201c}{name}\u{201d} back \u{2014} where it came from is not recorded."
+                ));
+                continue;
+            }
         };
         match restore_one(path, &origin, &info) {
             Ok(()) => {
@@ -1764,7 +1775,9 @@ pub fn restore_from_trash(paths: &[PathBuf]) -> OpResult {
 /// deleted after it was trashed still has somewhere it belongs, and refusing
 /// the restore over a missing directory would strand it in the trash.
 fn restore_one(from: &Path, origin: &Path, info: &Path) -> Result<(), String> {
-    if origin.exists() {
+    // Not `exists`, which follows a symlink: a dangling one at the origin is
+    // still something there, and a rename would silently replace it.
+    if std::fs::symlink_metadata(origin).is_ok() {
         return Err("something is there now".to_string());
     }
     if let Some(parent) = origin.parent() {
@@ -2263,6 +2276,71 @@ mod paste_tests {
         assert_eq!(result.errors.len(), 1, "and it says why");
         assert_eq!(std::fs::read_to_string(&victim).unwrap(), "new");
         assert!(to.exists(), "still in the trash, not lost");
+    }
+
+    /// A dangling symlink is something there too: `exists` says no, and the
+    /// rename would have replaced it without a word.
+    #[test]
+    fn put_back_refuses_to_replace_a_dangling_symlink() {
+        let _home = test_data_home();
+        let t = Tmp::new("restore-dangling");
+        let victim = t.file("paper.txt", "old");
+
+        let trashed = move_to_trash(std::slice::from_ref(&victim));
+        let Some(Change::Trashed { to, .. }) = trashed.changes.first() else {
+            panic!("no trashed change recorded");
+        };
+        let to = to.clone();
+        std::os::unix::fs::symlink(t.0.join("nowhere"), &victim).unwrap();
+
+        let result = restore_from_trash(std::slice::from_ref(&to));
+
+        assert_eq!(result.restored, 0);
+        assert!(std::fs::symlink_metadata(&victim).unwrap().is_symlink());
+        assert!(to.exists(), "still in the trash");
+    }
+
+    /// A stick's sidecar naming a path off the stick is shown, but Put Back
+    /// refuses it and says so: it would move a file, and make directories,
+    /// wherever the stick's author chose.
+    #[test]
+    fn put_back_refuses_an_origin_outside_the_topdir() {
+        use std::os::unix::fs::PermissionsExt;
+        let t = Tmp::new("restore-outside");
+        // SAFETY: getuid cannot fail.
+        let uid = unsafe { libc::getuid() };
+        let can = t.0.join(format!(".Trash-{uid}"));
+        std::fs::create_dir(&can).unwrap();
+        std::fs::set_permissions(&can, std::fs::Permissions::from_mode(0o700)).unwrap();
+        for sub in ["files", "info"] {
+            std::fs::create_dir(can.join(sub)).unwrap();
+            std::fs::set_permissions(can.join(sub), std::fs::Permissions::from_mode(0o700))
+                .unwrap();
+        }
+        let target = t.0.join("elsewhere/planted");
+        for (name, path) in [
+            ("abs", target.display().to_string()),
+            ("up", "../elsewhere/planted".to_string()),
+        ] {
+            let item = can.join("files").join(name);
+            std::fs::write(&item, "payload").unwrap();
+            std::fs::write(
+                can.join("info").join(format!("{name}.trashinfo")),
+                format!("[Trash Info]\nPath={path}\nDeletionDate=2024-01-01T00:00:00\n"),
+            )
+            .unwrap();
+
+            let result = restore_from_trash(std::slice::from_ref(&item));
+
+            assert_eq!(result.restored, 0, "{name}");
+            assert!(
+                result.errors.first().is_some_and(|e| e.contains("outside")),
+                "{:?}",
+                result.errors
+            );
+            assert!(item.exists(), "left in the trash");
+            assert!(!t.0.join("elsewhere").exists(), "nothing was made");
+        }
     }
 
     #[test]

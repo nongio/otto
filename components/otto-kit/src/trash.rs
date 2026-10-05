@@ -75,6 +75,16 @@ enum Kind {
     },
 }
 
+/// Why an item cannot be put back where it came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BadOrigin {
+    /// No sidecar, or one that records no `Path=`.
+    Unknown,
+    /// A topdir can's sidecar records a path outside its own filesystem:
+    /// absolute, or climbing out with `..`.
+    Outside,
+}
+
 /// How a directory on the way to a can is opened: never by following a
 /// symlink in its last component.
 const DIR_FLAGS: OFlags = OFlags::RDONLY
@@ -194,19 +204,44 @@ impl Can {
     }
 
     /// Where the item called `name` came from, from its sidecar.
-    pub fn origin(&self, name: &OsStr) -> Option<PathBuf> {
-        let body = std::fs::read_to_string(self.sidecar(name)).ok()?;
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::origin_in`], and [`BadOrigin::Unknown`] when there is no
+    /// sidecar to read.
+    pub fn origin(&self, name: &OsStr) -> Result<PathBuf, BadOrigin> {
+        let body = std::fs::read_to_string(self.sidecar(name)).map_err(|_| BadOrigin::Unknown)?;
         self.origin_in(&body)
     }
 
     /// The origin a sidecar's body records, resolved against [`Self::base`]
     /// when it is relative.
-    pub fn origin_in(&self, body: &str) -> Option<PathBuf> {
-        let recorded = path_key(body)?;
+    ///
+    /// A topdir can's sidecars are as trustworthy as the filesystem they are
+    /// on, which may be a stick somebody else prepared, so only a relative
+    /// path that stays under the topdir is taken from one: plain names, no
+    /// `..`, nothing absolute. Put Back would otherwise move a file, and
+    /// make directories, wherever the sidecar said.
+    ///
+    /// # Errors
+    ///
+    /// [`BadOrigin::Unknown`] when no `Path=` is recorded,
+    /// [`BadOrigin::Outside`] when a topdir can records one it may not.
+    pub fn origin_in(&self, body: &str) -> Result<PathBuf, BadOrigin> {
+        let recorded = path_key(body).ok_or(BadOrigin::Unknown)?;
+        if self.owner().is_some() {
+            let plain = !recorded.as_os_str().is_empty()
+                && recorded
+                    .components()
+                    .all(|part| matches!(part, Component::Normal(_)));
+            if !plain {
+                return Err(BadOrigin::Outside);
+            }
+        }
         if recorded.is_absolute() {
-            Some(recorded)
+            Ok(recorded)
         } else {
-            Some(self.base()?.join(recorded))
+            Ok(self.base().ok_or(BadOrigin::Unknown)?.join(recorded))
         }
     }
 
@@ -993,7 +1028,7 @@ mod tests {
             let i: usize = std::fs::read_to_string(to).unwrap().parse().unwrap();
             assert_eq!(source, &sources[i]);
             let can = Can::trusted(&trash);
-            assert_eq!(can.origin(to.file_name().unwrap()).as_ref(), Some(source));
+            assert_eq!(can.origin(to.file_name().unwrap()).as_ref(), Ok(source));
             assert!(info.exists());
         }
         let in_can = std::fs::read_dir(trash.join("files")).unwrap().count();
@@ -1136,7 +1171,7 @@ mod tests {
         assert!(body.contains("\nPath=photos/cat.png\n"), "{body}");
         let found = Can::of_item(&to).unwrap();
         assert_eq!(found, can);
-        assert_eq!(found.origin(to.file_name().unwrap()), Some(source));
+        assert_eq!(found.origin(to.file_name().unwrap()), Ok(source));
     }
 
     #[test]
@@ -1171,16 +1206,36 @@ mod tests {
     #[test]
     fn a_sidecar_without_a_path_is_skipped_rather_than_guessed() {
         let can = Can::trusted("/x/Trash");
-        assert_eq!(can.origin_in("[Trash Info]\nDeletionDate=x\n"), None);
+        assert_eq!(
+            can.origin_in("[Trash Info]\nDeletionDate=x\n"),
+            Err(BadOrigin::Unknown)
+        );
         assert_eq!(
             can.origin_in("[Trash Info]\nPath=/tmp/a%20b\nDeletionDate=x\n"),
-            Some(PathBuf::from("/tmp/a b"))
+            Ok(PathBuf::from("/tmp/a b"))
         );
         assert_eq!(
             can.origin_in("[Trash Info]\nPath=a%20b\n"),
-            Some(PathBuf::from("/x/a b")),
+            Ok(PathBuf::from("/x/a b")),
             "relative to the directory the can is in"
         );
+    }
+
+    /// A stick's sidecar cannot send Put Back anywhere but onto the stick.
+    #[test]
+    fn a_topdir_sidecar_may_only_point_under_its_topdir() {
+        let can = Can::topdir(Path::new("/media/usb"), false, 1000);
+        let origin = |path: &str| can.origin_in(&format!("[Trash Info]\nPath={path}\n"));
+
+        assert_eq!(
+            origin("photos/cat.png"),
+            Ok(PathBuf::from("/media/usb/photos/cat.png"))
+        );
+        assert_eq!(origin("/home/u/.bashrc"), Err(BadOrigin::Outside));
+        assert_eq!(origin("../../home/u/.bashrc"), Err(BadOrigin::Outside));
+        assert_eq!(origin("photos/../../etc"), Err(BadOrigin::Outside));
+        assert_eq!(origin("./photos"), Err(BadOrigin::Outside));
+        assert_eq!(origin(""), Err(BadOrigin::Outside));
     }
 
     #[test]
