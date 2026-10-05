@@ -810,7 +810,40 @@ const PSEUDO_FILESYSTEMS: &[&str] = &[
     "tracefs",
 ];
 
-/// The mount points in `/proc/self/mountinfo`, less [`PSEUDO_FILESYSTEMS`].
+/// Filesystems that may be across a network, or behind a FUSE daemon: a stat
+/// of one can hang for as long as the server or the daemon does, and the
+/// dock asks about the trash from the compositor. Their cans are not looked
+/// for, the way gio leaves network mounts out of its trash. `fuse.*` (sshfs,
+/// rclone, gvfsd-fuse…) is matched by prefix; `fuseblk`, a local disk such
+/// as an NTFS stick through ntfs-3g, is not FUSE-over-network and stays in.
+const NETWORK_FILESYSTEMS: &[&str] = &[
+    "9p",
+    "afs",
+    "ceph",
+    "cifs",
+    "coda",
+    "davfs",
+    "fuse",
+    "glusterfs",
+    "lustre",
+    "ncpfs",
+    "nfs",
+    "nfs4",
+    "ocfs2",
+    "smb3",
+    "smbfs",
+    "sshfs",
+];
+
+/// Whether a filesystem of type `fstype` is never searched for cans.
+fn is_skipped(fstype: &str) -> bool {
+    PSEUDO_FILESYSTEMS.contains(&fstype)
+        || NETWORK_FILESYSTEMS.contains(&fstype)
+        || fstype.starts_with("fuse.")
+}
+
+/// The mount points in `/proc/self/mountinfo`, less the filesystems
+/// [`is_skipped`] leaves out.
 fn mount_points() -> Vec<PathBuf> {
     std::fs::read_to_string("/proc/self/mountinfo")
         .map(|text| parse_mountinfo(&text))
@@ -822,7 +855,7 @@ fn parse_mountinfo(text: &str) -> Vec<PathBuf> {
         .filter_map(|line| {
             let (before, after) = line.split_once(" - ")?;
             let fstype = after.split(' ').next()?;
-            if PSEUDO_FILESYSTEMS.contains(&fstype) {
+            if is_skipped(fstype) {
                 return None;
             }
             before.split(' ').nth(4).map(unescape_mount)
@@ -1156,10 +1189,19 @@ mod tests {
 22 1 259:2 / / rw,relatime shared:1 - ext4 /dev/nvme0n1p2 rw
 23 22 0:21 / /proc rw,nosuid shared:12 - proc proc rw
 60 22 8:17 / /run/media/u/MY\\040STICK rw,nosuid shared:40 - vfat /dev/sdb1 rw
+61 22 0:50 / /mnt/nas rw,relatime shared:41 - nfs4 nas:/export rw
+62 22 0:51 / /mnt/cloud rw,relatime shared:42 - fuse.rclone remote: rw
+63 22 0:52 / /mnt/samba rw,relatime shared:43 - cifs //host/share rw
+64 22 8:33 / /run/media/u/NTFS rw,relatime shared:44 - fuseblk /dev/sdc1 rw
 ";
         assert_eq!(
             parse_mountinfo(text),
-            vec![PathBuf::from("/"), PathBuf::from("/run/media/u/MY STICK")]
+            vec![
+                PathBuf::from("/"),
+                PathBuf::from("/run/media/u/MY STICK"),
+                PathBuf::from("/run/media/u/NTFS"),
+            ],
+            "no pseudo, network or FUSE-daemon filesystems"
         );
     }
 

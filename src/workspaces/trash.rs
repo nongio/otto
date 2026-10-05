@@ -91,8 +91,16 @@ fn watched_dirs() -> Vec<PathBuf> {
 /// Whether the trash holds anything. A directory that does not exist is an
 /// empty trash, not an error: it is what a session that has never deleted
 /// anything looks like.
+///
+/// This reads the mount table and looks into every can, so it is not for the
+/// compositor's main thread.
 pub fn has_content() -> bool {
-    watched_dirs().iter().any(|dir| {
+    any_content(&watched_dirs())
+}
+
+/// Whether any of `dirs` has an entry.
+fn any_content(dirs: &[PathBuf]) -> bool {
+    dirs.iter().any(|dir| {
         std::fs::read_dir(dir)
             .map(|mut entries| entries.next().is_some())
             .unwrap_or(false)
@@ -102,19 +110,25 @@ pub fn has_content() -> bool {
 /// Call `on_change` with the trash's state now, and again every time it
 /// changes, until the process ends.
 ///
-/// One thread, blocking in `read(2)` on an inotify descriptor. If inotify is
-/// unavailable the state is still reported once — the icon is right until
-/// something changes it, which is better than no icon at all.
+/// One thread, blocking in `read(2)` on an inotify descriptor. The first look
+/// is made there too, not on the caller's thread: it stats every can, and the
+/// caller is the compositor. If inotify is unavailable the state is still
+/// reported once — the icon is right until something changes it, which is
+/// better than no icon at all.
 pub fn watch(on_change: impl Fn(bool) + Send + 'static) {
-    on_change(has_content());
-
-    std::thread::Builder::new()
+    let spawned = std::thread::Builder::new()
         .name("otto-trash-watch".into())
-        .spawn(move || run(on_change))
-        .ok();
+        .spawn(move || run(on_change));
+    if let Err(err) = spawned {
+        tracing::warn!(error = %err, "trash watch: no thread, the dock icon will not follow the can");
+    }
 }
 
 fn run(on_change: impl Fn(bool)) {
+    let mut dirs = watched_dirs();
+    let mut last = any_content(&dirs);
+    on_change(last);
+
     // SAFETY: inotify_init1 takes flags and returns a descriptor or -1.
     let fd = unsafe { libc::inotify_init1(libc::IN_CLOEXEC) };
     if fd < 0 {
@@ -157,13 +171,12 @@ fn run(on_change: impl Fn(bool)) {
         .ok();
 
     let mut armed: HashMap<PathBuf, i32> = HashMap::new();
-    let mut last = has_content();
     loop {
         // Watch the deepest directory that exists for each can: `files/` once
         // it is there, its parent while it is not, so its creation is itself
         // an event. Recomputed after every event, since a mount may have
         // brought a can or taken one away.
-        let targets: HashSet<PathBuf> = watched_dirs()
+        let targets: HashSet<PathBuf> = dirs
             .iter()
             .filter_map(|dir| deepest_existing(dir))
             .collect();
@@ -203,7 +216,10 @@ fn run(on_change: impl Fn(bool)) {
             }
         }
 
-        let now = has_content();
+        // One read of the mount table per burst, for both the look and the
+        // re-arming at the top of the loop.
+        dirs = watched_dirs();
+        let now = any_content(&dirs);
         if now != last {
             last = now;
             on_change(now);
