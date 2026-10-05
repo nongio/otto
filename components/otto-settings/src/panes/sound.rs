@@ -4,7 +4,7 @@
 //! are not wired to the compositor yet.
 //!
 //! Below the interface-sound settings sits a mixer laid out after
-//! pavucontrol, the reference for what it covers: a Show pop-up stands in
+//! pavucontrol, the reference for what it covers: a tab bar holds
 //! for pavucontrol's tabs — Playback, Recording, Output devices, Input
 //! devices, Configuration — and the groups under it are that tab's. Each app
 //! playing or recording has its volume, mute and device; each device its
@@ -28,8 +28,8 @@ use crate::model::{group, untitled, Control, Group, Pane, Row};
 use crate::pulse::{self, Direction, Graph};
 use crate::settings_client::{self, Value};
 
-/// The Show pop-up: which of pavucontrol's tabs the mixer shows.
-const VIEW_ID: &str = "sound.view";
+/// The tab bar: which of pavucontrol's tabs the mixer shows.
+const TABS_ID: &str = "sound.tabs";
 
 /// pavucontrol's tabs, in its order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -50,16 +50,6 @@ impl View {
         View::Configuration,
     ];
 
-    fn token(self) -> &'static str {
-        match self {
-            View::Playback => "playback",
-            View::Recording => "recording",
-            View::Output => "output",
-            View::Input => "input",
-            View::Configuration => "configuration",
-        }
-    }
-
     fn label(self) -> &'static str {
         match self {
             View::Playback => otto_kit::t!("settings-sound-view-playback"),
@@ -70,14 +60,32 @@ impl View {
         }
     }
 
-    fn from_token(token: &str) -> Option<View> {
-        View::ALL.into_iter().find(|view| view.token() == token)
+    fn index(self) -> usize {
+        View::ALL.iter().position(|view| *view == self).unwrap_or(0)
+    }
+
+    /// The tabs' labels as the `'static` slice a tab row wants. Resolved
+    /// once: the language cannot change without a restart.
+    fn labels() -> &'static [&'static str] {
+        static LABELS: OnceLock<Vec<&'static str>> = OnceLock::new();
+        LABELS.get_or_init(|| View::ALL.into_iter().map(View::label).collect())
     }
 }
 
 /// Which tab is shown. Output devices first: what a Settings pane is opened
 /// for far more often than to move one app's sound.
 static VIEW: Mutex<View> = Mutex::new(View::Output);
+
+/// A tab was picked in the row `id`. Whether the row is this module's.
+pub fn select_tab(id: &str, index: usize) -> bool {
+    if id != TABS_ID {
+        return false;
+    }
+    if let Some(view) = View::ALL.get(index) {
+        *VIEW.lock().unwrap() = *view;
+    }
+    true
+}
 
 /// What the pane last learned from the sound server.
 enum Snapshot {
@@ -157,6 +165,12 @@ pub fn set_shown(shown: bool) {
         watch();
         in_background("sound-read", reload);
     }
+}
+
+/// Read the server now, on this thread. For the offscreen preview, which
+/// draws once and cannot wait for the background read to come back.
+pub fn load_now() {
+    reload();
 }
 
 /// One change for the server.
@@ -357,10 +371,8 @@ fn slot_target(id: &str) -> Option<Menu> {
 }
 
 /// The pop-ups this module owns, for the menu pool built at startup.
-pub fn slot_ids() -> Vec<&'static str> {
-    let mut ids = vec![VIEW_ID];
-    ids.extend_from_slice(menu_slots());
-    ids
+pub fn slot_ids() -> &'static [&'static str] {
+    menu_slots()
 }
 
 /// The choices of a pop-up, as (value, label).
@@ -397,17 +409,6 @@ fn choices(graph: &Graph, menu: &Menu) -> Vec<(String, String)> {
 
 /// The choices one of this module's pop-ups offers. `None` for any other.
 pub fn menu_choices(id: &str) -> Option<Vec<Choice>> {
-    if id == VIEW_ID {
-        return Some(
-            View::ALL
-                .into_iter()
-                .map(|view| Choice {
-                    label: view.label().to_string(),
-                    value: view.token().to_string(),
-                })
-                .collect(),
-        );
-    }
     let menu = slot_target(id)?;
     let Snapshot::Ready(graph) = &*SNAPSHOT.read().unwrap() else {
         return Some(Vec::new());
@@ -422,9 +423,6 @@ pub fn menu_choices(id: &str) -> Option<Vec<Choice>> {
 
 /// What one of this module's pop-ups shows for `value`.
 pub fn display(id: &str, value: &str) -> Option<String> {
-    if id == VIEW_ID {
-        return View::from_token(value).map(|view| view.label().to_string());
-    }
     let menu = slot_target(id)?;
     let Snapshot::Ready(graph) = &*SNAPSHOT.read().unwrap() else {
         return Some(String::new());
@@ -441,12 +439,6 @@ pub fn display(id: &str, value: &str) -> Option<String> {
 /// of them. The row shows the choice straight away; the server is written
 /// on the writer thread and read back after.
 pub fn choose(id: &str, value: &str) -> bool {
-    if id == VIEW_ID {
-        if let Some(view) = View::from_token(value) {
-            *VIEW.lock().unwrap() = view;
-        }
-        return true;
-    }
     let Some(menu) = slot_target(id) else {
         return false;
     };
@@ -767,12 +759,17 @@ pub fn build() -> Pane {
             ))]));
         }
         Snapshot::Ready(graph) => {
+            // The label is never drawn — the segments span the row — but it
+            // is what assistive technologies call the tab bar.
             groups.push(untitled(vec![bound(
                 Row::new(
                     otto_kit::t!("settings-sound-show"),
-                    Control::Select(view.token().to_string()),
+                    Control::Tabs {
+                        labels: View::labels(),
+                        selected: view.index(),
+                    },
                 ),
-                VIEW_ID,
+                TABS_ID,
             )]));
             groups.extend(mixer_groups(graph, view, &mut menus));
         }
@@ -859,7 +856,7 @@ mod tests {
             Some(Target::Stream(Direction::Input, 42, Field::Volume))
         );
         assert_eq!(parse_control("audio.sound_enabled"), None);
-        assert_eq!(parse_control(VIEW_ID), None);
+        assert_eq!(parse_control(TABS_ID), None);
         assert_eq!(parse_control("sound.menu.3"), None);
     }
 
@@ -908,6 +905,18 @@ mod tests {
         assert_eq!(groups[0].title.as_deref(), Some("Built-in Audio"));
         assert!(matches!(&groups[0].rows[0].control, Control::Select(p) if p == "duplex"));
         assert_eq!(menus.targets, [Menu::Profile("card0".into())]);
+    }
+
+    #[test]
+    fn a_tab_picks_its_view() {
+        assert!(!select_tab("sound.menu.0", 1));
+        assert!(select_tab(TABS_ID, View::Configuration.index()));
+        assert_eq!(*VIEW.lock().unwrap(), View::Configuration);
+        // Past the last tab, nothing changes.
+        assert!(select_tab(TABS_ID, 9));
+        assert_eq!(*VIEW.lock().unwrap(), View::Configuration);
+        select_tab(TABS_ID, View::Output.index());
+        assert_eq!(View::labels().len(), View::ALL.len());
     }
 
     #[test]

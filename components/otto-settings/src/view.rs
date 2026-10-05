@@ -1706,6 +1706,30 @@ impl Settings {
             })
     }
 
+    /// The tab row and segment a click lands on, measured the way
+    /// [`Self::render_row`] draws it.
+    pub fn tab_hit(&self, x: f32, y: f32, scroll_offset: f32) -> Option<(&'static str, usize)> {
+        let viewport = self.viewport();
+        if !viewport.contains(Point::new(x, y)) {
+            return None;
+        }
+        let content_width = self.width - SIDEBAR_W;
+        let local = Point::new(x - viewport.left, y - viewport.top + scroll_offset);
+        let (row, rect) = self
+            .row_rects(content_width)
+            .into_iter()
+            .find(|(_, rect)| rect.contains(local))?;
+        let Control::Tabs { labels, .. } = &row.control else {
+            return None;
+        };
+        let track = widgets::tabs_rect(
+            rect.left + 14.0,
+            rect.right - 14.0,
+            Self::control_band(row, rect).center_y(),
+        );
+        widgets::tab_at(track, labels.len(), local.x, local.y).map(|index| (row.handle(), index))
+    }
+
     /// The label of the switch a click lands on, for a row that is *not* bound
     /// to a setting.
     ///
@@ -2427,6 +2451,8 @@ impl Settings {
                 }
             }
             Control::Shortcut { .. } | Control::AddShortcut => right,
+            // The segments span the row and leave its label no room.
+            Control::Tabs { .. } => label_x,
         }
     }
 
@@ -2656,6 +2682,13 @@ impl Settings {
                     )
                 }
             }
+            Control::Tabs { labels, selected } => widgets::tabs(
+                canvas,
+                widgets::tabs_rect(label_x, right, cy),
+                labels,
+                *selected,
+                &self.theme,
+            ),
         }
 
         // A chosen file gets shown, not just named: a wallpaper is picked by

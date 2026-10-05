@@ -1097,6 +1097,17 @@ fn describe_row(tree: &mut A11yTree, row: &model::Row, bounds: Rect) {
         // button for a list this does not describe yet; announcing either as
         // one thing would be a lie about what it is.
         model::Control::Shortcut { .. } | model::Control::AddShortcut => {}
+        // One stop, as the keyboard has it: the arrow keys move between the
+        // tabs, and what is heard is the tab that is open.
+        model::Control::Tabs { labels, selected } => {
+            tree.control(focus, bounds, Role::TabList, true, |node| {
+                node.set_label(label);
+                if let Some(open) = labels.get(*selected) {
+                    node.set_value(*open);
+                }
+                describe(node);
+            });
+        }
     }
 
     // A named remove button is its own node, as it is its own stop, named
@@ -1691,6 +1702,21 @@ impl SettingsApp {
                 }
                 apply(id, settings_client::number_for(id, moved));
             }
+            // The arrows walk the tabs, stopping at either end.
+            model::Control::Tabs { labels, selected } if step != 0.0 => {
+                let Some(id) = focused.id else {
+                    return false;
+                };
+                let next = if step < 0.0 {
+                    selected.checked_sub(1)
+                } else {
+                    Some(selected + 1).filter(|next| *next < labels.len())
+                };
+                let Some(next) = next else {
+                    return false;
+                };
+                panes::sound::select_tab(id, next);
+            }
             model::Control::Button(labels) if step == 0.0 => {
                 // The keyboard is on one particular button, so that is the one
                 // that is pressed. `Pressed` is keyed the way a click keys it —
@@ -2218,6 +2244,11 @@ impl App for SettingsApp {
                         } else if let Some(id) = settings.row_remove_hit(x, y, offset) {
                             // Acts on release, like every other push button.
                             *pressed_hit.lock().unwrap() = Some(view::Pressed::RemoveRow(id));
+                            mark_pane_dirty(&pane_dirty);
+                        } else if let Some((row, index)) = settings.tab_hit(x, y, offset) {
+                            // A tab is a view of the pane, not a setting: the
+                            // pane owning the row switches it and is rebuilt.
+                            panes::sound::select_tab(row, index);
                             mark_pane_dirty(&pane_dirty);
                         } else if let Some(select) = settings.select_hit(x, y, offset) {
                             open_menu(

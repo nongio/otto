@@ -236,6 +236,76 @@ pub fn buttons(
     }
 }
 
+/// A segmented control's height: a little taller than a pop-up, since it
+/// is the row's only control and spans it.
+pub const TABS_H: f32 = 28.0;
+
+/// The segmented control's track, spanning `left` to `right` on `cy`.
+pub fn tabs_rect(left: f32, right: f32, cy: f32) -> Rect {
+    Rect::from_ltrb(left, cy - TABS_H / 2.0, right, cy + TABS_H / 2.0)
+}
+
+/// Which of `count` segments `x` falls in, if `(x, y)` is on the track.
+pub fn tab_at(rect: Rect, count: usize, x: f32, y: f32) -> Option<usize> {
+    if count == 0 || x < rect.left || x >= rect.right || y < rect.top || y >= rect.bottom {
+        return None;
+    }
+    let width = rect.width() / count as f32;
+    Some((((x - rect.left) / width) as usize).min(count - 1))
+}
+
+/// A segmented control: one segment per label on a rounded track, the
+/// selected one raised as a pill — the switcher the colour picker uses.
+/// A label too long for its segment is cut with an ellipsis.
+///
+/// The pill carries a soft shadow and a hairline edge: in the light theme
+/// the highlight material is nearly the white of the card under it, and
+/// without them the open tab would be told apart only by its text.
+pub fn tabs(canvas: &Canvas, rect: Rect, labels: &[&str], selected: usize, theme: &Theme) {
+    let radius = TABS_H / 2.0;
+    canvas.draw_rrect(
+        RRect::new_rect_xy(rect, radius, radius),
+        &fill(theme.fill_secondary),
+    );
+    if labels.is_empty() {
+        return;
+    }
+    let width = rect.width() / labels.len() as f32;
+    for (index, label) in labels.iter().enumerate() {
+        let segment = Rect::from_xywh(
+            rect.left + width * index as f32,
+            rect.top,
+            width,
+            rect.height(),
+        );
+        let chosen = index == selected;
+        if chosen {
+            let pill = segment.with_inset((2.0, 2.0));
+            let radius = pill.height() / 2.0;
+            let rrect = RRect::new_rect_xy(pill, radius, radius);
+            let mut shadow = fill(theme.shadow.with_a(0x30));
+            shadow.set_mask_filter(MaskFilter::blur(BlurStyle::Normal, 1.5, false));
+            canvas.draw_rrect(rrect.with_offset((0.0, 0.5)), &shadow);
+            canvas.draw_rrect(rrect, &fill(theme.material_highlight));
+            canvas.draw_rrect(rrect, &stroke(theme.hairline, 0.5));
+        }
+        let text = elide_tail(label, styles::SUBHEADLINE, width - 16.0);
+        let text_w = styles::SUBHEADLINE.font().measure_str(&text, None).0;
+        text_centered_y(
+            canvas,
+            &text,
+            segment.center_x() - text_w / 2.0,
+            segment.center_y(),
+            styles::SUBHEADLINE,
+            if chosen {
+                theme.text_primary
+            } else {
+                theme.text_secondary
+            },
+        );
+    }
+}
+
 /// The "Choose…" button's width, and the gap between it and the path field.
 pub const CHOOSE_W: f32 = 84.0;
 const CHOOSE_GAP: f32 = 8.0;

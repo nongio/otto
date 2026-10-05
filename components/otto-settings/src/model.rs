@@ -37,6 +37,15 @@ pub enum Control {
     File(String),
     /// Static informational value, not editable here.
     Value(String),
+    /// A segmented control spanning the row, one segment per label, with
+    /// `selected` raised. It switches between views of a pane, as
+    /// pavucontrol's tabs do, so a pick goes to the pane that owns the row
+    /// (`panes::sound::select_tab`) rather than onto the bus. The row draws
+    /// no label of its own.
+    Tabs {
+        labels: &'static [&'static str],
+        selected: usize,
+    },
     /// One editable shortcut line: the action pop-up, the key combination
     /// field, and the button that deletes it.
     ///

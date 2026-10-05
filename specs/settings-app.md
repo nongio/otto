@@ -502,7 +502,8 @@ are:
   shortcuts.
 - **Trackpad & Mouse** — the pointer and touchpad settings.
 - **Sound** — interface sounds enabled and theme, then a mixer laid out
-  after pavucontrol, which is its reference. A Show pop-up stands in for
+  after pavucontrol, which is its reference. A tab bar, a segmented control
+  spanning its row, holds
   pavucontrol's tabs and the groups under it are that tab's:
   - *Playback* and *Recording* — one group per app stream, titled with the
     app and what it plays: volume, mute, and the device it plays on or
