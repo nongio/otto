@@ -158,22 +158,13 @@ fn measure(text: &str) -> f32 {
 /// Trim `text` until it fits `width`, marking the cut with a trailing
 /// ellipsis. Returns it unchanged when it already fits.
 fn elide(text: &str, width: f32) -> String {
-    let font = item_font();
-    if width <= 0.0 || crate::typography::measure_runs(&font, text) <= width {
+    if width <= 0.0 {
         return text.to_string();
     }
-    let mut end = text.len();
-    while end > 0 {
-        end -= 1;
-        while end > 0 && !text.is_char_boundary(end) {
-            end -= 1;
-        }
-        let candidate = format!("{}\u{2026}", &text[..end]);
-        if crate::typography::measure_runs(&font, &candidate) <= width {
-            return candidate;
-        }
-    }
-    "\u{2026}".to_string()
+    let font = item_font();
+    crate::typography::ellipsize_by(text, width, |piece| {
+        crate::typography::measure_runs(&font, piece)
+    })
 }
 
 /// Owns the popup lifecycle for one dropdown. The caller keeps one of these

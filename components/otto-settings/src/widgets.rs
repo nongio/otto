@@ -143,7 +143,7 @@ pub fn text_field(canvas: &Canvas, rect: Rect, value: &str, theme: &Theme) {
         (otto_kit::t_owned!("settings-not-set"), theme.text_tertiary)
     } else {
         (
-            elide_tail(value, style, rect.width() - 18.0),
+            otto_kit::typography::ellipsize(&style.font(), value, rect.width() - 18.0),
             theme.text_primary,
         )
     };
@@ -158,72 +158,13 @@ pub fn text_field(canvas: &Canvas, rect: Rect, value: &str, theme: &Theme) {
     canvas.restore();
 }
 
-/// Trim characters off the END of `text` until it fits `width`, marking the
-/// cut with a trailing ellipsis.
-pub fn elide_tail(text: &str, style: otto_kit::typography::TextStyle, width: f32) -> String {
-    let font = style.font();
-    if font.measure_str(text, None).0 <= width {
-        return text.to_string();
-    }
-    let mut end = text.len();
-    while end > 0 {
-        end -= 1;
-        while end > 0 && !text.is_char_boundary(end) {
-            end -= 1;
-        }
-        let candidate = format!("{}…", &text[..end]);
-        if font.measure_str(&candidate, None).0 <= width {
-            return candidate;
-        }
-    }
-    "…".to_string()
-}
-
-/// Break `text` into lines no wider than `width`, on word boundaries.
-///
-/// Greedy, and it never breaks inside a word: a single word too long for the
-/// line is left overhanging rather than cut, which is honest about the space
-/// being too narrow. Used for the paragraph a pane opens with, which is the
-/// only running text in the app.
+/// Break `text` into lines no wider than `width`, on word boundaries: the
+/// paragraph a pane opens with, which is the only running text in the app.
+/// Any run of whitespace, a catalogue's line breaks included, is one space.
 pub fn wrap(text: &str, style: otto_kit::typography::TextStyle, width: f32) -> Vec<String> {
     let font = style.font();
-    let mut lines: Vec<String> = Vec::new();
-    let mut line = String::new();
-    for word in text.split_whitespace() {
-        if line.is_empty() {
-            line.push_str(word);
-            continue;
-        }
-        let candidate = format!("{line} {word}");
-        if font.measure_str(&candidate, None).0 <= width {
-            line = candidate;
-        } else {
-            lines.push(std::mem::take(&mut line));
-            line.push_str(word);
-        }
-    }
-    if !line.is_empty() {
-        lines.push(line);
-    }
-    lines
-}
-
-/// Trim characters off the FRONT of `text` until it fits `width`, marking the
-/// cut with a leading ellipsis. Returns `text` unchanged when it already fits.
-fn elide_head(text: &str, style: otto_kit::typography::TextStyle, width: f32) -> String {
-    let font = style.font();
-    if font.measure_str(text, None).0 <= width {
-        return text.to_string();
-    }
-    // Walk char boundaries from the front; the first tail that fits with the
-    // ellipsis in front of it is the answer.
-    for (i, _) in text.char_indices() {
-        let candidate = format!("…{}", &text[i..]);
-        if font.measure_str(&candidate, None).0 <= width {
-            return candidate;
-        }
-    }
-    "…".to_string()
+    let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    otto_kit::typography::wrap(&text, width, |piece| font.measure_str(piece, None).0)
 }
 
 /// A push button's label: the size of every other control's text, so a row's
@@ -372,7 +313,7 @@ pub fn file_field(
     // identifies it, so what a too-long path loses is its leading directories:
     // the head is elided rather than the tail truncated.
     let inner = field.width() - 18.0;
-    let text = elide_head(&text, style, inner);
+    let text = otto_kit::typography::ellipsize_head(&style.font(), &text, inner);
     text_centered_y(canvas, &text, field.left + 9.0, cy, style, color);
     canvas.restore();
 
