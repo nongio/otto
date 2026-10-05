@@ -4,7 +4,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use async_io::Timer;
 use tokio::sync::Mutex;
 use tracing::{error, info, warn};
 use zbus::fdo;
@@ -734,7 +733,7 @@ impl ScreenCastPortal {
                         warn!(attempt = attempt + 1, ?err, "Failed to query node ID");
                     }
                 }
-                Timer::after(NODE_ID_RETRY_DELAY).await;
+                tokio::time::sleep(NODE_ID_RETRY_DELAY).await;
             }
 
             let pipewire_node_id = pipewire_node_id.ok_or_else(|| {

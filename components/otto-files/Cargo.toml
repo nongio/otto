@@ -14,28 +14,28 @@ otto-search = { path = "../otto-search" }
 # Playback for Peek. Library only: the GStreamer worker is a separate
 # binary built from the same crate, found at run time.
 otto-media-kit = { path = "../otto-media-kit", default-features = false }
-smithay-client-toolkit = { version = "0.19", default-features = false, features = ["calloop", "xkbcommon"] }
-wayland-client = "0.31"
-tracing = "0.1"
-libc = "0.2"
-zbus = { version = "4", default-features = false, features = ["tokio"] }
-tokio = { version = "1", features = ["full"] }
+smithay-client-toolkit = { workspace = true, features = ["calloop", "xkbcommon"] }
+wayland-client.workspace = true
+tracing.workspace = true
+libc.workspace = true
+zbus.workspace = true
+tokio = { workspace = true, features = ["full"] }
 # The sidebar's user configuration; see `places_config`.
-serde = { version = "1", features = ["derive"] }
-toml = "0.8"
+serde = { workspace = true, features = ["derive"] }
+toml = { workspace = true, features = ["default"] }
 # Writing the desk's size and position back into files.toml without losing
 # the comments and keys around them.
-toml_edit = "0.22"
-serde_json = "1"
+toml_edit.workspace = true
+serde_json.workspace = true
 
 
 [dependencies.skia-safe]
-version = "=0.93"
+workspace = true
 features = ["gl", "textlayout", "svg"]
 
 [dev-dependencies]
-khronos-egl = { version = "6", features = ["dynamic"] }
-wayland-egl = "0.32"
+khronos-egl = { workspace = true, features = ["dynamic"] }
+wayland-egl.workspace = true
 
 [[bin]]
 name = "otto-files"

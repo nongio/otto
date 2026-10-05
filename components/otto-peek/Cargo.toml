@@ -20,13 +20,13 @@ path = "src/main.rs"
 [dependencies]
 otto-kit = { path = "../otto-kit" }
 otto-md-kit = { path = "../otto-md-kit" }
-tracing = "0.1"
-libc = "0.2"
-tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros"] }
+tracing.workspace = true
+libc.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "sync", "macros"] }
 
 
 [dependencies.skia-safe]
-version = "=0.93"
+workspace = true
 features = ["gl", "textlayout", "svg", "skottie"]
 
 [lints]

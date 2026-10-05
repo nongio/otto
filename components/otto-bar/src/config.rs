@@ -328,7 +328,7 @@ fn load_config() -> TopbarConfig {
 
     for path in &candidates {
         if let Ok(content) = std::fs::read_to_string(path) {
-            match content.parse::<toml::Value>() {
+            match toml::from_str::<toml::Value>(&content) {
                 Ok(table) => {
                     if let Some(fmt) = table.get("clock_format").and_then(|v| v.as_str()) {
                         cfg.clock_format = fmt.to_string();

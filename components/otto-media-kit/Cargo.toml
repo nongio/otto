@@ -33,14 +33,14 @@ worker = ["dep:gstreamer", "dep:gstreamer-app"]
 
 [dependencies]
 otto-kit = { path = "../otto-kit" }
-libc = "0.2"
-tracing = "0.1"
+libc.workspace = true
+tracing.workspace = true
 
-gstreamer = { version = "0.25", optional = true }
-gstreamer-app = { version = "0.25", optional = true }
+gstreamer = { workspace = true, optional = true }
+gstreamer-app = { workspace = true, optional = true }
 
 [dependencies.skia-safe]
-version = "=0.93"
+workspace = true
 features = ["gl", "textlayout", "svg", "skottie"]
 
 [lints]

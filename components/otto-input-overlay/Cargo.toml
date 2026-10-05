@@ -9,14 +9,14 @@ description = "On-screen overlays of the touchpad and the keys being pressed, fo
 
 [dependencies]
 otto-kit = { path = "../otto-kit" }
-smithay-client-toolkit = { version = "0.19", default-features = false, features = ["calloop", "xkbcommon"] }
-wayland-protocols-wlr = { version = "0.3", features = ["client"] }
-libc = "0.2"
-tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
-zbus = { version = "4", default-features = false, features = ["tokio"] }
+smithay-client-toolkit = { workspace = true, features = ["calloop", "xkbcommon"] }
+wayland-protocols-wlr = { workspace = true, features = ["client"] }
+libc.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+zbus.workspace = true
 
 [dependencies.skia-safe]
-version = "=0.93"
+workspace = true
 features = ["gl", "textlayout", "svg", "skottie"]
 
 [lints]

@@ -10,38 +10,38 @@ repository.workspace = true
 laye-rs.workspace = true
 otto-search = { path = "../otto-search" }
 rustix = { version = "0.38", features = ["fs", "process"], optional = true }
-smithay-client-toolkit = { version = "0.19", default-features = false, features = ["calloop", "xkbcommon"] }
-wayland-client = "0.31"
-wayland-protocols = { version = "0.32", features = ["client", "staging", "unstable"] }
-wayland-protocols-wlr = { version = "0.3", features = ["client"] }
-wayland-egl = "0.32"
-wayland-scanner = "0.31"
-wayland-backend = "0.3"
-gl = "0.14"
-khronos-egl = { version = "6", features = ["dynamic"] }
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
-tokio = { version = "1", features = ["full"] }
-zbus = { version = "4", default-features = false, features = ["tokio"] }
-futures-util = "0.3"
+smithay-client-toolkit = { workspace = true, features = ["calloop", "xkbcommon"] }
+wayland-client.workspace = true
+wayland-protocols = { workspace = true, features = ["client", "staging", "unstable"] }
+wayland-protocols-wlr = { workspace = true, features = ["client"] }
+wayland-egl.workspace = true
+wayland-scanner.workspace = true
+wayland-backend.workspace = true
+gl.workspace = true
+khronos-egl = { workspace = true, features = ["dynamic"] }
+tracing.workspace = true
+tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
+tokio = { workspace = true, features = ["full"] }
+zbus.workspace = true
+futures-util.workspace = true
 freedesktop-icons = "0.2.4"
 resvg = "0.44.0"
 usvg = "0.44.0"
-libc = "0.2"
+libc.workspace = true
 percent-encoding = "2.3"
-freedesktop-desktop-entry = "0.7.5"
+freedesktop-desktop-entry.workspace = true
 # Localisation. fluent-bundle carries the .ftl parser, the selector runtime and
 # the CLDR plural rules; unic-langid does BCP 47 parsing and negotiation.
-fluent-bundle = "0.15"
-unic-langid = { version = "0.9", features = ["macros"] }
+fluent-bundle.workspace = true
+unic-langid = { workspace = true, features = ["macros"] }
 intl-memoizer = "0.5"
 
 # Accessibility. accesskit_unix keeps its default `async-io` executor rather
 # than the tokio one: an otto-kit application's UI thread is a hand-rolled
 # poll loop, not a tokio runtime, and the adapter has to be able to run its
 # D-Bus work without one.
-accesskit = "0.24"
-accesskit_unix = "0.22"
+accesskit.workspace = true
+accesskit_unix.workspace = true
 
 [features]
 default = []
@@ -50,7 +50,7 @@ debugger = ["laye-rs/debugger"]
 
 
 [dependencies.skia-safe]
-version = "=0.93"
+workspace = true
 features = ["gl", "textlayout", "svg", "skottie"]
 
 [[example]]

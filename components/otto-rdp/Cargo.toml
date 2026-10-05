@@ -18,26 +18,26 @@ ironrdp-svc = "0.8"
 # Hardware H.264 encode via the PipeWire→VA-API GStreamer graph
 # (pipewiresrc ! vapostproc ! vah264enc). Built from a launch string, so only
 # core + app (appsink) bindings are needed.
-gstreamer = "0.25"
-gstreamer-app = "0.25"
+gstreamer.workspace = true
+gstreamer-app.workspace = true
 bytes = "1"
 async-trait = "0.1"
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "net", "signal", "time"] }
-anyhow = "1"
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-pipewire = "0.9"
-zbus = { version = "4", default-features = false, features = ["tokio"] }
-libc = "0.2"
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "net", "signal", "time"] }
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+pipewire.workspace = true
+zbus.workspace = true
+libc.workspace = true
 # Reading back tiled dmabufs the CPU cannot map (gpu_import).
-khronos-egl = { version = "6", features = ["dynamic"] }
-gl = "0.14"
-memfd = "0.6"
-wayland-client = "0.31"
-wayland-protocols = { version = "0.32", features = ["client"] }
-wayland-protocols-wlr = { version = "0.3", features = ["client"] }
-wayland-protocols-misc = { version = "0.3", features = ["client"] }
-xkbcommon = "0.6"
+khronos-egl = { workspace = true, features = ["dynamic"] }
+gl.workspace = true
+memfd.workspace = true
+wayland-client.workspace = true
+wayland-protocols = { workspace = true, features = ["client"] }
+wayland-protocols-wlr = { workspace = true, features = ["client"] }
+wayland-protocols-misc = { workspace = true, features = ["client"] }
+xkbcommon.workspace = true
 # TLS acceptor (--tls): rustls/tokio-rustls are already in the tree via
 # ironrdp-server; rcgen generates the self-signed certificate.
 rustls = "0.23"

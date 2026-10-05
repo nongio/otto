@@ -10,10 +10,10 @@ description = "Screen locker for Otto, backed by PAM"
 [dependencies]
 otto-kit = { path = "../otto-kit" }
 otto-auth-ui = { path = "../otto-auth-ui", features = ["pam"] }
-smithay-client-toolkit = { version = "0.19", default-features = false, features = ["calloop", "xkbcommon"] }
-wayland-client = "0.31"
-wayland-protocols = { version = "0.32", features = ["client", "staging"] }
-tracing = "0.1"
+smithay-client-toolkit = { workspace = true, features = ["calloop", "xkbcommon"] }
+wayland-client.workspace = true
+wayland-protocols = { workspace = true, features = ["client", "staging"] }
+tracing.workspace = true
 
 # Locks and unlocks with no PAM in the way, to exercise the protocol lifecycle.
 [[example]]

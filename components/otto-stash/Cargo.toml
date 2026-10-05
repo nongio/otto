@@ -8,18 +8,18 @@ repository.workspace = true
 description = "Proof of concept: stash selections from any app into a balloon, then ask about them in Ask"
 
 [dependencies]
-anyhow = "1"
+anyhow.workspace = true
 otto-kit = { path = "../otto-kit" }
 otto-peek = { path = "../otto-peek" }
-serde = "1"
-smithay-client-toolkit = { version = "0.19", default-features = false, features = ["calloop"] }
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"] }
-tracing = "0.1"
-wayland-client = "0.31"
-wayland-protocols = { version = "0.32", features = ["client", "staging"] }
-wayland-protocols-misc = { version = "0.3", features = ["client"] }
-wayland-protocols-wlr = { version = "0.3", features = ["client"] }
-zbus = { version = "4", default-features = false, features = ["tokio"] }
+serde.workspace = true
+smithay-client-toolkit = { workspace = true, features = ["calloop"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync", "time"] }
+tracing.workspace = true
+wayland-client.workspace = true
+wayland-protocols = { workspace = true, features = ["client", "staging"] }
+wayland-protocols-misc = { workspace = true, features = ["client"] }
+wayland-protocols-wlr = { workspace = true, features = ["client"] }
+zbus.workspace = true
 
 [lints]
 workspace = true

@@ -12,16 +12,16 @@ laye-rs.workspace = true
 otto-kit = { path = "../otto-kit" }
 # `unstable-locales` is what makes `format_localized` translate %A and %B;
 # without it chrono emits English names whatever the locale says.
-chrono = { version = "0.4", features = ["unstable-locales"] }
-taffy = "0.5"
-serde = { version = "1", features = ["derive"] }
-toml = "0.8"
-tracing = "0.1"
-libc = { version = "0.2", optional = true }
+chrono = { workspace = true, features = ["default", "unstable-locales"] }
+taffy.workspace = true
+serde = { workspace = true, features = ["derive"] }
+toml = { workspace = true, features = ["default"] }
+tracing.workspace = true
+libc = { workspace = true, optional = true }
 # Wipes what was typed into the field, and every copy of it on the way out.
-zeroize = "1"
-# The power buttons ask logind directly. The tokio flavour, as otto-kit links.
-zbus = { version = "4", default-features = false, features = ["tokio"] }
+zeroize.workspace = true
+# The power buttons ask logind directly.
+zbus.workspace = true
 
 [features]
 # The PAM conversation otto-lock and otto-authorize share. Off by default so
@@ -29,7 +29,7 @@ zbus = { version = "4", default-features = false, features = ["tokio"] }
 pam = ["dep:libc"]
 
 [dependencies.skia-safe]
-version = "=0.93"
+workspace = true
 features = ["gl", "textlayout", "svg", "skottie"]
 
 [dev-dependencies]

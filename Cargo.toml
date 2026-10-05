@@ -11,41 +11,40 @@ repository.workspace = true
 [dependencies]
 bitflags = "2.2.1"
 wayland-server = "0.31"
-wayland-scanner = "0.31"
-wayland-backend = "0.3"
-wayland-protocols-wlr = { version = "0.3", features = ["server"] }
-image = { version = "0.24.5", optional = true }
-xcursor = { version = "0.3.3", optional = true }
-xkbcommon = "0.6.0"
-thiserror = "1"
-anyhow = "1"
-tokio = { version = "1", features = ["full"] }
+wayland-scanner.workspace = true
+wayland-backend.workspace = true
+wayland-protocols-wlr = { workspace = true, features = ["server"] }
+# Only decodes the fps ticker's digits, a PNG: the default format set would
+# build an AVIF encoder (rav1e) into every udev build for nothing.
+image = { version = "0.25", optional = true, default-features = false, features = ["png"] }
+xcursor = { workspace = true, optional = true }
+xkbcommon.workspace = true
+thiserror = "2"
+anyhow.workspace = true
+tokio = { workspace = true, features = ["full"] }
 # Accessibility: the AT-SPI object model for Otto's own chrome. `async-io`
 # (the default) rather than the tokio executor — the adapter is driven from
 # the compositor thread, which is calloop's, not a tokio runtime's.
-accesskit = "0.24"
-accesskit_unix = "0.22"
+accesskit.workspace = true
+accesskit_unix.workspace = true
 fps_ticker = { version = "1.0.0", optional = true }
-freedesktop-desktop-entry = "0.7.5"
+freedesktop-desktop-entry.workspace = true
 sd-notify = "0.4"
-libc = "0.2"
+libc.workspace = true
 shell-words = "1.1"
-tracing = { version = "0.1.37", features = [
-    "max_level_trace",
-    "release_max_level_trace",
-] }
-tracing-subscriber = { version = "0.3.16", features = ["env-filter"] }
+tracing = { workspace = true, features = ["max_level_trace", "release_max_level_trace"] }
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
 puffin_http = { version = "0.16", optional = true }
 profiling = { version = "1.0" }
 renderdoc = { version = "0.11.0", optional = true }
-serde = "1.0.213"
-serde_json = "1"
-toml = "0.8.19"
+serde.workspace = true
+serde_json.workspace = true
+toml = { workspace = true, features = ["default"] }
 # Comment-preserving TOML editing: settings are persisted one key at a time into
 # a hand-editable file (see src/config/file.rs).
-toml_edit = "0.22"
-zbus = "4"
-pipewire = "0.9"
+toml_edit.workspace = true
+zbus.workspace = true
+pipewire.workspace = true
 brightness = "0.8.0"
 mpris = "2.0"
 otto-kit = { path = "components/otto-kit" }
@@ -121,20 +120,20 @@ vulkan = ["udev"]
 renderer_sync = []
 
 [dev-dependencies]
-tempfile = "3"
+tempfile.workspace = true
 serial_test = "3"
-serde_json = "1"
+serde_json.workspace = true
 otto-kit = { path = "components/otto-kit", features = ["testing"] }
 # The picker's typing path, exercised end to end against the headless
 # compositor (tests/emoji_typing.rs).
 otto-emoji = { path = "components/otto-emoji" }
-wayland-client = "0.31"
+wayland-client.workspace = true
 # Client bindings for the protocols otto-rdp injects input through, so the
 # end-to-end tests can act as the RDP bridge does (tests/rdp_bridge.rs).
-wayland-protocols = { version = "0.32", features = ["client"] }
-wayland-protocols-wlr = { version = "0.3", features = ["client"] }
-wayland-protocols-misc = { version = "0.3", features = ["client"] }
-xkbcommon = "0.6.0"
+wayland-protocols = { workspace = true, features = ["client"] }
+wayland-protocols-wlr = { workspace = true, features = ["client"] }
+wayland-protocols-misc = { workspace = true, features = ["client"] }
+xkbcommon.workspace = true
 
 # [profile.release]
 # opt-level = 3
@@ -205,6 +204,65 @@ too_many_arguments = "allow"
 laye-rs = { git = "https://github.com/nongio/layers", tag = "v1.18.1", features = [
     "export-taffy",
 ] }
+
+# Every third-party crate more than one member uses, declared once so the
+# members cannot drift apart (two semver-incompatible copies in one link, or a
+# feature one crate needs silently coming from another). Members inherit with
+# `x.workspace = true` and add their own `features`/`optional` there.
+# `default-features` can only be turned off here, not per member, so an entry
+# that some member needs lean is declared with `default-features = false` and
+# the members that want the defaults ask for them back (`features = ["default"]`).
+accesskit = "0.24"
+accesskit_unix = "0.22"
+ahp = "=0.9.0"
+ahp-types = "=0.9.0"
+anyhow = "1"
+chrono = { version = "0.4", default-features = false }
+fluent-bundle = "0.15"
+freedesktop-desktop-entry = "0.7.5"
+futures-util = "0.3"
+gl = "0.14"
+gstreamer = "0.25"
+gstreamer-app = "0.25"
+khronos-egl = "6"
+libc = "0.2"
+memfd = "0.6"
+pipewire = "0.9"
+serde = "1.0.213"
+serde_json = "1"
+# Pinned to the release laye-rs builds against: skia-safe links the native Skia
+# library, so a build can only ever hold one copy of it.
+skia-safe = "=0.93"
+smithay-client-toolkit = { version = "0.19", default-features = false }
+taffy = "0.5"
+tempfile = "3.13"
+tokio = "1"
+toml = { version = "1.1", default-features = false }
+toml_edit = "0.25"
+tracing = "0.1.37"
+tracing-subscriber = "0.3.16"
+unic-langid = "0.9"
+uuid = "1"
+wayland-backend = "0.3"
+wayland-client = "0.31"
+wayland-egl = "0.32"
+wayland-protocols = { version = "0.32.9", default-features = false }
+wayland-protocols-misc = "0.3"
+wayland-protocols-wlr = "0.3"
+wayland-scanner = "0.31"
+xcursor = "0.3.3"
+xkbcommon = "0.9"
+# One executor for D-Bus across the workspace: tokio. Every member that awaits
+# zbus futures does so on a tokio runtime (the compositor's D-Bus services,
+# the portal's `#[tokio::main]`, the apps' worker runtimes), and the blocking
+# API runs on zbus's own internal tokio runtime, so nothing needs async-io.
+# With both flavours declared, feature unification used to pick tokio for any
+# binary that links otto-kit, or for the whole workspace built at once, and
+# async-io for the rest — the executor depended on how the crate was built.
+# (accesskit_unix and brightness bring their own zbus 5 on async-io; that copy
+# is independent of this one.)
+zbus = { version = "4", default-features = false, features = ["tokio"] }
+zeroize = "1"
 
 [workspace.package]
 version = "1.6.0"
