@@ -19,7 +19,7 @@ wayland-protocols-wlr = { workspace = true, features = ["server"] }
 image = { version = "0.25", optional = true, default-features = false, features = ["png"] }
 xcursor = { workspace = true, optional = true }
 xkbcommon.workspace = true
-thiserror = "1"
+thiserror = "2"
 anyhow.workspace = true
 tokio = { workspace = true, features = ["full"] }
 # Accessibility: the AT-SPI object model for Otto's own chrome. `async-io`
