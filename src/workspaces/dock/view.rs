@@ -312,11 +312,11 @@ impl DockView {
                 height: taffy::Dimension::Length(initial_bar_height),
             })
             .blend_mode(crate::theme::chrome_blend_mode())
-            .background_color(crate::theme::bar_material(theme_colors().materials_medium))
+            .background_color(crate::theme::bar_material(theme_colors().material_medium))
             // The same hairline the menus and the labels carry.
             .border_width((otto_kit::theme::Theme::HAIRLINE_WIDTH * draw_scale, None))
             .border_color(theme_colors().hairline)
-            .shadow_color(theme_colors().shadow_color)
+            .shadow_color(theme_colors().shadow)
             .shadow_offset(((0.0, 0.0).into(), None))
             .shadow_radius((20.0, None))
             .layout_style(taffy::Style {
@@ -1248,15 +1248,14 @@ impl DockView {
         let dock_size_multiplier = Config::with(|config| config.dock.size.clamp(0.5, 2.0)) as f32;
 
         self.bar_layer.set_background_color(
-            crate::theme::bar_material(theme_colors().materials_medium),
+            crate::theme::bar_material(theme_colors().material_medium),
             None,
         );
         self.bar_layer
             .set_blend_mode(crate::theme::chrome_blend_mode());
         self.bar_layer
             .set_border_color(theme_colors().hairline, None);
-        self.bar_layer
-            .set_shadow_color(theme_colors().shadow_color, None);
+        self.bar_layer.set_shadow_color(theme_colors().shadow, None);
         setup_resize_grip(&self.resize_handle, draw_scale, dock_size_multiplier);
 
         let position = self.position();
@@ -4393,7 +4392,7 @@ mod tests {
             show_first_label(&dock, &engine);
             let painted = first_entry(&dock).1.render_layer().background_color;
             let expected = layers::prelude::PaintColor::Solid {
-                color: crate::theme::theme_colors().materials_controls_tooltip,
+                color: crate::theme::theme_colors().material_tooltip,
             };
             assert_eq!(painted, expected, "{scheme:?} tooltip is off the palette");
             painted

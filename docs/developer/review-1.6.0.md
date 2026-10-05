@@ -108,9 +108,9 @@ otto-kit, so the portal and otto-agents need not link Skia): `xdg`, `dbus`,
 - [x] **hex colours**: one `otto_kit::theme::parse_hex` (see §1). **S** Fixed in #261.
 - [x] **`logging`**: the same `tracing_subscriber` block in 14–15 `main.rs`,
   with inconsistent default filters; `otto_kit::init()` doing logging + i18n. **S** Fixed in #261.
-- [ ] **Colour palette exists twice**: `src/theme/colors_{light,dark}.rs` and
+- [x] **Colour palette exists twice**: `src/theme/colors_{light,dark}.rs` and
   `otto-kit/src/theme.rs:169-230`. Make otto-kit the only table. **S**
-  - *Not done: the values differ (table in #261), and the compositor light/dark menu colours look swapped. Decide the palette first.*
+  - *Done: otto-kit's palette is canonical; the compositor converts it and `colors_{light,dark}.rs` are gone, which also drops the swapped menu colours. otto-settings and otto-auth-ui resolve accent names through it too.*
 - [ ] **`toplevels`**: three zwlr-foreign-toplevel trackers
   (`otto-kit/src/utils/focus_watcher.rs`, `otto-launcher/src/windows.rs`,
   `otto-emoji/src/target.rs`). **S–M**
