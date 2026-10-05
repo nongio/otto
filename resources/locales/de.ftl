@@ -1886,3 +1886,46 @@ privacy-store-unavailable-detail = Der Berechtigungsspeicher (xdg-permission-sto
 settings-pane-privacy = Datenschutz
 
 screencast-picker-remember = Für { $app } merken
+
+## Users pane
+
+settings-pane-account = Benutzer
+settings-account-picture = Bild
+settings-account-picture-detail = Wird auf dem Anmelde- und Sperrbildschirm angezeigt
+settings-account-choose-picture = Bild auswählen
+settings-account-picture-unreadable = Diese Datei ist kein Bild, das Otto lesen kann
+settings-account-full-name = Vollständiger Name
+settings-account-name = Accountname
+settings-account-type = Accounttyp
+settings-account-type-administrator = Administrator
+settings-account-type-standard = Standard
+settings-account-no-accountsservice = Kann hier nicht geändert werden: AccountsService läuft nicht
+settings-account-not-permitted = Das System hat diese Änderung nicht erlaubt
+settings-group-password = Passwort
+settings-account-current-password = Aktuelles Passwort
+settings-account-new-password = Neues Passwort
+settings-account-confirm-password = Neues Passwort bestätigen
+settings-account-change-password = Passwort ändern
+settings-account-change-password-ellipsis = Passwort ändern …
+settings-account-password-detail = Zum Anmelden, Entsperren des Bildschirms und Bestätigen von Änderungen
+settings-account-password-changing = Passwort wird geändert …
+settings-account-password-changed = Passwort geändert
+settings-account-password-missing = Gib dein aktuelles und ein neues Passwort ein
+settings-account-password-mismatch = Die neuen Passwörter stimmen nicht überein
+settings-account-password-same = Das neue Passwort ist dasselbe wie das aktuelle
+settings-account-password-wrong-current = Das aktuelle Passwort ist falsch
+settings-account-password-failed = Das Passwort konnte nicht geändert werden
+settings-account-reset-password-ellipsis = Passwort zurücksetzen …
+settings-account-reset-detail = Ein neues Passwort für diesen Account festlegen
+settings-account-working = Warten auf das System …
+settings-users-you = { $kind } · Du
+settings-users-reset-title = Passwort für { $name } zurücksetzen
+settings-users-reset-action = Passwort zurücksetzen
+settings-users-add-title = Benutzer hinzufügen
+settings-users-add-action = Benutzer hinzufügen
+settings-users-delete-title = { $name } löschen?
+settings-users-delete-body = Die Person kann sich dann nicht mehr anmelden. Ihr persönlicher Ordner bleibt erhalten.
+settings-users-delete-action = Benutzer löschen
+settings-users-invalid-name = Accountnamen beginnen mit einem Kleinbuchstaben und enthalten nur a–z, 0–9, - und _
+settings-users-name-taken = Es gibt bereits einen Account mit diesem Namen
+settings-users-password-missing = Gib ein Passwort für den Account ein

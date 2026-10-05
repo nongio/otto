@@ -1909,3 +1909,46 @@ privacy-store-unavailable-detail = O armazenamento de permissões (xdg-permissio
 settings-pane-privacy = Privacidade
 
 screencast-picker-remember = Lembrar para { $app }
+
+## Users pane
+
+settings-pane-account = Usuários
+settings-account-picture = Imagem
+settings-account-picture-detail = Exibida nas telas de login e de bloqueio
+settings-account-choose-picture = Escolher uma imagem
+settings-account-picture-unreadable = Esse arquivo não é uma imagem que o Otto consiga ler
+settings-account-full-name = Nome completo
+settings-account-name = Nome da conta
+settings-account-type = Tipo de conta
+settings-account-type-administrator = Administrador
+settings-account-type-standard = Padrão
+settings-account-no-accountsservice = Não pode ser alterado aqui: o AccountsService não está em execução
+settings-account-not-permitted = O sistema não permitiu esta alteração
+settings-group-password = Senha
+settings-account-current-password = Senha atual
+settings-account-new-password = Nova senha
+settings-account-confirm-password = Confirmar nova senha
+settings-account-change-password = Alterar senha
+settings-account-change-password-ellipsis = Alterar senha…
+settings-account-password-detail = Usada para fazer login, desbloquear a tela e aprovar alterações
+settings-account-password-changing = Alterando a senha…
+settings-account-password-changed = Senha alterada
+settings-account-password-missing = Digite sua senha atual e uma nova
+settings-account-password-mismatch = As novas senhas não coincidem
+settings-account-password-same = A nova senha é igual à atual
+settings-account-password-wrong-current = A senha atual está errada
+settings-account-password-failed = Não foi possível alterar a senha
+settings-account-reset-password-ellipsis = Redefinir senha…
+settings-account-reset-detail = Definir uma nova senha para esta conta
+settings-account-working = Aguardando o sistema…
+settings-users-you = { $kind } · Você
+settings-users-reset-title = Redefinir a senha de { $name }
+settings-users-reset-action = Redefinir senha
+settings-users-add-title = Adicionar usuário
+settings-users-add-action = Adicionar usuário
+settings-users-delete-title = Excluir { $name }?
+settings-users-delete-body = Essa pessoa não poderá mais fazer login. A pasta pessoal dela é mantida.
+settings-users-delete-action = Excluir usuário
+settings-users-invalid-name = Nomes de conta começam com uma letra minúscula e usam apenas a–z, 0–9, - e _
+settings-users-name-taken = Já existe uma conta com esse nome
+settings-users-password-missing = Digite uma senha para a conta

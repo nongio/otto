@@ -1910,3 +1910,46 @@ privacy-store-unavailable-detail = Le magasin d’autorisations (xdg-permission-
 settings-pane-privacy = Confidentialité
 
 screencast-picker-remember = Mémoriser pour { $app }
+
+## Users pane
+
+settings-pane-account = Utilisateurs
+settings-account-picture = Image
+settings-account-picture-detail = Affichée sur les écrans de connexion et de verrouillage
+settings-account-choose-picture = Choisir une image
+settings-account-picture-unreadable = Ce fichier n’est pas une image qu’Otto sait lire
+settings-account-full-name = Nom complet
+settings-account-name = Nom du compte
+settings-account-type = Type de compte
+settings-account-type-administrator = Administrateur
+settings-account-type-standard = Standard
+settings-account-no-accountsservice = Modification impossible ici : AccountsService n’est pas lancé
+settings-account-not-permitted = Le système n’a pas autorisé cette modification
+settings-group-password = Mot de passe
+settings-account-current-password = Mot de passe actuel
+settings-account-new-password = Nouveau mot de passe
+settings-account-confirm-password = Confirmer le nouveau mot de passe
+settings-account-change-password = Changer le mot de passe
+settings-account-change-password-ellipsis = Changer le mot de passe…
+settings-account-password-detail = Sert à se connecter, à déverrouiller l’écran et à approuver les modifications
+settings-account-password-changing = Changement du mot de passe…
+settings-account-password-changed = Mot de passe changé
+settings-account-password-missing = Saisissez votre mot de passe actuel et un nouveau
+settings-account-password-mismatch = Les nouveaux mots de passe ne correspondent pas
+settings-account-password-same = Le nouveau mot de passe est identique à l’actuel
+settings-account-password-wrong-current = Le mot de passe actuel est incorrect
+settings-account-password-failed = Le mot de passe n’a pas pu être changé
+settings-account-reset-password-ellipsis = Réinitialiser le mot de passe…
+settings-account-reset-detail = Définir un nouveau mot de passe pour ce compte
+settings-account-working = En attente du système…
+settings-users-you = { $kind } · Vous
+settings-users-reset-title = Réinitialiser le mot de passe de { $name }
+settings-users-reset-action = Réinitialiser le mot de passe
+settings-users-add-title = Ajouter un utilisateur
+settings-users-add-action = Ajouter l’utilisateur
+settings-users-delete-title = Supprimer { $name } ?
+settings-users-delete-body = Cette personne ne pourra plus se connecter. Son dossier personnel est conservé.
+settings-users-delete-action = Supprimer l’utilisateur
+settings-users-invalid-name = Les noms de compte commencent par une minuscule et n’utilisent que a–z, 0–9, - et _
+settings-users-name-taken = Un compte porte déjà ce nom
+settings-users-password-missing = Saisissez un mot de passe pour le compte
