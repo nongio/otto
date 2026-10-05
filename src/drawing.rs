@@ -9,9 +9,9 @@ use smithay::{
     backend::renderer::{
         element::{Element, Id, RenderElement},
         utils::CommitCounter,
-        Frame,
+        Frame, RendererSuper, Texture,
     },
-    utils::{Buffer, Logical, Rectangle, Size, Transform},
+    utils::{Buffer, Logical, Physical, Point, Rectangle, Scale, Size, Transform},
 };
 
 pub static CLEAR_COLOR: [f32; 4] = [0.0, 0.0, 0.0, 1.0];
@@ -132,7 +132,7 @@ where
                 .to_f64()
                 .to_physical(scale);
             let dst = Rectangle::new(
-                digit_location.to_i32_round().into(),
+                digit_location.to_i32_round(),
                 ((digit_size.to_point() + digit_location).to_i32_round()
                     - digit_location.to_i32_round())
                 .to_size(),

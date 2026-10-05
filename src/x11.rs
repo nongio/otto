@@ -16,6 +16,11 @@ use crate::{
 };
 #[cfg(feature = "egl")]
 use smithay::backend::renderer::ImportEgl;
+#[cfg(feature = "fps_ticker")]
+use smithay::backend::{allocator::Fourcc, renderer::ImportMem};
+
+#[cfg(feature = "fps_ticker")]
+use crate::drawing::{FpsElement, FPS_NUMBERS_PNG};
 
 use smithay::{
     backend::{
@@ -388,7 +393,8 @@ pub fn run_x11() {
             }
 
             let mut cursor_guard = cursor_status.lock().unwrap();
-            let elements: Vec<WorkspaceRenderElements<'_, SkiaRenderer>> = Vec::new();
+            #[cfg_attr(not(feature = "fps_ticker"), allow(unused_mut))]
+            let mut elements: Vec<WorkspaceRenderElements<'_, SkiaRenderer>> = Vec::new();
 
             // draw the cursor as relevant
             // reset the cursor if the surface is no longer alive
