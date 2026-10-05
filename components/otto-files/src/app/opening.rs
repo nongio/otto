@@ -318,17 +318,19 @@ impl Browser {
     }
 
     /// Open a link from a preview: a URL in the application that handles its
-    /// scheme (`x-scheme-handler/https`, say), anything else as a file.
+    /// scheme (`x-scheme-handler/https`, say), anything else — a `file://`
+    /// URL included — as a file.
     pub(super) fn open_link(&mut self, target: &std::ffi::OsStr) {
-        let uri = target.to_str().filter(|t| !t.starts_with('/'));
-        let mime = uri.and_then(otto_kit::mime_apps::scheme_handler_type);
-        let (Some(uri), Some(mime)) = (uri, mime) else {
-            self.open_file(std::path::Path::new(target));
-            return;
+        let (uri, mime) = match link_opening(target) {
+            LinkOpening::File(path) => {
+                self.open_file(&path);
+                return;
+            }
+            LinkOpening::Uri { uri, mime } => (uri, mime),
         };
         let associations = otto_kit::mime_apps::Associations::load();
         let result = match associations.default_for(&[mime]) {
-            Some(app) => otto_kit::mime_apps::open_uris(app, &[uri.to_owned()]).map_err(Some),
+            Some(app) => otto_kit::mime_apps::open_uris(app, &[uri]).map_err(Some),
             None => Err(None),
         };
         self.report_open(result);
@@ -365,6 +367,35 @@ impl Browser {
     // --- The picker's half of "activate" -----------------------------------
 }
 
+/// How a preview link opens.
+#[derive(Debug, PartialEq)]
+enum LinkOpening {
+    /// As a file, in the app its type opens with.
+    File(std::path::PathBuf),
+    /// As a URL, in the app registered for its scheme (`mime`).
+    Uri { uri: String, mime: String },
+}
+
+/// Sort a link into a file or a URL. A `file://` URL is a file: nothing
+/// registers `x-scheme-handler/file`, so handing it on as a URL would only
+/// ever end in "no app".
+fn link_opening(target: &std::ffi::OsStr) -> LinkOpening {
+    let file = || LinkOpening::File(std::path::PathBuf::from(target));
+    let Some(uri) = target.to_str().filter(|t| !t.starts_with('/')) else {
+        return file();
+    };
+    if let Some(path) = otto_kit::uri::uri_to_path(uri) {
+        return LinkOpening::File(path);
+    }
+    match otto_kit::mime_apps::scheme_handler_type(uri) {
+        Some(mime) => LinkOpening::Uri {
+            uri: uri.to_owned(),
+            mime,
+        },
+        None => file(),
+    }
+}
+
 /// Start `command` with its stdio closed, so it outlives the window that
 /// started it. The child is reaped on a thread of its own: nothing else here
 /// would ever wait on it.
@@ -378,4 +409,38 @@ fn spawn_detached(mut command: std::process::Command) -> std::io::Result<()> {
         let _ = child.wait();
     });
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{link_opening, LinkOpening};
+    use std::ffi::OsStr;
+    use std::path::PathBuf;
+
+    #[test]
+    fn a_file_url_opens_as_the_file_it_names() {
+        assert_eq!(
+            link_opening(OsStr::new("file:///home/me/Notes%20Two.md")),
+            LinkOpening::File(PathBuf::from("/home/me/Notes Two.md"))
+        );
+    }
+
+    #[test]
+    fn a_web_url_opens_in_its_scheme_handler() {
+        assert_eq!(
+            link_opening(OsStr::new("https://example.org/a")),
+            LinkOpening::Uri {
+                uri: "https://example.org/a".into(),
+                mime: "x-scheme-handler/https".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn a_path_opens_as_a_file() {
+        assert_eq!(
+            link_opening(OsStr::new("/tmp/a:b.txt")),
+            LinkOpening::File(PathBuf::from("/tmp/a:b.txt"))
+        );
+    }
 }

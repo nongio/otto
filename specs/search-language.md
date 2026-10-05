@@ -162,8 +162,9 @@ show localised aliases, but they write the canonical form.
   would bury the file whose name was typed. Contents are asked for explicitly
   with `text:`. Words read from pictures are the exception, because Find has
   always answered from them and they are only pictures the person has seen.
-- **Powers of 1024 for sizes.** A file shown as "1 MB" must be found by
-  `size:>1M`.
+- **Sizes count the way Files shows them.** `K`, `M`, `G` are powers of
+  1000, as Files displays sizes, so a file shown as "1 MB" is found by
+  `size:>1M`; `KiB`, `MiB`, … stay powers of 1024 for those who mean them.
 - **Parsing never fails.** A search box that refuses a query because of a
   typo in a filter is worse than one that searches the typo.
 

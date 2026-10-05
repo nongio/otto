@@ -189,11 +189,12 @@ impl Browser {
 
     /// Ctrl+O: open the entry at the cursor the way the desktop would.
     ///
-    /// Everything goes to `xdg-open`, folders included — the shortcut asks the
-    /// desktop to open the thing, and the desktop's answer for a directory is
-    /// whatever it has registered as the file manager. That is the difference
-    /// between this and a double-click: the click descends where you are, the
-    /// shortcut hands the entry over. Same in every view.
+    /// Everything goes to the entry type's default application (see
+    /// `open_file`), folders included — the shortcut asks the desktop to open
+    /// the thing, and the desktop's answer for a directory is whatever it has
+    /// registered as the file manager. That is the difference between this
+    /// and a double-click: the click descends where you are, the shortcut
+    /// hands the entry over. Same in every view.
     ///
     /// It pulses either way. Ctrl+O is a deliberate ask with no click to
     /// acknowledge it, and whatever answers can take a moment to appear.
