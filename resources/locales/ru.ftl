@@ -279,8 +279,8 @@ settings-scrolling-speed = Скорость прокрутки
 
 settings-interface-sounds = Звуки интерфейса
 settings-sound-theme = Звуковая тема
-settings-group-sound-output = Вывод
-settings-group-sound-input = Ввод
+settings-group-sound-output = Устройства вывода
+settings-group-sound-input = Устройства ввода
 settings-sound-output-device = Устройство вывода
 settings-sound-input-device = Устройство ввода
 settings-sound-volume = Громкость
@@ -288,6 +288,16 @@ settings-sound-mute = Выключить звук
 settings-sound-no-outputs = Нет устройств вывода
 settings-sound-no-inputs = Нет устройств ввода
 settings-sound-unavailable = Звуковой сервер не отвечает. Для звука нужен PipeWire с pipewire-pulse или PulseAudio, а также pactl.
+settings-sound-show = Показать
+settings-sound-view-playback = Воспроизведение
+settings-sound-view-recording = Запись
+settings-sound-view-configuration = Конфигурация
+settings-sound-port = Порт
+settings-sound-default = Использовать по умолчанию
+settings-sound-profile = Профиль
+settings-sound-no-playback = Ни одно приложение не воспроизводит звук
+settings-sound-no-recording = Ни одно приложение не записывает звук
+settings-sound-no-cards = Нет звуковых карт
 
 
 ## Settings — Power
