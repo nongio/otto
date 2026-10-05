@@ -386,6 +386,16 @@ impl Browser {
         column.path.ancestors().map(Path::to_path_buf).collect()
     }
 
+    /// Each of [`location_ancestors`](Self::location_ancestors)' icons, in
+    /// the same order.
+    pub(super) fn location_icons(&self) -> Vec<Vec<String>> {
+        let home = crate::model::home_dir();
+        self.location_ancestors()
+            .iter()
+            .map(|path| location_icon(path, &self.places, home.as_deref()))
+            .collect()
+    }
+
     /// Open the location menu under the toolbar's capsule.
     pub(super) fn location_press(&mut self, serial: u32) -> listing_pointer::After {
         self.location_open = true;
@@ -416,4 +426,29 @@ pub(super) fn location_label(path: &Path) -> String {
     path.file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| path.to_string_lossy().into_owned())
+}
+
+/// The icon the location menu draws for a directory, most specific first: a
+/// sidebar place keeps the icon it has there, so Music is the music folder in
+/// both; home and the root get the path bar's; anything else is a folder.
+pub(super) fn location_icon(
+    path: &Path,
+    places: &[crate::model::Place],
+    home: Option<&Path>,
+) -> Vec<String> {
+    let folder = || vec!["folder".to_string(), "inode-directory".to_string()];
+    if let Some(place) = places.iter().find(|p| !p.recent && p.path == path) {
+        let mut chain = vec![place.icon.clone()];
+        chain.extend(folder());
+        return chain;
+    }
+    if home == Some(path) {
+        let mut chain = vec!["user-home".to_string()];
+        chain.extend(folder());
+        return chain;
+    }
+    if path.parent().is_none() {
+        return vec!["drive-harddisk".to_string()];
+    }
+    folder()
 }

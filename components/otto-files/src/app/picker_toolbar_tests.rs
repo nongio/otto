@@ -80,6 +80,29 @@ fn the_root_is_named_by_its_path() {
     assert_eq!(picking::location_label(Path::new("/home/me")), "me");
 }
 
+/// A sidebar place keeps its own icon in the menu; home and the root get the
+/// path bar's; any other directory is a folder.
+#[test]
+fn each_location_wears_the_icon_it_has_elsewhere() {
+    let places = vec![model::Place {
+        label: "Music".to_string(),
+        path: PathBuf::from("/home/me/Music"),
+        icon: "folder-music".to_string(),
+        recent: false,
+    }];
+    let home = Some(Path::new("/home/me"));
+    let first = |path: &str| picking::location_icon(Path::new(path), &places, home)[0].clone();
+    assert_eq!(first("/home/me/Music"), "folder-music");
+    assert_eq!(first("/home/me"), "user-home");
+    assert_eq!(first("/"), "drive-harddisk");
+    assert_eq!(first("/home"), "folder");
+    // A themed icon a theme lacks still lands on a folder.
+    assert!(
+        picking::location_icon(Path::new("/home/me/Music"), &places, home)
+            .contains(&"folder".to_string())
+    );
+}
+
 /// Save: the new folder is named in place, and naming it goes into it —
 /// the save lands in the directory being viewed, so a folder left merely
 /// selected would not be where the file goes.

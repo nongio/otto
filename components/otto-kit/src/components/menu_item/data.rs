@@ -5,6 +5,10 @@ use std::hash::Hash;
 pub enum MenuItemIcon {
     /// Named icon from the XDG icon theme
     Named(String),
+    /// The first of these XDG theme icons the theme has, most specific first,
+    /// in its full-colour art rather than the outline glyph many themes ship
+    /// at menu size — a folder that should read as a folder, not a symbol.
+    Themed(Vec<String>),
     /// Raw ARGB32 pixel data (network byte order / big-endian)
     Pixmap {
         data: Vec<u8>,

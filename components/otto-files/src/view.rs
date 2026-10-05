@@ -4287,6 +4287,9 @@ pub struct FooterData<'a> {
     pub filter_open: bool,
     /// The toolbar's location menu is up, so its capsule draws held.
     pub location_open: bool,
+    /// The capsule's icon, most specific first: the same one the location
+    /// menu gives the directory being viewed.
+    pub location_icon: Vec<String>,
     pub hovered: Option<FooterButton>,
     pub pressed: Option<FooterButton>,
     /// Save mode: draw the name row above the buttons. The field's own text
@@ -5662,7 +5665,15 @@ fn draw_location_button(canvas: &Canvas, f: &Frame) {
     canvas.draw_path(&plus.detach(), &glyph);
 
     let mut text_x = rect.left + 10.0;
-    if let Some(image) = icons::cached_icon_chain(&["folder"], 16) {
+    // The theme's full-colour art, like the listing's rows: the 16px tier of
+    // many themes is a grey outline, which is not the folder the menu shows.
+    let names: Vec<&str> = f
+        .action_row
+        .as_ref()
+        .map(|row| row.location_icon.iter().map(String::as_str).collect())
+        .filter(|names: &Vec<&str>| !names.is_empty())
+        .unwrap_or_else(|| vec!["folder"]);
+    if let Some(image) = icons::cached_icon_chain_at(&names, 16, icons::FULL_COLOUR_SIZE) {
         let dst = Rect::from_xywh(text_x, cy - 8.0, 16.0, 16.0);
         canvas.draw_image_rect(&image, None, dst, &Paint::default());
         text_x += 22.0;

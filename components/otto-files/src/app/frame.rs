@@ -305,6 +305,7 @@ impl Browser {
                 current_filter: session.current_filter,
                 filter_open: session.filter_open,
                 location_open: self.location_open,
+                location_icon: self.location_icons().into_iter().next().unwrap_or_default(),
                 hovered: self.footer_hover,
                 pressed: self.footer_pressed,
             }),

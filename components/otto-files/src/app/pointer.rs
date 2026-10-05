@@ -475,20 +475,31 @@ fn show_location_menu(
     else {
         return;
     };
-    let options: Vec<String> = state
-        .lock()
-        .unwrap()
-        .location_ancestors()
-        .iter()
-        .map(|path| super::picking::location_label(path))
-        .collect();
+    let (options, icons): (
+        Vec<String>,
+        Vec<otto_kit::components::menu_item::MenuItemIcon>,
+    ) = {
+        let browser = state.lock().unwrap();
+        let options = browser
+            .location_ancestors()
+            .iter()
+            .map(|path| super::picking::location_label(path))
+            .collect();
+        let icons = browser
+            .location_icons()
+            .into_iter()
+            .map(otto_kit::components::menu_item::MenuItemIcon::Themed)
+            .collect();
+        (options, icons)
+    };
     let chosen = Arc::clone(state);
     let dismissed = Arc::clone(state);
-    menu.open(
+    menu.open_with_icons(
         &parent_xdg,
         rect,
         serial,
         &options,
+        &icons,
         Some(0),
         move |index| {
             chosen.lock().unwrap().location_choose(index);

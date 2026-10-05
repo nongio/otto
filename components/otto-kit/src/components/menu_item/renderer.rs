@@ -222,6 +222,26 @@ impl MenuItemRenderer {
                     canvas.restore();
                 }
             }
+            MenuItemIcon::Themed(names) => {
+                let scale = crate::app_runner::context::AppContext::scale_factor().max(1);
+                let load_size = (icon_size as i32) * scale;
+                let names: Vec<&str> = names.iter().map(String::as_str).collect();
+                if let Some(img) = crate::icons::cached_icon_chain_at(
+                    &names,
+                    load_size,
+                    crate::icons::FULL_COLOUR_SIZE,
+                ) {
+                    let dst = Rect::from_xywh(icon_x, icon_y, icon_size, icon_size);
+                    let dst_px = (icon_size * scale as f32, icon_size * scale as f32);
+                    canvas.draw_image_rect_with_sampling_options(
+                        &img,
+                        None,
+                        dst,
+                        crate::utils::icon_sampling((img.width(), img.height()), dst_px),
+                        &Paint::default(),
+                    );
+                }
+            }
             MenuItemIcon::Pixmap {
                 data,
                 width,
