@@ -679,18 +679,43 @@ impl SkiaRenderer {
                 let has_alpha = has_alpha(dmabuf.format().code);
 
                 // If external, resolve/blit into a TEXTURE_2D so Skia can sample it reliably.
-                let (tex_id, skia_external_flag) = if is_external {
-                    let dst = self.create_texture_and_framebuffer(
+                let tex_id = if is_external {
+                    self.create_texture_and_framebuffer(
                         dmabuf.size().w,
                         dmabuf.size().h,
                         dmabuf.format().code,
-                    )?;
-                    self.blit_eglimage_to_2d_texture(egl_image, dst.tex_id, dmabuf.size())?;
-                    (dst.tex_id, false)
+                    )
+                    .map(|dst| {
+                        // Only the texture outlives the import (the
+                        // `GlesTexture` below owns it); the blit, now and on
+                        // every refresh, brings framebuffers of its own.
+                        // SAFETY: the GL invariant; `dst.fbo` was just
+                        // created and nothing else refers to it.
+                        unsafe { self.gl.DeleteFramebuffers(1, &dst.fbo) };
+                        dst.tex_id
+                    })
+                    .and_then(|tex_id| {
+                        self.blit_eglimage_to_2d_texture(egl_image, tex_id, dmabuf.size())?;
+                        Ok(tex_id)
+                    })
                 } else {
-                    let tex = self.import_egl_image(egl_image, is_external, None)?;
-                    (tex, false)
+                    self.import_egl_image(egl_image, is_external, None)
                 };
+                let tex_id = match tex_id {
+                    Ok(tex_id) => tex_id,
+                    Err(err) => {
+                        // SAFETY: created above on this display and not
+                        // stored anywhere yet, so destroyed once.
+                        unsafe {
+                            smithay::backend::egl::ffi::egl::DestroyImageKHR(
+                                **self.egl_context().display().get_display_handle(),
+                                egl_image,
+                            );
+                        }
+                        return Err(err);
+                    }
+                };
+                let skia_external_flag = false;
 
                 // SAFETY: `tex_id` was just created in this context (shared
                 // with `gl_renderer`) and nothing else owns it: the
