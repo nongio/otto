@@ -37,6 +37,7 @@ components/otto-kit/src/
 ├── icon_theme.rs     freedesktop icon theme resolution
 ├── accent.rs         Accent colour, from the settings portal
 ├── color_scheme.rs   Light/dark, from the settings portal or OTTO_COLOR_SCHEME
+├── portal_settings.rs The one Settings portal client the watchers share
 ├── protocols/        Otto's own Wayland protocols, generated
 ├── desktop_entry.rs  .desktop parsing
 ├── filetype/         MIME lookup by glob and content
@@ -184,6 +185,14 @@ That path is startup-only, and always outranked by the portal. Otto's own
 backend for that portal is
 [`xdg-desktop-portal-otto`](settings-dbus-api.md); see
 [Color Scheme](color-scheme-setting.md) for the whole path.
+
+The watchers share one portal client, `portal_settings.rs`: one session
+connection and one `SettingChanged` subscription, fanned out by namespace and
+key to whichever watcher follows it.
+
+Otto's own D-Bus interfaces (`org.otto.Settings`, `org.otto.Shell1`, …) have
+their client proxies in the UI-free `otto-dbus` crate, re-exported here as
+`otto_kit::dbus`; see [otto-dbus](otto-dbus.md).
 
 `typography::styles` holds the named text styles (`SUBHEADLINE` and friends);
 `icons` and `icon_theme` resolve icon names against the user's icon theme.
