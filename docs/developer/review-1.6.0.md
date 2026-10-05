@@ -301,6 +301,35 @@ otto-kit, so the portal and otto-agents need not link Skia): `xdg`, `dbus`,
 - [ ] zbus 4 → 5 and smithay-client-toolkit 0.19 → 0.21 (§2) are now
   unblocked: every org.otto proxy lives in `otto-dbus`. **M each**
   - *zbus 5 done in #271; smithay-client-toolkit 0.21 still open.*
+- [x] **Topdir trash cans trusted as found** (after #272): a planted
+  `.Trash-$uid/files -> /home/victim` symlink (hostile stick, or another user
+  on `/tmp`) let Empty Trash delete outside the can, and the
+  `.directorysizes` temporary was written through any symlink at its name.
+  **M**
+  - *One check (real dir, owned by the user, not group/other-writable;
+    `files/`, `info/`, `directorysizes` likewise) gates trashing, listing,
+    emptying and restoring; deletes and the temp file go through
+    `O_NOFOLLOW` descriptors and `O_EXCL`.*
+- [x] The dock's first trash look ran on the compositor thread and stat'ed
+  every mount, network ones included. **S**
+  - *Done on the watcher thread (and `reload_icons` in a blocking task);
+    network and FUSE-daemon filesystems are not searched; one mountinfo read
+    per inotify burst.*
+- [x] Put Back trusted an absolute or `..` `Path=` from a topdir can, and
+  replaced a dangling symlink at the origin. **S**
+  - *Topdir origins must be relative plain names, refused with a message
+    otherwise; the origin is checked with `symlink_metadata`.*
+- [x] The topdir was the highest ancestor on the file's `st_dev`, which on
+  btrfs can be an unmounted subvolume whose can is never listed. **S**
+  - *Taken from the longest mountinfo mount point instead.*
+- [x] `otto-files` trash window tests still carried the `first_free_name`
+  race comment and unique-name workaround. **S**
+- [x] The Trash window watched only the home can's `files/`. **S**
+  - *Every listed can's `files/` is watched.*
+- [x] Trash can hygiene: cans deduplicated by `(dev, ino)` for bind mounts,
+  the can list injectable so `otto-files` tests never reach real mounts, the
+  dock's watcher stops when its inotify reader dies, structured tracing
+  fields, `trash_into` private. **S**
 
 ## Checked and fine
 

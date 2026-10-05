@@ -687,8 +687,12 @@ What it adds:
   its sidecar records and the sidecar is dropped. This is the same operation,
   and the same code, as undoing a delete with Ctrl+Z — the two cannot drift.
   A missing parent directory is recreated; a name that something else has
-  taken since is refused, with the item left in the trash rather than
-  overwriting what is there now.
+  taken since — a dangling symlink included — is refused, with the item left
+  in the trash rather than overwriting what is there now. **A topdir can's
+  sidecar may only send an item back onto its own filesystem**: a relative
+  `Path=` of plain names. An absolute path or one with `..` is shown as no
+  origin, and Put Back refuses it with a message rather than making
+  directories wherever the stick's author chose.
 - **Empty Trash**, in the header, on everything. Asked about first, with the
   count in the question. It wears the accent, not a warning colour: emptying
   is what the window is for, and the warning belongs on the question that
@@ -1050,7 +1054,24 @@ progress, and can cancel it.
   otherwise, with the path recorded relative to `$topdir` — a rename, not a
   copy. Only when neither can could be made does it fall back to the home
   trash, which is a copy across filesystems. A trashed folder gets a line in
-  the can's `directorysizes`.
+  the can's `directorysizes`. The topdir is the mount point above the file in
+  `/proc/self/mountinfo` — the same table the cans are listed from — so a
+  btrfs subvolume that is not mounted anywhere is not mistaken for one.
+- **Topdir cans are checked before they are used.** A can on a stick, or on
+  `/tmp`, is on a filesystem somebody else may have written, and a
+  `.Trash-$uid/files` planted as a symlink would point Empty Trash at someone's
+  home. So a topdir can is trashed into, listed, counted, emptied or restored
+  from only when `.Trash-$uid` (or `.Trash/$uid`, under a sticky, real
+  `.Trash`) is a real directory owned by the user and not writable by group or
+  others, and `files/`, `info/` and `directorysizes`, where present, are real
+  and the user's too. One that fails is left out of the Trash and, when
+  trashing, the next can — finally the home trash — is used instead. Every
+  operation on a can then works from directory descriptors opened without
+  following symlinks: Delete permanently and Empty Trash walk down from the
+  checked `files/`, and the `directorysizes` temporary is created with
+  `O_EXCL | O_NOFOLLOW`, mode `0600`. Filesystems that may hang a stat — NFS,
+  CIFS, sshfs and other FUSE daemons, 9p, Ceph and the like — are not searched
+  for cans at all.
 - **Delete permanently** — always confirmed, always says it cannot be undone,
   and is not undoable. Reachable only from the Trash window, where Delete
   means this because there is nowhere further to send a file.
