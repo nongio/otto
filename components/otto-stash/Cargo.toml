@@ -19,6 +19,7 @@ wayland-protocols = { workspace = true, features = ["client", "staging"] }
 wayland-protocols-misc = { workspace = true, features = ["client"] }
 wayland-protocols-wlr = { workspace = true, features = ["client"] }
 zbus.workspace = true
+futures-util.workspace = true
 
 [lints]
 workspace = true

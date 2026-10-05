@@ -783,7 +783,20 @@ fn debug_action_file_path() -> String {
     std::env::var("OTTO_ACTION_FILE").unwrap_or_else(|_| "/tmp/otto-action".to_string())
 }
 
+/// Brightness goes through `brightness::blocking`, whose zbus `block_on` starts
+/// its own tokio runtime when the workspace zbus has the `tokio` feature. The
+/// compositor thread is inside `#[tokio::main]`, where that panics, so the call
+/// runs on a short-lived thread outside the runtime and is joined.
 fn adjust_brightness(delta: i32) -> Option<u8> {
+    std::thread::scope(|scope| {
+        scope
+            .spawn(|| adjust_brightness_blocking(delta))
+            .join()
+            .unwrap_or(None)
+    })
+}
+
+fn adjust_brightness_blocking(delta: i32) -> Option<u8> {
     let mut result_level = None;
 
     for device in brightness::blocking::brightness_devices() {

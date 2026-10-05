@@ -39,10 +39,10 @@ fluent-bundle.workspace = true
 unic-langid = { workspace = true, features = ["macros"] }
 intl-memoizer = "0.5"
 
-# Accessibility. accesskit_unix keeps its default `async-io` executor rather
-# than the tokio one: an otto-kit application's UI thread is a hand-rolled
-# poll loop, not a tokio runtime, and the adapter has to be able to run its
-# D-Bus work without one.
+# Accessibility. An otto-kit application's UI thread is a hand-rolled poll
+# loop, not a tokio runtime, and the adapter has to run its D-Bus work without
+# one: accesskit_unix (tokio feature, set in the workspace) runs it on a
+# current-thread runtime on a thread of its own.
 accesskit.workspace = true
 accesskit_unix.workspace = true
 

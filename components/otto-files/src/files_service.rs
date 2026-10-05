@@ -78,7 +78,7 @@ impl FilesService {
 pub async fn serve(queue: SharedQueue) -> zbus::Result<()> {
     use zbus::fdo::DBusProxy;
 
-    let connection = zbus::ConnectionBuilder::session()?.build().await?;
+    let connection = zbus::connection::Builder::session()?.build().await?;
     connection
         .object_server()
         .at(DBUS_PATH, FilesService { queue })
@@ -89,7 +89,7 @@ pub async fn serve(queue: SharedQueue) -> zbus::Result<()> {
     // unique name.
     DBusProxy::new(&connection)
         .await?
-        .request_name(DBUS_NAME.try_into()?, Default::default())
+        .request_name(DBUS_NAME.try_into()?, enumflags2::BitFlags::empty())
         .await?;
 
     std::future::pending::<()>().await;

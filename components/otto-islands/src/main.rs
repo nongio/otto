@@ -2334,9 +2334,10 @@ fn emit_action_invoked(notification_id: u32, action_key: String) {
         return;
     };
     tokio::spawn(async move {
-        let Ok(ctxt) =
-            zbus::SignalContext::new(&connection, notifications::NOTIFICATIONS_DBUS_PATH)
-        else {
+        let Ok(ctxt) = zbus::object_server::SignalEmitter::new(
+            &connection,
+            notifications::NOTIFICATIONS_DBUS_PATH,
+        ) else {
             tracing::warn!(
                 notification_id,
                 "ActionInvoked: failed to build signal context"
@@ -2364,9 +2365,10 @@ fn emit_notification_closed(notification_id: u32, reason: u32) {
         return;
     };
     tokio::spawn(async move {
-        let Ok(ctxt) =
-            zbus::SignalContext::new(&connection, notifications::NOTIFICATIONS_DBUS_PATH)
-        else {
+        let Ok(ctxt) = zbus::object_server::SignalEmitter::new(
+            &connection,
+            notifications::NOTIFICATIONS_DBUS_PATH,
+        ) else {
             tracing::warn!(
                 notification_id,
                 "NotificationClosed: failed to build signal context"
@@ -2403,8 +2405,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let service = IslandService::new(dbus_state);
         let dialog_service = DialogService::new(dialog_state);
 
-        let connection = match zbus::ConnectionBuilder::session()
+        let connection = match zbus::connection::Builder::session()
             .expect("session bus")
+            .allow_name_replacements(false)
             .name(DBUS_NAME)
             .expect("claim D-Bus name")
             .build()
@@ -2445,8 +2448,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tokio::spawn(async move {
         let daemon = notifications::NotificationDaemon::new(notif_state);
 
-        let connection = match zbus::ConnectionBuilder::session()
+        let connection = match zbus::connection::Builder::session()
             .expect("session bus")
+            .allow_name_replacements(false)
             .name(notifications::NOTIFICATIONS_DBUS_NAME)
             .expect("claim notifications name")
             .build()

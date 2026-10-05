@@ -8,8 +8,8 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
 
+use futures_util::StreamExt;
 use otto_kit::dbus::stash::{StashProxy, SERVICE as NAME};
-use zbus::export::futures_util::StreamExt;
 use zbus::fdo::DBusProxy;
 use zbus::names::BusName;
 

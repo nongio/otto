@@ -83,8 +83,8 @@ god-objects, and kit widgets the apps never adopted.
   otto-agents already on 1.1). **S–M** Fixed in #265.
 - [x] image 0.24 → 0.25; thiserror 1 → 2 (ours only; v1 stays transitively). **S** Fixed in #265.
 - [ ] smithay-client-toolkit 0.19 → 0.21 (drops calloop 0.13, xkbcommon 0.7). **M**
-- [ ] zbus 4 → 5 (accesskit_unix and brightness already pull 5; drops zbus 4
-  and nix 0.29). **M**
+- [x] zbus 4 → 5 (accesskit_unix and brightness already pull 5; drops zbus 4
+  and nix 0.29). **M** Fixed in #271.
 - [ ] bitflags 1 via laye-rs: fix upstream in layers. **S**
 
 ## 3. Kits: shared logic that lives in the apps
@@ -300,6 +300,7 @@ otto-kit, so the portal and otto-agents need not link Skia): `xdg`, `dbus`,
   - *Now `otto_kit::theme::ACCENT_NAMES` through the same palette lookup.*
 - [ ] zbus 4 → 5 and smithay-client-toolkit 0.19 → 0.21 (§2) are now
   unblocked: every org.otto proxy lives in `otto-dbus`. **M each**
+  - *zbus 5 done in #271; smithay-client-toolkit 0.21 still open.*
 
 ## Checked and fine
 

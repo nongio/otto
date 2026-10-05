@@ -298,7 +298,12 @@ async fn run_registrar() -> Result<(), Box<dyn std::error::Error + Send + Sync>>
         .await?;
 
     // Request the well-known name
-    conn.request_name("com.canonical.AppMenu.Registrar").await?;
+    // No AllowReplacement: zbus 5's plain request_name would add it.
+    conn.request_name_with_flags(
+        "com.canonical.AppMenu.Registrar",
+        zbus::fdo::RequestNameFlags::ReplaceExisting | zbus::fdo::RequestNameFlags::DoNotQueue,
+    )
+    .await?;
 
     // Keep alive — the connection event loop runs inside zbus
     std::future::pending::<()>().await;

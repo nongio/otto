@@ -9,11 +9,11 @@
 use std::path::PathBuf;
 use std::sync::Mutex;
 
+use futures_util::StreamExt;
 use otto_kit::dbus::files::{FilesProxy, SERVICE as FILES_NAME};
 use otto_kit::dbus::settings::SettingsProxy;
 use smithay_client_toolkit::reexports::calloop::channel::Sender;
 use tokio::sync::oneshot;
-use zbus::export::futures_util::StreamExt;
 use zbus::fdo;
 
 pub use otto_kit::components::stashed::Items;
@@ -176,7 +176,7 @@ impl Service {
     /// Everything stashed, after every change.
     #[zbus(signal)]
     async fn changed(
-        emitter: &zbus::object_server::SignalContext<'_>,
+        emitter: &zbus::object_server::SignalEmitter<'_>,
         items: Vec<(String, bool)>,
     ) -> zbus::Result<()>;
 }
@@ -195,7 +195,7 @@ fn to_wire(items: Items) -> Vec<(String, bool)> {
 ///
 /// When the signal cannot be sent.
 pub async fn announce(bus: &zbus::Connection, items: Items) -> zbus::Result<()> {
-    let emitter = zbus::object_server::SignalContext::new(bus, PATH)?;
+    let emitter = zbus::object_server::SignalEmitter::new(bus, PATH)?;
     Service::changed(&emitter, to_wire(items)).await
 }
 
@@ -224,7 +224,7 @@ pub async fn focused_files() -> Option<Vec<PathBuf>> {
                     .await
             }
         });
-        let answers = zbus::export::futures_util::future::join_all(asks).await;
+        let answers = futures_util::future::join_all(asks).await;
         Ok::<_, zbus::Error>(answers.into_iter().find_map(Result::ok))
     })
     .await;
@@ -252,6 +252,7 @@ pub async fn serve(commands: Sender<Command>) -> zbus::Result<zbus::Connection> 
         commands: Mutex::new(commands),
     };
     zbus::connection::Builder::session()?
+        .allow_name_replacements(false)
         .name(NAME)?
         .serve_at(PATH, service)?
         .build()

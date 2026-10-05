@@ -272,7 +272,8 @@ fn entry(id: i32, props: HashMap<String, OwnedValue>) -> OwnedValue {
         .add_field(id)
         .add_field(props)
         .add_field(Vec::<OwnedValue>::new())
-        .build();
+        .build()
+        .expect("menu entry has fields");
     OwnedValue::try_from(Value::from(structure)).expect("menu entry is a plain struct")
 }
 
@@ -367,7 +368,8 @@ impl Indicator {
         // hosts expect to be handed, and it still vanishes with the connection.
         let name = format!("org.kde.StatusNotifierItem-{}-1", std::process::id());
 
-        let conn = zbus::ConnectionBuilder::session()?
+        let conn = zbus::connection::Builder::session()?
+            .allow_name_replacements(false)
             .name(name.as_str())?
             .serve_at(
                 ITEM_PATH,
@@ -441,8 +443,7 @@ async fn register(conn: &Connection, name: &str) {
 }
 
 async fn reregister_on_watcher_restart(conn: Connection, name: String) -> zbus::Result<()> {
-    // Via zbus rather than a direct futures-util dependency for one import.
-    use zbus::export::futures_util::StreamExt;
+    use futures_util::StreamExt;
 
     let dbus = zbus::fdo::DBusProxy::new(&conn).await?;
     let mut changes = dbus.receive_name_owner_changed().await?;

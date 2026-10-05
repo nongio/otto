@@ -116,7 +116,7 @@ async fn name_departure(
         .await
         .unwrap_or(false);
     Ok(async move {
-        use zbus::export::futures_util::StreamExt;
+        use futures_util::StreamExt;
         if gone_already {
             return;
         }
@@ -867,7 +867,13 @@ pub async fn run_dbus_service(
         .at("/org/otto/ScreenCast", screencast)
         .await?;
 
-    connection.request_name("org.otto.ScreenCast").await?;
+    // No AllowReplacement: zbus 5's plain request_name would add it.
+    connection
+        .request_name_with_flags(
+            "org.otto.ScreenCast",
+            zbus::fdo::RequestNameFlags::ReplaceExisting | zbus::fdo::RequestNameFlags::DoNotQueue,
+        )
+        .await?;
 
     // Register the compositor interface (health + app management)
     let compositor = CompositorInterface::new(compositor_tx);
@@ -876,7 +882,13 @@ pub async fn run_dbus_service(
         .at("/org/otto/Compositor", compositor)
         .await?;
 
-    connection.request_name("org.otto.Compositor").await?;
+    // No AllowReplacement: zbus 5's plain request_name would add it.
+    connection
+        .request_name_with_flags(
+            "org.otto.Compositor",
+            zbus::fdo::RequestNameFlags::ReplaceExisting | zbus::fdo::RequestNameFlags::DoNotQueue,
+        )
+        .await?;
 
     // Register the Settings interface
     crate::settings_service::register_settings_interface(&connection, settings_tx).await?;
@@ -893,10 +905,15 @@ pub async fn run_dbus_service(
             .await
         {
             Ok(()) => match connection
-                .request_name(crate::a11y::keyboard_monitor::BUS_NAME)
+                // No AllowReplacement: zbus 5's plain request_name would add it.
+                .request_name_with_flags(
+                    crate::a11y::keyboard_monitor::BUS_NAME,
+                    zbus::fdo::RequestNameFlags::ReplaceExisting
+                        | zbus::fdo::RequestNameFlags::DoNotQueue,
+                )
                 .await
             {
-                Ok(()) => {
+                Ok(_) => {
                     // The pointer half of the same object. at-spi2-core builds
                     // one device from both interfaces, so a manager that
                     // serves only the keyboard is not one Orca can use.
