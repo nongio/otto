@@ -541,10 +541,72 @@ impl std::error::Error for OpenError {}
 /// the program cannot be started. Nothing is started unless every command
 /// parses.
 pub fn open(app: &App, paths: &[PathBuf]) -> Result<(), OpenError> {
+    let targets: Vec<Target> = paths.iter().map(|path| Target::path(path)).collect();
+    launch(app, &targets)
+}
+
+/// Open `uris` (`https://…`, `mailto:…`, `file://…`) with `app`.
+///
+/// The handler for a scheme is the default for `x-scheme-handler/<scheme>`:
+/// see [`scheme_handler_type`]. A `%u`/`%U` code gets the URI as it is; a
+/// `%f`/`%F` code gets the path of a `file://` URI and any other URI as
+/// written, which is what an application that only takes files can make of
+/// it. Launched as [`open`] launches.
+///
+/// # Errors
+///
+/// As [`open`].
+pub fn open_uris(app: &App, uris: &[String]) -> Result<(), OpenError> {
+    let targets: Vec<Target> = uris.iter().map(|uri| Target::uri(uri)).collect();
+    launch(app, &targets)
+}
+
+/// The type whose default application handles `uri`'s scheme:
+/// `x-scheme-handler/https` for `https://example.org`. `None` when `uri`
+/// does not start with a scheme.
+pub fn scheme_handler_type(uri: &str) -> Option<String> {
+    let (scheme, _) = uri.split_once(':')?;
+    let valid = scheme.starts_with(|c: char| c.is_ascii_alphabetic())
+        && scheme
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'));
+    valid.then(|| format!("x-scheme-handler/{}", scheme.to_ascii_lowercase()))
+}
+
+/// One thing handed to an application, as a `%f` code and as a `%u` code
+/// would each pass it.
+struct Target {
+    path: OsString,
+    uri: OsString,
+}
+
+impl Target {
+    /// A file, made absolute: the application starts in a directory of its
+    /// own choosing.
+    fn path(path: &Path) -> Self {
+        let path = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
+        Self {
+            uri: crate::uri::path_to_uri(&path).into(),
+            path: path.into_os_string(),
+        }
+    }
+
+    fn uri(uri: &str) -> Self {
+        let path = crate::uri::uri_to_path(uri)
+            .map(PathBuf::into_os_string)
+            .unwrap_or_else(|| uri.into());
+        Self {
+            path,
+            uri: uri.into(),
+        }
+    }
+}
+
+fn launch(app: &App, targets: &[Target]) -> Result<(), OpenError> {
     use std::os::unix::process::CommandExt;
 
     let exec = app.exec.as_deref().ok_or(OpenError::NoCommand)?;
-    let commands = command_lines(exec, paths, app)?;
+    let commands = command_lines(exec, targets, app)?;
     for mut argv in commands {
         if app.terminal {
             let mut wrapped: Vec<OsString> =
@@ -637,8 +699,8 @@ fn tokenize(exec: &str) -> Result<Vec<Token>, OpenError> {
                 }
             }
             // `%%` still means a percent sign inside quotes; nothing else
-            // is expanded there.
-            tokens.push(Token::Text(arg.replace('%', "%%")));
+            // is expanded there, so any other `%` is kept as written.
+            tokens.push(Token::Text(escape_quoted(&arg)));
             continue;
         }
         let mut arg = String::new();
@@ -654,6 +716,22 @@ fn tokenize(exec: &str) -> Result<Vec<Token>, OpenError> {
     }
 }
 
+/// Escape a quoted argument so [`expand`] turns `%%` into `%` and leaves
+/// every other `%` (a field code is not one inside quotes) as it is.
+fn escape_quoted(arg: &str) -> String {
+    let mut out = String::with_capacity(arg.len());
+    let mut chars = arg.chars().peekable();
+    while let Some(c) = chars.next() {
+        out.push(c);
+        if c == '%' {
+            // `%%` stays `%%` (one percent sign); a lone `%` becomes `%%`.
+            chars.next_if_eq(&'%');
+            out.push('%');
+        }
+    }
+    out
+}
+
 /// The command lines that open `paths` with an `Exec=` value.
 ///
 /// More than one when the line takes a single file (`%f`, `%u`) and several
@@ -662,22 +740,18 @@ fn tokenize(exec: &str) -> Result<Vec<Token>, OpenError> {
 /// says it must be.
 fn command_lines(
     exec: &str,
-    paths: &[PathBuf],
+    targets: &[Target],
     app: &App,
 ) -> Result<Vec<Vec<OsString>>, OpenError> {
     let tokens = tokenize(exec)?;
-    let paths: Vec<PathBuf> = paths
-        .iter()
-        .map(|path| std::path::absolute(path).unwrap_or_else(|_| path.clone()))
-        .collect();
     let single = tokens.iter().any(|token| match token {
         Token::Text(text) => has_code(text, 'f') || has_code(text, 'u'),
         _ => false,
     });
-    let groups: Vec<&[PathBuf]> = if single && paths.len() > 1 {
-        paths.chunks(1).collect()
+    let groups: Vec<&[Target]> = if single && targets.len() > 1 {
+        targets.chunks(1).collect()
     } else {
-        vec![&paths]
+        vec![targets]
     };
 
     let mut lines = Vec::new();
@@ -685,8 +759,8 @@ fn command_lines(
         let mut argv = Vec::new();
         for token in &tokens {
             match token {
-                Token::Files => argv.extend(files.iter().map(|p| p.clone().into_os_string())),
-                Token::Uris => argv.extend(files.iter().map(|p| crate::uri::path_to_uri(p).into())),
+                Token::Files => argv.extend(files.iter().map(|t| t.path.clone())),
+                Token::Uris => argv.extend(files.iter().map(|t| t.uri.clone())),
                 Token::Icon => {
                     if let Some(icon) = &app.icon_name {
                         argv.push("--icon".into());
@@ -698,7 +772,7 @@ fn command_lines(
                     if files.is_empty() && matches!(text.as_str(), "%f" | "%u") {
                         continue;
                     }
-                    let expanded = expand(text, files.first().map(PathBuf::as_path), app);
+                    let expanded = expand(text, files.first(), app);
                     if !expanded.is_empty() || text.is_empty() {
                         argv.push(expanded);
                     }
@@ -732,7 +806,7 @@ fn has_code(text: &str, code: char) -> bool {
 /// Deprecated and unknown codes are dropped, as the specification asks. Paths
 /// go in as the bytes they are, so a name that is not UTF-8 still names the
 /// file.
-fn expand(text: &str, file: Option<&Path>, app: &App) -> OsString {
+fn expand(text: &str, file: Option<&Target>, app: &App) -> OsString {
     let mut out = OsString::new();
     let mut literal = [0u8; 4];
     let mut chars = text.chars();
@@ -745,12 +819,12 @@ fn expand(text: &str, file: Option<&Path>, app: &App) -> OsString {
             Some('%') => out.push("%"),
             Some('f') => {
                 if let Some(file) = file {
-                    out.push(file);
+                    out.push(&file.path);
                 }
             }
             Some('u') => {
                 if let Some(file) = file {
-                    out.push(crate::uri::path_to_uri(file));
+                    out.push(&file.uri);
                 }
             }
             Some('c') => out.push(&app.name),
@@ -967,7 +1041,8 @@ mod tests {
 
     fn lines(exec: &str, paths: &[&str]) -> Vec<Vec<String>> {
         let paths: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
-        command_lines(exec, &paths, &app("x.desktop", "X", &[]))
+        let targets: Vec<Target> = paths.iter().map(|p| Target::path(p)).collect();
+        command_lines(exec, &targets, &app("x.desktop", "X", &[]))
             .unwrap()
             .into_iter()
             .map(|argv| argv.into_iter().map(|a| a.into_string().unwrap()).collect())
@@ -1016,7 +1091,7 @@ mod tests {
         let path = PathBuf::from(std::ffi::OsStr::from_bytes(b"/tmp/caf\xe9.txt"));
         let argv = command_lines(
             "app --file=%f %F",
-            std::slice::from_ref(&path),
+            &[Target::path(&path)],
             &app("x.desktop", "X", &[]),
         )
         .unwrap();
@@ -1043,5 +1118,35 @@ mod tests {
             ]]
         );
         assert!(matches!(tokenize("\"open"), Err(OpenError::BadCommand(_))));
+    }
+
+    #[test]
+    fn a_uri_goes_in_as_written_and_a_file_uri_as_its_path() {
+        let targets = [
+            Target::uri("https://example.org/a?b"),
+            Target::uri("file:///tmp/a%20b"),
+        ];
+        let x = app("x.desktop", "X", &[]);
+        assert_eq!(
+            command_lines("browser %U", &targets, &x).unwrap(),
+            [["browser", "https://example.org/a?b", "file:///tmp/a%20b"]]
+        );
+        assert_eq!(
+            command_lines("viewer %F", &targets, &x).unwrap(),
+            [["viewer", "https://example.org/a?b", "/tmp/a b"]]
+        );
+        assert_eq!(
+            scheme_handler_type("HTTPS://example.org").as_deref(),
+            Some("x-scheme-handler/https")
+        );
+        assert_eq!(scheme_handler_type("/tmp/a:b"), None);
+    }
+
+    #[test]
+    fn percent_signs_inside_quotes() {
+        assert_eq!(
+            lines(r#"app "100%% done" "50% %f""#, &["/f"]),
+            [["app", "100% done", "50% %f"]]
+        );
     }
 }

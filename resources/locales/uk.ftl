@@ -701,6 +701,7 @@ files-rename-failed = Не вдалося перейменувати: { $error }
 files-new-folder-failed = Не вдалося створити папку: { $error }
 files-open-failed = Не вдалося відкрити файл: { $error }
 files-open-app-broken = команда запуску застосунку пошкоджена
+files-open-no-app = немає встановленого застосунку, що відкриває файли цього типу
 files-new-window-failed = Не вдалося відкрити нове вікно: { $error }
 files-settings-open-failed = Не вдалося відкрити Налаштування: { $error }
 

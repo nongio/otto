@@ -5219,6 +5219,7 @@ dependencies = [
 name = "otto-files"
 version = "1.6.0"
 dependencies = [
+ "imagesize",
  "khronos-egl",
  "laye-rs",
  "libc",
@@ -5290,6 +5291,7 @@ version = "1.6.0"
 dependencies = [
  "accesskit",
  "accesskit_unix",
+ "chrono",
  "fluent-bundle",
  "freedesktop-desktop-entry",
  "freedesktop-icons",
@@ -5393,8 +5395,10 @@ name = "otto-peek"
 version = "1.6.0"
 dependencies = [
  "libc",
+ "md-5 0.10.6",
  "otto-kit",
  "otto-md-kit",
+ "png 0.17.16",
  "skia-safe",
  "tokio",
  "tracing",

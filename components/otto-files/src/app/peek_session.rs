@@ -645,7 +645,7 @@ impl Browser {
                 session.pan_pointer_up();
                 session.select_pointer_up();
                 if let Some(target) = session.link_pointer_up(point.x, point.y, content) {
-                    self.open_in_default_app(target);
+                    self.open_link(&target);
                 }
                 (false, false)
             }

@@ -23,6 +23,8 @@ otto-md-kit = { path = "../otto-md-kit" }
 tracing.workspace = true
 libc.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "sync", "macros"] }
+md5 = { package = "md-5", version = "0.10" }
+png = "0.17"
 
 
 [dependencies.skia-safe]

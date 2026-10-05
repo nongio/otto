@@ -8003,7 +8003,7 @@ pub fn draw_info(
     // A file that could not be read at all says so instead of showing a
     // permissions grid for a mode it never managed to load.
     if let Some(reason) = &info.error {
-        Label::new(elide(reason, 40))
+        Label::new(otto_kit::typography::ellipsize_chars(reason, 40))
             .with_style(styles::CALLOUT)
             .with_color(Color::from_argb(0xFF, 0xD7, 0x3A, 0x2E))
             .centered_on(sheet.left + 24.0, y + 8.0)
@@ -8081,7 +8081,7 @@ pub fn info_runs(
     theme: &Theme,
 ) -> Vec<TextRun> {
     let mut runs = vec![TextRun::centered(
-        elide(&info.name, 30),
+        otto_kit::typography::ellipsize_chars(&info.name, 30),
         styles::TITLE_2_EMPHASIZED,
         theme.text_primary,
         sheet.center_x(),
@@ -8233,23 +8233,12 @@ fn draw_permissions(
 
     // A refused chmod says why, in place, rather than silently reverting.
     if let Some(error) = error {
-        Label::new(elide(error, 42))
+        Label::new(otto_kit::typography::ellipsize_chars(error, 42))
             .with_style(styles::CALLOUT)
             .with_color(Color::from_argb(0xFF, 0xD7, 0x3A, 0x2E))
             .centered_on(ox, oy + PERM_ROWS_TOP + 3.0 * PERM_ROW_H + 12.0)
             .render(canvas);
     }
-}
-
-/// Truncate to `max` characters with an ellipsis. Character-count based, which
-/// is good enough for a fixed-width sheet and needs no font.
-fn elide(text: &str, max: usize) -> String {
-    let chars: Vec<char> = text.chars().collect();
-    if chars.len() <= max {
-        return text.to_string();
-    }
-    let head: String = chars[..max.saturating_sub(1)].iter().collect();
-    format!("{head}…")
 }
 
 // ---------------------------------------------------------------------------
@@ -8735,7 +8724,7 @@ pub fn draw_open_with(canvas: &Canvas, theme: &Theme, sheet: Rect, data: &OpenWi
         canvas.draw_image_rect(&image, None, dst, &Paint::default());
     }
     let text_x = sheet.left + 84.0;
-    Label::new(elide(&chooser.title, 34))
+    Label::new(otto_kit::typography::ellipsize_chars(&chooser.title, 34))
         .with_style(styles::BODY_EMPHASIZED)
         .with_color(theme.text_primary)
         .centered_on(text_x, sheet.top + 60.0)
@@ -8909,7 +8898,7 @@ pub fn draw_open_with(canvas: &Canvas, theme: &Theme, sheet: Rect, data: &OpenWi
 
     // Why the last try did not work, in place, above the buttons.
     if let Some(error) = chooser.error.as_deref() {
-        Label::new(elide(error, 48))
+        Label::new(otto_kit::typography::ellipsize_chars(error, 48))
             .with_style(styles::CALLOUT)
             .with_color(Color::from_argb(0xFF, 0xD7, 0x3A, 0x2E))
             .centered_on(sheet.left + OPEN_WITH_PAD, sheet.bottom - 60.0)

@@ -667,6 +667,7 @@ files-rename-failed = 无法重命名：{ $error }
 files-new-folder-failed = 无法创建文件夹：{ $error }
 files-open-failed = 无法打开该文件：{ $error }
 files-open-app-broken = 该应用的启动命令有误
+files-open-no-app = 没有已安装的应用能打开此类文件
 files-new-window-failed = 无法打开新窗口：{ $error }
 files-settings-open-failed = 无法打开设置：{ $error }
 

@@ -700,6 +700,7 @@ files-rename-failed = Nie można zmienić nazwy: { $error }
 files-new-folder-failed = Nie można utworzyć folderu: { $error }
 files-open-failed = Nie można otworzyć tego pliku: { $error }
 files-open-app-broken = polecenie uruchamiające aplikację jest błędne
+files-open-no-app = żadna zainstalowana aplikacja nie otwiera tego typu pliku
 files-new-window-failed = Nie można otworzyć nowego okna: { $error }
 files-settings-open-failed = Nie można otworzyć Ustawień: { $error }
 

@@ -11,6 +11,7 @@
 use std::path::{Path, PathBuf};
 
 use otto_kit::preview::document;
+use otto_kit::typography::wrap;
 
 use crate::ask::{Attachment, Said};
 
@@ -492,46 +493,6 @@ fn blank(lines: &mut Vec<Line>) {
     );
 }
 
-/// Greedy word wrap. Line breaks in `text` are kept; a word wider than the
-/// line on its own is broken between characters, because it has nowhere else
-/// to go.
-pub fn wrap(text: &str, width: f32, measure: impl Fn(&str) -> f32) -> Vec<String> {
-    let mut lines = Vec::new();
-    if text.is_empty() {
-        return lines;
-    }
-    for paragraph in text.split('\n') {
-        let mut line = String::new();
-        for word in paragraph.split(' ') {
-            let candidate = if line.is_empty() {
-                word.to_string()
-            } else {
-                format!("{line} {word}")
-            };
-            if measure(&candidate) <= width {
-                line = candidate;
-                continue;
-            }
-            if !line.is_empty() {
-                lines.push(std::mem::take(&mut line));
-            }
-            // The word starts a line of its own, broken if it has to be.
-            for c in word.chars() {
-                let mut next = line.clone();
-                next.push(c);
-                if !line.is_empty() && measure(&next) > width {
-                    lines.push(std::mem::take(&mut line));
-                    line.push(c);
-                } else {
-                    line = next;
-                }
-            }
-        }
-        lines.push(line);
-    }
-    lines
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -539,32 +500,6 @@ mod tests {
     /// One point per character, so widths read as character counts.
     fn chars(text: &str) -> f32 {
         text.chars().count() as f32
-    }
-
-    #[test]
-    fn words_move_to_the_next_line_rather_than_overflow() {
-        assert_eq!(
-            wrap("the quick brown fox", 10.0, chars),
-            ["the quick", "brown fox"]
-        );
-    }
-
-    #[test]
-    fn line_breaks_and_blank_lines_are_kept() {
-        assert_eq!(wrap("one\n\ntwo", 10.0, chars), ["one", "", "two"]);
-    }
-
-    #[test]
-    fn a_word_too_long_for_a_line_is_broken() {
-        assert_eq!(
-            wrap("see abcdefghijkl", 5.0, chars),
-            ["see", "abcde", "fghij", "kl"]
-        );
-    }
-
-    #[test]
-    fn nothing_to_wrap_is_no_lines() {
-        assert!(wrap("", 10.0, chars).is_empty());
     }
 
     /// Each line as its text and how it is drawn, `None` for an answer laid
