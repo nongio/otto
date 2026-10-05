@@ -66,6 +66,7 @@ settings-pane-general = Allgemein
 settings-pane-appearance = Erscheinungsbild
 settings-pane-displays = Monitore
 settings-pane-dock = Dock
+settings-pane-top-bar = Obere Leiste
 settings-pane-tiling = Kacheln
 settings-pane-keyboard = Tastatur
 settings-pane-pointing = Trackpad & Maus
@@ -132,7 +133,11 @@ settings-cursor-theme = Zeigerdesign
 settings-cursor-size = Zeigergröße
 settings-icon-theme = Symboldesign
 
-settings-group-bar-clock = Uhr in der oberen Leiste
+settings-group-app-menu = Programmmenüs
+settings-show-app-menu = Programmmenüs anzeigen
+settings-show-app-menu-detail = Neben dem Namen des aktiven Programms. Programme, die geöffnet werden, während dies aus ist, behalten ihr Menü im eigenen Fenster
+
+settings-group-clock = Uhr
 settings-show-clock = Datum und Uhrzeit anzeigen
 settings-show-clock-detail = Am rechten Ende der oberen Leiste
 settings-clock-format = Format
@@ -952,6 +957,9 @@ bar-otto-menu = Otto
 bar-otto-about = Über Otto
 bar-otto-settings = Einstellungen…
 bar-otto-log-out = Abmelden
+# The menu under the focused application's name in the top bar.
+bar-app-minimize = Minimieren
+bar-app-quit = { $app } beenden
 bar-logout-title = Jetzt abmelden?
 bar-logout-body = Deine Apps werden zuerst gebeten, sich zu schließen, damit Ungespeichertes noch gesichert werden kann.
 
@@ -1012,6 +1020,8 @@ schema-topbar-show-clock-label = Datum und Uhrzeit anzeigen
 schema-topbar-show-clock-description = Die Uhr am rechten Ende der oberen Leiste.
 schema-topbar-clock-format-label = Uhrformat
 schema-topbar-clock-format-description = Wie die obere Leiste Datum und Uhrzeit schreibt, als strftime-Format. Leer folgt der Sprache.
+schema-topbar-show-app-menu-label = Programmmenüs anzeigen
+schema-topbar-show-app-menu-description = Die Menüs des aktiven Programms neben seinem Namen in der oberen Leiste.
 schema-background-color-label = Hintergrundfarbe
 schema-background-color-description = Hintergrundfarbe des Schreibtischs, als Hex-Zeichenfolge.
 schema-background-image-label = Hintergrundbild

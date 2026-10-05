@@ -144,10 +144,13 @@ args = []
 # [desktop]
 # widget = "calendar"
 
-# The top bar's clock. otto-bar reads these from Otto and follows changes live.
-# Settings ▸ Appearance edits them.
+# The top bar. otto-bar reads these from Otto and follows changes live.
+# Settings ▸ Top bar edits them.
 #
 # [topbar]
+# Show the focused application's menus beside its name (default true). Off,
+# applications opened afterwards keep the menu bar in their own window.
+# show_app_menu = true
 # Show the date and time at the right end of the bar (default true).
 # show_clock = true
 # A chrono strftime format (https://docs.rs/chrono/latest/chrono/format/strftime/).

@@ -45,3 +45,6 @@ bar-power-settings = Power Settings…
 
 # Month before day, and a comma after it.
 files-date-modified = { $month } { $day }, { $year } at { $time }
+
+# The menu under the focused application's name in the top bar.
+bar-app-minimize = Minimize

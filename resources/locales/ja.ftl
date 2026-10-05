@@ -66,6 +66,7 @@ settings-pane-general = 一般
 settings-pane-appearance = 外観
 settings-pane-displays = ディスプレイ
 settings-pane-dock = Dock
+settings-pane-top-bar = 上部バー
 settings-pane-tiling = タイル表示
 settings-pane-keyboard = キーボード
 settings-pane-pointing = トラックパッドとマウス
@@ -131,7 +132,11 @@ settings-cursor-theme = カーソルテーマ
 settings-cursor-size = カーソルサイズ
 settings-icon-theme = アイコンテーマ
 
-settings-group-bar-clock = 上部バーの時計
+settings-group-app-menu = アプリケーションメニュー
+settings-show-app-menu = アプリケーションメニューを表示
+settings-show-app-menu-detail = 使用中のアプリ名の横に表示。オフの間に開いたアプリは自分のウインドウにメニューを表示します
+
+settings-group-clock = 時計
 settings-show-clock = 日付と時刻を表示
 settings-show-clock-detail = 上部バーの右端に表示
 settings-clock-format = 表示形式
@@ -927,6 +932,9 @@ bar-otto-menu = Otto
 bar-otto-about = Otto について
 bar-otto-settings = 設定…
 bar-otto-log-out = ログアウト
+# The menu under the focused application's name in the top bar.
+bar-app-minimize = 最小化
+bar-app-quit = { $app } を終了
 bar-logout-title = 今すぐログアウトしますか?
 bar-logout-body = 先にアプリに終了を求めるので、保存していない内容を保存できます。
 
@@ -987,6 +995,8 @@ schema-topbar-show-clock-label = 日付と時刻を表示
 schema-topbar-show-clock-description = 上部バーの右端の時計。
 schema-topbar-clock-format-label = 時計の表示形式
 schema-topbar-clock-format-description = 上部バーに表示する日付と時刻の strftime 形式。空なら言語に従います。
+schema-topbar-show-app-menu-label = アプリケーションメニューを表示
+schema-topbar-show-app-menu-description = 使用中のアプリのメニューを、上部バーのアプリ名の横に表示します。
 schema-background-color-label = 背景色
 schema-background-color-description = デスクトップの背景色。16進文字列で指定します。
 schema-background-image-label = 背景画像

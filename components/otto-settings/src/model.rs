@@ -336,6 +336,7 @@ pub fn panes() -> Vec<Pane> {
         panes::appearance::build(),
         panes::displays::build(),
         panes::dock::build(),
+        panes::top_bar::build(),
         panes::tiling::build(),
         panes::keyboard::build(),
         panes::pointing::build(),
@@ -351,15 +352,15 @@ pub fn panes() -> Vec<Pane> {
 
 /// Where the Search pane sits in [`panes`], so `main.rs` can tell the pane
 /// when it is on screen without building every pane to find out.
-pub const SEARCH_PANE: usize = 11;
+pub const SEARCH_PANE: usize = 12;
 
 /// Where the Privacy pane sits in [`panes`]: it reads the permission store
 /// only while it is on screen.
-pub const PRIVACY_PANE: usize = 10;
+pub const PRIVACY_PANE: usize = 11;
 
 /// Where the Agents pane sits in [`panes`]: it watches its service only while
 /// it is on screen.
-pub const AGENTS_PANE: usize = 12;
+pub const AGENTS_PANE: usize = 13;
 
 pub(crate) fn group(title: impl Into<Cow<'static, str>>, rows: Vec<Row>) -> Group {
     Group {

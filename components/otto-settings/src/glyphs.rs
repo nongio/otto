@@ -27,6 +27,7 @@ pub fn draw(canvas: &Canvas, name: &str, cx: f32, cy: f32, size: f32, color: Col
         "appearance" => appearance(canvas, &paint, color),
         "monitor" => monitor(canvas, &paint),
         "dock" => dock(canvas, &paint),
+        "top_bar" => top_bar(canvas, &paint),
         "tiling" => tiling(canvas, &paint),
         "keyboard" => keyboard(canvas, &paint),
         "pointer" => pointer(canvas, &paint, color),
@@ -94,6 +95,13 @@ fn dock(canvas: &Canvas, paint: &Paint) {
     for x in [-4.0_f32, 0.0, 4.0] {
         canvas.draw_line(Point::new(x, 2.8), Point::new(x, 4.7), paint);
     }
+}
+
+/// A screen with a bar along its top edge: the dock's glyph, turned over.
+fn top_bar(canvas: &Canvas, paint: &Paint) {
+    let screen = Rect::from_ltrb(-7.5, -6.0, 7.5, 6.0);
+    canvas.draw_rrect(RRect::new_rect_xy(screen, 2.0, 2.0), paint);
+    canvas.draw_line(Point::new(-7.5, -2.5), Point::new(7.5, -2.5), paint);
 }
 
 /// Key grid with a spacebar.

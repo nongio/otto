@@ -121,6 +121,9 @@ pub struct TopBarApp {
     open_layout_menu: Option<ContextMenu>,
     /// The Otto menu, hanging from the mark at the left end, while it is open.
     open_otto_menu: Option<ContextMenu>,
+    /// Whether `open_otto_menu` is the application's menu, under its name,
+    /// rather than the Otto menu under the mark.
+    app_name_menu_open: bool,
 }
 
 impl TopBarApp {
@@ -148,6 +151,7 @@ impl TopBarApp {
             open_power_menu: None,
             open_layout_menu: None,
             open_otto_menu: None,
+            app_name_menu_open: false,
         }
     }
 
@@ -212,7 +216,8 @@ impl TopBarApp {
         let qh = AppContext::queue_handle();
 
         let timing = scene.create_timing_function(qh, ());
-        timing.set_spring(0.5, 0.7);
+        // A small settle, not a wobble: the panel resizes on every focus change.
+        timing.set_spring(0.2, 0.0);
         let txn = scene.begin_transaction(qh, ());
         txn.set_duration(0.5);
         txn.set_timing_function(&timing);
@@ -306,31 +311,54 @@ impl TopBarApp {
             self.left.logo_active = false;
             self.redraw_left();
         }
-    }
-
-    /// Open the Otto menu, or close it when it is already open: the same
-    /// toggle for a pointer and for a screen reader.
-    fn toggle_otto_menu(&mut self) {
-        let was_open = self.open_otto_menu.is_some();
-        self.close_app_menu();
-        self.close_otto_menu();
-        if !was_open {
-            self.show_otto_menu();
+        if self.app_name_menu_open {
+            self.app_name_menu_open = false;
+            self.left.menu_state.set_active(None);
+            self.redraw_left();
         }
     }
 
-    /// Show the Otto menu under the mark: About, Settings, Log Out.
-    fn show_otto_menu(&mut self) {
+    /// Open the Otto menu (`for_app` false) or the application's menu under
+    /// its name, or close it when that one is already open: the same toggle
+    /// for a pointer and for a screen reader.
+    fn toggle_otto_menu(&mut self, for_app: bool) {
+        let was_open = self.open_otto_menu.is_some() && self.app_name_menu_open == for_app;
+        self.close_app_menu();
+        self.close_otto_menu();
+        if !was_open {
+            self.show_otto_menu(for_app);
+        }
+    }
+
+    /// Show the Otto menu under the mark (About, Settings, Log Out), or the
+    /// focused application's under its name (Minimize, Quit).
+    fn show_otto_menu(&mut self, for_app: bool) {
         let Some(ref surface) = self.left_surface else {
             return;
         };
 
-        let menu = ContextMenu::new(otto_menu_items()).on_item_click(|action_id| match action_id {
-            "about" => open_settings(&["--pane", "about"]),
-            "settings" => open_settings(&[]),
-            "logout" => crate::logout::confirm_and_log_out(),
-            _ => {}
-        });
+        let menu = if for_app {
+            // Aimed at the window focused now: once this menu is open the
+            // bar holds the keyboard. No window, no menu.
+            let Some(con_id) = crate::appmenu::focused_con_id() else {
+                return;
+            };
+            ContextMenu::new(app_name_menu_items(&self.left.app_name)).on_item_click(
+                move |action_id| match action_id {
+                    "minimize" | "quit" => crate::keyboard_layout::run_shell_command(format!(
+                        "[con_id={con_id}] {action_id}"
+                    )),
+                    _ => {}
+                },
+            )
+        } else {
+            ContextMenu::new(otto_menu_items()).on_item_click(|action_id| match action_id {
+                "about" => open_settings(&["--pane", "about"]),
+                "settings" => open_settings(&[]),
+                "logout" => crate::logout::confirm_and_log_out(),
+                _ => {}
+            })
+        };
 
         let Ok(positioner) = XdgPositioner::new(AppContext::xdg_shell_state()) else {
             return;
@@ -344,7 +372,12 @@ impl TopBarApp {
                 &style,
             );
         positioner.set_size(menu_w as i32, menu_h as i32);
-        let (ix, iy, iw, ih) = self.left.logo_rect();
+        let (ix, iy, iw, ih) = if for_app {
+            let (left, width) = self.left.menu_item_rects()[0];
+            (left, 0.0, width, self.left.height)
+        } else {
+            self.left.logo_rect()
+        };
         positioner.set_anchor_rect(ix as i32, iy as i32, iw as i32, ih as i32);
         positioner.set_anchor(xdg_positioner::Anchor::BottomLeft);
         positioner.set_gravity(xdg_positioner::Gravity::BottomRight);
@@ -359,7 +392,12 @@ impl TopBarApp {
         menu.show_for_layer(&surface.layer_surface(), &positioner);
         surface.set_keyboard_interactivity(KeyboardInteractivity::Exclusive);
         self.open_otto_menu = Some(menu);
-        self.left.logo_active = true;
+        if for_app {
+            self.app_name_menu_open = true;
+            self.left.menu_state.set_active(Some(0));
+        } else {
+            self.left.logo_active = true;
+        }
         self.redraw_left();
     }
 
@@ -793,17 +831,58 @@ impl TopBarApp {
     fn handle_left_click(&mut self, event: &PointerEvent) {
         let x = event.position.0 as f32;
         if self.left.logo_at(x) {
-            self.toggle_otto_menu();
+            self.toggle_otto_menu(false);
             return;
         }
-        self.close_otto_menu();
         let hit = self.left.menu_item_at(x);
         let Some(index) = hit else {
+            self.close_otto_menu();
             self.close_app_menu();
             return;
         };
 
+        // `open_menu_at` closes whatever else is open itself, after it has
+        // seen whether this item's own menu was the open one: closing first
+        // would make a second click on the app's name open it again.
         self.open_menu_at(index);
+    }
+
+    /// Which left-panel item's menu is open or on its way: `None` for the
+    /// Otto mark, `Some(index)` for a menu bar item (0 is the app's name).
+    fn open_left_item(&self) -> Option<Option<usize>> {
+        if self.open_otto_menu.is_some() {
+            return Some(self.app_name_menu_open.then_some(0));
+        }
+        let open = self
+            .open_app_menu
+            .as_ref()
+            .map(|m| m.item_index)
+            .or(self.pending_app_menu_index)?;
+        Some(Some(open + 1))
+    }
+
+    /// The pointer moved over the left panel. While one of its menus is
+    /// open, passing over another item opens that one instead, as a menu bar
+    /// does: one click opens the bar, and the pointer walks it from there.
+    fn handle_left_motion(&mut self, x: f32) {
+        let Some(open) = self.open_left_item() else {
+            return;
+        };
+        let under = if self.left.logo_at(x) {
+            None
+        } else {
+            match self.left.menu_item_at(x) {
+                Some(index) => Some(index),
+                None => return,
+            }
+        };
+        if under == open {
+            return;
+        }
+        match under {
+            None => self.toggle_otto_menu(false),
+            Some(index) => self.open_menu_at(index),
+        }
     }
 
     /// Open (or close) the menu at `index` on the left panel.
@@ -812,12 +891,12 @@ impl TopBarApp {
     /// pointer's are the same thing, down to the toggle when the menu already
     /// open is clicked again.
     fn open_menu_at(&mut self, index: usize) {
-        self.close_otto_menu();
-        // Index 0 is the app name, which has no menu of its own.
+        // Index 0 is the app name: its menu is Otto's, not the app's.
         if index == 0 {
-            self.close_app_menu();
+            self.toggle_otto_menu(true);
             return;
         }
+        self.close_otto_menu();
 
         // Menu item indices are 1-based in the left panel MenuBar;
         // the dbusmenu top-level item index is (index - 1).
@@ -1064,7 +1143,9 @@ impl App for TopBarApp {
                         true,
                         |node| {
                             node.set_label(otto_kit::t!("bar-otto-menu"));
-                            node.set_expanded(self.open_otto_menu.is_some());
+                            node.set_expanded(
+                                self.open_otto_menu.is_some() && !self.app_name_menu_open,
+                            );
                             node.set_has_popup(otto_kit::accessibility::HasPopup::Menu);
                             node.add_action(Action::Click);
                         },
@@ -1207,7 +1288,7 @@ impl App for TopBarApp {
 
         if left {
             if node == otto_kit::accessibility::node_id(OTTO_MENU) {
-                self.toggle_otto_menu();
+                self.toggle_otto_menu(false);
                 return;
             }
             let count = self.left.menu_state.items().len();
@@ -1387,9 +1468,7 @@ impl App for TopBarApp {
             self.close_app_menu();
             self.left.set_app_name(&name);
             self.update_left_panel(true);
-
-            // Request the app menu for the newly focused app
-            crate::appmenu::request_menu_for_app(&focused.app_id, 0);
+            // The menu itself follows focus on org.otto.Shell1 (appmenu.rs).
         }
 
         // Check if app menu was fetched
@@ -1407,10 +1486,17 @@ impl App for TopBarApp {
                     .menu_state
                     .set_active(Some(pending.item_index + 1));
                 self.show_app_submenu(pending);
+                // close_app_menu drew the bar with nothing active; draw the
+                // open title's highlight.
+                self.redraw_left();
             } else {
                 // Menu layout itself changed — update left panel items
-                self.left
-                    .set_app_menu(crate::appmenu::current_menu().as_ref());
+                let menu = crate::appmenu::current_menu();
+                if menu.is_none() {
+                    // Gone, or turned off in Settings: nothing to keep open.
+                    self.close_app_menu();
+                }
+                self.left.set_app_menu(menu.as_ref());
                 self.update_left_panel(true);
             }
         }
@@ -1427,6 +1513,7 @@ impl App for TopBarApp {
         // Clear left panel active highlight if no app menu popup is open
         if self.open_app_menu.is_none()
             && self.pending_app_menu_index.is_none()
+            && !self.app_name_menu_open
             && self.left.menu_state.active_index().is_some()
         {
             self.left.menu_state.set_active(None);
@@ -1456,6 +1543,9 @@ impl App for TopBarApp {
                 .map(|w| event.surface == *w)
                 .unwrap_or(false);
 
+            if on_left && matches!(event.kind, PointerEventKind::Motion { .. }) {
+                self.handle_left_motion(event.position.0 as f32);
+            }
             if let PointerEventKind::Press { button, .. } = event.kind {
                 if on_right {
                     match button {
@@ -1638,6 +1728,21 @@ fn otto_menu_items() -> Vec<KitMenuItem> {
         KitMenuItem::action(otto_kit::t!("bar-otto-log-out")).with_action_id("logout".to_string()),
     );
     items
+}
+
+/// The menu under the application's name: what Otto does with the focused
+/// window and its application, whatever the application exports.
+fn app_name_menu_items(app_name: &str) -> Vec<KitMenuItem> {
+    vec![
+        KitMenuItem::action(otto_kit::t!("bar-app-minimize"))
+            .with_action_id("minimize".to_string()),
+        KitMenuItem::separator(),
+        KitMenuItem::action(otto_kit::t_owned!(
+            "bar-app-quit",
+            app = app_name.to_string()
+        ))
+        .with_action_id("quit".to_string()),
+    ]
 }
 
 /// The keyboard layout menu's items: every layout by its full name, the

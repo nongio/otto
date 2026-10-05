@@ -1668,7 +1668,7 @@ impl Default for DesktopConfig {
     }
 }
 
-/// The top bar's clock.
+/// The top bar's application menus and clock.
 ///
 /// The compositor does not draw the bar: `otto-bar` reads these over
 /// `org.otto.Settings` and follows its `Changed` signal, so they apply live
@@ -1676,6 +1676,10 @@ impl Default for DesktopConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct TopbarConfig {
+    /// Show the focused application's menus beside its name. Off, the bar
+    /// also stops serving the menu registrar, so applications keep their menu
+    /// bar in their own window.
+    pub show_app_menu: bool,
     /// Show the date and time at the bar's right edge.
     pub show_clock: bool,
     /// A chrono strftime format for the clock. Empty follows the language's
@@ -1686,6 +1690,7 @@ pub struct TopbarConfig {
 impl Default for TopbarConfig {
     fn default() -> Self {
         Self {
+            show_app_menu: true,
             show_clock: true,
             clock_format: String::new(),
         }

@@ -99,6 +99,20 @@ pub async fn fetch_menu(
     Ok(MenuLayout { items })
 }
 
+/// Tell the app submenu `id` is about to open, so it can fill it in. Errors
+/// are ignored: many apps do not care, and the layout is fetched either way.
+pub async fn about_to_show(conn: &Connection, service: &str, menu_path: &str, id: i32) {
+    let Ok(builder) = DBusMenuProxy::builder(conn)
+        .destination(service)
+        .and_then(|b| b.path(menu_path))
+    else {
+        return;
+    };
+    if let Ok(proxy) = builder.build().await {
+        let _ = proxy.about_to_show(id).await;
+    }
+}
+
 /// Activate a menu item by sending a "clicked" event.
 ///
 /// Because some apps (e.g. nm-applet) regenerate their menu tree frequently,

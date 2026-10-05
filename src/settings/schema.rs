@@ -532,6 +532,13 @@ pub static SETTINGS: &[SettingSpec] = &[
     },
     // ---- Top bar ---------------------------------------------------------
     spec(
+        "topbar.show_app_menu",
+        Bool,
+        "Show application menus",
+        "The menus of the application in use, beside its name in the top bar.",
+        Live,
+    ),
+    spec(
         "topbar.show_clock",
         Bool,
         "Show date and time",

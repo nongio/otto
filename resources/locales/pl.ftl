@@ -65,6 +65,7 @@ settings-pane-general = Ogólne
 settings-pane-appearance = Wygląd
 settings-pane-displays = Ekrany
 settings-pane-dock = Dock
+settings-pane-top-bar = Górny pasek
 settings-pane-tiling = Kafelki
 settings-pane-keyboard = Klawiatura
 settings-pane-pointing = Gładzik i mysz
@@ -131,7 +132,11 @@ settings-cursor-theme = Motyw kursora
 settings-cursor-size = Rozmiar kursora
 settings-icon-theme = Motyw ikon
 
-settings-group-bar-clock = Zegar na górnym pasku
+settings-group-app-menu = Menu aplikacji
+settings-show-app-menu = Pokazuj menu aplikacji
+settings-show-app-menu-detail = Obok nazwy aktywnej aplikacji. Aplikacje otwarte, gdy to jest wyłączone, zachowują menu we własnym oknie
+
+settings-group-clock = Zegar
 settings-show-clock = Pokazuj datę i godzinę
 settings-show-clock-detail = Na prawym końcu górnego paska
 settings-clock-format = Format
@@ -1004,6 +1009,9 @@ bar-otto-menu = Otto
 bar-otto-about = O Otto
 bar-otto-settings = Ustawienia…
 bar-otto-log-out = Wyloguj
+# The menu under the focused application's name in the top bar.
+bar-app-minimize = Minimalizuj
+bar-app-quit = Zakończ { $app }
 bar-logout-title = Wylogować się teraz?
 bar-logout-body = Aplikacje zostaną najpierw poproszone o zamknięcie, więc niezapisane zmiany można jeszcze zapisać.
 
@@ -1064,6 +1072,8 @@ schema-topbar-show-clock-label = Pokazuj datę i godzinę
 schema-topbar-show-clock-description = Zegar na prawym końcu górnego paska.
 schema-topbar-clock-format-label = Format zegara
 schema-topbar-clock-format-description = Jak górny pasek zapisuje datę i godzinę, w formacie strftime. Puste — według języka.
+schema-topbar-show-app-menu-label = Pokazuj menu aplikacji
+schema-topbar-show-app-menu-description = Menu aktywnej aplikacji obok jej nazwy na górnym pasku.
 schema-background-color-label = Kolor tła
 schema-background-color-description = Kolor tła pulpitu, jako ciąg szesnastkowy.
 schema-background-image-label = Obraz tła

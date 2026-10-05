@@ -8,6 +8,7 @@ mod dbusmenu;
 mod keyboard_layout;
 mod logout;
 mod power;
+mod settings;
 mod tray;
 
 use app::TopBarApp;

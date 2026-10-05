@@ -538,6 +538,7 @@ pub mod fractional_scale_handler;
 pub mod frame;
 pub mod gamma_control;
 pub mod input_method_handler;
+pub mod kde_appmenu;
 pub mod logout;
 pub mod screencopy;
 pub mod seat_handler;
@@ -687,6 +688,19 @@ smithay::reexports::wayland_server::delegate_dispatch!(@<BackendData: Backend + 
 smithay::reexports::wayland_server::delegate_dispatch!(@<BackendData: Backend + 'static> Otto<BackendData>: [
     gamma_control::gen::zwlr_gamma_control_v1::ZwlrGammaControlV1: gamma_control::GammaControlState
 ] => gamma_control::GammaControlManagerState);
+
+// org_kde_kwin_appmenu: where a Wayland-native app's global menu lives
+smithay::reexports::wayland_server::delegate_global_dispatch!(@<BackendData: Backend + 'static> Otto<BackendData>: [
+    kde_appmenu::gen::org_kde_kwin_appmenu_manager::OrgKdeKwinAppmenuManager: ()
+] => kde_appmenu::KdeAppMenuState);
+
+smithay::reexports::wayland_server::delegate_dispatch!(@<BackendData: Backend + 'static> Otto<BackendData>: [
+    kde_appmenu::gen::org_kde_kwin_appmenu_manager::OrgKdeKwinAppmenuManager: ()
+] => kde_appmenu::KdeAppMenuState);
+
+smithay::reexports::wayland_server::delegate_dispatch!(@<BackendData: Backend + 'static> Otto<BackendData>: [
+    kde_appmenu::gen::org_kde_kwin_appmenu::OrgKdeKwinAppmenu: smithay::reexports::wayland_server::protocol::wl_surface::WlSurface
+] => kde_appmenu::KdeAppMenuState);
 
 // otto_dock protocol delegates
 smithay::reexports::wayland_server::delegate_global_dispatch!(@<BackendData: Backend + 'static> Otto<BackendData>: [
@@ -976,6 +990,12 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         // Register gamma control global
         dh.create_global::<Self, gamma_control::gen::zwlr_gamma_control_manager_v1::ZwlrGammaControlManagerV1, _>(
             1,
+            (),
+        );
+
+        // Lets a Qt/KDE app on Wayland point otto-bar at its global menu.
+        dh.create_global::<Self, kde_appmenu::gen::org_kde_kwin_appmenu_manager::OrgKdeKwinAppmenuManager, _>(
+            2,
             (),
         );
 

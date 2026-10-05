@@ -66,6 +66,7 @@ settings-pane-general = Geral
 settings-pane-appearance = Aparência
 settings-pane-displays = Monitores
 settings-pane-dock = Dock
+settings-pane-top-bar = Barra superior
 settings-pane-tiling = Lado a lado
 settings-pane-keyboard = Teclado
 settings-pane-pointing = Trackpad e mouse
@@ -132,7 +133,11 @@ settings-cursor-theme = Tema do cursor
 settings-cursor-size = Tamanho do cursor
 settings-icon-theme = Tema de ícones
 
-settings-group-bar-clock = Relógio da barra superior
+settings-group-app-menu = Menus dos aplicativos
+settings-show-app-menu = Mostrar menus dos aplicativos
+settings-show-app-menu-detail = Ao lado do nome do aplicativo em uso. Aplicativos abertos enquanto isto está desligado mantêm o menu na própria janela
+
+settings-group-clock = Relógio
 settings-show-clock = Mostrar data e hora
 settings-show-clock-detail = Na ponta direita da barra superior
 settings-clock-format = Formato
@@ -965,6 +970,9 @@ bar-otto-menu = Otto
 bar-otto-about = Sobre o Otto
 bar-otto-settings = Configurações…
 bar-otto-log-out = Encerrar sessão
+# The menu under the focused application's name in the top bar.
+bar-app-minimize = Minimizar
+bar-app-quit = Encerrar { $app }
 bar-logout-title = Encerrar sessão agora?
 bar-logout-body = Primeiro seus apps serão solicitados a fechar, para que nada não salvo se perca.
 
@@ -1025,6 +1033,8 @@ schema-topbar-show-clock-label = Mostrar data e hora
 schema-topbar-show-clock-description = O relógio na ponta direita da barra superior.
 schema-topbar-clock-format-label = Formato do relógio
 schema-topbar-clock-format-description = Como a barra superior escreve a data e a hora, em formato strftime. Vazio segue o idioma.
+schema-topbar-show-app-menu-label = Mostrar menus dos aplicativos
+schema-topbar-show-app-menu-description = Os menus do aplicativo em uso, ao lado do nome dele na barra superior.
 schema-background-color-label = Cor do plano de fundo
 schema-background-color-description = Cor do plano de fundo da área de trabalho, como uma string hexadecimal.
 schema-background-image-label = Imagem do plano de fundo

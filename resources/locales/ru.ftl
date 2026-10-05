@@ -65,6 +65,7 @@ settings-pane-general = Основные
 settings-pane-appearance = Оформление
 settings-pane-displays = Дисплеи
 settings-pane-dock = Dock
+settings-pane-top-bar = Верхняя панель
 settings-pane-tiling = Мозаика
 settings-pane-keyboard = Клавиатура
 settings-pane-pointing = Трекпад и мышь
@@ -131,7 +132,11 @@ settings-cursor-theme = Тема курсора
 settings-cursor-size = Размер курсора
 settings-icon-theme = Тема значков
 
-settings-group-bar-clock = Часы на верхней панели
+settings-group-app-menu = Меню приложений
+settings-show-app-menu = Показывать меню приложений
+settings-show-app-menu-detail = Рядом с названием активного приложения. Приложения, открытые, пока это выключено, оставляют меню в своём окне
+
+settings-group-clock = Часы
 settings-show-clock = Показывать дату и время
 settings-show-clock-detail = У правого края верхней панели
 settings-clock-format = Формат
@@ -998,6 +1003,9 @@ bar-otto-menu = Otto
 bar-otto-about = Об Otto
 bar-otto-settings = Настройки…
 bar-otto-log-out = Выйти
+# The menu under the focused application's name in the top bar.
+bar-app-minimize = Свернуть
+bar-app-quit = Завершить { $app }
 bar-logout-title = Выйти сейчас?
 bar-logout-body = Сначала приложения получат запрос на закрытие, чтобы несохранённое можно было сохранить.
 
@@ -1057,6 +1065,8 @@ schema-topbar-show-clock-label = Показывать дату и время
 schema-topbar-show-clock-description = Часы у правого края верхней панели.
 schema-topbar-clock-format-label = Формат часов
 schema-topbar-clock-format-description = Как верхняя панель пишет дату и время, в формате strftime. Пусто — по языку.
+schema-topbar-show-app-menu-label = Показывать меню приложений
+schema-topbar-show-app-menu-description = Меню активного приложения рядом с его названием на верхней панели.
 schema-background-color-label = Цвет фона
 schema-background-color-description = Цвет фона рабочего стола в виде шестнадцатеричной строки.
 schema-background-image-label = Изображение фона

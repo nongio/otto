@@ -33,12 +33,17 @@ impl MenuBarRenderer {
         canvas.draw_rect(Rect::new(0.0, 0.0, width, style.height), &bg_paint);
 
         let font = typography::get_font_with_fallback("Inter", style.font_style(), style.font_size);
+        let first_font = style.first_item_font();
 
         let mut item_bounds = Vec::new();
         let mut x_offset = style.bar_padding_horizontal;
 
         for (index, item) in state.items().iter().enumerate() {
-            let content_width = style.item_content_width(item, &font);
+            let font = match &first_font {
+                Some(first) if index == 0 => first,
+                _ => &font,
+            };
+            let content_width = style.item_content_width(item, font);
             let item_width = style.item_width(content_width);
 
             let item_rect = Rect::new(x_offset, 0.0, x_offset + item_width, style.height);
@@ -75,7 +80,7 @@ impl MenuBarRenderer {
                 } else {
                     style.text_color
                 };
-                Self::draw_item_text(canvas, label, cx, &font, style, text_color);
+                Self::draw_item_text(canvas, label, cx, font, style, text_color);
             }
 
             item_bounds.push(ItemBounds {

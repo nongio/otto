@@ -65,6 +65,7 @@ settings-pane-general = 通用
 settings-pane-appearance = 外观
 settings-pane-displays = 显示器
 settings-pane-dock = Dock
+settings-pane-top-bar = 顶部栏
 settings-pane-tiling = 平铺
 settings-pane-keyboard = 键盘
 settings-pane-pointing = 触控板与鼠标
@@ -131,7 +132,11 @@ settings-cursor-theme = 光标主题
 settings-cursor-size = 光标大小
 settings-icon-theme = 图标主题
 
-settings-group-bar-clock = 顶部栏时钟
+settings-group-app-menu = 应用程序菜单
+settings-show-app-menu = 显示应用程序菜单
+settings-show-app-menu-detail = 位于当前应用名称旁边。关闭期间打开的应用会在自己的窗口中保留菜单
+
+settings-group-clock = 时钟
 settings-show-clock = 显示日期和时间
 settings-show-clock-detail = 位于顶部栏的右端
 settings-clock-format = 格式
@@ -930,6 +935,9 @@ bar-otto-menu = Otto
 bar-otto-about = 关于 Otto
 bar-otto-settings = 设置…
 bar-otto-log-out = 注销
+# The menu under the focused application's name in the top bar.
+bar-app-minimize = 最小化
+bar-app-quit = 退出 { $app }
 bar-logout-title = 现在注销?
 bar-logout-body = 会先请各个应用关闭,让未保存的内容有机会保存。
 
@@ -990,6 +998,8 @@ schema-topbar-show-clock-label = 显示日期和时间
 schema-topbar-show-clock-description = 顶部栏右端的时钟。
 schema-topbar-clock-format-label = 时钟格式
 schema-topbar-clock-format-description = 顶部栏显示日期和时间所用的 strftime 格式。留空则跟随语言。
+schema-topbar-show-app-menu-label = 显示应用程序菜单
+schema-topbar-show-app-menu-description = 当前应用的菜单，显示在顶部栏中其名称旁边。
 schema-background-color-label = 背景颜色
 schema-background-color-description = 桌面背景颜色，以十六进制字符串表示。
 schema-background-image-label = 背景图片
