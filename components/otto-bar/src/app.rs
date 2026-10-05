@@ -834,14 +834,55 @@ impl TopBarApp {
             self.toggle_otto_menu(false);
             return;
         }
-        self.close_otto_menu();
         let hit = self.left.menu_item_at(x);
         let Some(index) = hit else {
+            self.close_otto_menu();
             self.close_app_menu();
             return;
         };
 
+        // `open_menu_at` closes whatever else is open itself, after it has
+        // seen whether this item's own menu was the open one: closing first
+        // would make a second click on the app's name open it again.
         self.open_menu_at(index);
+    }
+
+    /// Which left-panel item's menu is open or on its way: `None` for the
+    /// Otto mark, `Some(index)` for a menu bar item (0 is the app's name).
+    fn open_left_item(&self) -> Option<Option<usize>> {
+        if self.open_otto_menu.is_some() {
+            return Some(self.app_name_menu_open.then_some(0));
+        }
+        let open = self
+            .open_app_menu
+            .as_ref()
+            .map(|m| m.item_index)
+            .or(self.pending_app_menu_index)?;
+        Some(Some(open + 1))
+    }
+
+    /// The pointer moved over the left panel. While one of its menus is
+    /// open, passing over another item opens that one instead, as a menu bar
+    /// does: one click opens the bar, and the pointer walks it from there.
+    fn handle_left_motion(&mut self, x: f32) {
+        let Some(open) = self.open_left_item() else {
+            return;
+        };
+        let under = if self.left.logo_at(x) {
+            None
+        } else {
+            match self.left.menu_item_at(x) {
+                Some(index) => Some(index),
+                None => return,
+            }
+        };
+        if under == open {
+            return;
+        }
+        match under {
+            None => self.toggle_otto_menu(false),
+            Some(index) => self.open_menu_at(index),
+        }
     }
 
     /// Open (or close) the menu at `index` on the left panel.
@@ -1502,6 +1543,9 @@ impl App for TopBarApp {
                 .map(|w| event.surface == *w)
                 .unwrap_or(false);
 
+            if on_left && matches!(event.kind, PointerEventKind::Motion { .. }) {
+                self.handle_left_motion(event.position.0 as f32);
+            }
             if let PointerEventKind::Press { button, .. } = event.kind {
                 if on_right {
                     match button {
