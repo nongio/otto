@@ -172,7 +172,11 @@ otto-kit, so the portal and otto-agents need not link Skia): `xdg`, `dbus`,
 - [x] **Per-frame repaint/throttle step copied into every backend and
   drifted** (`src/winit.rs:705-780`, `src/x11.rs:465-510`,
   `src/udev/render.rs:955-995,3146-3180`, `src/headless.rs:2184`). One
-  `Otto::frame_done(output, states, opts)`. **M** Fixed in #268.
+  `Otto::frame_done(output, states, opts)`. **M** Fixed in #268 for winit,
+  X11 and udev.
+  - *Headless still classifies by hand (`window_throttle_states` in
+    `src/headless.rs`): no occlusion pass, expose read from show-all only.
+    `FramePacing::classify` would change what its tests see, so it stays.*
 - [ ] **Giant functions**: `render_surface` 1,544 lines
   (`src/udev/render.rs:361`), `render_output_frame` 772, `run_udev` 700,
   `update_backdrop_and_upper_planes` 678, `run_winit` 632, surface-style

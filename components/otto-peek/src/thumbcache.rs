@@ -7,8 +7,8 @@
 //! cache before scheduling any work of our own is that the first paint of a
 //! photo folder costs no decoding at all.
 //!
-//! The standard is small enough to implement directly, which is why there is
-//! no dependency here:
+//! The standard is small enough to implement directly, with only the `md5`
+//! and `png` crates for the hash and the file format:
 //!
 //! * The **name** of a thumbnail is the MD5 of the file's canonical URI —
 //!   `file:///home/…`, percent-encoded — in lowercase hex, plus `.png`. The

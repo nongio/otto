@@ -1882,8 +1882,11 @@ impl HeadlessHandle {
 
     /// Frame-callback throttle state of every mapped window, keyed by title.
     ///
-    /// Classified exactly as the udev render loop does, screencast streams
-    /// included — a captured window is `Captured` no matter what covers it.
+    /// Classified with the same window rules as the udev render loop,
+    /// screencast streams included — a captured window is `Captured` no
+    /// matter what covers it. Unlike `FramePacing::classify`, there is no
+    /// occlusion pass (no window is ever `Occluded` here) and only an open
+    /// expose, not a transition or show-desktop, counts as expose.
     pub fn window_throttle_states(
         &self,
     ) -> std::collections::HashMap<String, crate::state::window_throttle::WindowThrottleState> {

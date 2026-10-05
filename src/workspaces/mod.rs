@@ -5996,13 +5996,15 @@ impl Workspaces {
             .unwrap_or_default()
     }
 
-    /// Replace the scanout window set: hides `content_layer` for new entrants,
-    /// unhides it for departures. Idempotent. The caller must re-import any
-    /// departing window's buffer (via `update_window_view`) *after* this call
-    /// so the unhidden `content_layer` shows the current frame, not a stale one.
+    /// Update one output's desired scanout set and apply the union of all
     /// outputs' sets. Each CRTC computes its own candidates; applying them
     /// directly to the global set made two outputs demote each other's
     /// promoted windows every frame.
+    ///
+    /// Applying the union hides `content_layer` for new entrants and unhides
+    /// it for departures. Idempotent. The caller must re-import any departing
+    /// window's buffer (via `update_window_view`) *after* this call so the
+    /// unhidden `content_layer` shows the current frame, not a stale one.
     pub fn set_scanout_windows_for_output(&self, output_name: &str, ids: &[ObjectId]) {
         let union: HashSet<ObjectId> = {
             let mut per_output = self.scanout_windows_per_output.write().unwrap();
