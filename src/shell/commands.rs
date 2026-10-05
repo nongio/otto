@@ -18,6 +18,7 @@ use smithay::reexports::wayland_server::backend::ObjectId;
 use smithay::wayland::shell::xdg::XdgShellHandler;
 
 use crate::config::Config;
+use crate::shell::WindowElement;
 use crate::state::{Backend, Otto};
 use crate::workspaces::tiling::command::{
     self, Amount, AxisArg, Command, Criteria, GapScope, GapTarget, Toggle, WindowFacts,
@@ -79,6 +80,16 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             Command::Fullscreen => self.command_fullscreen(),
             Command::Kill => {
                 self.close_focused_window();
+                Ok(())
+            }
+            Command::Minimize(criteria) => {
+                let window = self.command_target(criteria.as_ref())?;
+                self.minimize_window_element(&window);
+                Ok(())
+            }
+            Command::Quit(criteria) => {
+                let window = self.command_target(criteria.as_ref())?;
+                self.quit_app_of(&window);
                 Ok(())
             }
             Command::Exit => {
@@ -163,8 +174,14 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
     /// Several matches take the first in window order rather than guessing;
     /// a narrower criteria is the way to reach the others.
     fn command_focus_window(&mut self, criteria: &Criteria) -> CommandResult {
-        let found = self
-            .workspaces
+        let id = self.window_matching(criteria)?.id();
+        self.activate_window(&id);
+        Ok(())
+    }
+
+    /// The first window `criteria` matches.
+    fn window_matching(&self, criteria: &Criteria) -> Result<WindowElement, String> {
+        self.workspaces
             .windows_map
             .iter()
             .find(|(id, window)| {
@@ -175,13 +192,19 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                     pid: window.client_pid(&self.display_handle),
                 })
             })
-            .map(|(_, window)| window.id());
-        match found {
-            Some(id) => {
-                self.activate_window(&id);
-                Ok(())
-            }
-            None => Err("no window matches".to_string()),
+            .map(|(_, window)| window.clone())
+            .ok_or_else(|| "no window matches".to_string())
+    }
+
+    /// The window a command acts on: the one its criteria matches, else the
+    /// focused one. otto-bar names the window, since its own menu holds the
+    /// keyboard while the command is chosen.
+    fn command_target(&self, criteria: Option<&Criteria>) -> Result<WindowElement, String> {
+        match criteria {
+            Some(criteria) => self.window_matching(criteria),
+            None => self
+                .focused_window()
+                .ok_or_else(|| "no window has focus".to_string()),
         }
     }
 

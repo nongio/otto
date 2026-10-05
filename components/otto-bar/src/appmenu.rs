@@ -74,6 +74,8 @@ struct Registration {
 /// What identifies the focused window's menu.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 struct FocusedWindow {
+    /// The window's `id` in `GetTree`, which commands address it by.
+    con_id: Option<u64>,
     app_id: String,
     pid: Option<u32>,
     x11_window: Option<u32>,
@@ -99,6 +101,7 @@ impl FocusedWindow {
             ))
         });
         Some(Self {
+            con_id: node.get("id").and_then(|v| v.as_u64()),
             app_id: node
                 .get("app_id")
                 .and_then(|v| v.as_str())
@@ -152,6 +155,13 @@ pub struct AppMenu {
 /// Read the generation counter.
 pub fn generation() -> u64 {
     MENU_GENERATION.load(Ordering::Relaxed)
+}
+
+/// The focused window's `id`, for a command aimed at it (`[con_id=…] quit`):
+/// once the bar's own menu is open the bar holds the keyboard, so the
+/// compositor's own idea of the focused window is no longer that window.
+pub fn focused_con_id() -> Option<u64> {
+    FOCUSED.lock().unwrap().as_ref().and_then(|f| f.con_id)
 }
 
 /// Take the current menu for rendering.

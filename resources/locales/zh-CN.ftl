@@ -935,6 +935,9 @@ bar-otto-menu = Otto
 bar-otto-about = 关于 Otto
 bar-otto-settings = 设置…
 bar-otto-log-out = 注销
+# The menu under the focused application's name in the top bar.
+bar-app-minimize = 最小化
+bar-app-quit = 退出 { $app }
 bar-logout-title = 现在注销?
 bar-logout-body = 会先请各个应用关闭,让未保存的内容有机会保存。
 

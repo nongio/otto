@@ -57,6 +57,11 @@ Menu items support labels, icons, keyboard-shortcut hints, separators,
 checkboxes, radio groups and arbitrarily nested submenus. Disabled items are
 dimmed and inert.
 
+Click the application's name for Otto's own menu for it: **Minimise** puts
+the window away in the dock, and **Quit ‹App›** closes all of the
+application's windows, as Quit in the dock does. It is there whether or not
+the application has menus of its own.
+
 Prefer menus in the window? Turn off **Settings ▸ Top bar ▸ Show application
 menus**, or set `show_app_menu = false` under `[topbar]` in
 `~/.config/otto/config.toml`. The bar then shows just the application's name,

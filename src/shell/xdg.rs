@@ -1284,37 +1284,8 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
                 .contains(xdg_toplevel::WmCapabilities::Minimize)
         }) {
             let id = surface.wl_surface().id();
-            let Some(window) = self.workspaces.get_window_for_surface(&id).cloned() else {
-                surface.send_configure();
-                return;
-            };
-
-            // Ignore duplicate minimize requests (e.g. rapid clicks while the
-            // genie animation is still running).
-            if window.is_minimised() {
-                surface.send_configure();
-                return;
-            }
-
-            let Some(current_element_geometry) = self.workspaces.element_geometry(&window) else {
-                surface.send_configure();
-                return;
-            };
-
-            if let Some(mut view) = self.workspaces.get_window_view(&id) {
-                view.unmaximised_rect = current_element_geometry;
-                self.workspaces.set_window_view(&id, view);
-            }
-
-            // Leave scanout and re-import the current buffer BEFORE the genie
-            // starts: the spawned animation task captures layer bounds and
-            // renders scene content that promotion blanked.
-            self.demote_scanout_window(&window);
-            let next_focus = self.workspaces.minimize_window(&window);
-
-            match next_focus {
-                Some(wid) => self.set_keyboard_focus_on_surface(&wid),
-                None => self.clear_keyboard_focus(),
+            if let Some(window) = self.workspaces.get_window_for_surface(&id).cloned() {
+                self.minimize_window_element(&window);
             }
         }
 

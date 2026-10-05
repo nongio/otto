@@ -188,14 +188,18 @@ impl LeftPanel {
     }
 
     /// Set the app name shown in the left panel.
+    ///
+    /// The menu titles after it are kept: focus and the focused window's menu
+    /// arrive separately, in either order, and whichever lands second must
+    /// not leave the other's half stale.
     pub fn set_app_name(&mut self, name: &str) {
-        // Preserve any existing menu items after the app name
-        let had_menu = self.menu_state.items().len() > 1;
         self.app_name = name.to_string();
-        if !had_menu {
-            self.menu_state = MenuBarState::new();
-            self.menu_state.add_item(name);
+        let mut state = MenuBarState::new();
+        state.add_item(name);
+        for item in self.menu_state.items().iter().skip(1) {
+            state.add(item.clone());
         }
+        self.menu_state = state;
     }
 
     /// Set the app menu items from a fetched dbusmenu layout.

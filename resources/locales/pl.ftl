@@ -1009,6 +1009,9 @@ bar-otto-menu = Otto
 bar-otto-about = O Otto
 bar-otto-settings = Ustawienia…
 bar-otto-log-out = Wyloguj
+# The menu under the focused application's name in the top bar.
+bar-app-minimize = Minimalizuj
+bar-app-quit = Zakończ { $app }
 bar-logout-title = Wylogować się teraz?
 bar-logout-body = Aplikacje zostaną najpierw poproszone o zamknięcie, więc niezapisane zmiany można jeszcze zapisać.
 

@@ -970,6 +970,9 @@ bar-otto-menu = Otto
 bar-otto-about = Sobre o Otto
 bar-otto-settings = Configurações…
 bar-otto-log-out = Encerrar sessão
+# The menu under the focused application's name in the top bar.
+bar-app-minimize = Minimizar
+bar-app-quit = Encerrar { $app }
 bar-logout-title = Encerrar sessão agora?
 bar-logout-body = Primeiro seus apps serão solicitados a fechar, para que nada não salvo se perca.
 

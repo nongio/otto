@@ -932,6 +932,9 @@ bar-otto-menu = Otto
 bar-otto-about = Otto について
 bar-otto-settings = 設定…
 bar-otto-log-out = ログアウト
+# The menu under the focused application's name in the top bar.
+bar-app-minimize = 最小化
+bar-app-quit = { $app } を終了
 bar-logout-title = 今すぐログアウトしますか?
 bar-logout-body = 先にアプリに終了を求めるので、保存していない内容を保存できます。
 

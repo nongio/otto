@@ -112,6 +112,13 @@ pub enum Command {
     Fullscreen,
     /// `kill`
     Kill,
+    /// `[criteria] minimize` — Otto's own: minimise the window a criteria
+    /// matches, or the focused one, into the dock, as its minimise button
+    /// does.
+    Minimize(Option<Criteria>),
+    /// `[criteria] quit` — Otto's own: close every window of the application
+    /// the matched (or focused) window belongs to, as the dock's Quit does.
+    Quit(Option<Criteria>),
     /// `exit` — end the session, as the `Quit` shortcut does.
     Exit,
     /// `logout` — Otto's own: ask every window to close, and end the session
@@ -222,14 +229,16 @@ pub fn parse(text: &str) -> Result<Vec<Command>, ParseError> {
             }
             continue;
         }
-        // Only `focus` reads a criteria so far, and bare `focus` is not a
-        // command on its own, so this is settled before `parse_one` sees it.
-        // Anything else would look as if it had been aimed at the matching
-        // window while acting on the focused one, so it is refused rather
-        // than quietly misfiring.
+        // Only `focus`, `minimize` and `quit` read a criteria so far, and
+        // bare `focus` is not a command on its own, so this is settled before
+        // `parse_one` sees it. Anything else would look as if it had been
+        // aimed at the matching window while acting on the focused one, so it
+        // is refused rather than quietly misfiring.
         if let Some(criteria) = criteria {
             match tokens.as_slice() {
                 [(_, "focus")] => out.push(Command::FocusWindow(criteria)),
+                [(_, "minimize")] => out.push(Command::Minimize(Some(criteria))),
+                [(_, "quit")] => out.push(Command::Quit(Some(criteria))),
                 _ => {
                     let what = tokens
                         .iter()
@@ -460,6 +469,8 @@ fn parse_one(cursor: &mut Cursor<'_>) -> Result<Command, ParseError> {
         "floating" => Command::Floating(parse_toggle(cursor, "floating")?),
         "fullscreen" => parse_fullscreen(cursor, offset)?,
         "kill" => Command::Kill,
+        "minimize" => Command::Minimize(None),
+        "quit" => Command::Quit(None),
         "exit" => Command::Exit,
         "logout" => Command::Logout,
         "tiling" => Command::Tiling(parse_toggle(cursor, "tiling")?),
@@ -1107,6 +1118,17 @@ mod tests {
     #[test]
     fn the_standalone_commands_parse() {
         assert_eq!(one("kill"), Command::Kill);
+        assert_eq!(one("minimize"), Command::Minimize(None));
+        assert_eq!(one("quit"), Command::Quit(None));
+        let by_id = Criteria {
+            con_id: Some(7),
+            ..Criteria::default()
+        };
+        assert_eq!(
+            one("[con_id=7] minimize"),
+            Command::Minimize(Some(by_id.clone()))
+        );
+        assert_eq!(one("[con_id=7] quit"), Command::Quit(Some(by_id)));
         assert_eq!(one("exit"), Command::Exit);
         assert_eq!(one("logout"), Command::Logout);
         assert_eq!(one("fullscreen"), Command::Fullscreen);

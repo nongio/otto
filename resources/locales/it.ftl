@@ -976,6 +976,9 @@ bar-otto-menu = Otto
 bar-otto-about = Informazioni su Otto
 bar-otto-settings = Impostazioni…
 bar-otto-log-out = Esci
+# The menu under the focused application's name in the top bar.
+bar-app-minimize = Riduci a icona
+bar-app-quit = Esci da { $app }
 bar-logout-title = Uscire adesso?
 bar-logout-body = Prima verrà chiesto alle app di chiudersi, così potrai salvare quello che non è ancora salvato.
 
