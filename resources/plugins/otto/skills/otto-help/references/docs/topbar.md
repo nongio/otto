@@ -164,6 +164,8 @@ width = 28
 height = 13
 # Colours are "#RGB", "#RRGGBB" or "#RRGGBBAA", alpha last as in CSS:
 # "#34C75980" is the green at half opacity.
+# Up to 1.6.0 eight digits meant "#AARRGGBB": move the alpha pair to the
+# end ("#FF34C759" becomes "#34C759FF"), or it reads as another colour.
 color_normal = "#34C759"
 color_low = "#FF9F0A"
 color_critical = "#FF3B30"

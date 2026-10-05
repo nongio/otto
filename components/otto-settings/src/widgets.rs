@@ -158,8 +158,9 @@ pub fn text_field(canvas: &Canvas, rect: Rect, value: &str, theme: &Theme) {
     canvas.restore();
 }
 
-/// Break `text` into lines no wider than `width`, on word boundaries: the
-/// paragraph a pane opens with, which is the only running text in the app.
+/// Break `text` into lines no wider than `width`, on word boundaries where it
+/// can (a word too wide for a line on its own is broken between characters):
+/// the paragraph a pane opens with, which is the only running text in the app.
 /// Any run of whitespace, a catalogue's line breaks included, is one space.
 pub fn wrap(text: &str, style: otto_kit::typography::TextStyle, width: f32) -> Vec<String> {
     let font = style.font();

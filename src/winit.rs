@@ -12,10 +12,10 @@ use std::time::Instant;
 
 #[cfg(feature = "egl")]
 use smithay::backend::renderer::ImportEgl;
-#[cfg(feature = "fps_ticker")]
+#[cfg(feature = "ticker")]
 use smithay::backend::{allocator::Fourcc, renderer::ImportMem};
 
-#[cfg(feature = "fps_ticker")]
+#[cfg(feature = "ticker")]
 use crate::drawing::{FpsElement, FPS_NUMBERS_PNG};
 
 use smithay::{
@@ -161,7 +161,7 @@ pub struct WinitData {
     dmabuf_state: (DmabufState, DmabufGlobal, Option<DmabufFeedback>),
     full_redraw: u8,
     context_id: ContextId<SkiaTexture>,
-    #[cfg(feature = "fps_ticker")]
+    #[cfg(feature = "ticker")]
     pub fps: fps_ticker::Fps,
 }
 
@@ -283,14 +283,14 @@ pub fn run_winit() {
     );
     output.set_preferred(mode);
 
-    #[cfg(feature = "fps_ticker")]
+    #[cfg(feature = "ticker")]
     let fps_image = image::ImageReader::with_format(
         std::io::Cursor::new(FPS_NUMBERS_PNG),
         image::ImageFormat::Png,
     )
     .decode()
     .unwrap();
-    #[cfg(feature = "fps_ticker")]
+    #[cfg(feature = "ticker")]
     let fps_texture = backend
         .renderer()
         .import_memory(
@@ -300,7 +300,7 @@ pub fn run_winit() {
             false,
         )
         .expect("Unable to upload FPS texture");
-    #[cfg(feature = "fps_ticker")]
+    #[cfg(feature = "ticker")]
     let mut fps_element = FpsElement::new(fps_texture);
 
     let render_node = EGLDevice::device_for_display(backend.renderer().egl_context().display())
@@ -358,7 +358,7 @@ pub fn run_winit() {
             damage_tracker,
             dmabuf_state,
             full_redraw: 0,
-            #[cfg(feature = "fps_ticker")]
+            #[cfg(feature = "ticker")]
             fps: fps_ticker::Fps::default(),
             context_id,
         }
@@ -416,7 +416,7 @@ pub fn run_winit() {
         #[cfg(feature = "profile-with-puffin")]
         profiling::puffin::GlobalProfiler::lock().new_frame();
 
-        #[cfg(feature = "fps_ticker")]
+        #[cfg(feature = "ticker")]
         state.backend_data.fps.tick();
 
         state.update_dnd();
@@ -481,9 +481,9 @@ pub fn run_winit() {
                 backend.window().set_cursor(cursor.into());
             }
 
-            #[cfg(feature = "fps_ticker")]
+            #[cfg(feature = "ticker")]
             let fps = state.backend_data.fps.avg().round() as u32;
-            #[cfg(feature = "fps_ticker")]
+            #[cfg(feature = "ticker")]
             fps_element.update_fps(fps);
 
             let full_redraw = &mut state.backend_data.full_redraw;
@@ -582,7 +582,7 @@ pub fn run_winit() {
                         elements.extend(cursor_elements);
                     }
 
-                    #[cfg(feature = "fps_ticker")]
+                    #[cfg(feature = "ticker")]
                     elements.push(WorkspaceRenderElements::Fps(fps_element.clone()));
 
                     // Exposé hides `workspaces_layer`, and the per-output

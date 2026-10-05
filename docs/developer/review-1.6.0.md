@@ -172,7 +172,11 @@ otto-kit, so the portal and otto-agents need not link Skia): `xdg`, `dbus`,
 - [x] **Per-frame repaint/throttle step copied into every backend and
   drifted** (`src/winit.rs:705-780`, `src/x11.rs:465-510`,
   `src/udev/render.rs:955-995,3146-3180`, `src/headless.rs:2184`). One
-  `Otto::frame_done(output, states, opts)`. **M** Fixed in #268.
+  `Otto::frame_done(output, states, opts)`. **M** Fixed in #268 for winit,
+  X11 and udev.
+  - *Headless still classifies by hand (`window_throttle_states` in
+    `src/headless.rs`): no occlusion pass, expose read from show-all only.
+    `FramePacing::classify` would change what its tests see, so it stays.*
 - [ ] **Giant functions**: `render_surface` 1,544 lines
   (`src/udev/render.rs:361`), `render_output_frame` 772, `run_udev` 700,
   `update_backdrop_and_upper_planes` 678, `run_winit` 632, surface-style
@@ -287,7 +291,7 @@ otto-kit, so the portal and otto-agents need not link Skia): `xdg`, `dbus`,
 - [x] `ticker` / `fps_ticker` feature does not build on main: missing imports
   in `src/drawing.rs`, `FPS_NUMBERS_PNG`, `FpsElement`, `Fourcc` undefined
   (found in #265). Fix or drop the feature. **S**
-  - *Fixed; CI clippy now builds `default,ticker`.*
+  - *Fixed; CI clippy now builds `default,x11,ticker`.*
 - [ ] `headless_basic::pinch_show_desktop` fails locally on main
   (tests/headless_basic.rs:237, "clicking a window should dismiss show
   desktop"); check whether CI runs it. **S**
@@ -301,6 +305,25 @@ otto-kit, so the portal and otto-agents need not link Skia): `xdg`, `dbus`,
 - [ ] zbus 4 → 5 and smithay-client-toolkit 0.19 → 0.21 (§2) are now
   unblocked: every org.otto proxy lives in `otto-dbus`. **M each**
   - *zbus 5 done in #271; smithay-client-toolkit 0.21 still open.*
+
+Found by the post-merge review of #264-#270; fixed in this PR:
+
+- [x] `file://` links in Files' Markdown preview opened nothing (#267):
+  they went to the unregistered `x-scheme-handler/file`. **S**
+- [x] #264 flipped otto-bar's 8-digit battery colours to `#RRGGBBAA` with
+  no changelog entry (unconventional squash subject). **S**
+  - *Noted in CHANGELOG, the bar docs, and a `cliff.toml` preprocessor.*
+- [x] Renderer: `wait`/`map_texture` skipped `ensure_current`; a failed
+  Skia import leaked its EGLImage, the cached path `unwrap`ped (#270). **S**
+  - *Plane flush still skips its GL work when `ensure_current` fails: the
+    context is then known not to be current.*
+- [x] Ticker code was gated on `fps_ticker`, not `ticker`; CI's ticker
+  clippy now builds `default,x11,ticker`. **S**
+- [x] Stale docs: size powers in the search spec, scanout rustdoc,
+  headless "classified like udev", FocusedSelection error, Ctrl+O,
+  thumbcache, settings wrap, `ObjectId` in `clippy.toml`. **S**
+- [x] One panicking portal-settings handler ended every appearance update;
+  handlers now run under `catch_unwind`, "must not block" documented. **S**
 
 ## Checked and fine
 

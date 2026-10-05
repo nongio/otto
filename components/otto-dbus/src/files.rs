@@ -15,7 +15,9 @@ pub const PATH: &str = "/org/otto/Files1";
     default_path = "/org/otto/Files1"
 )]
 pub trait Files {
-    /// The selected paths of the window that has the keyboard, in order;
-    /// empty from every other window.
+    /// The selected paths of the window that has the keyboard, in order.
+    /// Every other window answers with `org.freedesktop.DBus.Error.Failed`
+    /// rather than an empty list, so a caller can tell "nothing selected"
+    /// from "not the focused window" (otto-stash relies on that).
     fn focused_selection(&self) -> zbus::Result<Vec<String>>;
 }

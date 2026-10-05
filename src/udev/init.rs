@@ -242,7 +242,7 @@ pub fn run_udev<A: RendererApi>() {
         backends: HashMap::new(),
         input_devices: Vec::new(),
         edge_swipe: crate::input::edge_swipe::dispatch::EdgeSwipeInput::new(evdev_fds.clone()),
-        #[cfg(feature = "fps_ticker")]
+        #[cfg(feature = "ticker")]
         fps_texture: None,
 
         context_id: None, // Will be set after device initialization
@@ -453,7 +453,7 @@ pub fn run_udev<A: RendererApi>() {
     #[cfg_attr(not(feature = "egl"), allow(unused_mut))]
     let mut renderer = A::single_renderer(&mut state.backend_data.gpus, &primary_gpu).unwrap();
 
-    #[cfg(feature = "fps_ticker")]
+    #[cfg(feature = "ticker")]
     {
         use crate::drawing::{FpsElement, FPS_NUMBERS_PNG};
         use smithay::backend::{allocator::Fourcc, renderer::ImportMem};

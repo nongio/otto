@@ -13,6 +13,13 @@
 //! handlers run on the hub's thread, one at a time, so a handler can keep
 //! state of its own without locking it.
 //!
+//! That thread is shared by every watcher in the process, so a handler must
+//! return promptly and never block: one that waits (on a lock another thread
+//! holds across a portal read, on I/O, on a channel) holds up every other
+//! appearance update, and [`read_blocking`] callers with them. Hand slow work
+//! to a thread or a channel of your own. A handler that panics is logged and
+//! kept; the others carry on.
+//!
 //! The thread is the hub's own rather than the app's runtime: a one-off
 //! [`read_blocking`] has to work from a synchronous `main`, from inside a
 //! `#[tokio::main]` and from a single-threaded runtime alike, and blocking on
@@ -64,7 +71,8 @@ enum Request {
 /// Follow `keys`: `handler` gets each one's current value (in the order
 /// given, where the portal answers) and then every change to any of them.
 ///
-/// `name` only labels the log lines.
+/// `name` only labels the log lines. `handler` runs on the hub's shared
+/// thread and must not block (see the module docs).
 pub(crate) fn watch(
     name: &'static str,
     keys: &'static [(&'static str, &'static str)],
@@ -184,7 +192,7 @@ async fn run(mut requests: UnboundedReceiver<Request>) {
                     Request::Watch { name, keys, mut handler } => {
                         for (namespace, key) in keys {
                             match proxy.read(namespace, key).await {
-                                Ok(owned) => handler(namespace, key, owned.into()),
+                                Ok(owned) => call(name, &mut handler, namespace, key, owned.into()),
                                 Err(err) => tracing::debug!(
                                     "{name}: {namespace} {key} read failed (portal absent?): {err}"
                                 ),
@@ -209,11 +217,25 @@ async fn run(mut requests: UnboundedReceiver<Request>) {
                     // copied, and no setting is one.
                     if let Ok(value) = args.value.try_clone() {
                         tracing::trace!("{}: {} {} changed", watcher.name, args.namespace, args.key);
-                        (watcher.handler)(args.namespace, args.key, value);
+                        call(watcher.name, &mut watcher.handler, args.namespace, args.key, value);
                     }
                 }
             }
         }
+    }
+}
+
+/// Run one handler, so that a panic in it is logged instead of ending the
+/// hub's thread and every other watcher's updates with it.
+fn call(name: &str, handler: &mut Handler, namespace: &str, key: &str, value: Value<'_>) {
+    let run = std::panic::AssertUnwindSafe(|| handler(namespace, key, value));
+    if let Err(panic) = std::panic::catch_unwind(run) {
+        let message = panic
+            .downcast_ref::<&str>()
+            .copied()
+            .or_else(|| panic.downcast_ref::<String>().map(String::as_str))
+            .unwrap_or("non-string panic");
+        tracing::error!("{name}: handler panicked on {namespace} {key}: {message}");
     }
 }
 
@@ -227,5 +249,29 @@ async fn next_change(changes: &mut Option<SettingChangedStream>) -> Option<Setti
     match changes {
         Some(stream) => stream.next().await,
         None => std::future::pending().await,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_panicking_handler_is_caught_and_kept() {
+        use std::sync::atomic::{AtomicU32, Ordering};
+        use std::sync::Arc;
+
+        let seen = Arc::new(AtomicU32::new(0));
+        let counter = seen.clone();
+        let mut handler: Handler = Box::new(move |_, _, value| {
+            let n = u32::try_from(value).unwrap();
+            if n == 1 {
+                panic!("bad value");
+            }
+            counter.store(n, Ordering::SeqCst);
+        });
+        call("test", &mut handler, "ns", "key", Value::from(1u32));
+        call("test", &mut handler, "ns", "key", Value::from(2u32));
+        assert_eq!(seen.load(Ordering::SeqCst), 2);
     }
 }
