@@ -511,6 +511,8 @@ struct Browser {
     zoom_pinch: Option<f32>,
     /// The grouping menu is up, so its button draws open.
     photos_group_open: bool,
+    /// The picker's location menu is up, so its control draws open.
+    location_open: bool,
     /// The info panel's swatch whose colour was just copied, and when.
     photos_copied: Option<(usize, std::time::Instant)>,
     /// Where the Photos wall should be scrolled to once it has been packed
@@ -567,6 +569,10 @@ struct Browser {
     /// column's snapshot yet when `new_folder` returns — the pane and the name
     /// are held here until the re-read lands.
     pending_rename: Option<(usize, String)>,
+    /// The picker made the folder now being renamed, and wants to be inside it
+    /// once it has its name: the place a save lands is the directory being
+    /// viewed, so a new folder left merely selected is not where it goes.
+    enter_after_rename: bool,
     /// The command palette, open on Ctrl+P. While it is up it takes the
     /// keyboard whole; the browser underneath is untouched until a command
     /// actually runs. See `specs/file-command-palette.md`.
@@ -1392,7 +1398,9 @@ pub async fn run_picker() -> Result<(), Box<dyn std::error::Error>> {
     // idle picker: no Wayland connection, no window, no watchers.
     let session = queue.next_session_async().await;
 
-    let start = session.request.starting_directory(None);
+    let start = session
+        .request
+        .starting_directory(crate::picker_dirs::remembered(&session.request.app_id));
     run_app(Browser::for_picker(session, start), Some(queue))
 }
 
@@ -1556,6 +1564,8 @@ mod folder_views_tests;
 #[cfg(test)]
 mod rename_tests;
 
+#[cfg(test)]
+mod picker_toolbar_tests;
 #[cfg(test)]
 mod typeahead_tests;
 

@@ -563,6 +563,13 @@ impl WindowElement {
             .load(std::sync::atomic::Ordering::Relaxed)
     }
 
+    /// Whether this is another window's dialog: an xdg toplevel with a
+    /// parent, set directly or through xdg-foreign (the portal's file picker,
+    /// which belongs to the app that asked for it, not to the file manager).
+    pub fn has_parent(&self) -> bool {
+        self.toplevel().and_then(|t| t.parent()).is_some()
+    }
+
     pub fn set_is_minimised(&self, is_minimized: bool) {
         self.0
             .is_minimized

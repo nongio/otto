@@ -3973,7 +3973,59 @@ impl Workspaces {
     /// Raise thw windowelement on top of all the windows in its space
     /// activate: will set the window as active
     /// update: will update the workspace model
+    ///
+    /// Windows parented to it — dialogs, a portal file picker adopted through
+    /// xdg-foreign — come up with it and stay above it, so raising an
+    /// application never buries the dialog it is waiting on.
     pub fn raise_element(&mut self, window_id: &ObjectId, activate: bool, update: bool) {
+        self.raise_element_with_children(window_id, activate, update, 0);
+    }
+
+    /// How deep a chain of parented windows is followed when raising. A
+    /// parent cycle is a client bug; this is what keeps it from being ours.
+    const MAX_CHILD_DEPTH: usize = 4;
+
+    fn raise_element_with_children(
+        &mut self,
+        window_id: &ObjectId,
+        activate: bool,
+        update: bool,
+        depth: usize,
+    ) {
+        self.raise_element_alone(window_id, activate, update && depth == 0);
+        if depth >= Self::MAX_CHILD_DEPTH {
+            return;
+        }
+        let Some(surface_id) = self
+            .windows_map
+            .get(window_id)
+            .and_then(|w| w.wl_surface().map(|s| s.id()))
+        else {
+            return;
+        };
+        let children: Vec<ObjectId> = self
+            .windows_map
+            .values()
+            .filter(|w| !w.is_minimised())
+            .filter(|w| {
+                w.toplevel()
+                    .and_then(|t| t.parent())
+                    .is_some_and(|p| p.id() == surface_id)
+            })
+            .map(|w| w.id())
+            .collect();
+        let raised_any = !children.is_empty();
+        for child in children {
+            // Above the parent, without taking the keyboard from it: whoever
+            // asked for the parent to be activated still gets the parent.
+            self.raise_element_with_children(&child, false, false, depth + 1);
+        }
+        if raised_any && update && depth == 0 {
+            self.update_workspace_model();
+        }
+    }
+
+    fn raise_element_alone(&mut self, window_id: &ObjectId, activate: bool, update: bool) {
         // get the space with the window
         // tracing::info!("workspaces::raise_element: {:?}", window_id);
         // A window lives in exactly one output's space, so search every output
@@ -4176,8 +4228,16 @@ impl Workspaces {
                 .collect()
         };
 
-        let all_windows: Vec<&(ObjectId, WindowElement)> =
-            minimized.iter().chain(windows.iter()).collect();
+        // A dialog is part of the window it belongs to, not an app of its
+        // own: the portal's file picker would otherwise put the file manager
+        // in the dock and the switcher every time another app asks for a
+        // file. Raising the parent brings it along — see
+        // `raise_element_with_children`.
+        let all_windows: Vec<&(ObjectId, WindowElement)> = minimized
+            .iter()
+            .chain(windows.iter())
+            .filter(|(_, we)| !we.has_parent())
+            .collect();
 
         {
             // reset the model
@@ -4293,9 +4353,12 @@ impl Workspaces {
                 // update minimized windows — keep entries that are either still
                 // mapped in a Space *or* still tracked in windows_map (minimized
                 // windows are unmapped from Space but remain in windows_map).
-                model
-                    .minimized_windows
-                    .retain(|(id, _)| all_windows.iter().any(|(wid, _)| wid == id));
+                model.minimized_windows.retain(|(id, _)| {
+                    minimized
+                        .iter()
+                        .chain(windows.iter())
+                        .any(|(wid, _)| wid == id)
+                });
             }
         }
 

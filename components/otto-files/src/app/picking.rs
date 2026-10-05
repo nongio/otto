@@ -252,6 +252,12 @@ impl Browser {
 
     /// Answer the request with `paths` and let the window go.
     pub(super) fn answer_with(&mut self, paths: Vec<PathBuf>) {
+        // Where the answer was found, so this application's next request
+        // opens there. Taken before the session is answered, while the
+        // listing it was found in is still the one on screen.
+        if let (Some(session), Some(dir)) = (self.picker.as_ref(), self.save_directory()) {
+            crate::picker_dirs::record(&session.request.app_id, &dir);
+        }
         if let Some(session) = self.picker.as_mut() {
             session.accept(&paths);
         }
@@ -340,13 +346,118 @@ impl Browser {
         match armed {
             Some(view::FooterButton::Accept) => self.picker_accept(),
             Some(view::FooterButton::Cancel) => self.picker_cancel(),
-            Some(view::FooterButton::Filter) => {
-                if let Some(session) = self.picker.as_mut() {
-                    session.filter_open = !session.filter_open;
-                }
-            }
-            Some(view::FooterButton::FilterOption(index)) => self.set_filter(index),
-            None => {}
+            // Opened on the press, like every menu — see `filter_press`.
+            Some(view::FooterButton::Filter) | None => {}
         }
     }
+
+    /// Open the filter menu over its control: a popup, so it sits above the
+    /// window and everything painted into it — the save field is painted
+    /// after the action row, and an in-window menu ended up underneath it.
+    pub(super) fn filter_press(&mut self, serial: u32) -> listing_pointer::After {
+        if let Some(session) = self.picker.as_mut() {
+            session.filter_open = true;
+        }
+        self.dirty = true;
+        listing_pointer::After::FilterMenu {
+            rect: view::footer_filter_rect(self.size.1),
+            serial,
+        }
+    }
+
+    // --- The toolbar ---------------------------------------------------------
+
+    /// The toolbar's New Folder: make "untitled folder" where the user is
+    /// looking and put its name up for editing, as the browser does.
+    ///
+    /// Where the answer is a directory — either save mode, or an open asking
+    /// for folders — naming it also goes into it, because that is where the
+    /// user made it for. An open asking for files has nothing to find in an
+    /// empty folder, so it stays beside it.
+    pub(super) fn picker_new_folder(&mut self) {
+        let Some(session) = self.picker.as_ref() else {
+            return;
+        };
+        let enter = session.request.mode != picker::Mode::Open || session.request.directory;
+        self.cancel_rename();
+        self.new_folder();
+        self.enter_after_rename = enter && self.pending_rename.is_some();
+    }
+
+    /// The location menu's entries: the directory being viewed, then each
+    /// directory above it up to the root — nearest first, the order they are
+    /// stepped out through.
+    pub(super) fn location_ancestors(&self) -> Vec<PathBuf> {
+        let depth = self.active.min(self.columns.len().saturating_sub(1));
+        let Some(column) = self.columns.get(depth) else {
+            return Vec::new();
+        };
+        column.path.ancestors().map(Path::to_path_buf).collect()
+    }
+
+    /// Each of [`location_ancestors`](Self::location_ancestors)' icons, in
+    /// the same order.
+    pub(super) fn location_icons(&self) -> Vec<Vec<String>> {
+        let home = crate::model::home_dir();
+        self.location_ancestors()
+            .iter()
+            .map(|path| location_icon(path, &self.places, home.as_deref()))
+            .collect()
+    }
+
+    /// Open the location menu under the toolbar's capsule.
+    pub(super) fn location_press(&mut self, serial: u32) -> listing_pointer::After {
+        self.location_open = true;
+        self.dirty = true;
+        listing_pointer::After::LocationMenu {
+            rect: view::location_rect(self.size.0),
+            serial,
+        }
+    }
+
+    /// A row of the location menu was chosen. The first row is where the user
+    /// already is, so choosing it only closes the menu.
+    pub(super) fn location_choose(&mut self, index: usize) {
+        self.location_open = false;
+        self.dirty = true;
+        if index == 0 {
+            return;
+        }
+        if let Some(path) = self.location_ancestors().get(index).cloned() {
+            self.navigate_to(&path);
+        }
+    }
+}
+
+/// What the location menu calls a directory: its own name, or — for the
+/// root, which has none — the path itself.
+pub(super) fn location_label(path: &Path) -> String {
+    path.file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.to_string_lossy().into_owned())
+}
+
+/// The icon the location menu draws for a directory, most specific first: a
+/// sidebar place keeps the icon it has there, so Music is the music folder in
+/// both; home and the root get the path bar's; anything else is a folder.
+pub(super) fn location_icon(
+    path: &Path,
+    places: &[crate::model::Place],
+    home: Option<&Path>,
+) -> Vec<String> {
+    let folder = || vec!["folder".to_string(), "inode-directory".to_string()];
+    if let Some(place) = places.iter().find(|p| !p.recent && p.path == path) {
+        let mut chain = vec![place.icon.clone()];
+        chain.extend(folder());
+        return chain;
+    }
+    if home == Some(path) {
+        let mut chain = vec!["user-home".to_string()];
+        chain.extend(folder());
+        return chain;
+    }
+    if path.parent().is_none() {
+        return vec!["drive-harddisk".to_string()];
+    }
+    folder()
 }

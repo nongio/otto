@@ -20,6 +20,7 @@ impl FilesApp {
             if !menu.is_open() {
                 let mut browser = self.state.lock().unwrap();
                 browser.photos_group_open = false;
+                browser.location_open = false;
                 browser.dirty = true;
             }
             return;

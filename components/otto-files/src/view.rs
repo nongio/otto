@@ -648,6 +648,37 @@ pub fn location_rect(width: f32) -> Rect {
         toolbar_cy() + 15.0,
     )
 }
+
+/// The picker's New Folder button, just after the location control: the
+/// folder it makes goes where that control says you are.
+pub fn new_folder_rect(width: f32) -> Rect {
+    let location = location_rect(width);
+    Rect::from_xywh(
+        location.right + 8.0,
+        location.top,
+        NEW_FOLDER_W,
+        location.height(),
+    )
+}
+const NEW_FOLDER_W: f32 = 36.0;
+
+/// What the picker's toolbar row has under `(x, y)`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolbarButton {
+    Location,
+    NewFolder,
+}
+
+pub fn picker_toolbar_at(x: f32, y: f32, width: f32) -> Option<ToolbarButton> {
+    let point = Point::new(x, y);
+    if location_rect(width).contains(point) {
+        Some(ToolbarButton::Location)
+    } else if new_folder_rect(width).contains(point) {
+        Some(ToolbarButton::NewFolder)
+    } else {
+        None
+    }
+}
 /// Half the height of the band a click on the subtitle lands in: its line of
 /// text with a little slack, so a click just above or below still counts.
 const SUBTITLE_HIT_HALF_H: f32 = 10.0;
@@ -3445,8 +3476,6 @@ const FOOTER_BTN_H: f32 = 30.0;
 const FOOTER_BTN_MIN_W: f32 = 92.0;
 const FOOTER_BTN_RADIUS: f32 = 8.0;
 const FOOTER_FILTER_W: f32 = 220.0;
-/// One row of the open filter menu.
-const FOOTER_MENU_ROW_H: f32 = 26.0;
 
 /// The action row's own strip, below the file area.
 pub fn footer_rect(width: f32, window_height: f32) -> Rect {
@@ -3486,39 +3515,20 @@ pub fn footer_filter_rect(window_height: f32) -> Rect {
     )
 }
 
-/// One row of the filter menu, which opens *upwards* out of the control —
-/// there is nothing below the action row to open into.
-pub fn footer_filter_option_rect(window_height: f32, index: usize, count: usize) -> Rect {
-    let control = footer_filter_rect(window_height);
-    let height = count as f32 * FOOTER_MENU_ROW_H + 8.0;
-    let top = control.top - 6.0 - height + 4.0 + index as f32 * FOOTER_MENU_ROW_H;
-    Rect::from_ltrb(control.left, top, control.right, top + FOOTER_MENU_ROW_H)
-}
-
 /// What the action row has under `(x, y)`, if anything.
 ///
-/// `window_height` is the whole window, not the file area. Takes the two
-/// facts it needs rather than a [`FooterData`], so a caller can hit-test
-/// without holding a borrow of the state it is about to mutate.
+/// `window_height` is the whole window, not the file area. Takes the facts
+/// it needs rather than a [`FooterData`], so a caller can hit-test without
+/// holding a borrow of the state it is about to mutate.
 pub fn footer_at(
     x: f32,
     y: f32,
     width: f32,
     window_height: f32,
     filter_count: usize,
-    filter_open: bool,
 ) -> Option<FooterButton> {
     let point = Point::new(x, y);
 
-    // The open menu floats above the row and takes the pointer first,
-    // exactly as a context menu would.
-    if filter_open {
-        for index in 0..filter_count {
-            if footer_filter_option_rect(window_height, index, filter_count).contains(point) {
-                return Some(FooterButton::FilterOption(index));
-            }
-        }
-    }
     if footer_accept_rect(width, window_height).contains(point) {
         return Some(FooterButton::Accept);
     }
@@ -3768,63 +3778,6 @@ fn draw_filter_control(canvas: &Canvas, f: &Frame, footer: &FooterData<'_>, wind
     path.line_to((cx, cy - 2.5));
     path.line_to((cx + 4.0, cy + 2.0));
     canvas.draw_path(&path.detach(), &chevron);
-
-    if !footer.filter_open {
-        return;
-    }
-
-    let count = footer.filters.len();
-    let first = footer_filter_option_rect(window_h, 0, count);
-    let last = footer_filter_option_rect(window_h, count - 1, count);
-    let panel = Rect::from_ltrb(rect.left, first.top - 4.0, rect.right, last.bottom + 4.0);
-
-    let mut menu = Paint::default();
-    menu.set_anti_alias(true);
-    menu.set_color(theme.material_popup);
-    canvas.draw_rrect(RRect::new_rect_xy(panel, 8.0, 8.0), &menu);
-
-    for (index, name) in footer.filters.iter().enumerate() {
-        let row = footer_filter_option_rect(window_h, index, count);
-        let hovered = footer.hovered == Some(FooterButton::FilterOption(index));
-        if hovered {
-            let mut hl = Paint::default();
-            hl.set_anti_alias(true);
-            hl.set_color(accent(theme));
-            canvas.draw_rrect(
-                RRect::new_rect_xy(row.with_inset((4.0, 0.0)), 5.0, 5.0),
-                &hl,
-            );
-        }
-        Label::new(name.as_str())
-            .with_style(styles::BODY)
-            .with_color(if hovered {
-                Color::WHITE
-            } else {
-                theme.text_primary
-            })
-            .centered_on(row.left + 24.0, row.center_y())
-            .render(canvas);
-
-        if index == footer.current_filter {
-            let mut tick = Paint::default();
-            tick.set_anti_alias(true);
-            tick.set_color(if hovered {
-                Color::WHITE
-            } else {
-                theme.text_primary
-            });
-            tick.set_style(skia_safe::paint::Style::Stroke);
-            tick.set_stroke_width(1.8);
-            tick.set_stroke_cap(skia_safe::paint::Cap::Round);
-            let mx = row.left + 13.0;
-            let my = row.center_y();
-            let mut p = skia_safe::PathBuilder::new();
-            p.move_to((mx - 4.0, my));
-            p.line_to((mx - 1.0, my + 3.5));
-            p.line_to((mx + 4.5, my - 4.0));
-            canvas.draw_path(&p.detach(), &tick);
-        }
-    }
 }
 
 /// Whether the current colour scheme is the dark one — what the materials
@@ -4251,9 +4204,15 @@ pub struct FooterData<'a> {
     /// The filter control's labels. Empty hides the control entirely.
     pub filters: &'a [String],
     pub current_filter: usize,
-    /// The filter menu is open, so the control draws as pressed and its
-    /// options are listed above it.
+    /// The filter menu is open, so the control draws as pressed. The menu
+    /// itself is a popup — see `show_filter_menu` — above the window and
+    /// everything painted into it, the save field included.
     pub filter_open: bool,
+    /// The toolbar's location menu is up, so its capsule draws held.
+    pub location_open: bool,
+    /// The capsule's icon, most specific first: the same one the location
+    /// menu gives the directory being viewed.
+    pub location_icon: Vec<String>,
     pub hovered: Option<FooterButton>,
     pub pressed: Option<FooterButton>,
     /// Save mode: draw the name row above the buttons. The field's own text
@@ -4272,8 +4231,6 @@ pub enum FooterButton {
     Accept,
     Cancel,
     Filter,
-    /// One option of the open filter menu.
-    FilterOption(usize),
 }
 
 /// What the preview pane shows for the current selection.
@@ -5572,20 +5529,72 @@ pub fn draw_search_band(canvas: &Canvas, f: &Frame) {
 /// name in a soft capsule, centred on the toolbar row between the navigation
 /// arrows and the view switcher.
 ///
-/// It does not open a menu yet — it says where you are. The popup of ancestor
-/// directories the reference layout has is the next thing it grows.
+/// A press opens the menu of the directories above this one; the chevron at
+/// its end says so.
 fn draw_location_button(canvas: &Canvas, f: &Frame) {
     let theme = f.theme;
     let cy = toolbar_cy();
     let rect = location_rect(f.width);
+    let open = f.action_row.as_ref().is_some_and(|row| row.location_open);
 
     let mut paint = Paint::default();
     paint.set_anti_alias(true);
-    paint.set_color(theme.fill_tertiary);
+    paint.set_color(if open {
+        theme.fill_secondary
+    } else {
+        theme.fill_tertiary
+    });
     canvas.draw_rrect(RRect::new_rect_xy(rect, NAV_RADIUS, NAV_RADIUS), &paint);
 
+    // Glyphs drawn rather than themed, like the switcher's: the bundled icon
+    // set has neither a downward chevron nor a new-folder sign.
+    let mut glyph = Paint::default();
+    glyph.set_anti_alias(true);
+    glyph.set_color(theme.text_secondary);
+    glyph.set_style(skia_safe::paint::Style::Stroke);
+    glyph.set_stroke_width(1.6);
+    glyph.set_stroke_cap(skia_safe::paint::Cap::Round);
+    glyph.set_stroke_join(skia_safe::paint::Join::Round);
+
+    let cx = rect.right - 14.0;
+    let mut chevron = skia_safe::PathBuilder::new();
+    chevron.move_to((cx - 4.0, cy - 2.0));
+    chevron.line_to((cx, cy + 2.5));
+    chevron.line_to((cx + 4.0, cy - 2.0));
+    canvas.draw_path(&chevron.detach(), &glyph);
+
+    // New Folder, beside it: a plain capsule, the same family as the nav pair.
+    let button = new_folder_rect(f.width);
+    paint.set_color(theme.fill_tertiary);
+    canvas.draw_rrect(RRect::new_rect_xy(button, NAV_RADIUS, NAV_RADIUS), &paint);
+    let (bx, by) = (button.center_x(), button.center_y());
+    // A folder: tab on the top left, body below it.
+    let mut folder = skia_safe::PathBuilder::new();
+    folder.move_to((bx - 8.0, by + 5.5));
+    folder.line_to((bx - 8.0, by - 5.5));
+    folder.line_to((bx - 3.5, by - 5.5));
+    folder.line_to((bx - 1.5, by - 3.5));
+    folder.line_to((bx + 8.0, by - 3.5));
+    folder.line_to((bx + 8.0, by + 5.5));
+    folder.close();
+    canvas.draw_path(&folder.detach(), &glyph);
+    let mut plus = skia_safe::PathBuilder::new();
+    plus.move_to((bx, by - 1.0));
+    plus.line_to((bx, by + 4.0));
+    plus.move_to((bx - 2.5, by + 1.5));
+    plus.line_to((bx + 2.5, by + 1.5));
+    canvas.draw_path(&plus.detach(), &glyph);
+
     let mut text_x = rect.left + 10.0;
-    if let Some(image) = icons::cached_icon_chain(&["folder"], 16) {
+    // The theme's full-colour art, like the listing's rows: the 16px tier of
+    // many themes is a grey outline, which is not the folder the menu shows.
+    let names: Vec<&str> = f
+        .action_row
+        .as_ref()
+        .map(|row| row.location_icon.iter().map(String::as_str).collect())
+        .filter(|names: &Vec<&str>| !names.is_empty())
+        .unwrap_or_else(|| vec!["folder"]);
+    if let Some(image) = icons::cached_icon_chain_at(&names, 16, icons::FULL_COLOUR_SIZE) {
         let dst = Rect::from_xywh(text_x, cy - 8.0, 16.0, 16.0);
         canvas.draw_image_rect(&image, None, dst, &Paint::default());
         text_x += 22.0;
