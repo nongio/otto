@@ -39,11 +39,7 @@ fn settle(browser: &mut Browser) {
 fn trashed(tag: &str) -> (Browser, Tmp, PathBuf) {
     let _ = model::test_data_home();
     let dir = Tmp::new(tag);
-    // Named after the test. The can is shared with every other test in
-    // this binary, and two of them trashing a file of the same name race
-    // for it: `first_free_name` checks and then moves, so both can pick
-    // the plain name and the second's sidecar wins.
-    let origin = dir.0.join(format!("{tag}.txt"));
+    let origin = dir.0.join("note.txt");
     std::fs::write(&origin, b"body").unwrap();
 
     let result = model::move_to_trash(std::slice::from_ref(&origin));

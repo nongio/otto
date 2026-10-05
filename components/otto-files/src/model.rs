@@ -2215,7 +2215,10 @@ mod paste_tests {
     fn put_back_returns_the_file_to_where_it_came_from() {
         let _home = test_data_home();
         let t = Tmp::new("restore");
-        let victim = t.file("paper.txt", "body");
+        // A name of its own: the can is shared by the whole binary, and once
+        // this item leaves it another test may trash a `paper.txt` into the
+        // very path this one asserts is gone.
+        let victim = t.file("put-back.txt", "body");
 
         let trashed = move_to_trash(std::slice::from_ref(&victim));
         assert_eq!(trashed.trashed, 1, "{:?}", trashed.errors);
@@ -2347,7 +2350,8 @@ mod paste_tests {
     fn delete_forever_takes_the_sidecar_with_it() {
         let _home = test_data_home();
         let t = Tmp::new("forever");
-        let victim = t.file("paper.txt", "body");
+        // A name of its own, for the same reason as Put Back's.
+        let victim = t.file("forever.txt", "body");
 
         let trashed = move_to_trash(std::slice::from_ref(&victim));
         let Some(Change::Trashed { to, info, .. }) = trashed.changes.first() else {
