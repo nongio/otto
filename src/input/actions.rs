@@ -703,13 +703,14 @@ impl<BackendData: Backend> Otto<BackendData> {
         }
     }
 
-    /// Dispatch one action coming from the debug hook rather than from a key
-    /// press. The window-management actions live in the per-backend *keyboard*
-    /// dispatchers, not in [`Self::process_common_key_action`] — which warns
-    /// and drops anything it does not own — so they need explicit arms here.
-    /// Without them the hook logged "executing debug action" and then did
-    /// nothing for the app switcher, tiling, maximize and close.
-    fn process_debug_key_action(&mut self, action: KeyAction) {
+    /// Run `action` if it means the same on every backend, or hand it back.
+    ///
+    /// Both keyboard dispatchers (`process_input_event_windowed`,
+    /// `process_input_event`) and the debug action hook go through here.
+    /// What comes back is either backend-specific — output scale and
+    /// rotation, VT and screen switching — or `TilingDragCancel`, which only
+    /// means something while a titlebar drag is up.
+    pub(crate) fn dispatch_key_action(&mut self, action: KeyAction) -> Option<KeyAction> {
         match action {
             KeyAction::ExposeShowAll => self.handle_expose_show_all(),
             KeyAction::ExposeShowDesktop => self.handle_expose_show_desktop(),
@@ -734,8 +735,43 @@ impl<BackendData: Backend> Otto<BackendData> {
             KeyAction::TilingFocusModeToggle => {
                 let _ = self.handle_tiling_focus_mode(None);
             }
-            KeyAction::TilingDragCancel => self.handle_tiling_drag_cancel(),
-            other => self.process_common_key_action(other),
+            KeyAction::None
+            | KeyAction::Quit
+            | KeyAction::Run(_)
+            | KeyAction::ToggleDecorations
+            | KeyAction::SceneSnapshot
+            | KeyAction::SkpSnapshot
+            | KeyAction::LockSession
+            | KeyAction::CanvasToggle
+            | KeyAction::PowerButton
+            | KeyAction::BrightnessUp
+            | KeyAction::BrightnessDown
+            | KeyAction::VolumeUp
+            | KeyAction::VolumeDown
+            | KeyAction::VolumeMute
+            | KeyAction::MediaPlayPause
+            | KeyAction::MediaNext
+            | KeyAction::MediaPrev
+            | KeyAction::MediaStop => self.process_common_key_action(action),
+            KeyAction::VtSwitch(_)
+            | KeyAction::Screen(_)
+            | KeyAction::ScaleUp
+            | KeyAction::ScaleDown
+            | KeyAction::RotateOutput
+            | KeyAction::TilingDragCancel => return Some(action),
+        }
+        None
+    }
+
+    /// Dispatch one action coming from the debug hook rather than from a key
+    /// press. A titlebar drag can be cancelled from here; anything
+    /// backend-specific falls through to [`Self::process_common_key_action`],
+    /// which warns and drops it.
+    fn process_debug_key_action(&mut self, action: KeyAction) {
+        match self.dispatch_key_action(action) {
+            None => (),
+            Some(KeyAction::TilingDragCancel) => self.handle_tiling_drag_cancel(),
+            Some(other) => self.process_common_key_action(other),
         }
     }
 }
