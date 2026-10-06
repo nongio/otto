@@ -244,6 +244,10 @@ pub const TABS_H: f32 = 28.0;
 /// leaves the raised segment inside it at 5.
 const TABS_RADIUS: f32 = 7.0;
 
+/// A tab's label: the size of the row labels around it, at medium weight
+/// so the bar reads as the pane's navigation rather than one more row.
+const TAB_TEXT: TextStyle = styles::BODY_MEDIUM;
+
 /// How far the raised segment sits inside the track.
 const TABS_INSET: f32 = 2.0;
 
@@ -297,15 +301,14 @@ pub fn tabs(canvas: &Canvas, rect: Rect, labels: &[&str], selected: usize, theme
             canvas.draw_rrect(rrect, &fill(theme.material_highlight));
             canvas.draw_rrect(rrect, &stroke(theme.hairline, 0.5));
         }
-        let text =
-            otto_kit::typography::ellipsize(&styles::SUBHEADLINE.font(), label, width - 16.0);
-        let text_w = styles::SUBHEADLINE.font().measure_str(&text, None).0;
+        let text = otto_kit::typography::ellipsize(&TAB_TEXT.font(), label, width - 16.0);
+        let text_w = TAB_TEXT.font().measure_str(&text, None).0;
         text_centered_y(
             canvas,
             &text,
             segment.center_x() - text_w / 2.0,
             segment.center_y(),
-            styles::SUBHEADLINE,
+            TAB_TEXT,
             if chosen {
                 theme.text_primary
             } else {
