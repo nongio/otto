@@ -209,6 +209,9 @@ impl ContextMenu {
         // A stale `closing` (e.g. a fade-out whose completion event never
         // arrived) must not wedge the menu permanently open.
         self.closing.set(false);
+        // A fade-out still running must not take down the menu shown now.
+        self.close_generation
+            .set(self.close_generation.get().wrapping_add(1));
         self.dismiss_pending.set(false);
         self.typeahead.borrow_mut().0.clear();
         self.show_menu_at_depth(0, parent, positioner, Some(serial));
@@ -228,6 +231,9 @@ impl ContextMenu {
         positioner: &smithay_client_toolkit::shell::xdg::XdgPositioner,
     ) {
         self.closing.set(false);
+        // A fade-out still running must not take down the menu shown now.
+        self.close_generation
+            .set(self.close_generation.get().wrapping_add(1));
         self.dismiss_pending.set(false);
         self.show_menu_at_depth_for_layer(0, layer_surface, positioner, None);
     }
@@ -246,6 +252,9 @@ impl ContextMenu {
         serial: u32,
     ) {
         self.closing.set(false);
+        // A fade-out still running must not take down the menu shown now.
+        self.close_generation
+            .set(self.close_generation.get().wrapping_add(1));
         self.dismiss_pending.set(false);
         self.typeahead.borrow_mut().0.clear();
         self.show_menu_at_depth_for_layer(0, layer_surface, positioner, Some(serial));

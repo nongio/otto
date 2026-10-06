@@ -224,9 +224,12 @@ impl DropdownMenu {
     /// Take the menu down at once, a fade-out in flight included. For before
     /// opening a sibling: a new pop-up has to go on the topmost one, so the
     /// old one cannot still be fading out when it is made.
+    /// A menu that is not up is left alone, rather than reporting a close.
     pub fn close_now(&self) {
         *self.typeahead.borrow_mut() = None;
-        self.menu.hide();
+        if self.is_open() {
+            self.menu.hide();
+        }
     }
 
     /// Feed a key to the open menu: the arrows move the highlight (scrolling

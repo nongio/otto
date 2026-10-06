@@ -269,6 +269,31 @@ fn named_color(name: &str) -> Option<Color> {
     model::named_argb(name).map(Color::from)
 }
 
+/// Take every pop-up menu down at once, one fading out included: a pop-up
+/// made while another is still up is not on the topmost one, which Otto
+/// refuses with a protocol error that ends the app.
+fn close_menus_now(
+    dropdowns: &HashMap<&'static str, DropdownMenu>,
+    open_dropdown: &Arc<Mutex<Option<&'static str>>>,
+) {
+    for menu in dropdowns.values().filter(|menu| menu.is_open()) {
+        menu.close_now();
+    }
+    *open_dropdown.lock().unwrap() = None;
+}
+
+/// Close every colour picker, for the same reason. A picker closed by its
+/// caller does not report it, so the open one is forgotten here.
+fn close_pickers(
+    pickers: &HashMap<&'static str, ColorPickerPopup>,
+    open_picker: &Arc<Mutex<Option<&'static str>>>,
+) {
+    for picker in pickers.values().filter(|picker| picker.is_open()) {
+        picker.close();
+    }
+    *open_picker.lock().unwrap() = None;
+}
+
 /// Open a colour well's picker.
 ///
 /// What a change sends depends on the setting. A `color` setting takes hex,
@@ -1875,6 +1900,7 @@ impl SettingsApp {
                 let Some(window) = self.window.as_ref() else {
                     return false;
                 };
+                close_pickers(&self.pickers, &self.open_picker);
                 open_menu(
                     &self.dropdowns,
                     &self.open_dropdown,
@@ -2614,15 +2640,18 @@ impl App for SettingsApp {
                             }
 
                             match hit {
-                                ShortcutHit::Action(select) => open_menu(
-                                    &dropdowns,
-                                    &open_dropdown,
-                                    &pane_dirty,
-                                    &redraw,
-                                    select,
-                                    event_serial(&event.kind),
-                                    false,
-                                ),
+                                ShortcutHit::Action(select) => {
+                                    close_pickers(&pickers, &open_picker);
+                                    open_menu(
+                                        &dropdowns,
+                                        &open_dropdown,
+                                        &pane_dirty,
+                                        &redraw,
+                                        select,
+                                        event_serial(&event.kind),
+                                        false,
+                                    )
+                                }
                                 ShortcutHit::Keys { index, offset_x } => {
                                     // A second press in the field already open
                                     // moves the caret. Starting over would
@@ -2669,6 +2698,7 @@ impl App for SettingsApp {
                             }
                             mark_pane_dirty(&pane_dirty);
                         } else if let Some(color) = settings.color_hit(x, y, offset) {
+                            close_menus_now(&dropdowns, &open_dropdown);
                             open_picker_for(
                                 &pickers,
                                 &open_picker,
@@ -2700,6 +2730,7 @@ impl App for SettingsApp {
                             panes::sound::select_tab(row, index);
                             mark_pane_dirty(&pane_dirty);
                         } else if let Some(select) = settings.select_hit(x, y, offset) {
+                            close_pickers(&pickers, &open_picker);
                             open_menu(
                                 &dropdowns,
                                 &open_dropdown,
