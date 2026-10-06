@@ -502,14 +502,17 @@ are:
   shortcuts.
 - **Trackpad & Mouse** — the pointer and touchpad settings.
 - **Sound** — interface sounds enabled and theme, then a mixer laid out
-  after pavucontrol, which is its reference. A tab bar, a segmented control
-  spanning its row, holds
-  pavucontrol's tabs and the groups under it are that tab's:
+  after pavucontrol, which is its reference. A tab bar holds pavucontrol's
+  tabs and the groups under it are that tab's. It sits on the window rather
+  than in a card, as wide as the cards below it: a rounded-rect track with
+  the open tab a flat dark fill under white text (a lighter grey in dark
+  mode), labels at 13pt medium. The arrow keys move between tabs:
   - *Playback* and *Recording* — one group per app stream, titled with the
     app and what it plays: volume, mute, and the device it plays on or
     records from, which moves it.
   - *Output devices* and *Input devices* — one group per device: its port
-    (speakers, headphone jack…, leaving out a jack with nothing plugged in),
+    (speakers, headphone jack…; a jack with nothing plugged in is still
+    listed, marked *(unplugged)*, as pavucontrol marks it),
     volume, mute, and *Use as default*, which like pavucontrol's fallback
     button is switched off only by switching another device on. Monitor
     sources are left out, as pavucontrol leaves them out by default.
