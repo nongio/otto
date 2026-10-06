@@ -1706,6 +1706,30 @@ impl Settings {
             })
     }
 
+    /// The tab row and segment a click lands on, measured the way
+    /// [`Self::render_row`] draws it.
+    pub fn tab_hit(&self, x: f32, y: f32, scroll_offset: f32) -> Option<(&'static str, usize)> {
+        let viewport = self.viewport();
+        if !viewport.contains(Point::new(x, y)) {
+            return None;
+        }
+        let content_width = self.width - SIDEBAR_W;
+        let local = Point::new(x - viewport.left, y - viewport.top + scroll_offset);
+        let (row, rect) = self
+            .row_rects(content_width)
+            .into_iter()
+            .find(|(_, rect)| rect.contains(local))?;
+        let Control::Tabs { labels, .. } = &row.control else {
+            return None;
+        };
+        let track = widgets::tabs_rect(
+            rect.left,
+            rect.right,
+            Self::control_band(row, rect).center_y(),
+        );
+        widgets::tab_at(track, labels.len(), local.x, local.y).map(|index| (row.handle(), index))
+    }
+
     /// The label of the switch a click lands on, for a row that is *not* bound
     /// to a setting.
     ///
@@ -1984,22 +2008,31 @@ impl Settings {
                 );
             }
 
-            // Grouped-list card behind the rows.
+            // Grouped-list card behind the rows. A tab bar is the exception:
+            // it is chrome over the groups, not a setting in one, so it sits
+            // on the window itself.
             let rrect = RRect::new_rect_xy(group.card, 9.0, 9.0);
-            canvas.draw_rrect(
-                rrect,
-                &self.fill(if self.dark {
-                    Color::from_argb(0x14, 0xFF, 0xFF, 0xFF)
-                } else {
-                    Color::WHITE
-                }),
-            );
-            let mut border = Paint::default();
-            border.set_anti_alias(true);
-            border.set_style(skia_safe::PaintStyle::Stroke);
-            border.set_stroke_width(1.0);
-            border.set_color(self.theme.fill_tertiary);
-            canvas.draw_rrect(rrect, &border);
+            let tabs_only = !group.rows.is_empty()
+                && group
+                    .rows
+                    .iter()
+                    .all(|(row, _)| matches!(row.control, Control::Tabs { .. }));
+            if !tabs_only {
+                canvas.draw_rrect(
+                    rrect,
+                    &self.fill(if self.dark {
+                        Color::from_argb(0x14, 0xFF, 0xFF, 0xFF)
+                    } else {
+                        Color::WHITE
+                    }),
+                );
+                let mut border = Paint::default();
+                border.set_anti_alias(true);
+                border.set_style(skia_safe::PaintStyle::Stroke);
+                border.set_stroke_width(1.0);
+                border.set_color(self.theme.fill_tertiary);
+                canvas.draw_rrect(rrect, &border);
+            }
 
             if let Some(header) = layout.header.filter(|h| h.top == group.card.top) {
                 self.render_account_header(canvas, header, !group.rows.is_empty());
@@ -2427,6 +2460,8 @@ impl Settings {
                 }
             }
             Control::Shortcut { .. } | Control::AddShortcut => right,
+            // The segments span the row and leave its label no room.
+            Control::Tabs { .. } => label_x,
         }
     }
 
@@ -2548,6 +2583,7 @@ impl Settings {
                     Some(id) => crate::panes::keyboard_layouts::display(id, value)
                         .or_else(|| crate::panes::top_bar::display(id, value))
                         .or_else(|| crate::panes::desk::display(id, value))
+                        .or_else(|| crate::panes::sound::display(id, value))
                         .unwrap_or_else(|| settings_client::display_choice(id, value)),
                     None => value.clone(),
                 };
@@ -2655,6 +2691,13 @@ impl Settings {
                     )
                 }
             }
+            Control::Tabs { labels, selected } => widgets::tabs(
+                canvas,
+                widgets::tabs_rect(x0, x1, cy),
+                labels,
+                *selected,
+                &self.theme,
+            ),
         }
 
         // A chosen file gets shown, not just named: a wallpaper is picked by

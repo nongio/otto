@@ -275,6 +275,26 @@ settings-scrolling-speed = スクロールの速さ
 
 settings-interface-sounds = インターフェイスのサウンド
 settings-sound-theme = サウンドテーマ
+settings-group-sound-output = 出力装置
+settings-group-sound-input = 入力装置
+settings-sound-output-device = 出力装置
+settings-sound-input-device = 入力装置
+settings-sound-volume = 音量
+settings-sound-mute = 消音
+settings-sound-no-outputs = 出力装置がありません
+settings-sound-no-inputs = 入力装置がありません
+settings-sound-unavailable = サウンドサーバーが応答しません。サウンドには pipewire-pulse を備えた PipeWire または PulseAudio と、pactl が必要です。
+settings-sound-show = 表示
+settings-sound-view-playback = 再生
+settings-sound-view-recording = 録音
+settings-sound-view-configuration = 構成
+settings-sound-port = ポート
+settings-sound-unplugged = 未接続
+settings-sound-default = デフォルトとして使用
+settings-sound-profile = プロファイル
+settings-sound-no-playback = サウンドを再生中のアプリはありません
+settings-sound-no-recording = サウンドを録音中のアプリはありません
+settings-sound-no-cards = サウンドカードがありません
 
 
 ## Settings — Power

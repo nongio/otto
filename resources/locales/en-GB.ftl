@@ -279,6 +279,26 @@ settings-scrolling-speed = Scrolling speed
 
 settings-interface-sounds = Interface sounds
 settings-sound-theme = Sound theme
+settings-group-sound-output = Output devices
+settings-group-sound-input = Input devices
+settings-sound-output-device = Output device
+settings-sound-input-device = Input device
+settings-sound-volume = Volume
+settings-sound-mute = Mute
+settings-sound-no-outputs = No output devices
+settings-sound-no-inputs = No input devices
+settings-sound-unavailable = No sound server answered. Sound needs PipeWire with pipewire-pulse, or PulseAudio, and pactl.
+settings-sound-show = Show
+settings-sound-view-playback = Playback
+settings-sound-view-recording = Recording
+settings-sound-view-configuration = Configuration
+settings-sound-port = Port
+settings-sound-unplugged = unplugged
+settings-sound-default = Use as default
+settings-sound-profile = Profile
+settings-sound-no-playback = No app is playing sound
+settings-sound-no-recording = No app is recording sound
+settings-sound-no-cards = No sound cards
 
 
 ## Settings — Power

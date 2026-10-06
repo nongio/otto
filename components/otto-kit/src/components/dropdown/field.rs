@@ -97,9 +97,10 @@ pub fn draw(
         theme.text_primary
     };
     Label::new(label)
-        // The same size the menu lists the values at, so opening the button
-        // does not change the size of the text you were reading.
-        .with_style(styles::BODY)
+        // A size under the row label beside it: the value is what the
+        // button holds, and set as large as the label the two read as one
+        // run of text with a box drawn round half of it.
+        .with_style(styles::CALLOUT)
         .with_color(text_color)
         .centered_on(rect.left + 9.0, rect.center_y())
         .render(canvas);
