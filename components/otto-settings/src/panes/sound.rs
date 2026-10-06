@@ -370,6 +370,31 @@ fn slot_target(id: &str) -> Option<Menu> {
     SLOT_TARGETS.lock().unwrap().get(index).cloned()
 }
 
+/// What each slot pointed at when its menu was opened. The pane is rebuilt
+/// on every event from the server, and a stream that ends while a menu is
+/// open shifts every slot after it along: a pick has to go to what the menu
+/// was opened for, not to whatever holds that slot by then.
+static OPENED: Mutex<Vec<(&'static str, Menu)>> = Mutex::new(Vec::new());
+
+/// Remember what `id`'s menu is for, as it opens.
+fn pin_target(id: &str, menu: &Menu) {
+    let Some(slot) = menu_slots().iter().find(|slot| **slot == id) else {
+        return;
+    };
+    let mut opened = OPENED.lock().unwrap();
+    opened.retain(|(open, _)| open != slot);
+    opened.push((slot, menu.clone()));
+}
+
+/// The menu `id` was opened for, falling back to what the slot holds now.
+fn picked_target(id: &str) -> Option<Menu> {
+    let mut opened = OPENED.lock().unwrap();
+    match opened.iter().position(|(slot, _)| *slot == id) {
+        Some(at) => Some(opened.swap_remove(at).1),
+        None => slot_target(id),
+    }
+}
+
 /// The pop-ups this module owns, for the menu pool built at startup.
 pub fn slot_ids() -> &'static [&'static str] {
     menu_slots()
@@ -424,6 +449,8 @@ fn choices(graph: &Graph, menu: &Menu) -> Vec<(String, String)> {
 /// The choices one of this module's pop-ups offers. `None` for any other.
 pub fn menu_choices(id: &str) -> Option<Vec<Choice>> {
     let menu = slot_target(id)?;
+    // Asked for as the menu opens.
+    pin_target(id, &menu);
     let Snapshot::Ready(graph) = &*SNAPSHOT.read().unwrap() else {
         return Some(Vec::new());
     };
@@ -453,7 +480,7 @@ pub fn display(id: &str, value: &str) -> Option<String> {
 /// of them. The row shows the choice straight away; the server is written
 /// on the writer thread and read back after.
 pub fn choose(id: &str, value: &str) -> bool {
-    let Some(menu) = slot_target(id) else {
+    let Some(menu) = picked_target(id) else {
         return false;
     };
     let mut snapshot = SNAPSHOT.write().unwrap();
@@ -921,6 +948,17 @@ mod tests {
         assert_eq!(groups[0].title.as_deref(), Some("Built-in Audio"));
         assert!(matches!(&groups[0].rows[0].control, Control::Select(p) if p == "duplex"));
         assert_eq!(menus.targets, [Menu::Profile("card0".into())]);
+    }
+
+    #[test]
+    fn a_pick_goes_to_what_the_menu_was_opened_for() {
+        let slot = menu_slots()[SLOTS - 1];
+        let first = Menu::StreamDevice(Direction::Output, 7);
+        pin_target(slot, &first);
+        // The pane is rebuilt and the slot now belongs to another stream.
+        assert_eq!(picked_target(slot), Some(first));
+        // Once picked, the pin is spent.
+        assert_eq!(picked_target(slot), slot_target(slot));
     }
 
     #[test]
