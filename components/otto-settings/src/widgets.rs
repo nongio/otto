@@ -241,14 +241,14 @@ pub fn buttons(
 pub const TABS_H: f32 = 28.0;
 
 /// The track's corner radius: a touch rounder than a pop-up's 6, which
-/// leaves the raised segment inside it at 5.
+/// leaves the open tab inside it at 5.
 const TABS_RADIUS: f32 = 7.0;
 
 /// A tab's label: the size of the row labels around it, at medium weight
 /// so the bar reads as the pane's navigation rather than one more row.
 const TAB_TEXT: TextStyle = styles::BODY_MEDIUM;
 
-/// How far the raised segment sits inside the track.
+/// How far the open tab sits inside the track.
 const TABS_INSET: f32 = 2.0;
 
 /// The segmented control's track, spanning `left` to `right` on `cy`.
@@ -265,13 +265,10 @@ pub fn tab_at(rect: Rect, count: usize, x: f32, y: f32) -> Option<usize> {
     Some((((x - rect.left) / width) as usize).min(count - 1))
 }
 
-/// A segmented control: one segment per label on a rounded-rect track, the
-/// selected one raised — cornered like the pop-ups and fields beside it.
-/// A label too long for its segment is cut with an ellipsis.
-///
-/// The raised segment carries a soft shadow and a hairline edge: in the light theme
-/// the highlight material is nearly the white of the card under it, and
-/// without them the open tab would be told apart only by its text.
+/// A segmented control: one segment per label on a rounded-rect track,
+/// cornered like the pop-ups and fields beside it. The open tab is a flat
+/// dark fill under white text, with no shadow: told apart by contrast, not
+/// by depth. A label too long for its segment is cut with an ellipsis.
 pub fn tabs(canvas: &Canvas, rect: Rect, labels: &[&str], selected: usize, theme: &Theme) {
     canvas.draw_rrect(
         RRect::new_rect_xy(rect, TABS_RADIUS, TABS_RADIUS),
@@ -292,14 +289,10 @@ pub fn tabs(canvas: &Canvas, rect: Rect, labels: &[&str], selected: usize, theme
         if chosen {
             // Inset by the track's padding, with its corners inset by the
             // same, so the two curves run parallel.
-            let raised = segment.with_inset((TABS_INSET, TABS_INSET));
+            let open = segment.with_inset((TABS_INSET, TABS_INSET));
             let radius = TABS_RADIUS - TABS_INSET;
-            let rrect = RRect::new_rect_xy(raised, radius, radius);
-            let mut shadow = fill(theme.shadow.with_a(0x30));
-            shadow.set_mask_filter(MaskFilter::blur(BlurStyle::Normal, 1.5, false));
-            canvas.draw_rrect(rrect.with_offset((0.0, 0.5)), &shadow);
-            canvas.draw_rrect(rrect, &fill(theme.material_highlight));
-            canvas.draw_rrect(rrect, &stroke(theme.hairline, 0.5));
+            let rrect = RRect::new_rect_xy(open, radius, radius);
+            canvas.draw_rrect(rrect, &fill(tab_selected_fill(theme)));
         }
         let text = otto_kit::typography::ellipsize(&TAB_TEXT.font(), label, width - 16.0);
         let text_w = TAB_TEXT.font().measure_str(&text, None).0;
@@ -310,11 +303,22 @@ pub fn tabs(canvas: &Canvas, rect: Rect, labels: &[&str], selected: usize, theme
             segment.center_y(),
             TAB_TEXT,
             if chosen {
-                theme.text_primary
+                Color::WHITE
             } else {
                 theme.text_secondary
             },
         );
+    }
+}
+
+/// The open tab's fill: a solid dark grey under white text. On a dark
+/// window the same grey would sink into it, so there it is lifted to a
+/// mid grey that still carries white text.
+fn tab_selected_fill(theme: &Theme) -> Color {
+    if theme.is_dark() {
+        Color::from_rgb(0x63, 0x63, 0x66)
+    } else {
+        Color::from_rgb(0x3A, 0x3A, 0x3C)
     }
 }
 
