@@ -365,10 +365,13 @@ schema and current values, and subscribes to the changed signal. A change
 arriving over the signal updates the displayed value, whether or not this app
 caused it.
 
-The window presents a list of panes and the selected pane's contents. The panes
-are:
+The window presents a list of panes and the selected pane's contents, and opens
+on the first. The sidebar lists them the system first, then the desktop, input,
+and accounts, with About last: General, Appearance, Displays, Sound, Power, Dock,
+Top bar, Tiling, Search, Agents, Keyboard, Trackpad & Mouse, Users, Lock & Login,
+Privacy, About. The panes are:
 
-- **Users** — the first pane, and not Otto settings: everyone who can log in.
+- **Users** — not Otto settings: everyone who can log in.
   It is a list and a detail. The users list (otto-kit's `selection_list`) sits
   left of the detail — above it when the pane is narrower than 560pt — with
   you first, then the others by name; each row has the account's avatar
