@@ -267,6 +267,9 @@ pub struct Search {
     /// it itself; `main.rs` moves it on its next update. `Some(None)` takes
     /// the focus off the field.
     pub focus: Option<Option<FocusId>>,
+    /// How many rows the window has room for: no more of the results than
+    /// that are drawn, walked, picked or described.
+    fit: usize,
     pub revision: u64,
 }
 
@@ -287,6 +290,7 @@ impl Search {
             pressed: None,
             pick: None,
             focus: None,
+            fit: MAX_ROWS,
             revision: 0,
         }
     }
@@ -335,8 +339,19 @@ impl Search {
         }
     }
 
+    /// How many results the list shows.
     pub fn result_count(&self) -> usize {
-        self.results.len()
+        self.results.len().min(self.fit)
+    }
+
+    /// Show only as many results as a window `height` tall has room for.
+    pub fn fit(&mut self, height: f32) {
+        let fit = rows_that_fit(height);
+        if fit != self.fit {
+            self.fit = fit;
+            self.selected = self.selected.min(fit - 1);
+            self.touch();
+        }
     }
 
     /// The `index`th result.
@@ -350,7 +365,7 @@ impl Search {
         if self.results.is_empty() {
             return false;
         }
-        let last = self.results.len() as isize - 1;
+        let last = self.result_count() as isize - 1;
         let moved = (self.selected as isize + delta).clamp(0, last) as usize;
         if moved == self.selected {
             return false;
@@ -362,7 +377,7 @@ impl Search {
 
     /// Select the result the pointer is over, as the launcher's list does.
     pub fn hover(&mut self, index: usize) {
-        if index < self.results.len() && index != self.selected {
+        if index < self.result_count() && index != self.selected {
             self.selected = index;
             self.touch();
         }
@@ -530,9 +545,7 @@ pub fn paint_field(canvas: &Canvas, field: &FieldView, theme: &Theme, dark: bool
 pub fn panel_rect(count: usize, width: f32, height: f32) -> Rect {
     let field = field_rect();
     let top = field.bottom + PANEL_GAP;
-    let room = (height - PANEL_MARGIN - top - PANEL_PAD * 2.0).max(ROW_H);
-    let fit = ((room / ROW_H).floor() as usize).max(1);
-    let rows = count.min(MAX_ROWS).min(fit);
+    let rows = count.min(rows_that_fit(height));
     let body = if rows == 0 {
         EMPTY_H
     } else {
@@ -540,6 +553,14 @@ pub fn panel_rect(count: usize, width: f32, height: f32) -> Rect {
     };
     let panel_w = PANEL_W.min(width - field.left - PANEL_MARGIN);
     Rect::from_xywh(field.left, top, panel_w, body)
+}
+
+/// How many rows of the list fit above the bottom edge of a window `height`
+/// tall — at least one, and never more than [`MAX_ROWS`].
+pub fn rows_that_fit(height: f32) -> usize {
+    let top = field_rect().bottom + PANEL_GAP;
+    let room = (height - PANEL_MARGIN - top - PANEL_PAD * 2.0).max(ROW_H);
+    ((room / ROW_H).floor() as usize).clamp(1, MAX_ROWS)
 }
 
 /// The rect of the `index`th row of a list drawn at `panel`.
@@ -812,6 +833,26 @@ mod tests {
         let panel = panel_rect(MAX_ROWS, 900.0, 300.0);
         assert!(panel.bottom <= 300.0 - PANEL_MARGIN + 0.5, "{panel:?}");
         assert!(panel.height() >= ROW_H);
+    }
+
+    #[test]
+    fn only_the_rows_drawn_can_be_walked_to() {
+        let mut search = Search::new(false);
+        search.input.set_value("dock");
+        search.refresh(&panes());
+        assert!(search.result_count() > 1);
+        search.move_selection(1);
+
+        // A window with room for one row: the selection comes back to it,
+        // and the arrows go nowhere a row is not drawn.
+        search.fit(0.0);
+        assert_eq!(search.result_count(), 1);
+        assert_eq!(search.selected, 0);
+        assert!(!search.move_selection(1));
+        assert_eq!(
+            panel_rect(search.result_count(), 900.0, 0.0).height(),
+            ROW_H + PANEL_PAD * 2.0
+        );
     }
 
     #[test]

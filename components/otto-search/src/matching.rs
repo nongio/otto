@@ -99,9 +99,75 @@ pub fn positions(text: &str, query: &str) -> Option<Vec<usize>> {
     Some(marked)
 }
 
+/// Which characters of `text` start its words with the words of `query`, as
+/// indices into `text.chars()`, or `None` unless every word typed starts one
+/// of `text`'s words.
+///
+/// What a list marks when it matched words by their starts: "rate" on
+/// "Repeat rate" marks the second word, where [`positions`] would mark the
+/// first `r`, `a`, `t` and `e` it walks past.
+pub fn word_positions(text: &str, query: &str) -> Option<Vec<usize>> {
+    // Each word of `text`, lowered a character at a time so a lowered
+    // character still knows where it came from.
+    let mut words: Vec<Vec<(char, usize)>> = Vec::new();
+    let mut word = Vec::new();
+    for (at, c) in text.chars().enumerate() {
+        if c.is_alphanumeric() {
+            word.extend(c.to_lowercase().map(|lower| (lower, at)));
+        } else if !word.is_empty() {
+            words.push(std::mem::take(&mut word));
+        }
+    }
+    if !word.is_empty() {
+        words.push(word);
+    }
+
+    let wanted: Vec<Vec<char>> = query
+        .to_lowercase()
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .map(|w| w.chars().collect())
+        .collect();
+    if wanted.is_empty() {
+        return None;
+    }
+
+    let starts = |word: &[(char, usize)], wanted: &[char]| {
+        word.len() >= wanted.len() && word.iter().zip(wanted).all(|(&(c, _), &w)| c == w)
+    };
+    let mut used = vec![false; words.len()];
+    let mut marked = Vec::new();
+    for wanted in &wanted {
+        // A word not already taken by an earlier one, if there is one.
+        let found = (0..words.len())
+            .find(|&i| !used[i] && starts(&words[i], wanted))
+            .or_else(|| (0..words.len()).find(|&i| starts(&words[i], wanted)))?;
+        used[found] = true;
+        marked.extend(words[found][..wanted.len()].iter().map(|&(_, at)| at));
+    }
+    marked.sort_unstable();
+    marked.dedup();
+    Some(marked)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn word_positions_mark_the_starts_of_the_words_typed() {
+        assert_eq!(
+            word_positions("Repeat rate", "rate"),
+            Some(vec![7, 8, 9, 10])
+        );
+        assert_eq!(word_positions("Tap to click", "to"), Some(vec![4, 5]));
+        assert_eq!(
+            word_positions("Tap to click", "cl ta"),
+            Some(vec![0, 1, 7, 8])
+        );
+        assert_eq!(word_positions("Dock size", "sz"), None);
+        assert_eq!(word_positions("Dock size", " "), None);
+    }
 
     #[test]
     fn positions_mark_the_characters_the_match_landed_on() {

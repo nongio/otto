@@ -178,10 +178,14 @@ pub fn paint_item_rows_styled(
         }
 
         // Marks only where they would show: on the selected row every
-        // character is already the selection's colour.
+        // character is already the selection's colour. The words a title
+        // starts with are what it was found by, when it was; the letters a
+        // looser match walked through, when not.
         let marked = match style.mark {
             Some(mark) if !selected && !style.query.trim().is_empty() => {
-                crate::matching::positions(&item.title, style.query).map(|at| (at, mark))
+                crate::matching::word_positions(&item.title, style.query)
+                    .or_else(|| crate::matching::positions(&item.title, style.query))
+                    .map(|at| (at, mark))
             }
             _ => None,
         };

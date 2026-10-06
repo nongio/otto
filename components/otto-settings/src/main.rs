@@ -1381,7 +1381,6 @@ fn press_search(
     if sidebar_search::field_rect().contains(point) {
         let input = sidebar_search::field_input_rect();
         let already = search.input.state.focused();
-        search.input.state.set_focused(true);
         search.input.on_pointer_down(x - input.left, 1, false);
         // A press back in a field that kept its query shows the list again.
         if already && !search.query().trim().is_empty() {
@@ -1864,10 +1863,15 @@ impl SettingsApp {
         surface.and_then(|s| AppContext::focused_control(&s)) == Some(view::SIDEBAR_FOCUS)
     }
 
-    /// Whether the keyboard is on the search field.
+    /// Whether the keyboard is on the search field. The window's focus ring
+    /// keeps its place while the window is in the background, so the window
+    /// has to hold the keyboard too.
     fn search_focused(&self) -> bool {
-        let surface = self.window.as_ref().and_then(Window::surface_id);
-        surface.and_then(|s| AppContext::focused_control(&s)) == Some(view::SEARCH_FOCUS)
+        let Some(surface) = self.window.as_ref().and_then(Window::surface_id) else {
+            return false;
+        };
+        AppContext::keyboard_focus().as_ref() == Some(&surface)
+            && AppContext::focused_control(&surface) == Some(view::SEARCH_FOCUS)
     }
 
     /// Move the keyboard to `focus`, or off every control.
@@ -1880,6 +1884,10 @@ impl SettingsApp {
     /// Put the keyboard in the search field, with what it already holds
     /// selected so typing replaces it — Ctrl+F, `/`, or a screen reader.
     fn focus_search(&mut self) {
+        // The password sheet is modal: the field behind it waits.
+        if panes::account::sheet().is_some() {
+            return;
+        }
         if commit_edit(&self.editing) {
             mark_pane_dirty(&self.pane_dirty);
         }
@@ -2932,6 +2940,7 @@ impl App for SettingsApp {
         }
         *size = (width, height);
         drop(size);
+        self.search.lock().unwrap().fit(height);
 
         // The pane's surfaces are placed against the window's size, so they
         // have to be told about the new one and repainted at it.
@@ -3334,9 +3343,9 @@ impl App for SettingsApp {
     /// answered, so it is dropped rather than left blinking on a window that
     /// no longer has focus.
     fn on_keyboard_leave(&mut self, _ctx: &AppContext, _surface: &wl_surface::WlSurface) {
-        // The list of matches goes up with the keyboard; the query stays, for
-        // when it comes back.
-        self.search.lock().unwrap().close();
+        // The list of matches goes up with the keyboard and the caret stops
+        // blinking; the query stays, for when it comes back.
+        self.sync_search_focus();
         // `|` rather than `||`: both have to be dropped.
         if cancel_edit(&self.editing) | stop_recording() {
             mark_pane_dirty(&self.pane_dirty);
@@ -3612,12 +3621,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.first().map(String::as_str) == Some("--png") {
         // `--search <query>` draws the field holding it and the list it drops.
-        let search = args
+        let at = args.iter().position(|arg| arg == "--search");
+        let search = at.and_then(|at| args.get(at + 1));
+        // What is left is `[out] [pane]`.
+        let plain: Vec<&String> = args
             .iter()
-            .position(|arg| arg == "--search")
-            .and_then(|at| args.get(at + 1));
-        let only = args.get(2).filter(|arg| !arg.starts_with("--"));
-        preview::render_to_png(args.get(1), only, search);
+            .enumerate()
+            .skip(1)
+            .filter(|&(i, _)| at.is_none_or(|at| i != at && i != at + 1))
+            .map(|(_, arg)| arg)
+            .collect();
+        preview::render_to_png(plain.first().copied(), plain.get(1).copied(), search);
         return Ok(());
     }
 
