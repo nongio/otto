@@ -34,6 +34,17 @@ makepkg -si
 `makepkg` fetches the release tarball itself. If you already downloaded it,
 drop the `PKGBUILD` next to it and it will be used without downloading again.
 
+On Debian, Ubuntu and Fedora the package manager also installs the recommended
+extras: the GStreamer plugins for video in Peek and remote desktop, and
+polkit. On Arch, the GStreamer plugins, the desktop portal and file search are
+optional dependencies; to get the full set:
+
+```sh
+sudo pacman -S --needed --asdeps xdg-desktop-portal localsearch gst-plugins-base gst-plugins-good gst-plugins-bad gst-libav gst-plugin-pipewire
+```
+
+Add `vulkan-intel` or `vulkan-radeon` for the Vulkan renderer on your GPU.
+
 Once it is installed, Otto appears in your login manager's session menu. Pick
 it there and log in, then run through the
 [first-run checklist](#first-run-checklist).
@@ -79,7 +90,9 @@ cargo build --release
 ```
 
 You need `libwayland`, `libxkbcommon`, `libudev`, `libinput`, `libgbm` and
-[`libseat`](https://git.sr.ht/~kennylevinsen/seatd). Add `xwayland` if you want
+[`libseat`](https://git.sr.ht/~kennylevinsen/seatd); the full list, with the
+Debian/Ubuntu install line, is under
+[Prerequisites](../developer/project-structure.md#prerequisites). Add `xwayland` if you want
 to run X11 applications. Otto runs without it: build with
 `--no-default-features --features "egl,winit,udev,renderer_sync"` to leave
 XWayland support out, and X11-only applications will not start. On Arch,
@@ -116,9 +129,10 @@ To start it by hand:
 otto                # auto-detects the backend
 ```
 
-Otto chooses `--winit` when it finds an existing Wayland or X11 session
-(it runs as a window, which is what you want for development), and `--tty-udev`
-when started from a bare TTY.
+Otto chooses `--winit` when `WAYLAND_DISPLAY` is set (it runs as a window
+inside your Wayland session), and `--tty-udev` otherwise. It does not look for
+X11: on an X11 session pass `--winit` explicitly, or Otto tries to take over
+the display from your running desktop.
 
 ### Backends
 

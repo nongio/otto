@@ -101,6 +101,40 @@ website/         Hugo site generated from docs/
 
 ## Build & run
 
+### Prerequisites
+
+Package names vary by distribution. The Debian/Ubuntu names are what CI
+installs, so that list is the authoritative one: see the "System dependencies"
+step in [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml).
+
+- Wayland and input: `libwayland`, `libxkbcommon`, `libudev`, `libinput`,
+  [`libseat`](https://git.sr.ht/~kennylevinsen/seatd)
+- Graphics: `libgbm`, `libdrm`, `libEGL`/Mesa, `libpixman`, `libdisplay-info`
+- Text: `freetype`, `fontconfig`
+- Session and IPC: `libdbus`, `libsystemd`
+- Screen sharing and remote desktop: `pipewire`, `gstreamer` and
+  `gstreamer-plugins-base` (`otto-rdp`)
+- Authentication: `libpam` (`otto-lock`, `otto-greeter`)
+
+On Debian and Ubuntu:
+
+```sh
+sudo apt-get install -y libdrm-dev libudev-dev libgbm-dev libxkbcommon-dev \
+  libegl1-mesa-dev libwayland-dev libinput-dev libdbus-1-dev libsystemd-dev \
+  libseat-dev libpipewire-0.3-dev libfreetype-dev libfontconfig-dev \
+  libdisplay-info-dev libpixman-1-dev libgstreamer1.0-dev \
+  libgstreamer-plugins-base1.0-dev libpam0g-dev
+```
+
+Add `xwayland` to run X11 applications inside Otto.
+
+### Running
+
+With no backend flag, Otto picks `--winit` when `WAYLAND_DISPLAY` is set and
+`--tty-udev` otherwise. The check does not look for X11, so on an X11 session
+pass `--winit` explicitly, or Otto tries to take the display from the running
+desktop.
+
 ```sh
 cargo run -- --winit          # windowed, inside an existing session — the dev path
 cargo run -- --tty-udev       # bare metal DRM/GBM — needs root or libseat
