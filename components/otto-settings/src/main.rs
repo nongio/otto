@@ -21,6 +21,7 @@ mod glyphs;
 mod model;
 mod panes;
 mod preview;
+mod pulse;
 mod settings_client;
 mod sheet;
 mod sidebar_search;
@@ -405,6 +406,9 @@ fn select_ids() -> Vec<&'static str> {
     // The Privacy pane's Ask / Allow / Don't Allow pop-ups, one per row it
     // can hold.
     ids.extend_from_slice(panes::privacy::slot_ids());
+    // The Sound pane's device pop-ups, whose rows only appear once the sound
+    // server has answered.
+    ids.extend(panes::sound::slot_ids());
     ids
 }
 
@@ -604,6 +608,8 @@ fn open_menu(
             choices
         } else if let Some(choices) = panes::account::menu_choices(select.id) {
             choices
+        } else if let Some(choices) = panes::sound::menu_choices(select.id) {
+            choices
         } else if let Some(choices) = panes::keyboard_layouts::menu_choices(select.id) {
             choices
         } else if let Some(choices) = panes::desk::menu_choices(select.id) {
@@ -681,6 +687,7 @@ fn open_menu(
             if let Some(value) = values.get(index) {
                 if panes::privacy::choose(id, value)
                     || panes::account::choose(id, value)
+                    || panes::sound::choose(id, value)
                     || panes::keyboard_layouts::choose(id, value)
                     || panes::desk::choose(id, value)
                 {
@@ -855,6 +862,10 @@ fn apply(id: &str, value: settings_client::Value) {
     }
     // The account picture goes to AccountsService, not to a setting.
     if panes::account::apply(id, &value) {
+        return;
+    }
+    // The Sound pane's devices, volumes and mutes belong to the sound server.
+    if panes::sound::apply(id, &value) {
         return;
     }
     // The desk's icon size is in files.toml, not a setting.
@@ -1063,6 +1074,7 @@ fn describe_row(tree: &mut A11yTree, row: &model::Row, bounds: Rect) {
                 Some(id) => panes::keyboard_layouts::display(id, current)
                     .or_else(|| panes::top_bar::display(id, current))
                     .or_else(|| panes::desk::display(id, current))
+                    .or_else(|| panes::sound::display(id, current))
                     .unwrap_or_else(|| settings_client::display_choice(id, current)),
                 None => current.clone(),
             };
@@ -1126,6 +1138,17 @@ fn describe_row(tree: &mut A11yTree, row: &model::Row, bounds: Rect) {
         // button for a list this does not describe yet; announcing either as
         // one thing would be a lie about what it is.
         model::Control::Shortcut { .. } | model::Control::AddShortcut => {}
+        // One stop, as the keyboard has it: the arrow keys move between the
+        // tabs, and what is heard is the tab that is open.
+        model::Control::Tabs { labels, selected } => {
+            tree.control(focus, bounds, Role::TabList, true, |node| {
+                node.set_label(label);
+                if let Some(open) = labels.get(*selected) {
+                    node.set_value(*open);
+                }
+                describe(node);
+            });
+        }
     }
 
     // A named remove button is its own node, as it is its own stop, named
@@ -1788,6 +1811,21 @@ impl SettingsApp {
                     return false;
                 }
                 apply(id, settings_client::number_for(id, moved));
+            }
+            // The arrows walk the tabs, stopping at either end.
+            model::Control::Tabs { labels, selected } if step != 0.0 => {
+                let Some(id) = focused.id else {
+                    return false;
+                };
+                let next = if step < 0.0 {
+                    selected.checked_sub(1)
+                } else {
+                    Some(selected + 1).filter(|next| *next < labels.len())
+                };
+                let Some(next) = next else {
+                    return false;
+                };
+                panes::sound::select_tab(id, next);
             }
             model::Control::Button(labels) if step == 0.0 => {
                 // The keyboard is on one particular button, so that is the one
@@ -2656,6 +2694,11 @@ impl App for SettingsApp {
                             // Acts on release, like every other push button.
                             *pressed_hit.lock().unwrap() = Some(view::Pressed::RemoveRow(id));
                             mark_pane_dirty(&pane_dirty);
+                        } else if let Some((row, index)) = settings.tab_hit(x, y, offset) {
+                            // A tab is a view of the pane, not a setting: the
+                            // pane owning the row switches it and is rebuilt.
+                            panes::sound::select_tab(row, index);
+                            mark_pane_dirty(&pane_dirty);
                         } else if let Some(select) = settings.select_hit(x, y, offset) {
                             open_menu(
                                 &dropdowns,
@@ -2982,6 +3025,8 @@ impl App for SettingsApp {
         panes::search::set_shown(*self.selected.lock().unwrap() == model::SEARCH_PANE);
         // The Privacy pane reads the permission store when it comes on screen.
         panes::privacy::set_shown(*self.selected.lock().unwrap() == model::PRIVACY_PANE);
+        // The Sound pane reads the sound server when it comes on screen.
+        panes::sound::set_shown(*self.selected.lock().unwrap() == model::SOUND_PANE);
         // The Agents pane asks systemd about its service only while it is on
         // screen.
         agents::set_shown(*self.selected.lock().unwrap() == model::AGENTS_PANE);

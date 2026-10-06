@@ -281,6 +281,26 @@ settings-scrolling-speed = Velocidade de rolagem
 
 settings-interface-sounds = Sons da interface
 settings-sound-theme = Tema de som
+settings-group-sound-output = Dispositivos de saída
+settings-group-sound-input = Dispositivos de entrada
+settings-sound-output-device = Dispositivo de saída
+settings-sound-input-device = Dispositivo de entrada
+settings-sound-volume = Volume
+settings-sound-mute = Silenciar
+settings-sound-no-outputs = Nenhum dispositivo de saída
+settings-sound-no-inputs = Nenhum dispositivo de entrada
+settings-sound-unavailable = Nenhum servidor de som respondeu. O som precisa do PipeWire com pipewire-pulse, ou do PulseAudio, e do pactl.
+settings-sound-show = Mostrar
+settings-sound-view-playback = Reprodução
+settings-sound-view-recording = Gravação
+settings-sound-view-configuration = Configuração
+settings-sound-port = Porta
+settings-sound-unplugged = desconectado
+settings-sound-default = Usar como padrão
+settings-sound-profile = Perfil
+settings-sound-no-playback = Nenhum app está reproduzindo som
+settings-sound-no-recording = Nenhum app está gravando som
+settings-sound-no-cards = Nenhuma placa de som
 
 
 ## Settings — Power

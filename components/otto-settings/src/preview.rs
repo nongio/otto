@@ -25,6 +25,11 @@ pub fn render_to_png(out: Option<&String>, only: Option<&String>, query: Option<
         .cloned()
         .unwrap_or_else(|| "otto-settings.png".to_string());
 
+    // The Sound pane's mixer is read from the sound server in the
+    // background as the pane comes on screen; a preview draws once, so it
+    // reads it first.
+    crate::panes::sound::load_now();
+
     let mut cells: Vec<(String, Settings, Option<Search>)> = Vec::new();
     for (i, pane) in model::panes().iter().enumerate() {
         if let Some(only) = only {

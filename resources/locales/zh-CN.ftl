@@ -278,6 +278,26 @@ settings-scrolling-speed = 滚动速度
 
 settings-interface-sounds = 界面声音
 settings-sound-theme = 声音主题
+settings-group-sound-output = 输出设备
+settings-group-sound-input = 输入设备
+settings-sound-output-device = 输出设备
+settings-sound-input-device = 输入设备
+settings-sound-volume = 音量
+settings-sound-mute = 静音
+settings-sound-no-outputs = 没有输出设备
+settings-sound-no-inputs = 没有输入设备
+settings-sound-unavailable = 没有声音服务器响应。声音需要带 pipewire-pulse 的 PipeWire 或 PulseAudio，以及 pactl。
+settings-sound-show = 显示
+settings-sound-view-playback = 播放
+settings-sound-view-recording = 录音
+settings-sound-view-configuration = 配置
+settings-sound-port = 端口
+settings-sound-unplugged = 未插入
+settings-sound-default = 设为默认
+settings-sound-profile = 配置文件
+settings-sound-no-playback = 没有应用正在播放声音
+settings-sound-no-recording = 没有应用正在录音
+settings-sound-no-cards = 没有声卡
 
 
 ## Settings — Power

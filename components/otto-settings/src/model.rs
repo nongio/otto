@@ -37,6 +37,15 @@ pub enum Control {
     File(String),
     /// Static informational value, not editable here.
     Value(String),
+    /// A segmented control spanning the row, one segment per label, with
+    /// `selected` raised. It switches between views of a pane, as
+    /// pavucontrol's tabs do, so a pick goes to the pane that owns the row
+    /// (`panes::sound::select_tab`) rather than onto the bus. The row draws
+    /// no label of its own.
+    Tabs {
+        labels: &'static [&'static str],
+        selected: usize,
+    },
     /// One editable shortcut line: the action pop-up, the key combination
     /// field, and the button that deletes it.
     ///
@@ -356,6 +365,10 @@ pub fn panes() -> Vec<Pane> {
 /// Where the Search pane sits in [`panes`], so `main.rs` can tell the pane
 /// when it is on screen without building every pane to find out.
 pub const SEARCH_PANE: usize = 8;
+
+/// Where the Sound pane sits in [`panes`]: it reads the sound server only
+/// while it is on screen.
+pub const SOUND_PANE: usize = 3;
 
 /// Where the Privacy pane sits in [`panes`]: it reads the permission store
 /// only while it is on screen.
@@ -932,7 +945,7 @@ mod readout_tests {
 
 #[cfg(test)]
 mod pane_order_tests {
-    use super::{panes, AGENTS_PANE, PRIVACY_PANE, SEARCH_PANE};
+    use super::{panes, AGENTS_PANE, PRIVACY_PANE, SEARCH_PANE, SOUND_PANE};
 
     #[test]
     fn the_search_pane_sits_where_main_looks_for_it() {
@@ -947,5 +960,10 @@ mod pane_order_tests {
     #[test]
     fn the_agents_pane_sits_where_main_looks_for_it() {
         assert_eq!(panes()[AGENTS_PANE].icon, "agent");
+    }
+
+    #[test]
+    fn the_sound_pane_sits_where_main_looks_for_it() {
+        assert_eq!(panes()[SOUND_PANE].icon, "sound");
     }
 }
