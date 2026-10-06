@@ -122,6 +122,26 @@ client is.
   Otto) ends every agent's seat at once, and is beyond the reach of any
   program in the session.
 
+### Passwords
+
+- Otto is the session's polkit authentication agent: the compositor starts
+  `otto-authorize --polkit-agent` on a socket of its own and starts it again
+  if it crashes. Every password asked for outside the lock screen is asked
+  there: `pkexec`, a system service's polkit action, and a change to a
+  protected setting (`org.otto.settings.lock`, `auth_self`).
+- Otto never checks the password. The panel hands it to polkit's own helper,
+  which runs PAM (polkit's stack) and reports to polkitd; polkitd believes
+  only the helper.
+- The panel holds the user's keyboard and is drawn above everything while it
+  is up. An agent's pointer and keyboard cannot reach it, so an agent that
+  needs something privileged waits for the user to answer, and the password
+  never passes through the agent.
+- polkit takes one agent per session. If another one registered first,
+  `otto-authorize` exits cleanly, Otto does not start it again, and passwords
+  are asked by a dialog Otto did not draw. `polkit_agent = false` turns
+  Otto's off for someone who runs their own.
+- No agent at all runs in login mode; the greeter asks for passwords itself.
+
 ## Constraints & Edge Cases
 
 - **Input below the compositor.** A process that can write to `/dev/uinput`
@@ -130,6 +150,11 @@ client is.
   cannot: no world-writable injector daemon (ydotoold), and the user not in
   a group or ACL that grants uinput. The secure attention key comes from the
   kernel and logind, below any of that.
+- **Typing into the password panel.** A virtual keyboard on the user's seat,
+  which every user program has unless `strict` is on, types into whatever
+  holds the user's keyboard, the panel included. That helps only a program
+  that already knows the password, but it can answer a prompt the user did
+  not mean to answer.
 - **Names are borrowed.** An executable's name can be borrowed by any
   unsandboxed process, and an interpreter is one program for every script it
   runs. Component names are trusted because root owns the files; a program
@@ -165,6 +190,9 @@ Places where Otto today does less than this model asks:
 - A virtual pointer on the user's seat, which every user program has by
   default, can click a consent dialog once it is armed.
 - A stop lasts until Otto restarts, not until the user logs out.
+- When another polkit agent holds the session, nothing tells the user that
+  password prompts are no longer Otto's; Settings › Privacy does not show
+  which agent is answering.
 - No limits on how many seats, workspaces, connections, launches or
   captures an agent may ask for; captures are not deleted.
 - An agent back under the same name gets the seat name of its earlier
