@@ -4,42 +4,35 @@
 [![Matrix](https://img.shields.io/matrix/otto-compositor%3Amatrix.org?logo=matrix&label=matrix)](https://matrix.to/#/#otto-compositor:matrix.org)
 [![Discord](https://img.shields.io/badge/discord-join-5865F2?logo=discord&logoColor=white)](https://discord.gg/Mp7cBfaACD)
 
-**A Wayland desktop that feels like someone cared.** Smooth animations, thoughtful gestures, and the kind of details you notice only when they're missing — built from scratch in Rust on [Smithay](https://github.com/Smithay/smithay), with a Skia renderer and the [lay-rs](https://github.com/nongio/layers) scene graph.
+**A Wayland desktop that is a pleasure to use.**
 
-Otto is a Wayland compositor and stacking window manager. Parts of the desktop are handed straight to hardware display planes instead of being composited into one buffer.
-
-Installing it takes a minute, and you can look at it in a window inside your current session before you log out — [jump to Try it](#try-it).
+Otto is a Wayland compositor and stacking window manager, with the apps that make it a desktop: top bar, Dock, file manager, settings, launcher, lock screen and login greeter. It is written in Rust on [Smithay](https://github.com/Smithay/smithay), with a Skia renderer and the [lay-rs](https://github.com/nongio/layers) scene graph.
 
 **Documentation:** [User Guide](https://nongio.github.io/otto/) · [Developer Guide](https://nongio.github.io/otto/developer/)
 
-> Feedback and questions: [Discord](https://discord.gg/Mp7cBfaACD) or Matrix [`#otto-compositor:matrix.org`](https://matrix.to/#/#otto-compositor:matrix.org).
+Questions and feedback: [Discord](https://discord.gg/Mp7cBfaACD) or Matrix [`#otto-compositor:matrix.org`](https://matrix.to/#/#otto-compositor:matrix.org).
 
 ## See it
 
-![The Otto desktop](./assets/press/01-desktop-hero.jpg)
+![A fresh Otto install: wallpaper, top bar and Dock](./assets/press/release-1.6.0/01-first-install.jpg)
 
-*Wallpaper, top bar, Dock, Files browsing poster thumbnails, the user guide in a browser window.*
+*A fresh install, set up before you touch anything.*
 
-![Exposé](./assets/press/03-expose.jpg)
+![Files in the Photos view, pictures grouped by day with an info panel](./assets/press/release-1.6.0/06-photos-view.jpg)
 
-*Exposé, with the workspace strip on top — the window previews are live, not screenshots.*
+*[Files](https://nongio.github.io/otto/files/), with pictures laid out by day.*
 
-![A warm Otto desktop over a rainy jazz-club street, with a now-playing panel and a gold-tinted Dock](./docs/user/images/rice-crate-digger.jpg)
+![The side canvas open on the right, with files to ask about and a list of agent sessions](./assets/press/release-1.6.0/04-side-canvas.jpg)
 
-*The same compositor, configured differently — and a third-party `wlr-layer-shell` widget ([eww](https://github.com/elkowar/eww)) on the desktop layer, behind windows and above the wallpaper. See [Desktop Widgets](https://nongio.github.io/otto/desktop-widgets/).*
+*The [side canvas](https://nongio.github.io/otto/side-canvas/), swiped in from the right edge, and files on the desk.*
 
-![A near-black Otto desktop over a James Webb deep field image, the brightness indicator over otto-settings](./docs/user/images/rice-deep-field-osd.jpg)
+![Settings open on the Appearance pane, with wallpaper, background widget and desk options](./assets/press/release-1.6.0/03-appearance.jpg)
 
-*Otto's own surfaces follow the theme: the Dock down the right edge, the brightness indicator, and `otto-settings` editing the running compositor over D-Bus.*
-
-![Otto Settings on a cold blue-grey desktop, showing the accent, corner and window-control settings](./docs/user/images/rice-section-9-settings.jpg)
-
-*None of this is a theme engine: a look is an accent, an icon tint, which edge the Dock sits on and which side the window controls are — one config file. More of them in [Customization](https://nongio.github.io/otto/customization/).*
+*[Settings](https://nongio.github.io/otto/settings/) › Appearance. More looks in [Customization](https://nongio.github.io/otto/customization/).*
 
 ## Try it
 
-One package installs the whole desktop: the compositor and every app that comes with it.
-It needs Ubuntu 24.04 or newer, Debian 13 or newer, Fedora 41 or newer, or Arch.
+Packages need Ubuntu 24.04+, Debian 13+, Fedora 41+ or Arch.
 
 ```sh
 # Debian / Ubuntu
@@ -53,308 +46,59 @@ sudo dnf install https://github.com/nongio/otto/releases/latest/download/otto-x8
 curl -fsSLO https://raw.githubusercontent.com/nongio/otto/main/PKGBUILD && makepkg -si
 ```
 
-Then log out and pick **Otto** in your login manager's session menu.
+Log out and pick **Otto** in your login manager's session menu. To look first, `otto --winit` runs it in a window inside your current Wayland session.
 
-**What's in the package:** the top bar and dynamic island, the Dock, [Files](https://nongio.github.io/otto/files/) with its Peek panel, [Settings](https://nongio.github.io/otto/settings/), the [launcher](https://nongio.github.io/otto/launcher/), the [emoji picker](https://nongio.github.io/otto/emoji/), the [lock screen](https://nongio.github.io/otto/lock-screen/) and [login greeter](https://nongio.github.io/otto/login-greeter/), a [remote desktop](https://nongio.github.io/otto/remote-desktop/) server, and Otto's desktop portal. It comes configured with Otto's wallpaper, the [Inter](https://rsms.me/inter/) font and the [MacTahoe](https://github.com/vinceliuice/MacTahoe-icon-theme) icons and cursors.
-
-On Debian, Ubuntu and Fedora the package manager also installs the recommended extras: the GStreamer plugins for video in Peek and remote desktop, and polkit. On Arch, the GStreamer plugins, the desktop portal and file search are optional dependencies; to get the full set:
-
-```sh
-sudo pacman -S --needed --asdeps xdg-desktop-portal localsearch gst-plugins-base gst-plugins-good gst-plugins-bad gst-libav gst-plugin-pipewire
-```
-
-Add `vulkan-intel` or `vulkan-radeon` for the Vulkan renderer on your GPU.
-
-Want a look before logging out? `otto --winit` runs Otto in a window inside your current session; open apps in it with the `WAYLAND_DISPLAY` socket it prints at startup.
-
-See [Installation](#installation) for nightly builds and post-install notes, and the [Getting Started guide](https://nongio.github.io/otto/getting-started/) for a walkthrough.
+[Getting Started](https://nongio.github.io/otto/getting-started/) covers nightly builds, building from source, optional dependencies and the first-run checklist (screen sharing, the lock screen's PAM file, lid and power button).
 
 ## What you get
 
-- **A Dock that is a real task manager** — pinned apps, running apps and minimized windows in one strip, along the bottom edge or down either side. Icons magnify on approach, bounce while an app is launching, auto-hide when you want the space back, and the whole thing resizes by dragging its handle.
-- **Workspaces that animate** — multiple workspaces per monitor, each monitor independent, drag windows between them, configurable backgrounds.
-- **Exposé and an app switcher** — `PageUp` (or a three-finger swipe up) spreads every window out with live previews; `Ctrl+Tab` walks apps, cycles windows within an app, and can close them. Both appear on the monitor under your pointer.
-- **Window management that stays out of the way** — animated fullscreen/maximize, snap to halves, minimize to the Dock, and new windows placed where they overlap the least. Otto draws the title bar for clients that want a server-side one, on both `xdg-decoration` and KDE's `org_kde_kwin_server_decoration`, so the controls keep working while an application is busy.
-- **Tiling or stacking, per workspace** — every workspace starts stacking and can be switched to a managed tiling layout at any time, and back again, with one shortcut: every window gets a cell in a tree of splits, edge to edge, with configurable gaps and slimmed-down title bars. Shape it from the keyboard with i3-style actions, or by dragging a tile's title bar into another slot and its edges to resize. The mode belongs to that one workspace on that one monitor — nothing else changes mode with it — so a tiled workspace sits a swipe away from your stacking ones, and switching back puts every window on the rectangle it had before, and `otto-msg` drives it with i3's own command language, so existing scripts and status bars port with a rename. See [Tiling](https://nongio.github.io/otto/tiling/).
-- **A top bar and a dynamic island** — clock, tray and application menus over DBusMenu; notifications, ongoing activities and permission dialogs in a floating panel; compositor-drawn volume and brightness indicators.
-- **Multi-monitor that holds up** — per-output rendering, hotplug, arrangement and modes from the config, virtual outputs created on demand.
-- **Lock, login and power** — `ext-session-lock-v1` locking with a PAM-backed locker, lock on hotkey / power button / lid close / idle timeout (respecting `idle-inhibit`), a greetd login screen with password and fingerprint, and Otto-owned lid-suspend with clamshell awareness.
-- **[Screen sharing](https://nongio.github.io/otto/screen-sharing/)** — an XDG Desktop Portal backend over PipeWire: share a whole output or a single window with browsers, OBS and anything else that speaks the portal, and send an output to an AirPlay receiver. The portal also answers file-picker, screenshot and permission-dialog requests.
-- **[Remote desktop](https://nongio.github.io/otto/remote-desktop/)** — `otto-rdp` serves an output to any RDP client (Microsoft Remote Desktop on Windows, macOS, iOS and Android, or FreeRDP), with TLS, hardware H.264 through VA-API where the GPU offers it and a bitmap fallback where it doesn't. Remote pointer and keyboard input is injected back into the session, so it is a screen you can actually work on.
-- **[Virtual outputs](https://nongio.github.io/otto/display/#virtual-outputs)** — monitors with no display behind them, declared in the config and rendered like any other screen, each published as a PipeWire node. They have their own workspaces, exposé and workspace selector, and you can drag windows onto them: a remote screen for RDP, a stage to record or cast from, or simply more desk than your hardware has.
-- **X11 apps, including fullscreen games** — keyboard focus for globally-active clients, output scale via XSETTINGS, direct scanout.
-- **A file manager** — [`otto-files`](https://nongio.github.io/otto/files/): list, icon and column views, thumbnails read from the shared cache other file managers write, drag and drop in and out of other apps, background copy/move/trash with progress and 32 levels of undo, and a Peek panel on `Space` that previews pictures, text, PDFs and media details in a sandboxed process. A command palette on `Ctrl+P` finds any command by name — including selecting and renaming in bulk by pattern, with a dry run you can edit before it happens — and it takes commands of your own: any script you drop in `~/.config/otto/files-scripts/` becomes commands in the palette and the right-click menu, with previews and undo like the built-in ones. It is also the desktop's file picker, so Open and Save dialogs in Firefox and Chrome are this window rather than a GTK one.
-- **A settings app** — [`otto-settings`](https://nongio.github.io/otto/settings/) edits the configuration live over D-Bus, so you don't have to hand-write TOML (you still can — the app writes to the same file, though it does not watch it for outside edits). Displays, Dock, input, sound, power, lock and login, and the shortcut list.
-- **A launcher** — [`otto-launcher`](https://nongio.github.io/otto/launcher/): `Ctrl+Space` to start an application, `Ctrl+Shift+P` to jump to a window, with fuzzy ranking and arithmetic in the query field.
-- **An emoji picker** — [`otto-emoji`](https://nongio.github.io/otto/emoji/): `Ctrl+.` opens a card of every emoji by category, with search by name and a skin-tone setting; the pick is typed straight into whichever window had the keyboard. All four are first versions — they aim to be useful day to day, and each guide lists what is still missing rather than leaving you to find out.
+- **[Dock](https://nongio.github.io/otto/dock/)**: pinned apps, running apps and minimized windows in one strip, on any edge.
+- **[Workspaces](https://nongio.github.io/otto/workspaces/)**: several per monitor, each monitor independent.
+- **[Exposé and app switcher](https://nongio.github.io/otto/expose-and-switcher/)**: every window spread out with live previews; `Ctrl+Tab` across apps and their windows.
+- **[Window management](https://nongio.github.io/otto/window-management/)**: snapping, minimize to the Dock, low-overlap placement, server-side title bars.
+- **[Tiling](https://nongio.github.io/otto/tiling/)**: any workspace can switch between stacking and tiling; `otto-msg` speaks i3's command language.
+- **[Top bar](https://nongio.github.io/otto/topbar/) and [dynamic island](https://nongio.github.io/otto/dynamic-island/)**: clock, tray and app menus; notifications, activities and permission dialogs.
+- **[Multiple monitors](https://nongio.github.io/otto/display/)**: hotplug, per-output scale, and [virtual outputs](https://nongio.github.io/otto/display/#virtual-outputs) with no screen behind them.
+- **[Lock screen](https://nongio.github.io/otto/lock-screen/) and [login greeter](https://nongio.github.io/otto/login-greeter/)**: PAM, fingerprint, idle and lid locking.
+- **[Screen sharing](https://nongio.github.io/otto/screen-sharing/)**: an XDG Desktop Portal backend over PipeWire, for an output or a single window.
+- **[Remote desktop](https://nongio.github.io/otto/remote-desktop/)**: `otto-rdp` serves an output to any RDP client.
+- **[Files](https://nongio.github.io/otto/files/)**: file manager with Peek previews, a command palette and your own scripts as commands; also the desktop's file picker.
+- **[Settings](https://nongio.github.io/otto/settings/)**: changes the running desktop live and writes the same config file you can edit by hand.
+- **[Launcher](https://nongio.github.io/otto/launcher/)** and **[emoji picker](https://nongio.github.io/otto/emoji/)**.
+- **X11 apps**, fullscreen games included, through XWayland.
+- **Rendering**: Skia, with parts of the desktop on their own hardware display planes and blur across them. See [DRM planes](https://nongio.github.io/otto/developer/drm_plane/).
+- **[Accessibility](https://nongio.github.io/otto/accessibility/)**: the desktop's own surfaces expose an AT-SPI tree.
+- **Translated** into 11 languages.
 
-- **Rendering built for this** — a Skia pipeline with KMS multi-plane scanout (Dock, app switcher, popups and topmost windows on their own hardware planes) and cross-plane backdrop blur.
-- **Input and theming** — natural and two-finger scrolling, keyboard remapping, fully configurable shortcuts, dark/light themes, accent colors, and night shift through `wlsunset` or `gammastep`, which drive the hardware gamma tables.
-- **Accessibility** — the desktop's own chrome and bundled apps expose an AT-SPI tree over D-Bus through [AccessKit](https://accesskit.dev), so a screen reader can walk the dock, the bar and the settings app, not just client windows. See [Accessibility](https://nongio.github.io/otto/accessibility/).
-- **Translated** — Otto's interface ships in German, English (GB and US), Spanish, French, Italian, Japanese, Polish, Portuguese (Brazil), Russian, Ukrainian and Simplified Chinese, selected with the `locales` setting.
-
-> **Note on KMS scanout:** on the tty-udev backend, Otto puts parts of the desktop on their own hardware planes instead of compositing everything into one buffer, keeping the number of overlapping planes small to limit GPU work. This has mostly been tested on Intel GPUs. Other drivers are expected to fall back to full composition when the atomic test rejects a plane configuration, but that path is untested — if you see missing, misplaced or flickering elements on AMD or NVIDIA, this is the first thing to suspect, and a report is welcome. See [docs/developer/drm_plane.md](./docs/developer/drm_plane.md).
+Plane scanout is mostly tested on Intel GPUs. If elements go missing or flicker on AMD or NVIDIA, see [Troubleshooting](https://nongio.github.io/otto/troubleshooting/).
 
 ### Not there yet
 
-- **Screen capture:** a screenshot UI for picking a region or a window interactively, and per-window capture through `wlr-screencopy`. Whole-output and region capture already work with `grim`, the desktop portal answers screenshot requests from applications, and per-window capture *is* available through the screen-sharing portal.
-- **Multi-monitor:** display mirroring.
-- **Dock:** favorite locations; moving Dock code out of the compositor core.
-- **Input:** scroll acceleration.
+- An interactive screenshot UI, and per-window `wlr-screencopy`
+- Display mirroring
+- Scroll acceleration
 
-### Experimentation
+### Supported protocols
 
-- **Scene graph protocol:** a WIP protocol ([otto-surface-style-unstable-v1](protocols/otto-surface-style-unstable-v1.xml)) exposing the scene graph and its animations to clients — size, position, corner radius, blur and shadow driven by compositor-side springs, a Core Animation-like model. The top bar and the dynamic island are built on it.
-
-## Supported Wayland protocols
-
-<details>
-<summary>Otto implements a comprehensive set of protocols — click to expand</summary>
-
-- Core: `wl_compositor`, `wl_subcompositor`, `wl_shm`, `wl_seat`, `wl_data_device_manager`
-- Shells: `xdg_wm_base` (XDG shell), `xdg_decoration_manager_v1`, `org_kde_kwin_server_decoration`, `wlr_layer_shell_v1` (Layer shell 1.0), `xwayland_shell_v1`
-- Output management: `wl_output`, `xdg_output`, `wp_presentation`, `wp_fractional_scale_v1`, `wp_viewporter`
-- Rendering and DRM: `zwp_linux_dmabuf_v1`, `wp_linux_drm_syncobj_v1` (explicit sync), `wp_drm_lease_device_v1`
-- Input: pointer gestures, relative pointer, pointer constraints, tablet, `wp_cursor_shape_v1`, keyboard shortcuts inhibit, text input, input method, virtual keyboard, `zwlr_virtual_pointer_v1`, XWayland keyboard grab
-- Selection: primary selection, data control (wlr-data-control)
-- Session: `ext_session_lock_v1`, `zwp_idle_inhibit_manager_v1`, `xdg_activation_v1`, security context
-- Window listing: `ext_foreign_toplevel_list_v1`, `zwlr_foreign_toplevel_management_v1`
-- Capture: `zwlr_screencopy_v1`
-- XDG foreign: cross-client surface identification
-- Display control: `zwlr_gamma_control_v1` (color temperature / night shift with hardware gamma tables)
-- Otto extensions: [`otto-surface-style-unstable-v1`](protocols/otto-surface-style-unstable-v1.xml), [`otto-dock-v1`](protocols/otto-dock-v1.xml)
-
-</details>
-
-For where each one is implemented and how to trace it through the code, see [docs/developer/wayland.md](./docs/developer/wayland.md).
-
-## Installation
-
-Each block below installs the [latest release](https://github.com/nongio/otto/releases/latest).
-Copy it as it is: there is no version to fill in and the package manager pulls
-in the dependencies.
-The packages, nightly included, need Ubuntu 24.04 or newer, Debian 13 or newer,
-Fedora 41 or newer, or Arch.
-
-#### Debian / Ubuntu
-
-```bash
-curl -fLO https://github.com/nongio/otto/releases/latest/download/otto-amd64.deb
-sudo apt install ./otto-amd64.deb
-```
-
-#### Fedora / RHEL
-
-```bash
-sudo dnf install https://github.com/nongio/otto/releases/latest/download/otto-x86_64.rpm
-```
-
-#### Arch Linux
-
-```bash
-curl -fsSLO https://raw.githubusercontent.com/nongio/otto/main/PKGBUILD
-makepkg -si
-```
-
-`makepkg` fetches the release tarball itself. If you already downloaded it,
-put the `PKGBUILD` beside it and it will be used as it is.
-
-#### Nightly
-
-Every commit to `main` is packaged as a [nightly build](https://github.com/nongio/otto/releases/tag/nightly).
-It is what is being worked on rather than what has been tested, so keep a
-release installed if you need the machine to work.
-
-```bash
-# Debian / Ubuntu
-curl -fLO https://github.com/nongio/otto/releases/download/nightly/otto-nightly-amd64.deb
-sudo apt install ./otto-nightly-amd64.deb
-
-# Fedora / RHEL
-sudo dnf install https://github.com/nongio/otto/releases/download/nightly/otto-nightly-x86_64.rpm
-
-# Arch Linux
-curl -fLO https://github.com/nongio/otto/releases/download/nightly/PKGBUILD-nightly-bin
-makepkg -p PKGBUILD-nightly-bin -si
-```
-
-The URLs never change, so the same commands update an existing install. Each
-nightly is versioned as the release it was built from plus the commits since
-(`1.4.1+nightly.r566.gcb851c3`, say), so it installs over that release and
-the next nightly installs over it. Going back to a release is a downgrade,
-which the package manager wants told: `sudo apt install --allow-downgrades ./otto-amd64.deb`,
-`sudo dnf downgrade ./otto-x86_64.rpm`, or `makepkg -si` from the release
-`PKGBUILD` on Arch.
-
-Prefer to build it yourself? See [Building Otto](#building-otto).
-
-### After installation
-
-Otto appears in your login manager (GDM, SDDM, LightDM, …) as "Otto" in the session menu. Select it and log in.
-
-- The packages install `/etc/otto/config.toml` and never overwrite a modified one on upgrade. Edit it to configure the whole machine, or copy it to `~/.config/otto/config.toml` for just your user. On a HiDPI display set `screen_scale = 2.0`. If that file is missing, Otto falls back to compiled-in defaults and you get an empty Dock with no pinned apps.
-- Screen sharing requires `xdg-desktop-portal` on your system.
-- Using Otto as the login screen (`otto --login` with `otto-greeter`) requires `greetd`. On Debian/Ubuntu, copy the shipped `otto-lock.pam` example to `/etc/pam.d/otto-lock` before using the screen locker — the Arch and Fedora packages install it for you.
-- Otto handles the lid switch and the power button itself. Set `HandleLidSwitch=ignore` and `HandlePowerKey=ignore` in `logind.conf` for those to work.
-
-## Building Otto
-
-### Prerequisites
-
-Install these (package names vary by distribution). The Debian/Ubuntu names are
-what CI installs, so that list is the authoritative one — see the "System
-dependencies" step in [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
-
-- Wayland and input: `libwayland`, `libxkbcommon`, `libudev`, `libinput`,
-  [`libseat`](https://git.sr.ht/~kennylevinsen/seatd)
-- Graphics: `libgbm`, `libdrm`, `libEGL`/Mesa, `libpixman`, `libdisplay-info`
-- Text: `freetype`, `fontconfig`
-- Session and IPC: `libdbus`, `libsystemd`
-- Screen sharing and remote desktop: `pipewire`, `gstreamer` and
-  `gstreamer-plugins-base` (`otto-rdp`)
-- Authentication: `libpam` (`otto-lock`, `otto-greeter`)
-
-On Debian and Ubuntu:
-
-```bash
-sudo apt-get install -y libdrm-dev libudev-dev libgbm-dev libxkbcommon-dev \
-  libegl1-mesa-dev libwayland-dev libinput-dev libdbus-1-dev libsystemd-dev \
-  libseat-dev libpipewire-0.3-dev libfreetype-dev libfontconfig-dev \
-  libdisplay-info-dev libpixman-1-dev libgstreamer1.0-dev \
-  libgstreamer-plugins-base1.0-dev libpam0g-dev
-```
-
-Add `xwayland` if you want to run X11 applications inside Otto. Otto itself does not need it: build with `--no-default-features --features "egl,winit,udev,renderer_sync"` to leave XWayland support out, and X11-only applications will not start (on Arch, `OTTO_XWAYLAND=0 makepkg -p PKGBUILD-git -si`). Minimum supported Rust is **1.87.0** for the compositor; building the whole workspace needs **1.96.0** (`otto-rdp` pins it through GStreamer).
-
-### Build and run
-
-```bash
-git clone https://github.com/nongio/otto
-cd otto
-
-# Run Otto (auto-detects backend)
-cargo run --release
-
-# Development features (scene debugger, profiler)
-cargo run --features "dev"
-```
-
-With no argument Otto looks at `WAYLAND_DISPLAY`:
-
-- set (you are in a Wayland session) — it uses `--winit` and runs as a window
-- unset — it uses `--tty-udev` and drives the display directly
-
-That check does not know about X11, so **on an X11 session pass `--winit`
-explicitly**; otherwise Otto tries to take over the display from your running
-desktop.
-
-**Force a backend** by passing it as an argument:
-
-- `--tty-udev`: start Otto in a tty with `udev` support — the "traditional" launch of a Wayland compositor. May require root if your system has no `logind`.
-- `--winit`: start Otto as a [Winit](https://github.com/tomaka/winit) application, inside another X11 or Wayland session. Best for development.
-- `--x11`: start Otto as an X11 client. Quite basic and not really maintained,
-  and not in the default feature set — build with `--features x11` to get it.
-  For running inside an X11 session, use `--winit` instead.
+The full list is in [Wayland protocols](./docs/developer/wayland.md#supported-protocols). Otto adds two of its own: [`otto-surface-style-unstable-v1`](protocols/otto-surface-style-unstable-v1.xml) (experimental: clients drive layer geometry, blur and shadow with compositor-side springs; the top bar and dynamic island use it) and [`otto-dock-v1`](protocols/otto-dock-v1.xml).
 
 ## Configuration
 
-Otto reads TOML configuration files, in this order (later files override earlier ones):
-
-1. **System**: `/etc/otto/config.toml` (installed by the packages, and marked
-   as a config file so your edits survive an upgrade)
-2. **User**: `$XDG_CONFIG_HOME/otto/config.toml` (defaults to `~/.config/otto/config.toml`)
-3. **Local override**: `./otto_config.toml` (current directory, for development)
-4. **Backend-specific**: `./otto_config.{backend}.toml` (highest priority)
-
-`otto_config.example.toml` is a complete, commented example:
-
-```bash
-mkdir -p ~/.config/otto
-cp otto_config.example.toml ~/.config/otto/config.toml
-$EDITOR ~/.config/otto/config.toml
-```
-
-Or skip the editor and use the `otto-settings` app, which changes settings live and writes them back to the same file.
-
-### Backend-specific configuration
-
-Files named `otto_config.{backend}.toml` in the current directory — `otto_config.winit.toml`, `otto_config.udev.toml` — override everything else. Handy when, say, you want a different `screen_scale` in a window than on bare metal.
-
-### Keyboard shortcuts
-
-Every hotkey is configurable in the `[keyboard_shortcuts]` section:
-
-```toml
-[keyboard_shortcuts]
-"Ctrl+Return" = { open_default = { role = "terminal", fallback = "foot" } }
-"Ctrl+Space" = { run = { cmd = "otto-launcher", args = [] } }
-"Logo+Space" = { open_default = "file_manager" }
-"Logo+B" = { open_default = "browser" }
-"Ctrl+1" = { builtin = "Workspace", index = 0 }
-"Ctrl+Tab" = "ApplicationSwitchNext"
-"Prior" = "ExposeShowAll"
-```
-
-For everything else — window management, workspaces, gestures, the Dock and top bar, screen sharing, remote desktop, locking and login — see the [configuration reference](https://nongio.github.io/otto/configuration/) and the [User Guide](https://nongio.github.io/otto/).
+Otto reads `/etc/otto/config.toml`, then `~/.config/otto/config.toml`. Edit either, or use the Settings app. [`otto_config.example.toml`](otto_config.example.toml) lists every option; the [Configuration guide](https://nongio.github.io/otto/configuration/) explains them.
 
 ## Development
 
-Otto is the compositor plus a set of components, each under `components/` and buildable on its own with `cargo build -p <name>`:
-
-| Component | Description |
-|-----------|-------------|
-| `otto` | Main compositor binary |
-| `otto-bar` | Top bar: clock, tray and application menus |
-| `otto-islands` | Dynamic island: notifications, activities and dialogs |
-| `otto-canvas` | Sample client placing one panel in the side canvas |
-| `otto-lock` | PAM-backed screen locker (`ext-session-lock-v1`) |
-| `otto-greeter` | Login screen client speaking greetd's IPC |
-| `otto-auth-ui` | Authentication panel shared by the locker and the greeter |
-| `otto-settings` | Settings app, driving the compositor over D-Bus |
-| `otto-files` | File manager, and the desktop's file picker |
-| `otto-peek` | Sandboxed preview decoder behind Files' Peek |
-| `otto-launcher` | Keyboard-driven launcher — type to filter apps and windows |
-| `otto-emoji` | Emoji picker — search or browse, and the pick is typed into the focused window |
-| `otto-rdp` | RDP bridge serving a virtual output to a remote client |
-| `otto-msg` | Command-line control over `org.otto.Shell1`, speaking i3's command syntax |
-| `otto-search` | File search: the query language Files uses, as a library and a command |
-| `otto-media-kit` | Video playback: the embeddable player and its `otto-media-worker` |
-| `otto-kit` | UI toolkit the Otto clients are built on |
-| `xdg-desktop-portal-otto` | XDG Desktop Portal backend: screen sharing, file picker, screenshots, settings, permission dialogs |
-| `apps-manager` | Debug tool for `ext_foreign_toplevel_list_v1` |
-
-To exercise a component against a running compositor:
-
-```bash
-cargo run --release -- --winit &
-WAYLAND_DISPLAY=wayland-1 cargo run -p otto-launcher
+```sh
+git clone https://github.com/nongio/otto
+cd otto
+cargo run --release
 ```
 
-The [Developer Guide](https://nongio.github.io/otto/developer/) covers architecture, the rendering pipeline, the render loop, the scene graph, layers, DRM planes, screen sharing and more. The same pages live in [docs/developer/](./docs/developer/README.md).
-
-### Profiling
-
-Otto can profile itself with [puffin](https://github.com/EmbarkStudios/puffin), through the `profile` feature (also enabled by `dev`):
-
-1. **Run the compositor** with profiling on — the puffin HTTP server starts on port 8585:
-   ```bash
-   cargo run --features "profile" -- --winit
-   ```
-2. **Install `puffin_viewer`**:
-   ```bash
-   cargo install puffin_viewer
-   ```
-3. **Connect** it to `127.0.0.1:8585`.
-
-You get frame timing, render performance and other metrics for finding bottlenecks.
-
-**Note:** your `puffin_viewer` version must match the puffin version Otto uses (0.19.x needs puffin_viewer 0.22.0 or later).
+Build prerequisites, backends, feature flags and the component crates are in [Project Structure](./docs/developer/project-structure.md). The [Developer Guide](https://nongio.github.io/otto/developer/) covers the architecture, rendering and the rest; the same pages live in [docs/developer/](./docs/developer/README.md).
 
 ## Contributing
 
-Otto and LayersEngine are both open to contributions — test the compositor, report bugs, implement features, bring ideas. Questions and bug reports go to the [issue tracker](https://github.com/nongio/otto/issues), the [Discord server](https://discord.gg/Mp7cBfaACD) or the [Matrix room](https://matrix.to/#/#otto-compositor:matrix.org).
-
-The repository ships [AGENTS.md](AGENTS.md), automated code review instructions and developer documentation, for human contributors and coding agents alike.
+Bug reports, testing on your hardware, features and ideas are all welcome: the [issue tracker](https://github.com/nongio/otto/issues), [Discord](https://discord.gg/Mp7cBfaACD) or [Matrix](https://matrix.to/#/#otto-compositor:matrix.org). [AGENTS.md](AGENTS.md) and the developer docs are written for human contributors and coding agents alike.
 
 ## License
 
