@@ -240,6 +240,13 @@ pub fn buttons(
 /// is the row's only control and spans it.
 pub const TABS_H: f32 = 28.0;
 
+/// The track's corner radius: a touch rounder than a pop-up's 6, which
+/// leaves the raised segment inside it at 5.
+const TABS_RADIUS: f32 = 7.0;
+
+/// How far the raised segment sits inside the track.
+const TABS_INSET: f32 = 2.0;
+
 /// The segmented control's track, spanning `left` to `right` on `cy`.
 pub fn tabs_rect(left: f32, right: f32, cy: f32) -> Rect {
     Rect::from_ltrb(left, cy - TABS_H / 2.0, right, cy + TABS_H / 2.0)
@@ -254,17 +261,16 @@ pub fn tab_at(rect: Rect, count: usize, x: f32, y: f32) -> Option<usize> {
     Some((((x - rect.left) / width) as usize).min(count - 1))
 }
 
-/// A segmented control: one segment per label on a rounded track, the
-/// selected one raised as a pill — the switcher the colour picker uses.
+/// A segmented control: one segment per label on a rounded-rect track, the
+/// selected one raised — cornered like the pop-ups and fields beside it.
 /// A label too long for its segment is cut with an ellipsis.
 ///
-/// The pill carries a soft shadow and a hairline edge: in the light theme
+/// The raised segment carries a soft shadow and a hairline edge: in the light theme
 /// the highlight material is nearly the white of the card under it, and
 /// without them the open tab would be told apart only by its text.
 pub fn tabs(canvas: &Canvas, rect: Rect, labels: &[&str], selected: usize, theme: &Theme) {
-    let radius = TABS_H / 2.0;
     canvas.draw_rrect(
-        RRect::new_rect_xy(rect, radius, radius),
+        RRect::new_rect_xy(rect, TABS_RADIUS, TABS_RADIUS),
         &fill(theme.fill_secondary),
     );
     if labels.is_empty() {
@@ -280,9 +286,11 @@ pub fn tabs(canvas: &Canvas, rect: Rect, labels: &[&str], selected: usize, theme
         );
         let chosen = index == selected;
         if chosen {
-            let pill = segment.with_inset((2.0, 2.0));
-            let radius = pill.height() / 2.0;
-            let rrect = RRect::new_rect_xy(pill, radius, radius);
+            // Inset by the track's padding, with its corners inset by the
+            // same, so the two curves run parallel.
+            let raised = segment.with_inset((TABS_INSET, TABS_INSET));
+            let radius = TABS_RADIUS - TABS_INSET;
+            let rrect = RRect::new_rect_xy(raised, radius, radius);
             let mut shadow = fill(theme.shadow.with_a(0x30));
             shadow.set_mask_filter(MaskFilter::blur(BlurStyle::Normal, 1.5, false));
             canvas.draw_rrect(rrect.with_offset((0.0, 0.5)), &shadow);
