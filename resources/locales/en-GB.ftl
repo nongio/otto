@@ -76,6 +76,10 @@ settings-pane-lock-and-login = Lock & Login
 settings-pane-search = Search
 settings-pane-agents = Agents
 settings-pane-about = About
+# The search field over the sidebar, and the line its list shows when
+# nothing matches. $query is what was typed.
+settings-sidebar-search = Search
+settings-sidebar-search-none = No settings match “{ $query }”
 settings-group-about-machine = About this computer
 settings-about-version-line = Version { $version }
 settings-about-computer-name = Computer name
@@ -1914,6 +1918,8 @@ a11y-tray-item = Tray item { $number }
 a11y-notifications = Notifications
 # The sidebar of Settings, listing its panes.
 a11y-categories = Categories
+# The search field at the top of Settings' sidebar.
+a11y-search-settings = Search settings
 # The launcher's list of matches for what has been typed.
 a11y-results = Results
 # Names the Settings pane when no pane is selected.

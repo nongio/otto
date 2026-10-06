@@ -76,6 +76,8 @@ settings-pane-lock-and-login = ロックとログイン
 settings-pane-search = 検索
 settings-pane-agents = エージェント
 settings-pane-about = 情報
+settings-sidebar-search = 検索
+settings-sidebar-search-none = 「{ $query }」に一致する設定はありません
 settings-group-about-machine = このコンピュータについて
 settings-about-version-line = バージョン { $version }
 settings-about-computer-name = コンピュータ名
@@ -1787,6 +1789,7 @@ a11y-tray-item = トレイ項目 { $number }
 a11y-notifications = 通知
 # The sidebar of Settings, listing its panes.
 a11y-categories = カテゴリ
+a11y-search-settings = 設定を検索
 # The launcher's list of matches for what has been typed.
 a11y-results = 結果
 # Names the Settings pane when no pane is selected.

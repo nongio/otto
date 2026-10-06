@@ -580,6 +580,43 @@ right and bottom stay live, a wheel anywhere over the window scrolls the pane,
 and a slider or scrollbar drag keeps going when the pointer wanders off the
 pane.
 
+### Finding a setting
+
+A search field heads the sidebar, above the panes. Typing into it drops a list
+of matches under it — the launcher's list (otto-kit's `item_list`), at most
+eight rows, wider than the sidebar and over the pane. Each row is a setting's
+name with its place under it ("Dock › Magnification & icons") and its pane's
+glyph; a pane is a match of its own, by its name. The list is drawn in the
+accent: the selected match is filled with it, the glyphs and the letters each
+name was matched by are drawn in it, and the field's magnifier turns it while
+the field holds a query.
+
+Matches are found word by word: a row whose name has a word starting with each
+word typed comes first, then one whose pane, group, setting identifier or
+choices supply the words its name does not ("dock size", "timeout", "dark"),
+then one whose help text does. Within each the order is the launcher's ranking
+of the name. Only when nothing matches that way do looser matches count —
+letters in order, not at a word's start — so "sz" finds Size, but "dock" is
+not answered with "Drag lock".
+
+Picking a match — a click, or Enter on the selected one — goes to it: its pane
+is selected, the pane scrolls the row a third of the way down, the keyboard
+lands on its control (as Tab would have put it there, so Space flips the switch
+that was searched for), and the row is lit in the accent and fades out. A pane
+picked selects the pane and leaves the keyboard on the sidebar.
+
+The field is the first Tab stop, ahead of the sidebar. Ctrl+F reaches it from
+anywhere, and `/` when nothing is being typed into; either selects what it
+holds. The arrows walk the list, Escape empties the field and, from an empty
+field, moves on to the sidebar. Tab, a press elsewhere or the window losing the
+keyboard puts the list away and keeps the query. The field is a text input to
+assistive technologies and the list a list of results, with the selected match
+the focused one.
+
+`otto-settings --setting <id>` opens on a setting as though it had been picked
+— by the identifier the configuration file uses, or a row's label where it has
+none. `--pane <name>` still opens on a pane.
+
 ### Input sources
 
 The keyboard pane edits `input.xkb_layout`, `input.xkb_variant` and

@@ -75,6 +75,8 @@ settings-pane-lock-and-login = 锁定与登录
 settings-pane-search = 搜索
 settings-pane-agents = 智能体
 settings-pane-about = 关于
+settings-sidebar-search = 搜索
+settings-sidebar-search-none = 没有与“{ $query }”匹配的设置
 settings-group-about-machine = 关于本机
 settings-about-version-line = 版本 { $version }
 settings-about-computer-name = 计算机名称
@@ -1791,6 +1793,7 @@ a11y-tray-item = 托盘项目 { $number }
 a11y-notifications = 通知
 # The sidebar of Settings, listing its panes.
 a11y-categories = 类别
+a11y-search-settings = 搜索设置
 # The launcher's list of matches for what has been typed.
 a11y-results = 结果
 # Names the Settings pane when no pane is selected.
