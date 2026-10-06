@@ -1723,8 +1723,8 @@ impl Settings {
             return None;
         };
         let track = widgets::tabs_rect(
-            rect.left + 14.0,
-            rect.right - 14.0,
+            rect.left,
+            rect.right,
             Self::control_band(row, rect).center_y(),
         );
         widgets::tab_at(track, labels.len(), local.x, local.y).map(|index| (row.handle(), index))
@@ -2008,22 +2008,31 @@ impl Settings {
                 );
             }
 
-            // Grouped-list card behind the rows.
+            // Grouped-list card behind the rows. A tab bar is the exception:
+            // it is chrome over the groups, not a setting in one, so it sits
+            // on the window itself.
             let rrect = RRect::new_rect_xy(group.card, 9.0, 9.0);
-            canvas.draw_rrect(
-                rrect,
-                &self.fill(if self.dark {
-                    Color::from_argb(0x14, 0xFF, 0xFF, 0xFF)
-                } else {
-                    Color::WHITE
-                }),
-            );
-            let mut border = Paint::default();
-            border.set_anti_alias(true);
-            border.set_style(skia_safe::PaintStyle::Stroke);
-            border.set_stroke_width(1.0);
-            border.set_color(self.theme.fill_tertiary);
-            canvas.draw_rrect(rrect, &border);
+            let tabs_only = !group.rows.is_empty()
+                && group
+                    .rows
+                    .iter()
+                    .all(|(row, _)| matches!(row.control, Control::Tabs { .. }));
+            if !tabs_only {
+                canvas.draw_rrect(
+                    rrect,
+                    &self.fill(if self.dark {
+                        Color::from_argb(0x14, 0xFF, 0xFF, 0xFF)
+                    } else {
+                        Color::WHITE
+                    }),
+                );
+                let mut border = Paint::default();
+                border.set_anti_alias(true);
+                border.set_style(skia_safe::PaintStyle::Stroke);
+                border.set_stroke_width(1.0);
+                border.set_color(self.theme.fill_tertiary);
+                canvas.draw_rrect(rrect, &border);
+            }
 
             if let Some(header) = layout.header.filter(|h| h.top == group.card.top) {
                 self.render_account_header(canvas, header, !group.rows.is_empty());
@@ -2684,7 +2693,7 @@ impl Settings {
             }
             Control::Tabs { labels, selected } => widgets::tabs(
                 canvas,
-                widgets::tabs_rect(label_x, right, cy),
+                widgets::tabs_rect(x0, x1, cy),
                 labels,
                 *selected,
                 &self.theme,
