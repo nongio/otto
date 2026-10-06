@@ -71,11 +71,11 @@ use crate::components::menu_item::{MenuItem, MenuItemIcon};
 /// Label size and row height for a pop-up button's menu.
 ///
 /// The size is the field's own — `super::field` draws its label at
-/// [`crate::typography::styles::BODY`], and a menu that drops out of a control
+/// [`crate::typography::styles::CALLOUT`], and a menu that drops out of a control
 /// to list that control's values has to read as the same text, not as a larger
 /// echo of it. The row stays taller than a menu bar's 22pt all the same: a
 /// pop-up button is read one row at a time, not scanned along a crowded strip.
-const ITEM_FONT_SIZE: f32 = crate::typography::styles::BODY.size;
+const ITEM_FONT_SIZE: f32 = crate::typography::styles::CALLOUT.size;
 const ITEM_HEIGHT: f32 = 26.0;
 
 /// Tallest a pop-up button's menu is drawn before its list starts scrolling.
