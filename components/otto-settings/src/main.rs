@@ -572,6 +572,14 @@ fn open_menu(
         window.request_frame();
         return;
     }
+    // Any other menu goes now, even mid fade-out: a press outside a menu both
+    // dismisses it and lands here, and a pop-up made while another is still
+    // up is a protocol error that ends the app.
+    for (_, other) in dropdowns.iter().filter(|(other, _)| **other != select.id) {
+        if other.is_open() {
+            other.close_now();
+        }
+    }
     let Some(parent) = window
         .surface()
         .map(|s| s.xdg_window().xdg_surface().clone())
@@ -696,7 +704,12 @@ fn open_menu(
             chosen_window.request_frame();
         },
         move || {
-            *dismissed_open.lock().unwrap() = None;
+            // Only if it is still this menu that is open.
+            let mut open = dismissed_open.lock().unwrap();
+            if *open == Some(id) {
+                *open = None;
+            }
+            drop(open);
             mark_pane_dirty(&dismissed_dirty);
             dismissed_window.request_frame();
         },
