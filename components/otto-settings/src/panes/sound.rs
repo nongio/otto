@@ -375,6 +375,20 @@ pub fn slot_ids() -> &'static [&'static str] {
     menu_slots()
 }
 
+/// A port as its pop-up names it: an unplugged jack says so, as
+/// pavucontrol's does.
+fn port_label(port: &pulse::Port) -> String {
+    if port.available {
+        port.description.clone()
+    } else {
+        format!(
+            "{} ({})",
+            port.description,
+            otto_kit::t!("settings-sound-unplugged")
+        )
+    }
+}
+
 /// The choices of a pop-up, as (value, label).
 fn choices(graph: &Graph, menu: &Menu) -> Vec<(String, String)> {
     match menu {
@@ -384,7 +398,7 @@ fn choices(graph: &Graph, menu: &Menu) -> Vec<(String, String)> {
                 device
                     .ports
                     .iter()
-                    .map(|port| (port.name.clone(), port.description.clone()))
+                    .map(|port| (port.name.clone(), port_label(port)))
                     .collect()
             })
             .unwrap_or_default(),
@@ -661,7 +675,7 @@ fn device_groups(graph: &Graph, direction: Direction, menus: &mut Menus) -> Vec<
                     .ports
                     .iter()
                     .find(|port| port.name == current)
-                    .map(|port| port.description.clone())
+                    .map(port_label)
                     .unwrap_or_default();
                 rows.push(menus.row(
                     otto_kit::t!("settings-sound-port"),
@@ -807,10 +821,12 @@ mod tests {
             Port {
                 name: "speaker".into(),
                 description: "Speakers".into(),
+                available: true,
             },
             Port {
                 name: "headphones".into(),
                 description: "Headphones".into(),
+                available: true,
             },
         ];
         laptop.active_port = Some("speaker".into());

@@ -289,6 +289,7 @@ settings-sound-view-playback = 再生
 settings-sound-view-recording = 録音
 settings-sound-view-configuration = 構成
 settings-sound-port = ポート
+settings-sound-unplugged = 未接続
 settings-sound-default = デフォルトとして使用
 settings-sound-profile = プロファイル
 settings-sound-no-playback = サウンドを再生中のアプリはありません

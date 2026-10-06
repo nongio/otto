@@ -294,6 +294,7 @@ settings-sound-view-playback = Відтворення
 settings-sound-view-recording = Запис
 settings-sound-view-configuration = Конфігурація
 settings-sound-port = Порт
+settings-sound-unplugged = не під'єднано
 settings-sound-default = Використовувати типово
 settings-sound-profile = Профіль
 settings-sound-no-playback = Жодна програма не відтворює звук

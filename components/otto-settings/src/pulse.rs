@@ -71,6 +71,10 @@ pub struct Device {
 pub struct Port {
     pub name: String,
     pub description: String,
+    /// False for a jack that senses nothing plugged in. Such a port is
+    /// still listed, as pavucontrol lists it, so headphones can be picked
+    /// before they are plugged in.
+    pub available: bool,
 }
 
 /// One app's sound on its way to a sink, or from a source.
@@ -348,12 +352,9 @@ fn parse_devices(json: &str) -> Result<Vec<Device>, String> {
             ports: device
                 .ports
                 .into_iter()
-                .filter(|port| {
-                    port.availability != "not available"
-                        || device.active_port.as_ref() == Some(&port.name)
-                })
                 .map(|port| Port {
                     description: or_name(port.description, &port.name),
+                    available: port.availability != "not available",
                     name: port.name,
                 })
                 .collect(),
@@ -568,14 +569,21 @@ mod tests {
     }
 
     #[test]
-    fn unplugged_ports_are_left_out() {
+    fn unplugged_ports_are_kept_and_marked() {
         let device = &parse_devices(SOURCES).unwrap()[0];
         let ports: Vec<_> = device
             .ports
             .iter()
-            .map(|p| p.description.as_str())
+            .map(|p| (p.description.as_str(), p.available))
             .collect();
-        assert_eq!(ports, ["Internal Microphone", "Dock Microphone"]);
+        assert_eq!(
+            ports,
+            [
+                ("Internal Microphone", true),
+                ("Microphone", false),
+                ("Dock Microphone", true)
+            ]
+        );
         assert_eq!(
             device.active_port.as_deref(),
             Some("analog-input-internal-mic")

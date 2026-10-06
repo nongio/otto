@@ -290,6 +290,7 @@ settings-sound-view-playback = 播放
 settings-sound-view-recording = 录音
 settings-sound-view-configuration = 配置
 settings-sound-port = 端口
+settings-sound-unplugged = 未插入
 settings-sound-default = 设为默认
 settings-sound-profile = 配置文件
 settings-sound-no-playback = 没有应用正在播放声音

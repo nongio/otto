@@ -293,6 +293,7 @@ settings-sound-view-playback = Riproduzione
 settings-sound-view-recording = Registrazione
 settings-sound-view-configuration = Configurazione
 settings-sound-port = Porta
+settings-sound-unplugged = scollegato
 settings-sound-default = Usa come predefinito
 settings-sound-profile = Profilo
 settings-sound-no-playback = Nessuna app sta riproducendo audio
