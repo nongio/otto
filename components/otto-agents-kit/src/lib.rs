@@ -6,7 +6,10 @@
 //! the keys that walk the rows and edit the field ([`keys`]), and the painters
 //! for the rows and the field ([`rows`]).
 
-pub mod item;
 pub mod keys;
-pub mod rows;
 pub mod sessions;
+
+// The rows and their ranking are otto-kit's, so an app with no agent in it —
+// the settings sidebar's search — can list matches the same way. Re-exported
+// under their old names so the agent UIs keep reaching them here.
+pub use otto_kit::components::item_list::{item, rows};

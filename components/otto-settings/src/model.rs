@@ -341,40 +341,42 @@ pub struct Pane {
 /// The panes from the spec, in sidebar order.
 pub fn panes() -> Vec<Pane> {
     vec![
-        panes::account::build(),
+        // The system as a whole, then the desktop, then input, then who can
+        // log in and what they can reach — and About last.
         panes::general::build(),
         panes::appearance::build(),
         panes::displays::build(),
+        panes::sound::build(),
+        panes::power::build(),
         panes::dock::build(),
         panes::top_bar::build(),
         panes::tiling::build(),
-        panes::keyboard::build(),
-        panes::pointing::build(),
-        panes::sound::build(),
-        panes::power::build(),
-        panes::lock_and_login::build(),
-        panes::privacy::build(),
         panes::search::build(),
         panes::agents::build(),
+        panes::keyboard::build(),
+        panes::pointing::build(),
+        panes::account::build(),
+        panes::lock_and_login::build(),
+        panes::privacy::build(),
         panes::about::build(),
     ]
 }
 
 /// Where the Search pane sits in [`panes`], so `main.rs` can tell the pane
 /// when it is on screen without building every pane to find out.
-pub const SEARCH_PANE: usize = 13;
+pub const SEARCH_PANE: usize = 8;
 
 /// Where the Sound pane sits in [`panes`]: it reads the sound server only
 /// while it is on screen.
-pub const SOUND_PANE: usize = 9;
+pub const SOUND_PANE: usize = 3;
 
 /// Where the Privacy pane sits in [`panes`]: it reads the permission store
 /// only while it is on screen.
-pub const PRIVACY_PANE: usize = 12;
+pub const PRIVACY_PANE: usize = 14;
 
 /// Where the Agents pane sits in [`panes`]: it watches its service only while
 /// it is on screen.
-pub const AGENTS_PANE: usize = 14;
+pub const AGENTS_PANE: usize = 9;
 
 pub(crate) fn group(title: impl Into<Cow<'static, str>>, rows: Vec<Row>) -> Group {
     Group {

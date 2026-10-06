@@ -348,7 +348,9 @@ It shares its pieces with the launcher's agents mode through
 `components/otto-agents-kit`, which both depend on:
 
 - `otto_agents_kit::item` has the row model (`Item`, `Activity`, `Origin`)
-  and `rank`, which the launcher's sources also use.
+  and `rank`, which the launcher's sources also use. It and `rows` live in
+  `otto_kit::components::item_list` — the settings sidebar's search lists its
+  matches with them too — and are re-exported here under their old names.
 - `otto_agents_kit::sessions` has the session rows (`session_items`, used by
   `Ask::session_rows` too) and `SessionFeed`, a background connection that
   lists agents and sessions and lists again on `root/sessionAdded`,

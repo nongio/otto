@@ -1,10 +1,10 @@
 //! One row of a list, and how a query ranks the rows.
 //!
-//! The launcher lists apps, windows and agent sessions as [`Item`]s, and the
-//! side canvas lists sessions the same way; [`rank`] orders them against what
-//! was typed.
+//! The launcher lists apps, windows and agent sessions as [`Item`]s, the
+//! side canvas lists sessions the same way, and so does the settings search;
+//! [`rank`] orders them against what was typed.
 
-use otto_kit::matching::score;
+use crate::matching::score;
 
 /// One row: something that can be picked.
 #[derive(Clone, Debug)]

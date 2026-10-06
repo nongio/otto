@@ -201,7 +201,8 @@ pub fn titlebar_material(dark: bool) -> Color {
 /// reader is told all go through this, so none of them can drift away from the
 /// painted row.
 pub fn sidebar_item_rect(index: usize) -> Rect {
-    let first_item_y = titlebar_h() + 10.0;
+    // Under the search field, which heads the sidebar.
+    let first_item_y = crate::sidebar_search::field_rect().bottom + 10.0;
     const ITEM_H: f32 = 30.0;
     const ITEM_STEP: f32 = 32.0;
     Rect::from_xywh(
@@ -218,6 +219,16 @@ pub fn sidebar_item_rect(index: usize) -> Rect {
 /// arrows move within it, which is what the list role tells a screen reader to
 /// expect and what every other toolkit does.
 pub const SIDEBAR_FOCUS: FocusId = FocusId::from_raw(0x5EED_5EED);
+
+/// The search field over the sidebar: the first stop Tab makes, ahead of the
+/// sidebar's list. See [`crate::sidebar_search`].
+pub const SEARCH_FOCUS: FocusId = FocusId::from_raw(0x5EED_F1ED);
+
+/// One of the search list's results, for assistive technologies: the list is
+/// walked with the arrows from the field, so a result is no keyboard stop.
+pub fn search_result_focus_id(index: usize) -> FocusId {
+    FocusId::new(format!("search-result-{index}"))
+}
 
 /// A sidebar row's identity for assistive technologies.
 ///
@@ -917,6 +928,12 @@ pub struct Settings {
     /// combination — see `EditTarget` in `main.rs`. `None`, the usual case,
     /// draws every value as static text.
     pub editing: Option<(crate::EditTarget, TextInput)>,
+    /// The sidebar's search field as it stands, or `None` to draw it empty and
+    /// at rest — a still render with no window behind it.
+    pub search_field: Option<crate::sidebar_search::FieldView>,
+    /// The row a search just went to, and how strongly it is still lit, 1.0
+    /// fading to nothing. See [`Self::with_flash`].
+    pub flash: Option<(&'static str, f32)>,
 }
 
 impl Settings {
@@ -937,6 +954,8 @@ impl Settings {
             hovered_preview: None,
             controls: WindowControlsState::new(),
             editing: None,
+            search_field: None,
+            flash: None,
         }
     }
 
@@ -952,6 +971,20 @@ impl Settings {
     /// Carry an in-progress edit into this frame.
     pub fn with_editing(mut self, editing: Option<(crate::EditTarget, TextInput)>) -> Self {
         self.editing = editing;
+        self
+    }
+
+    /// Carry the search field's state into this frame.
+    pub fn with_search_field(mut self, field: Option<crate::sidebar_search::FieldView>) -> Self {
+        self.search_field = field;
+        self
+    }
+
+    /// Light the row whose handle is `row` in the accent, at `strength` from
+    /// 1.0 down to 0.0: where a search took the user, so the eye lands on the
+    /// row among the others in the pane.
+    pub fn with_flash(mut self, flash: Option<(&'static str, f32)>) -> Self {
+        self.flash = flash.filter(|(_, strength)| *strength > 0.0);
         self
     }
 
@@ -1892,12 +1925,18 @@ impl Settings {
     }
 
     fn render_sidebar(&self, canvas: &Canvas) {
-        // No search field: it was drawn but never searched anything, and a
-        // control that does nothing is worse than no control. The list starts
-        // at the top of the sidebar instead — see `sidebar_item_rect`.
         // Which row the keyboard is on, if this window has it at all.
         let focused =
             AppContext::keyboard_focus().and_then(|surface| AppContext::focused_control(&surface));
+
+        let field = self
+            .search_field
+            .clone()
+            .unwrap_or_else(|| crate::sidebar_search::FieldView {
+                input: crate::sidebar_search::Search::new(self.dark).input,
+                focused: false,
+            });
+        crate::sidebar_search::paint_field(canvas, &field, &self.theme, self.dark);
 
         for (i, pane) in self.panes.iter().enumerate() {
             let item = sidebar_item_rect(i);
@@ -2077,6 +2116,9 @@ impl Settings {
                         );
                     }
                 }
+                if let Some((_, strength)) = self.flash.filter(|(h, _)| *h == row.handle()) {
+                    self.render_flash(canvas, *rect, strength);
+                }
                 self.render_row(canvas, row, rect.left, rect.right, rect.top, rect.height());
                 if i + 1 < group.rows.len() {
                     widgets::separator(
@@ -2089,6 +2131,23 @@ impl Settings {
                 }
             }
         }
+    }
+
+    /// The accent a search lands a row in: a wash over the row and a bar at
+    /// its leading edge, both fading out with `strength`.
+    fn render_flash(&self, canvas: &Canvas, rect: Rect, strength: f32) {
+        let accent = self.theme.accent;
+        let alpha = |max: f32| (max * strength.clamp(0.0, 1.0) * 255.0).round() as u8;
+        let wash = rect.with_inset((3.0, 1.0));
+        canvas.draw_rrect(
+            RRect::new_rect_xy(wash, 8.0, 8.0),
+            &self.fill(accent.with_a(alpha(0.22))),
+        );
+        let bar = Rect::from_xywh(wash.left + 4.0, wash.top + 8.0, 3.0, wash.height() - 16.0);
+        canvas.draw_rrect(
+            RRect::new_rect_xy(bar, 1.5, 1.5),
+            &self.fill(accent.with_a(alpha(1.0))),
+        );
     }
 
     /// The users list, in the same card material as the groups beside it.

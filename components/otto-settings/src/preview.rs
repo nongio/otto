@@ -5,7 +5,11 @@
 
 use skia_safe::{surfaces, Color, EncodedImageFormat, Paint, Rect};
 
+use otto_kit::components::item_list::rows::RowIcons;
+use otto_kit::theme::Theme;
+
 use crate::model;
+use crate::sidebar_search::{self, FieldView, Search};
 use crate::view::{self, Settings, WINDOW_H, WINDOW_W};
 use crate::widgets;
 
@@ -14,7 +18,9 @@ const CAPTION_H: f32 = 26.0;
 const COLS: usize = 2;
 
 /// `out` defaults to `otto-settings.png`; `only` limits it to one pane by name.
-pub fn render_to_png(out: Option<&String>, only: Option<&String>) {
+/// `query` draws the sidebar's search field holding it, with the list of what
+/// it finds dropped over the window.
+pub fn render_to_png(out: Option<&String>, only: Option<&String>, query: Option<&String>) {
     let out = out
         .cloned()
         .unwrap_or_else(|| "otto-settings.png".to_string());
@@ -24,15 +30,29 @@ pub fn render_to_png(out: Option<&String>, only: Option<&String>) {
     // reads it first.
     crate::panes::sound::load_now();
 
-    let mut cells: Vec<(String, Settings)> = Vec::new();
+    let mut cells: Vec<(String, Settings, Option<Search>)> = Vec::new();
     for (i, pane) in model::panes().iter().enumerate() {
         if let Some(only) = only {
             if !pane.name.eq_ignore_ascii_case(only) {
                 continue;
             }
         }
-        cells.push((format!("{} · light", pane.name), Settings::new(i, false)));
-        cells.push((format!("{} · dark", pane.name), Settings::new(i, true)));
+        for dark in [false, true] {
+            let scheme = if dark { "dark" } else { "light" };
+            let mut settings = Settings::new(i, dark);
+            let search = query.map(|query| {
+                let mut search = Search::new(dark);
+                search.input.set_value(query.clone());
+                search.input.state.set_focused(true);
+                search.refresh(&model::panes());
+                settings = Settings::new(i, dark).with_search_field(Some(FieldView {
+                    input: search.input.clone(),
+                    focused: true,
+                }));
+                search
+            });
+            cells.push((format!("{} · {scheme}", pane.name), settings, search));
+        }
     }
 
     if cells.is_empty() {
@@ -53,7 +73,8 @@ pub fn render_to_png(out: Option<&String>, only: Option<&String>) {
     let mut surface = surfaces::raster_n32_premul((width, height)).expect("raster surface");
     let canvas = surface.canvas();
 
-    for (i, (caption, settings)) in cells.iter().enumerate() {
+    let icons = RowIcons::default();
+    for (i, (caption, settings, search)) in cells.iter().enumerate() {
         let col = i % cols;
         let row = i / cols;
         canvas.save();
@@ -79,6 +100,24 @@ pub fn render_to_png(out: Option<&String>, only: Option<&String>) {
         );
 
         view::render_on_desktop(canvas, settings, MARGIN, MARGIN + CAPTION_H);
+        if let Some(search) = search {
+            let theme = if settings.dark {
+                Theme::dark()
+            } else {
+                Theme::light()
+            };
+            canvas.save();
+            canvas.translate((MARGIN, MARGIN + CAPTION_H));
+            sidebar_search::paint_panel(
+                canvas,
+                (settings.width, settings.height),
+                settings.dark,
+                &theme,
+                search,
+                &icons,
+            );
+            canvas.restore();
+        }
         canvas.restore();
     }
 
