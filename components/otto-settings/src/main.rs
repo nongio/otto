@@ -572,6 +572,7 @@ fn open_menu(
         if let Some(choices) = panes::privacy::menu_choices(select.id) {
             choices
         } else if let Some(choices) = panes::account::menu_choices(select.id) {
+            choices
         } else if let Some(choices) = panes::sound::menu_choices(select.id) {
             choices
         } else if let Some(choices) = panes::keyboard_layouts::menu_choices(select.id) {
