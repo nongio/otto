@@ -9,14 +9,13 @@
 //! It also sidesteps MuPDF's AGPL, which constrains *linking* and says nothing
 //! about running a program.
 //!
-//! The same table generalises: video poster frames arrive later as more rows,
-//! without GStreamer entering the default build. See `specs/peek.md`.
+//! The same table generalises: video poster frames and HEIF photographs are
+//! made the same way, by [`super::external`], without GStreamer or libheif
+//! entering the default build. See `specs/peek.md`.
 
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::process::{Command, Stdio};
-
-use skia_safe::{Codec, Data};
 
 use crate::payload;
 use crate::payload::{Fact, Page, Pixels, PreviewPayload, Word};
@@ -195,7 +194,7 @@ pub fn render(file: &mut File, request: &Request) -> PreviewPayload {
     let width = width.clamp(320, MAX_WIDTH);
 
     match rasterise(rasteriser, &bytes, page, width) {
-        Some(png) => match decode_png(&png) {
+        Some(png) => match super::external::decode_png(&png) {
             Some(mut pixels) => {
                 // A rasterised page is a picture like any other, so a
                 // document with no text layer — a scan — is recognised like
@@ -568,16 +567,6 @@ fn run(command: &str, args: &[String], document: &[u8]) -> Option<Vec<u8>> {
     Some(out)
 }
 
-fn decode_png(png: &[u8]) -> Option<crate::payload::Pixels> {
-    let mut codec = Codec::from_data(Data::new_copy(png))?;
-    let info = codec
-        .info()
-        .with_color_type(skia_safe::ColorType::RGBA8888)
-        .with_alpha_type(skia_safe::AlphaType::Premul);
-    let dimensions = codec.dimensions();
-    let image = codec.get_image(info, None).ok()?;
-    super::image::to_pixels(&image, dimensions)
-}
 
 /// Page count, read out of the document's own structure.
 ///

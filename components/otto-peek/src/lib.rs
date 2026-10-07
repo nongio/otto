@@ -104,6 +104,12 @@ pub fn generate_thumbnail(
     };
     match decode_path(path, &request) {
         Preview::Pixels { pixels, .. } => pixels.to_image(),
+        // A card's artwork is a picture of the file: a video's poster frame,
+        // a song's cover.
+        Preview::Card {
+            hero: Some(pixels),
+            ..
+        } => pixels.to_image(),
         // Everything else a previewer can return — a text listing, an
         // archive's contents, an unavailable file — is not a picture, and
         // standing it in for one would put a grey card where the type icon

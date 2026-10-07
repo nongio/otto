@@ -10,6 +10,7 @@
 //! contain the consequences either way, but the correct preview is the one
 //! matching the bytes.
 
+mod external;
 mod image;
 mod listing;
 mod markdown;
@@ -274,6 +275,12 @@ fn dispatch(
     }
     if mime == "application/pdf" {
         return pdf::render(file, request);
+    }
+    // HEIF before the other pictures: a phone's photographs are HEIC, and
+    // this build's Skia decodes neither it nor AVIF, so they are converted by
+    // a program on the system rather than refused.
+    if image::is_heif(mime) {
+        return image::heif(file, request);
     }
     if mime.starts_with("image/") {
         return image::raster(file, request);

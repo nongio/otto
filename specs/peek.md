@@ -381,8 +381,9 @@ the table is arranged around not compromising them.
 | Lottie animation | Full, played | Skottie — already enabled and already used by otto-kit |
 | Archive — zip, uncompressed tar | Listing only: names, sizes, dates, entry count | Nothing (see below) |
 | Audio | Metadata card: title/artist/album/duration, plus embedded cover art | Tag parsing by hand; PCM decode deferred |
-| Video | Played, with a transport: play/pause, scrub, clock, mute. The card underneath (dimensions, duration, kind) is the poster until the first frame, and the whole preview where playback is unavailable | `otto-media-kit`'s worker, a separate binary — see [Video playback](#video-playback) |
-| HEIC, AVIF, camera RAW | Not previewed — shown as an unsupported card naming the type, under the file's icon | Deferred |
+| Video | Played, with a transport: play/pause, scrub, clock, mute. The card underneath (dimensions, duration, kind, and a poster frame as its artwork) is the poster until the first frame, and the whole preview where playback is unavailable. The poster frame is also the file's thumbnail in a listing | `otto-media-kit`'s worker, a separate binary — see [Video playback](#video-playback). Poster: `ffmpegthumbnailer`, else `ffmpeg`, exec'd in the worker over the file's descriptor — see `decode/external.rs` |
+| HEIC, AVIF | Full, as a picture, at the size asked for; the file's own dimensions are read from its `ispe` boxes so a zoom asks for more | `vipsthumbnail`, else `magick`, exec'd in the worker — libheif underneath either way, nothing linked |
+| Camera RAW | Not previewed — shown as an unsupported card naming the type, under the file's icon | Deferred |
 | Anything with no decoder, and any decode that failed | The file's icon at hero size, with the type and size, or the reason it could not be shown | Nothing |
 | HTML, EPUB, Office documents | Never | — |
 
@@ -530,10 +531,19 @@ same machinery a recognised picture already uses.
 
 **This generalises, and is the reason to prefer it over a linked library.** The
 same seam — a table of external renderer commands, tried in order, run inside
-the existing sandbox — is how video poster frames arrive later
-(`ffmpegthumbnailer`, `gst-launch-1.0`) without GStreamer entering the default
-build, and how any future format can be supported by a distribution that ships
-the right tool. A new format becomes a table row.
+the existing sandbox — is how video poster frames (`ffmpegthumbnailer`,
+`ffmpeg`) and HEIF pictures (`vipsthumbnail`, `magick`) arrive without
+GStreamer or libheif entering the default build, and how any future format can
+be supported by a distribution that ships the right tool. A new format becomes
+a table row.
+
+Those rows cannot be fed the file on stdin the way a PDF is: a video is
+gigabytes, and its decoder has to seek. So `decode/external.rs` makes the
+child's stdin a duplicate of the worker's one read-only descriptor and the
+tool opens `/dev/stdin`, which reopens the same file, seekable, without the
+child ever resolving a name. The tools inherit the worker's budgets, and each
+is told how many threads to start: left to choose one per core, their pools
+fail to come up under the address-space cap.
 
 Rejected alternatives for PDF: `pdfium-render` bundles a large C++ blob into
 Otto's build for a preview feature; `dlopen`ing a system libpdfium avoids the
@@ -543,12 +553,15 @@ structure but do not rasterise, so they cannot produce a page image at all.
 
 Decoders Otto genuinely lacks, with candidates and their cost:
 
-- **Video poster frames.** GStreamer is already in the workspace, but only in
-  `otto-rdp`, which pins Rust 1.96 and drags the whole GStreamer tree. Taking it
-  into the default build would raise the workspace MSRV for a preview feature.
-  **Recommendation:** an optional `preview-video` feature; without it, the
-  metadata card. FFmpeg bindings are a larger version of the same trade and are
-  not recommended.
+- **Video poster frames** — *built, as table rows (above).* GStreamer is in
+  the workspace, but only in `otto-rdp`, which pins Rust 1.96 and drags the
+  whole GStreamer tree; FFmpeg bindings are a larger version of the same trade.
+  Neither is needed now: without `ffmpegthumbnailer` or `ffmpeg` on the
+  system, a video is the metadata card it always was.
+- **HEIF** — *built, as table rows (above).* There is no production-quality
+  pure-Rust HEVC decoder; `libheif-rs` links libheif and libde265, and HEVC is
+  patent-encumbered enough that some distributions ship it separately. Running
+  the libheif a distribution already has keeps both out of the build.
 - **Audio playback and waveforms.** Needs a PCM decoder (`symphonia` is the
   pure-Rust candidate, one crate per codec family) plus an output path. Deferred
   wholesale; v1 deliberately gets most of the value from tags and cover art,
@@ -1037,8 +1050,8 @@ regardless. The dependency is a package a distribution almost certainly already
 installed, not a crate in Otto's tree, and it degrades to a card with a useful
 message rather than to a build-time choice nobody can change afterwards. It also
 sidesteps MuPDF's AGPL, which restricts linking and says nothing about running a
-program. Generalising it to a table of renderer commands is what lets video
-poster frames arrive later without GStreamer.
+program. Generalising it to a table of renderer commands is what let video
+poster frames and HEIF arrive without GStreamer or libheif.
 
 **The payload set is closed on purpose.** An open plug-in interface would let a
 new content type invent a new drawing path, and the previews would stop looking
