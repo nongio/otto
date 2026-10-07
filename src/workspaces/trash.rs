@@ -125,13 +125,10 @@ pub fn watch(on_change: impl Fn(bool) + Send + 'static) {
 }
 
 fn run(on_change: impl Fn(bool)) {
-    let mut dirs = watched_dirs();
-    let mut last = any_content(&dirs);
-    on_change(last);
-
     // SAFETY: inotify_init1 takes flags and returns a descriptor or -1.
     let fd = unsafe { libc::inotify_init1(libc::IN_CLOEXEC) };
     if fd < 0 {
+        on_change(has_content());
         tracing::warn!("trash watch: inotify unavailable, the dock icon will not follow the can");
         return;
     }
@@ -139,6 +136,15 @@ fn run(on_change: impl Fn(bool)) {
     let (tx, rx) = mpsc::channel::<Wake>();
     // Held for as long as this function runs; dropped, it stops the thread.
     let _mounts = watch_mounts(tx.clone());
+
+    // Armed before the first look, so a change between the two is an event
+    // rather than lost. Nothing reads the descriptor yet; events queue.
+    let mut armed: HashMap<PathBuf, i32> = HashMap::new();
+    let mut dirs = watched_dirs();
+    arm(fd, &dirs, &mut armed);
+    let mut last = any_content(&dirs);
+    on_change(last);
+
     // The read blocks, so it lives on its own thread and pokes this one; this
     // one owns the debounce and the re-arming.
     let reader = std::thread::Builder::new()
@@ -179,42 +185,8 @@ fn run(on_change: impl Fn(bool)) {
         return;
     }
 
-    let mut armed: HashMap<PathBuf, i32> = HashMap::new();
-    loop {
-        // Watch the deepest directory that exists for each can: `files/` once
-        // it is there, its parent while it is not, so its creation is itself
-        // an event. Recomputed after every event, since a mount may have
-        // brought a can or taken one away.
-        let targets: HashSet<PathBuf> = dirs
-            .iter()
-            .filter_map(|dir| deepest_existing(dir))
-            .collect();
-        armed.retain(|path, descriptor| {
-            let keep = targets.contains(path);
-            if !keep {
-                // SAFETY: a descriptor this thread added and has not removed.
-                unsafe { libc::inotify_rm_watch(fd, *descriptor) };
-            }
-            keep
-        });
-        for target in targets {
-            if armed.contains_key(&target) {
-                continue;
-            }
-            if let Ok(c_path) = std::ffi::CString::new(target.as_os_str().as_encoded_bytes()) {
-                // SAFETY: a NUL-terminated path and a mask of inotify flags.
-                let descriptor = unsafe { libc::inotify_add_watch(fd, c_path.as_ptr(), INTEREST) };
-                if descriptor >= 0 {
-                    armed.insert(target, descriptor);
-                }
-            }
-        }
-
-        match rx.recv() {
-            Ok(Wake::Changed) => {}
-            // The reader thread is gone: the descriptor died with it.
-            Ok(Wake::ReaderGone) | Err(_) => break,
-        }
+    // Anything else means the reader thread is gone: the descriptor died with it.
+    while let Ok(Wake::Changed) = rx.recv() {
         // Drain the burst rather than looking once per file: keep waiting
         // until DEBOUNCE passes with nothing new.
         let mut reader_gone = false;
@@ -232,9 +204,10 @@ fn run(on_change: impl Fn(bool)) {
             break;
         }
 
-        // One read of the mount table per burst, for both the look and the
-        // re-arming at the top of the loop.
+        // One read of the mount table per burst, for both the re-arming and
+        // the look.
         dirs = watched_dirs();
+        arm(fd, &dirs, &mut armed);
         let now = any_content(&dirs);
         if now != last {
             last = now;
@@ -244,6 +217,43 @@ fn run(on_change: impl Fn(bool)) {
     tracing::warn!("trash watch: inotify reader stopped, the dock icon will not follow the can");
     // SAFETY: the descriptor this function opened; its reader has returned.
     unsafe { libc::close(fd) };
+}
+
+/// Watch the deepest directory that exists for each of `dirs`: `files/` once
+/// it is there, its parent while it is not, so its creation is itself an
+/// event. Called after every burst, since a mount may have brought a can or
+/// taken one away.
+///
+/// Every target is added again each time, not only the new ones: a `files/`
+/// deleted and made again is a new inode, and the kernel dropped the watch on
+/// the old one (`IN_IGNORED`) while the path stayed in `armed`. Adding a watch
+/// on an inode already watched just returns its descriptor.
+fn arm(fd: i32, dirs: &[PathBuf], armed: &mut HashMap<PathBuf, i32>) {
+    let targets: HashSet<PathBuf> = dirs
+        .iter()
+        .filter_map(|dir| deepest_existing(dir))
+        .collect();
+    armed.retain(|path, descriptor| {
+        let keep = targets.contains(path);
+        if !keep {
+            // SAFETY: a descriptor this thread added; if the kernel already
+            // dropped it, the call fails with EINVAL and changes nothing.
+            unsafe { libc::inotify_rm_watch(fd, *descriptor) };
+        }
+        keep
+    });
+    for target in targets {
+        let Ok(c_path) = std::ffi::CString::new(target.as_os_str().as_encoded_bytes()) else {
+            continue;
+        };
+        // SAFETY: a NUL-terminated path and a mask of inotify flags.
+        let descriptor = unsafe { libc::inotify_add_watch(fd, c_path.as_ptr(), INTEREST) };
+        if descriptor >= 0 {
+            armed.insert(target, descriptor);
+        } else {
+            armed.remove(&target);
+        }
+    }
 }
 
 /// What wakes the watcher.
@@ -347,6 +357,47 @@ mod tests {
         std::fs::create_dir_all(&files).unwrap();
         assert_eq!(deepest_existing(&files), Some(files.clone()));
 
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn a_can_made_again_is_watched_again() {
+        let root = std::env::temp_dir().join(format!("otto-trash-rearm-{}", std::process::id()));
+        let files = root.join("Trash/files");
+        std::fs::create_dir_all(&files).unwrap();
+        // SAFETY: inotify_init1 takes flags and returns a descriptor or -1.
+        let fd = unsafe { libc::inotify_init1(libc::IN_CLOEXEC | libc::IN_NONBLOCK) };
+        assert!(fd >= 0);
+        let drain = || {
+            let mut buffer = [0u8; 4096];
+            // SAFETY: reading into a buffer we own, of the size we pass.
+            unsafe {
+                libc::read(
+                    fd,
+                    buffer.as_mut_ptr() as *mut libc::c_void,
+                    buffer.len() as libc::size_t,
+                )
+            }
+        };
+
+        let dirs = vec![files.clone()];
+        let mut armed = HashMap::new();
+        arm(fd, &dirs, &mut armed);
+        let first = armed[&files];
+
+        // Deleted and made again between two bursts: same path, new inode,
+        // and the kernel has dropped the old watch.
+        std::fs::remove_dir(&files).unwrap();
+        std::fs::create_dir(&files).unwrap();
+        while drain() > 0 {}
+        arm(fd, &dirs, &mut armed);
+        assert_ne!(armed[&files], first);
+
+        std::fs::write(files.join("thrown-away"), b"").unwrap();
+        assert!(drain() > 0, "a file in the new can is an event");
+
+        // SAFETY: the descriptor this test opened.
+        unsafe { libc::close(fd) };
         std::fs::remove_dir_all(&root).ok();
     }
 }

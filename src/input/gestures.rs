@@ -24,8 +24,11 @@ impl<A: crate::renderer::active::RendererApi> crate::Otto<crate::udev::UdevData<
         // 3-finger swipe: start detecting direction. Show desktop takes the
         // gesture instead — swiping with the windows pushed aside brings them
         // back, animated, rather than silently doing nothing.
+        // Neither does anything on a locked session — the swipe would switch
+        // workspaces or open exposé under the lock. The event still goes on
+        // to the pointer, whose focus is the lock surface.
         let is_show_desktop_active = self.workspaces.get_show_desktop();
-        if evt.fingers() == 3 && !self.is_pinching {
+        if evt.fingers() == 3 && !self.is_pinching && !self.is_session_locked() {
             if is_show_desktop_active {
                 self.workspaces.expose_show_desktop(-2.0, true);
             } else {
@@ -163,6 +166,11 @@ impl<A: crate::renderer::active::RendererApi> crate::Otto<crate::udev::UdevData<
 impl<B: crate::state::Backend> crate::Otto<B> {
     /// Start a 3-finger swipe: wait for enough travel to tell its direction.
     pub fn gesture_swipe_begin_3finger(&mut self) {
+        // A locked session has no desktop gestures. Left `Idle`, every update
+        // and the end of this swipe are ignored too.
+        if self.is_session_locked() {
+            return;
+        }
         self.swipe_gesture = crate::state::SwipeGestureState::Detecting {
             accumulated: (0.0, 0.0),
         };
@@ -296,8 +304,11 @@ impl<B: crate::state::Backend> crate::Otto<B> {
     }
 
     /// Start a 4-finger pinch for show desktop — unless a swipe gesture is
-    /// under way or exposé is up.
+    /// under way, exposé is up, or the session is locked.
     pub fn gesture_pinch_begin_4finger(&mut self) {
+        if self.is_session_locked() {
+            return;
+        }
         let is_swiping = !matches!(self.swipe_gesture, crate::state::SwipeGestureState::Idle);
         let is_expose_active = self.workspaces.get_show_all();
         if !is_swiping && !is_expose_active {
@@ -324,6 +335,36 @@ impl<B: crate::state::Backend> crate::Otto<B> {
             self.pinch_last_scale = scale;
             self.workspaces.expose_show_desktop(delta, false);
         }
+    }
+
+    /// Abandon any swipe or pinch under way, settling the desktop back where
+    /// the gesture found it. Called when the session locks: the gesture's
+    /// remaining updates must not keep driving the desktop under the lock.
+    ///
+    /// Unlike lifting the fingers, nothing here touches keyboard focus — the
+    /// lock has just taken it off the session, and handing it to the top
+    /// window would put it back under the lock.
+    pub fn cancel_desktop_gestures(&mut self) {
+        match std::mem::replace(
+            &mut self.swipe_gesture,
+            crate::state::SwipeGestureState::Idle,
+        ) {
+            crate::state::SwipeGestureState::Expose { .. } => {
+                // `show_all` still says which side the gesture started from;
+                // a strong fling back that way settles it there.
+                let back = if self.workspaces.get_show_all() {
+                    1.0
+                } else {
+                    -1.0
+                };
+                self.workspaces.expose_end_with_velocity(back * 100.0);
+            }
+            crate::state::SwipeGestureState::WorkspaceSwitching { output_name, .. } => {
+                self.workspaces.workspace_swipe_end(&output_name, 0.0);
+            }
+            _ => {}
+        }
+        self.gesture_pinch_end();
     }
 
     /// End the pinch: let show desktop settle where it is heading.

@@ -1261,6 +1261,9 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         // drag begun before the lock keeps receiving motion.
         let pointer = self.pointer.clone();
         pointer.unset_grab(self, serial, smithay::backend::input::InputTime::now());
+        // A swipe or pinch begun before the lock would otherwise go on
+        // switching workspaces or opening exposé while the fingers stay down.
+        self.cancel_desktop_gestures();
     }
 
     /// Give focus back to whatever had it when the lock began, if it is still

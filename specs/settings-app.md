@@ -419,15 +419,18 @@ Privacy, About. The panes are:
   Change Password checks that all are filled, that the new ones match and
   differ from the current one, then runs `passwd` on a thread of its own and
   answers its prompts over a pipe — current password, then the new one twice.
-  A prompt is recognised by shape (output ending in a colon with no line
-  break), not wording, so the user's locale is kept and a refusal comes back
+  A prompt is recognised by shape (output ending in a colon, ASCII or
+  fullwidth, with no line break), not wording, so the user's locale is kept and a refusal comes back
   in their language. The passwords leave the sheet when the attempt starts and
   are never passed as arguments. On success the sheet closes and the row says
   so; otherwise it stays up with the reason under the fields: a wrong current
   password (`passwd` stopping after the first answer), the quality module's
-  `BAD PASSWORD: …`, or `passwd`'s own line. A fourth prompt — a quality
-  module asking again — is not answered. Cancel and Escape do nothing while
-  the change is underway.
+  `BAD PASSWORD: …`, or `passwd`'s own line (also when it stops before
+  asking anything). A fourth prompt — a quality module asking again — is not
+  answered. `passwd` silent for 20 seconds — waiting on something not
+  recognised as a prompt — is killed and the attempt reported as failed.
+  Cancel and Escape stay live while the change is underway: they kill
+  `passwd` and close the sheet.
 - **General** — the app switcher's display, the display language, which is
   what every part of Otto localises itself against, the renderer (see below)
   and where the configuration file is. The language requires a restart to take

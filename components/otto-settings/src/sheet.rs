@@ -250,6 +250,7 @@ pub fn paint(
     // Cancel is an ordinary button; the action is the default one, in the
     // accent — or in red when it destroys something — since Enter presses it.
     let enabled = !view.busy;
+    let cancellable = enabled || view.cancellable;
     let text = |enabled: bool, color: Color| {
         if enabled {
             color
@@ -275,7 +276,7 @@ pub fn paint(
         layout.cancel,
         cancel_label(),
         theme.fill_tertiary,
-        text(enabled, theme.text_primary),
+        text(cancellable, theme.text_primary),
     );
     button(
         layout.action,
@@ -315,6 +316,7 @@ mod tests {
             destructive: false,
             message: None,
             busy: false,
+            cancellable: true,
         }
     }
 

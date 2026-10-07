@@ -11,6 +11,7 @@ use std::sync::{Arc, LazyLock, Mutex};
 use otto_kit::AppContext;
 
 use futures_util::StreamExt;
+use zbus::proxy::CacheProperties;
 use zbus::zvariant::{OwnedValue, Value};
 use zbus::{interface, object_server::SignalEmitter, proxy, Connection};
 
@@ -520,6 +521,7 @@ async fn fetch_item(
     let proxy = StatusNotifierItemProxy::builder(conn)
         .destination(bus_name)?
         .path(path)?
+        .cache_properties(CacheProperties::No)
         .build()
         .await?;
 
@@ -610,8 +612,7 @@ async fn fetch_item(
         cached_layout: None,
     };
 
-    // Insert at front so newest items appear leftmost (per spec).
-    state.lock().unwrap().insert(0, item);
+    let is_new = upsert_item(&mut state.lock().unwrap(), item);
     TRAY_GENERATION.fetch_add(1, Ordering::Relaxed);
     AppContext::request_wakeup();
 
@@ -624,12 +625,19 @@ async fn fetch_item(
         tokio::spawn(async move {
             prefetch_menu_layout(&conn_for_prefetch, &service, &mpath, state_for_prefetch).await;
         });
+    }
 
+    // A re-registered item already has its signal watchers running.
+    if !is_new {
+        return Ok(());
+    }
+
+    if let Some(ref menu_path) = menu_path {
         // And keep it current: the prefetch is a snapshot, and a network
         // list or a toggle is stale the moment the applet changes it.
         let service = bus_name.to_string();
         let item_path = path.to_string();
-        let watch_path = menu_path.clone().unwrap_or_default();
+        let watch_path = menu_path.clone();
         let state_for_watch = state.clone();
         let conn_for_watch = conn.clone();
         tokio::spawn(async move {
@@ -655,6 +663,29 @@ async fn fetch_item(
     });
 
     Ok(())
+}
+
+/// Add `item` to the list, or refresh it in place if the same service and
+/// path is already listed (an app registering again). New items go to the
+/// front so the newest appears leftmost (per spec). Returns whether the item
+/// was new.
+fn upsert_item(items: &mut Vec<TrayItem>, mut item: TrayItem) -> bool {
+    match items
+        .iter_mut()
+        .find(|i| i.service == item.service && i.path == item.path)
+    {
+        Some(existing) => {
+            if existing.menu_path == item.menu_path {
+                item.cached_layout = existing.cached_layout.take();
+            }
+            *existing = item;
+            false
+        }
+        None => {
+            items.insert(0, item);
+            true
+        }
+    }
 }
 
 /// Pre-fetch a dbusmenu layout in the background and cache it on the TrayItem.
@@ -777,11 +808,14 @@ fn precache_menu_icons(items: &[crate::dbusmenu::MenuItem], load_size: i32) {
 
 /// Watch NewIcon/NewStatus/NewToolTip signals and refresh the item.
 async fn watch_item_signals(conn: &Connection, bus_name: &str, path: &str, state: TrayState) {
+    // SNI items signal changes with NewIcon/NewStatus/NewToolTip, not
+    // PropertiesChanged, so a cached proxy would return stale values forever.
     let Ok(proxy) = StatusNotifierItemProxy::builder(conn)
         .destination(bus_name)
         .unwrap()
         .path(path)
         .unwrap()
+        .cache_properties(CacheProperties::No)
         .build()
         .await
     else {
@@ -904,5 +938,66 @@ fn extract_tooltip_text(val: OwnedValue) -> Option<String> {
         }
         Value::Str(s) => Some(s.to_string()),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn item(service: &str, path: &str, status: &str) -> TrayItem {
+        TrayItem {
+            service: service.into(),
+            path: path.into(),
+            icon_name: None,
+            icon_file: None,
+            icon_data: None,
+            icon_width: 0,
+            icon_height: 0,
+            tooltip: None,
+            status: status.into(),
+            menu_path: None,
+            cached_layout: None,
+        }
+    }
+
+    #[test]
+    fn upsert_inserts_new_items_at_front() {
+        let mut items = Vec::new();
+        assert!(upsert_item(
+            &mut items,
+            item(":1.1", "/StatusNotifierItem", "Active")
+        ));
+        assert!(upsert_item(
+            &mut items,
+            item(":1.2", "/StatusNotifierItem", "Active")
+        ));
+        assert_eq!(items[0].service, ":1.2");
+        assert_eq!(items[1].service, ":1.1");
+    }
+
+    #[test]
+    fn upsert_updates_reregistered_item_in_place() {
+        let mut items = Vec::new();
+        upsert_item(&mut items, item(":1.1", "/StatusNotifierItem", "Active"));
+        upsert_item(&mut items, item(":1.2", "/StatusNotifierItem", "Active"));
+        assert!(!upsert_item(
+            &mut items,
+            item(":1.1", "/StatusNotifierItem", "NeedsAttention")
+        ));
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[1].service, ":1.1");
+        assert_eq!(items[1].status, "NeedsAttention");
+    }
+
+    #[test]
+    fn upsert_treats_other_path_as_new_item() {
+        let mut items = Vec::new();
+        upsert_item(&mut items, item(":1.1", "/StatusNotifierItem", "Active"));
+        assert!(upsert_item(
+            &mut items,
+            item(":1.1", "/org/ayatana/1", "Active")
+        ));
+        assert_eq!(items.len(), 2);
     }
 }

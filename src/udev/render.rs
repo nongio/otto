@@ -436,7 +436,12 @@ impl<A: RendererApi> Otto<UdevData<A>> {
             && !self.has_modal_overlay_layer()
             // Nor may the side canvas, which slides in over fullscreen
             // windows from the same plane.
-            && !self.canvas_on_screen();
+            && !self.canvas_on_screen()
+            // Least of all the lock: scanout puts the window alone on the
+            // primary plane, so the blank — and the locker on it — would be
+            // drawn nowhere, and a fullscreen video or game would play on
+            // over a locked session. Held until the shade is back up.
+            && !self.lock_blank_on_screen();
         let fullscreen_window = if allow_fullscreen_scanout {
             this_output
                 .as_ref()
@@ -484,8 +489,9 @@ impl<A: RendererApi> Otto<UdevData<A>> {
         // too, while the blank slides back off the top.
         // A modal overlay dialog, for the same reason as the lock plane: the
         // prompt lives in a subtree the plane decomposition never scans out.
+        let lock_on_screen = self.lock_blank_on_screen();
         let composite_now = self.workspaces.has_minimizing_window()
-            || self.lock_blank_on_screen()
+            || lock_on_screen
             || self.has_modal_overlay_layer();
         let composite_active = if let Some(surf) = self
             .backend_data
@@ -1192,21 +1198,30 @@ impl<A: RendererApi> Otto<UdevData<A>> {
         // came out black. So the composite fallback stacks the plane
         // subtrees instead, top→bottom like the plane push order (and like
         // the winit backend and virtual outputs already do).
+        // The lock plane goes on top of that stack: a lock can come down on
+        // an open exposé (an idle timer, the lid), and a stack without it
+        // drew the overview over the blank.
         let expose_scene_stack: Vec<crate::render_elements::scene_element::SceneElement> =
             match self.workspaces.output_workspaces.get(&output.name()) {
                 Some(ows) if expose_active => {
                     let pos = ows.output_layer.render_position();
                     let origin = (pos.x, pos.y);
-                    vec![
+                    let lock = lock_on_screen.then(|| {
                         self.scene_element
-                            .for_plane_subtree(&ows.switcher_plane, origin),
-                        self.scene_element
-                            .for_plane_subtree(&ows.overlay_plane, origin),
-                        self.scene_element
-                            .for_plane_subtree(&ows.expose_layer, origin),
-                        self.scene_element
-                            .for_plane_subtree(&ows.background_plane, origin),
-                    ]
+                            .for_plane_subtree(&ows.lock_plane, origin)
+                    });
+                    lock.into_iter()
+                        .chain([
+                            self.scene_element
+                                .for_plane_subtree(&ows.switcher_plane, origin),
+                            self.scene_element
+                                .for_plane_subtree(&ows.overlay_plane, origin),
+                            self.scene_element
+                                .for_plane_subtree(&ows.expose_layer, origin),
+                            self.scene_element
+                                .for_plane_subtree(&ows.background_plane, origin),
+                        ])
+                        .collect()
                 }
                 _ => Vec::new(),
             };
@@ -1738,12 +1753,16 @@ impl<A: RendererApi> Otto<UdevData<A>> {
 
                                 if let Err(e) = blit_result {
                                     tracing::debug!("Screenshare blit failed: {}", e);
+                                    // Never queue a buffer holding a partial
+                                    // frame; its next use renders in full.
+                                    pool.forget_rendered();
+                                    pool.put_back(available);
                                 } else {
                                     // Only increment sequence on successful blit
                                     stream.pipewire_stream.increment_frame_sequence();
+                                    pool.queue(available);
                                 }
 
-                                pool.queue(available);
                                 drop(pool);
                                 // Trigger to queue the buffer we just rendered
                                 stream.pipewire_stream.trigger_frame();
@@ -1879,6 +1898,21 @@ impl<A: RendererApi> Otto<UdevData<A>> {
         crtc: crtc::Handle,
         evt_handle: LoopHandle<'static, Otto<UdevData<A>>>,
     ) {
+        self.try_initial_render(node, crtc, evt_handle, 0);
+    }
+
+    /// `node` is the primary device node keying `backends`, not the
+    /// surface's render node. Temporary failures are retried on idle up to
+    /// `INITIAL_RENDER_MAX_RETRIES` times.
+    fn try_initial_render(
+        &mut self,
+        node: DrmNode,
+        crtc: crtc::Handle,
+        evt_handle: LoopHandle<'static, Otto<UdevData<A>>>,
+        attempt: u32,
+    ) {
+        const INITIAL_RENDER_MAX_RETRIES: u32 = 3;
+
         let device = if let Some(device) = self.backend_data.backends.get_mut(&node) {
             device
         } else {
@@ -1891,9 +1925,15 @@ impl<A: RendererApi> Otto<UdevData<A>> {
             return;
         };
 
-        let node = surface.render_node;
+        let render_node = surface.render_node;
         let result = {
-            let mut renderer = A::single_renderer(&mut self.backend_data.gpus, &node).unwrap();
+            let mut renderer = match A::single_renderer(&mut self.backend_data.gpus, &render_node) {
+                Ok(r) => r,
+                Err(err) => {
+                    warn!("initial render: failed to get renderer: {err}");
+                    return;
+                }
+            };
             initial_render::<A>(surface, &mut renderer)
         };
 
@@ -1901,13 +1941,21 @@ impl<A: RendererApi> Otto<UdevData<A>> {
             match err {
                 SwapBuffersError::AlreadySwapped => {}
                 SwapBuffersError::TemporaryFailure(err) => {
-                    // TODO dont reschedule after 3(?) retries
+                    if attempt >= INITIAL_RENDER_MAX_RETRIES {
+                        warn!("Failed to submit initial page_flip, giving up: {}", err);
+                        return;
+                    }
                     warn!("Failed to submit page_flip: {}", err);
                     let handle = evt_handle.clone();
-                    evt_handle
-                        .insert_idle(move |data| data.schedule_initial_render(node, crtc, handle));
+                    evt_handle.insert_idle(move |data| {
+                        data.try_initial_render(node, crtc, handle, attempt + 1)
+                    });
                 }
-                SwapBuffersError::ContextLost(err) => panic!("Rendering loop lost: {}", err),
+                // Same policy as the main render path: log instead of
+                // taking the whole session down.
+                SwapBuffersError::ContextLost(err) => {
+                    tracing::error!("Rendering context lost during initial render: {}", err);
+                }
             }
         }
     }

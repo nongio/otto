@@ -21,6 +21,7 @@ use std::sync::Arc;
 
 use layers::prelude::*;
 use layers::types::{BlendMode, Color as LayerColor, Point as LayerPoint, Size as LayerSize};
+use otto_kit::components::avatar;
 use otto_kit::lottie::LottiePlayer;
 use otto_kit::typography::get_font_with_fallback;
 use skia_safe::{
@@ -973,7 +974,10 @@ impl Panel {
             .avatar_image
             .as_ref()
             .and_then(|(_, image)| image.clone());
-        let initials = user.map(User::initials).filter(|i| !i.is_empty());
+        // Settings › Users draws the same initials on the same ground.
+        let initials = user
+            .map(|user| (user.initials(), avatar::ground_color(user.avatar_name())))
+            .filter(|(initials, _)| !initials.is_empty());
 
         self.avatar.set_draw_content(draw_avatar(
             image,
@@ -1266,7 +1270,7 @@ fn draw_scrim(width: f32, height: f32) -> impl Fn(&Canvas, f32, f32) -> Rect + S
 
 fn draw_avatar(
     image: Option<Image>,
-    initials: Option<String>,
+    initials: Option<(String, Color)>,
     accent: Color,
     font: Font,
 ) -> impl Fn(&Canvas, f32, f32) -> Rect + Send + Sync + 'static {
@@ -1286,39 +1290,39 @@ fn draw_avatar(
                     &Paint::default(),
                 );
             }
-            None => {
-                let mut paint = Paint::default();
-                paint.set_shader(skia_safe::gradient_shader::linear(
-                    (Point::new(0.0, 0.0), Point::new(w, h)),
-                    skia_safe::gradient_shader::GradientShaderColors::Colors(&[
-                        lighten(accent, 0.25),
-                        darken(accent, 0.25),
-                    ]),
-                    None,
-                    skia_safe::TileMode::Clamp,
-                    None,
-                    None,
-                ));
-                canvas.draw_rect(bounds, &paint);
+            None => match &initials {
+                Some((initials, ground)) => {
+                    let mut paint = Paint::default();
+                    paint.set_anti_alias(true);
+                    paint.set_color(*ground);
+                    canvas.draw_rect(bounds, &paint);
 
-                match &initials {
-                    Some(initials) => {
-                        let mut text = Paint::new(Color4f::from(Color::WHITE), None);
-                        text.set_anti_alias(true);
-                        let width = font.measure_str(initials, Some(&text)).0;
-                        canvas.draw_str(
-                            initials,
-                            ((w - width) / 2.0, h / 2.0 + 12.0),
-                            &font,
-                            &text,
-                        );
-                    }
+                    let mut text = Paint::new(Color4f::from(Color::WHITE), None);
+                    text.set_anti_alias(true);
+                    let width = font.measure_str(initials, Some(&text)).0;
+                    canvas.draw_str(initials, ((w - width) / 2.0, h / 2.0 + 12.0), &font, &text);
+                }
+                None => {
+                    let mut paint = Paint::default();
+                    paint.set_shader(skia_safe::gradient_shader::linear(
+                        (Point::new(0.0, 0.0), Point::new(w, h)),
+                        skia_safe::gradient_shader::GradientShaderColors::Colors(&[
+                            lighten(accent, 0.25),
+                            darken(accent, 0.25),
+                        ]),
+                        None,
+                        skia_safe::TileMode::Clamp,
+                        None,
+                        None,
+                    ));
+                    canvas.draw_rect(bounds, &paint);
+
                     // Nobody has been named yet, so there are no initials. A
                     // silhouette says "a person, unspecified"; a "?" reads as
                     // something having gone wrong.
-                    None => draw_silhouette(canvas, w, h),
+                    draw_silhouette(canvas, w, h);
                 }
-            }
+            },
         }
 
         let mut ring = Paint::default();
