@@ -308,7 +308,9 @@ fn app_from_entry(
 }
 
 /// Is `program` an absolute path that exists, or a name found on `PATH`?
-fn program_exists(program: &str) -> bool {
+///
+/// This is the check `TryExec=` asks for.
+pub fn program_exists(program: &str) -> bool {
     let program = Path::new(program);
     if program.is_absolute() {
         return program.exists();
@@ -716,6 +718,41 @@ fn tokenize(exec: &str) -> Result<Vec<Token>, OpenError> {
     }
 }
 
+/// The argv an `Exec=` value runs when there is nothing to open.
+///
+/// Quoting is undone as the specification says and every field code is
+/// dropped, so a line like `sh -c "exec foo --x" %U` gives
+/// `["sh", "-c", "exec foo --x"]`. `None` for a line that is malformed or
+/// leaves no program.
+pub fn exec_argv(exec: &str) -> Option<Vec<String>> {
+    let argv: Vec<String> = tokenize(exec)
+        .ok()?
+        .into_iter()
+        .filter_map(|token| match token {
+            Token::Text(text) => {
+                let stripped = strip_codes(&text);
+                (!stripped.is_empty() || text.is_empty()).then_some(stripped)
+            }
+            Token::Files | Token::Uris | Token::Icon => None,
+        })
+        .collect();
+    (!argv.is_empty()).then_some(argv)
+}
+
+/// Drop the field codes from one argument, keeping `%%` as a percent sign.
+fn strip_codes(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars();
+    while let Some(c) = chars.next() {
+        if c != '%' {
+            out.push(c);
+        } else if chars.next() == Some('%') {
+            out.push('%');
+        }
+    }
+    out
+}
+
 /// Escape a quoted argument so [`expand`] turns `%%` into `%` and leaves
 /// every other `%` (a field code is not one inside quotes) as it is.
 fn escape_quoted(arg: &str) -> String {
@@ -1118,6 +1155,21 @@ mod tests {
             ]]
         );
         assert!(matches!(tokenize("\"open"), Err(OpenError::BadCommand(_))));
+    }
+
+    #[test]
+    fn exec_argv_unquotes_and_drops_field_codes() {
+        assert_eq!(
+            exec_argv(r#"sh -c "exec foo --x" %U"#).unwrap(),
+            ["sh", "-c", "exec foo --x"]
+        );
+        assert_eq!(
+            exec_argv(r#"sway --unsupported-gpu %f --file=%f "50%%" "a \"q\"" %i"#).unwrap(),
+            ["sway", "--unsupported-gpu", "--file=", "50%", "a \"q\""]
+        );
+        assert_eq!(exec_argv("%F"), None);
+        assert_eq!(exec_argv("   "), None);
+        assert_eq!(exec_argv("\"open"), None);
     }
 
     #[test]
