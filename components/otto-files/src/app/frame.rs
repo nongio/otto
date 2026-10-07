@@ -38,10 +38,6 @@ impl Browser {
         }
         let depth = self.active.min(self.columns.len() - 1);
         let selected = self.columns[depth].selection.len();
-        // One picked out of the Photos wall: what it can do next.
-        if selected == 1 && self.mode == ViewMode::Photos {
-            return Some(otto_kit::t_owned!("files-photos-one-selected"));
-        }
         (selected > 0).then(|| {
             otto_kit::t_owned!(
                 "files-status-selected",
