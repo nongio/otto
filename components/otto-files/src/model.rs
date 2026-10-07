@@ -1692,6 +1692,82 @@ pub fn create_folder_named(dest: &Path, name: &str) -> Result<PathBuf, String> {
     Ok(target)
 }
 
+/// Rename `from` to `to` without replacing anything already at `to`.
+///
+/// `rename(2)` quietly clobbers the destination, and undo cannot bring that
+/// back, so this asks the kernel for `RENAME_NOREPLACE` and reports a taken
+/// name as `AlreadyExists`. A filesystem without the flag falls back to a
+/// check before a plain rename, as `otto_kit::trash` does.
+pub fn rename_no_replace(from: &Path, to: &Path) -> std::io::Result<()> {
+    use std::ffi::CString;
+    use std::io::{Error, ErrorKind};
+    use std::os::unix::ffi::OsStrExt;
+
+    let c = |path: &Path| {
+        CString::new(path.as_os_str().as_bytes()).map_err(|_| Error::from(ErrorKind::InvalidInput))
+    };
+    let (from_c, to_c) = (c(from)?, c(to)?);
+    // SAFETY: both pointers are NUL-terminated strings that outlive the call.
+    let result = unsafe {
+        libc::renameat2(
+            libc::AT_FDCWD,
+            from_c.as_ptr(),
+            libc::AT_FDCWD,
+            to_c.as_ptr(),
+            libc::RENAME_NOREPLACE,
+        )
+    };
+    if result == 0 {
+        return Ok(());
+    }
+    let err = Error::last_os_error();
+    match err.raw_os_error() {
+        // On a case-insensitive filesystem "a" → "A" finds the file itself
+        // at the destination; that is a rename, not a collision.
+        Some(libc::EEXIST) if same_file(from, to) => std::fs::rename(from, to),
+        Some(libc::EINVAL | libc::ENOSYS) => {
+            if to.symlink_metadata().is_ok() && !same_file(from, to) {
+                return Err(ErrorKind::AlreadyExists.into());
+            }
+            std::fs::rename(from, to)
+        }
+        _ => Err(err),
+    }
+}
+
+fn same_file(a: &Path, b: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    match (a.symlink_metadata(), b.symlink_metadata()) {
+        (Ok(a), Ok(b)) => a.dev() == b.dev() && a.ino() == b.ino(),
+        _ => false,
+    }
+}
+
+#[cfg(test)]
+mod rename_tests {
+    use super::*;
+
+    #[test]
+    fn rename_refuses_to_replace_an_existing_sibling() {
+        let dir = std::env::temp_dir().join(format!("otto-files-rename-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (a, b) = (dir.join("a.txt"), dir.join("b.txt"));
+        std::fs::write(&a, "a").unwrap();
+        std::fs::write(&b, "b").unwrap();
+
+        let err = rename_no_replace(&a, &b).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists);
+        assert_eq!(std::fs::read_to_string(&a).unwrap(), "a");
+        assert_eq!(std::fs::read_to_string(&b).unwrap(), "b");
+
+        let c = dir.join("c.txt");
+        rename_no_replace(&a, &c).unwrap();
+        assert!(!a.exists());
+        assert_eq!(std::fs::read_to_string(&c).unwrap(), "a");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Trash
 // ---------------------------------------------------------------------------

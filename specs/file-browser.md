@@ -1009,7 +1009,9 @@ progress, and can cancel it.
 
 - **Rename** — inline in the view. A name containing `/`, or empty, or `.`
   or `..`, is rejected while typing. A name that collides with an existing
-  entry offers to replace it or to keep editing.
+  entry is refused — the status line says it is already there — and nothing
+  is replaced: the rename asks the kernel for `RENAME_NOREPLACE`, falling back
+  to a check before a plain rename where the filesystem lacks it.
 - **New folder** — creates `untitled folder`, disambiguating with a numeric
   suffix, and immediately enters inline rename on it, scrolling the view to it
   first: the sort can put the new folder anywhere, and a rename field off
