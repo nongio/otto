@@ -240,6 +240,22 @@ impl Doc {
     /// layer, both off the UI thread.
     fn follow_document(&self) {
         let scale = AppContext::scale_factor().max(1) as f32;
+        // The sidebar's thumbnails, small decodes of their own pages.
+        let thumbs = self.viewer.lock().unwrap().thumb_work(scale);
+        if let Some((requests, path)) = thumbs {
+            for request in requests {
+                let viewer = Arc::clone(&self.viewer);
+                let path = path.clone();
+                tokio::task::spawn_blocking(move || {
+                    let image = match peek::decode_page(&path, request.page, request.width) {
+                        Preview::Pixels { pixels, .. } => pixels.to_image(),
+                        _ => None,
+                    };
+                    viewer.lock().unwrap().finish_thumb(request.page, image);
+                    AppContext::request_wakeup();
+                });
+            }
+        }
         let work = {
             let mut viewer = self.viewer.lock().unwrap();
             viewer
@@ -412,6 +428,10 @@ fn handle_pointer(viewer: &Mutex<Viewer>, window: &Window, events: &[PointerEven
                     }
                     continue;
                 }
+                if v.sidebar().is_some_and(|sidebar| sidebar.rect.contains(at)) {
+                    v.sidebar_press(at);
+                    continue;
+                }
                 v.content_pointer(VideoPointer::Press, at);
                 if v.drag.is_some() && v.cursor != CursorShape::Grabbing {
                     v.cursor = CursorShape::Grabbing;
@@ -464,6 +484,13 @@ fn handle_pointer(viewer: &Mutex<Viewer>, window: &Window, events: &[PointerEven
                 vertical,
                 ..
             } => {
+                if v.sidebar().is_some_and(|sidebar| sidebar.rect.contains(at)) {
+                    if !vertical.stop {
+                        v.sidebar_wheel(vertical.absolute as f32);
+                    }
+                    redraw |= std::mem::take(&mut v.dirty);
+                    continue;
+                }
                 v.wheel(
                     horizontal.absolute as f32,
                     vertical.absolute as f32,

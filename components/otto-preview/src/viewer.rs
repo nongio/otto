@@ -7,7 +7,7 @@
 
 // Rust guideline compliant 2026-02-21
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::time::Instant;
 
@@ -15,11 +15,12 @@ use otto_files::peek::{PageRequest, Session, VideoPointer};
 use otto_kit::components::titlebar::{DecorationVariant, WindowControlsState};
 use otto_kit::prelude::*;
 use otto_kit::preview::{Preview, ROW_HEIGHT};
-use otto_kit::skia::Point;
+use otto_kit::skia::{Image, Point};
 use otto_kit::theme::ColorScheme;
 use otto_kit::CursorShape;
 
 use crate::chrome::{self, Tool};
+use crate::sidebar::{self, SidebarLayout};
 
 /// How much one press of a zoom button or a zoom shortcut magnifies.
 const ZOOM_STEP: f32 = 1.25;
@@ -28,6 +29,12 @@ const KEY_STEP: f32 = 48.0;
 /// How many pages are rasterised at once. Enough that one slow page does not
 /// hold up its neighbours, few enough that a fast scroll leaves no queue.
 const PAGES_AT_ONCE: usize = 3;
+/// How many thumbnails are rasterised at once, beside the pages.
+const THUMBS_AT_ONCE: usize = 2;
+/// How many thumbnails either side of the sidebar's box are made ready, and
+/// how many further out are let go of.
+const THUMBS_AHEAD: usize = 3;
+const THUMBS_KEPT: usize = 12;
 
 /// The window's whole state, shared between the draw, the pointer handler,
 /// the update pass and the workers.
@@ -67,6 +74,18 @@ pub struct Viewer {
     pub dirty: bool,
     /// The window was asked to close; the loop closes it on its next turn.
     pub closing: bool,
+    /// The sidebar shown or hidden from the toolbar; `None` until then, when
+    /// it shows for a document of more than one page.
+    pub sidebar_choice: Option<bool>,
+    /// How far the thumbnail column is scrolled, in points.
+    pub sidebar_scroll: f32,
+    /// The page the sidebar last brought into its box, so it follows the
+    /// document without fighting a scroll of its own.
+    pub sidebar_followed: u32,
+    /// Rasterised thumbnails, by 1-based page.
+    pub thumbs: HashMap<u32, Image>,
+    /// Thumbnails whose rasterising is in flight.
+    pub thumbs_pending: HashSet<u32>,
 }
 
 /// What a key press asks the window to do beyond changing the viewer.
@@ -113,6 +132,11 @@ impl Viewer {
             video_key: 0,
             dirty: true,
             closing: false,
+            sidebar_choice: None,
+            sidebar_scroll: 0.0,
+            sidebar_followed: 0,
+            thumbs: HashMap::new(),
+            thumbs_pending: HashSet::new(),
         }
     }
 
@@ -122,7 +146,158 @@ impl Viewer {
 
     /// The box the preview is drawn in.
     pub fn content(&self) -> Rect {
-        chrome::content_rect(self.size.0, self.size.1, self.variant)
+        let mut content = chrome::content_rect(self.size.0, self.size.1, self.variant);
+        if self.sidebar_open() {
+            content.left = (content.left + sidebar::WIDTH).min(content.right - 1.0);
+        }
+        content
+    }
+
+    /// Whether the preview is a document the sidebar can show pages of.
+    pub fn has_pages(&self) -> bool {
+        !self.session.loading && !self.session.pages().is_empty()
+    }
+
+    /// Whether the pages sidebar is showing: as chosen from the toolbar, or
+    /// by default for a document of more than one page.
+    pub fn sidebar_open(&self) -> bool {
+        self.has_pages()
+            && self
+                .sidebar_choice
+                .unwrap_or(self.session.pages().len() > 1)
+    }
+
+    /// The sidebar's thumbnails where they are drawn now, when it is open.
+    pub fn sidebar(&self) -> Option<SidebarLayout> {
+        if !self.sidebar_open() {
+            return None;
+        }
+        let full = chrome::content_rect(self.size.0, self.size.1, self.variant);
+        let rect = Rect::from_ltrb(
+            full.left,
+            full.top,
+            (full.left + sidebar::WIDTH).min(full.right),
+            full.bottom,
+        );
+        let sizes: Vec<(f32, f32)> = self
+            .session
+            .pages()
+            .iter()
+            .map(|page| (page.width, page.height))
+            .collect();
+        Some(sidebar::layout(rect, &sizes, self.sidebar_scroll))
+    }
+
+    /// Show or hide the sidebar, keeping the document on the same spot of
+    /// the same page while the content box changes width under it.
+    pub fn toggle_sidebar(&mut self) {
+        if !self.has_pages() {
+            return;
+        }
+        let place = self.place();
+        self.sidebar_choice = Some(!self.sidebar_open());
+        self.sidebar_followed = 0;
+        if let Some((index, along)) = place {
+            let content = self.content();
+            let layout = otto_kit::preview::layout(
+                content,
+                &self.session.preview,
+                self.session.first_row,
+                self.session.zoom,
+            );
+            if let Some(rect) = layout.page_rects.get(index) {
+                let target = rect.top + along * rect.height();
+                self.session.pan_by(0.0, layout.inner.top - target, content);
+            }
+        }
+        self.dirty = true;
+    }
+
+    /// The page at the top of the content box and how far down it the box's
+    /// top edge falls, as a share of its height.
+    fn place(&self) -> Option<(usize, f32)> {
+        let content = self.content();
+        let layout = otto_kit::preview::layout(
+            content,
+            &self.session.preview,
+            self.session.first_row,
+            self.session.zoom,
+        );
+        let index = self.session.showing_page(content);
+        let rect = layout.page_rects.get(index)?;
+        (rect.height() > 0.0).then(|| (index, (layout.inner.top - rect.top) / rect.height()))
+    }
+
+    /// Scroll the thumbnail column by `dy` points of wheel.
+    pub fn sidebar_wheel(&mut self, dy: f32) {
+        let Some(layout) = self.sidebar() else {
+            return;
+        };
+        let scroll = (self.sidebar_scroll + dy).clamp(0.0, layout.max_scroll);
+        if scroll != self.sidebar_scroll {
+            self.sidebar_scroll = scroll;
+            self.dirty = true;
+        }
+    }
+
+    /// A press in the sidebar: go to the page under it.
+    pub fn sidebar_press(&mut self, at: Point) {
+        let Some(page) = self.sidebar().and_then(|layout| layout.page_at(at)) else {
+            return;
+        };
+        let content = self.content();
+        self.dirty |= self.session.scroll_to_page(page, content);
+        // The pressed thumbnail is in view already; following it would only
+        // nudge the column.
+        self.sidebar_followed = page;
+        self.dirty = true;
+    }
+
+    /// Keep the page showing in the sidebar's box as the document scrolls.
+    fn follow_in_sidebar(&mut self) -> bool {
+        let (Some(layout), Some((page, _))) = (self.sidebar(), self.page_status()) else {
+            return false;
+        };
+        if page == self.sidebar_followed {
+            return false;
+        }
+        self.sidebar_followed = page;
+        let scroll = layout.scroll_to_show(page, self.sidebar_scroll);
+        let moved = scroll != self.sidebar_scroll;
+        self.sidebar_scroll = scroll;
+        moved
+    }
+
+    /// The thumbnails the sidebar wants rasterised next, marked as in flight,
+    /// with the file they come from. Thumbnails scrolled well out of the box
+    /// are let go of.
+    pub fn thumb_work(&mut self, scale: f32) -> Option<(Vec<PageRequest>, PathBuf)> {
+        let layout = self.sidebar()?;
+        let kept = layout.pages_in_view(THUMBS_KEPT);
+        self.thumbs.retain(|page, _| kept.contains(page));
+        let width = (sidebar::THUMB_W * scale).ceil() as u32;
+        let wanted: Vec<PageRequest> = layout
+            .pages_in_view(THUMBS_AHEAD)
+            .filter(|page| !self.thumbs.contains_key(page) && !self.thumbs_pending.contains(page))
+            .take(THUMBS_AT_ONCE.saturating_sub(self.thumbs_pending.len()))
+            .map(|page| PageRequest { page, width })
+            .collect();
+        if wanted.is_empty() {
+            return None;
+        }
+        for request in &wanted {
+            self.thumbs_pending.insert(request.page);
+        }
+        Some((wanted, self.path.clone()))
+    }
+
+    /// Put a rasterised thumbnail in the sidebar.
+    pub fn finish_thumb(&mut self, page: u32, image: Option<Image>) {
+        self.thumbs_pending.remove(&page);
+        if let Some(image) = image {
+            self.thumbs.insert(page, image);
+            self.dirty |= self.sidebar_open();
+        }
     }
 
     /// The page showing and how many there are, for a document strip.
@@ -155,12 +330,18 @@ impl Viewer {
             Tool::ZoomIn => self.zoomable() && scale < otto_kit::preview::Zoom::MAX,
             Tool::PreviousPage => self.page_status().is_some_and(|(page, _)| page > 1),
             Tool::NextPage => self.page_status().is_some_and(|(page, pages)| page < pages),
+            Tool::Sidebar => self.has_pages(),
         }
     }
 
     /// The toolbar's buttons where they are drawn now.
     pub fn toolbar(&self) -> chrome::ToolbarLayout {
-        chrome::toolbar_layout(self.size.0, self.variant, self.page_status().is_some())
+        chrome::toolbar_layout(
+            self.size.0,
+            self.variant,
+            self.page_status().is_some(),
+            self.has_pages(),
+        )
     }
 
     /// Zoom to `scale` about `focus`, a window-local point. Returns whether
@@ -345,6 +526,7 @@ impl Viewer {
             Tool::NextPage => {
                 self.turn_page(1);
             }
+            Tool::Sidebar => self.toggle_sidebar(),
         }
     }
 
@@ -473,6 +655,7 @@ impl Viewer {
         let mut moved = self.session.tick_pan(content);
         moved |= self.session.tick_animation();
         moved |= self.session.recognising_since.is_some();
+        moved |= self.follow_in_sidebar();
         let video = self.session.video_key();
         if video != self.video_key {
             self.video_key = video;

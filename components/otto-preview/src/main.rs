@@ -17,6 +17,7 @@ mod app;
 mod chrome;
 mod content;
 mod instance;
+mod sidebar;
 mod viewer;
 
 use std::io::Read;
