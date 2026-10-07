@@ -61,6 +61,7 @@ impl Browser {
             decoded: None,
             video: None,
             palette: Vec::new(),
+            camera: None,
         });
         // A new picture: the last one's "Copied" is not about this one.
         self.photos_copied = None;
@@ -338,6 +339,7 @@ impl Browser {
         generation: u64,
         preview: otto_kit::preview::Preview,
         video: Option<otto_media_kit::Options>,
+        camera: Option<crate::camera::Shot>,
     ) {
         let Some(pane) = &mut self.preview else {
             return;
@@ -346,6 +348,7 @@ impl Browser {
             return;
         }
         pane.pending = false;
+        pane.camera = camera;
         pane.palette = match &preview {
             otto_kit::preview::Preview::Pixels { pixels, .. } => pixels
                 .to_image()

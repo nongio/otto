@@ -421,6 +421,7 @@ impl Browser {
                         .unwrap_or_default(),
                     copied: self.photos_copied.map(|(i, _)| i),
                     hovered: self.photo_swatch_hover,
+                    camera: pane.and_then(|p| p.camera.as_ref()),
                 })
             }
             count => Some(view::PhotosInfoData::Many {

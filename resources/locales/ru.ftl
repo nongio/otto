@@ -1987,6 +1987,11 @@ files-photos-info-copied = Скопировано
 files-photos-info-dimensions = Размеры
 files-photos-info-modified = Изменён
 files-photos-info-where = Где
+files-photos-info-taken = Снято
+files-photos-info-camera = Камера
+files-photos-info-lens = Объектив
+files-photos-info-exposure = Экспозиция
+files-photos-info-location = Место
 files-photos-info-many =
     { $count ->
         [one] { $count } объект

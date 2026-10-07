@@ -1984,6 +1984,8 @@ pub enum PhotosInfoData<'a> {
         copied: Option<usize>,
         /// The swatch under the pointer, which grows and names its colour.
         hovered: Option<usize>,
+        /// What the camera wrote down about it, once the decode lands.
+        camera: Option<&'a crate::camera::Shot>,
     },
     /// Several things selected: how many, and how much they weigh.
     Many { count: usize, bytes: u64 },
@@ -2242,12 +2244,18 @@ pub fn photos_info_runs(panel: Rect, data: &PhotosInfoData<'_>, theme: &Theme) -
             entry,
             dims,
             swatches,
+            camera,
             ..
         } => {
             let layout = photos_info_layout(panel, swatches.len());
             runs.push(title(&entry.name, layout.name_cy));
             runs.push(line(&info_kind_line(entry), layout.kind_cy));
-            rows(&mut runs, layout.rows_cy, facts(entry, *dims));
+            // How it was taken goes after its size, before what the disk
+            // says about the file.
+            let mut all = facts(entry, *dims);
+            let at = usize::from(dims.is_some());
+            all.splice(at..at, camera.map(shot_rows).unwrap_or_default());
+            rows(&mut runs, layout.rows_cy, all);
         }
         PhotosInfoData::Many { count, bytes } => {
             let cy = panel.top + INFO_PAD + 24.0;
@@ -2275,6 +2283,32 @@ pub fn photos_info_runs(panel: Rect, data: &PhotosInfoData<'_>, theme: &Theme) -
         }
     }
     runs
+}
+
+/// The info panel's rows for what the camera wrote down: when, with what,
+/// and how.
+fn shot_rows(shot: &crate::camera::Shot) -> Vec<(&'static str, String)> {
+    let mut out = Vec::new();
+    if let Some(secs) = shot.taken_secs() {
+        // Wall-clock time where it was taken: EXIF has no zone to shift.
+        out.push((
+            otto_kit::t!("files-photos-info-taken"),
+            model::format_time_at(secs, 0),
+        ));
+    }
+    if let Some(camera) = &shot.camera {
+        out.push((otto_kit::t!("files-photos-info-camera"), camera.clone()));
+    }
+    if let Some(lens) = &shot.lens {
+        out.push((otto_kit::t!("files-photos-info-lens"), lens.clone()));
+    }
+    if let Some(exposure) = shot.exposure_line() {
+        out.push((otto_kit::t!("files-photos-info-exposure"), exposure));
+    }
+    if let Some(location) = shot.location_line() {
+        out.push((otto_kit::t!("files-photos-info-location"), location));
+    }
+    out
 }
 
 /// One key/value line: the key on the left in the quieter ink, the value
@@ -2341,7 +2375,7 @@ fn draw_info_stage(
         return;
     };
     // Contained, not cropped: this is the one place the whole picture is
-    // shown, so its own edges are the rounded ones.
+    // shown, square-cornered like a print, lifted off the panel by a shadow.
     let (w, h) = (image.width() as f32, image.height() as f32);
     let scale = (stage.width() / w).min(stage.height() / h);
     let fitted = Rect::from_xywh(
@@ -2350,12 +2384,9 @@ fn draw_info_stage(
         w * scale,
         h * scale,
     );
+    draw_picture_shadow(canvas, fitted);
     canvas.save();
-    canvas.clip_rrect(
-        RRect::new_rect_xy(fitted, 10.0, 10.0),
-        ClipOp::Intersect,
-        true,
-    );
+    canvas.clip_rect(fitted, ClipOp::Intersect, true);
     canvas.draw_image_rect_with_sampling_options(
         &image,
         None,
@@ -2366,8 +2397,30 @@ fn draw_info_stage(
         &Paint::default(),
     );
     canvas.restore();
-    draw_picture_edge(canvas, fitted, 10.0, false);
+    draw_picture_edge(canvas, fitted, 0.0, false);
 }
+
+/// The soft shadow a picture casts on the panel it is shown in: a blurred
+/// dark copy of its rect, dropped a little, drawn before the picture so the
+/// picture covers all but what falls outside its edges.
+fn draw_picture_shadow(canvas: &Canvas, picture: Rect) {
+    if picture.width() < 1.0 || picture.height() < 1.0 {
+        return;
+    }
+    let mut paint = Paint::default();
+    paint.set_anti_alias(true);
+    paint.set_color(Color::from_argb(0x55, 0, 0, 0));
+    paint.set_mask_filter(skia_safe::MaskFilter::blur(
+        skia_safe::BlurStyle::Normal,
+        PICTURE_SHADOW_BLUR,
+        None,
+    ));
+    canvas.draw_rect(picture.with_offset((0.0, PICTURE_SHADOW_DROP)), &paint);
+}
+
+/// How soft a picture's shadow is, as a blur sigma, and how far it falls.
+const PICTURE_SHADOW_BLUR: f32 = 6.0;
+const PICTURE_SHADOW_DROP: f32 = 3.0;
 
 const PHOTOS_GROUP_W: f32 = 150.0;
 const PHOTOS_SLIDER_W: f32 = 100.0;
@@ -5088,6 +5141,12 @@ fn draw_preview_stage(
     // long entry names, a text file with no line breaks — and the one
     // place that must not depend on the file being reasonable is the one
     // where overflow would draw over the caption below it.
+    //
+    // A picture's shadow is the exception: it falls just outside the
+    // picture, and is drawn first so the picture sits on it.
+    if let Some(picture) = preview_picture_rect(stage, decoded, first_row) {
+        draw_picture_shadow(canvas, picture);
+    }
     canvas.save();
     canvas.clip_rect(stage, None, false);
     match decoded {
@@ -5145,6 +5204,39 @@ fn draw_preview_stage(
         }
     }
     canvas.restore();
+}
+
+/// Where the preview column draws a picture in `stage`: the decode's own,
+/// or a card's artwork. `None` for anything that is not a picture.
+fn preview_picture_rect(
+    stage: Rect,
+    decoded: Option<&otto_kit::preview::Preview>,
+    first_row: usize,
+) -> Option<Rect> {
+    let pixels = match decoded? {
+        otto_kit::preview::Preview::Pixels { pixels, .. } => pixels,
+        otto_kit::preview::Preview::Card {
+            hero: Some(pixels), ..
+        } => pixels,
+        _ => return None,
+    };
+    // Laid out from its size alone: the frames are not copied for it.
+    let picture = otto_kit::preview::Preview::Pixels {
+        pixels: otto_kit::preview::Pixels {
+            width: pixels.width,
+            height: pixels.height,
+            intrinsic_width: pixels.intrinsic_width,
+            intrinsic_height: pixels.intrinsic_height,
+            data: Vec::new(),
+            frame_delays: Vec::new(),
+            words: Vec::new(),
+        },
+        pages: 1,
+        page: 1,
+    };
+    let content =
+        otto_kit::preview::layout(stage, &picture, first_row, otto_kit::preview::Zoom::FIT).content;
+    (content.width() >= 1.0 && content.height() >= 1.0).then_some(content)
 }
 
 /// A hairline around the picture's own edges — the fitted rect, not the

@@ -918,6 +918,8 @@ struct PreviewPaneState {
     text: Option<ocrcache::Status>,
     /// The picture's main colours, for the Photos info panel's swatches.
     palette: Vec<skia_safe::Color>,
+    /// What the camera wrote down about the picture, read with the decode.
+    camera: Option<crate::camera::Shot>,
 }
 
 /// An in-place rename in progress: which row it belongs to and the text
