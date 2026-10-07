@@ -108,15 +108,18 @@ pub fn default_index(sessions: &[Session]) -> usize {
     }
 }
 
-/// Minimal `.desktop` parse: `Name` and `Exec` from the `[Desktop Entry]`
-/// group, ignoring `Hidden` entries. Field codes (`%f`, `%U`, …) are stripped
-/// since a session takes no arguments.
+/// Minimal `.desktop` parse: `Name`, `Exec` and `TryExec` from the
+/// `[Desktop Entry]` group, ignoring `Hidden` entries and those whose
+/// `TryExec` program is not installed. `Exec` is unquoted as the Desktop Entry
+/// spec says and field codes (`%f`, `%U`, …) are stripped, since a session
+/// takes no arguments.
 fn parse_desktop_entry(path: &Path) -> Option<Session> {
     let content = std::fs::read_to_string(path).ok()?;
 
     let mut in_entry = false;
     let mut name = None;
     let mut exec = None;
+    let mut try_exec = None;
     let mut hidden = false;
 
     for line in content.lines() {
@@ -135,6 +138,7 @@ fn parse_desktop_entry(path: &Path) -> Option<Session> {
         match key.trim() {
             "Name" => name = Some(value.trim().to_string()),
             "Exec" => exec = Some(value.trim().to_string()),
+            "TryExec" => try_exec = Some(value.trim().to_string()),
             "Hidden" | "NoDisplay" => hidden |= value.trim() == "true",
             _ => {}
         }
@@ -143,16 +147,14 @@ fn parse_desktop_entry(path: &Path) -> Option<Session> {
     if hidden {
         return None;
     }
-
-    let exec = exec?;
-    let command: Vec<String> = exec
-        .split_whitespace()
-        .filter(|token| !(token.len() == 2 && token.starts_with('%')))
-        .map(str::to_string)
-        .collect();
-    if command.is_empty() {
-        return None;
+    if let Some(program) = try_exec.filter(|p| !p.is_empty()) {
+        if !otto_kit::mime_apps::program_exists(&program) {
+            tracing::debug!(?path, program, "Skipping session, TryExec not found");
+            return None;
+        }
     }
+
+    let command = otto_kit::mime_apps::exec_argv(&exec?)?;
 
     Some(Session {
         name: name.unwrap_or_else(|| command[0].clone()),
@@ -203,6 +205,45 @@ mod tests {
         )
         .expect("entry should parse");
         assert_eq!(session.command, vec!["sway", "--unsupported-gpu"]);
+    }
+
+    #[test]
+    fn keeps_quoted_arguments_whole() {
+        let session = entry(
+            "[Desktop Entry]\n\
+             Name=Wrapped\n\
+             Exec=sh -c \"exec foo --x\" %f\n",
+        )
+        .expect("entry should parse");
+        assert_eq!(session.command, vec!["sh", "-c", "exec foo --x"]);
+    }
+
+    #[test]
+    fn skips_entries_whose_try_exec_is_missing() {
+        assert!(entry(
+            "[Desktop Entry]\n\
+             Name=Missing\n\
+             TryExec=/nonexistent/otto-greeter-test-binary\n\
+             Exec=missing\n"
+        )
+        .is_none());
+
+        assert!(entry(
+            "[Desktop Entry]\n\
+             Name=Missing\n\
+             TryExec=otto-greeter-test-binary-not-on-path\n\
+             Exec=missing\n"
+        )
+        .is_none());
+
+        let session = entry(
+            "[Desktop Entry]\n\
+             Name=Present\n\
+             TryExec=/bin/sh\n\
+             Exec=sh\n",
+        )
+        .expect("an installed TryExec keeps the entry");
+        assert_eq!(session.command, vec!["sh"]);
     }
 
     #[test]
