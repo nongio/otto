@@ -1967,33 +1967,13 @@ const INFO_ROW_H: f32 = 24.0;
 const INFO_TOOL: f32 = 32.0;
 const INFO_TOOL_GAP: f32 = 8.0;
 
-/// The buttons under the Photos info panel's picture, left to right, with
-/// the theme icons they wear.
+/// The buttons under the Photos info panel's picture, left to right.
 pub const PHOTOS_TOOLS: [crate::orient::Turn; 4] = [
     crate::orient::Turn::Left,
     crate::orient::Turn::Right,
     crate::orient::Turn::FlipHorizontal,
     crate::orient::Turn::FlipVertical,
 ];
-
-fn photos_tool_icons(turn: crate::orient::Turn) -> (&'static [&'static str], &'static str) {
-    use crate::orient::Turn;
-    match turn {
-        Turn::Left => (&["object-rotate-left-symbolic", "object-rotate-left"], "↺"),
-        Turn::Right => (
-            &["object-rotate-right-symbolic", "object-rotate-right"],
-            "↻",
-        ),
-        Turn::FlipHorizontal => (
-            &["object-flip-horizontal-symbolic", "object-flip-horizontal"],
-            "⇆",
-        ),
-        Turn::FlipVertical => (
-            &["object-flip-vertical-symbolic", "object-flip-vertical"],
-            "⇅",
-        ),
-    }
-}
 
 /// The turn or flip button under `(x, y)`, when one picture is in the panel.
 pub fn photos_info_tool_at(
@@ -2473,9 +2453,8 @@ fn draw_info_stage(
     draw_picture_edge(canvas, fitted, 0.0, false);
 }
 
-/// One turn or flip button: the theme's icon, tinted like the sidebar's
-/// glyphs, on a rounded ground while the pointer is over it. Dimmed, and
-/// with no ground, for a file it cannot turn.
+/// One turn or flip button: its glyph, on a rounded ground while the pointer
+/// is over it. Dimmed, and with no ground, for a file it cannot turn.
 fn draw_photos_tool(
     canvas: &Canvas,
     theme: &Theme,
@@ -2495,28 +2474,94 @@ fn draw_photos_tool(
     } else {
         fade(theme.text_tertiary, 0.5)
     };
-    let (names, fallback) = photos_tool_icons(turn);
-    let glyph = 16.0;
-    let dst = Rect::from_xywh(
-        rect.center_x() - glyph / 2.0,
-        rect.center_y() - glyph / 2.0,
-        glyph,
-        glyph,
+    draw_turn_glyph(
+        canvas,
+        Point::new(
+            rect.center_x() - TURN_GLYPH / 2.0,
+            rect.center_y() - TURN_GLYPH / 2.0,
+        ),
+        turn,
+        ink,
     );
-    if let Some(image) = icons::cached_icon_chain(names, glyph as i32) {
-        let mut tint = Paint::default();
-        tint.set_color_filter(skia_safe::color_filters::blend(
-            ink,
-            skia_safe::BlendMode::SrcIn,
-        ));
-        canvas.draw_image_rect(&image, None, dst, &tint);
-    } else {
-        Label::new(fallback)
-            .with_style(styles::BODY)
-            .with_color(ink)
-            .centered_on(rect.center_x(), rect.center_y())
-            .render(canvas);
+}
+
+/// The edge of the square a turn or flip glyph is drawn in.
+const TURN_GLYPH: f32 = 16.0;
+
+/// A turn or flip glyph, drawn rather than taken from the icon theme: few
+/// themes have `object-rotate-*` and `object-flip-*` at all, so the four
+/// buttons came from whichever inherited theme did and did not match each
+/// other or anything else in the window. Stroked like the breadcrumb chevron.
+///
+/// Two shapes make all four: the picture with an arrow over its corner,
+/// mirrored for the other way round, and two triangles either side of an
+/// axis — the original filled, its mirror image outlined — turned on its side
+/// for the other flip.
+fn draw_turn_glyph(canvas: &Canvas, origin: Point, turn: crate::orient::Turn, ink: Color) {
+    use crate::orient::Turn;
+
+    let mut stroke = Paint::default();
+    stroke.set_anti_alias(true);
+    stroke.set_style(skia_safe::paint::Style::Stroke);
+    stroke.set_stroke_width(1.3);
+    stroke.set_stroke_cap(skia_safe::paint::Cap::Round);
+    stroke.set_stroke_join(skia_safe::paint::Join::Round);
+    stroke.set_color(ink);
+
+    canvas.save();
+    canvas.translate(origin);
+    match turn {
+        Turn::Left | Turn::FlipHorizontal => {}
+        Turn::Right => {
+            canvas.translate((TURN_GLYPH, 0.0));
+            canvas.scale((-1.0, 1.0));
+        }
+        // x and y exchanged: the horizontal flip, on its side.
+        Turn::FlipVertical => {
+            canvas.concat(&skia_safe::Matrix::new_all(
+                0.0, 1.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
+            ));
+        }
     }
+
+    match turn {
+        Turn::Left | Turn::Right => {
+            // The picture.
+            canvas.draw_rrect(
+                RRect::new_rect_xy(Rect::from_ltrb(6.0, 7.0, 14.5, 14.5), 1.8, 1.8),
+                &stroke,
+            );
+            // The arrow, sweeping back over its top-left corner.
+            let mut arc = PathBuilder::new();
+            arc.move_to(Point::new(11.5, 3.0));
+            arc.quad_to(Point::new(3.0, 2.5), Point::new(3.0, 9.5));
+            arc.move_to(Point::new(1.0, 7.5));
+            arc.line_to(Point::new(3.0, 9.5));
+            arc.line_to(Point::new(5.0, 7.5));
+            canvas.draw_path(&arc.detach(), &stroke);
+        }
+        Turn::FlipHorizontal | Turn::FlipVertical => {
+            let triangle = |tip: f32, base: f32| {
+                let mut path = PathBuilder::new();
+                path.move_to(Point::new(tip, 3.5));
+                path.line_to(Point::new(tip, 12.5));
+                path.line_to(Point::new(base, 12.5));
+                path.close();
+                path.detach()
+            };
+            let original = triangle(6.5, 1.5);
+            let mut fill = stroke.clone();
+            fill.set_style(skia_safe::paint::Style::StrokeAndFill);
+            canvas.draw_path(&original, &fill);
+            canvas.draw_path(&triangle(9.5, 14.5), &stroke);
+
+            let mut axis = stroke.clone();
+            axis.set_stroke_width(1.0);
+            axis.set_path_effect(skia_safe::PathEffect::dash(&[1.5, 2.0], 0.0));
+            canvas.draw_line((8.0, 1.5), (8.0, 14.5), &axis);
+        }
+    }
+    canvas.restore();
 }
 
 /// The soft shadow a picture casts on the panel it is shown in: a blurred
