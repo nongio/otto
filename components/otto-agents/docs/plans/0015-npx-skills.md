@@ -53,8 +53,10 @@ Gemini CLI and OpenCode set up.
   `~/.agents/skills/<name>` stays a symlink into the plugin directory, made and
   checked by `skills::install` as today. `npx skills` only adds the per-harness
   links that point at it.
-- **Agent files stay ours.** `npx skills` installs skills, not agents.
-  `vendors.rs` (OpenCode, Hermes, Codex, pi) and the Claude plugin route through
+- **Only skills move; agent files stay ours.** `npx skills` installs skills and
+  nothing else (its only notion of agents is Eve's subagent skill folders), so
+  this plan covers `otto-help` and not `agents/otto.md`. `vendors.rs`
+  (OpenCode, Hermes, Codex, pi) and the Claude plugin route through
   claude-agent-acp's `_meta` are unchanged.
 - **Pinned.** The version is a constant in `skills.rs` (`skills@1.7.1`), bumped
   by hand after checking the behaviour above again. Never `@latest`: the CLI is
@@ -141,6 +143,14 @@ installs do not fight on an Otto desktop.
       Installs count towards the skills.sh listing.
 
 ## Open questions
+
+- **The `otto` agent in a terminal.** Claude Code started from a terminal gets
+  `otto-help` once this lands, but still not the `otto` agent: that reaches
+  Claude only through Ask (`--agent plugin:otto`). Claude Code reads user
+  agents from `~/.claude/agents/<name>.md` in the same frontmatter dialect as
+  `agents/otto.md`, so a Claude vendor in `vendors.rs` that writes it there,
+  with the marker line, would close the gap. Separate from this plan, since
+  `npx skills` has no part in it.
 
 - **`npx skills update -g`.** Does it re-copy a `local` entry over our link? If
   so, `plugins status` catches it and `plugins install` repairs it, but the
