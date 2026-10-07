@@ -1894,7 +1894,6 @@ files-photos-info-copied = Copiato
 files-photos-info-dimensions = Dimensioni
 files-photos-info-modified = Modificato
 files-photos-info-where = Posizione
-files-photos-info-taken = Scattata
 files-photos-info-camera = Fotocamera
 files-photos-info-lens = Obiettivo
 files-photos-info-exposure = Esposizione

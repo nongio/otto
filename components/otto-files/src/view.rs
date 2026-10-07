@@ -2285,17 +2285,10 @@ pub fn photos_info_runs(panel: Rect, data: &PhotosInfoData<'_>, theme: &Theme) -
     runs
 }
 
-/// The info panel's rows for what the camera wrote down: when, with what,
-/// and how.
+/// The info panel's rows for what the camera wrote down: with what, how,
+/// and where.
 fn shot_rows(shot: &crate::camera::Shot) -> Vec<(&'static str, String)> {
     let mut out = Vec::new();
-    if let Some(secs) = shot.taken_secs() {
-        // Wall-clock time where it was taken: EXIF has no zone to shift.
-        out.push((
-            otto_kit::t!("files-photos-info-taken"),
-            model::format_time_at(secs, 0),
-        ));
-    }
     if let Some(camera) = &shot.camera {
         out.push((otto_kit::t!("files-photos-info-camera"), camera.clone()));
     }
