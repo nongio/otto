@@ -16,8 +16,8 @@
 //! nothing in it slides the canvas away.
 //!
 //! Opening a session runs `otto-launcher --session <URI>`, asking runs
-//! `otto-launcher --ask -- <request>`, and either sends the canvas away: the
-//! launcher's card is where it carries on.
+//! `otto-launcher --ask --send -- <request>`, and either sends the canvas
+//! away: the launcher's card is where it carries on.
 //!
 //! The list is fetched when the canvas comes on screen and kept up to date
 //! while it stays there, as the service announces changes. While the canvas
@@ -305,16 +305,16 @@ impl Sessions {
         }
     }
 
-    /// Start a new request in the launcher, with `request` already typed when
-    /// it is not empty, and send the canvas away.
+    /// Send `request` to the agent in the launcher, which opens on it
+    /// running, or open an empty request when there is nothing to send; and
+    /// send the canvas away.
     fn ask(&mut self, request: &str) {
         let request = request.trim();
-        // After `--`, the request is words to type even if it looks like an
-        // option.
+        // After `--`, the request is words even if it looks like an option.
         let args: &[&str] = if request.is_empty() {
             &["--ask"]
         } else {
-            &["--ask", "--", request]
+            &["--ask", "--send", "--", request]
         };
         match launch(args) {
             Ok(()) => self.dismiss(),
