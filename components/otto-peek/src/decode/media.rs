@@ -2,8 +2,9 @@
 //!
 //! v1 deliberately gets most of the value here without a decoder: tags and
 //! embedded cover art need no PCM decode, and container headers give dimensions
-//! and duration without reading a 2 GB file. Playback and poster frames are
-//! later stages; see `specs/peek.md`.
+//! and duration without reading a 2 GB file. A video's poster frame is made by
+//! a program on the system, through [`external`], which seeks rather than
+//! reads; playback is `otto-media-kit`'s. See `specs/peek.md`.
 //!
 //! The hard rule in this file is that **nothing reads the whole file**. A
 //! metadata previewer that streams two gigabytes to find a duration has missed
@@ -17,7 +18,7 @@ use skia_safe::{Codec, Data};
 
 use crate::payload::{Fact, Pixels, PreviewPayload};
 
-use super::{human_size, Request};
+use super::{external, human_size, Request};
 
 /// How much of a media file the metadata readers may look at. ID3 and MP4
 /// headers live at one end or the other; nothing here needs the middle.
@@ -98,6 +99,7 @@ pub fn video(
 ) -> PreviewPayload {
     let head = read_head(file);
     let mut facts = Vec::new();
+    let duration = mp4_duration(&head);
 
     if let Some((width, height)) = mp4_dimensions(&head) {
         facts.push(Fact {
@@ -105,7 +107,7 @@ pub fn video(
             value: format!("{width} × {height}"),
         });
     }
-    if let Some(seconds) = mp4_duration(&head) {
+    if let Some(seconds) = duration {
         facts.push(Fact {
             key: otto_kit::t_owned!("peek-fact-duration"),
             value: clock(seconds),
@@ -124,10 +126,63 @@ pub fn video(
         title: request.name.clone(),
         subtitle: filetype::kind_of(mime).label().to_string(),
         facts,
-        hero: None,
+        hero: poster(file, request, duration),
         // Stamped by `decode`, which is where the sniffed type is known.
         icon: Vec::new(),
     }
+}
+
+/// The widest a poster frame is made, whatever the panel asks for: the
+/// player takes over from it at the first frame, so detail past a panel's
+/// worth is never looked at.
+const MAX_POSTER_EDGE: u32 = 2_048;
+
+/// Programs that make a poster frame, tried in order.
+const POSTER_TOOLS: &[external::Tool] = &[
+    external::Tool {
+        command: "ffmpegthumbnailer",
+        args: |ask| {
+            vec![
+                "-i".into(),
+                "/dev/stdin".into(),
+                "-o".into(),
+                "-".into(),
+                "-c".into(),
+                "png".into(),
+                // The longest edge, so the shorter side of the box is what
+                // keeps the frame inside it whichever way round it is.
+                "-s".into(),
+                ask.width.min(ask.height).to_string(),
+                // Left at its own default for where to look, a tenth of the
+                // way in, which it finds for any container — and which skips
+                // the black a recording usually starts on.
+            ]
+        },
+    },
+    external::Tool {
+        command: "ffmpeg",
+        args: external::ffmpeg_frame,
+    },
+];
+
+/// One frame of the video, to stand for it until it plays, and in a
+/// listing's thumbnail for good.
+///
+/// Taken a tenth of the way in when the length is known, for the reason
+/// `ffmpegthumbnailer` does; from the start when it is not, or when the
+/// length was wrong and there is nothing there.
+fn poster(file: &mut File, request: &Request, duration: Option<u64>) -> Option<Pixels> {
+    let ask = external::Ask {
+        width: request.width.clamp(1, MAX_POSTER_EDGE),
+        height: request.height.clamp(1, MAX_POSTER_EDGE),
+        at: duration.map(|seconds| seconds as f64 / 10.0),
+    };
+    external::picture(POSTER_TOOLS, file, &ask).or_else(|| {
+        ask.at?;
+        // Only the rows that were told where to look have anywhere else to.
+        let seeking = &POSTER_TOOLS[1..];
+        external::picture(seeking, file, &external::Ask { at: None, ..ask })
+    })
 }
 
 /// Read the front of the file, and rewind so nothing downstream is surprised.
