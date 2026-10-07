@@ -276,7 +276,8 @@ impl Browser {
             panes,
             active: self.active,
             pan: self.pan.offset(),
-            pan_bar: (self.mode == ViewMode::Columns).then_some(&self.pan.state),
+            pan_bar: matches!(self.mode, ViewMode::Columns | ViewMode::Photos)
+                .then_some(&self.pan.state),
             miller: self.miller_widths(),
             sort: self.sort,
             ascending: self.ascending,

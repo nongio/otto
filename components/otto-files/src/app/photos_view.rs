@@ -33,11 +33,9 @@ impl Browser {
         }
         let depth = self.columns.len() - 1;
         self.ensure_sorted(depth);
-        // The info panel is always up beside the wall, which is packed into
-        // what it leaves.
-        let panel_w = view::PHOTOS_INFO_W;
-        let full = view::content_viewport(self.size.0, self.content_h(), ViewMode::Photos);
-        let area = Rect::from_ltrb(full.left, full.top, full.right - panel_w, full.bottom);
+        // The wall takes the whole file area; the info panel trails it, out
+        // of sight until the file area is panned sideways to it.
+        let area = view::content_viewport(self.size.0, self.content_h(), ViewMode::Photos);
         let today = photos::today();
         let key = PhotosKey {
             width: area.width().round() as u32,
@@ -64,8 +62,8 @@ impl Browser {
         let entries = self.visible(depth);
         let sections = photos::sections(&entries, today, self.photos_group, &self.photo_dims);
         let aspects: Vec<f32> = entries.iter().map(|e| self.photo_dims.aspect(e)).collect();
-        self.photos = view::PhotosLayout::new(sections, &aspects, area.width(), self.photos_row_h)
-            .with_panel(panel_w);
+        self.photos = view::PhotosLayout::new(sections, &aspects, area.width(), self.photos_row_h);
+        self.photos.set_pan(self.pan.offset());
         self.photos_key = Some(key);
         if let Some((index, above)) = self.photos_anchor.take() {
             let tile = self.photos.tile_rect(area, index, 0.0);
@@ -182,7 +180,7 @@ impl Browser {
         }
         let point = skia_safe::Point::new(x, y);
         if self.photos.has_panel() {
-            let panel = view::photos_info_rect(self.size.0, self.content_h());
+            let panel = self.photos.panel_rect(self.size.0, self.content_h());
             if panel.contains(point) {
                 self.photos_info_press(panel, x, y, serial);
                 return Some(listing_pointer::After::Stop);
@@ -644,7 +642,7 @@ impl Browser {
         if self.mode != ViewMode::Photos || !self.photos.has_panel() {
             return None;
         }
-        let panel = view::photos_info_rect(self.size.0, self.content_h());
+        let panel = self.photos.panel_rect(self.size.0, self.content_h());
         if !panel.contains(skia_safe::Point::new(x, y)) {
             return None;
         }

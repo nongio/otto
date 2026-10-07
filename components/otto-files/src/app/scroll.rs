@@ -28,14 +28,16 @@ impl Browser {
         // preview pane, when showing, is one more thing the stack must have
         // room to pan to — it is folded into the same content length as the
         // real columns rather than carved out of the viewport.
-        self.pan
-            .set_viewport(view::content_viewport(width, height, mode));
-        self.pan.set_content_length(view::miller_content_width(
-            depth_count,
-            &miller,
-            self.preview_width(),
-        ));
+        // In the Photos view it pans between the wall, which fills the file
+        // area, and the info panel trailing it.
+        let viewport = view::content_viewport(width, height, mode);
+        self.pan.set_viewport(viewport);
+        self.pan.set_content_length(match mode {
+            ViewMode::Photos => viewport.width() + view::PHOTOS_INFO_W,
+            _ => view::miller_content_width(depth_count, &miller, self.preview_width()),
+        });
         let pan = self.pan.offset();
+        self.photos.set_pan(pan);
 
         for (depth, &count) in counts.iter().enumerate() {
             let count = match tile {
@@ -143,6 +145,7 @@ impl Browser {
         let mut moved = false;
         if self.pan.is_animating() {
             moved |= self.pan.tick();
+            self.photos.set_pan(self.pan.offset());
         }
         for column in &mut self.columns {
             if column.scroll.is_animating() {

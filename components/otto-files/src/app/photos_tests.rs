@@ -201,7 +201,7 @@ fn the_layout_is_kept_until_something_it_depends_on_moves() {
 }
 
 #[test]
-fn the_info_panel_is_always_up_and_describes_the_selection() {
+fn the_info_panel_is_panned_to_and_describes_the_selection() {
     let mut browser = photos_over(vec![
         entry("Trips", Kind::Folder, 0),
         entry("a.jpg", Kind::Image, 0),
@@ -211,9 +211,19 @@ fn the_info_panel_is_always_up_and_describes_the_selection() {
     browser.sync_scroll_metrics();
     let full = view::content_viewport(browser.size.0, browser.content_h(), ViewMode::Photos);
     let area = browser.photos.area(browser.size.0, browser.content_h());
-    // Up with nothing selected, and the wall packed into what it leaves.
+    // Out of sight at first, the wall taking the whole file area …
+    assert!(!browser.photos.has_panel());
+    assert_eq!(area, full);
+    assert_eq!(
+        browser.photos.panel_rect(browser.size.0, browser.content_h()).left,
+        full.right
+    );
+    // … and panned to sideways, the wall sliding left to make room.
+    reveal_info_panel(&mut browser);
     assert!(browser.photos.has_panel());
-    assert_eq!(full.width() - area.width(), view::PHOTOS_INFO_W);
+    let area = browser.photos.area(browser.size.0, browser.content_h());
+    assert_eq!(area.right, full.right - view::PHOTOS_INFO_W);
+    assert_eq!(area.width(), full.width());
     assert!(matches!(
         browser.photos_info_data(),
         Some(view::PhotosInfoData::Here { .. })
@@ -231,7 +241,7 @@ fn the_info_panel_is_always_up_and_describes_the_selection() {
     ));
     assert_eq!(browser.path_bar_note().as_deref(), Some("1 of 4 selected"));
     // A press in the panel is the panel's, not a click on nothing.
-    let panel = view::photos_info_rect(browser.size.0, browser.content_h());
+    let panel = browser.photos.panel_rect(browser.size.0, browser.content_h());
     assert!(browser
         .photos_controls_press(panel.center_x(), panel.center_y(), 1)
         .is_some());
@@ -260,6 +270,7 @@ fn the_info_panel_copies_a_swatch() {
     let mut browser = photos_over(vec![entry("a.jpg", Kind::Image, 0)]);
     browser.select(0, 0);
     browser.sync_scroll_metrics();
+    reveal_info_panel(&mut browser);
     // The decode landing, with its palette worked out.
     let path = browser.visible(0)[0].path.clone();
     browser.sync_preview_target();
@@ -270,7 +281,7 @@ fn the_info_panel_copies_a_swatch() {
         skia_safe::Color::from_rgb(0x20, 0x20, 0x20),
     ];
 
-    let panel = view::photos_info_rect(browser.size.0, browser.content_h());
+    let panel = browser.photos.panel_rect(browser.size.0, browser.content_h());
     let layout = view::photos_info_layout(panel, 2);
     // Two colours sit together at the left, not at the two ends of the row.
     assert!(layout.swatches[1].left - layout.swatches[0].right < 20.0);
@@ -346,8 +357,9 @@ fn the_info_panel_text_can_be_selected_and_copied() {
     let mut browser = photos_over(vec![entry("holiday.jpg", Kind::Image, 0)]);
     browser.select(0, 0);
     browser.sync_scroll_metrics();
+    reveal_info_panel(&mut browser);
     let data = browser.photos_info_data().unwrap();
-    let panel = view::photos_info_rect(browser.size.0, browser.content_h());
+    let panel = browser.photos.panel_rect(browser.size.0, browser.content_h());
     let runs = view::photos_info_runs(panel, &data, &otto_kit::theme::Theme::light());
     let name = runs[0].rect();
     let (x, y) = (name.center_x(), name.center_y());
@@ -460,4 +472,28 @@ fn the_icon_view_has_a_size_of_its_own() {
         browser.entry_rect(0, first).width(),
         cell_w + view::GRID_ICON_MAX - view::DEFAULT_GRID_ICON
     );
+}
+
+/// Pan the Photos view all the way to its info panel, as a sideways scroll
+/// would.
+fn reveal_info_panel(browser: &mut Browser) {
+    browser.pan.state.set_offset(view::PHOTOS_INFO_W);
+    browser.sync_scroll_metrics();
+}
+
+#[test]
+fn a_sideways_scroll_pans_to_the_info_panel() {
+    let mut browser = photos_over(vec![entry("a.jpg", Kind::Image, 0)]);
+    browser.sync_scroll_metrics();
+    assert!(!browser.photos.has_panel());
+    let full = view::content_viewport(browser.size.0, browser.content_h(), ViewMode::Photos);
+    // As far as the panel and no further.
+    assert_eq!(browser.pan.state.max_offset(), view::PHOTOS_INFO_W);
+    reveal_info_panel(&mut browser);
+    let panel = browser.photos.panel_rect(browser.size.0, browser.content_h());
+    assert_eq!(panel.right, full.right);
+    // What slid behind the sidebar is not there to be clicked.
+    let tile = browser.entry_rect(0, 0);
+    assert!(tile.left < full.left, "the first tile is under the sidebar");
+    assert_eq!(browser.entry_at(tile.left + 2.0, tile.center_y()), None);
 }

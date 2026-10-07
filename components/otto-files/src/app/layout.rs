@@ -21,6 +21,12 @@ impl Browser {
             self.refuse(otto_kit::t_owned!("files-search-no-columns"));
             return;
         }
+        // The Photos view opens on the wall, with its info panel out of sight,
+        // not wherever the column stack was last panned to.
+        if mode == ViewMode::Photos && self.mode != mode {
+            self.pan.stop();
+            self.pan.state.set_offset(0.0);
+        }
         self.mode = mode;
         if !self.sort_pinned {
             let (sort, ascending) = Self::default_sort(mode);
@@ -209,6 +215,9 @@ impl Browser {
                 let depth = self.columns.len() - 1;
                 let scroll = self.columns[depth].scroll.offset();
                 let area = self.photos.area(width, height);
+                if !self.photos.shown(width, height).contains(skia_safe::Point::new(x, y)) {
+                    return None;
+                }
                 self.photos
                     .tile_at(area, x, y, scroll)
                     .filter(|&i| i < self.visible_len(depth))

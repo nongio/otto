@@ -613,7 +613,7 @@ impl Browser {
         self.sync_scroll_metrics();
         let hovered = self.pane_under(x, y);
         let mut moved = self.pan.on_pointer_drag(x, y);
-        if self.mode == ViewMode::Columns {
+        if matches!(self.mode, ViewMode::Columns | ViewMode::Photos) {
             moved |= self.pan.on_pointer_move(x, y);
         } else {
             self.pan.on_pointer_leave();
@@ -856,7 +856,7 @@ impl Browser {
         // pane, crossing the foot of each pane's own gutter,
         // so it is asked first where the two overlap.
         let depth = self.pane_under(x, y);
-        let panning = self.mode == ViewMode::Columns;
+        let panning = matches!(self.mode, ViewMode::Columns | ViewMode::Photos);
         if (panning && self.pan.on_pointer_down(x, y))
             || self.columns[depth].scroll.on_pointer_down(x, y)
         {
@@ -1066,7 +1066,8 @@ impl Browser {
         let discrete = vertical.discrete != 0 || horizontal.discrete != 0;
         // One gesture belongs to one axis, chosen by its first
         // delta and kept until it lifts.
-        let leading = if self.mode == ViewMode::Columns && dx.abs() > dy.abs() {
+        let pans = matches!(self.mode, ViewMode::Columns | ViewMode::Photos);
+        let leading = if pans && dx.abs() > dy.abs() {
             Axis::Horizontal
         } else {
             Axis::Vertical

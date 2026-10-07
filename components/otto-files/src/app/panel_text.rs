@@ -45,7 +45,7 @@ impl Browser {
                     return None;
                 }
                 let data = self.photos_info_data()?;
-                let rect = view::photos_info_rect(self.size.0, self.content_h());
+                let rect = self.photos.panel_rect(self.size.0, self.content_h());
                 Some((data.subject(), view::photos_info_runs(rect, &data, &theme)))
             }
             TextPanel::Preview => {
