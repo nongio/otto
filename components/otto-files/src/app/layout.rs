@@ -21,8 +21,8 @@ impl Browser {
             self.refuse(otto_kit::t_owned!("files-search-no-columns"));
             return;
         }
-        // The Photos view opens on the wall, with its info panel out of sight,
-        // not wherever the column stack was last panned to.
+        // The Photos view opens at its start, not wherever the column stack
+        // was last panned to.
         if mode == ViewMode::Photos && self.mode != mode {
             self.pan.stop();
             self.pan.state.set_offset(0.0);

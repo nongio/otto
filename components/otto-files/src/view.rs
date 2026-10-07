@@ -1541,8 +1541,8 @@ pub struct PhotosLayout {
     pub sections: Vec<PhotosSection>,
     layout: JustifiedLayout,
     /// How far the file area is panned toward the info panel, which trails
-    /// the wall past its right edge the way the preview column trails the
-    /// Miller stack. Zero, the default, shows the wall alone.
+    /// the wall the way the preview column trails the Miller stack. Stays
+    /// zero while the window is wide enough for both.
     pan: f32,
 }
 
@@ -1595,11 +1595,18 @@ impl PhotosLayout {
         self.pan = pan.clamp(0.0, PHOTOS_INFO_W);
     }
 
-    /// The wall in window coordinates: as wide as the file area, slid left
+    /// The wall in window coordinates: [`photos_wall_width`] wide, slid left
     /// by the pan. Its left may lie under the sidebar; what can be seen of
     /// it is [`Self::shown`].
     pub fn area(&self, width: f32, height: f32) -> Rect {
-        content_viewport(width, height, ViewMode::Photos).with_offset((-self.pan, 0.0))
+        let full = content_viewport(width, height, ViewMode::Photos);
+        let left = full.left - self.pan;
+        Rect::from_ltrb(
+            left,
+            full.top,
+            left + photos_wall_width(full.width()),
+            full.bottom,
+        )
     }
 
     /// The part of the wall that can be seen: the file area, less what the
@@ -1617,9 +1624,10 @@ impl PhotosLayout {
         Rect::from_ltrb(left, header_h(), left + PHOTOS_INFO_W, height)
     }
 
-    /// Whether any of the info panel has been panned into view.
-    pub fn has_panel(&self) -> bool {
-        self.pan >= 1.0
+    /// Whether any of the info panel is in view.
+    pub fn has_panel(&self, width: f32, height: f32) -> bool {
+        let full = content_viewport(width, height, ViewMode::Photos);
+        self.panel_rect(width, height).left < full.right - 1.0
     }
 
     /// Which kind of section tile `index` is in.
@@ -1957,14 +1965,29 @@ pub struct PhotosControls {
 
 // --- The Photos info panel -------------------------------------------------
 //
-// A column trailing the Photos wall past the right of the file area, the way
-// the preview column trails the Miller stack: hidden until the file area is
-// panned sideways to it. It takes the same decode as the preview column and
+// A column trailing the Photos wall, the way the preview column trails the
+// Miller stack: beside the wall when the window has room for both, past the
+// edge to be panned to when it does not. It takes the same decode as the preview column and
 // draws it with the same stage, and describes the one file, the one folder,
 // how many are selected, or with nothing selected, the folder itself.
 
 /// The info panel's width.
 pub const PHOTOS_INFO_W: f32 = 320.0;
+/// The narrowest the wall is squeezed to make room for the info panel. A
+/// file area narrower than this and the panel together gives the wall the
+/// whole of it and leaves the panel past the edge, to be panned to.
+pub const PHOTOS_WALL_MIN: f32 = 480.0;
+
+/// How wide the wall is in a file area `viewport` wide: what the info panel
+/// leaves, but never under [`PHOTOS_WALL_MIN`] nor over the file area.
+pub fn photos_wall_width(viewport: f32) -> f32 {
+    (viewport - PHOTOS_INFO_W).max(PHOTOS_WALL_MIN.min(viewport))
+}
+
+/// How far the Photos view reaches across: the wall, then the info panel.
+pub fn photos_content_width(viewport: f32) -> f32 {
+    photos_wall_width(viewport) + PHOTOS_INFO_W
+}
 const INFO_PAD: f32 = 16.0;
 const INFO_STAGE_H: f32 = 220.0;
 const INFO_SWATCH: f32 = 28.0;
@@ -2159,7 +2182,7 @@ fn info_kind_line(entry: &Entry) -> String {
 fn draw_photos_info(canvas: &Canvas, f: &Frame, data: &PhotosInfoData<'_>) {
     let theme = f.theme;
     let panel = f.photos.panel_rect(f.width, f.height);
-    if !f.photos.has_panel() {
+    if !f.photos.has_panel(f.width, f.height) {
         return;
     }
     let mut paint = Paint::default();

@@ -41,7 +41,7 @@ impl Browser {
         let theme = layout_theme();
         match panel {
             TextPanel::Photos => {
-                if !self.photos.has_panel() {
+                if !self.photos.has_panel(self.size.0, self.content_h()) {
                     return None;
                 }
                 let data = self.photos_info_data()?;

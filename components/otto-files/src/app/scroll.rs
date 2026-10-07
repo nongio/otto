@@ -28,12 +28,12 @@ impl Browser {
         // preview pane, when showing, is one more thing the stack must have
         // room to pan to — it is folded into the same content length as the
         // real columns rather than carved out of the viewport.
-        // In the Photos view it pans between the wall, which fills the file
-        // area, and the info panel trailing it.
+        // In the Photos view it pans across the wall and the info panel
+        // trailing it, when the two do not both fit.
         let viewport = view::content_viewport(width, height, mode);
         self.pan.set_viewport(viewport);
         self.pan.set_content_length(match mode {
-            ViewMode::Photos => viewport.width() + view::PHOTOS_INFO_W,
+            ViewMode::Photos => view::photos_content_width(viewport.width()),
             _ => view::miller_content_width(depth_count, &miller, self.preview_width()),
         });
         let pan = self.pan.offset();

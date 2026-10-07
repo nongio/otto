@@ -33,9 +33,15 @@ impl Browser {
         }
         let depth = self.columns.len() - 1;
         self.ensure_sorted(depth);
-        // The wall takes the whole file area; the info panel trails it, out
-        // of sight until the file area is panned sideways to it.
-        let area = view::content_viewport(self.size.0, self.content_h(), ViewMode::Photos);
+        // The wall comes first and the info panel after it, panned to when
+        // the file area is too narrow for both.
+        let full = view::content_viewport(self.size.0, self.content_h(), ViewMode::Photos);
+        let area = Rect::from_xywh(
+            full.left,
+            full.top,
+            view::photos_wall_width(full.width()),
+            full.height(),
+        );
         let today = photos::today();
         let key = PhotosKey {
             width: area.width().round() as u32,
@@ -179,7 +185,7 @@ impl Browser {
             return None;
         }
         let point = skia_safe::Point::new(x, y);
-        if self.photos.has_panel() {
+        if self.photos.has_panel(self.size.0, self.content_h()) {
             let panel = self.photos.panel_rect(self.size.0, self.content_h());
             if panel.contains(point) {
                 self.photos_info_press(panel, x, y, serial);
@@ -639,7 +645,7 @@ impl Browser {
 
     /// The info panel's swatch under `(x, y)`, if any.
     pub(super) fn photos_swatch_at(&self, x: f32, y: f32) -> Option<usize> {
-        if self.mode != ViewMode::Photos || !self.photos.has_panel() {
+        if self.mode != ViewMode::Photos || !self.photos.has_panel(self.size.0, self.content_h()) {
             return None;
         }
         let panel = self.photos.panel_rect(self.size.0, self.content_h());
