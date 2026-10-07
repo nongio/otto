@@ -1994,7 +1994,6 @@ files-photos-info-copied = Skopiowano
 files-photos-info-dimensions = Wymiary
 files-photos-info-modified = Zmodyfikowano
 files-photos-info-where = Miejsce
-files-photos-info-taken = Wykonano
 files-photos-info-camera = Aparat
 files-photos-info-lens = Obiektyw
 files-photos-info-exposure = Ekspozycja

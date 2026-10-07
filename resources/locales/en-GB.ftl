@@ -1000,9 +1000,8 @@ files-photos-info-copied = Copied
 files-photos-info-dimensions = Dimensions
 files-photos-info-modified = Modified
 files-photos-info-where = Where
-# How the picture was taken, from its EXIF: when the shutter fired, the
-# camera, the lens, and the exposure ("ƒ/1.8 · 1/120 s · ISO 100 · 26 mm").
-files-photos-info-taken = Taken
+# How the picture was taken, from its EXIF: the camera, the lens, and the
+# exposure ("ƒ/1.8 · 1/120 s · ISO 100 · 26 mm").
 files-photos-info-camera = Camera
 files-photos-info-lens = Lens
 files-photos-info-exposure = Exposure

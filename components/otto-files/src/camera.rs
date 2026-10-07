@@ -1,5 +1,5 @@
 //! What the camera wrote down about a photograph: which camera and lens,
-//! the exposure, and when it was taken. Read from the EXIF block of a JPEG,
+//! the exposure, and where it was taken. Read from the EXIF block of a JPEG,
 //! or the header of a TIFF-based file (TIFF itself, and the raw formats
 //! built on it: DNG, NEF, CR2, ARW, ORF, RW2 …).
 //!
@@ -33,10 +33,6 @@ pub struct Shot {
     /// gives one: what a phone's tiny lens means to someone who thinks in
     /// full-frame terms.
     pub focal: Option<f32>,
-    /// When the shutter fired, on the camera's own clock: year, month, day,
-    /// hour, minute. EXIF carries no zone, so this is wall-clock time where
-    /// the picture was taken.
-    pub taken: Option<(i32, u32, u32, u32, u32)>,
     /// Where it was taken, latitude then longitude in degrees, north and
     /// east positive.
     pub location: Option<(f64, f64)>,
@@ -48,15 +44,7 @@ impl Shot {
         self.camera.is_none()
             && self.lens.is_none()
             && self.exposure_line().is_none()
-            && self.taken.is_none()
             && self.location.is_none()
-    }
-
-    /// [`Self::taken`] as seconds since the epoch, read as if it were UTC:
-    /// the wall-clock time, for formatting with no offset.
-    pub fn taken_secs(&self) -> Option<i64> {
-        let (year, month, day, hour, minute) = self.taken?;
-        Some(days_from_civil(year, month, day) * 86_400 + (hour * 3600 + minute * 60) as i64)
     }
 
     /// Where it was taken, the way a map writes it: "45.4642° N, 9.1900° E".
@@ -179,7 +167,6 @@ struct Field {
 
 const IFD0_MAKE: u16 = 0x010F;
 const IFD0_MODEL: u16 = 0x0110;
-const IFD0_DATE: u16 = 0x0132;
 const IFD0_EXIF: u16 = 0x8769;
 const IFD0_GPS: u16 = 0x8825;
 const GPS_LAT_REF: u16 = 0x0001;
@@ -189,7 +176,6 @@ const GPS_LON: u16 = 0x0004;
 const EXIF_EXPOSURE: u16 = 0x829A;
 const EXIF_FNUMBER: u16 = 0x829D;
 const EXIF_ISO: u16 = 0x8827;
-const EXIF_TAKEN: u16 = 0x9003;
 const EXIF_FOCAL: u16 = 0x920A;
 const EXIF_FOCAL_35: u16 = 0xA405;
 const EXIF_LENS_MAKE: u16 = 0xA433;
@@ -311,14 +297,13 @@ impl<'a> Tiff<'a> {
 
     fn shot(&self) -> Shot {
         let mut shot = Shot::default();
-        let (mut make, mut model, mut date) = (None, None, None);
+        let (mut make, mut model) = (None, None);
         let (mut exif, mut gps) = (None, None);
         if let Some(ifd0) = self.u32_at(4) {
             for (tag, field) in self.ifd(ifd0 as usize) {
                 match tag {
                     IFD0_MAKE => make = self.text(&field),
                     IFD0_MODEL => model = self.text(&field),
-                    IFD0_DATE => date = self.text(&field),
                     IFD0_EXIF => exif = self.number(&field),
                     IFD0_GPS => gps = self.number(&field),
                     _ => {}
@@ -327,8 +312,7 @@ impl<'a> Tiff<'a> {
         }
         shot.camera = camera_name(make.as_deref(), model.as_deref());
 
-        let (mut focal, mut focal_35, mut lens_make, mut lens_model, mut taken) =
-            (None, None, None, None, None);
+        let (mut focal, mut focal_35, mut lens_make, mut lens_model) = (None, None, None, None);
         if let Some(exif) = exif {
             for (tag, field) in self.ifd(exif as usize) {
                 match tag {
@@ -340,7 +324,6 @@ impl<'a> Tiff<'a> {
                             .filter(|f| *f > 0.0)
                     }
                     EXIF_ISO => shot.iso = self.number(&field).filter(|iso| *iso > 0),
-                    EXIF_TAKEN => taken = self.text(&field),
                     EXIF_FOCAL => {
                         focal = self
                             .rational(&field)
@@ -358,9 +341,6 @@ impl<'a> Tiff<'a> {
         // The lens's own model says enough ("iPhone 15 back dual wide camera
         // 5.96mm f/1.6"); its maker is the camera's, or on the model already.
         shot.lens = lens_model.or(lens_make);
-        // When it was taken, else when the file was last written by the
-        // camera: a scanner or an old camera only fills in the latter.
-        shot.taken = taken.or(date).as_deref().and_then(exif_date);
 
         if let Some(gps) = gps {
             let (mut lat, mut lon, mut lat_ref, mut lon_ref) = (None, None, None, None);
@@ -410,31 +390,6 @@ fn camera_name(make: Option<&str>, model: Option<&str>) -> Option<String> {
             }
         }
     }
-}
-
-/// Days from 1970-01-01 to a date: Howard Hinnant's `days_from_civil`.
-fn days_from_civil(year: i32, month: u32, day: u32) -> i64 {
-    let year = year as i64 - i64::from(month <= 2);
-    let era = year.div_euclid(400);
-    let yoe = year - era * 400;
-    let month = month as i64;
-    let doy = (153 * (month + if month > 2 { -3 } else { 9 }) + 2) / 5 + day as i64 - 1;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    era * 146_097 + doe - 719_468
-}
-
-/// "2024:05:01 14:03:22" as its parts. Cameras with no clock set write
-/// zeros or blanks, which are no date at all.
-fn exif_date(text: &str) -> Option<(i32, u32, u32, u32, u32)> {
-    let digits = |range: std::ops::Range<usize>| text.get(range)?.parse::<u32>().ok();
-    let (year, month, day) = (digits(0..4)?, digits(5..7)?, digits(8..10)?);
-    let (hour, minute) = (digits(11..13).unwrap_or(0), digits(14..16).unwrap_or(0));
-    let valid = year > 0
-        && (1..=12).contains(&month)
-        && (1..=31).contains(&day)
-        && hour < 24
-        && minute < 60;
-    valid.then_some((year as i32, month, day, hour, minute))
 }
 
 #[cfg(test)]
@@ -551,7 +506,6 @@ mod tests {
             .exif(EXIF_EXPOSURE, rational(1, 120))
             .exif(EXIF_FNUMBER, rational(16, 10))
             .exif(EXIF_ISO, short(100))
-            .exif(EXIF_TAKEN, ascii("2024:05:01 14:03:22"))
             .exif(EXIF_FOCAL, rational(51, 10))
             .exif(EXIF_FOCAL_35, short(26))
             .exif(EXIF_LENS_MAKE, ascii("Apple"))
@@ -584,10 +538,6 @@ mod tests {
             shot.exposure_line().as_deref(),
             Some("ƒ/1.6 · 1/120 s · ISO 100 · 26 mm")
         );
-        assert_eq!(shot.taken, Some((2024, 5, 1, 14, 3)));
-        assert_eq!(days_from_civil(1970, 1, 1), 0);
-        // 2024-05-01 14:03 UTC.
-        assert_eq!(shot.taken_secs(), Some(1_714_572_180));
     }
 
     #[test]
@@ -648,16 +598,6 @@ mod tests {
         assert_eq!(shutter((0, 1)), None);
         assert_eq!(trim(8.0), "8");
         assert_eq!(trim(1.8), "1.8");
-    }
-
-    #[test]
-    fn an_unset_clock_is_no_date() {
-        assert_eq!(exif_date("0000:00:00 00:00:00"), None);
-        assert_eq!(exif_date("    :  :     :  :  "), None);
-        assert_eq!(
-            exif_date("2023:12:31 23:59:00"),
-            Some((2023, 12, 31, 23, 59))
-        );
     }
 
     #[test]

@@ -1982,7 +1982,6 @@ files-photos-info-copied = Скопійовано
 files-photos-info-dimensions = Розміри
 files-photos-info-modified = Змінено
 files-photos-info-where = Де
-files-photos-info-taken = Знято
 files-photos-info-camera = Камера
 files-photos-info-lens = Обʼєктив
 files-photos-info-exposure = Експозиція
