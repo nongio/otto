@@ -177,10 +177,11 @@ pub fn load_now() {
 enum Write {
     Default(Direction, String),
     Port(Direction, String, String),
-    Volume(Direction, String, u32),
+    /// The device's channels as last read, and the volume for the loudest.
+    Volume(Direction, String, Vec<u32>, u32),
     Mute(Direction, String, bool),
     Move(Direction, u32, String),
-    StreamVolume(Direction, u32, u32),
+    StreamVolume(Direction, u32, Vec<u32>, u32),
     StreamMute(Direction, u32, bool),
     Profile(String, String),
 }
@@ -191,10 +192,10 @@ impl Write {
         match self {
             Write::Default(d, _) => format!("default {d:?}"),
             Write::Port(d, name, _) => format!("port {d:?} {name}"),
-            Write::Volume(d, name, _) => format!("volume {d:?} {name}"),
+            Write::Volume(d, name, ..) => format!("volume {d:?} {name}"),
             Write::Mute(d, name, _) => format!("mute {d:?} {name}"),
             Write::Move(d, index, _) => format!("move {d:?} {index}"),
-            Write::StreamVolume(d, index, _) => format!("stream-volume {d:?} {index}"),
+            Write::StreamVolume(d, index, ..) => format!("stream-volume {d:?} {index}"),
             Write::StreamMute(d, index, _) => format!("stream-mute {d:?} {index}"),
             Write::Profile(card, _) => format!("profile {card}"),
         }
@@ -204,10 +205,14 @@ impl Write {
         match self {
             Write::Default(d, name) => pulse::set_default(d, &name),
             Write::Port(d, name, port) => pulse::set_port(d, &name, &port),
-            Write::Volume(d, name, percent) => pulse::set_volume(d, &name, percent),
+            Write::Volume(d, name, channels, percent) => {
+                pulse::set_volume(d, &name, &channels, percent)
+            }
             Write::Mute(d, name, muted) => pulse::set_mute(d, &name, muted),
             Write::Move(d, index, device) => pulse::move_stream(d, index, &device),
-            Write::StreamVolume(d, index, percent) => pulse::set_stream_volume(d, index, percent),
+            Write::StreamVolume(d, index, channels, percent) => {
+                pulse::set_stream_volume(d, index, &channels, percent)
+            }
             Write::StreamMute(d, index, muted) => pulse::set_stream_mute(d, index, muted),
             Write::Profile(card, profile) => pulse::set_profile(&card, &profile),
         }
@@ -539,7 +544,8 @@ pub fn apply(id: &str, value: &Value) -> bool {
                     return true;
                 };
                 device.volume = percent;
-                write(Write::Volume(direction, name, percent));
+                let channels = device.channels.clone();
+                write(Write::Volume(direction, name, channels, percent));
             }
             Field::Mute => {
                 let (Some(muted), Some(device)) = (on, graph.device_mut(direction, &name)) else {
@@ -565,7 +571,8 @@ pub fn apply(id: &str, value: &Value) -> bool {
                     return true;
                 };
                 stream.volume = percent;
-                write(Write::StreamVolume(direction, index, percent));
+                let channels = stream.channels.clone();
+                write(Write::StreamVolume(direction, index, channels, percent));
             }
             Field::Mute => {
                 let (Some(muted), Some(stream)) = (on, graph.stream_mut(direction, index)) else {
@@ -836,6 +843,7 @@ mod tests {
             name: name.into(),
             description: format!("{name} speakers"),
             volume: 40,
+            channels: Vec::new(),
             muted: false,
             ports: Vec::new(),
             active_port: None,
@@ -865,6 +873,7 @@ mod tests {
                 media: "Tiny Desk".into(),
                 device: 60,
                 volume: 140,
+                channels: Vec::new(),
                 muted: true,
             }],
             cards: vec![Card {

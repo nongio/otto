@@ -53,9 +53,12 @@ pub struct Device {
     pub name: String,
     /// What people call it: "Built-in Audio Analog Stereo".
     pub description: String,
-    /// Mean of its channels, in percent of normal volume. Over 100 when
+    /// Its loudest channel, in percent of normal volume. Over 100 when
     /// something boosted it past normal.
     pub volume: u32,
+    /// Each channel's volume, in channel-map order, which [`set_volume`]
+    /// scales together to keep the balance between them.
+    pub channels: Vec<u32>,
     pub muted: bool,
     /// Where on the device the sound goes or comes from — a laptop's one
     /// analog device has its speakers and its headphone jack — leaving out
@@ -89,6 +92,8 @@ pub struct Stream {
     /// The [`Device::index`] it plays on or records from.
     pub device: u32,
     pub volume: u32,
+    /// As [`Device::channels`].
+    pub channels: Vec<u32>,
     pub muted: bool,
 }
 
@@ -247,6 +252,10 @@ struct RawDevice {
     mute: bool,
     #[serde(default)]
     volume: HashMap<String, RawVolume>,
+    /// The channels in order, "front-left,front-right", naming the keys of
+    /// `volume`, which a map does not keep in order.
+    #[serde(default)]
+    channel_map: String,
     #[serde(default)]
     properties: HashMap<String, serde_json::Value>,
     #[serde(default)]
@@ -282,6 +291,10 @@ struct RawStream {
     mute: bool,
     #[serde(default)]
     volume: HashMap<String, RawVolume>,
+    /// The channels in order, "front-left,front-right", naming the keys of
+    /// `volume`, which a map does not keep in order.
+    #[serde(default)]
+    channel_map: String,
     #[serde(default)]
     properties: HashMap<String, serde_json::Value>,
 }
@@ -314,10 +327,45 @@ fn yes() -> bool {
 /// What `pactl` calls normal volume, 100 %.
 const NORM: f64 = 65536.0;
 
+/// The loudest channel, as pavucontrol's locked slider shows it and as
+/// [`volume_args`] sets it.
 fn percent(volume: &HashMap<String, RawVolume>) -> u32 {
-    let channels = volume.len().max(1) as f64;
-    let sum: f64 = volume.values().map(|v| f64::from(v.value)).sum();
-    (sum / channels / NORM * 100.0).round() as u32
+    let loudest = volume.values().map(|v| v.value).max().unwrap_or(0);
+    (f64::from(loudest) / NORM * 100.0).round() as u32
+}
+
+/// Each channel's volume in `channel_map` order, or none when the map does
+/// not name every channel of `volume`.
+fn channels(volume: &HashMap<String, RawVolume>, channel_map: &str) -> Vec<u32> {
+    let channels: Option<Vec<u32>> = channel_map
+        .split(',')
+        .filter(|channel| !channel.is_empty())
+        .map(|channel| volume.get(channel).map(|v| v.value))
+        .collect();
+    match channels {
+        Some(channels) if channels.len() == volume.len() => channels,
+        _ => Vec::new(),
+    }
+}
+
+/// The volume arguments to `pactl set-*-volume` that bring the loudest of
+/// `channels` to `percent` and the others along with it, keeping the
+/// balance between them. Channels all alike, or unknown, are set to
+/// `percent` as one.
+fn volume_args(channels: &[u32], percent: u32) -> Vec<String> {
+    let loudest = channels.iter().copied().max().unwrap_or(0);
+    if loudest == 0 || channels.iter().all(|&c| c == loudest) {
+        return vec![format!("{percent}%")];
+    }
+    let target = f64::from(percent) / 100.0 * NORM;
+    channels
+        .iter()
+        .map(|&c| {
+            (f64::from(c) / f64::from(loudest) * target)
+                .round()
+                .to_string()
+        })
+        .collect()
 }
 
 fn property<'a>(properties: &'a HashMap<String, serde_json::Value>, key: &str) -> Option<&'a str> {
@@ -348,6 +396,7 @@ fn parse_devices(json: &str) -> Result<Vec<Device>, String> {
         .map(|device| Device {
             index: device.index,
             volume: percent(&device.volume),
+            channels: channels(&device.volume, &device.channel_map),
             muted: device.mute,
             ports: device
                 .ports
@@ -394,6 +443,7 @@ fn parse_streams(json: &str) -> Result<Vec<Stream>, String> {
                 media,
                 device: stream.device,
                 volume: percent(&stream.volume),
+                channels: channels(&stream.volume, &stream.channel_map),
                 muted: stream.mute,
             }
         })
@@ -441,14 +491,19 @@ pub fn set_default(direction: Direction, name: &str) -> Result<(), String> {
     run(&[&format!("set-default-{}", direction.noun()), name]).map(drop)
 }
 
-/// Set every channel of `name` to `percent` of normal volume.
-pub fn set_volume(direction: Direction, name: &str, percent: u32) -> Result<(), String> {
-    run(&[
-        &format!("set-{}-volume", direction.noun()),
-        name,
-        &format!("{percent}%"),
-    ])
-    .map(drop)
+/// Bring the loudest channel of `name` to `percent` of normal volume, its
+/// other `channels` along in proportion.
+pub fn set_volume(
+    direction: Direction,
+    name: &str,
+    channels: &[u32],
+    percent: u32,
+) -> Result<(), String> {
+    let command = format!("set-{}-volume", direction.noun());
+    let volumes = volume_args(channels, percent);
+    let mut args = vec![command.as_str(), name];
+    args.extend(volumes.iter().map(String::as_str));
+    run(&args).map(drop)
 }
 
 pub fn set_mute(direction: Direction, name: &str, muted: bool) -> Result<(), String> {
@@ -475,13 +530,19 @@ pub fn move_stream(direction: Direction, index: u32, device: &str) -> Result<(),
     .map(drop)
 }
 
-pub fn set_stream_volume(direction: Direction, index: u32, percent: u32) -> Result<(), String> {
-    run(&[
-        &format!("set-{}-volume", direction.stream_noun()),
-        &index.to_string(),
-        &format!("{percent}%"),
-    ])
-    .map(drop)
+/// As [`set_volume`], for one app's stream.
+pub fn set_stream_volume(
+    direction: Direction,
+    index: u32,
+    channels: &[u32],
+    percent: u32,
+) -> Result<(), String> {
+    let command = format!("set-{}-volume", direction.stream_noun());
+    let index = index.to_string();
+    let volumes = volume_args(channels, percent);
+    let mut args = vec![command.as_str(), index.as_str()];
+    args.extend(volumes.iter().map(String::as_str));
+    run(&args).map(drop)
 }
 
 pub fn set_stream_mute(direction: Direction, index: u32, muted: bool) -> Result<(), String> {
@@ -544,6 +605,7 @@ mod tests {
          "properties":{"device.class":"monitor"}},
         {"index":56,"name":"alsa_input.pci.analog-stereo","description":"Built-in Audio Analog Stereo","mute":true,
          "volume":{"front-left":{"value":26214},"front-right":{"value":39322}},
+         "channel_map":"front-left,front-right",
          "properties":{"device.class":"sound","alsa.card":"0"},
          "active_port":"analog-input-internal-mic",
          "ports":[
@@ -563,9 +625,43 @@ mod tests {
     }
 
     #[test]
-    fn volume_is_the_mean_of_the_channels() {
+    fn volume_is_the_loudest_channel() {
         // 40 % and 60 %.
-        assert_eq!(parse_devices(SOURCES).unwrap()[0].volume, 50);
+        let device = &parse_devices(SOURCES).unwrap()[0];
+        assert_eq!(device.volume, 60);
+        assert_eq!(device.channels, [26214, 39322]);
+    }
+
+    #[test]
+    fn channels_follow_the_channel_map() {
+        let devices = parse_devices(
+            r#"[{"index":1,"name":"a","channel_map":"front-right,front-left",
+                 "volume":{"front-left":{"value":1},"front-right":{"value":2}}},
+                {"index":2,"name":"b",
+                 "volume":{"front-left":{"value":1},"front-right":{"value":2}}}]"#,
+        )
+        .unwrap();
+        assert_eq!(devices[0].channels, [2, 1]);
+        // No map to order them by: set as one, as before.
+        assert!(devices[1].channels.is_empty());
+    }
+
+    #[test]
+    fn alike_or_unknown_channels_are_set_as_one() {
+        assert_eq!(volume_args(&[], 70), ["70%"]);
+        assert_eq!(volume_args(&[65536], 70), ["70%"]);
+        assert_eq!(volume_args(&[30000, 30000], 70), ["70%"]);
+        assert_eq!(volume_args(&[0, 0], 70), ["70%"]);
+    }
+
+    #[test]
+    fn the_loudest_channel_takes_the_volume_and_the_balance_holds() {
+        // Left at half of right: right goes to 80 %, left to 40 %.
+        assert_eq!(volume_args(&[32768, 65536], 80), ["26214", "52429"]);
+        assert_eq!(volume_args(&[65536, 32768], 80), ["52429", "26214"]);
+        // A silent channel stays silent.
+        assert_eq!(volume_args(&[0, 39322], 100), ["0", "65536"]);
+        assert_eq!(volume_args(&[32768, 65536], 0), ["0", "0"]);
     }
 
     #[test]
@@ -613,6 +709,7 @@ mod tests {
                 media: "Tiny Desk Concert".into(),
                 device: 55,
                 volume: 100,
+                channels: Vec::new(),
                 muted: false,
             }]
         );
