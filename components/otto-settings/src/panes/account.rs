@@ -996,7 +996,7 @@ fn change_password(
         // Spawned inside a block so the command — and the pipe's write ends
         // it holds — is gone once the child has them, or reading would never
         // see the end of the output.
-        command.spawn().map_err(failed)?
+        spawn_retrying_busy(&mut command).map_err(failed)?
     };
     let mut input = child.stdin.take().expect("stdin is piped");
 
@@ -1068,6 +1068,24 @@ fn change_password(
         return Err(PasswdError::WrongCurrent);
     }
     Err(PasswdError::Refused(refusal(&said)))
+}
+
+/// Spawn `command`, trying again a few times while the kernel says the
+/// program is busy (ETXTBSY): a program written moments ago can still be
+/// held open for writing by another thread's fork that has not reached exec
+/// yet. The tests' stand-in `passwd` hits this when tests run in parallel.
+fn spawn_retrying_busy(command: &mut Command) -> std::io::Result<std::process::Child> {
+    const TRIES: u32 = 10;
+    let mut tried = 1;
+    loop {
+        match command.spawn() {
+            Err(err) if err.kind() == std::io::ErrorKind::ExecutableFileBusy && tried < TRIES => {
+                tried += 1;
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            outcome => return outcome,
+        }
+    }
 }
 
 /// Whether `text` — output since the last line break — is left asking for
