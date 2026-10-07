@@ -367,20 +367,21 @@ It shares its pieces with the launcher's agents mode through
   `copy_to_clipboard`. The launcher's `on_key_event` and the canvas both go
   through it; each checks its own keys (Enter, Escape, Ctrl+L, Right) first.
 - `SessionFeed::items(source, query)` filters with `session_items`, as
-  `Ask::session_rows` does. Rows carry the session's index in the feed, so the
-  canvas maps a filtered row back to its URI.
+  `Ask::session_rows` does; the canvas asks for every session (an empty
+  query). Rows carry the session's index in the feed, so the canvas maps a
+  row back to its URI.
 
-The item draws immediate-mode into its one surface: the heading band with the
-Ask button, the launcher's `TextInput` with `field_style` at 16 pt, a hairline
+The item draws immediate-mode into its one surface: the heading band, the
+prompt field (the launcher's `TextInput` with `field_style` at 16 pt), a hairline
 (`rows::divider_color`), then the rows, with otto-kit's `ScrollView` for the
 scroll physics and scrollbar. Scroll animation steps only when
 `CanvasItemSurface::frame_in_flight` is false. The field's caret shows while
 `CanvasItemSurface::has_keyboard` is true and blinks on the idle timeout.
 The item asks for `on_show` when it is created. Opening a row spawns
-`otto-launcher --session <URI>`, the Ask button and Ctrl+L spawn
-`otto-launcher --ask`, and Enter with no row spawns
-`otto-launcher --ask -- <text>` (the launcher takes everything after `--` as
-its query). Each is reaped on a thread and followed by `dismiss`.
+`otto-launcher --session <URI>`, and Enter or Ctrl+L with text typed spawns
+`otto-launcher --ask --send -- <text>` (the launcher takes everything after
+`--` as its query, and `--send` sends it as soon as the card is up); Ctrl+L
+with nothing typed spawns `otto-launcher --ask`. Each is reaped on a thread and followed by `dismiss`.
 
 ## Tests
 
