@@ -11,6 +11,7 @@ use std::sync::{Arc, LazyLock, Mutex};
 use otto_kit::AppContext;
 
 use futures_util::StreamExt;
+use zbus::proxy::CacheProperties;
 use zbus::zvariant::{OwnedValue, Value};
 use zbus::{interface, object_server::SignalEmitter, proxy, Connection};
 
@@ -520,6 +521,7 @@ async fn fetch_item(
     let proxy = StatusNotifierItemProxy::builder(conn)
         .destination(bus_name)?
         .path(path)?
+        .cache_properties(CacheProperties::No)
         .build()
         .await?;
 
@@ -777,11 +779,14 @@ fn precache_menu_icons(items: &[crate::dbusmenu::MenuItem], load_size: i32) {
 
 /// Watch NewIcon/NewStatus/NewToolTip signals and refresh the item.
 async fn watch_item_signals(conn: &Connection, bus_name: &str, path: &str, state: TrayState) {
+    // SNI items signal changes with NewIcon/NewStatus/NewToolTip, not
+    // PropertiesChanged, so a cached proxy would return stale values forever.
     let Ok(proxy) = StatusNotifierItemProxy::builder(conn)
         .destination(bus_name)
         .unwrap()
         .path(path)
         .unwrap()
+        .cache_properties(CacheProperties::No)
         .build()
         .await
     else {
