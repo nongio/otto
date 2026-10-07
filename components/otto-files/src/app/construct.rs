@@ -98,6 +98,7 @@ impl Browser {
             photo_dims: crate::photos::Dims::new(),
             photo_hover: None,
             photo_swatch_hover: None,
+            photo_tool_hover: None,
             panel_text: None,
             info_selection: Default::default(),
             folder_views: Vec::new(),

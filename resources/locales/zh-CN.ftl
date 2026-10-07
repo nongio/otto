@@ -693,6 +693,9 @@ files-undo-move = 移动
 files-undo-copy = 拷贝
 files-undo-delete = 删除
 files-undo-rename = 重命名
+files-undo-rotate = 旋转
+files-undo-flip = 翻转
+files-turn-failed = 无法旋转“{ $name }”：{ $error }
 # $name is a file or folder name, already wrapped in quotation marks.
 files-renamed-to = 已重命名为“{ $name }”
 files-new-folder-created = 新文件夹“{ $name }”

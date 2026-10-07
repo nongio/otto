@@ -492,6 +492,8 @@ struct Browser {
     photo_hover: Option<usize>,
     /// The info panel's colour swatch under the pointer.
     photo_swatch_hover: Option<usize>,
+    /// The Photos info panel's turn or flip button under the pointer.
+    photo_tool_hover: Option<usize>,
     /// Text selected in an info panel of the main window.
     panel_text: Option<panel_text::PanelText>,
     /// Text selected in Get Info.

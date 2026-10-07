@@ -93,3 +93,26 @@ fn ctrl_o_on_a_folder_opens_it_in_this_window() {
         assert!(browser.opening.is_none(), "{mode:?}: nothing was launched");
     }
 }
+
+/// The Photos info panel's turn buttons change the photo's orientation, and
+/// Ctrl+Z puts it back.
+#[test]
+fn a_photo_turned_from_the_info_panel_is_undone() {
+    use crate::orient::{orientation, Turn};
+    let (mut browser, dir) = browser_over(&["shot.jpg"]);
+    let shot = dir.0.join("shot.jpg");
+    // A JPEG with no EXIF: start of image, an empty scan, end of image.
+    std::fs::write(&shot, [0xFF, 0xD8, 0xFF, 0xDA, 0, 2, 0xFF, 0xD9]).unwrap();
+    browser.set_mode(ViewMode::Photos);
+    browser.select(0, row_of(&browser, "shot.jpg"));
+
+    browser.turn_selected_photo(Turn::Right);
+    assert_eq!(orientation(&shot).unwrap(), 6, "a quarter turn clockwise");
+    browser.turn_selected_photo(Turn::FlipHorizontal);
+    assert_eq!(orientation(&shot).unwrap(), 5);
+
+    browser.undo_last();
+    assert_eq!(orientation(&shot).unwrap(), 6, "the flip taken back");
+    browser.undo_last();
+    assert_eq!(orientation(&shot).unwrap(), 1, "and the turn");
+}

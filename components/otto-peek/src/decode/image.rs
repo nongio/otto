@@ -215,10 +215,22 @@ fn decoded(bytes: &[u8], request: &Request) -> PreviewPayload {
         return payload::unavailable(otto_kit::t_owned!("peek-error-image-unsupported"));
     };
 
-    let intrinsic = codec.dimensions();
-    if intrinsic.width <= 0 || intrinsic.height <= 0 {
+    let encoded = codec.dimensions();
+    if encoded.width <= 0 || encoded.height <= 0 {
         return payload::unavailable(otto_kit::t_owned!("peek-error-image-no-size"));
     }
+    // A photo stored on its side, with EXIF saying which way up it goes:
+    // `get_image` turns it upright, and wants the size it is to be turned
+    // *into*. So everything from here on is measured the way it is shown.
+    let swaps = codec.origin().swaps_width_height();
+    let upright = |size: ISize| {
+        if swaps {
+            ISize::new(size.height, size.width)
+        } else {
+            size
+        }
+    };
+    let intrinsic = upright(encoded);
 
     let target = target_size(intrinsic, request);
 
@@ -239,11 +251,11 @@ fn decoded(bytes: &[u8], request: &Request) -> PreviewPayload {
     // The codec picks the nearest sample size it can actually deliver, which is
     // rarely exactly what was asked for.
     let scale = (target.width as f32 / intrinsic.width as f32).clamp(0.0, 1.0);
-    let scaled = if scale >= 1.0 {
-        intrinsic
+    let scaled = upright(if scale >= 1.0 {
+        encoded
     } else {
         codec.get_scaled_dimensions(scale)
-    };
+    });
 
     if pixel_count(scaled) > MAX_DECODE_PIXELS {
         return too_large(intrinsic, request);

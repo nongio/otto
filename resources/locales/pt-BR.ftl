@@ -713,6 +713,9 @@ files-undo-move = Mover
 files-undo-copy = Copiar
 files-undo-delete = Excluir
 files-undo-rename = Renomear
+files-undo-rotate = Rotação
+files-undo-flip = Espelhamento
+files-turn-failed = Não foi possível girar “{ $name }”: { $error }
 # $name is a file or folder name, already wrapped in quotation marks.
 files-renamed-to = Renomeado para “{ $name }”
 files-new-folder-created = Nova pasta “{ $name }”

@@ -422,6 +422,8 @@ impl Browser {
                     copied: self.photos_copied.map(|(i, _)| i),
                     hovered: self.photo_swatch_hover,
                     camera: pane.and_then(|p| p.camera.as_ref()),
+                    turnable: picture && crate::orient::supported(&entry.path),
+                    tool_hover: self.photo_tool_hover,
                 })
             }
             count => Some(view::PhotosInfoData::Many {
@@ -436,8 +438,16 @@ impl Browser {
         }
     }
 
-    /// A press inside the info panel: a swatch copies its colour.
+    /// A press inside the info panel: a swatch copies its colour, and a turn
+    /// or flip button turns the picture.
     fn photos_info_press(&mut self, panel: Rect, x: f32, y: f32, serial: u32) {
+        let tool = self
+            .photos_info_data()
+            .and_then(|data| view::photos_info_tool_at(panel, &data, x, y));
+        if let Some(index) = tool {
+            self.turn_selected_photo(view::PHOTOS_TOOLS[index]);
+            return;
+        }
         let swatch = self
             .photos_info_data()
             .and_then(|data| view::photos_info_swatch_at(panel, &data, x, y));
@@ -523,6 +533,64 @@ impl Browser {
             self.photo_swatch_hover = swatch;
             self.dirty = true;
         }
+        let tool = self.photos_tool_at(x, y);
+        if tool != self.photo_tool_hover {
+            self.photo_tool_hover = tool;
+            self.dirty = true;
+        }
+    }
+
+    /// The info panel's turn or flip button under `(x, y)`, if any.
+    pub(super) fn photos_tool_at(&self, x: f32, y: f32) -> Option<usize> {
+        if self.mode != ViewMode::Photos || !self.photos.has_panel() {
+            return None;
+        }
+        let panel = view::photos_info_rect(self.size.0, self.content_h());
+        if !panel.contains(skia_safe::Point::new(x, y)) {
+            return None;
+        }
+        self.photos_info_data()
+            .and_then(|data| view::photos_info_tool_at(panel, &data, x, y))
+    }
+
+    /// Turn or flip the one selected photograph, by its EXIF orientation:
+    /// lossless, and undone with Ctrl+Z like any other change to a file.
+    pub(super) fn turn_selected_photo(&mut self, turn: crate::orient::Turn) {
+        let Some(entry) = self.selected_entry() else {
+            return;
+        };
+        if self.trash || !photos::is_photo(&entry) || !crate::orient::supported(&entry.path) {
+            return;
+        }
+        match crate::orient::apply(&entry.path, turn) {
+            Ok((from, to)) => {
+                let label = match turn {
+                    crate::orient::Turn::Left | crate::orient::Turn::Right => {
+                        otto_kit::t!("files-undo-rotate")
+                    }
+                    _ => otto_kit::t!("files-undo-flip"),
+                };
+                self.record_undo(
+                    label,
+                    vec![model::Change::Oriented {
+                        path: entry.path.clone(),
+                        from,
+                        to,
+                    }],
+                );
+                // Decoded again the way up it now goes; the listing re-read
+                // brings the new mtime, which re-measures it on the wall and
+                // asks for a new thumbnail.
+                self.preview = None;
+                self.reload_all();
+            }
+            Err(err) => self.refuse(otto_kit::t_owned!(
+                "files-turn-failed",
+                name = entry.name.clone(),
+                error = err.to_string()
+            )),
+        }
+        self.dirty = true;
     }
 
     /// The info panel's swatch under `(x, y)`, if any.
