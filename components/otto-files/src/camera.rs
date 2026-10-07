@@ -36,6 +36,10 @@ pub struct Shot {
     /// Where it was taken, latitude then longitude in degrees, north and
     /// east positive.
     pub location: Option<(f64, f64)>,
+    /// The day it was taken, as days since the epoch, by the camera's own
+    /// clock — the calendar day where the picture was taken, which is the one
+    /// it belongs to, wherever it is looked at later.
+    pub taken: Option<i64>,
 }
 
 impl Shot {
@@ -114,10 +118,46 @@ pub fn parse(bytes: &[u8]) -> Option<Shot> {
         jpeg_exif(bytes)?
     } else if bytes.starts_with(b"II\x2A\0") || bytes.starts_with(b"MM\0\x2A") {
         bytes
+    } else if bytes.get(4..8) == Some(b"ftyp") {
+        heif_exif(bytes)?
     } else {
         return None;
     };
     Tiff::new(tiff).map(|tiff| tiff.shot())
+}
+
+/// The TIFF block inside a HEIF's — a phone's HEIC, an AVIF — EXIF item.
+///
+/// The item's bytes are `Exif\0\0` and a TIFF header, behind a four-byte
+/// offset; the index that says where they are is a box tree of its own. That
+/// signature is ten bytes no picture data plausibly forms, and a phone writes
+/// the item ahead of the picture, so it is looked for directly. The item's
+/// *name* is `Exif` too, but followed by its own NUL and not a TIFF header,
+/// so it is never mistaken for the data.
+fn heif_exif(bytes: &[u8]) -> Option<&[u8]> {
+    const MARK: &[u8] = b"Exif\0\0";
+    let mut from = 0;
+    while let Some(found) = bytes[from..].windows(MARK.len()).position(|w| w == MARK) {
+        let tiff = &bytes[from + found + MARK.len()..];
+        if tiff.starts_with(b"MM\0\x2A") || tiff.starts_with(b"II\x2A\0") {
+            return Some(tiff);
+        }
+        from += found + 1;
+    }
+    None
+}
+
+/// An EXIF date, `2024:11:29 13:25:59`, as the day it names. A camera with
+/// no clock set writes zeros or spaces, which name no day.
+fn exif_day(text: &str) -> Option<i64> {
+    let mut parts = text.get(..10)?.split(':');
+    let year: i32 = parts.next()?.parse().ok()?;
+    let month: u32 = parts.next()?.parse().ok()?;
+    let day: u32 = parts.next()?.parse().ok()?;
+    if year < 1900 || !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+        return None;
+    }
+    Some(otto_search::dates::days_from_civil(year, month, day))
 }
 
 /// The TIFF block inside a JPEG's EXIF segment, found by walking the marker
@@ -167,6 +207,7 @@ struct Field {
 
 const IFD0_MAKE: u16 = 0x010F;
 const IFD0_MODEL: u16 = 0x0110;
+const IFD0_DATETIME: u16 = 0x0132;
 const IFD0_EXIF: u16 = 0x8769;
 const IFD0_GPS: u16 = 0x8825;
 const GPS_LAT_REF: u16 = 0x0001;
@@ -175,6 +216,7 @@ const GPS_LON_REF: u16 = 0x0003;
 const GPS_LON: u16 = 0x0004;
 const EXIF_EXPOSURE: u16 = 0x829A;
 const EXIF_FNUMBER: u16 = 0x829D;
+const EXIF_DATE_ORIGINAL: u16 = 0x9003;
 const EXIF_ISO: u16 = 0x8827;
 const EXIF_FOCAL: u16 = 0x920A;
 const EXIF_FOCAL_35: u16 = 0xA405;
@@ -299,11 +341,16 @@ impl<'a> Tiff<'a> {
         let mut shot = Shot::default();
         let (mut make, mut model) = (None, None);
         let (mut exif, mut gps) = (None, None);
+        // When the file was last written, which for a photograph nobody has
+        // edited is when it was taken: the fallback for a camera that leaves
+        // the original date out.
+        let mut written = None;
         if let Some(ifd0) = self.u32_at(4) {
             for (tag, field) in self.ifd(ifd0 as usize) {
                 match tag {
                     IFD0_MAKE => make = self.text(&field),
                     IFD0_MODEL => model = self.text(&field),
+                    IFD0_DATETIME => written = self.text(&field).as_deref().and_then(exif_day),
                     IFD0_EXIF => exif = self.number(&field),
                     IFD0_GPS => gps = self.number(&field),
                     _ => {}
@@ -333,10 +380,14 @@ impl<'a> Tiff<'a> {
                     EXIF_FOCAL_35 => focal_35 = self.number(&field).filter(|mm| *mm > 0),
                     EXIF_LENS_MAKE => lens_make = self.text(&field),
                     EXIF_LENS_MODEL => lens_model = self.text(&field),
+                    EXIF_DATE_ORIGINAL => {
+                        shot.taken = self.text(&field).as_deref().and_then(exif_day)
+                    }
                     _ => {}
                 }
             }
         }
+        shot.taken = shot.taken.or(written);
         shot.focal = focal_35.map(|mm| mm as f32).or(focal);
         // The lens's own model says enough ("iPhone 15 back dual wide camera
         // 5.96mm f/1.6"); its maker is the camera's, or on the model already.
@@ -598,6 +649,51 @@ mod tests {
         assert_eq!(shutter((0, 1)), None);
         assert_eq!(trim(8.0), "8");
         assert_eq!(trim(1.8), "1.8");
+    }
+
+    /// The day it was taken, from the original date, else from when the file
+    /// was written; a camera whose clock was never set names no day.
+    #[test]
+    fn a_photo_says_which_day_it_was_taken() {
+        let taken = Builder::new()
+            .ifd0(IFD0_DATETIME, ascii("2025:01:05 09:00:00"))
+            .exif(EXIF_DATE_ORIGINAL, ascii("2024:11:29 13:25:59"))
+            .build();
+        let day = otto_search::dates::days_from_civil(2024, 11, 29);
+        assert_eq!(parse(&jpeg(&taken)).unwrap().taken, Some(day));
+
+        let written = Builder::new()
+            .ifd0(IFD0_DATETIME, ascii("2024:11:29 23:59:59"))
+            .build();
+        assert_eq!(parse(&written).unwrap().taken, Some(day));
+
+        let unset = Builder::new()
+            .exif(EXIF_DATE_ORIGINAL, ascii("0000:00:00 00:00:00"))
+            .build();
+        assert_eq!(parse(&unset).unwrap().taken, None);
+    }
+
+    /// A phone's HEIC: the EXIF item's name in the index first, then the
+    /// item itself, a TIFF block behind `Exif\0\0`.
+    #[test]
+    fn a_heic_is_read_through_its_exif_item() {
+        let tiff = Builder::new()
+            .ifd0(IFD0_MAKE, ascii("Apple"))
+            .exif(EXIF_DATE_ORIGINAL, ascii("2024:11:30 10:33:58"))
+            .build();
+        let mut heic = b"\0\0\0\x2cftypheic\0\0\0\0mif1".to_vec();
+        heic.extend_from_slice(b"....infe....Exif\0\0\0\0hvc1....");
+        heic.extend_from_slice(&[0, 0, 0, 6]);
+        heic.extend_from_slice(b"Exif\0\0");
+        heic.extend_from_slice(&tiff);
+        let shot = parse(&heic).expect("the EXIF item");
+        assert_eq!(shot.camera.as_deref(), Some("Apple"));
+        assert_eq!(
+            shot.taken,
+            Some(otto_search::dates::days_from_civil(2024, 11, 30))
+        );
+        // The same file with no EXIF item at all.
+        assert_eq!(parse(b"\0\0\0\x2cftypheic\0\0\0\0mif1"), None);
     }
 
     #[test]
