@@ -35,6 +35,7 @@ pub mod orient;
 pub mod palette;
 pub mod pane_surfaces;
 pub mod peek;
+pub mod peek_cache;
 pub mod perf;
 pub mod photos;
 pub mod picker;
