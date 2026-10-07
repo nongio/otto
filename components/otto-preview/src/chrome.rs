@@ -162,12 +162,11 @@ pub fn draw(canvas: &Canvas, viewer: &Viewer, theme: &Theme) {
 
     let paged = viewer.page_status();
     let layout = viewer.toolbar();
-    let open = viewer.sidebar_open();
     for (tool, rect) in &layout.buttons {
         let enabled = viewer.tool_enabled(*tool);
         let hovered = enabled && viewer.hovered_tool == Some(*tool);
         let pressed = hovered && viewer.pressed_tool == Some(*tool);
-        draw_icon_button(canvas, theme, *rect, *tool, open, enabled, hovered, pressed);
+        draw_icon_button(canvas, theme, *rect, *tool, enabled, hovered, pressed);
     }
 
     if let (Some(rect), Some((page, pages))) = (layout.page_label, paged) {
@@ -192,15 +191,11 @@ fn button_ground(hovered: bool, pressed: bool, theme: &Theme) -> Option<Color> {
     }
 }
 
-/// `open` is whether the sidebar shows, which the sidebar button's arrow
-/// follows.
-#[allow(clippy::too_many_arguments)]
 fn draw_icon_button(
     canvas: &Canvas,
     theme: &Theme,
     rect: Rect,
     tool: Tool,
-    open: bool,
     enabled: bool,
     hovered: bool,
     pressed: bool,
@@ -222,7 +217,13 @@ fn draw_icon_button(
         GLYPH,
         GLYPH,
     );
-    match icons::cached_icon_chain(icon_names(tool, open), GLYPH as i32) {
+    if tool == Tool::Sidebar {
+        // Drawn rather than looked up: themes disagree on what the sidebar
+        // icon is, and some put an arrow in it.
+        draw_sidebar_glyph(canvas, dst, color);
+        return;
+    }
+    match icons::cached_icon_chain(icon_names(tool), GLYPH as i32) {
         Some(image) => {
             // Symbolic art recoloured to the text tone, as the rest of the
             // chrome does with its glyphs.
@@ -233,27 +234,25 @@ fn draw_icon_button(
             ));
             canvas.draw_image_rect(&image, None, dst, &tint);
         }
-        None => draw_fallback_glyph(canvas, dst, tool, open, color),
+        None => draw_fallback_glyph(canvas, dst, tool, color),
     }
 }
 
-/// The themed symbolic icons for a tool, most specific first. The sidebar
-/// button points the way it will move the sidebar: `>` to open it, `<` to
-/// close it.
-fn icon_names(tool: Tool, open: bool) -> &'static [&'static str] {
+/// The themed symbolic icons for a tool, most specific first.
+fn icon_names(tool: Tool) -> &'static [&'static str] {
     match tool {
         Tool::ZoomOut => &["zoom-out-symbolic"],
         Tool::ZoomFit => &["zoom-fit-best-symbolic", "zoom-original-symbolic"],
         Tool::ZoomIn => &["zoom-in-symbolic"],
         Tool::PreviousPage => &["go-up-symbolic", "pan-up-symbolic"],
         Tool::NextPage => &["go-down-symbolic", "pan-down-symbolic"],
-        Tool::Sidebar if open => &["go-previous-symbolic", "pan-start-symbolic"],
-        Tool::Sidebar => &["go-next-symbolic", "pan-end-symbolic"],
+        // Never looked up; see `draw_sidebar_glyph`.
+        Tool::Sidebar => &[],
     }
 }
 
 /// A plain drawn glyph for a theme with no symbolic art for the tool.
-fn draw_fallback_glyph(canvas: &Canvas, dst: Rect, tool: Tool, open: bool, color: Color) {
+fn draw_fallback_glyph(canvas: &Canvas, dst: Rect, tool: Tool, color: Color) {
     let mut stroke = Paint::default();
     stroke.set_anti_alias(true);
     stroke.set_style(PaintStyle::Stroke);
@@ -297,14 +296,31 @@ fn draw_fallback_glyph(canvas: &Canvas, dst: Rect, tool: Tool, open: bool, color
             path.line_to((cx, cy + dy * half / 2.0));
             path.line_to((cx + half, cy - dy * half / 2.0));
         }
-        Tool::Sidebar => {
-            // A chevron: `<` while the sidebar shows, `>` while it does not.
-            let dx = if open { -1.0 } else { 1.0 };
-            let half = r.height() * 0.35;
-            path.move_to((cx - dx * half / 2.0, cy - half));
-            path.line_to((cx + dx * half / 2.0, cy));
-            path.line_to((cx - dx * half / 2.0, cy + half));
-        }
+        Tool::Sidebar => draw_sidebar_glyph(canvas, dst, color),
     }
     canvas.draw_path(&path.detach(), &stroke);
+}
+
+/// The sidebar button's icon: a rounded window with a shaded pane down its
+/// leading edge, the shape every desktop draws for "sidebar".
+fn draw_sidebar_glyph(canvas: &Canvas, dst: Rect, color: Color) {
+    let frame = Rect::from_ltrb(dst.left + 0.75, dst.top + 2.25, dst.right - 0.75, dst.bottom - 2.25);
+    let radius = 2.5;
+    let divider = frame.left + frame.width() * 0.36;
+
+    let mut pane = Paint::default();
+    pane.set_anti_alias(true);
+    pane.set_color(color.with_a((color.a() as f32 * 0.35) as u8));
+    canvas.save();
+    canvas.clip_rrect(RRect::new_rect_xy(frame, radius, radius), None, true);
+    canvas.draw_rect(Rect::from_ltrb(frame.left, frame.top, divider, frame.bottom), &pane);
+    canvas.restore();
+
+    let mut stroke = Paint::default();
+    stroke.set_anti_alias(true);
+    stroke.set_style(PaintStyle::Stroke);
+    stroke.set_stroke_width(1.5);
+    stroke.set_color(color);
+    canvas.draw_rrect(RRect::new_rect_xy(frame, radius, radius), &stroke);
+    canvas.draw_line((divider, frame.top), (divider, frame.bottom), &stroke);
 }
