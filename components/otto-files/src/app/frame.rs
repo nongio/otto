@@ -282,6 +282,7 @@ impl Browser {
             ascending: self.ascending,
             list_columns: self.list_columns,
             opening: self.opening_progress(),
+            opening_stage: self.opening_stage,
             renaming: self.rename.as_ref().map(|r| (r.depth, r.index)),
             controls: self.controls,
             focused: self.focused,

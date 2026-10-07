@@ -684,6 +684,7 @@ mod tests {
             ascending: true,
             list_columns: view::ListColumnWidths::default(),
             opening: None,
+            opening_stage: None,
             renaming: None,
             cut: Vec::new(),
             controls: otto_kit::components::titlebar::WindowControlsState::new(),

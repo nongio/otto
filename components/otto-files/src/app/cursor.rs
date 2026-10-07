@@ -216,6 +216,7 @@ impl Browser {
         }
 
         self.opening = Some((depth, std::time::Instant::now()));
+        self.opening_stage = None;
         self.dirty = true;
         self.open_file(&entry.path);
     }

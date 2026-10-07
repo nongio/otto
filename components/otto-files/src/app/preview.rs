@@ -132,7 +132,13 @@ impl Browser {
     /// pick the file up by.
     pub(super) fn preview_grab_at(&self, x: f32, y: f32) -> Option<Rect> {
         if !self.preview_visible() {
-            return None;
+            // The Photos info panel's picture is the same kind of handle:
+            // one file, drawn large.
+            return self
+                .photos_info_wants_preview()
+                .then(|| self.photos_info_stage())
+                .flatten()
+                .filter(|stage| stage.contains(skia_safe::Point::new(x, y)));
         }
         let (width, height) = (self.size.0, self.content_h());
         let panel = view::preview_pane_rect(
@@ -372,27 +378,35 @@ impl Browser {
         x: f32,
         y: f32,
     ) -> bool {
-        if !self.preview_visible() {
-            return false;
-        }
-        let Some(entry) = self.selected_entry() else {
+        // The preview column's stage, or the Photos info panel's: the same
+        // player, drawn in whichever is showing.
+        let stage = if self.preview_visible() {
+            let Some(entry) = self.selected_entry() else {
+                return false;
+            };
+            let pane = view::preview_pane_rect(
+                self.columns.len(),
+                self.content_h(),
+                self.pan.offset(),
+                &self.miller_widths(),
+            );
+            view::preview_stage_rect(
+                pane,
+                preview_info(
+                    &entry,
+                    self.decoded_preview(),
+                    self.preview.as_ref().and_then(|pane| pane.text),
+                )
+                .len(),
+            )
+        } else if self.photos_info_wants_preview() {
+            let Some(stage) = self.photos_info_stage() else {
+                return false;
+            };
+            stage
+        } else {
             return false;
         };
-        let pane = view::preview_pane_rect(
-            self.columns.len(),
-            self.content_h(),
-            self.pan.offset(),
-            &self.miller_widths(),
-        );
-        let stage = view::preview_stage_rect(
-            pane,
-            preview_info(
-                &entry,
-                self.decoded_preview(),
-                self.preview.as_ref().and_then(|pane| pane.text),
-            )
-            .len(),
-        );
         let Some(video) = self.preview.as_mut().and_then(|p| p.video.as_mut()) else {
             return false;
         };
@@ -400,8 +414,46 @@ impl Browser {
         // the hit test has to measure against the same rect — otherwise the
         // play button answers for a band of empty column above it.
         let content = view::preview_video_box(stage, video.snapshot().aspect());
+        let over_picture = content.contains(skia_safe::Point::new(x, y))
+            && otto_media_kit::view::transport_layout(content)
+                .hit(skia_safe::Point::new(x, y))
+                .is_none();
+        // A second press on the picture opens the video, the way a second
+        // click on its row does. The first one has played or paused it;
+        // opening it elsewhere pauses it here, so the two do not talk over
+        // each other.
+        if kind == peek::VideoPointer::Press && over_picture && self.note_preview_click() {
+            if let Some(video) = self.preview.as_mut().and_then(|p| p.video.as_mut()) {
+                video.player.pause();
+            }
+            self.open_from_preview(content);
+            return true;
+        }
+        let Some(video) = self.preview.as_mut().and_then(|p| p.video.as_mut()) else {
+            return false;
+        };
         let handled = video.pointer(kind, x, y, content);
         self.dirty |= handled;
         handled
+    }
+
+    /// Record a press on a preview's picture. Whether it is the second of a
+    /// double click.
+    pub(super) fn note_preview_click(&mut self) -> bool {
+        let now = std::time::Instant::now();
+        let double = self
+            .last_preview_click
+            .is_some_and(|at| now.duration_since(at) < DOUBLE_CLICK_WINDOW);
+        self.last_preview_click = (!double).then_some(now);
+        double
+    }
+
+    /// Open the selected file from its preview, the pulse rising from the
+    /// picture it was double-clicked on rather than from its row.
+    pub(super) fn open_from_preview(&mut self, picture: Rect) {
+        self.open_selection();
+        if self.opening.is_some() {
+            self.opening_stage = Some(picture);
+        }
     }
 }
