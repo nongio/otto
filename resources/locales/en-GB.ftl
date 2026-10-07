@@ -1339,9 +1339,6 @@ launcher-agents-error = Failed
 launcher-agents-none = No agent sessions yet
 # The heading of the panel in the side canvas that lists the agent sessions.
 canvas-sessions-heading = Agents
-# The button in that panel that starts a new request in the launcher.
-# Ask is the name of the feature, as in "Open in Ask".
-canvas-sessions-ask = Ask
 # The card in the side canvas that takes files dragged there, while a
 # drag goes on and nothing is stashed yet.
 stash-drop-invite = Drop files here to stash them

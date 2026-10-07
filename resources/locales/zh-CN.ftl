@@ -1224,7 +1224,6 @@ launcher-agents-needs-input = 等待回答
 launcher-agents-error = 失败
 launcher-agents-none = 尚无智能体会话
 canvas-sessions-heading = 智能体
-canvas-sessions-ask = Ask
 stash-drop-invite = 将文件拖放到此处以添加到收集
 # Ask mode: the files that go with a request, under it in the log, or above
 # the field before it is sent. { $files } is their names, comma-separated.
