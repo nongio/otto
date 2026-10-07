@@ -62,7 +62,7 @@ impl Browser {
             self.photos_anchor = self.photos_on_screen_anchor(depth);
         }
         let entries = self.visible(depth);
-        let sections = photos::sections(&entries, today, self.photos_group);
+        let sections = photos::sections(&entries, today, self.photos_group, &self.photo_dims);
         let aspects: Vec<f32> = entries.iter().map(|e| self.photo_dims.aspect(e)).collect();
         self.photos = view::PhotosLayout::new(sections, &aspects, area.width(), self.photos_row_h)
             .with_panel(panel_w);

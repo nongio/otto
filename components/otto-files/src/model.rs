@@ -449,14 +449,16 @@ impl Column {
 
 /// What a column's cached order was computed from: the column epoch, the
 /// sort key and direction, whether hidden files show, the picker's filter,
-/// and the Photos view's grouping when the order is that view's.
+/// and the Photos view's grouping when the order is that view's — with the
+/// epoch of the dates the pictures were taken, which arrive after the listing
+/// and move pictures between groups.
 pub type SortCacheKey = (
     u64,
     SortKey,
     bool,
     bool,
     usize,
-    Option<crate::photos::Grouping>,
+    Option<(crate::photos::Grouping, u64)>,
 );
 
 /// The filtered, sorted order of a column's listing, remembered between
