@@ -19,8 +19,12 @@ fn browser_over(names: &[&str]) -> (Browser, Tmp) {
         COUNTER.fetch_add(1, Ordering::Relaxed)
     ));
     std::fs::create_dir_all(&dir).expect("temp dir");
+    // A name ending in a slash is a folder.
     for name in names {
-        std::fs::write(dir.join(name), b"x").expect("temp file");
+        match name.strip_suffix('/') {
+            Some(folder) => std::fs::create_dir(dir.join(folder)).expect("temp dir"),
+            None => std::fs::write(dir.join(name), b"x").expect("temp file"),
+        }
     }
     let mut browser = Browser::new(dir.clone());
     browser.mode = ViewMode::List;
@@ -68,4 +72,24 @@ fn the_folder_being_viewed_is_not_a_selection() {
         Some(Vec::new()),
         "the focused window answers, with nothing selected"
     );
+}
+
+/// Ctrl+O on a folder goes into it here, as a double-click does, and hands
+/// nothing to another application.
+#[test]
+fn ctrl_o_on_a_folder_opens_it_in_this_window() {
+    for mode in [ViewMode::List, ViewMode::Grid, ViewMode::Photos] {
+        let (mut browser, dir) = browser_over(&["notes.txt", "Trips/"]);
+        browser.set_mode(mode);
+        browser.select(0, row_of(&browser, "Trips"));
+
+        browser.open_cursor_entry();
+
+        assert_eq!(
+            browser.columns.last().map(|c| c.path.clone()),
+            Some(dir.0.join("Trips")),
+            "{mode:?}: went into the folder"
+        );
+        assert!(browser.opening.is_none(), "{mode:?}: nothing was launched");
+    }
 }

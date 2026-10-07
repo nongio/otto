@@ -187,17 +187,14 @@ impl Browser {
         }
     }
 
-    /// Ctrl+O: open the entry at the cursor the way the desktop would.
+    /// Ctrl+O: open the entry at the cursor.
     ///
-    /// Everything goes to the entry type's default application (see
-    /// `open_file`), folders included — the shortcut asks the desktop to open
-    /// the thing, and the desktop's answer for a directory is whatever it has
-    /// registered as the file manager. That is the difference between this
-    /// and a double-click: the click descends where you are, the shortcut
-    /// hands the entry over. Same in every view.
-    ///
-    /// It pulses either way. Ctrl+O is a deliberate ask with no click to
-    /// acknowledge it, and whatever answers can take a moment to appear.
+    /// A folder opens here, the way a double-click opens it: Files is the
+    /// file manager, and handing a folder to the desktop's would at best open
+    /// another window of this one. Anything else goes to its type's default
+    /// application (see `open_file`), and pulses: Ctrl+O is a deliberate ask
+    /// with no click to acknowledge it, and whatever answers can take a moment
+    /// to appear. Same in every view.
     pub(super) fn open_cursor_entry(&mut self) {
         // The picker answers one request in one window: a second window would
         // have nothing to do with the request, and no way to answer it.
@@ -213,6 +210,10 @@ impl Browser {
         let Some(entry) = self.visible(depth).get(index).map(|e| (*e).clone()) else {
             return;
         };
+        if entry.is_dir {
+            self.open_selection();
+            return;
+        }
 
         self.opening = Some((depth, std::time::Instant::now()));
         self.dirty = true;
