@@ -16,6 +16,8 @@ serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 toml_edit.workspace = true
 xcursor.workspace = true
+sha-crypt.workspace = true
+zeroize.workspace = true
 # The clock format pop-up previews each format the way otto-bar renders it;
 # `unstable-locales` gives the day and month names in the user's language.
 chrono = { workspace = true, features = ["clock", "unstable-locales"] }

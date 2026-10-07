@@ -31,6 +31,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 use otto_kit::components::selection_list::SelectionListHit;
+use zeroize::Zeroizing;
 
 use crate::model::{group, untitled, Control, Pane, Row};
 
@@ -863,26 +864,19 @@ fn problem(state: &State, sheet: Sheet) -> Option<&'static str> {
 }
 
 /// Hash `password` the way `/etc/shadow` keeps it (SHA-512 crypt), which is
-/// what AccountsService's `SetPassword` takes. `openssl` reads it from a pipe.
-fn hash_password(password: &str) -> Result<String, String> {
-    let mut child = Command::new("openssl")
-        .args(["passwd", "-6", "-stdin"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|err| err.to_string())?;
-    {
-        let mut input = child.stdin.take().expect("stdin is piped");
-        writeln!(input, "{password}").map_err(|err| err.to_string())?;
-    }
-    let output = child.wait_with_output().map_err(|err| err.to_string())?;
-    let hash = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if output.status.success() && hash.starts_with("$6$") {
-        Ok(hash)
-    } else {
-        Err(otto_kit::t!("settings-account-password-failed").to_string())
-    }
+/// what AccountsService's `SetPassword` takes.
+///
+/// The salt is 12 random bytes, 16 characters once encoded: glibc's `crypt`
+/// reads no more than that, and `pam_unix` compares its output with the
+/// stored hash as a string, so a longer salt would never match.
+fn hash_password(password: &str) -> Result<Zeroizing<String>, String> {
+    use sha_crypt::{password_hash, PasswordHasher, ShaCrypt};
+    let failed = || otto_kit::t!("settings-account-password-failed").to_string();
+    let salt = password_hash::try_generate_salt().map_err(|_| failed())?;
+    ShaCrypt::SHA512
+        .hash_password_with_salt(password.as_bytes(), &salt[..12])
+        .map(|hash| Zeroizing::new(hash.to_string()))
+        .map_err(|_| failed())
 }
 
 fn set_password(object: &str, password: &str) -> Result<(), String> {
@@ -891,7 +885,12 @@ fn set_password(object: &str, password: &str) -> Result<(), String> {
 }
 
 /// Make a standard account, then give it its password.
+///
+/// The password is hashed first, so nothing is created when it cannot be;
+/// an account left without one is deleted again, so a retry does not find
+/// the name taken.
 fn add_user_account(user: &str, full_name: &str, password: &str) -> Result<(), String> {
+    let hash = hash_password(password)?;
     let full_name = if full_name.trim().is_empty() {
         user
     } else {
@@ -904,7 +903,16 @@ fn add_user_account(user: &str, full_name: &str, password: &str) -> Result<(), S
         &(user, full_name, 0_i32),
     )?
     .ok_or_else(|| otto_kit::t!("settings-account-not-permitted").to_string())?;
-    set_password(object.as_str(), password)
+    call(object.as_str(), "SetPassword", &(hash.as_str(), "")).inspect_err(|_| {
+        let uid = zbus::blocking::Connection::system()
+            .ok()
+            .and_then(|connection| read_account(&connection, object.as_str()).ok())
+            .map(|account| account.uid)
+            .filter(|&uid| uid != u32::MAX);
+        if let Some(uid) = uid {
+            let _ = delete_user_account(uid);
+        }
+    })
 }
 
 /// Delete an account, keeping its home folder.
@@ -1327,6 +1335,22 @@ printf "Retype new password: "; read b
 [ ${#a} -ge 8 ] || { echo "BAD PASSWORD: The password is shorter than 8 characters"; printf "New password: "; read c; echo "passwd: Have exhausted maximum number of retries for service"; exit 10; }
 echo "passwd: password updated successfully"
 "#;
+
+    #[test]
+    fn a_password_hashes_to_sha512_crypt() {
+        use sha_crypt::{PasswordVerifier, ShaCrypt};
+        let hash = hash_password("correct horse").unwrap();
+        assert!(hash.starts_with("$6$"));
+        // glibc's crypt reads at most 16 characters of salt.
+        let salt = hash.split('$').nth(3).unwrap();
+        assert_eq!(salt.len(), 16);
+        assert!(ShaCrypt::SHA512
+            .verify_password(b"correct horse", hash.as_str())
+            .is_ok());
+        assert!(ShaCrypt::SHA512
+            .verify_password(b"wrong horse", hash.as_str())
+            .is_err());
+    }
 
     #[test]
     fn the_prompts_are_answered_in_order() {

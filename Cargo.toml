@@ -275,6 +275,8 @@ xkbcommon = "0.9"
 # thread inside a tokio runtime: the compositor calls it from a plain thread). zbus 5 gates the blocking API
 # behind `blocking-api`; the settings client, otto-kit and others use it.
 zbus = { version = "5.15", default-features = false, features = ["blocking-api", "tokio"] }
+# SHA-512 crypt (`$6$`) for the passwords otto-settings hands AccountsService.
+sha-crypt = { version = "0.6", features = ["getrandom"] }
 zeroize = "1"
 
 [workspace.package]
@@ -297,7 +299,7 @@ extended-description = """\
 Otto is a modern Wayland compositor built with Smithay and Skia.\
 Featuring a custom scene graph engine (laye-rs) for layout management,\
 multi-workspace support, and integrated screen sharing capabilities."""
-depends = "$auto, libdrm2, libudev1, libgbm1, libxkbcommon0, libegl1, libwayland-client0, libwayland-egl1, libinput10, libdbus-1-3, libsystemd0, libseat1, libpipewire-0.3-0, libfreetype6, libfontconfig1, libpixman-1-0, fonts-inter, wireplumber, xwayland"
+depends = "$auto, libdrm2, libudev1, libgbm1, libxkbcommon0, libegl1, libwayland-client0, libwayland-egl1, libinput10, libdbus-1-3, libsystemd0, libseat1, libpipewire-0.3-0, libfreetype6, libfontconfig1, libpixman-1-0, fonts-inter, wireplumber, xwayland, accountsservice"
 section = "x11"
 priority = "optional"
 # postinst/prerm create and remove the default icon theme's symlinks.
@@ -531,6 +533,8 @@ rsms-inter-fonts = "*"
 wireplumber = "*"
 # X11 applications run through XWayland; Otto spawns it at startup.
 xorg-x11-server-Xwayland = "*"
+# otto-settings lists, adds and deletes users through it.
+accountsservice = "*"
 
 [package.metadata.aur]
 depends = [
@@ -553,6 +557,7 @@ depends = [
     "gst-plugins-base-libs",
     "polkit",
     "xorg-xwayland",
+    "accountsservice",
 ]
 optdepends = [
     "xdg-desktop-portal: Desktop integration",
