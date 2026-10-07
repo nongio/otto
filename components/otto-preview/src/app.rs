@@ -384,6 +384,7 @@ fn handle_pointer(viewer: &Mutex<Viewer>, window: &Window, events: &[PointerEven
                 // Always forwarded: a selection or a bar dragged past the
                 // content's edge keeps going.
                 v.content_pointer(VideoPointer::Motion, at);
+                v.sidebar_motion(at);
                 let shape = match edge {
                     Some(edge) if v.drag.is_none() => edge.cursor(),
                     _ if content.contains(at) || v.drag.is_some() => v.content_cursor(at),
@@ -461,6 +462,7 @@ fn handle_pointer(viewer: &Mutex<Viewer>, window: &Window, events: &[PointerEven
                         v.run_tool(tool);
                     }
                 }
+                v.sidebar_release();
                 let link = v.content_pointer(VideoPointer::Release, at);
                 if v.cursor == CursorShape::Grabbing {
                     v.cursor = v.content_cursor(at);
@@ -477,6 +479,7 @@ fn handle_pointer(viewer: &Mutex<Viewer>, window: &Window, events: &[PointerEven
                     v.dirty = true;
                 }
                 v.content_pointer(VideoPointer::Leave, at);
+                v.sidebar_scroll.on_pointer_leave();
                 v.cursor = CursorShape::Default;
             }
             PointerEventKind::Axis {
@@ -484,10 +487,10 @@ fn handle_pointer(viewer: &Mutex<Viewer>, window: &Window, events: &[PointerEven
                 vertical,
                 ..
             } => {
-                if v.sidebar().is_some_and(|sidebar| sidebar.rect.contains(at)) {
-                    if !vertical.stop {
-                        v.sidebar_wheel(vertical.absolute as f32);
-                    }
+                let stop = vertical.stop || horizontal.stop;
+                let discrete = vertical.discrete != 0 || horizontal.discrete != 0;
+                if v.wheel_goes_to_sidebar(at, stop, discrete) {
+                    v.sidebar_wheel(vertical.absolute as f32, stop, discrete);
                     redraw |= std::mem::take(&mut v.dirty);
                     continue;
                 }

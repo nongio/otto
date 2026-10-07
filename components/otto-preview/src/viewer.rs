@@ -12,10 +12,11 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use otto_files::peek::{PageRequest, Session, VideoPointer};
+use otto_kit::components::scroll::ScrollView;
 use otto_kit::components::titlebar::{DecorationVariant, WindowControlsState};
 use otto_kit::prelude::*;
 use otto_kit::preview::{Preview, ROW_HEIGHT};
-use otto_kit::skia::{Image, Point};
+use otto_kit::skia::{Contains, Image, Point};
 use otto_kit::theme::ColorScheme;
 use otto_kit::CursorShape;
 
@@ -77,8 +78,12 @@ pub struct Viewer {
     /// The sidebar shown or hidden from the toolbar; `None` until then, when
     /// it shows for a document of more than one page.
     pub sidebar_choice: Option<bool>,
-    /// How far the thumbnail column is scrolled, in points.
-    pub sidebar_scroll: f32,
+    /// The thumbnail column's scroll: the same physics as every other
+    /// scrolled view, fling, rubber band and scrollbar included.
+    pub sidebar_scroll: ScrollView,
+    /// Whether the scroll gesture in progress began over the sidebar, so it
+    /// stays with the column it started in until the fingers lift.
+    pub wheel_in_sidebar: Option<bool>,
     /// The page the sidebar last brought into its box, so it follows the
     /// document without fighting a scroll of its own.
     pub sidebar_followed: u32,
@@ -133,7 +138,8 @@ impl Viewer {
             dirty: true,
             closing: false,
             sidebar_choice: None,
-            sidebar_scroll: 0.0,
+            sidebar_scroll: ScrollView::new(Rect::new_empty()),
+            wheel_in_sidebar: None,
             sidebar_followed: 0,
             thumbs: HashMap::new(),
             thumbs_pending: HashSet::new(),
@@ -185,7 +191,16 @@ impl Viewer {
             .iter()
             .map(|page| (page.width, page.height))
             .collect();
-        Some(sidebar::layout(rect, &sizes, self.sidebar_scroll))
+        Some(sidebar::layout(rect, &sizes, self.sidebar_scroll.offset()))
+    }
+
+    /// Tell the column's scroll what it scrolls: the sidebar's box and the
+    /// column's height, which a resize or a newly opened document changes.
+    fn fit_sidebar_scroll(&mut self) {
+        if let Some(layout) = self.sidebar() {
+            self.sidebar_scroll.set_viewport(layout.rect);
+            self.sidebar_scroll.set_content_length(layout.column);
+        }
     }
 
     /// Show or hide the sidebar, keeping the document on the same spot of
@@ -228,20 +243,59 @@ impl Viewer {
         (rect.height() > 0.0).then(|| (index, (layout.inner.top - rect.top) / rect.height()))
     }
 
-    /// Scroll the thumbnail column by `dy` points of wheel.
-    pub fn sidebar_wheel(&mut self, dy: f32) {
-        let Some(layout) = self.sidebar() else {
-            return;
-        };
-        let scroll = (self.sidebar_scroll + dy).clamp(0.0, layout.max_scroll);
-        if scroll != self.sidebar_scroll {
-            self.sidebar_scroll = scroll;
-            self.dirty = true;
+    /// Whether a wheel or touchpad scroll at `at` is the sidebar's: the
+    /// pane a gesture began over keeps it until it ends, as the pan does.
+    pub fn wheel_goes_to_sidebar(&mut self, at: Point, stop: bool, discrete: bool) -> bool {
+        let over = self.sidebar().is_some_and(|layout| layout.rect.contains(at));
+        if discrete {
+            return over;
         }
+        let sidebar = *self.wheel_in_sidebar.get_or_insert(over);
+        if stop {
+            self.wheel_in_sidebar = None;
+        }
+        sidebar && self.sidebar_open()
     }
 
-    /// A press in the sidebar: go to the page under it.
+    /// A wheel or touchpad scroll of the thumbnail column.
+    pub fn sidebar_wheel(&mut self, dy: f32, stop: bool, discrete: bool) {
+        self.fit_sidebar_scroll();
+        let view = &mut self.sidebar_scroll;
+        self.dirty |= if stop {
+            // Fingers off the touchpad: the gesture's speed becomes a
+            // fling, and a pull past an end springs back.
+            view.on_wheel_end();
+            true
+        } else if discrete {
+            view.on_wheel_discrete(dy)
+        } else {
+            view.on_wheel(dy)
+        };
+    }
+
+    /// The pointer moved over the window: drag the column's scrollbar thumb,
+    /// or let the bar know it is hovered.
+    pub fn sidebar_motion(&mut self, at: Point) {
+        if !self.sidebar_open() {
+            return;
+        }
+        let view = &mut self.sidebar_scroll;
+        self.dirty |= view.on_pointer_drag(at.x, at.y) || view.on_pointer_move(at.x, at.y);
+    }
+
+    /// The button came up: a thumb drag ends.
+    pub fn sidebar_release(&mut self) {
+        self.sidebar_scroll.on_pointer_up();
+    }
+
+    /// A press in the sidebar: grab the scrollbar's thumb, or go to the page
+    /// under it.
     pub fn sidebar_press(&mut self, at: Point) {
+        self.fit_sidebar_scroll();
+        if self.sidebar_scroll.on_pointer_down(at.x, at.y) {
+            self.dirty = true;
+            return;
+        }
         let Some(page) = self.sidebar().and_then(|layout| layout.page_at(at)) else {
             return;
         };
@@ -262,10 +316,9 @@ impl Viewer {
             return false;
         }
         self.sidebar_followed = page;
-        let scroll = layout.scroll_to_show(page, self.sidebar_scroll);
-        let moved = scroll != self.sidebar_scroll;
-        self.sidebar_scroll = scroll;
-        moved
+        let offset = self.sidebar_scroll.offset();
+        let scroll = layout.scroll_to_show(page, offset);
+        scroll != offset && self.sidebar_scroll.scroll_to(scroll)
     }
 
     /// The thumbnails the sidebar wants rasterised next, marked as in flight,
@@ -655,7 +708,11 @@ impl Viewer {
         let mut moved = self.session.tick_pan(content);
         moved |= self.session.tick_animation();
         moved |= self.session.recognising_since.is_some();
+        self.fit_sidebar_scroll();
         moved |= self.follow_in_sidebar();
+        if self.sidebar_open() && self.sidebar_scroll.is_animating() {
+            moved |= self.sidebar_scroll.tick();
+        }
         let video = self.session.video_key();
         if video != self.video_key {
             self.video_key = video;
@@ -671,6 +728,7 @@ impl Viewer {
         self.session.pan_animating()
             || self.session.frames_running()
             || self.session.recognising_since.is_some()
+            || (self.sidebar_open() && self.sidebar_scroll.is_animating())
     }
 }
 

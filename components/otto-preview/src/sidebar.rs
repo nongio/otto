@@ -34,6 +34,8 @@ pub struct SidebarLayout {
     pub rect: Rect,
     /// Each page's thumbnail, 1-based page first.
     pub thumbs: Vec<(u32, Rect)>,
+    /// The column's whole height, thumbnails and margins.
+    pub column: f32,
     /// How far the column may scroll: its height past the box's.
     pub max_scroll: f32,
 }
@@ -104,6 +106,7 @@ pub fn layout(rect: Rect, pages: &[(f32, f32)], scroll: f32) -> SidebarLayout {
     SidebarLayout {
         rect,
         thumbs,
+        column,
         max_scroll: (column - rect.height()).max(0.0),
     }
 }
@@ -173,6 +176,8 @@ pub fn draw(canvas: &Canvas, viewer: &Viewer, theme: &Theme) {
             .centered_at(thumb.center_x(), thumb.bottom + LABEL_H / 2.0 + 1.0)
             .render(canvas);
     }
+    // The column's scrollbar, faded in and out like every other one.
+    viewer.sidebar_scroll.render(canvas, theme, |_, _| {});
     canvas.restore();
 
     // The hairline between the column and the document.
