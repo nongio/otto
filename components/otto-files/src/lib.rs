@@ -27,6 +27,7 @@ pub mod desk;
 pub mod desk_service;
 pub mod files_service;
 pub mod imagesize;
+pub mod videosize;
 pub mod launch;
 pub mod model;
 pub mod ocrcache;
