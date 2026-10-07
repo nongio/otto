@@ -86,6 +86,9 @@ pub struct WindowElementInner {
     /// Cached stable ID derived from the wl_surface on first call.
     /// Survives after the wl_surface is destroyed (e.g. on window close).
     cached_id: OnceLock<ObjectId>,
+    /// App id guessed from the client's executable, for a window that sets
+    /// none. Resolved once: the process behind a window never changes.
+    resolved_app_id: OnceLock<String>,
 }
 
 impl PartialEq for WindowElement {
@@ -111,6 +114,7 @@ impl WindowElement {
             has_material: AtomicBool::new(false),
             decoration_variant: AtomicU8::new(VARIANT_FLOATING),
             cached_id: OnceLock::new(),
+            resolved_app_id: OnceLock::new(),
         }))
     }
 
@@ -485,6 +489,10 @@ impl WindowElement {
 
     /// Resolve the actual app_id by examining the client's PID
     fn resolve_app_id_from_pid(&self, display_handle: &DisplayHandle) -> Option<String> {
+        if let Some(resolved) = self.0.resolved_app_id.get() {
+            return Some(resolved.clone());
+        }
+
         let surface = self.wl_surface()?;
 
         // Get the client from the surface
@@ -498,63 +506,19 @@ impl WindowElement {
         let exe_path = fs::read_link(format!("/proc/{}/exe", pid)).ok()?;
         let exe_name = exe_path.file_name()?.to_str()?.to_string();
 
-        // Try to find matching desktop entry
-        if let Some(desktop_id) = Self::find_desktop_entry_for_exe(&exe_name, &exe_path) {
-            return Some(desktop_id);
-        }
+        // Exact program-name match, cached by otto-kit: a substring match
+        // would take `sh` for `bash`.
+        let resolved = otto_kit::desktop_entry::lookup_app_by_binary(&exe_name)
+            .and_then(|info| info.desktop_file_id)
+            .unwrap_or_else(|| {
+                tracing::trace!(
+                    "[resolve_app_id_from_pid] No desktop entry found, using exe name: {}",
+                    exe_name
+                );
+                exe_name
+            });
 
-        // Fall back to executable name
-        tracing::trace!(
-            "[resolve_app_id_from_pid] No desktop entry found, using exe name: {}",
-            exe_name
-        );
-        Some(exe_name)
-    }
-
-    /// Find a desktop entry matching the executable
-    fn find_desktop_entry_for_exe(exe_name: &str, exe_path: &std::path::Path) -> Option<String> {
-        use freedesktop_desktop_entry::{DesktopEntry, Iter};
-
-        let exe_path_str = exe_path.to_str()?;
-
-        // Iterate through all desktop entries
-        for path in Iter::new(freedesktop_desktop_entry::default_paths()) {
-            if let Ok(entry) = DesktopEntry::from_path(&path, None::<&[&str]>) {
-                // Check Exec field
-                if let Some(exec) = entry.exec() {
-                    let exec_parts: Vec<&str> = exec.split_whitespace().collect();
-                    if let Some(exec_binary) = exec_parts.first() {
-                        // Extract basename from exec
-                        let exec_basename = std::path::Path::new(exec_binary)
-                            .file_name()
-                            .and_then(|s| s.to_str())
-                            .unwrap_or(exec_binary);
-
-                        // Match by executable name
-                        if exec_basename == exe_name || exec_binary.contains(exe_name) {
-                            let desktop_id = path
-                                .file_stem()
-                                .and_then(|s| s.to_str())
-                                .map(|s| s.to_string())?;
-                            return Some(desktop_id);
-                        }
-                    }
-                }
-
-                // Check TryExec field
-                if let Some(try_exec) = entry.try_exec() {
-                    if try_exec.contains(exe_name) || try_exec == exe_path_str {
-                        let desktop_id = path
-                            .file_stem()
-                            .and_then(|s| s.to_str())
-                            .map(|s| s.to_string())?;
-                        return Some(desktop_id);
-                    }
-                }
-            }
-        }
-
-        None
+        Some(self.0.resolved_app_id.get_or_init(|| resolved).clone())
     }
 
     pub fn is_minimised(&self) -> bool {
