@@ -392,11 +392,14 @@ Privacy, About. The panes are:
   For another account an administrator may also change its type (a pop-up;
   `SetAccountType` — never your own, so the machine cannot be left without
   one) and its password: **Reset Password…** opens a sheet with New password
-  and Confirm, hashed with `openssl passwd -6` and set with `SetPassword`.
+  and Confirm, hashed in-process to SHA-512 crypt (`$6$`) and set with
+  `SetPassword`.
   **+** opens **Add User**: Full name, Account name (suggested from the full
   name's first word while empty), Password and Confirm; the account name must
-  be one `useradd` takes and not already listed. It is created as Standard
-  with `CreateUser`, then given its password, and selected. **−** asks
+  be one `useradd` takes and not already listed. The password is hashed
+  first, the account created as Standard with `CreateUser`, given the
+  password and selected; if setting the password fails the new account is
+  deleted again. **−** asks
   **Delete <name>?** and deletes with `DeleteUser`, keeping the home folder.
   Everything done to another account is user administration, which polkit
   asks an administrator to approve through the session's agent; the sheet says
