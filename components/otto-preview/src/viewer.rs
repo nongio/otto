@@ -376,6 +376,32 @@ impl Viewer {
             )
     }
 
+    /// How large the preview is drawn against its own size, in percent: a
+    /// page at one point per point, a picture at one pixel per point, is
+    /// 100. `None` for what is not zoomed: text, listings, a decode in flight.
+    pub fn zoom_percent(&self) -> Option<u32> {
+        if !self.zoomable() {
+            return None;
+        }
+        let layout = otto_kit::preview::layout(
+            self.content(),
+            &self.session.preview,
+            self.session.first_row,
+            self.session.zoom,
+        );
+        let ratio = match &self.session.preview {
+            Preview::Pages { pages, .. } => {
+                let page = pages.first()?;
+                layout.page_rects.first()?.width() / page.width
+            }
+            Preview::Pixels { pixels, .. } => {
+                layout.content.width() / pixels.intrinsic_width as f32
+            }
+            _ => return None,
+        };
+        (ratio.is_finite() && ratio > 0.0).then(|| (ratio * 100.0).round() as u32)
+    }
+
     pub fn tool_enabled(&self, tool: Tool) -> bool {
         let scale = self.session.zoom.scale;
         match tool {
