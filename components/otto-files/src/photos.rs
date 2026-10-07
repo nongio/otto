@@ -20,10 +20,22 @@ use crate::recent;
 use crate::view::PhotosSection;
 use otto_search::dates::civil_from_days;
 
-/// Whether an entry is laid out as a picture, at its own proportions, rather
-/// than as a square tile in the trailing "Other Files" section.
+/// Whether an entry is a picture: what can be turned, has a palette, and is
+/// counted as a photo.
 pub fn is_photo(entry: &Entry) -> bool {
     !entry.is_dir && entry.kind == Kind::Image
+}
+
+/// Whether an entry is a video.
+pub fn is_video(entry: &Entry) -> bool {
+    !entry.is_dir && entry.kind == Kind::Video
+}
+
+/// Whether an entry is laid out on the wall at its own proportions, its
+/// thumbnail filling the tile — a picture, or a video's poster frame — rather
+/// than as a square tile in the trailing "Other Files" section.
+pub fn is_media(entry: &Entry) -> bool {
+    is_photo(entry) || is_video(entry)
 }
 
 const DAY: i64 = 86_400;
@@ -144,7 +156,7 @@ pub enum SectionKind {
 pub fn kind_of(entry: &Entry) -> SectionKind {
     if entry.is_dir {
         SectionKind::Folders
-    } else if is_photo(entry) {
+    } else if is_media(entry) {
         SectionKind::Photos
     } else {
         SectionKind::Other
@@ -242,6 +254,10 @@ pub fn sections(
 /// cameras shoot 3:2 or 4:3, and a guess close to the answer moves the least
 /// when the answer lands.
 pub const PLACEHOLDER_ASPECT: f32 = 1.5;
+
+/// The aspect a video is laid out at until its header is read, and when it
+/// cannot be: 16:9, what nearly everything records at.
+pub const VIDEO_ASPECT: f32 = 16.0 / 9.0;
 
 /// The widest and tallest a tile may be, as width over height. A panorama at
 /// its true proportions would be a strip too thin to see, and a tall
@@ -366,15 +382,23 @@ impl Dims {
     /// hold. [`PLACEHOLDER_ASPECT`] until it is known; square for a picture
     /// whose size could not be read, and for anything that is not a picture.
     pub fn aspect(&self, entry: &Entry) -> f32 {
-        if !is_photo(entry) {
+        if !is_media(entry) {
             return 1.0;
         }
+        // A video whose header could not be read is still a video, and
+        // nearly every video is widescreen.
+        let unknown = if is_video(entry) { VIDEO_ASPECT } else { 1.0 };
+        let placeholder = if is_video(entry) {
+            VIDEO_ASPECT
+        } else {
+            PLACEHOLDER_ASPECT
+        };
         let aspect = match self.known.get(&entry.path) {
             Some(known) if known.modified == entry.modified => match known.size {
                 Some((w, h)) => w as f32 / h as f32,
-                None => 1.0,
+                None => unknown,
             },
-            _ => PLACEHOLDER_ASPECT,
+            _ => placeholder,
         };
         aspect.clamp(MIN_ASPECT, MAX_ASPECT)
     }
@@ -391,7 +415,7 @@ impl Dims {
         }
         let jobs: Vec<ProbeJob> = entries
             .into_iter()
-            .filter(|entry| is_photo(entry) && entry.modified.is_some())
+            .filter(|entry| is_media(entry) && entry.modified.is_some())
             .filter(|entry| {
                 self.known
                     .get(&entry.path)
@@ -452,10 +476,35 @@ impl Dims {
 pub fn probe_all(jobs: Vec<ProbeJob>) -> Vec<ProbeResult> {
     jobs.into_iter()
         .map(|(path, modified)| {
-            let (size, taken) = probe(&path);
+            let (size, taken) = if is_video_path(&path) {
+                probe_video(&path)
+            } else {
+                probe(&path)
+            };
             (path, modified, size, taken)
         })
         .collect()
+}
+
+/// Whether a probe job is a video. Named rather than sniffed: the job
+/// carries a path, and its entry was laid out as a video by the same name.
+fn is_video_path(path: &Path) -> bool {
+    path.file_name().is_some_and(|name| {
+        otto_kit::filetype::kind_for_name(&name.to_string_lossy()) == Kind::Video
+    })
+}
+
+/// [`probe`] for a video: its size as shown, and the day it was recorded,
+/// from the container's header.
+pub fn probe_video(path: &Path) -> (Option<(u32, u32)>, Option<i64>) {
+    let Some(video) = crate::videosize::read(path) else {
+        return (None, None);
+    };
+    let day = video
+        .recorded
+        .and_then(|secs| u64::try_from(secs).ok())
+        .map(|secs| SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(secs));
+    (video.size, local_day(day))
 }
 
 // ---------------------------------------------------------------------------

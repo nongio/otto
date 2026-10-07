@@ -6259,8 +6259,9 @@ pub struct PhotoTileState {
     pub cut: bool,
 }
 
-/// One Photos tile: the picture cropped to fill the tile, or, for anything
-/// that is not a picture, its icon and name on a quiet card.
+/// One Photos tile: the picture — or a video's poster frame, with a play
+/// badge over it — cropped to fill the tile, or, for anything else, its icon
+/// and name on a quiet card.
 ///
 /// Filled rather than fitted, unlike the grid's thumbnails: the tile already
 /// has the picture's proportions, so the crop only trims what the clamp on
@@ -6278,7 +6279,9 @@ pub fn draw_photo_tile(
         return;
     }
     let shape = RRect::new_rect_xy(tile, PHOTOS_RADIUS, PHOTOS_RADIUS);
-    let photo = crate::photos::is_photo(entry);
+    // A video is laid out and drawn as its poster frame, like a picture.
+    let photo = crate::photos::is_media(entry);
+    let video = crate::photos::is_video(entry);
     let mut paint = Paint::default();
     paint.set_anti_alias(true);
     if state.cut {
@@ -6312,6 +6315,9 @@ pub fn draw_photo_tile(
         None => draw_photo_card(canvas, theme, entry, tile, thumb, state.cut),
     }
 
+    if video {
+        draw_play_badge(canvas, tile, state.cut);
+    }
     if state.hovered && photo {
         draw_photo_caption(canvas, entry, tile);
     }
@@ -6324,6 +6330,43 @@ pub fn draw_photo_tile(
     if state.selected {
         draw_photo_selection(canvas, theme, tile, PHOTOS_RADIUS);
     }
+}
+
+/// The badge that says a tile is a video: a play triangle on a dark disc,
+/// centred, sized to the tile within limits so it reads on a small tile and
+/// does not shout on a large one. Drawn whether or not the poster has landed,
+/// so a video is a video from the first frame.
+fn draw_play_badge(canvas: &Canvas, tile: Rect, cut: bool) {
+    let radius = (tile.width().min(tile.height()) * 0.14).clamp(12.0, 26.0);
+    let (cx, cy) = (tile.center_x(), tile.center_y());
+    let fade = if cut { 0.45 } else { 1.0 };
+
+    let mut disc = Paint::default();
+    disc.set_anti_alias(true);
+    disc.set_color(Color::from_argb((110.0 * fade) as u8, 0, 0, 0));
+    canvas.draw_circle((cx, cy), radius, &disc);
+
+    let mut ring = Paint::default();
+    ring.set_anti_alias(true);
+    ring.set_style(skia_safe::paint::Style::Stroke);
+    ring.set_stroke_width(1.5);
+    ring.set_color(Color::from_argb((200.0 * fade) as u8, 255, 255, 255));
+    canvas.draw_circle((cx, cy), radius, &ring);
+
+    // The triangle's centroid sits a third of the way in from its flat side,
+    // so it is nudged right to look centred in the disc.
+    let side = radius * 0.95;
+    let half = side * 0.5;
+    let left = cx - side * 0.36;
+    let mut triangle = PathBuilder::new();
+    triangle.move_to(Point::new(left, cy - half));
+    triangle.line_to(Point::new(left + side * 0.87, cy));
+    triangle.line_to(Point::new(left, cy + half));
+    triangle.close();
+    let mut ink = Paint::default();
+    ink.set_anti_alias(true);
+    ink.set_color(Color::from_argb((240.0 * fade) as u8, 255, 255, 255));
+    canvas.draw_path(&triangle.detach(), &ink);
 }
 
 /// A folder in the Photos view: a card of the newest pictures inside it —
