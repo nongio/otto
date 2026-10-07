@@ -10,7 +10,7 @@
 
 use otto_kit::common::Renderable;
 use otto_kit::prelude::*;
-use otto_kit::skia::{Contains, PaintStyle, Point, RRect};
+use otto_kit::skia::{BlurStyle, Contains, MaskFilter, PaintStyle, Point, RRect};
 
 use crate::viewer::Viewer;
 
@@ -26,6 +26,9 @@ const LABEL_H: f32 = 22.0;
 const GAP: f32 = 10.0;
 /// The ring around the page showing, outside the thumbnail.
 const RING: f32 = 3.0;
+/// The shadow under a thumbnail: how soft, and how far it drops.
+const SHADOW_BLUR: f32 = 3.0;
+const SHADOW_DROP: f32 = 1.5;
 
 /// Where every thumbnail sits, in window coordinates, scrolled.
 #[derive(Debug, Clone)]
@@ -134,6 +137,11 @@ pub fn draw(canvas: &Canvas, viewer: &Viewer, theme: &Theme) {
     edge.set_style(PaintStyle::Stroke);
     edge.set_stroke_width(1.0);
     edge.set_color(theme.fill_tertiary);
+    // A soft drop under each page, so it sits on the column like paper.
+    let mut shadow = Paint::default();
+    shadow.set_anti_alias(true);
+    shadow.set_color(Color::from_argb(if theme.is_dark() { 140 } else { 60 }, 0, 0, 0));
+    shadow.set_mask_filter(MaskFilter::blur(BlurStyle::Normal, SHADOW_BLUR, false));
     let mut ring = Paint::default();
     ring.set_anti_alias(true);
     ring.set_style(PaintStyle::Stroke);
@@ -145,6 +153,7 @@ pub fn draw(canvas: &Canvas, viewer: &Viewer, theme: &Theme) {
             continue;
         }
         let current = showing == Some(*page);
+        canvas.draw_rect(thumb.with_offset((0.0, SHADOW_DROP)), &shadow);
         match viewer.thumbs.get(page) {
             Some(image) => {
                 canvas.draw_image_rect_with_sampling_options(

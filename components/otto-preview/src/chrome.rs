@@ -166,6 +166,9 @@ pub fn draw(canvas: &Canvas, viewer: &Viewer, theme: &Theme) {
         let enabled = viewer.tool_enabled(*tool);
         let hovered = enabled && viewer.hovered_tool == Some(*tool);
         let pressed = hovered && viewer.pressed_tool == Some(*tool);
+        // The sidebar button is a toggle: it stays down while the sidebar
+        // shows.
+        let pressed = pressed || (*tool == Tool::Sidebar && viewer.sidebar_open());
         draw_icon_button(canvas, theme, *rect, *tool, enabled, hovered, pressed);
     }
 
