@@ -610,8 +610,8 @@ pub fn run_winit() {
                                 let origin = (pos.x, pos.y);
                                 // The lock plane stays in the stack rather than
                                 // replacing it (as the virtual-output path does):
-                                // it is hidden while unlocked, and exposé cannot
-                                // be open on a locked session anyway.
+                                // it is hidden while unlocked, and a lock can
+                                // come down on an exposé that is already open.
                                 vec![
                                     state.scene_element.for_plane_subtree(&ows.lock_plane, origin),
                                     state

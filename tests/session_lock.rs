@@ -583,4 +583,69 @@ mod session_lock_tests {
 
         handle.stop();
     }
+
+    /// A locked session has no desktop gestures: a 3-finger swipe neither
+    /// opens exposé nor switches workspace, and a 4-finger pinch does not
+    /// start show desktop.
+    #[test]
+    #[serial]
+    fn gestures_do_nothing_while_locked() {
+        let handle = start();
+        handle.query(|state| state.lock_session());
+        assert!(locked(&handle));
+
+        handle.swipe(&[(0.0, -10.0), (0.0, -50.0), (0.0, -80.0), (0.0, -80.0)]);
+        handle.settle(300);
+        assert!(
+            !handle.is_expose_active(),
+            "a swipe opened exposé under the lock"
+        );
+
+        let before = handle.current_workspace_index();
+        handle.swipe(&[(-10.0, 0.0), (-80.0, 0.0), (-120.0, 0.0), (-120.0, 0.0)]);
+        handle.settle(300);
+        assert_eq!(
+            handle.current_workspace_index(),
+            before,
+            "a swipe switched workspace under the lock"
+        );
+        assert_eq!(handle.swipe_gesture_state(), "idle");
+
+        handle.pinch_begin();
+        handle.pinch_update(1.8);
+        handle.pinch_end();
+        handle.settle(300);
+        assert!(
+            !handle.is_show_desktop_active(),
+            "a pinch showed the desktop under the lock"
+        );
+
+        handle.stop();
+    }
+
+    /// A swipe already under way when the lock comes down stops driving the
+    /// desktop: the rest of its updates are ignored.
+    #[test]
+    #[serial]
+    fn a_swipe_in_progress_is_cancelled_by_the_lock() {
+        let handle = start();
+
+        handle.swipe_begin();
+        handle.swipe_update(0.0, -40.0);
+        assert_eq!(handle.swipe_gesture_state(), "expose");
+
+        handle.query(|state| state.lock_session());
+        assert_eq!(handle.swipe_gesture_state(), "idle");
+
+        handle.swipe_update(0.0, -80.0);
+        handle.swipe_update(0.0, -80.0);
+        handle.swipe_end();
+        handle.settle(300);
+        assert!(
+            !handle.is_expose_active(),
+            "a swipe begun before the lock opened exposé under it"
+        );
+
+        handle.stop();
+    }
 }
