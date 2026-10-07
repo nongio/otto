@@ -685,6 +685,9 @@ files-undo-move = 移動
 files-undo-copy = コピー
 files-undo-delete = 削除
 files-undo-rename = 名称変更
+files-undo-rotate = 回転
+files-undo-flip = 反転
+files-turn-failed = 「{ $name }」を回転できませんでした: { $error }
 # $name is a file or folder name, already wrapped in quotation marks.
 files-renamed-to = 「{ $name }」に名称変更しました
 files-new-folder-created = 新規フォルダ「{ $name }」

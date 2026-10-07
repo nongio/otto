@@ -31,6 +31,7 @@ pub mod launch;
 pub mod model;
 pub mod ocrcache;
 pub mod open_with;
+pub mod orient;
 pub mod palette;
 pub mod pane_surfaces;
 pub mod peek;

@@ -819,6 +819,11 @@ files-undo-copy = Copy
 files-undo-delete = Delete
 files-undo-new-folder-with-selection = New Folder with Selection
 files-undo-rename = Rename
+# A photograph turned or flipped from the Photos info panel, for Undo, and
+# the message when its file could not be changed.
+files-undo-rotate = Rotate
+files-undo-flip = Flip
+files-turn-failed = Couldn’t turn “{ $name }”: { $error }
 # $name is a file or folder name, already wrapped in quotation marks.
 files-renamed-to = Renamed to “{ $name }”
 files-new-folder-created = New folder “{ $name }”

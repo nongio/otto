@@ -718,6 +718,9 @@ files-undo-move = Перемещение
 files-undo-copy = Копирование
 files-undo-delete = Удаление
 files-undo-rename = Переименование
+files-undo-rotate = Поворот
+files-undo-flip = Отражение
+files-turn-failed = Не удалось повернуть «{ $name }»: { $error }
 # $name is a file or folder name, already wrapped in quotation marks.
 files-renamed-to = Переименовано в «{ $name }»
 files-new-folder-created = Новая папка «{ $name }»

@@ -1963,6 +1963,53 @@ const INFO_SWATCH_GAP: f32 = 12.0;
 /// How much a swatch grows on each side under the pointer.
 const INFO_SWATCH_GROW: f32 = 2.0;
 const INFO_ROW_H: f32 = 24.0;
+/// A turn or flip button under the picture, and the room between two.
+const INFO_TOOL: f32 = 32.0;
+const INFO_TOOL_GAP: f32 = 8.0;
+
+/// The buttons under the Photos info panel's picture, left to right, with
+/// the theme icons they wear.
+pub const PHOTOS_TOOLS: [crate::orient::Turn; 4] = [
+    crate::orient::Turn::Left,
+    crate::orient::Turn::Right,
+    crate::orient::Turn::FlipHorizontal,
+    crate::orient::Turn::FlipVertical,
+];
+
+fn photos_tool_icons(turn: crate::orient::Turn) -> (&'static [&'static str], &'static str) {
+    use crate::orient::Turn;
+    match turn {
+        Turn::Left => (&["object-rotate-left-symbolic", "object-rotate-left"], "↺"),
+        Turn::Right => (
+            &["object-rotate-right-symbolic", "object-rotate-right"],
+            "↻",
+        ),
+        Turn::FlipHorizontal => (
+            &["object-flip-horizontal-symbolic", "object-flip-horizontal"],
+            "⇆",
+        ),
+        Turn::FlipVertical => (
+            &["object-flip-vertical-symbolic", "object-flip-vertical"],
+            "⇅",
+        ),
+    }
+}
+
+/// The turn or flip button under `(x, y)`, when one picture is in the panel.
+pub fn photos_info_tool_at(
+    panel: Rect,
+    data: &PhotosInfoData<'_>,
+    x: f32,
+    y: f32,
+) -> Option<usize> {
+    let PhotosInfoData::One { swatches, .. } = data else {
+        return None;
+    };
+    photos_info_layout(panel, swatches.len())
+        .tools
+        .iter()
+        .position(|rect| rect.contains(Point::new(x, y)))
+}
 
 /// The panel itself, from under the header to the foot of the file area.
 pub fn photos_info_rect(width: f32, height: f32) -> Rect {
@@ -1986,6 +2033,11 @@ pub enum PhotosInfoData<'a> {
         hovered: Option<usize>,
         /// What the camera wrote down about it, once the decode lands.
         camera: Option<&'a crate::camera::Shot>,
+        /// Whether its turn and flip buttons work: a JPEG. They are drawn
+        /// either way, so the panel keeps its shape from file to file.
+        turnable: bool,
+        /// The turn or flip button under the pointer.
+        tool_hover: Option<usize>,
     },
     /// Several things selected: how many, and how much they weigh.
     Many { count: usize, bytes: u64 },
@@ -2003,6 +2055,9 @@ pub enum PhotosInfoData<'a> {
 /// Where the parts of the info panel go, for drawing and hit testing alike.
 pub struct InfoLayout {
     pub stage: Rect,
+    /// The turn and flip buttons, in a row under the picture, in the order
+    /// of [`PHOTOS_TOOLS`].
+    pub tools: [Rect; 4],
     /// The baseline centre of the name, and of the kind line under it.
     pub name_cy: f32,
     pub kind_cy: f32,
@@ -2022,7 +2077,19 @@ pub fn photos_info_layout(panel: Rect, swatches: usize) -> InfoLayout {
         inner.width(),
         INFO_STAGE_H,
     );
-    let name_cy = stage.bottom + 22.0;
+    let row = PHOTOS_TOOLS.len() as f32;
+    let tools_w = row * INFO_TOOL + (row - 1.0) * INFO_TOOL_GAP;
+    let tools_left = stage.center_x() - tools_w / 2.0;
+    let tools_top = stage.bottom + 10.0;
+    let tools = std::array::from_fn(|i| {
+        Rect::from_xywh(
+            tools_left + i as f32 * (INFO_TOOL + INFO_TOOL_GAP),
+            tools_top,
+            INFO_TOOL,
+            INFO_TOOL,
+        )
+    });
+    let name_cy = tools_top + INFO_TOOL + 22.0;
     let kind_cy = name_cy + 20.0;
     let count = swatches.min(5);
     // A fixed gap from the left, so two colours sit together rather than at
@@ -2046,6 +2113,7 @@ pub fn photos_info_layout(panel: Rect, swatches: usize) -> InfoLayout {
     };
     InfoLayout {
         stage,
+        tools,
         name_cy,
         kind_cy,
         swatches: swatch_rects,
@@ -2123,11 +2191,23 @@ fn draw_photos_info(canvas: &Canvas, f: &Frame, data: &PhotosInfoData<'_>) {
         swatches,
         copied,
         hovered,
+        turnable,
+        tool_hover,
         ..
     } = data
     {
         let layout = photos_info_layout(panel, swatches.len());
         draw_info_stage(canvas, theme, layout.stage, entry, *decoded);
+        for (i, (rect, turn)) in layout.tools.iter().zip(PHOTOS_TOOLS).enumerate() {
+            draw_photos_tool(
+                canvas,
+                theme,
+                *rect,
+                turn,
+                *turnable,
+                *tool_hover == Some(i),
+            );
+        }
         for (i, (rect, colour)) in layout.swatches.iter().zip(swatches.iter()).enumerate() {
             // The one under the pointer grows a little and wears a ring: it
             // is something to click, not only a colour to look at.
@@ -2391,6 +2471,52 @@ fn draw_info_stage(
     );
     canvas.restore();
     draw_picture_edge(canvas, fitted, 0.0, false);
+}
+
+/// One turn or flip button: the theme's icon, tinted like the sidebar's
+/// glyphs, on a rounded ground while the pointer is over it. Dimmed, and
+/// with no ground, for a file it cannot turn.
+fn draw_photos_tool(
+    canvas: &Canvas,
+    theme: &Theme,
+    rect: Rect,
+    turn: crate::orient::Turn,
+    enabled: bool,
+    hovered: bool,
+) {
+    if enabled && hovered {
+        let mut ground = Paint::default();
+        ground.set_anti_alias(true);
+        ground.set_color(theme.fill_tertiary);
+        canvas.draw_rrect(RRect::new_rect_xy(rect, 8.0, 8.0), &ground);
+    }
+    let ink = if enabled {
+        theme.text_secondary
+    } else {
+        fade(theme.text_tertiary, 0.5)
+    };
+    let (names, fallback) = photos_tool_icons(turn);
+    let glyph = 16.0;
+    let dst = Rect::from_xywh(
+        rect.center_x() - glyph / 2.0,
+        rect.center_y() - glyph / 2.0,
+        glyph,
+        glyph,
+    );
+    if let Some(image) = icons::cached_icon_chain(names, glyph as i32) {
+        let mut tint = Paint::default();
+        tint.set_color_filter(skia_safe::color_filters::blend(
+            ink,
+            skia_safe::BlendMode::SrcIn,
+        ));
+        canvas.draw_image_rect(&image, None, dst, &tint);
+    } else {
+        Label::new(fallback)
+            .with_style(styles::BODY)
+            .with_color(ink)
+            .centered_on(rect.center_x(), rect.center_y())
+            .render(canvas);
+    }
 }
 
 /// The soft shadow a picture casts on the panel it is shown in: a blurred

@@ -699,6 +699,9 @@ files-undo-move = Verschieben
 files-undo-copy = Kopieren
 files-undo-delete = Löschen
 files-undo-rename = Umbenennen
+files-undo-rotate = Drehen
+files-undo-flip = Spiegeln
+files-turn-failed = „{ $name }“ konnte nicht gedreht werden: { $error }
 # $name is a file or folder name, already wrapped in quotation marks.
 files-renamed-to = In „{ $name }“ umbenannt
 files-new-folder-created = Neuer Ordner „{ $name }“
