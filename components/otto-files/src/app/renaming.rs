@@ -94,8 +94,13 @@ impl Browser {
             return Err(otto_kit::t_owned!("files-name-invalid"));
         }
         let target = original.with_file_name(new_name);
-        std::fs::rename(original, &target)
-            .map_err(|err| otto_kit::t_owned!("files-rename-failed", error = err.to_string()))?;
+        model::rename_no_replace(original, &target).map_err(|err| {
+            if err.kind() == std::io::ErrorKind::AlreadyExists {
+                otto_kit::t_owned!("files-name-taken", name = new_name)
+            } else {
+                otto_kit::t_owned!("files-rename-failed", error = err.to_string())
+            }
+        })?;
         if let Some(column) = self.columns.get_mut(depth) {
             column.selection.clear();
             // The renamed file, by its new path: the key moves with the file,
