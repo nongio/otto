@@ -39,7 +39,7 @@ impl Browser {
         let area = Rect::from_xywh(
             full.left,
             full.top,
-            view::photos_wall_width(full.width()),
+            view::photos_wall_width(full.width(), self.photos_row_h),
             full.height(),
         );
         let today = photos::today();

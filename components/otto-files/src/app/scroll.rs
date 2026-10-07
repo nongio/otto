@@ -33,7 +33,7 @@ impl Browser {
         let viewport = view::content_viewport(width, height, mode);
         self.pan.set_viewport(viewport);
         self.pan.set_content_length(match mode {
-            ViewMode::Photos => view::photos_content_width(viewport.width()),
+            ViewMode::Photos => view::photos_content_width(viewport.width(), self.photos_row_h),
             _ => view::miller_content_width(depth_count, &miller, self.preview_width()),
         });
         let pan = self.pan.offset();

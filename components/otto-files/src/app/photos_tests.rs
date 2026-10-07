@@ -208,6 +208,8 @@ fn the_info_panel_sits_beside_the_wall_and_describes_the_selection() {
         entry("b.jpg", Kind::Image, 0),
         entry("notes.txt", Kind::Text, 0),
     ]);
+    // Wide enough for the wall's four pictures across and the panel.
+    browser.size.0 = 2000.0;
     browser.sync_scroll_metrics();
     let (width, height) = (browser.size.0, browser.content_h());
     let full = view::content_viewport(width, height, ViewMode::Photos);
@@ -264,6 +266,7 @@ fn the_info_panel_copies_a_swatch() {
     let mut browser = photos_over(vec![entry("a.jpg", Kind::Image, 0)]);
     browser.select(0, 0);
     browser.sync_scroll_metrics();
+    reveal_info_panel(&mut browser);
     // The decode landing, with its palette worked out.
     let path = browser.visible(0)[0].path.clone();
     browser.sync_preview_target();
@@ -350,6 +353,7 @@ fn the_info_panel_text_can_be_selected_and_copied() {
     let mut browser = photos_over(vec![entry("holiday.jpg", Kind::Image, 0)]);
     browser.select(0, 0);
     browser.sync_scroll_metrics();
+    reveal_info_panel(&mut browser);
     let data = browser.photos_info_data().unwrap();
     let panel = browser.photos.panel_rect(browser.size.0, browser.content_h());
     let runs = view::photos_info_runs(panel, &data, &otto_kit::theme::Theme::light());
@@ -480,15 +484,16 @@ fn a_narrow_window_pans_to_the_info_panel() {
     browser.sync_scroll_metrics();
     let (width, height) = (browser.size.0, browser.content_h());
     let full = view::content_viewport(width, height, ViewMode::Photos);
-    assert!(full.width() < view::PHOTOS_WALL_MIN + view::PHOTOS_INFO_W);
+    let least = view::photos_wall_min(browser.photos_row_h);
+    assert!(full.width() < least + view::PHOTOS_INFO_W);
     // The wall keeps its least width and the panel is past the edge …
     assert_eq!(
         browser.photos.area(width, height).width(),
-        view::PHOTOS_WALL_MIN.min(full.width())
+        least.min(full.width())
     );
     assert!(!browser.photos.has_panel(width, height));
     // … as far away as the pan reaches, and no further.
-    let reach = view::photos_content_width(full.width()) - full.width();
+    let reach = view::photos_content_width(full.width(), browser.photos_row_h) - full.width();
     assert_eq!(browser.pan.state.max_offset(), reach);
     reveal_info_panel(&mut browser);
     assert!(browser.photos.has_panel(width, height));
