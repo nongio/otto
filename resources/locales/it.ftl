@@ -1894,6 +1894,11 @@ files-photos-info-copied = Copiato
 files-photos-info-dimensions = Dimensioni
 files-photos-info-modified = Modificato
 files-photos-info-where = Posizione
+files-photos-info-taken = Scattata
+files-photos-info-camera = Fotocamera
+files-photos-info-lens = Obiettivo
+files-photos-info-exposure = Esposizione
+files-photos-info-location = Luogo
 files-photos-info-many =
     { $count ->
         [one] 1 elemento

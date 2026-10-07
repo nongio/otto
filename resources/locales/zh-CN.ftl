@@ -1871,6 +1871,11 @@ files-photos-info-copied = 已拷贝
 files-photos-info-dimensions = 尺寸
 files-photos-info-modified = 修改时间
 files-photos-info-where = 位置
+files-photos-info-taken = 拍摄时间
+files-photos-info-camera = 相机
+files-photos-info-lens = 镜头
+files-photos-info-exposure = 曝光
+files-photos-info-location = 拍摄地点
 files-photos-info-many =
     { $count ->
        *[other] { $count } 项

@@ -962,7 +962,7 @@ pub fn format_time(time: SystemTime) -> String {
 
 /// [`format_time`] for `secs` since the epoch, shifted `offset` seconds east
 /// of UTC.
-fn format_time_at(secs: i64, offset: i64) -> String {
+pub(crate) fn format_time_at(secs: i64, offset: i64) -> String {
     use otto_search::dates::{civil_from_days, DAY};
     let local = secs + offset;
     let (year, month, day) = civil_from_days(local.div_euclid(DAY));

@@ -1867,6 +1867,11 @@ files-photos-info-copied = コピーしました
 files-photos-info-dimensions = サイズ
 files-photos-info-modified = 変更日
 files-photos-info-where = 場所
+files-photos-info-taken = 撮影日時
+files-photos-info-camera = カメラ
+files-photos-info-lens = レンズ
+files-photos-info-exposure = 露出
+files-photos-info-location = 撮影地
 files-photos-info-many =
     { $count ->
        *[other] { $count } 項目

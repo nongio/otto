@@ -20,6 +20,7 @@
 mod bench;
 
 pub mod app;
+pub mod camera;
 pub mod command;
 pub mod dbus;
 pub mod desk;
