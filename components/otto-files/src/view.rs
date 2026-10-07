@@ -1544,9 +1544,6 @@ pub struct PhotosLayout {
     /// the wall the way the preview column trails the Miller stack. Stays
     /// zero while the window is wide enough for both.
     pan: f32,
-    /// The row height the wall was packed for, which sets how narrow it
-    /// may be squeezed: see [`photos_wall_width`].
-    row_h: f32,
 }
 
 impl PhotosLayout {
@@ -1555,7 +1552,6 @@ impl PhotosLayout {
         sections: Vec::new(),
         layout: JustifiedLayout::empty(),
         pan: 0.0,
-        row_h: 0.0,
     };
 
     /// Lay `sections` out across `width` — the file area's — with `aspects`
@@ -1591,7 +1587,6 @@ impl PhotosLayout {
             sections,
             layout,
             pan: 0.0,
-            row_h,
         }
     }
 
@@ -1609,7 +1604,7 @@ impl PhotosLayout {
         Rect::from_ltrb(
             left,
             full.top,
-            left + photos_wall_width(full.width(), self.row_h),
+            left + photos_wall_width(full.width()),
             full.bottom,
         )
     }
@@ -1971,36 +1966,26 @@ pub struct PhotosControls {
 // --- The Photos info panel -------------------------------------------------
 //
 // A column trailing the Photos wall, the way the preview column trails the
-// Miller stack: beside the wall when the window has room for both, past the
-// edge to be panned to when it does not. It takes the same decode as the preview column and
+// Miller stack: its edge shows in the file area's last fifteen percent, and
+// the rest of it is panned to. It takes the same decode as the preview column and
 // draws it with the same stage, and describes the one file, the one folder,
 // how many are selected, or with nothing selected, the folder itself.
 
 /// The info panel's width.
 pub const PHOTOS_INFO_W: f32 = 320.0;
-/// How many pictures across the wall keeps room for before it gives up
-/// space to the info panel.
-pub const PHOTOS_WALL_COLUMNS: f32 = 4.0;
+/// The share of the file area the wall keeps. The info panel starts in what
+/// is left, showing its edge, and the rest of it is panned to.
+pub const PHOTOS_WALL_SHARE: f32 = 0.85;
 
-/// The narrowest the wall is squeezed to make room for the info panel:
-/// [`PHOTOS_WALL_COLUMNS`] pictures of the usual proportions at `row_h`.
-/// A file area narrower than this and the panel together gives the wall the
-/// whole of it and leaves the panel past the edge, to be panned to.
-pub fn photos_wall_min(row_h: f32) -> f32 {
-    let tile = row_h * crate::photos::PLACEHOLDER_ASPECT;
-    PHOTOS_WALL_COLUMNS * tile + (PHOTOS_WALL_COLUMNS - 1.0) * PHOTOS_GAP + 2.0 * PHOTOS_PAD
-}
-
-/// How wide the wall is in a file area `viewport` wide, its rows `row_h`
-/// tall: what the info panel leaves, but never under [`photos_wall_min`]
-/// nor over the file area.
-pub fn photos_wall_width(viewport: f32, row_h: f32) -> f32 {
-    (viewport - PHOTOS_INFO_W).max(photos_wall_min(row_h).min(viewport))
+/// How wide the wall is in a file area `viewport` wide: its share of it, or
+/// all the info panel leaves when that is more.
+pub fn photos_wall_width(viewport: f32) -> f32 {
+    (viewport - PHOTOS_INFO_W).max(viewport * PHOTOS_WALL_SHARE)
 }
 
 /// How far the Photos view reaches across: the wall, then the info panel.
-pub fn photos_content_width(viewport: f32, row_h: f32) -> f32 {
-    photos_wall_width(viewport, row_h) + PHOTOS_INFO_W
+pub fn photos_content_width(viewport: f32) -> f32 {
+    photos_wall_width(viewport) + PHOTOS_INFO_W
 }
 const INFO_PAD: f32 = 16.0;
 const INFO_STAGE_H: f32 = 220.0;

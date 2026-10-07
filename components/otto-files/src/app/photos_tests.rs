@@ -201,25 +201,25 @@ fn the_layout_is_kept_until_something_it_depends_on_moves() {
 }
 
 #[test]
-fn the_info_panel_sits_beside_the_wall_and_describes_the_selection() {
+fn the_info_panel_peeks_past_the_wall_and_describes_the_selection() {
     let mut browser = photos_over(vec![
         entry("Trips", Kind::Folder, 0),
         entry("a.jpg", Kind::Image, 0),
         entry("b.jpg", Kind::Image, 0),
         entry("notes.txt", Kind::Text, 0),
     ]);
-    // Wide enough for the wall's four pictures across and the panel.
-    browser.size.0 = 2000.0;
     browser.sync_scroll_metrics();
     let (width, height) = (browser.size.0, browser.content_h());
     let full = view::content_viewport(width, height, ViewMode::Photos);
     let area = browser.photos.area(width, height);
-    // Room for both: the wall packed into what the panel leaves, and
-    // nothing to pan.
+    // The wall keeps its share; the panel's edge shows in what is left …
+    assert_eq!(area.width(), full.width() * view::PHOTOS_WALL_SHARE);
+    let panel = browser.photos.panel_rect(width, height);
+    assert_eq!(panel.left, area.right);
+    assert!(panel.right > full.right);
     assert!(browser.photos.has_panel(width, height));
-    assert_eq!(full.width() - area.width(), view::PHOTOS_INFO_W);
-    assert_eq!(browser.photos.panel_rect(width, height).right, full.right);
-    assert_eq!(browser.pan.state.max_offset(), 0.0);
+    // … and the rest of it is panned to.
+    assert_eq!(browser.pan.state.max_offset(), panel.right - full.right);
     assert!(matches!(
         browser.photos_info_data(),
         Some(view::PhotosInfoData::Here { .. })
@@ -478,28 +478,30 @@ fn reveal_info_panel(browser: &mut Browser) {
 }
 
 #[test]
-fn a_narrow_window_pans_to_the_info_panel() {
+fn panning_brings_the_whole_info_panel_in() {
     let mut browser = photos_over(vec![entry("a.jpg", Kind::Image, 0)]);
-    browser.size.0 = 700.0;
     browser.sync_scroll_metrics();
     let (width, height) = (browser.size.0, browser.content_h());
     let full = view::content_viewport(width, height, ViewMode::Photos);
-    let least = view::photos_wall_min(browser.photos_row_h);
-    assert!(full.width() < least + view::PHOTOS_INFO_W);
-    // The wall keeps its least width and the panel is past the edge …
+    reveal_info_panel(&mut browser);
+    assert_eq!(browser.photos.panel_rect(width, height).right, full.right);
     assert_eq!(
         browser.photos.area(width, height).width(),
-        least.min(full.width())
+        full.width() * view::PHOTOS_WALL_SHARE
     );
-    assert!(!browser.photos.has_panel(width, height));
-    // … as far away as the pan reaches, and no further.
-    let reach = view::photos_content_width(full.width(), browser.photos_row_h) - full.width();
-    assert_eq!(browser.pan.state.max_offset(), reach);
-    reveal_info_panel(&mut browser);
-    assert!(browser.photos.has_panel(width, height));
-    assert_eq!(browser.photos.panel_rect(width, height).right, full.right);
     // What slid behind the sidebar is not there to be clicked.
     let tile = browser.entry_rect(0, 0);
     assert!(tile.left < full.left, "the first tile is under the sidebar");
     assert_eq!(browser.entry_at(tile.left + 2.0, tile.center_y()), None);
+}
+
+#[test]
+fn a_window_with_room_for_the_whole_panel_does_not_pan() {
+    let mut browser = photos_over(vec![entry("a.jpg", Kind::Image, 0)]);
+    browser.size.0 = 3000.0;
+    browser.sync_scroll_metrics();
+    let (width, height) = (browser.size.0, browser.content_h());
+    let full = view::content_viewport(width, height, ViewMode::Photos);
+    assert_eq!(browser.pan.state.max_offset(), 0.0);
+    assert_eq!(browser.photos.panel_rect(width, height).right, full.right);
 }

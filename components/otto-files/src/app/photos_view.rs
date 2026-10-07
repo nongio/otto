@@ -33,13 +33,13 @@ impl Browser {
         }
         let depth = self.columns.len() - 1;
         self.ensure_sorted(depth);
-        // The wall comes first and the info panel after it, panned to when
-        // the file area is too narrow for both.
+        // The wall takes its share of the file area and the info panel
+        // comes after it, panned to the rest of the way.
         let full = view::content_viewport(self.size.0, self.content_h(), ViewMode::Photos);
         let area = Rect::from_xywh(
             full.left,
             full.top,
-            view::photos_wall_width(full.width(), self.photos_row_h),
+            view::photos_wall_width(full.width()),
             full.height(),
         );
         let today = photos::today();
