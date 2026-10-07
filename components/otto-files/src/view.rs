@@ -2018,6 +2018,9 @@ pub enum PhotosInfoData<'a> {
         turnable: bool,
         /// The turn or flip button under the pointer.
         tool_hover: Option<usize>,
+        /// A video's player, which the stage plays in place of a picture —
+        /// the same one the preview column plays.
+        video: Option<&'a crate::peek::Video>,
     },
     /// Several things selected: how many, and how much they weigh.
     Many { count: usize, bytes: u64 },
@@ -2173,11 +2176,26 @@ fn draw_photos_info(canvas: &Canvas, f: &Frame, data: &PhotosInfoData<'_>) {
         hovered,
         turnable,
         tool_hover,
+        video,
         ..
     } = data
     {
         let layout = photos_info_layout(panel, swatches.len());
-        draw_info_stage(canvas, theme, layout.stage, entry, *decoded);
+        match video {
+            // Played where the picture would be, transport and all, as the
+            // preview column plays it.
+            Some(video) => draw_preview_stage(
+                canvas,
+                theme,
+                layout.stage,
+                *decoded,
+                Some(&video.snapshot()),
+                false,
+                &entry.icon_chain(),
+                0,
+            ),
+            None => draw_info_stage(canvas, theme, layout.stage, entry, *decoded),
+        }
         for (i, (rect, turn)) in layout.tools.iter().zip(PHOTOS_TOOLS).enumerate() {
             draw_photos_tool(
                 canvas,
@@ -4217,6 +4235,9 @@ pub struct Frame<'a> {
     /// that pane's cursor — opening acts on the selection — so only the pane
     /// and the progress are needed here.
     pub opening: Option<(usize, f32)>,
+    /// The picture an open pulse rises from when the file was opened from
+    /// its preview, in place of its row or tile.
+    pub opening_stage: Option<Rect>,
     /// Depth and row index of an in-place rename in progress. That row's
     /// name label is skipped so the host's text field shows through instead.
     pub renaming: Option<(usize, usize)>,
@@ -8591,6 +8612,58 @@ pub fn open_pulse(t: f32) -> (f32, u8) {
 /// rather than the icon alone is what makes it read as *that file* opening: in
 /// the grid the caption pill goes with it, and in the row views the highlight
 /// band does.
+/// The open pulse for a file opened from its preview: its picture swelling
+/// out of the preview and fading, as a tile's does out of the wall. The
+/// thumbnail is drawn at the picture's own proportions, centred in the
+/// preview where the picture sits; a file with none swells as a plain card.
+fn draw_preview_open_pulse(canvas: &Canvas, f: &Frame, entry: &Entry, stage: Rect, t: f32) {
+    let thumb = f.thumbnail(entry);
+    let rect = match thumb {
+        Some(image) => {
+            let (w, h) = (image.width() as f32, image.height() as f32);
+            let scale = (stage.width() / w).min(stage.height() / h);
+            Rect::from_xywh(
+                stage.center_x() - w * scale / 2.0,
+                stage.center_y() - h * scale / 2.0,
+                w * scale,
+                h * scale,
+            )
+        }
+        None => stage,
+    };
+    if rect.is_empty() {
+        return;
+    }
+    let (scale, alpha) = open_pulse(t);
+    let grown = Rect::from_xywh(
+        rect.center_x() - rect.width() * scale / 2.0,
+        rect.center_y() - rect.height() * scale / 2.0,
+        rect.width() * scale,
+        rect.height() * scale,
+    );
+    canvas.save_layer_alpha(Some(grown), alpha as u32);
+    match thumb {
+        Some(image) => {
+            canvas.draw_image_rect_with_sampling_options(
+                image,
+                None,
+                grown,
+                skia_safe::sampling_options::SamplingOptions::from(
+                    skia_safe::sampling_options::CubicResampler::mitchell(),
+                ),
+                &Paint::default(),
+            );
+        }
+        None => {
+            let mut card = Paint::default();
+            card.set_anti_alias(true);
+            card.set_color(f.theme.fill_tertiary);
+            canvas.draw_rrect(RRect::new_rect_xy(grown, 10.0, 10.0), &card);
+        }
+    }
+    canvas.restore();
+}
+
 pub fn draw_open_pulse(canvas: &Canvas, f: &Frame) {
     let Some((depth, t)) = f.opening else { return };
     let Some(pane) = f.panes.get(depth) else {
@@ -8601,6 +8674,10 @@ pub fn draw_open_pulse(canvas: &Canvas, f: &Frame) {
         return;
     };
 
+    if let Some(stage) = f.opening_stage {
+        draw_preview_open_pulse(canvas, f, entry, stage, t);
+        return;
+    }
     let in_overflow = f.desk_overflow.and_then(|overflow| {
         overflow.entry_rect(content_viewport(f.width, f.height, ViewMode::Grid), index)
     });
@@ -10467,6 +10544,7 @@ mod geometry_tests {
             ascending: true,
             list_columns: ListColumnWidths::default(),
             opening: None,
+            opening_stage: None,
             renaming: None,
             cut: Vec::new(),
             controls: WindowControlsState::new(),

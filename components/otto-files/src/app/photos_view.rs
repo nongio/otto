@@ -414,7 +414,9 @@ impl Browser {
                 Some(view::PhotosInfoData::One {
                     entry,
                     decoded: pane.and_then(|p| p.decoded.as_ref()),
-                    dims: picture.then(|| self.photo_dims.size(entry)).flatten(),
+                    dims: photos::is_media(entry)
+                        .then(|| self.photo_dims.size(entry))
+                        .flatten(),
                     swatches: pane
                         .filter(|_| picture)
                         .map(|p| p.palette.as_slice())
@@ -424,6 +426,7 @@ impl Browser {
                     camera: pane.and_then(|p| p.camera.as_ref()),
                     turnable: picture && crate::orient::supported(&entry.path),
                     tool_hover: self.photo_tool_hover,
+                    video: pane.and_then(|p| p.video.as_ref()),
                 })
             }
             count => Some(view::PhotosInfoData::Many {
@@ -438,9 +441,52 @@ impl Browser {
         }
     }
 
+    /// Where the info panel shows the one selected file's picture or video,
+    /// when it is showing one: what a press plays, picks the file up by or
+    /// double-clicks open.
+    pub(super) fn photos_info_stage(&self) -> Option<Rect> {
+        if !self.photos.has_panel() {
+            return None;
+        }
+        let data = self.photos_info_data()?;
+        let view::PhotosInfoData::One { swatches, .. } = &data else {
+            return None;
+        };
+        let panel = view::photos_info_rect(self.size.0, self.content_h());
+        Some(view::photos_info_layout(panel, swatches.len()).stage)
+    }
+
+    /// Repaint for the info panel's video: its frames arrive on their own
+    /// clock, and the panel is drawn with the window rather than on a
+    /// surface of its own, so a new frame has to mark the window dirty.
+    /// Never asks the loop to keep spinning — the player wakes it per frame.
+    pub(super) fn tick_photos_video(&mut self) -> bool {
+        let key = self
+            .photos_info_wants_preview()
+            .then(|| self.preview.as_ref().and_then(|p| p.video.as_ref()))
+            .flatten()
+            .map(|video| video.key());
+        if key != self.photos_video_key {
+            self.photos_video_key = key;
+            self.dirty |= key.is_some();
+        }
+        false
+    }
+
     /// A press inside the info panel: a swatch copies its colour, and a turn
     /// or flip button turns the picture.
     fn photos_info_press(&mut self, panel: Rect, x: f32, y: f32, serial: u32) {
+        // The picture: picked up by a drag, opened by a second press — the
+        // preview column's picture does both, and this is the same picture.
+        if let Some(stage) = self.preview_grab_at(x, y) {
+            if self.note_preview_click() {
+                self.drag_armed = None;
+                self.open_from_preview(stage);
+            } else if self.dnd_enabled() {
+                self.drag_armed = Some((x, y, serial));
+            }
+            return;
+        }
         let tool = self
             .photos_info_data()
             .and_then(|data| view::photos_info_tool_at(panel, &data, x, y));

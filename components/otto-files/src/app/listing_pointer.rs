@@ -872,6 +872,16 @@ impl Browser {
             self.drag_armed = Some((x, y, serial));
         }
 
+        // A second press on the preview's picture opens the file, as a
+        // second click on its row would.
+        if let Some(stage) = self.preview_grab_at(x, y) {
+            if self.note_preview_click() {
+                self.drag_armed = None;
+                self.open_from_preview(stage);
+                return After::Next;
+            }
+        }
+
         if let Some(action) = self.trash_action_at(x, y) {
             // Armed and decided on release, the way a nav
             // arrow is: both of these destroy or move files,
