@@ -163,6 +163,11 @@ already stashed. While Ask or agents mode is up, the stash card steps
 aside; closed without sending, the card comes back. Sending a request while
 anything is stashed ends the stash, struck items included.
 
+`--send` opens Ask and sends the query given on the command line as the first
+request as soon as the card is up, so the card opens on the running
+conversation rather than on the text waiting in the field. It does nothing
+with `--session`, which opens an existing conversation instead.
+
 **A request of attachments alone.** Enter with nothing typed sends a request
 when at least one attachment is not struck out: the attachments can be the
 whole question. The agent receives the attachments with no text, and a new

@@ -7,18 +7,17 @@
 //! which lists the agent sessions otto-agents has, as the launcher's agents
 //! mode (`otto-launcher --agents`) lists them.
 //!
-//! The panel has a heading with an Ask button, a search field that narrows
-//! the list as the launcher's agents field does, and the rows. It asks for
-//! the keyboard as the canvas is shown, so typing goes straight into the
-//! field; on a compositor that cannot give it that, a click does. The keys
-//! are the launcher's: the arrows, Tab, Ctrl+N/P and the page keys walk the
-//! rows, Enter (or Right with nothing typed) opens the highlighted session,
-//! and Ctrl+L starts a new one. Escape clears the field, and with nothing in
-//! it slides the canvas away.
+//! The panel has a heading, a prompt field for a new request, and the rows.
+//! It asks for the keyboard as the canvas is shown, so typing goes straight
+//! into the prompt; on a compositor that cannot give it that, a click does.
+//! Enter with something typed asks it; with nothing typed (or Right) it opens
+//! the highlighted session. The arrows, Tab, Ctrl+N/P and the page keys walk
+//! the rows, as in the launcher's list. Escape clears the prompt, and with
+//! nothing in it slides the canvas away.
 //!
 //! Opening a session runs `otto-launcher --session <URI>`, asking runs
-//! `otto-launcher --ask`, and either sends the canvas away: the launcher's
-//! card is where it carries on.
+//! `otto-launcher --ask --send -- <request>`, and either sends the canvas
+//! away: the launcher's card is where it carries on.
 //!
 //! The list is fetched when the canvas comes on screen and kept up to date
 //! while it stays there, as the service announces changes. While the canvas
@@ -68,8 +67,7 @@ const PANEL_CORNER: f32 = 16.0;
 /// other items on any screen the canvas is likely to be on.
 const MAX_HEIGHT: i32 = 480;
 
-/// Height of the heading's band, which also holds the Ask button, in
-/// logical points.
+/// Height of the heading's band, in logical points.
 const HEADING_H: f32 = 44.0;
 
 /// Where the heading's text and the field's text start, in logical points:
@@ -80,7 +78,7 @@ const TEXT_X: f32 = 20.0;
 /// Size of the heading's text, in points.
 const HEADING_TEXT: f32 = 13.0;
 
-/// Height of the search field, in logical points.
+/// Height of the prompt field, in logical points.
 const FIELD_H: f32 = 40.0;
 
 /// Size of the field's text, in points: the launcher's field face, smaller,
@@ -97,18 +95,6 @@ const LIST_TOP: f32 = HEADING_H + FIELD_H + 1.0 + LIST_PAD;
 
 /// Space under the last row, in logical points: the launcher's list padding.
 const BOTTOM_PAD: f32 = 8.0;
-
-/// The Ask button's height, in logical points, and the size of its label.
-const ASK_H: f32 = 26.0;
-const ASK_TEXT: f32 = 13.0;
-
-/// Space on either side of the Ask button's label, in logical points.
-const ASK_PAD: f32 = 12.0;
-
-/// Space between the Ask button and the panel's right edge, in logical
-/// points: the rows' highlight inset plus a little, so the button sits
-/// inside the list's column.
-const ASK_RIGHT: f32 = 12.0;
 
 /// The name the panel gives itself when it connects to the agent service.
 const CLIENT_NAME: &str = "otto-canvas";
@@ -133,8 +119,6 @@ enum Content {
     Rows,
     /// There are no sessions.
     Empty,
-    /// There are sessions, but none matches what is typed.
-    NoMatch,
     /// The agent service is not running.
     Unreachable,
 }
@@ -147,25 +131,20 @@ struct Sessions {
     events: Rc<RefCell<Vec<CanvasItemEvent>>>,
     /// The connection to the agent service, while the canvas is on screen.
     feed: Option<SessionFeed>,
-    /// Every session as a row, from the last listing, for when the field is
-    /// cleared while there is no feed to filter again.
-    all_rows: Vec<Item>,
-    /// The sessions the field lets through, as rows. Each row's origin index
-    /// is its session's place in `resources`.
+    /// Every session, as rows. Each row's origin index is its session's
+    /// place in `resources`.
     rows: Vec<Item>,
     /// Every session's URI, in the order of the last listing.
     resources: Vec<String>,
     /// Whether the service is there and has listed the sessions.
     status: FeedStatus,
-    /// The search field.
+    /// The prompt: a new request, asked on Enter.
     input: TextInput,
     /// The highlighted session, by URI, so it stays on the same session as
     /// the list reorders under it.
     selected: Option<String>,
     /// The row a press landed on; a release on the same row picks it.
     pressed: Option<usize>,
-    /// A press landed on the Ask button; a release on it asks.
-    ask_pressed: bool,
     /// A press landed in the field, and a drag selects text in it.
     field_pressed: bool,
     /// Where the pointer is, in the item's coordinates, while it is over it.
@@ -183,19 +162,17 @@ struct Sessions {
 impl Sessions {
     fn new() -> Self {
         let mut input = TextInput::new("", canvas_field_style(dark()));
-        input.state.placeholder = otto_kit::t!("launcher-search-agents").to_string();
+        input.state.placeholder = otto_kit::t!("launcher-search-ask").to_string();
         Self {
             item: None,
             events: Rc::new(RefCell::new(Vec::new())),
             feed: None,
-            all_rows: Vec::new(),
             rows: Vec::new(),
             resources: Vec::new(),
             status: FeedStatus::Connecting,
             input,
             selected: None,
             pressed: None,
-            ask_pressed: false,
             field_pressed: false,
             pointer: None,
             cursor: CursorShape::Default,
@@ -211,8 +188,7 @@ impl Sessions {
         match self.status {
             FeedStatus::Connecting if self.resources.is_empty() => Content::Waiting,
             FeedStatus::Unreachable => Content::Unreachable,
-            _ if self.resources.is_empty() => Content::Empty,
-            _ if self.rows.is_empty() => Content::NoMatch,
+            _ if self.rows.is_empty() => Content::Empty,
             _ => Content::Rows,
         }
     }
@@ -255,14 +231,9 @@ impl Sessions {
             .map_or(0.0, |item| item.dimensions().0 as f32)
     }
 
-    /// Where the search field is, in the item's coordinates.
+    /// Where the prompt field is, in the item's coordinates.
     fn field_rect(&self) -> Rect {
         Rect::from_xywh(0.0, HEADING_H, self.width(), FIELD_H)
-    }
-
-    /// Where the Ask button is, in the item's coordinates.
-    fn ask_rect(&self) -> Rect {
-        ask_button_rect(self.width())
     }
 
     fn selected_index(&self) -> Option<usize> {
@@ -320,21 +291,6 @@ impl Sessions {
         }
     }
 
-    /// Filter the sessions again with what is in the field, and highlight
-    /// the first that is left: a new search starts at its best match.
-    fn refilter(&mut self) {
-        let query = self.input.value().to_string();
-        if let Some(feed) = self.feed.as_ref() {
-            self.rows = feed.items(0, &query);
-        } else if query.trim().is_empty() {
-            self.rows = self.all_rows.clone();
-        }
-        self.selected = None;
-        self.keep_selection();
-        self.scroll.scroll_to(0.0);
-        self.dirty = true;
-    }
-
     /// Open the session in row `index` in the launcher, and send the canvas
     /// away: the launcher's card is where it carries on.
     fn open(&mut self, index: usize) {
@@ -349,16 +305,16 @@ impl Sessions {
         }
     }
 
-    /// Start a new request in the launcher, with `request` already typed when
-    /// it is not empty, and send the canvas away.
+    /// Send `request` to the agent in the launcher, which opens on it
+    /// running, or open an empty request when there is nothing to send; and
+    /// send the canvas away.
     fn ask(&mut self, request: &str) {
         let request = request.trim();
-        // After `--`, the request is words to type even if it looks like an
-        // option.
+        // After `--`, the request is words even if it looks like an option.
         let args: &[&str] = if request.is_empty() {
             &["--ask"]
         } else {
-            &["--ask", "--", request]
+            &["--ask", "--send", "--", request]
         };
         match launch(args) {
             Ok(()) => self.dismiss(),
@@ -390,18 +346,17 @@ impl Sessions {
                 }
                 CanvasItemEvent::Hidden => {
                     // Off screen, the list costs nothing: no connection, no
-                    // scroll left running, no hover to come back to. The
-                    // search is over too; the canvas opens on the whole list.
+                    // scroll left running, no hover to come back to. What
+                    // was typed goes too; the canvas opens on an empty prompt.
                     self.feed = None;
                     self.pressed = None;
-                    self.ask_pressed = false;
                     self.field_pressed = false;
                     self.pointer = None;
                     self.scroll.stop();
                     self.scroll.on_pointer_leave();
                     if !self.input.value().is_empty() {
                         self.input.set_value("");
-                        self.refilter();
+                        self.dirty = true;
                     }
                 }
             }
@@ -421,8 +376,7 @@ impl Sessions {
             return;
         }
         self.status = status;
-        self.all_rows = feed.items(0, "");
-        self.rows = feed.items(0, self.input.value());
+        self.rows = feed.items(0, "");
         self.resources = feed
             .sessions()
             .iter()
@@ -466,17 +420,9 @@ impl Sessions {
         let scroll = &self.scroll;
         let icons = &self.icons;
         let input = &self.input;
-        let ask = AskButton {
-            rect: ask_button_rect(width),
-            hovered: self
-                .pointer
-                .is_some_and(|(x, y)| ask_button_rect(width).contains(Point::new(x, y))),
-            pressed: self.ask_pressed,
-        };
         item.draw(|canvas| {
             canvas.clear(Color::TRANSPARENT);
             draw_heading(canvas, dark);
-            ask.draw(canvas, &theme);
 
             canvas.save();
             canvas.translate((0.0, HEADING_H));
@@ -491,7 +437,6 @@ impl Sessions {
                 Content::Rows => None,
                 Content::Waiting => Some(""),
                 Content::Empty => Some(otto_kit::t!("launcher-agents-none")),
-                Content::NoMatch => Some(otto_kit::t!("launcher-no-results")),
                 Content::Unreachable => Some(otto_kit::t!("launcher-ask-unreachable")),
             };
             match message {
@@ -546,12 +491,9 @@ impl Sessions {
     }
 
     /// Ask for the cursor that fits what is under the pointer: a text cursor
-    /// over the field, a hand over the Ask button.
+    /// over the field.
     fn update_cursor(&mut self, x: f32, y: f32) {
-        let point = Point::new(x, y);
-        let cursor = if self.ask_rect().contains(point) {
-            CursorShape::Pointer
-        } else if self.field_rect().contains(point) {
+        let cursor = if self.field_rect().contains(Point::new(x, y)) {
             CursorShape::Text
         } else {
             CursorShape::Default
@@ -571,14 +513,8 @@ impl Sessions {
                     // A new surface under the pointer: its cursor is unknown.
                     self.cursor = CursorShape::Default;
                 }
-                let over_ask_before = self
-                    .pointer
-                    .is_some_and(|(px, py)| self.ask_rect().contains(Point::new(px, py)));
                 self.pointer = Some((x, y));
                 self.update_cursor(x, y);
-                if over_ask_before != self.ask_rect().contains(point) {
-                    self.dirty = true;
-                }
                 if self.field_pressed {
                     self.input.on_pointer_drag(x);
                     self.dirty = true;
@@ -598,17 +534,13 @@ impl Sessions {
             PointerEventKind::Leave { .. } => {
                 self.pointer = None;
                 self.pressed = None;
-                self.ask_pressed = false;
                 self.scroll.on_pointer_leave();
                 self.dirty = true;
             }
             PointerEventKind::Press { button, .. } if button == BTN_LEFT => {
                 self.pointer = Some((x, y));
                 self.pressed = None;
-                self.ask_pressed = false;
-                if self.ask_rect().contains(point) {
-                    self.ask_pressed = true;
-                } else if self.field_rect().contains(point) {
+                if self.field_rect().contains(point) {
                     // The press gave the item the keyboard; the caret goes
                     // where it landed.
                     self.input.state.set_focused(true);
@@ -625,13 +557,6 @@ impl Sessions {
                 if self.field_pressed {
                     self.field_pressed = false;
                     self.input.on_pointer_up();
-                    return;
-                }
-                if std::mem::take(&mut self.ask_pressed) {
-                    self.dirty = true;
-                    if self.ask_rect().contains(point) {
-                        self.ask("");
-                    }
                     return;
                 }
                 let released = self.row_at(x, y);
@@ -666,14 +591,15 @@ impl Sessions {
         let shift = modifiers.shift;
 
         // Ctrl+L or Cmd+L, which from the launcher's list starts a new
-        // request, does the same here.
+        // request, asks what is typed, or opens an empty one.
         let ask_key = control == Some('l')
             || (modifiers.logo
                 && !modifiers.ctrl
                 && !modifiers.alt
                 && matches!(event.keysym, Keysym::l | Keysym::L));
         if ask_key {
-            self.ask("");
+            let request = self.input.value().to_string();
+            self.ask(&request);
             return;
         }
 
@@ -685,20 +611,18 @@ impl Sessions {
                     self.dismiss();
                 } else {
                     self.input.set_value("");
-                    self.refilter();
+                    self.dirty = true;
                 }
                 return;
             }
-            // Enter opens the highlighted session. With none to open, what is
-            // typed is not a search that found something, so it becomes a
-            // new request instead.
+            // Enter asks what is typed. With nothing typed it opens the
+            // highlighted session, as in the launcher's list.
             Keysym::Return | Keysym::KP_Enter => {
-                match self.selected_index() {
-                    Some(index) => self.open(index),
-                    None => {
-                        let request = self.input.value().to_string();
-                        self.ask(&request);
-                    }
+                let request = self.input.value().trim().to_string();
+                if !request.is_empty() {
+                    self.ask(&request);
+                } else if let Some(index) = self.selected_index() {
+                    self.open(index);
                 }
                 return;
             }
@@ -729,8 +653,7 @@ impl Sessions {
         }
 
         match keys::edit_field(&mut self.input, event, control, shift, serial) {
-            FieldEdit::Changed => self.refilter(),
-            FieldEdit::Moved => self.dirty = true,
+            FieldEdit::Changed | FieldEdit::Moved => self.dirty = true,
             // Enter and Escape are answered above; the field only reports
             // them.
             FieldEdit::Commit | FieldEdit::Cancel | FieldEdit::None => {}
@@ -874,78 +797,6 @@ fn draw_heading(canvas: &Canvas, dark: bool) {
         &font,
         &paint,
     );
-}
-
-/// Where the Ask button goes in an item `width` wide: at the right end of
-/// the heading's band, centred on it.
-fn ask_button_rect(width: f32) -> Rect {
-    let label_w = ask_font()
-        .measure_str(otto_kit::t!("canvas-sessions-ask"), None)
-        .0;
-    let button_w = label_w + ASK_PAD * 2.0;
-    Rect::from_xywh(
-        width - ASK_RIGHT - button_w,
-        (HEADING_H - ASK_H) / 2.0,
-        button_w,
-        ASK_H,
-    )
-}
-
-/// The face of the Ask button's label.
-fn ask_font() -> Font {
-    get_font_with_fallback(styles::BODY.family, FontStyle::bold(), ASK_TEXT)
-}
-
-/// The Ask button, as it is to be drawn.
-struct AskButton {
-    rect: Rect,
-    hovered: bool,
-    pressed: bool,
-}
-
-impl AskButton {
-    /// A pill in the accent colour, with its label in white, a shade lighter
-    /// under the pointer and darker while pressed.
-    fn draw(&self, canvas: &Canvas, theme: &otto_kit::theme::Theme) {
-        let accent = theme.accent;
-        let fill = if self.pressed {
-            shade(accent, 0.85)
-        } else if self.hovered {
-            shade(accent, 1.1)
-        } else {
-            accent
-        };
-        let mut paint = Paint::new(Color4f::from(fill), None);
-        paint.set_anti_alias(true);
-        let radius = self.rect.height() / 2.0;
-        canvas.draw_round_rect(self.rect, radius, radius, &paint);
-
-        let font = ask_font();
-        let label = otto_kit::t!("canvas-sessions-ask");
-        let mut text = Paint::new(Color4f::from(Color::WHITE), None);
-        text.set_anti_alias(true);
-        let label_w = font.measure_str(label, Some(&text)).0;
-        canvas.draw_str(
-            label,
-            (
-                self.rect.center_x() - label_w / 2.0,
-                self.rect.center_y() + ASK_TEXT * 0.35,
-            ),
-            &font,
-            &text,
-        );
-    }
-}
-
-/// `color` with its channels scaled by `factor`, clamped to white.
-fn shade(color: Color, factor: f32) -> Color {
-    let channel = |c: u8| (f32::from(c) * factor).round().clamp(0.0, 255.0) as u8;
-    Color::from_argb(
-        color.a(),
-        channel(color.r()),
-        channel(color.g()),
-        channel(color.b()),
-    )
 }
 
 /// A line of text centred in `rect`, standing in for the rows, the way the

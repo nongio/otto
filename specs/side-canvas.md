@@ -238,9 +238,8 @@ are read the next time the column is laid out.
 
 ## Agents panel (`otto-canvas`)
 
-- `otto-canvas` places one item: a heading ("Agents") with an Ask button at
-  its right end, a search field ("Search for agent sessions…"), a hairline,
-  and the agent sessions otto-agents has, one row per session, most recently
+- `otto-canvas` places one item: a heading ("Agents"), a prompt field ("Ask
+  an agent…"), a hairline, and the agent sessions otto-agents has, one row per session, most recently
   changed first.
   The rows are the launcher's agents-mode rows (`otto-launcher --agents`):
   title (or "Untitled session"), `@agent · status · folder`, and the activity
@@ -258,13 +257,10 @@ are read the next time the column is laid out.
   removed or changed on the root channel. On `hidden` it disconnects and does
   no work until the next `shown`. Rows from the last listing stay up until the
   new one arrives.
-- Typing in the field narrows the rows to the sessions whose titles contain
-  the text, ignoring case, exactly as the launcher's agents mode filters
-  (`otto_agents_kit::sessions::session_items`). A change to the text highlights
-  the first row left.
-- With no sessions it says "No agent sessions yet"; with sessions but none
-  matching, "No results"; with the service not running, "The agent service
-  is not running".
+- The field is a prompt for a new request, not a search: typing does not
+  change the rows, which always show every session.
+- With no sessions it says "No agent sessions yet"; with the service not
+  running, "The agent service is not running".
 - The item asks for `on_show`, so the field has the keyboard as soon as the
   canvas opens and shows its caret while it does. On a version 1 compositor a
   press on the item gives it the keyboard.
@@ -274,21 +270,22 @@ are read the next time the column is laid out.
   - Down, Ctrl+N, Tab: next row; Up, Ctrl+P, Shift+Tab: previous row; Page
     Down / Page Up: eight rows. All wrap around, and scroll the highlight into
     view.
-  - Enter: open the highlighted session. With no row to open, start a new
-    request with the typed text.
+  - Enter with text typed: send it as a new request. Enter with nothing
+    typed: open the highlighted session.
   - Right with nothing typed: open the highlighted session.
-  - Ctrl+L or Cmd+L: start a new request (the Ask button).
+  - Ctrl+L or Cmd+L: send what is typed, or open an empty request.
   - Escape: clear the field; with the field empty, `dismiss`.
   - Everything else edits the field as the launcher's does: the shared
     otto-kit field keys, plus Ctrl+U (clear), Ctrl+A (select all),
     Ctrl+C/X/V (clipboard) and Ctrl+W (delete a word).
-- Opening a session (click, Enter, Right) runs
+- Opening a session (click, Enter with nothing typed, Right) runs
   `otto-launcher --session <session URI>`, which opens the launcher card in
   ask mode on that session, then sends `dismiss` on the item.
-- The Ask button (click, or Ctrl+L) runs `otto-launcher --ask` and sends
-  `dismiss`. Enter with no row to open runs `otto-launcher --ask -- <text>`,
-  so the launcher opens with the text in its field.
-- The field is cleared when the canvas hides; it opens on the whole list.
+- Sending a request (Enter or Ctrl+L with text typed) runs
+  `otto-launcher --ask --send -- <text>`, so the launcher opens with the
+  request already sent and the conversation running, then sends `dismiss`.
+  Ctrl+L with nothing typed runs `otto-launcher --ask`.
+- The field is cleared when the canvas hides.
 
 ## Rationale
 
@@ -336,6 +333,11 @@ are read the next time the column is laid out.
 - **`never` rather than a stash-only rule.** An item that must never steal
   the keyboard says so on the wire; the compositor needs no knowledge of
   which client it is.
+- **The Agents panel's field is a prompt, not a search.** The panel lists
+  only recent sessions in a narrow column, so narrowing them saved little,
+  while a separate Ask button made starting a request two steps. Typing a
+  request and pressing Enter sends it; the launcher opens on the running
+  conversation instead of asking for a second Enter.
 
 ## Open Questions
 

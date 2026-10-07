@@ -1291,7 +1291,6 @@ launcher-agents-needs-input = Ждёт ответа
 launcher-agents-error = Ошибка
 launcher-agents-none = Сеансов агентов пока нет
 canvas-sessions-heading = Агенты
-canvas-sessions-ask = Ask
 stash-drop-invite = Перетащите файлы сюда, чтобы добавить в подборку
 # Ask mode: the files that go with a request, under it in the log, or above
 # the field before it is sent. { $files } is their names, comma-separated.

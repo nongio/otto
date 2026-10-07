@@ -237,6 +237,9 @@ struct Launcher {
     /// The session opened from the list, by URI, so going back to the list
     /// highlights it again wherever it now sits.
     opened_session: Option<String>,
+    /// `--send`: the query on the command line is a request to send as soon
+    /// as the card is up, rather than one to finish typing.
+    send_on_start: bool,
     /// The session to highlight once the list of sessions arrives.
     return_to: Option<String>,
     /// Down has listed the agents under the field, to send the first request
@@ -411,6 +414,7 @@ impl Launcher {
             asked: None,
             picking: scope == Scope::Agents,
             opened_session: None,
+            send_on_start: false,
             return_to: None,
             choosing_agent: false,
             picked_agent: None,
@@ -2045,6 +2049,10 @@ impl App for Launcher {
         self.reload();
         // Attached files, or an opened session, have a log from the start.
         self.relayout_log();
+        // `--send`: the request goes now, and the card opens on it running.
+        if std::mem::take(&mut self.send_on_start) {
+            self.send_ask();
+        }
         tracing::debug!(ms = since_start(), "sources loaded");
         Ok(())
     }
@@ -2899,6 +2907,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut files: Vec<PathBuf> = Vec::new();
     let mut session: Option<String> = None;
     let mut with_selection = false;
+    let mut send = false;
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--apps" | "-a" => scope = Scope::Apps,
@@ -2915,6 +2924,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 scope = Scope::Ask;
                 with_selection = true;
             }
+            // Send the query as the first request as soon as the card is up.
+            "--send" => {
+                scope = Scope::Ask;
+                send = true;
+            }
             // Everything after `--` is the query, even what looks like an
             // option.
             "--" => {
@@ -2924,7 +2938,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "--help" | "-h" => {
                 println!(
                     "usage: otto-launcher [--apps|--windows|--all|--ask|--agents] \
-                     [--file PATH]... [--session ID] [--selection] [--] [query]\n\
+                     [--file PATH]... [--session ID] [--selection] [--send] [--] [query]\n\
                      otto-ask opens in --ask mode"
                 );
                 return Ok(());
@@ -2943,6 +2957,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut launcher = Launcher::new(&words.join(" "), scope);
     launcher.prepare_ask(files, session.as_deref());
     launcher.stashed = stashed;
+    launcher.send_on_start = send && session.is_none();
     AppRunner::new(launcher).run()?;
     Ok(())
 }
