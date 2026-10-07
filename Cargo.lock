@@ -9925,6 +9925,7 @@ dependencies = [
  "anyhow",
  "futures-util",
  "otto-dbus",
+ "percent-encoding",
  "tokio",
  "tracing",
  "tracing-subscriber",
