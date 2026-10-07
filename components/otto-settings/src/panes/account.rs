@@ -28,7 +28,8 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{mpsc, Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use otto_kit::components::selection_list::SelectionListHit;
 
@@ -141,6 +142,8 @@ struct State {
     status: Status,
     /// Your password was changed this session, which the Password row says.
     password_changed: bool,
+    /// Set by Cancel to stop the `passwd` underway, while there is one.
+    cancel: Option<Arc<AtomicBool>>,
 }
 
 impl State {
@@ -647,8 +650,10 @@ pub struct SheetView {
     pub destructive: bool,
     /// A line under the fields: the work underway, or why it was refused.
     pub message: Option<(String, bool)>,
-    /// Work is underway, so neither button does anything.
+    /// Work is underway, so the default button does nothing.
     pub busy: bool,
+    /// Cancel still works while busy: it stops the work underway.
+    pub cancellable: bool,
 }
 
 /// The sheet, while one is up.
@@ -724,6 +729,7 @@ pub fn sheet() -> Option<SheetView> {
             Status::Idle => None,
         },
         busy: state.status == Status::Working,
+        cancellable: state.status != Status::Working || state.cancel.is_some(),
     })
 }
 
@@ -737,12 +743,16 @@ pub fn field_value(id: &str) -> String {
         .unwrap_or_default()
 }
 
-/// Close the sheet without doing anything — Cancel, or Escape. Ignored while
-/// its work is underway: closing would hide how it ends.
+/// Close the sheet without doing anything — Cancel, or Escape. While a
+/// password is being changed it stops `passwd`; other work is waited out, as
+/// closing would hide how it ends.
 pub fn close_sheet() {
     let mut state = state().lock().unwrap();
     if state.status == Status::Working {
-        return;
+        let Some(cancel) = state.cancel.take() else {
+            return;
+        };
+        cancel.store(true, Ordering::Relaxed);
     }
     state.sheet = None;
     state.clear_fields();
@@ -776,6 +786,10 @@ pub fn submit() {
     let add_user = std::mem::take(&mut held.add_user);
     held.confirm.clear();
     held.status = Status::Working;
+    let cancel = Arc::new(AtomicBool::new(false));
+    if sheet == Sheet::ChangePassword {
+        held.cancel = Some(cancel.clone());
+    }
     let shown = held.shown().clone();
     drop(held);
     changed();
@@ -783,11 +797,13 @@ pub fn submit() {
     spawn("account-sheet", move || {
         let outcome = match sheet {
             Sheet::ChangePassword => {
-                change_password("passwd", &current, &new).map_err(|err| match err {
-                    PasswdError::WrongCurrent => {
-                        otto_kit::t!("settings-account-password-wrong-current").to_string()
+                change_password("passwd", &current, &new, &cancel, PASSWD_PATIENCE).map_err(|err| {
+                    match err {
+                        PasswdError::WrongCurrent => {
+                            otto_kit::t!("settings-account-password-wrong-current").to_string()
+                        }
+                        PasswdError::Refused(why) => why,
                     }
-                    PasswdError::Refused(why) => why,
                 })
             }
             Sheet::ResetPassword => match &shown.object {
@@ -798,6 +814,12 @@ pub fn submit() {
             Sheet::DeleteUser => delete_user_account(shown.uid),
         };
         let mut state = state().lock().unwrap();
+        // Cancelled: the sheet is already closed, and may be up again for
+        // another try that this must not touch.
+        if cancel.load(Ordering::Relaxed) {
+            return;
+        }
+        state.cancel = None;
         match outcome {
             Ok(()) => {
                 state.sheet = None;
@@ -918,6 +940,15 @@ fn delete_user_account(uid: u32) -> Result<(), String> {
     .map(|_| ())
 }
 
+/// How long `passwd` may go without saying anything before it is given up on.
+/// Long enough for PAM's delay after a wrong password and for hashing the new
+/// one, short enough that a prompt not recognised as one does not hang the
+/// sheet.
+const PASSWD_PATIENCE: Duration = Duration::from_secs(20);
+
+/// How often a wait on `passwd` looks up to see whether it was cancelled.
+const CANCEL_POLL: Duration = Duration::from_millis(100);
+
 /// What `passwd` said no to.
 #[derive(Debug, PartialEq)]
 enum PasswdError {
@@ -931,11 +962,21 @@ enum PasswdError {
 /// prompts: the current password, then the new one twice.
 ///
 /// A prompt is recognised by shape, not wording: output that stops, without a
-/// line break, after a colon. That holds in every language PAM is translated
-/// into, so the user's locale is left alone and a refusal comes back in it.
-/// A fourth prompt is a password-quality module asking again after refusing
-/// the new one; it is not answered, since the answer would be the same.
-fn change_password(program: &str, current: &str, new: &str) -> Result<(), PasswdError> {
+/// line break, after a colon (ASCII or fullwidth). That holds in every
+/// language PAM is translated into, so the user's locale is left alone and a
+/// refusal comes back in it. A fourth prompt is a password-quality module
+/// asking again after refusing the new one; it is not answered, since the
+/// answer would be the same.
+///
+/// `program` is killed when `cancel` is set, or when it stays quiet for
+/// `patience` — waiting on something not recognised as a prompt.
+fn change_password(
+    program: &str,
+    current: &str,
+    new: &str,
+    cancel: &AtomicBool,
+    patience: Duration,
+) -> Result<(), PasswdError> {
     let failed = |err: std::io::Error| PasswdError::Refused(err.to_string());
     let (mut output, writer) = std::io::pipe().map_err(failed)?;
     let mut child = {
@@ -951,25 +992,47 @@ fn change_password(program: &str, current: &str, new: &str) -> Result<(), Passwd
     };
     let mut input = child.stdin.take().expect("stdin is piped");
 
+    // Read on a thread of its own so the wait for output can be given up on;
+    // the channel closes when the output ends.
+    let (send, chunks) = mpsc::channel();
+    spawn("passwd-output", move || {
+        let mut buffer = [0u8; 512];
+        while let Ok(read @ 1..) = output.read(&mut buffer) {
+            if send.send(buffer[..read].to_vec()).is_err() {
+                break;
+            }
+        }
+    });
+
     let answers = [current, new, new];
     let mut answered = 0;
     // What it has said since the last answer, which is where a reason for
     // refusing ends up.
     let mut said = String::new();
     let mut pending = String::new();
-    let mut buffer = [0u8; 512];
+    let mut deadline = Instant::now() + patience;
     loop {
-        let read = match output.read(&mut buffer) {
-            Ok(0) | Err(_) => break,
-            Ok(read) => read,
+        if cancel.load(Ordering::Relaxed) || Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(PasswdError::Refused(
+                otto_kit::t!("settings-account-password-failed").to_string(),
+            ));
+        }
+        let wait = deadline.saturating_duration_since(Instant::now());
+        let chunk = match chunks.recv_timeout(wait.min(CANCEL_POLL)) {
+            Ok(chunk) => chunk,
+            Err(mpsc::RecvTimeoutError::Timeout) => continue,
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
         };
-        let text = String::from_utf8_lossy(&buffer[..read]);
+        deadline = Instant::now() + patience;
+        let text = String::from_utf8_lossy(&chunk);
         said.push_str(&text);
         pending.push_str(&text);
         if let Some(line_end) = pending.rfind('\n') {
             pending.drain(..=line_end);
         }
-        if !pending.trim_end().ends_with(':') {
+        if !is_prompt(&pending) {
             continue;
         }
         pending.clear();
@@ -991,10 +1054,18 @@ fn change_password(program: &str, current: &str, new: &str) -> Result<(), Passwd
     if status.success() {
         return Ok(());
     }
-    if answered <= 1 {
+    // Stopping right after the current password means it was wrong; stopping
+    // before it is not about the password, and is said in its own words.
+    if answered == 1 {
         return Err(PasswdError::WrongCurrent);
     }
     Err(PasswdError::Refused(refusal(&said)))
+}
+
+/// Whether `text` — output since the last line break — is left asking for
+/// something: it ends in a colon, ASCII or fullwidth.
+fn is_prompt(text: &str) -> bool {
+    text.trim_end().ends_with([':', '：'])
 }
 
 /// Why `passwd` refused, from what it printed after the last answer: a
@@ -1004,7 +1075,7 @@ fn refusal(said: &str) -> String {
     let lines: Vec<&str> = said
         .lines()
         .map(str::trim)
-        .filter(|line| !line.is_empty() && !line.ends_with(':'))
+        .filter(|line| !line.is_empty() && !is_prompt(line))
         .collect();
     lines
         .iter()
@@ -1317,6 +1388,16 @@ mod tests {
         dir
     }
 
+    fn run(program: &str, current: &str, new: &str) -> Result<(), PasswdError> {
+        change_password(
+            program,
+            current,
+            new,
+            &AtomicBool::new(false),
+            Duration::from_secs(10),
+        )
+    }
+
     const ASKS: &str = r#"
 echo "Changing password for someone."
 printf "Current password: "; read cur
@@ -1331,14 +1412,14 @@ echo "passwd: password updated successfully"
     #[test]
     fn the_prompts_are_answered_in_order() {
         let program = fake_passwd(&scratch("ok"), ASKS);
-        assert_eq!(change_password(&program, "old", "a-long-new-one"), Ok(()));
+        assert_eq!(run(&program, "old", "a-long-new-one"), Ok(()));
     }
 
     #[test]
     fn stopping_after_the_current_password_means_it_was_wrong() {
         let program = fake_passwd(&scratch("wrong"), ASKS);
         assert_eq!(
-            change_password(&program, "nope", "a-long-new-one"),
+            run(&program, "nope", "a-long-new-one"),
             Err(PasswdError::WrongCurrent)
         );
     }
@@ -1347,7 +1428,7 @@ echo "passwd: password updated successfully"
     fn a_quality_refusal_is_reported_in_its_own_words_and_not_answered_again() {
         let program = fake_passwd(&scratch("weak"), ASKS);
         assert_eq!(
-            change_password(&program, "old", "short"),
+            run(&program, "old", "short"),
             Err(PasswdError::Refused(
                 "BAD PASSWORD: The password is shorter than 8 characters".into()
             ))
@@ -1355,9 +1436,71 @@ echo "passwd: password updated successfully"
     }
 
     #[test]
+    fn a_fullwidth_colon_ends_a_prompt_too() {
+        let program = fake_passwd(
+            &scratch("fullwidth"),
+            &ASKS
+                .replace("Current password: ", "当前密码：")
+                .replace("New password: ", "新的密码：")
+                .replace("Retype new password: ", "重新输入新的密码："),
+        );
+        assert_eq!(run(&program, "old", "a-long-new-one"), Ok(()));
+    }
+
+    #[test]
+    fn a_refusal_before_any_prompt_is_not_a_wrong_password() {
+        let program = fake_passwd(
+            &scratch("early"),
+            "echo 'passwd: Authentication service cannot retrieve authentication info'; exit 1",
+        );
+        assert_eq!(
+            run(&program, "old", "a-long-new-one"),
+            Err(PasswdError::Refused(
+                "passwd: Authentication service cannot retrieve authentication info".into()
+            ))
+        );
+    }
+
+    #[test]
+    fn a_prompt_not_recognised_is_given_up_on() {
+        let program = fake_passwd(&scratch("silent"), "printf 'Password? '; read cur; exit 0");
+        let started = Instant::now();
+        let outcome = change_password(
+            &program,
+            "old",
+            "a-long-new-one",
+            &AtomicBool::new(false),
+            Duration::from_millis(300),
+        );
+        assert!(matches!(outcome, Err(PasswdError::Refused(_))));
+        assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
+    #[test]
+    fn cancelling_stops_passwd_mid_conversation() {
+        let program = fake_passwd(&scratch("cancel"), "printf 'Password? '; read cur; exit 0");
+        let cancel = Arc::new(AtomicBool::new(false));
+        let later = cancel.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(200));
+            later.store(true, Ordering::Relaxed);
+        });
+        let started = Instant::now();
+        let outcome = change_password(
+            &program,
+            "old",
+            "a-long-new-one",
+            &cancel,
+            Duration::from_secs(60),
+        );
+        assert!(matches!(outcome, Err(PasswdError::Refused(_))));
+        assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
+    #[test]
     fn a_missing_program_is_a_refusal_not_a_hang() {
         assert!(matches!(
-            change_password("/nonexistent/passwd", "a", "b"),
+            run("/nonexistent/passwd", "a", "b"),
             Err(PasswdError::Refused(_))
         ));
     }
