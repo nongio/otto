@@ -436,7 +436,12 @@ impl<A: RendererApi> Otto<UdevData<A>> {
             && !self.has_modal_overlay_layer()
             // Nor may the side canvas, which slides in over fullscreen
             // windows from the same plane.
-            && !self.canvas_on_screen();
+            && !self.canvas_on_screen()
+            // Least of all the lock: scanout puts the window alone on the
+            // primary plane, so the blank — and the locker on it — would be
+            // drawn nowhere, and a fullscreen video or game would play on
+            // over a locked session. Held until the shade is back up.
+            && !self.lock_blank_on_screen();
         let fullscreen_window = if allow_fullscreen_scanout {
             this_output
                 .as_ref()
@@ -484,8 +489,9 @@ impl<A: RendererApi> Otto<UdevData<A>> {
         // too, while the blank slides back off the top.
         // A modal overlay dialog, for the same reason as the lock plane: the
         // prompt lives in a subtree the plane decomposition never scans out.
+        let lock_on_screen = self.lock_blank_on_screen();
         let composite_now = self.workspaces.has_minimizing_window()
-            || self.lock_blank_on_screen()
+            || lock_on_screen
             || self.has_modal_overlay_layer();
         let composite_active = if let Some(surf) = self
             .backend_data
@@ -1192,21 +1198,30 @@ impl<A: RendererApi> Otto<UdevData<A>> {
         // came out black. So the composite fallback stacks the plane
         // subtrees instead, top→bottom like the plane push order (and like
         // the winit backend and virtual outputs already do).
+        // The lock plane goes on top of that stack: a lock can come down on
+        // an open exposé (an idle timer, the lid), and a stack without it
+        // drew the overview over the blank.
         let expose_scene_stack: Vec<crate::render_elements::scene_element::SceneElement> =
             match self.workspaces.output_workspaces.get(&output.name()) {
                 Some(ows) if expose_active => {
                     let pos = ows.output_layer.render_position();
                     let origin = (pos.x, pos.y);
-                    vec![
+                    let lock = lock_on_screen.then(|| {
                         self.scene_element
-                            .for_plane_subtree(&ows.switcher_plane, origin),
-                        self.scene_element
-                            .for_plane_subtree(&ows.overlay_plane, origin),
-                        self.scene_element
-                            .for_plane_subtree(&ows.expose_layer, origin),
-                        self.scene_element
-                            .for_plane_subtree(&ows.background_plane, origin),
-                    ]
+                            .for_plane_subtree(&ows.lock_plane, origin)
+                    });
+                    lock.into_iter()
+                        .chain([
+                            self.scene_element
+                                .for_plane_subtree(&ows.switcher_plane, origin),
+                            self.scene_element
+                                .for_plane_subtree(&ows.overlay_plane, origin),
+                            self.scene_element
+                                .for_plane_subtree(&ows.expose_layer, origin),
+                            self.scene_element
+                                .for_plane_subtree(&ows.background_plane, origin),
+                        ])
+                        .collect()
                 }
                 _ => Vec::new(),
             };
