@@ -3,8 +3,9 @@
 //! The window draws the file exactly as Peek does over the file list, through
 //! the same [`otto_files::peek::Session`] and the same toolkit renderer, with a
 //! titlebar and a toolbar around it instead of the panel's title strip. One
-//! file per window: opening another starts another process. See
-//! `specs/preview-app.md`.
+//! file per window, and one process for all of them: a later start hands its
+//! file to the running Preview over the session bus (see [`instance`]) and
+//! leaves. See `specs/preview-app.md`.
 //!
 //! ```sh
 //! cargo run -p otto-preview -- ~/Pictures/photo.jpg
@@ -15,6 +16,7 @@
 mod app;
 mod chrome;
 mod content;
+mod instance;
 mod viewer;
 
 use std::io::Read;
@@ -83,12 +85,29 @@ fn path_from_args() -> Option<PathBuf> {
 
 async fn run(path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
     otto_kit::logging::init("info");
+
+    // A launcher that brought us up with an activation token passes it on,
+    // so the Preview that ends up showing the file may come forward with it.
+    let request = instance::Request {
+        path,
+        token: std::env::var("XDG_ACTIVATION_TOKEN").ok(),
+    };
+    let inbox = instance::Inbox::default();
+    // Held for the life of the process: the bus name goes with it.
+    let _service = match instance::claim_or_forward(&request, inbox.clone()).await {
+        Ok(instance::Role::Forwarded) => return Ok(()),
+        Ok(instance::Role::Owner(connection)) => Some(connection),
+        Err(err) => {
+            tracing::warn!(%err, "no session bus; this Preview stands alone");
+            None
+        }
+    };
+
     // Needs the runtime: without the icon theme every lookup searches hicolor
     // alone, and a card or a listing draws with no icons.
     otto_kit::icon_theme::spawn_icon_theme_watcher();
 
-    let shape = Shape::of(&path);
-    otto_kit::AppRunner::new(app::PreviewApp::new(path, shape)).run()
+    otto_kit::AppRunner::new(app::PreviewApp::new(request, inbox)).run()
 }
 
 /// What decides the window's size on opening.
@@ -104,7 +123,7 @@ pub enum Shape {
 
 impl Shape {
     /// The shape of the file at `path`, read from its header or its name.
-    fn of(path: &Path) -> Self {
+    pub fn of(path: &Path) -> Self {
         if let Some((width, height)) = picture_size(path) {
             return Self::Picture(width, height);
         }

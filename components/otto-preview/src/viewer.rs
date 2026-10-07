@@ -65,6 +65,8 @@ pub struct Viewer {
     pub video_key: u64,
     /// Something changed that the window has not repainted yet.
     pub dirty: bool,
+    /// The window was asked to close; the loop closes it on its next turn.
+    pub closing: bool,
 }
 
 /// What a key press asks the window to do beyond changing the viewer.
@@ -110,6 +112,7 @@ impl Viewer {
             cursor: CursorShape::Default,
             video_key: 0,
             dirty: true,
+            closing: false,
         }
     }
 
