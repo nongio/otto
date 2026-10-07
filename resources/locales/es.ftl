@@ -1923,7 +1923,6 @@ files-photos-info-many =
         [one] 1 elemento
        *[other] { $count } elementos
     }
-files-photos-one-selected = 1 seleccionado · Espacio para previsualizar · ↵ para abrir
 
 
 ## otto-authorize — the panel that asks for the password before a sensitive setting changes.

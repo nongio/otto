@@ -1012,8 +1012,6 @@ files-photos-info-many =
         [one] 1 item
        *[other] { $count } items
     }
-# The path bar's note with one picture selected in the Photos view.
-files-photos-one-selected = 1 selected · Space to preview · ↵ to open
 # The Photos view's header line, e.g. "36 images, 2 folders". $images and
 # $folders are already-formatted counts from the two messages below it.
 files-photos-summary = { $images }, { $folders }
