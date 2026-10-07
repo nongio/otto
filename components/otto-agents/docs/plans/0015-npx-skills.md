@@ -1,18 +1,24 @@
-# 0015: Skills reach every harness through `npx skills`
+# 0015: The otto plugin reaches every harness
 
 **Status:** Draft
 
 ## Goal
 
-Otto's skills reach every coding agent a person has, not only the ones that read
-`~/.agents/skills`, and the skill they reach stays the packaged one, so an Otto
-upgrade upgrades the skill everywhere.
+Both halves of the `otto` plugin, the `otto-help` skill and the `otto` agent
+(`agents/otto.md`), reach every coding agent a person has, whether it is
+started from Ask or from a terminal. What they reach stays the packaged copy,
+so an Otto upgrade upgrades it everywhere.
 
 Today `otto-agents plugins install` links each skill into `~/.agents/skills` and
 stops there (0005, item 13). Codex, Cursor, Gemini CLI and OpenCode read that
 folder; Claude Code in a terminal reads `~/.claude/skills` and does not, so
 `otto-help` is missing from `claude` sessions on an Otto desktop. Nearly eighty
 other harnesses each have a folder of their own.
+
+The agent is narrower still. `vendors.rs` renders it for OpenCode, Hermes,
+Codex and pi, and Claude gets it only through Ask (`--agent plugin:otto`). A
+`claude` started in a terminal has no `otto` agent, and neither does any
+harness outside those four.
 
 [`skills`](https://github.com/vercel-labs/skills) (`npx skills`, MIT, Vercel
 Labs) already keeps that table: one entry per harness with its global folder and
@@ -53,11 +59,16 @@ Gemini CLI and OpenCode set up.
   `~/.agents/skills/<name>` stays a symlink into the plugin directory, made and
   checked by `skills::install` as today. `npx skills` only adds the per-harness
   links that point at it.
-- **Only skills move; agent files stay ours.** `npx skills` installs skills and
-  nothing else (its only notion of agents is Eve's subagent skill folders), so
-  this plan covers `otto-help` and not `agents/otto.md`. `vendors.rs`
-  (OpenCode, Hermes, Codex, pi) and the Claude plugin route through
-  claude-agent-acp's `_meta` are unchanged.
+- **The skill through `npx skills`, the agent through `vendors.rs`.**
+  `npx skills` installs skills and nothing else (its only notion of agents is
+  Eve's subagent skill folders), so `agents/otto.md` keeps Otto's own route and
+  that route grows: one more `Vendor` per harness that reads agent files (see
+  "The `otto` agent" below). The Claude plugin route through claude-agent-acp's
+  `_meta` is unchanged.
+- **One command, both halves.** The agent declares `skills: otto-help`, so an
+  agent without its skill is an agent that cannot do its job. `plugins install`
+  installs both, and `plugins status` reports a harness that has one without
+  the other.
 - **Pinned.** The version is a constant in `skills.rs` (`skills@1.7.1`), bumped
   by hand after checking the behaviour above again. Never `@latest`: the CLI is
   young and its install layout has changed between releases.
@@ -78,6 +89,31 @@ Gemini CLI and OpenCode set up.
   ~/.agents/skills only. Claude Code and other agents that look elsewhere will
   not see them until Node is installed."
 
+## The `otto` agent
+
+`agents/otto.md` is written in Claude Code's own agent dialect: frontmatter
+`name`, `description`, `skills: otto-help`, `tools`, then the prompt. Each new
+target is a `Vendor`, rendered with the marker line, written only when the
+harness's folder already exists, and checked against the installed version the
+way the existing four were (the version and what was verified go in the
+variant's docs).
+
+- **Claude Code: `~/.claude/agents/otto.md`.** The source file almost as it is:
+  the same frontmatter, plus the marker. Claude Code then offers the agent in a
+  terminal (`claude --agent otto`, or as a subagent). Check: a user agent named
+  `otto` and the plugin's `plugin:otto` loaded through Ask do not collide, and
+  `skills: otto-help` resolves against `~/.claude/skills/otto-help`.
+- **Candidates, each to be verified before it gets a variant:** GitHub Copilot
+  CLI (`~/.copilot/agents/`), Gemini CLI (`~/.gemini/agents/`), Cursor
+  (`~/.cursor/agents/`). Only harnesses whose agent file can name or carry the
+  skill are worth adding; one that cannot gets the skill alone and reads the
+  prompt's intent from `otto-help`'s own page.
+- **Codex and pi stay as they are.** They have no agent files; the instructions
+  already reach them through `CODEX_CONFIG` and `--append-system-prompt`, for
+  sessions started from Ask. A terminal `codex` keeps the skill only. Writing
+  the prompt into `~/.codex/AGENTS.md` would put it in every project, which
+  `vendors.rs` already decided against.
+
 ## `plugins install`, after the change
 
 1. Prune stale links (`skills::prune`, unchanged).
@@ -93,7 +129,8 @@ Gemini CLI and OpenCode set up.
 5. Ask `npx skills ls -g --json` which harnesses now reach each skill, and
    print one line per skill: `otto-help: Claude Code, Codex, Cursor, Gemini
    CLI, OpenCode`.
-6. Write agent files (`vendors::install`, unchanged).
+6. Write agent files (`vendors::install`), now including the Claude Code
+   variant and any others verified in "The `otto` agent".
 
 `--vendor <id>` keeps skipping steps 1–5, as `only` does today.
 
@@ -120,7 +157,19 @@ ends up there.
       (the harness folders, the lock file, the Node requirement);
       `docs/developer/agents.md`; a pointer from 0005 item 13 to this plan.
 
-### 2. Upstream: resolve symlinks in `pathsOverlap`
+### 2. The `otto` agent in more harnesses (otto-agents)
+
+- [ ] `Vendor::ClaudeCode`: render `agents/otto.md` to `~/.claude/agents/otto.md`
+      with the marker; verify against the installed Claude Code, including the
+      `plugin:otto` collision check.
+- [ ] Verify the candidates (Copilot CLI, Gemini CLI, Cursor) and add a variant
+      for each that holds up.
+- [ ] `plugins status`: per harness, skill and agent side by side, flagging one
+      without the other.
+- [ ] Docs: the agent table in `docs/user/agents.md` gains the terminal column
+      ("`otto` agent in a terminal": Claude Code yes, Codex no, …).
+
+### 3. Upstream: resolve symlinks in `pathsOverlap`
 
 - [ ] PR to vercel-labs/skills: compare real paths, so a canonical path that is
       already a link to the source is skipped instead of replaced. Include a test
@@ -128,14 +177,16 @@ ends up there.
 - [ ] Once released: bump the pin. Step 4 becomes a check that finds nothing to
       do; keep it, because older CLIs and manual runs still copy.
 
-### 3. Publish `otto-help` for people not on Otto yet
+### 4. Publish the plugin for people not on Otto yet
 
-Separate from the migration, and only worth doing once 1 is in, so the two
+Separate from the migration, and only worth doing once 1 and 2 are in, so the
 installs do not fight on an Otto desktop.
 
 - [ ] Root `.claude-plugin/marketplace.json` pointing at `resources/plugins/otto`.
-      It makes `npx skills add nongio/otto` explicit, and the repository a Claude
-      Code plugin marketplace (`/plugin marketplace add nongio/otto`).
+      It makes `npx skills add nongio/otto` explicit (skill only), and the
+      repository a Claude Code plugin marketplace
+      (`/plugin marketplace add nongio/otto`), which installs the skill and the
+      agent together.
 - [ ] `otto-help` says so when it is not on Otto: no `org.otto.*` names on the
       session bus means it answers from the guides and does not run commands.
 - [ ] README and website: `npx skills add nongio/otto`, and
@@ -144,13 +195,11 @@ installs do not fight on an Otto desktop.
 
 ## Open questions
 
-- **The `otto` agent in a terminal.** Claude Code started from a terminal gets
-  `otto-help` once this lands, but still not the `otto` agent: that reaches
-  Claude only through Ask (`--agent plugin:otto`). Claude Code reads user
-  agents from `~/.claude/agents/<name>.md` in the same frontmatter dialect as
-  `agents/otto.md`, so a Claude vendor in `vendors.rs` that writes it there,
-  with the marker line, would close the gap. Separate from this plan, since
-  `npx skills` has no part in it.
+- **Agent files can't be links.** Skills stay live through the symlink; a
+  rendered agent file is a copy, refreshed only when `plugins install` runs.
+  For Claude Code the source needs no rendering beyond the marker, so a symlink
+  to `/usr/share/otto/plugins/otto/agents/otto.md` would stay live too, but
+  loses the marker that tells `vendors.rs` the file is ours. Link or render?
 
 - **`npx skills update -g`.** Does it re-copy a `local` entry over our link? If
   so, `plugins status` catches it and `plugins install` repairs it, but the
