@@ -1738,12 +1738,16 @@ impl<A: RendererApi> Otto<UdevData<A>> {
 
                                 if let Err(e) = blit_result {
                                     tracing::debug!("Screenshare blit failed: {}", e);
+                                    // Never queue a buffer holding a partial
+                                    // frame; its next use renders in full.
+                                    pool.forget_rendered();
+                                    pool.put_back(available);
                                 } else {
                                     // Only increment sequence on successful blit
                                     stream.pipewire_stream.increment_frame_sequence();
+                                    pool.queue(available);
                                 }
 
-                                pool.queue(available);
                                 drop(pool);
                                 // Trigger to queue the buffer we just rendered
                                 stream.pipewire_stream.trigger_frame();

@@ -232,6 +232,12 @@ impl BufferPool {
         self.last_rendered = Some(buffer.id);
         (first, changed)
     }
+
+    /// Undo [`Self::mark_rendered`] after a frame failed to render, so the
+    /// next frame is a full one whichever buffer it goes into.
+    pub fn forget_rendered(&mut self) {
+        self.last_rendered = None;
+    }
 }
 
 /// A dequeued buffer the main thread is rendering into.
@@ -1707,6 +1713,29 @@ mod tests {
         pool.remove_fd(7);
         pool.add(7, dmabuf(), pw_buffer(1));
         pool.dequeued(7, pw_buffer(1));
+        let buffer = pool.take_available().unwrap();
+        assert_eq!(pool.mark_rendered(&buffer), (true, true));
+    }
+
+    #[test]
+    fn failed_render_is_put_back_and_redone_in_full() {
+        let mut pool = BufferPool::default();
+        pool.add(7, dmabuf(), pw_buffer(1));
+        pool.dequeued(7, pw_buffer(1));
+
+        let buffer = pool.take_available().unwrap();
+        pool.mark_rendered(&buffer);
+        pool.queue(buffer);
+        pool.take_queue();
+        pool.dequeued(7, pw_buffer(1));
+
+        // The blit fails: the buffer goes back unqueued.
+        let buffer = pool.take_available().unwrap();
+        assert_eq!(pool.mark_rendered(&buffer), (false, false));
+        pool.forget_rendered();
+        assert!(pool.put_back(buffer));
+        assert!(pool.take_queue().is_empty());
+
         let buffer = pool.take_available().unwrap();
         assert_eq!(pool.mark_rendered(&buffer), (true, true));
     }
