@@ -320,6 +320,10 @@ pub struct AppContextData {
     >,
     pub session_lock_manager: Option<wayland_protocols::ext::session_lock::v1::client::ext_session_lock_manager_v1::ExtSessionLockManagerV1>,
     pub cursor_shape_manager: Option<wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_manager_v1::WpCursorShapeManagerV1>,
+    /// `xdg_activation_v1`, how a window asks to be brought forward. `None`
+    /// on a compositor without it — see [`AppContext::activate`].
+    pub xdg_activation:
+        Option<wayland_protocols::xdg::activation::v1::client::xdg_activation_v1::XdgActivationV1>,
     pub fractional_scale_manager: Option<wayland_protocols::wp::fractional_scale::v1::client::wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1>,
     /// `None` on a compositor without pointer gestures at version 3, where a
     /// touchpad hold is simply not reported.
@@ -983,6 +987,41 @@ impl<'a> AppContext<'a> {
 
     pub fn queue_handle() -> &'static QueueHandle<AppData<super::DefaultApp>> {
         Self::queue_handle_typed::<super::DefaultApp>()
+    }
+
+    /// Ask the compositor to bring `surface` forward and give it the keyboard.
+    ///
+    /// `token` is an activation token handed over by whoever asked for the
+    /// window — a launcher's `XDG_ACTIVATION_TOKEN`. Without one a token is
+    /// requested here, carrying the pointer's last enter serial when there is one; the
+    /// compositor decides whether to honour it (Otto does for a request made
+    /// right after a press). Nothing happens on a compositor without
+    /// xdg-activation.
+    pub fn activate(surface: &wl_surface::WlSurface, token: Option<String>) {
+        Self::with_global(|ctx| {
+            let Some(activation) = &ctx.data.xdg_activation else {
+                tracing::debug!("no xdg_activation_v1; cannot bring a window forward");
+                return;
+            };
+            match token {
+                Some(token) => activation.activate(token, surface),
+                None => {
+                    let request =
+                        activation.get_activation_token(Self::queue_handle(), surface.clone());
+                    request.set_surface(surface);
+                    let serial = LAST_POINTER_ENTER_SERIAL.with(|s| *s.borrow());
+                    if let Some(seat) = ctx.data.seat_state.seats().next() {
+                        if serial != 0 {
+                            request.set_serial(serial, &seat);
+                        }
+                    }
+                    request.commit();
+                }
+            }
+            if let Err(err) = ctx.data.connection.flush() {
+                tracing::warn!(%err, "could not flush an activation request");
+            }
+        });
     }
 
     /// Return the theme matching the current system color scheme.
