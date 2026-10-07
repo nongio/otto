@@ -19,21 +19,21 @@ while the agent works, yellow when it is waiting for an answer, and grey when
 it is idle.
 
 Click a session to carry it on: the launcher opens on that conversation and
-the canvas slides away. **Ask**, at the top of the panel, starts a new
-request in the launcher instead.
+the canvas slides away.
 
-The search field above the list has the keyboard as soon as the canvas
-opens, so you can just start typing: the list narrows to the sessions whose
-titles contain what you typed. The keys are the launcher's:
+The field above the list is where you ask something new. It has the keyboard
+as soon as the canvas opens, so you can just start typing; press Enter and
+the request is sent, the launcher opens on the conversation and the canvas
+slides away. The other keys are the launcher's:
 
 | Keys | What they do |
 |------|--------------|
 | Down, Up (or Ctrl+N, Ctrl+P, Tab, Shift+Tab) | Move the highlight |
 | Page Down, Page Up | Move the highlight a page at a time |
-| Enter | Open the highlighted session. If nothing matches, ask about what you typed |
+| Enter | Send what you typed as a new request. With nothing typed, open the highlighted session |
 | Right, with nothing typed | Open the highlighted session |
-| Ctrl+L | Start a new request, like Ask |
-| Escape | Clear the search; with nothing typed, close the canvas |
+| Ctrl+L | Send what you typed; with nothing typed, open an empty request |
+| Escape | Clear what you typed; with nothing typed, close the canvas |
 
 The list is fetched each time the canvas opens and follows the agent service
 while it stays open: new sessions, finished turns and questions show up as
@@ -66,7 +66,7 @@ send the stash or clear it, the card leaves the canvas.
   the touchpad to close it.
 - **Keyboard:** bind the `CanvasToggle` action (see below). Escape closes it;
   when a panel has the keyboard, the panel decides what Escape does first
-  (the Agents panel clears its search).
+  (the Agents panel clears what you typed).
 - **Pointer:** click anywhere outside the canvas to close it. The click still
   reaches the window you clicked, and the canvas slides away when you let go
   of the button. If you pressed to drag something instead, the canvas stays
