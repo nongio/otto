@@ -6,6 +6,7 @@ pub mod ask;
 pub mod calc;
 pub mod input;
 pub mod log;
+pub mod log_paint;
 pub mod selection;
 pub mod source;
 pub mod transcript;

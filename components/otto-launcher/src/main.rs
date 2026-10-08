@@ -48,10 +48,11 @@ use otto_launcher::ask::{Ask, Note, Status, Step, Terminal};
 use otto_launcher::calc::Calculator;
 use otto_launcher::input;
 use otto_launcher::log::{self as ask_log, lay_out, Block, Line as LogLine};
+use otto_launcher::log_paint::{AttachmentHit, LogPainter};
 use otto_launcher::selection::{self, Caret, Selection, Span};
 use otto_launcher::source::Source;
 use otto_launcher::view::{
-    AttachmentHit, Palette, CARD_W, FIELD_H, LIST_TOP, LOG_LINE_H, LOG_W, MAX_CARD_H, RADIUS,
+    Palette, CARD_W, FIELD_H, LIST_TOP, LOG_LINE_H, LOG_W, MAX_CARD_H, RADIUS,
 };
 use otto_launcher::windows;
 
@@ -106,6 +107,8 @@ struct Launcher {
     /// behind *it* rather than behind the whole screen.
     card: Option<SubsurfaceSurface>,
     palette: Option<Palette>,
+    /// Measures, paints and hit-tests the ask log, at [`LOG_W`].
+    log_painter: LogPainter,
     /// Last size handed to the card's style, so an unchanged frame does not
     /// re-send it.
     card_size: (f32, f32),
@@ -363,6 +366,7 @@ impl Launcher {
             surface: None,
             card: None,
             palette: None,
+            log_painter: LogPainter::new(dark()),
             card_size: (0.0, 0.0),
             input_region: None,
             sources,
@@ -678,7 +682,7 @@ impl Launcher {
             )
         });
         let content = LogRows {
-            palette,
+            painter: &self.log_painter,
             lines: &self.log,
             selection: &self.selection_rects,
             copy,
@@ -1116,9 +1120,10 @@ impl Launcher {
 
     /// Lay the log out again from the conversation.
     fn relayout_log(&mut self) {
-        let (Some(ask), Some(palette)) = (self.ask.as_ref(), self.palette.as_ref()) else {
+        let (Some(ask), Some(_)) = (self.ask.as_ref(), self.palette.as_ref()) else {
             return;
         };
+        let painter = &self.log_painter;
         // What goes with the next request shows before anything is asked.
         let pending = ask.pending();
         let transcript = match ask.transcript() {
@@ -1200,9 +1205,9 @@ impl Launcher {
             &pending,
             footer,
             LOG_W,
-            |text, style| palette.measure_log(text, style),
-            |path| palette.picture_size(path),
-            |items, pending| palette.attachments_height(items, pending),
+            |text, style| painter.measure(text, style),
+            |path| painter.picture_size(path),
+            |items, pending| painter.attachments_height(items, pending, LOG_W),
         );
         self.log_text = self
             .log
@@ -1214,7 +1219,7 @@ impl Launcher {
         // selection whose text has since been laid out differently — the log
         // was cleared, or a request withdrawn — is dropped rather than left
         // highlighting whatever now sits at those coordinates.
-        self.log_spans = palette.log_spans(&self.log);
+        self.log_spans = painter.spans(&self.log, LOG_W);
         match self.log_selection {
             Some(selection) if selection.fits(&self.log_spans) => {
                 // The words may have been laid out somewhere else — the card
@@ -1235,10 +1240,7 @@ impl Launcher {
 
     /// Ask for the thumbnails of attached files just laid out.
     fn request_thumbnails(&mut self) {
-        let Some(palette) = self.palette.as_ref() else {
-            return;
-        };
-        let wanted = palette.thumbnails_wanted();
+        let wanted = self.log_painter.thumbnails_wanted();
         if wanted.is_empty() {
             return;
         }
@@ -1260,8 +1262,7 @@ impl Launcher {
 
     /// Show the thumbnails made since the last pass.
     fn take_thumbnails(&mut self) {
-        let (Some(thumbnailer), Some(palette)) = (self.thumbnailer.as_mut(), self.palette.as_ref())
-        else {
+        let Some(thumbnailer) = self.thumbnailer.as_mut() else {
             return;
         };
         let made = thumbnailer.take();
@@ -1269,7 +1270,7 @@ impl Launcher {
             return;
         }
         for (path, image) in made {
-            palette.set_thumbnail(&path, image);
+            self.log_painter.set_thumbnail(&path, image);
         }
         self.relayout_log();
     }
@@ -1335,11 +1336,7 @@ impl Launcher {
     /// pointer shows its copy button, and a copied block stops saying so once
     /// the pointer leaves it.
     fn hover_code(&mut self, point: Option<(f32, f32)>) {
-        let hover = point.and_then(|point| {
-            self.palette
-                .as_ref()
-                .and_then(|palette| palette.code_at(&self.log, point))
-        });
+        let hover = point.and_then(|point| self.log_painter.code_at(&self.log, point, LOG_W));
         if hover == self.code_hover {
             return;
         }
@@ -1361,11 +1358,7 @@ impl Launcher {
     /// drawn as something that can be opened.
     fn hover_steps(&mut self, point: Option<(f32, f32)>) {
         let hover = point
-            .and_then(|point| {
-                self.palette
-                    .as_ref()
-                    .and_then(|palette| palette.steps_at(&self.log, point))
-            })
+            .and_then(|point| self.log_painter.steps_at(&self.log, point, LOG_W))
             .map(|(line, _)| line);
         if hover == self.steps_hover {
             return;
@@ -1378,11 +1371,7 @@ impl Launcher {
     /// Follow the pointer over the attachments going with the next request,
     /// so the one under it is highlighted.
     fn hover_attachment(&mut self, point: Option<(f32, f32)>) {
-        let hover = point.and_then(|point| {
-            self.palette
-                .as_ref()
-                .and_then(|palette| palette.attachment_at(&self.log, point))
-        });
+        let hover = point.and_then(|point| self.log_painter.attachment_at(&self.log, point, LOG_W));
         if hover.map(|hit| (hit.line, hit.item))
             == self.attachment_hover.map(|hit| (hit.line, hit.item))
         {
@@ -1434,7 +1423,7 @@ impl Launcher {
 
     fn link_at(&self, point: Option<(f32, f32)>) -> Option<&str> {
         let point = point?;
-        self.palette.as_ref()?.link_at(&self.log, point)
+        self.log_painter.link_at(&self.log, point, LOG_W)
     }
 
     /// How many presses have run together at this spot: a second within the
@@ -1795,7 +1784,7 @@ impl ScrollContent for Rows<'_> {
 
 /// What the list pane shows once a request is made: the ask log.
 struct LogRows<'a> {
-    palette: &'a Palette,
+    painter: &'a LogPainter,
     lines: &'a [LogLine],
     /// What is selected, as the boxes to paint behind the words.
     selection: &'a [Rect],
@@ -1818,10 +1807,11 @@ impl ScrollContent for LogRows<'_> {
     }
 
     fn paint(&self, canvas: &skia_safe::Canvas, band: Rect) {
-        self.palette.paint_log(
+        self.painter.paint(
             canvas,
             band,
             self.lines,
+            LOG_W,
             self.selection,
             self.copy,
             self.steps,
@@ -2081,6 +2071,7 @@ impl App for Launcher {
         if let Some(palette) = self.palette.as_mut() {
             palette.set_dark(dark);
         }
+        self.log_painter.set_dark(dark);
         if let Some(card) = self.card.as_ref() {
             apply_card_colour(card, self.card_tint);
         }
@@ -2513,7 +2504,7 @@ impl App for Launcher {
                     // over the block's words too.
                     if let Some((line, hit)) = self.code_hover.filter(|(_, hit)| hit.on_button) {
                         if let PointerEventKind::Press { serial, .. } = event.kind {
-                            if let Some(text) = Palette::code_text(&self.log, line, hit.block) {
+                            if let Some(text) = LogPainter::code_text(&self.log, line, hit.block) {
                                 copy_to_clipboard(&text, serial);
                                 self.code_copied = Some((line, hit.block));
                                 self.log_revision = self.log_revision.wrapping_add(1);
@@ -2524,11 +2515,10 @@ impl App for Launcher {
                     }
                     // A press on an attachment going with the next request is
                     // a click on it, if it is released there.
-                    if let Some(hit) = self.log_point(x, y).and_then(|point| {
-                        self.palette
-                            .as_ref()
-                            .and_then(|palette| palette.attachment_at(&self.log, point))
-                    }) {
+                    if let Some(hit) = self
+                        .log_point(x, y)
+                        .and_then(|point| self.log_painter.attachment_at(&self.log, point, LOG_W))
+                    {
                         self.attachment_press = Some((hit, x, y));
                         self.set_log_selection(None);
                         continue;
@@ -2536,11 +2526,10 @@ impl App for Launcher {
                     // A press on a group of tool calls opens or closes it,
                     // and is not also the start of a selection over the words
                     // it is on.
-                    if let Some((_, block)) = self.log_point(x, y).and_then(|point| {
-                        self.palette
-                            .as_ref()
-                            .and_then(|palette| palette.steps_at(&self.log, point))
-                    }) {
+                    if let Some((_, block)) = self
+                        .log_point(x, y)
+                        .and_then(|point| self.log_painter.steps_at(&self.log, point, LOG_W))
+                    {
                         if !self.steps_open.remove(&block) {
                             self.steps_open.insert(block);
                         }
@@ -2587,9 +2576,7 @@ impl App for Launcher {
                     const SLOP: f32 = 4.0;
                     if let Some((hit, from_x, from_y)) = self.attachment_press.take() {
                         let here = self.log_point(x, y).and_then(|point| {
-                            self.palette
-                                .as_ref()
-                                .and_then(|palette| palette.attachment_at(&self.log, point))
+                            self.log_painter.attachment_at(&self.log, point, LOG_W)
                         });
                         let still = (x - from_x).abs() <= SLOP && (y - from_y).abs() <= SLOP;
                         if still && here == Some(hit) {
