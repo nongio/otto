@@ -58,6 +58,7 @@ impl Browser {
     /// must not narrow to one of them when the button comes up.
     pub(super) fn drag_started(&mut self) {
         self.press_pending = None;
+        self.video_click_pending = false;
     }
 
     /// Is `index` one of *several* entries selected in `depth`?

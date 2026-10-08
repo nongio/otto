@@ -101,6 +101,7 @@ impl Browser {
             photo_tool_hover: None,
             photos_video_key: None,
             last_preview_click: None,
+            video_click_pending: false,
             opening_stage: None,
             panel_text: None,
             info_selection: Default::default(),

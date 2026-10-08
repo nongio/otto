@@ -500,6 +500,10 @@ struct Browser {
     /// The last press on a preview's picture — the preview column's, or the
     /// Photos info panel's — so a second one soon after opens the file.
     last_preview_click: Option<std::time::Instant>,
+    /// A press on a preview's *video* that has not yet said whether it is a
+    /// click, which plays or pauses it, or the start of a drag, which picks
+    /// the file up. Settled by the release, or cancelled by the drag.
+    video_click_pending: bool,
     /// Where an open pulse rises from when the file was opened from its
     /// preview rather than its row: the picture it was double-clicked on.
     opening_stage: Option<Rect>,
