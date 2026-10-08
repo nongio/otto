@@ -32,4 +32,4 @@ otto-agents is the agents service: it runs ACP agents and serves them over AHP. 
 | 0013 | [Stash and ask](0013-stash.md) | Idea | 0011, 0012 |
 | 0014 | [MCP gateway](0014-mcp-gateway.md) | Idea | 0003, 0013 |
 | 0016 | [Documents you look at, agents edit](0016-agent-edited-documents.md) | Idea | 0011, 0014 |
-| 0017 | [The chat, out of the launcher](0017-agents-ui-kit.md) | Draft | 0011 |
+| 0017 | [The chat, out of the launcher](0017-agents-ui-kit.md) | In progress | 0011 |

@@ -1,6 +1,6 @@
 # 0017: The chat, out of the launcher
 
-**Status:** Draft
+**Status:** In progress: milestones 1–5 done; 6 (Preview hosts it) is 0016's milestone 3
 
 ## Goal
 
@@ -42,6 +42,23 @@ changes no behaviour: the launcher looks and works the same at the end.
 - **One background-connection pattern.** `Ask` and `SessionFeed` each start a
   thread with a current-thread runtime, a channel and a wake-up socket, with the
   same `Reporter` written twice. They share one.
+- **The log's inset is the kit's.** `LogPainter` paints the log's text
+  `log::paint::INSET` in from either edge of its pane; the width a host gives
+  is the text's, so the launcher passes `LOG_W = CARD_W - 2 * INSET`.
+- **The transcript is its own module.** `Said`, `Picture` and `Attachment` sit
+  in `chat::transcript`, apart from the connection, so the log's layout takes
+  them without `Ask`. `chat` re-exports them.
+- **The host finds windows.** `Terminal::focus` takes the function that brings
+  a matching window forward; the launcher passes its foreign-toplevel lookup,
+  so the kit needs no Wayland protocol of its own for it.
+- **`ChatView` answers the conversation's keys, not the composer's.** It
+  takes the keys that scroll the log, stop the turn, change the mode, copy and
+  select all; Return, Tab completion, Escape and the field stay the host's.
+  It works in the log's content coordinates: the host says where a point on
+  its surface falls in the log, because the pane and its scroll are the
+  host's, and it reports what a press or release came to (`Pressed`,
+  `Released`) rather than acting on the host's state, as for a pending
+  attachment that may be otto-stash's.
 - **Islands and the service keep their own questions.** otto-agents asks
   otto-islands over `org.otto.Dialog1` when no client watches the chat, from ACP
   types, before AHP sees the question. That is a different layer, not a copy of
@@ -187,12 +204,13 @@ unchanged on screen.
 ## Open questions
 
 - **One text selection or two.** `otto-kit`'s `selectable_text` and the
-  launcher's `selection` are both run-based selection with click counting. Merge
-  them into `otto-kit` as part of milestone 4, or move the launcher's as it is and
-  merge later?
+  launcher's `selection` are both run-based selection with click counting.
+  Milestone 4 moved the launcher's as it is, to `log::selection`; merging the
+  two into `otto-kit` is still open.
 - **The composer.** Preview needs a field with the question rows under it, as
   the launcher has. Is that `ChatView`'s, or does each host build it from
-  `TextInput` and `rows`?
+  `TextInput` and `rows`? For now the host builds it: Return (send or answer)
+  and Tab (complete a skill) stay in the launcher's `main.rs`.
 - **Agent colours.** The launcher tints the whole card with the agent's
   material. A panel in Preview probably shouldn't. Does the colour stay in
   `Ask` for hosts to use as they like?
