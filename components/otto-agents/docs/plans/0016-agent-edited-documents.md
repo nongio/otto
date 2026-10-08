@@ -47,7 +47,7 @@ Three things make this more than "an image next to a chat":
 - **Document sessions are ordinary sessions.** Same service, same AHP, same
   history and permissions. Only where they open is different (see below).
 - **The chat is shared, not copied.** The Ask model and chat drawing move out of
-  the launcher into a crate both apps use.
+  the launcher into `otto-agents-kit`, which both apps use (see 0017).
 - **The viewer is the generic output surface.** Anything the agent wants to show
   is a file in a format Preview already renders. No separate widget vocabulary.
 
@@ -201,8 +201,9 @@ styles you made.
 1. **Reload and ask.** Preview watches its file and reloads. An Ask button runs
    `otto-launcher --ask --file <path>`. Two windows, but the loop works today.
 2. **Shared chat.** Move the `Ask` model, `log.rs` layout and the chat half of the
-   launcher's `view.rs` into a crate (`otto-ask-kit`). The launcher is its first
-   user and doesn't change.
+   launcher's `view.rs` into `otto-agents-kit`, as
+   [0017](0017-agents-ui-kit.md) plans. The launcher is its first user and
+   doesn't change.
 3. **Chat in Preview.** A side panel that starts a document session with the
    subject attached.
 4. **Versions and the editing tools.** The store, `Workspace`, `Commit`,
