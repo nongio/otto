@@ -23,9 +23,11 @@ use otto_kit::CursorShape;
 use smithay_client_toolkit::seat::keyboard::KeyEvent;
 use smithay_client_toolkit::seat::pointer::{PointerEvent, PointerEventKind};
 use smithay_client_toolkit::shell::xdg::window::WindowConfigure;
+use smithay_client_toolkit::shell::WaylandSurface;
 use wayland_client::protocol::wl_keyboard;
 
 use crate::chrome;
+use crate::instance::{Inbox, Request};
 use crate::viewer::{KeyOutcome, Viewer};
 use crate::Shape;
 
@@ -41,10 +43,21 @@ const BTN_LEFT: u32 = 0x110;
 /// How often the loop turns while something moves on its own.
 const FRAME: Duration = Duration::from_millis(16);
 
-/// The application: one window on one file.
+/// The application: a window for each open file.
 pub struct PreviewApp {
+    docs: Vec<Doc>,
+    /// The file this start was asked for, opened once the app is ready.
+    first: Option<Request>,
+    /// Files asked for by later starts, handed over the bus.
+    inbox: Inbox,
+}
+
+/// One file in its window.
+struct Doc {
     viewer: Arc<Mutex<Viewer>>,
-    window: Option<Window>,
+    window: Window,
+    /// The file with its links resolved, to tell a second request for it.
+    key: PathBuf,
     /// What the opening size is fitted to.
     shape: Shape,
     /// Whether the first configure has been answered, which is when the
@@ -53,20 +66,103 @@ pub struct PreviewApp {
 }
 
 impl PreviewApp {
-    /// An application that will open `path` in a window sized for `shape`.
-    pub fn new(path: PathBuf, shape: Shape) -> Self {
+    /// An application that opens `first` when it is ready, and then whatever
+    /// arrives in `inbox`.
+    pub fn new(first: Request, inbox: Inbox) -> Self {
         Self {
-            viewer: Arc::new(Mutex::new(Viewer::new(path, shape.opening_size(None)))),
-            window: None,
-            shape,
-            sized: false,
+            docs: Vec::new(),
+            first: Some(first),
+            inbox,
         }
     }
 
-    fn redraw(&self) {
-        if let Some(window) = &self.window {
-            window.request_frame();
+    /// Open the file `request` names in a window of its own, or bring
+    /// forward the window already showing it.
+    fn open(&mut self, request: Request) -> Result<(), Box<dyn std::error::Error>> {
+        let key = resolved(&request.path);
+        if let Some(doc) = self.docs.iter().find(|doc| doc.key == key) {
+            if let Some(surface) = doc.window.surface() {
+                AppContext::activate(surface.xdg_window().wl_surface(), request.token);
+            }
+            return Ok(());
         }
+        let shape = Shape::of(&request.path);
+        self.docs.push(Doc::open(request.path, key, shape)?);
+        Ok(())
+    }
+
+    /// The window holding the keyboard.
+    fn focused(&self) -> Option<&Doc> {
+        let focus = AppContext::keyboard_focus()?;
+        self.docs
+            .iter()
+            .find(|doc| doc.window.surface_id().as_ref() == Some(&focus))
+    }
+
+    /// The window under the pointer.
+    fn hovered(&self) -> Option<&Doc> {
+        self.docs
+            .iter()
+            .find(|doc| doc.viewer.lock().unwrap().pointer.is_some())
+    }
+}
+
+/// `path` with its links resolved, or as given when it cannot be.
+fn resolved(path: &Path) -> PathBuf {
+    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
+impl Doc {
+    /// A window on `path`, sized for `shape`.
+    fn open(path: PathBuf, key: PathBuf, shape: Shape) -> Result<Self, Box<dyn std::error::Error>> {
+        let viewer = Viewer::new(path, shape.opening_size(None));
+        let (name, (width, height)) = (viewer.name.clone(), viewer.size);
+        let viewer = Arc::new(Mutex::new(viewer));
+        let mut window = Window::new(&name, width as i32, height as i32)?;
+        window.set_min_size(MIN_W as u32, MIN_H as u32);
+        // Opaque, and the same ground the preview is drawn on, so a resize
+        // that outruns the repaint shows paper rather than the desktop.
+        window.set_background(ground(&AppContext::current_theme()));
+        // Named after the desktop entry, so the dock and the switcher find
+        // `otto-preview.desktop` directly.
+        if let Some(surface) = window.surface() {
+            surface.xdg_window().set_app_id(APP_ID.to_string());
+        }
+        window.set_frame_corner_radius(CORNER);
+
+        let drawn = Arc::clone(&viewer);
+        window.on_draw(move |canvas| {
+            let theme = AppContext::current_theme();
+            let viewer = drawn.lock().unwrap();
+            canvas.clear(ground(&theme));
+            crate::content::draw(canvas, &viewer, &theme);
+            chrome::draw(canvas, &viewer, &theme);
+        });
+
+        let pointed = Arc::clone(&viewer);
+        let handle = window.clone();
+        window.on_pointer_event(move |events| handle_pointer(&pointed, &handle, events));
+
+        // The compositor's close (the dock's, a shortcut's) closes this
+        // window, not the application with every other file in it.
+        let closed = Arc::clone(&viewer);
+        window.on_close_request(move || {
+            closed.lock().unwrap().closing = true;
+            AppContext::request_wakeup();
+        });
+
+        AppContext::register_window(window.clone());
+        Ok(Self {
+            viewer,
+            window,
+            key,
+            shape,
+            sized: false,
+        })
+    }
+
+    fn redraw(&self) {
+        self.window.request_frame();
     }
 
     /// Decode the file off the UI thread, then recognise its text if it is a
@@ -331,7 +427,10 @@ fn handle_pointer(viewer: &Mutex<Viewer>, window: &Window, events: &[PointerEven
                 let fired = v.controls.on_release(control);
                 v.dirty |= armed;
                 match fired {
-                    Some(WindowControl::Close) => std::process::exit(0),
+                    Some(WindowControl::Close) => {
+                        v.closing = true;
+                        AppContext::request_wakeup();
+                    }
                     Some(WindowControl::Minimize) => window.minimize(),
                     Some(WindowControl::Zoom) => window.toggle_maximized(),
                     None => {}
@@ -381,46 +480,9 @@ fn handle_pointer(viewer: &Mutex<Viewer>, window: &Window, events: &[PointerEven
     }
 }
 
-impl App for PreviewApp {
-    fn on_app_ready(&mut self, _ctx: &AppContext) -> Result<(), Box<dyn std::error::Error>> {
-        let (name, (width, height)) = {
-            let viewer = self.viewer.lock().unwrap();
-            (viewer.name.clone(), viewer.size)
-        };
-        let mut window = Window::new(&name, width as i32, height as i32)?;
-        window.set_min_size(MIN_W as u32, MIN_H as u32);
-        // Opaque, and the same ground the preview is drawn on, so a resize
-        // that outruns the repaint shows paper rather than the desktop.
-        window.set_background(ground(&AppContext::current_theme()));
-        // Named after the desktop entry, so the dock and the switcher find
-        // `otto-preview.desktop` directly.
-        if let Some(surface) = window.surface() {
-            surface.xdg_window().set_app_id(APP_ID.to_string());
-        }
-        window.set_frame_corner_radius(CORNER);
-
-        let viewer = Arc::clone(&self.viewer);
-        window.on_draw(move |canvas| {
-            let theme = AppContext::current_theme();
-            let viewer = viewer.lock().unwrap();
-            canvas.clear(ground(&theme));
-            crate::content::draw(canvas, &viewer, &theme);
-            chrome::draw(canvas, &viewer, &theme);
-        });
-
-        let viewer = Arc::clone(&self.viewer);
-        let handle = window.clone();
-        window.on_pointer_event(move |events| handle_pointer(&viewer, &handle, events));
-
-        AppContext::register_window(window.clone());
-        self.window = Some(window);
-        Ok(())
-    }
-
-    fn on_configure(&mut self, _ctx: &AppContext, configure: WindowConfigure, _serial: u32) {
-        let Some(window) = &self.window else {
-            return;
-        };
+impl Doc {
+    /// Answer a configure for this window.
+    fn configure(&mut self, configure: WindowConfigure) {
         // The first configure leaves the size to the window unless the window
         // is tiled or maximized, and carries the room a new window has. The
         // opening size is fitted to that room: the size the window was
@@ -429,7 +491,7 @@ impl App for PreviewApp {
         let fitted = match (first, configure.new_size, configure.suggested_bounds) {
             (true, (None, None), Some((width, height))) => {
                 let (width, height) = self.shape.opening_size(Some((width as f32, height as f32)));
-                window.resize(width as i32, height as i32);
+                self.window.resize(width as i32, height as i32);
                 Some((width, height))
             }
             _ => None,
@@ -441,18 +503,65 @@ impl App for PreviewApp {
             } else if let Some(size) = fitted {
                 viewer.size = size;
             }
-            viewer.variant = window.decoration_variant();
-            viewer.active = window.is_activated();
+            viewer.variant = self.window.decoration_variant();
+            viewer.active = self.window.is_activated();
             viewer.dirty = true;
             viewer.size
         };
-        window.sync_frame_corners();
-        apply_opaque_region(window, size);
-        window.request_frame();
+        self.window.sync_frame_corners();
+        apply_opaque_region(&self.window, size);
+        self.window.request_frame();
+    }
+
+    /// One turn of the loop: start the decode once the window is
+    /// configured, follow the document, and step whatever moves.
+    fn update(&self) {
+        // The decode waits for the first configure, by which time the window
+        // knows its real size and the output's scale.
+        let start = {
+            let mut viewer = self.viewer.lock().unwrap();
+            (!viewer.started && self.window.is_configured()).then(|| {
+                viewer.started = true;
+                viewer.decode_panel = viewer.content();
+                (viewer.path.clone(), viewer.decode_panel)
+            })
+        };
+        if let Some((path, panel)) = start {
+            let scale = AppContext::scale_factor().max(1) as f32;
+            self.start_decode(path, panel, scale);
+        }
+        self.follow_document();
+        if self.viewer.lock().unwrap().tick() {
+            self.window.request_frame();
+        }
+    }
+}
+
+impl App for PreviewApp {
+    fn on_app_ready(&mut self, _ctx: &AppContext) -> Result<(), Box<dyn std::error::Error>> {
+        match self.first.take() {
+            Some(first) => self.open(first),
+            None => Ok(()),
+        }
+    }
+
+    fn on_configure(&mut self, _ctx: &AppContext, configure: WindowConfigure, _serial: u32) {
+        let Some((id, ..)) = AppContext::current_surface_configure() else {
+            return;
+        };
+        if let Some(doc) = self
+            .docs
+            .iter_mut()
+            .find(|doc| doc.window.surface_id().as_ref() == Some(&id))
+        {
+            doc.configure(configure);
+        }
     }
 
     fn on_modifiers(&mut self, _ctx: &AppContext, modifiers: Modifiers) {
-        self.viewer.lock().unwrap().modifiers = modifiers;
+        for doc in &self.docs {
+            doc.viewer.lock().unwrap().modifiers = modifiers;
+        }
     }
 
     fn on_key_event(
@@ -465,28 +574,38 @@ impl App for PreviewApp {
         if state != wl_keyboard::KeyState::Pressed {
             return;
         }
-        let outcome = self.viewer.lock().unwrap().key(event.keysym);
+        let Some(doc) = self.focused() else {
+            return;
+        };
+        let outcome = doc.viewer.lock().unwrap().key(event.keysym);
         match outcome {
-            KeyOutcome::Close => std::process::exit(0),
+            KeyOutcome::Close => {
+                doc.viewer.lock().unwrap().closing = true;
+                AppContext::request_wakeup();
+            }
             KeyOutcome::Copy(text) => {
                 otto_kit::clipboard::set_text(&text, serial);
             }
             KeyOutcome::Handled | KeyOutcome::Ignored => {}
         }
-        if std::mem::take(&mut self.viewer.lock().unwrap().dirty) {
-            self.redraw();
+        if std::mem::take(&mut doc.viewer.lock().unwrap().dirty) {
+            doc.redraw();
         }
     }
 
     fn on_theme_changed(&mut self, _ctx: &AppContext) {
-        if let Some(window) = &mut self.window {
-            window.set_background(ground(&AppContext::current_theme()));
+        for doc in &mut self.docs {
+            doc.window
+                .set_background(ground(&AppContext::current_theme()));
+            doc.redraw();
         }
-        self.redraw();
     }
 
     fn on_pointer_pinch_begin(&mut self, _ctx: &AppContext, fingers: u32) {
-        let mut viewer = self.viewer.lock().unwrap();
+        let Some(doc) = self.hovered() else {
+            return;
+        };
+        let mut viewer = doc.viewer.lock().unwrap();
         viewer.pinch_base =
             (fingers == 2 && viewer.zoomable()).then_some(viewer.session.zoom.scale);
     }
@@ -499,7 +618,10 @@ impl App for PreviewApp {
         scale: f64,
         _rotation: f64,
     ) {
-        let mut viewer = self.viewer.lock().unwrap();
+        let Some(doc) = self.hovered() else {
+            return;
+        };
+        let mut viewer = doc.viewer.lock().unwrap();
         let Some(base) = viewer.pinch_base else {
             return;
         };
@@ -513,39 +635,44 @@ impl App for PreviewApp {
         let moved = viewer.zoom_about(base * scale as f32, focus);
         drop(viewer);
         if moved {
-            self.redraw();
+            doc.redraw();
         }
     }
 
     fn on_pointer_pinch_end(&mut self, _ctx: &AppContext, _cancelled: bool) {
-        self.viewer.lock().unwrap().pinch_base = None;
+        for doc in &self.docs {
+            doc.viewer.lock().unwrap().pinch_base = None;
+        }
     }
 
     fn on_update(&mut self, _ctx: &AppContext) {
-        let Some(window) = &self.window else {
-            return;
-        };
-        // The decode waits for the first configure, by which time the window
-        // knows its real size and the output's scale.
-        let start = {
-            let mut viewer = self.viewer.lock().unwrap();
-            (!viewer.started && window.is_configured()).then(|| {
-                viewer.started = true;
-                viewer.decode_panel = viewer.content();
-                (viewer.path.clone(), viewer.decode_panel)
-            })
-        };
-        if let Some((path, panel)) = start {
-            let scale = AppContext::scale_factor().max(1) as f32;
-            self.start_decode(path, panel, scale);
+        let requests = std::mem::take(&mut *self.inbox.lock().unwrap());
+        for request in requests {
+            if let Err(err) = self.open(request) {
+                tracing::warn!(%err, "could not open a window");
+            }
         }
-        self.follow_document();
-        if self.viewer.lock().unwrap().tick() {
-            window.request_frame();
+        self.docs.retain(|doc| {
+            let closing = doc.viewer.lock().unwrap().closing;
+            if closing {
+                doc.window.close();
+            }
+            !closing
+        });
+        // The last window closed is the application closed; the bus name
+        // goes with the process, and the next start owns it.
+        if self.docs.is_empty() {
+            std::process::exit(0);
+        }
+        for doc in &self.docs {
+            doc.update();
         }
     }
 
     fn idle_timeout(&self) -> Option<Duration> {
-        self.viewer.lock().unwrap().animating().then_some(FRAME)
+        self.docs
+            .iter()
+            .any(|doc| doc.viewer.lock().unwrap().animating())
+            .then_some(FRAME)
     }
 }

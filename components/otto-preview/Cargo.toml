@@ -24,6 +24,7 @@ smithay-client-toolkit = { workspace = true, features = ["calloop", "xkbcommon"]
 wayland-client.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread"] }
 tracing.workspace = true
+zbus.workspace = true
 
 [lints]
 workspace = true

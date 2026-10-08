@@ -13,6 +13,13 @@ in another app, `xdg-open`, the command line.
 ## Goals
 
 - `otto-preview PATH` opens one window on `PATH`, titled with the file's name.
+- One Preview runs per session. The first start owns the session-bus name
+  `org.otto.Preview1`; a later start calls its `Open(path, token)` and exits.
+  The running Preview opens the file in a new window, or, when a window
+  already shows that file (links resolved), brings that window forward
+  through xdg-activation — with the launcher's `XDG_ACTIVATION_TOKEN` when
+  there is one, else with a token it requests itself, which Otto honours
+  right after a press.
 - The content is indistinguishable from Peek's panel for the same file:
   pictures (animated ones play), SVG, PDF as a scrolling strip of pages
   rasterised as they come into view, Markdown with working links, text,
@@ -30,7 +37,7 @@ in another app, `xdg-open`, the command line.
 ## Non-Goals
 
 - Stepping through a folder, a sidebar, thumbnails or any browsing: another
-  file is another window, and another process.
+  file is another window.
 - Editing, annotating, rotating, or saving anything.
 - Claiming plain text, archives, audio or video as a default handler. Preview
   can show them when asked by path, but does not advertise them.
@@ -61,7 +68,8 @@ in another app, `xdg-open`, the command line.
 - The file's name is centred, ellipsised to stay clear of the lights.
 - The traffic lights are the kit's: close and minimise, and zoom only when
   the desktop shows the zoom dot (`show_maximize_button`), as in every other
-  Otto window. Close quits the process; minimise and zoom do what they do
+  Otto window. Close closes that window, and closing the last one quits the
+  process; minimise and zoom do what they do
   everywhere.
 - Dragging the bar (or the toolbar's empty space) moves the window; a double
   click zooms it. The window edges resize it.
@@ -131,6 +139,9 @@ in another app, `xdg-open`, the command line.
 
 - One file per window keeps the app a viewer rather than a second file
   browser; stepping through a folder is what Files and Peek are for.
+- One process for every window: opening the same file twice brings its
+  window back rather than stacking copies, and each further file costs a
+  window, not another renderer, font set and runtime.
 - The preview state and drawing are Peek's, reused rather than copied, so the
   two can never show the same file differently.
 - The window is opaque because it is a document window: a translucent

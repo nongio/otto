@@ -48,6 +48,10 @@ use wayland_protocols::wp::pointer_gestures::zv1::client::{
     zwp_pointer_gesture_pinch_v1::{self, ZwpPointerGesturePinchV1},
     zwp_pointer_gestures_v1::ZwpPointerGesturesV1,
 };
+use wayland_protocols::xdg::activation::v1::client::{
+    xdg_activation_token_v1::{self, XdgActivationTokenV1},
+    xdg_activation_v1::XdgActivationV1,
+};
 use wayland_protocols_wlr::layer_shell::v1::client::{
     zwlr_layer_shell_v1::ZwlrLayerShellV1, zwlr_layer_surface_v1::ZwlrLayerSurfaceV1,
 };
@@ -588,6 +592,10 @@ impl<A: App + 'static> AppRunnerWithType<A> {
         let subcompositor = globals.bind(&qh, 1..=1, ()).ok();
         let cursor_shape_manager: Option<wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_manager_v1::WpCursorShapeManagerV1> =
             globals.bind(&qh, 1..=2, ()).ok();
+        // xdg-activation, so a window can ask to be brought forward: a
+        // single-instance app raising the window a second launch asked for.
+        // Optional; without it the request is simply not made.
+        let xdg_activation: Option<XdgActivationV1> = globals.bind(&qh, 1..=1, ()).ok();
         let fractional_scale_manager: Option<wayland_protocols::wp::fractional_scale::v1::client::wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1> =
             globals.bind(&qh, 1..=1, ()).ok();
         // Hold gestures arrived in version 3; pinch has been there since 1.
@@ -642,6 +650,7 @@ impl<A: App + 'static> AppRunnerWithType<A> {
             otto_canvas_manager,
             session_lock_manager,
             cursor_shape_manager,
+            xdg_activation,
             fractional_scale_manager,
             pointer_gestures,
             data_device_manager,
@@ -2159,6 +2168,28 @@ wayland_client::delegate_noop!(@<A: App + 'static> AppData<A>: ignore wayland_cl
 wayland_client::delegate_noop!(@<A: App + 'static> AppData<A>: ignore wayland_client::protocol::wl_region::WlRegion);
 wayland_client::delegate_noop!(@<A: App + 'static> AppData<A>: ignore ZwlrLayerShellV1);
 wayland_client::delegate_noop!(@<A: App + 'static> AppData<A>: ignore wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_manager_v1::WpCursorShapeManagerV1);
+wayland_client::delegate_noop!(@<A: App + 'static> AppData<A>: ignore XdgActivationV1);
+
+/// A token asked for by [`AppContext::activate`]: once the compositor has
+/// issued it, it is spent on the surface it was asked for.
+impl<A: App + 'static> Dispatch<XdgActivationTokenV1, wl_surface::WlSurface> for AppData<A> {
+    fn event(
+        state: &mut Self,
+        token: &XdgActivationTokenV1,
+        event: xdg_activation_token_v1::Event,
+        surface: &wl_surface::WlSurface,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        let xdg_activation_token_v1::Event::Done { token: issued } = event else {
+            return;
+        };
+        if let Some(activation) = &state.context_data.xdg_activation {
+            activation.activate(issued, surface);
+        }
+        token.destroy();
+    }
+}
 wayland_client::delegate_noop!(@<A: App + 'static> AppData<A>: ignore wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_device_v1::WpCursorShapeDeviceV1);
 wayland_client::delegate_noop!(@<A: App + 'static> AppData<A>: ignore wayland_protocols::wp::fractional_scale::v1::client::wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1);
 wayland_client::delegate_noop!(@<A: App + 'static> AppData<A>: ignore ZwpPointerGesturesV1);

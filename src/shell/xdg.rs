@@ -110,6 +110,12 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
 
         tracing::info!("SC::new_toplevel at({}, {})", location.x, location.y);
 
+        // A window opened by a left press (a double click in Files) arrives
+        // while the clicked window's raise still waits for the release. Settle
+        // that raise now, so the new window maps above it instead of being
+        // pushed back under it when the button comes up.
+        self.apply_pending_raise();
+
         // Map window to the output under the pointer, falling back to primary.
         let target_output = self
             .workspaces
