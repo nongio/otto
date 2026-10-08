@@ -326,7 +326,7 @@ impl Launcher {
         let ask = matches!(scope, Scope::Ask | Scope::Agents).then(|| {
             // One kind of row, `ASK_ROWS`, not badged.
             labels.push("");
-            Ask::open()
+            Ask::open("otto-launcher")
         });
 
         if matches!(scope, Scope::Everything | Scope::Apps) {
@@ -990,7 +990,7 @@ impl Launcher {
     /// service owns the session, and it is in the list to come back to.
     fn new_session(&mut self) {
         self.spring();
-        self.ask = Some(Ask::open());
+        self.ask = Some(Ask::open("otto-launcher"));
         self.show_stashed();
         self.picking = false;
         self.opened_session = None;
@@ -1021,7 +1021,7 @@ impl Launcher {
     /// service owns its requests, and its questions go to a dialog.
     fn back_to_sessions(&mut self) {
         self.spring();
-        self.ask = Some(Ask::open());
+        self.ask = Some(Ask::open("otto-launcher"));
         self.show_stashed();
         self.picking = true;
         // Back where the user was, once the list arrives: the session left.

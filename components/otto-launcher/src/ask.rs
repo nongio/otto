@@ -43,6 +43,7 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::time::Duration;
 
+pub use crate::transcript::{Attachment, Picture, Said};
 use ahp::reducers::apply_action_to_chat;
 use ahp::{Client, SubscriptionEvent};
 use ahp_types::actions::{
@@ -60,7 +61,6 @@ use ahp_types::ROOT_RESOURCE_URI;
 use otto_agents_client::default_url;
 use otto_agents_client::session::{self, SESSION_SCHEME};
 use otto_agents_client::uri::{from_path as file_uri, to_path as path_from_uri};
-pub use otto_kit::components::attachments::Attachment;
 use serde_json::{json, Value};
 use tokio::sync::mpsc as async_mpsc;
 
@@ -409,57 +409,6 @@ pub struct SkillRef {
 pub struct Request {
     pub prompt: String,
     pub attachments: Vec<Attachment>,
-}
-
-/// A piece of what the agent answered.
-///
-/// An answer is mostly Markdown, and the pieces of it that arrive one after
-/// another read as one document. A picture breaks it in two: what was said
-/// before it, the picture, then the rest — so a diagram sits where the agent put
-/// it rather than at the end.
-#[derive(Clone, Debug, PartialEq)]
-pub enum Said {
-    /// Markdown, as [`otto_md_kit`] reads it.
-    Text(String),
-    /// A picture the agent sent, as the file the service keeps it in.
-    Image(Picture),
-}
-
-/// A picture in an answer.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Picture {
-    pub path: PathBuf,
-    /// What it is called, for a screen reader and for when it cannot be drawn:
-    /// the file's name without the digest the service appends to it.
-    pub label: String,
-}
-
-impl Picture {
-    /// The picture at `uri`, when it is a local file the launcher can read.
-    ///
-    /// The service writes pictures under its own cache and names them
-    /// `<label>-<digest>.<extension>`; the digest is how the same picture stays
-    /// one file, and is not something to show anyone.
-    fn at(uri: &str, content_type: Option<&str>) -> Option<Self> {
-        let path = path_from_uri(uri)?;
-        if !content_type.is_none_or(|kind| kind.starts_with("image/")) {
-            return None;
-        }
-        let stem = path.file_stem()?.to_string_lossy();
-        let label = match stem.rsplit_once('-') {
-            Some((label, digest)) if is_digest(digest) && !label.is_empty() => {
-                label.replace('-', " ")
-            }
-            _ => stem.into_owned(),
-        };
-        Some(Self { path, label })
-    }
-}
-
-/// Whether `text` is the hexadecimal digest the service appends to a picture's
-/// name, rather than part of what the picture is called.
-fn is_digest(text: &str) -> bool {
-    text.len() == 16 && text.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
 /// One request and what came of it.
@@ -843,14 +792,16 @@ pub struct Ask {
 }
 
 impl Ask {
-    /// Connect to otto-agents in the background, with sessions created in
-    /// [`default_folder`].
-    pub fn open() -> Self {
+    /// Connect to otto-agents in the background, introducing the client as
+    /// `client`, with sessions created in [`default_folder`].
+    pub fn open(client: &str) -> Self {
         let url = std::env::var("OTTO_AGENTS_URL").unwrap_or_else(|_| default_url());
-        Self::connect(url, default_folder())
+        Self::connect(client, url, default_folder())
     }
 
-    pub fn connect(url: String, folder: PathBuf) -> Self {
+    /// Connect to otto-agents at `url`, introducing the client as `client`,
+    /// with sessions created in `folder`.
+    pub fn connect(client: &str, url: String, folder: PathBuf) -> Self {
         let (commands, command_rx) = async_mpsc::unbounded_channel();
         let (update_tx, updates) = mpsc::channel();
         let (wake, wake_tx) = match UnixStream::pair() {
@@ -863,6 +814,7 @@ impl Ask {
             updates: update_tx,
             wake: wake_tx,
         };
+        let client = client.to_owned();
 
         std::thread::Builder::new()
             .name("otto-agents".into())
@@ -877,7 +829,7 @@ impl Ask {
                         return;
                     }
                 };
-                runtime.block_on(serve(&url, &folder, command_rx, &reporter));
+                runtime.block_on(serve(&url, &client, &folder, command_rx, &reporter));
             })
             .expect("cannot start the otto-agents connection thread");
 
@@ -2125,11 +2077,12 @@ impl Reporter {
 /// follow and send the answers, until the launcher goes.
 async fn serve(
     url: &str,
+    name: &str,
     folder: &Path,
     mut commands: async_mpsc::UnboundedReceiver<Command>,
     reporter: &Reporter,
 ) {
-    let client = match tokio::time::timeout(TIMEOUT, connect(url)).await {
+    let client = match tokio::time::timeout(TIMEOUT, sessions::connect(url, name)).await {
         Ok(Ok(client)) => client,
         Ok(Err(err)) => {
             reporter.send(Update::Unreachable(format!("otto-agents at {url}: {err}")));
@@ -2336,10 +2289,6 @@ async fn serve(
     client.shutdown().await;
 }
 
-async fn connect(url: &str) -> Result<Client, BoxError> {
-    sessions::connect(url, "otto-launcher").await
-}
-
 /// A followed session: its chat's URI, with the session's and the chat's event
 /// streams.
 type Followed = (String, ahp::SessionSubscription, ahp::SessionSubscription);
@@ -2528,7 +2477,11 @@ mod tests {
     #[test]
     fn an_unreachable_service_is_reported_rather_than_waited_on() {
         // Port 9 is the discard port; nothing speaks WebSocket there.
-        let mut ask = Ask::connect("ws://127.0.0.1:9".into(), PathBuf::from("/"));
+        let mut ask = Ask::connect(
+            "otto-launcher",
+            "ws://127.0.0.1:9".into(),
+            PathBuf::from("/"),
+        );
         let deadline = Instant::now() + TIMEOUT + Duration::from_secs(2);
         while ask.unreachable().is_none() && Instant::now() < deadline {
             ask.pump();
@@ -3105,7 +3058,11 @@ mod tests {
     /// An `Ask` whose connection never gets anywhere, for driving its state by
     /// hand. Nothing is pumped, so the connection's failure never lands.
     fn offline() -> Ask {
-        Ask::connect("ws://127.0.0.1:9".into(), PathBuf::from("/"))
+        Ask::connect(
+            "otto-launcher",
+            "ws://127.0.0.1:9".into(),
+            PathBuf::from("/"),
+        )
     }
 
     fn attached(file: &str) -> MessageAttachment {
@@ -3599,7 +3556,7 @@ mod tests {
     #[ignore = "needs a running `otto-agents serve --echo`"]
     fn follows_a_conversation_to_its_answers() {
         let url = std::env::var("OTTO_AGENTS_URL").unwrap_or_else(|_| default_url());
-        let mut ask = Ask::connect(url, std::env::temp_dir());
+        let mut ask = Ask::connect("otto-launcher", url, std::env::temp_dir());
 
         assert!(pump_until(&mut ask, |ask| !ask.agents.is_empty()));
         assert!(
@@ -3631,7 +3588,7 @@ mod tests {
     #[ignore = "needs a running `otto-agents serve --echo`"]
     fn opens_a_session_with_its_attachments_and_carries_it_on() {
         let url = std::env::var("OTTO_AGENTS_URL").unwrap_or_else(|_| default_url());
-        let mut first = Ask::connect(url.clone(), std::env::temp_dir());
+        let mut first = Ask::connect("otto-launcher", url.clone(), std::env::temp_dir());
         first.attach([PathBuf::from("/tmp/notes.md")]);
         first.send("resume me", None);
         assert!(pump_until(&mut first, |ask| ask.transcript().is_some_and(
@@ -3640,7 +3597,7 @@ mod tests {
         drop(first);
 
         // The newest session is the one just made.
-        let mut second = Ask::connect(url, std::env::temp_dir());
+        let mut second = Ask::connect("otto-launcher", url, std::env::temp_dir());
         assert!(pump_until(&mut second, Ask::sessions_listed));
         assert!(second.resume_at(0));
         assert!(pump_until(&mut second, |ask| ask
