@@ -246,7 +246,9 @@ impl Viewer {
     /// Whether a wheel or touchpad scroll at `at` is the sidebar's: the
     /// pane a gesture began over keeps it until it ends, as the pan does.
     pub fn wheel_goes_to_sidebar(&mut self, at: Point, stop: bool, discrete: bool) -> bool {
-        let over = self.sidebar().is_some_and(|layout| layout.rect.contains(at));
+        let over = self
+            .sidebar()
+            .is_some_and(|layout| layout.rect.contains(at));
         if discrete {
             return over;
         }

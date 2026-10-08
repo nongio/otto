@@ -52,8 +52,7 @@ impl SidebarLayout {
         self.thumbs
             .iter()
             .find(|(_, rect)| {
-                Rect::from_ltrb(rect.left, rect.top, rect.right, rect.bottom + LABEL_H)
-                    .contains(at)
+                Rect::from_ltrb(rect.left, rect.top, rect.right, rect.bottom + LABEL_H).contains(at)
             })
             .map(|(page, _)| *page)
     }
@@ -64,7 +63,9 @@ impl SidebarLayout {
         let visible: Vec<u32> = self
             .thumbs
             .iter()
-            .filter(|(_, rect)| rect.bottom + LABEL_H >= self.rect.top && rect.top <= self.rect.bottom)
+            .filter(|(_, rect)| {
+                rect.bottom + LABEL_H >= self.rect.top && rect.top <= self.rect.bottom
+            })
             .map(|(page, _)| *page)
             .collect();
         let first = visible.first().copied().unwrap_or(1);
@@ -102,7 +103,10 @@ pub fn layout(rect: Rect, pages: &[(f32, f32)], scroll: f32) -> SidebarLayout {
         let aspect = if *width > 0.0 { height / width } else { 1.4 };
         let thumb_h = (THUMB_W * aspect).clamp(THUMB_W * 0.25, THUMB_W * 4.0);
         let top = rect.top + y - scroll;
-        thumbs.push((index as u32 + 1, Rect::from_xywh(left, top, THUMB_W, thumb_h)));
+        thumbs.push((
+            index as u32 + 1,
+            Rect::from_xywh(left, top, THUMB_W, thumb_h),
+        ));
         y += thumb_h + LABEL_H + GAP;
     }
     let column = y - GAP + MARGIN;
@@ -140,7 +144,12 @@ pub fn draw(canvas: &Canvas, viewer: &Viewer, theme: &Theme) {
     // A soft drop under each page, so it sits on the column like paper.
     let mut shadow = Paint::default();
     shadow.set_anti_alias(true);
-    shadow.set_color(Color::from_argb(if theme.is_dark() { 140 } else { 60 }, 0, 0, 0));
+    shadow.set_color(Color::from_argb(
+        if theme.is_dark() { 140 } else { 60 },
+        0,
+        0,
+        0,
+    ));
     shadow.set_mask_filter(MaskFilter::blur(BlurStyle::Normal, SHADOW_BLUR, false));
     let mut ring = Paint::default();
     ring.set_anti_alias(true);
@@ -219,7 +228,10 @@ mod tests {
         let (_, second) = layout.thumbs[1];
         let at = Point::new(second.center_x(), second.center_y());
         assert_eq!(layout.page_at(at), Some(2));
-        assert_eq!(layout.page_at(Point::new(WIDTH + 10.0, second.center_y())), None);
+        assert_eq!(
+            layout.page_at(Point::new(WIDTH + 10.0, second.center_y())),
+            None
+        );
     }
 
     #[test]

@@ -328,7 +328,12 @@ fn draw_fallback_glyph(canvas: &Canvas, dst: Rect, tool: Tool, color: Color) {
 /// The sidebar button's icon: a rounded window with a shaded pane down its
 /// leading edge, the shape every desktop draws for "sidebar".
 fn draw_sidebar_glyph(canvas: &Canvas, dst: Rect, color: Color) {
-    let frame = Rect::from_ltrb(dst.left + 0.75, dst.top + 2.25, dst.right - 0.75, dst.bottom - 2.25);
+    let frame = Rect::from_ltrb(
+        dst.left + 0.75,
+        dst.top + 2.25,
+        dst.right - 0.75,
+        dst.bottom - 2.25,
+    );
     let radius = 2.5;
     let divider = frame.left + frame.width() * 0.36;
 
@@ -337,7 +342,10 @@ fn draw_sidebar_glyph(canvas: &Canvas, dst: Rect, color: Color) {
     pane.set_color(color.with_a((color.a() as f32 * 0.35) as u8));
     canvas.save();
     canvas.clip_rrect(RRect::new_rect_xy(frame, radius, radius), None, true);
-    canvas.draw_rect(Rect::from_ltrb(frame.left, frame.top, divider, frame.bottom), &pane);
+    canvas.draw_rect(
+        Rect::from_ltrb(frame.left, frame.top, divider, frame.bottom),
+        &pane,
+    );
     canvas.restore();
 
     let mut stroke = Paint::default();
