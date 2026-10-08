@@ -377,6 +377,7 @@ impl Browser {
         kind: peek::VideoPointer,
         x: f32,
         y: f32,
+        serial: Option<u32>,
     ) -> bool {
         // The preview column's stage, or the Photos info panel's: the same
         // player, drawn in whichever is showing.
@@ -427,6 +428,32 @@ impl Browser {
                 video.player.pause();
             }
             self.open_from_preview(content);
+            return true;
+        }
+        // The picture is a handle as well as a play button, as every other
+        // preview is: a press arms a drag, and only a release that did not
+        // travel plays or pauses. The transport answers at once, as before.
+        if kind == peek::VideoPointer::Press && over_picture {
+            if let Some(serial) = serial.filter(|_| self.dnd_enabled()) {
+                self.drag_armed = Some((x, y, serial));
+            }
+            self.video_click_pending = true;
+            return true;
+        }
+        if matches!(
+            kind,
+            peek::VideoPointer::Release | peek::VideoPointer::Leave
+        ) && std::mem::take(&mut self.video_click_pending)
+        {
+            // This handler took the press, so the listing's release that
+            // would disarm the drag never runs.
+            self.drag_armed = None;
+            if kind == peek::VideoPointer::Release && over_picture {
+                if let Some(video) = self.preview.as_mut().and_then(|p| p.video.as_mut()) {
+                    video.player.toggle();
+                }
+                self.dirty = true;
+            }
             return true;
         }
         let Some(video) = self.preview.as_mut().and_then(|p| p.video.as_mut()) else {
