@@ -40,16 +40,16 @@ use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::{
     Anchor, KeyboardInteractivity,
 };
 
+use otto_agents_kit::chat::{input, Ask, Note, Status, Step, Terminal};
 use otto_agents_kit::item::{rank, Item, Origin};
 use otto_agents_kit::keys::{self, copy_to_clipboard, FieldEdit};
+use otto_agents_kit::log::selection::{self, Caret, Selection, Span};
+use otto_agents_kit::log::{
+    self as ask_log, lay_out, AttachmentHit, Block, Line as LogLine, LogPainter,
+};
 use otto_agents_kit::rows::{field_style, HIGHLIGHT_RADIUS, ROW_H};
 use otto_launcher::apps::Apps;
-use otto_launcher::ask::{Ask, Note, Status, Step, Terminal};
 use otto_launcher::calc::Calculator;
-use otto_launcher::input;
-use otto_launcher::log::{self as ask_log, lay_out, Block, Line as LogLine};
-use otto_launcher::log_paint::{AttachmentHit, LogPainter};
-use otto_launcher::selection::{self, Caret, Selection, Span};
 use otto_launcher::source::Source;
 use otto_launcher::view::{
     Palette, CARD_W, FIELD_H, LIST_TOP, LOG_LINE_H, LOG_W, MAX_CARD_H, RADIUS,
@@ -944,7 +944,7 @@ impl Launcher {
             .ask
             .as_ref()
             .and_then(|ask| ask.terminal_at(index))
-            .is_some_and(|terminal| terminal.focus());
+            .is_some_and(|terminal| terminal.focus(windows::focus_matching));
         if in_terminal {
             self.close();
             return;
@@ -2178,7 +2178,7 @@ impl App for Launcher {
                 // writing the same history. The one that is open comes to the
                 // front instead.
                 if terminal.already_open() {
-                    terminal.focus();
+                    terminal.focus(windows::focus_matching);
                     self.close();
                     return;
                 }

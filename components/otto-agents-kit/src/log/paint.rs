@@ -18,12 +18,12 @@ use otto_kit::typography::{draw_runs, get_font_with_fallback, measure_runs, styl
 use skia_safe::font_style::{Slant, Weight, Width};
 use skia_safe::{Canvas, Color, Color4f, Font, FontStyle, Image, Paint, Rect};
 
+use crate::chat::transcript::Attachment;
+use crate::log::selection::Span;
 use crate::log::{
     Kind, Line, Style, BUBBLE_GAP, BUBBLE_PAD_X, BUBBLE_PAD_Y, FOOTER_H, IMAGE_PAD, LINE_H, TEXT,
 };
-use crate::selection::Span;
-use crate::transcript::Attachment;
-use otto_agents_kit::rows::{row_subtitle_color, row_title_color};
+use crate::rows::{row_subtitle_color, row_title_color};
 
 /// Space either side of the log's text, inside the pane it is painted in.
 pub const INSET: f32 = 20.0;
@@ -213,7 +213,7 @@ impl LogPainter {
     }
 
     /// Every piece of text in the log, laid out `width` wide, in reading
-    /// order, with the box it is painted in — what [`crate::selection`]
+    /// order, with the box it is painted in — what [`crate::log::selection`]
     /// selects over.
     ///
     /// This walks the log exactly as [`LogPainter::paint`] does, because a
@@ -575,8 +575,8 @@ fn selection_color(theme: &Theme) -> Color {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::chat::transcript::{Picture, Said};
     use crate::log::Block;
-    use crate::transcript::{Picture, Said};
 
     /// The width the launcher's card lays the log out at.
     const WIDTH: f32 = 580.0;
@@ -660,9 +660,9 @@ mod tests {
         // All of it, copied, reads as the conversation does on screen: the
         // request, the answer with its code and its list, the tool call and
         // the status, each on its own line.
-        let all = crate::selection::everything(&spans).expect("something to select");
+        let all = crate::log::selection::everything(&spans).expect("something to select");
         assert_eq!(
-            crate::selection::text(&spans, all),
+            crate::log::selection::text(&spans, all),
             "how do I build it\nRun cargo build first\n• then the tests\n✓ ls\n\nWorking…"
         );
 
@@ -689,9 +689,11 @@ mod tests {
             .position(|span| span.text.contains("how do I build it"))
             .expect("the request is there");
         let rect = spans[request].rect;
-        let caret =
-            crate::selection::caret_at(&spans, (rect.left + rect.width() / 2.0, rect.center_y()))
-                .expect("a press on the words selects them");
+        let caret = crate::log::selection::caret_at(
+            &spans,
+            (rect.left + rect.width() / 2.0, rect.center_y()),
+        )
+        .expect("a press on the words selects them");
         assert_eq!(caret.span, request);
         assert!(caret.byte > 0 && caret.byte < spans[request].text.len());
     }
@@ -743,12 +745,12 @@ mod tests {
         );
 
         let spans = painter.spans(&lines, WIDTH);
-        let all = crate::selection::everything(&spans).expect("something to select");
+        let all = crate::log::selection::everything(&spans).expect("something to select");
         // The picture has nothing to copy, so it contributes no line of its
         // own — but it takes a line number, which is what keeps the words after
         // it from being run onto the words before it.
         assert_eq!(
-            crate::selection::text(&spans, all),
+            crate::log::selection::text(&spans, all),
             "draw\nhere:\nthat is all"
         );
         let mut rows: Vec<usize> = spans.iter().map(|span| span.line).collect();
@@ -829,7 +831,7 @@ mod tests {
                     continue;
                 }
                 let centre = (span.rect.center_x(), span.rect.center_y());
-                let caret = crate::selection::caret_at(spans, centre).expect("a press lands");
+                let caret = crate::log::selection::caret_at(spans, centre).expect("a press lands");
                 assert_eq!(&spans[caret.span].text, &span.text, "at width {width}");
             }
             // And it paints at that width, every band of it.
