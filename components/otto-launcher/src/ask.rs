@@ -36,12 +36,8 @@
 //! without anyone watching.
 
 use std::collections::HashMap;
-use std::io::{ErrorKind, Read, Write};
-use std::os::fd::{AsRawFd, RawFd};
-use std::os::unix::net::UnixStream;
+use std::os::fd::RawFd;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc;
-use std::time::Duration;
 
 pub use crate::transcript::{Attachment, Picture, Said};
 use ahp::reducers::apply_action_to_chat;
@@ -67,7 +63,8 @@ use tokio::sync::mpsc as async_mpsc;
 use crate::input::{self, Change, InputRequest, Outcome};
 use crate::log::Style;
 use otto_agents_kit::item::{Item, Origin};
-use otto_agents_kit::sessions::{self, list_sessions, session_items, BoxError};
+use otto_agents_kit::link::{self, Link};
+use otto_agents_kit::sessions::{list_sessions, session_items, BoxError};
 
 /// The folder a session starts in when neither the agent nor anyone else
 /// names one: a scratch folder of Ask's own, `$XDG_STATE_HOME/otto/ask`.
@@ -110,10 +107,6 @@ fn folders_from_meta(meta: Option<&serde_json::Map<String, Value>>) -> HashMap<S
         })
         .unwrap_or_default()
 }
-
-/// Connecting is one round trip to a local service. Past this, the service is
-/// not answering, and saying so beats a launcher that looks like it is.
-const TIMEOUT: Duration = sessions::CONNECT_TIMEOUT;
 
 /// What the connection thread reports.
 #[derive(Debug)]
@@ -769,8 +762,7 @@ fn window_title(agent: Option<&str>, title: &str) -> String {
 
 pub struct Ask {
     commands: async_mpsc::UnboundedSender<Command>,
-    updates: mpsc::Receiver<Update>,
-    wake: UnixStream,
+    link: Link<Update>,
     agents: Vec<AgentInfo>,
     /// The material each coloured agent wears, by provider id.
     colours: HashMap<String, String>,
@@ -803,40 +795,14 @@ impl Ask {
     /// with sessions created in `folder`.
     pub fn connect(client: &str, url: String, folder: PathBuf) -> Self {
         let (commands, command_rx) = async_mpsc::unbounded_channel();
-        let (update_tx, updates) = mpsc::channel();
-        let (wake, wake_tx) = match UnixStream::pair() {
-            Ok(pair) => pair,
-            Err(err) => panic!("cannot create the launcher's wake-up socket: {err}"),
-        };
-        let _ = wake.set_nonblocking(true);
-        let _ = wake_tx.set_nonblocking(true);
-        let reporter = Reporter {
-            updates: update_tx,
-            wake: wake_tx,
-        };
         let client = client.to_owned();
-
-        std::thread::Builder::new()
-            .name("otto-agents".into())
-            .spawn(move || {
-                let runtime = match tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                {
-                    Ok(runtime) => runtime,
-                    Err(err) => {
-                        reporter.send(Update::Unreachable(err.to_string()));
-                        return;
-                    }
-                };
-                runtime.block_on(serve(&url, &client, &folder, command_rx, &reporter));
-            })
-            .expect("cannot start the otto-agents connection thread");
+        let link = Link::start("otto-agents", Update::Unreachable, |reporter| async move {
+            serve(&url, &client, &folder, command_rx, &reporter).await;
+        });
 
         Self {
             commands,
-            updates,
-            wake,
+            link,
             agents: Vec::new(),
             colours: HashMap::new(),
             sessions: Vec::new(),
@@ -1024,25 +990,15 @@ impl Ask {
 
     /// The socket that becomes readable when there is news.
     pub fn poll_fd(&self) -> RawFd {
-        self.wake.as_raw_fd()
+        self.link.poll_fd()
     }
 
     /// Take in whatever the connection thread has reported. Never blocks.
     /// Returns whether anything changed.
     pub fn pump(&mut self) -> bool {
-        let mut buffer = [0u8; 64];
-        loop {
-            match self.wake.read(&mut buffer) {
-                Ok(0) => break,
-                Ok(_) => continue,
-                Err(err) if err.kind() == ErrorKind::Interrupted => continue,
-                Err(_) => break,
-            }
-        }
-
-        let mut changed = false;
-        while let Ok(update) = self.updates.try_recv() {
-            changed = true;
+        let updates: Vec<Update> = self.link.drain().collect();
+        let changed = !updates.is_empty();
+        for update in updates {
             self.apply(update);
         }
         changed
@@ -2057,20 +2013,7 @@ fn error_message(parts: &[ResponsePart]) -> String {
 }
 
 /// The connection thread's side of the channel.
-struct Reporter {
-    updates: mpsc::Sender<Update>,
-    wake: UnixStream,
-}
-
-impl Reporter {
-    fn send(&self, update: Update) {
-        if self.updates.send(update).is_ok() {
-            // A full socket already has a wake-up in it, which is all a byte
-            // is for.
-            let _ = (&self.wake).write(&[1]);
-        }
-    }
-}
+type Reporter = link::Reporter<Update>;
 
 /// The connection thread: connect and list the agents, wait for the first
 /// request and hand it off, then follow the chat, queue the requests that
@@ -2082,16 +2025,10 @@ async fn serve(
     mut commands: async_mpsc::UnboundedReceiver<Command>,
     reporter: &Reporter,
 ) {
-    let client = match tokio::time::timeout(TIMEOUT, sessions::connect(url, name)).await {
-        Ok(Ok(client)) => client,
-        Ok(Err(err)) => {
-            reporter.send(Update::Unreachable(format!("otto-agents at {url}: {err}")));
-            return;
-        }
-        Err(_) => {
-            reporter.send(Update::Unreachable(format!(
-                "otto-agents at {url} did not answer"
-            )));
+    let client = match link::reach(url, name).await {
+        Ok(client) => client,
+        Err(err) => {
+            reporter.send(Update::Unreachable(err));
             return;
         }
     };
@@ -2472,7 +2409,7 @@ mod tests {
     };
     use otto_agents_kit::item::Activity;
     use otto_agents_kit::sessions::{session_activity, session_subtitle};
-    use std::time::Instant;
+    use std::time::{Duration, Instant};
 
     #[test]
     fn an_unreachable_service_is_reported_rather_than_waited_on() {
@@ -2482,7 +2419,8 @@ mod tests {
             "ws://127.0.0.1:9".into(),
             PathBuf::from("/"),
         );
-        let deadline = Instant::now() + TIMEOUT + Duration::from_secs(2);
+        let deadline =
+            Instant::now() + otto_agents_kit::sessions::CONNECT_TIMEOUT + Duration::from_secs(2);
         while ask.unreachable().is_none() && Instant::now() < deadline {
             ask.pump();
             std::thread::sleep(Duration::from_millis(20));
