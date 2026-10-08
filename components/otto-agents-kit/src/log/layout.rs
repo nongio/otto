@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use otto_kit::preview::document;
 use otto_kit::typography::{styles, wrap, TextStyle};
 
-use crate::transcript::{Attachment, Picture, Said};
+use crate::chat::transcript::{Attachment, Picture, Said};
 
 /// Height of one line of plain text in the log.
 pub const LINE_H: f32 = 21.0;
@@ -554,7 +554,7 @@ mod tests {
 
     /// An answer holding one picture, at `path`.
     fn shows(path: &str, label: &str) -> &'static [Said] {
-        let picture = crate::transcript::Picture {
+        let picture = crate::chat::transcript::Picture {
             path: PathBuf::from(path),
             label: label.to_owned(),
         };
@@ -1055,7 +1055,7 @@ mod tests {
         let answer = Box::leak(
             vec![
                 Said::Text("here:".to_owned()),
-                Said::Image(crate::transcript::Picture {
+                Said::Image(crate::chat::transcript::Picture {
                     path: PathBuf::from("/tmp/shot.png"),
                     label: "shot".to_owned(),
                 }),

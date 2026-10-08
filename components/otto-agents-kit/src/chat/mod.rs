@@ -16,15 +16,15 @@
 //! open — the request sits in the chat as an input request, and the launcher
 //! asks its questions one at a time, with the answers as rows and the field
 //! taking typed ones. Drafts and answers are shared as they are given, so a
-//! request answered somewhere else closes here too; see [`crate::input`].
+//! request answered somewhere else closes here too; see [`crate::chat::input`].
 //!
 //! Files handed to the launcher go with the next request, as attachments that
 //! point the agent at them. And instead of starting a session, the launcher
 //! can open one that is already there — named on the command line, or picked
 //! from the list in agents mode — to follow it and carry it on.
 //!
-//! The connection lives on a thread of its own, because the launcher's loop
-//! has no async runtime. The thread connects as soon as the launcher opens —
+//! The connection lives on a thread of its own, a [`Link`], because the
+//! launcher's loop has no async runtime. The thread connects as soon as the launcher opens —
 //! so the list of agents is there by the time anyone looks — and reports back
 //! over a channel, waking the loop through a socket the launcher polls.
 //!
@@ -35,11 +35,13 @@
 //! nothing: the service already owns the requests, and the session carries on
 //! without anyone watching.
 
+pub mod input;
+pub mod transcript;
+
 use std::collections::HashMap;
 use std::os::fd::RawFd;
 use std::path::{Path, PathBuf};
 
-pub use crate::transcript::{Attachment, Picture, Said};
 use ahp::reducers::apply_action_to_chat;
 use ahp::{Client, SubscriptionEvent};
 use ahp_types::actions::{
@@ -59,12 +61,13 @@ use otto_agents_client::session::{self, SESSION_SCHEME};
 use otto_agents_client::uri::{from_path as file_uri, to_path as path_from_uri};
 use serde_json::{json, Value};
 use tokio::sync::mpsc as async_mpsc;
+pub use transcript::{Attachment, Picture, Said};
 
-use crate::input::{self, Change, InputRequest, Outcome};
+use crate::item::{Item, Origin};
+use crate::link::{self, Link};
 use crate::log::Style;
-use otto_agents_kit::item::{Item, Origin};
-use otto_agents_kit::link::{self, Link};
-use otto_agents_kit::sessions::{list_sessions, session_items, BoxError};
+use crate::sessions::{list_sessions, session_items, BoxError};
+use input::{Change, InputRequest, Outcome};
 
 /// The folder a session starts in when neither the agent nor anyone else
 /// names one: a scratch folder of Ask's own, `$XDG_STATE_HOME/otto/ask`.
@@ -656,12 +659,12 @@ impl Terminal {
 
     /// Brings the terminal that has the session open to the front, when there
     /// is one and its window can be told apart. Says whether it did.
-    pub fn focus(&self) -> bool {
-        self.already_open()
-            && self
-                .session
-                .as_deref()
-                .is_some_and(crate::windows::focus_matching)
+    ///
+    /// `focus_matching` brings forward the first window whose app id or title
+    /// holds the text it is given, and says whether there was one: finding
+    /// windows is the host's, over its own Wayland connection.
+    pub fn focus(&self, focus_matching: impl FnOnce(&str) -> bool) -> bool {
+        self.already_open() && self.session.as_deref().is_some_and(focus_matching)
     }
 
     /// Whether a terminal already has the session open: some process names
@@ -2402,13 +2405,13 @@ fn attachment(file: &Path) -> MessageAttachment {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::item::Activity;
+    use crate::sessions::{session_activity, session_subtitle};
     use ahp_types::state::{
         ActiveTurn, ConfirmationOption, ErrorInfo, ErrorResponsePart, MarkdownResponsePart,
         PendingMessage, ReasoningResponsePart, ToolCallCancellationReason, ToolCallCancelledState,
         ToolCallPendingConfirmationState, ToolCallResponsePart, Turn,
     };
-    use otto_agents_kit::item::Activity;
-    use otto_agents_kit::sessions::{session_activity, session_subtitle};
     use std::time::{Duration, Instant};
 
     #[test]
@@ -2419,8 +2422,7 @@ mod tests {
             "ws://127.0.0.1:9".into(),
             PathBuf::from("/"),
         );
-        let deadline =
-            Instant::now() + otto_agents_kit::sessions::CONNECT_TIMEOUT + Duration::from_secs(2);
+        let deadline = Instant::now() + crate::sessions::CONNECT_TIMEOUT + Duration::from_secs(2);
         while ask.unreachable().is_none() && Instant::now() < deadline {
             ask.pump();
             std::thread::sleep(Duration::from_millis(20));

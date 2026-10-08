@@ -73,10 +73,10 @@ const fn log_block(log: f32) -> f32 {
 const LOG_TOP_PAD: f32 = 20.0;
 
 /// Height of one line of plain text in the ask log.
-pub const LOG_LINE_H: f32 = crate::log::LINE_H;
+pub const LOG_LINE_H: f32 = otto_agents_kit::log::LINE_H;
 /// How wide a line of the ask log may run on the card: the width the
 /// launcher lays the log out at and gives its painter.
-pub const LOG_W: f32 = CARD_W - crate::log_paint::INSET * 2.0;
+pub const LOG_W: f32 = CARD_W - otto_agents_kit::log::paint::INSET * 2.0;
 
 /// Where the top of the card sits, as a fraction of the output's height.
 /// Above centre: the eye starts there, and the list grows downwards into

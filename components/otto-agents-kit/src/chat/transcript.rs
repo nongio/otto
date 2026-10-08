@@ -1,7 +1,7 @@
 //! What a conversation is made of, as the log draws it: what the agent said,
 //! the pictures it sent and what went with a request.
 //!
-//! Kept apart from [`crate::ask`], which talks to the service, so the log can
+//! Kept apart from [`crate::chat`], which talks to the service, so the log can
 //! be laid out from a conversation without the connection that carries it.
 
 use std::path::PathBuf;

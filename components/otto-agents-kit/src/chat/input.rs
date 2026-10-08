@@ -10,7 +10,7 @@
 //! This module reads those requests and works out what the launcher offers
 //! for them: the rows under the field, what the log says, and the answers
 //! each choice produces. The launcher asks one question at a time. What the
-//! connection sends is decided in [`crate::ask`].
+//! connection sends is decided in [`crate::chat`].
 
 use std::collections::HashMap;
 
