@@ -12,11 +12,8 @@
 
 // Rust guideline compliant 2026-02-21
 
-use std::io::{ErrorKind, Read, Write};
-use std::os::fd::{AsRawFd, RawFd};
-use std::os::unix::net::UnixStream;
+use std::os::fd::RawFd;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc;
 use std::time::Duration;
 
 use ahp::{Client, ClientConfig, SubscriptionEvent};
@@ -29,6 +26,7 @@ use serde_json::json;
 use tokio::sync::oneshot;
 
 use crate::item::{Activity, Item, Origin};
+use crate::link::{reach, Link, Reporter};
 
 /// How long connecting may take before the service counts as not running.
 ///
@@ -183,27 +181,11 @@ enum Update {
     Unreachable(String),
 }
 
-/// The feed thread's side of the channel.
-struct Reporter {
-    updates: mpsc::Sender<Update>,
-    wake: UnixStream,
-}
-
-impl Reporter {
-    fn send(&self, update: Update) {
-        if self.updates.send(update).is_ok() {
-            // A full socket already has a wake-up in it, which is all a byte
-            // is for.
-            let _ = (&self.wake).write(&[1]);
-        }
-    }
-}
-
 /// The service's sessions, listed and kept up to date in the background.
 ///
-/// The connection lives on a thread of its own, with an async runtime the
-/// caller's loop does not need to have, and reports back over a channel,
-/// waking the loop through [`Self::poll_fd`]. Dropping the feed closes the
+/// The connection lives on a thread of its own — a [`Link`] — with an async
+/// runtime the caller's loop does not need to have, and reports back over a
+/// channel, waking the loop through [`Self::poll_fd`]. Dropping the feed closes the
 /// connection: a feed is for as long as the list is on screen.
 ///
 /// # Examples
@@ -220,8 +202,7 @@ impl Reporter {
 /// }
 /// ```
 pub struct SessionFeed {
-    updates: mpsc::Receiver<Update>,
-    wake: UnixStream,
+    link: Link<Update>,
     agents: Vec<AgentInfo>,
     sessions: Vec<SessionSummary>,
     status: FeedStatus,
@@ -244,40 +225,14 @@ impl SessionFeed {
     /// Panics when the process cannot make a socket pair or start a thread,
     /// which only happens when it is out of descriptors or memory.
     pub fn connect(url: String, name: &str) -> Self {
-        let (update_tx, updates) = mpsc::channel();
-        let (wake, wake_tx) = match UnixStream::pair() {
-            Ok(pair) => pair,
-            Err(err) => panic!("cannot create the session feed's wake-up socket: {err}"),
-        };
-        let _ = wake.set_nonblocking(true);
-        let _ = wake_tx.set_nonblocking(true);
-        let reporter = Reporter {
-            updates: update_tx,
-            wake: wake_tx,
-        };
         let (stop, stopped) = oneshot::channel();
         let name = name.to_owned();
-
-        std::thread::Builder::new()
-            .name("session-feed".into())
-            .spawn(move || {
-                let runtime = match tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                {
-                    Ok(runtime) => runtime,
-                    Err(err) => {
-                        reporter.send(Update::Unreachable(err.to_string()));
-                        return;
-                    }
-                };
-                runtime.block_on(feed(&url, &name, stopped, &reporter));
-            })
-            .expect("cannot start the session feed's thread");
+        let link = Link::start("session-feed", Update::Unreachable, |reporter| async move {
+            feed(&url, &name, stopped, &reporter).await;
+        });
 
         Self {
-            updates,
-            wake,
+            link,
             agents: Vec::new(),
             sessions: Vec::new(),
             status: FeedStatus::Connecting,
@@ -287,23 +242,14 @@ impl SessionFeed {
 
     /// The socket that becomes readable when there is news.
     pub fn poll_fd(&self) -> RawFd {
-        self.wake.as_raw_fd()
+        self.link.poll_fd()
     }
 
     /// Take in whatever the thread has reported. Never blocks. Returns
     /// whether anything changed.
     pub fn pump(&mut self) -> bool {
-        let mut buffer = [0u8; 64];
-        loop {
-            match self.wake.read(&mut buffer) {
-                Ok(0) => break,
-                Ok(_) => continue,
-                Err(err) if err.kind() == ErrorKind::Interrupted => continue,
-                Err(_) => break,
-            }
-        }
         let mut changed = false;
-        while let Ok(update) = self.updates.try_recv() {
+        for update in self.link.drain() {
             changed = true;
             match update {
                 Update::Agents(agents) => self.agents = agents,
@@ -340,17 +286,16 @@ impl SessionFeed {
 
 /// The feed's thread: connect, list, and list again on every change the
 /// service announces, until the feed is dropped.
-async fn feed(url: &str, name: &str, mut stopped: oneshot::Receiver<()>, reporter: &Reporter) {
-    let client = match tokio::time::timeout(CONNECT_TIMEOUT, connect(url, name)).await {
-        Ok(Ok(client)) => client,
-        Ok(Err(err)) => {
-            reporter.send(Update::Unreachable(format!("otto-agents at {url}: {err}")));
-            return;
-        }
-        Err(_) => {
-            reporter.send(Update::Unreachable(format!(
-                "otto-agents at {url} did not answer"
-            )));
+async fn feed(
+    url: &str,
+    name: &str,
+    mut stopped: oneshot::Receiver<()>,
+    reporter: &Reporter<Update>,
+) {
+    let client = match reach(url, name).await {
+        Ok(client) => client,
+        Err(err) => {
+            reporter.send(Update::Unreachable(err));
             return;
         }
     };
@@ -399,7 +344,7 @@ async fn feed(url: &str, name: &str, mut stopped: oneshot::Receiver<()>, reporte
     client.shutdown().await;
 }
 
-async fn relist(client: &Client, reporter: &Reporter) {
+async fn relist(client: &Client, reporter: &Reporter<Update>) {
     match list_sessions(client).await {
         Ok(sessions) => reporter.send(Update::Sessions(sessions)),
         Err(err) => tracing::warn!(%err, "could not list the sessions"),
