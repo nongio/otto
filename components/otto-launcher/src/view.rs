@@ -41,9 +41,9 @@ use otto_kit::typography::{draw_runs, get_font_with_fallback, measure_runs, styl
 use skia_safe::font_style::{Slant, Weight, Width};
 use skia_safe::{Canvas, Color, Color4f, Font, FontStyle, Image, Paint, Rect};
 
-use crate::ask::Attachment;
 use crate::log::{Kind, Line, Style, BUBBLE_GAP, BUBBLE_PAD_X, BUBBLE_PAD_Y, FOOTER_H, IMAGE_PAD};
 use crate::selection::Span;
+use crate::transcript::Attachment;
 use otto_agents_kit::item::Item;
 use otto_agents_kit::rows::{
     divider_color, paint_item_rows, row_highlight_color, row_highlight_rect, row_subtitle_color,
@@ -84,19 +84,8 @@ const LOG_TOP_PAD: f32 = 20.0;
 
 /// Height of one line of plain text in the ask log.
 pub const LOG_LINE_H: f32 = crate::log::LINE_H;
-/// Size of the ask log's text: what the person asked and what the agent
-/// answered, both sides of it. The answer is laid out by the toolkit's
-/// document, which is told this size too, so one side of the conversation is
-/// never quietly smaller than the other.
-pub const LOG_TEXT: f32 = 14.0;
-
-/// The prose style of an answer: the toolkit's body, at the log's size.
-pub fn log_body() -> otto_kit::typography::TextStyle {
-    otto_kit::typography::TextStyle {
-        size: LOG_TEXT,
-        ..styles::BODY
-    }
-}
+/// Size of the ask log's text; see [`crate::log::TEXT`].
+pub const LOG_TEXT: f32 = crate::log::TEXT;
 /// Size of a note in the ask log — a tool call, a status line. Smaller than
 /// the conversation, so what the agent said outranks what it is doing.
 const LOG_NOTE_TEXT: f32 = 11.5;
@@ -1151,7 +1140,7 @@ mod tests {
             "the notes are at https://example.com/a now",
             otto_md_kit::MAX_BLOCKS,
         );
-        let doc = otto_kit::preview::document::wrap_at(&blocks, LOG_W, log_body());
+        let doc = otto_kit::preview::document::wrap_at(&blocks, LOG_W, crate::log::body());
         let run = doc
             .iter()
             .flat_map(|line| line.runs.iter().map(move |run| (line, run)))
@@ -1227,7 +1216,7 @@ mod tests {
     fn every_kind_of_line_in_the_log_can_be_pointed_at() {
         let palette = Palette::new(Engine::create(CARD_W, MAX_CARD_H), None, true);
         let steps = ["✓ ls".to_string()];
-        let answer = [crate::ask::Said::Text(
+        let answer = [crate::transcript::Said::Text(
             "Run `cargo build` first\n\n- then the tests".to_owned(),
         )];
         let blocks = [crate::log::Block {
@@ -1303,12 +1292,12 @@ mod tests {
         std::fs::write(&path, PIXEL_PNG).expect("written");
         let palette = Palette::new(Engine::create(CARD_W, MAX_CARD_H), None, true);
         let answer = [
-            crate::ask::Said::Text("here:".to_owned()),
-            crate::ask::Said::Image(crate::ask::Picture {
+            crate::transcript::Said::Text("here:".to_owned()),
+            crate::transcript::Said::Image(crate::transcript::Picture {
                 path: path.clone(),
                 label: "shot".to_owned(),
             }),
-            crate::ask::Said::Text("that is all".to_owned()),
+            crate::transcript::Said::Text("that is all".to_owned()),
         ];
         let blocks = [crate::log::Block {
             prompt: "draw",

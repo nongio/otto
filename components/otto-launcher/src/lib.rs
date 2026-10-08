@@ -8,6 +8,7 @@ pub mod input;
 pub mod log;
 pub mod selection;
 pub mod source;
+pub mod transcript;
 pub mod view;
 pub mod windows;
 

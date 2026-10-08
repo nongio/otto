@@ -11,12 +11,26 @@
 use std::path::{Path, PathBuf};
 
 use otto_kit::preview::document;
-use otto_kit::typography::wrap;
+use otto_kit::typography::{styles, wrap, TextStyle};
 
-use crate::ask::{Attachment, Said};
+use crate::transcript::{Attachment, Picture, Said};
 
 /// Height of one line of plain text in the log.
 pub const LINE_H: f32 = 21.0;
+
+/// Size of the log's text: what the person asked and what the agent
+/// answered, both sides of it. The answer is laid out by the toolkit's
+/// document, which is told this size too, so one side of the conversation is
+/// never quietly smaller than the other.
+pub const TEXT: f32 = 14.0;
+
+/// The prose style of an answer: the toolkit's body, at the log's size.
+pub fn body() -> TextStyle {
+    TextStyle {
+        size: TEXT,
+        ..styles::BODY
+    }
+}
 
 /// Height of one line of a note, which is set smaller than the conversation.
 pub const NOTE_LINE_H: f32 = 17.0;
@@ -443,7 +457,7 @@ fn answer(lines: &mut Vec<Line>, markdown: &str, width: f32) {
         return;
     }
     let (blocks, _) = otto_md_kit::parse_capped(markdown, otto_md_kit::MAX_BLOCKS);
-    let mut wrapped = document::wrap_at(&blocks, width, crate::view::log_body());
+    let mut wrapped = document::wrap_at(&blocks, width, body());
     let Some(height) = wrapped.last().map(|line| line.top + line.height) else {
         return;
     };
@@ -456,7 +470,7 @@ fn answer(lines: &mut Vec<Line>, markdown: &str, width: f32) {
 /// A picture under what came before it, as large as the log is wide but no
 /// taller than [`IMAGE_MAX_H`], keeping its own proportions. `size` is the
 /// file's own size in pixels.
-fn picture(lines: &mut Vec<Line>, image: &crate::ask::Picture, size: (f32, f32), width: f32) {
+fn picture(lines: &mut Vec<Line>, image: &Picture, size: (f32, f32), width: f32) {
     let (natural_w, natural_h) = size;
     if natural_w <= 0.0 || natural_h <= 0.0 {
         return;
@@ -540,7 +554,7 @@ mod tests {
 
     /// An answer holding one picture, at `path`.
     fn shows(path: &str, label: &str) -> &'static [Said] {
-        let picture = crate::ask::Picture {
+        let picture = crate::transcript::Picture {
             path: PathBuf::from(path),
             label: label.to_owned(),
         };
@@ -1041,7 +1055,7 @@ mod tests {
         let answer = Box::leak(
             vec![
                 Said::Text("here:".to_owned()),
-                Said::Image(crate::ask::Picture {
+                Said::Image(crate::transcript::Picture {
                     path: PathBuf::from("/tmp/shot.png"),
                     label: "shot".to_owned(),
                 }),
