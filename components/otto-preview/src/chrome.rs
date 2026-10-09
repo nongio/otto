@@ -48,6 +48,8 @@ pub enum Tool {
     Chat,
     /// Turns drawing marks on the document on or off.
     Mark,
+    /// Hides or shows the marks, the person's and the agent's.
+    ShowMarks,
 }
 
 /// Where the toolbar's buttons sit for one window width.
@@ -129,7 +131,9 @@ pub fn toolbar_layout(
     // The chat at the trailing edge, and the pen that points things out to
     // it beside it.
     buttons.push((Tool::Chat, square(width - EDGE - BUTTON)));
-    buttons.push((Tool::Mark, square(width - EDGE - 2.0 * BUTTON - GAP * 4.0)));
+    let pen = width - EDGE - 2.0 * BUTTON - GAP * 4.0;
+    buttons.push((Tool::Mark, square(pen)));
+    buttons.push((Tool::ShowMarks, square(pen - BUTTON - GAP)));
 
     let mut x = EDGE;
     if sidebar {
@@ -191,7 +195,8 @@ pub fn draw(canvas: &Canvas, viewer: &Viewer, theme: &Theme) {
         let pressed = pressed
             || (*tool == Tool::Sidebar && viewer.sidebar_open())
             || (*tool == Tool::Chat && viewer.chat_open)
-            || (*tool == Tool::Mark && viewer.marking);
+            || (*tool == Tool::Mark && viewer.marking)
+            || (*tool == Tool::ShowMarks && viewer.marks_hidden);
         draw_icon_button(canvas, theme, *rect, *tool, enabled, hovered, pressed);
     }
 
@@ -267,6 +272,11 @@ fn draw_icon_button(
         draw_pen_glyph(canvas, dst, color);
         return;
     }
+    if tool == Tool::ShowMarks {
+        // Crossed out while the marks are hidden, which is when it is down.
+        draw_eye_glyph(canvas, dst, color, pressed);
+        return;
+    }
     match icons::cached_icon_chain(icon_names(tool), GLYPH as i32) {
         Some(image) => {
             // Symbolic art recoloured to the text tone, as the rest of the
@@ -291,7 +301,7 @@ fn icon_names(tool: Tool) -> &'static [&'static str] {
         Tool::PreviousPage => &["go-up-symbolic", "pan-up-symbolic"],
         Tool::NextPage => &["go-down-symbolic", "pan-down-symbolic"],
         // Never looked up; see `draw_sidebar_glyph` and `draw_chat_glyph`.
-        Tool::Sidebar | Tool::Chat | Tool::Mark => &[],
+        Tool::Sidebar | Tool::Chat | Tool::Mark | Tool::ShowMarks => &[],
     }
 }
 
@@ -343,6 +353,7 @@ fn draw_fallback_glyph(canvas: &Canvas, dst: Rect, tool: Tool, color: Color) {
         Tool::Sidebar => draw_sidebar_glyph(canvas, dst, color),
         Tool::Chat => draw_chat_glyph(canvas, dst, color),
         Tool::Mark => draw_pen_glyph(canvas, dst, color),
+        Tool::ShowMarks => draw_eye_glyph(canvas, dst, color, false),
     }
     canvas.draw_path(&path.detach(), &stroke);
 }
@@ -403,6 +414,35 @@ fn draw_pen_glyph(canvas: &Canvas, dst: Rect, color: Color) {
     pen.line_to((l + 1.0, b - 4.0));
     pen.close();
     canvas.draw_path(&pen.detach(), &stroke);
+}
+
+/// An eye, for the marks shown over the document; struck through when they
+/// are hidden.
+fn draw_eye_glyph(canvas: &Canvas, dst: Rect, color: Color, struck: bool) {
+    let mut stroke = Paint::default();
+    stroke.set_anti_alias(true);
+    stroke.set_style(PaintStyle::Stroke);
+    stroke.set_stroke_width(1.5);
+    stroke.set_stroke_join(otto_kit::skia::PaintJoin::Round);
+    stroke.set_stroke_cap(otto_kit::skia::PaintCap::Round);
+    stroke.set_color(color);
+    let (l, r, cy) = (dst.left + 1.0, dst.right - 1.0, dst.center_y());
+    let cx = dst.center_x();
+    let lid = dst.height() * 0.42;
+    let mut eye = PathBuilder::new();
+    eye.move_to((l, cy));
+    eye.quad_to((cx, cy - lid), (r, cy));
+    eye.quad_to((cx, cy + lid), (l, cy));
+    eye.close();
+    canvas.draw_path(&eye.detach(), &stroke);
+    canvas.draw_circle((cx, cy), 2.25, &stroke);
+    if struck {
+        canvas.draw_line(
+            (dst.left + 2.5, dst.bottom - 2.0),
+            (dst.right - 2.5, dst.top + 2.0),
+            &stroke,
+        );
+    }
 }
 
 /// A speech bubble: a rounded box with a tail at its lower leading corner.

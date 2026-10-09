@@ -125,9 +125,13 @@ impl Service {
         } else {
             layer
         };
-        self.change(&path, |viewer| viewer.marks.draw_agent(&layer, &marks))?
-            .map(|count| count as u32)
-            .map_err(fdo::Error::InvalidArgs)
+        self.change(&path, |viewer| {
+            // What the agent points at is shown, even with the marks hidden.
+            viewer.marks_hidden = false;
+            viewer.marks.draw_agent(&layer, &marks)
+        })?
+        .map(|count| count as u32)
+        .map_err(fdo::Error::InvalidArgs)
     }
 
     /// Take away the agent's layer `layer`, every agent mark for an empty

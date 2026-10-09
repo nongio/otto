@@ -100,8 +100,10 @@ in another app, `xdg-open`, the command line.
 - Centre, only for a document of more than one page: previous page, "N / M"
   showing the page with most of the window, next page. Each button is
   disabled at its end.
-- Trailing: the pen, a toggle that stays down while it is on (see *Marks*),
-  and the chat button, a toggle that stays down while the chat shows.
+- Trailing: the eye, a toggle that stays down (struck through) while the
+  marks are hidden; the pen, a toggle that stays down while it is on (see
+  *Marks*); and the chat button, a toggle that stays down while the chat
+  shows.
 - A button fires when the press and the release both land on it.
 - There is no button to open the file in another application: Preview is
   the viewer for the types it handles.
@@ -126,7 +128,8 @@ in another app, `xdg-open`, the command line.
   connects again when the service couldn't be reached.
 - The first message creates the session with `_meta.otto`: `app`
   (`otto-preview`) and `subject` (the file's URI), so lists open it here
-  again; `instructions`, which otto-agents hands the agent ahead of its first
+  again; `agent` (`studio`), the plugin agent for working on one file, so
+  Otto's desktop helper stays out of it; `instructions`, which otto-agents hands the agent ahead of its first
   turn (it is working on the file shown beside the chat, edits it in place
   and calls `preview_reload`); and `mcpServers`, this program in `--mcp` mode
   with the file in `OTTO_PREVIEW_DOC` (see *Document tools*).
@@ -154,6 +157,9 @@ in another app, `xdg-open`, the command line.
 - Hovering a badge shows a cross and a bin cursor; a click deletes the mark,
   the person's or the agent's. Backspace takes back the person's last mark
   not yet sent.
+- The eye hides every mark, to see the document as it is, and turns the pen
+  off; badges can't be hovered or deleted while hidden. The marks show again
+  from the eye, when the pen is turned on, or when the agent draws.
 - The person's marks not yet sent go with the next message: the line over
   the field says which. They are written to `$XDG_RUNTIME_DIR/otto-preview/`
   as `marks-*.json` (shapes and bounds in the document's units) and, for a

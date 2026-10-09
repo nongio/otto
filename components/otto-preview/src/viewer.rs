@@ -105,6 +105,9 @@ pub struct Viewer {
     /// Whether a press on the document draws a mark rather than pans or
     /// selects: the pen in the toolbar.
     pub marking: bool,
+    /// Whether the marks are hidden, to see the document as it is. They
+    /// show again when the pen is taken up or the agent draws.
+    pub marks_hidden: bool,
     /// The chat panel as last painted, in window coordinates.
     pub chat_picture: Option<otto_kit::skia::Picture>,
     /// Whether the window grew to make room for the chat, and so shrinks
@@ -202,6 +205,7 @@ impl Viewer {
             chat_open: false,
             marks: Marks::default(),
             marking: false,
+            marks_hidden: false,
             chat_picture: None,
             chat_grew: false,
             floating: true,
@@ -329,12 +333,16 @@ impl Viewer {
 
     /// Follow the pointer over the marks' badges; `None` when it left.
     pub fn mark_hover(&mut self, at: Option<Point>) {
+        let at = at.filter(|_| !self.marks_hidden);
         let frames = self.frames();
         self.dirty |= self.marks.hover(&frames, at);
     }
 
     /// Delete the mark whose badge is under `at`. Returns whether one was.
     pub fn mark_delete_at(&mut self, at: Point) -> bool {
+        if self.marks_hidden {
+            return false;
+        }
         let frames = self.frames();
         let Some(index) = self.marks.badge_at(&frames, at) else {
             return false;
@@ -664,6 +672,7 @@ impl Viewer {
             Tool::Sidebar => self.has_pages(),
             Tool::Chat => true,
             Tool::Mark => self.marking || !self.frames().is_empty(),
+            Tool::ShowMarks => self.marks_hidden || !self.marks.list.is_empty(),
         }
     }
 
@@ -872,6 +881,17 @@ impl Viewer {
             }
             Tool::Mark => {
                 self.marking = !self.marking;
+                if self.marking {
+                    self.marks_hidden = false;
+                }
+                self.dirty = true;
+            }
+            Tool::ShowMarks => {
+                self.marks_hidden = !self.marks_hidden;
+                if self.marks_hidden {
+                    self.marking = false;
+                    self.marks.hover(&[], None);
+                }
                 self.dirty = true;
             }
         }
