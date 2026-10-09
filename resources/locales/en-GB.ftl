@@ -1764,6 +1764,50 @@ peek-pdf-install-rasteriser = Install one of: { $packages } — to see the pages
 peek-page-of = { $page } / { $pages }
 
 
+## Studio — menus and the keyboard shortcuts sheet
+##
+## Studio's menus in the top bar, and the sheet (Help › Keyboard Shortcuts)
+## that lists every command with its key.
+
+studio-menu-file = File
+studio-menu-edit = Edit
+studio-menu-marks = Marks
+studio-menu-view = View
+studio-menu-help = Help
+studio-close = Close Window
+studio-undo = Undo
+studio-redo = Redo
+studio-copy = Copy
+studio-select-all = Select All
+# The pen: a press on the document draws a mark.
+studio-pen = Pen
+# Toggle: whether the marks show over the document.
+studio-show-marks = Show Marks
+# Takes away the person's last mark not yet sent.
+studio-delete-mark = Delete Last Mark
+studio-zoom-in = Zoom In
+studio-zoom-out = Zoom Out
+studio-zoom-fit = Zoom to Fit
+studio-previous-page = Previous Page
+studio-next-page = Next Page
+studio-sidebar = Show Pages
+studio-chat = Show Chat
+studio-shortcuts = Keyboard Shortcuts
+# Sections of the sheet for keys that are in no menu.
+studio-sheet-document = Document
+studio-sheet-chat = Chat
+studio-sheet-scroll = Scroll
+studio-sheet-page = Next screen
+studio-sheet-ends = Top and bottom
+studio-sheet-zoom-pointer = Zoom at the pointer
+studio-sheet-stop = Put the pen down
+studio-sheet-send = Send
+studio-sheet-dictate = Dictate
+studio-sheet-stop-agent = Stop the agent
+studio-sheet-to-document = Back to the document
+# Over the sheet: the Cmd key does what Ctrl does in every shortcut.
+studio-sheet-cmd = Cmd works wherever Ctrl does
+
 ## Preview — chat
 
 # The chat field beside a file in Preview, before anything is typed.

@@ -31,9 +31,11 @@ use wayland_client::protocol::wl_keyboard;
 
 use crate::chat::Chat;
 use crate::chrome::{self, Tool};
+use crate::commands;
 use crate::instance::{Documents, Inbox, Request};
 use crate::viewer::{KeyOutcome, Stamp, Viewer};
 use crate::Shape;
+use otto_kit::app_menu::AppMenu;
 
 /// The desktop entry this binary is installed under, and the window's app id.
 pub const APP_ID: &str = "otto-preview";
@@ -79,6 +81,8 @@ struct Doc {
     sized: bool,
     /// Show the chat once the window knows its room: asked for on opening.
     chat_on_configure: bool,
+    /// The window's menus in the top bar; `None` without a session bus.
+    menu: Option<AppMenu>,
     /// The file's folder, watched so the file is shown again when something
     /// changes it: an agent, an editor, a script. A folder rather than the
     /// file, because most tools save by writing a new file over the old.
@@ -180,6 +184,7 @@ impl Doc {
                 }
             }
             chrome::draw(canvas, &viewer, &theme);
+            crate::shortcuts::draw(canvas, &viewer, &theme);
         });
 
         let pointed = Arc::clone(&viewer);
@@ -198,6 +203,10 @@ impl Doc {
         });
 
         AppContext::register_window(window.clone());
+        let mut menu = AppMenu::serve(commands::menus(&viewer.lock().unwrap()));
+        if let (Some(menu), Some(surface)) = (menu.as_mut(), window.surface()) {
+            menu.attach(surface.wl_surface());
+        }
         let watch = key.parent().map(DirWatch::new);
         Ok(Self {
             viewer,
@@ -207,8 +216,54 @@ impl Doc {
             shape,
             sized: false,
             chat_on_configure: false,
+            menu,
             watch,
         })
+    }
+
+    /// Run `command`, from a menu or a key; `serial` is the input that asked.
+    fn run(&self, command: commands::Command, serial: u32) {
+        let mut viewer = self.viewer.lock().unwrap();
+        match command {
+            commands::Command::Chat => {
+                let resized = viewer.toggle_chat();
+                chat_toggled(&viewer, &self.chat, &self.window, resized);
+            }
+            commands::Command::Shortcuts => viewer.shortcuts_open = !viewer.shortcuts_open,
+            commands::Command::Close => {
+                viewer.closing = true;
+                AppContext::request_wakeup();
+            }
+            commands::Command::Copy => {
+                if let Some(text) = viewer.selected_text() {
+                    otto_kit::clipboard::set_text(&text, serial);
+                }
+            }
+            commands::Command::SelectAll => viewer.select_all(),
+            commands::Command::DeleteMark => viewer.dirty |= viewer.marks.undo(),
+            command => {
+                if let Some(tool) = command.tool() {
+                    viewer.run_tool(tool);
+                }
+            }
+        }
+        viewer.dirty = false;
+        drop(viewer);
+        self.redraw();
+    }
+
+    /// Keep the menus saying what the window can do now, and run what was
+    /// picked from them.
+    fn follow_menu(&self) {
+        let Some(menu) = &self.menu else {
+            return;
+        };
+        for id in menu.take_picked() {
+            if let Some(command) = commands::Command::from_id(&id) {
+                self.run(command, AppContext::last_input_serial());
+            }
+        }
+        menu.set(commands::menus(&self.viewer.lock().unwrap()));
     }
 
     /// Repaint the window, with the chat painted afresh.
@@ -504,6 +559,12 @@ fn handle_pointer(
                 serial,
                 time,
             } => {
+                // A click anywhere puts the shortcuts sheet away.
+                if v.shortcuts_open {
+                    v.shortcuts_open = false;
+                    redraw = true;
+                    continue;
+                }
                 if *button != BTN_LEFT {
                     continue;
                 }
@@ -873,12 +934,18 @@ impl App for PreviewApp {
         {
             let mut viewer = doc.viewer.lock().unwrap();
             let modifiers = viewer.modifiers;
-            // Ctrl+K shows or hides the chat, from anywhere.
-            if modifiers.ctrl && matches!(event.keysym, Keysym::k | Keysym::K) {
-                let resized = viewer.toggle_chat();
-                chat_toggled(&viewer, &doc.chat, &doc.window, resized);
+            // The shortcuts sheet goes with Escape, and keeps every other key
+            // from what is under it.
+            if viewer.shortcuts_open && event.keysym == Keysym::Escape {
+                viewer.shortcuts_open = false;
                 drop(viewer);
                 doc.redraw();
+                return;
+            }
+            // The chat, the pen, the marks and the sheet, from anywhere.
+            if let Some(command) = commands::global_key(event.keysym, modifiers) {
+                drop(viewer);
+                doc.run(command, serial);
                 return;
             }
             if viewer.chat_open {
@@ -904,6 +971,11 @@ impl App for PreviewApp {
                     return;
                 }
             }
+        }
+        let modifiers = doc.viewer.lock().unwrap().modifiers;
+        if let Some(command) = commands::document_key(event.keysym, modifiers) {
+            doc.run(command, serial);
+            return;
         }
         let outcome = doc.viewer.lock().unwrap().key(event.keysym);
         match outcome {
@@ -1000,6 +1072,7 @@ impl App for PreviewApp {
         self.last_update = now;
         for doc in &self.docs {
             doc.update();
+            doc.follow_menu();
             let mut chat = doc.chat.borrow_mut();
             doc.sync_marks(&mut chat);
             let dictated = chat.follow_dictation();

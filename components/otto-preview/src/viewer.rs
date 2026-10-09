@@ -103,6 +103,9 @@ pub struct Viewer {
     pub stamp: Option<Stamp>,
     /// Whether the chat shows beside the document.
     pub chat_open: bool,
+    /// Whether the keyboard shortcuts sheet is over the window; see
+    /// [`crate::shortcuts`].
+    pub shortcuts_open: bool,
     /// The marks on the document: the person's and the agent's.
     pub marks: Marks,
     /// Whether a press on the document draws a mark rather than pans or
@@ -215,6 +218,7 @@ impl Viewer {
             thumbs: HashMap::new(),
             thumbs_pending: HashSet::new(),
             chat_open: false,
+            shortcuts_open: false,
             marks: Marks::default(),
             marking: false,
             marks_hidden: false,
@@ -1013,19 +1017,30 @@ impl Viewer {
     }
 
     /// A key press, already filtered to presses.
+    /// The document's text selected now, if any.
+    pub fn selected_text(&self) -> Option<String> {
+        self.session.selected_text()
+    }
+
+    pub fn has_selection(&self) -> bool {
+        self.selected_text().is_some()
+    }
+
+    /// Select every word of the document.
+    pub fn select_all(&mut self) {
+        self.dirty |= self.session.select_all_words();
+    }
+
     pub fn key(&mut self, keysym: Keysym) -> KeyOutcome {
-        let ctrl = self.modifiers.ctrl;
+        // Cmd reaches an app as `logo`, or as `ctrl` when the session maps
+        // the Cmd keys to Control; either counts.
+        let ctrl = self.modifiers.ctrl || self.modifiers.logo;
         let content = self.content();
         let screen = (content.height() - KEY_STEP).max(KEY_STEP);
         match keysym {
             Keysym::Escape if self.marking => {
                 self.marking = false;
                 self.dirty = true;
-                KeyOutcome::Handled
-            }
-            // The file's versions, once a chat keeps them.
-            Keysym::z | Keysym::Z if ctrl && self.versions.is_some() => {
-                self.step_version(!self.modifiers.shift);
                 KeyOutcome::Handled
             }
             // The person's last mark, until it goes with a message.

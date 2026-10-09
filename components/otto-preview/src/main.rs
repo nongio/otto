@@ -16,11 +16,13 @@
 mod app;
 mod chat;
 mod chrome;
+mod commands;
 mod content;
 mod cursors;
 mod instance;
 mod marks;
 mod mcp;
+mod shortcuts;
 mod sidebar;
 mod versions;
 mod viewer;

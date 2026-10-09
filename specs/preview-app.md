@@ -251,6 +251,26 @@ Underneath it is still `otto-preview` (the program, its app id and the
   there is nothing to pan sideways.
 - Home and End go to the start and the end.
 - Ctrl+W and Ctrl+Q close the window.
+- Ctrl+Z steps the file back a version and Ctrl+Y (or Ctrl+Shift+Z) forward.
+- From anywhere, the chat included: Ctrl+K shows or hides the chat,
+  Ctrl+Shift+A takes up or puts down the pen, Ctrl+Shift+H shows or hides
+  the marks, and Ctrl+/ shows the keyboard shortcuts sheet.
+- Cmd works wherever Ctrl does: Otto hands it to apps as either.
+
+### Menus and the shortcuts sheet
+
+- The window's menus show in the top bar while it has focus (served over
+  `com.canonical.dbusmenu`, pointed at with `org_kde_kwin_appmenu`; see
+  `otto_kit::app_menu`): File (Close Window), Edit (Undo, Redo, Copy, Select
+  All), Marks (Pen, Show Marks, Delete Last Mark), View (zoom, pages, Show
+  Pages, Show Chat) and Help (Keyboard Shortcuts).
+- Each item shows its key, and is greyed out when it cannot run. Pen, Show
+  Marks, Show Pages and Show Chat are toggles and say whether they are on.
+- One list of commands (`commands.rs`) feeds the menus, the keys and the
+  sheet, so a key the menu shows is a key that works.
+- Help › Keyboard Shortcuts, or Ctrl+/, lays a card over the window listing
+  every command with its key, then the keys that are in no menu (the
+  document's and the chat's). Escape or a click puts it away.
 
 ### Resizing
 
