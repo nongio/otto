@@ -80,7 +80,7 @@ pub use surfaces::{
 };
 
 // Re-export app framework
-pub use app_runner::{App, AppContext, AppRunner, AppRunnerWithType, Modifiers};
+pub use app_runner::{App, AppContext, AppRunner, AppRunnerWithType, CursorImage, Modifiers};
 
 // Re-export cursor shape type for apps
 pub use wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_device_v1::Shape as CursorShape;

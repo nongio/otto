@@ -8,7 +8,7 @@ mod handlers;
 mod key_repeat;
 mod output_scale;
 
-pub use context::AppContext;
+pub use context::{AppContext, CursorImage};
 pub use smithay_client_toolkit::seat::keyboard::Modifiers;
 
 use crate::protocols::{
@@ -1414,6 +1414,7 @@ impl<A: App + 'static> PointerHandler for AppData<A> {
         AppContext::dispatch_pointer_callbacks(events);
         let ctx = AppContext::new(&self.context_data);
         self.app.on_pointer_event(&ctx, events);
+        AppContext::apply_cursor_image(&self.context_data, pointer, qh);
         // Everything that had a claim on this batch has now had it, which is
         // when a popup can tell an outside press from a press on the control
         // that owns it.
