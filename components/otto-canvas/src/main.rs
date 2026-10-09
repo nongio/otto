@@ -505,6 +505,9 @@ impl Sessions {
         style.set_corner_radius(f64::from(otto_kit::corners::radius(PANEL_CORNER)));
         style.set_masks_to_bounds(ClipMode::Enabled);
         apply_hairline_border(&style);
+        // The launcher's shadow, so the panel floats over the desktop as the
+        // other panels do.
+        style.set_shadow(0.32, 32.0, 0.0, 12.0, 0.0, 0.0, 0.0);
     }
 
     /// Ask for the cursor that fits what is under the pointer: a text cursor

@@ -141,6 +141,12 @@ one swipe away and out of the way the rest of the time.
   points below the top of the usable area, and it reaches down to `margin`
   points above the bottom of it. Hidden, it is entirely past the right edge
   of the output.
+- The column clips what its items draw to its area grown by 108 physical
+  pixels on every side, so an item's drop shadow (set through its surface
+  style) shows: enough for the shadow the desktop's floating panels use.
+  Overflow is cut that far past the column too. Hidden, the column is that
+  far further past the right edge, so no shadow shows. Clicks count as inside
+  only on the column itself, not on the room around it.
 - Items receive `shown` as soon as the canvas starts coming on screen (the
   first frame of a swipe or a toggle), and `hidden` only once it has finished
   sliding fully off screen.

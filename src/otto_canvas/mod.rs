@@ -78,6 +78,18 @@ const SETTLE_BOUNCE: f32 = 0.05;
 /// that fingers coming to rest before lifting do not count as a flick.
 const FLICK_VELOCITY: f64 = 300.0;
 
+/// Room around the items, in physical pixels, for what an item draws past
+/// its edges: the drop shadow a panel asks for through its surface style.
+///
+/// The column clips to the items' area grown by this on every side, so a
+/// panel's shadow is not cut. A shadow's radius reaches the scene unscaled,
+/// as physical pixels, and lay-rs blurs it with that radius as the Gaussian's
+/// sigma, which fades out about three radii past the layer. The desktop's
+/// floating panels ask for a radius of 32 and an offset of 12 down
+/// (`otto-launcher`, `otto-stash`, `otto-canvas`): 3 × 32 + 12 = 108. A
+/// larger shadow is cut at this distance.
+const SHADOW_BLEED_PX: f64 = 108.0;
+
 /// One client surface in the column.
 struct CanvasItem {
     resource: OttoCanvasItemV1,
@@ -129,19 +141,46 @@ enum Phase {
 }
 
 /// The column's placement on one output, in output-local physical pixels.
+///
+/// The edges are those of the items' area. The column's layer reaches
+/// [`ColumnGeometry::bleed_px`] past them on every side.
 #[derive(Debug, Clone, Copy)]
 struct ColumnGeometry {
     scale: f64,
     /// Left edge at rest, fully shown.
     shown_x_px: f64,
-    /// Left edge when hidden: the output's right edge, so nothing shows.
+    /// Left edge when hidden: past the output's right edge by the bleed, so
+    /// not even a shadow shows.
     hidden_x_px: f64,
     top_px: f64,
     width_px: f64,
     height_px: f64,
+    /// How far the layer reaches past the items' area on every side.
+    bleed_px: f64,
 }
 
 impl ColumnGeometry {
+    /// Where the column's layer goes for `progress` (0 hidden, 1 shown).
+    fn layer_position(&self, progress: f64) -> Point {
+        Point {
+            x: (self.x_for(progress) - self.bleed_px) as f32,
+            y: (self.top_px - self.bleed_px) as f32,
+        }
+    }
+
+    /// The column's layer size: the items' area and the bleed around it.
+    fn layer_size(&self) -> Size {
+        Size::points(
+            (self.width_px + 2.0 * self.bleed_px) as f32,
+            (self.height_px + 2.0 * self.bleed_px) as f32,
+        )
+    }
+
+    /// How far out the column is with its layer's left edge at `x_px`.
+    fn progress_at_layer(&self, x_px: f64) -> f64 {
+        self.progress_at(x_px + self.bleed_px)
+    }
+
     /// The left edge for `progress` (0 hidden, 1 shown).
     fn x_for(&self, progress: f64) -> f64 {
         (self.hidden_x_px + (self.shown_x_px - self.hidden_x_px) * progress).round()
@@ -294,7 +333,9 @@ impl<B: Backend> Otto<B> {
             }
             // Caught mid-slide: carry on from wherever the column is now.
             _ => match (self.canvas_geometry(), self.canvas.column.as_ref()) {
-                (Some(geometry), Some(column)) => geometry.progress_at(column.position().x as f64),
+                (Some(geometry), Some(column)) => {
+                    geometry.progress_at_layer(column.position().x as f64)
+                }
                 _ => return,
             },
         };
@@ -459,13 +500,7 @@ impl<B: Backend> Otto<B> {
         };
         let done = self.canvas.closed_generation.clone();
         column
-            .set_position(
-                Point {
-                    x: geometry.x_for(0.0) as f32,
-                    y: geometry.top_px as f32,
-                },
-                Some(settle_transition()),
-            )
+            .set_position(geometry.layer_position(0.0), Some(settle_transition()))
             .on_finish(
                 move |_: &Layer, _| {
                     done.fetch_max(generation, Ordering::Relaxed);
@@ -1017,8 +1052,10 @@ impl<B: Backend> Otto<B> {
             ..Default::default()
         });
         column.set_pointer_events(false);
-        // Overflow is clipped: items taller than the space left are cut at
-        // the bottom of the usable area.
+        // Overflow is clipped: items taller than the space left are cut
+        // [`SHADOW_BLEED_PX`] below the bottom of the usable area, the room
+        // left there for a shadow. Only items that do not fit their share
+        // (before version 5, or too many for the minimums) overflow at all.
         column.set_clip_children(true, None);
         column.set_clip_content(true, None);
         self.canvas.column = Some(column.clone());
@@ -1112,15 +1149,11 @@ impl<B: Backend> Otto<B> {
         else {
             return;
         };
-        column.set_size(
-            Size::points(geometry.width_px as f32, geometry.height_px as f32),
-            None,
+        column.set_size(geometry.layer_size(), None);
+        column.set_position(
+            geometry.layer_position(progress),
+            animated.then(settle_transition),
         );
-        let target = Point {
-            x: geometry.x_for(progress) as f32,
-            y: geometry.top_px as f32,
-        };
-        column.set_position(target, animated.then(settle_transition));
         self.canvas_request_redraw();
     }
 
@@ -1135,14 +1168,14 @@ impl<B: Backend> Otto<B> {
             return;
         };
         let gap_px = (f64::from(Config::with(|c| c.canvas.gap)) * geometry.scale).round();
-        let mut y_px = 0.0;
+        let mut y_px = geometry.bleed_px;
         for item in &self.canvas.items {
             let height_px = item_size_points(&item.surface)
                 .map(|(_, h)| (f64::from(h) * geometry.scale).round())
                 .unwrap_or(0.0);
             item.slot.set_position(
                 Point {
-                    x: 0.0,
+                    x: geometry.bleed_px as f32,
                     y: y_px as f32,
                 },
                 None,
@@ -1190,31 +1223,39 @@ impl<B: Backend> Otto<B> {
         let right = f64::from(usable.loc.x - output_geo.loc.x + usable.size.w) - margin;
         let top = f64::from(usable.loc.y - output_geo.loc.y) + margin;
         let height = (f64::from(usable.size.h) - 2.0 * margin).max(0.0);
+        let bleed_px = SHADOW_BLEED_PX;
         Some(ColumnGeometry {
             scale,
             shown_x_px: ((right - width) * scale).round(),
-            hidden_x_px: (f64::from(output_geo.size.w) * scale).round(),
+            hidden_x_px: (f64::from(output_geo.size.w) * scale).round() + bleed_px,
             top_px: (top * scale).round(),
             width_px: (width * scale).round(),
             height_px: (height * scale).round(),
+            bleed_px,
         })
     }
 
-    /// The column's current bounds in global logical coordinates.
+    /// The column's current bounds in global logical coordinates: the items'
+    /// area, without the bleed around it, so a click on a shadow is outside.
     fn canvas_column_rect(&self) -> Option<Rectangle<f64, Logical>> {
         let output = self.canvas.output.as_ref()?;
         let column = self.canvas.column.as_ref()?;
         let origin = self.workspaces.output_geometry(output)?.loc.to_f64();
         let scale = output.current_scale().fractional_scale();
+        let bleed_px = SHADOW_BLEED_PX;
         let at = column.render_position();
         let size = column.render_size();
         Some(Rectangle::new(
             (
-                origin.x + at.x as f64 / scale,
-                origin.y + at.y as f64 / scale,
+                origin.x + (at.x as f64 + bleed_px) / scale,
+                origin.y + (at.y as f64 + bleed_px) / scale,
             )
                 .into(),
-            (size.x as f64 / scale, size.y as f64 / scale).into(),
+            (
+                (size.x as f64 - 2.0 * bleed_px).max(0.0) / scale,
+                (size.y as f64 - 2.0 * bleed_px).max(0.0) / scale,
+            )
+                .into(),
         ))
     }
 
@@ -1410,6 +1451,7 @@ mod tests {
             top_px: 80.0,
             width_px: 776.0,
             height_px: 1000.0,
+            bleed_px: 96.0,
         }
     }
 
@@ -1425,6 +1467,17 @@ mod tests {
         let g = geometry();
         for progress in [0.0, 0.25, 0.5, 1.0] {
             assert!((g.progress_at(g.x_for(progress)) - progress).abs() < 1e-3);
+        }
+    }
+
+    #[test]
+    fn layer_reaches_the_bleed_past_the_items() {
+        let g = geometry();
+        let at = g.layer_position(1.0);
+        assert_eq!((at.x, at.y), (904.0, -16.0));
+        for progress in [0.0, 0.5, 1.0] {
+            let x = f64::from(g.layer_position(progress).x);
+            assert!((g.progress_at_layer(x) - progress).abs() < 1e-3);
         }
     }
 
