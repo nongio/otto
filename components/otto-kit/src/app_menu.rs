@@ -553,7 +553,10 @@ impl Served {
         Ok((shared.revision, node.wire()))
     }
 
-    #[expect(clippy::type_complexity, reason = "the signature dbusmenu defines")]
+    #[allow(
+        clippy::type_complexity,
+        reason = "the signature dbusmenu defines; complex enough to lint on some clippy versions only"
+    )]
     fn get_group_properties(
         &self,
         ids: Vec<i32>,
