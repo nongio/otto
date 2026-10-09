@@ -91,8 +91,12 @@ Otto reads `/etc/otto/config.toml`, then `~/.config/otto/config.toml`. Edit eith
 ```sh
 git clone https://github.com/nongio/otto
 cd otto
-cargo run --release
+cargo build --release --workspace --exclude otto-rdp
+cp otto_config.example.toml otto_config.toml
+PATH="$PWD/target/release:$PATH" target/release/otto --winit
 ```
+
+Otto is the compositor plus a set of separate programs it starts by name: `otto-bar`, `otto-islands`, `otto-files`, `otto-settings` and others. A plain `cargo build` only builds `otto`, and nothing from `target/release` is on your `PATH`, so the top bar, notifications and Settings would not start. The lines above build every program, put the build directory first on `PATH` for this one run, and copy the example config into the checkout, where Otto reads it as a local override (it is gitignored). That example config is what tells Otto to autostart the top bar and dynamic island. `--winit` opens Otto as a window in your current session. `otto-rdp` is left out because it needs the GStreamer development libraries.
 
 Build prerequisites, backends, feature flags and the component crates are in [Project Structure](./docs/developer/project-structure.md). The [Developer Guide](https://nongio.github.io/otto/developer/) covers the architecture, rendering and the rest; the same pages live in [docs/developer/](./docs/developer/README.md).
 
