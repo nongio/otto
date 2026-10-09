@@ -157,13 +157,6 @@ impl Backend for AcpBackend {
             .args(crate::config::expand_args(&agent.args))
             .envs(crate::config::expand_env(&agent.env));
         let transport = AcpAgent::new(config);
-        let permissions = Permissions {
-            policy: agent.permissions,
-            agent: agent.name.clone(),
-            icon: dialog::agent_icon(agent.agent.as_deref()),
-        };
-        // Claude loads plugins itself, on every session it opens, resumed or
-        // not: what it knows of them lives in the process, not the history.
         // A session may ask for another of the plugins' agents, as Preview's
         // asks for `studio`; one no plugin has leaves the configured agent.
         let asked = spec.runs_as.as_deref().filter(|name| {
@@ -173,6 +166,16 @@ impl Backend for AcpBackend {
             }
             found
         });
+        // Its questions are asked in its own name and with its own face.
+        let permissions = Permissions {
+            policy: agent.permissions,
+            agent: asked
+                .map(dialog::agent_name)
+                .unwrap_or_else(|| agent.name.clone()),
+            icon: dialog::agent_icon(asked.or(agent.agent.as_deref())),
+        };
+        // Claude loads plugins itself, on every session it opens, resumed or
+        // not: what it knows of them lives in the process, not the history.
         let run_as = asked.or(agent.agent.as_deref()).and_then(|name| {
             let found = skills::agent_file(&self.plugins, name);
             if found.is_none() {

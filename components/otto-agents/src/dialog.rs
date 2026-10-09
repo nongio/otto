@@ -353,8 +353,28 @@ const OTTO: &str = "otto";
 /// rather than a tool glyph. The name is Files' icon: it is the Otto mark the
 /// desktop installs into the icon theme, and the island resolves icons by
 /// theme name.
+///
+/// Preview's `studio` works on the file in Preview's window, and wears
+/// Preview's icon.
 pub fn agent_icon(plugin_agent: Option<&str>) -> Option<&'static str> {
-    (plugin_agent == Some(OTTO)).then_some("otto-files")
+    match plugin_agent {
+        Some(OTTO) => Some("otto-files"),
+        Some(STUDIO) => Some("image-viewer"),
+        _ => None,
+    }
+}
+
+/// The plugin agent Preview's chat runs as.
+const STUDIO: &str = "studio";
+
+/// How questions name a plugin agent a session asked for: its name, with a
+/// capital, as `studio` is Studio.
+pub fn agent_name(plugin_agent: &str) -> String {
+    let mut chars = plugin_agent.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().chain(chars).collect(),
+        None => String::new(),
+    }
 }
 
 /// The dialog for `request`, made by the agent called `agent` in `cwd`.
@@ -797,7 +817,9 @@ mod tests {
     #[test]
     fn a_dialog_from_otto_wears_ottos_face() {
         assert_eq!(agent_icon(Some("otto")), Some("otto-files"));
+        assert_eq!(agent_icon(Some("studio")), Some("image-viewer"));
         assert_eq!(agent_icon(Some("claude")), None);
+        assert_eq!(agent_name("studio"), "Studio");
         assert_eq!(agent_icon(None), None);
 
         let asked = |icon| {
