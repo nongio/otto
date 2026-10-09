@@ -24,8 +24,8 @@ use ahp_types::state::AgentInfo;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::agent::{
-    Backend, Decision, HistoryPart, HistoryTurn, Mode, SessionCommand, SessionEvent, SessionSpec,
-    TurnOutcome, agent_info,
+    Attachment, Backend, Decision, HistoryPart, HistoryTurn, Mode, SessionCommand, SessionEvent,
+    SessionSpec, TurnOutcome, agent_info,
 };
 use crate::attached::Attached;
 use crate::config::{self, AgentConfig, PermissionPolicy, SkillDelivery};
@@ -575,6 +575,22 @@ impl Replay {
     fn take(&mut self, update: SessionUpdate) {
         match update {
             SessionUpdate::UserMessageChunk(chunk) => {
+                // A file that went with the message, replayed as the link it
+                // was sent as.
+                if let ContentBlock::ResourceLink(link) = &chunk.content {
+                    let attachment = Attachment {
+                        name: link.name.clone(),
+                        uri: link.uri.clone(),
+                    };
+                    match self.turns.last_mut() {
+                        Some(turn) if turn.parts.is_empty() => turn.attachments.push(attachment),
+                        _ => self.turns.push(HistoryTurn {
+                            attachments: vec![attachment],
+                            ..HistoryTurn::default()
+                        }),
+                    }
+                    return;
+                }
                 let Some(text) = text(chunk.content) else {
                     return;
                 };
@@ -591,7 +607,7 @@ impl Replay {
                     Some(turn) if turn.parts.is_empty() => turn.prompt.push_str(&text),
                     _ => self.turns.push(HistoryTurn {
                         prompt: text,
-                        parts: Vec::new(),
+                        ..HistoryTurn::default()
                     }),
                 }
             }
@@ -652,6 +668,26 @@ impl Replay {
             }
             _ => {}
         }
+    }
+
+    /// The turns replayed, each prompt as the person wrote it.
+    ///
+    /// An agent may replay a prompt as the one text it made of it: Otto's
+    /// instructions to the agent ahead of it, and each file that went with
+    /// it as a `[@name](uri)` link after it. The instructions are taken out,
+    /// as the chat never showed them, and the links become the turn's
+    /// attachments again.
+    fn finish(self) -> Vec<HistoryTurn> {
+        self.turns
+            .into_iter()
+            .map(|mut turn| {
+                let prompt = without_context(&turn.prompt);
+                let (prompt, linked) = take_file_links(&prompt);
+                turn.prompt = prompt;
+                turn.attachments.extend(linked);
+                turn
+            })
+            .collect()
     }
 
     /// Puts every picture in a replayed tool call's `content` into the turn, as
@@ -730,7 +766,7 @@ async fn open_session(
                     tracing::info!(agent_session = %id, "agent session loaded with its history");
                     return Ok(Opened {
                         session_id: SessionId::from(id),
-                        history: collected.map(|replay| replay.turns),
+                        history: collected.map(Replay::finish),
                         modes: loaded.modes,
                         fresh: false,
                     });
@@ -1174,6 +1210,52 @@ fn without_remote_note(text: &str) -> &str {
         .unwrap_or(text)
 }
 
+/// `text` without the `<otto-context>` block Otto put ahead of a first
+/// prompt for the agent.
+fn without_context(text: &str) -> String {
+    const OPEN: &str = "<otto-context>";
+    const CLOSE: &str = "</otto-context>";
+    let Some(start) = text.find(OPEN) else {
+        return text.to_owned();
+    };
+    let end = text[start..]
+        .find(CLOSE)
+        .map_or(text.len(), |end| start + end + CLOSE.len());
+    format!("{}{}", &text[..start], &text[end..])
+        .trim()
+        .to_owned()
+}
+
+/// `text` without the `[@name](uri)` links an agent replays a message's files
+/// as, and the files.
+fn take_file_links(text: &str) -> (String, Vec<Attachment>) {
+    let mut kept = String::new();
+    let mut files = Vec::new();
+    let mut rest = text;
+    while let Some(start) = rest.find("[@") {
+        let link = rest[start + 2..]
+            .split_once("](")
+            .and_then(|(name, after)| {
+                let (uri, after) = after.split_once(')')?;
+                let plain = !name.contains(['[', ']', '\n']) && !uri.contains(char::is_whitespace);
+                (plain && uri.contains("://")).then_some((name, uri, after))
+            });
+        let Some((name, uri, after)) = link else {
+            kept.push_str(&rest[..start + 2]);
+            rest = &rest[start + 2..];
+            continue;
+        };
+        kept.push_str(&rest[..start]);
+        files.push(Attachment {
+            name: name.to_owned(),
+            uri: uri.to_owned(),
+        });
+        rest = after;
+    }
+    kept.push_str(rest);
+    (kept.trim().to_owned(), files)
+}
+
 fn text(content: ContentBlock) -> Option<String> {
     match content {
         ContentBlock::Text(text) => Some(text.text),
@@ -1262,6 +1344,60 @@ mod replay_tests {
 
     fn asked(text: &str) -> SessionUpdate {
         SessionUpdate::UserMessageChunk(ContentChunk::new(said(text)))
+    }
+
+    /// A first prompt replayed as one text: Otto's instructions, what was
+    /// typed and the files, which come back as the person sent them.
+    #[test]
+    fn a_replayed_prompt_comes_back_as_the_person_sent_it() {
+        let mut replay = Replay::default();
+        replay.take(asked(
+            "<otto-context>\nYou are working inside Preview.\n</otto-context>show me the \
+             histogram of this image[@a 1.jpg](file:///home/me/a%201.jpg)",
+        ));
+        replay.take(SessionUpdate::AgentMessageChunk(ContentChunk::new(said(
+            "Here.",
+        ))));
+        replay.take(asked(
+            "which is this?[@marks-1.json](file:///run/m-1.json)[@marks-1.png](file:///run/m-1.png)",
+        ));
+        replay.take(SessionUpdate::AgentMessageChunk(ContentChunk::new(said(
+            "Chrome.",
+        ))));
+        replay.take(asked("and [@ me](not a link) [x](file:///y)"));
+        let turns = replay.finish();
+        assert_eq!(turns[0].prompt, "show me the histogram of this image");
+        assert_eq!(
+            turns[0].attachments,
+            [Attachment {
+                name: "a 1.jpg".into(),
+                uri: "file:///home/me/a%201.jpg".into()
+            }]
+        );
+        assert_eq!(turns[1].prompt, "which is this?");
+        assert_eq!(turns[2].prompt, "and [@ me](not a link) [x](file:///y)");
+        assert!(turns[2].attachments.is_empty());
+        assert_eq!(
+            turns[1]
+                .attachments
+                .iter()
+                .map(|a| a.name.as_str())
+                .collect::<Vec<_>>(),
+            ["marks-1.json", "marks-1.png"]
+        );
+    }
+
+    /// An agent that replays a message's files as links of their own.
+    #[test]
+    fn replayed_resource_links_go_with_their_message() {
+        let mut replay = Replay::default();
+        replay.take(asked("look"));
+        replay.take(SessionUpdate::UserMessageChunk(ContentChunk::new(
+            ContentBlock::ResourceLink(ResourceLink::new("a.jpg", "file:///a.jpg")),
+        )));
+        let turns = replay.finish();
+        assert_eq!(turns[0].prompt, "look");
+        assert_eq!(turns[0].attachments[0].uri, "file:///a.jpg");
     }
 
     /// The `_meta` claude-agent-acp puts on a call to `tool`.

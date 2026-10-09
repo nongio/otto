@@ -194,6 +194,8 @@ pub struct Attachment {
 pub struct HistoryTurn {
     /// What the person asked.
     pub prompt: String,
+    /// The files that went with it.
+    pub attachments: Vec<Attachment>,
     /// What the agent said back, in stream order.
     pub parts: Vec<HistoryPart>,
 }

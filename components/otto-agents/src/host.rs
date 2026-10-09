@@ -40,10 +40,10 @@ use ahp_types::state::{
     ChatInputQuestion, ChatInputRequest, ChatInputResponseKind, ChatInputSelectedAnswerValue,
     ChatInputSelectedManyAnswerValue, ChatOrigin, ChatState, ChatSummary, ConfirmationOption,
     ConfirmationOptionKind, ErrorInfo, ErrorResponsePart, MarkdownResponsePart, Message,
-    MessageAttachment, MessageKind, MessageOrigin, PendingMessageKind, ReasoningResponsePart,
-    ResourceResponsePart, ResponsePart, RootState, SessionChatInputRequest, SessionInputRequest,
-    SessionLifecycle, SessionState, SessionStatus, SessionSummary, Snapshot, SnapshotState,
-    ToolCallCancellationReason, ToolCallCompletedState, ToolCallConfirmationReason,
+    MessageAttachment, MessageKind, MessageOrigin, MessageResourceAttachment, PendingMessageKind,
+    ReasoningResponsePart, ResourceResponsePart, ResponsePart, RootState, SessionChatInputRequest,
+    SessionInputRequest, SessionLifecycle, SessionState, SessionStatus, SessionSummary, Snapshot,
+    SnapshotState, ToolCallCancellationReason, ToolCallCompletedState, ToolCallConfirmationReason,
     ToolCallResponsePart, ToolCallResult, ToolCallState, ToolInput, Turn, TurnState,
 };
 use ahp_types::{PROTOCOL_VERSION, ROOT_RESOURCE_URI};
@@ -3385,7 +3385,24 @@ fn history_turn(turn: HistoryTurn) -> Turn {
             origin: MessageOrigin {
                 kind: MessageKind::User,
             },
-            attachments: None,
+            attachments: (!turn.attachments.is_empty()).then(|| {
+                turn.attachments
+                    .into_iter()
+                    .map(|attachment| {
+                        MessageAttachment::Resource(MessageResourceAttachment {
+                            label: attachment.name,
+                            uri: attachment.uri,
+                            range: None,
+                            display_kind: None,
+                            meta: None,
+                            size_hint: None,
+                            content_type: None,
+                            nonce: None,
+                            selection: None,
+                        })
+                    })
+                    .collect()
+            }),
             model: None,
             agent: None,
             meta: None,
