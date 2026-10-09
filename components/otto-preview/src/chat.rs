@@ -22,7 +22,7 @@ use otto_agents_kit::log::{ChatView, Key as ChatKey, Keyed, Pressed, Released};
 use otto_kit::components::scroll::{ScrollContent, ScrollView};
 use otto_kit::components::text_input::{TextInput, TextInputStyle};
 use otto_kit::prelude::*;
-use otto_kit::skia::{Contains, Point, RRect};
+use otto_kit::skia::{paint::Style as PaintStyle, Contains, Point, RRect};
 use otto_kit::CursorShape;
 use smithay_client_toolkit::seat::keyboard::{KeyEvent, Keysym};
 
@@ -636,8 +636,14 @@ impl Chat {
             .centered_on(layout.field.left + 4.0, layout.field.top - 10.0)
             .render(canvas);
         }
-        paint.set_color(theme.fill_quaternary);
-        canvas.draw_rrect(RRect::new_rect_xy(layout.field, 8.0, 8.0), &paint);
+        let field = RRect::new_rect_xy(layout.field, 8.0, 8.0);
+        paint.set_color(field_fill(theme));
+        canvas.draw_rrect(field, &paint);
+        paint.set_color(theme.hairline);
+        paint.set_style(PaintStyle::Stroke);
+        paint.set_stroke_width(1.0);
+        canvas.draw_rrect(field.with_inset((0.5, 0.5)), &paint);
+        paint.set_style(PaintStyle::Fill);
         self.field.state.set_focused(self.focused);
         if (self.field.width, self.field.height) != (layout.field.width(), layout.field.height()) {
             self.field
@@ -690,6 +696,17 @@ pub fn session_meta(path: &std::path::Path) -> serde_json::Value {
             }],
         }
     })
+}
+
+/// The field's fill: lighter than the panel it sits on, which is Preview's
+/// ground. White on a light ground, the ground lifted a step on a dark one.
+fn field_fill(theme: &Theme) -> Color {
+    let mut solid = theme.clone();
+    solid.with_solid_materials(theme.is_dark());
+    let ground = otto_kit::preview::background(&solid);
+    let lift = if theme.is_dark() { 0.08 } else { 1.0 };
+    let up = |c: u8| (f32::from(c) + (255.0 - f32::from(c)) * lift).round() as u8;
+    Color::from_rgb(up(ground.r()), up(ground.g()), up(ground.b()))
 }
 
 /// The field: a plain, rounded box, smaller than the launcher's.
