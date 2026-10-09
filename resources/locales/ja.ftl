@@ -431,6 +431,14 @@ settings-agents-service-missing = 未インストール
 settings-agents-service-unmanaged = 不明：このシステムには systemctl がありません
 settings-agents-start = 起動
 settings-agents-restart = 再起動
+settings-agents-bridge-group = チャットブリッジ
+settings-agents-bridge = ブリッジ
+settings-agents-bridge-off = オフ。チャットアプリからエージェントに接続できません。
+settings-agents-bridge-unset = 下にコマンドを設定して適用してから、ここをオンにしてください。
+settings-agents-bridge-failed = エラーで停止しました。理由は journalctl --user -u otto-agents-bridge で確認できます。
+settings-agents-bridge-missing = 未インストール
+settings-agents-bridge-command = コマンド
+settings-agents-bridge-command-detail = ブリッジを動かすもの。たとえば otto-agents acp をエージェントとして起動するよう設定したゲートウェイ。
 # The row that opens agents.toml. Its path is shown under it.
 settings-agents-file = 設定ファイル
 settings-agents-none = エージェントが設定されていません

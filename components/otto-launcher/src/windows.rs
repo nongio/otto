@@ -167,6 +167,7 @@ impl Source for Windows {
                     activity: None,
                     checked: None,
                     search_terms: vec![toplevel.app_id.clone()],
+                    pill: None,
                     origin: Origin {
                         source: self.index,
                         index,

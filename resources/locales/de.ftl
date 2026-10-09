@@ -437,6 +437,14 @@ settings-agents-service-missing = Nicht installiert
 settings-agents-service-unmanaged = Unbekannt: Dieses System hat kein systemctl
 settings-agents-start = Starten
 settings-agents-restart = Neu starten
+settings-agents-bridge-group = Chat-Brücke
+settings-agents-bridge = Brücke
+settings-agents-bridge-off = Aus. Chat-Apps erreichen deine Agenten nicht.
+settings-agents-bridge-unset = Lege unten einen Befehl fest und wende ihn an, dann schalte das hier ein.
+settings-agents-bridge-failed = Nach einem Fehler gestoppt. journalctl --user -u otto-agents-bridge nennt den Grund.
+settings-agents-bridge-missing = Nicht installiert
+settings-agents-bridge-command = Befehl
+settings-agents-bridge-command-detail = Was die Brücke ausführt, etwa ein Gateway, das otto-agents acp als seinen Agenten startet.
 # The row that opens agents.toml. Its path is shown under it.
 settings-agents-file = Konfigurationsdatei
 settings-agents-none = Keine Agenten eingerichtet

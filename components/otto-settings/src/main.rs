@@ -884,6 +884,13 @@ fn stop_recording() -> bool {
 /// is updated there when the answer comes and a redraw is requested, exactly
 /// as for a `Changed` signal.
 fn apply(id: &str, value: settings_client::Value) {
+    // The agents pane's switches are its own, not the compositor's.
+    if let settings_client::Value::Bool(on) = value {
+        if agents::owns(id) {
+            agents::switch(id, on);
+            return;
+        }
+    }
     // The Privacy pane's notification switches write the permission store,
     // not a setting.
     if panes::privacy::apply(id, &value) {

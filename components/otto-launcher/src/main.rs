@@ -47,6 +47,7 @@ use otto_agents_kit::log::{AttachmentHit, ChatView, Key as ChatKey, Keyed, Press
 use otto_agents_kit::rows::{field_style, HIGHLIGHT_RADIUS, ROW_H};
 use otto_launcher::apps::Apps;
 use otto_launcher::calc::Calculator;
+use otto_launcher::drafts;
 use otto_launcher::source::Source;
 use otto_launcher::view::{
     Palette, CARD_W, FIELD_H, LIST_TOP, LOG_LINE_H, LOG_W, MAX_CARD_H, RADIUS,
@@ -225,6 +226,10 @@ struct Launcher {
     /// The agent's frosted material the card wears, when the agent it shows
     /// has one; see [`Launcher::card_tint`].
     card_tint: Option<Frosted>,
+    /// Whose draft the field holds: a session's URI, [`drafts::NEW`] for a
+    /// request that has no session yet, or `None` while there is nothing to
+    /// keep — the list of sessions, or a session still opening.
+    draft_key: Option<String>,
 }
 
 /// The query field's identity for assistive technologies.
@@ -377,6 +382,7 @@ impl Launcher {
             spring_until: None,
             log_top: 0.0,
             card_tint: None,
+            draft_key: None,
         }
     }
 
@@ -917,6 +923,41 @@ impl Launcher {
         if let Some(session) = session {
             ask.resume(session);
             self.follow_session();
+        } else if !self.picking {
+            self.take_draft(drafts::NEW);
+        }
+    }
+
+    /// Keep what is typed as the draft of the request it is for, so closing
+    /// the launcher does not lose it.
+    fn keep_draft(&self) {
+        if let Some(key) = self.draft_key.as_deref() {
+            drafts::save(key, self.input.value());
+        }
+    }
+
+    /// The field is `key`'s from now on: its draft comes back, unless
+    /// something is typed already.
+    fn take_draft(&mut self, key: &str) {
+        self.draft_key = Some(key.to_string());
+        if self.input.value().is_empty() {
+            if let Some(draft) = drafts::load(key) {
+                self.input.set_value(draft);
+                self.dirty = true;
+            }
+        }
+    }
+
+    /// Once the followed session has a URI, the field is its: the draft of a
+    /// session that was opened comes back, and a new session's request,
+    /// sent, leaves the field to the next.
+    fn follow_draft(&mut self) {
+        let Some(session) = self.ask.as_ref().and_then(Ask::session) else {
+            return;
+        };
+        if self.draft_key.as_deref() != Some(session) {
+            let session = session.to_string();
+            self.take_draft(&session);
         }
     }
 
@@ -959,6 +1000,8 @@ impl Launcher {
             .map(str::to_string);
         if self.ask.as_mut().is_some_and(|ask| ask.resume_at(index)) {
             self.input.set_value("");
+            // The session's draft comes back once its URI does.
+            self.draft_key = None;
             self.follow_session();
         }
     }
@@ -996,6 +1039,7 @@ impl Launcher {
     /// [`Launcher::back_to_sessions`]. What is left behind costs nothing: the
     /// service owns the session, and it is in the list to come back to.
     fn new_session(&mut self) {
+        self.keep_draft();
         self.spring();
         self.ask = Some(Ask::open("otto-launcher"));
         self.show_stashed();
@@ -1011,6 +1055,7 @@ impl Launcher {
         // The open groups are the old conversation's, by its numbering.
         self.chat.forget();
         self.log_following = true;
+        self.take_draft(drafts::NEW);
         self.refresh_composer_placeholder();
         self.refilter();
         self.relayout_log();
@@ -1023,6 +1068,8 @@ impl Launcher {
     /// costs the session nothing, as closing the launcher does not: the
     /// service owns its requests, and its questions go to a dialog.
     fn back_to_sessions(&mut self) {
+        self.keep_draft();
+        self.draft_key = None;
         self.spring();
         self.ask = Some(Ask::open("otto-launcher"));
         self.show_stashed();
@@ -1064,6 +1111,8 @@ impl Launcher {
             }
         }
         self.input.set_value("");
+        // What was kept is what just went.
+        self.keep_draft();
         if first {
             // The agent is chosen for the session now, so its list goes.
             self.input.state.placeholder = otto_kit::t!("launcher-search-ask-more").to_string();
@@ -1445,6 +1494,7 @@ impl Launcher {
             return;
         }
         self.closing_at = Some(Instant::now() + CLOSE);
+        self.keep_draft();
 
         let Some(style) = self
             .card
@@ -2443,6 +2493,7 @@ impl App for Launcher {
             Some((true, false)) => self.reload(),
             _ => {}
         }
+        self.follow_draft();
         self.refresh_card_tint();
         self.refresh_composer_placeholder();
 

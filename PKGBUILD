@@ -137,6 +137,7 @@ UNIT
     # The agent service, off until the user enables it:
     # systemctl --user enable --now otto-agents
     install -Dm644 components/otto-agents/otto-agents.service "$pkgdir/usr/lib/systemd/user/otto-agents.service"
+    install -Dm644 components/otto-agents/otto-agents-bridge.service "$pkgdir/usr/lib/systemd/user/otto-agents-bridge.service"
 
     # Agent skills. One plugin directory — `.claude-plugin/plugin.json`, a
     # `skills/` tree and an `agents/` file — that an agent running on this

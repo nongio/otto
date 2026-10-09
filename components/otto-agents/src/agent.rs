@@ -37,6 +37,9 @@ pub enum SessionCommand {
         text: String,
         /// Resources the message points the agent at, such as files.
         attachments: Vec<Attachment>,
+        /// The chat app the message came through when it was written away
+        /// from the desktop, such as "Telegram"; `None` at the desktop.
+        remote: Option<String>,
     },
     Cancel {
         turn_id: String,

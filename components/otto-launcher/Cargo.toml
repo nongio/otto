@@ -14,6 +14,8 @@ laye-rs.workspace = true
 otto-agents-kit = { path = "../otto-agents-kit" }
 otto-kit = { path = "../otto-kit", features = ["dictation"] }
 otto-peek = { path = "../otto-peek" }
+# Ask's drafts, kept per session.
+serde_json.workspace = true
 taffy.workspace = true
 tracing.workspace = true
 wayland-client.workspace = true
@@ -27,3 +29,7 @@ features = ["gl", "textlayout", "svg", "skottie"]
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+# The drafts tests keep their files in a directory of their own.
+tempfile.workspace = true

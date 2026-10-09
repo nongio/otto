@@ -146,6 +146,7 @@ fn item(title: String, subtitle: Option<String>, search_terms: Vec<String>) -> I
         activity: None,
         checked: None,
         search_terms,
+        pill: None,
         origin: Origin {
             source: 0,
             index: 0,

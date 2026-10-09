@@ -444,6 +444,14 @@ settings-agents-service-missing = Не установлена
 settings-agents-service-unmanaged = Неизвестно: в этой системе нет systemctl
 settings-agents-start = Запустить
 settings-agents-restart = Перезапустить
+settings-agents-bridge-group = Мост для чатов
+settings-agents-bridge = Мост
+settings-agents-bridge-off = Выключен. Приложения чатов не могут связаться с вашими агентами.
+settings-agents-bridge-unset = Укажите команду ниже и примените её, затем включите это.
+settings-agents-bridge-failed = Остановлен после ошибки. Причину покажет journalctl --user -u otto-agents-bridge.
+settings-agents-bridge-missing = Не установлен
+settings-agents-bridge-command = Команда
+settings-agents-bridge-command-detail = То, что запускает мост, например шлюз, настроенный запускать otto-agents acp в качестве агента.
 # The row that opens agents.toml. Its path is shown under it.
 settings-agents-file = Файл конфигурации
 settings-agents-none = Агенты не настроены

@@ -87,6 +87,7 @@ for f in otto.portal \
         "$tmpdir/$PKGDIR/components/xdg-desktop-portal-otto/$f"
 done
 install -Dm644 components/otto-agents/otto-agents.service "$tmpdir/$PKGDIR/components/otto-agents/otto-agents.service"
+install -Dm644 components/otto-agents/otto-agents-bridge.service "$tmpdir/$PKGDIR/components/otto-agents/otto-agents-bridge.service"
 install -Dm644 components/otto-lock/otto-lock.pam \
     "$tmpdir/$PKGDIR/components/otto-lock/otto-lock.pam"
 install -Dm644 resources/polkit/org.otto.settings.policy \

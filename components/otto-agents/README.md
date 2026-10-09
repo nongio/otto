@@ -19,6 +19,7 @@ cargo run -p otto-agents -- new otto                   # start a session with an
 cargo run -p otto-agents -- enter 1a2b                 # take a session up in this terminal, in the agent's interface
 cargo run -p otto-agents -- plugins install            # link Otto's skills into ~/.agents/skills, render its agent per harness
 cargo run -p otto-agents -- plugins status             # what was found, and where each harness's copy stands
+cargo run -p otto-agents -- acp --agent claude         # be one ACP agent on stdio whose sessions are the desktop's
 ```
 
 - **Agents.** They come from `[[agents]]` in `~/.config/otto/agents.toml` (after
@@ -87,6 +88,24 @@ What it needs:
 - **otto-islands**, to show permission requests and agents' questions when no
   client is watching. Without it, a permission request is denied and a question
   waits in the chat.
+
+## A chat bridge
+
+A chat bridge lets chat apps reach the agents: a program that starts
+`otto-agents acp` as its agent. Otto's is
+[cc-connect](https://github.com/chenhg5/cc-connect). Name it in `agents.toml`:
+
+```toml
+[bridge]
+command = "/home/you/.local/bin/cc-connect"   # a full path: the unit has its own PATH
+args = ["--config", "/home/you/.cc-connect/config.toml"]
+```
+
+and turn it on under **Chat bridge** in Settings › Agents, which enables the
+`otto-agents-bridge` user unit (off by default). The unit runs
+`otto-agents bridge`, which execs the command, and starts the agent service too.
+Its log is `journalctl --user -u otto-agents-bridge`. [docs/cc-connect.md](docs/cc-connect.md)
+walks through it with a Telegram bot.
 
 ## Repository layout
 

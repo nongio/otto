@@ -438,6 +438,14 @@ settings-agents-service-missing = Non installé
 settings-agents-service-unmanaged = Impossible à savoir : ce système n’a pas systemctl
 settings-agents-start = Démarrer
 settings-agents-restart = Redémarrer
+settings-agents-bridge-group = Passerelle de discussion
+settings-agents-bridge = Passerelle
+settings-agents-bridge-off = Désactivée. Les apps de discussion ne peuvent pas joindre vos agents.
+settings-agents-bridge-unset = Indiquez une commande ci-dessous et appliquez-la, puis activez ceci.
+settings-agents-bridge-failed = Arrêtée après une erreur. journalctl --user -u otto-agents-bridge en donne la raison.
+settings-agents-bridge-missing = Non installée
+settings-agents-bridge-command = Commande
+settings-agents-bridge-command-detail = Ce qui fait tourner la passerelle, par exemple un service configuré pour lancer otto-agents acp comme agent.
 # The row that opens agents.toml. Its path is shown under it.
 settings-agents-file = Fichier de configuration
 settings-agents-none = Aucun agent configuré

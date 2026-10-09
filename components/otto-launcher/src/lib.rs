@@ -3,6 +3,7 @@
 
 pub mod apps;
 pub mod calc;
+pub mod drafts;
 pub mod source;
 pub mod view;
 pub mod windows;
