@@ -662,6 +662,23 @@ fn handle_pointer(
 
 /// Paint the chat, when it shows, into the picture the draw puts beside the
 /// document. Called before every repaint the chat may have changed for.
+/// Attach the marks not yet sent to the message about to go, as files the
+/// agent reads and the chat doesn't list.
+fn attach_marks(viewer: &mut Viewer, chat: &mut Chat) {
+    // The file as it is before the agent hears of it, so there is always a
+    // version to come back to.
+    viewer.keep_version(None);
+    let dir = crate::marks::dir();
+    let files = viewer
+        .marks
+        .export(&viewer.path, &viewer.session.preview, &dir);
+    if !files.is_empty() {
+        tracing::debug!(path = %viewer.path.display(), count = files.len(), "marks go with the message");
+        viewer.dirty = true;
+    }
+    chat.attach_unlisted(files);
+}
+
 fn paint_chat(viewer: &mut Viewer, chat: &mut Chat) {
     chat.pending_marks = viewer.marks.pending();
     viewer.chat_picture = viewer.chat_rect().and_then(|panel| {
@@ -870,23 +887,7 @@ impl App for PreviewApp {
                     // The marks not yet sent go with this message, as files
                     // the agent reads and the chat doesn't list.
                     if chat.sends(event) {
-                        // The file as it is before the agent hears of it, so
-                        // there is always a version to come back to.
-                        viewer.keep_version(None);
-                        let dir = crate::marks::dir();
-                        let (path, files) = {
-                            let viewer = &mut *viewer;
-                            let files =
-                                viewer
-                                    .marks
-                                    .export(&viewer.path, &viewer.session.preview, &dir);
-                            (viewer.path.clone(), files)
-                        };
-                        if !files.is_empty() {
-                            tracing::debug!(path = %path.display(), count = files.len(), "marks go with the message");
-                            viewer.dirty = true;
-                        }
-                        chat.attach_unlisted(files);
+                        attach_marks(&mut viewer, &mut chat);
                     }
                     let handled = chat.key(event, modifiers, serial);
                     drop(chat);
@@ -1001,7 +1002,12 @@ impl App for PreviewApp {
             doc.update();
             let mut chat = doc.chat.borrow_mut();
             doc.sync_marks(&mut chat);
-            if chat.pump() | chat.tick(delta) {
+            let dictated = chat.follow_dictation();
+            if dictated.is_some_and(|followed| followed.send) {
+                attach_marks(&mut doc.viewer.lock().unwrap(), &mut chat);
+                chat.send_now();
+            }
+            if chat.pump() | chat.tick(delta) | dictated.is_some() {
                 drop(chat);
                 doc.redraw();
             }
@@ -1009,11 +1015,10 @@ impl App for PreviewApp {
     }
 
     fn idle_timeout(&self) -> Option<Duration> {
-        if self
-            .docs
-            .iter()
-            .any(|doc| doc.viewer.lock().unwrap().animating() || doc.chat.borrow().scrolling())
-        {
+        if self.docs.iter().any(|doc| {
+            let chat = doc.chat.borrow();
+            doc.viewer.lock().unwrap().animating() || chat.scrolling() || chat.dictating()
+        }) {
             return Some(FRAME);
         }
         self.docs
@@ -1025,7 +1030,11 @@ impl App for PreviewApp {
     fn poll_fds(&self) -> Vec<std::os::fd::RawFd> {
         self.docs
             .iter()
-            .filter_map(|doc| doc.chat.borrow().poll_fd())
+            .flat_map(|doc| {
+                let chat = doc.chat.borrow();
+                [chat.poll_fd(), chat.dictation_fd()]
+            })
+            .flatten()
             .collect()
     }
 }

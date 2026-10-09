@@ -1,7 +1,7 @@
 # Dictation
 
 **Status:** draft
-**Related specs:** [launcher.md](./launcher.md), [localisation.md](./localisation.md), [settings-app.md](./settings-app.md#dictation)
+**Related specs:** [launcher.md](./launcher.md), [preview-app.md](./preview-app.md#chat), [localisation.md](./localisation.md), [settings-app.md](./settings-app.md#dictation)
 
 ## Summary
 
@@ -111,6 +111,15 @@ The launcher is the first app with dictation.
   for typing.
 - When the launcher loses the keyboard, dictation stops as if a key had been
   pressed. The launcher normally closes on losing the keyboard as well.
+
+### Dictation in an agent chat
+
+Every app that hosts the Ask chat from otto-agents-kit dictates into its
+field with the same keys as the launcher, from the same code: the launcher's
+ask mode and Preview's chat panel (Studio). Return sends the request once
+the last words are in. A request to an agent is free speech, so no
+vocabulary is given. When the field loses the keyboard, dictation stops as
+if a key had been pressed, and nothing is sent.
 
 ### Vocabulary
 

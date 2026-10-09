@@ -17,7 +17,7 @@ path = "src/main.rs"
 [dependencies]
 otto-kit = { path = "../otto-kit" }
 # The chat beside the document: the same conversation and log the launcher hosts.
-otto-agents-kit = { path = "../otto-agents-kit" }
+otto-agents-kit = { path = "../otto-agents-kit", features = ["dictation"] }
 otto-agents-client = { path = "../otto-agents-client" }
 otto-peek = { path = "../otto-peek" }
 otto-files = { path = "../otto-files" }

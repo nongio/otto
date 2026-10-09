@@ -134,6 +134,11 @@ in another app, `xdg-open`, the command line.
 - Long words in the log, paths and addresses, break after a `/`, `-`, `_` or
   `.` rather than run past the edge. A tool call shows its first line, in
   at most two lines; closed, a run of calls is the last of them on one line.
+- Ctrl+D dictates into the field, with the keys of an agent chat in
+  [dictation.md](./dictation.md#dictation-in-an-agent-chat). Return during a
+  dictation sends once the last words are in, with the marks not yet sent,
+  as Return does. Giving the keyboard back to the document stops the
+  dictation without sending.
 - Opening the panel connects to otto-agents in the background; nothing
   reaches an agent until something is sent. Hiding and showing it again
   connects again when the service couldn't be reached.

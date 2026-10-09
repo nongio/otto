@@ -16,6 +16,7 @@ use std::os::fd::RawFd;
 use std::path::PathBuf;
 
 use otto_agents_kit::chat::Ask;
+use otto_agents_kit::dictation::{DictationKey, FieldDictation, Followed};
 use otto_agents_kit::keys::{self, FieldEdit};
 use otto_agents_kit::log::paint::INSET;
 use otto_agents_kit::log::{ChatView, Key as ChatKey, Keyed, Pressed, Released};
@@ -76,6 +77,9 @@ pub struct Chat {
     ask: Option<Ask>,
     view: ChatView,
     field: TextInput,
+    /// Speech going into the field, from Ctrl+D until its last words are
+    /// typed.
+    dictation: FieldDictation,
     /// Whether keys go to the field rather than the document.
     pub focused: bool,
     /// The log's scroll: momentum, the rubber band at the ends and the bar,
@@ -165,6 +169,7 @@ impl Chat {
             ask: None,
             view: ChatView::new(dark),
             field,
+            dictation: FieldDictation::default(),
             focused: false,
             scroll: ScrollView::new(Rect::from_wh(0.0, 0.0)),
             follow: true,
@@ -225,6 +230,24 @@ impl Chat {
         self.ask.as_ref().map(Ask::poll_fd)
     }
 
+    /// The descriptor that wakes the loop when the dictation has words.
+    pub fn dictation_fd(&self) -> Option<RawFd> {
+        self.dictation.poll_fd()
+    }
+
+    /// Whether a dictation is running, which moves its equaliser every
+    /// frame.
+    pub fn dictating(&self) -> bool {
+        self.dictation.is_running()
+    }
+
+    /// Type in what the dictation heard and move its equaliser; `None` when
+    /// none runs. When [`Followed::send`] says Enter asked for it, the
+    /// window attaches the marks and calls [`Self::send_now`].
+    pub fn follow_dictation(&mut self) -> Option<Followed> {
+        self.dictation.follow(&mut self.field)
+    }
+
     /// Take in what the service sent. Returns whether to repaint.
     pub fn pump(&mut self) -> bool {
         let changed = self.ask.as_mut().is_some_and(Ask::pump);
@@ -243,6 +266,9 @@ impl Chat {
             repaint = true;
         }
         if !self.focused {
+            // The keyboard went back to the document: the last words still
+            // come in, and nothing is sent.
+            self.dictation.stop();
             return repaint;
         }
         let shown = self.field.caret_visible();
@@ -321,6 +347,11 @@ impl Chat {
     }
 
     /// Send what is in the field.
+    pub fn send_now(&mut self) {
+        self.send();
+    }
+
+    /// Send what is in the field.
     fn send(&mut self) {
         let prompt = self.field.value().trim().to_string();
         let Some(ask) = &mut self.ask else {
@@ -344,7 +375,10 @@ impl Chat {
     /// Whether `event` sends what is in the field as a new message: Return
     /// with text, while no question waits.
     pub fn sends(&self, event: &KeyEvent) -> bool {
+        // Enter during a dictation sends once the last words are in, which
+        // [`Self::follow_dictation`] tells.
         matches!(event.keysym, Keysym::Return | Keysym::KP_Enter)
+            && !self.dictation.is_running()
             && !self.field.value().trim().is_empty()
             && self.answers().is_empty()
     }
@@ -360,6 +394,16 @@ impl Chat {
     /// A key while the panel has the keyboard. Returns whether to repaint;
     /// Escape gives the keyboard back to the document.
     pub fn key(&mut self, event: &KeyEvent, modifiers: Modifiers, serial: u32) -> bool {
+        let control = keys::control_char(event);
+        // While it runs, the dictation takes every key. A request to an
+        // agent is free speech, so it expects no names.
+        match self
+            .dictation
+            .key(event.keysym, control, &mut self.field, || None)
+        {
+            DictationKey::Ignored => {}
+            DictationKey::Taken | DictationKey::Cancelled => return true,
+        }
         let answers = self.answers();
         let field_selected = self.field.state.has_selection();
         if let Some(ask) = &mut self.ask {
@@ -402,7 +446,6 @@ impl Chat {
             }
             _ => {}
         }
-        let control = keys::control_char(event);
         match keys::edit_field(&mut self.field, event, control, modifiers.shift, serial) {
             FieldEdit::Commit => {
                 self.send();
