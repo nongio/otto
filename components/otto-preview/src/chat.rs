@@ -721,6 +721,68 @@ fn field_style(dark: bool) -> TextInputStyle {
 mod tests {
     use super::*;
 
+    /// Paint the panel for a live session into PNGs, light and dark, to look
+    /// at its typography: `OTTO_RENDER_SESSION=<session uri>` and optionally
+    /// `OTTO_RENDER_OUT=<dir>` and `OTTO_RENDER_WIDTH=<points>`, against a
+    /// running otto-agents.
+    #[test]
+    #[ignore = "needs a running otto-agents and OTTO_RENDER_SESSION"]
+    fn render_a_session() {
+        let session = std::env::var("OTTO_RENDER_SESSION").expect("OTTO_RENDER_SESSION");
+        let out = PathBuf::from(std::env::var("OTTO_RENDER_OUT").unwrap_or_else(|_| ".".into()));
+        let width: f32 = std::env::var("OTTO_RENDER_WIDTH")
+            .ok()
+            .and_then(|w| w.parse().ok())
+            .unwrap_or(WIDTH);
+        const SCALE: f32 = 2.0;
+        for dark in [false, true] {
+            let mut chat = Chat::new(PathBuf::from("/tmp/x.jpg"), dark);
+            chat.carry_on(session.clone());
+            chat.opened();
+            chat.focused = false;
+            // Until the log stops growing for a while.
+            let mut last = (0.0, std::time::Instant::now());
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+            while std::time::Instant::now() < deadline {
+                chat.pump();
+                let length = chat.view.length();
+                if length != last.0 {
+                    last = (length, std::time::Instant::now());
+                } else if length > 0.0 && last.1.elapsed().as_millis() > 1500 {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(30));
+            }
+            let theme = if dark { Theme::dark() } else { Theme::light() };
+            let height = chat.view.length() + LOG_TOP + FIELD_H + 3.0 * PAD + 40.0;
+            let panel = Rect::from_wh(width, height);
+            let mut surface = otto_kit::skia::surfaces::raster_n32_premul((
+                (width * SCALE) as i32,
+                (height * SCALE) as i32,
+            ))
+            .expect("a raster surface");
+            let canvas = surface.canvas();
+            canvas.scale((SCALE, SCALE));
+            let mut solid = theme.clone();
+            solid.with_solid_materials(dark);
+            canvas.clear(otto_kit::preview::background(&solid));
+            chat.draw(canvas, panel, &theme);
+            // Laid out at this width now: once more, with the log in place.
+            canvas.clear(otto_kit::preview::background(&solid));
+            chat.draw(canvas, panel, &theme);
+            let png = surface
+                .image_snapshot()
+                .encode(None, otto_kit::skia::EncodedImageFormat::PNG, None)
+                .expect("a png");
+            let name = if dark {
+                "chat-dark.png"
+            } else {
+                "chat-light.png"
+            };
+            std::fs::write(out.join(name), png.as_bytes()).expect("written");
+        }
+    }
+
     #[test]
     fn a_session_is_made_for_the_file_with_the_document_tools() {
         let meta = session_meta(std::path::Path::new("/home/me/photo 1.jpg"));
