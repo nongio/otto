@@ -41,7 +41,7 @@ const DEFAULT_SIZE: (f32, f32) = (960.0, 720.0);
 /// dimensions can sit behind a large EXIF block.
 const HEADER_BYTES: u64 = 256 * 1024;
 
-const USAGE: &str = "usage: otto-preview PATH";
+const USAGE: &str = "usage: otto-preview [--chat] PATH";
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // First, before the runtime starts a thread: the sandboxed decode worker
@@ -49,16 +49,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     otto_peek::run_worker_if_requested();
     otto_kit::i18n::init_from_desktop();
 
-    let Some(path) = path_from_args() else {
+    let Some((path, chat)) = path_from_args() else {
         return Ok(());
     };
-    tokio::runtime::Runtime::new()?.block_on(run(path))
+    tokio::runtime::Runtime::new()?.block_on(run(path, chat))
 }
 
-/// The file named on the command line, as an absolute path. `None` after
-/// answering `--help` or `--version`; exits when no file is named.
-fn path_from_args() -> Option<PathBuf> {
+/// The file named on the command line, as an absolute path, and whether
+/// `--chat` asks for the chat beside it. `None` after answering `--help` or
+/// `--version`; exits when no file is named.
+fn path_from_args() -> Option<(PathBuf, bool)> {
     let mut path = None;
+    let mut chat = false;
     for argument in std::env::args_os().skip(1) {
         match argument.to_str() {
             Some("--help" | "-h") => {
@@ -69,6 +71,7 @@ fn path_from_args() -> Option<PathBuf> {
                 println!("otto-preview {}", env!("CARGO_PKG_VERSION"));
                 return None;
             }
+            Some("--chat") => chat = true,
             Some(other) if other.starts_with('-') && other.len() > 1 => {
                 eprintln!("otto-preview: unknown option {other}");
                 eprintln!("{USAGE}");
@@ -82,10 +85,10 @@ fn path_from_args() -> Option<PathBuf> {
         eprintln!("{USAGE}");
         std::process::exit(2);
     };
-    Some(std::path::absolute(&path).unwrap_or(path))
+    Some((std::path::absolute(&path).unwrap_or(path), chat))
 }
 
-async fn run(path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+async fn run(path: PathBuf, chat: bool) -> Result<(), Box<dyn std::error::Error>> {
     otto_kit::logging::init("info");
 
     // A launcher that brought us up with an activation token passes it on,
@@ -93,6 +96,7 @@ async fn run(path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
     let request = instance::Request {
         path,
         token: std::env::var("XDG_ACTIVATION_TOKEN").ok(),
+        chat,
     };
     let inbox = instance::Inbox::default();
     // Held for the life of the process: the bus name goes with it.

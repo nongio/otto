@@ -75,6 +75,8 @@ struct Doc {
     /// Whether the first configure has been answered, which is when the
     /// window takes its opening size.
     sized: bool,
+    /// Show the chat once the window knows its room: asked for on opening.
+    chat_on_configure: bool,
     /// The file's folder, watched so the file is shown again when something
     /// changes it: an agent, an editor, a script. A folder rather than the
     /// file, because most tools save by writing a new file over the old.
@@ -98,13 +100,18 @@ impl PreviewApp {
     fn open(&mut self, request: Request) -> Result<(), Box<dyn std::error::Error>> {
         let key = resolved(&request.path);
         if let Some(doc) = self.docs.iter().find(|doc| doc.key == key) {
+            if request.chat {
+                doc.show_chat();
+            }
             if let Some(surface) = doc.window.surface() {
                 AppContext::activate(surface.xdg_window().wl_surface(), request.token);
             }
             return Ok(());
         }
         let shape = Shape::of(&request.path);
-        self.docs.push(Doc::open(request.path, key, shape)?);
+        let mut doc = Doc::open(request.path, key, shape)?;
+        doc.chat_on_configure = request.chat;
+        self.docs.push(doc);
         Ok(())
     }
 
@@ -186,6 +193,7 @@ impl Doc {
             key,
             shape,
             sized: false,
+            chat_on_configure: false,
             watch,
         })
     }
@@ -541,9 +549,11 @@ fn handle_pointer(
                 if let Some(tool) = v.pressed_tool.take() {
                     v.dirty = true;
                     if v.toolbar().tool_at(at.x, at.y) == Some(tool) {
-                        v.run_tool(tool);
                         if tool == Tool::Chat {
-                            chat_toggled(&v, chat);
+                            let resized = v.toggle_chat();
+                            chat_toggled(&v, chat, window, resized);
+                        } else {
+                            v.run_tool(tool);
                         }
                     }
                 }
@@ -618,7 +628,16 @@ fn paint_chat(viewer: &mut Viewer, chat: &mut Chat) {
 
 /// The chat was just shown or hidden: a panel shown takes the keyboard, and
 /// connects the first time.
-fn chat_toggled(viewer: &Viewer, chat: &RefCell<Chat>) {
+fn chat_toggled(
+    viewer: &Viewer,
+    chat: &RefCell<Chat>,
+    window: &Window,
+    resized: Option<(f32, f32)>,
+) {
+    if let Some((width, height)) = resized {
+        window.resize(width as i32, height as i32);
+        apply_opaque_region(window, (width, height));
+    }
     let mut chat = chat.borrow_mut();
     if viewer.chat_open {
         chat.opened();
@@ -652,11 +671,33 @@ impl Doc {
             }
             viewer.variant = self.window.decoration_variant();
             viewer.active = self.window.is_activated();
+            viewer.floating = !self.window.is_maximized()
+                && viewer.variant == otto_kit::components::titlebar::DecorationVariant::Floating;
+            if let Some((width, height)) = configure.suggested_bounds {
+                if width > 0 && height > 0 {
+                    viewer.room = Some((width as f32, height as f32));
+                }
+            }
             viewer.dirty = true;
             viewer.size
         };
         self.window.sync_frame_corners();
         apply_opaque_region(&self.window, size);
+        if std::mem::take(&mut self.chat_on_configure) {
+            self.show_chat();
+        }
+        self.redraw();
+    }
+
+    /// Show the chat, if it isn't showing.
+    fn show_chat(&self) {
+        let mut viewer = self.viewer.lock().unwrap();
+        if viewer.chat_open {
+            return;
+        }
+        let resized = viewer.toggle_chat();
+        chat_toggled(&viewer, &self.chat, &self.window, resized);
+        drop(viewer);
         self.redraw();
     }
 
@@ -752,8 +793,8 @@ impl App for PreviewApp {
             let modifiers = viewer.modifiers;
             // Ctrl+K shows or hides the chat, from anywhere.
             if modifiers.ctrl && matches!(event.keysym, Keysym::k | Keysym::K) {
-                viewer.toggle_chat();
-                chat_toggled(&viewer, &doc.chat);
+                let resized = viewer.toggle_chat();
+                chat_toggled(&viewer, &doc.chat, &doc.window, resized);
                 drop(viewer);
                 doc.redraw();
                 return;

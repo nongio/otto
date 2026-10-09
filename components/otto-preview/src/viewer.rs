@@ -101,6 +101,13 @@ pub struct Viewer {
     pub chat_open: bool,
     /// The chat panel as last painted, in window coordinates.
     pub chat_picture: Option<otto_kit::skia::Picture>,
+    /// Whether the window grew to make room for the chat, and so shrinks
+    /// back when it hides.
+    pub chat_grew: bool,
+    /// Whether the window sizes itself: floating, not maximized or tiled.
+    pub floating: bool,
+    /// The room the compositor last said a window has, in points.
+    pub room: Option<(f32, f32)>,
     /// Where the view was when the file changed, put back once the new
     /// decode lands. Set from the reload until then.
     pub reloading: Option<Place>,
@@ -188,6 +195,9 @@ impl Viewer {
             thumbs_pending: HashSet::new(),
             chat_open: false,
             chat_picture: None,
+            chat_grew: false,
+            floating: true,
+            room: None,
             generation: 0,
             stamp: None,
             reloading: None,
@@ -268,15 +278,33 @@ impl Viewer {
         ))
     }
 
-    /// Show or hide the chat, keeping the document on the same spot of the
-    /// same page while the content box narrows or widens.
-    pub fn toggle_chat(&mut self) {
+    /// Show or hide the chat. A floating window with room to spare grows by
+    /// the panel's width, so the document keeps its size, and shrinks back
+    /// when the chat hides; otherwise the document narrows, keeping its place.
+    /// Returns the size the window should take, when it changes.
+    pub fn toggle_chat(&mut self) -> Option<(f32, f32)> {
         let place = self.place();
         self.chat_open = !self.chat_open;
+        let (width, height) = self.size;
+        let resized = if self.chat_open {
+            let fits = self
+                .room
+                .is_none_or(|(room, _)| width + crate::chat::WIDTH <= room);
+            self.chat_grew = self.floating && fits;
+            self.chat_grew
+                .then_some((width + crate::chat::WIDTH, height))
+        } else {
+            std::mem::take(&mut self.chat_grew)
+                .then_some(((width - crate::chat::WIDTH).max(crate::app::MIN_W), height))
+        };
+        if let Some(size) = resized {
+            self.size = size;
+        }
         if let Some(place) = place {
             self.restore_place(place);
         }
         self.dirty = true;
+        resized
     }
 
     /// Whether the preview is a document the sidebar can show pages of.
@@ -741,7 +769,9 @@ impl Viewer {
                 self.turn_page(1);
             }
             Tool::Sidebar => self.toggle_sidebar(),
-            Tool::Chat => self.toggle_chat(),
+            Tool::Chat => {
+                self.toggle_chat();
+            }
         }
     }
 
@@ -929,16 +959,32 @@ mod tests {
     }
 
     #[test]
-    fn the_chat_takes_its_width_from_the_document() {
+    fn with_room_the_window_grows_for_the_chat_and_shrinks_back() {
         let mut viewer = Viewer::new(PathBuf::from("/tmp/a.png"), (960.0, 720.0));
+        viewer.room = Some((1920.0, 1080.0));
+        let document = viewer.content();
+        assert_eq!(
+            viewer.toggle_chat(),
+            Some((960.0 + crate::chat::WIDTH, 720.0))
+        );
+        assert_eq!(viewer.content(), document, "the document keeps its size");
+        let panel = viewer.chat_rect().unwrap();
+        assert_eq!(panel.left, document.right);
+        assert_eq!(panel.width(), crate::chat::WIDTH);
+        assert_eq!(viewer.toggle_chat(), Some((960.0, 720.0)));
+    }
+
+    #[test]
+    fn without_room_the_chat_takes_its_width_from_the_document() {
+        let mut viewer = Viewer::new(PathBuf::from("/tmp/a.png"), (960.0, 720.0));
+        viewer.room = Some((1100.0, 1080.0));
         let wide = viewer.content();
-        assert!(viewer.chat_rect().is_none());
-        viewer.toggle_chat();
+        assert_eq!(viewer.toggle_chat(), None);
         let panel = viewer.chat_rect().unwrap();
         assert_eq!(panel.right, 960.0);
-        assert_eq!(panel.width(), crate::chat::WIDTH);
         assert_eq!(viewer.content().right, wide.right - crate::chat::WIDTH);
         assert_eq!(panel.top, wide.top);
+        assert_eq!(viewer.toggle_chat(), None, "nothing to shrink back");
     }
 
     #[test]

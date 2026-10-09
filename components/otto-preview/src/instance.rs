@@ -21,6 +21,8 @@ const DBUS_PATH: &str = "/org/otto/Preview1";
 pub struct Request {
     pub path: PathBuf,
     pub token: Option<String>,
+    /// Whether the chat shows beside the file from the start.
+    pub chat: bool,
 }
 
 /// Requests from other starts, waiting for the UI loop.
@@ -35,10 +37,22 @@ impl Service {
     /// Open `path`, an absolute path, or bring forward the window showing
     /// it. `token` is an xdg-activation token, empty when there is none.
     fn open(&self, path: String, token: String) {
+        self.push(path, token, false);
+    }
+
+    /// As `Open`, with the chat showing beside the file.
+    fn open_chat(&self, path: String, token: String) {
+        self.push(path, token, true);
+    }
+}
+
+impl Service {
+    fn push(&self, path: String, token: String, chat: bool) {
         let token = (!token.is_empty()).then_some(token);
         self.inbox.lock().unwrap().push(Request {
             path: PathBuf::from(path),
             token,
+            chat,
         });
         AppContext::request_wakeup();
     }
@@ -83,7 +97,7 @@ pub async fn claim_or_forward(request: &Request, inbox: Inbox) -> zbus::Result<R
             Some(DBUS_NAME),
             DBUS_PATH,
             Some(DBUS_NAME),
-            "Open",
+            if request.chat { "OpenChat" } else { "Open" },
             &(path, token),
         )
         .await?;

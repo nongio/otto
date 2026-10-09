@@ -110,7 +110,10 @@ impl Chat {
             .file_name()
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_default();
-        let mut field = TextInput::editing("", field_style(dark));
+        // Sized from the start: a field with no box scrolls what is typed out
+        // of its own zero-width clip and draws nothing.
+        let mut field =
+            TextInput::editing("", field_style(dark)).with_size(WIDTH - 2.0 * PAD, FIELD_H);
         field.state.placeholder = otto_kit::t_owned!("preview-chat-placeholder", name = name);
         Self {
             path,
@@ -472,6 +475,10 @@ impl Chat {
         paint.set_color(theme.fill_quaternary);
         canvas.draw_rrect(RRect::new_rect_xy(layout.field, 8.0, 8.0), &paint);
         self.field.state.set_focused(self.focused);
+        if (self.field.width, self.field.height) != (layout.field.width(), layout.field.height()) {
+            self.field
+                .set_size(layout.field.width(), layout.field.height());
+        }
         canvas.save();
         canvas.translate((layout.field.left, layout.field.top));
         self.field
