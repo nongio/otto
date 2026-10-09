@@ -130,7 +130,13 @@ impl Chat {
     /// to go with the first message.
     pub fn opened(&mut self) {
         self.focused = true;
-        if self.ask.is_none() {
+        // Connect the first time, and again when the service couldn't be
+        // reached before anything was asked: it may be up now.
+        let stale = self
+            .ask
+            .as_ref()
+            .is_some_and(|ask| ask.unreachable().is_some() && !ask.running());
+        if self.ask.is_none() || stale {
             let mut ask = Ask::open(CLIENT);
             ask.set_subject([self.path.clone()]);
             self.ask = Some(ask);
