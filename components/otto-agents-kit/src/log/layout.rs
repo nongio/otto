@@ -635,7 +635,9 @@ mod tests {
             Some("Working…"),
             &[],
             None,
-            20.0,
+            // Wide enough for the answer's word: one wider than the line
+            // is broken across lines.
+            200.0,
             |text, _| chars(text),
             no_pictures,
             |_, _| 0.0,

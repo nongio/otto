@@ -1,10 +1,10 @@
 use super::{MenuItem, MenuItemIcon, MenuItemStyle, VisualState};
 
 use crate::{components::icon::Icon, Renderable};
+use skia_safe::{Canvas, Font, Paint, Point, RRect, Rect};
 
 /// Room before a toggle's label for its check.
 pub const CHECK_GUTTER: f32 = 16.0;
-use skia_safe::{Canvas, Font, Paint, Point, RRect, Rect};
 
 /// Pure rendering functions for MenuItem
 pub struct MenuItemRenderer;

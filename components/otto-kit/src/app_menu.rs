@@ -185,6 +185,11 @@ impl Shortcut {
             "Enter" | "Return" => "Return".to_owned(),
             "Backspace" => "BackSpace".to_owned(),
             "Delete" | "Del" => "Delete".to_owned(),
+            "PageUp" => "Page_Up".to_owned(),
+            "PageDown" => "Page_Down".to_owned(),
+            "+" => "plus".to_owned(),
+            "-" => "minus".to_owned(),
+            "/" => "slash".to_owned(),
             key => key.to_owned(),
         };
         combo.push(key);
@@ -198,29 +203,62 @@ struct Shared {
     /// The menus as last set, and how often they changed.
     menus: Vec<Menu>,
     revision: u32,
-    /// Action ids by dbusmenu id, for the menus as they are now.
-    ids: HashMap<i32, String>,
+    /// The menus as served, with the ids [`Ids`] gave them.
+    tree: Option<Node>,
+    /// The action each item's id runs, and whether it can run now.
+    actions: HashMap<i32, (String, bool)>,
+    ids: Ids,
     /// What was picked since the app last asked.
     picked: Vec<String>,
 }
 
+/// The dbusmenu id of every entry ever served, by what it is: an item by its
+/// action, a menu by its titles from the top, a separator by its place in
+/// its menu. An entry keeps its id while the menus around it change, and an
+/// id is never given to anything else, so a click on a menu the bar fetched
+/// a moment ago runs what it said, or nothing.
+#[derive(Default)]
+struct Ids {
+    given: HashMap<String, i32>,
+    last: i32,
+}
+
+impl Ids {
+    fn of(&mut self, key: String) -> i32 {
+        if let Some(id) = self.given.get(&key) {
+            return *id;
+        }
+        self.last += 1;
+        self.given.insert(key, self.last);
+        self.last
+    }
+}
+
 /// A window's menus, served for the top bar.
+///
+/// Used on the thread that runs the app, like the window it is attached to.
 pub struct AppMenu {
     shared: Arc<Mutex<Shared>>,
-    /// The connection's name, which the window points the bar at.
-    service: String,
+    /// The connection's name once it has one, which the window points the
+    /// bar at.
+    service: std::cell::OnceCell<String>,
+    ready: std::sync::mpsc::Receiver<Option<String>>,
     /// Sends `LayoutUpdated` when the menus change.
     changed: tokio::sync::mpsc::UnboundedSender<u32>,
-    /// One per attached window; dropping it would forget the address.
-    attached: Vec<OrgKdeKwinAppmenu>,
+    /// One per attached window, and whether it has been given the address
+    /// yet; dropping one would forget the address.
+    attached: std::cell::RefCell<Vec<(OrgKdeKwinAppmenu, bool)>>,
 }
 
 impl AppMenu {
-    /// Serve `menus` on a session-bus connection of their own. `None` with
-    /// no session bus, in which case the app simply has no menus in the bar.
+    /// Serve `menus` on a session-bus connection of their own, started on a
+    /// thread of its own: this returns at once, and the windows attached are
+    /// pointed at the menus once the connection is up. With no session bus
+    /// the app simply has no menus in the bar. `None` only when the thread
+    /// cannot be started.
     pub fn serve(menus: Vec<Menu>) -> Option<Self> {
         let shared = Arc::new(Mutex::new(Shared::default()));
-        let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+        let (ready_tx, ready) = std::sync::mpsc::channel();
         let (changed, changes) = tokio::sync::mpsc::unbounded_channel();
         let served = Arc::clone(&shared);
         std::thread::Builder::new()
@@ -233,21 +271,19 @@ impl AppMenu {
                     Ok(runtime) => runtime,
                     Err(err) => {
                         tracing::warn!(%err, "no runtime for the app menu");
+                        let _ = ready_tx.send(None);
                         return;
                     }
                 };
                 runtime.block_on(run(served, ready_tx, changes));
             })
             .ok()?;
-        let service = match ready_rx.recv_timeout(std::time::Duration::from_secs(5)) {
-            Ok(Some(service)) => service,
-            _ => return None,
-        };
         let menu = Self {
             shared,
-            service,
+            service: std::cell::OnceCell::new(),
+            ready,
             changed,
-            attached: Vec::new(),
+            attached: std::cell::RefCell::new(Vec::new()),
         };
         menu.set(menus);
         Some(menu)
@@ -255,25 +291,26 @@ impl AppMenu {
 
     /// Point the top bar at these menus while `surface`'s window has focus.
     /// Nothing happens on a compositor without `org_kde_kwin_appmenu`.
-    pub fn attach(&mut self, surface: &WlSurface) {
+    pub fn attach(&self, surface: &WlSurface) {
         if let Some(appmenu) = AppContext::appmenu_for(surface) {
-            appmenu.set_address(self.service.clone(), MENU_PATH.to_owned());
-            self.attached.push(appmenu);
+            self.attached.borrow_mut().push((appmenu, false));
+            self.address();
         }
     }
 
     /// The menus as they should read now. The bar hears of a change only
     /// when there is one.
     pub fn set(&self, menus: Vec<Menu>) {
+        self.address();
         let revision = {
             let mut shared = self.shared.lock().unwrap();
             if shared.menus == menus && shared.revision > 0 {
                 return;
             }
-            shared.ids = numbered(&menus)
-                .into_iter()
-                .map(|(id, item)| (id, item.id.clone()))
-                .collect();
+            let mut actions = HashMap::new();
+            let tree = layout(&menus, &mut shared.ids, &mut actions);
+            shared.tree = Some(tree);
+            shared.actions = actions;
             shared.menus = menus;
             shared.revision += 1;
             shared.revision
@@ -283,31 +320,42 @@ impl AppMenu {
 
     /// The action ids of the items picked since the last call, in order.
     pub fn take_picked(&self) -> Vec<String> {
+        self.address();
         std::mem::take(&mut self.shared.lock().unwrap().picked)
     }
-}
 
-/// Every item in `menus` with the dbusmenu id it is served as: ids count up
-/// from 1 in the order the bar walks them, menus and separators included,
-/// so the same menus always get the same ids.
-fn numbered(menus: &[Menu]) -> Vec<(i32, &MenuItem)> {
-    fn walk<'a>(entries: &'a [MenuEntry], next: &mut i32, out: &mut Vec<(i32, &'a MenuItem)>) {
-        for entry in entries {
-            *next += 1;
-            match entry {
-                MenuEntry::Item(item) => out.push((*next, item)),
-                MenuEntry::Separator => {}
-                MenuEntry::Submenu(menu) => walk(&menu.items, next, out),
+    /// The connection's name, once it is up.
+    fn service(&self) -> Option<&str> {
+        if self.service.get().is_none() {
+            if let Ok(Some(name)) = self.ready.try_recv() {
+                let _ = self.service.set(name);
+            }
+        }
+        self.service.get().map(String::as_str)
+    }
+
+    /// Give the windows attached so far the menus' address, once there is
+    /// one.
+    fn address(&self) {
+        let Some(service) = self.service() else {
+            return;
+        };
+        for (appmenu, addressed) in self.attached.borrow_mut().iter_mut() {
+            if !*addressed {
+                appmenu.set_address(service.to_owned(), MENU_PATH.to_owned());
+                *addressed = true;
             }
         }
     }
-    let mut out = Vec::new();
-    let mut next = 0;
-    for menu in menus {
-        next += 1;
-        walk(&menu.items, &mut next, &mut out);
+}
+
+impl Drop for AppMenu {
+    /// The windows stop pointing the bar at menus that are no longer served.
+    fn drop(&mut self) {
+        for (appmenu, _) in self.attached.borrow_mut().drain(..) {
+            appmenu.release();
+        }
     }
-    out
 }
 
 /// One entry as the bar is served it: its id, what it says, and the
@@ -350,52 +398,70 @@ impl Node {
         }
         self.children.iter().find_map(|child| child.find(id))
     }
+
+    /// Every node under this one, depth first.
+    fn descendants(&self) -> Vec<&Node> {
+        let mut out = Vec::new();
+        for child in &self.children {
+            out.push(child);
+            out.extend(child.descendants());
+        }
+        out
+    }
 }
 
-/// The whole menu tree from the root (id 0), numbered as [`numbered`] does.
-fn layout(menus: &[Menu]) -> Node {
-    fn entries(items: &[MenuEntry], next: &mut i32) -> Vec<Node> {
+/// The whole menu tree from the root (id 0), each entry with the id `ids`
+/// keeps for it, and in `actions` what each item runs.
+fn layout(menus: &[Menu], ids: &mut Ids, actions: &mut HashMap<i32, (String, bool)>) -> Node {
+    fn entries(
+        items: &[MenuEntry],
+        path: &str,
+        ids: &mut Ids,
+        actions: &mut HashMap<i32, (String, bool)>,
+    ) -> Vec<Node> {
+        let mut separators = 0;
         items
             .iter()
-            .map(|entry| {
-                *next += 1;
-                let id = *next;
-                match entry {
-                    MenuEntry::Item(item) => Node {
+            .map(|entry| match entry {
+                MenuEntry::Item(item) => {
+                    let id = ids.of(format!("item\u{1f}{}", item.id));
+                    actions.insert(id, (item.id.clone(), item.enabled));
+                    Node {
                         id,
                         props: item_props(item),
                         children: Vec::new(),
-                    },
-                    MenuEntry::Separator => {
-                        let mut props = HashMap::new();
-                        props.insert("type".to_owned(), text("separator"));
-                        Node {
-                            id,
-                            props,
-                            children: Vec::new(),
-                        }
                     }
-                    MenuEntry::Submenu(menu) => Node {
-                        id,
-                        props: submenu_props(&menu.title),
-                        children: entries(&menu.items, next),
-                    },
                 }
+                MenuEntry::Separator => {
+                    separators += 1;
+                    let mut props = HashMap::new();
+                    props.insert("type".to_owned(), text("separator"));
+                    Node {
+                        id: ids.of(format!("separator\u{1f}{path}\u{1f}{separators}")),
+                        props,
+                        children: Vec::new(),
+                    }
+                }
+                MenuEntry::Submenu(menu) => submenu(menu, path, ids, actions),
             })
             .collect()
     }
-    let mut next = 0;
+    fn submenu(
+        menu: &Menu,
+        parent: &str,
+        ids: &mut Ids,
+        actions: &mut HashMap<i32, (String, bool)>,
+    ) -> Node {
+        let path = format!("{parent}\u{1f}{}", menu.title);
+        Node {
+            id: ids.of(format!("menu{path}")),
+            props: submenu_props(&menu.title),
+            children: entries(&menu.items, &path, ids, actions),
+        }
+    }
     let children = menus
         .iter()
-        .map(|menu| {
-            next += 1;
-            let id = next;
-            Node {
-                id,
-                props: submenu_props(&menu.title),
-                children: entries(&menu.items, &mut next),
-            }
-        })
+        .map(|menu| submenu(menu, "", ids, actions))
         .collect();
     let mut props = HashMap::new();
     props.insert("children-display".to_owned(), text("submenu"));
@@ -471,7 +537,7 @@ impl Served {
         false
     }
 
-    #[allow(clippy::type_complexity)]
+    #[expect(clippy::type_complexity, reason = "the signature dbusmenu defines")]
     fn get_layout(
         &self,
         parent_id: i32,
@@ -479,33 +545,41 @@ impl Served {
         _property_names: Vec<String>,
     ) -> zbus::fdo::Result<(u32, (i32, HashMap<String, OwnedValue>, Vec<OwnedValue>))> {
         let shared = self.shared.lock().unwrap();
-        let tree = layout(&shared.menus);
-        let node = tree
-            .find(parent_id)
+        let node = shared
+            .tree
+            .as_ref()
+            .and_then(|tree| tree.find(parent_id))
             .ok_or_else(|| zbus::fdo::Error::InvalidArgs(format!("no menu item {parent_id}")))?;
         Ok((shared.revision, node.wire()))
     }
 
-    #[allow(clippy::type_complexity)]
+    #[expect(clippy::type_complexity, reason = "the signature dbusmenu defines")]
     fn get_group_properties(
         &self,
         ids: Vec<i32>,
         _property_names: Vec<String>,
     ) -> Vec<(i32, HashMap<String, OwnedValue>)> {
         let shared = self.shared.lock().unwrap();
-        numbered(&shared.menus)
+        let Some(tree) = &shared.tree else {
+            return Vec::new();
+        };
+        tree.descendants()
             .into_iter()
-            .filter(|(id, _)| ids.is_empty() || ids.contains(id))
-            .map(|(id, item)| (id, item_props(item)))
+            .filter(|node| ids.is_empty() || ids.contains(&node.id))
+            .map(|node| {
+                let (id, props, _) = node.wire();
+                (id, props)
+            })
             .collect()
     }
 
     fn get_property(&self, id: i32, name: &str) -> zbus::fdo::Result<OwnedValue> {
         let shared = self.shared.lock().unwrap();
-        numbered(&shared.menus)
-            .into_iter()
-            .find(|(item_id, _)| *item_id == id)
-            .and_then(|(_, item)| item_props(item).remove(name))
+        shared
+            .tree
+            .as_ref()
+            .and_then(|tree| tree.find(id))
+            .and_then(|node| node.wire().1.remove(name))
             .ok_or_else(|| zbus::fdo::Error::InvalidArgs(format!("no {name} on {id}")))
     }
 
@@ -513,8 +587,10 @@ impl Served {
         if event_id != "clicked" {
             return;
         }
+        // An item greyed out, or gone since the bar fetched the menus, does
+        // nothing.
         let mut shared = self.shared.lock().unwrap();
-        if let Some(action) = shared.ids.get(&id).cloned() {
+        if let Some((action, true)) = shared.actions.get(&id).cloned() {
             shared.picked.push(action);
             drop(shared);
             AppContext::request_wakeup();
@@ -611,46 +687,62 @@ mod tests {
         assert!(Shortcut::parse("Hyper+Z").is_none());
     }
 
-    #[test]
-    fn every_item_has_the_id_it_is_served_as() {
-        let menus = menus();
-        let ids: Vec<(i32, &str)> = numbered(&menus)
+    /// The id an item is served as, from the tree.
+    fn id_of(tree: &Node, label: &str) -> i32 {
+        tree.descendants()
             .into_iter()
-            .map(|(id, item)| (id, item.id.as_str()))
-            .collect();
-        // Edit 1: undo 2, redo 3, separator 4, pen 5; View 6: zoom 7,
-        // Panels 8: chat 9.
-        assert_eq!(
-            ids,
-            [
-                (2, "undo"),
-                (3, "redo"),
-                (5, "pen"),
-                (7, "zoom_in"),
-                (9, "chat")
-            ]
-        );
+            .find(|node| {
+                node.props.get("label").is_some_and(|value| {
+                    String::try_from(value.try_clone().unwrap()).unwrap() == label
+                })
+            })
+            .unwrap()
+            .id
+    }
 
-        // The layout numbers them the same way.
-        let tree = layout(&menus);
-        let chat = tree.find(9).unwrap();
-        let label: String = chat.props["label"].try_clone().unwrap().try_into().unwrap();
-        assert_eq!(label, "Chat");
-        assert_eq!(tree.find(8).unwrap().children.len(), 1);
-        // And it goes on the wire whole.
-        let (id, _, children) = tree.wire();
-        assert_eq!((id, children.len()), (0, 2));
+    #[test]
+    fn every_entry_keeps_its_id_while_the_menus_change() {
+        let mut ids = Ids::default();
+        let mut actions = HashMap::new();
+        let tree = layout(&menus(), &mut ids, &mut actions);
+        let chat = id_of(&tree, "Chat");
+        assert_eq!(actions[&chat], ("chat".to_owned(), true));
+        assert_eq!(tree.find(id_of(&tree, "Panels")).unwrap().children.len(), 1);
+        let (root, _, children) = tree.wire();
+        assert_eq!((root, children.len()), (0, 2));
+
+        // An item comes in at the top: everything keeps its id, the new one
+        // gets one nothing had.
+        let mut more = menus();
+        more[0].items.insert(0, MenuEntry::item("paste", "Paste"));
+        let mut actions = HashMap::new();
+        let again = layout(&more, &mut ids, &mut actions);
+        assert_eq!(id_of(&again, "Chat"), chat);
+        assert_eq!(id_of(&again, "Undo"), id_of(&tree, "Undo"));
+        let paste = id_of(&again, "Paste");
+        assert!(tree.find(paste).is_none());
+        // A greyed item is served, but would not run.
+        assert_eq!(actions[&id_of(&again, "Redo")].1, false);
     }
 
     #[test]
     fn a_toggle_and_a_greyed_item_say_so() {
         let menus = menus();
-        let items = numbered(&menus);
-        let pen = item_props(items.iter().find(|(_, i)| i.id == "pen").unwrap().1);
+        let item = |id: &str| {
+            menus
+                .iter()
+                .flat_map(|menu| &menu.items)
+                .find_map(|entry| match entry {
+                    MenuEntry::Item(item) if item.id == id => Some(item.clone()),
+                    _ => None,
+                })
+                .unwrap()
+        };
+        let pen = item_props(&item("pen"));
         let kind: String = pen["toggle-type"].try_clone().unwrap().try_into().unwrap();
         let state: i32 = pen["toggle-state"].try_clone().unwrap().try_into().unwrap();
         assert_eq!((kind.as_str(), state), ("checkmark", 1));
-        let redo = item_props(items.iter().find(|(_, i)| i.id == "redo").unwrap().1);
+        let redo = item_props(&item("redo"));
         let enabled: bool = redo["enabled"].try_clone().unwrap().try_into().unwrap();
         assert!(!enabled);
         assert!(!redo.contains_key("toggle-type"));
@@ -661,13 +753,26 @@ mod tests {
     #[test]
     #[ignore = "needs a session bus"]
     fn the_bar_reads_the_menus_and_a_click_comes_back() {
-        let menu = AppMenu::serve(menus()).expect("a session bus");
+        let menu = AppMenu::serve(menus()).expect("the menu thread");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let service = loop {
+            if let Some(service) = menu.service() {
+                break service.to_owned();
+            }
+            assert!(std::time::Instant::now() < deadline, "no session bus");
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        };
+        let (panels, chat) = {
+            let shared = menu.shared.lock().unwrap();
+            let tree = shared.tree.as_ref().unwrap();
+            (id_of(tree, "Panels"), id_of(tree, "Chat"))
+        };
         let runtime = tokio::runtime::Runtime::new().unwrap();
         runtime.block_on(async {
             let bus = zbus::Connection::session().await.unwrap();
             let reply = bus
                 .call_method(
-                    Some(menu.service.as_str()),
+                    Some(service.as_str()),
                     MENU_PATH,
                     Some("com.canonical.dbusmenu"),
                     "GetLayout",
@@ -683,23 +788,23 @@ mod tests {
             // The Panels submenu on its own.
             let reply = bus
                 .call_method(
-                    Some(menu.service.as_str()),
+                    Some(service.as_str()),
                     MENU_PATH,
                     Some("com.canonical.dbusmenu"),
                     "GetLayout",
-                    &(8i32, -1i32, Vec::<String>::new()),
+                    &(panels, -1i32, Vec::<String>::new()),
                 )
                 .await
                 .unwrap();
             let (_, (id, _, children)): (u32, (i32, HashMap<String, OwnedValue>, Vec<OwnedValue>)) =
                 reply.body().deserialize().unwrap();
-            assert_eq!((id, children.len()), (8, 1));
+            assert_eq!((id, children.len()), (panels, 1));
             bus.call_method(
-                Some(menu.service.as_str()),
+                Some(service.as_str()),
                 MENU_PATH,
                 Some("com.canonical.dbusmenu"),
                 "Event",
-                &(9i32, "clicked", Value::from(0i32), 0u32),
+                &(chat, "clicked", Value::from(0i32), 0u32),
             )
             .await
             .unwrap();

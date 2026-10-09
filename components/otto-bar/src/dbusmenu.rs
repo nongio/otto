@@ -402,6 +402,11 @@ fn format_shortcut(combo: &[String]) -> Option<String> {
         "Right" => "→".to_string(),
         "Up" => "↑".to_string(),
         "Down" => "↓".to_string(),
+        "Page_Up" | "Prior" => "⇞".to_string(),
+        "Page_Down" | "Next" => "⇟".to_string(),
+        "plus" => "+".to_string(),
+        "minus" => "-".to_string(),
+        "slash" => "/".to_string(),
         "" => return None,
         other => other.to_uppercase(),
     };

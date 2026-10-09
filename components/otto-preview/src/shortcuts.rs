@@ -16,8 +16,8 @@ const PAD: f32 = 24.0;
 const ROW_H: f32 = 24.0;
 /// A section's title, with the room above it.
 const TITLE_H: f32 = 34.0;
-/// The sheet's own title.
-const HEADING_H: f32 = 40.0;
+/// The sheet's own title, and the note on Cmd under it.
+const HEADING_H: f32 = 62.0;
 /// How wide a column is at most; two fit side by side when there is room.
 const COLUMN_W: f32 = 300.0;
 
@@ -82,8 +82,7 @@ pub fn draw(canvas: &Canvas, viewer: &Viewer, theme: &Theme) {
         .with_style(styles::FOOTNOTE)
         .with_color(theme.text_secondary)
         .with_width(card_w - 2.0 * PAD)
-        .with_align(TextAlign::Right)
-        .centered_on(card.left + PAD, card.top + PAD + HEADING_H / 2.0 - 6.0)
+        .centered_on(card.left + PAD, card.top + PAD + HEADING_H - 12.0)
         .render(canvas);
     for (column, range) in [&sections[..split], &sections[split..]]
         .into_iter()

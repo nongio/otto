@@ -65,6 +65,9 @@ pub struct PreviewApp {
 }
 
 /// One file in its window.
+/// How often the menus are brought up to date, when nothing was picked.
+const MENU_EVERY: Duration = Duration::from_millis(250);
+
 struct Doc {
     viewer: Arc<Mutex<Viewer>>,
     /// The chat beside the document. It stays on the UI thread: its log
@@ -81,8 +84,10 @@ struct Doc {
     sized: bool,
     /// Show the chat once the window knows its room: asked for on opening.
     chat_on_configure: bool,
-    /// The window's menus in the top bar; `None` without a session bus.
+    /// The window's menus in the top bar.
     menu: Option<AppMenu>,
+    /// When the menus were last brought up to date.
+    menu_at: std::cell::Cell<Instant>,
     /// The file's folder, watched so the file is shown again when something
     /// changes it: an agent, an editor, a script. A folder rather than the
     /// file, because most tools save by writing a new file over the old.
@@ -203,8 +208,8 @@ impl Doc {
         });
 
         AppContext::register_window(window.clone());
-        let mut menu = AppMenu::serve(commands::menus(&viewer.lock().unwrap()));
-        if let (Some(menu), Some(surface)) = (menu.as_mut(), window.surface()) {
+        let menu = AppMenu::serve(commands::menus(&viewer.lock().unwrap()));
+        if let (Some(menu), Some(surface)) = (menu.as_ref(), window.surface()) {
             menu.attach(surface.wl_surface());
         }
         let watch = key.parent().map(DirWatch::new);
@@ -217,6 +222,7 @@ impl Doc {
             sized: false,
             chat_on_configure: false,
             menu,
+            menu_at: std::cell::Cell::new(Instant::now()),
             watch,
         })
     }
@@ -258,12 +264,19 @@ impl Doc {
         let Some(menu) = &self.menu else {
             return;
         };
-        for id in menu.take_picked() {
+        let picked = menu.take_picked();
+        // A few times a second is soon enough for a menu nobody is looking
+        // at; the bar fetches it afresh when it opens.
+        if picked.is_empty() && self.menu_at.get().elapsed() < MENU_EVERY {
+            return;
+        }
+        for id in picked {
             if let Some(command) = commands::Command::from_id(&id) {
                 self.run(command, AppContext::last_input_serial());
             }
         }
         menu.set(commands::menus(&self.viewer.lock().unwrap()));
+        self.menu_at.set(Instant::now());
     }
 
     /// Repaint the window, with the chat painted afresh.
@@ -721,8 +734,6 @@ fn handle_pointer(
     }
 }
 
-/// Paint the chat, when it shows, into the picture the draw puts beside the
-/// document. Called before every repaint the chat may have changed for.
 /// Attach the marks not yet sent to the message about to go, as files the
 /// agent reads and the chat doesn't list.
 fn attach_marks(viewer: &mut Viewer, chat: &mut Chat) {
@@ -740,6 +751,8 @@ fn attach_marks(viewer: &mut Viewer, chat: &mut Chat) {
     chat.attach_unlisted(files);
 }
 
+/// Paint the chat, when it shows, into the picture the draw puts beside the
+/// document. Called before every repaint the chat may have changed for.
 fn paint_chat(viewer: &mut Viewer, chat: &mut Chat) {
     chat.pending_marks = viewer.marks.pending();
     viewer.chat_picture = viewer.chat_rect().and_then(|panel| {
@@ -931,11 +944,18 @@ impl App for PreviewApp {
         let Some(doc) = self.focused() else {
             return;
         };
+        // Whether the chat's field has the keyboard: the file's undo and redo
+        // are then not to be had, so Ctrl+Z typed there never steps the file
+        // on disk back.
+        let in_chat = {
+            let viewer = doc.viewer.lock().unwrap();
+            viewer.chat_open && doc.chat.borrow().focused
+        };
         {
             let mut viewer = doc.viewer.lock().unwrap();
             let modifiers = viewer.modifiers;
             // The shortcuts sheet goes with Escape, and keeps every other key
-            // from what is under it.
+            // but the window's own from what is under it.
             if viewer.shortcuts_open && event.keysym == Keysym::Escape {
                 viewer.shortcuts_open = false;
                 drop(viewer);
@@ -946,6 +966,9 @@ impl App for PreviewApp {
             if let Some(command) = commands::global_key(event.keysym, modifiers) {
                 drop(viewer);
                 doc.run(command, serial);
+                return;
+            }
+            if viewer.shortcuts_open {
                 return;
             }
             if viewer.chat_open {
@@ -974,7 +997,9 @@ impl App for PreviewApp {
         }
         let modifiers = doc.viewer.lock().unwrap().modifiers;
         if let Some(command) = commands::document_key(event.keysym, modifiers) {
-            doc.run(command, serial);
+            if !in_chat {
+                doc.run(command, serial);
+            }
             return;
         }
         let outcome = doc.viewer.lock().unwrap().key(event.keysym);

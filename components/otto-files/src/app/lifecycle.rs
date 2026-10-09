@@ -82,14 +82,16 @@ impl App for FilesApp {
 
         // The menus in the top bar, for a browser window; a file dialog
         // belongs to the app that opened it, whose menus stay.
-        let browser = self.state.lock().unwrap();
-        if browser.picker.is_none() {
-            self.app_menu = otto_kit::app_menu::AppMenu::serve(browser.app_menus());
-            if let (Some(menu), Some(surface)) = (self.app_menu.as_mut(), window.wl_surface()) {
+        let menus = {
+            let browser = self.state.lock().unwrap();
+            browser.picker.is_none().then(|| browser.app_menus())
+        };
+        if let Some(menus) = menus {
+            self.app_menu = otto_kit::app_menu::AppMenu::serve(menus);
+            if let (Some(menu), Some(surface)) = (self.app_menu.as_ref(), window.wl_surface()) {
                 menu.attach(&surface);
             }
         }
-        drop(browser);
 
         self.install_window(window, scene);
         Ok(())

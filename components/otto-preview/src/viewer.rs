@@ -26,9 +26,9 @@ use crate::chrome::{self, Tool};
 use crate::marks::{self, Frame, Marks};
 use crate::sidebar::{self, SidebarLayout};
 
-/// How much one press of a zoom button or a zoom shortcut magnifies.
 /// How far either side of the chat panel's edge a press drags it.
 const CHAT_EDGE: f32 = 4.0;
+/// How much one press of a zoom button or a zoom shortcut magnifies.
 const ZOOM_STEP: f32 = 1.25;
 /// What an arrow key moves the content by, in points.
 const KEY_STEP: f32 = 48.0;

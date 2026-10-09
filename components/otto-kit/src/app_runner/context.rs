@@ -1894,8 +1894,6 @@ impl<'a> AppContext<'a> {
         });
     }
 
-    /// The surface holding the keyboard, or `None` when no window of this
-    /// application does.
     /// A new `org_kde_kwin_appmenu` for `surface`, to say where its menu is
     /// served; `None` on a compositor without the protocol, or before the
     /// app runs. Used by [`crate::app_menu::AppMenu::attach`].
@@ -1905,6 +1903,8 @@ impl<'a> AppContext<'a> {
         APPMENU_FN.with(|make| make.borrow().as_ref().and_then(|make| make(surface)))
     }
 
+    /// The surface holding the keyboard, or `None` when no window of this
+    /// application does.
     /// Start watching the desktop's text cursor, and return the object doing
     /// the watching — it has to be kept alive for the events to keep coming.
     ///
