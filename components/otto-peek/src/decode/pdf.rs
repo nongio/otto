@@ -337,7 +337,7 @@ fn parse_bbox(xml: &str) -> Option<(Vec<Page>, Vec<Word>)> {
                 if raw.len() >= payload::MAX_DOC_WORDS {
                     break;
                 }
-                let text = unescape(&after[..close]);
+                let text = otto_kit::xml::unescape(after[..close].trim());
                 if text.is_empty() {
                     continue;
                 }
@@ -406,20 +406,6 @@ fn attribute(tag: &str, name: &str) -> Option<f32> {
         }
         at = found + name.len();
     }
-}
-
-/// The five entities `pdftotext` writes. Anything else is its own text.
-fn unescape(text: &str) -> String {
-    if !text.contains('&') {
-        return text.trim().to_string();
-    }
-    text.replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&quot;", "\"")
-        .replace("&apos;", "'")
-        .replace("&amp;", "&")
-        .trim()
-        .to_string()
 }
 
 /// The whole document as a strip, with the one page that has been rasterised

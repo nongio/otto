@@ -17,7 +17,8 @@
 
 use std::process::Command;
 
-use crate::source::{Item, Origin, Source};
+use crate::source::Source;
+use otto_agents_kit::item::{Item, Origin};
 
 pub struct Calculator {
     index: usize,

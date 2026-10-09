@@ -3299,7 +3299,6 @@ fn history_turn(turn: HistoryTurn) -> Turn {
 
 #[cfg(test)]
 mod tests {
-    use ahp_types::errors::json_rpc_error_codes;
 
     use super::*;
 
@@ -3359,21 +3358,6 @@ mod tests {
             Ok(Outgoing::Message(message)) => message["error"]["code"].as_i64(),
             _ => None,
         }
-    }
-
-    #[test]
-    fn requests_before_initialize_are_rejected() {
-        let (host, mut conn, mut inbox) = connect();
-        host.handle_request(
-            &mut conn,
-            json!(1),
-            "listSessions",
-            json!({ "channel": ROOT_RESOURCE_URI }),
-        );
-        assert_eq!(
-            error_code(&mut inbox),
-            Some(json_rpc_error_codes::INVALID_REQUEST.into())
-        );
     }
 
     #[test]

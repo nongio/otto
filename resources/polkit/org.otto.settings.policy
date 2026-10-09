@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC
+ "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+<!--
+  Otto asks for this before changing a setting that decides what runs in
+  front of the password, or whether the session locks at all: the locker,
+  the greeter, auto-lock, locking on suspend, the lid and the power button.
+  The user confirms with their own password, every time.
+-->
+<policyconfig>
+  <vendor>Otto</vendor>
+  <vendor_url>https://github.com/nongio/otto</vendor_url>
+
+  <action id="org.otto.settings.lock">
+    <description>Change lock and login settings</description>
+    <message>Confirm this change with your password.</message>
+    <defaults>
+      <allow_any>auth_self</allow_any>
+      <allow_inactive>auth_self</allow_inactive>
+      <allow_active>auth_self</allow_active>
+    </defaults>
+  </action>
+</policyconfig>

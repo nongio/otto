@@ -14,12 +14,9 @@ use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{OnceLock, RwLock};
 
+use otto_kit::dbus::settings::{SettingsProxyBlocking, SERVICE as BUS_NAME};
 use zbus::blocking::Connection;
 use zbus::zvariant::{OwnedValue, Type, Value as ZValue};
-
-const BUS_NAME: &str = "org.otto.Settings";
-const OBJECT_PATH: &str = "/org/otto/Settings";
-const INTERFACE: &str = "org.otto.Settings";
 
 /// A setting's value, in the shapes the contract's `type` column allows.
 #[derive(Debug, Clone, PartialEq)]
@@ -31,15 +28,7 @@ pub enum Value {
     List(Vec<String>),
 }
 
-#[allow(dead_code)] // the full accessor set is used as more panes are wired
 impl Value {
-    pub fn as_bool(&self) -> Option<bool> {
-        match self {
-            Value::Bool(v) => Some(*v),
-            _ => None,
-        }
-    }
-
     pub fn as_f32(&self) -> Option<f32> {
         match self {
             Value::Double(v) => Some(*v as f32),
@@ -82,7 +71,7 @@ impl Value {
             Value::Double(v) => ZValue::F64(*v),
             Value::Text(v) => ZValue::Str(v.clone().into()),
             Value::List(v) => {
-                let mut array = zbus::zvariant::Array::new(<&str>::signature());
+                let mut array = zbus::zvariant::Array::new(<&str>::SIGNATURE);
                 for item in v {
                     // The element type is fixed above, so this cannot fail.
                     let _ = array.append(ZValue::Str(item.clone().into()));
@@ -125,35 +114,16 @@ impl Kind {
     }
 }
 
-/// What the compositor says happens when a setting is changed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Apply {
-    Live,
-    Restart,
-    Unsupported,
-}
-
-impl Apply {
-    fn parse(raw: &str) -> Self {
-        match raw {
-            "live" => Apply::Live,
-            "restart" => Apply::Restart,
-            _ => Apply::Unsupported,
-        }
-    }
-}
-
 /// One entry of the served schema. Only the fields the app actually renders
 /// from are kept; unknown keys in the reply are ignored, as the contract
 /// requires, so the compositor can add more without breaking this build.
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // ditto: panes read more of the schema as they are wired
+#[allow(dead_code)] // panes read more of the schema as they are wired
 pub struct Desc {
     pub id: String,
     pub kind: Kind,
     pub label: String,
     pub description: String,
-    pub apply: Apply,
     pub min: Option<f64>,
     pub max: Option<f64>,
     /// Granularity to snap a slider to, when the setting has one.
@@ -172,6 +142,10 @@ pub struct Desc {
     /// one tied to other backends, such as the renderer under a windowed
     /// session.
     pub applies_here: bool,
+    /// The compositor asks for the user's password before applying a change
+    /// (`confirm = "password"`), so a `Set` can take as long as the user
+    /// takes to answer.
+    pub sensitive: bool,
 }
 
 impl Desc {
@@ -202,7 +176,7 @@ struct Store {
 }
 
 static STORE: OnceLock<RwLock<Store>> = OnceLock::new();
-static CONNECTION: OnceLock<Option<Connection>> = OnceLock::new();
+static CONNECTION: OnceLock<Option<SettingsProxyBlocking<'static>>> = OnceLock::new();
 
 fn store() -> &'static RwLock<Store> {
     STORE.get_or_init(|| RwLock::new(Store::default()))
@@ -216,21 +190,6 @@ pub fn is_online() -> bool {
 /// The current value of a setting, if the compositor served one.
 pub fn value(id: &str) -> Option<Value> {
     store().read().ok()?.values.get(id).cloned()
-}
-
-/// Whether a setting is set in the user's own config file, and so offers a
-/// revert.
-///
-/// Nothing reads this yet: the badge that used to show it was an unlabelled
-/// glyph that could not be clicked and read as a restart marker, so it was
-/// removed. The override set is still tracked here, and [`reset`] still
-/// written, for the undo affordance that replaces it.
-#[allow(dead_code)]
-pub fn is_overridden(id: &str) -> bool {
-    store()
-        .read()
-        .map(|s| s.overridden.contains(id))
-        .unwrap_or(false)
 }
 
 /// Whether this session has changed a setting that is waiting on a restart.
@@ -279,10 +238,30 @@ pub fn snap(id: &str, raw: f32) -> f32 {
 /// holding the configuration token, so hit-testing and `Set` are unaffected.
 pub fn display_choice(id: &str, value: &str) -> String {
     let store = STORE.get_or_init(Default::default).read().unwrap();
-    match store.schema.get(id) {
+    let shown = match store.schema.get(id) {
         Some(desc) => desc.display(value),
         None => value.to_string(),
+    };
+    // A value the schema has no name for, which this app can name — an
+    // interval in seconds, shown as minutes.
+    if shown == value {
+        if let Some(label) = crate::discovery::label_for(id, value) {
+            return label;
+        }
     }
+    shown
+}
+
+/// Whether a change to `id` waits on the user's password. See [`Desc::sensitive`].
+pub fn is_sensitive(id: &str) -> bool {
+    describe(id).is_some_and(|desc| desc.sensitive)
+}
+
+/// Ask for a redraw from any thread, the way the `Changed` listener does:
+/// for a `Set` that answered on a thread of its own.
+pub fn request_redraw() {
+    DIRTY.store(true, Ordering::Relaxed);
+    otto_kit::AppContext::request_wakeup();
 }
 
 pub fn describe(id: &str) -> Option<Desc> {
@@ -292,11 +271,13 @@ pub fn describe(id: &str) -> Option<Desc> {
 /// Connect and populate the store. Failure is not fatal: the app stays usable
 /// against a compositor that does not serve the interface yet.
 pub fn connect() {
-    let connection = CONNECTION.get_or_init(|| match Connection::session() {
-        Ok(connection) => Some(connection),
-        Err(err) => {
-            eprintln!("settings: no session bus ({err}); running offline");
-            None
+    let connection = CONNECTION.get_or_init(|| {
+        match Connection::session().and_then(|bus| SettingsProxyBlocking::new(&bus)) {
+            Ok(proxy) => Some(proxy),
+            Err(err) => {
+                eprintln!("settings: no session bus ({err}); running offline");
+                None
+            }
         }
     });
 
@@ -356,23 +337,12 @@ pub fn spawn_change_listener() {
     let Some(Some(connection)) = CONNECTION.get() else {
         return;
     };
-    let connection = connection.clone();
+    let proxy = connection.clone();
 
     let spawned = std::thread::Builder::new()
         .name("settings-changed".into())
         .spawn(move || {
-            let proxy =
-                match zbus::blocking::Proxy::new(&connection, BUS_NAME, OBJECT_PATH, INTERFACE) {
-                    Ok(proxy) => proxy,
-                    Err(err) => {
-                        eprintln!(
-                            "settings: cannot watch {BUS_NAME} ({err}); \
-                             external changes will not be reflected"
-                        );
-                        return;
-                    }
-                };
-            let signals = match proxy.receive_signal("Changed") {
+            let signals = match proxy.receive_changed() {
                 Ok(signals) => signals,
                 Err(err) => {
                     eprintln!("settings: cannot subscribe to Changed ({err})");
@@ -380,9 +350,9 @@ pub fn spawn_change_listener() {
                 }
             };
 
-            for message in signals {
-                let changed: HashMap<String, OwnedValue> = match message.body().deserialize() {
-                    Ok(changed) => changed,
+            for signal in signals {
+                let changed = match signal.args() {
+                    Ok(args) => args.values,
                     Err(err) => {
                         eprintln!("settings: malformed Changed signal ({err})");
                         continue;
@@ -413,19 +383,8 @@ pub fn spawn_change_listener() {
     }
 }
 
-fn call<B, R>(connection: &Connection, method: &str, body: &B) -> zbus::Result<R>
-where
-    B: serde::ser::Serialize + zbus::zvariant::DynamicType,
-    R: serde::de::DeserializeOwned + zbus::zvariant::Type,
-{
-    connection
-        .call_method(Some(BUS_NAME), OBJECT_PATH, Some(INTERFACE), method, body)?
-        .body()
-        .deserialize()
-}
-
-fn fetch_schema(connection: &Connection) -> zbus::Result<HashMap<String, Desc>> {
-    let raw: Vec<HashMap<String, OwnedValue>> = call(connection, "Describe", &())?;
+fn fetch_schema(connection: &SettingsProxyBlocking<'_>) -> zbus::Result<HashMap<String, Desc>> {
+    let raw = connection.describe()?;
 
     Ok(raw
         .into_iter()
@@ -435,7 +394,6 @@ fn fetch_schema(connection: &Connection) -> zbus::Result<HashMap<String, Desc>> 
                 kind: Kind::parse(&string_field(&entry, "type").unwrap_or_default()),
                 label: string_field(&entry, "label").unwrap_or_else(|| id.clone()),
                 description: string_field(&entry, "description").unwrap_or_default(),
-                apply: Apply::parse(&string_field(&entry, "apply").unwrap_or_default()),
                 min: entry.get("min").and_then(number_field),
                 max: entry.get("max").and_then(number_field),
                 step: entry.get("step").and_then(number_field),
@@ -447,6 +405,7 @@ fn fetch_schema(connection: &Connection) -> zbus::Result<HashMap<String, Desc>> 
                     entry.get("applies_here").and_then(Value::from_zbus),
                     Some(Value::Bool(false))
                 ),
+                sensitive: string_field(&entry, "confirm").as_deref() == Some("password"),
                 id: id.clone(),
             };
             Some((id, desc))
@@ -454,16 +413,16 @@ fn fetch_schema(connection: &Connection) -> zbus::Result<HashMap<String, Desc>> 
         .collect())
 }
 
-fn fetch_values(connection: &Connection) -> zbus::Result<HashMap<String, Value>> {
-    let raw: HashMap<String, OwnedValue> = call(connection, "GetAll", &())?;
+fn fetch_values(connection: &SettingsProxyBlocking<'_>) -> zbus::Result<HashMap<String, Value>> {
+    let raw = connection.get_all()?;
     Ok(raw
         .iter()
         .filter_map(|(id, value)| Value::from_zbus(value).map(|v| (id.clone(), v)))
         .collect())
 }
 
-fn fetch_overridden(connection: &Connection) -> zbus::Result<HashSet<String>> {
-    let raw: Vec<String> = call(connection, "GetOverridden", &())?;
+fn fetch_overridden(connection: &SettingsProxyBlocking<'_>) -> zbus::Result<HashSet<String>> {
+    let raw = connection.get_overridden()?;
     Ok(raw.into_iter().collect())
 }
 
@@ -511,6 +470,12 @@ pub fn number_for(id: &str, value: f32) -> Value {
 /// does not become an empty locale.
 pub fn text_for(id: &str, value: &str) -> Value {
     match describe(id).map(|d| d.kind) {
+        // An integer offered as a pop-up of choices (the auto-lock interval)
+        // comes back from the menu as its text.
+        Some(Kind::Int) => match value.trim().parse::<i32>() {
+            Ok(number) => Value::Int(number),
+            Err(_) => Value::Text(value.to_string()),
+        },
         Some(Kind::List) => Value::List(
             value
                 .split(',')
@@ -560,7 +525,7 @@ pub fn set(id: &str, value: Value) -> SetOutcome {
         }
     }
 
-    let status: zbus::Result<String> = call(connection, "Set", &(id, value.to_zbus()));
+    let status = connection.set(id, &value.to_zbus());
 
     match status {
         Ok(status) => {
@@ -587,7 +552,7 @@ pub fn set(id: &str, value: Value) -> SetOutcome {
 /// that does not serve `ListShortcuts`.
 pub fn list_shortcuts() -> Option<Vec<(String, String)>> {
     let connection = CONNECTION.get()?.as_ref()?;
-    call(connection, "ListShortcuts", &()).ok()
+    connection.list_shortcuts().ok()
 }
 
 static CONFIG_PATH: OnceLock<Option<String>> = OnceLock::new();
@@ -606,7 +571,7 @@ pub fn resolve_config_path() {
     let path = CONNECTION
         .get()
         .and_then(|c| c.as_ref())
-        .and_then(|connection| call::<_, String>(connection, "ConfigPath", &()).ok());
+        .and_then(|connection| connection.config_path().ok());
     let _ = CONFIG_PATH.set(path);
 }
 
@@ -637,11 +602,7 @@ pub fn set_output_profile(
     let Some(Some(connection)) = CONNECTION.get() else {
         return SetOutcome::Failed("not connected to the compositor".into());
     };
-    let status: zbus::Result<String> = call(
-        connection,
-        "SetOutputProfile",
-        &(connector, width, height, refresh_hz, x, y, primary),
-    );
+    let status = connection.set_output_profile(connector, width, height, refresh_hz, x, y, primary);
     match status {
         Ok(status) if status == "pending-restart" => SetOutcome::PendingRestart,
         Ok(_) => SetOutcome::Applied,
@@ -659,11 +620,7 @@ pub fn add_virtual_output(name: &str, width: u32, height: u32, refresh_hz: f64) 
     let Some(Some(connection)) = CONNECTION.get() else {
         return SetOutcome::Failed("not connected to the compositor".into());
     };
-    match call::<_, u32>(
-        connection,
-        "AddVirtualOutput",
-        &(name, width, height, refresh_hz, false, true),
-    ) {
+    match connection.add_virtual_output(name, width, height, refresh_hz, false, true) {
         Ok(_) => SetOutcome::Applied,
         Err(err) => SetOutcome::Failed(err.to_string()),
     }
@@ -675,33 +632,8 @@ pub fn remove_virtual_output(name: &str) -> SetOutcome {
     let Some(Some(connection)) = CONNECTION.get() else {
         return SetOutcome::Failed("not connected to the compositor".into());
     };
-    match call::<_, ()>(connection, "RemoveVirtualOutput", &(name,)) {
+    match connection.remove_virtual_output(name) {
         Ok(()) => SetOutcome::Applied,
-        Err(err) => SetOutcome::Failed(err.to_string()),
-    }
-}
-
-/// Drop a setting back to whatever the lower config layers provide.
-#[allow(dead_code)] // wired when rows grow a revert affordance
-pub fn reset(id: &str) -> SetOutcome {
-    let Some(Some(connection)) = CONNECTION.get() else {
-        return SetOutcome::Failed("not connected to the compositor".into());
-    };
-
-    let status: zbus::Result<String> = call(connection, "Reset", &(id,));
-
-    match status {
-        Ok(_) => {
-            // The effective value now comes from a lower layer and we do not
-            // know it, so re-read rather than guess.
-            if let Ok(values) = fetch_values(connection) {
-                if let Ok(mut store) = store().write() {
-                    store.values = values;
-                    store.overridden.remove(id);
-                }
-            }
-            SetOutcome::Applied
-        }
         Err(err) => SetOutcome::Failed(err.to_string()),
     }
 }
@@ -724,7 +656,6 @@ mod commit_type_tests {
                 kind,
                 label: String::new(),
                 description: String::new(),
-                apply: Apply::Restart,
                 min: None,
                 max: None,
                 step: None,
@@ -733,6 +664,7 @@ mod commit_type_tests {
                 choice_labels: Vec::new(),
                 unavailable_choices: Vec::new(),
                 applies_here: true,
+                sensitive: false,
             },
         );
     }

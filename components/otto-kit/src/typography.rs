@@ -639,7 +639,7 @@ pub fn draw_runs(
 }
 
 /// Predefined text styles for a consistent design system
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TextStyle {
     pub family: &'static str,
     pub weight: i32,
@@ -672,28 +672,166 @@ impl TextStyle {
 /// whatever is beside it, so anything laid out in a fixed width should come
 /// through here rather than trusting the content to be short.
 ///
-/// Binary search on the character count: a long name is measured a handful of
-/// times instead of once per character, and measuring is the expensive part.
 pub fn ellipsize(font: &Font, text: &str, max_width: f32) -> String {
-    if font.measure_str(text, None).0 <= max_width {
+    ellipsize_by(text, max_width, |piece| font.measure_str(piece, None).0)
+}
+
+const ELLIPSIS: &str = "\u{2026}";
+
+/// [`ellipsize`] with the measuring left to the caller: for text drawn in
+/// runs of several faces ([`measure_runs`]), or styled some other way.
+pub fn ellipsize_by(text: &str, max_width: f32, measure: impl Fn(&str) -> f32) -> String {
+    if measure(text) <= max_width {
         return text.to_string();
     }
-    const ELLIPSIS: &str = "\u{2026}";
-    let budget = (max_width - font.measure_str(ELLIPSIS, None).0).max(0.0);
-
     let chars: Vec<char> = text.chars().collect();
+    let keep = longest_fit(chars.len(), |n| {
+        let mut candidate: String = chars[..n].iter().collect();
+        candidate.push_str(ELLIPSIS);
+        measure(&candidate) <= max_width
+    });
+    let mut out: String = chars[..keep].iter().collect();
+    out.push_str(ELLIPSIS);
+    out
+}
+
+/// Trim characters off the *front* of `text` until it fits `max_width`,
+/// marking the cut with a leading ellipsis: for a path, whose end is the part
+/// worth reading. Returns `text` unchanged when it already fits.
+pub fn ellipsize_head(font: &Font, text: &str, max_width: f32) -> String {
+    let measure = |piece: &str| font.measure_str(piece, None).0;
+    if measure(text) <= max_width {
+        return text.to_string();
+    }
+    let chars: Vec<char> = text.chars().collect();
+    let tail = |n: usize| -> String {
+        std::iter::once('\u{2026}')
+            .chain(chars[chars.len() - n..].iter().copied())
+            .collect()
+    };
+    let keep = longest_fit(chars.len(), |n| measure(&tail(n)) <= max_width);
+    tail(keep)
+}
+
+/// Truncate to at most `max` characters, the last of them an ellipsis.
+///
+/// By count rather than by width: for a short message in a fixed-width sheet,
+/// where a few characters either way do not matter and no font is at hand.
+pub fn ellipsize_chars(text: &str, max: usize) -> String {
+    if text.chars().count() <= max {
+        return text.to_string();
+    }
+    let mut out: String = text.chars().take(max.saturating_sub(1)).collect();
+    out.push_str(ELLIPSIS);
+    out
+}
+
+/// The largest `n` in `0..=len` for which `fits(n)` holds, given that it
+/// holds for every smaller `n` too (0 is taken to fit). Binary search: a long
+/// name is measured a handful of times instead of once per character, and
+/// measuring is the expensive part.
+fn longest_fit(len: usize, fits: impl Fn(usize) -> bool) -> usize {
     let mut lo = 0usize;
-    let mut hi = chars.len();
+    let mut hi = len;
     while lo < hi {
         let mid = (lo + hi).div_ceil(2);
-        let candidate: String = chars[..mid].iter().collect();
-        if font.measure_str(&candidate, None).0 <= budget {
+        if fits(mid) {
             lo = mid;
         } else {
             hi = mid - 1;
         }
     }
-    format!("{}{ELLIPSIS}", chars[..lo].iter().collect::<String>())
+    lo
+}
+
+/// Greedy word wrap of `text` into lines no wider than `width`.
+///
+/// Line breaks in `text` are kept (a blank line stays a blank line); a word
+/// wider than the line on its own is broken between characters, because it
+/// has nowhere else to go. Empty text is no lines.
+pub fn wrap(text: &str, width: f32, measure: impl Fn(&str) -> f32) -> Vec<String> {
+    let mut lines = Vec::new();
+    if text.is_empty() {
+        return lines;
+    }
+    for paragraph in text.split('\n') {
+        let mut line = String::new();
+        for word in paragraph.split(' ') {
+            let candidate = if line.is_empty() {
+                word.to_string()
+            } else {
+                format!("{line} {word}")
+            };
+            if measure(&candidate) <= width {
+                line = candidate;
+                continue;
+            }
+            if !line.is_empty() {
+                lines.push(std::mem::take(&mut line));
+            }
+            // The word starts a line of its own, broken if it has to be.
+            for c in word.chars() {
+                let mut next = line.clone();
+                next.push(c);
+                if !line.is_empty() && measure(&next) > width {
+                    lines.push(std::mem::take(&mut line));
+                    line.push(c);
+                } else {
+                    line = next;
+                }
+            }
+        }
+        lines.push(line);
+    }
+    lines
+}
+
+#[cfg(test)]
+mod text_fit_tests {
+    use super::*;
+
+    /// One point per character, so widths read as character counts.
+    fn chars(text: &str) -> f32 {
+        text.chars().count() as f32
+    }
+
+    #[test]
+    fn ellipsizing_keeps_what_fits_and_marks_the_cut() {
+        assert_eq!(ellipsize_by("short", 10.0, chars), "short");
+        assert_eq!(
+            ellipsize_by("a long file name", 6.0, chars),
+            "a lon\u{2026}"
+        );
+        assert_eq!(ellipsize_by("abc", 0.0, chars), "\u{2026}");
+        assert_eq!(ellipsize_chars("abcdef", 4), "abc\u{2026}");
+        assert_eq!(ellipsize_chars("abcd", 4), "abcd");
+    }
+
+    #[test]
+    fn words_move_to_the_next_line_rather_than_overflow() {
+        assert_eq!(
+            wrap("the quick brown fox", 10.0, chars),
+            ["the quick", "brown fox"]
+        );
+    }
+
+    #[test]
+    fn line_breaks_and_blank_lines_are_kept() {
+        assert_eq!(wrap("one\n\ntwo", 10.0, chars), ["one", "", "two"]);
+    }
+
+    #[test]
+    fn a_word_too_long_for_a_line_is_broken() {
+        assert_eq!(
+            wrap("see abcdefghijkl", 5.0, chars),
+            ["see", "abcde", "fghij", "kl"]
+        );
+    }
+
+    #[test]
+    fn nothing_to_wrap_is_no_lines() {
+        assert!(wrap("", 10.0, chars).is_empty());
+    }
 }
 
 pub mod styles {
@@ -925,14 +1063,6 @@ mod tests {
 
         // Should be same instance from cache
         assert_eq!(font1.typeface().unique_id(), font2.typeface().unique_id());
-    }
-
-    #[test]
-    fn test_text_styles() {
-        let _title = styles::TITLE_1.font();
-        let _body = styles::BODY.font();
-        let _caption = styles::CAPTION_1.font();
-        // If we get here without panic, fonts loaded successfully
     }
 
     #[test]

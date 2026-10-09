@@ -143,7 +143,7 @@ pub fn text_field(canvas: &Canvas, rect: Rect, value: &str, theme: &Theme) {
         (otto_kit::t_owned!("settings-not-set"), theme.text_tertiary)
     } else {
         (
-            elide_tail(value, style, rect.width() - 18.0),
+            otto_kit::typography::ellipsize(&style.font(), value, rect.width() - 18.0),
             theme.text_primary,
         )
     };
@@ -158,72 +158,14 @@ pub fn text_field(canvas: &Canvas, rect: Rect, value: &str, theme: &Theme) {
     canvas.restore();
 }
 
-/// Trim characters off the END of `text` until it fits `width`, marking the
-/// cut with a trailing ellipsis.
-pub fn elide_tail(text: &str, style: otto_kit::typography::TextStyle, width: f32) -> String {
-    let font = style.font();
-    if font.measure_str(text, None).0 <= width {
-        return text.to_string();
-    }
-    let mut end = text.len();
-    while end > 0 {
-        end -= 1;
-        while end > 0 && !text.is_char_boundary(end) {
-            end -= 1;
-        }
-        let candidate = format!("{}…", &text[..end]);
-        if font.measure_str(&candidate, None).0 <= width {
-            return candidate;
-        }
-    }
-    "…".to_string()
-}
-
-/// Break `text` into lines no wider than `width`, on word boundaries.
-///
-/// Greedy, and it never breaks inside a word: a single word too long for the
-/// line is left overhanging rather than cut, which is honest about the space
-/// being too narrow. Used for the paragraph a pane opens with, which is the
-/// only running text in the app.
+/// Break `text` into lines no wider than `width`, on word boundaries where it
+/// can (a word too wide for a line on its own is broken between characters):
+/// the paragraph a pane opens with, which is the only running text in the app.
+/// Any run of whitespace, a catalogue's line breaks included, is one space.
 pub fn wrap(text: &str, style: otto_kit::typography::TextStyle, width: f32) -> Vec<String> {
     let font = style.font();
-    let mut lines: Vec<String> = Vec::new();
-    let mut line = String::new();
-    for word in text.split_whitespace() {
-        if line.is_empty() {
-            line.push_str(word);
-            continue;
-        }
-        let candidate = format!("{line} {word}");
-        if font.measure_str(&candidate, None).0 <= width {
-            line = candidate;
-        } else {
-            lines.push(std::mem::take(&mut line));
-            line.push_str(word);
-        }
-    }
-    if !line.is_empty() {
-        lines.push(line);
-    }
-    lines
-}
-
-/// Trim characters off the FRONT of `text` until it fits `width`, marking the
-/// cut with a leading ellipsis. Returns `text` unchanged when it already fits.
-fn elide_head(text: &str, style: otto_kit::typography::TextStyle, width: f32) -> String {
-    let font = style.font();
-    if font.measure_str(text, None).0 <= width {
-        return text.to_string();
-    }
-    // Walk char boundaries from the front; the first tail that fits with the
-    // ellipsis in front of it is the answer.
-    for (i, _) in text.char_indices() {
-        let candidate = format!("…{}", &text[i..]);
-        if font.measure_str(&candidate, None).0 <= width {
-            return candidate;
-        }
-    }
-    "…".to_string()
+    let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    otto_kit::typography::wrap(&text, width, |piece| font.measure_str(piece, None).0)
 }
 
 /// A push button's label: the size of every other control's text, so a row's
@@ -291,6 +233,92 @@ pub fn buttons(
                 theme.text_tertiary
             },
         );
+    }
+}
+
+/// A segmented control's height: a little taller than a pop-up, since it
+/// is the row's only control and spans it.
+pub const TABS_H: f32 = 28.0;
+
+/// The track's corner radius: a touch rounder than a pop-up's 6, which
+/// leaves the open tab inside it at 5.
+const TABS_RADIUS: f32 = 7.0;
+
+/// A tab's label: the size of the row labels around it, at medium weight
+/// so the bar reads as the pane's navigation rather than one more row.
+const TAB_TEXT: TextStyle = styles::BODY_MEDIUM;
+
+/// How far the open tab sits inside the track.
+const TABS_INSET: f32 = 2.0;
+
+/// The segmented control's track, spanning `left` to `right` on `cy`.
+pub fn tabs_rect(left: f32, right: f32, cy: f32) -> Rect {
+    Rect::from_ltrb(left, cy - TABS_H / 2.0, right, cy + TABS_H / 2.0)
+}
+
+/// Which of `count` segments `x` falls in, if `(x, y)` is on the track.
+pub fn tab_at(rect: Rect, count: usize, x: f32, y: f32) -> Option<usize> {
+    if count == 0 || x < rect.left || x >= rect.right || y < rect.top || y >= rect.bottom {
+        return None;
+    }
+    let width = rect.width() / count as f32;
+    Some((((x - rect.left) / width) as usize).min(count - 1))
+}
+
+/// A segmented control: one segment per label on a rounded-rect track,
+/// cornered like the pop-ups and fields beside it. The open tab is a flat
+/// dark fill under white text, with no shadow: told apart by contrast, not
+/// by depth. A label too long for its segment is cut with an ellipsis.
+pub fn tabs(canvas: &Canvas, rect: Rect, labels: &[&str], selected: usize, theme: &Theme) {
+    canvas.draw_rrect(
+        RRect::new_rect_xy(rect, TABS_RADIUS, TABS_RADIUS),
+        &fill(theme.fill_secondary),
+    );
+    if labels.is_empty() {
+        return;
+    }
+    let width = rect.width() / labels.len() as f32;
+    for (index, label) in labels.iter().enumerate() {
+        let segment = Rect::from_xywh(
+            rect.left + width * index as f32,
+            rect.top,
+            width,
+            rect.height(),
+        );
+        let chosen = index == selected;
+        if chosen {
+            // Inset by the track's padding, with its corners inset by the
+            // same, so the two curves run parallel.
+            let open = segment.with_inset((TABS_INSET, TABS_INSET));
+            let radius = TABS_RADIUS - TABS_INSET;
+            let rrect = RRect::new_rect_xy(open, radius, radius);
+            canvas.draw_rrect(rrect, &fill(tab_selected_fill(theme)));
+        }
+        let text = otto_kit::typography::ellipsize(&TAB_TEXT.font(), label, width - 16.0);
+        let text_w = TAB_TEXT.font().measure_str(&text, None).0;
+        text_centered_y(
+            canvas,
+            &text,
+            segment.center_x() - text_w / 2.0,
+            segment.center_y(),
+            TAB_TEXT,
+            if chosen {
+                Color::WHITE
+            } else {
+                theme.text_secondary
+            },
+        );
+    }
+}
+
+/// The open tab's fill: a solid dark grey under white text. On a dark
+/// window the same grey would sink into it, so there it is lifted to a
+/// mid grey that still carries white text.
+fn tab_selected_fill(theme: &Theme) -> Color {
+    if theme.is_dark() {
+        Color::from_rgb(0x63, 0x63, 0x66)
+    } else {
+        Color::from_rgb(0x3A, 0x3A, 0x3C)
     }
 }
 
@@ -372,7 +400,7 @@ pub fn file_field(
     // identifies it, so what a too-long path loses is its leading directories:
     // the head is elided rather than the tail truncated.
     let inner = field.width() - 18.0;
-    let text = elide_head(&text, style, inner);
+    let text = otto_kit::typography::ellipsize_head(&style.font(), &text, inner);
     text_centered_y(canvas, &text, field.left + 9.0, cy, style, color);
     canvas.restore();
 

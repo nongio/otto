@@ -43,6 +43,7 @@ is the place to start.
 | [Foreign Toplevel](foreign-toplevel.md) | Exposing the window list to taskbars and launchers |
 | [Surface Style Protocol](surface-style-protocol.md) | `otto-surface-style-unstable-v1`: letting a client style and animate its own surface |
 | [Screen Sharing](screenshare.md) | Portal, PipeWire, wlr-screencopy, window capture |
+| [Permissions](permissions.md) | What Flatpak apps cannot reach, the lock screen, and the polkit auth panel |
 | [File Previews](file-previews.md) | Thumbnails, the preview column, Peek, the sandboxed decode worker, video |
 | [otto-media-kit](otto-media-kit.md) | Video playback: the embeddable player and its GStreamer worker |
 | [File Icons](file-icons.md) | What goes in the icon box: file types, the icon-name chain, themes, animated previews |
@@ -53,6 +54,7 @@ is the place to start.
 | [Color Scheme](color-scheme-setting.md) | How apps learn whether Otto is in light or dark mode, and the accent colour |
 | [Settings D-Bus API](settings-dbus-api.md) | The `org.otto.Settings` wire contract |
 | [Shell D-Bus API](shell-dbus-api.md) | The `org.otto.Shell1` wire contract: i3-syntax commands, the tree as JSON, `otto-msg` |
+| [otto-dbus](otto-dbus.md) | The one client proxy per `org.otto.*` interface, and where a new one goes |
 | [RDP Bridge](rdp-virtual-output.md) | Serving a virtual output over RDP (`otto-rdp`) |
 | [Debug Action Hook](debug-action-hook.md) | Driving builtin shortcut actions from a script (`$OTTO_ACTION_FILE`) |
 | [Versioning & Releases](versioning.md) | One workspace version for the compositor and every component, and how to bump it |

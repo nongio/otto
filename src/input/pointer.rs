@@ -95,8 +95,26 @@ impl<BackendData: Backend> Otto<BackendData> {
         let button = evt.button_code();
 
         let state = wl_pointer::ButtonState::from(evt.state());
+        // A press no client ends up receiving (Otto's own, or a view's) still
+        // ends the last client's claim to a popup grab; delivery overwrites
+        // this with the client that got it. See `crate::input::popup_grab`.
+        if wl_pointer::ButtonState::Pressed == state {
+            let seat = self.seat.clone();
+            self.note_seat_press(&seat, serial, None);
+        }
 
-        if !self.workspaces.get_show_all() && wl_pointer::ButtonState::Pressed == state {
+        // A shown side canvas sees the button first: a press outside it hides
+        // it and goes no further, and a press on one of its items keeps the
+        // keyboard on that item.
+        let canvas = self.canvas_pointer_button(button, wl_pointer::ButtonState::Pressed == state);
+        if canvas == crate::otto_canvas::CanvasButton::Consumed {
+            return;
+        }
+
+        if canvas != crate::otto_canvas::CanvasButton::Item
+            && !self.workspaces.get_show_all()
+            && wl_pointer::ButtonState::Pressed == state
+        {
             self.focus_window_under_cursor(serial, RaiseTiming::for_button(button));
         }
         if wl_pointer::ButtonState::Released == state {
@@ -640,6 +658,12 @@ impl<BackendData: Backend> Otto<BackendData> {
                     break;
                 }
             }
+        }
+
+        // The side canvas sits above the layer-shell chrome, the dock and
+        // every window, and below layer-shell popups.
+        if under.is_none() {
+            under = self.canvas_surface_under(pos);
         }
 
         // Check Top/Overlay layer shell surfaces using lay-rs hit testing

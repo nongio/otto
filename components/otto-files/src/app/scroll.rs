@@ -12,9 +12,14 @@ impl Browser {
     /// wrong end.
     pub(super) fn sync_scroll_metrics(&mut self) {
         self.rebuild_recent_sections();
+        self.rebuild_photos_layout();
+        self.settle_overflow_panel();
+        // A desk that stacks is exactly as tall as its cells up to the tile,
+        // which all fit, so it never scrolls.
+        let tile = self.desk_overflow().map(|overflow| overflow.tile);
         let (width, height) = (self.size.0, self.content_h());
         let mode = self.mode;
-        let miller_w = self.miller_w;
+        let miller = self.miller_widths();
         let depth_count = self.columns.len();
         let counts = self.counts();
 
@@ -27,17 +32,32 @@ impl Browser {
             .set_viewport(view::content_viewport(width, height, mode));
         self.pan.set_content_length(view::miller_content_width(
             depth_count,
-            miller_w,
+            &miller,
             self.preview_width(),
         ));
         let pan = self.pan.offset();
 
         for (depth, &count) in counts.iter().enumerate() {
-            let viewport = view::pane_viewport(width, height, mode, depth, pan, miller_w);
+            let count = match tile {
+                Some(tile) if depth + 1 == depth_count => tile.first + 1,
+                _ => count,
+            };
+            let viewport = match mode {
+                // Beside the info panel, not under it: the bar, the wheel and
+                // the band all stop at the panel's edge.
+                ViewMode::Photos => self.photos.area(width, height),
+                _ => view::pane_viewport(width, height, mode, depth, pan, &miller),
+            };
             // The day headings are part of the content: measured without them
             // the grid is short by their height and the last row is unreachable.
-            let content =
-                view::pane_content_height_in(width, height, mode, count, &self.recent_sections);
+            let content = view::pane_content_height_in(
+                width,
+                height,
+                mode,
+                count,
+                &self.recent_sections,
+                &self.photos,
+            );
             // A column being re-read has no entries *yet*, and telling its
             // scroll view how long *that* is would clamp the offset to the top
             // — permanently, since the offset is not restored when the listing
@@ -58,6 +78,14 @@ impl Browser {
                 scroll.set_content_length(content);
             }
         }
+        // The Photos wall was packed again at a new size: back to the picture
+        // that was at the top, now that the new length is known.
+        if let Some(offset) = self.scroll_to_after_layout.take() {
+            let depth = self.columns.len() - 1;
+            let scroll = &mut self.columns[depth].scroll;
+            scroll.stop();
+            scroll.state.set_offset(offset);
+        }
     }
 
     /// Pan the stack the shortest distance that brings pane `depth` fully into
@@ -71,7 +99,8 @@ impl Browser {
             return;
         }
         self.sync_scroll_metrics();
-        let target = view::miller_pan_for(depth, self.size.0, self.pan.offset(), self.miller_w);
+        let target =
+            view::miller_pan_for(depth, self.size.0, self.pan.offset(), &self.miller_widths());
         if self.pan.scroll_to(target) {
             self.dirty = true;
         }
@@ -92,7 +121,7 @@ impl Browser {
             &self.columns,
             &counts,
             self.pan.offset(),
-            self.miller_w,
+            &self.miller_widths(),
         )
         .map(|(depth, _)| depth)
         .unwrap_or(self.active)

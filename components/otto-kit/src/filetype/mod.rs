@@ -130,29 +130,15 @@ pub fn database() -> &'static MimeDb {
 fn mime_dirs() -> Vec<std::path::PathBuf> {
     let mut dirs = Vec::new();
 
-    let data_dirs = std::env::var("XDG_DATA_DIRS")
-        .unwrap_or_else(|_| "/usr/local/share:/usr/share".to_string());
     // Reversed: XDG_DATA_DIRS is highest-priority-first, and later parses win.
-    for dir in data_dirs.split(':').rev().filter(|d| !d.is_empty()) {
-        dirs.push(std::path::Path::new(dir).join("mime"));
+    for dir in crate::xdg::data_dirs().iter().rev() {
+        dirs.push(dir.join("mime"));
     }
 
-    if let Some(home) = data_home() {
+    if let Some(home) = crate::xdg::data_home() {
         dirs.push(home.join("mime"));
     }
     dirs
-}
-
-fn data_home() -> Option<std::path::PathBuf> {
-    if let Ok(dir) = std::env::var("XDG_DATA_HOME") {
-        if !dir.is_empty() {
-            return Some(dir.into());
-        }
-    }
-    std::env::var("HOME")
-        .ok()
-        .filter(|h| !h.is_empty())
-        .map(|h| std::path::Path::new(&h).join(".local/share"))
 }
 
 // ---------------------------------------------------------------------------
@@ -382,7 +368,7 @@ fn comment_in(xml: &str, languages: &[String]) -> Option<String> {
             break;
         };
         let attributes = &after[..open_end];
-        let body = unescape_xml(after[open_end + 1..close].trim());
+        let body = crate::xml::unescape(after[open_end + 1..close].trim());
         match attributes.split_once("xml:lang=\"") {
             Some((_, lang)) => {
                 let lang = lang.split('"').next().unwrap_or_default();
@@ -419,14 +405,6 @@ fn without_script(lang: &str) -> String {
         .map(|(_, part)| part)
         .collect::<Vec<_>>()
         .join("-")
-}
-
-fn unescape_xml(text: &str) -> String {
-    text.replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&quot;", "\"")
-        .replace("&apos;", "'")
-        .replace("&amp;", "&")
 }
 
 /// Expand a MIME type into the set of name globs that match it, including

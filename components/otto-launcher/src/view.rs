@@ -26,51 +26,31 @@
 //! logical points and absolute — a row appearing must not move the field being
 //! typed into.
 
-use std::cell::RefCell;
-use std::collections::HashMap;
-use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use layers::prelude::*;
 use layers::types::{Color as LayerColor, Point as LayerPoint, Size as LayerSize};
-use otto_kit::components::attachments::{AttachmentList, Options as AttachmentOptions, HOVER_PAD};
-use otto_kit::components::scroll::RowLayout;
-use otto_kit::components::text_input::{TextInput, TextInputStyle};
-use otto_kit::icons::named_icon_sized;
-use otto_kit::preview::document;
-use otto_kit::theme::Theme;
-use otto_kit::typography::{draw_runs, get_font_with_fallback, measure_runs, styles};
-use skia_safe::font_style::{Slant, Weight, Width};
-use skia_safe::{Canvas, Color, Color4f, Font, FontStyle, Image, Paint, Rect, SamplingOptions};
+use otto_kit::components::text_input::TextInput;
+use otto_kit::typography::{get_font_with_fallback, styles};
+use skia_safe::{Canvas, Color, Color4f, Font, FontStyle, Paint, Rect};
 
-use crate::ask::Attachment;
-use crate::log::{Kind, Line, Style, BUBBLE_GAP, BUBBLE_PAD_X, BUBBLE_PAD_Y, FOOTER_H, IMAGE_PAD};
-use crate::selection::Span;
-use crate::source::{Activity, Item};
+use otto_agents_kit::item::Item;
+use otto_agents_kit::rows::{
+    divider_color, paint_item_rows, row_highlight_color, row_highlight_rect, row_subtitle_color,
+    RowIcons, MAX_ROWS, ROW_H,
+};
 
 /// Width of the card. Wide enough for a window title and its application, and
 /// narrow enough to stay a dialog rather than become a page.
 pub const CARD_W: f32 = 620.0;
 /// Height of the query field.
 pub const FIELD_H: f32 = 58.0;
-/// Height of one result row.
-pub const ROW_H: f32 = 46.0;
-/// How many rows are on screen at once. Past this the list scrolls, because a
-/// list taller than this stops being scannable and the card starts to be the
-/// screen.
-pub const MAX_ROWS: usize = 8;
 /// Padding above and below the list.
 const LIST_PAD: f32 = 8.0;
 /// Where the list starts, down the card.
 pub const LIST_TOP: f32 = FIELD_H + 1.0 + LIST_PAD;
 /// Corner radius of the card, applied by the compositor to the subsurface.
 pub const RADIUS: f32 = 10.0;
-const ICON: f32 = 28.0;
-/// The activity dot beside a row with no icon, such as an agent session.
-const DOT_RADIUS: f32 = 4.0;
-const ROW_INSET: f32 = 8.0;
-/// Corner radius of the selection's highlight.
-pub const HIGHLIGHT_RADIUS: f32 = 9.0;
 /// The card at its tallest, which is how big its buffer is allocated: a
 /// shorter card is the same buffer with the compositor clipping it, so the
 /// height can change without reallocating anything.
@@ -93,45 +73,10 @@ const fn log_block(log: f32) -> f32 {
 const LOG_TOP_PAD: f32 = 20.0;
 
 /// Height of one line of plain text in the ask log.
-pub const LOG_LINE_H: f32 = crate::log::LINE_H;
-/// Size of the ask log's text: what the person asked and what the agent
-/// answered, both sides of it. The answer is laid out by the toolkit's
-/// document, which is told this size too, so one side of the conversation is
-/// never quietly smaller than the other.
-pub const LOG_TEXT: f32 = 14.0;
-
-/// The prose style of an answer: the toolkit's body, at the log's size.
-pub fn log_body() -> otto_kit::typography::TextStyle {
-    otto_kit::typography::TextStyle {
-        size: LOG_TEXT,
-        ..styles::BODY
-    }
-}
-/// Size of a note in the ask log — a tool call, a status line. Smaller than
-/// the conversation, so what the agent said outranks what it is doing.
-const LOG_NOTE_TEXT: f32 = 11.5;
-/// Space either side of the ask log's text.
-const LOG_INSET: f32 = 20.0;
-
-/// Corner radius of a request's bubble; a one-line request is a pill.
-const BUBBLE_RADIUS: f32 = 16.0;
-
-/// Room either side of the mode's name inside its pill.
-const PILL_PAD_X: f32 = 7.0;
-/// How tall the mode's pill is.
-const PILL_H: f32 = 16.0;
-/// Space between the footer's pieces: the agent, its mode, the hint.
-const FOOTER_GAP: f32 = 7.0;
-/// Corner radius of the fill under a group of tool calls the pointer is on.
-const STEPS_RADIUS: f32 = 6.0;
-/// Room around that fill, so the words are not against its edge.
-const STEPS_PAD: f32 = 4.0;
-
-/// How rounded a picture in the log is: the corner every other surface in
-/// the card wears.
-const IMAGE_RADIUS: f32 = 8.0;
-/// How wide a line of the ask log may run.
-pub const LOG_W: f32 = CARD_W - LOG_INSET * 2.0;
+pub const LOG_LINE_H: f32 = otto_agents_kit::log::LINE_H;
+/// How wide a line of the ask log may run on the card: the width the
+/// launcher lays the log out at and gives its painter.
+pub const LOG_W: f32 = CARD_W - otto_agents_kit::log::paint::INSET * 2.0;
 
 /// Where the top of the card sits, as a fraction of the output's height.
 /// Above centre: the eye starts there, and the list grows downwards into
@@ -230,28 +175,8 @@ pub struct Palette {
     /// decoding the same icon on every keystroke is the one thing that would
     /// make typing feel slow. Behind a cell because painting a band only
     /// borrows the palette.
-    icons: RefCell<HashMap<String, Option<Image>>>,
-    /// Pictures the agent sent, decoded once. Kept beside the icons and for the
-    /// same reason: the log is laid out again on every chunk of an answer, and
-    /// each pass asks every picture how large it is.
-    pictures: RefCell<HashMap<PathBuf, Option<Image>>>,
-    /// Attachments, as otto-stash's card shows them, with what was read
-    /// about each file kept for the next layout.
-    attachments: RefCell<AttachmentList>,
+    icons: RowIcons,
     dark: bool,
-}
-
-/// A pending attachment under the pointer.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct AttachmentHit {
-    /// The log line the attachments are on.
-    pub line: usize,
-    /// Which attachment, by its index among them.
-    pub item: usize,
-    /// Whether the pointer is on its remove button.
-    pub remove: bool,
-    /// Whether it goes with the next request, rather than went with one.
-    pub pending: bool,
 }
 
 impl Palette {
@@ -301,9 +226,7 @@ impl Palette {
             log_h: 0.0,
             centered: false,
             moved: (0.0, 0.0),
-            icons: RefCell::new(HashMap::new()),
-            pictures: RefCell::new(HashMap::new()),
-            attachments: RefCell::new(AttachmentList::default()),
+            icons: RowIcons::default(),
             dark,
         };
         palette.style();
@@ -336,11 +259,7 @@ impl Palette {
         self.card
             .set_size(LayerSize::points(CARD_W, MAX_CARD_H), None);
 
-        let line = if self.dark {
-            Color::from_argb(36, 255, 255, 255)
-        } else {
-            Color::from_argb(24, 0, 0, 0)
-        };
+        let line = divider_color(self.dark);
         for divider in [&self.divider, &self.log_divider] {
             divider.set_background_color(
                 PaintColor::Solid {
@@ -353,38 +272,17 @@ impl Palette {
 
     /// The selection's wash, which the list pane draws under the rows.
     pub fn highlight_color(&self) -> Color {
-        if self.dark {
-            Color::from_argb(46, 255, 255, 255)
-        } else {
-            Color::from_argb(20, 0, 0, 0)
-        }
+        row_highlight_color(self.dark)
     }
 
     /// Where the highlight goes for row `index`, in the list's content
     /// coordinates.
     pub fn highlight_rect(index: usize) -> Rect {
-        Rect::from_xywh(
-            ROW_INSET,
-            index as f32 * ROW_H + 2.0,
-            CARD_W - ROW_INSET * 2.0,
-            ROW_H - 4.0,
-        )
-    }
-
-    fn title_color(&self) -> Color {
-        if self.dark {
-            Color::from_argb(240, 255, 255, 255)
-        } else {
-            Color::from_argb(240, 12, 12, 14)
-        }
+        row_highlight_rect(index, CARD_W)
     }
 
     fn subtitle_color(&self) -> Color {
-        if self.dark {
-            Color::from_argb(150, 255, 255, 255)
-        } else {
-            Color::from_argb(140, 0, 0, 0)
-        }
+        row_subtitle_color(self.dark)
     }
 
     /// The surface's size changed. Everything that does not depend on the
@@ -552,456 +450,6 @@ impl Palette {
         };
     }
 
-    /// How large the picture at `path` is, in its own pixels, for the log to
-    /// scale into the card. `None` when there is no reading it — the file is
-    /// gone, or it is not a picture — and the log says its name instead.
-    pub fn picture_size(&self, path: &Path) -> Option<(f32, f32)> {
-        let image = self.picture(path)?;
-        Some((image.width() as f32, image.height() as f32))
-    }
-
-    /// The picture at `path`, decoded once and kept.
-    ///
-    /// Decoded eagerly into raster pixels: `Image::from_encoded` is lazy, and a
-    /// picture left lazy is decoded again on every band the log paints.
-    fn picture(&self, path: &Path) -> Option<Image> {
-        if let Some(cached) = self.pictures.borrow().get(path) {
-            return cached.clone();
-        }
-        let decoded = std::fs::read(path)
-            .ok()
-            .and_then(|bytes| Image::from_encoded(skia_safe::Data::new_copy(&bytes)))
-            .and_then(|image| image.make_raster_image(None, None));
-        self.pictures
-            .borrow_mut()
-            .insert(path.to_path_buf(), decoded.clone());
-        decoded
-    }
-
-    /// How wide `text` is in the ask log, drawn in `style`.
-    fn theme(&self) -> Theme {
-        if self.dark {
-            Theme::dark()
-        } else {
-            Theme::light()
-        }
-    }
-
-    /// Lay out attachments as the log shows them: pending ones as a pile to
-    /// strike out or take off, the newest in full; sent ones as a record.
-    fn lay_out_attachments(
-        &self,
-        items: &[(Attachment, bool)],
-        pending: bool,
-    ) -> otto_kit::components::attachments::Layout {
-        let listed: Vec<_> = items.iter().map(|(item, struck)| (item, *struck)).collect();
-        let options = AttachmentOptions {
-            width: LOG_W,
-            newest_first: pending,
-            removable: pending,
-        };
-        self.attachments
-            .borrow_mut()
-            .layout(&listed, options, &self.theme())
-    }
-
-    /// How tall a log line of attachments is, highlight room included.
-    /// The files in the attachments last laid out whose thumbnails are still
-    /// to be made; see [`AttachmentList::thumbnails_wanted`].
-    pub fn thumbnails_wanted(&self) -> Vec<std::path::PathBuf> {
-        self.attachments.borrow_mut().thumbnails_wanted()
-    }
-
-    /// Hand in the thumbnail of `path`, or that it has none.
-    pub fn set_thumbnail(&self, path: &std::path::Path, image: Option<skia_safe::Image>) {
-        self.attachments.borrow_mut().set_thumbnail(path, image);
-    }
-
-    pub fn attachments_height(&self, items: &[(Attachment, bool)], pending: bool) -> f32 {
-        self.lay_out_attachments(items, pending).height + 2.0 * HOVER_PAD
-    }
-
-    /// The pending attachment at `point`, in the log's content coordinates.
-    pub fn attachment_at(&self, lines: &[Line], point: (f32, f32)) -> Option<AttachmentHit> {
-        let (x, y) = point;
-        let (index, line) = lines
-            .iter()
-            .enumerate()
-            .find(|(_, line)| (line.top..line.top + line.height).contains(&y))?;
-        let Kind::Attachments { items, pending } = &line.kind else {
-            return None;
-        };
-        let layout = self.lay_out_attachments(items, *pending);
-        let (x, y) = (x - LOG_INSET, y - line.top - HOVER_PAD);
-        let item = layout.item_at(x, y)?;
-        Some(AttachmentHit {
-            line: index,
-            item,
-            remove: layout.remove_at(x, y) == Some(item),
-            pending: *pending,
-        })
-    }
-
-    pub fn measure_log(&self, text: &str, style: Style) -> f32 {
-        measure_runs(&self.log_font(style), text)
-    }
-
-    fn log_font(&self, style: Style) -> Font {
-        let weight = match style {
-            Style::Prompt => Weight::SEMI_BOLD,
-            Style::Request | Style::Answer | Style::Note => Weight::NORMAL,
-        };
-        let size = match style {
-            Style::Note => LOG_NOTE_TEXT,
-            Style::Request | Style::Prompt | Style::Answer => LOG_TEXT,
-        };
-        self.font(size, FontStyle::new(weight, Width::NORMAL, Slant::Upright))
-    }
-
-    /// Every piece of text in the ask log, in reading order, with the box it
-    /// is painted in — what [`crate::selection`] selects over.
-    ///
-    /// This walks the log exactly as [`Palette::paint_log`] does, because a
-    /// highlight that does not sit on the words is worse than no highlight at
-    /// all: the two have to agree about where each line was put.
-    pub fn log_spans(&self, lines: &[Line]) -> Vec<Span> {
-        let plain = self.log_font(Style::Answer);
-        let mut spans = Vec::new();
-        let mut row = 0usize;
-        for line in lines {
-            match &line.kind {
-                Kind::Text { text, style } => {
-                    let font = self.log_font(*style);
-                    let width = measure_runs(&font, text);
-                    spans.push(Span {
-                        rect: Rect::from_xywh(LOG_INSET, line.top, width, line.height),
-                        text: text.clone(),
-                        font,
-                        line: row,
-                    });
-                    row += 1;
-                }
-                Kind::Bubble {
-                    lines: words,
-                    width,
-                    ..
-                } => {
-                    let left = LOG_INSET + LOG_W - width + BUBBLE_PAD_X;
-                    for (index, words) in words.iter().enumerate() {
-                        let top = line.top + BUBBLE_PAD_Y + index as f32 * LOG_LINE_H;
-                        spans.push(Span {
-                            rect: Rect::from_xywh(
-                                left,
-                                top,
-                                measure_runs(&plain, words),
-                                LOG_LINE_H,
-                            ),
-                            text: words.clone(),
-                            font: plain.clone(),
-                            line: row,
-                        });
-                        row += 1;
-                    }
-                }
-                Kind::Document(doc) => {
-                    for text_line in doc {
-                        for run in &text_line.runs {
-                            spans.push(Span {
-                                rect: Rect::from_xywh(
-                                    LOG_INSET + run.x,
-                                    line.top + text_line.top,
-                                    run.width,
-                                    text_line.height,
-                                ),
-                                text: run.text.clone(),
-                                font: run.font(),
-                                line: row,
-                            });
-                        }
-                        row += 1;
-                    }
-                }
-                Kind::Steps { lines: words, .. } => {
-                    let font = self.log_font(Style::Note);
-                    let height = Style::Note.line_h();
-                    for (index, words) in words.iter().enumerate() {
-                        spans.push(Span {
-                            rect: Rect::from_xywh(
-                                LOG_INSET,
-                                line.top + index as f32 * height,
-                                measure_runs(&font, words),
-                                height,
-                            ),
-                            text: words.clone(),
-                            font: font.clone(),
-                            line: row,
-                        });
-                        row += 1;
-                    }
-                }
-                // Neither a picture nor the footer has words to select over —
-                // the footer is the card talking about itself, not the
-                // conversation — but each is a line of the log all the same,
-                // so the numbering carries on past it.
-                // Attachments are clicked, not selected.
-                Kind::Image { .. } | Kind::Footer { .. } | Kind::Attachments { .. } => row += 1,
-            }
-        }
-        spans
-    }
-
-    /// The group of tool calls under `point` in the ask log, as the log line
-    /// holding it and the request it belongs to. `point` is in the log's
-    /// content coordinates.
-    pub fn steps_at(&self, lines: &[Line], point: (f32, f32)) -> Option<(usize, usize)> {
-        lines.iter().enumerate().find_map(|(index, line)| {
-            let Kind::Steps { block, .. } = &line.kind else {
-                return None;
-            };
-            let rect = Self::steps_rect(line);
-            let (x, y) = point;
-            (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom)
-                .then_some((index, *block))
-        })
-    }
-
-    /// What a group of tool calls answers the pointer over: its words and the
-    /// padding the fill is drawn in.
-    fn steps_rect(line: &Line) -> Rect {
-        Rect::from_xywh(
-            LOG_INSET - STEPS_PAD,
-            line.top - STEPS_PAD / 2.0,
-            LOG_W + STEPS_PAD * 2.0,
-            line.height + STEPS_PAD,
-        )
-    }
-
-    /// The code block under `point` in the ask log, as the log line holding
-    /// the answer and the block within it, and whether the point is on the
-    /// block's copy button. `point` is in the log's content coordinates.
-    pub fn code_at(&self, lines: &[Line], point: (f32, f32)) -> Option<(usize, document::CodeHit)> {
-        lines.iter().enumerate().find_map(|(index, line)| {
-            let Kind::Document(doc) = &line.kind else {
-                return None;
-            };
-            let content = Rect::from_xywh(LOG_INSET, line.top, LOG_W, line.height);
-            document::code_at(content, doc, 0.0, point).map(|hit| (index, hit))
-        })
-    }
-
-    /// The link under `point` in the ask log, as its destination. `point` is
-    /// in the log's content coordinates, as for [`Palette::code_at`].
-    pub fn link_at<'a>(&self, lines: &'a [Line], point: (f32, f32)) -> Option<&'a str> {
-        lines.iter().find_map(|line| {
-            let Kind::Document(doc) = &line.kind else {
-                return None;
-            };
-            let content = Rect::from_xywh(LOG_INSET, line.top, LOG_W, line.height);
-            document::link_at_scrolled(content, doc, 0.0, point)
-        })
-    }
-
-    /// The text of the `block`th code block of the answer on log line `line`.
-    pub fn code_text(lines: &[Line], line: usize, block: usize) -> Option<String> {
-        let Kind::Document(doc) = &lines.get(line)?.kind else {
-            return None;
-        };
-        document::code_blocks(doc)
-            .into_iter()
-            .nth(block)
-            .map(|block| block.text)
-    }
-
-    /// Paint the lines of the ask log that fall inside `band`, in the list's
-    /// content coordinates. `copy` is the copy button to show on a code
-    /// block, as the log line holding its answer and the button. `steps` is
-    /// the log line of the group of tool calls the pointer is on, which is
-    /// drawn as something to click.
-    pub fn paint_log(
-        &self,
-        canvas: &Canvas,
-        band: Rect,
-        lines: &[Line],
-        selection: &[Rect],
-        copy: Option<(usize, document::CopyButton)>,
-        steps: Option<usize>,
-        attachment: Option<AttachmentHit>,
-    ) {
-        let prompt_font = self.log_font(Style::Prompt);
-        let note_font = self.log_font(Style::Note);
-        let font = self.log_font(Style::Answer);
-        let mut text = Paint::new(Color4f::from(self.title_color()), None);
-        text.set_anti_alias(true);
-        let mut dim = Paint::new(Color4f::from(self.subtitle_color()), None);
-        dim.set_anti_alias(true);
-
-        let theme = if self.dark {
-            Theme::dark()
-        } else {
-            Theme::light()
-        };
-        let mut request = Paint::new(Color4f::from(theme.text_primary), None);
-        request.set_anti_alias(true);
-
-        // The highlight goes down first, so the words sit on top of it.
-        let mut highlight = Paint::new(Color4f::from(selection_color(&theme)), None);
-        highlight.set_anti_alias(true);
-        for rect in selection {
-            if rect.bottom < band.top || rect.top > band.bottom {
-                continue;
-            }
-            canvas.draw_round_rect(*rect, 2.0, 2.0, &highlight);
-        }
-        let mut bubble_fill = Paint::new(Color4f::from(theme.fill_secondary), None);
-        bubble_fill.set_anti_alias(true);
-
-        for (index, line) in lines.iter().enumerate() {
-            if line.top + line.height < band.top || line.top > band.bottom {
-                continue;
-            }
-            match &line.kind {
-                Kind::Text { text: words, .. } if words.is_empty() => {}
-                Kind::Text { text: words, style } => {
-                    let baseline = line.top + line.height * 0.72;
-                    let (font, paint) = match style {
-                        Style::Prompt => (&prompt_font, &text),
-                        Style::Request | Style::Answer => (&font, &text),
-                        Style::Note => (&note_font, &dim),
-                    };
-                    draw_runs(canvas, words, (LOG_INSET, baseline), font, paint);
-                }
-                Kind::Bubble {
-                    lines: words,
-                    width,
-                    ..
-                } => {
-                    let bubble = Rect::from_xywh(
-                        LOG_INSET + LOG_W - width,
-                        line.top,
-                        *width,
-                        line.height - BUBBLE_GAP,
-                    );
-                    let radius = BUBBLE_RADIUS.min(bubble.height() / 2.0);
-                    canvas.draw_round_rect(bubble, radius, radius, &bubble_fill);
-                    for (index, words) in words.iter().enumerate() {
-                        let baseline =
-                            line.top + BUBBLE_PAD_Y + index as f32 * LOG_LINE_H + LOG_LINE_H * 0.72;
-                        draw_runs(
-                            canvas,
-                            words,
-                            (bubble.left + BUBBLE_PAD_X, baseline),
-                            &font,
-                            &request,
-                        );
-                    }
-                }
-                Kind::Steps { lines: words, .. } => {
-                    // Under the pointer the group takes a fill: painted text
-                    // says nothing about being clickable on its own, and the
-                    // cursor alone is only found by the person already there.
-                    if steps == Some(index) {
-                        let mut fill = Paint::new(Color4f::from(theme.fill_secondary), None);
-                        fill.set_anti_alias(true);
-                        canvas.draw_round_rect(
-                            Self::steps_rect(line),
-                            STEPS_RADIUS,
-                            STEPS_RADIUS,
-                            &fill,
-                        );
-                    }
-                    let height = Style::Note.line_h();
-                    for (row, words) in words.iter().enumerate() {
-                        let baseline = line.top + row as f32 * height + height * 0.72;
-                        draw_runs(canvas, words, (LOG_INSET, baseline), &note_font, &dim);
-                    }
-                }
-                Kind::Footer { agent, mode, hint } => {
-                    let baseline = line.top + FOOTER_H * 0.68;
-                    let mut x = LOG_INSET;
-                    draw_runs(canvas, agent, (x, baseline), &note_font, &dim);
-                    x += measure_runs(&note_font, agent) + FOOTER_GAP;
-
-                    // The mode is the one thing here that can be changed, so
-                    // it is the one thing wearing a control's shape.
-                    let width = measure_runs(&note_font, mode) + PILL_PAD_X * 2.0;
-                    let pill =
-                        Rect::from_xywh(x, line.top + (FOOTER_H - PILL_H) / 2.0, width, PILL_H);
-                    let mut fill = Paint::new(Color4f::from(theme.fill_secondary), None);
-                    fill.set_anti_alias(true);
-                    canvas.draw_round_rect(pill, PILL_H / 2.0, PILL_H / 2.0, &fill);
-                    draw_runs(canvas, mode, (x + PILL_PAD_X, baseline), &note_font, &text);
-                    x += width + FOOTER_GAP;
-
-                    if let Some(hint) = hint {
-                        draw_runs(canvas, hint, (x, baseline), &note_font, &dim);
-                    }
-                }
-                Kind::Document(doc) => {
-                    let content = Rect::from_xywh(LOG_INSET, line.top, LOG_W, line.height);
-                    let copy = copy
-                        .filter(|(on_line, _)| *on_line == index)
-                        .map(|(_, button)| button);
-                    document::draw_scrolled(canvas, content, doc, 0.0, &theme, copy);
-                }
-                Kind::Attachments { items, pending } => {
-                    let layout = self.lay_out_attachments(items, *pending);
-                    let hovered = attachment
-                        .filter(|hit| hit.line == index)
-                        .map(|hit| hit.item);
-                    canvas.save();
-                    canvas.translate((LOG_INSET, line.top + HOVER_PAD));
-                    self.attachments
-                        .borrow()
-                        .paint(canvas, &layout, &theme, hovered);
-                    canvas.restore();
-                }
-                Kind::Image {
-                    path,
-                    label,
-                    width,
-                    height,
-                } => {
-                    let Some(image) = self.picture(path) else {
-                        // The layout only makes a picture line for a file it
-                        // could read; if it has gone since, its name goes in
-                        // its place rather than a hole in the log.
-                        let baseline = line.top + LOG_LINE_H * 0.72;
-                        let words = format!("picture: {label}");
-                        draw_runs(canvas, &words, (LOG_INSET, baseline), &note_font, &dim);
-                        continue;
-                    };
-                    let box_ = Rect::from_xywh(LOG_INSET, line.top + IMAGE_PAD, *width, *height);
-                    let radius = IMAGE_RADIUS.min(box_.height() / 2.0);
-                    canvas.save();
-                    // Rounded like every other surface in the card, and clipped
-                    // rather than drawn rounded: the picture's own edge pixels
-                    // must not bleed past the corner.
-                    canvas.clip_rrect(
-                        skia_safe::RRect::new_rect_xy(box_, radius, radius),
-                        None,
-                        true,
-                    );
-                    let source = (image.width(), image.height());
-                    canvas.draw_image_rect_with_sampling_options(
-                        &image,
-                        None,
-                        box_,
-                        otto_kit::utils::icon_sampling(source, (*width, *height)),
-                        &Paint::default(),
-                    );
-                    canvas.restore();
-                    // A hairline border, so a picture that is nearly the colour
-                    // of the card still reads as a picture.
-                    let mut edge = Paint::new(Color4f::from(theme.hairline), None);
-                    edge.set_anti_alias(true);
-                    edge.set_style(skia_safe::paint::Style::Stroke);
-                    edge.set_stroke_width(1.0);
-                    canvas.draw_round_rect(box_, radius, radius, &edge);
-                }
-            }
-        }
-    }
-
     /// Paint the rows of `items` that fall inside `band`, in the list's
     /// content coordinates — row 0 at the top — for the list pane's band.
     /// `labels` name each item's source.
@@ -1012,54 +460,7 @@ impl Palette {
         items: &[&Item],
         labels: &[&'static str],
     ) {
-        let title_font = self.font(15.0, FontStyle::normal());
-        let subtitle_font = self.font(11.5, FontStyle::normal());
-        let badge_font = self.font(10.5, FontStyle::normal());
-        let (title_color, subtitle_color) = (self.title_color(), self.subtitle_color());
-        let theme = if self.dark {
-            Theme::dark()
-        } else {
-            Theme::light()
-        };
-        let layout = RowLayout::new(ROW_H, items.len());
-        for index in layout.visible(band) {
-            let item = items[index];
-            let icon = item
-                .icon
-                .as_deref()
-                .and_then(|name| resolve_icon(&mut self.icons.borrow_mut(), name));
-            let dot = item.activity.map(|activity| match activity {
-                Activity::Working => theme.accent,
-                Activity::Idle => theme.text_tertiary,
-                Activity::Waiting => theme.accent_yellow,
-            });
-            let check = item.checked.map(|checked| Check {
-                checked,
-                accent: theme.accent,
-                outline: theme.text_tertiary,
-            });
-            let draw = draw_row(
-                icon,
-                dot,
-                check,
-                item.title.clone(),
-                item.subtitle.clone(),
-                match &item.pill {
-                    Some(pill) => Badge::Pill(pill.clone(), theme.fill_secondary),
-                    None => Badge::Text(labels.get(item.origin.source).copied().unwrap_or("")),
-                },
-                title_font.clone(),
-                subtitle_font.clone(),
-                badge_font.clone(),
-                title_color,
-                subtitle_color,
-            );
-            let row = layout.rect(index, CARD_W);
-            canvas.save();
-            canvas.translate((row.left, row.top));
-            draw(canvas, row.width(), row.height());
-            canvas.restore();
-        }
+        paint_item_rows(canvas, band, items, labels, CARD_W, self.dark, &self.icons);
     }
 
     /// Size the card for what is on it, and place what sits under the log.
@@ -1114,159 +515,6 @@ impl Palette {
 // resolved here and moved in.
 // ---------------------------------------------------------------------------
 
-/// A checkbox in a row's icon place: an outlined box, or one filled with the
-/// accent and ticked.
-#[derive(Clone, Copy)]
-struct Check {
-    checked: bool,
-    accent: Color,
-    outline: Color,
-}
-
-impl Check {
-    /// Side of the box.
-    const SIZE: f32 = 16.0;
-
-    fn draw(&self, canvas: &Canvas, centre: (f32, f32)) {
-        let half = Self::SIZE / 2.0;
-        let rect = Rect::from_xywh(centre.0 - half, centre.1 - half, Self::SIZE, Self::SIZE);
-        let radius = 4.0;
-        if !self.checked {
-            let mut paint = Paint::new(Color4f::from(self.outline), None);
-            paint.set_anti_alias(true);
-            paint.set_style(skia_safe::PaintStyle::Stroke);
-            paint.set_stroke_width(1.5);
-            canvas.draw_round_rect(rect.with_inset((0.75, 0.75)), radius, radius, &paint);
-            return;
-        }
-        let mut fill = Paint::new(Color4f::from(self.accent), None);
-        fill.set_anti_alias(true);
-        canvas.draw_round_rect(rect, radius, radius, &fill);
-        let mut tick = skia_safe::PathBuilder::new();
-        tick.move_to((centre.0 - 4.0, centre.1 + 0.2));
-        tick.line_to((centre.0 - 1.2, centre.1 + 3.0));
-        tick.line_to((centre.0 + 4.2, centre.1 - 3.2));
-        let mut paint = Paint::new(Color4f::from(Color::WHITE), None);
-        paint.set_anti_alias(true);
-        paint.set_style(skia_safe::PaintStyle::Stroke);
-        paint.set_stroke_width(2.0);
-        paint.set_stroke_cap(skia_safe::paint::Cap::Round);
-        paint.set_stroke_join(skia_safe::paint::Join::Round);
-        canvas.draw_path(&tick.detach(), &paint);
-    }
-}
-
-/// What sits at a row's end: its source's name, or a word of its own in a
-/// pill filled with `Color`, shaped as the mode's in the ask log.
-enum Badge {
-    Text(&'static str),
-    Pill(String, Color),
-}
-
-#[allow(clippy::too_many_arguments)]
-fn draw_row(
-    icon: Option<Image>,
-    dot: Option<Color>,
-    check: Option<Check>,
-    title: String,
-    subtitle: Option<String>,
-    badge: Badge,
-    title_font: Font,
-    subtitle_font: Font,
-    badge_font: Font,
-    title_color: Color,
-    subtitle_color: Color,
-) -> impl Fn(&Canvas, f32, f32) -> Rect + Send + Sync {
-    move |canvas, width, height| {
-        let mut paint = Paint::new(Color4f::from(title_color), None);
-        paint.set_anti_alias(true);
-
-        if let Some(image) = &icon {
-            let top = (height - ICON) / 2.0;
-            let left = ROW_INSET + 8.0;
-            canvas.draw_image_rect_with_sampling_options(
-                image,
-                None,
-                Rect::from_xywh(left, top, ICON, ICON),
-                SamplingOptions::default(),
-                &paint,
-            );
-        }
-
-        if let Some(color) = dot {
-            // In the icon's place, centred where a full-size icon would be.
-            let centre = (ROW_INSET + 8.0 + ICON / 2.0, height / 2.0);
-            let mut dot_paint = Paint::new(Color4f::from(color), None);
-            dot_paint.set_anti_alias(true);
-            canvas.draw_circle(centre, DOT_RADIUS, &dot_paint);
-        }
-
-        if let Some(check) = check {
-            check.draw(canvas, (ROW_INSET + 8.0 + ICON / 2.0, height / 2.0));
-        }
-
-        // The badge is measured first: the title is clipped to what is left,
-        // so a long window title cannot run underneath it.
-        let (text, fill, text_colour) = match &badge {
-            Badge::Text(text) => (*text, None, subtitle_color),
-            Badge::Pill(text, fill) => (text.as_str(), Some(*fill), title_color),
-        };
-        let mut badge_paint = Paint::new(Color4f::from(text_colour), None);
-        badge_paint.set_anti_alias(true);
-        // A pill's text sits inside it, with room either side.
-        let padding = if fill.is_some() { PILL_PAD_X } else { 0.0 };
-        let badge_width = if text.is_empty() {
-            0.0
-        } else {
-            badge_font.measure_str(text, Some(&badge_paint)).0 + 2.0 * padding
-        };
-        if !text.is_empty() {
-            let left = width - ROW_INSET - 8.0 - badge_width;
-            if let Some(fill) = fill {
-                let mut fill = Paint::new(Color4f::from(fill), None);
-                fill.set_anti_alias(true);
-                let rect = Rect::from_xywh(left, (height - PILL_H) / 2.0, badge_width, PILL_H);
-                canvas.draw_round_rect(rect, PILL_H / 2.0, PILL_H / 2.0, &fill);
-            }
-            canvas.draw_str(
-                text,
-                (left + padding, height / 2.0 + 4.0),
-                &badge_font,
-                &badge_paint,
-            );
-        }
-
-        let text_x = ROW_INSET + 8.0 + ICON + 12.0;
-        let text_width = (width - ROW_INSET - 20.0 - badge_width - text_x).max(0.0);
-        canvas.save();
-        canvas.clip_rect(
-            Rect::from_xywh(text_x, 0.0, text_width, height),
-            None,
-            Some(true),
-        );
-
-        match &subtitle {
-            Some(subtitle) if !subtitle.is_empty() => {
-                canvas.draw_str(&title, (text_x, height / 2.0 - 1.0), &title_font, &paint);
-                let mut sub = Paint::new(Color4f::from(subtitle_color), None);
-                sub.set_anti_alias(true);
-                canvas.draw_str(
-                    subtitle,
-                    (text_x, height / 2.0 + 14.0),
-                    &subtitle_font,
-                    &sub,
-                );
-            }
-            _ => {
-                canvas.draw_str(&title, (text_x, height / 2.0 + 5.0), &title_font, &paint);
-            }
-        }
-        canvas.restore();
-
-        Rect::from_wh(width, height)
-    }
-}
-
 fn draw_message(
     message: String,
     font: Font,
@@ -1286,48 +534,10 @@ fn draw_message(
     }
 }
 
-/// Decode an icon once and keep it. Misses are remembered too — an app whose
-/// icon the theme does not have must not be looked up again on every keystroke.
-fn resolve_icon(cache: &mut HashMap<String, Option<Image>>, name: &str) -> Option<Image> {
-    cache
-        .entry(name.to_string())
-        .or_insert_with(|| named_icon_sized(name, (ICON * 2.0) as i32))
-        .clone()
-}
-
 /// Draws nothing. Given to rows that have no item, whose opacity is zero
 /// anyway — the engine wants a content function, not the absence of one.
 fn draw_nothing() -> impl Fn(&Canvas, f32, f32) -> Rect + Send + Sync {
     move |_canvas, width, height| Rect::from_wh(width, height)
-}
-
-/// The query field's look: no box of its own, because it already sits in one.
-pub fn field_style(dark: bool) -> TextInputStyle {
-    let mut style = TextInputStyle::with_theme(if dark { Theme::dark() } else { Theme::light() });
-    style.text_style = styles::TITLE_3;
-    style.text_style.size = 19.0;
-    style.horizontal_padding = 20.0;
-    style.corner_radius = 0.0;
-    style.focus_ring_width = 0.0;
-    style.background = Color::TRANSPARENT;
-    style.text_color = if dark {
-        Color::from_argb(245, 255, 255, 255)
-    } else {
-        Color::from_argb(245, 10, 10, 12)
-    };
-    style.placeholder_color = if dark {
-        Color::from_argb(110, 255, 255, 255)
-    } else {
-        Color::from_argb(100, 0, 0, 0)
-    };
-    style
-}
-
-/// What selected text in the log sits on: the accent, faint enough to read
-/// through.
-fn selection_color(theme: &Theme) -> Color {
-    let accent = theme.accent;
-    Color::from_argb(90, accent.r(), accent.g(), accent.b())
 }
 
 fn lay_color(color: Color) -> LayerColor {
@@ -1336,6 +546,8 @@ fn lay_color(color: Color) -> LayerColor {
 
 #[cfg(test)]
 mod tests {
+    use otto_agents_kit::rows::field_style;
+
     use super::*;
     use otto_kit::components::text_input::{KeyMods, TextInputKey};
 
@@ -1402,47 +614,6 @@ mod tests {
         assert!(y >= 0 && y + height <= 1080, "the card stays on the output");
     }
 
-    /// An agent that shares a link writes it bare, so the log has to find one
-    /// under the pointer — a link that cannot be clicked is not a link.
-    #[test]
-    fn a_bare_link_in_the_log_is_under_the_pointer() {
-        let palette = Palette::new(Engine::create(CARD_W, MAX_CARD_H), None, true);
-        let (blocks, _) = otto_md_kit::parse_capped(
-            "the notes are at https://example.com/a now",
-            otto_md_kit::MAX_BLOCKS,
-        );
-        let doc = otto_kit::preview::document::wrap_at(&blocks, LOG_W, log_body());
-        let run = doc
-            .iter()
-            .flat_map(|line| line.runs.iter().map(move |run| (line, run)))
-            .find(|(_, run)| run.style.link)
-            .expect("the bare link is a link");
-        let (text_line, run) = run;
-        let height = doc
-            .last()
-            .map(|line| line.top + line.height)
-            .expect("a laid-out answer");
-        let lines = vec![Line {
-            top: 0.0,
-            height,
-            kind: Kind::Document(doc.clone()),
-        }];
-
-        let point = (
-            LOG_INSET + run.x + run.width / 2.0,
-            text_line.top + text_line.height / 2.0,
-        );
-        assert_eq!(
-            palette.link_at(&lines, point),
-            Some("https://example.com/a")
-        );
-        assert_eq!(
-            palette.link_at(&lines, (LOG_INSET + 1.0, point.1)),
-            None,
-            "the words before the link go nowhere"
-        );
-    }
-
     /// The card is dragged by its field or its log, and never off the output.
     #[test]
     fn a_dragged_card_moves_and_stays_on_the_output() {
@@ -1477,149 +648,6 @@ mod tests {
             "and back off the edge at once"
         );
     }
-
-    /// Selecting text in the log is hit-testing against the boxes this file
-    /// says each piece of text was painted in, so those boxes have to hold
-    /// every kind of line the log draws — a request in its bubble, an answer
-    /// laid out as a document, a tool call, the status — and be where the
-    /// words are.
-    #[test]
-    fn every_kind_of_line_in_the_log_can_be_pointed_at() {
-        let palette = Palette::new(Engine::create(CARD_W, MAX_CARD_H), None, true);
-        let steps = ["✓ ls".to_string()];
-        let answer = [crate::ask::Said::Text(
-            "Run `cargo build` first\n\n- then the tests".to_owned(),
-        )];
-        let blocks = [crate::log::Block {
-            prompt: "how do I build it",
-            attachments: &[],
-            answer: &answer,
-            steps: &steps,
-            steps_expanded: false,
-
-            inputs: &[],
-            question: None,
-            action: &[],
-            note: None,
-        }];
-        let lines = crate::log::lay_out(
-            &blocks,
-            Some("Working…"),
-            &[],
-            None,
-            LOG_W,
-            |text, style| palette.measure_log(text, style),
-            |path| palette.picture_size(path),
-            |_, _| 0.0,
-        );
-        let spans = palette.log_spans(&lines);
-        // All of it, copied, reads as the conversation does on screen: the
-        // request, the answer with its code and its list, the tool call and
-        // the status, each on its own line.
-        let all = crate::selection::everything(&spans).expect("something to select");
-        assert_eq!(
-            crate::selection::text(&spans, all),
-            "how do I build it\nRun cargo build first\n• then the tests\n✓ ls\n\nWorking…"
-        );
-
-        let length = crate::log::length(&lines);
-        for span in &spans {
-            assert!(
-                span.rect.left >= 0.0 && span.rect.right <= CARD_W + 0.5,
-                "{:?} is drawn off the card",
-                span.text
-            );
-            assert!(
-                span.rect.top >= 0.0 && span.rect.bottom <= length + 0.5,
-                "{:?} is drawn outside the log",
-                span.text
-            );
-        }
-        // Reading order: a span never starts above the one before it.
-        for pair in spans.windows(2) {
-            assert!(pair[1].rect.top >= pair[0].rect.top - 0.5);
-        }
-        // And a press in the middle of a span lands in that span.
-        let request = spans
-            .iter()
-            .position(|span| span.text.contains("how do I build it"))
-            .expect("the request is there");
-        let rect = spans[request].rect;
-        let caret =
-            crate::selection::caret_at(&spans, (rect.left + rect.width() / 2.0, rect.center_y()))
-                .expect("a press on the words selects them");
-        assert_eq!(caret.span, request);
-        assert!(caret.byte > 0 && caret.byte < spans[request].text.len());
-    }
-
-    /// A picture has no words in it, but it is still a line of the log. The
-    /// spans on either side of it have to keep the line numbers they would have
-    /// had, or copying an answer with a picture in it puts the words in the
-    /// wrong order.
-    #[test]
-    fn a_picture_keeps_its_line_without_adding_a_span() {
-        let dir = tempfile::tempdir().expect("a temporary folder");
-        let path = dir.path().join("shot.png");
-        std::fs::write(&path, PIXEL_PNG).expect("written");
-        let palette = Palette::new(Engine::create(CARD_W, MAX_CARD_H), None, true);
-        let answer = [
-            crate::ask::Said::Text("here:".to_owned()),
-            crate::ask::Said::Image(crate::ask::Picture {
-                path: path.clone(),
-                label: "shot".to_owned(),
-            }),
-            crate::ask::Said::Text("that is all".to_owned()),
-        ];
-        let blocks = [crate::log::Block {
-            prompt: "draw",
-            attachments: &[],
-            answer: &answer,
-            steps: &[],
-            steps_expanded: false,
-
-            inputs: &[],
-            question: None,
-            action: &[],
-            note: None,
-        }];
-        let lines = crate::log::lay_out(
-            &blocks,
-            None,
-            &[],
-            None,
-            LOG_W,
-            |text, style| palette.measure_log(text, style),
-            |path| palette.picture_size(path),
-            |_, _| 0.0,
-        );
-        assert!(
-            matches!(lines[2].kind, Kind::Image { .. }),
-            "the picture is laid out: {:?}",
-            lines[2].kind
-        );
-
-        let spans = palette.log_spans(&lines);
-        let all = crate::selection::everything(&spans).expect("something to select");
-        // The picture has nothing to copy, so it contributes no line of its
-        // own — but it takes a line number, which is what keeps the words after
-        // it from being run onto the words before it.
-        assert_eq!(
-            crate::selection::text(&spans, all),
-            "draw\nhere:\nthat is all"
-        );
-        let mut rows: Vec<usize> = spans.iter().map(|span| span.line).collect();
-        rows.dedup();
-        assert_eq!(rows, [0, 1, 3], "the picture is line 2");
-    }
-
-    /// A one-pixel PNG, so the decoder has something real to read.
-    const PIXEL_PNG: &[u8] = &[
-        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44,
-        0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1f,
-        0x15, 0xc4, 0x89, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x44, 0x41, 0x54, 0x78, 0xda, 0x63, 0xfc,
-        0xcf, 0xc0, 0xf0, 0x1f, 0x00, 0x05, 0x00, 0x01, 0xff, 0xab, 0xce, 0x36, 0x89, 0x00, 0x00,
-        0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
-    ];
 
     #[test]
     fn the_input_rect_is_the_card_that_is_drawn() {

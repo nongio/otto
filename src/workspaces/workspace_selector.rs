@@ -12,14 +12,14 @@ use layers::prelude::*;
 use otto_kit::components::{
     label::TextAlign as KitTextAlign,
     text_input::{
-        KeyMods, TextInput, TextInputKey, TextInputRenderer, TextInputResponse, TextInputState,
+        self, KeyMods, TextInput, TextInputRenderer, TextInputResponse, TextInputState,
         TextInputStyle,
     },
 };
 use smithay::{
     backend::input::{ButtonState, KeyState},
     input::{
-        keyboard::{Keysym, ModifiersState},
+        keyboard::ModifiersState,
         pointer::{CursorIcon, CursorImageStatus},
     },
     reexports::calloop::channel::Sender as CalloopSender,
@@ -1452,7 +1452,7 @@ fn render_workspace_selector_view(
                                 None,
                             ))
                             .background_color(crate::theme::chrome_material(
-                                theme_colors().materials_ultrathick,
+                                theme_colors().material_ultrathick,
                             ))
                             .blend_mode(crate::theme::chrome_blend_mode())
                             .border_corner_radius(BorderRadius::new_single(25.0))
@@ -1526,10 +1526,10 @@ fn render_workspace_selector_view(
             None,
         ))
         .background_color(crate::theme::chrome_material(
-            theme_colors().materials_medium,
+            theme_colors().material_medium,
         ))
         .blend_mode(crate::theme::chrome_blend_mode())
-        .shadow_color(theme_colors().shadow_color)
+        .shadow_color(theme_colors().shadow)
         .shadow_offset(((0.0, -5.0).into(), None))
         .shadow_radius((20.0, None))
         .children({
@@ -1765,7 +1765,7 @@ fn draw_carried_label(text: &str, ui_scale: f32) -> Option<ContentDrawFunction> 
 
     // The same material the selector's own surfaces use, so the plate is light
     // on a light theme and dark on a dark one without asking which is on.
-    let plate_color = theme_colors().materials_medium;
+    let plate_color = theme_colors().material_medium;
     let pad_x_px = 10.0 * ui_scale;
     let pad_y_px = 5.0 * ui_scale;
     let radius_px = otto_kit::corners::radius(8.0 * ui_scale);
@@ -1900,25 +1900,6 @@ impl WorkspaceSelectorView {
             .filter(|(last_key, _, _)| last_key == key)
             .map(|(_, _, count)| *count)
             .unwrap_or(0)
-    }
-
-    /// Translate a keysym into an edit the field understands. Keys with no
-    /// meaning here return `None` and are swallowed (the grab is exclusive).
-    fn key_for(keysym: Keysym, mods: &ModifiersState) -> Option<TextInputKey> {
-        let key = match keysym {
-            Keysym::Left => TextInputKey::Left,
-            Keysym::Right => TextInputKey::Right,
-            Keysym::Home => TextInputKey::Home,
-            Keysym::End => TextInputKey::End,
-            Keysym::BackSpace => TextInputKey::Backspace,
-            Keysym::Delete => TextInputKey::Delete,
-            Keysym::Return | Keysym::KP_Enter => TextInputKey::Enter,
-            Keysym::Escape => TextInputKey::Escape,
-            Keysym::a | Keysym::A if mods.ctrl => TextInputKey::SelectAll,
-            _ if mods.ctrl || mods.alt || mods.logo => return None,
-            _ => TextInputKey::Char(keysym.key_char()?),
-        };
-        Some(key)
     }
 }
 
@@ -2165,8 +2146,16 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for WorkspaceSele
         if key_state != KeyState::Pressed || !self.is_editing() {
             return;
         }
+        // Keys with no meaning in the field are swallowed: the grab is
+        // exclusive.
         let mods = *self.modifiers.read().unwrap();
-        let Some(key) = Self::key_for(event.modified_sym(), &mods) else {
+        let held = KeyMods {
+            shift: mods.shift,
+            ctrl: mods.ctrl,
+            alt: mods.alt,
+            logo: mods.logo,
+        };
+        let Some((key, key_mods)) = text_input::key_for(event.modified_sym(), None, held) else {
             return;
         };
 
@@ -2176,13 +2165,7 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for WorkspaceSele
                 return;
             };
             edit.caret_visible = true;
-            edit.input.on_key(
-                key,
-                KeyMods {
-                    shift: mods.shift,
-                    ctrl: mods.ctrl,
-                },
-            )
+            edit.input.on_key(key, key_mods)
         };
 
         match response {

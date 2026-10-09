@@ -2,7 +2,7 @@
 
 **Status:** draft
 **Related specs:** [context-menus.md](./context-menus.md), [topbar.md](./topbar.md),
-[stash.md](./stash.md)
+[stash.md](./stash.md), [dictation.md](./dictation.md)
 
 ## Summary
 
@@ -177,6 +177,11 @@ already stashed. While Ask or agents mode is up, the stash card steps
 aside; closed without sending, the card comes back. Sending a request while
 anything is stashed ends the stash, struck items included.
 
+`--send` opens Ask and sends the query given on the command line as the first
+request as soon as the card is up, so the card opens on the running
+conversation rather than on the text waiting in the field. It does nothing
+with `--session`, which opens an existing conversation instead.
+
 **A request of attachments alone.** Enter with nothing typed sends a request
 when at least one attachment is not struck out: the attachments can be the
 whole question. The agent receives the attachments with no text, and a new
@@ -316,6 +321,15 @@ motion with Ctrl, select-all with Ctrl+A, deleting the previous word with
 Ctrl+W, and clearing the query with Ctrl+U. Ctrl+C, Ctrl+X and Ctrl+V copy, cut
 and paste against the system clipboard; a paste keeps only what fits on one
 line, and refilters as typing does.
+
+**Dictation.** Ctrl+D starts dictating into the field: an equaliser stands in
+for the caret, words heard but not settled show dimmed at it, and settled words
+are typed in and refilter the list. While dictating, Escape or Backspace
+cancels and removes what was dictated, Return stops and acts once the last
+words are in, modifier keys are ignored, and any other key, Ctrl+D included,
+stops. When picking from a list, the listed titles are the vocabulary that
+heard names are corrected to; ask mode has none. See
+[dictation.md](./dictation.md).
 
 **Pointer.** Over the log's words the pointer is a text cursor, because
 nothing else about painted text says it can be picked up. Moving the pointer

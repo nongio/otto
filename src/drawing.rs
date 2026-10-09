@@ -1,19 +1,17 @@
-#![allow(clippy::too_many_arguments)]
-
 use smithay::{
     backend::renderer::{
         element::surface::WaylandSurfaceRenderElement, ImportAll, ImportMem, Renderer,
     },
     render_elements,
 };
-#[cfg(feature = "fps_ticker")]
+#[cfg(feature = "ticker")]
 use smithay::{
     backend::renderer::{
         element::{Element, Id, RenderElement},
         utils::CommitCounter,
-        Frame,
+        Frame, RendererSuper, Texture,
     },
-    utils::{Buffer, Logical, Rectangle, Size, Transform},
+    utils::{Buffer, Logical, Physical, Point, Rectangle, Scale, Size, Transform},
 };
 
 pub static CLEAR_COLOR: [f32; 4] = [0.0, 0.0, 0.0, 1.0];
@@ -38,10 +36,10 @@ impl<R: Renderer> std::fmt::Debug for PointerRenderElement<R> {
     }
 }
 
-#[cfg(feature = "fps_ticker")]
+#[cfg(feature = "ticker")]
 pub static FPS_NUMBERS_PNG: &[u8] = include_bytes!("../resources/numbers.png");
 
-#[cfg(feature = "fps_ticker")]
+#[cfg(feature = "ticker")]
 #[derive(Debug, Clone)]
 pub struct FpsElement<T: Texture> {
     id: Id,
@@ -50,7 +48,7 @@ pub struct FpsElement<T: Texture> {
     commit_counter: CommitCounter,
 }
 
-#[cfg(feature = "fps_ticker")]
+#[cfg(feature = "ticker")]
 impl<T: Texture> FpsElement<T> {
     pub fn new(texture: T) -> Self {
         FpsElement {
@@ -69,7 +67,7 @@ impl<T: Texture> FpsElement<T> {
     }
 }
 
-#[cfg(feature = "fps_ticker")]
+#[cfg(feature = "ticker")]
 impl<T> Element for FpsElement<T>
 where
     T: Texture + 'static,
@@ -109,7 +107,7 @@ where
     }
 }
 
-#[cfg(feature = "fps_ticker")]
+#[cfg(feature = "ticker")]
 impl<R> RenderElement<R> for FpsElement<<R as RendererSuper>::TextureId>
 where
     R: Renderer + ImportAll,
@@ -134,7 +132,7 @@ where
                 .to_f64()
                 .to_physical(scale);
             let dst = Rectangle::new(
-                digit_location.to_i32_round().into(),
+                digit_location.to_i32_round(),
                 ((digit_size.to_point() + digit_location).to_i32_round()
                     - digit_location.to_i32_round())
                 .to_size(),

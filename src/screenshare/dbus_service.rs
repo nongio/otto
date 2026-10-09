@@ -31,14 +31,18 @@ pub struct ScreenCastInterface {
     sessions: Arc<RwLock<HashMap<String, SessionState>>>,
     /// D-Bus connection for registering session objects.
     connection: Connection,
+    /// Session owners whose departure is being watched for.
+    watched_owners: Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
 }
 
 /// Internal state for a session.
 #[derive(Clone)]
 struct SessionState {
-    #[allow(dead_code)]
-    cursor_mode: u32,
-    streams: Vec<String>, // Stream object paths
+    /// The unique bus name that created it; see [`SessionInterface`].
+    owner: String,
+    /// The session's streams, shared with its [`SessionInterface`], so a
+    /// session whose owner left can be torn down from outside it.
+    streams: Arc<RwLock<HashMap<String, StreamState>>>,
     started: bool,
 }
 
@@ -48,8 +52,149 @@ impl ScreenCastInterface {
             compositor_tx,
             sessions: Arc::new(RwLock::new(HashMap::new())),
             connection,
+            watched_owners: Arc::default(),
         }
     }
+
+    /// Tear down every session `owner` created once its name leaves the
+    /// bus: a portal or otto-rdp that crashed cannot call `Stop`, and its
+    /// PipeWire streams would otherwise keep the screen recorded.
+    async fn watch_owner(&self, owner: String) -> zbus::Result<()> {
+        if !self.watched_owners.lock().unwrap().insert(owner.clone()) {
+            return Ok(());
+        }
+        let departure = match name_departure(&self.connection, &owner).await {
+            Ok(departure) => departure,
+            Err(err) => {
+                self.watched_owners.lock().unwrap().remove(&owner);
+                return Err(err);
+            }
+        };
+        let connection = self.connection.clone();
+        let compositor_tx = self.compositor_tx.clone();
+        let sessions = self.sessions.clone();
+        let watched = self.watched_owners.clone();
+        tokio::spawn(async move {
+            departure.await;
+            watched.lock().unwrap().remove(&owner);
+            let owned: Vec<String> = sessions
+                .read()
+                .await
+                .iter()
+                .filter(|(_, session)| session.owner == owner)
+                .map(|(path, _)| path.clone())
+                .collect();
+            if !owned.is_empty() {
+                info!(
+                    owner,
+                    sessions = owned.len(),
+                    "Screencast client left the bus; ending its sessions"
+                );
+            }
+            for path in owned {
+                teardown_session(&connection, &compositor_tx, &sessions, &path).await;
+            }
+        });
+        Ok(())
+    }
+}
+
+/// A future that finishes once `owner` has left the bus (at once, if it
+/// already has).
+async fn name_departure(
+    connection: &Connection,
+    owner: &str,
+) -> zbus::Result<impl std::future::Future<Output = ()>> {
+    let dbus = zbus::fdo::DBusProxy::new(connection).await?;
+    let mut changes = dbus
+        .receive_name_owner_changed_with_args(&[(0, owner)])
+        .await?;
+    // Subscribed before this check, so a name that goes in between is still
+    // seen: either here, or as a change.
+    let gone_already = !dbus
+        .name_has_owner(owner.try_into()?)
+        .await
+        .unwrap_or(false);
+    Ok(async move {
+        use futures_util::StreamExt;
+        if gone_already {
+            return;
+        }
+        while let Some(change) = changes.next().await {
+            if change.args().is_ok_and(|args| args.new_owner().is_none()) {
+                break;
+            }
+        }
+    })
+}
+
+/// Takes interface `I` at `path` off the bus.
+///
+/// Teardown is best-effort: a path that has already gone is the outcome we
+/// wanted, and failing to unregister is no reason to fail the caller's
+/// `Stop`.
+async fn unregister<I: zbus::object_server::Interface>(connection: &Connection, path: &str) {
+    let object_path = match ObjectPath::try_from(path) {
+        Ok(path) => path,
+        Err(e) => {
+            warn!(%path, ?e, "Invalid object path, not unregistering");
+            return;
+        }
+    };
+
+    match connection
+        .object_server()
+        .remove::<I, _>(&object_path)
+        .await
+    {
+        Ok(_) => debug!(%path, "Unregistered object"),
+        Err(e) => warn!(%path, ?e, "Failed to unregister object"),
+    }
+}
+
+/// End session `session_path`: stop its streams, drop it and its PipeWire
+/// streams in the compositor, and take its objects off the bus. Does nothing
+/// for a session already gone, so `Stop` and an owner leaving can race.
+async fn teardown_session(
+    connection: &Connection,
+    compositor_tx: &Sender<CompositorCommand>,
+    sessions: &RwLock<HashMap<String, SessionState>>,
+    session_path: &str,
+) {
+    let Some(session) = sessions.write().await.remove(session_path) else {
+        return;
+    };
+    // Take the streams: nothing may start them again from here.
+    let streams = std::mem::take(&mut *session.streams.write().await);
+
+    info!(session = %session_path, stream_count = streams.len(), "Stopping {} streams", streams.len());
+    for (path, stream) in &streams {
+        if stream.started {
+            info!(session = %session_path, stream_path = %path, target = %stream.target.key(), "Stopping started stream");
+            if let Err(e) = compositor_tx.send(CompositorCommand::StopRecording {
+                session_id: session_path.to_string(),
+                target: stream.target.clone(),
+            }) {
+                warn!(?e, "Failed to stop recording");
+            }
+        } else {
+            info!(session = %session_path, stream_path = %path, target = %stream.target.key(), "Skipping non-started stream");
+        }
+        unregister::<StreamInterface>(connection, path).await;
+    }
+
+    // Drop the compositor-side session, along with any stream the
+    // bookkeeping above missed.
+    if let Err(e) = compositor_tx.send(CompositorCommand::DestroySession {
+        session_id: session_path.to_string(),
+    }) {
+        warn!(?e, "Failed to destroy session");
+    }
+
+    // Last, since it may take the very object calling this off the bus. zbus
+    // releases the root lock before dispatching, so removing ourselves from
+    // inside a method is fine.
+    unregister::<SessionInterface>(connection, session_path).await;
 }
 
 #[interface(name = "org.otto.ScreenCast")]
@@ -60,8 +205,10 @@ impl ScreenCastInterface {
     /// - `cursor-mode`: u32 (1 = hidden, 2 = embedded, 4 = metadata)
     async fn create_session(
         &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
         properties: HashMap<&str, Value<'_>>,
     ) -> zbus::fdo::Result<OwnedObjectPath> {
+        let owner = sender_of(&header)?;
         let cursor_mode = properties
             .get("cursor-mode")
             .and_then(|v| u32::try_from(v).ok())
@@ -75,26 +222,27 @@ impl ScreenCastInterface {
             cursor_mode, "Creating screencast session at {session_path}"
         );
 
+        // Register the session D-Bus object
+        let session_iface = SessionInterface::new(
+            session_path.clone(),
+            owner.clone(),
+            self.compositor_tx.clone(),
+            self.sessions.clone(),
+            self.connection.clone(),
+        );
+
         // Store session state
         {
             let mut sessions = self.sessions.write().await;
             sessions.insert(
                 session_path.clone(),
                 SessionState {
-                    cursor_mode,
-                    streams: Vec::new(),
+                    owner: owner.clone(),
+                    streams: session_iface.streams.clone(),
                     started: false,
                 },
             );
         }
-
-        // Register the session D-Bus object
-        let session_iface = SessionInterface::new(
-            session_path.clone(),
-            self.compositor_tx.clone(),
-            self.sessions.clone(),
-            self.connection.clone(),
-        );
 
         let path = ObjectPath::try_from(session_path.as_str())
             .map_err(|e| zbus::fdo::Error::Failed(format!("Invalid session path: {e}")))?;
@@ -113,6 +261,25 @@ impl ScreenCastInterface {
             cursor_mode,
         }) {
             error!(?e, "Failed to notify compositor of session creation");
+        }
+
+        if let Err(err) = self.watch_owner(owner.clone()).await {
+            // Without the watch a crashed client would leave its session
+            // recording: refuse rather than hand out one that may leak.
+            warn!(
+                owner,
+                "Cannot watch the screencast client's bus name: {err}"
+            );
+            teardown_session(
+                &self.connection,
+                &self.compositor_tx,
+                &self.sessions,
+                &session_path,
+            )
+            .await;
+            return Err(zbus::fdo::Error::Failed(format!(
+                "cannot watch the caller's bus name: {err}"
+            )));
         }
 
         OwnedObjectPath::try_from(session_path)
@@ -178,6 +345,9 @@ impl ScreenCastInterface {
 pub struct SessionInterface {
     /// The session's object path.
     session_path: String,
+    /// The unique bus name that created the session; the only one that may
+    /// drive it. A unique name is never handed to another connection.
+    owner: String,
     /// Channel to send commands to the compositor's main loop.
     compositor_tx: Sender<CompositorCommand>,
     /// Shared session state.
@@ -202,12 +372,14 @@ struct StreamState {
 impl SessionInterface {
     fn new(
         session_path: String,
+        owner: String,
         compositor_tx: Sender<CompositorCommand>,
         sessions: Arc<RwLock<HashMap<String, SessionState>>>,
         connection: Connection,
     ) -> Self {
         Self {
             session_path,
+            owner,
             compositor_tx,
             sessions,
             connection,
@@ -247,18 +419,10 @@ impl SessionInterface {
             );
         }
 
-        // Update session state
-        {
-            let mut sessions = self.sessions.write().await;
-            if let Some(session) = sessions.get_mut(&self.session_path) {
-                session.streams.push(stream_path.clone());
-            }
-        }
-
         // Register the stream D-Bus object
         let stream_iface = StreamInterface::new(
             stream_path.clone(),
-            self.compositor_tx.clone(),
+            self.owner.clone(),
             self.streams.clone(),
         );
 
@@ -274,31 +438,6 @@ impl SessionInterface {
         OwnedObjectPath::try_from(stream_path)
             .map_err(|e| zbus::fdo::Error::Failed(format!("Invalid path: {e}")))
     }
-
-    /// Takes interface `I` at `path` off the bus.
-    ///
-    /// Teardown is best-effort: a path that has already gone is the outcome
-    /// we wanted, and failing to unregister is no reason to fail the caller's
-    /// `Stop`.
-    async fn unregister<I: zbus::object_server::Interface>(&self, path: &str) {
-        let object_path = match ObjectPath::try_from(path) {
-            Ok(path) => path,
-            Err(e) => {
-                warn!(%path, ?e, "Invalid object path, not unregistering");
-                return;
-            }
-        };
-
-        match self
-            .connection
-            .object_server()
-            .remove::<I, _>(&object_path)
-            .await
-        {
-            Ok(_) => debug!(%path, "Unregistered object"),
-            Err(e) => warn!(%path, ?e, "Failed to unregister object"),
-        }
-    }
 }
 
 #[interface(name = "org.otto.ScreenCast.Session")]
@@ -306,9 +445,11 @@ impl SessionInterface {
     /// Starts recording a monitor by connector name.
     async fn record_monitor(
         &mut self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
         connector: &str,
         properties: HashMap<&str, Value<'_>>,
     ) -> zbus::fdo::Result<OwnedObjectPath> {
+        deny_unless_owner(&header, &self.owner, "RecordMonitor")?;
         let cursor_mode = properties
             .get("cursor-mode")
             .and_then(|v| u32::try_from(v).ok())
@@ -348,8 +489,10 @@ impl SessionInterface {
     /// - `cursor-mode`: u32 — optional, defaults to embedded.
     async fn record_window(
         &mut self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
         properties: HashMap<&str, Value<'_>>,
     ) -> zbus::fdo::Result<OwnedObjectPath> {
+        deny_unless_owner(&header, &self.owner, "RecordWindow")?;
         let window_id: String = properties
             .get("window-id")
             .and_then(|v| String::try_from(v.try_clone().ok()?).ok())
@@ -389,7 +532,11 @@ impl SessionInterface {
     }
 
     /// Starts all streams in the session.
-    async fn start(&mut self) -> zbus::fdo::Result<()> {
+    async fn start(
+        &mut self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+    ) -> zbus::fdo::Result<()> {
+        deny_unless_owner(&header, &self.owner, "Start")?;
         info!(session = %self.session_path, "Starting session");
 
         {
@@ -468,52 +615,19 @@ impl SessionInterface {
     /// client that comes back gets a fresh session rather than inheriting a
     /// half-dead one. Leaving the objects on the bus and the recording state
     /// in the compositor would strand a PipeWire node per cast.
-    async fn stop(&mut self) -> zbus::fdo::Result<()> {
+    async fn stop(
+        &mut self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+    ) -> zbus::fdo::Result<()> {
+        deny_unless_owner(&header, &self.owner, "Stop")?;
         info!(session = %self.session_path, "Stopping session");
-
-        // Take the streams: nothing may start them again from here.
-        let streams = {
-            let mut streams = self.streams.write().await;
-            std::mem::take(&mut *streams)
-        };
-
-        info!(session = %self.session_path, stream_count = streams.len(), "Stopping {} streams", streams.len());
-        for (path, stream) in &streams {
-            if stream.started {
-                info!(session = %self.session_path, stream_path = %path, target = %stream.target.key(), "Stopping started stream");
-
-                if let Err(e) = self.compositor_tx.send(CompositorCommand::StopRecording {
-                    session_id: self.session_path.clone(),
-                    target: stream.target.clone(),
-                }) {
-                    warn!(?e, "Failed to stop recording");
-                }
-            } else {
-                info!(session = %self.session_path, stream_path = %path, target = %stream.target.key(), "Skipping non-started stream");
-            }
-
-            self.unregister::<StreamInterface>(path).await;
-        }
-
-        // Drop the compositor-side session, along with any stream the
-        // bookkeeping above missed.
-        {
-            let mut sessions = self.sessions.write().await;
-            sessions.remove(&self.session_path);
-        }
-
-        if let Err(e) = self.compositor_tx.send(CompositorCommand::DestroySession {
-            session_id: self.session_path.clone(),
-        }) {
-            warn!(?e, "Failed to destroy session");
-        }
-
-        // Last, since it takes this very object off the bus. zbus releases the
-        // root lock before dispatching, so removing ourselves from inside a
-        // method is fine.
-        let session_path = self.session_path.clone();
-        self.unregister::<SessionInterface>(&session_path).await;
-
+        teardown_session(
+            &self.connection,
+            &self.compositor_tx,
+            &self.sessions,
+            &self.session_path,
+        )
+        .await;
         Ok(())
     }
 
@@ -522,8 +636,10 @@ impl SessionInterface {
     /// This returns an FD that can be used with `pw_context_connect_fd()`.
     async fn open_pipe_wire_remote(
         &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
         _options: HashMap<&str, Value<'_>>,
     ) -> zbus::fdo::Result<OwnedFd> {
+        deny_unless_owner(&header, &self.owner, "OpenPipeWireRemote")?;
         debug!(session = %self.session_path, "Opening PipeWire remote");
 
         // Request PipeWire FD from compositor
@@ -551,9 +667,8 @@ impl SessionInterface {
 pub struct StreamInterface {
     /// The stream's object path.
     stream_path: String,
-    /// Channel to send commands to the compositor's main loop.
-    #[allow(dead_code)]
-    compositor_tx: Sender<CompositorCommand>,
+    /// The session owner's unique bus name; see [`SessionInterface`].
+    owner: String,
     /// Shared stream state.
     streams: Arc<RwLock<HashMap<String, StreamState>>>,
 }
@@ -561,12 +676,12 @@ pub struct StreamInterface {
 impl StreamInterface {
     fn new(
         stream_path: String,
-        compositor_tx: Sender<CompositorCommand>,
+        owner: String,
         streams: Arc<RwLock<HashMap<String, StreamState>>>,
     ) -> Self {
         Self {
             stream_path,
-            compositor_tx,
+            owner,
             streams,
         }
     }
@@ -575,7 +690,11 @@ impl StreamInterface {
 #[interface(name = "org.otto.ScreenCast.Stream")]
 impl StreamInterface {
     /// Starts this individual stream.
-    async fn start(&self) -> zbus::fdo::Result<()> {
+    async fn start(
+        &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+    ) -> zbus::fdo::Result<()> {
+        deny_unless_owner(&header, &self.owner, "Stream.Start")?;
         debug!(stream = %self.stream_path, "Starting stream");
 
         let mut streams = self.streams.write().await;
@@ -590,7 +709,11 @@ impl StreamInterface {
     }
 
     /// Stops this individual stream.
-    async fn stop(&self) -> zbus::fdo::Result<()> {
+    async fn stop(
+        &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+    ) -> zbus::fdo::Result<()> {
+        deny_unless_owner(&header, &self.owner, "Stream.Stop")?;
         debug!(stream = %self.stream_path, "Stopping stream");
 
         let mut streams = self.streams.write().await;
@@ -602,7 +725,11 @@ impl StreamInterface {
     }
 
     /// Returns PipeWire node metadata including `node-id`.
-    async fn pipe_wire_node(&self) -> zbus::fdo::Result<HashMap<String, OwnedValue>> {
+    async fn pipe_wire_node(
+        &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+    ) -> zbus::fdo::Result<HashMap<String, OwnedValue>> {
+        deny_unless_owner(&header, &self.owner, "PipeWireNode")?;
         let streams = self.streams.read().await;
         let stream = streams
             .get(&self.stream_path)
@@ -619,7 +746,11 @@ impl StreamInterface {
     }
 
     /// Returns static stream metadata.
-    async fn metadata(&self) -> zbus::fdo::Result<HashMap<String, OwnedValue>> {
+    async fn metadata(
+        &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+    ) -> zbus::fdo::Result<HashMap<String, OwnedValue>> {
+        deny_unless_owner(&header, &self.owner, "Metadata")?;
         let streams = self.streams.read().await;
         let stream = streams
             .get(&self.stream_path)
@@ -691,6 +822,32 @@ impl CompositorInterface {
     }
 }
 
+/// A session, and its streams, answer only the connection that created it.
+fn deny_unless_owner(
+    header: &zbus::message::Header<'_>,
+    owner: &str,
+    what: &str,
+) -> zbus::fdo::Result<()> {
+    if header
+        .sender()
+        .is_some_and(|sender| sender.as_str() == owner)
+    {
+        return Ok(());
+    }
+    warn!(what, sender = ?header.sender(), owner, "Refusing a screencast call from another connection");
+    Err(zbus::fdo::Error::AccessDenied(format!(
+        "{what}: this screencast session belongs to another client"
+    )))
+}
+
+/// The unique bus name a call came from.
+fn sender_of(header: &zbus::message::Header<'_>) -> zbus::fdo::Result<String> {
+    header
+        .sender()
+        .map(|sender| sender.to_string())
+        .ok_or_else(|| zbus::fdo::Error::Failed("no sender".into()))
+}
+
 /// Starts the D-Bus service on the session bus.
 ///
 /// `a11y` is present only for a session that owns the screen and has
@@ -710,7 +867,13 @@ pub async fn run_dbus_service(
         .at("/org/otto/ScreenCast", screencast)
         .await?;
 
-    connection.request_name("org.otto.ScreenCast").await?;
+    // No AllowReplacement: zbus 5's plain request_name would add it.
+    connection
+        .request_name_with_flags(
+            "org.otto.ScreenCast",
+            zbus::fdo::RequestNameFlags::ReplaceExisting | zbus::fdo::RequestNameFlags::DoNotQueue,
+        )
+        .await?;
 
     // Register the compositor interface (health + app management)
     let compositor = CompositorInterface::new(compositor_tx);
@@ -719,7 +882,13 @@ pub async fn run_dbus_service(
         .at("/org/otto/Compositor", compositor)
         .await?;
 
-    connection.request_name("org.otto.Compositor").await?;
+    // No AllowReplacement: zbus 5's plain request_name would add it.
+    connection
+        .request_name_with_flags(
+            "org.otto.Compositor",
+            zbus::fdo::RequestNameFlags::ReplaceExisting | zbus::fdo::RequestNameFlags::DoNotQueue,
+        )
+        .await?;
 
     // Register the Settings interface
     crate::settings_service::register_settings_interface(&connection, settings_tx).await?;
@@ -736,10 +905,15 @@ pub async fn run_dbus_service(
             .await
         {
             Ok(()) => match connection
-                .request_name(crate::a11y::keyboard_monitor::BUS_NAME)
+                // No AllowReplacement: zbus 5's plain request_name would add it.
+                .request_name_with_flags(
+                    crate::a11y::keyboard_monitor::BUS_NAME,
+                    zbus::fdo::RequestNameFlags::ReplaceExisting
+                        | zbus::fdo::RequestNameFlags::DoNotQueue,
+                )
                 .await
             {
-                Ok(()) => {
+                Ok(_) => {
                     // The pointer half of the same object. at-spi2-core builds
                     // one device from both interfaces, so a manager that
                     // serves only the keyboard is not one Orca can use.

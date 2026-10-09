@@ -168,12 +168,48 @@ enum DialogKind {
     Questions,
 }
 
-/// Convert wire choice groups into the dialog model, dropping groups with no
-/// options (they would be unanswerable) and resolving each default by id.
+/// The checkbox group xdg-desktop-portal-otto adds to the screen-sharing
+/// picker for an app it can remember a share for. Its label is the app's
+/// name; islands supplies the sentence around it.
+pub const REMEMBER_GROUP: &str = "otto.remember";
+
+/// Convert wire choice groups into the dialog model, resolving each default
+/// by id. A group with no options is a checkbox, as in the Access portal:
+/// its default and its answer are `true` or `false`. One with no options and
+/// no label would be a box with nothing beside it, and is dropped.
 fn choice_groups(choices: Vec<WireChoice>) -> Vec<ChoiceGroup> {
     choices
         .into_iter()
         .filter_map(|(id, label, opts, default_id)| {
+            if opts.is_empty() {
+                if label.is_empty() {
+                    return None;
+                }
+                // Otto's portal names only the app for its Remember box; the
+                // words are islands' own, in the session's language.
+                let label = if id == REMEMBER_GROUP {
+                    otto_kit::t_owned!("screencast-picker-remember", app = label)
+                } else {
+                    label
+                };
+                return Some(ChoiceGroup {
+                    options: vec![ChoiceOption {
+                        id: "true".into(),
+                        label: label.clone(),
+                        icon: String::new(),
+                    }],
+                    picked: if default_id == "true" {
+                        vec![0]
+                    } else {
+                        Vec::new()
+                    },
+                    multi: true,
+                    check: true,
+                    id,
+                    label,
+                    ..ChoiceGroup::default()
+                });
+            }
             let options: Vec<ChoiceOption> = opts
                 .into_iter()
                 .map(|(oid, olabel, oicon)| ChoiceOption {
@@ -226,6 +262,7 @@ fn question_groups(questions: Vec<WireQuestion>) -> Vec<ChoiceGroup> {
                 default,
                 multi,
                 picked: if multi { picked } else { Vec::new() },
+                check: false,
             })
         })
         .collect()
@@ -509,7 +546,12 @@ mod tests {
                 vec![opt("a"), opt("b")],
                 "b".into(),
             ),
-            ("empty".into(), "Empty".into(), Vec::new(), String::new()),
+            (
+                "unlabelled".into(),
+                String::new(),
+                Vec::new(),
+                String::new(),
+            ),
             (
                 "mode".into(),
                 String::new(),
@@ -522,6 +564,45 @@ mod tests {
         assert_eq!(groups[0].default, 1);
         assert_eq!(groups[1].id, "mode");
         assert_eq!(groups[1].default, 0);
+    }
+
+    /// A group with no options is the Access portal's checkbox: it starts on
+    /// its `true`/`false` default and answers `true` or `false`, ticked or
+    /// not.
+    #[test]
+    fn a_group_with_no_options_is_a_checkbox_answering_true_or_false() {
+        use crate::dialog::Picks;
+        let groups = choice_groups(vec![
+            ("source".into(), "Source".into(), vec![opt("a")], "a".into()),
+            (
+                "remember".into(),
+                "Remember".into(),
+                Vec::new(),
+                "false".into(),
+            ),
+            ("keep".into(), "Keep".into(), Vec::new(), "true".into()),
+        ]);
+        assert!(groups[1].check && groups[2].check && !groups[0].check);
+        assert_eq!(groups[1].options[0].label, "Remember");
+        let mut picks = Picks::new(&groups);
+        let answer = |picks: &Picks| picks.results(&groups);
+        assert_eq!(
+            answer(&picks),
+            [
+                ("source".to_string(), "a".to_string()),
+                ("remember".to_string(), "false".to_string()),
+                ("keep".to_string(), "true".to_string()),
+            ]
+        );
+        picks.choose(&groups, 1, 0);
+        picks.choose(&groups, 2, 0);
+        assert_eq!(
+            answer(&picks)[1..],
+            [
+                ("remember".to_string(), "true".to_string()),
+                ("keep".to_string(), "false".to_string()),
+            ]
+        );
     }
 
     /// The contract otto-agents calls: `PresentQuestion` takes the

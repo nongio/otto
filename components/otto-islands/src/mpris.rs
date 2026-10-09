@@ -49,6 +49,9 @@ pub struct PlaybackInfo {
     /// The processes behind those players, where D-Bus reports the app itself
     /// rather than a sandbox's proxy.
     pub player_pids: Vec<u32>,
+    /// The player's MPRIS `DesktopEntry`, the standard link to its app: a
+    /// window whose app id is this belongs to the player.
+    pub desktop_entry: String,
 }
 
 impl PlaybackInfo {
@@ -64,6 +67,7 @@ impl PlaybackInfo {
             track_id: String::new(),
             player_names: Vec::new(),
             player_pids: Vec::new(),
+            desktop_entry: String::new(),
         }
     }
 
@@ -440,6 +444,7 @@ fn playback_from(entry: Option<PlayerEntry>) -> PlaybackInfo {
         track_id: entry.track_id,
         player_names,
         player_pids,
+        desktop_entry: entry.desktop_entry,
     }
 }
 

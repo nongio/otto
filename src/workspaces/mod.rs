@@ -133,6 +133,11 @@ pub struct OutputWorkspaces {
     /// Above everything else, including the dock and fullscreen windows, and
     /// hidden whenever the session is unlocked. See `src/lock.rs`.
     pub lock_plane: Layer,
+    /// Holds the side canvas column while it is on this output. Lives in
+    /// `overlay_plane`, above the dock and the layer-shell chrome and right
+    /// below the workspace selector and the popups, and is hidden whenever
+    /// the canvas is somewhere else or off screen. Fades out with exposé. See `src/otto_canvas/`.
+    pub canvas_plane: Layer,
     /// Per-output workspace selector strip (expose UI). Each output shows its
     /// own selector so previews reflect that output's content at its own
     /// resolution. Lives in `overlay_plane`.
@@ -267,6 +272,12 @@ pub struct Workspaces {
     /// arrangement rather than auto-placed after outputs (e.g. virtual ones)
     /// that kept running meanwhile.
     suspended_outputs: HashMap<String, SuspendedOutput>,
+    /// Set while the session is locked (from the moment the blank is raised
+    /// until the unlock): an output added meanwhile gets its blank up at
+    /// creation, before its first frame, so a monitor plugged in while
+    /// locked never shows the desktop. See
+    /// `src/lock.rs`.
+    pub blank_new_outputs: bool,
     display_handle: DisplayHandle,
 
     pub windows_map: HashMap<ObjectId, WindowElement>,
@@ -753,6 +764,7 @@ impl Workspaces {
             outputs: Vec::new(),
             primary_output: None,
             suspended_outputs: HashMap::new(),
+            blank_new_outputs: false,
             model: Arc::new(RwLock::new(model)),
             windows_map: HashMap::new(),
             focus_history: Vec::new(),
@@ -1007,14 +1019,6 @@ impl Workspaces {
         }
     }
 
-    /// Get all spaces across all outputs and all workspaces (for window search)
-    #[allow(dead_code)]
-    fn all_spaces(&self) -> impl Iterator<Item = &Space<WindowElement>> {
-        self.output_workspaces
-            .values()
-            .flat_map(|ows| ows.spaces.iter())
-    }
-
     /// Get workspaces_layer for primary output (for animations/expose)
     pub fn primary_workspaces_layer(&self) -> Option<&Layer> {
         self.primary_output_workspaces()
@@ -1208,6 +1212,7 @@ impl Workspaces {
             ows.switcher_plane.set_size(Size::points(w, h), None);
             ows.dock_plane.set_size(Size::points(w, h), None);
             ows.lock_plane.set_size(Size::points(w, h), None);
+            ows.canvas_plane.set_size(Size::points(w, h), None);
             // The switcher panel sizes itself from its host output — a mode or
             // scale change under it must re-render it at the new geometry.
             if self.app_switcher_output_name().as_deref() == Some(output_name.as_str()) {
@@ -1427,13 +1432,6 @@ impl Workspaces {
             || self.is_show_desktop_transitioning()
     }
 
-    /// Set the window selection mode
-    #[allow(dead_code)]
-    fn set_show_all(&self, show_all: bool) {
-        self.show_all
-            .store(show_all, std::sync::atomic::Ordering::Relaxed);
-    }
-
     /// Return if we are in show desktop mode
     pub fn get_show_desktop(&self) -> bool {
         self.show_desktop.load(std::sync::atomic::Ordering::Relaxed)
@@ -1621,15 +1619,6 @@ impl Workspaces {
                 workspace_view.window_selector_view.clear_selection();
             }
         }
-    }
-
-    /// Reset the accumulated expose gesture value.
-    /// Called when starting a new expose gesture to prevent accumulation.
-    pub fn reset_expose_gesture(&self) {
-        let current_state = self.show_all.load(std::sync::atomic::Ordering::Relaxed);
-        let reset_value = if current_state { 1000 } else { 0 };
-        self.show_all_gesture
-            .store(reset_value, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Reset the accumulated show desktop gesture value.
@@ -2285,6 +2274,18 @@ impl Workspaces {
                 .map(|ows| ows.expose_layer.clone())
                 .collect();
 
+            // The side canvas fades with the layer shell overlay. It shows over
+            // fullscreen windows too, so it always rests fully opaque.
+            let canvas_planes: Vec<Layer> = self
+                .output_workspaces
+                .values()
+                .map(|ows| ows.canvas_plane.clone())
+                .collect();
+            let canvas_fade_opacity = (1.0_f32 - delta).clamp(0.0, 1.0);
+            for plane in &canvas_planes {
+                plane.set_opacity(canvas_fade_opacity, transition.clone());
+            }
+
             // Collect all output workspaces_layers so the on_finish callback can restore them
             let all_workspaces_layers: Vec<Layer> = self
                 .output_workspaces
@@ -2421,6 +2422,10 @@ impl Workspaces {
                         } else {
                             // Fullscreen: keep layers hidden and transparent
                             layer_shell_top_ref.set_hidden(true);
+                        }
+
+                        for plane in &canvas_planes {
+                            plane.set_opacity(if show_all { 0.0_f32 } else { 1.0_f32 }, None);
                         }
 
                         show_all_ref.store(show_all, std::sync::atomic::Ordering::Relaxed);
@@ -2880,13 +2885,6 @@ impl Workspaces {
                     }
                 }
             }
-        }
-    }
-
-    /// Close all the windows of the current focused App
-    pub fn quit_current_app(&self) {
-        if let Some(app_id) = self.get_current_app_id() {
-            self.quit_app(&app_id);
         }
     }
 
@@ -3614,17 +3612,6 @@ impl Workspaces {
             || self.dock.has_menu_open()
     }
 
-    /// Return the actual rendered height of the dock in logical pixels
-    pub fn get_dock_height(&self) -> i32 {
-        if self.dock.alive() {
-            let bounds = self.dock.bar_layer.render_bounds_transformed();
-            let scale = Config::with(|c| c.screen_scale);
-            (bounds.height() / scale as f32).ceil() as i32
-        } else {
-            0
-        }
-    }
-
     /// Return the actual rendered geometry of the dock in logical coordinates
     pub fn get_dock_geometry(&self) -> Rectangle<i32, smithay::utils::Logical> {
         // Where the dock sits at rest, not where it is right now: exposé,
@@ -3663,36 +3650,6 @@ impl Workspaces {
             .get(app_id)
             .cloned()
             .unwrap_or_default()
-    }
-
-    /// Return the list of Spaces where an app has windows by its id
-    pub fn get_app_spaces(&self, app_id: &str) -> Vec<&Space<WindowElement>> {
-        let model = self.model.read().unwrap();
-        let mut spaces = Vec::new();
-
-        model
-            .app_windows_map
-            .get(app_id)
-            .cloned()
-            .unwrap_or_default()
-            .iter()
-            .for_each(|id| {
-                let window = self.get_window_for_surface(id);
-                if let Some(we) = window {
-                    for space in self
-                        .output_workspaces
-                        .values()
-                        .flat_map(|ows| ows.spaces.iter())
-                    {
-                        if space.elements().any(|e| e == we) {
-                            spaces.push(space);
-                            break;
-                        }
-                    }
-                }
-            });
-
-        spaces
     }
 
     /// Return the current focused Application
@@ -3994,10 +3951,6 @@ impl Workspaces {
         self.cycle_app_window(1)
     }
 
-    pub fn raise_prev_app_window(&mut self) -> Option<ObjectId> {
-        self.cycle_app_window(-1)
-    }
-
     /// Scroll the output owning `wid` to the workspace that holds it, so a
     /// window raised from another workspace actually becomes visible.
     fn switch_to_workspace_of_window(&mut self, wid: &ObjectId) {
@@ -4020,7 +3973,59 @@ impl Workspaces {
     /// Raise thw windowelement on top of all the windows in its space
     /// activate: will set the window as active
     /// update: will update the workspace model
+    ///
+    /// Windows parented to it — dialogs, a portal file picker adopted through
+    /// xdg-foreign — come up with it and stay above it, so raising an
+    /// application never buries the dialog it is waiting on.
     pub fn raise_element(&mut self, window_id: &ObjectId, activate: bool, update: bool) {
+        self.raise_element_with_children(window_id, activate, update, 0);
+    }
+
+    /// How deep a chain of parented windows is followed when raising. A
+    /// parent cycle is a client bug; this is what keeps it from being ours.
+    const MAX_CHILD_DEPTH: usize = 4;
+
+    fn raise_element_with_children(
+        &mut self,
+        window_id: &ObjectId,
+        activate: bool,
+        update: bool,
+        depth: usize,
+    ) {
+        self.raise_element_alone(window_id, activate, update && depth == 0);
+        if depth >= Self::MAX_CHILD_DEPTH {
+            return;
+        }
+        let Some(surface_id) = self
+            .windows_map
+            .get(window_id)
+            .and_then(|w| w.wl_surface().map(|s| s.id()))
+        else {
+            return;
+        };
+        let children: Vec<ObjectId> = self
+            .windows_map
+            .values()
+            .filter(|w| !w.is_minimised())
+            .filter(|w| {
+                w.toplevel()
+                    .and_then(|t| t.parent())
+                    .is_some_and(|p| p.id() == surface_id)
+            })
+            .map(|w| w.id())
+            .collect();
+        let raised_any = !children.is_empty();
+        for child in children {
+            // Above the parent, without taking the keyboard from it: whoever
+            // asked for the parent to be activated still gets the parent.
+            self.raise_element_with_children(&child, false, false, depth + 1);
+        }
+        if raised_any && update && depth == 0 {
+            self.update_workspace_model();
+        }
+    }
+
+    fn raise_element_alone(&mut self, window_id: &ObjectId, activate: bool, update: bool) {
         // get the space with the window
         // tracing::info!("workspaces::raise_element: {:?}", window_id);
         // A window lives in exactly one output's space, so search every output
@@ -4223,8 +4228,16 @@ impl Workspaces {
                 .collect()
         };
 
-        let all_windows: Vec<&(ObjectId, WindowElement)> =
-            minimized.iter().chain(windows.iter()).collect();
+        // A dialog is part of the window it belongs to, not an app of its
+        // own: the portal's file picker would otherwise put the file manager
+        // in the dock and the switcher every time another app asks for a
+        // file. Raising the parent brings it along — see
+        // `raise_element_with_children`.
+        let all_windows: Vec<&(ObjectId, WindowElement)> = minimized
+            .iter()
+            .chain(windows.iter())
+            .filter(|(_, we)| !we.has_parent())
+            .collect();
 
         {
             // reset the model
@@ -4282,7 +4295,6 @@ impl Workspaces {
         // An app is ranked by how recently it was used, but only against the
         // apps it shares a workspace with: one whose windows are all somewhere
         // else belongs behind everything here, however recently it was used.
-        #[allow(clippy::mutable_key_type)]
         let here: HashSet<ObjectId> = self
             .focused_output_workspaces()
             .and_then(|ows| ows.spaces.get(ows.current_workspace))
@@ -4341,9 +4353,12 @@ impl Workspaces {
                 // update minimized windows — keep entries that are either still
                 // mapped in a Space *or* still tracked in windows_map (minimized
                 // windows are unmapped from Space but remain in windows_map).
-                model
-                    .minimized_windows
-                    .retain(|(id, _)| all_windows.iter().any(|(wid, _)| wid == id));
+                model.minimized_windows.retain(|(id, _)| {
+                    minimized
+                        .iter()
+                        .chain(windows.iter())
+                        .any(|(wid, _)| wid == id)
+                });
             }
         }
 
@@ -4643,7 +4658,19 @@ impl Workspaces {
             self.label_editing.clone(),
             self.rename_workspace_sender.clone(),
         ));
-        let _ = overlay_plane.add_sublayer(&selector_layer);
+        // The side canvas container. Empty and hidden until the canvas opens
+        // on this output; the column is moved in here when it does. It sits
+        // above the dock and the layer-shell chrome, right below the
+        // workspace selector; both are attached with the rest of the overlay
+        // plane below.
+        let canvas_plane = self.layers_engine.new_layer();
+        canvas_plane.set_key(format!("canvas_plane_{}", output.name()));
+        canvas_plane.set_layout_style(taffy::Style {
+            position: taffy::Position::Absolute,
+            ..Default::default()
+        });
+        canvas_plane.set_pointer_events(false);
+        canvas_plane.set_hidden(true);
 
         let switcher_plane = self.layers_engine.new_layer();
         switcher_plane.set_key(format!("switcher_plane_{}", output.name()));
@@ -4682,7 +4709,13 @@ impl Workspaces {
         // Pointer events on, so a click while locked cannot reach the session
         // underneath even before the locker has mapped a surface.
         lock_plane.set_pointer_events(true);
-        lock_plane.set_hidden(true);
+        // Hidden unless the session is locked right now: then this output was
+        // plugged in under the lock, and its blank is up before anything of
+        // the session can be drawn on it.
+        lock_plane.set_position(layers::types::Point { x: 0.0, y: 0.0 }, None);
+        lock_plane.set_hidden(!self.blank_new_outputs);
+
+        canvas_plane.set_size(layers::types::Size::points(phys_w, phys_h), None);
 
         if is_this_primary {
             // Wire the primary output's expose layer into self.expose_layer so all
@@ -4715,6 +4748,11 @@ impl Workspaces {
             // Below the OSD and the popups, above the layer-shell chrome.
             let _ = dock_plane.add_sublayer(&self.dock.wrap_layer.clone());
             let _ = overlay_plane.add_sublayer(&dock_plane.clone());
+            // The side canvas covers the dock and the chrome. The workspace
+            // selector is above it; it only shows in exposé, where the canvas
+            // and the layer-shell chrome have faded out.
+            let _ = overlay_plane.add_sublayer(&canvas_plane);
+            let _ = overlay_plane.add_sublayer(&selector_layer);
             let _ = overlay_plane.add_sublayer(&self.overlay_layer);
             let _ = overlay_plane.add_sublayer(&self.popup_overlay.layer.clone());
             let _ = output_layer.add_sublayer(&overlay_plane.clone());
@@ -4724,6 +4762,8 @@ impl Workspaces {
             let _ = switcher_plane.add_sublayer(&self.app_switcher.wrap_layer.clone());
             let _ = output_layer.add_sublayer(&switcher_plane.clone());
         } else {
+            let _ = overlay_plane.add_sublayer(&canvas_plane);
+            let _ = overlay_plane.add_sublayer(&selector_layer);
             let _ = output_layer.add_sublayer(&overlay_plane.clone());
             let _ = output_layer.add_sublayer(&switcher_plane.clone());
             let _ = output_layer.add_sublayer(&dock_plane.clone());
@@ -4788,6 +4828,7 @@ impl Workspaces {
             switcher_plane,
             dock_plane,
             lock_plane,
+            canvas_plane,
             workspace_selector,
         };
         self.output_workspaces.insert(output.name(), ows);
@@ -5615,24 +5656,6 @@ impl Workspaces {
         self.with_model(|m| m.workspaces.get(i).cloned())
     }
 
-    /// Windows eligible for direct client-buffer scanout ("shadow-only" mode).
-    ///
-    /// Ported from the reference implementation in `../otto`
-    /// (feat/window-scanout-new) and adapted to the plane pipeline: the app
-    /// switcher, OSD and layer-shell panels render on the overlay plane, so
-    /// they do not gate scanout globally — only windows they geometrically
-    /// overlap are demoted (their pixels must be in the windows plane for the
-    /// overlay's backdrop blur to sample).
-    ///
-    /// Selection is intentionally based on *stable* geometry (dock bar,
-    /// switcher and OSD layer bounds, layer-shell rects), never on per-frame
-    /// scene state like bubbled blur regions — those are cleared and rebuilt
-    /// every engine update, so sampling them oscillates between promote and
-    /// demote and flickers the window content.
-    pub fn get_scanout_candidates(&self, output: &Output) -> Vec<ObjectId> {
-        self.get_plane_candidates(output).raw
-    }
-
     /// Debug: which global gate closed plane promotion, logged when it changes.
     fn plane_gate_log(reason: &'static str) {
         use std::sync::Mutex;
@@ -5646,6 +5669,12 @@ impl Workspaces {
 
     /// Both promotion tiers for `output`, computed in one top-to-bottom walk
     /// (they share every stability gate and the same occlusion state).
+    ///
+    /// Selection is intentionally based on *stable* geometry (dock bar,
+    /// switcher and OSD layer bounds, layer-shell rects), never on per-frame
+    /// scene state like bubbled blur regions — those are cleared and rebuilt
+    /// every engine update, so sampling them oscillates between promote and
+    /// demote and flickers the window content.
     pub fn get_plane_candidates(&self, output: &Output) -> PlaneCandidates {
         use smithay::utils::{Physical, Rectangle};
 
@@ -5951,11 +5980,17 @@ impl Workspaces {
             || self.is_animating.load(std::sync::atomic::Ordering::Relaxed);
         let osd = self.osd.is_visible();
         let tiling = self.tiling_overlay.is_visible();
-        let active = layer_shell_active || popups || selector || osd || tiling;
+        // The side canvas is in this output's plane only while it is on
+        // screen here; its container is hidden the rest of the time.
+        let canvas = self
+            .output_workspaces
+            .get(&output.name())
+            .is_some_and(|ows| !ows.canvas_plane.hidden());
+        let active = layer_shell_active || popups || selector || osd || tiling || canvas;
         if active {
             tracing::debug!(
                 target: "otto::planes",
-                "overlay active: shell={layer_shell_active} popups={popups} selector={selector} osd={osd} tiling={tiling}",
+                "overlay active: shell={layer_shell_active} popups={popups} selector={selector} osd={osd} tiling={tiling} canvas={canvas}",
             );
         }
         active
@@ -5970,7 +6005,6 @@ impl Workspaces {
     /// `translucent` (blur-effect clients, see
     /// `window_throttle::translucent_window_ids`) can be occluded but never
     /// occlude: what is behind them shows through.
-    #[allow(clippy::mutable_key_type)]
     pub fn occluded_window_ids(&self, translucent: &HashSet<ObjectId>) -> HashSet<ObjectId> {
         use smithay::utils::{Physical, Rectangle};
         let mut occluded = HashSet::new();
@@ -6011,13 +6045,11 @@ impl Workspaces {
     }
 
     /// Snapshot of the windows currently flagged for scanout.
-    #[allow(clippy::mutable_key_type)]
     pub fn scanout_window_ids(&self) -> HashSet<ObjectId> {
         self.scanout_windows.read().unwrap().clone()
     }
 
     /// The promoted (direct-scanout) window set of a single output.
-    #[allow(clippy::mutable_key_type)]
     pub fn scanout_window_ids_for_output(&self, output_name: &str) -> HashSet<ObjectId> {
         self.scanout_windows_per_output
             .read()
@@ -6027,15 +6059,15 @@ impl Workspaces {
             .unwrap_or_default()
     }
 
-    /// Replace the scanout window set: hides `content_layer` for new entrants,
-    /// unhides it for departures. Idempotent. The caller must re-import any
-    /// departing window's buffer (via `update_window_view`) *after* this call
-    /// so the unhidden `content_layer` shows the current frame, not a stale one.
-    #[allow(clippy::mutable_key_type)]
     /// Update one output's desired scanout set and apply the union of all
     /// outputs' sets. Each CRTC computes its own candidates; applying them
     /// directly to the global set made two outputs demote each other's
     /// promoted windows every frame.
+    ///
+    /// Applying the union hides `content_layer` for new entrants and unhides
+    /// it for departures. Idempotent. The caller must re-import any departing
+    /// window's buffer (via `update_window_view`) *after* this call so the
+    /// unhidden `content_layer` shows the current frame, not a stale one.
     pub fn set_scanout_windows_for_output(&self, output_name: &str, ids: &[ObjectId]) {
         let union: HashSet<ObjectId> = {
             let mut per_output = self.scanout_windows_per_output.write().unwrap();
@@ -6227,7 +6259,6 @@ impl Workspaces {
     /// Remove one window from every output's scanout set (pre-animation
     /// demotion) and apply the new union.
     pub fn remove_scanout_window(&self, id: &ObjectId) {
-        #[allow(clippy::mutable_key_type)] // ObjectId as key — see window_throttle.rs
         let union: HashSet<ObjectId> = {
             let mut per_output = self.scanout_windows_per_output.write().unwrap();
             for set in per_output.values_mut() {
@@ -6240,9 +6271,7 @@ impl Workspaces {
     }
 
     fn set_scanout_windows(&self, ids: &[ObjectId]) {
-        #[allow(clippy::mutable_key_type)] // ObjectId as key — see window_throttle.rs
         let new_ids: HashSet<ObjectId> = ids.iter().cloned().collect();
-        #[allow(clippy::mutable_key_type)] // ObjectId as key — see window_throttle.rs
         let prev_ids = self.scanout_windows.read().unwrap().clone();
         if prev_ids == new_ids {
             return;
@@ -6826,15 +6855,6 @@ impl Workspaces {
         outputs.dedup_by_key(|o| o.name());
         outputs
     }
-    #[allow(dead_code)]
-    fn apply_scroll_offset(
-        &self,
-        offset: f32,
-        transition: Option<Transition>,
-    ) -> Option<TransactionRef> {
-        self.apply_scroll_offset_filtered(offset, transition, None)
-    }
-
     /// Scroll only the specified output's workspaces_layer (or all if None).
     fn apply_scroll_offset_filtered(
         &self,
@@ -6993,23 +7013,6 @@ impl Workspaces {
         self.output_workspaces
             .values()
             .find_map(|ows| ows.spaces.iter().find_map(|s| s.element_geometry(we)))
-    }
-
-    // Add these helper methods
-    #[allow(dead_code)]
-    fn find_space_for_element(&self, element: &WindowElement) -> Option<&Space<WindowElement>> {
-        self.primary_output_workspaces()?
-            .spaces
-            .iter()
-            .find(|space| space.elements().any(|e| e.id() == element.id()))
-    }
-
-    #[allow(dead_code)]
-    fn find_space_index_for_element(&self, element: &WindowElement) -> Option<usize> {
-        self.primary_output_workspaces()?
-            .spaces
-            .iter()
-            .position(|space| space.elements().any(|e| e.id() == element.id()))
     }
 
     // ─────────────────────────────────────────────────────────────────────────────

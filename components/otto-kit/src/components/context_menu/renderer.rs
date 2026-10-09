@@ -264,13 +264,21 @@ impl ContextMenuRenderer {
         bg_paint.set_anti_alias(true);
         canvas.draw_rrect(popup_rect, &bg_paint);
 
-        // Draw border
+        // Draw border, inset by half its width: a stroke centred on the
+        // edge loses its outer half to the surface's clip, which left only
+        // half a hairline and a menu that faded into a light page behind it.
+        let inset = style.border_width / 2.0;
+        let border_rect = RRect::new_rect_xy(
+            Rect::from_xywh(inset, inset, width - inset * 2.0, height - inset * 2.0),
+            (style.corner_radius - inset).max(0.0),
+            (style.corner_radius - inset).max(0.0),
+        );
         let mut border_paint = Paint::default();
         border_paint.set_color(style.border_color());
         border_paint.set_style(skia_safe::paint::Style::Stroke);
         border_paint.set_stroke_width(style.border_width);
         border_paint.set_anti_alias(true);
-        canvas.draw_rrect(popup_rect, &border_paint);
+        canvas.draw_rrect(border_rect, &border_paint);
     }
 
     /// Draw items with explicit selection (for depth-specific rendering)

@@ -25,6 +25,66 @@ use crate::{
     state::{Backend, Otto},
 };
 
+/// The `PointerGrab` methods a window move/resize grab passes straight
+/// through to the client under the pointer, plus `start_data` from a
+/// `start_data` field. Expands inside an `impl PointerGrab<$data> for ...`.
+macro_rules! forward_pointer_grab_events {
+    ($data:ty) => {
+        fn relative_motion(
+            &mut self,
+            data: &mut $data,
+            handle: &mut PointerInnerHandle<'_, $data>,
+            focus: Option<(
+                <$data as smithay::input::SeatHandler>::PointerFocus,
+                Point<f64, Logical>,
+            )>,
+            event: &RelativeMotionEvent,
+        ) {
+            handle.relative_motion(data, focus, event);
+        }
+
+        fn axis(
+            &mut self,
+            data: &mut $data,
+            handle: &mut PointerInnerHandle<'_, $data>,
+            details: AxisFrame,
+        ) {
+            handle.axis(data, details)
+        }
+
+        fn frame(&mut self, data: &mut $data, handle: &mut PointerInnerHandle<'_, $data>) {
+            handle.frame(data);
+        }
+
+        forward_pointer_grab_events!(@gesture $data,
+            gesture_swipe_begin: GestureSwipeBeginEvent,
+            gesture_swipe_update: GestureSwipeUpdateEvent,
+            gesture_swipe_end: GestureSwipeEndEvent,
+            gesture_pinch_begin: GesturePinchBeginEvent,
+            gesture_pinch_update: GesturePinchUpdateEvent,
+            gesture_pinch_end: GesturePinchEndEvent,
+            gesture_hold_begin: GestureHoldBeginEvent,
+            gesture_hold_end: GestureHoldEndEvent,
+        );
+
+        fn start_data(&self) -> &PointerGrabStartData<$data> {
+            &self.start_data
+        }
+    };
+    (@gesture $data:ty, $($name:ident: $event:ty,)*) => {
+        $(
+            fn $name(
+                &mut self,
+                data: &mut $data,
+                handle: &mut PointerInnerHandle<'_, $data>,
+                event: &$event,
+            ) {
+                handle.$name(data, event);
+            }
+        )*
+    };
+}
+
 pub struct PointerResizeSurfaceGrab<B: Backend + 'static> {
     pub start_data: PointerGrabStartData<Otto<B>>,
     pub window: WindowElement,
@@ -207,15 +267,7 @@ impl<B: Backend> PointerGrab<Otto<B>> for PointerMoveSurfaceGrab<B> {
         }
     }
 
-    fn relative_motion(
-        &mut self,
-        data: &mut Otto<B>,
-        handle: &mut PointerInnerHandle<'_, Otto<B>>,
-        focus: Option<(PointerFocusTarget<B>, Point<f64, Logical>)>,
-        event: &RelativeMotionEvent,
-    ) {
-        handle.relative_motion(data, focus, event);
-    }
+    forward_pointer_grab_events!(Otto<B>);
 
     fn button(
         &mut self,
@@ -267,95 +319,6 @@ impl<B: Backend> PointerGrab<Otto<B>> for PointerMoveSurfaceGrab<B> {
             #[cfg(feature = "xwayland")]
             data.sync_x11_window_position(&self.window);
         }
-    }
-
-    fn axis(
-        &mut self,
-        data: &mut Otto<B>,
-        handle: &mut PointerInnerHandle<'_, Otto<B>>,
-        details: AxisFrame,
-    ) {
-        handle.axis(data, details)
-    }
-
-    fn frame(&mut self, data: &mut Otto<B>, handle: &mut PointerInnerHandle<'_, Otto<B>>) {
-        handle.frame(data);
-    }
-
-    fn gesture_swipe_begin(
-        &mut self,
-        data: &mut Otto<B>,
-        handle: &mut PointerInnerHandle<'_, Otto<B>>,
-        event: &GestureSwipeBeginEvent,
-    ) {
-        handle.gesture_swipe_begin(data, event);
-    }
-
-    fn gesture_swipe_update(
-        &mut self,
-        data: &mut Otto<B>,
-        handle: &mut PointerInnerHandle<'_, Otto<B>>,
-        event: &GestureSwipeUpdateEvent,
-    ) {
-        handle.gesture_swipe_update(data, event);
-    }
-
-    fn gesture_swipe_end(
-        &mut self,
-        data: &mut Otto<B>,
-        handle: &mut PointerInnerHandle<'_, Otto<B>>,
-        event: &GestureSwipeEndEvent,
-    ) {
-        handle.gesture_swipe_end(data, event);
-    }
-
-    fn gesture_pinch_begin(
-        &mut self,
-        data: &mut Otto<B>,
-        handle: &mut PointerInnerHandle<'_, Otto<B>>,
-        event: &GesturePinchBeginEvent,
-    ) {
-        handle.gesture_pinch_begin(data, event);
-    }
-
-    fn gesture_pinch_update(
-        &mut self,
-        data: &mut Otto<B>,
-        handle: &mut PointerInnerHandle<'_, Otto<B>>,
-        event: &GesturePinchUpdateEvent,
-    ) {
-        handle.gesture_pinch_update(data, event);
-    }
-
-    fn gesture_pinch_end(
-        &mut self,
-        data: &mut Otto<B>,
-        handle: &mut PointerInnerHandle<'_, Otto<B>>,
-        event: &GesturePinchEndEvent,
-    ) {
-        handle.gesture_pinch_end(data, event);
-    }
-
-    fn gesture_hold_begin(
-        &mut self,
-        data: &mut Otto<B>,
-        handle: &mut PointerInnerHandle<'_, Otto<B>>,
-        event: &GestureHoldBeginEvent,
-    ) {
-        handle.gesture_hold_begin(data, event);
-    }
-
-    fn gesture_hold_end(
-        &mut self,
-        data: &mut Otto<B>,
-        handle: &mut PointerInnerHandle<'_, Otto<B>>,
-        event: &GestureHoldEndEvent,
-    ) {
-        handle.gesture_hold_end(data, event);
-    }
-
-    fn start_data(&self) -> &PointerGrabStartData<Otto<B>> {
-        &self.start_data
     }
 
     /// The grab going away with a detach still open — a client dying, a
@@ -533,15 +496,7 @@ impl<B: Backend> PointerGrab<Otto<B>> for PointerTilingResizeGrab<B> {
         data.tiling_resize_to(event.location.x, event.location.y);
     }
 
-    fn relative_motion(
-        &mut self,
-        data: &mut Otto<B>,
-        handle: &mut PointerInnerHandle<'_, Otto<B>>,
-        focus: Option<(PointerFocusTarget<B>, Point<f64, Logical>)>,
-        event: &RelativeMotionEvent,
-    ) {
-        handle.relative_motion(data, focus, event);
-    }
+    forward_pointer_grab_events!(Otto<B>);
 
     fn button(
         &mut self,
@@ -555,95 +510,6 @@ impl<B: Backend> PointerGrab<Otto<B>> for PointerTilingResizeGrab<B> {
             handle.unset_grab(self, data, event.serial, event.time, true);
             data.tiling_resize_end();
         }
-    }
-
-    fn axis(
-        &mut self,
-        data: &mut Otto<B>,
-        handle: &mut PointerInnerHandle<'_, Otto<B>>,
-        details: AxisFrame,
-    ) {
-        handle.axis(data, details)
-    }
-
-    fn frame(&mut self, data: &mut Otto<B>, handle: &mut PointerInnerHandle<'_, Otto<B>>) {
-        handle.frame(data);
-    }
-
-    fn gesture_swipe_begin(
-        &mut self,
-        data: &mut Otto<B>,
-        handle: &mut PointerInnerHandle<'_, Otto<B>>,
-        event: &GestureSwipeBeginEvent,
-    ) {
-        handle.gesture_swipe_begin(data, event);
-    }
-
-    fn gesture_swipe_update(
-        &mut self,
-        data: &mut Otto<B>,
-        handle: &mut PointerInnerHandle<'_, Otto<B>>,
-        event: &GestureSwipeUpdateEvent,
-    ) {
-        handle.gesture_swipe_update(data, event);
-    }
-
-    fn gesture_swipe_end(
-        &mut self,
-        data: &mut Otto<B>,
-        handle: &mut PointerInnerHandle<'_, Otto<B>>,
-        event: &GestureSwipeEndEvent,
-    ) {
-        handle.gesture_swipe_end(data, event);
-    }
-
-    fn gesture_pinch_begin(
-        &mut self,
-        data: &mut Otto<B>,
-        handle: &mut PointerInnerHandle<'_, Otto<B>>,
-        event: &GesturePinchBeginEvent,
-    ) {
-        handle.gesture_pinch_begin(data, event);
-    }
-
-    fn gesture_pinch_update(
-        &mut self,
-        data: &mut Otto<B>,
-        handle: &mut PointerInnerHandle<'_, Otto<B>>,
-        event: &GesturePinchUpdateEvent,
-    ) {
-        handle.gesture_pinch_update(data, event);
-    }
-
-    fn gesture_pinch_end(
-        &mut self,
-        data: &mut Otto<B>,
-        handle: &mut PointerInnerHandle<'_, Otto<B>>,
-        event: &GesturePinchEndEvent,
-    ) {
-        handle.gesture_pinch_end(data, event);
-    }
-
-    fn gesture_hold_begin(
-        &mut self,
-        data: &mut Otto<B>,
-        handle: &mut PointerInnerHandle<'_, Otto<B>>,
-        event: &GestureHoldBeginEvent,
-    ) {
-        handle.gesture_hold_begin(data, event);
-    }
-
-    fn gesture_hold_end(
-        &mut self,
-        data: &mut Otto<B>,
-        handle: &mut PointerInnerHandle<'_, Otto<B>>,
-        event: &GestureHoldEndEvent,
-    ) {
-        handle.gesture_hold_end(data, event);
-    }
-
-    fn start_data(&self) -> &PointerGrabStartData<Otto<B>> {
-        &self.start_data
     }
 
     /// A grab taken away mid-drag leaves the shares where the pointer left
@@ -857,15 +723,7 @@ impl<B: Backend> PointerGrab<Otto<B>> for PointerResizeSurfaceGrab<B> {
         }
     }
 
-    fn relative_motion(
-        &mut self,
-        data: &mut Otto<B>,
-        handle: &mut PointerInnerHandle<'_, Otto<B>>,
-        focus: Option<(PointerFocusTarget<B>, Point<f64, Logical>)>,
-        event: &RelativeMotionEvent,
-    ) {
-        handle.relative_motion(data, focus, event);
-    }
+    forward_pointer_grab_events!(Otto<B>);
 
     fn button(
         &mut self,
@@ -937,95 +795,6 @@ impl<B: Backend> PointerGrab<Otto<B>> for PointerResizeSurfaceGrab<B> {
             // every popup the window owns.
             state.reposition_popups_for_window(&self.window);
         }
-    }
-
-    fn axis(
-        &mut self,
-        data: &mut Otto<B>,
-        handle: &mut PointerInnerHandle<'_, Otto<B>>,
-        details: AxisFrame,
-    ) {
-        handle.axis(data, details)
-    }
-
-    fn frame(&mut self, data: &mut Otto<B>, handle: &mut PointerInnerHandle<'_, Otto<B>>) {
-        handle.frame(data);
-    }
-
-    fn gesture_swipe_begin(
-        &mut self,
-        data: &mut Otto<B>,
-        handle: &mut PointerInnerHandle<'_, Otto<B>>,
-        event: &GestureSwipeBeginEvent,
-    ) {
-        handle.gesture_swipe_begin(data, event);
-    }
-
-    fn gesture_swipe_update(
-        &mut self,
-        data: &mut Otto<B>,
-        handle: &mut PointerInnerHandle<'_, Otto<B>>,
-        event: &GestureSwipeUpdateEvent,
-    ) {
-        handle.gesture_swipe_update(data, event);
-    }
-
-    fn gesture_swipe_end(
-        &mut self,
-        data: &mut Otto<B>,
-        handle: &mut PointerInnerHandle<'_, Otto<B>>,
-        event: &GestureSwipeEndEvent,
-    ) {
-        handle.gesture_swipe_end(data, event);
-    }
-
-    fn gesture_pinch_begin(
-        &mut self,
-        data: &mut Otto<B>,
-        handle: &mut PointerInnerHandle<'_, Otto<B>>,
-        event: &GesturePinchBeginEvent,
-    ) {
-        handle.gesture_pinch_begin(data, event);
-    }
-
-    fn gesture_pinch_update(
-        &mut self,
-        data: &mut Otto<B>,
-        handle: &mut PointerInnerHandle<'_, Otto<B>>,
-        event: &GesturePinchUpdateEvent,
-    ) {
-        handle.gesture_pinch_update(data, event);
-    }
-
-    fn gesture_pinch_end(
-        &mut self,
-        data: &mut Otto<B>,
-        handle: &mut PointerInnerHandle<'_, Otto<B>>,
-        event: &GesturePinchEndEvent,
-    ) {
-        handle.gesture_pinch_end(data, event);
-    }
-
-    fn gesture_hold_begin(
-        &mut self,
-        data: &mut Otto<B>,
-        handle: &mut PointerInnerHandle<'_, Otto<B>>,
-        event: &GestureHoldBeginEvent,
-    ) {
-        handle.gesture_hold_begin(data, event);
-    }
-
-    fn gesture_hold_end(
-        &mut self,
-        data: &mut Otto<B>,
-        handle: &mut PointerInnerHandle<'_, Otto<B>>,
-        event: &GestureHoldEndEvent,
-    ) {
-        handle.gesture_hold_end(data, event);
-    }
-
-    fn start_data(&self) -> &PointerGrabStartData<Otto<B>> {
-        &self.start_data
     }
 
     fn unset(&mut self, _data: &mut Otto<B>) {}

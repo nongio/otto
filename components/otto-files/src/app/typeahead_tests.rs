@@ -123,7 +123,7 @@ fn new_folder_scrolls_the_view_to_it() {
         browser.mode,
         depth,
         browser.pan.offset(),
-        browser.miller_w,
+        &browser.miller_widths(),
     );
     assert!(
         top >= offset && top + item_h <= offset + viewport.height(),

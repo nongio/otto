@@ -310,7 +310,6 @@ impl ScreenshareManager {
 /// Takes the two fields it needs rather than `&Otto` so callers inside the
 /// render loop — which already hold a mutable borrow of `backend_data` — can
 /// still use it under field-disjoint borrows.
-#[allow(clippy::mutable_key_type)] // ObjectId as key — see window_throttle.rs
 pub fn window_for_identifier(
     workspaces: &crate::workspaces::Workspaces,
     foreign_toplevels: &HashMap<
@@ -338,7 +337,6 @@ pub fn window_for_identifier(
 /// Dimensions are physical pixels rounded **down to even** — several PipeWire
 /// consumers, and every YUV encoder downstream, reject odd sizes. A window that
 /// rounds down to zero in either axis is not capturable.
-#[allow(clippy::mutable_key_type)] // ObjectId as key — see window_throttle.rs
 pub fn window_capture_size(
     workspaces: &crate::workspaces::Workspaces,
     foreign_toplevels: &HashMap<
@@ -370,7 +368,6 @@ pub fn window_capture_size(
 /// Drives [`crate::state::window_throttle::WindowThrottleState::Captured`] so a
 /// shared window keeps painting while occluded or on another workspace. Takes
 /// individual fields for the same borrow reason as [`window_for_identifier`].
-#[allow(clippy::mutable_key_type)] // ObjectId as key — see window_throttle.rs
 pub fn screencast_window_ids(
     sessions: &HashMap<String, ScreencastSession>,
     workspaces: &crate::workspaces::Workspaces,
@@ -400,7 +397,6 @@ pub fn screencast_window_ids(
 /// fields for the same borrow reason as [`window_for_identifier`], and answers
 /// `false` without resolving anything when nothing is being cast — the common
 /// case, hit on every commit of a decorated window.
-#[allow(clippy::mutable_key_type)] // ObjectId as key — see window_throttle.rs
 pub fn is_window_screencast(
     sessions: &HashMap<String, ScreencastSession>,
     workspaces: &crate::workspaces::Workspaces,
@@ -423,7 +419,6 @@ pub fn is_window_screencast(
 /// when one starts or stops: the windows that just gained or lost the badge may
 /// be idle. Call this whenever the set of streams changes.
 pub fn refresh_sharing_badges<B: crate::state::Backend + 'static>(state: &crate::state::Otto<B>) {
-    #[allow(clippy::mutable_key_type)] // ObjectId as key — see window_throttle.rs
     let captured = screencast_window_ids(
         &state.screenshare_sessions,
         &state.workspaces,

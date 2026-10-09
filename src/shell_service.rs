@@ -14,7 +14,7 @@ use std::sync::{Mutex, OnceLock};
 
 use tokio::sync::oneshot;
 use tracing::info;
-use zbus::{interface, Connection, SignalContext};
+use zbus::{interface, object_server::SignalEmitter, Connection};
 
 use crate::screenshare::CompositorCommand;
 
@@ -86,6 +86,14 @@ pub fn announce_window_focus(container: serde_json::Value) {
     announce(
         EventKind::Window,
         serde_json::json!({"change": "focus", "container": container}),
+    );
+}
+
+/// Any other change to the focused window, in i3's `window` event shape.
+pub fn announce_window_event(change: &str, container: serde_json::Value) {
+    announce(
+        EventKind::Window,
+        serde_json::json!({"change": change, "container": container}),
     );
 }
 
@@ -174,18 +182,18 @@ impl ShellInterface {
     /// The focused or visible workspace changed. The argument is i3's
     /// `workspace` event as JSON.
     #[zbus(signal)]
-    async fn workspace_changed(context: &SignalContext<'_>, event: String) -> zbus::Result<()>;
+    async fn workspace_changed(context: &SignalEmitter<'_>, event: String) -> zbus::Result<()>;
 
     /// The focused window changed. The argument is i3's `window` event as
     /// JSON.
     #[zbus(signal)]
-    async fn window_changed(context: &SignalContext<'_>, event: String) -> zbus::Result<()>;
+    async fn window_changed(context: &SignalEmitter<'_>, event: String) -> zbus::Result<()>;
 
     /// The keyboard layout switched (`"change": "xkb_layout"`) or the keymap
     /// was rebuilt (`"xkb_keymap"`). The argument is sway's `input` event as
     /// JSON, carrying the same object `GetInputs` answers with.
     #[zbus(signal)]
-    async fn input_changed(context: &SignalContext<'_>, event: String) -> zbus::Result<()>;
+    async fn input_changed(context: &SignalEmitter<'_>, event: String) -> zbus::Result<()>;
 }
 
 /// Register the shell interface on the existing D-Bus connection.
@@ -198,7 +206,13 @@ pub async fn register_shell_interface(
         .at("/org/otto/Shell1", ShellInterface { compositor_tx })
         .await?;
 
-    connection.request_name("org.otto.Shell1").await?;
+    // No AllowReplacement: zbus 5's plain request_name would add it.
+    connection
+        .request_name_with_flags(
+            "org.otto.Shell1",
+            zbus::fdo::RequestNameFlags::ReplaceExisting | zbus::fdo::RequestNameFlags::DoNotQueue,
+        )
+        .await?;
 
     // Events originate on the compositor thread, which cannot await, so they
     // are handed to a task on this connection's runtime — the same shape the
@@ -220,7 +234,7 @@ pub async fn register_shell_interface(
                 tracing::warn!("Shell interface went away");
                 continue;
             };
-            let context = iface.signal_context();
+            let context = iface.signal_emitter();
             let sent = match event.kind {
                 EventKind::Workspace => {
                     ShellInterface::workspace_changed(context, event.payload).await

@@ -121,10 +121,14 @@ pub fn app_switcher_hold_is_active(hold: Option<ModifiersState>, current: Modifi
 
 /// Whether `action` still fires while a modal layer surface holds the keyboard.
 ///
-/// These are the shortcuts whose UI draws above the overlay layer — the app
-/// switcher, and the OSD for volume and brightness — so using them never
-/// leaves something hidden behind the modal.
-fn shows_above_modal_layers(action: &KeyAction) -> bool {
+/// Two kinds get through. The shortcuts whose UI draws above the overlay
+/// layer — the app switcher, and the OSD for volume and brightness — so using
+/// them never leaves something hidden behind the modal. And the ones that
+/// leave the windows alone: the person's own commands (a screenshot, a
+/// dictation toggle), the media keys, locking, and the debug snapshots. What
+/// stays out is everything that acts on windows and workspaces, which the
+/// modal is covering.
+fn fires_over_modal_layers(action: &KeyAction) -> bool {
     matches!(
         action,
         KeyAction::ApplicationSwitchNext
@@ -135,7 +139,30 @@ fn shows_above_modal_layers(action: &KeyAction) -> bool {
             | KeyAction::VolumeMute
             | KeyAction::BrightnessUp
             | KeyAction::BrightnessDown
+            | KeyAction::Run(_)
+            | KeyAction::MediaPlayPause
+            | KeyAction::MediaNext
+            | KeyAction::MediaPrev
+            | KeyAction::MediaStop
+            | KeyAction::LockSession
+            | KeyAction::SceneSnapshot
+            | KeyAction::SkpSnapshot
     )
+}
+
+/// Whether `action` still fires while the focused client holds a
+/// keyboard-shortcuts inhibitor.
+///
+/// An inhibitor hands the compositor's shortcuts to the client — what a VM
+/// or a remote desktop viewer wants. But every client that asks is granted
+/// one, and locking must not be something an app can switch off: a window
+/// that could keep the lock shortcut from working could keep the user from
+/// locking the screen. Nor may it trap the user on the session, so VT
+/// switching goes through too. (`Ctrl+Alt+Escape` and `Ctrl+Alt+F<n>` are
+/// matched from raw keycodes before any of this; these are the configured
+/// bindings, and the `XF86Switch_VT_<n>` keysyms.)
+fn survives_shortcut_inhibition(action: &KeyAction) -> bool {
+    matches!(action, KeyAction::LockSession | KeyAction::VtSwitch(_))
 }
 
 pub fn process_keyboard_shortcut(
@@ -214,7 +241,63 @@ fn function_key_vt(keycode: u32) -> Option<i32> {
     }
 }
 
+/// Whether `surface` belongs to the polkit agent Otto started.
+pub fn is_authorize_surface(
+    surface: &smithay::reexports::wayland_server::protocol::wl_surface::WlSurface,
+) -> bool {
+    use smithay::reexports::wayland_server::Resource;
+    surface.client().is_some_and(|client| {
+        crate::state::ClientState::component_of(&client)
+            == Some(crate::state::OttoComponent::Authorize)
+    })
+}
+
 impl<BackendData: Backend + 'static> Otto<BackendData> {
+    /// The layer surface that takes every key: the newest mapped top or
+    /// overlay surface asking for exclusive keyboard interactivity.
+    ///
+    /// Except while the password panel is up: then it is the panel, whatever
+    /// else asks. An overlay mapped after the panel would otherwise be newer,
+    /// take the keys, and receive the password typed into what looks like
+    /// the panel. The locker needs no such rule: a locked session sends every
+    /// key to the lock surface before any layer surface is looked at.
+    pub fn modal_keyboard_layer(&self) -> Option<smithay::desktop::LayerSurface> {
+        let modal: Vec<_> = self
+            .layer_shell_state
+            .layer_surfaces()
+            .rev()
+            .filter(|layer| {
+                let data = with_states(layer.wl_surface(), |states| {
+                    *states
+                        .cached_state
+                        .get::<LayerSurfaceCachedState>()
+                        .current()
+                });
+                data.keyboard_interactivity == KeyboardInteractivity::Exclusive
+                    && (data.layer == WlrLayer::Top || data.layer == WlrLayer::Overlay)
+            })
+            .filter_map(|layer| {
+                self.workspaces.outputs().find_map(|o| {
+                    let map = layer_map_for_output(o);
+                    let cloned = map.layers().find(|l| l.layer_surface() == &layer).cloned();
+                    cloned
+                })
+            })
+            .collect();
+        modal
+            .iter()
+            .find(|surface| is_authorize_surface(surface.wl_surface()))
+            .or_else(|| modal.first())
+            .cloned()
+    }
+
+    /// Whether the polkit agent has its password panel up.
+    pub fn authorize_panel_up(&self) -> bool {
+        self.layer_surfaces
+            .values()
+            .any(|layer| is_authorize_surface(layer.layer_surface().wl_surface()))
+    }
+
     /// Resolve a key event to what Otto does with it, then announce the
     /// keyboard layout if the key switched it (a `grp:` option acts inside
     /// XKB, where no shortcut sees it).
@@ -228,13 +311,29 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
     }
 
     fn key_to_action<B: InputBackend>(&mut self, evt: B::KeyboardKeyEvent) -> KeyAction {
-        let keycode = evt.key_code();
-        let state = evt.state();
+        self.keycode_to_action(evt.key_code(), evt.state(), Event::time(&evt))
+    }
+
+    /// [`Self::keyboard_key_to_action`] for a key given by code rather than
+    /// as a backend event. `pub(crate)` so the headless harness can press
+    /// keys through the whole path.
+    pub(crate) fn keycode_to_action(
+        &mut self,
+        keycode: smithay::input::keyboard::Keycode,
+        state: KeyState,
+        time: InputTime,
+    ) -> KeyAction {
         let serial = SCOUNTER.next_serial();
-        let time = Event::time(&evt);
         let mut suppressed_keys = self.suppressed_keys.clone();
         let keyboard = self.seat.get_keyboard().unwrap();
         let mut updated_modifiers: Option<ModifiersState> = None;
+        // A key Otto keeps (a shortcut) still ends the last client's claim to
+        // a popup grab; delivery overwrites this with the client that got it.
+        // See `crate::input::popup_grab`.
+        if matches!(state, KeyState::Pressed) {
+            let seat = self.seat.clone();
+            self.note_seat_press(&seat, serial, None);
+        }
 
         // Self-heal a release we never saw — a VT switch or a focus change can
         // swallow one, and a Cmd key stuck down would keep every real Ctrl
@@ -294,6 +393,13 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         // is checked before this. The key still has to go through
         // `keyboard.input` so the focused lock surface receives it.
         if self.is_session_locked() {
+            // Nor through any grab: a popup's or an input method's would take
+            // the key from the lock surface. Grabs are refused while
+            // locked, and dropped here in case one got in anyway.
+            let seat = self.seat.clone();
+            let locker = self.lock_locker_client.as_ref().map(|c| c.id());
+            self.release_grabs_not_held_by(&seat, locker.as_ref(), false);
+            self.refresh_lock_focus();
             keyboard.input::<(), _>(self, keycode, state, serial, time, |_, _, _| {
                 FilterResult::Forward
             });
@@ -317,85 +423,76 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         // over a modal layer surface. Committing focuses a window, and a modal
         // that loses the keyboard (the launcher) closes, so the switcher,
         // being the later of the two, wins.
-        let modal_layers = if self.workspaces.app_switcher.alive() {
-            Vec::new()
+        //
+        // The password panel is the exception to the exception: while it is
+        // up, the switcher does not get the keys either.
+        let modal_layer = if self.workspaces.app_switcher.alive() && !self.authorize_panel_up() {
+            None
         } else {
-            self.layer_shell_state.layer_surfaces().rev().collect()
+            self.modal_keyboard_layer()
         };
-        for layer in modal_layers {
-            let data = with_states(layer.wl_surface(), |states| {
-                *states
-                    .cached_state
-                    .get::<LayerSurfaceCachedState>()
-                    .current()
-            });
-            if data.keyboard_interactivity == KeyboardInteractivity::Exclusive
-                && (data.layer == WlrLayer::Top || data.layer == WlrLayer::Overlay)
-            {
-                let surface = self.workspaces.outputs().find_map(|o| {
-                    let map = layer_map_for_output(o);
-                    let cloned = map.layers().find(|l| l.layer_surface() == &layer).cloned();
-                    cloned
-                });
-                if let Some(surface) = surface {
-                    keyboard.set_focus(self, Some(surface.into()), serial);
-                    // Every key is the surface's except the few shortcuts that
-                    // show something above it: the app switcher, and the
-                    // volume and brightness keys with their OSD.
-                    let mut suppressed_keys = self.suppressed_keys.clone();
-                    let mut pressed_modifiers = None;
-                    let action = keyboard
-                        .input(
-                            self,
-                            keycode,
-                            state,
-                            serial,
-                            time,
-                            |_, modifiers, handle| {
-                                let keysym = handle.modified_sym();
-                                if let KeyState::Pressed = state {
-                                    let action = Config::with(|config| {
-                                        let modifiers = shortcut_modifiers(
-                                            *modifiers,
-                                            cmd_held,
-                                            cmd_is_ctrl(config),
-                                        );
-                                        process_keyboard_shortcut(config, modifiers, keysym)
-                                    })
-                                    .filter(shows_above_modal_layers);
-                                    match action {
-                                        Some(action) => {
-                                            suppressed_keys.push(keysym);
-                                            pressed_modifiers = Some(*modifiers);
-                                            FilterResult::Intercept(action)
-                                        }
-                                        None => FilterResult::Forward,
-                                    }
-                                } else if suppressed_keys.contains(&keysym) {
-                                    suppressed_keys.retain(|k| *k != keysym);
-                                    FilterResult::Intercept(KeyAction::None)
-                                } else {
-                                    FilterResult::Forward
-                                }
-                            },
-                        )
-                        .unwrap_or(KeyAction::None);
-                    if let Some(modifiers) = pressed_modifiers.filter(|_| {
-                        matches!(
-                            action,
-                            KeyAction::ApplicationSwitchNext
-                                | KeyAction::ApplicationSwitchPrev
-                                | KeyAction::ApplicationSwitchNextWindow
-                        )
-                    }) {
-                        self.app_switcher_hold_modifiers =
-                            capture_app_switcher_hold_modifiers(modifiers);
-                    }
-                    self.suppressed_keys = suppressed_keys;
-                    self.current_modifiers = keyboard.modifier_state();
-                    return action;
-                };
+        if let Some(surface) = modal_layer {
+            // The password panel's keys go to the panel whatever grab is in
+            // place: a popup grab would ignore the focus change below, and an
+            // input method's would be sent the password.
+            if is_authorize_surface(surface.wl_surface()) {
+                let seat = self.seat.clone();
+                let panel =
+                    smithay::reexports::wayland_server::Resource::client(surface.wl_surface())
+                        .map(|c| c.id());
+                self.release_grabs_not_held_by(&seat, panel.as_ref(), false);
             }
+            keyboard.set_focus(self, Some(surface.into()), serial);
+            // Every key is the surface's except the shortcuts that leave
+            // the windows under it alone: see `fires_over_modal_layers`.
+            let mut suppressed_keys = self.suppressed_keys.clone();
+            let mut pressed_modifiers = None;
+            let action = keyboard
+                .input(
+                    self,
+                    keycode,
+                    state,
+                    serial,
+                    time,
+                    |_, modifiers, handle| {
+                        let keysym = handle.modified_sym();
+                        if let KeyState::Pressed = state {
+                            let action = Config::with(|config| {
+                                let modifiers =
+                                    shortcut_modifiers(*modifiers, cmd_held, cmd_is_ctrl(config));
+                                process_keyboard_shortcut(config, modifiers, keysym)
+                            })
+                            .filter(fires_over_modal_layers);
+                            match action {
+                                Some(action) => {
+                                    suppressed_keys.push(keysym);
+                                    pressed_modifiers = Some(*modifiers);
+                                    FilterResult::Intercept(action)
+                                }
+                                None => FilterResult::Forward,
+                            }
+                        } else if suppressed_keys.contains(&keysym) {
+                            suppressed_keys.retain(|k| *k != keysym);
+                            FilterResult::Intercept(KeyAction::None)
+                        } else {
+                            FilterResult::Forward
+                        }
+                    },
+                )
+                .unwrap_or(KeyAction::None);
+            if let Some(modifiers) = pressed_modifiers.filter(|_| {
+                matches!(
+                    action,
+                    KeyAction::ApplicationSwitchNext
+                        | KeyAction::ApplicationSwitchPrev
+                        | KeyAction::ApplicationSwitchNextWindow
+                )
+            }) {
+                self.app_switcher_hold_modifiers = capture_app_switcher_hold_modifiers(modifiers);
+            }
+            self.suppressed_keys = suppressed_keys;
+            self.current_modifiers = keyboard.modifier_state();
+            return action;
         }
 
         // The protocol ties an inhibitor to the surface with keyboard focus,
@@ -412,6 +509,10 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
 
         // A drag out of a tree owns Escape, which cancels it.
         let tiling_drag_active = self.tiling_drag_is_active();
+        // So does a shown side canvas, which it hides, unless one of its
+        // items has the keyboard (the item then decides what Escape means)
+        // or a client showed it and the app kept the keyboard.
+        let canvas_owns_escape = self.canvas_owns_escape();
 
         // Assistive technologies are offered the key before anything else in
         // the session sees it. Cloned out of `self` because `keyboard.input`
@@ -496,11 +597,20 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                         return FilterResult::Intercept(KeyAction::TilingDragCancel);
                     }
 
+                    if canvas_owns_escape
+                        && matches!(state, KeyState::Pressed)
+                        && keysym == Keysym::Escape
+                    {
+                        suppressed_keys.push(keysym);
+                        return FilterResult::Intercept(KeyAction::CanvasToggle);
+                    }
+
                     let shortcut_action = Config::with(|config| {
-                        if matches!(state, KeyState::Pressed) && !inhibited {
+                        if matches!(state, KeyState::Pressed) {
                             let modifiers =
                                 shortcut_modifiers(*modifiers, cmd_held, cmd_is_ctrl(config));
                             process_keyboard_shortcut(config, modifiers, keysym)
+                                .filter(|action| !inhibited || survives_shortcut_inhibition(action))
                         } else {
                             None
                         }

@@ -10,21 +10,6 @@ pub enum Priority {
     Critical,
 }
 
-impl Priority {
-    // Used by `IslandState::top_activity`/`second_activity`, which are not
-    // yet wired into the render loop but are kept for the planned
-    // priority-based dual-island selection.
-    #[allow(dead_code)]
-    pub fn rank(&self) -> u8 {
-        match self {
-            Priority::Low => 0,
-            Priority::Normal => 1,
-            Priority::High => 2,
-            Priority::Critical => 3,
-        }
-    }
-}
-
 impl TryFrom<&str> for Priority {
     type Error = String;
 
@@ -49,18 +34,6 @@ impl From<u8> for Priority {
     }
 }
 
-// Reserved for the `ActivityRenderer` trait below, part of the planned
-// per-mode activity content rendering that isn't wired up yet.
-#[allow(dead_code)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PresentationMode {
-    Idle,
-    Compact,
-    Minimal,
-    Expanded,
-    Banner,
-}
-
 #[derive(Debug, Clone, PartialEq)]
 pub struct NotificationAction {
     pub id: String,
@@ -71,9 +44,6 @@ pub struct NotificationAction {
 pub enum ActivitySource {
     DBus,
     Notification,
-    // Portal is reserved for the in-progress portal-access-dialog source.
-    #[allow(dead_code)]
-    Portal,
     /// Published by otto-islands itself, like the music island.
     Internal,
 }
@@ -110,17 +80,4 @@ pub struct Activity {
     pub resident: bool,
     pub notification_id: Option<u32>,
     pub source: ActivitySource,
-}
-
-/// Trait for rendering activity content at different presentation sizes.
-///
-/// Each activity type (generic, media, timer, etc.) implements this to
-/// draw itself appropriately for the given mode.
-#[allow(dead_code)] // reserved for planned per-activity-type content renderers
-pub trait ActivityRenderer {
-    /// Preferred surface size (width, height) for this mode.
-    fn size(&self, mode: PresentationMode) -> (f32, f32);
-
-    /// Draw content into the canvas at the given dimensions.
-    fn draw(&self, canvas: &skia_safe::Canvas, mode: PresentationMode, w: f32, h: f32);
 }

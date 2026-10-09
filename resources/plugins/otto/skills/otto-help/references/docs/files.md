@@ -20,19 +20,49 @@ implement.
 `Ctrl+N` opens a new window at your home directory. To open a specific folder
 in a new window, hold `Ctrl` and double-click it.
 
-## The three views
+## The four views
 
 | View | Key | What it is for |
 |------|-----|----------------|
 | List | `Ctrl+1` | One row per entry, with size and date |
 | Icon | `Ctrl+2` | A grid of large icons and thumbnails |
 | Column | `Ctrl+3` | Miller columns: each folder opens a pane to the right, with a preview column at the end |
+| Photos | `Ctrl+4` | Pictures at their own shapes, in rows grouped by day |
+
+Files remembers the view you pick for a folder and uses it again the next
+time you open that folder. Folders you have not picked a view for open in
+whatever view the window is in. In the column view, clicking or arrowing into
+folders never changes the view; only going somewhere new does, such as a
+sidebar place or Back.
 
 Pictures, PDFs and videos show a thumbnail instead of a generic type icon.
 Files reads the shared thumbnail cache that other file managers write, so
 folders another manager has already been through come up with pictures
 immediately. Files does not write to that cache yet, so thumbnails it makes for
 itself are not reused elsewhere.
+
+In the icon view the slider in the header sets the size of the icons, from
+small to very large; `Ctrl+=`, `Ctrl+-` and pinching do the same.
+
+### Photos
+
+Photos is for a folder of pictures. The folders inside it come first, each
+shown as a card of the newest pictures in it. The pictures follow in rows that
+keep each one's own shape, newest day first, under a heading for each day.
+Anything that is not a picture comes last, under **Other Files**.
+
+- **Size**: the slider in the header makes the pictures bigger or smaller.
+  `Ctrl+=` and `Ctrl+-` do the same, and so does pinching on the touchpad.
+- **Grouping**: the **Group by Day** button switches to one heading per
+  month, or to no headings at all.
+- **Info**: a panel on the right describes what is selected. With one
+  picture selected it shows the picture, its size and where it is, and its
+  main colours; click a colour to copy it, for example `#F2845C`. For a
+  folder it shows how many items it holds, with several things selected how
+  many and how much they take up, and with nothing selected what the folder
+  holds.
+
+Files remembers the size and the grouping.
 
 ## Getting around
 
@@ -396,6 +426,49 @@ are the same operation reached from two places.
 Items in the Trash cannot be opened, renamed, copied or pasted into. Put one
 back first and it is an ordinary file again. Trashed *folders* can be opened,
 so you can look inside before deciding.
+
+## The desk
+
+The desk shows the files in your Desktop folder on the desktop itself, behind
+the windows. Turn it on in **Settings ▸ Appearance ▸ Desk ▸ Show files on the
+desktop**. The same group picks another folder with **Choose…**.
+
+It fills the screen by default. To make it smaller or move it, click
+**Edit…** beside *Size and position*. The desk comes to the front with an
+outline and handles: drag inside it to move it, drag an edge or a corner to
+resize it. **Done** (or Return, or Escape) keeps the result, **Cancel** puts
+it back. **Reset** makes it fill the screen again.
+
+*Icon size* in the same group makes the desk's icons bigger or smaller, from
+32 to 160 px; the desk follows as you drag.
+
+When there are more files than fit, *When icons don't fit* in the same group
+decides what happens. **Scroll** (the default) lets the grid run on and scroll.
+**Show in overlay** keeps the grid still: the extra icons go into
+the overflow tile in the last cell, with a badge saying how many. Click the
+tile, or press Return or Space with it selected, to open the overflow panel:
+it grows out of the tile above your windows and shows the files two rows at a
+time, scrolling for the rest. There they work like any other icon on the desk:
+select them, open them, rename them, drag them out to the desk or another app.
+Escape, a click anywhere else, or switching to another window closes it.
+Dropping files on the tile puts them on the desk, like dropping them anywhere
+else on it.
+
+All of this is kept in `~/.config/otto/files.toml`, and the desk picks up
+changes to that file as soon as they are saved:
+
+```toml
+[desk]
+folder = "~/Desktop"      # default: your Desktop folder
+sort = "name"             # name | kind | modified
+anchor = "fill"           # fill | top-left | top | top-right | left | center
+                          # | right | bottom-left | bottom | bottom-right
+size = ["40%", "60%"]     # ignored with fill; points or percentages
+position = ["5%", "10%"]  # top-left corner, optional; ignored with fill
+padding = 24              # points between the edge and the icons
+icon_size = 64            # points
+overflow = "scroll"       # scroll | stack
+```
 
 ## Not there yet
 

@@ -386,6 +386,12 @@ the table is arranged around not compromising them.
 | Anything with no decoder, and any decode that failed | The file's icon at hero size, with the type and size, or the reason it could not be shown | Nothing |
 | HTML, EPUB, Office documents | Never | — |
 
+A picture and each page of a PDF wear the same hairline edge every picture in
+Files does (`otto_kit::preview::draw_picture_edge`): a single faint line on the
+content's own square edges, so a white page or a pale sky still ends somewhere
+against the panel. Text, listings, cards and Markdown have no edges of their
+own and get none; a playing video is framed by its player.
+
 Notes on the ones that look like they need a crate and do not:
 
 - **Archive listing needs no decompression.** A zip's central directory carries

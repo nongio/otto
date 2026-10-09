@@ -79,15 +79,17 @@ jobs:
           LOCK='^Cargo\.lock$'
           # The UI toolkit: linked by otto and by every component except the
           # RDP bridge and the portal backend, which are leaf crates (verified
-          # with `cargo tree -p <crate> | grep otto-kit`).
-          KIT='^components/otto-kit/'
+          # with `cargo tree -p <crate> | grep otto-kit`). otto-dbus, which
+          # otto-kit re-exports, counts as the toolkit, and the two leaf
+          # crates link it as well.
+          KIT='^components/(otto-kit|otto-dbus)/'
           # resources/bin and resources/plugins are installed files that no
           # crate reads; they only reach the packaging jobs. resources/locales
           # counts as UI below: the catalogues are strings, which the locales
           # job and the workspace unit tests cover, not the headless suites.
           COMPOSITOR='^(src|tests|protocols)/|^resources/(?!bin/|plugins/|locales/)|^otto_config.*\.toml$'
-          RDP='^components/otto-rdp/'
-          PORTAL='^components/xdg-desktop-portal-otto/'
+          RDP='^components/(otto-rdp|otto-dbus)/'
+          PORTAL='^components/(xdg-desktop-portal-otto|otto-dbus)/'
           # Every component except the two with their own filters above.
           UI='^components/(?!otto-rdp/|xdg-desktop-portal-otto/)|^sample-clients/|^resources/locales/'
           # The file browser and the two crates only it links (verified with
@@ -160,6 +162,22 @@ jobs:
       - name: Format
         run: cargo fmt --all -- --check
 
+  # Cheap and early: a dependency no crate imports any more. cargo-machete
+  # reads the source rather than compiling it, so it needs no system libraries.
+  # A false positive (a crate imported under another name) goes in the
+  # `cargo-machete` metadata in Cargo.toml.
+  unused-deps:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+      - name: Install cargo-machete
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-machete
+      - name: Unused dependencies
+        run: cargo machete
+
   # Cheap and early: a locale missing keys otherwise only surfaces in the
   # otto-kit unit tests, after the compositor has been built and linted.
   locales:
@@ -218,7 +236,7 @@ jobs:
           shared-key: workspace-build
           cache-on-failure: true
       - name: System dependencies
-        run: sudo apt-get update; sudo apt-get install -y libdrm-dev libudev-dev libgbm-dev libxkbcommon-dev libegl1-mesa-dev libwayland-dev libinput-dev libdbus-1-dev libsystemd-dev libseat-dev libpipewire-0.3-dev libfreetype-dev libfontconfig-dev libdisplay-info-dev libpixman-1-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libpam0g-dev hicolor-icon-theme fonts-dejavu-core
+        run: sudo apt-get update; sudo apt-get install -y libdrm-dev libudev-dev libgbm-dev libxkbcommon-dev libegl1-mesa-dev libwayland-dev libinput-dev libdbus-1-dev libsystemd-dev libseat-dev libpipewire-0.3-dev libfreetype-dev libfontconfig-dev libdisplay-info-dev libpixman-1-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libpam0g-dev libpolkit-agent-1-dev hicolor-icon-theme fonts-dejavu-core
       # Clippy mirrors the test steps below: every crate CI compiles is
       # linted, and each area is linted only when that area changed.
       # `--all-targets` reaches tests, examples and benches, and the headless
@@ -231,6 +249,15 @@ jobs:
         # compiles that configuration, so it breaks silently without this.
         if: needs.changes.outputs.compositor == 'true'
         run: cargo clippy --locked -p otto --no-default-features --features "egl,winit,udev,renderer_sync" -- -D warnings
+      - name: Clippy (compositor x11 backend)
+        # `x11` is opt-in and no other step enables it, so the backend
+        # bit-rotted unnoticed once already.
+        if: needs.changes.outputs.compositor == 'true'
+        run: cargo clippy --locked -p otto --features "default,x11" -- -D warnings
+      - name: Clippy (compositor fps ticker)
+        # `ticker` is opt-in like `x11`, and stopped compiling the same way.
+        if: needs.changes.outputs.compositor == 'true'
+        run: cargo clippy --locked -p otto --features "default,x11,ticker" -- -D warnings
       - name: Clippy (components)
         # Everything with no filter of its own, sample clients included.
         # submenu-gtk is the one exception: it needs GTK development libraries
@@ -251,10 +278,27 @@ jobs:
         # otto-files has its own step below, gated on its own paths.
         if: needs.changes.outputs.compositor == 'true' || needs.changes.outputs.ui == 'true'
         run: cargo test --locked --lib --workspace --exclude otto-files
+      - name: Run toolkit doctests
+        timeout-minutes: 15
+        # `--lib` skips doctests, and otto-kit's examples are its API docs:
+        # without this run they stop compiling unseen.
+        if: needs.changes.outputs.ui == 'true'
+        run: cargo test --locked -p otto-kit --doc
+      - name: Run app unit tests
+        timeout-minutes: 20
+        # `--lib` above skips binary targets, so the apps with no lib target —
+        # lock screen and greeter auth included — and the main.rs tests of
+        # the launcher and search need a --bins run of their own.
+        if: needs.changes.outputs.ui == 'true'
+        run: >-
+          cargo test --locked --bins
+          -p otto-bar -p otto-greeter -p otto-input-overlay -p otto-islands
+          -p otto-lock -p otto-msg -p otto-preview -p otto-settings
+          -p otto-stash -p otto-launcher -p otto-search
       - name: Run file browser tests
         timeout-minutes: 15
         if: needs.changes.outputs.files == 'true'
-        run: cargo test --locked --lib -p otto-files
+        run: cargo test --locked --lib --bins -p otto-files
       - name: Run agent service tests
         timeout-minutes: 15
         # The workspace step above is --lib, so the agent service's integration
@@ -313,9 +357,9 @@ jobs:
           shared-key: workspace-build
           cache-on-failure: true
       - name: System dependencies
-        run: sudo apt-get update; sudo apt-get install -y libdrm-dev libudev-dev libgbm-dev libxkbcommon-dev libegl1-mesa-dev libwayland-dev libinput-dev libdbus-1-dev libsystemd-dev libseat-dev libpipewire-0.3-dev libfreetype-dev libfontconfig-dev libdisplay-info-dev libpixman-1-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libpam0g-dev hicolor-icon-theme fonts-dejavu-core
+        run: sudo apt-get update; sudo apt-get install -y libdrm-dev libudev-dev libgbm-dev libxkbcommon-dev libegl1-mesa-dev libwayland-dev libinput-dev libdbus-1-dev libsystemd-dev libseat-dev libpipewire-0.3-dev libfreetype-dev libfontconfig-dev libdisplay-info-dev libpixman-1-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libpam0g-dev libpolkit-agent-1-dev hicolor-icon-theme fonts-dejavu-core
       - name: Build workspace binaries
-        run: cargo build --locked --release -p otto -p otto-bar -p otto-islands -p otto-lock -p otto-greeter -p otto-rdp -p xdg-desktop-portal-otto -p otto-settings -p otto-files -p otto-launcher -p otto-emoji -p otto-stash -p otto-peek -p otto-media-kit -p otto-msg -p otto-search -p otto-agents
+        run: cargo build --locked --release -p otto -p otto-bar -p otto-islands -p otto-lock -p otto-authorize -p otto-greeter -p otto-rdp -p xdg-desktop-portal-otto -p otto-settings -p otto-files -p otto-launcher -p otto-emoji -p otto-stash -p otto-canvas -p otto-peek -p otto-preview -p otto-media-kit -p otto-msg -p otto-search -p otto-agents
       - name: Upload workspace binaries
         uses: actions/upload-artifact@v4
         with:
@@ -325,6 +369,7 @@ jobs:
             target/release/otto-bar
             target/release/otto-islands
             target/release/otto-lock
+            target/release/otto-authorize
             target/release/otto-greeter
             target/release/otto-rdp
             target/release/xdg-desktop-portal-otto
@@ -333,7 +378,9 @@ jobs:
             target/release/otto-launcher
             target/release/otto-emoji
             target/release/otto-stash
+            target/release/otto-canvas
             target/release/otto-peek
+            target/release/otto-preview
             target/release/otto-media-worker
             target/release/otto-msg
             target/release/otto-search
@@ -361,7 +408,7 @@ jobs:
       - name: System dependencies
         # Nothing is compiled here, but dpkg-shlibdeps reads the binaries to
         # resolve runtime dependencies, so the shared libraries must be present.
-        run: sudo apt-get update; sudo apt-get install -y libdrm-dev libudev-dev libgbm-dev libxkbcommon-dev libegl1-mesa-dev libwayland-dev libinput-dev libdbus-1-dev libsystemd-dev libseat-dev libpipewire-0.3-dev libfreetype-dev libfontconfig-dev libdisplay-info-dev libpixman-1-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libpam0g-dev hicolor-icon-theme fonts-dejavu-core
+        run: sudo apt-get update; sudo apt-get install -y libdrm-dev libudev-dev libgbm-dev libxkbcommon-dev libegl1-mesa-dev libwayland-dev libinput-dev libdbus-1-dev libsystemd-dev libseat-dev libpipewire-0.3-dev libfreetype-dev libfontconfig-dev libdisplay-info-dev libpixman-1-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libpam0g-dev libpolkit-agent-1-dev hicolor-icon-theme fonts-dejavu-core
       - name: Cargo cache (packaging tools)
         uses: Swatinem/rust-cache@v2
         with:
@@ -408,7 +455,7 @@ jobs:
       - name: Rust toolchain
         uses: dtolnay/rust-toolchain@1.97.0
       - name: System dependencies
-        run: sudo apt-get update; sudo apt-get install -y libdrm-dev libudev-dev libgbm-dev libxkbcommon-dev libegl1-mesa-dev libwayland-dev libinput-dev libdbus-1-dev libsystemd-dev libseat-dev libpipewire-0.3-dev libfreetype-dev libfontconfig-dev libdisplay-info-dev libpixman-1-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libpam0g-dev hicolor-icon-theme fonts-dejavu-core
+        run: sudo apt-get update; sudo apt-get install -y libdrm-dev libudev-dev libgbm-dev libxkbcommon-dev libegl1-mesa-dev libwayland-dev libinput-dev libdbus-1-dev libsystemd-dev libseat-dev libpipewire-0.3-dev libfreetype-dev libfontconfig-dev libdisplay-info-dev libpixman-1-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libpam0g-dev libpolkit-agent-1-dev hicolor-icon-theme fonts-dejavu-core
       - name: Cargo cache (packaging tools)
         uses: Swatinem/rust-cache@v2
         with:

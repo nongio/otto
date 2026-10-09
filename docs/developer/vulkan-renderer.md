@@ -4,9 +4,9 @@ Otto draws with Skia. On the udev backend (a real session on a TTY) Skia can
 run on either of two GPU APIs:
 
 - **OpenGL ES**, through EGL. This is `SkiaRenderer` in
-  `src/skia_renderer.rs`, the default, and the only choice on winit and x11.
-- **Vulkan**. This is `SkiaVkRenderer` in `src/renderer/vulkan/`,
-  experimental, picked at startup.
+  `src/skia_renderer.rs`, the fallback, and the only choice on winit and x11.
+- **Vulkan**. This is `SkiaVkRenderer` in `src/renderer/vulkan/`, the
+  default on the udev backend.
 
 Everything above the renderer is shared: the lay-rs scene graph, the render
 elements, damage tracking, Smithay's `DrmCompositor`. The Vulkan renderer only
@@ -27,23 +27,25 @@ see [Vulkan Renderer Plan](vulkan-renderer-plan.md).
 - **Formats.** 10-bit and fp16 render targets are ordinary Vulkan formats;
   the HDR work needs them.
 
-## Turning it on
+## Choosing the renderer
+
+Vulkan is the default. To draw with OpenGL instead:
 
 ```sh
-otto --tty-udev --renderer vulkan      # one session
+otto --tty-udev --renderer gl      # one session
 ```
 
 or, to keep it:
 
 ```toml
 [rendering]
-renderer = "vulkan"   # "gl" is the default
+renderer = "gl"   # "vulkan" is the default
 ```
 
 Settings › General › Renderer writes the same key. The command line wins over
 the config. The `vulkan` Cargo feature is in the default feature set; a build
-without it refuses `--renderer vulkan` and exits with an error naming the
-feature.
+without it defaults to OpenGL, and refuses an explicit `--renderer vulkan` with
+an error naming the feature.
 
 ![Choosing the renderer](diagrams/vulkan-selection.svg)
 
@@ -108,7 +110,16 @@ there with a named error rather than on the first frame.
 memory fd, dma-buf, DRM format modifiers, external semaphore fd, foreign queue
 family, image format list), creates a Smithay Vulkan `Device` on the
 **graphics** queue, and builds a Skia Ganesh `DirectContext` on that device and
-queue.
+queue. When the device supports `samplerYcbcrConversion` it is enabled, so YUV
+video buffers can be sampled.
+
+The context is built in `context.rs` through the raw skia-bindings
+(`layers::sb`), not skia-safe's `BackendContext`: Skia only samples YUV when
+`fDeviceFeatures2` tells it the YCbCr feature is on, and skia-safe has no way
+to set that field. `context.rs` writes it at its offset in
+`skgpu::VulkanBackendContext`, with a compile-time check on the struct size,
+so a skia-safe upgrade that changes the layout fails the build instead of
+misreading features.
 
 Skia is told the API version explicitly, capped at 1.3. A driver may report
 1.4 while the instance is 1.3; without the cap Skia asks for 1.4 entry points
@@ -119,6 +130,13 @@ and which it can render into (`render_formats`), keeping only fourccs that
 `format.rs` can map to Skia. Each alpha format also offers its `X` twin
 (`XRGB8888` for `ARGB8888`), since Vulkan lists only the alpha one and
 XWayland's depth-24 windows need the opaque one.
+
+NV12 is sample-only. It imports with `SAMPLED` usage alone and is wrapped
+with a `YcbcrConversionInfo`, so Skia converts to RGB as it samples: BT.601
+up to 576 lines and BT.709 above, limited range, chroma at the midpoint,
+filtered linearly where the modifier's format features allow. Clients have
+no way to say how their YUV is encoded yet, so the size decides, as video
+players do for untagged video.
 
 ### Buffers in a frame
 
@@ -159,12 +177,18 @@ after every frame, read-back or blit the buffer is back where KMS and other
 devices expect it. Forgetting this step shows up as garbage or stale content
 on screen, because Skia's layout transitions and the scanout engine disagree.
 
+Sampled client dmabufs are released too. Each import records the texture's
+`BackendTexture` in `sampled`, and `release_sampled` runs between the flush
+and the submit of every frame: `set_backend_texture_state(GENERAL,
+QUEUE_FAMILY_FOREIGN_EXT)` on each live one. Skia skips images already in
+that state, so only the textures drawn this frame get a barrier, and the
+next draw acquires them again.
+
 ### Sync
 
 skia-safe exposes no semaphore API: there is no way to hand Skia a semaphore
-to wait on or signal. The renderer works around Skia instead of inside it.
-Vulkan runs submissions to one queue in order, so an empty submit placed
-right before or right after Skia's does the job.
+to wait on or signal. The renderer works around Skia instead of inside it,
+with its own submits placed right before or right after Skia's.
 
 ![Sync around Skia's submit](diagrams/vulkan-sync.svg)
 
@@ -175,8 +199,12 @@ right before or right after Skia's does the job.
   as the plane's `IN_FENCE_FD` and anywhere else that takes a `SyncPoint`.
 - **Waiting for a client.** `Renderer::wait` exports the client's sync point
   as a sync file, imports it as a *temporary* semaphore payload, and submits
-  an empty batch that waits on it. Skia's next submit lands after it. If the
-  import or submit fails, the wait falls back to the CPU.
+  a batch that waits on it. A semaphore wait only holds back its own batch,
+  so that batch also runs one pre-recorded command buffer with a full
+  `ALL_COMMANDS` pipeline barrier. A barrier's second scope is every command
+  later in submission order on the queue, so Skia's next submits wait for the
+  client through it. If the import or submit fails, the wait falls back to
+  the CPU.
 - **Drivers without `SYNC_FD` export.** `signal` blocks on
   `vkQueueWaitIdle` and returns an already-signalled point. Slow, but correct.
 - **Screenshare copies.** `blit_current_frame` attaches the copy's sync file
@@ -242,12 +270,12 @@ requested but unavailable, the probe failed and the session is on GL.
   window on its own KMS plane yet. The plane code builds for Vulkan
   (`create_surface_from_dmabuf`, `flush_planes_for_scanout`) but has not been
   run on hardware. See [DRM Planes](drm_plane.md).
-- **Multi-plane dmabufs.** Disjoint NV12 video buffers are refused at import;
-  `format.rs` has no YUV formats.
-- **Release after sampling.** Sampled client dmabufs stay in Skia's queue
-  family after use; the next import acquires them again.
-- **Queue ordering.** The wait semaphore relies on submissions on one queue
-  executing in order. ANV and RADV do this; the spec does not promise it.
+- **More YUV.** NV12 is the only YUV format. P010 and other layouts need
+  entries in `format.rs`. NV12 with its planes in separate buffer objects
+  (disjoint) is refused by Smithay's device layer, which needs
+  `VkBindImagePlaneMemoryInfo`. Single-object NV12, which VAAPI exports,
+  works. The encoding is guessed from the height (BT.601 for SD, BT.709
+  for HD) until clients can describe it.
 - **Texture filters and debug flags** are stored and ignored, as on GL.
 - **Driver coverage.** Tested on Intel (ANV). NVK and the proprietary NVIDIA
   driver still need checking for `SYNC_FD` export and modifier imports.

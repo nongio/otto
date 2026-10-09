@@ -7,7 +7,7 @@
 // Rust guideline compliant 2026-02-21
 
 /// Seconds in a day.
-pub(crate) const DAY: i64 = 86_400;
+pub const DAY: i64 = 86_400;
 
 /// Days since 1970-01-01 of a civil date. `month` is 1 to 12.
 pub(crate) fn days_from_civil(year: i32, month: u32, day: u32) -> i64 {
@@ -21,7 +21,7 @@ pub(crate) fn days_from_civil(year: i32, month: u32, day: u32) -> i64 {
 }
 
 /// The civil date `(year, month, day)` of a day count since 1970-01-01.
-pub(crate) fn civil_from_days(days: i64) -> (i64, u32, u32) {
+pub fn civil_from_days(days: i64) -> (i64, u32, u32) {
     let days = days + 719_468;
     let era = days.div_euclid(146_097);
     let day_of_era = days - era * 146_097;
@@ -93,7 +93,7 @@ pub(crate) fn rfc3339_local(epoch: i64) -> String {
 ///
 /// Read from the C library, which knows the time zone rules; zero if it
 /// cannot say.
-pub(crate) fn local_offset(epoch: i64) -> i64 {
+pub fn local_offset(epoch: i64) -> i64 {
     let time: libc::time_t = epoch;
     // SAFETY: `tm` is plain data that `localtime_r` fills in; all-zero is a
     // valid value for it to start from.

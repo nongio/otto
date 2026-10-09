@@ -17,12 +17,14 @@ Launch **Settings** from the Dock or the launcher, or run `otto-settings`.
 
 | Pane | Covers |
 |------|--------|
-| General | Light or dark appearance, accent colour, interface font, GTK theme, desktop background colour and image, pointer and icon themes, the renderer |
+| General | The window switcher, the display language, the renderer, and where the configuration file is |
+| Appearance | Light or dark, accent colour, corners, frosting, window controls, interface font, GTK theme, desktop background and widget, the desk, pointer and icon themes, and the top bar's clock |
 | Displays | Resolution, refresh rate and arrangement of connected monitors, and the global interface scale |
 | Dock | Size, position, auto-hide, magnification, icon colorization |
 | Keyboard | Layout and options, repeat rate, and the shortcut list |
+| Dictation | The speech-to-text engine and whether its server runs, the language you speak, the hotword boost, and whether dictation starts at login |
 | Trackpad & Mouse | Tap to click, drag lock, natural scrolling, click method, scroll and pointer speed |
-| Sound | Interface sounds on or off, and which sound theme to use |
+| Sound | Interface sounds on or off and which sound theme to use, then a mixer like pavucontrol's: each app's volume and device, each device's port, volume, mute and whether it is the default, and each sound card's profile |
 | Power | What the lid switch and the power button do |
 | Lock & Login | Auto-lock timeout, and which lock screen and greeter to run |
 | Search | What the file index is doing, which folders it covers, whether it skips code repositories and removable drives |
@@ -62,17 +64,16 @@ per-display value.
 
 ## Renderer
 
-The **Renderer** row in General picks the GPU API Otto draws with: OpenGL or
-Vulkan. It applies to the login session only, since a windowed session (`otto --winit` or
+The **Renderer** row in General picks the GPU API Otto draws with: Vulkan, the
+default, or OpenGL. It applies to the login session only, since a windowed session (`otto --winit` or
 `--x11`) always uses OpenGL, and it takes effect after you log in again. Run
 Settings inside a windowed session and the row shows OpenGL with a note
-instead of a menu. Vulkan is part of the default build, but it also needs a
-working Vulkan driver for your GPU (on Arch, `vulkan-icd-loader` plus
-`vulkan-intel` or `vulkan-radeon`). Choosing Vulkan where it cannot start is
-safe: Otto logs why and draws that session with OpenGL, and the row then says
+instead of a menu. Vulkan needs a working Vulkan driver for your GPU (on Arch,
+`vulkan-icd-loader` plus `vulkan-intel` or `vulkan-radeon`). Where it cannot
+start, Otto logs why and draws that session with OpenGL, and the row then says
 Vulkan isn't available here instead of offering it. The setting is `renderer`
 under `[rendering]` in the config file, and `otto --tty-udev --renderer
-vulkan` overrides it for one session.
+gl` overrides it for one session.
 
 ## Shortcuts
 
@@ -145,6 +146,30 @@ that are the agent files you've added under
 to **Instructions file** opens the one in use, and **Open** next to
 **Configuration file** opens `agents.toml` itself.
 See [Ask and Agents](agents.md) for what each setting does.
+
+## Dictation
+
+The Dictation pane edits `~/.config/otto/dictation.toml`. Changes apply to
+the next dictation — `Ctrl+D` in the launcher, or `otto-dictate toggle`
+bound to a shortcut for other apps — with nothing to restart. The
+`OTTO_DICTATE_URL`, `OTTO_DICTATE_LANGUAGE` and `OTTO_DICTATE_HOTWORDS_BOOST`
+environment variables still win over the file.
+
+- **Engine** picks Parakeet, Whisper (English only) or CrispASR. Picking one
+  starts its speech server, `otto-stt-<engine>`, stops the others, and makes
+  it the one that starts at login.
+- **Speech server** says whether that server is running, with **Start** or
+  **Restart**. "Not installed" means the engine hasn't been set up yet:
+  `components/otto-dictate/engines/install.sh <engine>` does it.
+- **Language** is the language you speak, or **Automatic** to let the engine
+  tell. Parakeet and CrispASR always detect it themselves.
+- **Hotword boost** appears with CrispASR: how strongly it favours the names
+  the field expects, such as app names in the launcher. Above 6 it starts to
+  garble the words around them.
+- **Start dictation at login** turns otto-dictate's entry in
+  `~/.config/autostart` on or off. Off hides the entry rather than deleting
+  it. Otto only reads that folder with `xdg_autostart = true` (see
+  [Autostart](autostart.md)).
 
 ## From the keyboard
 

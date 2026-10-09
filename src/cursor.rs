@@ -387,7 +387,6 @@ impl CursorManager {
 
     /// Bilinearly resample the `src_w`×`src_h` region at (`src_x`, `src_y`) of
     /// an Argb8888 buffer `stride` texels wide into a `dst_w`×`dst_h` image.
-    #[allow(clippy::too_many_arguments)]
     fn resample(
         src: &[u8],
         stride: i32,

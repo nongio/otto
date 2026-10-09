@@ -57,19 +57,33 @@ Menu items support labels, icons, keyboard-shortcut hints, separators,
 checkboxes, radio groups and arbitrarily nested submenus. Disabled items are
 dimmed and inert.
 
+Click the application's name for Otto's own menu for it: **Minimise** puts
+the window away in the dock, and **Quit ‹App›** closes all of the
+application's windows, as Quit in the dock does. It is there whether or not
+the application has menus of its own.
+
+Prefer menus in the window? Turn off **Settings ▸ Top bar ▸ Show application
+menus**, or set `show_app_menu = false` under `[topbar]` in
+`~/.config/otto/config.toml`. The bar then shows just the application's name,
+and applications you open afterwards keep their menu bar in their own window.
+One already running may need restarting before its menu comes back.
+
 ### Getting an app to export its menu
 
 Not every application exports a DBusMenu. When one does not, the left zone shows
 just the application's name and the app keeps drawing its own menu bar in its
 window.
 
-- **GTK 3/4 apps.** These usually export automatically over the GTK
-  application-menu D-Bus interfaces.
-- **Qt/KDE apps.** These need `appmenu-qt5` / the `AppMenu` platform theme
-  plugin.
+- **Qt and KDE apps.** Run them with KDE's platform theme
+  (`plasma-integration`, `QT_QPA_PLATFORMTHEME=kde`). On Wayland they then
+  tell Otto where their menu is, and the bar shows it. Other themes, such as
+  `qt5ct`, keep the menu in the window.
+- **GTK apps running under XWayland.** These export through
+  `appmenu-gtk-module`: install it and start the app with
+  `GTK_MODULES=appmenu-gtk-module` and `GDK_BACKEND=x11`.
+- **GTK apps on Wayland.** These do not export a DBusMenu at all; the menu stays
+  in the window.
 - **Electron and browsers.** These mostly do not export menus.
-- **X11 apps.** These can export via `appmenu-gtk-module` and the
-  `UNITY_MENUBAR` path.
 
 The application name shown comes from the window's `app_id` mapped through the
 desktop entry database.
@@ -162,6 +176,10 @@ low_level = 20
 critical_level = 10
 width = 28
 height = 13
+# Colours are "#RGB", "#RRGGBB" or "#RRGGBBAA", alpha last as in CSS:
+# "#34C75980" is the green at half opacity.
+# Up to 1.6.0 eight digits meant "#AARRGGBB": move the alpha pair to the
+# end ("#FF34C759" becomes "#34C759FF"), or it reads as another colour.
 color_normal = "#34C759"
 color_low = "#FF9F0A"
 color_critical = "#FF3B30"
@@ -200,16 +218,31 @@ the layout switch keys.
 
 ## Clock
 
-The clock is on the far right. Its format is a
+The clock is on the far right. **Settings ▸ Top bar ▸ Clock** turns
+it on or off and picks its format from a list, each entry showing the current
+time the way the bar will write it. Both apply at once. With the clock off,
+the battery and tray move up to the edge.
+
+The same two settings live in Otto's configuration file, where any
 [chrono strftime](https://docs.rs/chrono/latest/chrono/format/strftime/index.html)
-string:
+format works:
+
+```toml
+# ~/.config/otto/config.toml
+[topbar]
+show_clock = true
+clock_format = "%a %-d %b  %H:%M"
+```
+
+An empty `clock_format` (the default) falls back to `clock_format` in the
+bar's own file, and then to your language's usual format:
 
 ```toml
 # ~/.config/otto/otto-bar.toml
 clock_format = "%B %-d, %A %H:%M"
 ```
 
-That default renders as `March 23, Thursday 21:16`. Some other useful formats:
+That one renders as `March 23, Thursday 21:16`. Some other useful formats:
 
 | Format | Renders as |
 |--------|------------|
@@ -255,5 +288,6 @@ see errors.
 has an SNI or "AppIndicator" option.
 
 **The clock format is ignored.** A malformed strftime string falls back to the
-default. Verify the file parses as TOML and the key is at the top level, not in
-a table.
+next format in line: the bar's own file, then your language's. In
+`otto-bar.toml` the key sits at the top level, not in a table; in Otto's
+configuration it goes under `[topbar]`.

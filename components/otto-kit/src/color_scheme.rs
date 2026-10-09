@@ -20,7 +20,7 @@
 
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::LazyLock;
-use zbus::zvariant::{OwnedValue, Value};
+use zbus::zvariant::Value;
 
 use crate::theme::ColorScheme;
 
@@ -82,9 +82,8 @@ pub fn export(scheme: ColorScheme) -> String {
     format!("{ENV}={text}")
 }
 
-/// Spawn a background tokio task that:
-/// 1. Reads the initial `color-scheme` from the XDG Settings portal.
-/// 2. Subscribes to `SettingChanged` and updates the atomic on every change.
+/// Follow `color-scheme` on the Settings portal: read it once, then update the
+/// atomic on every change (see [`crate::portal_settings`]).
 ///
 /// Safe to call multiple times — only one watcher is ever active.
 pub fn spawn_color_scheme_watcher() {
@@ -94,11 +93,17 @@ pub fn spawn_color_scheme_watcher() {
         return;
     }
 
-    crate::portal_runtime::spawn("color-scheme-watcher", async move {
-        if let Err(e) = run_watcher().await {
-            tracing::warn!("color-scheme watcher stopped: {e}");
-        }
-    });
+    crate::portal_settings::watch(
+        "color-scheme-watcher",
+        &[("org.freedesktop.appearance", "color-scheme")],
+        |_, _, value| {
+            if let Some(v) = extract_u32(value) {
+                tracing::debug!("color-scheme: {v}");
+                COLOR_SCHEME_VALUE.store(v, Ordering::Relaxed);
+                crate::portal_runtime::theme_changed();
+            }
+        },
+    );
 }
 
 /// Extract u32 from a possibly variant-wrapped `Value`.
@@ -111,59 +116,4 @@ fn extract_u32(val: Value<'_>) -> Option<u32> {
         Value::Value(inner) => extract_u32(*inner),
         _ => None,
     }
-}
-
-async fn run_watcher() -> Result<(), zbus::Error> {
-    use zbus::{proxy, Connection};
-
-    #[proxy(
-        interface = "org.freedesktop.portal.Settings",
-        default_service = "org.freedesktop.portal.Desktop",
-        default_path = "/org/freedesktop/portal/desktop"
-    )]
-    trait Settings {
-        fn read(&self, namespace: &str, key: &str) -> zbus::Result<OwnedValue>;
-        #[zbus(signal)]
-        fn setting_changed(&self, namespace: &str, key: &str, value: Value<'_>)
-            -> zbus::Result<()>;
-    }
-
-    let conn = Connection::session().await?;
-    let proxy = SettingsProxy::new(&conn).await?;
-
-    // Read initial value. The portal returns the value wrapped in a variant.
-    match proxy
-        .read("org.freedesktop.appearance", "color-scheme")
-        .await
-    {
-        Ok(owned) => {
-            // OwnedValue is Value<'static>; convert into Value then extract.
-            let val: Value<'_> = owned.into();
-            if let Some(v) = extract_u32(val) {
-                COLOR_SCHEME_VALUE.store(v, Ordering::Relaxed);
-                crate::portal_runtime::theme_changed();
-                tracing::debug!("color-scheme initial value: {v}");
-            }
-        }
-        Err(e) => tracing::debug!("color-scheme read failed (portal absent?): {e}"),
-    }
-
-    // Watch for changes via zbus signal stream.
-    let mut stream = proxy.receive_setting_changed().await?;
-    loop {
-        use futures_util::StreamExt as _;
-        let Some(signal) = stream.next().await else {
-            break;
-        };
-        let args = signal.args()?;
-        if args.namespace == "org.freedesktop.appearance" && args.key == "color-scheme" {
-            if let Some(v) = extract_u32(args.value) {
-                tracing::debug!("color-scheme changed to: {v}");
-                COLOR_SCHEME_VALUE.store(v, Ordering::Relaxed);
-                crate::portal_runtime::theme_changed();
-            }
-        }
-    }
-
-    Ok(())
 }

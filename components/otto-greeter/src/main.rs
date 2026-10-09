@@ -15,8 +15,10 @@ mod greetd;
 mod session;
 
 use greetd::{AuthMessageType, Client, Request, Response};
+use otto_auth_ui::power::PowerRequest;
 use otto_auth_ui::{
-    reader, Action, Appearance, Field, Finger, Panel, PowerAction, Status, User, View,
+    frame_in_flight, reader, Action, Appearance, Clock, Field, Finger, Panel, PowerAction,
+    SecretInput, Status, User, View,
 };
 use otto_kit::{surfaces::LayerShellSurface, App, AppContext, AppRunner};
 use session::Session;
@@ -43,12 +45,6 @@ const SESSION_START_TIMEOUT: std::time::Duration = std::time::Duration::from_sec
 /// It is a safety net, not a deadline: the panel finishes well inside it, and
 /// it only has to stay clear of however long the mark takes to settle.
 const MARK_SETTLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
-
-/// How long a painted frame is given to reach the screen before the greeter
-/// paints regardless. Frames are paced by the compositor's frame callbacks —
-/// that is what keeps an animating panel from painting faster than anyone can
-/// see — and this is the bound on trusting it to send them.
-const FRAME_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(100);
 
 /// What greetd was asked, remembered until it answers.
 ///
@@ -116,7 +112,8 @@ struct Greeter {
     /// real name and avatar without re-reading the password database to draw.
     user: Option<User>,
     /// The current input buffer — username or auth answer depending on stage.
-    input: String,
+    /// Wiped whenever anything leaves it.
+    input: SecretInput,
     /// The buffer holds a suggested username nobody has typed, so the first
     /// edit replaces it rather than adding to it. A field cannot show a
     /// selection, so this stands in for one: the offer is either taken with
@@ -148,7 +145,9 @@ struct Greeter {
     /// The minute the clock was last drawn showing. A login screen left up
     /// overnight otherwise keeps the time it appeared at — the clock draws
     /// from a closure the engine records once and replays.
-    clock_minute: Option<i64>,
+    clock: Clock,
+    /// A power button's request, until logind has answered it.
+    power_request: Option<PowerRequest>,
 }
 
 impl Greeter {
@@ -181,7 +180,7 @@ impl Greeter {
             username: String::new(),
             input: suggested
                 .as_ref()
-                .map(|user| user.name.clone())
+                .map(|user| SecretInput::from(user.name.as_str()))
                 .unwrap_or_default(),
             input_is_a_suggestion: suggested.is_some(),
             user: suggested,
@@ -193,7 +192,8 @@ impl Greeter {
             submit_when_asked: false,
             sessions,
             session_index,
-            clock_minute: None,
+            clock: Clock::default(),
+            power_request: None,
         }
     }
 
@@ -372,27 +372,16 @@ impl Greeter {
                     // environment is barer than a session's, so they are
                     // usually English. A request for a finger is said again
                     // from the catalogues; the rest keeps its wording.
-                    match reader::finger_request(&auth_message) {
-                        Some(request) => {
-                            self.finger_pending = true;
-                            self.info = Some(reader::request_line(request, "greeter"));
-                        }
-                        None => {
-                            self.finger_pending |= reader::mentions_fingerprint(&auth_message);
-                            self.info = Some(auth_message);
-                        }
-                    }
+                    let (finger, line) = reader::info_line(auth_message, "greeter");
+                    self.finger_pending |= finger;
+                    self.info = Some(line);
                     self.send(
                         Asked::Auth,
                         Request::PostAuthMessageResponse { response: None },
                     );
                 }
                 AuthMessageType::Error => {
-                    self.error = Some(if reader::is_no_match(&auth_message) {
-                        reader::no_match_line("greeter")
-                    } else {
-                        auth_message
-                    });
+                    self.error = Some(reader::error_line(auth_message, "greeter"));
                     self.send(
                         Asked::Auth,
                         Request::PostAuthMessageResponse { response: None },
@@ -481,7 +470,7 @@ impl Greeter {
             Asked::Start,
             Request::StartSession {
                 cmd: session.command,
-                env: Vec::new(),
+                env: session_env(),
             },
         );
     }
@@ -570,7 +559,7 @@ impl Greeter {
 
         match self.stage {
             Stage::Username => {
-                let username = self.input.trim().to_string();
+                let username = self.input.as_str().trim().to_string();
                 if username.is_empty() {
                     return;
                 }
@@ -592,7 +581,7 @@ impl Greeter {
                 self.send(Asked::Auth, Request::CreateSession { username });
             }
             Stage::Prompt { .. } => {
-                let answer = std::mem::take(&mut self.input);
+                let answer = self.input.take();
                 self.error = None;
                 // Whatever was queued has now gone out as this answer.
                 self.password_requested = false;
@@ -612,11 +601,11 @@ impl Greeter {
     fn view(&self) -> View<'_> {
         let field = match self.stage {
             // The panel is given only the length of a secret, never the secret.
-            Stage::Prompt { secret: true } => Field::Secret(self.input.chars().count()),
+            Stage::Prompt { secret: true } => Field::Secret(self.input.chars()),
             // A password typed before PAM has asked for it is a secret too,
             // and must not be echoed while it waits.
-            _ if self.password_requested => Field::Secret(self.input.chars().count()),
-            _ => Field::Text(&self.input),
+            _ if self.password_requested => Field::Secret(self.input.chars()),
+            _ => Field::Text(self.input.as_str()),
         };
 
         let status = match (&self.stage, self.error.as_deref(), self.info.as_deref()) {
@@ -687,21 +676,15 @@ impl Greeter {
     /// Whether the last painted frame is still on its way to the screen, in
     /// which case there is nothing to gain by painting another one yet.
     ///
-    /// Only until [`FRAME_TIMEOUT`], though: a compositor that stops answering
-    /// with frame callbacks must not be able to freeze the login screen, which
-    /// is not something anyone can close and reopen.
+    /// Only until [`otto_auth_ui::FRAME_TIMEOUT`], though: a compositor that
+    /// stops answering with frame callbacks must not be able to freeze the
+    /// login screen, which is not something anyone can close and reopen.
     fn frame_in_flight(&self) -> bool {
-        self.painted_at
-            .is_some_and(|at| at.elapsed() < FRAME_TIMEOUT)
-            && self
-                .surface
+        frame_in_flight(self.painted_at, || {
+            self.surface
                 .as_ref()
                 .is_some_and(|surface| surface.base_surface().frame_in_flight())
-    }
-
-    /// Whether the minute has turned since the clock was last drawn.
-    fn clock_stale(&self) -> bool {
-        self.clock_minute != Some(chrono::Local::now().timestamp() / 60)
+        })
     }
 
     /// Paint the scene as it currently stands, without touching its state.
@@ -712,8 +695,7 @@ impl Greeter {
         }
         self.painted_at = Some(std::time::Instant::now());
 
-        if self.clock_stale() {
-            self.clock_minute = Some(chrono::Local::now().timestamp() / 60);
+        if self.clock.catch_up() {
             if let Some(panel) = self.panel.as_ref() {
                 panel.refresh_clock();
             }
@@ -741,6 +723,8 @@ impl Greeter {
             Action::CycleSession => self.cycle_session(),
             Action::Power(power) => self.power(power),
             Action::UsePassword => self.use_password(),
+            // Only a dialog panel (otto-authorize) draws Cancel.
+            Action::Cancel => {}
         }
     }
 
@@ -750,42 +734,28 @@ impl Greeter {
         }
     }
 
-    /// Suspend, restart or shut down through systemd.
+    /// Suspend, restart or shut down, through logind.
     ///
     /// Whether an unprivileged greeter may do this is polkit's call, not the
-    /// greeter's; if it refuses, say so on the panel rather than failing mute.
+    /// greeter's. The answer arrives in [`Greeter::power_answered`]; a refusal
+    /// is said on the panel rather than failing mute.
     fn power(&mut self, action: PowerAction) {
-        // The verb is systemctl's, not the user's: it goes on the command
-        // line, and the panel gets a message keyed by the action instead.
-        let (verb, denied, failed) = match action {
-            PowerAction::Suspend => (
-                "suspend",
-                "greeter-power-suspend-denied",
-                "greeter-power-suspend-failed",
-            ),
-            PowerAction::Restart => (
-                "reboot",
-                "greeter-power-restart-denied",
-                "greeter-power-restart-failed",
-            ),
-            PowerAction::Shutdown => (
-                "poweroff",
-                "greeter-power-shutdown-denied",
-                "greeter-power-shutdown-failed",
-            ),
-        };
-
-        match std::process::Command::new("systemctl").arg(verb).status() {
-            Ok(status) if status.success() => {}
-            Ok(status) => {
-                tracing::warn!(verb, ?status, "systemctl refused");
-                self.error = Some(otto_kit::t_owned!(denied));
-            }
-            Err(err) => {
-                tracing::warn!(verb, %err, "could not run systemctl");
-                self.error = Some(otto_kit::t_owned!(failed));
-            }
+        if self.power_request.is_none() {
+            self.power_request = Some(PowerRequest::start(action));
         }
+    }
+
+    /// Take logind's answer to a power button, if it has given one. Returns
+    /// whether the panel needs redrawing.
+    fn power_answered(&mut self) -> bool {
+        let Some(answer) = self.power_request.as_ref().and_then(PowerRequest::poll) else {
+            return false;
+        };
+        let action = self.power_request.take().expect("polled above").action();
+        if let Err(err) = answer {
+            self.error = Some(err.line(action, "greeter"));
+        }
+        true
     }
 }
 
@@ -846,7 +816,7 @@ impl App for Greeter {
     fn on_update(&mut self, _ctx: &AppContext) {
         // Collect anything greetd has said since the last pass. The socket is
         // in the loop's poll set, so this runs when it has something to say.
-        if self.pump() || self.tick() {
+        if self.pump() | self.power_answered() || self.tick() {
             self.draw();
             return;
         }
@@ -864,7 +834,7 @@ impl App for Greeter {
         let animating = self
             .animating_until
             .is_some_and(|deadline| std::time::Instant::now() < deadline);
-        if animating || self.panel.as_ref().is_some_and(Panel::frame_due) || self.clock_stale() {
+        if animating || self.panel.as_ref().is_some_and(Panel::frame_due) || self.clock.stale() {
             self.paint();
             return;
         }
@@ -882,7 +852,7 @@ impl App for Greeter {
         // loop for the next one. The timer is only the way out of a callback
         // that never comes — see `frame_in_flight`.
         if self.frame_in_flight() {
-            return Some(FRAME_TIMEOUT);
+            return Some(otto_auth_ui::FRAME_TIMEOUT);
         }
 
         // The Touch ID mark paces itself; sleep exactly up to its next frame.
@@ -899,9 +869,7 @@ impl App for Greeter {
 
         // The clock only changes on the minute, and nothing else needs the
         // loop awake in between.
-        let clock = Some(std::time::Duration::from_secs(
-            60 - (chrono::Local::now().timestamp() % 60).unsigned_abs(),
-        ));
+        let clock = Some(Clock::until_next_minute());
 
         [mark, transition, session, clock]
             .into_iter()
@@ -983,13 +951,15 @@ impl App for Greeter {
             _ => {
                 // Anything the keymap turned into text goes into the buffer;
                 // control characters (Enter, Tab, …) are handled above.
-                let printable: String = event
-                    .utf8
-                    .as_deref()
-                    .unwrap_or_default()
-                    .chars()
-                    .filter(|c| !c.is_control())
-                    .collect();
+                let printable: otto_auth_ui::Zeroizing<String> = otto_auth_ui::Zeroizing::new(
+                    event
+                        .utf8
+                        .as_deref()
+                        .unwrap_or_default()
+                        .chars()
+                        .filter(|c| !c.is_control())
+                        .collect(),
+                );
                 if printable.is_empty() {
                     return;
                 }
@@ -1012,12 +982,7 @@ impl App for Greeter {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-        )
-        .init();
+    otto_kit::logging::init("info");
 
     // Before the first string is looked up and before anything is drawn: the
     // catalogue is fixed by the first lookup, and the greeter draws at once.
@@ -1026,6 +991,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let client = Client::connect()?;
     AppRunner::new(Greeter::new(client)).run()?;
     Ok(())
+}
+
+/// What greetd puts in PAM's environment before `pam_open_session`, for
+/// `pam_systemd` to register the session with.
+///
+/// Every session offered comes from `wayland-sessions`, so each is a Wayland
+/// session, and logind should know: without `XDG_SESSION_TYPE` greetd leaves
+/// it a `tty` session, and logind then keeps any older login of the same
+/// user (a text console on another VT) as the user's *display* session.
+/// polkitd sends requests from programs outside a logind session — every app
+/// Otto launches runs in a systemd user scope — to that display session, so
+/// they would never reach Otto's polkit agent.
+fn session_env() -> Vec<String> {
+    vec!["XDG_SESSION_TYPE=wayland".to_string()]
 }
 
 #[cfg(test)]
@@ -1045,7 +1024,7 @@ mod tests {
     /// database of the machine running the test happens to hold.
     fn greeter_offering(name: &str) -> Greeter {
         let mut greeter = greeter();
-        greeter.input = name.to_string();
+        greeter.input = name.into();
         greeter.input_is_a_suggestion = true;
         greeter.user = Some(User::lookup(name));
         greeter
@@ -1061,7 +1040,7 @@ mod tests {
 
         assert!(greeter.take_over_the_suggestion());
         greeter.input.push('a');
-        assert_eq!(greeter.input, "a");
+        assert_eq!(greeter.input.as_str(), "a");
         assert!(
             greeter.user.is_none(),
             "the card must stop showing an account that is being typed over"
@@ -1070,7 +1049,7 @@ mod tests {
         // Only the first edit; after that the field is an ordinary one.
         assert!(!greeter.take_over_the_suggestion());
         greeter.input.push_str("da");
-        assert_eq!(greeter.input, "ada");
+        assert_eq!(greeter.input.as_str(), "ada");
     }
 
     /// Backspace over a suggestion clears the whole thing, as it would over a
@@ -1130,7 +1109,7 @@ mod tests {
             "the abandoned request and the cancellation are both still owed"
         );
 
-        greeter.input = "riccardo".to_string();
+        greeter.input = "riccardo".into();
         greeter.submit();
 
         assert_eq!(greeter.username, "riccardo", "Enter has to start the login");
@@ -1242,7 +1221,7 @@ mod tests {
     #[test]
     fn the_username_step_ends_when_the_username_is_taken() {
         let mut greeter = greeter();
-        greeter.input = "riccardo".to_string();
+        greeter.input = "riccardo".into();
 
         greeter.submit();
         assert!(greeter.conversation, "greetd is holding a session now");
@@ -1406,7 +1385,7 @@ mod tests {
     fn a_password_typed_before_the_prompt_is_sent_when_it_arrives() {
         let mut greeter = waiting_for_a_finger();
         greeter.use_password();
-        greeter.input = "hunter2".to_string();
+        greeter.input = "hunter2".into();
 
         greeter.submit();
         assert!(greeter.submit_when_asked, "Enter should be remembered");
@@ -1415,7 +1394,11 @@ mod tests {
             1,
             "nothing may be sent while the reader still owns the conversation"
         );
-        assert_eq!(greeter.input, "hunter2", "the answer must not be lost");
+        assert_eq!(
+            greeter.input.as_str(),
+            "hunter2",
+            "the answer must not be lost"
+        );
         assert!(matches!(greeter.view().status, Some(Status::Info(_))));
 
         // The reader gives up and `pam_unix` asks its question.
@@ -1442,7 +1425,7 @@ mod tests {
     fn a_queued_password_is_not_given_to_a_visible_prompt() {
         let mut greeter = waiting_for_a_finger();
         greeter.use_password();
-        greeter.input = "hunter2".to_string();
+        greeter.input = "hunter2".into();
         greeter.submit();
 
         greeter.outstanding.pop_front();

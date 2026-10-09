@@ -346,25 +346,11 @@ fn largest_at_or_below(wanted: i32, find: impl Fn(i32) -> Option<String>) -> Opt
 /// The directories a theme may live in, most specific first.
 fn icon_search_roots() -> Vec<std::path::PathBuf> {
     let mut roots = Vec::new();
-    if let Some(home) = std::env::var_os("HOME") {
-        roots.push(std::path::PathBuf::from(&home).join(".icons"));
+    if let Some(home) = crate::xdg::home() {
+        roots.push(home.join(".icons"));
     }
-    match std::env::var_os("XDG_DATA_HOME") {
-        Some(data) if !data.is_empty() => roots.push(std::path::PathBuf::from(data).join("icons")),
-        _ => {
-            if let Some(home) = std::env::var_os("HOME") {
-                roots.push(std::path::PathBuf::from(home).join(".local/share/icons"));
-            }
-        }
-    }
-    let data_dirs = std::env::var("XDG_DATA_DIRS")
-        .unwrap_or_else(|_| "/usr/local/share:/usr/share".to_string());
-    roots.extend(
-        data_dirs
-            .split(':')
-            .filter(|dir| !dir.is_empty())
-            .map(|dir| std::path::Path::new(dir).join("icons")),
-    );
+    roots.extend(crate::xdg::data_home().map(|data| data.join("icons")));
+    roots.extend(crate::xdg::data_dirs().iter().map(|dir| dir.join("icons")));
     roots
 }
 

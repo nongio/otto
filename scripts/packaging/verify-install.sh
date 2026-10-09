@@ -32,17 +32,19 @@ check() {
 }
 
 echo "== binaries =="
-for b in otto otto-bar otto-islands otto-lock otto-settings otto-files \
-         otto-launcher otto-emoji otto-stash otto-peek otto-media-worker otto-msg otto-search otto-greeter otto-rdp otto-agents; do
+for b in otto otto-bar otto-islands otto-lock otto-authorize otto-settings otto-files \
+         otto-launcher otto-emoji otto-stash otto-canvas otto-peek otto-preview otto-media-worker otto-msg otto-search otto-greeter otto-rdp otto-agents; do
     check "/usr/bin/$b" exec
 done
 check /usr/libexec/xdg-desktop-portal-otto exec
+check /usr/share/polkit-1/actions/org.otto.settings.policy
 check /usr/bin/otto-look exec
 
 echo "== session and applications =="
 check /usr/share/wayland-sessions/otto.desktop
 check /usr/share/applications/otto-files.desktop
 check /usr/share/applications/otto-settings.desktop
+check /usr/share/applications/otto-preview.desktop
 # The Trash window is otto-files behind its own entry, so it gets its own
 # icon in the dock and the applications list. Every package must ship it.
 check /usr/share/applications/otto-trash.desktop
@@ -88,6 +90,33 @@ else
     echo "  (not packaged for $flavour, skipped)"
 fi
 
+echo "== background widgets =="
+# The ewwii configuration Otto copies to the cache and runs. ewwii and Python
+# are optional, so the files have to be there whatever is installed, and the
+# scripts have to stay executable.
+w=/usr/share/otto/widgets/ewwii
+check "$w/ewwii.nbcl"
+check "$w/ewwii.scss"
+check "$w/scripts/month.py" exec
+check "$w/generators/focus-grid.py" exec
+check "$w/generators/lines-grid.py" exec
+# What Otto does with them at a first login: a copy in a fresh cache, every
+# generator run there with the usable size. Only where Python is installed.
+if command -v python3 >/dev/null; then
+    tmp=$(mktemp -d)
+    cp -r "$w/." "$tmp/"
+    if (cd "$tmp" && for g in generators/*; do "$g" 1440 930 >/dev/null || exit 1; done \
+            && scripts/month.py month >/dev/null) \
+       && [[ -f "$tmp/focus/grid@2x.png" && -f "$tmp/lines/grid@2x.png" ]]; then
+        echo "  ok  the widgets' generators and scripts run"
+    else
+        echo "FAILED: the widgets' generators or scripts"; fail=1
+    fi
+    rm -rf "$tmp"
+else
+    echo "  (no python3, scripts not run)"
+fi
+
 echo "== documentation =="
 check /usr/share/doc/otto/README.md
 check /usr/share/doc/otto/portals.conf.example
@@ -108,6 +137,21 @@ if [[ "$flavour" != rpm ]]; then
     done
 fi
 
+echo "== wallpaper =="
+# The shipped config names it as background_image.
+check /usr/share/otto/wallpaper.jpg
+
+echo "== icon theme (Otto-MacTahoe) =="
+for theme in Otto-MacTahoe Otto-MacTahoe-light Otto-MacTahoe-dark; do
+    check "/usr/share/icons/$theme/index.theme"
+done
+# Through a link to a file, through a link to a directory, and the cursor the
+# config names (left_ptr is a link): the deb and rpm create these on install
+# from a list rather than shipping them.
+check /usr/share/icons/Otto-MacTahoe/apps/scalable/org.mozilla.firefox.svg
+check /usr/share/icons/Otto-MacTahoe-light/apps/scalable/firefox.svg
+check /usr/share/icons/Otto-MacTahoe/cursors/left_ptr
+
 echo "== PAM =="
 if [[ "$flavour" == deb ]]; then
     check /usr/share/doc/otto/otto-lock.pam.example
@@ -119,7 +163,8 @@ echo "== desktop entry is valid =="
 if command -v desktop-file-validate >/dev/null; then
     for d in /usr/share/applications/otto-files.desktop \
              /usr/share/applications/otto-trash.desktop \
-             /usr/share/applications/otto-settings.desktop; do
+             /usr/share/applications/otto-settings.desktop \
+             /usr/share/applications/otto-preview.desktop; do
         [[ -f "$d" ]] || continue   # already reported missing above
         desktop-file-validate "$d" && echo "  ok  $d" || fail=1
     done
@@ -148,7 +193,8 @@ echo "== Exec= targets resolve =="
 for d in /usr/share/wayland-sessions/otto.desktop \
          /usr/share/applications/otto-files.desktop \
          /usr/share/applications/otto-trash.desktop \
-         /usr/share/applications/otto-settings.desktop; do
+         /usr/share/applications/otto-settings.desktop \
+         /usr/share/applications/otto-preview.desktop; do
     [[ -f "$d" ]] || continue   # already reported missing above
     exe=$(sed -n 's/^Exec=\([^ ]*\).*/\1/p' "$d" | head -1)
     [[ -n "$exe" ]] || { echo "no Exec= in $d"; fail=1; continue; }
@@ -159,6 +205,19 @@ for d in /usr/share/wayland-sessions/otto.desktop \
     fi
     echo "  ok  $d -> $exe"
 done
+
+echo "== runtime dependencies =="
+# Otto spawns Xwayland at startup for X11 applications; every package
+# declares it, so its absence means the dependency was dropped. A locally
+# built package (OTTO_SKIP_RUN) may be installed without its dependencies —
+# the rpm test uses `--nodeps` — so there it proves nothing.
+if [[ "${OTTO_SKIP_RUN:-0}" == 1 ]]; then
+    echo "  (skipped: locally built package, installed without dependencies)"
+elif command -v Xwayland >/dev/null; then
+    echo "  ok  Xwayland"
+else
+    echo "MISSING: Xwayland not on PATH (declared dependency not installed)"; fail=1
+fi
 
 echo "== shared libraries resolve =="
 # The real dependency test. A package can declare every dependency it likes;
@@ -174,9 +233,9 @@ echo "== shared libraries resolve =="
 if [[ "${OTTO_SKIP_RUN:-0}" == 1 ]]; then
     echo "  (skipped: locally built package, dependency list is not authoritative)"
 else
-for b in /usr/bin/otto /usr/bin/otto-bar /usr/bin/otto-islands /usr/bin/otto-lock \
-         /usr/bin/otto-settings /usr/bin/otto-files /usr/bin/otto-launcher /usr/bin/otto-emoji /usr/bin/otto-stash /usr/bin/otto-msg /usr/bin/otto-search \
-         /usr/bin/otto-peek /usr/bin/otto-media-worker \
+for b in /usr/bin/otto /usr/bin/otto-bar /usr/bin/otto-islands /usr/bin/otto-lock /usr/bin/otto-authorize \
+         /usr/bin/otto-settings /usr/bin/otto-files /usr/bin/otto-launcher /usr/bin/otto-emoji /usr/bin/otto-stash /usr/bin/otto-canvas /usr/bin/otto-msg /usr/bin/otto-search \
+         /usr/bin/otto-peek /usr/bin/otto-preview /usr/bin/otto-media-worker \
          /usr/bin/otto-greeter /usr/bin/otto-rdp /usr/bin/otto-agents \
          /usr/libexec/xdg-desktop-portal-otto; do
     [[ -x "$b" ]] || continue   # already reported missing above
@@ -208,8 +267,8 @@ else
 # --version loads the binary and every library it links, then exits: enough
 # to prove the install is runnable without a seat, a GPU or a compositor.
 "/usr/bin/otto" --version || { echo "otto --version failed"; fail=1; }
-for b in otto-bar otto-islands otto-lock otto-settings otto-files \
-         otto-launcher otto-emoji otto-stash otto-peek otto-media-worker otto-msg otto-search otto-greeter otto-rdp otto-agents; do
+for b in otto-bar otto-islands otto-lock otto-authorize otto-settings otto-files \
+         otto-launcher otto-emoji otto-stash otto-canvas otto-peek otto-preview otto-media-worker otto-msg otto-search otto-greeter otto-rdp otto-agents; do
     [[ -x "/usr/bin/$b" ]] || continue
     # Not every component parses --version; a component that instead prints
     # usage and exits non-zero has still loaded successfully. Only a loader

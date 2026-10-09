@@ -60,10 +60,15 @@ impl ToplevelSurface {
     /// * `height` - Initial height in logical pixels
     ///
     /// # Example
+    /// `no_run`: needs a running app connected to a Wayland compositor.
+    ///
     /// ```no_run
     /// use otto_kit::surfaces::ToplevelSurface;
     ///
+    /// # fn main() -> Result<(), otto_kit::surfaces::SurfaceError> {
     /// let surface = ToplevelSurface::new("My Window", 800, 600)?;
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn new(title: &str, width: i32, height: i32) -> Result<Self, SurfaceError> {
         let compositor = AppContext::compositor_state();

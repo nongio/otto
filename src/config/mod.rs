@@ -99,6 +99,12 @@ pub struct Config {
     #[serde(default)]
     pub desk: DeskConfig,
     #[serde(default)]
+    pub canvas: CanvasConfig,
+    #[serde(default)]
+    pub desktop: DesktopConfig,
+    #[serde(default)]
+    pub topbar: TopbarConfig,
+    #[serde(default)]
     pub search: SearchConfig,
     #[serde(default)]
     pub workspaces: WorkspacesConfig,
@@ -110,6 +116,11 @@ pub struct Config {
     pub exec_once: Vec<RunCommandConfig>,
     #[serde(default)]
     pub xdg_autostart: bool,
+    /// Run Otto's polkit authentication agent (`otto-authorize
+    /// --polkit-agent`) for the session — see `src/polkit_agent.rs`. Off only
+    /// for someone who runs another agent of their own.
+    #[serde(default = "default_polkit_agent")]
+    pub polkit_agent: bool,
     #[serde(default)]
     pub systemd_notify: bool,
     #[serde(skip)]
@@ -143,7 +154,7 @@ impl Default for Config {
             // the cursor and every panel twice the size it should be.
             screen_scale: 1.0,
             displays: DisplaysConfig::default(),
-            cursor_theme: "Notwaita-Black".to_string(),
+            cursor_theme: "Otto-MacTahoe".to_string(),
             icon_theme: None,
             cursor_size: 24,
             input: InputConfig::default(),
@@ -174,12 +185,16 @@ impl Default for Config {
             login: LoginConfig::default(),
             lock: LockConfig::default(),
             desk: DeskConfig::default(),
+            canvas: CanvasConfig::default(),
+            desktop: DesktopConfig::default(),
+            topbar: TopbarConfig::default(),
             search: SearchConfig::default(),
             workspaces: WorkspacesConfig::default(),
             tiling: TilingConfig::default(),
             rendering: RenderingConfig::default(),
             exec_once: Vec::new(),
             xdg_autostart: false,
+            polkit_agent: true,
             systemd_notify: false,
         };
         config.rebuild_shortcut_bindings();
@@ -241,7 +256,7 @@ impl Config {
         let _guard = CONFIG_WRITE
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let (config, errors) = Self::load_layered_reporting();
+        let (config, errors) = Self::load_layered_reporting(None);
         if let Some(error) = errors.into_iter().next() {
             return Err(error);
         }
@@ -250,8 +265,42 @@ impl Config {
         Ok((previous, next))
     }
 
+    /// Every layer merged as [`Config::reload`] would, but with the dotted key
+    /// `without` left out of the writable file — what a `Reset` of it would
+    /// leave in force — and nothing installed or written.
+    ///
+    /// A layer that fails to parse is an error, as it is for a reload.
+    pub fn load_without(without: &str) -> Result<Config, String> {
+        let (config, errors) = Self::load_layered_reporting(Some(without));
+        match errors.into_iter().next() {
+            Some(error) => Err(error),
+            None => Ok(config),
+        }
+    }
+
+    /// Install `next` as the live configuration, but only while the live one
+    /// is still `expected`: a snapshot prepared earlier (and shown to the
+    /// user) must not undo whatever changed since. Returns the previous
+    /// snapshot and the new one, or `None` if the configuration moved on.
+    pub fn install_if_current(
+        expected: &Arc<Config>,
+        next: Config,
+    ) -> Option<(Arc<Config>, Arc<Config>)> {
+        let _guard = CONFIG_WRITE
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let previous = Self::current();
+        if !Arc::ptr_eq(&previous, expected) {
+            return None;
+        }
+        let mut next = next;
+        next.rebuild_shortcut_bindings();
+        let next = Self::store(next);
+        Some((previous, next))
+    }
+
     fn init() -> Self {
-        let (config, errors) = Self::load_layered_reporting();
+        let (config, errors) = Self::load_layered_reporting(None);
         for error in &errors {
             warn!("{error}");
         }
@@ -266,7 +315,10 @@ impl Config {
 
     /// Merge every configuration layer, lowest priority first, reporting the
     /// layers that could not be parsed instead of quietly dropping them.
-    fn load_layered_reporting() -> (Self, Vec<String>) {
+    ///
+    /// `without` is a dotted key read as absent from the writable file; see
+    /// [`Config::load_without`].
+    fn load_layered_reporting(without: Option<&str>) -> (Self, Vec<String>) {
         let mut errors: Vec<String> = Vec::new();
         let mut merged =
             toml::Value::try_from(Self::default()).expect("default config is always valid toml");
@@ -278,6 +330,7 @@ impl Config {
 
         let layers = config_layers();
         let found_any_config = !layers.is_empty();
+        let writable = without.map(|_| writable_config_path());
 
         for layer in layers {
             let content = match std::fs::read_to_string(&layer) {
@@ -289,8 +342,13 @@ impl Config {
                     continue;
                 }
             };
-            match content.parse::<toml::Value>() {
-                Ok(value) => {
+            match toml::from_str::<toml::Value>(&content) {
+                Ok(mut value) => {
+                    if let (Some(key), Some(writable)) = (without, writable.as_ref()) {
+                        if &layer == writable {
+                            remove_dotted(&mut value, key);
+                        }
+                    }
                     merge_value(&mut merged, value);
                     tracing::info!("Loaded config layer from {}", layer.display());
                 }
@@ -332,6 +390,21 @@ impl Config {
         descriptor: &DisplayDescriptor<'_>,
     ) -> Option<DisplayProfile> {
         self.displays.resolve(name, descriptor)
+    }
+}
+
+/// Take the dotted key `path` out of a TOML document, if it is there.
+fn remove_dotted(doc: &mut toml::Value, path: &str) {
+    let (parent, leaf) = path.rsplit_once('.').unwrap_or(("", path));
+    let mut value = doc;
+    for segment in parent.split('.').filter(|s| !s.is_empty()) {
+        let Some(next) = value.get_mut(segment) else {
+            return;
+        };
+        value = next;
+    }
+    if let Some(table) = value.as_table_mut() {
+        table.remove(leaf);
     }
 }
 
@@ -707,7 +780,7 @@ fn report_materialized_dock_keys_in_file(path: &std::path::Path) {
     let Ok(content) = std::fs::read_to_string(path) else {
         return;
     };
-    let Ok(doc) = content.parse::<toml::Value>() else {
+    let Ok(doc) = toml::from_str::<toml::Value>(&content) else {
         return; // a parse error is reported when the file is loaded
     };
 
@@ -965,7 +1038,7 @@ pub struct LoginConfig {
 impl Default for LoginConfig {
     fn default() -> Self {
         Self {
-            greeter_command: "otto-greeter".to_string(),
+            greeter_command: DEFAULT_GREETER.to_string(),
             greeter_args: Vec::new(),
         }
     }
@@ -1136,14 +1209,25 @@ pub struct RenderingConfig {
 }
 
 /// A GPU api the tty backend can draw with.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum RendererKind {
     /// Skia on OpenGL ES through EGL.
-    #[default]
     Gl,
     /// Skia on Vulkan. Needs a build with the `vulkan` feature.
     Vulkan,
+}
+
+/// Vulkan in a build that includes it, OpenGL otherwise. A GPU Vulkan cannot
+/// start on still falls back to OpenGL at startup.
+impl Default for RendererKind {
+    fn default() -> Self {
+        if cfg!(feature = "vulkan") {
+            Self::Vulkan
+        } else {
+            Self::Gl
+        }
+    }
 }
 
 impl RendererKind {
@@ -1527,6 +1611,92 @@ pub struct DeskConfig {
     pub enabled: bool,
 }
 
+/// The side canvas: the column of client surfaces that slides in from the
+/// right edge of an output (`specs/side-canvas.md`).
+///
+/// All values are logical points.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CanvasConfig {
+    /// Width of the column, and so of every item in it.
+    pub width: u32,
+    /// Space between the column and the edges of the usable area.
+    pub margin: u32,
+    /// Space between two items.
+    pub gap: u32,
+}
+
+impl CanvasConfig {
+    /// The narrowest column an item can usefully be drawn in.
+    pub const MIN_WIDTH: u32 = 200;
+    /// The widest column; past this it stops being a side panel.
+    pub const MAX_WIDTH: u32 = 1200;
+
+    /// [`CanvasConfig::width`], held to the range the layout supports.
+    pub fn clamped_width(&self) -> u32 {
+        self.width.clamp(Self::MIN_WIDTH, Self::MAX_WIDTH)
+    }
+}
+
+impl Default for CanvasConfig {
+    fn default() -> Self {
+        Self {
+            width: 400,
+            margin: 12,
+            gap: 12,
+        }
+    }
+}
+
+/// What the desktop shows behind the windows besides the wallpaper and the
+/// desk.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DesktopConfig {
+    /// The desktop widget: `"none"` or one of the themes Otto draws with
+    /// ewwii, `"calendar"`, `"cross_pad"` or `"grid_pad"`. The
+    /// compositor runs ewwii for it and follows changes live (see
+    /// `src/desktop_widget.rs`).
+    pub widget: String,
+}
+
+impl Default for DesktopConfig {
+    fn default() -> Self {
+        Self {
+            widget: "none".to_string(),
+        }
+    }
+}
+
+/// The top bar's application menus and clock.
+///
+/// The compositor does not draw the bar: `otto-bar` reads these over
+/// `org.otto.Settings` and follows its `Changed` signal, so they apply live
+/// without anything to reconcile here.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TopbarConfig {
+    /// Show the focused application's menus beside its name. Off, the bar
+    /// also stops serving the menu registrar, so applications keep their menu
+    /// bar in their own window.
+    pub show_app_menu: bool,
+    /// Show the date and time at the bar's right edge.
+    pub show_clock: bool,
+    /// A chrono strftime format for the clock. Empty follows the language's
+    /// own convention, or `clock_format` in `otto-bar.toml` where one is set.
+    pub clock_format: String,
+}
+
+impl Default for TopbarConfig {
+    fn default() -> Self {
+        Self {
+            show_app_menu: true,
+            show_clock: true,
+            clock_format: String::new(),
+        }
+    }
+}
+
 /// The file index behind search: which folders LocalSearch looks in and what
 /// it leaves out.
 ///
@@ -1572,14 +1742,26 @@ pub struct LockConfig {
     /// A client holding an `idle-inhibit-unstable-v1` inhibitor — a video
     /// player, a presentation — holds the lock off while it plays.
     pub auto_lock_timeout: u64,
+    /// Lock the session before the computer suspends, however the suspend
+    /// was asked for (the power menu, the power button, `systemctl suspend`,
+    /// the lid), so it wakes to the lock screen. On by default; turning it
+    /// off asks for the password. `power_management.on_lid_close = "lock"`
+    /// locks on a suspend either way.
+    pub on_suspend: bool,
 }
+
+/// The default locker, Otto's own `otto-lock`.
+pub const DEFAULT_LOCKER: &str = "otto-lock";
+/// The default greeter, Otto's own `otto-greeter`.
+pub const DEFAULT_GREETER: &str = "otto-greeter";
 
 impl Default for LockConfig {
     fn default() -> Self {
         Self {
-            locker_command: "otto-lock".to_string(),
+            locker_command: DEFAULT_LOCKER.to_string(),
             locker_args: Vec::new(),
             auto_lock_timeout: 0,
+            on_suspend: true,
         }
     }
 }
@@ -1664,6 +1846,10 @@ fn default_frosting() -> bool {
 }
 
 fn default_occlusion_culling() -> bool {
+    true
+}
+
+fn default_polkit_agent() -> bool {
     true
 }
 
@@ -2198,18 +2384,6 @@ pub struct DisplayDescriptor<'a> {
     pub kind: Option<DisplayKind>,
 }
 
-impl<'a> DisplayDescriptor<'a> {
-    #[allow(dead_code)]
-    pub fn new(connector: &'a str) -> Self {
-        Self {
-            connector,
-            vendor: None,
-            model: None,
-            kind: None,
-        }
-    }
-}
-
 fn equals_ignore_case(actual: &str, expected: &str) -> bool {
     actual.eq_ignore_ascii_case(expected)
 }
@@ -2248,12 +2422,17 @@ mod tests {
     }
 
     #[test]
-    fn renderer_defaults_to_gl_and_reads_vulkan() {
-        assert_eq!(Config::default().rendering.renderer, RendererKind::Gl);
+    fn renderer_defaults_to_vulkan_and_reads_gl() {
+        let expected = if cfg!(feature = "vulkan") {
+            RendererKind::Vulkan
+        } else {
+            RendererKind::Gl
+        };
+        assert_eq!(Config::default().rendering.renderer, expected);
 
-        let config: Config = toml::from_str("[rendering]\nrenderer = \"vulkan\"\n")
-            .expect("Config should deserialize");
-        assert_eq!(config.rendering.renderer, RendererKind::Vulkan);
+        let config: Config =
+            toml::from_str("[rendering]\nrenderer = \"gl\"\n").expect("Config should deserialize");
+        assert_eq!(config.rendering.renderer, RendererKind::Gl);
 
         assert_eq!(RendererKind::from_name("gl"), Some(RendererKind::Gl));
         assert_eq!(
@@ -2432,17 +2611,6 @@ mod tests {
     }
 
     #[test]
-    fn test_get_system_config_path() {
-        // System config path is fixed
-        let path = get_system_config_path();
-
-        // Only returns Some if the file exists
-        if let Some(p) = path {
-            assert_eq!(p, PathBuf::from("/etc/otto/config.toml"));
-        }
-    }
-
-    #[test]
     fn test_config_merge_priority() {
         // Test that config values merge correctly with priority
         let mut base =
@@ -2453,7 +2621,7 @@ mod tests {
             screen_scale = 3.0
             font_family = "Custom Font"
         "#;
-        let override_value: toml::Value = override_toml.parse().unwrap();
+        let override_value: toml::Value = toml::from_str(override_toml).unwrap();
 
         merge_value(&mut base, override_value);
 
@@ -2472,14 +2640,14 @@ mod tests {
         let override_toml = r#"
             screen_scale = 1.5
         "#;
-        let override_value: toml::Value = override_toml.parse().unwrap();
+        let override_value: toml::Value = toml::from_str(override_toml).unwrap();
 
         merge_value(&mut base, override_value);
 
         let config: Config = base.try_into().unwrap();
         assert_eq!(config.screen_scale, 1.5);
         // Other defaults should remain
-        assert_eq!(config.cursor_theme, "Notwaita-Black");
+        assert_eq!(config.cursor_theme, "Otto-MacTahoe");
     }
 
     #[test]
@@ -2837,9 +3005,8 @@ tiling = true
 
     #[test]
     fn test_reports_the_materialized_table_old_builds_wrote() {
-        let doc: toml::Value = materialized_dock_table(&[])
-            .parse()
-            .expect("config should parse");
+        let doc: toml::Value =
+            toml::from_str(&materialized_dock_table(&[])).expect("config should parse");
         let reported = materialized_dock_keys(&doc);
 
         // Every key those builds copied in with no intent behind it.
@@ -2866,7 +3033,7 @@ tiling = true
             ("colorize_color", "\"\""),
             ("colorize_intensity", "0.0"),
         ]);
-        let doc: toml::Value = raw.parse().expect("config should parse");
+        let doc: toml::Value = toml::from_str(&raw).expect("config should parse");
         let reported = materialized_dock_keys(&doc);
 
         assert!(reported.contains(&"size"));
@@ -2883,7 +3050,7 @@ tiling = true
             ("genie_span", "10"),
             ("colorize_intensity", "1"),
         ]);
-        let doc: toml::Value = raw.parse().expect("config should parse");
+        let doc: toml::Value = toml::from_str(&raw).expect("config should parse");
 
         assert_eq!(materialized_dock_keys(&doc).len(), 6);
     }
@@ -2897,7 +3064,7 @@ tiling = true
             "[dock]\nsize = 1.0\ngenie_scale = {}\n",
             default_genie_scale()
         );
-        let doc: toml::Value = raw.parse().expect("config should parse");
+        let doc: toml::Value = toml::from_str(&raw).expect("config should parse");
 
         assert!(materialized_dock_keys(&doc).is_empty());
     }
@@ -2908,7 +3075,7 @@ tiling = true
         // written after them — by a human, or by a build that no longer
         // materialises anything.
         let raw = materialized_dock_table(&[("position", "\"left\"")]);
-        let doc: toml::Value = raw.parse().expect("config should parse");
+        let doc: toml::Value = toml::from_str(&raw).expect("config should parse");
 
         assert!(materialized_dock_keys(&doc).is_empty());
     }
@@ -3024,31 +3191,14 @@ bookmarks = []
     }
 
     #[test]
-    fn test_scroll_speed_negative_clamping() {
-        // Test that negative values are clamped to 0.0
-        let val: f64 = (-2.5f64).max(0.0);
-        assert_eq!(val, 0.0, "negative scroll_speed should be clamped to 0.0");
-    }
-
-    #[test]
-    fn test_scroll_speed_positive_preserved() {
-        // Test that positive values are preserved
-        let val: f64 = (2.5f64).max(0.0);
-        assert_eq!(val, 2.5, "positive scroll_speed should be preserved");
-    }
-
-    #[test]
-    fn test_scroll_speed_zero_preserved() {
-        // Test that zero is preserved
-        let val: f64 = (0.0f64).max(0.0);
-        assert_eq!(val, 0.0, "zero scroll_speed should be preserved");
-    }
-
-    #[test]
-    fn test_scroll_speed_default() {
-        // Test default value
-        let val = default_scroll_speed();
-        assert_eq!(val, 1.0, "scroll_speed should default to 1.0");
+    fn scroll_speed_clamps_negatives_and_defaults_to_one() {
+        for (raw, want) in [("-2.5", 0.0), ("0.0", 0.0), ("2.5", 2.5)] {
+            let config: Config = toml::from_str(&format!("[input]\nscroll_speed = {raw}\n"))
+                .expect("Config should deserialize");
+            assert_eq!(config.input.scroll_speed, want, "scroll_speed = {raw}");
+        }
+        let config: Config = toml::from_str("[input]\n").expect("empty input table");
+        assert_eq!(config.input.scroll_speed, 1.0);
     }
 
     #[test]
@@ -3103,6 +3253,10 @@ bookmarks = []
             "the dynamic island autostarts"
         );
         assert!(started.contains(&"otto-stash"), "the stash autostarts");
+        assert!(
+            started.contains(&"otto-canvas"),
+            "the side canvas sample autostarts"
+        );
 
         assert!(!config.dock.bookmarks.is_empty(), "the dock has bookmarks");
         assert!(

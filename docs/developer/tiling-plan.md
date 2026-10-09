@@ -434,6 +434,8 @@ resize grow|shrink width|height <n> px|ppt
 floating toggle|enable|disable
 fullscreen
 kill
+exit                               # end the session
+logout                             # Otto: close windows, then exit
 tiling toggle                      # Otto: workspace mode
 expose toggle                      # Otto: the overview
 gaps inner|outer <n> [current|all]  # current = this workspace's override, all = the default

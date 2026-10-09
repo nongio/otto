@@ -299,6 +299,19 @@ is the narrower of the two. A press resolves the window border first, so the
 cursor must too — otherwise it promises a column resize while the click
 underneath it resizes the window.
 
+### Column widths
+
+**Each column keeps its own width.** Dragging the divider on a column's right
+edge resizes that column alone: the divider stays under the pointer, and the
+columns to its right shift along without changing width. Double-clicking a
+divider fits only that column to its longest name. Either way the width is
+clamped to a fixed minimum and maximum.
+
+A column opens at the default width. The width belongs to the column, so it
+goes when the column closes: a folder opened later at the same depth starts at
+the default again rather than inheriting a closed column's width. Widths are
+not persisted between windows.
+
 ### Column surfaces
 
 Painting every column into the window's one buffer makes a scroll in a single
@@ -674,8 +687,12 @@ What it adds:
   its sidecar records and the sidecar is dropped. This is the same operation,
   and the same code, as undoing a delete with Ctrl+Z — the two cannot drift.
   A missing parent directory is recreated; a name that something else has
-  taken since is refused, with the item left in the trash rather than
-  overwriting what is there now.
+  taken since — a dangling symlink included — is refused, with the item left
+  in the trash rather than overwriting what is there now. **A topdir can's
+  sidecar may only send an item back onto its own filesystem**: a relative
+  `Path=` of plain names. An absolute path or one with `..` is shown as no
+  origin, and Put Back refuses it with a message rather than making
+  directories wherever the stick's author chose.
 - **Empty Trash**, in the header, on everything. Asked about first, with the
   count in the question. It wears the accent, not a warning colour: emptying
   is what the window is for, and the warning belongs on the question that
@@ -823,6 +840,111 @@ is waiting on, and its result is thrown away.
 The picker does not have it. Its header is a toolbar with a location control
 rather than a title, so there is nothing to turn into a field.
 
+### The icon view's size
+
+The icon view has the Photos view's size slider in its header, beside the view
+switcher (there is no grouping button). It sets the icon size from 32 to 256
+points; 64 is the default and is exactly the grid as it always was. Ctrl+= and
+Ctrl+- step it by 16 points and a two-finger pinch scales it, as in Photos.
+
+- A cell is the icon with the same margin and caption room a 64-point one
+  has, so everything drawn in a cell — the selection behind the icon, the
+  caption pill, the rename field, the Peek anchor, the drop ring — scales
+  with it. The caption's type stays its size; a wider cell fits more of the
+  name on each line, a narrower one less.
+- Thumbnails are asked for at the icon size.
+- The icon at the top of the view stays where it is while the size changes.
+- Recent's grid is the same grid and takes the same size.
+- Remembered in the state file under `[icons]`, apart from the Photos size.
+- The desk has no slider and no zoom: its icons are the size its
+  `[desk] icon_size` says, and the browser's remembered size never reaches it.
+  It is the same process-wide icon size the desk sets, driven here by the
+  slider.
+
+### The Photos view
+
+The fourth view, after list, icons and columns: pictures at their own
+proportions, packed into rows that each fill the width. The switcher has a
+fourth segment for it, the palette a Photos command, and Ctrl+4 selects it. It
+opens newest first; Recent stays a grid and refuses it.
+
+From the top: the folders, then the pictures, then everything else.
+
+- **Folders** come first, under a "Folders" heading with their count, as
+  240×150 cards in rows that wrap: the three newest pictures directly inside
+  the folder — one large, two small stacked beside it — over the icon
+  theme's folder at 16 points, the folder's name and its date. The pictures
+  are found off the UI thread by reading only that folder, and only its first
+  few thousand entries, and are kept until the folder's modification time
+  moves. A folder with no pictures shows the icon theme's folder, large, on
+  its card. Click selects, double-click goes in.
+- **Pictures** follow in rows aiming at a height the header's slider sets
+  (120 to 300 points, 190 to start), with a 6-point gap. Pictures are added
+  to a row until the height that makes them span the width exactly drops to
+  the target or below, and that height is the row's. A group's last row, if
+  it runs out of pictures first, keeps the target height and stays
+  left-aligned. Proportions are clamped to between 0.4 and 3, so a panorama
+  or a long screenshot is cropped rather than shown as a sliver.
+- **Grouping** is the header's "Group by" button: by **day** (the default —
+  "Friday, 25 September", with the year outside the current one), by
+  **month** ("September 2026"), or **none** (one run, no headings). Days and
+  months are local, of the modification time, and each heading carries its
+  count. The listing is ordered so each group is one run: newest group first
+  unless sorted by date ascending, the chosen sort within a group.
+- **Everything else** — files that are not pictures — follows in a last
+  "Other Files" section, as square tiles with their icon and name.
+- **Size**: the slider sits left of the grouping button, between a small and
+  a large picture glyph, and gives its room up below a 900-point window.
+  Ctrl+= and Ctrl+- step it by 20 points, and a two-finger pinch over the
+  wall scales it (a pinch with Peek open still zooms Peek). The size and the
+  grouping are remembered (see below).
+- **Sizes of pictures** come from the image header, read off the UI thread a
+  batch at a time from the first 64 KiB of each file (more only while a JPEG's
+  frame header is still further in). The header is parsed by a small reader
+  of its own — JPEG with its EXIF orientation, PNG, GIF, WebP and BMP —
+  rather than by an image codec, since the bytes are untrusted and this is
+  the file manager's own process, not Peek's sandbox. Anything else is laid
+  out square. Until a picture's size is known it is laid out at 3:2, and the
+  rows are packed again as each batch lands. Nothing is written to the shared
+  thumbnail cache.
+- **Tiles** show the thumbnail cropped to fill, with 6-point corners and the
+  same hairline edge every thumbnail wears (folder cards and the info panel's
+  picture have it too); hovering
+  shows the name on a shade along the foot; a selected tile wears an accent
+  ring with a white line inside it. Thumbnails are asked for
+  at the row height (at most 512 pixels); a thumbnail fetched smaller for
+  another view is kept on screen while the larger one is fetched.
+- The header's subtitle counts what the view is for: "36 images, 2 folders".
+  With one thing selected the path bar's note says what it can do next:
+  "1 selected · Space to preview · ↵ to open".
+- **Info panel**: a 320-point panel is docked along the right of the file
+  area for as long as the view is Photos, and the wall is packed into what it
+  leaves — it does not come and go with the selection, so selecting nothing
+  moves. It takes the preview column's decode rather than one of its own.
+  - Nothing selected: the folder's name and the header's count ("36 images,
+    2 folders").
+  - One file: the picture fitted into a rounded stage, the name, the kind and
+    size ("JPEG image · 77 KB"), up to five swatches of the picture's main
+    colours in a row from the left, then Dimensions (from the size cache),
+    Modified and Where. Clicking a swatch copies its colour as `#F2845C` and
+    says "Copied" under it for a moment. A file that is not a picture has no
+    swatches.
+  - One folder: its name, how many items it holds, Modified and Where — a
+    folder has no picture of its own.
+  - Several: how many, and their total size.
+- **Remembered**: the size and the grouping, in the state file under
+  `[photos]`. An `info` key left there by an earlier build is ignored.
+- **Changing the size**, or the window's width, keeps the selected tile (or,
+  if it is off screen, the top one) where it is: the wall is packed again and
+  scrolled so that tile has not moved.
+- **The grouping menu** takes the keyboard while it is up: the arrows move
+  through it, a letter jumps, Return picks and Escape closes.
+- Clicks, the rubber band, drag and drop, the context menu, rename and Peek
+  work as in the icon view, over cards and tiles alike. The arrows move to
+  the neighbouring tile: Left and Right in order, Up and Down to the tile in
+  the next row whose centre is nearest, across headings and between the
+  folder cards and the pictures.
+
 ### Selection, keyboard and type-ahead
 
 Identical to the picker, including the type-ahead-is-not-search distinction, the
@@ -871,7 +993,7 @@ The browser adds:
 | Ctrl+O | open the entry at the cursor — exactly what a double-click does: descend into a directory, or activate a file (in the picker, accept it). Return is not free for this, since it renames |
 | Ctrl+I | show info for the selection |
 | Ctrl+L | open the **path entry** (see below) |
-| Ctrl+1 / Ctrl+2 / Ctrl+3 | list / icon / column view |
+| Ctrl+1 / Ctrl+2 / Ctrl+3 / Ctrl+4 | list / icon / column / photos view |
 | Escape | cancel an inline rename, else clear the search field, else clear the selection |
 
 Return renames, in every view mode; F2 is an alias for it, for the Linux
@@ -887,7 +1009,9 @@ progress, and can cancel it.
 
 - **Rename** — inline in the view. A name containing `/`, or empty, or `.`
   or `..`, is rejected while typing. A name that collides with an existing
-  entry offers to replace it or to keep editing.
+  entry is refused — the status line says it is already there — and nothing
+  is replaced: the rename asks the kernel for `RENAME_NOREPLACE`, falling back
+  to a check before a plain rename where the filesystem lacks it.
 - **New folder** — creates `untitled folder`, disambiguating with a numeric
   suffix, and immediately enters inline rename on it, scrolling the view to it
   first: the sort can put the new folder anywhere, and a rename field off
@@ -925,12 +1049,48 @@ progress, and can cancel it.
 - **Move to trash** — the freedesktop trash specification: the file is moved to
   `$XDG_DATA_HOME/Trash/files/`, with a `.trashinfo` recording its original
   path and the deletion time, both under a name disambiguated against what is
-  already there. **v1 trashes only files on the same filesystem as the home
-  trash.** Trashing on another mount requires a `.Trash-$uid` directory at that
-  mount's root, with its own rules about creation and stickiness; until that
-  exists, the browser says plainly that the file is on another volume and
-  offers permanent deletion instead. It never silently copies a file across
-  filesystems in the name of trashing it.
+  already there. The `.trashinfo` is created first, with `O_EXCL`, so two
+  trashes of one name at once each get their own. **A file on another
+  filesystem goes to that filesystem's own can**, `$topdir/.Trash/$uid` when an
+  administrator made a sticky `$topdir/.Trash`, `$topdir/.Trash-$uid`
+  otherwise, with the path recorded relative to `$topdir` — a rename, not a
+  copy. Only when neither can could be made does it fall back to the home
+  trash, which is a copy across filesystems. A trashed folder gets a line in
+  the can's `directorysizes`. The topdir is the mount point above the file in
+  `/proc/self/mountinfo` — the same table the cans are listed from — so a
+  btrfs subvolume that is not mounted anywhere is not mistaken for one.
+- **Topdir cans are checked before they are used.** A can on a stick, or on
+  `/tmp`, is on a filesystem somebody else may have written, and a
+  `.Trash-$uid/files` planted as a symlink would point Empty Trash at someone's
+  home. So a topdir can is trashed into, listed, counted, emptied or restored
+  from only when `.Trash-$uid` (or `.Trash/$uid`, under a sticky, real
+  `.Trash` owned by root or the user) is a real directory owned by the user
+  and not writable by group or others, and `files/`, `info/` and
+  `directorysizes`, where present, are real and the user's too. One that
+  fails is left out of the Trash and, when trashing, the next can — finally
+  the home trash — is used instead. Filesystems that may hang a stat — NFS,
+  CIFS, sshfs and other FUSE daemons, 9p, Ceph and the like — are not searched
+  for cans at all.
+
+  **What goes by descriptor** (directories opened without following
+  symlinks, from the check on): trashing (the sidecar created `O_EXCL` in the
+  checked `info/`, the item renamed into the checked `files/`); Delete
+  permanently and Empty Trash (a walk down from the checked `files/` that
+  never follows a symlink, never enters another device, and stops 512 levels
+  down); Put Back from a topdir can (each folder from the topdir down to the
+  origin opened, or made, without following a symlink, and the item renamed —
+  never copied — with nothing replaced); reading sidecars and
+  `directorysizes` (`O_NOFOLLOW | O_NONBLOCK`, regular files only, capped at
+  64 KiB and 4 MiB); rewriting `directorysizes` (a temporary created
+  `O_EXCL | O_NOFOLLOW`, mode `0600`, renamed in place). **What goes by
+  path**, after the check and read-only: listing a can's `files/`, watching it
+  with inotify, and sizing a freshly trashed folder (`lstat` only). The home
+  trash is the user's own and is trashed into and put back from by path.
+
+  Known limits: a topdir can's absolute `Path=` is refused rather than
+  honoured when it points onto the same filesystem; a FAT stick mounted with a
+  loose `umask` makes every can group- or other-writable, and so unused (its
+  items go to the home trash).
 - **Delete permanently** — always confirmed, always says it cannot be undone,
   and is not undoable. Reachable only from the Trash window, where Delete
   means this because there is nowhere further to send a file.
@@ -1171,6 +1331,58 @@ own.
   a panel for another file is another Ctrl+I.
 - **A close request for the panel closes the panel.** A secondary window's
   close is not the application's, and must not end the process.
+- **Its text is selectable.** See *Selectable text in the info panels*.
+
+### The view a folder was left in
+
+Choosing a view — the switcher, Ctrl+1 to Ctrl+4, the palette's view commands
+— is remembered for the folder the window is at, and put back the next time
+the window goes there.
+
+- **Only a choice is remembered.** The grid Recent forces, a search, and
+  anything else the window does on its own are not. The Trash, the picker, the
+  desk and listings with no folder behind them neither remember nor apply.
+- **Only arriving applies it.** Opening the window on a folder, a sidebar
+  place, a path-bar crumb, Go To and the typed path, Back and Forward, and
+  opening a folder from List, Icons or Photos (a double-click, Return, the
+  right arrow) all go somewhere, and a folder with a remembered view is shown
+  in it. A folder with none keeps the view the window is in — there is no
+  global default to fall back to.
+- **"The folder the window is at" depends on the view.** List, Icons and
+  Photos show one folder, the deepest in the stack. The column view shows a
+  hierarchy from its root, and its root is the location: selecting, clicking
+  and arrowing into folders only adds columns below it, and never changes the
+  view, even into a folder remembered as Photos. Only a real navigation
+  replaces the root — a place, a crumb, Go To, Back or Forward to a different
+  root, a launch — and only that applies a remembered view. Back and Forward
+  between locations with the same root stay in the columns, and so does Up
+  out of a column.
+- Kept in the state file under `[[views]]` (path and view), least recently
+  chosen first, the oldest forgotten past 500; written only by a window that
+  keeps state at all. A file without the key reads as nothing remembered.
+
+### Selectable text in the info panels
+
+The facts in Get Info, in the column view's preview caption and in the Photos
+view's info panel — names, paths, kinds, sizes, dates, dimensions, and the
+labels beside them — are text to select and copy, not pictures of text.
+
+- A drag selects, from one line down through the next the way a web page
+  does; a double-click takes a word, a triple-click the whole line or value.
+  The selection is highlighted in the accent behind the text.
+- **Ctrl+C** copies it: lines are joined with newlines, a label and its value
+  with a space, and a value shortened with an ellipsis to fit copies whole.
+  With panel text selected in the main window, Ctrl+C copies that rather than
+  the selected files; in Get Info it copies Get Info's.
+- The pointer is an I-beam over the text. A press anywhere else lets the
+  selection go and does what it would have done. A selection belongs to what
+  the panel was describing: selecting another file drops it.
+- The rest of each panel is untouched: the Photos swatches still copy their
+  colour, the preview's picture still drags the file, and Get Info's close
+  dot, permission boxes and title strip still work.
+- The panels lay their text out once as runs that are both drawn and
+  hit-tested — otto-kit's `selectable_text` — so what is selected is exactly
+  what is on screen.
 
 ### Peek
 
@@ -1548,11 +1760,12 @@ the same action, and Right arrow (or a double-click) opens.
 malware delivery mechanism, and the convenience it buys is a keystroke in a
 terminal.
 
-**Trash is home-filesystem-only in v1, and says so.** The alternative that looks
-like it works — copy the file to the home trash — moves gigabytes across a bus
-to "delete" something and breaks restore. The alternative that is correct
-requires `.Trash-$uid` handling with its own security rules. Refusing clearly is
-better than either, and it is a small, self-contained thing to add later.
+**Each filesystem's trash is its own.** Copying a file to the home trash moves
+gigabytes across a bus to "delete" something. The can at the top of the file's
+own filesystem makes trashing a rename there too; the Trash window, Empty Trash
+and the dock's icon list the home can together with the cans of every mounted
+filesystem, so where an item went is not something the user has to know. A can
+on a drive that is not plugged in is not listed until it is.
 
 **Drag and drop moves by default and copies when asked.** A drag between two
 directories on one filesystem is a move — what every other file manager does —
@@ -1569,7 +1782,7 @@ Tabs. Split views. Network and virtual filesystems. Mounting and ejecting.
 Any index of Otto's own. Batch rename. Archive browsing or
 extraction.
 File comparison. Tags, labels, colours, or any metadata Otto would have to store
-itself. Custom per-directory view settings beyond sort order. Templates. Running
+itself. Custom per-directory view settings beyond the view mode. Templates. Running
 external thumbnailers. Persisted column widths.
 
 ## Resolved decisions
@@ -1610,14 +1823,15 @@ With [peek.md](./peek.md), recorded so they are not reopened:
 Questions this spec left open in an earlier draft, resolved with the obvious
 answer rather than carried:
 
-- **Per-directory sort order and view mode live in one central bounded file**,
-  `$XDG_STATE_HOME/otto/file-browser-views`, keyed by absolute path, a
-  least-recently-used cap of 512 entries. **Otto never writes a dotfile into a
-  user's directory** to record its own view state: it pollutes directories the
-  user did not ask us to write to, it travels with the files into archives and
-  version control, and it is visible in every other file manager. A bounded
-  central file is forgettable in the way this state deserves to be — losing an
-  old entry costs a sort order.
+- **Per-directory view state lives in one central bounded file**: the
+  window's state file, `$XDG_STATE_HOME/otto/files.toml`, keyed by absolute
+  path, least recently chosen forgotten past 500 folders. Today it holds the
+  view mode (see *The view a folder was left in*); sort order is not kept per
+  folder yet. **Otto never writes a dotfile into a user's directory** to record
+  its own view state: it pollutes directories the user did not ask us to write
+  to, it travels with the files into archives and version control, and it is
+  visible in every other file manager. A bounded central file is forgettable
+  in the way this state deserves to be — losing an old entry costs a view.
 - **`mimeapps.list` is written by the browser directly**, not routed through the
   settings service. It is a freedesktop file with a defined format and other
   writers on the system; the settings schema is for Otto's own configuration

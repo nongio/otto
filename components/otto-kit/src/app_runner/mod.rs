@@ -6,6 +6,7 @@
 pub mod context;
 mod handlers;
 mod key_repeat;
+mod output_scale;
 
 pub use context::AppContext;
 pub use smithay_client_toolkit::seat::keyboard::Modifiers;
@@ -46,6 +47,10 @@ use wayland_protocols::wp::pointer_gestures::zv1::client::{
     zwp_pointer_gesture_hold_v1::{self, ZwpPointerGestureHoldV1},
     zwp_pointer_gesture_pinch_v1::{self, ZwpPointerGesturePinchV1},
     zwp_pointer_gestures_v1::ZwpPointerGesturesV1,
+};
+use wayland_protocols::xdg::activation::v1::client::{
+    xdg_activation_token_v1::{self, XdgActivationTokenV1},
+    xdg_activation_v1::XdgActivationV1,
 };
 use wayland_protocols_wlr::layer_shell::v1::client::{
     zwlr_layer_shell_v1::ZwlrLayerShellV1, zwlr_layer_surface_v1::ZwlrLayerSurfaceV1,
@@ -256,6 +261,26 @@ pub trait App {
         // Default: do nothing
     }
 
+    /// Called when a drag and drop operation starts anywhere in the session,
+    /// from Otto's side canvas (`otto-canvas-v1` version 4).
+    ///
+    /// `mime_types` is what the drag's data is offered as; empty when the
+    /// source has not said, which means unknown rather than nothing. The
+    /// canvas opens if the drag rests at the right edge of the screen, so
+    /// an app with nothing in it may add a
+    /// [`CanvasItemSurface`](crate::surfaces::CanvasItemSurface) now to take
+    /// the drop.
+    fn on_canvas_drag_started(&mut self, _ctx: &AppContext, _mime_types: &[String]) {
+        // Default: do nothing
+    }
+
+    /// Called when the drag announced by
+    /// [`App::on_canvas_drag_started`] ends, dropped or cancelled. An item
+    /// the drop landed on has had it already.
+    fn on_canvas_drag_ended(&mut self, _ctx: &AppContext) {
+        // Default: do nothing
+    }
+
     /// Called once per event loop iteration, after dispatching Wayland events.
     /// Use for periodic checks (timers, polling state changes) without frame callbacks.
     fn on_update(&mut self, _ctx: &AppContext) {
@@ -386,6 +411,12 @@ impl App for DefaultApp {
 
     fn on_dock_menu_requested(&mut self, ctx: &AppContext, x: i32, y: i32) {
         self.inner.on_dock_menu_requested(ctx, x, y)
+    }
+    fn on_canvas_drag_started(&mut self, ctx: &AppContext, mime_types: &[String]) {
+        self.inner.on_canvas_drag_started(ctx, mime_types)
+    }
+    fn on_canvas_drag_ended(&mut self, ctx: &AppContext) {
+        self.inner.on_canvas_drag_ended(ctx)
     }
     fn on_pointer_event(&mut self, ctx: &AppContext, events: &[PointerEvent]) {
         self.inner.on_pointer_event(ctx, events)
@@ -535,6 +566,8 @@ impl<A: App + 'static> AppRunnerWithType<A> {
         let surface_style_manager = globals.bind(&qh, 1..=5, ()).ok();
         let wlr_layer_shell: Option<ZwlrLayerShellV1> = globals.bind(&qh, 1..=4, ()).ok();
         let otto_dock_manager = globals.bind(&qh, 1..=1, ()).ok();
+        // The side canvas; Otto only, so optional like the dock.
+        let otto_canvas_manager = globals.bind(&qh, 1..=5, ()).ok();
         // Where the desktop's text cursor is, for a panel that wants to sit
         // beside the text rather than in the middle of the screen. Absent on
         // any compositor but Otto, which is why it is optional.
@@ -559,6 +592,10 @@ impl<A: App + 'static> AppRunnerWithType<A> {
         let subcompositor = globals.bind(&qh, 1..=1, ()).ok();
         let cursor_shape_manager: Option<wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_manager_v1::WpCursorShapeManagerV1> =
             globals.bind(&qh, 1..=2, ()).ok();
+        // xdg-activation, so a window can ask to be brought forward: a
+        // single-instance app raising the window a second launch asked for.
+        // Optional; without it the request is simply not made.
+        let xdg_activation: Option<XdgActivationV1> = globals.bind(&qh, 1..=1, ()).ok();
         let fractional_scale_manager: Option<wayland_protocols::wp::fractional_scale::v1::client::wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1> =
             globals.bind(&qh, 1..=1, ()).ok();
         // Hold gestures arrived in version 3; pinch has been there since 1.
@@ -571,6 +608,11 @@ impl<A: App + 'static> AppRunnerWithType<A> {
         let background_effect =
             crate::backdrop::init(&conn, &globals, surface_style_manager.is_some());
         crate::key_capture::init(&conn, &globals);
+        // Before the app makes anything — see [`output_scale`].
+        if let Some(scale_120) = output_scale::probe(&conn, &globals) {
+            tracing::debug!("output scale at startup: {scale_120}/120");
+            AppContext::seed_output_scale_120(scale_120);
+        }
 
         // Get display pointer for creating surfaces
         let display_ptr = conn.backend().display_ptr() as *mut std::ffi::c_void;
@@ -605,8 +647,10 @@ impl<A: App + 'static> AppRunnerWithType<A> {
             xdg_wm_dialog,
             subcompositor,
             otto_dock_manager,
+            otto_canvas_manager,
             session_lock_manager,
             cursor_shape_manager,
+            xdg_activation,
             fractional_scale_manager,
             pointer_gestures,
             data_device_manager,
@@ -623,6 +667,7 @@ impl<A: App + 'static> AppRunnerWithType<A> {
             hold_gestures: Vec::new(),
             pinch_gestures: Vec::new(),
             key_repeat: key_repeat::KeyRepeat::default(),
+            canvas_drag_mime_types: Vec::new(),
             exit: false,
         };
 
@@ -843,6 +888,9 @@ pub struct AppData<A: App + 'static> {
     pinch_gestures: Vec<ZwpPointerGesturePinchV1>,
     /// The key being held, repeated at the compositor's rate.
     key_repeat: key_repeat::KeyRepeat,
+    /// The mime types of the drag the side canvas is announcing, gathered
+    /// until its `drag_started`.
+    canvas_drag_mime_types: Vec<String>,
     exit: bool,
 }
 
@@ -1930,6 +1978,63 @@ impl<A: App + 'static> Dispatch<otto_timing_function_v1::OttoTimingFunctionV1, (
     }
 }
 
+impl<A: App + 'static> Dispatch<crate::protocols::otto_canvas_manager_v1::OttoCanvasManagerV1, ()>
+    for AppData<A>
+{
+    fn event(
+        state: &mut Self,
+        _proxy: &crate::protocols::otto_canvas_manager_v1::OttoCanvasManagerV1,
+        event: crate::protocols::otto_canvas_manager_v1::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        use crate::protocols::otto_canvas_manager_v1::Event;
+        match event {
+            Event::DragMimeType { mime_type } => state.canvas_drag_mime_types.push(mime_type),
+            Event::DragStarted => {
+                let mime_types = std::mem::take(&mut state.canvas_drag_mime_types);
+                let ctx = AppContext::new(&state.context_data);
+                state.app.on_canvas_drag_started(&ctx, &mime_types);
+            }
+            Event::DragEnded => {
+                state.canvas_drag_mime_types.clear();
+                let ctx = AppContext::new(&state.context_data);
+                state.app.on_canvas_drag_ended(&ctx);
+            }
+        }
+    }
+}
+
+impl<A: App + 'static> Dispatch<crate::protocols::otto_canvas_item_v1::OttoCanvasItemV1, ()>
+    for AppData<A>
+{
+    fn event(
+        _state: &mut Self,
+        proxy: &crate::protocols::otto_canvas_item_v1::OttoCanvasItemV1,
+        event: crate::protocols::otto_canvas_item_v1::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        use crate::protocols::otto_canvas_item_v1::Event;
+        use crate::surfaces::CanvasItemEvent;
+        use wayland_client::Proxy;
+        let event = match event {
+            Event::Configure { serial, width } => CanvasItemEvent::Configure {
+                serial,
+                width: i32::try_from(width).unwrap_or(i32::MAX),
+            },
+            Event::Shown => CanvasItemEvent::Shown,
+            Event::Hidden => CanvasItemEvent::Hidden,
+            Event::MaxHeight { height } => CanvasItemEvent::MaxHeight {
+                height: i32::try_from(height).unwrap_or(i32::MAX),
+            },
+        };
+        AppContext::dispatch_canvas_item_event(&proxy.id(), event);
+    }
+}
+
 impl<A: App + 'static> Dispatch<otto_dock_manager_v1::OttoDockManagerV1, ()> for AppData<A> {
     fn event(
         _state: &mut Self,
@@ -2063,6 +2168,28 @@ wayland_client::delegate_noop!(@<A: App + 'static> AppData<A>: ignore wayland_cl
 wayland_client::delegate_noop!(@<A: App + 'static> AppData<A>: ignore wayland_client::protocol::wl_region::WlRegion);
 wayland_client::delegate_noop!(@<A: App + 'static> AppData<A>: ignore ZwlrLayerShellV1);
 wayland_client::delegate_noop!(@<A: App + 'static> AppData<A>: ignore wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_manager_v1::WpCursorShapeManagerV1);
+wayland_client::delegate_noop!(@<A: App + 'static> AppData<A>: ignore XdgActivationV1);
+
+/// A token asked for by [`AppContext::activate`]: once the compositor has
+/// issued it, it is spent on the surface it was asked for.
+impl<A: App + 'static> Dispatch<XdgActivationTokenV1, wl_surface::WlSurface> for AppData<A> {
+    fn event(
+        state: &mut Self,
+        token: &XdgActivationTokenV1,
+        event: xdg_activation_token_v1::Event,
+        surface: &wl_surface::WlSurface,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        let xdg_activation_token_v1::Event::Done { token: issued } = event else {
+            return;
+        };
+        if let Some(activation) = &state.context_data.xdg_activation {
+            activation.activate(issued, surface);
+        }
+        token.destroy();
+    }
+}
 wayland_client::delegate_noop!(@<A: App + 'static> AppData<A>: ignore wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_device_v1::WpCursorShapeDeviceV1);
 wayland_client::delegate_noop!(@<A: App + 'static> AppData<A>: ignore wayland_protocols::wp::fractional_scale::v1::client::wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1);
 wayland_client::delegate_noop!(@<A: App + 'static> AppData<A>: ignore ZwpPointerGesturesV1);

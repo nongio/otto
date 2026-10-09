@@ -74,14 +74,20 @@ and Otto has not built it. Commands that parse and are refused at run time
 | `focus mode_toggle\|floating\|tiling` | move focus between the two layers |
 | `fullscreen [toggle]` | the same path a client's own request takes |
 | `kill` | closes the focused window |
+| `minimize` | Otto's own: minimises the focused window into the dock, as its minimise button does. otto-bar's application menu runs it |
+| `quit` | Otto's own: closes every window of the focused window's application, as the dock's Quit does; each application may still ask to save. otto-bar's application menu runs it |
+| `exit` | ends the session at once, as the `Quit` shortcut does |
+| `logout` | Otto's own: asks every window to close, as its close button does, and ends the session once they are gone. While a new window is open (an application asking whether to save) it waits for the answer; if that application is still open 3 seconds after its last prompt went, the person cancelled and the logout stands down, leaving the session as it is. Without any prompt it stands down if windows are still open after 10 seconds. otto-bar's Log Out runs it |
 | `tiling toggle\|enable\|disable` | Otto's own: the workspace's mode |
 | `expose [show\|hide\|toggle]` | Otto's own: the window overview. Show and hide are idempotent |
 | `gaps inner\|outer <n> [current\|all]` | see below |
 | `input type:keyboard xkb_switch_layout <n>\|next\|prev` | sway's layout switch. `<n>` counts from 0; `next` and `prev` wrap. `otto:keyboard` and `*` name the keyboard too. Nothing else sway sets through `input` is taken: the rest lives in the config |
 
-A criteria is parsed, but only `focus` reads one: `[app_id="firefox"] focus`
-and `[title="…"] focus` work, and `class` and `instance` are accepted as
-spellings of `app_id`. A criteria in front of any other command is refused
+A criteria is parsed, but only `focus`, `minimize` and `quit` read one:
+`[app_id="firefox"] focus` and `[title="…"] focus` work, and `class` and `instance` are accepted as
+spellings of `app_id`. `[con_id=<id>]` and `[pid=<pid>]` match a window's `id`
+and `pid` from `GetTree` exactly, for a script that has picked the window out
+of the tree. A criteria in front of any other command is refused
 rather than quietly acted on the focused window.
 
 **Not implemented yet**, and refused by name rather than ignored:
@@ -127,6 +133,9 @@ and windows.
 | `floating_nodes` | workspaces | windows the tree does not hold |
 | `urgent` | every node | always `false`; Otto has no urgency hint yet |
 | `app_id` | windows | the xdg app id |
+| `pid` | windows | the process that owns the window (an X11 window's `_NET_WM_PID`), `null` when unknown |
+| `window` | X11 windows | i3's X11 window id: what an app hands `com.canonical.AppMenu.Registrar` |
+| `otto_appmenu` | windows | Otto's own: `{service, object_path}` of the window's `com.canonical.dbusmenu`, when the app sent it over `org_kde_kwin_appmenu`; absent otherwise |
 | `window_properties` | X11 windows | `{class, instance, title}` |
 | `gaps` | workspaces | Otto's own: `{inner, outer}` when the workspace has an override, else `null` |
 
@@ -166,7 +175,7 @@ answers, plus two keys of Otto's own for a status bar:
 | Signal | Argument | When |
 | --- | --- | --- |
 | `WorkspaceChanged` | `s`, i3's `workspace` event as JSON | the current workspace changed |
-| `WindowChanged` | `s`, i3's `window` event as JSON | keyboard focus moved to another window |
+| `WindowChanged` | `s`, i3's `window` event as JSON | keyboard focus moved to another window (`change: "focus"`), or the focused window's `otto_appmenu` changed (`change: "otto_appmenu"`) |
 | `InputChanged` | `s`, sway's `input` event as JSON | the keyboard layout switched, or the keymap was rebuilt |
 
 `InputChanged` carries `change` — `"xkb_layout"` for a switch, `"xkb_keymap"`

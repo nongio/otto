@@ -302,7 +302,6 @@ impl<A: RendererApi> Otto<UdevData<A>> {
     }
 
     /// Sets up a desktop (normal display) connector
-    #[allow(clippy::too_many_arguments)]
     fn setup_desktop_connector(
         &mut self,
         node: DrmNode,
@@ -589,7 +588,7 @@ impl<A: RendererApi> Otto<UdevData<A>> {
             smithay::desktop::layer_map_for_output(&output).arrange();
         }
 
-        #[cfg(feature = "fps_ticker")]
+        #[cfg(feature = "ticker")]
         let fps_element = self
             .backend_data
             .fps_texture
@@ -655,9 +654,9 @@ impl<A: RendererApi> Otto<UdevData<A>> {
                 render_node: device_render_node,
                 global: Some(global),
                 compositor,
-                #[cfg(feature = "fps_ticker")]
+                #[cfg(feature = "ticker")]
                 fps: fps_ticker::Fps::default(),
-                #[cfg(feature = "fps_ticker")]
+                #[cfg(feature = "ticker")]
                 fps_element,
                 dmabuf_feedback,
                 #[cfg(feature = "metrics")]
@@ -1064,12 +1063,11 @@ impl<A: RendererApi> Otto<UdevData<A>> {
             }
 
             // Lock first, so the blank is what the session comes back to. Same
-            // path as the power button's `lock`: launching the locker is what
-            // locks — it asks for the lock itself. See `src/lock.rs`.
+            // path as the power button's `lock`; the suspend below waits for
+            // the blank on logind's delay inhibitor. See `src/lock.rs`.
             if matches!(lid_action, LidCloseAction::Lock) && !self.is_session_locked() {
-                let (cmd, args) = crate::lock::locker_command();
-                tracing::info!(locker = %cmd, "Lid closed - locking session");
-                self.launch_program(cmd, args);
+                tracing::info!("Lid closed - locking session");
+                self.lock_session();
             }
 
             // Otto owns the suspend decision — logind's lid handling is

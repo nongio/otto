@@ -16,8 +16,11 @@ Otto uses `ext-session-lock-v1`, the Wayland protocol designed for this. Its
 key guarantee: if the locker crashes, the screen **stays blank** rather than
 revealing what was behind it.
 
-Otto ships `otto-lock` as the default locker, but any `ext-session-lock-v1`
-client works.
+Otto ships `otto-lock` as the default locker, and any `ext-session-lock-v1`
+client can be configured in its place. Otto starts the locker itself, and only
+the locker it started is allowed to lock the screen. Whatever holds the lock
+screen is what you type your password into, so no other program, an app you
+installed or a script, can put up a lock screen of its own.
 
 ## Setup
 
@@ -54,6 +57,11 @@ install the file properly.
 raw hardware key code, so it works whatever your layout is and whatever holds
 the keyboard.
 
+A lock shortcut you bind yourself works even while an app is holding the
+keyboard shortcuts for itself, the way a virtual machine or a remote desktop
+viewer does. Otto's other shortcuts go to that app; locking and VT switching
+never do.
+
 You can bind it elsewhere too:
 
 ```toml
@@ -70,6 +78,20 @@ locker_args = []
 ```
 
 Any `ext-session-lock-v1` locker fits here: `swaylock`, `hyprlock`, `gtklock`.
+Give the program alone, without spaces; its options go in `locker_args`.
+
+Otto hands the locker its own connection (`WAYLAND_SOCKET`) rather than the
+session's display. Lockers built on `libwayland` or `wayland-rs` pick that up
+without being told.
+
+You can also change the locker, its options, the auto-lock timeout and locking
+on suspend in **Settings › Lock & Login**. These decide what you type your
+password into, so Otto asks for your password first, in its own panel, naming
+the change ("Change the program that locks your screen to “swaylock”?"). The
+same happens when a script changes them with `busctl`. The question goes
+through polkit, so it needs polkit installed; without it, edit `config.toml`
+instead, which works as before. The greeter and the lid and power-button
+actions ask the same way.
 
 ## Using it
 
@@ -124,10 +146,12 @@ playback, a presentation tool) holds auto-lock off, and **restarts** the
 countdown when it releases the inhibitor. So the timer runs from when the video
 stops, not from your last keypress.
 
-Otto only honours an inhibitor while its surface is alive and its window is not
-minimized. The protocol leaves that judgment to the compositor precisely
-because clients forget to drop inhibitors, and one stale inhibitor would
-otherwise disable locking for the whole session.
+Otto only honours an inhibitor while its surface is on screen: a window that is
+not minimized, on the workspace its monitor is showing, or a panel (a layer
+surface) that is mapped. A surface with no window at all, or a window on
+another workspace, does not count. The protocol leaves that judgment to the
+compositor precisely because clients forget to drop inhibitors, and one stale
+or invisible inhibitor would otherwise disable locking for the whole session.
 
 The check runs on the timer's tick, so an inhibitor released just after a tick
 can delay the lock by up to one further timeout.
@@ -144,39 +168,75 @@ can delay the lock by up to one further timeout.
 Multiple monitors are all covered, including ones plugged in, unplugged, or
 mode-changed while locked.
 
+The screen goes blank the moment you lock, before the locker has even
+started, so nothing of your desktop stays visible while it comes up.
+
 If the locker crashes, Otto restarts it, rate-limited, so a crash is
 recoverable without a VT switch, and the screen never uncovers in the meantime.
+The same goes for a locker that fails to start: the screen stays blank and Otto
+keeps trying.
 
 ## Locking from a script
 
-Anything that wants to lock runs the same command:
+Ask logind, and Otto starts your configured locker:
 
 ```sh
-otto-lock
+loginctl lock-session
 ```
 
-That is what the shortcut and the auto-lock timer both do. A suspend hook or an
-external idle daemon (`swayidle`) can call it directly.
+That is the same thing the shortcut, the lid and the auto-lock timer do. A
+suspend hook or an external idle daemon (`swayidle`) should run
+`loginctl lock-session` too.
+
+Starting a locker yourself, `otto-lock` or `swaylock` from a terminal or a
+script, no longer locks the screen: Otto only accepts the lock from the locker
+it started, and refuses the request (the log says "session lock requested by a
+client Otto did not start as its locker"). To use a different locker, set it
+as `locker_command`.
+
+## Locking on suspend
+
+Every suspend locks first, so the machine wakes to the lock screen: the power
+menu, the power button, closing the lid and `systemctl suspend` alike. Otto
+asks logind to wait for it (a "delay" inhibitor, listed by
+`systemd-inhibit --list` as "Otto: lock before sleep"), so the machine goes to
+sleep only once the screen is blank, or after four seconds at most.
+
+This is on by default. To wake to your desktop instead, set:
+
+```toml
+[lock]
+on_suspend = false
+```
 
 ## Locking and the lid
 
-`on_lid_close = "lock"` locks before suspending, so the machine wakes to the
-lock screen. Clamshell and remote sessions deliberately stay unlocked — the
-session is still in use. See [Power Management](power-management.md).
+`on_lid_close = "lock"` locks when you close the lid, and locks before every
+suspend even with `on_suspend = false`. Clamshell and remote sessions
+deliberately stay unlocked — the session is still in use. See
+[Power Management](power-management.md).
 
 ## Troubleshooting
 
-**Nothing happens when I press `Ctrl+Alt+Escape`.** The locker failed to launch.
-Run `otto-lock` from a terminal inside the session to see the error.
+**The screen goes blank when I press `Ctrl+Alt+Escape`, but the password panel
+never appears.** The locker failed to launch. Otto keeps the screen blank and
+keeps retrying every few seconds. Switch VT with `Ctrl+Alt+F2`, log in, and
+check Otto's log for why: "Failed to start the locker" is logged once per
+lock, with the reason. Check that `otto-lock` is installed, or that your
+`locker_command` names a program that exists. Running the locker by hand from a
+terminal will not lock (see
+[Locking from a script](#locking-from-a-script)), but it does show whether the
+program starts at all.
 
 **My password is rejected even though it is correct.** The PAM service file is
 missing or wrong. Check `/etc/pam.d/otto-lock` exists and uses the right stack
 for your distribution (`system-auth` vs `common-auth`). The log says which
 fallback the locker resorted to.
 
-**The screen is blank but there is no password panel.** The locker died after
-locking. Otto keeps the screen blank — that is the protocol working as
-designed. Switch VT with `Ctrl+Alt+F2`, log in, and check the logs.
+**The screen is blank but there is no password panel.** The locker died, or is
+failing to start. Otto keeps the screen blank and starts a new locker every few
+seconds; the panel normally comes back on its own. If it does not, switch VT
+with `Ctrl+Alt+F2`, log in, and check the logs.
 
 **The fingerprint reader is not offered.** Confirm `pam_fprintd.so` is in
 `/etc/pam.d/otto-lock` and that you have enrolled a finger

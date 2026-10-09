@@ -122,8 +122,6 @@ impl PopupOverlayView {
     }
 
     /// Update popup position and surfaces
-    #[allow(clippy::mutable_key_type)]
-    #[allow(clippy::too_many_arguments)]
     pub fn update_popup(
         &mut self,
         popup_id: &ObjectId,

@@ -5,7 +5,7 @@
 //! and greeter commands) are `string` on the wire because the compositor
 //! should not have to know what fonts a given machine has installed.
 //!
-//! Every lookup here touches the filesystem or spawns a process, so results
+//! Every lookup here touches the filesystem or the font manager, so results
 //! are cached for the lifetime of the app: `open_menu` runs on a pointer
 //! press and must not block visibly, and re-scanning `/usr/share/icons` on
 //! every click would be a needless stat storm.
@@ -13,7 +13,6 @@
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::OnceLock;
 
 /// One entry in a discovered dropdown: what the field shows, and what gets
@@ -30,6 +29,9 @@ pub struct Choice {
 /// else is not ours to answer — `open_menu` falls back to this only when the
 /// served schema has no `choices` of its own.
 pub fn choices_for(id: &str, current: &str) -> Option<Vec<Choice>> {
+    if id == AUTO_LOCK_ID {
+        return Some(auto_lock_choices(current));
+    }
     let discovered: &'static [String] = match id {
         "font_family" => font_families(),
         "cursor_theme" => cursor_themes(),
@@ -79,49 +81,26 @@ fn merge_with_current(discovered: &[String], current: &str) -> Vec<Choice> {
 }
 
 // ---------------------------------------------------------------------
-// Fonts, via fontconfig's `fc-list`. The project deliberately keeps its
-// dependency count low, and fontconfig's own crate pulls in a build-time
-// bindgen dependency for what is, from here, one command's output — so this
-// shells out instead of linking it.
+// Fonts, from the font manager Skia renders with — on Linux that is
+// fontconfig's view of the machine, the same one the compositor draws text
+// from, without spawning `fc-list` for it.
 // ---------------------------------------------------------------------
 
 static FONT_FAMILIES: OnceLock<Vec<String>> = OnceLock::new();
 
 fn font_families() -> &'static [String] {
-    FONT_FAMILIES.get_or_init(|| {
-        let output = match Command::new("fc-list").arg(":").arg("family").output() {
-            Ok(output) if output.status.success() => output,
-            Ok(output) => {
-                eprintln!(
-                    "settings: fc-list exited with {}; font list unavailable",
-                    output.status
-                );
-                return Vec::new();
-            }
-            Err(err) => {
-                eprintln!("settings: fc-list not available ({err}); font list unavailable");
-                return Vec::new();
-            }
-        };
-        parse_fc_list(&String::from_utf8_lossy(&output.stdout))
-    })
+    FONT_FAMILIES.get_or_init(|| sorted_families(otto_kit::skia::FontMgr::new().family_names()))
 }
 
-/// Parse `fc-list : family` output: one family (or comma-separated aliases,
-/// commonly a Latin name and a localised one) per line. Only the first alias
-/// is kept — good enough for a picker, and it keeps the list from doubling
-/// up on every CJK font.
-fn parse_fc_list(text: &str) -> Vec<String> {
-    let mut names = BTreeSet::new();
-    for line in text.lines() {
-        if let Some(first) = line.split(',').next() {
-            let name = first.trim();
-            if !name.is_empty() {
-                names.insert(name.to_string());
-            }
-        }
-    }
-    names.into_iter().collect()
+/// Family names, sorted for a picker: blanks dropped, each name once.
+fn sorted_families(names: impl IntoIterator<Item = String>) -> Vec<String> {
+    names
+        .into_iter()
+        .map(|name| name.trim().to_string())
+        .filter(|name| !name.is_empty())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
 }
 
 // ---------------------------------------------------------------------
@@ -275,6 +254,59 @@ fn is_executable_file(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
+// ---------------------------------------------------------------------
+// The auto-lock interval: an integer number of seconds on the wire, offered
+// as a handful of intervals. Not discovered, but not the schema's to serve
+// either — the setting takes any number of seconds, and these are only the
+// ones worth a row in a menu.
+// ---------------------------------------------------------------------
+
+const AUTO_LOCK_ID: &str = "lock.auto_lock_timeout";
+
+/// Seconds. 0 never locks.
+const AUTO_LOCK_INTERVALS: &[u32] = &[0, 60, 120, 300, 600, 900, 1800, 3600];
+
+/// The intervals, plus whatever is set now if it is not one of them (a value
+/// written into `config.toml` by hand).
+fn auto_lock_choices(current: &str) -> Vec<Choice> {
+    let mut seconds: Vec<u32> = AUTO_LOCK_INTERVALS.to_vec();
+    if let Ok(current) = current.trim().parse::<u32>() {
+        if !seconds.contains(&current) {
+            seconds.push(current);
+            seconds.sort_unstable();
+        }
+    }
+    seconds
+        .into_iter()
+        .map(|s| Choice {
+            label: interval_label(s),
+            value: s.to_string(),
+        })
+        .collect()
+}
+
+/// A name for `value` of `id` where the schema has none. Only the auto-lock
+/// interval has one: seconds, shown as minutes.
+pub fn label_for(id: &str, value: &str) -> Option<String> {
+    if id != AUTO_LOCK_ID {
+        return None;
+    }
+    value.trim().parse::<u32>().ok().map(interval_label)
+}
+
+fn interval_label(seconds: u32) -> String {
+    match seconds {
+        0 => otto_kit::t_owned!("settings-lock-never"),
+        s if s % 3600 == 0 => {
+            otto_kit::t_owned!("settings-interval-hours", count = f64::from(s / 3600))
+        }
+        s if s % 60 == 0 => {
+            otto_kit::t_owned!("settings-interval-minutes", count = f64::from(s / 60))
+        }
+        s => otto_kit::t_owned!("settings-interval-seconds", count = f64::from(s)),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -292,17 +324,19 @@ mod tests {
     }
 
     #[test]
-    fn parses_fc_list_output_taking_first_alias_and_dedup_sorting() {
-        let text =
-            "DejaVu Sans,DejaVu Sans\nNoto Sans CJK JP,Noto Sans CJK JP\nDejaVu Sans\nInter\n";
-        let names = parse_fc_list(text);
+    fn font_families_are_sorted_once_each_without_blanks() {
+        let names = sorted_families(
+            [
+                "Inter",
+                "DejaVu Sans",
+                "",
+                " ",
+                "DejaVu Sans",
+                "Noto Sans CJK JP",
+            ]
+            .map(String::from),
+        );
         assert_eq!(names, vec!["DejaVu Sans", "Inter", "Noto Sans CJK JP"]);
-    }
-
-    #[test]
-    fn parses_fc_list_output_ignoring_blank_lines() {
-        let names = parse_fc_list("\n\nMono\n");
-        assert_eq!(names, vec!["Mono"]);
     }
 
     #[test]
@@ -363,6 +397,28 @@ mod tests {
         assert_eq!(found, vec!["otto-lock"]);
 
         fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn auto_lock_offers_intervals_and_keeps_a_hand_written_one() {
+        let offered = auto_lock_choices("600");
+        assert_eq!(offered.first().map(|c| c.value.as_str()), Some("0"));
+        assert!(offered.iter().any(|c| c.value == "600"));
+        assert_eq!(offered.len(), AUTO_LOCK_INTERVALS.len());
+
+        let odd = auto_lock_choices("450");
+        assert_eq!(odd.len(), AUTO_LOCK_INTERVALS.len() + 1);
+        let values: Vec<&str> = odd.iter().map(|c| c.value.as_str()).collect();
+        assert!(values
+            .windows(2)
+            .all(|w| w[0].parse::<u32>().unwrap() < w[1].parse::<u32>().unwrap()));
+    }
+
+    #[test]
+    fn only_the_auto_lock_interval_gets_a_label() {
+        assert!(label_for("lock.auto_lock_timeout", "300").is_some());
+        assert_eq!(label_for("cursor_theme", "300"), None);
+        assert_eq!(label_for("lock.auto_lock_timeout", "soon"), None);
     }
 
     #[test]

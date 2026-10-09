@@ -4,14 +4,19 @@ use std::{
 };
 
 #[cfg(feature = "perf-counters")]
-use once_cell::sync::Lazy;
-#[cfg(feature = "perf-counters")]
 use std::sync::atomic::AtomicU64;
+#[cfg(feature = "perf-counters")]
+use std::sync::LazyLock;
 #[cfg(feature = "perf-counters")]
 use std::time::Instant;
 
 #[cfg(feature = "egl")]
 use smithay::backend::renderer::ImportEgl;
+#[cfg(feature = "ticker")]
+use smithay::backend::{allocator::Fourcc, renderer::ImportMem};
+
+#[cfg(feature = "ticker")]
+use crate::drawing::{FpsElement, FPS_NUMBERS_PNG};
 
 use smithay::{
     backend::{
@@ -20,7 +25,7 @@ use smithay::{
         renderer::{
             damage::{Error as OutputDamageTrackerError, OutputDamageTracker},
             element::Kind,
-            utils::{import_surface, RendererSurfaceState},
+            utils::RendererSurfaceState,
             ContextId, ImportDma, ImportMemWl, Renderer,
         },
         winit::{self, WinitEvent, WinitGraphicsBackend},
@@ -30,7 +35,6 @@ use smithay::{
     output::{Mode, Output, PhysicalProperties, Subpixel},
     reexports::{
         calloop::EventLoop,
-        wayland_protocols::wp::presentation_time::server::wp_presentation_feedback,
         wayland_server::{protocol::wl_surface, Display},
         winit::{
             dpi::{LogicalSize, Size},
@@ -40,12 +44,11 @@ use smithay::{
     },
     utils::{IsAlive, Scale, Transform},
     wayland::{
-        compositor::{self, with_states},
+        compositor,
         dmabuf::{
             DmabufFeedback, DmabufFeedbackBuilder, DmabufGlobal, DmabufHandler, DmabufState,
             ImportNotifier,
         },
-        presentation::Refresh,
     },
 };
 use tracing::{error, info, warn};
@@ -57,7 +60,10 @@ use crate::{
     renderer::SkiaTexture,
     shell::WindowElement,
     skia_renderer::{SkiaRenderer, SkiaTextureImage},
-    state::{post_repaint, take_presentation_feedback, Backend, Otto},
+    state::{
+        frame::{frame_done, FramePacing, Presentation},
+        Backend, Otto,
+    },
 };
 
 #[cfg(feature = "debug")]
@@ -76,7 +82,8 @@ static FRAME_RENDERED: AtomicU64 = AtomicU64::new(0);
 #[cfg(feature = "perf-counters")]
 static FRAME_SUBMITTED: AtomicU64 = AtomicU64::new(0);
 #[cfg(feature = "perf-counters")]
-static FRAME_LOG_STATE: Lazy<Mutex<FrameLogState>> = Lazy::new(|| Mutex::new(FrameLogState::new()));
+static FRAME_LOG_STATE: LazyLock<Mutex<FrameLogState>> =
+    LazyLock::new(|| Mutex::new(FrameLogState::new()));
 
 #[cfg(feature = "perf-counters")]
 struct FrameLogState {
@@ -154,7 +161,7 @@ pub struct WinitData {
     dmabuf_state: (DmabufState, DmabufGlobal, Option<DmabufFeedback>),
     full_redraw: u8,
     context_id: ContextId<SkiaTexture>,
-    #[cfg(feature = "fps_ticker")]
+    #[cfg(feature = "ticker")]
     pub fps: fps_ticker::Fps,
 }
 
@@ -194,9 +201,7 @@ impl Backend for WinitData {
         self.full_redraw = 4;
     }
     fn early_import(&mut self, surface: &wl_surface::WlSurface) {
-        with_states(surface, |states| {
-            let _ = import_surface(self.backend.renderer(), states);
-        });
+        let _ = crate::renderer::import_surface_subtree(self.backend.renderer(), surface);
     }
     fn texture_for_surface(
         &self,
@@ -278,14 +283,14 @@ pub fn run_winit() {
     );
     output.set_preferred(mode);
 
-    #[cfg(feature = "fps_ticker")]
-    let fps_image = image::io::Reader::with_format(
+    #[cfg(feature = "ticker")]
+    let fps_image = image::ImageReader::with_format(
         std::io::Cursor::new(FPS_NUMBERS_PNG),
         image::ImageFormat::Png,
     )
     .decode()
     .unwrap();
-    #[cfg(feature = "fps_ticker")]
+    #[cfg(feature = "ticker")]
     let fps_texture = backend
         .renderer()
         .import_memory(
@@ -295,7 +300,7 @@ pub fn run_winit() {
             false,
         )
         .expect("Unable to upload FPS texture");
-    #[cfg(feature = "fps_ticker")]
+    #[cfg(feature = "ticker")]
     let mut fps_element = FpsElement::new(fps_texture);
 
     let render_node = EGLDevice::device_for_display(backend.renderer().egl_context().display())
@@ -353,7 +358,7 @@ pub fn run_winit() {
             damage_tracker,
             dmabuf_state,
             full_redraw: 0,
-            #[cfg(feature = "fps_ticker")]
+            #[cfg(feature = "ticker")]
             fps: fps_ticker::Fps::default(),
             context_id,
         }
@@ -411,7 +416,7 @@ pub fn run_winit() {
         #[cfg(feature = "profile-with-puffin")]
         profiling::puffin::GlobalProfiler::lock().new_frame();
 
-        #[cfg(feature = "fps_ticker")]
+        #[cfg(feature = "ticker")]
         state.backend_data.fps.tick();
 
         state.update_dnd();
@@ -476,9 +481,9 @@ pub fn run_winit() {
                 backend.window().set_cursor(cursor.into());
             }
 
-            #[cfg(feature = "fps_ticker")]
+            #[cfg(feature = "ticker")]
             let fps = state.backend_data.fps.avg().round() as u32;
-            #[cfg(feature = "fps_ticker")]
+            #[cfg(feature = "ticker")]
             fps_element.update_fps(fps);
 
             let full_redraw = &mut state.backend_data.full_redraw;
@@ -577,7 +582,7 @@ pub fn run_winit() {
                         elements.extend(cursor_elements);
                     }
 
-                    #[cfg(feature = "fps_ticker")]
+                    #[cfg(feature = "ticker")]
                     elements.push(WorkspaceRenderElements::Fps(fps_element.clone()));
 
                     // Exposé hides `workspaces_layer`, and the per-output
@@ -605,8 +610,8 @@ pub fn run_winit() {
                                 let origin = (pos.x, pos.y);
                                 // The lock plane stays in the stack rather than
                                 // replacing it (as the virtual-output path does):
-                                // it is hidden while unlocked, and exposé cannot
-                                // be open on a locked session anyway.
+                                // it is hidden while unlocked, and a lock can
+                                // come down on an exposé that is already open.
                                 vec![
                                     state.scene_element.for_plane_subtree(&ows.lock_plane, origin),
                                     state
@@ -707,79 +712,34 @@ pub fn run_winit() {
 
                         backend.window().set_cursor_visible(cursor_visible);
 
-                        let time = state.clock.now();
                         let all_window_elements: Vec<&WindowElement> =
                             state.workspaces.spaces_elements().collect();
-                        #[allow(clippy::mutable_key_type)]
-                        // ObjectId as key — see window_throttle.rs
-                        {
-                            let expose_active = state.workspaces.mirrors_active();
-                            let interacting_ids = crate::state::window_throttle::interacting_ids(
-                                &state.pointer_interaction,
-                            );
-                            let window_throttle_states =
-                                crate::state::window_throttle::classify_windows(
-                                    &state.workspaces,
-                                    &all_window_elements,
-                                    &std::collections::HashSet::new(),
-                                    expose_active,
-                                    // Winit has no per-frame screenshare tap,
-                                    // so nothing is ever capture-pinned here.
-                                    &std::collections::HashSet::new(),
-                                    &interacting_ids,
-                                );
-                            let effect_surfaces: std::collections::HashSet<_> =
-                                state.background_effects.keys().cloned().collect();
-                            let translucent_ids =
-                                crate::state::window_throttle::translucent_window_ids(
-                                    &all_window_elements,
-                                    &effect_surfaces,
-                                );
-                            let occluded_layer_ids =
-                                crate::state::window_throttle::occluded_layer_surface_ids(
-                                    &state.workspaces,
-                                    &output,
-                                    expose_active,
-                                    &translucent_ids,
-                                );
-                            post_repaint(
-                                &output,
-                                &render_output_result.states,
-                                &all_window_elements,
-                                None,
-                                time,
-                                &window_throttle_states,
-                                &occluded_layer_ids,
-                            );
-                        }
+                        let pacing = FramePacing::classify(
+                            &state.workspaces,
+                            &output,
+                            &all_window_elements,
+                            &state.background_effects,
+                            &state.pointer_interaction,
+                            false,
+                            // Winit has no per-frame screenshare tap,
+                            // so nothing is ever capture-pinned here.
+                            &std::collections::HashSet::new(),
+                        );
+                        frame_done(
+                            &output,
+                            &render_output_result.states,
+                            &all_window_elements,
+                            None,
+                            state.clock.now(),
+                            &pacing,
+                            has_rendered,
+                            Presentation::Immediate,
+                        );
 
                         record_frame_result(has_rendered, frame_submitted);
                         lock_frame_presented = frame_submitted;
                         if has_rendered || frame_submitted {
                             needs_redraw_soon = true;
-                        }
-
-                        if has_rendered {
-                            let all_window_elements: Vec<&WindowElement> =
-                                state.workspaces.spaces_elements().collect();
-                            let mut output_presentation_feedback = take_presentation_feedback(
-                                &output,
-                                &all_window_elements,
-                                &render_output_result.states,
-                            );
-                            output_presentation_feedback.presented(
-                                time,
-                                output
-                                    .current_mode()
-                                    .map(|mode| {
-                                        Refresh::fixed(Duration::from_nanos(
-                                            1_000_000_000_000 / mode.refresh as u64,
-                                        ))
-                                    })
-                                    .unwrap_or(Refresh::Unknown),
-                                0,
-                                wp_presentation_feedback::Kind::Vsync,
-                            );
                         }
                     }
                     Err(SwapBuffersError::ContextLost(err)) => {

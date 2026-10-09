@@ -129,48 +129,6 @@ impl MenuBarState {
     pub fn clear_active(&mut self) {
         self.active_index = None;
     }
-
-    // === Navigation Logic ===
-
-    /// Navigate to the next item (wraps around)
-    pub fn navigate_next(&mut self) {
-        if self.items.is_empty() {
-            return;
-        }
-
-        self.active_index = Some(match self.active_index {
-            Some(idx) => (idx + 1) % self.items.len(),
-            None => 0,
-        });
-    }
-
-    /// Navigate to the previous item (wraps around)
-    pub fn navigate_previous(&mut self) {
-        if self.items.is_empty() {
-            return;
-        }
-
-        self.active_index = Some(match self.active_index {
-            Some(idx) => {
-                if idx == 0 {
-                    self.items.len() - 1
-                } else {
-                    idx - 1
-                }
-            }
-            None => self.items.len() - 1,
-        });
-    }
-
-    /// Activate the item at the given index
-    pub fn activate_at(&mut self, index: usize) -> bool {
-        if index < self.items.len() {
-            self.active_index = Some(index);
-            true
-        } else {
-            false
-        }
-    }
 }
 
 impl Default for MenuBarState {
@@ -202,67 +160,5 @@ mod tests {
         assert_eq!(state.items()[0].label.as_deref(), Some("File"));
         assert_eq!(state.items()[1].label.as_deref(), Some("Edit"));
         assert_eq!(state.items()[2].label.as_deref(), Some("View"));
-    }
-
-    #[test]
-    fn test_navigation() {
-        let mut state = MenuBarState::new();
-        state.add_item("File");
-        state.add_item("Edit");
-        state.add_item("View");
-
-        // Navigate next from None
-        state.navigate_next();
-        assert_eq!(state.active_index(), Some(0));
-
-        // Navigate next
-        state.navigate_next();
-        assert_eq!(state.active_index(), Some(1));
-
-        // Navigate next
-        state.navigate_next();
-        assert_eq!(state.active_index(), Some(2));
-
-        // Wrap around
-        state.navigate_next();
-        assert_eq!(state.active_index(), Some(0));
-    }
-
-    #[test]
-    fn test_navigation_previous() {
-        let mut state = MenuBarState::new();
-        state.add_item("File");
-        state.add_item("Edit");
-        state.add_item("View");
-
-        // Navigate previous from None
-        state.navigate_previous();
-        assert_eq!(state.active_index(), Some(2));
-
-        // Navigate previous
-        state.navigate_previous();
-        assert_eq!(state.active_index(), Some(1));
-
-        // Navigate previous
-        state.navigate_previous();
-        assert_eq!(state.active_index(), Some(0));
-
-        // Wrap around
-        state.navigate_previous();
-        assert_eq!(state.active_index(), Some(2));
-    }
-
-    #[test]
-    fn test_activate_at() {
-        let mut state = MenuBarState::new();
-        state.add_item("File");
-        state.add_item("Edit");
-
-        assert!(state.activate_at(1));
-        assert_eq!(state.active_index(), Some(1));
-
-        // Out of bounds
-        assert!(!state.activate_at(5));
-        assert_eq!(state.active_index(), Some(1)); // Unchanged
     }
 }

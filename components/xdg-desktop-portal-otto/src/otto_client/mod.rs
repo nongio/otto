@@ -1,9 +1,8 @@
 //! Interface layer towards Otto's backend-facing APIs.
 //!
-//! This module owns the D-Bus bindings we use to talk to Otto.
-//! Each backend API should live in its own submodule (e.g. Screencast,
-//! RemoteDesktop). For now only the ScreenCast API is implemented.
-//! See `ScreenCast-backend-spec.md` for the contract this module targets.
+//! The proxies themselves are declared once, in the `otto-dbus` crate; this
+//! module wraps them in the calls the portal makes, one submodule per backend
+//! API.
 
 use zbus::{Connection, Result};
 
@@ -23,4 +22,3 @@ impl OttoClient {
 pub mod dialog;
 pub mod file_picker;
 pub mod screencast;
-pub mod settings;

@@ -135,6 +135,11 @@ pub struct ChoiceGroup {
     pub multi: bool,
     /// For a multi-select group: the options picked to begin with.
     pub picked: Vec<usize>,
+    /// A checkbox: the Access portal's choice with no options. Its one
+    /// option carries the group's label and is drawn as a box to tick rather
+    /// than a row to pick; it answers `true` or `false`. Always `multi`, so
+    /// it flips like a multi-select option.
+    pub check: bool,
 }
 
 /// The extras a `PresentQuestions` dialog carries over `PresentQuestion`.
@@ -223,7 +228,10 @@ impl Picks {
     pub fn results(&self, choices: &[ChoiceGroup]) -> Vec<(String, String)> {
         let mut results = Vec::new();
         for (gi, g) in choices.iter().enumerate() {
-            if g.multi {
+            if g.check {
+                let on = self.is_chosen(choices, gi, 0);
+                results.push((g.id.clone(), on.to_string()));
+            } else if g.multi {
                 for (oi, o) in g.options.iter().enumerate() {
                     if self.is_chosen(choices, gi, oi) {
                         results.push((g.id.clone(), o.id.clone()));
@@ -820,12 +828,17 @@ pub fn dialog_layout(view: &DialogView, page: usize) -> DialogLayout {
         if group.options.is_empty() || (pages > 1 && gi != page) {
             continue;
         }
-        let lines = wrap(
-            &group.label,
-            &question_font(handle_title),
-            text_max_w,
-            GROUP_LABEL_MAX_LINES,
-        );
+        // A checkbox's label is its row's own.
+        let lines = if group.check {
+            Vec::new()
+        } else {
+            wrap(
+                &group.label,
+                &question_font(handle_title),
+                text_max_w,
+                GROUP_LABEL_MAX_LINES,
+            )
+        };
         if !lines.is_empty() {
             let h = question_line_h(handle_title) * lines.len() as f32;
             bottom = y + h;
@@ -857,7 +870,7 @@ pub fn dialog_layout(view: &DialogView, page: usize) -> DialogLayout {
                 y = top + h + GAP_CHOICES;
             }
         }
-        if group.multi && !view.style.multi_hint.is_empty() {
+        if group.multi && !group.check && !view.style.multi_hint.is_empty() {
             let lines = wrap(
                 &view.style.multi_hint,
                 &font(OPTION_DESC_SIZE, 400),
@@ -1500,6 +1513,13 @@ pub fn draw_dialog(
             continue;
         };
         let is_selected = picks.is_chosen(&view.choices, *gi, *oi);
+        if group.check {
+            draw_check_row(canvas, *rect, label_lines, is_selected, text, accent, dim2);
+            if focus == Some(KeyboardTarget::Row(row)) {
+                draw_ring(canvas, *rect, OPTION_RADIUS, accent);
+            }
+            continue;
+        }
 
         let mut row_bg = Paint::default();
         row_bg.set_anti_alias(true);
@@ -1657,6 +1677,65 @@ pub fn draw_dialog(
     }
 
     canvas.restore();
+}
+
+/// A checkbox row: a box at the badge's place, ticked with the accent when
+/// on, and the label beside it. No fill of its own, so it reads as a setting
+/// on the answer rather than one more thing to pick.
+fn draw_check_row(
+    canvas: &Canvas,
+    rect: Rect,
+    label_lines: &[String],
+    on: bool,
+    text: Color,
+    accent: Color,
+    border: Color,
+) {
+    let size = BADGE - 2.0;
+    let the_box = Rect::from_xywh(
+        rect.left + BADGE_X + 1.0,
+        rect.center_y() - size / 2.0,
+        size,
+        size,
+    );
+    let mut paint = Paint::default();
+    paint.set_anti_alias(true);
+    if on {
+        paint.set_color(accent);
+        canvas.draw_rrect(RRect::new_rect_xy(the_box, 5.0, 5.0), &paint);
+        let mut tick = Paint::default();
+        tick.set_anti_alias(true);
+        tick.set_color(Color::WHITE);
+        tick.set_style(skia_safe::paint::Style::Stroke);
+        tick.set_stroke_width(2.0);
+        tick.set_stroke_cap(skia_safe::paint::Cap::Round);
+        tick.set_stroke_join(skia_safe::paint::Join::Round);
+        let (x, y, s) = (the_box.left, the_box.top, size);
+        let mut path = skia_safe::PathBuilder::new();
+        path.move_to((x + s * 0.26, y + s * 0.52));
+        path.line_to((x + s * 0.44, y + s * 0.70));
+        path.line_to((x + s * 0.76, y + s * 0.32));
+        canvas.draw_path(&path.detach(), &tick);
+    } else {
+        paint.set_color(border);
+        paint.set_style(skia_safe::paint::Style::Stroke);
+        paint.set_stroke_width(1.5);
+        canvas.draw_rrect(
+            RRect::new_rect_xy(the_box.with_inset((0.75, 0.75)), 5.0, 5.0),
+            &paint,
+        );
+    }
+    let text_x = rect.left + option_text_x(false);
+    let h = OPTION_LABEL_LINE_H * label_lines.len().max(1) as f32;
+    draw_lines(
+        canvas,
+        label_lines,
+        text_x,
+        rect.center_y() - h / 2.0,
+        OPTION_LABEL_LINE_H,
+        &font(OPTION_LABEL_SIZE, 500),
+        text,
+    );
 }
 
 fn draw_button(canvas: &Canvas, rect: &Rect, label: &str, bg: Color, text: Color) {

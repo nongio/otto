@@ -61,7 +61,7 @@ of letters. `12:30`, `C:\` and `http://…` are words and earn no hint.
 | `kind:` | `document`, `pdf`, `image`, `video`, `audio`, `text`, `archive`, `app`, `folder`; comma for any of several | The kind of file. |
 | `in:` | a folder: `~/Documents`, `/mnt/data`, `notes` | Under that folder, at any depth. `~` is home; a relative path is relative to the folder the search started in. Several `in:` terms: under any of them. `-in:` leaves a folder out. |
 | `modified:` | `today`, `yesterday`, `week`, `month`, `year`; `<7d`, `>1y` (units `h`, `d`, `w`, `m`, `y`); `2025`, `2025-03`, `2025-03-14`, each optionally with `<` or `>` | When the file was last written. `<7d` is "in the last seven days", `>1y` "longer ago than a year". A date is a calendar period in local time: `2025-03` is all of March, `<2025-03` before it began, `>2025-03` after it ended. A bare duration means "within". |
-| `size:` | `>100M`, `<1K`, `1.5G`; units `K`, `M`, `G`, `T` with optional `B` or `iB` | Size. Units are powers of 1024, as Files shows sizes. A bare size means "at least". |
+| `size:` | `>100M`, `<1K`, `1.5G`; units `K`, `M`, `G`, `T` with optional `B` or `iB` | Size. Units are powers of 1000, as Files shows sizes; `KiB`, `MiB`, … are powers of 1024. A bare size means "at least". |
 | `sort:` | `relevance`, `modified`, `size`, `name` | How results are ordered: best name match, newest, largest, or A to Z. The last `sort:` wins. |
 
 Aliases are accepted for values (`photos` for `image`, `music` for `audio`,
@@ -162,8 +162,9 @@ show localised aliases, but they write the canonical form.
   would bury the file whose name was typed. Contents are asked for explicitly
   with `text:`. Words read from pictures are the exception, because Find has
   always answered from them and they are only pictures the person has seen.
-- **Powers of 1024 for sizes.** A file shown as "1 MB" must be found by
-  `size:>1M`.
+- **Sizes count the way Files shows them.** `K`, `M`, `G` are powers of
+  1000, as Files displays sizes, so a file shown as "1 MB" is found by
+  `size:>1M`; `KiB`, `MiB`, … stay powers of 1024 for those who mean them.
 - **Parsing never fails.** A search box that refuses a query because of a
   typo in a filter is worse than one that searches the typo.
 

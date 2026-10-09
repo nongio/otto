@@ -34,12 +34,14 @@ impl Browser {
         // re-filters in place, with no filesystem access, and picking the
         // same one re-uses the order already computed.
         let filter = self.picker.as_ref().map(|p| p.current_filter).unwrap_or(0);
+        let photos = (self.mode == ViewMode::Photos).then_some(self.photos_group);
         let key = (
             column.epoch,
             self.sort,
             self.ascending,
             self.show_hidden,
             filter,
+            photos,
         );
         if column.sorted.borrow().key == Some(key) {
             return;
@@ -52,7 +54,40 @@ impl Browser {
                 None => true,
             })
             .collect();
-        order.sort_by(|&a, &b| self.compare(&entries[a], &entries[b]));
+        if let Some(grouping) = photos {
+            // Folders, then pictures a group at a time, then everything
+            // else: the Photos view's sections are runs of this order, so
+            // each day or month has to be one run whatever the sort within
+            // it. The groups are read once up front rather than per
+            // comparison, each being a `localtime_r`.
+            let ranks: Vec<(crate::photos::SectionKind, Option<i64>)> = entries
+                .iter()
+                .map(|e| {
+                    let kind = crate::photos::kind_of(e);
+                    let group = (kind == crate::photos::SectionKind::Photos)
+                        .then(|| crate::photos::group_key(e.modified, grouping))
+                        .flatten();
+                    (kind, group)
+                })
+                .collect();
+            let newest_first = !(self.sort == SortKey::Modified && self.ascending);
+            order.sort_by(|&a, &b| {
+                let (kind_a, group_a) = ranks[a];
+                let (kind_b, group_b) = ranks[b];
+                let by_group = match (group_a, group_b) {
+                    (Some(x), Some(y)) if newest_first => y.cmp(&x),
+                    (Some(x), Some(y)) => x.cmp(&y),
+                    // An undated picture after the dated ones.
+                    (x, y) => y.is_some().cmp(&x.is_some()),
+                };
+                kind_a
+                    .cmp(&kind_b)
+                    .then(by_group)
+                    .then_with(|| self.compare(&entries[a], &entries[b]))
+            });
+        } else {
+            order.sort_by(|&a, &b| self.compare(&entries[a], &entries[b]));
+        }
         *column.sorted.borrow_mut() = model::SortCache {
             key: Some(key),
             order,

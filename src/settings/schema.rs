@@ -36,6 +36,27 @@ impl Apply {
 }
 
 /// One row of the schema.
+/// The settings that decide what runs in front of the password, or whether
+/// the session locks at all. Changing one over the bus first asks polkit
+/// (`org.otto.settings.lock`), which shows the auth panel; see
+/// `src/settings/polkit.rs`.
+pub const PROTECTED: &[&str] = &[
+    "lock.locker_command",
+    "lock.locker_args",
+    "lock.auto_lock_timeout",
+    "lock.on_suspend",
+    "login.greeter_command",
+    "login.greeter_args",
+    "power_management.manage_lid_switch",
+    "power_management.on_lid_close",
+    "power_management.on_power_button",
+];
+
+/// Whether changing `id` asks for the password.
+pub fn is_protected(id: &str) -> bool {
+    PROTECTED.contains(&id)
+}
+
 pub struct SettingSpec {
     /// Dotted path, matching the configuration structure.
     pub id: &'static str,
@@ -85,6 +106,16 @@ impl SettingSpec {
         out
     }
 
+    /// The values the setting takes in this session: `choices`, plus the
+    /// widgets a customised desktop widget theme adds.
+    pub fn choices_now(&self) -> Vec<String> {
+        let mut out: Vec<String> = self.choices.iter().map(|c| c.to_string()).collect();
+        if self.id == "desktop.widget" {
+            out.extend(crate::desktop_widget::extra_widgets());
+        }
+        out
+    }
+
     /// The configuration section the setting lives in — everything before the
     /// last dot, empty for a top-level key.
     pub fn section(&self) -> &'static str {
@@ -109,11 +140,12 @@ impl SettingSpec {
 
         if self.ty == SettingType::Enum {
             let text = value.as_str().unwrap_or_default();
-            if !self.choices.contains(&text) {
+            let choices = self.choices_now();
+            if !choices.iter().any(|choice| choice == text) {
                 return Err(Invalid::Range(format!(
                     "`{}` must be one of {}, got `{text}`",
                     self.id,
-                    self.choices.join(", ")
+                    choices.join(", ")
                 )));
             }
             if self.unavailable_now().contains(&text) {
@@ -193,8 +225,6 @@ const fn spec(
         backends: &[],
     }
 }
-
-#[allow(clippy::too_many_arguments)]
 const fn ranged(
     id: &'static str,
     ty: SettingType,
@@ -414,6 +444,30 @@ pub static SETTINGS: &[SettingSpec] = &[
         "The files in your Desktop folder, behind the windows.",
         Live,
     ),
+    ranged(
+        "canvas.width",
+        Int,
+        "Side canvas width",
+        "Width of the side canvas, in logical points. Everything in it is drawn at this width.",
+        Live,
+        200.0,
+        1200.0,
+        10.0,
+    ),
+    labelled_choice(
+        "desktop.widget",
+        "Background widget",
+        "A full-screen page drawn over the wallpaper, behind the windows. \
+         Needs ewwii.",
+        Live,
+        crate::desktop_widget::WIDGET_CHOICES,
+        &[
+            "settings-choice-widget-none",
+            "settings-choice-widget-calendar",
+            "settings-choice-widget-cross-pad",
+            "settings-choice-widget-grid-pad",
+        ],
+    ),
     spec(
         "background_color",
         Str,
@@ -476,6 +530,29 @@ pub static SETTINGS: &[SettingSpec] = &[
             Restart,
         )
     },
+    // ---- Top bar ---------------------------------------------------------
+    spec(
+        "topbar.show_app_menu",
+        Bool,
+        "Show application menus",
+        "The menus of the application in use, beside its name in the top bar.",
+        Live,
+    ),
+    spec(
+        "topbar.show_clock",
+        Bool,
+        "Show date and time",
+        "The clock at the right end of the top bar.",
+        Live,
+    ),
+    spec(
+        "topbar.clock_format",
+        Str,
+        "Clock format",
+        "How the top bar writes the date and time, as a strftime format. \
+         Empty follows your language.",
+        Live,
+    ),
     // ---- Tiling ----------------------------------------------------------
     choice(
         "tiling.decoration",
@@ -860,6 +937,13 @@ pub static SETTINGS: &[SettingSpec] = &[
         0.0,
         86400.0,
         60.0,
+    ),
+    spec(
+        "lock.on_suspend",
+        Bool,
+        "Lock when the computer sleeps",
+        "Lock the screen before the computer suspends, so it wakes to the lock screen.",
+        Live,
     ),
     spec(
         "login.greeter_command",

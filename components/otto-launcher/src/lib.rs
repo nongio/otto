@@ -2,17 +2,13 @@
 //! can build the same scene the binary does without a compositor.
 
 pub mod apps;
-pub mod ask;
 pub mod calc;
 pub mod drafts;
-pub mod input;
-pub mod log;
-pub mod selection;
 pub mod source;
 pub mod view;
 pub mod windows;
 
 pub use apps::Apps;
 pub use calc::Calculator;
-pub use source::{rank, Item, Match, Origin, Source};
-pub use view::{field_style, Palette, CARD_W, FIELD_H, MAX_CARD_H, MAX_ROWS, RADIUS};
+pub use source::Source;
+pub use view::{Palette, CARD_W, FIELD_H, MAX_CARD_H, RADIUS};

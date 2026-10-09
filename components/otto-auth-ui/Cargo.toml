@@ -5,22 +5,31 @@ authors.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "The authentication panel Otto shows when it needs a password — shared by the greeter and the lock screen"
+description = "The authentication panel Otto shows when it needs a password — shared by the greeter, the lock screen and otto-authorize"
 
 [dependencies]
 laye-rs.workspace = true
 otto-kit = { path = "../otto-kit" }
 # `unstable-locales` is what makes `format_localized` translate %A and %B;
 # without it chrono emits English names whatever the locale says.
-chrono = { version = "0.4", features = ["unstable-locales"] }
-taffy = "0.5"
-serde = { version = "1", features = ["derive"] }
-toml = "0.8"
-tracing = "0.1"
+chrono = { workspace = true, features = ["default", "unstable-locales"] }
+taffy.workspace = true
+serde = { workspace = true, features = ["derive"] }
+toml = { workspace = true, features = ["default"] }
+tracing.workspace = true
+libc = { workspace = true, optional = true }
+# Wipes what was typed into the field, and every copy of it on the way out.
+zeroize.workspace = true
+# The power buttons ask logind directly.
+zbus.workspace = true
 
+[features]
+# The PAM conversation otto-lock and otto-authorize share. Off by default so
+# the greeter, which talks to greetd rather than PAM, does not link libpam.
+pam = ["dep:libc"]
 
 [dependencies.skia-safe]
-version = "=0.93"
+workspace = true
 features = ["gl", "textlayout", "svg", "skottie"]
 
 [dev-dependencies]

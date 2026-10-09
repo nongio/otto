@@ -12,8 +12,7 @@ use std::time::SystemTime;
 
 use otto_kit::components::scroll::ScrollView;
 use otto_kit::filetype::{self, Kind};
-use otto_kit::fs::{copy_entry, first_free_name, move_entry, remove_entry, unique_name};
-use otto_kit::trash::percent_decode;
+use otto_kit::fs::{copy_entry, first_free_name, move_entry, unique_name};
 use skia_safe::Rect;
 
 /// One entry in a directory.
@@ -195,6 +194,9 @@ pub struct Snapshot {
     /// Set when the directory could not be read at all — shown in place of the
     /// listing, rather than as an empty directory.
     pub error: Option<String>,
+    /// For the Trash: the `files/` of every can listed, found on the loader
+    /// thread with the listing, for the column to watch. Empty otherwise.
+    pub can_dirs: Vec<PathBuf>,
 }
 
 /// One directory in the path stack: its contents, what is selected in it, and
@@ -232,6 +234,9 @@ pub struct Column {
     /// viewport and content height are re-set every frame by the view, since
     /// both change with the window size and the listing.
     pub scroll: ScrollView,
+    /// This pane's width in the Miller view, set by dragging its divider.
+    /// Opens at [`crate::view::MILLER_W`].
+    pub width: f32,
     /// Bumped whenever [`Self::snapshot`] is replaced, so a cached order can
     /// tell whether it was computed from the listing that is there now.
     pub epoch: u64,
@@ -241,6 +246,11 @@ pub struct Column {
     /// This directory's inotify watch. Dropped with the column, which is what
     /// keeps the watch set equal to what is on screen.
     watch: crate::watch::DirWatch,
+    /// For the Trash, which lists every can rather than one directory: a
+    /// watch on each other can's `files/`, so an item trashed on a stick
+    /// shows up as one trashed at home does. Set from each snapshot's
+    /// [`Snapshot::can_dirs`]; empty for any other column.
+    can_watches: Vec<(PathBuf, crate::watch::DirWatch)>,
     /// Set when a snapshot landed because the *directory* changed rather than
     /// because the user navigated. The cursor is an index, so it has to be
     /// re-derived after one of these; the selection is by key and does not.
@@ -268,9 +278,11 @@ impl Column {
             cursor: None,
             anchor: None,
             scroll: ScrollView::new(Rect::new_empty()),
+            width: crate::view::MILLER_W,
             epoch: 0,
             sorted: std::cell::RefCell::new(SortCache::default()),
             watch,
+            can_watches: Vec::new(),
             refreshed: false,
             gone: false,
             reload_pending: false,
@@ -298,6 +310,7 @@ impl Column {
                 path: path.clone(),
                 entries,
                 error: None,
+                can_dirs: Vec::new(),
             },
             // Idle: no read is started, so nothing will arrive later and
             // replace the listing with the error of failing to open a path
@@ -308,11 +321,13 @@ impl Column {
             // Dead: the sentinel is not a directory, so inotify declines it and
             // the watch reports nothing for the pane's whole life.
             watch: crate::watch::DirWatch::new(&path),
+            can_watches: Vec::new(),
             path,
             selection: std::collections::BTreeSet::new(),
             cursor: None,
             anchor: None,
             scroll: ScrollView::new(Rect::new_empty()),
+            width: crate::view::MILLER_W,
             epoch,
             sorted: std::cell::RefCell::new(SortCache::default()),
             refreshed: false,
@@ -367,6 +382,14 @@ impl Column {
     /// the directory has changed underneath. Returns whether anything changed,
     /// so the caller knows to repaint.
     pub fn poll(&mut self) -> bool {
+        // Every can's watch is taken, not only until one has fired, so none
+        // is left dirty to cause a second re-read of the same change.
+        let cans_changed = self
+            .can_watches
+            .iter()
+            .filter_map(|(_, watch)| watch.take())
+            .count()
+            > 0;
         match self.watch.take() {
             // A re-read in place: `snapshot` is replaced, and nothing the user
             // positioned — selection, scroll offset — is touched.
@@ -374,6 +397,7 @@ impl Column {
                 self.reload();
             }
             Some(crate::watch::Change::Gone) => self.gone = true,
+            None if cans_changed => self.reload(),
             None => {}
         }
         // A search batch replaces the listing whole — the worker has already
@@ -389,6 +413,7 @@ impl Column {
         }
         match self.loader.poll() {
             Some(snapshot) => {
+                self.watch_cans(&snapshot.can_dirs);
                 self.snapshot = snapshot;
                 self.refreshed = std::mem::take(&mut self.reload_pending);
                 // The only place the listing is ever replaced, so the only
@@ -400,6 +425,39 @@ impl Column {
         }
     }
 }
+
+impl Column {
+    /// Watch `dirs` (the cans a Trash listing came from) other than this
+    /// column's own, keeping the watches already on the ones that stay: a
+    /// stick plugged in since the last read brings a can of its own.
+    fn watch_cans(&mut self, dirs: &[PathBuf]) {
+        let wanted: Vec<&PathBuf> = dirs.iter().filter(|dir| **dir != self.path).collect();
+        let current: Vec<&PathBuf> = self.can_watches.iter().map(|(dir, _)| dir).collect();
+        if wanted == current {
+            return;
+        }
+        let mut old = std::mem::take(&mut self.can_watches);
+        for dir in wanted {
+            let watch = match old.iter().position(|(kept, _)| kept == dir) {
+                Some(at) => old.swap_remove(at).1,
+                None => crate::watch::DirWatch::new(dir),
+            };
+            self.can_watches.push((dir.clone(), watch));
+        }
+    }
+}
+
+/// What a column's cached order was computed from: the column epoch, the
+/// sort key and direction, whether hidden files show, the picker's filter,
+/// and the Photos view's grouping when the order is that view's.
+pub type SortCacheKey = (
+    u64,
+    SortKey,
+    bool,
+    bool,
+    usize,
+    Option<crate::photos::Grouping>,
+);
 
 /// The filtered, sorted order of a column's listing, remembered between
 /// frames.
@@ -418,7 +476,9 @@ impl Column {
 /// [`Column::snapshot`], which is what `epoch` guards.
 #[derive(Default)]
 pub struct SortCache {
-    pub key: Option<(u64, SortKey, bool, bool, usize)>,
+    /// The column epoch, sort key, direction, hidden files shown, picker
+    /// filter, and the Photos view's grouping when the order is that view's.
+    pub key: Option<SortCacheKey>,
     pub order: Vec<usize>,
 }
 
@@ -501,45 +561,85 @@ impl Directory {
 /// name-first pass is the next change; the snapshot shape is already what it
 /// will deliver.
 fn read_directory(path: &Path) -> Snapshot {
+    if is_trash_root(path) {
+        let (entries, can_dirs) = read_trash();
+        return Snapshot {
+            path: path.to_path_buf(),
+            entries,
+            error: None,
+            can_dirs,
+        };
+    }
     let read = match std::fs::read_dir(path) {
         Ok(read) => read,
-        // A trash can that has never been used has no directory on disk yet.
-        // That is an empty Trash, not a folder that has gone missing, and the
-        // window must say so rather than showing a read error.
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound && is_trash_root(path) => {
-            return Snapshot {
-                path: path.to_path_buf(),
-                entries: Vec::new(),
-                error: None,
-            }
-        }
         Err(err) => {
             return Snapshot {
                 path: path.to_path_buf(),
                 entries: Vec::new(),
                 error: Some(describe_error(&err)),
+                can_dirs: Vec::new(),
             }
         }
     };
 
-    // The sidecars, once for the whole listing rather than once per entry:
-    // the info directory is a single readdir, and reading it per file would
-    // be one open() per row on the pane's critical path. Empty for every
-    // directory that is not the trash, which costs nothing.
-    let origins = is_trash_root(path).then(read_trash_origins);
-
-    let mut entries = Vec::new();
-    for read_entry in read.flatten() {
-        let mut entry = entry_for_dir_entry(&read_entry);
-        entry.origin = origins.as_ref().and_then(|o| o.get(&entry.name).cloned());
-        entries.push(entry);
-    }
-
     Snapshot {
         path: path.to_path_buf(),
-        entries,
+        entries: read.flatten().map(|e| entry_for_dir_entry(&e)).collect(),
         error: None,
+        can_dirs: Vec::new(),
     }
+}
+
+/// The trash cans Files lists, watches and empties.
+#[cfg(not(test))]
+fn trash_cans() -> Vec<otto_kit::trash::Can> {
+    otto_kit::trash::cans()
+}
+
+/// In tests, the home can under [`test_data_home`] and the topdirs a test
+/// puts in [`TEST_TOPDIRS`]: never the cans of the machine's real mounts,
+/// which a test listing (or, worse, emptying) the Trash would otherwise
+/// reach.
+#[cfg(test)]
+fn trash_cans() -> Vec<otto_kit::trash::Can> {
+    let topdirs = TEST_TOPDIRS.lock().map(|t| t.clone()).unwrap_or_default();
+    otto_kit::trash::cans_in(&topdirs)
+}
+
+/// Topdirs whose cans [`trash_cans`] lists in tests.
+#[cfg(test)]
+pub(crate) static TEST_TOPDIRS: std::sync::Mutex<Vec<PathBuf>> = std::sync::Mutex::new(Vec::new());
+
+/// Everything in the trash: the home can and the cans at the top of every
+/// other mounted filesystem (see [`otto_kit::trash::cans`]), as one listing.
+/// Each row keeps its real path in its own can, which is how Put Back and
+/// Delete Forever find its sidecar.
+///
+/// A can that has never been used has no directory on disk yet. That is an
+/// empty Trash, not a folder that has gone missing, so it lists nothing
+/// rather than an error.
+///
+/// Returns the `files/` of every can too, for the Trash column to watch: the
+/// mount table is read here, on the loader thread, never on the UI thread.
+fn read_trash() -> (Vec<Entry>, Vec<PathBuf>) {
+    let mut entries = Vec::new();
+    let cans = trash_cans();
+    let can_dirs = cans.iter().map(otto_kit::trash::Can::files_dir).collect();
+    for can in cans {
+        let Ok(read) = std::fs::read_dir(can.files_dir()) else {
+            continue;
+        };
+        // The sidecars, once per can rather than once per entry: the info
+        // directory is a single readdir, and reading it per file would be one
+        // open() per row on the pane's critical path.
+        let origins = read_trash_origins(&can);
+        for read_entry in read.flatten() {
+            let mut entry = entry_for_dir_entry(&read_entry);
+            entry.origin = origins.get(&entry.name).cloned();
+            entries.push(entry);
+        }
+    }
+    (entries, can_dirs)
 }
 
 /// One entry, from a directory read.
@@ -583,16 +683,6 @@ pub fn entry_for_dir_entry(entry: &std::fs::DirEntry) -> Entry {
         is_dir,
         is_symlink,
     }
-}
-
-/// One entry, built from a path rather than from a directory read.
-///
-/// What [`read_directory`] does per row, for a caller that already has the
-/// path and no `DirEntry` to go with it — a search result, most of all, where
-/// the paths come from somewhere that is not a `readdir`. `None` when there is
-/// nothing at that path any more, which is how a stale index entry is dropped.
-pub fn entry_for_path(path: &Path) -> Option<Entry> {
-    otto_search::Found::stat(path).map(Entry::from)
 }
 
 impl From<otto_search::Found> for Entry {
@@ -855,48 +945,28 @@ pub fn home_dir() -> Option<PathBuf> {
 // ---------------------------------------------------------------------------
 
 /// Human-readable size, the way a file manager writes it.
-pub fn format_size(bytes: u64) -> String {
-    // Under a kilobyte the count is exact and needs a plural rule — one byte,
-    // two bytes, and whatever the local grammar does with 2 and 5.
-    if bytes < 1000 {
-        return otto_kit::t_owned!("files-size-bytes", count = bytes as f64);
-    }
+pub use otto_kit::format::file_size as format_size;
 
-    const UNITS: &[&str] = &[
-        "files-size-kb",
-        "files-size-mb",
-        "files-size-gb",
-        "files-size-tb",
-    ];
-    // Divided once up front: anything reaching here is at least a kilobyte,
-    // and UNITS starts at KB rather than at bytes, so the counter and the unit
-    // it names stay in step.
-    let mut value = bytes as f64 / 1000.0;
-    let mut unit = 0;
-    while value >= 1000.0 && unit < UNITS.len() - 1 {
-        value /= 1000.0;
-        unit += 1;
-    }
-    // One decimal below ten, none above: the extra digit stops a 1 GB file and
-    // a 9 GB file from looking the same, and is noise once the number is wide.
-    let rendered = if value < 10.0 {
-        format!("{value:.1}")
-    } else {
-        format!("{value:.0}")
-    };
-    otto_kit::t_owned!(UNITS[unit], value = rendered)
-}
-
-/// Date, as a listing shows it. Deliberately plain: no locale formatting, and
-/// no relative "yesterday" — both need more than the standard library gives.
+/// Date, as a listing shows it, in local time. Deliberately plain: no locale
+/// formatting, and no relative "yesterday" — both need more than the standard
+/// library gives.
 pub fn format_time(time: SystemTime) -> String {
     let Ok(elapsed) = time.duration_since(SystemTime::UNIX_EPOCH) else {
         return String::new();
     };
     let secs = elapsed.as_secs() as i64;
-    let days = secs.div_euclid(86_400);
-    let (year, month, day) = civil_from_days(days);
-    let time_of_day = secs.rem_euclid(86_400);
+    // The offset in force at the file's own moment, not now's: a file saved
+    // in summer reads in summer time even when listed in winter.
+    format_time_at(secs, otto_search::dates::local_offset(secs))
+}
+
+/// [`format_time`] for `secs` since the epoch, shifted `offset` seconds east
+/// of UTC.
+fn format_time_at(secs: i64, offset: i64) -> String {
+    use otto_search::dates::{civil_from_days, DAY};
+    let local = secs + offset;
+    let (year, month, day) = civil_from_days(local.div_euclid(DAY));
+    let time_of_day = local.rem_euclid(DAY);
     let (hour, minute) = (time_of_day / 3600, (time_of_day % 3600) / 60);
     // Assembled from parts rather than formatted from a pattern, because the
     // month names have to be translated too — and the order of the parts is
@@ -925,21 +995,6 @@ pub fn format_time(time: SystemTime) -> String {
     )
 }
 
-/// Days since the Unix epoch to a civil date. Howard Hinnant's algorithm —
-/// exact, branch-light, and shorter than taking on a date crate.
-fn civil_from_days(days: i64) -> (i64, u32, u32) {
-    let z = days + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z.rem_euclid(146_097);
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let y = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
-    (if m <= 2 { y + 1 } else { y }, m, d)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -964,37 +1019,6 @@ mod tests {
         assert_ne!(natural_cmp("file007", "file7"), std::cmp::Ordering::Equal);
     }
 
-    /// Compared against the catalogue rather than against English prose.
-    ///
-    /// What this guards is the threshold each size crosses and how many
-    /// decimals survive it — 1.5 KB rather than 1.5 kB, 15 KB rather than
-    /// 15.0. The words around the number are the catalogue's business, and
-    /// spelling them out here would fail the test on a developer whose own
-    /// session is not English, which is not a bug in `format_size`.
-    #[test]
-    fn sizes_read_the_way_a_file_manager_writes_them() {
-        assert_eq!(
-            format_size(0),
-            otto_kit::t_owned!("files-size-bytes", count = 0.0)
-        );
-        assert_eq!(
-            format_size(999),
-            otto_kit::t_owned!("files-size-bytes", count = 999.0)
-        );
-        assert_eq!(
-            format_size(1_500),
-            otto_kit::t_owned!("files-size-kb", value = "1.5")
-        );
-        assert_eq!(
-            format_size(15_000),
-            otto_kit::t_owned!("files-size-kb", value = "15")
-        );
-        assert_eq!(
-            format_size(2_000_000),
-            otto_kit::t_owned!("files-size-mb", value = "2.0")
-        );
-    }
-
     #[test]
     fn epoch_formats_correctly() {
         // A fixed point, so the date arithmetic is pinned rather than trusted.
@@ -1003,7 +1027,7 @@ mod tests {
         // month and year is now the locale's business — en-GB puts the day
         // first, en-US the month — and pinning one ordering here would make
         // this test fail on a correctly translated desktop. What it is
-        // actually guarding is `civil_from_days`, and that shows up in the
+        // actually guarding is the date arithmetic, and that shows up in the
         // parts whatever order they are printed in.
         //
         // The month comes from the catalogue for the same reason: its name is
@@ -1018,12 +1042,33 @@ mod tests {
                 "22:13",
             ),
         ] {
-            let at = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(secs);
-            let rendered = format_time(at);
+            // Pinned to UTC: the local zone is the next test's business.
+            let rendered = format_time_at(secs as i64, 0);
             for part in [day, month, year, time] {
                 assert!(rendered.contains(part), "{rendered:?} is missing {part:?}");
             }
         }
+    }
+
+    #[test]
+    fn times_read_in_the_local_zone() {
+        // 23:30 UTC on 31 December 2023. An hour east it is already the new
+        // year; five hours west it is still the evening of the 31st.
+        let secs = 1_704_065_400;
+        let east = format_time_at(secs, 3_600);
+        for part in ["1", otto_kit::t!("files-month-jan"), "2024", "00:30"] {
+            assert!(east.contains(part), "{east:?} is missing {part:?}");
+        }
+        let west = format_time_at(secs, -5 * 3_600);
+        for part in ["31", otto_kit::t!("files-month-dec"), "2023", "18:30"] {
+            assert!(west.contains(part), "{west:?} is missing {part:?}");
+        }
+        // And the public entry point takes the offset in force at that time.
+        let at = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(secs as u64);
+        assert_eq!(
+            format_time(at),
+            format_time_at(secs, otto_search::dates::local_offset(secs))
+        );
     }
 }
 
@@ -1597,10 +1642,10 @@ pub fn undo(changes: &[Change]) -> OpResult {
                 result.trashed += trashed.trashed;
                 result.errors.extend(trashed.errors);
             }
-            Change::Trashed { from, to, info } => {
+            Change::Trashed { from, to, .. } => {
                 // The same operation the Trash window's Put Back runs, and
                 // the same code, so a Ctrl+Z and a Put Back cannot drift.
-                match restore_one(to, from, info) {
+                match restore_one(to, from) {
                     Ok(()) => result.moved += 1,
                     Err(err) => result
                         .errors
@@ -1647,6 +1692,82 @@ pub fn create_folder_named(dest: &Path, name: &str) -> Result<PathBuf, String> {
     Ok(target)
 }
 
+/// Rename `from` to `to` without replacing anything already at `to`.
+///
+/// `rename(2)` quietly clobbers the destination, and undo cannot bring that
+/// back, so this asks the kernel for `RENAME_NOREPLACE` and reports a taken
+/// name as `AlreadyExists`. A filesystem without the flag falls back to a
+/// check before a plain rename, as `otto_kit::trash` does.
+pub fn rename_no_replace(from: &Path, to: &Path) -> std::io::Result<()> {
+    use std::ffi::CString;
+    use std::io::{Error, ErrorKind};
+    use std::os::unix::ffi::OsStrExt;
+
+    let c = |path: &Path| {
+        CString::new(path.as_os_str().as_bytes()).map_err(|_| Error::from(ErrorKind::InvalidInput))
+    };
+    let (from_c, to_c) = (c(from)?, c(to)?);
+    // SAFETY: both pointers are NUL-terminated strings that outlive the call.
+    let result = unsafe {
+        libc::renameat2(
+            libc::AT_FDCWD,
+            from_c.as_ptr(),
+            libc::AT_FDCWD,
+            to_c.as_ptr(),
+            libc::RENAME_NOREPLACE,
+        )
+    };
+    if result == 0 {
+        return Ok(());
+    }
+    let err = Error::last_os_error();
+    match err.raw_os_error() {
+        // On a case-insensitive filesystem "a" → "A" finds the file itself
+        // at the destination; that is a rename, not a collision.
+        Some(libc::EEXIST) if same_file(from, to) => std::fs::rename(from, to),
+        Some(libc::EINVAL | libc::ENOSYS) => {
+            if to.symlink_metadata().is_ok() && !same_file(from, to) {
+                return Err(ErrorKind::AlreadyExists.into());
+            }
+            std::fs::rename(from, to)
+        }
+        _ => Err(err),
+    }
+}
+
+fn same_file(a: &Path, b: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    match (a.symlink_metadata(), b.symlink_metadata()) {
+        (Ok(a), Ok(b)) => a.dev() == b.dev() && a.ino() == b.ino(),
+        _ => false,
+    }
+}
+
+#[cfg(test)]
+mod rename_tests {
+    use super::*;
+
+    #[test]
+    fn rename_refuses_to_replace_an_existing_sibling() {
+        let dir = std::env::temp_dir().join(format!("otto-files-rename-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (a, b) = (dir.join("a.txt"), dir.join("b.txt"));
+        std::fs::write(&a, "a").unwrap();
+        std::fs::write(&b, "b").unwrap();
+
+        let err = rename_no_replace(&a, &b).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists);
+        assert_eq!(std::fs::read_to_string(&a).unwrap(), "a");
+        assert_eq!(std::fs::read_to_string(&b).unwrap(), "b");
+
+        let c = dir.join("c.txt");
+        rename_no_replace(&a, &c).unwrap();
+        assert!(!a.exists());
+        assert_eq!(std::fs::read_to_string(&c).unwrap(), "a");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Trash
 // ---------------------------------------------------------------------------
@@ -1657,34 +1778,22 @@ pub fn create_folder_named(dest: &Path, name: &str) -> Result<PathBuf, String> {
 /// [`paste`] for why that is acceptable here.
 pub fn move_to_trash(paths: &[PathBuf]) -> OpResult {
     let mut result = OpResult::default();
-    let Some(trash) = otto_kit::trash::home_trash_dir() else {
-        result
-            .errors
-            .push("No home directory to trash into.".to_string());
-        return result;
-    };
-    let files_dir = trash.join("files");
-    let info_dir = trash.join("info");
-    if let Err(err) =
-        std::fs::create_dir_all(&files_dir).and_then(|_| std::fs::create_dir_all(&info_dir))
-    {
-        result
-            .errors
-            .push(format!("Couldn\u{2019}t prepare Trash: {err}"));
-        return result;
-    }
-
     for source in paths {
         let Some(name) = source.file_name() else {
             continue;
         };
-        match otto_kit::trash::trash_into(source, &trash) {
-            Ok((to, info)) => {
+        // The can is chosen per item: one on another filesystem goes to the
+        // trash at the top of that filesystem rather than being copied home.
+        match otto_kit::trash::trash(source) {
+            Ok(trashed) => {
                 result.trashed += 1;
+                // The origin the sidecar records, not `source` as spelled:
+                // through a symlinked folder the two differ, and undo is
+                // checked against the can's topdir like Put Back is.
                 result.changes.push(Change::Trashed {
-                    from: source.clone(),
-                    to,
-                    info,
+                    from: trashed.origin,
+                    to: trashed.item,
+                    info: trashed.sidecar,
                 });
             }
             Err(err) => result
@@ -1715,19 +1824,15 @@ pub(crate) fn test_data_home() -> &'static Path {
     })
 }
 
-/// The directory the trash's items live in: `$XDG_DATA_HOME/Trash/files`.
+/// The directory the Trash shell opens on: `$XDG_DATA_HOME/Trash/files`.
 ///
-/// This is what the Trash shell browses, so it is an ordinary path and the
-/// ordinary listing machinery reads it. Everything that makes the trash
-/// special — the origins, and what may be done to a row — hangs off
-/// [`is_trash_root`] rather than off a separate kind of column.
+/// What it lists is every can's items, not only this directory's (see
+/// [`read_trash`]); the path is what identifies the Trash as a place.
+/// Everything that makes the trash special — the origins, and what may be
+/// done to a row — hangs off [`is_trash_root`] rather than off a separate
+/// kind of column.
 pub fn trash_files_dir() -> Option<PathBuf> {
-    otto_kit::trash::home_trash_dir().map(|t| t.join("files"))
-}
-
-/// The sidecar directory: `$XDG_DATA_HOME/Trash/info`.
-pub fn trash_info_dir() -> Option<PathBuf> {
-    otto_kit::trash::home_trash_dir().map(|t| t.join("info"))
+    otto_kit::trash::Can::home().map(|can| can.files_dir())
 }
 
 /// Is `path` the trash's own directory — the one the Trash shell opens on?
@@ -1739,68 +1844,51 @@ pub fn is_trash_root(path: &Path) -> bool {
     trash_files_dir().is_some_and(|trash| path == trash)
 }
 
-/// Every sidecar in the info directory, as trashed-name → original path.
+/// Every sidecar in `can`'s info directory, as trashed-name → original path.
 ///
 /// A sidecar that cannot be read, or that carries no `Path=`, is skipped: an
 /// item whose origin is unknown is still an item in the trash, and dropping
-/// the whole listing over one unreadable file would be the wrong trade.
-fn read_trash_origins() -> std::collections::HashMap<String, PathBuf> {
-    let mut origins = std::collections::HashMap::new();
-    let Some(info_dir) = trash_info_dir() else {
-        return origins;
-    };
-    let Ok(read) = std::fs::read_dir(&info_dir) else {
-        return origins;
-    };
-    for entry in read.flatten() {
-        let file = entry.file_name();
-        let Some(name) = file.to_str().and_then(|n| n.strip_suffix(".trashinfo")) else {
-            continue;
-        };
-        let Ok(body) = std::fs::read_to_string(entry.path()) else {
-            continue;
-        };
-        if let Some(path) = parse_trashinfo(&body) {
-            origins.insert(name.to_string(), path);
-        }
-    }
-    origins
-}
-
-/// The `Path=` key out of a `.trashinfo` body, percent-decoded.
-fn parse_trashinfo(body: &str) -> Option<PathBuf> {
-    body.lines()
-        .find_map(|line| line.strip_prefix("Path="))
-        .map(|encoded| PathBuf::from(percent_decode(encoded.trim())))
+/// the whole listing over one unreadable file would be the wrong trade. So is
+/// a path a stick's sidecar may not name: the row shows no origin, and Put
+/// Back says why when asked. The reading itself is the kit's, from the
+/// checked `info/` descriptor (see [`otto_kit::trash::Can::origins`]).
+fn read_trash_origins(can: &otto_kit::trash::Can) -> std::collections::HashMap<String, PathBuf> {
+    can.origins()
+        .into_iter()
+        .filter_map(|(name, origin)| Some((name.into_string().ok()?, origin)))
+        .collect()
 }
 
 /// Put trashed items back where they came from.
 ///
-/// Each path is one of the trash's own rows; its origin comes from the
-/// sidecar, which is dropped once the item is back. An item whose origin is
-/// unknown cannot be put back — there is nowhere to put it — and says so
-/// rather than being moved somewhere invented.
+/// Each path is one of the trash's own rows, in whichever can holds it; its
+/// origin comes from the sidecar beside it, which is dropped once the item is
+/// back. An item whose origin is unknown cannot be put back — there is
+/// nowhere to put it — and says so rather than being moved somewhere
+/// invented.
 pub fn restore_from_trash(paths: &[PathBuf]) -> OpResult {
     let mut result = OpResult::default();
-    let Some(info_dir) = trash_info_dir() else {
-        result.errors.push("No trash to restore from.".to_string());
-        return result;
-    };
-
     for path in paths {
         let name = name_of(path);
-        let info = info_dir.join(format!("{name}.trashinfo"));
-        let origin = std::fs::read_to_string(&info)
-            .ok()
-            .as_deref()
-            .and_then(parse_trashinfo);
-        let Some(origin) = origin else {
-            result.errors.push(format!(
-                "Can\u{2019}t put \u{201c}{name}\u{201d} back \u{2014} where it came from is not recorded."
-            ));
-            continue;
+        let located = otto_kit::trash::Can::of_item(path)
+            .zip(path.file_name())
+            .map(|(can, file)| can.origin(file));
+        let origin = match located {
+            Some(Ok(origin)) => origin,
+            Some(Err(otto_kit::trash::BadOrigin::Outside)) => {
+                result.errors.push(format!(
+                    "Can\u{2019}t put \u{201c}{name}\u{201d} back \u{2014} the place it records is outside the disk it is on."
+                ));
+                continue;
+            }
+            _ => {
+                result.errors.push(format!(
+                    "Can\u{2019}t put \u{201c}{name}\u{201d} back \u{2014} where it came from is not recorded."
+                ));
+                continue;
+            }
         };
-        match restore_one(path, &origin, &info) {
+        match restore_one(path, &origin) {
             Ok(()) => {
                 result.restored += 1;
                 // The inverse of a restore is a trash, and `Change::Moved` is
@@ -1824,18 +1912,13 @@ pub fn restore_from_trash(paths: &[PathBuf]) -> OpResult {
 /// The origin's parent is recreated if it has gone: a file whose folder was
 /// deleted after it was trashed still has somewhere it belongs, and refusing
 /// the restore over a missing directory would strand it in the trash.
-fn restore_one(from: &Path, origin: &Path, info: &Path) -> Result<(), String> {
-    if origin.exists() {
-        return Err("something is there now".to_string());
-    }
-    if let Some(parent) = origin.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
-    move_entry(from, origin)?;
-    // The sidecar describes an item that is no longer in the trash; leaving
-    // it would show a phantom there.
-    std::fs::remove_file(info).ok();
-    Ok(())
+/// Nothing already at the origin, a dangling symlink included, is replaced.
+///
+/// The move is the kit's: from a can on another filesystem it goes by
+/// descriptor and never follows a symlink on the way, so a stick cannot
+/// steer an item into the home folder (see [`otto_kit::trash::restore`]).
+fn restore_one(from: &Path, origin: &Path) -> Result<(), String> {
+    otto_kit::trash::restore(from, origin)
 }
 
 /// Delete trashed items outright, with their sidecars.
@@ -1844,46 +1927,38 @@ fn restore_one(from: &Path, origin: &Path, info: &Path) -> Result<(), String> {
 /// caller is responsible for having asked first.
 pub fn delete_forever(paths: &[PathBuf]) -> OpResult {
     let mut result = OpResult::default();
-    let info_dir = trash_info_dir();
     for path in paths {
         let name = name_of(path);
-        match remove_entry(path) {
-            Ok(()) => {
-                result.deleted += 1;
-                if let Some(dir) = info_dir.as_ref() {
-                    std::fs::remove_file(dir.join(format!("{name}.trashinfo"))).ok();
-                }
-            }
+        // Through the can, which checks it and deletes by descriptor: a can
+        // on a stick or on /tmp may have been planted with symlinks.
+        match otto_kit::trash::delete_forever(path) {
+            Ok(()) => result.deleted += 1,
             Err(err) => result.errors.push(format!("\u{201c}{name}\u{201d}: {err}")),
         }
     }
     result
 }
 
-/// Delete everything in the trash.
+/// Delete everything in the trash, in every can.
 ///
 /// Listed and then deleted item by item rather than by removing the whole
 /// directory: one unremovable file must fail on its own and leave the rest
 /// emptied, and the trash's own directories have to survive so the next
 /// delete still has somewhere to go.
 pub fn empty_trash() -> OpResult {
-    let mut result = OpResult::default();
-    let Some(files_dir) = trash_files_dir() else {
-        result.errors.push("No trash to empty.".to_string());
-        return result;
-    };
-    let paths: Vec<PathBuf> = match std::fs::read_dir(&files_dir) {
-        Ok(read) => read.flatten().map(|e| e.path()).collect(),
-        // Never used, so already empty.
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return result,
-        Err(err) => {
-            result
-                .errors
-                .push(format!("Couldn\u{2019}t read Trash: {err}"));
-            return result;
+    let mut paths = Vec::new();
+    let mut errors = Vec::new();
+    for can in trash_cans() {
+        match std::fs::read_dir(can.files_dir()) {
+            Ok(read) => paths.extend(read.flatten().map(|e| e.path())),
+            // Never used, so already empty.
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => errors.push(format!("Couldn\u{2019}t read Trash: {err}")),
         }
-    };
-    delete_forever(&paths)
+    }
+    let mut result = delete_forever(&paths);
+    result.errors.splice(0..0, errors);
+    result
 }
 
 #[cfg(test)]
@@ -1923,7 +1998,7 @@ mod places_tests {
 #[cfg(test)]
 mod paste_tests {
     use super::*;
-    use otto_kit::trash::percent_encode_path;
+    use otto_kit::uri::{decode_path, encode_path};
 
     struct Tmp(PathBuf);
     impl Tmp {
@@ -2263,7 +2338,10 @@ mod paste_tests {
     fn put_back_returns_the_file_to_where_it_came_from() {
         let _home = test_data_home();
         let t = Tmp::new("restore");
-        let victim = t.file("paper.txt", "body");
+        // A name of its own: the can is shared by the whole binary, and once
+        // this item leaves it another test may trash a `paper.txt` into the
+        // very path this one asserts is gone.
+        let victim = t.file("put-back.txt", "body");
 
         let trashed = move_to_trash(std::slice::from_ref(&victim));
         assert_eq!(trashed.trashed, 1, "{:?}", trashed.errors);
@@ -2326,11 +2404,143 @@ mod paste_tests {
         assert!(to.exists(), "still in the trash, not lost");
     }
 
+    /// A dangling symlink is something there too: `exists` says no, and the
+    /// rename would have replaced it without a word.
+    #[test]
+    fn put_back_refuses_to_replace_a_dangling_symlink() {
+        let _home = test_data_home();
+        let t = Tmp::new("restore-dangling");
+        let victim = t.file("paper.txt", "old");
+
+        let trashed = move_to_trash(std::slice::from_ref(&victim));
+        let Some(Change::Trashed { to, .. }) = trashed.changes.first() else {
+            panic!("no trashed change recorded");
+        };
+        let to = to.clone();
+        std::os::unix::fs::symlink(t.0.join("nowhere"), &victim).unwrap();
+
+        let result = restore_from_trash(std::slice::from_ref(&to));
+
+        assert_eq!(result.restored, 0);
+        assert!(std::fs::symlink_metadata(&victim).unwrap().is_symlink());
+        assert!(to.exists(), "still in the trash");
+    }
+
+    /// A stick's sidecar naming a path off the stick is shown, but Put Back
+    /// refuses it and says so: it would move a file, and make directories,
+    /// wherever the stick's author chose.
+    #[test]
+    fn put_back_refuses_an_origin_outside_the_topdir() {
+        use std::os::unix::fs::PermissionsExt;
+        let t = Tmp::new("restore-outside");
+        // SAFETY: getuid cannot fail.
+        let uid = unsafe { libc::getuid() };
+        let can = t.0.join(format!(".Trash-{uid}"));
+        std::fs::create_dir(&can).unwrap();
+        std::fs::set_permissions(&can, std::fs::Permissions::from_mode(0o700)).unwrap();
+        for sub in ["files", "info"] {
+            std::fs::create_dir(can.join(sub)).unwrap();
+            std::fs::set_permissions(can.join(sub), std::fs::Permissions::from_mode(0o700))
+                .unwrap();
+        }
+        let target = t.0.join("elsewhere/planted");
+        for (name, path) in [
+            ("abs", target.display().to_string()),
+            ("up", "../elsewhere/planted".to_string()),
+        ] {
+            let item = can.join("files").join(name);
+            std::fs::write(&item, "payload").unwrap();
+            std::fs::write(
+                can.join("info").join(format!("{name}.trashinfo")),
+                format!("[Trash Info]\nPath={path}\nDeletionDate=2024-01-01T00:00:00\n"),
+            )
+            .unwrap();
+
+            let result = restore_from_trash(std::slice::from_ref(&item));
+
+            assert_eq!(result.restored, 0, "{name}");
+            assert!(
+                result.errors.first().is_some_and(|e| e.contains("outside")),
+                "{:?}",
+                result.errors
+            );
+            assert!(item.exists(), "left in the trash");
+            assert!(!t.0.join("elsewhere").exists(), "nothing was made");
+        }
+
+        // A relative path through a link the stick carries is refused too:
+        // `a -> ~/.config` would otherwise land the item in autostart.
+        let config = t.0.join("config");
+        std::fs::create_dir(&config).unwrap();
+        std::os::unix::fs::symlink(&config, t.0.join("a")).unwrap();
+        let item = can.join("files/evil.desktop");
+        std::fs::write(&item, "payload").unwrap();
+        std::fs::write(
+            can.join("info/evil.desktop.trashinfo"),
+            "[Trash Info]\nPath=a/autostart/evil.desktop\nDeletionDate=2024-01-01T00:00:00\n",
+        )
+        .unwrap();
+
+        let result = restore_from_trash(std::slice::from_ref(&item));
+
+        assert_eq!(result.restored, 0, "{:?}", result.errors);
+        assert!(item.exists(), "left in the trash");
+        assert!(!config.join("autostart").exists(), "nothing went through");
+    }
+
+    /// The Trash lists every can, so it watches every can: an item landing
+    /// in a stick's can shows up without anybody reopening the window.
+    #[test]
+    fn the_trash_watches_every_can() {
+        use std::os::unix::fs::PermissionsExt;
+        let _home = test_data_home();
+        let t = Tmp::new("watch-cans");
+        // SAFETY: getuid cannot fail.
+        let uid = unsafe { libc::getuid() };
+        let can = t.0.join(format!(".Trash-{uid}"));
+        for dir in [can.clone(), can.join("files"), can.join("info")] {
+            std::fs::create_dir(&dir).unwrap();
+            std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        TEST_TOPDIRS.lock().unwrap().push(t.0.clone());
+        let mut column = Column::new(trash_files_dir().unwrap());
+        // The first read lands before the item does, so only a watch can
+        // bring it in.
+        for _ in 0..500 {
+            column.poll();
+            if !column.loading() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert!(!column.loading());
+        assert!(!column.can_watches.is_empty(), "the stick's can is watched");
+
+        std::fs::write(can.join("files/from-the-stick.txt"), "x").unwrap();
+        let mut seen = false;
+        for _ in 0..500 {
+            column.poll();
+            if column
+                .snapshot
+                .entries
+                .iter()
+                .any(|e| e.name == "from-the-stick.txt")
+            {
+                seen = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        TEST_TOPDIRS.lock().unwrap().retain(|top| top != &t.0);
+        assert!(seen, "the listing followed the stick's can");
+    }
+
     #[test]
     fn delete_forever_takes_the_sidecar_with_it() {
         let _home = test_data_home();
         let t = Tmp::new("forever");
-        let victim = t.file("paper.txt", "body");
+        // A name of its own, for the same reason as Put Back's.
+        let victim = t.file("forever.txt", "body");
 
         let trashed = move_to_trash(std::slice::from_ref(&victim));
         let Some(Change::Trashed { to, info, .. }) = trashed.changes.first() else {
@@ -2354,17 +2564,8 @@ mod paste_tests {
     #[test]
     fn a_path_survives_the_round_trip_through_percent_encoding() {
         let path = Path::new("/home/u/Documents/a b&c%d — é.txt");
-        let encoded = percent_encode_path(path);
+        let encoded = encode_path(path);
         assert!(!encoded.contains(' '), "spaces are encoded: {encoded}");
-        assert_eq!(PathBuf::from(percent_decode(&encoded)), path);
-    }
-
-    #[test]
-    fn a_sidecar_without_a_path_is_skipped_rather_than_guessed() {
-        assert_eq!(parse_trashinfo("[Trash Info]\nDeletionDate=x\n"), None);
-        assert_eq!(
-            parse_trashinfo("[Trash Info]\nPath=/tmp/a%20b\nDeletionDate=x\n"),
-            Some(PathBuf::from("/tmp/a b"))
-        );
+        assert_eq!(decode_path(&encoded), path);
     }
 }

@@ -131,7 +131,7 @@ pub fn render_appswitcher_panel(
     LayerTreeBuilder::with_key("appswitcher_panel")
         .blend_mode(crate::theme::chrome_blend_mode())
         .background_color(PaintColor::Solid {
-            color: crate::theme::chrome_material(crate::theme::theme_colors().materials_thin),
+            color: crate::theme::chrome_material(crate::theme::theme_colors().material_thin),
         })
         .size((
             Size::points(w, h),

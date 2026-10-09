@@ -1,0 +1,33 @@
+[package]
+name = "otto-agents-kit"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "The agent sessions, their rows, the keys that walk them and the Ask chat, shared by Otto's agent UIs"
+
+[dependencies]
+otto-kit = { path = "../otto-kit" }
+otto-md-kit = { path = "../otto-md-kit" }
+# The session feed and the chat talk to otto-agents over the Agent Host
+# Protocol; the ahp pins match otto-agents-client's.
+ahp.workspace = true
+ahp-types.workspace = true
+otto-agents-client = { path = "../otto-agents-client" }
+serde_json.workspace = true
+smithay-client-toolkit = { workspace = true, features = ["calloop", "xkbcommon"] }
+tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
+tracing.workspace = true
+uuid = { workspace = true, features = ["v4"] }
+
+[dependencies.skia-safe]
+workspace = true
+features = ["gl", "textlayout", "svg", "skottie"]
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+# The picture the log draws is a real file on disk; the test needs one.
+tempfile.workspace = true

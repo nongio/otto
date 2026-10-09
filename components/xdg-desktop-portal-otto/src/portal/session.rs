@@ -7,8 +7,8 @@ use tracing::{info, warn};
 use zbus::fdo;
 use zbus::interface;
 use zbus::object_server::ObjectServer;
+use zbus::object_server::SignalEmitter;
 use zbus::zvariant::OwnedObjectPath;
-use zbus::SignalContext;
 
 use crate::otto_client::OttoClient;
 use crate::portal::{PortalState, SessionState};
@@ -45,7 +45,7 @@ impl Session {
     async fn close(
         &self,
         #[zbus(object_server)] object_server: &ObjectServer,
-        #[zbus(signal_context)] ctx: SignalContext<'_>,
+        #[zbus(signal_emitter)] ctx: SignalEmitter<'_>,
     ) -> fdo::Result<()> {
         info!(session = %self.path, "Session.Close called - client requested session termination");
 
@@ -88,5 +88,5 @@ impl Session {
 
     /// Signal emitted when the session is closed.
     #[zbus(signal)]
-    async fn closed(ctx: &SignalContext<'_>) -> zbus::Result<()>;
+    async fn closed(ctx: &SignalEmitter<'_>) -> zbus::Result<()>;
 }

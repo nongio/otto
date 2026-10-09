@@ -1,4 +1,6 @@
 //! The balloon's surfaces: a card that can be dragged anywhere on the output.
+//! This is the card where Otto has no side canvas to put it in (see
+//! [`crate::canvas`]).
 //!
 //! As the launcher's card is: a transparent overlay surface covers the
 //! output and takes the pointer only where the card is, and the card is a
@@ -35,7 +37,7 @@ const RESTING_MARGIN: i32 = 12;
 /// whole output, bar included, so the card starts below it.
 const BAR_HEIGHT: i32 = 30;
 /// The tallest the card grows; past it the items scroll.
-const MAX_CARD_HEIGHT: i32 = 640;
+pub const MAX_CARD_HEIGHT: i32 = 640;
 /// How solid the card's frost is at least: the launcher's floors, with the
 /// desktop's frosting on and off.
 const FROSTED_MIN_ALPHA: u8 = 0xD8;
@@ -119,6 +121,13 @@ impl Panel {
         let style = shell.style.as_ref().map(|manager| {
             let style = manager.get_surface_style(&card, qh, ());
             apply_material(&style);
+            // The buffer is as tall as the card gets and the material shows
+            // its top: stretched to the material instead, it would squash
+            // while it springs.
+            style.set_contents_gravity(ContentsGravity::TopLeft);
+            style.set_shadow(0.32, 32.0, 0.0, 12.0, 0.0, 0.0, 0.0);
+            // Positions are the card's top-left corner.
+            style.set_anchor_point(0.0, 0.0);
             style
         });
 
@@ -332,8 +341,8 @@ impl Panel {
 }
 
 /// The launcher's card material: the popup frost, blurred when the desktop's
-/// frosting is on, rounded, clipped and shadowed.
-fn apply_material(style: &OttoSurfaceStyleV1) {
+/// frosting is on, rounded, clipped and edged with the hairline.
+pub fn apply_material(style: &OttoSurfaceStyleV1) {
     let theme = Theme::for_scheme(otto_kit::color_scheme::current_color_scheme());
     let frosting = otto_kit::frosting::enabled();
     let floor = if frosting {
@@ -358,9 +367,6 @@ fn apply_material(style: &OttoSurfaceStyleV1) {
     let radius = otto_kit::corners::radius(crate::balloon::RADIUS);
     style.set_corner_radius(f64::from(radius));
     style.set_masks_to_bounds(ClipMode::Enabled);
-    // The buffer is as tall as the card gets and the material shows its top:
-    // stretched to the material instead, it would squash while it springs.
-    style.set_contents_gravity(ContentsGravity::TopLeft);
     // Stroked by the compositor centred on the material's edge, half of it
     // clipped: doubled, the inner half is the hairline.
     let hairline = theme.hairline;
@@ -371,7 +377,4 @@ fn apply_material(style: &OttoSurfaceStyleV1) {
         channel(hairline.b()),
         channel(hairline.a()),
     );
-    style.set_shadow(0.32, 32.0, 0.0, 12.0, 0.0, 0.0, 0.0);
-    // Positions are the card's top-left corner.
-    style.set_anchor_point(0.0, 0.0);
 }

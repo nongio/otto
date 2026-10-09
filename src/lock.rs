@@ -12,33 +12,57 @@
 //! the desktop. Every path in here that can lose the client therefore leaves
 //! the lock standing; see [`Otto::lock_surfaces_pruned`].
 //!
+//! Locking is also the compositor's before it is the client's. The blank goes
+//! up the moment a lock is asked for — shortcut, idle timer, lid, logind, a
+//! suspend — and the locker is started into it: a locker that is slow to start,
+//! fails to start, or dies is replaced, and the screen stays blank throughout.
+//! A suspend waits for the blank to reach the screen, on a logind `delay`
+//! inhibitor, so the machine never wakes to the desktop.
+//!
 //! Otto performs no authentication. The locker (`otto-lock` by default) runs as
 //! the session user and talks to PAM itself, exactly as the greeter talks to
 //! greetd. See `specs/lock-screen.md`.
 
 use std::collections::{HashMap, HashSet};
+use std::path::Path;
+use std::sync::Arc;
 
 use layers::prelude::*;
 use layers::types::Size;
 use smithay::desktop::utils::send_frames_surface_tree;
 use smithay::output::Output;
+use smithay::reexports::wayland_protocols::ext::session_lock::v1::server::ext_session_lock_v1::ExtSessionLockV1;
 use smithay::reexports::wayland_server::backend::ObjectId;
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
-use smithay::reexports::wayland_server::Resource;
+use smithay::reexports::wayland_server::{Client, Resource};
 use smithay::utils::{IsAlive, SERIAL_COUNTER};
 use smithay::wayland::session_lock::{LockSurface, SessionLocker};
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
-use crate::state::{Backend, Otto};
+use crate::state::{Backend, ClientState, Otto, OttoComponent};
 
-/// How long an output has to present the blank before the lock is given up on.
+/// How long an output has to present the blank before it is no longer waited
+/// for.
 ///
-/// The alternative to giving up is a session that stays hidden with no locker
+/// Waiting for ever would leave a session that stays hidden with no locker
 /// able to authenticate — the client is waiting on `locked`, which is waiting
 /// on a frame that is not coming — and no way out but a VT switch, which a
-/// tablet or a closed lid may not offer. Generous, because the cost of
-/// tripping it on a slow first frame is a lock that did not happen.
+/// tablet or a closed lid may not offer. Giving up on the lock instead would
+/// uncover every other output because one is stuck. So the stalled output
+/// keeps its blank and is dropped from the outputs `locked` waits for.
 const LOCK_CONFIRM_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// How often a standing lock is looked after: a dead locker replaced, a
+/// stalled output given up on, a held suspend let go.
+const LOCK_WATCHDOG_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
+
+/// How soon a locker that is gone may be started again, so one that crashes on
+/// startup cannot spin.
+const RESPAWN_INTERVAL: std::time::Duration = std::time::Duration::from_secs(3);
+
+/// The longest a suspend is held for the blank. logind's own ceiling
+/// (`InhibitDelayMaxSec`) defaults to 5 s, after which it suspends anyway.
+const SLEEP_HOLD_MAX: std::time::Duration = std::time::Duration::from_secs(4);
 
 /// How long the blank takes to come down from the top of the screen, and how
 /// much it bounces when it lands.
@@ -81,7 +105,11 @@ pub enum LockState {
     /// Dropping the [`SessionLocker`] instead of calling `lock()` on it sends
     /// `finished`, which is how a refused lock is reported.
     Locking {
-        locker: SessionLocker,
+        /// The locker's request, once one has made it. The blank goes up when
+        /// the lock is asked for and the locker is started after, so this is
+        /// `None` until the locker connects and asks. A locker that asked and
+        /// then died is replaced here by the next one Otto starts.
+        locker: Option<SessionLocker>,
         /// Outputs that have yet to present the blank.
         pending: HashSet<String>,
         /// When the lock was requested, so a confirmation that never comes
@@ -93,7 +121,12 @@ pub enum LockState {
         landed: std::time::Instant,
     },
     /// The client has been told the session is locked.
-    Locked,
+    Locked {
+        /// The lock object of the locker that was told. Once it is dead — the
+        /// locker crashed or was killed — another locker Otto started may take
+        /// the lock over; while it lives, nobody else can.
+        owner: ExtSessionLockV1,
+    },
 }
 
 impl LockState {
@@ -102,6 +135,31 @@ impl LockState {
     /// and the confirmation is exactly when the desktop must stop reacting.
     pub fn is_active(&self) -> bool {
         !matches!(self, LockState::Unlocked)
+    }
+
+    /// Whether the locker holding, or asking for, the lock is still there.
+    fn owner_alive(&self) -> bool {
+        match self {
+            LockState::Locking {
+                locker: Some(locker),
+                ..
+            } => locker.ext_session_lock().is_alive(),
+            LockState::Locked { owner } => owner.is_alive(),
+            _ => false,
+        }
+    }
+
+    /// Whether the blank has landed and been presented on every output that
+    /// is waited for — the session is hidden, whether or not a locker has
+    /// been told yet.
+    pub fn blank_presented(&self) -> bool {
+        match self {
+            LockState::Locked { .. } => true,
+            LockState::Locking {
+                pending, landed, ..
+            } => pending.is_empty() && std::time::Instant::now() >= *landed,
+            LockState::Unlocked => false,
+        }
     }
 }
 
@@ -133,7 +191,252 @@ pub fn locker_command() -> (String, Vec<String>) {
     crate::config::Config::with(|c| (c.lock.locker_command.clone(), c.lock.locker_args.clone()))
 }
 
+/// Let `fd` survive into the child's `exec`. Called between fork and exec.
+pub(crate) fn inherit(fd: i32) -> std::io::Result<()> {
+    // SAFETY: fcntl on a descriptor this process holds open; async-signal-safe.
+    unsafe {
+        let flags = libc::fcntl(fd, libc::F_GETFD);
+        if flags < 0 || libc::fcntl(fd, libc::F_SETFD, flags & !libc::FD_CLOEXEC) < 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+    }
+    Ok(())
+}
+
 impl<BackendData: Backend + 'static> Otto<BackendData> {
+    /// Lock the session: blank every output now, and start the locker into
+    /// the blank.
+    ///
+    /// Every way of locking comes through here — the shortcut, the idle
+    /// timer, the lid, the power button, `loginctl lock-session`, a suspend.
+    /// The blank does not wait for the locker: the desktop stops being
+    /// reachable and starts going out of sight the moment the lock is asked
+    /// for, and a locker that is slow to start, fails to start or dies only
+    /// means a blank screen for a little longer — the watchdog keeps starting
+    /// one (see [`Otto::respawn_locker_if_gone`]). Nothing here ever unlocks.
+    pub fn lock_session(&mut self) {
+        if !self.lock_state.is_active() {
+            info!("Locking session");
+            self.lock_locker_missing_reported = false;
+            self.raise_blank();
+        }
+        if !self.locker_running() {
+            self.spawn_locker();
+        }
+    }
+
+    /// Start the configured locker, which asks for the lock itself.
+    ///
+    /// This is the only client that can lock: it is connected on a
+    /// socketpair (`WAYLAND_SOCKET`) and marked as Otto's locker, and
+    /// `ext_session_lock_manager_v1` is offered to no one else. Whatever
+    /// holds the lock collects the password, so a program the user did not
+    /// configure must not be able to put one up.
+    fn spawn_locker(&mut self) {
+        // Recorded whether or not the start works: a locker that cannot be
+        // started is retried at the respawn interval, not on every tick.
+        self.lock_last_spawn = Some(std::time::Instant::now());
+        let (cmd, args) = locker_command();
+        info!(locker = %cmd, "Starting the locker");
+        let failure = match self.start_locker(Path::new(&cmd), &args) {
+            Ok(()) => {
+                self.lock_locker_missing_reported = false;
+                return;
+            }
+            Err(err) => format!("Failed to start the locker {cmd}: {err}"),
+        };
+        // The screen stays blank and the watchdog keeps trying every
+        // `RESPAWN_INTERVAL` — a locker installed meanwhile is picked up —
+        // but the failure is an error once per lock, not once per retry.
+        if self.lock_locker_missing_reported {
+            debug!(locker = %cmd, "{failure}");
+        } else {
+            error!(
+                locker = %cmd,
+                "{failure}; the screen stays blank until a locker can be started"
+            );
+            self.lock_locker_missing_reported = true;
+        }
+    }
+
+    fn start_locker(&mut self, program: &Path, args: &[String]) -> std::io::Result<()> {
+        use std::os::fd::AsRawFd;
+
+        let (client, theirs) = self.connect_locker_client()?;
+        let socket_fd = theirs.as_raw_fd();
+        let mut command = self.program_command(&program.to_string_lossy(), args);
+        // One connection, the one handed over. `WAYLAND_DISPLAY` would let a
+        // locker that ignores `WAYLAND_SOCKET` connect as an ordinary client,
+        // which cannot lock; better that it fails to connect at all.
+        command
+            .env_remove("WAYLAND_DISPLAY")
+            .env("WAYLAND_SOCKET", socket_fd.to_string());
+        // SAFETY: only fcntl between fork and exec.
+        unsafe {
+            use std::os::unix::process::CommandExt;
+            command.pre_exec(move || inherit(socket_fd));
+        }
+        match command.spawn() {
+            Ok(child) => {
+                drop(theirs);
+                crate::input::actions::reap_in_background(&program.to_string_lossy(), child);
+                Ok(())
+            }
+            Err(err) => {
+                self.lock_locker_client = None;
+                self.display_handle.backend_handle().kill_client(
+                    client.id(),
+                    smithay::reexports::wayland_server::backend::DisconnectReason::ConnectionClosed,
+                );
+                Err(err)
+            }
+        }
+    }
+
+    /// Connect a client as Otto's locker, returning its end of the socket.
+    ///
+    /// [`Otto::spawn_locker`] hands that end to the locker it starts; tests
+    /// connect a locker of their own the same way. Either way it is the
+    /// locker from now on: while it is connected, no other is started.
+    pub fn connect_locker_client(
+        &mut self,
+    ) -> std::io::Result<(Client, std::os::unix::net::UnixStream)> {
+        let (client, theirs) = self.connect_component_client(OttoComponent::Locker)?;
+        self.lock_locker_client = Some(client.clone());
+        Ok((client, theirs))
+    }
+
+    /// Connect a client on a socketpair as one of Otto's own components,
+    /// returning its end of the socket.
+    pub fn connect_component_client(
+        &mut self,
+        component: OttoComponent,
+    ) -> std::io::Result<(Client, std::os::unix::net::UnixStream)> {
+        let (ours, theirs) = std::os::unix::net::UnixStream::pair()?;
+        let client = self
+            .display_handle
+            .insert_client(
+                ours,
+                Arc::new(ClientState {
+                    component: Some(component),
+                    ..ClientState::default()
+                }),
+            )
+            .map_err(std::io::Error::other)?;
+        Ok((client, theirs))
+    }
+
+    /// Whether a locker is there to take, or holding, the lock: the one Otto
+    /// last started is still connected, or the lock's owner is.
+    fn locker_running(&self) -> bool {
+        let started_alive = self.lock_locker_client.as_ref().is_some_and(|client| {
+            self.display_handle
+                .backend_handle()
+                .get_client_data(client.id())
+                .is_ok()
+        });
+        started_alive || self.lock_state.owner_alive()
+    }
+
+    /// Answer logind: lock when it asks, and hold a suspend until the lock
+    /// is on screen.
+    ///
+    /// logind emits `Lock` on this session (`loginctl lock-session`, an idle
+    /// daemon, a suspend hook) and whoever runs the session answers it. Otto
+    /// answers by locking, which starts its locker. `Unlock` is not honoured —
+    /// unlocking is the locker's, after the password.
+    ///
+    /// For suspend, Otto holds a `delay` inhibitor on `sleep`. When logind
+    /// announces a suspend (`PrepareForSleep(true)`), the session is locked
+    /// if the configuration says so (see [`lock_before_sleep`]) and the
+    /// inhibitor let go once the blank has been presented — or after
+    /// [`SLEEP_HOLD_MAX`], whichever is first — so the machine never goes to
+    /// sleep, and wakes, showing the desktop. It is taken again on resume.
+    ///
+    /// Only on a real session (the udev backend): a nested Otto shares its
+    /// host's logind session, and locking the host is the host's job.
+    pub fn watch_logind(handle: &smithay::reexports::calloop::LoopHandle<'static, Self>) {
+        use smithay::reexports::calloop::channel::{channel, Event as ChannelEvent};
+
+        let (tx, rx) = channel::<LogindEvent>();
+        if handle
+            .insert_source(rx, |event, _, state| {
+                let ChannelEvent::Msg(event) = event else {
+                    return;
+                };
+                match event {
+                    LogindEvent::Lock => {
+                        if !state.is_session_locked() {
+                            info!("logind asked for the session to be locked");
+                            state.lock_session();
+                        }
+                    }
+                    LogindEvent::PrepareForSleep(true) => state.prepare_for_sleep(),
+                    LogindEvent::PrepareForSleep(false) => {
+                        info!("resumed from sleep");
+                        state.sleep_pending_since = None;
+                    }
+                    LogindEvent::SleepInhibitor(fd) => {
+                        debug!("holding logind's sleep delay inhibitor");
+                        state.sleep_inhibitor = Some(fd);
+                    }
+                }
+            })
+            .is_err()
+        {
+            warn!("could not listen to logind; `loginctl lock-session` will not lock");
+            return;
+        }
+
+        let lock_tx = tx.clone();
+        let spawned = std::thread::Builder::new()
+            .name("logind-lock".into())
+            .spawn(move || {
+                if let Err(err) = listen_for_logind_lock(&lock_tx) {
+                    warn!(%err, "not listening for logind's Lock; `loginctl lock-session` will not lock");
+                }
+            });
+        if let Err(err) = spawned {
+            warn!(%err, "could not start the logind Lock listener");
+        }
+
+        let spawned = std::thread::Builder::new()
+            .name("logind-sleep".into())
+            .spawn(move || {
+                if let Err(err) = listen_for_sleep(&tx) {
+                    warn!(%err, "not holding suspend for the lock; the machine may sleep before the screen is blank");
+                }
+            });
+        if let Err(err) = spawned {
+            warn!(%err, "could not start the logind sleep listener");
+        }
+    }
+
+    /// logind is about to suspend: lock first if configured to, and let the
+    /// suspend go once the blank is on screen.
+    fn prepare_for_sleep(&mut self) {
+        if lock_before_sleep() && !self.is_session_locked() {
+            info!("suspending; locking first");
+            self.lock_session();
+        }
+        if self.lock_state.is_active() && !self.lock_state.blank_presented() {
+            // Held until the blank is presented — see `confirm_lock_if_blanked`
+            // — or the watchdog gives up waiting.
+            self.sleep_pending_since = Some(std::time::Instant::now());
+            self.request_lock_redraw();
+            return;
+        }
+        self.release_sleep_inhibitor();
+    }
+
+    /// Let a held suspend go ahead.
+    fn release_sleep_inhibitor(&mut self) {
+        self.sleep_pending_since = None;
+        if self.sleep_inhibitor.take().is_some() {
+            debug!("released logind's sleep delay inhibitor");
+        }
+    }
+
     /// Note that the user did something. Auto-lock measures from the last such
     /// moment, so every input path has to call this — a session that only ever
     /// sees mouse motion is not idle.
@@ -221,22 +524,37 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
     /// leaves that to the compositor precisely because clients forget to drop
     /// them: a dead or minimized window holding one would block auto-lock for
     /// the rest of the session.
+    ///
+    /// On screen means a window that is not minimized, on the workspace an
+    /// output is showing, or a mapped layer surface. A surface that is
+    /// neither — never given a role, or a window on a workspace nobody is
+    /// looking at — does not count: anything could otherwise keep the session
+    /// from locking without showing anything.
     pub fn idle_inhibited(&self) -> bool {
-        self.idle_inhibitors.iter().any(|surface| {
-            if !surface.alive() {
-                return false;
-            }
-            // Inhibitors are usually taken on a subsurface (the video area),
-            // so a surface with no window of its own is one whose toplevel we
-            // can't check — count it rather than silently ignore it.
-            match self
-                .workspaces
-                .get_window_for_surface(&surface.id())
-                .map(|w| w.is_minimised())
-            {
-                Some(minimized) => !minimized,
-                None => true,
-            }
+        self.idle_inhibitors
+            .iter()
+            .any(|surface| surface.alive() && self.inhibitor_on_screen(surface))
+    }
+
+    fn inhibitor_on_screen(&self, surface: &WlSurface) -> bool {
+        // Inhibitors are usually taken on a subsurface (the video area); what
+        // is on screen or not is the surface at the root of its tree.
+        let mut root = surface.clone();
+        while let Some(parent) = smithay::wayland::compositor::get_parent(&root) {
+            root = parent;
+        }
+        if let Some(window) = self.workspaces.get_window_for_surface(&root.id()) {
+            return !window.is_minimised()
+                && self.workspaces.output_workspaces.values().any(|ows| {
+                    ows.current_space()
+                        .elements()
+                        .any(|element| element.id() == window.id())
+                });
+        }
+        self.workspaces.outputs().any(|output| {
+            smithay::desktop::layer_map_for_output(output)
+                .layer_for_surface(&root, smithay::desktop::WindowSurfaceType::TOPLEVEL)
+                .is_some()
         })
     }
 
@@ -245,14 +563,11 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         if self.is_session_locked() {
             return;
         }
-        let (cmd, args) = locker_command();
-        info!(locker = %cmd, idle_secs = timeout.as_secs(), "Auto-locking idle session");
-        // Same path as the `lock` action: launching the locker is what locks —
-        // it binds `ext_session_lock_manager_v1` and asks for the lock itself.
-        self.launch_program(cmd, args);
-        // Launching is not locking yet; the locker takes a moment to come up.
-        // Without this the next tick — still idle, still unlocked — would
-        // launch a second one.
+        info!(idle_secs = timeout.as_secs(), "Auto-locking idle session");
+        // Same path as the `lock` action.
+        self.lock_session();
+        // The idle clock restarts, so the countdown after an unlock runs from
+        // the unlock rather than expiring at once.
         self.note_input_activity();
     }
 
@@ -276,22 +591,60 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                 .is_some_and(|until| std::time::Instant::now() < until)
     }
 
-    /// Accept a lock request: raise the blank on every output and wait for it
-    /// to reach the screen.
+    /// Accept a lock request from Otto's locker.
+    ///
+    /// If the session is not locked yet, the blank goes up now and `locked`
+    /// is sent once it is on screen. If it is — the blank raised ahead of the
+    /// locker, or a lock whose locker has died — the request takes the
+    /// standing lock over. What is refused is a second lock while the locker
+    /// holding the first is alive: it could otherwise unlock a session it did
+    /// not lock.
     pub fn begin_lock(&mut self, locker: SessionLocker) {
         if self.lock_state.is_active() {
-            // Dropping the locker sends `finished`. One lock at a time — a
-            // second one could otherwise unlock a session it did not lock.
-            warn!("session lock requested while already locked; refusing");
-            return;
+            if self.lock_state.owner_alive() {
+                // Dropping the locker sends `finished`.
+                warn!("session lock requested while another locker holds it; refusing");
+                return;
+            }
+            if matches!(self.lock_state, LockState::Locked { .. }) {
+                warn!("the locker holding the lock is gone; a new one takes it over");
+            }
+        } else {
+            info!("Locking session");
+            self.raise_blank();
         }
 
-        info!("Locking session");
+        self.lock_locker_client = locker.ext_session_lock().client();
+        match &mut self.lock_state {
+            LockState::Locking { locker: slot, .. } => {
+                // A request from a locker that died is dropped here, and its
+                // `finished` goes nowhere.
+                *slot = Some(locker);
+            }
+            LockState::Locked { owner } => {
+                // The blank has stood the whole time the lock was defunct, so
+                // there is nothing to wait for: the session is hidden now.
+                *owner = locker.ext_session_lock().clone();
+                info!("Session locked");
+                locker.lock();
+            }
+            LockState::Unlocked => {}
+        }
+        self.confirm_lock_if_blanked();
+        self.request_lock_redraw();
+    }
 
+    /// Raise the blank on every output and cut the session off, with no
+    /// locker yet: the start of every lock.
+    fn raise_blank(&mut self) {
         // A lock that arrives while the previous one's shade is still going up
         // takes the screen back over; the deadline it left behind would let the
         // plane path resume mid-lock.
         self.lock_shade_until = None;
+
+        // An output plugged in from now until the unlock gets its blank as it
+        // is added, before its first frame.
+        self.workspaces.blank_new_outputs = true;
 
         // What `locked` is a promise about is screens someone can see. A
         // virtual output composites only when something is consuming it, so a
@@ -309,13 +662,11 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             .filter(|name| self.workspaces.output_workspaces.contains_key(name))
             .collect();
 
-        // Nothing would ever confirm the blank, so the promise could not be
-        // kept. Returning drops the locker, which sends `finished`: the
-        // request is refused and the session is untouched.
-        if pending.is_empty() {
-            warn!("no output can present the blank; refusing to lock");
-            return;
-        }
+        // No screen anyone can see — the lid closed on the only panel, or
+        // nothing but virtual outputs. Nothing of the session is visible, so
+        // there is nothing to wait for; the blanks still go up below, for
+        // when a screen comes back.
+        let nothing_to_wait_for = pending.is_empty();
 
         // Every output's blank starts just above its screen and falls into
         // place. An output with no locker surface keeps the bare blank for the
@@ -334,6 +685,17 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                 ))
             })
             .collect();
+
+        // An output with a workspace but no geometry is one set aside —
+        // the laptop panel while the lid is shut. It comes back as it was, so
+        // its blank has to be up already when it does.
+        for (name, ows) in self.workspaces.output_workspaces.iter() {
+            if geometries.iter().any(|(shown, _, _)| shown == name) {
+                continue;
+            }
+            ows.lock_plane.set_position(Point { x: 0.0, y: 0.0 }, None);
+            ows.lock_plane.set_hidden(false);
+        }
 
         for (name, width_px, height_px) in geometries {
             let Some(ows) = self.workspaces.output_workspaces.get(&name) else {
@@ -370,15 +732,21 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         // is mapped; until then nothing has it, so nothing receives keys.
         self.cancel_session_interaction();
 
+        let now = std::time::Instant::now();
         self.lock_state = LockState::Locking {
-            locker,
+            locker: None,
             pending,
-            since: std::time::Instant::now(),
+            since: now,
             // The blank covers the screen at the end of its travel; the
             // rebound after that happens in the slack above and uncovers
             // nothing, so there is no need to wait for the spring to settle.
-            landed: std::time::Instant::now() + std::time::Duration::from_secs_f32(SLIDE),
+            landed: if nothing_to_wait_for {
+                now
+            } else {
+                now + std::time::Duration::from_secs_f32(SLIDE)
+            },
         };
+        self.arm_lock_watchdog();
 
         // The blank has to reach the screen for the lock to be confirmed at
         // all, and nothing else will ask for that frame. It happens to work
@@ -402,26 +770,102 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         self.schedule_event_loop_dispatch();
     }
 
-    /// Give up on a lock that cannot be confirmed: put the session back and
-    /// tell the client the request failed.
-    ///
-    /// Dropping the [`SessionLocker`] is what sends `finished`, so taking the
-    /// state apart is all this has to do.
-    fn abandon_lock(&mut self) {
-        for ows in self.workspaces.output_workspaces.values() {
-            ows.lock_plane.set_hidden(true);
+    /// Tell the locker the session is locked, once there is a locker to tell
+    /// and the blank is on every screen; and let a held suspend go once the
+    /// blank is, locker or not.
+    fn confirm_lock_if_blanked(&mut self) {
+        let ready = matches!(
+            &self.lock_state,
+            LockState::Locking {
+                locker: Some(_),
+                ..
+            }
+        ) && self.lock_state.blank_presented();
+        if ready {
+            if let LockState::Locking {
+                locker: Some(locker),
+                ..
+            } = std::mem::replace(&mut self.lock_state, LockState::Unlocked)
+            {
+                // `lock()` is what sends the `locked` event the client is
+                // waiting on; it consumes the locker, so the owner is kept.
+                self.lock_state = LockState::Locked {
+                    owner: locker.ext_session_lock().clone(),
+                };
+                info!("Session locked");
+                locker.lock();
+            }
         }
-        self.lock_state = LockState::Unlocked;
-        self.lock_locker_seen = false;
-        self.lock_last_spawn = None;
-        self.lock_shade_until = None;
-        self.restore_session_focus();
-        self.request_lock_redraw();
+        if self.sleep_pending_since.is_some() && self.lock_state.blank_presented() {
+            info!("the screen is blank; letting the suspend go ahead");
+            self.release_sleep_inhibitor();
+        }
+    }
+
+    /// Start the timer that looks after the lock while it stands. It goes
+    /// with the lock, in [`Otto::finish_unlock`].
+    fn arm_lock_watchdog(&mut self) {
+        use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
+
+        if self.lock_watchdog.is_some() {
+            return;
+        }
+        let token = self.handle.insert_source(
+            Timer::from_duration(LOCK_WATCHDOG_INTERVAL),
+            |_, _, state| {
+                if !state.lock_state.is_active() {
+                    state.lock_watchdog = None;
+                    return TimeoutAction::Drop;
+                }
+                state.lock_watchdog_tick();
+                TimeoutAction::ToDuration(LOCK_WATCHDOG_INTERVAL)
+            },
+        );
+        match token {
+            Ok(token) => self.lock_watchdog = Some(token),
+            Err(_) => {
+                warn!("could not schedule the lock watchdog; a dead locker will not be replaced")
+            }
+        }
+    }
+
+    fn lock_watchdog_tick(&mut self) {
+        self.give_up_on_stalled_outputs();
+        self.confirm_lock_if_blanked();
+        if self
+            .sleep_pending_since
+            .is_some_and(|since| since.elapsed() >= SLEEP_HOLD_MAX)
+        {
+            warn!("the blank did not reach the screen in time; letting the suspend go ahead");
+            self.release_sleep_inhibitor();
+        }
+        self.lock_surfaces_pruned();
+    }
+
+    /// Stop waiting for outputs that have not presented the blank within
+    /// [`LOCK_CONFIRM_TIMEOUT`]. Their blank stays up; the lock goes on
+    /// without them rather than being given up, which would uncover every
+    /// other screen because one is stuck.
+    fn give_up_on_stalled_outputs(&mut self) {
+        if let LockState::Locking { pending, since, .. } = &mut self.lock_state {
+            if !pending.is_empty() && since.elapsed() >= LOCK_CONFIRM_TIMEOUT {
+                warn!(
+                    outputs = ?pending,
+                    "outputs never presented the blank; locking without waiting for them"
+                );
+                pending.clear();
+            }
+        }
     }
 
     /// A frame has been presented on `output`. Sends frame callbacks to that
     /// output's lock surface and, while locking, counts the output as blanked.
+    ///
+    /// Every backend calls this once per presented frame, so the side canvas,
+    /// whose items are in no space or layer map either, takes its frame
+    /// callbacks from here too.
     pub fn lock_frame_presented(&mut self, output: &Output) {
+        self.canvas_frame_presented(output);
         if !self.lock_state.is_active() {
             return;
         }
@@ -438,51 +882,35 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
 
         self.refresh_lock_focus();
 
-        let (confirmed, stalled) = match &mut self.lock_state {
-            LockState::Locking {
-                pending,
-                since,
-                landed,
-                ..
-            } => {
-                // A frame presented while the blank is still falling has the
-                // desktop under it, so it does not blank anything yet. The
-                // slide keeps producing damage, so more frames are coming.
-                if std::time::Instant::now() < *landed {
-                    return;
-                }
+        // An output that arrived after the lock began — hotplugged — gets
+        // its blank as it is added (`Workspaces::blank_new_outputs`), before
+        // its first frame. This is the backstop for one that somehow did
+        // not: it goes up now, and the frame just presented is the only one
+        // that can have shown the session.
+        if let Some(ows) = self.workspaces.output_workspaces.get(&output.name()) {
+            if ows.lock_plane.hidden() {
+                warn!(output = %output.name(), "output without its blank while locked; raising it");
+                ows.lock_plane.set_position(Point { x: 0.0, y: 0.0 }, None);
+                ows.lock_plane.set_hidden(false);
+                self.request_lock_redraw();
+            }
+        }
+
+        if let LockState::Locking {
+            pending, landed, ..
+        } = &mut self.lock_state
+        {
+            // A frame presented while the blank is still falling has the
+            // desktop under it, so it does not blank anything yet. The slide
+            // keeps producing damage, so more frames are coming.
+            if std::time::Instant::now() >= *landed {
                 pending.remove(&output.name());
-                let stalled = !pending.is_empty() && since.elapsed() >= LOCK_CONFIRM_TIMEOUT;
-                if stalled {
-                    warn!(
-                        outputs = ?pending,
-                        "outputs never presented the blank; abandoning the lock"
-                    );
-                }
-                (pending.is_empty(), stalled)
-            }
-            _ => (false, false),
-        };
-
-        // An output that cannot present cannot be part of a promise that the
-        // session is hidden — and a lock that is never confirmed is one no
-        // locker can ever unlock, because the client is waiting for `locked`
-        // before it authenticates.
-        if stalled {
-            self.abandon_lock();
-            return;
-        }
-
-        if confirmed {
-            // Take the locker out of the state to consume it; `lock()` is what
-            // sends the `locked` event the client is waiting on.
-            if let LockState::Locking { locker, .. } =
-                std::mem::replace(&mut self.lock_state, LockState::Locked)
-            {
-                info!("Session locked");
-                locker.lock();
             }
         }
+        // An output that never presents is not waited for past the timeout;
+        // see `give_up_on_stalled_outputs`.
+        self.give_up_on_stalled_outputs();
+        self.confirm_lock_if_blanked();
     }
 
     /// The locker has authenticated the user and asked for the session back:
@@ -557,8 +985,13 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         }
 
         self.lock_state = LockState::Unlocked;
-        self.lock_locker_seen = false;
+        self.workspaces.blank_new_outputs = false;
+        self.lock_locker_client = None;
         self.lock_last_spawn = None;
+        self.lock_locker_missing_reported = false;
+        if let Some(token) = self.lock_watchdog.take() {
+            self.handle.remove(token);
+        }
         self.restore_session_focus();
         self.request_lock_redraw();
     }
@@ -586,31 +1019,40 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         self.respawn_locker_if_gone();
     }
 
-    /// Bring the locker back if it died without unlocking.
+    /// Bring the locker back if it is gone without unlocking — died after
+    /// locking, died before its first surface, or never started at all.
     ///
     /// The session stays hidden either way — that is the protocol's guarantee
     /// and it is not negotiable here. But leaving the user with a black screen
     /// and no field to type into means the only way back in is a VT switch,
     /// which a tablet or a closed-lid laptop may not have. So the lock stands
-    /// and a new locker is started into it, rate-limited so a locker that
-    /// crashes on startup cannot spin.
+    /// and a new locker is started into it, which takes the lock over (see
+    /// [`Otto::begin_lock`]), rate-limited so a locker that crashes on startup
+    /// cannot spin.
+    ///
+    /// Only for a lock Otto started a locker for. A test that connects a
+    /// locker of its own gets no second one behind its back.
     fn respawn_locker_if_gone(&mut self) {
-        const RESPAWN_INTERVAL: std::time::Duration = std::time::Duration::from_secs(3);
-
-        if !self.lock_locker_seen || !self.lock_surfaces.is_empty() {
+        let Some(last_spawn) = self.lock_last_spawn else {
             return;
-        }
-        if self
-            .lock_last_spawn
-            .is_some_and(|at| at.elapsed() < RESPAWN_INTERVAL)
+        };
+        if !self.lock_state.is_active()
+            || self.locker_running()
+            || self
+                .lock_surfaces
+                .values()
+                .any(|entry| entry.surface.alive())
+            || last_spawn.elapsed() < RESPAWN_INTERVAL
         {
             return;
         }
 
-        let (cmd, args) = locker_command();
-        warn!(locker = %cmd, "locker gone while locked; restarting it");
-        self.lock_last_spawn = Some(std::time::Instant::now());
-        self.launch_program(cmd, args);
+        if self.lock_locker_missing_reported {
+            debug!("still no locker while locked; trying again");
+        } else {
+            warn!("no locker while locked; starting one");
+        }
+        self.spawn_locker();
     }
 
     /// Register a lock surface for `output` and configure it to the output's
@@ -677,7 +1119,9 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
 
         debug!(output = %name, w = geometry.size.w, h = geometry.size.h, "lock surface configured");
 
-        self.lock_surfaces.insert(
+        // A surface a dead locker left on this output, not yet pruned, goes:
+        // replacing the entry would leave its layers in the scene.
+        if let Some(old) = self.lock_surfaces.insert(
             name,
             LockSurfaceEntry {
                 surface,
@@ -685,8 +1129,10 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                 shade,
                 output,
             },
-        );
-        self.lock_locker_seen = true;
+        ) {
+            self.surface_layers.remove(&old.surface.wl_surface().id());
+            old.shade.remove();
+        }
     }
 
     /// Whether `surface_id` belongs to a lock surface (not a subsurface of one).
@@ -815,6 +1261,9 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         // drag begun before the lock keeps receiving motion.
         let pointer = self.pointer.clone();
         pointer.unset_grab(self, serial, smithay::backend::input::InputTime::now());
+        // A swipe or pinch begun before the lock would otherwise go on
+        // switching workspaces or opening exposé while the fingers stay down.
+        self.cancel_desktop_gestures();
     }
 
     /// Give focus back to whatever had it when the lock began, if it is still
@@ -838,3 +1287,169 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
 
 /// Lock surfaces keyed by output name.
 pub type LockSurfaces = HashMap<String, LockSurfaceEntry>;
+
+/// What the logind listeners report to the event loop.
+enum LogindEvent {
+    /// `Lock` on this session.
+    Lock,
+    /// `PrepareForSleep`: `true` before a suspend, `false` after the resume.
+    PrepareForSleep(bool),
+    /// A fresh `delay` inhibitor on `sleep`, to hold until the next suspend
+    /// has been locked for.
+    SleepInhibitor(std::os::fd::OwnedFd),
+}
+
+/// Whether a suspend locks the session first.
+///
+/// `lock.on_suspend` (on by default) says the machine should wake to the
+/// locker, whatever asked for the suspend — the power menu, the power button,
+/// the lid or `systemctl suspend`. `on_lid_close =
+/// "lock"` says the same, and locks on a suspend even with it off. Without
+/// either, Otto still holds each suspend briefly, but only to finish a lock
+/// that is already under way.
+fn lock_before_sleep() -> bool {
+    crate::config::Config::with(locks_before_sleep)
+}
+
+fn locks_before_sleep(c: &crate::config::Config) -> bool {
+    c.lock.on_suspend || c.power_management.on_lid_close == crate::config::LidCloseAction::Lock
+}
+
+const LOGIND: &str = "org.freedesktop.login1";
+
+fn logind_manager(bus: &zbus::blocking::Connection) -> zbus::Result<zbus::blocking::Proxy<'_>> {
+    zbus::blocking::Proxy::new(
+        bus,
+        LOGIND,
+        "/org/freedesktop/login1",
+        "org.freedesktop.login1.Manager",
+    )
+}
+
+/// The logind session this compositor runs in.
+///
+/// The one this process belongs to, first: `$XDG_SESSION_ID` is inherited,
+/// and names the wrong session — or one that no longer exists — when Otto is
+/// started from outside its own (a login shell on another VT, a user unit).
+/// Failing that, the user's display session, which is the graphical one
+/// logind picked for them; and only then the environment.
+fn own_session(
+    bus: &zbus::blocking::Connection,
+    manager: &zbus::blocking::Proxy<'_>,
+) -> zbus::Result<zbus::zvariant::OwnedObjectPath> {
+    use zbus::zvariant::OwnedObjectPath;
+
+    let by_pid = manager.call::<_, _, OwnedObjectPath>("GetSessionByPID", &(std::process::id(),));
+    let err = match by_pid {
+        Ok(session) => return Ok(session),
+        Err(err) => err,
+    };
+    debug!(%err, "this process is in no logind session; trying the user's display session");
+
+    // SAFETY: getuid never fails.
+    let uid = unsafe { libc::getuid() };
+    let display = manager
+        .call::<_, _, OwnedObjectPath>("GetUser", &(uid,))
+        .and_then(|user| {
+            zbus::blocking::Proxy::new(bus, LOGIND, user, "org.freedesktop.login1.User")?
+                .get_property::<(String, OwnedObjectPath)>("Display")
+        });
+    match display {
+        Ok((id, session)) if !id.is_empty() => return Ok(session),
+        Ok(_) => debug!("the user has no display session"),
+        Err(err) => debug!(%err, "could not read the user's display session"),
+    }
+
+    match std::env::var("XDG_SESSION_ID") {
+        Ok(id) if !id.is_empty() => manager.call("GetSession", &(id,)),
+        _ => Err(err),
+    }
+}
+
+/// Forward every `Lock` logind emits on this session to `tx`. Blocks for as
+/// long as the system bus is there.
+fn listen_for_logind_lock(
+    tx: &smithay::reexports::calloop::channel::Sender<LogindEvent>,
+) -> zbus::Result<()> {
+    let bus = zbus::blocking::Connection::system()?;
+    let manager = logind_manager(&bus)?;
+    let session = own_session(&bus, &manager)?;
+    info!(session = %session.as_str(), "Listening for logind's Lock");
+    let session =
+        zbus::blocking::Proxy::new(&bus, LOGIND, session, "org.freedesktop.login1.Session")?;
+    for _ in session.receive_signal("Lock")? {
+        if tx.send(LogindEvent::Lock).is_err() {
+            break;
+        }
+    }
+    Ok(())
+}
+
+/// Take a `delay` inhibitor on sleep: logind waits for it to be closed, up to
+/// `InhibitDelayMaxSec`, before suspending.
+fn take_sleep_inhibitor(manager: &zbus::blocking::Proxy<'_>) -> zbus::Result<std::os::fd::OwnedFd> {
+    let fd: zbus::zvariant::OwnedFd =
+        manager.call("Inhibit", &("sleep", "Otto", "lock before sleep", "delay"))?;
+    Ok(fd.into())
+}
+
+/// Hold a sleep inhibitor and forward `PrepareForSleep` to `tx`, taking a new
+/// inhibitor after every resume. Blocks for as long as the system bus is
+/// there.
+fn listen_for_sleep(
+    tx: &smithay::reexports::calloop::channel::Sender<LogindEvent>,
+) -> zbus::Result<()> {
+    let bus = zbus::blocking::Connection::system()?;
+    let manager = logind_manager(&bus)?;
+    // Subscribed before the inhibitor is taken, so a suspend that starts in
+    // between is not missed.
+    let signals = manager.receive_signal("PrepareForSleep")?;
+    let send_inhibitor = |tx: &smithay::reexports::calloop::channel::Sender<LogindEvent>| {
+        match take_sleep_inhibitor(&manager) {
+            Ok(fd) => tx.send(LogindEvent::SleepInhibitor(fd)).is_ok(),
+            Err(err) => {
+                warn!(%err, "could not take logind's sleep delay inhibitor");
+                true
+            }
+        }
+    };
+    if !send_inhibitor(tx) {
+        return Ok(());
+    }
+    info!("Holding suspend for the lock");
+    for signal in signals {
+        let start: bool = match signal.body().deserialize() {
+            Ok(start) => start,
+            Err(err) => {
+                warn!(%err, "unreadable PrepareForSleep");
+                continue;
+            }
+        };
+        if tx.send(LogindEvent::PrepareForSleep(start)).is_err() {
+            break;
+        }
+        if !start && !send_inhibitor(tx) {
+            break;
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A suspend locks by default, and turning `lock.on_suspend` off leaves
+    /// the lid's `lock` action still locking.
+    #[test]
+    fn a_suspend_locks_by_default() {
+        use crate::config::{Config, LidCloseAction};
+        let mut config = Config::default();
+        assert_ne!(config.power_management.on_lid_close, LidCloseAction::Lock);
+        assert!(locks_before_sleep(&config));
+        config.lock.on_suspend = false;
+        assert!(!locks_before_sleep(&config));
+        config.power_management.on_lid_close = LidCloseAction::Lock;
+        assert!(locks_before_sleep(&config));
+    }
+}

@@ -24,7 +24,7 @@ use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tracing::{trace, warn};
 use zbus::message::Header;
 use zbus::names::{BusName, OwnedUniqueName};
-use zbus::{fdo, interface, Connection, SignalContext};
+use zbus::{fdo, interface, object_server::SignalEmitter, Connection};
 
 /// Well-known name the compositor owns for the a11y manager.
 pub const BUS_NAME: &str = "org.freedesktop.a11y.Manager";
@@ -153,7 +153,6 @@ impl KeyboardMonitorHandle {
     /// `time` is the event timestamp and `repeat_delay` the configured key
     /// repeat delay; together they decide whether a second press of a grabbed
     /// modifier counts as a double-tap.
-    #[allow(clippy::too_many_arguments)]
     pub fn process_key(
         &self,
         repeat_delay: Duration,
@@ -372,7 +371,7 @@ impl KeyboardMonitor {
     /// - `keycode`: hardware keycode
     #[zbus(signal)]
     pub async fn key_event(
-        context: &SignalContext<'_>,
+        context: &SignalEmitter<'_>,
         released: bool,
         state: u32,
         keysym: u32,
@@ -400,7 +399,7 @@ pub async fn register(
 
     let signal_connection = connection.clone();
     tokio::spawn(async move {
-        let context = match SignalContext::new(&signal_connection, OBJECT_PATH) {
+        let context = match SignalEmitter::new(&signal_connection, OBJECT_PATH) {
             Ok(context) => context,
             Err(err) => {
                 warn!("a11y: cannot build a signal context: {err}");
@@ -445,7 +444,7 @@ async fn watch_disconnects(
     connection: &Connection,
     handle: KeyboardMonitorHandle,
 ) -> zbus::Result<()> {
-    use zbus::export::futures_util::StreamExt;
+    use futures_util::StreamExt;
 
     let proxy = fdo::DBusProxy::new(connection).await?;
     let mut changes = proxy.receive_name_owner_changed().await?;

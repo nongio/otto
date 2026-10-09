@@ -11,8 +11,11 @@ impl Browser {
         if self.mode != ViewMode::Grid {
             return 1;
         }
+        if let Some(step) = self.overflow_panel_row_step() {
+            return step;
+        }
         let area = view::content_viewport(self.size.0, self.content_h(), ViewMode::Grid);
-        view::grid_columns(area) as i32
+        view::grid_columns_in(area, &self.recent_sections) as i32
     }
 
     /// Move the cursor within the active column. With `extend`, the selection
@@ -25,11 +28,22 @@ impl Browser {
         // With nothing selected, the first press should land the cursor on an
         // end, whatever the step: Down's obvious first stop is index 0, not
         // one grid row in.
+        // On a desk with an overflow tile the keyboard stops at the tile, or
+        // stays in the overflow panel while that is open.
+        let (low, high) = self
+            .desk_cursor_range()
+            .map_or((0, count - 1), |range| (*range.start(), *range.end()));
         let next = match self.columns[self.active].cursor {
-            Some(cursor) => (cursor as i32 + delta).clamp(0, count as i32 - 1) as usize,
-            None if delta >= 0 => 0,
-            None => count - 1,
+            Some(cursor) => (cursor as i32 + delta).clamp(low as i32, high as i32) as usize,
+            None if delta >= 0 => low,
+            None => high,
         };
+        self.move_cursor_to(next, extend);
+    }
+
+    /// Put the cursor on `next`, selecting it, or extending the selection to
+    /// it with `extend`, and scroll it into view.
+    pub(super) fn move_cursor_to(&mut self, next: usize, extend: bool) {
         if extend {
             self.extend_select(self.active, next);
         } else {
@@ -110,6 +124,11 @@ impl Browser {
         let Some(index) = self.columns[depth].cursor else {
             return;
         };
+        // A desk with an overflow tile never scrolls its grid; the overflow
+        // panel scrolls instead.
+        if self.reveal_in_desk_overflow(index) {
+            return;
+        }
         let (width, height) = (self.size.0, self.content_h());
         let viewport = view::pane_viewport(
             width,
@@ -117,13 +136,19 @@ impl Browser {
             self.mode,
             depth,
             self.pan.offset(),
-            self.miller_w,
+            &self.miller_widths(),
         );
         if viewport.is_empty() {
             return;
         }
-        let (top, item_h) =
-            view::item_span_in(width, height, self.mode, &self.recent_sections, index);
+        let (top, item_h) = view::item_span_in(
+            width,
+            height,
+            self.mode,
+            &self.recent_sections,
+            &self.photos,
+            index,
+        );
 
         let scroll = &mut self.columns[depth].scroll;
         let offset = scroll.offset();
@@ -164,11 +189,12 @@ impl Browser {
 
     /// Ctrl+O: open the entry at the cursor the way the desktop would.
     ///
-    /// Everything goes to `xdg-open`, folders included — the shortcut asks the
-    /// desktop to open the thing, and the desktop's answer for a directory is
-    /// whatever it has registered as the file manager. That is the difference
-    /// between this and a double-click: the click descends where you are, the
-    /// shortcut hands the entry over. Same in every view.
+    /// Everything goes to the entry type's default application (see
+    /// `open_file`), folders included — the shortcut asks the desktop to open
+    /// the thing, and the desktop's answer for a directory is whatever it has
+    /// registered as the file manager. That is the difference between this
+    /// and a double-click: the click descends where you are, the shortcut
+    /// hands the entry over. Same in every view.
     ///
     /// It pulses either way. Ctrl+O is a deliberate ask with no click to
     /// acknowledge it, and whatever answers can take a moment to appear.

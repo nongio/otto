@@ -423,6 +423,38 @@ impl Browser {
         self.dirty = true;
     }
 
+    /// Empty every can, on a worker: it reads the mount table and deletes
+    /// whatever is in the trash, which can be a lot. The outcome lands
+    /// through [`Self::poll_job`] like a paste's, which reports it and
+    /// re-reads the listing.
+    pub(super) fn start_empty_trash(&mut self) {
+        if self.job.is_some() {
+            self.refuse(otto_kit::t_owned!("files-task-already-running"));
+            return;
+        }
+        let (updates, rx) = std::sync::mpsc::channel();
+        let spawned = std::thread::Builder::new()
+            .name("otto-files-empty-trash".into())
+            .spawn(move || {
+                let result = model::empty_trash();
+                let _ = updates.send(JobUpdate::Done(result));
+                otto_kit::prelude::AppContext::request_wakeup();
+            });
+        if let Err(err) = spawned {
+            tracing::warn!(?err, "could not start emptying the trash");
+            return;
+        }
+        self.job = Some(Job {
+            updates: rx,
+            // Nothing to stop between: emptying is one call.
+            cancel: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            // Nothing is recorded — there is nothing to put back.
+            undo_label: otto_kit::t!("files-empty-trash"),
+            cut: false,
+        });
+        self.dirty = true;
+    }
+
     /// Stop the running operation, if there is one.
     ///
     /// What it has already done stands and stays undoable; it simply does no

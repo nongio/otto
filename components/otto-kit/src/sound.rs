@@ -273,75 +273,27 @@ pub fn spawn_theme_watcher() {
         return;
     }
 
-    crate::portal_runtime::spawn("sound-theme-watcher", async move {
-        if let Err(err) = watch_theme().await {
-            tracing::debug!("sound-theme watcher stopped: {err}");
-        }
-    });
+    crate::portal_settings::watch(
+        "sound-theme-watcher",
+        &[("org.gnome.desktop.sound", "theme-name")],
+        |_, _, value| {
+            if let Some(name) = as_string(value) {
+                tracing::debug!(name, "sound theme");
+                // An empty name is "no preference", which is `None` here, not
+                // a theme called "".
+                set_theme(Some(name).filter(|n| !n.is_empty()));
+            }
+        },
+    );
 }
 
-async fn watch_theme() -> Result<(), zbus::Error> {
-    use zbus::zvariant::{OwnedValue, Value};
-    use zbus::{proxy, Connection};
-
-    const NAMESPACE: &str = "org.gnome.desktop.sound";
-    const KEY: &str = "theme-name";
-
-    #[proxy(
-        interface = "org.freedesktop.portal.Settings",
-        default_service = "org.freedesktop.portal.Desktop",
-        default_path = "/org/freedesktop/portal/desktop"
-    )]
-    trait Settings {
-        fn read(&self, namespace: &str, key: &str) -> zbus::Result<OwnedValue>;
-        #[zbus(signal)]
-        fn setting_changed(&self, namespace: &str, key: &str, value: Value<'_>)
-            -> zbus::Result<()>;
+fn as_string(value: zbus::zvariant::Value<'_>) -> Option<String> {
+    use zbus::zvariant::Value;
+    match value {
+        Value::Str(s) => Some(s.to_string()),
+        Value::Value(inner) => as_string(*inner),
+        _ => None,
     }
-
-    fn as_string(value: Value<'_>) -> Option<String> {
-        match value {
-            Value::Str(s) => Some(s.to_string()),
-            Value::Value(inner) => as_string(*inner),
-            _ => None,
-        }
-    }
-
-    // An empty name is "no preference", which is `None` here, not a theme
-    // called "".
-    fn apply(name: String) {
-        set_theme(Some(name).filter(|n| !n.is_empty()));
-    }
-
-    let conn = Connection::session().await?;
-    let proxy = SettingsProxy::new(&conn).await?;
-
-    match proxy.read(NAMESPACE, KEY).await {
-        Ok(owned) => {
-            if let Some(name) = as_string(owned.into()) {
-                tracing::debug!(name, "sound theme");
-                apply(name);
-            }
-        }
-        Err(err) => tracing::debug!("sound-theme read failed (portal absent?): {err}"),
-    }
-
-    let mut stream = proxy.receive_setting_changed().await?;
-    loop {
-        use futures_util::StreamExt as _;
-        let Some(signal) = stream.next().await else {
-            break;
-        };
-        let args = signal.args()?;
-        if args.namespace == NAMESPACE && args.key == KEY {
-            if let Some(name) = as_string(args.value) {
-                tracing::debug!(name, "sound theme changed");
-                apply(name);
-            }
-        }
-    }
-
-    Ok(())
 }
 
 #[cfg(test)]

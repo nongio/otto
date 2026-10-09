@@ -30,8 +30,8 @@ outdir="${1:-dist}"
 mkdir -p "$outdir"
 outdir=$(cd "$outdir" && pwd)
 
-BINARIES=(otto otto-bar otto-islands otto-lock otto-greeter otto-rdp
-          otto-settings otto-files otto-launcher otto-emoji otto-stash otto-peek
+BINARIES=(otto otto-bar otto-islands otto-lock otto-authorize otto-greeter otto-rdp
+          otto-settings otto-files otto-launcher otto-emoji otto-stash otto-canvas otto-peek otto-preview
           otto-media-worker otto-msg otto-search otto-agents xdg-desktop-portal-otto)
 
 # The workspace version names the tarball and its top directory; the
@@ -61,12 +61,14 @@ install -m644 LICENSE                  "$tmpdir/$PKGDIR/LICENSE"
 install -m644 README.md                "$tmpdir/$PKGDIR/README.md"
 install -m644 otto_config.example.toml "$tmpdir/$PKGDIR/otto_config.example.toml"
 install -Dm755 resources/bin/otto-look "$tmpdir/$PKGDIR/resources/bin/otto-look"
+install -Dm644 resources/wallpaper.jpg  "$tmpdir/$PKGDIR/resources/wallpaper.jpg"
 
 # Desktop entries. otto-trash.desktop is the Trash window — otto-files behind
 # its own entry, so it gets its own icon in the dock and the applications
 # list. All three PKGBUILDs install it; leaving it out of the tarball fails
 # package() with "cannot stat".
-for d in otto.desktop otto-files.desktop otto-settings.desktop otto-trash.desktop; do
+for d in otto.desktop otto-files.desktop otto-settings.desktop otto-trash.desktop \
+         otto-preview.desktop; do
     install -Dm644 "resources/$d" "$tmpdir/$PKGDIR/resources/$d"
 done
 
@@ -88,6 +90,8 @@ install -Dm644 components/otto-agents/otto-agents.service "$tmpdir/$PKGDIR/compo
 install -Dm644 components/otto-agents/otto-agents-bridge.service "$tmpdir/$PKGDIR/components/otto-agents/otto-agents-bridge.service"
 install -Dm644 components/otto-lock/otto-lock.pam \
     "$tmpdir/$PKGDIR/components/otto-lock/otto-lock.pam"
+install -Dm644 resources/polkit/org.otto.settings.policy \
+    "$tmpdir/$PKGDIR/resources/polkit/org.otto.settings.policy"
 
 # The agent skills, as a tree: PKGBUILD and PKGBUILD-nightly-bin install
 # whatever is under resources/plugins/otto, so the tarball has to carry all of
@@ -96,6 +100,21 @@ while IFS= read -r f; do
     if [ -x "$f" ]; then m=755; else m=644; fi
     install -D -m$m "$f" "$tmpdir/$PKGDIR/$f"
 done < <(find resources/plugins/otto -type f)
+
+# The desktop widgets' ewwii configuration, likewise a tree with executable
+# scripts in it.
+while IFS= read -r f; do
+    if [ -x "$f" ]; then m=755; else m=644; fi
+    install -D -m$m "$f" "$tmpdir/$PKGDIR/$f"
+done < <(find resources/widgets -type f)
+
+# The default icon theme, Otto-MacTahoe: the PKGBUILDs copy the themes and
+# extract their symlinks from the links list into the package.
+scripts/packaging/fetch-icon-theme.sh
+mkdir -p "$tmpdir/$PKGDIR/icon-theme"
+cp -a target/icon-theme/Otto-MacTahoe target/icon-theme/Otto-MacTahoe-light \
+      target/icon-theme/Otto-MacTahoe-dark target/icon-theme/links-*.tar.gz \
+      target/icon-theme/COPYING target/icon-theme/SOURCE "$tmpdir/$PKGDIR/icon-theme/"
 
 install -m644 PKGBUILD-git "$tmpdir/$PKGDIR/PKGBUILD-git"
 

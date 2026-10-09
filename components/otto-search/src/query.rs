@@ -469,9 +469,9 @@ fn duration(value: &str) -> Option<u64> {
 
 /// Read a `size:` value.
 ///
-/// Units are powers of 1024, matching how Files shows sizes: a file listed as
-/// "1 MB" is found by `size:>1M`, and would not be if the query counted in
-/// thousands.
+/// Units are powers of 1000, matching how Files shows sizes: a file listed as
+/// "1 MB" holds at least a million bytes and is found by `size:>1M`. The
+/// binary units (`KiB`, `MiB`, …) count in powers of 1024.
 fn size(value: &str) -> Option<SizeBound> {
     let (below, rest) = match value.as_bytes().first()? {
         b'<' => (true, &value[1..]),
@@ -482,17 +482,20 @@ fn size(value: &str) -> Option<SizeBound> {
         .find(|c: char| !(c.is_ascii_digit() || c == '.'))
         .unwrap_or(rest.len());
     let number: f64 = rest[..number_end].parse().ok()?;
-    let unit = rest[number_end..]
-        .trim_end_matches("ib")
-        .trim_end_matches('b');
-    let scale: u64 = match unit {
-        "" => 1,
-        "k" => 1 << 10,
-        "m" => 1 << 20,
-        "g" => 1 << 30,
-        "t" => 1 << 40,
+    let unit = &rest[number_end..];
+    let (unit, base) = match unit.strip_suffix("ib") {
+        Some(unit) => (unit, 1024u64),
+        None => (unit.strip_suffix('b').unwrap_or(unit), 1000),
+    };
+    let power = match unit {
+        "" if base == 1000 => 0,
+        "k" => 1,
+        "m" => 2,
+        "g" => 3,
+        "t" => 4,
         _ => return None,
     };
+    let scale = base.pow(power);
     #[expect(
         clippy::cast_possible_truncation,
         clippy::cast_sign_loss,
@@ -661,13 +664,20 @@ mod tests {
     }
 
     #[test]
-    fn size_counts_in_powers_of_1024() {
-        assert_eq!(size(">100m"), Some(SizeBound::AtLeast(100 << 20)));
-        assert_eq!(size("<1k"), Some(SizeBound::Below(1024)));
-        assert_eq!(size("1.5gb"), Some(SizeBound::AtLeast(3 << 29)));
-        assert_eq!(size("2mib"), Some(SizeBound::AtLeast(2 << 20)));
+    fn size_counts_in_powers_of_1000_like_files() {
+        assert_eq!(size(">100m"), Some(SizeBound::AtLeast(100_000_000)));
+        assert_eq!(size("<1k"), Some(SizeBound::Below(1000)));
+        assert_eq!(size("1.5gb"), Some(SizeBound::AtLeast(1_500_000_000)));
         assert_eq!(size("10"), Some(SizeBound::AtLeast(10)));
+        assert_eq!(size("10b"), Some(SizeBound::AtLeast(10)));
         assert_eq!(size("big"), None);
+        assert_eq!(size("1ib"), None);
+    }
+
+    #[test]
+    fn binary_units_count_in_powers_of_1024() {
+        assert_eq!(size("2mib"), Some(SizeBound::AtLeast(2 << 20)));
+        assert_eq!(size("<1kib"), Some(SizeBound::Below(1024)));
     }
 
     #[test]

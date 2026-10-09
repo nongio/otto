@@ -32,13 +32,11 @@ use crate::renderer::{
 };
 use crate::state::{Backend, Otto};
 
-#[cfg(feature = "fps_ticker")]
-use smithay::backend::renderer::ImportMem;
 use smithay::{
     backend::{
         allocator::dmabuf::Dmabuf,
         drm::{DrmDevice, DrmDeviceFd, DrmNode},
-        renderer::{multigpu::MultiTexture, utils::import_surface, ImportDma},
+        renderer::{multigpu::MultiTexture, ImportDma},
         session::{libseat::LibSeatSession, Session},
         udev::UdevBackend,
     },
@@ -51,7 +49,6 @@ use smithay::{
     },
     utils::DeviceFd,
     wayland::{
-        compositor,
         dmabuf::{DmabufGlobal, DmabufHandler, DmabufState, ImportNotifier},
         drm_lease::{
             DrmLease, DrmLeaseBuilder, DrmLeaseHandler, DrmLeaseRequest, DrmLeaseState,
@@ -143,12 +140,9 @@ impl<A: RendererApi> Backend for UdevData<A> {
             tracing::warn!("Early buffer import failed: {}", err);
         }
         let mut r = A::single_renderer(&mut self.gpus, &self.primary_gpu).unwrap();
-        compositor::with_states(surface, |states| {
-            let import_res = import_surface(&mut r, states);
-            if let Err(ref err) = import_res {
-                tracing::warn!("Early buffer import surface failed: {}", err);
-            }
-        });
+        if let Err(err) = crate::renderer::import_surface_subtree(&mut r, surface) {
+            tracing::warn!("Early buffer import surface failed: {}", err);
+        }
     }
 
     fn texture_for_surface(

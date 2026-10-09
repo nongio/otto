@@ -2,7 +2,7 @@
 
 **Status:** draft — compositor side of the settings interface implemented
 **Wire contract:** [docs/developer/settings-dbus-api.md](../docs/developer/settings-dbus-api.md)
-**Related specs:** [search-language.md](./search-language.md), [file-browser.md](./file-browser.md#recent-and-find), [multi-output.md](./multi-output.md), [lock-screen.md](./lock-screen.md), [login-mode.md](./login-mode.md), [lid-power.md](./lid-power.md), [topbar.md](./topbar.md), [localisation.md](./localisation.md)
+**Related specs:** [search-language.md](./search-language.md), [file-browser.md](./file-browser.md#recent-and-find), [multi-output.md](./multi-output.md), [lock-screen.md](./lock-screen.md), [login-mode.md](./login-mode.md), [lid-power.md](./lid-power.md), [topbar.md](./topbar.md), [desktop-widget.md](./desktop-widget.md), [localisation.md](./localisation.md)
 
 ## Summary
 
@@ -66,8 +66,8 @@ D-Bus client that reads a described schema, sets values, and observes changes.
 - Configuring anything Otto does not already have a configuration key for.
   This app exposes the existing surface; it does not motivate new features.
   The exceptions are services Otto's features stand on that keep their own
-  configuration: the agents service ([Agents](#agents)) and the desktop's
-  file indexer ([Search](#search)).
+  configuration: the agents service ([Agents](#agents)), dictation
+  ([Dictation](#dictation)) and the desktop's file indexer ([Search](#search)).
 - Application-level settings for other Otto components (bar layout, launcher
   behaviour) unless they are already compositor configuration keys.
 - Exposing the whole configuration surface. The app presents a curated set of
@@ -84,8 +84,10 @@ D-Bus client that reads a described schema, sets values, and observes changes.
 
 The compositor owns the writable configuration file. It is the only process
 that writes it. The app never reads or writes the compositor's configuration
-files. The one file it does write is `agents.toml`, whose owner, the
-otto-agents service, serves no settings interface (see [Agents](#agents)).
+files. The files it does write belong to components that serve no settings
+interface: `agents.toml`, the otto-agents service's (see [Agents](#agents)),
+and `dictation.toml` with otto-dictate's autostart entry (see
+[Dictation](#dictation)).
 
 The compositor's in-memory configuration is mutable at runtime. When a value
 changes — from any source — the compositor must, in this order:
@@ -365,22 +367,115 @@ schema and current values, and subscribes to the changed signal. A change
 arriving over the signal updates the displayed value, whether or not this app
 caused it.
 
-The window presents a list of panes and the selected pane's contents. The panes
-are:
+The window presents a list of panes and the selected pane's contents, and opens
+on the first. The sidebar lists them the system first, then the desktop, input,
+and accounts, with About last: General, Appearance, Displays, Sound, Power, Dock,
+Top bar, Tiling, Search, Agents, Keyboard, Dictation, Trackpad & Mouse, Users,
+Lock & Login, Privacy, About. Dictation sits with the keyboard because it is
+another way of typing. The panes are:
 
-- **General** — appearance (light/dark), accent colour, rounded corners, frosting, which
-  end of a title bar the window controls sit at, font family, background
-  colour and image, cursor theme and size, icon theme, the renderer (see below), and the display
-  language, which is what every part of Otto localises itself against. That
-  setting requires a restart to take effect, and the app says so like any
-  other; its *System language* entry asks Otto to take the language from the
-  environment instead ([localisation.md](./localisation.md)).
+- **Users** — not Otto settings: everyone who can log in.
+  It is a list and a detail. The users list (otto-kit's `selection_list`) sits
+  left of the detail — above it when the pane is narrower than 560pt — with
+  you first, then the others by name; each row has the account's avatar
+  (otto-kit's `avatar`: the picture, else initials on a color picked from the
+  name), its name, and its type ("Administrator · You"). Picking one shows it
+  at once. Its footer's **+** and **−** are live for an administrator only, and
+  − never for yourself.
+  The detail opens with a header — the avatar, the name and **Choose…** for the
+  picture — in the same card as Full name, Account name and Account type
+  (Administrator or Standard), then a Password group. Names and pictures are
+  the system's, and are written through AccountsService (`SetRealName`,
+  `SetIconFile`) — where the greeter and the lock screen read them back from.
+  Your own picture is cut to a centered 256-pixel square, written to `~/.face`
+  and handed to the service from there, so display managers that read
+  `~/.face` agree; another account's is cut to a scratch file in the runtime
+  directory, handed over and removed. Where AccountsService is not running,
+  only you are listed, shown but not editable, and the name row says why.
+  For another account an administrator may also change its type (a pop-up;
+  `SetAccountType` — never your own, so the machine cannot be left without
+  one) and its password: **Reset Password…** opens a sheet with New password
+  and Confirm, hashed in-process to SHA-512 crypt (`$6$`) and set with
+  `SetPassword`.
+  **+** opens **Add User**: Full name, Account name (suggested from the full
+  name's first word while empty), Password and Confirm; the account name must
+  be one `useradd` takes and not already listed. The password is hashed
+  first, the account created as Standard with `CreateUser`, given the
+  password and selected; if setting the password fails the new account is
+  deleted again. **−** asks
+  **Delete <name>?** and deletes with `DeleteUser`, keeping the home folder.
+  Everything done to another account is user administration, which polkit
+  asks an administrator to approve through the session's agent; the sheet says
+  it is waiting meanwhile, and a refusal is shown under its fields.
+  Your own Password row's **Change Password…** button opens a sheet: a card
+  over the dimmed window with Current password, New password and Confirm new
+  password, and Cancel / Change Password. Every sheet of the pane has this
+  shape — a title, a paragraph or fields, Cancel and a default button (red for
+  Delete User). It is modal — the sidebar, the pane
+  and the scroll wheel do nothing behind it. It is drawn on a subsurface
+  stacked above the pane's, with an empty input region, so the pointer and
+  keyboard stay on the window and its fields use the app's ordinary text
+  editor in password mode (dots, no copy, no value given to assistive
+  technologies). The keyboard starts in the first field; Tab and Shift-Tab
+  walk the fields, Enter moves to the next one and from the last one presses
+  the default button, Escape cancels.
+  Change Password checks that all are filled, that the new ones match and
+  differ from the current one, then runs `passwd` on a thread of its own and
+  answers its prompts over a pipe — current password, then the new one twice.
+  A prompt is recognised by shape (output ending in a colon, ASCII or
+  fullwidth, with no line break), not wording, so the user's locale is kept and a refusal comes back
+  in their language. The passwords leave the sheet when the attempt starts and
+  are never passed as arguments. On success the sheet closes and the row says
+  so; otherwise it stays up with the reason under the fields: a wrong current
+  password (`passwd` stopping after the first answer), the quality module's
+  `BAD PASSWORD: …`, or `passwd`'s own line (also when it stops before
+  asking anything). A fourth prompt — a quality module asking again — is not
+  answered. `passwd` silent for 20 seconds — waiting on something not
+  recognised as a prompt — is killed and the attempt reported as failed.
+  Cancel and Escape stay live while the change is underway: they kill
+  `passwd` and close the sheet.
+- **General** — the app switcher's display, the display language, which is
+  what every part of Otto localises itself against, the renderer (see below)
+  and where the configuration file is. The language requires a restart to take
+  effect, and the app says so like any other; its *System language* entry
+  asks Otto to take the language from the environment instead
+  ([localisation.md](./localisation.md)).
 
-  The font family and the display language are pop-up buttons rather than text
-  fields. Both list more values than a menu can show at once — every family
-  fontconfig knows of, in the first case — so both are menus that cap their
-  height, scroll, and are walked by typing the start of a name
+  The display language is a pop-up button rather than a text field. It lists
+  more values than a menu can show at once, so the menu caps its height,
+  scrolls, and is walked by typing the start of a name
   ([context-menus.md](./context-menus.md)).
+- **Appearance** — sits right after General. Colour scheme (light/dark),
+  accent colour, rounded corners, frosting, which end of a title bar the
+  window controls sit at, the maximize button, font family and GTK theme; the
+  desktop's background colour and image and the desktop widget; the desk; the cursor theme and size
+  and the icon theme.
+
+  The Desk group holds *Show files on the desktop* (`desk.enabled`), then
+  four rows that are not `org.otto.Settings` settings but the desk's own, in
+  the `[desk]` section of `~/.config/otto/files.toml`: *Folder*, whose
+  **Choose…** opens the portal's folder picker and writes `folder`; *When
+  icons don't fit*, a pop-up offering Scroll and Show in overlay that writes
+  `overflow = "scroll"` or `"stack"` (an unset or unknown value shows as
+  Scroll, the desk's default); *Icon size*, a slider from 32 to 160 px in
+  steps of 4 that writes `icon_size` (64 when unset), once per step while it
+  is dragged; and *Size and position*, whose **Edit…** asks
+  the running desk for its edit mode over `org.otto.Desk1` and whose
+  **Reset** writes `anchor = "fill"`. All are edited in place with
+  everything else in the file kept, and the desk follows the file live. *Size and position* is inactive while the desk
+  is off ([desk.md](./desk.md)).
+
+  The background widget is a pop-up (`desktop.widget`, live) offering None,
+  Calendar, Cross pad and Grid pad, pages ewwii draws behind the
+  windows. ewwii is optional: where it is not on `PATH` the pop-up is dimmed
+  and cannot be opened, and the row's detail says ewwii is needed. Where it
+  is, the detail says ewwii draws the widgets and names the folder that takes
+  widgets of one's own, `$XDG_CONFIG_HOME/otto/widgets/ewwii` with the home
+  folder as `~`. The pop-up lists the widgets that theme adds after the
+  shipped ones ([desktop-widget.md](./desktop-widget.md)).
+
+  The font family is a pop-up that lists every family fontconfig knows of, so
+  like the language it caps its height, scrolls and is walked by typing.
 
   The accent is a `color` setting rather than an enumeration: the colour well
   offers the palette's named accents as swatches, and picking one sends the
@@ -394,13 +489,69 @@ are:
   toggle lives here rather than with the switcher's own settings because it
   says nothing on its own: it borrows the dock's tint, and does nothing while
   that tint is off.
+- **Top bar** — right after Dock. What otto-bar shows: the application
+  menus, then the clock.
+
+  The application menu group has one toggle, *Show application menus*
+  (`topbar.show_app_menu`, live, on by default). Off, the bar shows only the
+  focused application's name and gives up the
+  `com.canonical.AppMenu.Registrar` name, so applications opened afterwards
+  keep their menu bar in their own window; the row's detail says so.
+
+  The *Clock* group has a toggle, *Show date and time* (`topbar.show_clock`,
+  live, on by default), and a *Format* pop-up (`topbar.clock_format`, live).
+  The format is a `string` setting; the pop-up offers a fixed set of formats
+  (time only, weekday and time, short and long date with time, each on a
+  24- and a 12-hour clock), each entry showing the current time in that
+  format in the interface's language. The first entry is the empty string,
+  the language's own format, shown as a preview marked as the language
+  default. A format written by hand in the configuration file that the list
+  does not offer is added to the menu so the field always shows what is in
+  force. otto-bar reads both settings over `org.otto.Settings` and follows
+  `Changed`, so both apply live; the compositor has nothing to reconcile
+  ([topbar.md](./topbar.md)).
 - **Keyboard** — repeat delay and rate, the input sources (see below), then
   shortcuts.
 - **Trackpad & Mouse** — the pointer and touchpad settings.
-- **Sound** — enabled, theme.
+- **Sound** — interface sounds enabled and theme, then a mixer laid out
+  after pavucontrol, which is its reference. A tab bar holds pavucontrol's
+  tabs and the groups under it are that tab's. It sits on the window rather
+  than in a card, as wide as the cards below it: a rounded-rect track with
+  the open tab a flat dark fill under white text (a lighter grey in dark
+  mode), labels at 13pt medium. The arrow keys move between tabs:
+  - *Playback* and *Recording* — one group per app stream, titled with the
+    app and what it plays: volume, mute, and the device it plays on or
+    records from, which moves it.
+  - *Output devices* and *Input devices* — one group per device: its port
+    (speakers, headphone jack…; a jack with nothing plugged in is still
+    listed, marked *(unplugged)*, as pavucontrol marks it),
+    volume, mute, and *Use as default*, which like pavucontrol's fallback
+    button is switched off only by switching another device on. Monitor
+    sources are left out, as pavucontrol leaves them out by default.
+  - *Configuration* — one group per card: the profile it runs in, among the
+    ones that can run now. HDMI audio is a profile of the same card as the
+    laptop's speakers.
+
+  It opens on Output devices. None of it is a setting: it belongs to the
+  sound server, which remembers it itself. The pane reads and writes it
+  through `pactl`, which speaks to PulseAudio or to PipeWire through
+  pipewire-pulse alike. From the first time the pane is shown it follows
+  `pactl subscribe` for as long as the app runs, acting on events only
+  while the pane is on screen, so an app starting to play or a headset
+  plugged in shows up without reopening it. Volume runs to 100 %; something boosted past it shows at the
+  end of the track. With no server answering, the pane says so and keeps the
+  interface-sound rows.
 - **Power** — lid switch handling, power button action.
 - **Lock & Login** — automatic lock timeout, which locker runs the lock screen,
   which greeter runs the login screen.
+- **About** — the last pane, and not settings. It opens on a centred band:
+  the Otto mark large (the logo's rounded square in the text colour, its two
+  dots in the opposite one), "Otto" in large type, and the version under it.
+  Below, a card *About this computer* lists the computer's name, operating
+  system (`PRETTY_NAME` from `/etc/os-release`), kernel, processor and
+  memory, each value on its row's detail line, read from `/proc` when the
+  pane is built. A line whose source cannot be read is left out. otto-bar's *About Otto* opens
+  the app on it with `--pane about` ([topbar.md](./topbar.md)).
 
 Settings outside these panes are not shown. The schema may describe settings
 the app does not present; the app must ignore them rather than render them
@@ -467,6 +618,43 @@ anywhere else goes to the chrome. The window's resize edges along the pane's
 right and bottom stay live, a wheel anywhere over the window scrolls the pane,
 and a slider or scrollbar drag keeps going when the pointer wanders off the
 pane.
+
+### Finding a setting
+
+A search field heads the sidebar, above the panes. Typing into it drops a list
+of matches under it — the launcher's list (otto-kit's `item_list`), at most
+eight rows, wider than the sidebar and over the pane. Each row is a setting's
+name with its place under it ("Dock › Magnification & icons") and its pane's
+glyph; a pane is a match of its own, by its name. The list is drawn in the
+accent: the selected match is filled with it, the glyphs and the letters each
+name was matched by are drawn in it, and the field's magnifier turns it while
+the field holds a query.
+
+Matches are found word by word: a row whose name has a word starting with each
+word typed comes first, then one whose pane, group, setting identifier or
+choices supply the words its name does not ("dock size", "timeout", "dark"),
+then one whose help text does. Within each the order is the launcher's ranking
+of the name. Only when nothing matches that way do looser matches count —
+letters in order, not at a word's start — so "sz" finds Size, but "dock" is
+not answered with "Drag lock".
+
+Picking a match — a click, or Enter on the selected one — goes to it: its pane
+is selected, the pane scrolls the row a third of the way down, the keyboard
+lands on its control (as Tab would have put it there, so Space flips the switch
+that was searched for), and the row is lit in the accent and fades out. A pane
+picked selects the pane and leaves the keyboard on the sidebar.
+
+The field is the first Tab stop, ahead of the sidebar. Ctrl+F reaches it from
+anywhere, and `/` when nothing is being typed into; either selects what it
+holds. The arrows walk the list, Escape empties the field and, from an empty
+field, moves on to the sidebar. Tab, a press elsewhere or the window losing the
+keyboard puts the list away and keeps the query. The field is a text input to
+assistive technologies and the list a list of results, with the selected match
+the focused one.
+
+`otto-settings --setting <id>` opens on a setting as though it had been picked
+— by the identifier the configuration file uses, or a row's label where it has
+none. `--pane <name>` still opens on a pane.
 
 ### Input sources
 
@@ -552,7 +740,8 @@ no route at all. An agent on a command the pane does not recognise has no
 route it knows, and the pick is ignored. When the named file exists, an
 Instructions file row shows its path with Open; when it does not, the pop-up's
 note says where agent files go. A Configuration file row opens `agents.toml` the same way, handing
-both to `xdg-open`.
+both to the application their type opens with by default, resolved through the
+same associations Files uses.
 
 The harness is recognised from the command (Claude Code, Codex, OpenCode,
 Hermes, pi, or Custom for anything else). Picking another one sets the whole
@@ -567,8 +756,9 @@ one shell-quoted line.
 The pane opens with an Agent service row saying whether the service is
 running, stopped, stopped after an error, or not installed, with Start when it
 is down and Restart when it is up. The state comes from `systemctl --user
-show`, asked every five seconds on a thread of its own so the draw path never
-runs a process, and the window is woken when it changes. Without `systemctl`
+show`, asked every five seconds while the pane is on screen, on a thread of
+its own so the draw path never runs a process, and the window is woken when it
+changes; a hidden pane asks nothing. Without `systemctl`
 the row says it cannot tell, and nothing is asked again; neither that nor a
 missing `otto-agents` stops the pane working.
 
@@ -592,6 +782,53 @@ key as they were. An empty model or folder, or a colour of None, removes the
 key. When the agent list came from the system file, the first change to an
 agent copies that list into the user's file, since a user file that lists
 agents replaces the system list.
+
+### Dictation
+
+The dictation pane edits `$XDG_CONFIG_HOME/otto/dictation.toml`, the file the
+launcher and otto-dictate read as each dictation starts (see
+[dictation.md](./dictation.md#settings)), so a change applies to the next
+dictation and nothing is held for an Apply. Each change writes its one key
+with `toml_edit`, leaving comments and keys the pane does not show (`url`) as
+they were; a file that does not parse is left alone. Its intro says that
+Ctrl+D dictates in the launcher and that `otto-dictate toggle` can be bound to
+a shortcut for other apps. `otto-settings --pane dictation` opens on it.
+
+- **Engine** is a pop-up of Parakeet, Whisper (English only) and CrispASR. A
+  pick writes `engine`, then, on a thread of its own, runs `systemctl --user
+  disable` for the other engines' units and `enable --now` for
+  `otto-stt-<engine>.service`: the units conflict, so starting one stops the
+  others, and the next login starts the same one. Without an `engine` in the
+  file the pop-up shows the engine whose unit is running, else the one
+  enabled, else Parakeet, since `install.sh` picks one without writing the
+  file.
+- **Speech server** says whether the picked engine's unit is running, stopped,
+  stopped after an error (naming the `journalctl` line), not installed (naming
+  `install.sh` with the engine), or unknown without `systemctl`, with Start
+  when it is down and Restart when it is up. It is asked with `systemctl
+  --user show` every five seconds while the pane is on screen, on a thread of
+  its own, as the Agents pane asks about its service; a hidden pane asks
+  nothing.
+- **Language** is a pop-up of Automatic (`auto`) and the languages Otto has a
+  catalogue for (English, German, Spanish, French, Italian, Japanese, Polish,
+  Portuguese, Russian, Ukrainian, Chinese), each by its own name, written as
+  `language`. Without one in the file it shows the language a dictation would
+  use, the one `LANG` names.
+- **Hotword boost** is a slider from 1 to 8 in steps of 0.5, written as
+  `hotwords_boost`, shown only while the engine is CrispASR, the one that takes
+  hotwords.
+- **Start dictation at login** is otto-dictate's XDG autostart entry,
+  `$XDG_CONFIG_HOME/autostart/otto-dictate.desktop`, and touches no other.
+  It is on when the user's entry, or failing one a system entry of the same
+  name, is neither `Hidden=true` nor `X-GNOME-Autostart-enabled=false`.
+  Turning it off writes `Hidden=true` (and `X-GNOME-Autostart-enabled=false`)
+  into the user's entry rather than deleting it: the autostart specification
+  reads a hidden entry as deleted, and a user's entry overrides a system one
+  of the same name, so this also switches off an entry a package installed,
+  and keeps the user's `Exec` line. Turning it on sets them back, or writes an
+  entry running `~/.local/bin/otto-dictate` where `install.sh` put it, else
+  `otto-dictate`. Otto reads autostart entries only with `xdg_autostart` on,
+  which the row says.
 
 ### Search
 
@@ -708,7 +945,7 @@ session cannot be undone if the display does not come back, so the confirm
 timeout above has to exist before the live path does.*
 
 The General pane offers the renderer
-(`rendering.renderer`), in a group of its own above Configuration: OpenGL or Vulkan, the GPU API a login session draws
+(`rendering.renderer`), in a group of its own above Configuration: Vulkan (the default) or OpenGL, the GPU API a login session draws
 with. It is a restart setting, and its helper text says it applies to the
 login session, that windowed sessions always use OpenGL, and that it takes
 effect after the next login. Two cases leave nothing to choose, and the row

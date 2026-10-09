@@ -7,7 +7,7 @@
 //!
 //! # Using it
 //!
-//! ```ignore
+//! ```
 //! use otto_kit::t;
 //!
 //! let label = t!("dock-keep-in-dock");
@@ -353,6 +353,19 @@ pub fn posix_locale() -> String {
         _ => return tag,
     };
     format!("{tag}_{region}")
+}
+
+/// The locale chrono formats month and weekday names against, for
+/// `format_localized`.
+///
+/// Resolved once: it cannot change without a restart, and the lookup walks a
+/// table. Falls back to the source locale when chrono does not know the tag —
+/// an unknown locale should still produce a clock.
+pub fn chrono_locale() -> chrono::Locale {
+    static LOCALE: OnceLock<chrono::Locale> = OnceLock::new();
+    *LOCALE.get_or_init(|| {
+        chrono::Locale::try_from(posix_locale().as_str()).unwrap_or(chrono::Locale::en_GB)
+    })
 }
 
 fn chain() -> &'static [Bundle] {

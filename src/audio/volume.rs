@@ -6,7 +6,7 @@
 //! - Track mute state
 //! - Event-driven updates for OSD integration
 
-use std::sync::{Arc, Mutex};
+use std::sync::{mpsc, Arc, Mutex, OnceLock};
 
 use tracing::{debug, error, info};
 
@@ -53,6 +53,8 @@ impl Default for AudioState {
 pub struct AudioManager {
     /// Cached audio state
     state: Arc<Mutex<AudioState>>,
+    /// Channel to the wpctl worker thread, started lazily on first change
+    wpctl_tx: OnceLock<mpsc::Sender<WpctlCommand>>,
 }
 
 impl AudioManager {
@@ -62,6 +64,7 @@ impl AudioManager {
 
         Ok(Self {
             state: Arc::new(Mutex::new(AudioState::default())),
+            wpctl_tx: OnceLock::new(),
         })
     }
 
@@ -108,79 +111,101 @@ impl AudioManager {
         Ok(())
     }
 
-    /// Set volume via wpctl (temporary implementation)
+    /// Queue a volume change for the wpctl worker (temporary implementation)
     fn set_volume_wpctl(&self, volume: u32) -> Result<(), VolumeError> {
-        let volume_fraction = (volume as f32 / 100.0).clamp(0.0, 1.0);
+        self.send_wpctl(WpctlCommand::Volume(volume))
+    }
 
-        std::thread::spawn(move || {
-            let output = std::process::Command::new("wpctl")
+    /// Queue a mute change for the wpctl worker (temporary implementation)
+    fn set_mute_wpctl(&self, muted: bool) -> Result<(), VolumeError> {
+        self.send_wpctl(WpctlCommand::Mute(muted))
+    }
+
+    /// Send a command to the wpctl worker, starting it on first use.
+    ///
+    /// A single worker applies commands in order, so a held volume key can't
+    /// race several `wpctl` processes and leave a stale volume applied.
+    fn send_wpctl(&self, command: WpctlCommand) -> Result<(), VolumeError> {
+        let sender = self.wpctl_tx.get_or_init(|| {
+            let (tx, rx) = mpsc::channel();
+            if let Err(e) = std::thread::Builder::new()
+                .name("otto-wpctl".into())
+                .spawn(move || wpctl_worker(rx))
+            {
+                error!("Failed to spawn wpctl worker: {}", e);
+            }
+            tx
+        });
+
+        sender
+            .send(command)
+            .map_err(|e| VolumeError::OperationFailed(format!("wpctl worker gone: {}", e)))
+    }
+}
+
+/// A change to apply to the default sink via `wpctl`
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WpctlCommand {
+    /// Volume in percent (0-100)
+    Volume(u32),
+    Mute(bool),
+}
+
+/// Collapse each run of consecutive volume changes to its last value, keeping
+/// mute changes in their original order relative to volume.
+fn coalesce_wpctl_commands(commands: Vec<WpctlCommand>) -> Vec<WpctlCommand> {
+    let mut out: Vec<WpctlCommand> = Vec::with_capacity(commands.len());
+    for command in commands {
+        if let (WpctlCommand::Volume(_), Some(WpctlCommand::Volume(_))) = (command, out.last()) {
+            out.pop();
+        }
+        out.push(command);
+    }
+    out
+}
+
+/// Worker loop: block for a command, drain whatever else is pending, and
+/// apply the coalesced batch in order.
+fn wpctl_worker(rx: mpsc::Receiver<WpctlCommand>) {
+    while let Ok(first) = rx.recv() {
+        let mut batch = vec![first];
+        batch.extend(rx.try_iter());
+        for command in coalesce_wpctl_commands(batch) {
+            run_wpctl(command);
+        }
+    }
+}
+
+fn run_wpctl(command: WpctlCommand) {
+    let output = match command {
+        WpctlCommand::Volume(volume) => {
+            let volume_fraction = (volume as f32 / 100.0).clamp(0.0, 1.0);
+            std::process::Command::new("wpctl")
                 .args([
                     "set-volume",
                     "@DEFAULT_AUDIO_SINK@",
                     &format!("{:.4}", volume_fraction),
                 ])
-                .output();
-
-            match output {
-                Ok(out) if out.status.success() => {
-                    tracing::trace!("Volume set to {}% via wpctl", volume);
-                }
-                Ok(out) => {
-                    tracing::error!("wpctl failed: {}", String::from_utf8_lossy(&out.stderr));
-                }
-                Err(e) => {
-                    error!("Failed to execute wpctl: {}", e);
-                }
-            }
-        });
-
-        Ok(())
-    }
-
-    /// Set mute via wpctl (temporary implementation)
-    fn set_mute_wpctl(&self, muted: bool) -> Result<(), VolumeError> {
-        let mute_arg = if muted { "1" } else { "0" };
-
-        std::thread::spawn(move || {
-            let output = std::process::Command::new("wpctl")
+                .output()
+        }
+        WpctlCommand::Mute(muted) => {
+            let mute_arg = if muted { "1" } else { "0" };
+            std::process::Command::new("wpctl")
                 .args(["set-mute", "@DEFAULT_AUDIO_SINK@", mute_arg])
-                .output();
+                .output()
+        }
+    };
 
-            match output {
-                Ok(out) if out.status.success() => {
-                    debug!("Mute set to {} via wpctl", muted);
-                }
-                Ok(out) => {
-                    error!("wpctl failed: {}", String::from_utf8_lossy(&out.stderr));
-                }
-                Err(e) => {
-                    error!("Failed to execute wpctl: {}", e);
-                }
-            }
-        });
-
-        Ok(())
-    }
-
-    /// Query current volume from PipeWire (future implementation)
-    #[allow(dead_code)]
-    fn query_volume_pipewire(&self) -> Result<AudioState, VolumeError> {
-        // TODO: Use Registry to find default sink
-        // TODO: Query node parameters for volume
-        // TODO: Parse volume and mute state
-        Err(VolumeError::OperationFailed(
-            "Native PipeWire query not yet implemented".to_string(),
-        ))
-    }
-
-    /// Set volume via PipeWire (future implementation)
-    #[allow(dead_code)]
-    fn set_volume_pipewire(&self, _volume: u32) -> Result<(), VolumeError> {
-        // TODO: Use Registry to find default sink
-        // TODO: Set node parameters
-        Err(VolumeError::OperationFailed(
-            "Native PipeWire control not yet implemented".to_string(),
-        ))
+    match output {
+        Ok(out) if out.status.success() => {
+            debug!("Applied {:?} via wpctl", command);
+        }
+        Ok(out) => {
+            error!("wpctl failed: {}", String::from_utf8_lossy(&out.stderr));
+        }
+        Err(e) => {
+            error!("Failed to execute wpctl: {}", e);
+        }
     }
 }
 
@@ -188,6 +213,40 @@ impl Default for AudioManager {
     fn default() -> Self {
         Self {
             state: Arc::new(Mutex::new(AudioState::default())),
+            wpctl_tx: OnceLock::new(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use WpctlCommand::{Mute, Volume};
+
+    #[test]
+    fn coalesce_keeps_latest_volume() {
+        let batch = vec![Volume(55), Volume(60), Volume(65)];
+        assert_eq!(coalesce_wpctl_commands(batch), vec![Volume(65)]);
+    }
+
+    #[test]
+    fn coalesce_keeps_mute_order() {
+        let batch = vec![
+            Volume(10),
+            Volume(20),
+            Mute(true),
+            Volume(30),
+            Volume(40),
+            Mute(false),
+        ];
+        assert_eq!(
+            coalesce_wpctl_commands(batch),
+            vec![Volume(20), Mute(true), Volume(40), Mute(false)]
+        );
+    }
+
+    #[test]
+    fn coalesce_empty() {
+        assert!(coalesce_wpctl_commands(Vec::new()).is_empty());
     }
 }

@@ -52,8 +52,6 @@ pub struct RunCommandConfig {
 pub struct ShortcutBinding {
     pub trigger: ShortcutTrigger,
     pub action: ShortcutAction,
-    #[allow(dead_code)]
-    pub trigger_repr: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -139,6 +137,8 @@ pub enum BuiltinAction {
     MediaPrev,
     MediaStop,
     LockSession,
+    /// Show the side canvas, or hide it if it is shown.
+    CanvasToggle,
     // ── Tiling (see specs/tiling.md) ─────────────────────────────────────
     /// Put the focused workspace into, or out of, tiling mode.
     TilingToggle,
@@ -196,11 +196,7 @@ pub fn build_bindings(map: &ShortcutMap) -> Vec<ShortcutBinding> {
                             "duplicate shortcut definition, new entry replaces the previous one"
                         );
                     }
-                    bindings.push(ShortcutBinding {
-                        trigger,
-                        action,
-                        trigger_repr: trigger_str.clone(),
-                    });
+                    bindings.push(ShortcutBinding { trigger, action });
                 }
                 Err(err) => {
                     warn!(trigger = %trigger_str, error = %err, "skipping shortcut due to invalid action")
@@ -306,6 +302,7 @@ fn parse_builtin(name: &str, index: Option<usize>) -> Result<BuiltinAction, Shor
         "MediaPrev" => BuiltinAction::MediaPrev,
         "MediaStop" => BuiltinAction::MediaStop,
         "LockSession" => BuiltinAction::LockSession,
+        "CanvasToggle" => BuiltinAction::CanvasToggle,
         "TilingToggle" => BuiltinAction::TilingToggle,
         "FocusLeft" => BuiltinAction::FocusLeft,
         "FocusRight" => BuiltinAction::FocusRight,

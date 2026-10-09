@@ -18,7 +18,7 @@ use otto_kit::accessibility::{A11yTree, Action, ActionRequest, Role};
 use otto_kit::clipboard;
 use otto_kit::components::scroll::{Axis, ScrollContent, ScrollPane};
 use otto_kit::components::text_input::{
-    KeyMods, TextInput, TextInputKey, TextInputResponse, CARET_BLINK_PERIOD,
+    self, KeyMods, TextInput, TextInputKey, TextInputResponse, CARET_BLINK_PERIOD,
 };
 use otto_kit::focus::FocusId;
 use otto_kit::protocols::otto_surface_style_v1::{BeakEdge, BlendMode, ClipMode, ContentsGravity};
@@ -1299,13 +1299,7 @@ impl App for Picker {
                 return;
             }
             (_, Some('w')) => {
-                self.input.on_key(
-                    TextInputKey::Backspace,
-                    KeyMods {
-                        shift: false,
-                        ctrl: true,
-                    },
-                );
+                self.input.on_key(TextInputKey::Backspace, KeyMods::word());
                 self.refilter();
                 return;
             }
@@ -1314,28 +1308,11 @@ impl App for Picker {
 
         let mods = KeyMods {
             shift: self.shift,
-            ctrl: false,
+            ..KeyMods::from(AppContext::current_modifiers())
         };
-        let key = match event.keysym {
-            Keysym::Left => TextInputKey::Left,
-            Keysym::Right => TextInputKey::Right,
-            Keysym::Home => TextInputKey::Home,
-            Keysym::End => TextInputKey::End,
-            Keysym::BackSpace => TextInputKey::Backspace,
-            Keysym::Delete => TextInputKey::Delete,
-            _ => {
-                let text: String = event
-                    .utf8
-                    .as_deref()
-                    .unwrap_or_default()
-                    .chars()
-                    .filter(|c| !c.is_control())
-                    .collect();
-                if text.is_empty() {
-                    return;
-                }
-                TextInputKey::Text(text)
-            }
+        let Some((key, mods)) = text_input::key_for(event.keysym, event.utf8.as_deref(), mods)
+        else {
+            return;
         };
 
         match self.input.on_key(key, mods) {
@@ -1657,12 +1634,7 @@ impl App for Picker {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     STARTED.get_or_init(Instant::now);
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-        )
-        .init();
+    otto_kit::logging::init("info");
     otto_kit::i18n::init_from_desktop();
 
     let mut deliver = Deliver::Auto;

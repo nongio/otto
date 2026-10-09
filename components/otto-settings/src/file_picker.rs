@@ -137,71 +137,14 @@ fn choose(title: &str, filters: &[(&str, &[&str])], directory: bool) -> Outcome 
         .and_then(|v| Vec::<String>::try_from(v).ok())
         .unwrap_or_default();
 
-    let paths: Vec<std::path::PathBuf> = uris.iter().filter_map(|u| uri_to_path(u)).collect();
+    let paths: Vec<std::path::PathBuf> = uris
+        .iter()
+        .filter_map(|u| otto_kit::uri::uri_to_path(u))
+        .collect();
     if paths.is_empty() {
         // Accepted with nothing usable in it. Saying "dismissed" would be a
         // lie, and returning an empty selection would look like success.
         return Outcome::Failed(format!("no local file in the reply ({uris:?})"));
     }
     Outcome::Chosen(paths)
-}
-
-/// Percent-decode a `file://` URI into a path.
-///
-/// Deliberately a local copy rather than a dependency on otto-peek: this
-/// app links otto-kit and nothing else, and pulling in an image-decoding crate
-/// for twenty lines of URI handling would be a poor trade. If a third consumer
-/// appears, the pair belongs in otto-kit.
-fn uri_to_path(uri: &str) -> Option<std::path::PathBuf> {
-    use std::os::unix::ffi::OsStringExt;
-
-    let rest = uri.strip_prefix("file://")?;
-    let path = match rest.find('/') {
-        Some(0) => rest,
-        Some(slash) => {
-            let authority = &rest[..slash];
-            if !authority.is_empty() && authority != "localhost" {
-                return None;
-            }
-            &rest[slash..]
-        }
-        None => return None,
-    };
-
-    let bytes = path.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut at = 0;
-    while at < bytes.len() {
-        if bytes[at] == b'%' && at + 2 < bytes.len() {
-            if let Ok(byte) =
-                u8::from_str_radix(std::str::from_utf8(&bytes[at + 1..at + 3]).ok()?, 16)
-            {
-                out.push(byte);
-                at += 3;
-                continue;
-            }
-        }
-        out.push(bytes[at]);
-        at += 1;
-    }
-    Some(std::path::PathBuf::from(std::ffi::OsString::from_vec(out)))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn an_escaped_uri_decodes_to_its_path() {
-        assert_eq!(
-            uri_to_path("file:///home/me/holiday%20photo.jpg"),
-            Some("/home/me/holiday photo.jpg".into())
-        );
-    }
-
-    #[test]
-    fn a_remote_uri_is_refused() {
-        assert!(uri_to_path("file://elsewhere/share/a").is_none());
-        assert!(uri_to_path("http://example.com/a").is_none());
-    }
 }

@@ -367,26 +367,7 @@ pub(crate) fn on_path(command: &str) -> bool {
 }
 
 /// Human-readable byte count, for the facts on a card.
-pub(crate) fn human_size(bytes: u64) -> String {
-    // Below a kilobyte the count is exact and needs a plural rule; above it
-    // the unit is a symbol and only the number varies.
-    if bytes < 1024 {
-        return otto_kit::t_owned!("peek-size-bytes", count = bytes as f64);
-    }
-    const UNITS: [&str; 4] = [
-        "peek-size-kb",
-        "peek-size-mb",
-        "peek-size-gb",
-        "peek-size-tb",
-    ];
-    let mut value = bytes as f64 / 1024.0;
-    let mut unit = 0;
-    while value >= 1024.0 && unit + 1 < UNITS.len() {
-        value /= 1024.0;
-        unit += 1;
-    }
-    otto_kit::t_owned!(UNITS[unit], value = format!("{value:.1}"))
-}
+pub(crate) use otto_kit::format::file_size as human_size;
 
 #[cfg(test)]
 mod tests {
@@ -404,16 +385,5 @@ mod tests {
         let request = parse_request(&[]);
         assert!(!request.ocr);
         assert_eq!(request.languages, "eng");
-    }
-
-    #[test]
-    fn human_size_reads_naturally() {
-        // Against the source catalogue: the test asserts the shape of the
-        // string, and the shape is what a translator preserves.
-        otto_kit::i18n::init(&["en-GB".to_string()]);
-        assert_eq!(human_size(0), "0 bytes");
-        assert_eq!(human_size(999), "999 bytes");
-        assert_eq!(human_size(1024), "1.0 KB");
-        assert_eq!(human_size(1024 * 1024 * 3 / 2), "1.5 MB");
     }
 }

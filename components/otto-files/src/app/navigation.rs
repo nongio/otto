@@ -53,6 +53,7 @@ impl Browser {
     /// Replace the column stack with a remembered one, as Back and Forward
     /// both do.
     pub(super) fn restore_location(&mut self, location: Location) {
+        let old_root = self.columns.first().map(|c| c.path.clone());
         // Whatever is up now is being left, whichever kind of listing the one
         // arriving turns out to be.
         self.close_search();
@@ -89,6 +90,7 @@ impl Browser {
         }
         self.active = location.active.min(self.columns.len() - 1);
         self.pan.scroll_to(0.0);
+        self.apply_folder_view_after_restore(old_root);
         self.reveal_pane(self.active);
         self.pending_restore = true;
         self.dirty = true;
@@ -206,6 +208,12 @@ impl Browser {
             self.record_location();
             self.columns.truncate(self.columns.len() - 1);
             self.active = self.columns.len() - 1;
+            // Up out of a column is moving within the columns; up in the
+            // one-folder views is going to the parent.
+            if self.mode != ViewMode::Columns {
+                let here = self.columns[self.active].path.clone();
+                self.apply_folder_view(&here);
+            }
             self.reveal_pane(self.active);
             self.dirty = true;
             return;
@@ -217,6 +225,9 @@ impl Browser {
             self.columns = vec![Column::new(parent.to_path_buf())];
             self.active = 0;
             self.pan.scroll_to(0.0);
+            if self.mode != ViewMode::Columns {
+                self.apply_folder_view(parent);
+            }
             self.dirty = true;
         }
     }
@@ -259,6 +270,7 @@ impl Browser {
         self.columns = vec![Column::new(path.to_path_buf())];
         self.active = 0;
         self.pan.scroll_to(0.0);
+        self.apply_folder_view(path);
         self.dirty = true;
     }
 

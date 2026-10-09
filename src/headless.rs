@@ -232,6 +232,12 @@ impl HeadlessHandle {
         }
     }
 
+    /// Whether the compositor is still running: false once something inside
+    /// it (a logout, the `exit` command) has ended the session.
+    pub fn is_running(&self) -> bool {
+        self.running.load(Ordering::SeqCst)
+    }
+
     /// Stop the compositor and join the background thread.
     pub fn stop(mut self) {
         self.running.store(false, Ordering::SeqCst);
@@ -470,51 +476,6 @@ impl HeadlessHandle {
         self.query(|state| state.layers_engine.scene().snapshot().nodes.len())
     }
 
-    /// The keys of every parentless node in the scene arena.
-    ///
-    /// A node with no parent is either a real scene root or an orphan: one
-    /// detached from the tree and never freed. `cleanup_nodes` only walks the
-    /// root's descendants, so an orphan is invisible to it and stays in the
-    /// arena for good — which makes this list the place a leak shows itself.
-    pub fn scene_root_keys(&self) -> Vec<String> {
-        self.query(|state| {
-            state
-                .layers_engine
-                .scene()
-                .snapshot()
-                .nodes
-                .iter()
-                .map(|n| n.key.clone())
-                .collect()
-        })
-    }
-
-    /// One line per parentless scene node: key, size, child count.
-    /// Diagnostic company for [`Self::scene_root_keys`].
-    pub fn scene_root_details(&self) -> Vec<String> {
-        self.query(|state| {
-            state
-                .layers_engine
-                .scene()
-                .snapshot()
-                .nodes
-                .iter()
-                .map(|n| {
-                    format!(
-                        "{} id={} {}x{} children={} hidden={} content={:?}",
-                        n.key,
-                        n.id,
-                        n.local_bounds.width,
-                        n.local_bounds.height,
-                        n.children.len(),
-                        n.hidden,
-                        n.content
-                    )
-                })
-                .collect()
-        })
-    }
-
     /// Whether a drag icon is currently being carried.
     pub fn dnd_icon_present(&self) -> bool {
         self.query(|state| state.dnd_icon.is_some())
@@ -597,6 +558,25 @@ impl HeadlessHandle {
         });
     }
 
+    /// Press (`pressed`) or release the key with evdev code `code` through
+    /// the same path a real keyboard's key takes: shortcuts, the lock
+    /// screen, modal layers, grabs.
+    pub fn key(&self, code: u32, pressed: bool) {
+        self.with_state(move |state| {
+            let key_state = if pressed {
+                smithay::backend::input::KeyState::Pressed
+            } else {
+                smithay::backend::input::KeyState::Released
+            };
+            // xkb keycodes are evdev codes plus 8.
+            let _ = state.keycode_to_action(
+                (code + 8).into(),
+                key_state,
+                smithay::backend::input::InputTime::from_millis(0),
+            );
+        });
+    }
+
     /// Press the left button at the current pointer position.
     pub fn pointer_press(&self) {
         self.with_state(|state| {
@@ -632,21 +612,6 @@ impl HeadlessHandle {
                 .values()
                 .all(|ows| ows.workspaces_layer.hidden());
             (hidden, state.workspaces.mirrors_active())
-        })
-    }
-
-    /// Click, and report whether expose still counts as transitioning the
-    /// instant the click has been handled — sampled inside the same state
-    /// callback, so no frame can be processed in between.
-    ///
-    /// Anything that reads `is_expose_transitioning` to decide whether expose
-    /// is at rest (scanout promotion above all) must see `true` here: the close
-    /// animation has only just been scheduled.
-    pub fn click_and_sample_expose_transitioning(&self) -> bool {
-        self.query(|state| {
-            state.synthetic_pointer_button(true);
-            state.synthetic_pointer_button(false);
-            state.workspaces.is_expose_transitioning()
         })
     }
 
@@ -1131,13 +1096,6 @@ impl HeadlessHandle {
         });
     }
 
-    /// Even out the shares of the focused container.
-    pub fn tiling_equalize(&self) {
-        self.with_state(|state| {
-            state.handle_tiling_equalize();
-        });
-    }
-
     // ── Pointer drags on a tile ──────────────────────────────────────────
     //
     // The grab entry points, called with logical pointer positions, rather
@@ -1181,16 +1139,6 @@ impl HeadlessHandle {
         self.with_state(|state| {
             state.tiling_drag_cancel();
         });
-    }
-
-    /// Press on `title`'s titlebar, drag to `(x, y)` and let go — the whole
-    /// gesture in one call.
-    pub fn tiling_drag_window(&self, title: &str, x: f64, y: f64) {
-        self.tiling_drag_begin(title);
-        self.settle(200);
-        self.tiling_drag_motion(x, y);
-        self.tiling_drag_drop(x, y);
-        self.settle(400);
     }
 
     /// Is a drag out of a tree in flight?
@@ -1934,13 +1882,15 @@ impl HeadlessHandle {
 
     /// Frame-callback throttle state of every mapped window, keyed by title.
     ///
-    /// Classified exactly as the udev render loop does, screencast streams
-    /// included — a captured window is `Captured` no matter what covers it.
+    /// Classified with the same window rules as the udev render loop,
+    /// screencast streams included — a captured window is `Captured` no
+    /// matter what covers it. Unlike `FramePacing::classify`, there is no
+    /// occlusion pass (no window is ever `Occluded` here) and only an open
+    /// expose, not a transition or show-desktop, counts as expose.
     pub fn window_throttle_states(
         &self,
     ) -> std::collections::HashMap<String, crate::state::window_throttle::WindowThrottleState> {
         self.query(|state| {
-            #[allow(clippy::mutable_key_type)] // ObjectId as key — see window_throttle.rs
             let captured_ids = crate::screenshare::screencast_window_ids(
                 &state.screenshare_sessions,
                 &state.workspaces,
@@ -1949,10 +1899,8 @@ impl HeadlessHandle {
             let windows: Vec<crate::shell::WindowElement> =
                 state.workspaces.spaces_elements().cloned().collect();
             let refs: Vec<&crate::shell::WindowElement> = windows.iter().collect();
-            #[allow(clippy::mutable_key_type)] // ObjectId as key — see window_throttle.rs
             let interacting_ids =
                 crate::state::window_throttle::interacting_ids(&state.pointer_interaction);
-            #[allow(clippy::mutable_key_type)] // ObjectId as key — see window_throttle.rs
             let states = crate::state::window_throttle::classify_windows(
                 &state.workspaces,
                 &refs,
@@ -2035,7 +1983,15 @@ impl Otto<HeadlessData> {
         };
 
         // BTN_LEFT = 0x110
-        if refocus && !self.workspaces.get_show_all() && pressed {
+        let canvas = self.canvas_pointer_button(0x110, pressed);
+        if canvas == crate::otto_canvas::CanvasButton::Consumed {
+            return;
+        }
+        if refocus
+            && canvas != crate::otto_canvas::CanvasButton::Item
+            && !self.workspaces.get_show_all()
+            && pressed
+        {
             self.focus_window_under_cursor(serial, crate::input::pointer::RaiseTiming::Release);
         }
         if !pressed {
@@ -2243,6 +2199,9 @@ fn send_frames(state: &mut Otto<HeadlessData>) {
                 Some(output.clone())
             });
         }
+        // The canvas items, while the canvas is on this output; this also
+        // finishes a slide out that has reached its end.
+        state.canvas_frame_presented(&output);
     }
 }
 

@@ -9,12 +9,12 @@ locales = []  # Language preferences, most specific first. Empty — the default
 # Theme
 cursor_size = 24
 font_family = "Inter"
-cursor_theme = "Notwaita-Black"
-icon_theme = "Adwaita"  # Icon theme under /usr/share/icons (e.g. "Papirus", "WhiteSur"); lookups fall back to hicolor
+cursor_theme = "Otto-MacTahoe"  # Ships with Otto (the MacTahoe theme, under Otto's name) and carries its own cursors
+icon_theme = "Otto-MacTahoe"  # Icon theme under /usr/share/icons (e.g. "Adwaita", "Papirus"); lookups fall back to hicolor. Otto-MacTahoe ships with Otto
 theme_scheme = "Light"  # "Light" or "Dark" - exposed via XDG Desktop Portal Settings
 # gtk_theme = "Adwaita"  # Optional: for documentation/reference only
-# background_image = "/usr/share/otto/background.jpg"
-background_color = "#40C8E0"  # Fallback gradient color (bottom) when background_image is unavailable; the top is generated 30% toward white
+background_image = "/usr/share/otto/wallpaper.jpg"  # Ships with Otto; any absolute path to an image works
+background_color = "#102E95"  # Fallback gradient color (bottom) when background_image is unavailable; the top is generated 30% toward white
 
 # Rounded corners on Otto's own chrome: the dock's background, the top bar,
 # window decorations, and the panels the desktop draws itself — the workspace
@@ -55,6 +55,11 @@ keyboard_repeat_rate = 30
 # Disabled by default.
 # xdg_autostart = true
 
+# Polkit — Otto asks for the password when a program needs polkit's
+# permission (pkexec, system services), with the same panel as Lock & Login.
+# Set to false only if you start another polkit agent yourself.
+# polkit_agent = true
+
 # Autostart — commands to run once at startup, in order.
 # Each entry is spawned non-blocking (fire-and-forget). Otto does not
 # restart crashed processes; use systemd or another supervisor for that.
@@ -72,6 +77,12 @@ args = []
 # Stash: the card that collects things to ask about in Ask.
 [[exec_once]]
 cmd = "otto-stash"
+args = []
+
+# The Agents panel for the side canvas, the column a two-finger swipe from the
+# right edge of the touchpad brings in. See [canvas] below.
+[[exec_once]]
+cmd = "otto-canvas"
 args = []
 
 # Third-party helpers work the same way:
@@ -100,8 +111,14 @@ args = []
 # Any ext-session-lock-v1 locker works here.
 #
 # [lock]
+# The locker program: "otto-lock" (Otto's own, found where Otto is installed),
+# or the full path of another one, with no spaces — its options go in
+# locker_args. A bare name is looked up in $PATH once, when Otto starts.
 # locker_command = "otto-lock"
 # locker_args = []
+# Lock before the computer suspends (power menu, power button, lid,
+# `systemctl suspend`), so it wakes to the lock screen. On by default.
+# on_suspend = true
 # Lock the session after this many seconds with no keyboard, pointer, touch or
 # tablet input. 0 (the default) never locks on its own. Clients that take an
 # idle inhibitor (idle-inhibit-unstable-v1 — video players, presentations) hold
@@ -110,11 +127,36 @@ args = []
 
 # The desk: the files in your Desktop folder, shown behind the windows. Otto
 # runs it as `otto-files --desk`, restarts it if it crashes and stops it when
-# this is switched off. Off by default. Its folder, size and arrangement are
-# set in ~/.config/otto/files.toml.
+# this is switched off. Off by default. Its folder, size, arrangement and what
+# it does with icons that don't fit are set in ~/.config/otto/files.toml;
+# Settings ▸ Appearance ▸ Desk edits the folder and the overflow, and moves
+# and resizes the panel with the pointer.
 #
 # [desk]
 # enabled = true
+
+# A desktop widget: a full-screen page over the wallpaper, behind the desk and
+# the windows. Needs ewwii, which Otto runs itself and follows changes to live.
+# "none" (the default), "calendar", "cross_pad" or "grid_pad". The
+# themes are in /usr/share/otto/widgets/ewwii; copy them to
+# ~/.config/otto/widgets/ewwii to change them. Settings ▸ Appearance edits it.
+#
+# [desktop]
+# widget = "calendar"
+
+# The top bar. otto-bar reads these from Otto and follows changes live.
+# Settings ▸ Top bar edits them.
+#
+# [topbar]
+# Show the focused application's menus beside its name (default true). Off,
+# applications opened afterwards keep the menu bar in their own window.
+# show_app_menu = true
+# Show the date and time at the right end of the bar (default true).
+# show_clock = true
+# A chrono strftime format (https://docs.rs/chrono/latest/chrono/format/strftime/).
+# Empty (the default) uses clock_format from otto-bar.toml if set, otherwise
+# your language's own format.
+# clock_format = "%a %-d %b  %H:%M"
 
 # File search: the folders LocalSearch, the file indexer, looks in, and what it
 # leaves out. Otto pushes these to LocalSearch's own settings; a key left
@@ -310,6 +352,9 @@ sound_enabled = true
 "Ctrl+Alt+Shift+g" = { run = { cmd = "otto-stash", args = ["send"] } }
 "Ctrl+Alt+Shift+c" = { run = { cmd = "otto-stash", args = ["cancel"] } }
 # "Logo+Space" = { run = { cmd = "dolphin", args = [] } }
+# Show or hide the side canvas (also: a two-finger swipe from the right edge
+# of the touchpad; Escape or a click outside hides it).
+# "Ctrl+Alt+c" = "CanvasToggle"
 # "Logo+Shift+B" = { run = { cmd = "firefox", args = [] } }
 
 "Ctrl+1" = { builtin = "Workspace", index = 0 }
@@ -363,6 +408,13 @@ sound_enabled = true
 # "Logo+Shift+space" = "FloatingToggle"     # float this tile, or tile this window
 # "Logo+space" = "FocusModeToggle"          # focus the other layer
 
+# The side canvas: a column of application panels that slides in over the
+# desktop from the right edge. All values are logical points.
+[canvas]
+width = 400   # column width, 200 to 1200
+margin = 12   # space between the column and the edges of the usable area
+gap = 12      # space between two panels
+
 [dock]
 size = 1.0  # Dock size multiplier (0.5 - 2.0, default: 1.0)
 # Screen edge the dock is docked to: "bottom" (default), "left" or "right".
@@ -388,10 +440,11 @@ autohide = false
 # The effect intensity is controlled by genie_scale and genie_span above.
 magnification = true
 
-# Pinned apps, by desktop file id. An id with no desktop file installed is
-# skipped with a warning, so listing apps you may not have is harmless. The
-# default names the usual GNOME and KDE apps for each job, so a system shows
-# whichever of them it has.
+# Pinned apps, by desktop file id, in dock order. An id with no desktop file
+# installed is skipped (one info line in the log names them), so listing apps
+# you may not have is harmless. The default names the usual GNOME and KDE apps
+# for each job, and each packaging of a browser (a Snap's id is
+# `<snap>_<app>.desktop`), so a system shows whichever of them it has.
 bookmarks = [
   { desktop_id = "otto-files.desktop" },
   { desktop_id = "otto-settings.desktop" },
@@ -400,8 +453,11 @@ bookmarks = [
   { desktop_id = "com.mitchellh.ghostty.desktop" },
   { desktop_id = "terminator.desktop" },
   { desktop_id = "firefox.desktop" },
+  { desktop_id = "firefox_firefox.desktop" },
   { desktop_id = "firefox-esr.desktop" },
   { desktop_id = "chromium.desktop" },
+  { desktop_id = "chromium_chromium.desktop" },
+  { desktop_id = "google-chrome.desktop" },
   { desktop_id = "org.gnome.TextEditor.desktop" },
   { desktop_id = "gvim.desktop" },
   { desktop_id = "org.gnome.Calculator.desktop" },
@@ -512,11 +568,11 @@ colorize_icons = true
 # decoration = "minimal"
 
 [rendering]
-# The GPU api Otto draws with on a tty (the --tty-udev backend): "gl" or
-# "vulkan". Vulkan is in the default build and is experimental: it composites
-# every output into a single plane for now. When Vulkan cannot start on the
-# primary GPU (no loader, no driver for it, or one older than Vulkan 1.3) the
-# session falls back to "gl" and logs why. `otto --tty-udev --renderer vulkan`
-# overrides this for one session. Read at startup; the windowed backends
-# always use GL.
-# renderer = "gl"
+# The GPU api Otto draws with on a tty (the --tty-udev backend): "vulkan" or
+# "gl". Vulkan is the default and composites every output into a single plane
+# for now. When Vulkan cannot start on the primary GPU (no loader, no driver
+# for it, or one older than Vulkan 1.3) the session falls back to "gl" and
+# logs why. A build without the `vulkan` feature defaults to "gl".
+# `otto --tty-udev --renderer gl` overrides this for one session. Read at
+# startup; the windowed backends always use GL.
+# renderer = "vulkan"

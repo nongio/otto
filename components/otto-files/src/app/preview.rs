@@ -39,7 +39,7 @@ impl Browser {
     /// nothing is already in flight for it — the caller runs the decode off
     /// the UI thread and reports back through [`Self::finish_preview`].
     pub(super) fn sync_preview_target(&mut self) -> Option<(PathBuf, u64)> {
-        if !self.preview_visible() {
+        if !self.preview_visible() && !self.photos_info_wants_preview() {
             if self.preview.take().is_some() {
                 self.dirty = true;
             }
@@ -60,7 +60,10 @@ impl Browser {
             pending: true,
             decoded: None,
             video: None,
+            palette: Vec::new(),
         });
+        // A new picture: the last one's "Copied" is not about this one.
+        self.photos_copied = None;
         self.dirty = true;
         Some((entry.path, generation))
     }
@@ -98,13 +101,18 @@ impl Browser {
                 height,
                 self.pan.offset(),
                 self.columns.len(),
-                self.miller_w,
+                &self.miller_widths(),
             )
             .is_some(),
-            ViewMode::Grid => false,
+            ViewMode::Grid | ViewMode::Photos => false,
         };
         if over_divider {
             CursorShape::ColResize
+        } else if self.photos_swatch_at(x, y).is_some() {
+            // A swatch copies its colour when clicked.
+            CursorShape::Pointer
+        } else if self.over_panel_text(x, y) {
+            CursorShape::Text
         } else {
             CursorShape::Default
         }
@@ -126,8 +134,12 @@ impl Browser {
             return None;
         }
         let (width, height) = (self.size.0, self.content_h());
-        let panel =
-            view::preview_pane_rect(self.columns.len(), height, self.pan.offset(), self.miller_w);
+        let panel = view::preview_pane_rect(
+            self.columns.len(),
+            height,
+            self.pan.offset(),
+            &self.miller_widths(),
+        );
         let lines = preview_info(
             &self.selected_entry()?,
             self.decoded_preview(),
@@ -167,6 +179,7 @@ impl Browser {
                 self.decoded_preview(),
                 self.preview.as_ref().and_then(|pane| pane.text),
             ),
+            caption_selection: None,
         };
         Some(view::preview_drag_picture(
             &data,
@@ -193,7 +206,7 @@ impl Browser {
             self.columns.len(),
             self.size.0,
             self.pan.offset(),
-            self.miller_w,
+            &self.miller_widths(),
         );
         if self.pan.scroll_to(target) {
             self.dirty = true;
@@ -221,6 +234,9 @@ impl Browser {
         let area = view::content_viewport(self.size.0, self.content_h(), self.mode);
         let scroll = self.columns[depth].scroll.offset();
         let range = match self.mode {
+            view::ViewMode::Grid if self.desk_overflow().is_some() => {
+                self.desk_overflow_shown().unwrap_or_default()
+            }
             view::ViewMode::Grid => view::grid_visible_range_in(
                 area,
                 &self.recent_sections,
@@ -228,6 +244,10 @@ impl Browser {
                 scroll,
                 area,
             ),
+            view::ViewMode::Photos => {
+                let range = self.photos.visible_range(area, scroll, area);
+                range.start.min(entries.len())..range.end.min(entries.len())
+            }
             view::ViewMode::List => {
                 view::RowStrip::list(self.size.0, entries.len(), scroll).visible(area)
             }
@@ -241,7 +261,7 @@ impl Browser {
                     depth,
                     self.content_h(),
                     self.pan.offset(),
-                    self.miller_w,
+                    &self.miller_widths(),
                 );
                 let band = view::pane_viewport(
                     self.size.0,
@@ -249,7 +269,7 @@ impl Browser {
                     view::ViewMode::Columns,
                     depth,
                     self.pan.offset(),
-                    self.miller_w,
+                    &self.miller_widths(),
                 );
                 view::RowStrip::miller(full, entries.len(), scroll).visible(band)
             }
@@ -260,22 +280,52 @@ impl Browser {
         // it.
         let box_edge = match self.mode {
             view::ViewMode::Grid => view::grid_icon(),
+            // A tile is as tall as its row and, for a 3:2 picture, half as
+            // wide again. Capped below the largest size: a whole row of those
+            // is more memory than the store is allowed, and the difference is
+            // only visible at the very widest tiles.
+            view::ViewMode::Photos => self.photos_row_h,
             view::ViewMode::List | view::ViewMode::Columns => view::ICON_SIZE,
         };
         let scale = AppContext::scale_factor().max(1) as f32;
         let size = thumbcache::Size::for_box(box_edge, scale);
+        let size = if self.mode == view::ViewMode::Photos
+            && size.pixels() > thumbcache::Size::XLarge.pixels()
+        {
+            thumbcache::Size::XLarge
+        } else {
+            size
+        };
 
         let requests = entries
             .get(range.clone())
             .unwrap_or_default()
             .iter()
-            // A directory has no picture of its own, and asking for one means
-            // a sandboxed worker per folder in a folder of folders.
-            .filter(|entry| !entry.is_dir)
-            .map(|entry| thumbnails::Request {
-                path: entry.path.clone(),
-                modified: entry.modified,
-                may_generate: entry.kind.thumbnailable(),
+            .flat_map(|entry| -> Vec<thumbnails::Request> {
+                if !entry.is_dir {
+                    return vec![thumbnails::Request {
+                        path: entry.path.clone(),
+                        modified: entry.modified,
+                        may_generate: entry.kind.thumbnailable(),
+                    }];
+                }
+                // A directory has no picture of its own, and asking for one
+                // means a sandboxed worker per folder in a folder of folders.
+                // In the Photos view its card shows the newest pictures
+                // inside it instead, once they have been found.
+                if self.mode != view::ViewMode::Photos {
+                    return Vec::new();
+                }
+                self.folder_previews
+                    .images(entry)
+                    .unwrap_or_default()
+                    .iter()
+                    .map(|(path, modified)| thumbnails::Request {
+                        path: path.clone(),
+                        modified: *modified,
+                        may_generate: true,
+                    })
+                    .collect()
             })
             .collect::<Vec<_>>();
         self.thumbs.wanted(requests, size)
@@ -296,6 +346,13 @@ impl Browser {
             return;
         }
         pane.pending = false;
+        pane.palette = match &preview {
+            otto_kit::preview::Preview::Pixels { pixels, .. } => pixels
+                .to_image()
+                .map(|image| otto_kit::utils::extract_palette(&image, 5))
+                .unwrap_or_default(),
+            _ => Vec::new(),
+        };
         pane.video = video.and_then(|options| {
             peek::Video::open(&preview, &pane.path, options, AppContext::request_wakeup)
         });
@@ -322,7 +379,7 @@ impl Browser {
             self.columns.len(),
             self.content_h(),
             self.pan.offset(),
-            self.miller_w,
+            &self.miller_widths(),
         );
         let stage = view::preview_stage_rect(
             pane,

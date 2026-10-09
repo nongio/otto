@@ -5,26 +5,6 @@ use std::{
 
 use smithay::reexports::wayland_server::backend::ObjectId;
 
-use crate::shell::WindowElement;
-
-#[allow(unused)]
-trait LayoutBoundingBox {
-    fn bounding_box(&self) -> LayoutRect;
-}
-
-impl LayoutBoundingBox for WindowElement {
-    fn bounding_box(&self) -> LayoutRect {
-        // Return the bounding box of the window
-        let bbox = self.bbox();
-        LayoutRect::new(
-            bbox.loc.x as f32,
-            bbox.loc.y as f32,
-            bbox.size.w as f32,
-            bbox.size.h as f32,
-        )
-    }
-}
-
 const WINDOW_PLACEMENT_NATURAL_ACCURACY: f32 = 10.0;
 const WINDOW_PLACEMENT_NATURAL_GAPS: f32 = 40.0;
 const WINDOW_PLACEMENT_NATURAL_MAX_TRANSLATIONS: usize = 5000;
@@ -106,8 +86,6 @@ impl LayoutRect {
         self.y += dy;
     }
 }
-
-#[allow(clippy::mutable_key_type)]
 pub fn natural_layout(
     slots: &mut HashMap<ObjectId, LayoutRect>,
     windows: impl IntoIterator<Item = (ObjectId, LayoutRect)>,

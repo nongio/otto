@@ -246,11 +246,8 @@ through the `org.otto.Dialog1` service, the same dialog the portal's Access
 implementation uses. Option ids are `monitor:<connector>` and
 `window:<identifier>`.
 
-If no dialog renderer answers on the bus, monitor capture falls back to picking
-an output without asking: a one-line connector-name override in
-`$XDG_CONFIG_HOME/otto/screencast-output` (or `~/.config/otto/screencast-output`),
-re-read on every call, otherwise the first output. A window is never
-auto-selected on that path.
+If no dialog renderer answers on the bus, `SelectSources` is refused
+(response 2): nothing is picked on the user's behalf.
 
 **Restore.** An approved source survives into a new session through the spec's
 `restore_data` handshake

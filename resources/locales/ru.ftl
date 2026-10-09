@@ -62,8 +62,10 @@ dock-quit = Завершить
 ## sidebar does not grow to fit them.
 
 settings-pane-general = Основные
+settings-pane-appearance = Оформление
 settings-pane-displays = Дисплеи
 settings-pane-dock = Dock
+settings-pane-top-bar = Верхняя панель
 settings-pane-tiling = Мозаика
 settings-pane-keyboard = Клавиатура
 settings-pane-pointing = Трекпад и мышь
@@ -72,6 +74,17 @@ settings-pane-power = Питание
 settings-pane-lock-and-login = Блокировка и вход
 settings-pane-search = Поиск
 settings-pane-agents = Агенты
+settings-pane-about = Об Otto
+settings-sidebar-search = Поиск
+settings-sidebar-search-none = Нет настроек, соответствующих «{ $query }»
+settings-group-about-machine = Этот компьютер
+settings-about-version-line = Версия { $version }
+settings-about-computer-name = Имя компьютера
+settings-about-os = Операционная система
+settings-about-kernel = Ядро
+settings-about-processor = Процессор
+settings-about-memory = Память
+settings-about-memory-gb = { $size } ГБ
 
 
 ## Settings — General
@@ -92,15 +105,45 @@ settings-group-desktop = Рабочий стол
 settings-background-colour = Цвет фона
 settings-background-image = Изображение фона
 settings-background-image-detail = Выбирается через диалог выбора файлов портала рабочего стола
+settings-desktop-widget = Фоновый виджет
+settings-desktop-widget-needs-ewwii = Нужен ewwii, а он не установлен
+# { $folder } is a path such as ~/.config/otto/widgets/ewwii.
+settings-desktop-widget-detail = Рисуется ewwii. Добавляй свои виджеты в { $folder }
 # Stands in for the wallpaper thumbnail when the file cannot be decoded.
 settings-background-image-unavailable = Невозможно показать
 settings-show-desk = Показывать файлы на рабочем столе
 settings-show-desk-detail = Файлы из папки «Рабочий стол», за окнами
 
+settings-group-desk = Рабочий стол
+settings-desk-folder = Папка
+settings-desk-folder-default = Ваша папка «Рабочий стол»
+settings-desk-choose-folder-title = Выберите папку для рабочего стола
+settings-desk-layout = Размер и положение
+settings-desk-layout-edit = Изменить…
+settings-desk-layout-reset = Сбросить
+settings-desk-layout-fill = На весь экран. «Изменить» показывает маркеры, чтобы перетащить его на место
+settings-desk-layout-placed = Размещён вручную. «Сбросить» снова растянет его на весь экран
+settings-desk-icon-size = Размер значков
+settings-desk-overflow = Когда значки не помещаются
+settings-desk-overflow-scroll = Прокручивать
+settings-desk-overflow-stack = Показывать поверх
+settings-desk-overflow-detail = Прокрутка сдвигает сетку. «Показывать поверх» оставляет лишние значки в последней ячейке и открывает их над окнами
+
 settings-group-pointer-and-icons = Указатель и значки
 settings-cursor-theme = Тема курсора
 settings-cursor-size = Размер курсора
 settings-icon-theme = Тема значков
+
+settings-group-app-menu = Меню приложений
+settings-show-app-menu = Показывать меню приложений
+settings-show-app-menu-detail = Рядом с названием активного приложения. Приложения, открытые, пока это выключено, оставляют меню в своём окне
+
+settings-group-clock = Часы
+settings-show-clock = Показывать дату и время
+settings-show-clock-detail = У правого края верхней панели
+settings-clock-format = Формат
+settings-clock-format-detail = Подойдёт и любой формат strftime: clock_format в разделе [topbar] файла конфигурации
+settings-clock-format-automatic = { $preview } (по умолчанию для языка)
 
 settings-group-window-switcher = Переключатель окон
 settings-follow-cursor = Показывать на дисплее с указателем
@@ -238,6 +281,26 @@ settings-scrolling-speed = Скорость прокрутки
 
 settings-interface-sounds = Звуки интерфейса
 settings-sound-theme = Звуковая тема
+settings-group-sound-output = Устройства вывода
+settings-group-sound-input = Устройства ввода
+settings-sound-output-device = Устройство вывода
+settings-sound-input-device = Устройство ввода
+settings-sound-volume = Громкость
+settings-sound-mute = Выключить звук
+settings-sound-no-outputs = Нет устройств вывода
+settings-sound-no-inputs = Нет устройств ввода
+settings-sound-unavailable = Звуковой сервер не отвечает. Для звука нужен PipeWire с pipewire-pulse или PulseAudio, а также pactl.
+settings-sound-show = Показать
+settings-sound-view-playback = Воспроизведение
+settings-sound-view-recording = Запись
+settings-sound-view-configuration = Конфигурация
+settings-sound-port = Порт
+settings-sound-unplugged = не подключено
+settings-sound-default = Использовать по умолчанию
+settings-sound-profile = Профиль
+settings-sound-no-playback = Ни одно приложение не воспроизводит звук
+settings-sound-no-recording = Ни одно приложение не записывает звук
+settings-sound-no-cards = Нет звуковых карт
 
 
 ## Settings — Power
@@ -255,10 +318,40 @@ settings-lock-after = Блокировать через
 settings-lock-screen = Экран блокировки
 settings-lock-screen-detail = Применяется при следующей блокировке экрана
 settings-lock-screen-arguments = Аргументы экрана блокировки
+settings-lock-on-suspend = Блокировать при переходе в сон
 settings-group-login = Вход
 settings-greeter = Экран приветствия
 settings-greeter-detail = Применяется при следующем входе
 settings-greeter-arguments = Аргументы экрана приветствия
+settings-lock-never = Никогда
+# Under each Lock & Login row: the compositor asks for the password before it applies a change.
+settings-asks-for-password = Для изменения потребуется пароль
+settings-login-background-failed = Не удалось изменить фон экрана входа
+settings-login-background-not-image = Это не изображение PNG, JPEG или WebP
+settings-login-background-too-large = Больше 20 МБ
+settings-images-filter = Изображения
+# The auto-lock interval pop-up.
+settings-interval-minutes =
+    { $count ->
+        [one] { $count } минута
+        [few] { $count } минуты
+        [many] { $count } минут
+       *[other] { $count } минуты
+    }
+settings-interval-hours =
+    { $count ->
+        [one] { $count } час
+        [few] { $count } часа
+        [many] { $count } часов
+       *[other] { $count } часа
+    }
+settings-interval-seconds =
+    { $count ->
+        [one] { $count } секунда
+        [few] { $count } секунды
+        [many] { $count } секунд
+       *[other] { $count } секунды
+    }
 
 
 ## Settings — Search
@@ -442,6 +535,11 @@ settings-choice-power-ignore = Ничего не делать
 settings-choice-power-lock = Заблокировать экран
 settings-choice-power-suspend = Перейти в спящий режим
 settings-choice-power-shutdown = Выключить
+settings-choice-widget-none = Нет
+settings-choice-widget-calendar = Календарь
+# The next two name pages whose text is in English, so they stay as written.
+settings-choice-widget-cross-pad = Cross pad
+settings-choice-widget-grid-pad = Grid pad
 # The automatic option for a theme that follows the system.
 settings-choice-auto = Авто
 
@@ -486,6 +584,17 @@ files-open-with-always = Всегда использовать для типа �
 files-open-with-not-remembered = Открыто, но выбор не сохранён: { $error }
 files-new-folder = Новая папка
 files-desk-open-in-files = Открыть в Файлах
+files-desk-edit-done = Готово
+# The desk's overflow tile: the caption under it, and what a screen reader
+# says for it. $count is how many items it holds.
+files-desk-overflow-caption = Ещё
+files-desk-overflow =
+    { $count ->
+        [one] Ещё { $count } объект
+        [few] Ещё { $count } объекта
+        [many] Ещё { $count } объектов
+       *[other] Ещё { $count } объекта
+    }
 files-move-to-trash = Переместить в корзину
 # $count is always two or more; the single-item case uses files-move-to-trash.
 files-move-count-to-trash =
@@ -626,6 +735,7 @@ files-rename-failed = Не удалось переименовать: { $error }
 files-new-folder-failed = Не удалось создать папку: { $error }
 files-open-failed = Не удалось открыть файл: { $error }
 files-open-app-broken = команда запуска приложения повреждена
+files-open-no-app = нет установленного приложения, которое открывает файлы этого типа
 files-new-window-failed = Не удалось открыть новое окно: { $error }
 files-settings-open-failed = Не удалось открыть Настройки: { $error }
 
@@ -719,17 +829,17 @@ files-empty-trash-detail =
 ## not KiB. Most languages keep the symbols as they are; translate only the
 ## spelled-out "bytes".
 
-files-size-bytes =
+size-bytes =
     { $count ->
         [one] { $count } байт
         [few] { $count } байта
         [many] { $count } байт
        *[other] { $count } байта
     }
-files-size-kb = { $value } КБ
-files-size-mb = { $value } МБ
-files-size-gb = { $value } ГБ
-files-size-tb = { $value } ТБ
+size-kb = { $value } КБ
+size-mb = { $value } МБ
+size-gb = { $value } ГБ
+size-tb = { $value } ТБ
 
 
 ## Files — dates
@@ -919,6 +1029,15 @@ bar-power-performance = Производительность
 bar-power-settings = Настройки питания…
 bar-keyboard-settings = Настройки клавиатуры…
 bar-keyboard-layout-label = Раскладка клавиатуры: { $layout }
+bar-otto-menu = Otto
+bar-otto-about = Об Otto
+bar-otto-settings = Настройки…
+bar-otto-log-out = Выйти
+# The menu under the focused application's name in the top bar.
+bar-app-minimize = Свернуть
+bar-app-quit = Завершить { $app }
+bar-logout-title = Выйти сейчас?
+bar-logout-body = Сначала приложения получат запрос на закрытие, чтобы несохранённое можно было сохранить.
 
 
 ## Settings — widgets
@@ -968,6 +1087,16 @@ schema-font-family-label = Шрифт интерфейса
 schema-font-family-description = Семейство шрифтов, используемое собственным интерфейсом Otto.
 schema-desk-enabled-label = Показывать файлы на рабочем столе
 schema-desk-enabled-description = Файлы из папки «Рабочий стол», за окнами.
+schema-canvas-width-label = Ширина бокового холста
+schema-canvas-width-description = Ширина бокового холста в логических точках. Всё, что на нём есть, рисуется такой ширины.
+schema-desktop-widget-label = Фоновый виджет
+schema-desktop-widget-description = Страница во весь экран поверх обоев, за окнами. Нужен ewwii.
+schema-topbar-show-clock-label = Показывать дату и время
+schema-topbar-show-clock-description = Часы у правого края верхней панели.
+schema-topbar-clock-format-label = Формат часов
+schema-topbar-clock-format-description = Как верхняя панель пишет дату и время, в формате strftime. Пусто — по языку.
+schema-topbar-show-app-menu-label = Показывать меню приложений
+schema-topbar-show-app-menu-description = Меню активного приложения рядом с его названием на верхней панели.
 schema-background-color-label = Цвет фона
 schema-background-color-description = Цвет фона рабочего стола в виде шестнадцатеричной строки.
 schema-background-image-label = Изображение фона
@@ -1082,6 +1211,8 @@ schema-lock-locker-args-label = Аргументы экрана блокиров
 schema-lock-locker-args-description = Аргументы, передаваемые программе блокировки.
 schema-lock-auto-lock-timeout-label = Блокировать через
 schema-lock-auto-lock-timeout-description = Секунды бездействия до блокировки. 0 отключает блокировку.
+schema-lock-on-suspend-label = Блокировать при переходе в сон
+schema-lock-on-suspend-description = Блокировать экран перед переходом компьютера в сон, чтобы он просыпался на экране блокировки.
 
 # --- login ---
 schema-login-greeter-command-label = Команда экрана приветствия
@@ -1167,6 +1298,8 @@ launcher-agents-working = Работает
 launcher-agents-needs-input = Ждёт ответа
 launcher-agents-error = Ошибка
 launcher-agents-none = Сеансов агентов пока нет
+canvas-sessions-heading = Агенты
+stash-drop-invite = Перетащите файлы сюда, чтобы добавить в подборку
 # Ask mode: the files that go with a request, under it in the log, or above
 # the field before it is sent. { $files } is their names, comma-separated.
 # Ask mode, while an existing session is being opened to continue it.
@@ -1612,24 +1745,6 @@ peek-item-count =
 peek-archive-summary = { $items } — { $size }
 
 
-## Peek — sizes
-##
-## Byte units. Peek counts in powers of 1024, so the symbols are the
-## conventional binary-rounded ones. Translate only the spelled-out "bytes".
-
-peek-size-bytes =
-    { $count ->
-        [one] { $count } байт
-        [few] { $count } байта
-        [many] { $count } байт
-       *[other] { $count } байта
-    }
-peek-size-kb = { $value } КБ
-peek-size-mb = { $value } МБ
-peek-size-gb = { $value } ГБ
-peek-size-tb = { $value } ТБ
-
-
 ## Peek — nothing to show
 ##
 ## Each of these fills the card in place of a preview, so a person reads it
@@ -1778,9 +1893,193 @@ a11y-status = Состояние
 a11y-tray-item = Элемент { $number }
 a11y-notifications = Уведомления
 a11y-categories = Категории
+a11y-search-settings = Поиск настроек
 a11y-results = Результаты
 a11y-settings = Настройки
 a11y-preview = Просмотр
 a11y-preview-page = Просмотр, страница { $page } из { $pages }
 a11y-preview-pages = Просмотр, { $pages } страниц
 a11y-preview-shortened = Просмотр, сокращённый
+
+## The Photos view
+
+files-view-photos = Фото
+files-photos-day = { $weekday }, { $day } { $month }
+files-photos-day-year = { $weekday }, { $day } { $month } { $year }
+files-photos-undated = Без даты
+files-photos-other = Другие файлы
+files-photos-summary = { $images }, { $folders }
+files-photos-images =
+    { $count ->
+        [one] { $count } изображение
+        [few] { $count } изображения
+        [many] { $count } изображений
+       *[other] { $count } изображения
+    }
+files-photos-folders =
+    { $count ->
+        [one] { $count } папка
+        [few] { $count } папки
+        [many] { $count } папок
+       *[other] { $count } папки
+    }
+
+files-weekday-sun = Воскресенье
+files-weekday-mon = Понедельник
+files-weekday-tue = Вторник
+files-weekday-wed = Среда
+files-weekday-thu = Четверг
+files-weekday-fri = Пятница
+files-weekday-sat = Суббота
+
+files-month-long-jan = января
+files-month-long-feb = февраля
+files-month-long-mar = марта
+files-month-long-apr = апреля
+files-month-long-may = мая
+files-month-long-jun = июня
+files-month-long-jul = июля
+files-month-long-aug = августа
+files-month-long-sep = сентября
+files-month-long-oct = октября
+files-month-long-nov = ноября
+files-month-long-dec = декабря
+files-photos-month =
+    { $number ->
+        [1] Январь { $year }
+        [2] Февраль { $year }
+        [3] Март { $year }
+        [4] Апрель { $year }
+        [5] Май { $year }
+        [6] Июнь { $year }
+        [7] Июль { $year }
+        [8] Август { $year }
+        [9] Сентябрь { $year }
+        [10] Октябрь { $year }
+        [11] Ноябрь { $year }
+        [12] Декабрь { $year }
+       *[other] { $month } { $year }
+    }
+files-photos-folders-title = Папки
+files-photos-group-day = По дням
+files-photos-group-month = По месяцам
+files-photos-group-none = Без группировки
+files-photos-info-kind = Изображение { $format }
+files-photos-info-copied = Скопировано
+files-photos-info-dimensions = Размеры
+files-photos-info-modified = Изменён
+files-photos-info-where = Где
+files-photos-info-many =
+    { $count ->
+        [one] { $count } объект
+        [few] { $count } объекта
+        [many] { $count } объектов
+       *[other] { $count } объекта
+    }
+files-photos-one-selected = 1 выбран · Пробел — просмотр · ↵ — открыть
+
+
+## otto-authorize — the panel that asks for the password before a sensitive setting changes.
+## The reason line is composed by Otto from the setting and the value asked for; { $value } is the program or options, quoted.
+
+authorize-cancel = Отмена
+authorize-error-failed = Не удалось пройти проверку подлинности
+authorize-path-in = { $name } (в { $dir })
+polkit-unknown-program = Неизвестная программа
+
+## Settings › Privacy: what apps were allowed, read from xdg-permission-store.
+
+privacy-applies-to-unsandboxed = относится ко всем приложениям вне песочницы
+privacy-app-unsandboxed = Приложения вне песочницы
+privacy-decision-allow = Разрешать
+privacy-decision-ask = Спрашивать
+privacy-decision-deny = Не разрешать
+privacy-forget = Забыть
+privacy-group-notifications = Уведомления
+privacy-group-screen = Доступ к экрану
+privacy-notifications-none = Ни одно приложение ещё не просило отправлять уведомления
+privacy-reading = Чтение…
+privacy-remembered-by = запомнено в { $desktop }
+privacy-remote-desktop = Управляет мышью и клавиатурой и видит экран
+privacy-reset = Сбросить
+privacy-screencast = Записывает экран
+privacy-screencast-monitor = Записывает экран { $screen }
+privacy-screencast-window = Записывает окно
+privacy-screen-none = Ни одному приложению не запомнено разрешение на доступ к экрану
+privacy-screenshot = Делает снимки экрана
+privacy-screenshot-allowed = Делает снимки экрана без запроса
+privacy-screenshot-denied = Не может делать снимки экрана
+privacy-store-unavailable = Не удаётся прочитать, что разрешено приложениям
+privacy-store-unavailable-detail = Хранилище разрешений (xdg-permission-store из xdg-desktop-portal) недоступно
+settings-pane-privacy = Конфиденциальность
+
+screencast-picker-remember = Запомнить для { $app }
+
+## Users pane
+
+settings-pane-account = Пользователи
+settings-account-picture = Изображение
+settings-account-picture-detail = Показывается на экранах входа и блокировки
+settings-account-choose-picture = Выбрать изображение
+settings-account-picture-unreadable = Otto не может прочитать этот файл как изображение
+settings-account-full-name = Полное имя
+settings-account-name = Имя учётной записи
+settings-account-type = Тип учётной записи
+settings-account-type-administrator = Администратор
+settings-account-type-standard = Обычная
+settings-account-no-accountsservice = Здесь это изменить нельзя: AccountsService не запущен
+settings-account-not-permitted = Система не разрешила это изменение
+settings-group-password = Пароль
+settings-account-current-password = Текущий пароль
+settings-account-new-password = Новый пароль
+settings-account-confirm-password = Подтвердите новый пароль
+settings-account-change-password = Изменить пароль
+settings-account-change-password-ellipsis = Изменить пароль…
+settings-account-password-detail = Нужен для входа, разблокировки экрана и подтверждения изменений
+settings-account-password-changing = Изменение пароля…
+settings-account-password-changed = Пароль изменён
+settings-account-password-missing = Введите текущий пароль и новый
+settings-account-password-mismatch = Новые пароли не совпадают
+settings-account-password-same = Новый пароль совпадает с текущим
+settings-account-password-wrong-current = Текущий пароль неверен
+settings-account-password-failed = Не удалось изменить пароль
+settings-account-reset-password-ellipsis = Сбросить пароль…
+settings-account-reset-detail = Задать новый пароль для этой учётной записи
+settings-account-working = Ожидание системы…
+settings-users-you = { $kind } · Вы
+settings-users-reset-title = Сброс пароля: { $name }
+settings-users-reset-action = Сбросить пароль
+settings-users-add-title = Добавить пользователя
+settings-users-add-action = Добавить пользователя
+settings-users-delete-title = Удалить { $name }?
+settings-users-delete-body = Этот пользователь больше не сможет войти. Его домашняя папка сохранится.
+settings-users-delete-action = Удалить пользователя
+settings-users-invalid-name = Имя учётной записи начинается со строчной латинской буквы и содержит только a–z, 0–9, - и _
+settings-users-name-taken = Учётная запись с таким именем уже есть
+settings-users-password-missing = Введите пароль для учётной записи
+
+## Настройки › Диктовка
+
+settings-pane-dictation = Диктовка
+settings-dictation-intro = Речь набирается в текстовое поле и распознаётся на этом компьютере. Ctrl+D включает диктовку в лаунчере; в других приложениях это делает сочетание клавиш, назначенное на otto-dictate toggle.
+settings-dictation-engine = Движок
+settings-dictation-engine-detail = Выбор движка запускает его речевой сервер и останавливает остальные
+settings-dictation-engine-parakeet = Parakeet
+settings-dictation-engine-whisper = Whisper (только английский)
+settings-dictation-engine-crispasr = CrispASR
+settings-dictation-server = Речевой сервер
+settings-dictation-server-checking = Проверка…
+settings-dictation-server-running = Работает
+settings-dictation-server-stopped = Остановлен. Диктовка ничего не слышит, пока он не запустится.
+settings-dictation-server-failed = Остановлен после ошибки. Причину покажет journalctl --user -u { $unit }.
+settings-dictation-server-missing = Не установлен. Установить его можно командой components/otto-dictate/engines/install.sh { $engine }.
+settings-dictation-server-unmanaged = Неизвестно: в этой системе нет systemctl
+settings-dictation-start = Запустить
+settings-dictation-restart = Перезапустить
+settings-dictation-language = Язык
+settings-dictation-language-auto = Автоматически
+settings-dictation-language-detail = Язык речи. Parakeet и CrispASR определяют его сами.
+settings-dictation-hotwords-boost = Усиление имён
+settings-dictation-hotwords-boost-detail = Насколько предпочитаются имена, которых ожидает поле. Выше 6 слова вокруг имени начинают искажаться.
+settings-dictation-autostart = Запускать диктовку при входе
+settings-dictation-autostart-detail = Запускает otto-dictate из ~/.config/autostart — Otto читает эту папку, когда включён xdg_autostart

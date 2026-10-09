@@ -1,0 +1,7 @@
+# `ObjectId` is the key of most of the compositor's per-surface maps. With the
+# system libwayland backend it holds an `Arc<AtomicBool>` liveness flag, which
+# trips `mutable_key_type`, but neither trait reads that flag's value: `Hash`
+# uses the object id, the resource pointer and the flag's *address*, and `Eq`
+# is `Arc::ptr_eq` on the flag. So a key's hash and equality cannot change
+# while it is in a map.
+ignore-interior-mutability = ["wayland_backend::server::ObjectId"]

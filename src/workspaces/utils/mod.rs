@@ -221,7 +221,6 @@ pub enum BalloonArrow {
 /// Only the bottom-arrow shape is built by hand; the side variants are that
 /// same path rotated a quarter turn, which keeps the rounded arrow tip and the
 /// corner radii identical whichever way the balloon points.
-#[allow(clippy::too_many_arguments)]
 pub fn draw_balloon_rect(
     x: f32,
     y: f32,
@@ -947,36 +946,6 @@ mod tests {
         );
     }
 
-    /// Not an assertion: writes the three balloon shapes to /tmp so they can be
-    /// eyeballed. Run with `cargo test --lib dump_balloons -- --ignored`.
-    #[test]
-    #[ignore]
-    fn dump_balloons() {
-        use layers::skia;
-        let mut surface = skia::surfaces::raster_n32_premul((900, 200)).unwrap();
-        let canvas = surface.canvas();
-        canvas.clear(skia::Color::WHITE);
-        let mut paint = skia::Paint::new(skia::Color4f::new(0.2, 0.2, 0.9, 1.0), None);
-        paint.set_anti_alias(true);
-        for (i, arrow) in [
-            BalloonArrow::Bottom,
-            BalloonArrow::Left,
-            BalloonArrow::Right,
-        ]
-        .into_iter()
-        .enumerate()
-        {
-            let x = 20.0 + i as f32 * 290.0;
-            let path = draw_balloon_rect(x, 40.0, 200.0, 60.0, 5.0, 12.5, 10.0, 0.5, 1.5, arrow);
-            canvas.draw_path(&path, &paint);
-        }
-        let image = surface.image_snapshot();
-        let data = image
-            .encode(None, skia::EncodedImageFormat::PNG, None)
-            .unwrap();
-        std::fs::write("/tmp/balloons.png", data.as_bytes()).unwrap();
-    }
-
     /// The balloon must fill exactly the rect it was asked for, arrow included,
     /// whichever edge the arrow sticks out of — the tooltip layer is sized from
     /// those same numbers, so a path that overflows or falls short of them puts
@@ -1110,7 +1079,12 @@ mod tests {
     fn nonexistent_font_falls_back() {
         let cache = make_test_cache();
         let style = layers::skia::FontStyle::normal();
-        // A completely nonexistent font should still return something
-        let _font = cache.make_font_with_fallback("ZzzNonExistentFont999", style, 12.0);
+        let font = cache.make_font_with_fallback("ZzzNonExistentFont999", style, 12.0);
+        let family_name = font.typeface().family_name();
+        assert!(
+            !family_name.is_empty() && family_name != "ZzzNonExistentFont999",
+            "expected a fallback family, got '{}'",
+            family_name
+        );
     }
 }

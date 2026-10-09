@@ -47,20 +47,23 @@ The Top Bar is a persistent, full-width panel anchored to the top edge of the pr
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│  [App Name]  [File] [Edit] [View] [Help] ··· [island] ··· [icons] [🔋] [clock]│
+│ [••] [App Name] [File] [Edit] [View] [Help] ··· [island] ··· [icons] [🔋] [clock]│
 └──────────────────────────────────────────────────────────────────────────────┘
   ◄── Left zone ──────────────────►         ◄── Right zone ──────────────────►
                                    ◄Center►
 ```
 
-5. **Left zone** (left-aligned): application name (bold), followed by top-level menu entries (File, Edit, …). Clicking a top-level entry opens the corresponding submenu as a popup.
+5. **Left zone** (left-aligned): the Otto mark, then the application name (bold), followed by top-level menu entries (File, Edit, …). Clicking a top-level entry opens the corresponding submenu as a popup.
+5b. **The application's name** opens Otto's menu for the focused window: *Minimise*, a separator, *Quit ‹App›*. It is the same whatever the application exports, and is there for an application with no menu of its own. Minimise runs `[con_id=<id>] minimize` and Quit `[con_id=<id>] quit` over `org.otto.Shell1`, naming the window that had focus when the menu opened, since the bar holds the keyboard while its menu is open. Quit closes every window of that application, as the dock's Quit does, so each one can still ask to save. With no window focused (the name reads "Otto") clicking the name does nothing. While the menu is open the name wears the open-menu pill.
+5a. **The Otto mark** is the logo's two dots, side by side, in the bar's text colour. It is always there, whatever has focus, and the bar's padding before it counts as part of it, so a click in the screen corner lands on it. Clicking it opens the Otto menu: *About Otto*, a separator, *Settings…*, a separator, *Log Out*. About and Settings start the settings command (`battery.settings_command`), About with `--pane about`; both are left out when no settings command is configured. Log Out asks first, through otto-islands' system dialog (`org.otto.Dialog1.PresentAccess`, modal): "Log out now?", saying apps will be asked to close first, with *Log Out* and *Cancel*. On *Log Out* the bar runs `logout` over `org.otto.Shell1`. The compositor asks every window to close, as its close button does, and ends the session once all are gone. A window that opens meanwhile is an application asking something, usually whether to save, and the logout waits for as long as it stays open. When the last such prompt goes, the application either closes and the logout carries on, or is still open 3 seconds later, which means the person cancelled, and the logout stands down and leaves the session as it is. Without any prompt, windows still open after 10 seconds stand it down too. Logging out again starts over. Without otto-islands there is nobody to ask, and the bar runs `logout` straight away, which still lets every application close the polite way. While the menu is open the mark wears the open-menu pill. To an assistive technology it is the menu bar's first item, labelled "Otto", with a popup.
 6. **Center zone**: reserved empty space. No content is rendered here to leave visual room for the Dynamic Island.
 7. **Right zone** (right-aligned): SNI tray icons (rightmost first), then the keyboard layout indicator, then the battery indicator, then the clock.
 
 ### Active Window Tracking
 
 8. The bar tracks the currently focused window using the `zwlr-foreign-toplevel-management-unstable-v1` Wayland protocol. When focus changes, the bar updates the left zone within one frame.
-9. If no window is focused, the left zone shows the desktop/compositor name without any menu entries.
+9. If no window is focused, the left zone shows the desktop/compositor name without any menu entries. That covers an empty workspace, the last window closing or being minimised, and the window overview: the compositor announces a `focus` event with a null container whenever it clears the keyboard focus, and the bar drops the menu it was showing.
+9a. The name and the menu titles arrive separately (the name from `zwlr_foreign_toplevel_manager_v1`, the menu from `org.otto.Shell1`), in either order. Each replaces only its own part of the left zone, so the name is never left showing the previous application beside the new one's menus.
 10. The application name shown is derived from the `app_id` of the focused toplevel (mapped to a human-readable name via the desktop entry database).
 
 ### Global Menu (Left Zone)
@@ -68,9 +71,11 @@ The Top Bar is a persistent, full-width panel anchored to the top edge of the pr
 11. Menu data is sourced via the `com.canonical.dbusmenu` D-Bus interface. The bar looks for the menu at the well-known bus name registered for the focused window.
 12. The bar queries the menu structure once per focus change and caches it. It listens for `ItemsPropertiesUpdated` and `LayoutUpdated` signals to refresh the cache incrementally.
 13. Clicking a top-level menu entry renders a dropdown popup as a new layer-shell surface (`overlay` layer) positioned below the bar at the correct horizontal offset. The popup is managed by the context menu system (see context-menus.md for detailed menu behavior).
+13a. The left zone behaves as one menu bar. Clicking the item whose menu is open (the Otto mark, the application's name or a menu title) closes it. While any of its menus is open, moving the pointer onto another of those items opens that item's menu in its place, without a click.
 14. Keyboard navigation within a menu follows standard conventions: arrow keys move selection, Enter activates, Escape closes. The bar requests keyboard grab from the compositor while a menu is open. Submenus do not request a grab; the root menu retains focus throughout the entire menu tree.
 15. When a submenu is opened or the pointer moves between menu depths, only one item is selected across the entire menu tree. If a submenu is visible, parent menu items are not highlighted.
 16. If no dbusmenu is registered for the focused app, the left zone shows only the application name with no menu entries.
+16a. The `topbar.show_app_menu` setting (Settings, Top bar, "Show application menus", on by default) turns the global menu off. While it is false the left zone shows only the application name, an open application menu closes, and the bar releases the `com.canonical.AppMenu.Registrar` name, so applications that look for a registrar keep the menu bar in their own window. The bar reads the setting before it first asks for the name, so a bar starting with the menu off never claims it. Turning the setting back on claims the name again and fetches the focused window's menu.
 17. Menu entries support: labels, icons, keyboard shortcuts (displayed right-aligned), separators, checkboxes, radio groups, and submenus.
 18. Disabled menu entries are rendered at reduced opacity and do not respond to activation.
 
@@ -106,7 +111,9 @@ The Top Bar is a persistent, full-width panel anchored to the top edge of the pr
 
 ### Clock (Right Zone)
 
-40. The clock displays the current local time. The default format is the one the active locale's catalogue carries — weekday, day, month and a 24-hour time in most locales, a 12-hour time with the month first in `en-US` (see localisation.md). An explicit clock format in the bar's own configuration overrides it. Whether seconds are shown is a user setting, and it changes how often the bar redraws.
+40. The clock displays the current local time. Its format is, in order: the `topbar.clock_format` setting (Settings, Top bar, "Format") when it is not empty; else `clock_format` in the bar's own configuration file; else the one the active locale's catalogue carries — weekday, day, month and a 24-hour time in most locales, a 12-hour time with the month first in `en-US` (see localisation.md). A format chrono cannot render is skipped for the next one, and `%H:%M` is the last resort, so a typo never takes the clock down. Whether seconds are shown follows from the format, and it changes how often the bar redraws.
+40a. The clock is drawn only while the `topbar.show_clock` setting (Settings, Top bar, "Show date and time", on by default) is true. Hidden, it takes no room: the battery, or whatever comes next, moves up to the bar's edge padding with no gap left behind, the panel shrinks to fit, and the clock leaves the accessibility tree.
+40b. The bar reads both settings from `org.otto.Settings` when it starts, or when the compositor's bus name appears, and reads them back whenever the `Changed` signal names either one. A change applies at once. Without a compositor serving the interface, the clock is shown in the file's or the locale's format.
 41. Clicking the clock opens a calendar popup (future milestone; not in initial implementation).
 
 ### Animations & Visual Behavior
@@ -124,7 +131,7 @@ The Top Bar is a persistent, full-width panel anchored to the top edge of the pr
 - **SNI watcher absent:** Tray section is hidden. The bar must not crash — re-probe every 30 seconds.
 - **Menu root changes while open:** Close the current open menu and re-fetch before re-opening.
 - **User clicks away while a menu is open:** Whether the click lands on a window, the desktop, or the dock, the compositor takes the keyboard from the bar and the bar closes every open menu on `wl_keyboard.leave`, releasing its keyboard grab. A click on the open menu itself does not count as clicking away, even where the menu overlaps a window.
-- **HiDPI / fractional scaling:** The bar must render at the output's native scale. All sizes are in logical points; the bar converts to physical pixels using the output's *fractional* scale (`wp_fractional_scale_v1`), not the integer buffer scale — on a 1.5x output the integer scale is 2, and sizing by it pushes the panels past their exclusive zone and over the window below.
+- **HiDPI / fractional scaling:** The bar must render at the output's native scale. All sizes are in logical points; the bar converts to physical pixels using the output's *fractional* scale (`wp_fractional_scale_v1`), not the integer buffer scale — on a 1.5x output the integer scale is 2, and sizing by it pushes the panels past their exclusive zone and over the window below. Until the surface's preferred scale arrives, the scale is the first output's, read at startup; when the preferred scale lands and differs, the panels' surface-style geometry is re-applied at it.
 - **Theme change:** Re-apply colors within one second without restarting. Use the color-scheme D-Bus portal (`org.freedesktop.portal.Settings`) to track system theme.
 - **Language change:** Unlike the colour scheme, the language is fixed for the life of the process and takes effect at the next start of the bar (see localisation.md).
 - **Multiple monitors:** Primary-output bar shows all three zones. Secondary-output bars (if enabled) show only tray + clock.

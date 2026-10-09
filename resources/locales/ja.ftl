@@ -63,8 +63,10 @@ dock-quit = 終了
 ## sidebar does not grow to fit them.
 
 settings-pane-general = 一般
+settings-pane-appearance = 外観
 settings-pane-displays = ディスプレイ
 settings-pane-dock = Dock
+settings-pane-top-bar = 上部バー
 settings-pane-tiling = タイル表示
 settings-pane-keyboard = キーボード
 settings-pane-pointing = トラックパッドとマウス
@@ -73,6 +75,17 @@ settings-pane-power = 電源
 settings-pane-lock-and-login = ロックとログイン
 settings-pane-search = 検索
 settings-pane-agents = エージェント
+settings-pane-about = 情報
+settings-sidebar-search = 検索
+settings-sidebar-search-none = 「{ $query }」に一致する設定はありません
+settings-group-about-machine = このコンピュータについて
+settings-about-version-line = バージョン { $version }
+settings-about-computer-name = コンピュータ名
+settings-about-os = オペレーティングシステム
+settings-about-kernel = カーネル
+settings-about-processor = プロセッサ
+settings-about-memory = メモリ
+settings-about-memory-gb = { $size } GB
 
 
 ## Settings — General
@@ -93,14 +106,44 @@ settings-group-desktop = デスクトップ
 settings-background-colour = 背景色
 settings-background-image = 背景画像
 settings-background-image-detail = デスクトップポータルのファイル選択画面から選びます
+settings-desktop-widget = 背景ウィジェット
+settings-desktop-widget-needs-ewwii = ewwii が必要ですが、インストールされていません
+# { $folder } is a path such as ~/.config/otto/widgets/ewwii.
+settings-desktop-widget-detail = ewwii で描画されます。独自のウィジェットは { $folder } に追加します
 settings-background-image-unavailable = 表示できません
 settings-show-desk = デスクトップにファイルを表示
 settings-show-desk-detail = 「デスクトップ」フォルダのファイルをウインドウの背後に表示
+
+settings-group-desk = デスク
+settings-desk-folder = フォルダ
+settings-desk-folder-default = 「デスクトップ」フォルダ
+settings-desk-choose-folder-title = デスクに表示するフォルダを選択
+settings-desk-layout = サイズと位置
+settings-desk-layout-edit = 編集…
+settings-desk-layout-reset = リセット
+settings-desk-layout-fill = 画面全体に表示。「編集」でデスクにハンドルが表示され、ドラッグで配置できます
+settings-desk-layout-placed = 手動で配置済み。「リセット」で画面全体に戻ります
+settings-desk-icon-size = アイコンのサイズ
+settings-desk-overflow = アイコンが収まらないとき
+settings-desk-overflow-scroll = スクロール
+settings-desk-overflow-stack = オーバーレイで表示
+settings-desk-overflow-detail = スクロールはグリッドを動かします。オーバーレイで表示は残りを最後のマスに置き、ウィンドウの上で開きます
 
 settings-group-pointer-and-icons = ポインタとアイコン
 settings-cursor-theme = カーソルテーマ
 settings-cursor-size = カーソルサイズ
 settings-icon-theme = アイコンテーマ
+
+settings-group-app-menu = アプリケーションメニュー
+settings-show-app-menu = アプリケーションメニューを表示
+settings-show-app-menu-detail = 使用中のアプリ名の横に表示。オフの間に開いたアプリは自分のウインドウにメニューを表示します
+
+settings-group-clock = 時計
+settings-show-clock = 日付と時刻を表示
+settings-show-clock-detail = 上部バーの右端に表示
+settings-clock-format = 表示形式
+settings-clock-format-detail = 設定ファイルの [topbar] に clock_format として任意の strftime 形式も書けます
+settings-clock-format-automatic = { $preview }（言語の既定）
 
 settings-group-window-switcher = ウインドウスイッチャー
 settings-follow-cursor = ポインタのあるディスプレイに表示
@@ -234,6 +277,26 @@ settings-scrolling-speed = スクロールの速さ
 
 settings-interface-sounds = インターフェイスのサウンド
 settings-sound-theme = サウンドテーマ
+settings-group-sound-output = 出力装置
+settings-group-sound-input = 入力装置
+settings-sound-output-device = 出力装置
+settings-sound-input-device = 入力装置
+settings-sound-volume = 音量
+settings-sound-mute = 消音
+settings-sound-no-outputs = 出力装置がありません
+settings-sound-no-inputs = 入力装置がありません
+settings-sound-unavailable = サウンドサーバーが応答しません。サウンドには pipewire-pulse を備えた PipeWire または PulseAudio と、pactl が必要です。
+settings-sound-show = 表示
+settings-sound-view-playback = 再生
+settings-sound-view-recording = 録音
+settings-sound-view-configuration = 構成
+settings-sound-port = ポート
+settings-sound-unplugged = 未接続
+settings-sound-default = デフォルトとして使用
+settings-sound-profile = プロファイル
+settings-sound-no-playback = サウンドを再生中のアプリはありません
+settings-sound-no-recording = サウンドを録音中のアプリはありません
+settings-sound-no-cards = サウンドカードがありません
 
 
 ## Settings — Power
@@ -251,10 +314,31 @@ settings-lock-after = ロックするまでの時間
 settings-lock-screen = ロック画面
 settings-lock-screen-detail = 次に画面がロックされるときから適用されます
 settings-lock-screen-arguments = ロック画面の引数
+settings-lock-on-suspend = スリープ時にロック
 settings-group-login = ログイン
 settings-greeter = グリーター
 settings-greeter-detail = 次回のログインから適用されます
 settings-greeter-arguments = グリーターの引数
+settings-lock-never = ロックしない
+# Under each Lock & Login row: the compositor asks for the password before it applies a change.
+settings-asks-for-password = 変更するにはパスワードが必要です
+settings-login-background-failed = ログイン画面の背景を変更できませんでした
+settings-login-background-not-image = PNG、JPEG、WebP 画像ではありません
+settings-login-background-too-large = 20 MB を超えています
+settings-images-filter = 画像
+# The auto-lock interval pop-up.
+settings-interval-minutes =
+    { $count ->
+       *[other] { $count } 分
+    }
+settings-interval-hours =
+    { $count ->
+       *[other] { $count } 時間
+    }
+settings-interval-seconds =
+    { $count ->
+       *[other] { $count } 秒
+    }
 
 
 ## Settings — Search
@@ -438,6 +522,11 @@ settings-choice-power-ignore = 何もしない
 settings-choice-power-lock = 画面をロック
 settings-choice-power-suspend = スリープ
 settings-choice-power-shutdown = システム終了
+settings-choice-widget-none = なし
+settings-choice-widget-calendar = カレンダー
+# The next two name pages whose text is in English, so they stay as written.
+settings-choice-widget-cross-pad = Cross pad
+settings-choice-widget-grid-pad = Grid pad
 # The automatic option for a theme that follows the system.
 settings-choice-auto = 自動
 
@@ -479,6 +568,14 @@ files-open-with-always = 「{ $kind }」には常にこのAppを使用
 files-open-with-not-remembered = 開きましたが、選択を保存できませんでした：{ $error }
 files-new-folder = 新規フォルダ
 files-desk-open-in-files = ファイルで開く
+files-desk-edit-done = 完了
+# The desk's overflow tile: the caption under it, and what a screen reader
+# says for it. $count is how many items it holds.
+files-desk-overflow-caption = その他
+files-desk-overflow =
+    { $count ->
+       *[other] ほか { $count } 項目
+    }
 files-move-to-trash = ゴミ箱に入れる
 # $count is always two or more; the single-item case uses files-move-to-trash.
 files-move-count-to-trash =
@@ -605,6 +702,7 @@ files-rename-failed = 名称変更できません：{ $error }
 files-new-folder-failed = フォルダを作成できません：{ $error }
 files-open-failed = そのファイルを開けません：{ $error }
 files-open-app-broken = アプリの起動コマンドが正しくありません
+files-open-no-app = この種類のファイルを開けるアプリがインストールされていません
 files-new-window-failed = 新しいウインドウを開けません：{ $error }
 files-settings-open-failed = 設定を開けません：{ $error }
 
@@ -691,14 +789,14 @@ files-empty-trash-detail =
 ## not KiB. Most languages keep the symbols as they are; translate only the
 ## spelled-out "bytes".
 
-files-size-bytes =
+size-bytes =
     { $count ->
        *[other] { $count } バイト
     }
-files-size-kb = { $value } KB
-files-size-mb = { $value } MB
-files-size-gb = { $value } GB
-files-size-tb = { $value } TB
+size-kb = { $value } KB
+size-mb = { $value } MB
+size-gb = { $value } GB
+size-tb = { $value } TB
 
 
 ## Files — dates
@@ -860,6 +958,15 @@ bar-power-performance = パフォーマンス
 bar-power-settings = 電源設定…
 bar-keyboard-settings = キーボード設定…
 bar-keyboard-layout-label = キーボードレイアウト: { $layout }
+bar-otto-menu = Otto
+bar-otto-about = Otto について
+bar-otto-settings = 設定…
+bar-otto-log-out = ログアウト
+# The menu under the focused application's name in the top bar.
+bar-app-minimize = 最小化
+bar-app-quit = { $app } を終了
+bar-logout-title = 今すぐログアウトしますか?
+bar-logout-body = 先にアプリに終了を求めるので、保存していない内容を保存できます。
 
 
 ## Settings — widgets
@@ -910,6 +1017,16 @@ schema-font-family-label = インターフェイスフォント
 schema-font-family-description = Otto自身のインターフェイスが使うフォントファミリー。
 schema-desk-enabled-label = デスクトップにファイルを表示
 schema-desk-enabled-description = 「デスクトップ」フォルダのファイルをウインドウの背後に表示。
+schema-canvas-width-label = サイドキャンバスの幅
+schema-canvas-width-description = サイドキャンバスの幅（論理ポイント）。中のものはすべてこの幅で描画されます。
+schema-desktop-widget-label = 背景ウィジェット
+schema-desktop-widget-description = 壁紙の上、ウインドウの背後に描く全画面のページ。ewwii が必要です。
+schema-topbar-show-clock-label = 日付と時刻を表示
+schema-topbar-show-clock-description = 上部バーの右端の時計。
+schema-topbar-clock-format-label = 時計の表示形式
+schema-topbar-clock-format-description = 上部バーに表示する日付と時刻の strftime 形式。空なら言語に従います。
+schema-topbar-show-app-menu-label = アプリケーションメニューを表示
+schema-topbar-show-app-menu-description = 使用中のアプリのメニューを、上部バーのアプリ名の横に表示します。
 schema-background-color-label = 背景色
 schema-background-color-description = デスクトップの背景色。16進文字列で指定します。
 schema-background-image-label = 背景画像
@@ -1024,6 +1141,8 @@ schema-lock-locker-args-label = ロック画面の引数
 schema-lock-locker-args-description = ロッカーに渡す引数。
 schema-lock-auto-lock-timeout-label = ロックするまでの時間
 schema-lock-auto-lock-timeout-description = ロックするまでの無操作の秒数。0ならロックしません。
+schema-lock-on-suspend-label = スリープ時にロック
+schema-lock-on-suspend-description = コンピュータがサスペンドする前に画面をロックし、復帰時にロック画面が表示されるようにします。
 
 # --- login ---
 schema-login-greeter-command-label = グリーターのコマンド
@@ -1109,6 +1228,8 @@ launcher-agents-working = 作業中
 launcher-agents-needs-input = 回答待ち
 launcher-agents-error = 失敗
 launcher-agents-none = エージェントセッションはまだありません
+canvas-sessions-heading = エージェント
+stash-drop-invite = ここにファイルをドロップして収集に追加
 # Ask mode: the files that go with a request, under it in the log, or above
 # the field before it is sent. { $files } is their names, comma-separated.
 # Ask mode, while an existing session is being opened to continue it.
@@ -1534,21 +1655,6 @@ peek-item-count =
 peek-archive-summary = { $items } — { $size }
 
 
-## Peek — sizes
-##
-## Byte units. Peek counts in powers of 1024, so the symbols are the
-## conventional binary-rounded ones. Translate only the spelled-out "bytes".
-
-peek-size-bytes =
-    { $count ->
-       *[other] { $count } バイト
-    }
-peek-size-kb = { $value } KB
-peek-size-mb = { $value } MB
-peek-size-gb = { $value } GB
-peek-size-tb = { $value } TB
-
-
 ## Peek — nothing to show
 ##
 ## Each of these fills the card in place of a preview, so a person reads it
@@ -1710,6 +1816,7 @@ a11y-tray-item = トレイ項目 { $number }
 a11y-notifications = 通知
 # The sidebar of Settings, listing its panes.
 a11y-categories = カテゴリ
+a11y-search-settings = 設定を検索
 # The launcher's list of matches for what has been typed.
 a11y-results = 結果
 # Names the Settings pane when no pane is selected.
@@ -1720,3 +1827,162 @@ a11y-preview-page = プレビュー、{ $pages } ページ中 { $page } ペー�
 a11y-preview-pages = プレビュー、{ $pages } ページ
 # Said of a preview that shows only the beginning of a long file.
 a11y-preview-shortened = プレビュー、短縮表示
+
+## The Photos view
+
+files-view-photos = 写真
+files-photos-day = { $month }{ $day }日（{ $weekday }）
+files-photos-day-year = { $year }年{ $month }{ $day }日（{ $weekday }）
+files-photos-undated = 日付なし
+files-photos-other = その他のファイル
+files-photos-summary = { $images }、{ $folders }
+files-photos-images =
+    { $count ->
+       *[other] { $count } 枚の画像
+    }
+files-photos-folders =
+    { $count ->
+       *[other] { $count } 個のフォルダ
+    }
+
+files-weekday-sun = 日
+files-weekday-mon = 月
+files-weekday-tue = 火
+files-weekday-wed = 水
+files-weekday-thu = 木
+files-weekday-fri = 金
+files-weekday-sat = 土
+
+files-month-long-jan = 1月
+files-month-long-feb = 2月
+files-month-long-mar = 3月
+files-month-long-apr = 4月
+files-month-long-may = 5月
+files-month-long-jun = 6月
+files-month-long-jul = 7月
+files-month-long-aug = 8月
+files-month-long-sep = 9月
+files-month-long-oct = 10月
+files-month-long-nov = 11月
+files-month-long-dec = 12月
+files-photos-month = { $year }年{ $month }
+files-photos-folders-title = フォルダ
+files-photos-group-day = 日ごとにグループ化
+files-photos-group-month = 月ごとにグループ化
+files-photos-group-none = グループ化しない
+files-photos-info-kind = { $format } 画像
+files-photos-info-copied = コピーしました
+files-photos-info-dimensions = サイズ
+files-photos-info-modified = 変更日
+files-photos-info-where = 場所
+files-photos-info-many =
+    { $count ->
+       *[other] { $count } 項目
+    }
+files-photos-one-selected = 1 項目を選択 · Space でプレビュー · ↵ で開く
+
+
+## otto-authorize — the panel that asks for the password before a sensitive setting changes.
+## The reason line is composed by Otto from the setting and the value asked for; { $value } is the program or options, quoted.
+
+authorize-cancel = キャンセル
+authorize-error-failed = 認証に失敗しました
+authorize-path-in = { $name }（{ $dir } 内）
+polkit-unknown-program = 不明なプログラム
+
+## Settings › Privacy: what apps were allowed, read from xdg-permission-store.
+
+privacy-applies-to-unsandboxed = サンドボックス外のすべてのアプリに適用
+privacy-app-unsandboxed = サンドボックス外のアプリ
+privacy-decision-allow = 許可
+privacy-decision-ask = 確認する
+privacy-decision-deny = 許可しない
+privacy-forget = 削除
+privacy-group-notifications = 通知
+privacy-group-screen = 画面共有
+privacy-notifications-none = 通知の送信を求めたアプリはまだありません
+privacy-reading = 読み込み中…
+privacy-remembered-by = { $desktop } が記憶
+privacy-remote-desktop = マウスとキーボードを操作し、画面を見る
+privacy-reset = リセット
+privacy-screencast = 画面を録画
+privacy-screencast-monitor = 画面 { $screen } を録画
+privacy-screencast-window = ウインドウを録画
+privacy-screen-none = 画面共有を許可したと記憶されているアプリはありません
+privacy-screenshot = スクリーンショットを撮る
+privacy-screenshot-allowed = 確認なしでスクリーンショットを撮る
+privacy-screenshot-denied = スクリーンショットは許可されていません
+privacy-store-unavailable = アプリへの許可を読み込めません
+privacy-store-unavailable-detail = 権限ストア（xdg-desktop-portal の xdg-permission-store）を利用できません
+settings-pane-privacy = プライバシー
+
+screencast-picker-remember = { $app } 用に記憶する
+
+## Users pane
+
+settings-pane-account = ユーザ
+settings-account-picture = 画像
+settings-account-picture-detail = ログイン画面とロック画面に表示されます
+settings-account-choose-picture = 画像を選択
+settings-account-picture-unreadable = このファイルは Otto で読み込める画像ではありません
+settings-account-full-name = フルネーム
+settings-account-name = アカウント名
+settings-account-type = アカウントの種類
+settings-account-type-administrator = 管理者
+settings-account-type-standard = 通常
+settings-account-no-accountsservice = ここでは変更できません: AccountsService が実行されていません
+settings-account-not-permitted = システムがこの変更を許可しませんでした
+settings-group-password = パスワード
+settings-account-current-password = 現在のパスワード
+settings-account-new-password = 新しいパスワード
+settings-account-confirm-password = 新しいパスワードを確認
+settings-account-change-password = パスワードを変更
+settings-account-change-password-ellipsis = パスワードを変更…
+settings-account-password-detail = ログイン、画面のロック解除、変更の承認に使用します
+settings-account-password-changing = パスワードを変更しています…
+settings-account-password-changed = パスワードを変更しました
+settings-account-password-missing = 現在のパスワードと新しいパスワードを入力してください
+settings-account-password-mismatch = 新しいパスワードが一致しません
+settings-account-password-same = 新しいパスワードが現在のものと同じです
+settings-account-password-wrong-current = 現在のパスワードが正しくありません
+settings-account-password-failed = パスワードを変更できませんでした
+settings-account-reset-password-ellipsis = パスワードをリセット…
+settings-account-reset-detail = このアカウントに新しいパスワードを設定します
+settings-account-working = システムを待っています…
+settings-users-you = { $kind } · あなた
+settings-users-reset-title = { $name } のパスワードをリセット
+settings-users-reset-action = パスワードをリセット
+settings-users-add-title = ユーザを追加
+settings-users-add-action = ユーザを追加
+settings-users-delete-title = { $name } を削除しますか?
+settings-users-delete-body = このユーザはログインできなくなります。ホームフォルダは残ります。
+settings-users-delete-action = ユーザを削除
+settings-users-invalid-name = アカウント名は英小文字で始まり、a–z、0–9、- と _ のみ使用できます
+settings-users-name-taken = その名前のアカウントはすでにあります
+settings-users-password-missing = アカウントのパスワードを入力してください
+
+## 設定 › 音声入力
+
+settings-pane-dictation = 音声入力
+settings-dictation-intro = 話した言葉をこのコンピュータ上で認識し、テキストフィールドに入力します。ランチャーでは Ctrl+D で音声入力でき、ほかのアプリでは otto-dictate toggle に割り当てたショートカットで行えます。
+settings-dictation-engine = エンジン
+settings-dictation-engine-detail = 選ぶとその音声サーバーが起動し、ほかは停止します
+settings-dictation-engine-parakeet = Parakeet
+settings-dictation-engine-whisper = Whisper（英語のみ）
+settings-dictation-engine-crispasr = CrispASR
+settings-dictation-server = 音声サーバー
+settings-dictation-server-checking = 確認中…
+settings-dictation-server-running = 実行中
+settings-dictation-server-stopped = 停止中。起動するまで、音声入力は何も聞き取りません。
+settings-dictation-server-failed = エラーで停止しました。理由は journalctl --user -u { $unit } で確認できます。
+settings-dictation-server-missing = 未インストール。components/otto-dictate/engines/install.sh { $engine } で導入できます。
+settings-dictation-server-unmanaged = 不明：このシステムには systemctl がありません
+settings-dictation-start = 起動
+settings-dictation-restart = 再起動
+settings-dictation-language = 言語
+settings-dictation-language-auto = 自動
+settings-dictation-language-detail = 話す言語。Parakeet と CrispASR は自分で判別します。
+settings-dictation-hotwords-boost = 名前の優先度
+settings-dictation-hotwords-boost-detail = フィールドが想定する名前をどれだけ優先するか。6 を超えると、名前の前後の言葉が崩れはじめます。
+settings-dictation-autostart = ログイン時に音声入力を起動
+settings-dictation-autostart-detail = ~/.config/autostart から otto-dictate を起動します。Otto は xdg_autostart がオンのときにこのフォルダを読み込みます

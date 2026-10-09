@@ -191,7 +191,12 @@ impl TestClient {
                 format!("/run/user/{}/{}", uid, socket_name)
             });
 
-        let stream = UnixStream::connect(&socket_path)?;
+        Self::from_stream(UnixStream::connect(&socket_path)?)
+    }
+
+    /// Connect over an already connected socket — one end of a socketpair
+    /// the compositor handed out, the way it connects its own components.
+    pub fn from_stream(stream: UnixStream) -> Result<Self, Box<dyn std::error::Error>> {
         let conn = Connection::from_socket(stream)?;
         let mut queue = conn.new_event_queue();
         let qh = queue.handle();
@@ -703,7 +708,20 @@ impl TestClient {
         width: u32,
         height: u32,
     ) -> Arc<Mutex<TestPopup>> {
-        self.create_popup_inner(parent, x, y, width, height, 0)
+        self.create_popup_inner(parent, x, y, width, height, 0, None)
+    }
+
+    /// Create a popup that asks for an explicit grab (`xdg_popup.grab`) with
+    /// `serial` before it is mapped, the way a menu opened by a click does.
+    /// The compositor may refuse and send `popup_done` (`TestPopup::done`).
+    pub fn create_grabbing_popup(
+        &mut self,
+        parent: &Arc<Mutex<TestToplevel>>,
+        width: u32,
+        height: u32,
+        serial: u32,
+    ) -> Arc<Mutex<TestPopup>> {
+        self.create_popup_inner(parent, 10, 10, width, height, 0, Some(serial))
     }
 
     /// Create a popup that pads its buffer with a drop shadow, the way a GTK
@@ -720,9 +738,10 @@ impl TestClient {
         height: u32,
         shadow: i32,
     ) -> Arc<Mutex<TestPopup>> {
-        self.create_popup_inner(parent, x, y, width, height, shadow)
+        self.create_popup_inner(parent, x, y, width, height, shadow, None)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn create_popup_inner(
         &mut self,
         parent: &Arc<Mutex<TestToplevel>>,
@@ -731,6 +750,7 @@ impl TestClient {
         width: u32,
         height: u32,
         shadow: i32,
+        grab: Option<u32>,
     ) -> Arc<Mutex<TestPopup>> {
         let surface = self.create_surface();
         let xdg_wm_base = self
@@ -763,13 +783,19 @@ impl TestClient {
             .xdg_surface
             .clone()
             .expect("parent toplevel has no xdg_surface");
-        let _popup = xdg_surface.get_popup(
+        let popup = xdg_surface.get_popup(
             Some(&parent_xdg),
             &positioner,
             &self.qh,
             popup_state.clone(),
         );
         positioner.destroy();
+        if let Some(serial) = grab {
+            popup.grab(
+                self.state.wl_seat.as_ref().expect("wl_seat not bound"),
+                serial,
+            );
+        }
         if shadow > 0 {
             xdg_surface.set_window_geometry(
                 shadow,

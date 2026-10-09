@@ -18,10 +18,6 @@ pub const BAR_MARGIN_SIDE: i32 = 0;
 /// Horizontal padding inside a panel.
 pub const BAR_PADDING_H: f32 = 14.0;
 
-/// Spacing between tray icons.
-#[allow(dead_code)]
-pub const TRAY_ICON_SPACING: f32 = 8.0;
-
 /// Tray icon size in logical points.
 pub const TRAY_ICON_SIZE: f32 = 22.0;
 
@@ -166,14 +162,11 @@ impl Default for TopbarConfig {
 
 static CONFIG: LazyLock<TopbarConfig> = LazyLock::new(load_config);
 
-/// Access the current topbar configuration.
-#[allow(dead_code)]
-pub fn config() -> &'static TopbarConfig {
-    &CONFIG
-}
-
-/// Return the clock format string.
-pub fn clock_format() -> &'static str {
+/// The clock format from `otto-bar.toml`, or the language's own where the
+/// file sets none.
+///
+/// The format chosen in Settings wins over this; see [`crate::clock`].
+pub fn file_clock_format() -> &'static str {
     &CONFIG.clock_format
 }
 
@@ -182,41 +175,11 @@ pub fn battery_config() -> &'static BatteryConfig {
     &CONFIG.battery
 }
 
-/// Parse `#RGB`, `#RRGGBB` or `#AARRGGBB`. Returns None for anything else,
-/// so a typo leaves the default colour rather than painting the glyph black.
+/// Parse `#RGB`, `#RRGGBB` or `#RRGGBBAA`, alpha last like every other
+/// colour setting on the desktop. Returns None for anything else, so a typo
+/// leaves the default colour rather than painting the glyph black.
 fn parse_color(raw: &str) -> Option<skia_safe::Color> {
-    let hex = raw.trim().strip_prefix('#')?;
-    let digits = |s: &str| u32::from_str_radix(s, 16).ok();
-    match hex.len() {
-        3 => {
-            let v = digits(hex)?;
-            // #abc means #aabbcc.
-            let (r, g, b) = ((v >> 8) & 0xF, (v >> 4) & 0xF, v & 0xF);
-            Some(skia_safe::Color::from_rgb(
-                (r * 17) as u8,
-                (g * 17) as u8,
-                (b * 17) as u8,
-            ))
-        }
-        6 => {
-            let v = digits(hex)?;
-            Some(skia_safe::Color::from_rgb(
-                ((v >> 16) & 0xFF) as u8,
-                ((v >> 8) & 0xFF) as u8,
-                (v & 0xFF) as u8,
-            ))
-        }
-        8 => {
-            let v = digits(hex)?;
-            Some(skia_safe::Color::from_argb(
-                ((v >> 24) & 0xFF) as u8,
-                ((v >> 16) & 0xFF) as u8,
-                ((v >> 8) & 0xFF) as u8,
-                (v & 0xFF) as u8,
-            ))
-        }
-        _ => None,
-    }
+    otto_kit::color::parse_hex(raw)
 }
 
 /// Read a command as either a bare string or an argv array, so both
@@ -358,26 +321,14 @@ fn number(value: &toml::Value) -> Option<f64> {
 
 fn load_config() -> TopbarConfig {
     // Search order: /etc/otto/otto-bar.toml → ~/.config/otto/otto-bar.toml → ./otto-bar.toml
-    let candidates: Vec<std::path::PathBuf> = {
-        let mut v = Vec::new();
-        v.push(std::path::PathBuf::from("/etc/otto/otto-bar.toml"));
-        if let Some(xdg) = std::env::var_os("XDG_CONFIG_HOME")
-            .map(std::path::PathBuf::from)
-            .or_else(|| {
-                std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".config"))
-            })
-        {
-            v.push(xdg.join("otto").join("otto-bar.toml"));
-        }
-        v.push(std::path::PathBuf::from("otto-bar.toml"));
-        v
-    };
+    let mut candidates = otto_kit::xdg::otto_config_paths("otto-bar.toml");
+    candidates.push(std::path::PathBuf::from("otto-bar.toml"));
 
     let mut cfg = TopbarConfig::default();
 
     for path in &candidates {
         if let Ok(content) = std::fs::read_to_string(path) {
-            match content.parse::<toml::Value>() {
+            match toml::from_str::<toml::Value>(&content) {
                 Ok(table) => {
                     if let Some(fmt) = table.get("clock_format").and_then(|v| v.as_str()) {
                         cfg.clock_format = fmt.to_string();

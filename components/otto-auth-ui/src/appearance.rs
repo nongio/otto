@@ -7,6 +7,7 @@
 
 use std::path::PathBuf;
 
+use otto_kit::color::parse_hex;
 use serde::Deserialize;
 use skia_safe::Color;
 
@@ -64,16 +65,7 @@ impl Appearance {
 
     /// System config first, so the user's overrides it.
     fn config_paths() -> Vec<PathBuf> {
-        let mut paths = vec![PathBuf::from("/etc/otto/config.toml")];
-
-        let config_home = std::env::var_os("XDG_CONFIG_HOME")
-            .map(PathBuf::from)
-            .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")));
-        if let Some(dir) = config_home {
-            paths.push(dir.join("otto").join("config.toml"));
-        }
-
-        paths
+        otto_kit::xdg::otto_config_paths("config.toml")
     }
 
     fn apply(&mut self, config: ConfigFile) {
@@ -109,73 +101,21 @@ struct ConfigFile {
     theme_scheme: Option<String>,
 }
 
-/// Otto's named accents. Kept in step with `src/theme/colors_light.rs` in the
-/// compositor, which is where these values come from.
+/// Otto's named accents, from otto-kit's light palette — the one the
+/// compositor resolves `accent_color` against in the light scheme.
 fn accent_color(name: &str) -> Color {
-    let hex = match name.trim().to_ascii_lowercase().as_str() {
-        "red" => "#FF453A",
-        "orange" => "#FF9500",
-        "yellow" => "#FFCC00",
-        "green" => "#28CD41",
-        "mint" => "#00C7BE",
-        "teal" => "#59ADC4",
-        "cyan" => "#55BEF0",
-        "indigo" => "#5856D6",
-        "purple" => "#AF52DE",
-        "pink" => "#FF2D55",
-        "gray" => "#8E8E93",
-        "brown" => "#A2845E",
+    let name = name.trim().to_ascii_lowercase();
+    otto_kit::theme::Theme::light_palette()
+        .named_accent(&name)
         // An unknown name falls back to blue, as the compositor's theme does;
         // a literal colour is also accepted so a greeter can be themed alone.
-        other => return parse_hex(other).unwrap_or(Color::from_argb(255, 10, 132, 255)),
-        // "blue" lands here through the fallback, which resolves to the same
-        // value, so it needs no arm of its own.
-    };
-    parse_hex(hex).unwrap_or(Color::from_argb(255, 10, 132, 255))
-}
-
-/// Parse `#RGB`, `#RRGGBB` or `#RRGGBBAA`.
-fn parse_hex(value: &str) -> Option<Color> {
-    let hex = value.trim().strip_prefix('#')?;
-    let byte = |i: usize| u8::from_str_radix(&hex[i..i + 2], 16).ok();
-
-    match hex.len() {
-        3 => {
-            let nibble = |i: usize| {
-                u8::from_str_radix(&hex[i..i + 1], 16)
-                    .ok()
-                    .map(|v| v << 4 | v)
-            };
-            Some(Color::from_argb(255, nibble(0)?, nibble(1)?, nibble(2)?))
-        }
-        6 => Some(Color::from_argb(255, byte(0)?, byte(2)?, byte(4)?)),
-        8 => Some(Color::from_argb(byte(6)?, byte(0)?, byte(2)?, byte(4)?)),
-        _ => None,
-    }
+        .or_else(|| parse_hex(&name))
+        .unwrap_or(Color::from_argb(255, 10, 132, 255))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn parses_hex_colours() {
-        assert_eq!(
-            parse_hex("#0A84FF"),
-            Some(Color::from_argb(255, 10, 132, 255))
-        );
-        assert_eq!(
-            parse_hex("  #fff  "),
-            Some(Color::from_argb(255, 255, 255, 255))
-        );
-        assert_eq!(
-            parse_hex("#FF000080"),
-            Some(Color::from_argb(128, 255, 0, 0))
-        );
-        assert_eq!(parse_hex("0A84FF"), None, "a leading # is required");
-        assert_eq!(parse_hex("#GGGGGG"), None);
-        assert_eq!(parse_hex("#12345"), None);
-    }
 
     #[test]
     fn named_accents_resolve_and_unknown_names_fall_back() {

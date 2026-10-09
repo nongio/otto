@@ -615,11 +615,12 @@ pub mod id {
     pub const NEW_FOLDER_WITH_SELECTION: &str = "new_folder_with_selection";
     pub const ADD_TO_STASH: &str = "add_to_stash";
     pub const UNDO: &str = "undo";
-    /// The three views, by name. Their ids double as the values
-    /// [`CHANGE_VIEW`] takes, so there is one spelling of "grid".
+    /// The views, by name. Their ids double as the values [`CHANGE_VIEW`]
+    /// takes, so there is one spelling of "grid".
     pub const VIEW_LIST: &str = "list";
     pub const VIEW_GRID: &str = "grid";
     pub const VIEW_COLUMNS: &str = "columns";
+    pub const VIEW_PHOTOS: &str = "photos";
     pub const CHANGE_VIEW: &str = "change_view";
     pub const SORT_BY: &str = "sort_by";
     pub const TOGGLE_HIDDEN: &str = "toggle_hidden";
@@ -635,6 +636,7 @@ pub fn view_choices() -> Vec<Choice> {
         Choice::new("list", otto_kit::t_owned!("files-view-list")),
         Choice::new("grid", otto_kit::t_owned!("files-view-grid")),
         Choice::new("columns", otto_kit::t_owned!("files-view-columns")),
+        Choice::new("photos", otto_kit::t_owned!("files-view-photos")),
     ]
 }
 
@@ -1026,7 +1028,7 @@ impl CommandProvider for Builtin {
 
         // --- View -----------------------------------------------------------
         if !s.trash {
-            // The three views by name as well as behind Change View: typing
+            // The views by name as well as behind Change View: typing
             // "grid" should land on the grid, not on a question about which
             // view you meant. The one that is already on is not offered —
             // switching to where you are is not a command.
@@ -1046,6 +1048,11 @@ impl CommandProvider for Builtin {
                     otto_kit::t_owned!("files-view-columns"),
                     "Ctrl+3",
                 ),
+                (
+                    id::VIEW_PHOTOS,
+                    otto_kit::t_owned!("files-view-photos"),
+                    "Ctrl+4",
+                ),
             ] {
                 if s.view == view {
                     continue;
@@ -1062,7 +1069,7 @@ impl CommandProvider for Builtin {
                     otto_kit::t_owned!("files-command-change-view"),
                     Group::View,
                 )
-                .with_keywords(["list", "grid", "icons", "columns", "layout"])
+                .with_keywords(["list", "grid", "icons", "columns", "photos", "layout"])
                 .with_arg(
                     ArgSpec::new(
                         otto_kit::t_owned!("files-command-change-view-prompt"),
@@ -1327,6 +1334,7 @@ mod tests {
         let offered = ids(&browsing());
         assert!(!offered.contains(&id::VIEW_LIST.to_string()));
         assert!(offered.contains(&id::VIEW_GRID.to_string()));
+        assert!(offered.contains(&id::VIEW_PHOTOS.to_string()));
         assert!(offered.contains(&id::CHANGE_VIEW.to_string()));
     }
 

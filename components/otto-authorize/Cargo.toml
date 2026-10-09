@@ -1,0 +1,24 @@
+[package]
+name = "otto-authorize"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Otto's polkit authentication agent: the password panel for pkexec, system services and protected settings"
+
+[dependencies]
+otto-kit = { path = "../otto-kit" }
+otto-auth-ui = { path = "../otto-auth-ui", features = ["pam"] }
+smithay-client-toolkit = { workspace = true, features = ["calloop", "xkbcommon"] }
+wayland-client.workspace = true
+wayland-protocols-wlr = { workspace = true, features = ["client"] }
+libc.workspace = true
+# polkit's own agent library (libpolkit-agent-1): registration, polkitd's
+# requests and the helper conversation.
+polkit-agent-rs = "0.3"
+tokio = { workspace = true, features = ["sync"] }
+tracing.workspace = true
+
+[lints]
+workspace = true

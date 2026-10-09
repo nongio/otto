@@ -24,6 +24,7 @@ If you are installing Otto for the first time, start with
 | [Dock](dock.md) | Running apps, minimized windows, bookmarks, autohide, magnification |
 | [Top Bar](topbar.md) | Clock, system tray, global application menus |
 | [Dynamic Island](dynamic-island.md) | Notifications, live activities, permission dialogs |
+| [Side Canvas](side-canvas.md) | The column that slides in from the right edge |
 | [Keyboard Shortcuts](keyboard-shortcuts.md) | Binding syntax and the complete action list |
 | [Touchpad Gestures](gestures.md) | Three-finger swipes, four-finger pinch |
 
@@ -68,6 +69,7 @@ versions: useful day to day, still filling in.
 | [Lock Screen](lock-screen.md) | Locking, idle auto-lock, fingerprint unlock, PAM setup |
 | [Login Greeter](login-greeter.md) | Using Otto as the login screen with greetd |
 | [Screen Sharing](screen-sharing.md) | Portal setup, browsers, OBS, AirPlay, screenshots |
+| [Privacy](privacy.md) | What apps were allowed, remembered shares, the password panel |
 | [Accessibility](accessibility.md) | Screen readers and keyboard-only use: setup, what is announced, driving Otto's applications from the keyboard |
 | [Remote Desktop](remote-desktop.md) | `otto-rdp`, virtual outputs, connecting from RDP clients |
 | [Scripting](scripting.md) | `otto-msg`: driving windows and tiling from a script, in i3's command language |
@@ -92,5 +94,5 @@ filing a bug, writing a page of documentation, picking up a feature. Start at
 the [issue tracker](https://github.com/nongio/otto/issues), or say hello first
 in one of the rooms below.
 
-Questions and feedback are welcome on [Discord](https://discord.gg/AdXkrYKuz) or in the Matrix room
+Questions and feedback are welcome on [Discord](https://discord.gg/Mp7cBfaACD) or in the Matrix room
 [`#otto-compositor:matrix.org`](https://matrix.to/#/#otto-compositor:matrix.org).

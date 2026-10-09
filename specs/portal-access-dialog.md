@@ -176,8 +176,8 @@ Stages 1–3 implemented (compiling; runtime verification pending):
   and brokers to the renderer, translating `a{sv}` options/results ↔ the typed
   call. Denies if no renderer is reachable.
 - **Screencast** `SelectSources` prompts via the renderer (consent + output
-  choice); the `~/.config/otto/screencast-output` override now only *skips* the
-  prompt for headless/testing.
+  choice). With no renderer reachable it is refused; the former
+  `~/.config/otto/screencast-output` override is gone.
 
 ### Questions (`PresentQuestion`)
 

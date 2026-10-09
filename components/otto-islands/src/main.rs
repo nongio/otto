@@ -6,8 +6,10 @@ mod dialog;
 mod dock_overlays;
 mod mpris;
 mod music;
+mod notification_permission;
 mod notifications;
 mod renderer;
+mod shell_windows;
 mod state;
 
 use std::sync::{Arc, Mutex};
@@ -1760,10 +1762,22 @@ impl IslandApp {
                 let (eq_w, eq_h, _, _) = music::MusicActivityRenderer::eq_layout(mode, w, h);
                 let buf_w = music::EQ_BUF_W as f32;
                 let buf_h = music::EQ_BUF_H as f32;
+                let bars = skia_safe::Rect::from_xywh(
+                    (buf_w - eq_w) / 2.0,
+                    (buf_h - eq_h) / 2.0,
+                    eq_w,
+                    eq_h,
+                );
+                // A frame of the same layout changes only the bars. After a
+                // layout change the whole buffer goes out, so bars drawn at
+                // the old size don't linger outside the new rect.
+                if visualiser.drawn {
+                    visualiser.surface.base_surface().add_frame_damage(&[bars]);
+                }
                 visualiser.surface.draw(|canvas| {
                     canvas.clear(skia_safe::Color::TRANSPARENT);
                     canvas.save();
-                    canvas.translate(((buf_w - eq_w) / 2.0, (buf_h - eq_h) / 2.0));
+                    canvas.translate((bars.left, bars.top));
                     mr.draw_eq_only(canvas, mode, eq_w, eq_h);
                     canvas.restore();
                 });
@@ -2294,15 +2308,10 @@ fn request_focus_app(app_id: String) {
                 return;
             }
         };
-        let reply = connection
-            .call_method(
-                Some("org.otto.Compositor"),
-                "/org/otto/Compositor",
-                Some("org.otto.Compositor"),
-                "FocusApp",
-                &(app_id.as_str(),),
-            )
-            .await;
+        let reply = match otto_kit::dbus::compositor::CompositorProxy::new(&connection).await {
+            Ok(compositor) => compositor.focus_app(&app_id).await,
+            Err(e) => Err(e),
+        };
         if let Err(e) = reply {
             tracing::warn!(app_id, "focus_app D-Bus call failed: {e}");
         }
@@ -2325,9 +2334,10 @@ fn emit_action_invoked(notification_id: u32, action_key: String) {
         return;
     };
     tokio::spawn(async move {
-        let Ok(ctxt) =
-            zbus::SignalContext::new(&connection, notifications::NOTIFICATIONS_DBUS_PATH)
-        else {
+        let Ok(ctxt) = zbus::object_server::SignalEmitter::new(
+            &connection,
+            notifications::NOTIFICATIONS_DBUS_PATH,
+        ) else {
             tracing::warn!(
                 notification_id,
                 "ActionInvoked: failed to build signal context"
@@ -2355,9 +2365,10 @@ fn emit_notification_closed(notification_id: u32, reason: u32) {
         return;
     };
     tokio::spawn(async move {
-        let Ok(ctxt) =
-            zbus::SignalContext::new(&connection, notifications::NOTIFICATIONS_DBUS_PATH)
-        else {
+        let Ok(ctxt) = zbus::object_server::SignalEmitter::new(
+            &connection,
+            notifications::NOTIFICATIONS_DBUS_PATH,
+        ) else {
             tracing::warn!(
                 notification_id,
                 "NotificationClosed: failed to build signal context"
@@ -2379,12 +2390,7 @@ fn emit_notification_closed(notification_id: u32, reason: u32) {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-        )
-        .init();
+    otto_kit::logging::init("info");
 
     // Before any surface is drawn: every label below is looked up once and
     // the catalogue is chosen once, for the life of the process.
@@ -2399,8 +2405,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let service = IslandService::new(dbus_state);
         let dialog_service = DialogService::new(dialog_state);
 
-        let connection = match zbus::ConnectionBuilder::session()
+        let connection = match zbus::connection::Builder::session()
             .expect("session bus")
+            .allow_name_replacements(false)
             .name(DBUS_NAME)
             .expect("claim D-Bus name")
             .build()
@@ -2441,8 +2448,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tokio::spawn(async move {
         let daemon = notifications::NotificationDaemon::new(notif_state);
 
-        let connection = match zbus::ConnectionBuilder::session()
+        let connection = match zbus::connection::Builder::session()
             .expect("session bus")
+            .allow_name_replacements(false)
             .name(notifications::NOTIFICATIONS_DBUS_NAME)
             .expect("claim notifications name")
             .build()

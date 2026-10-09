@@ -15,7 +15,6 @@ impl Browser {
             show_hidden: false,
             list_columns: view::ListColumnWidths::default(),
             column_resize: None,
-            miller_w: view::MILLER_W,
             miller_resize: None,
             last_miller_click: None,
             last_row_click: None,
@@ -24,6 +23,7 @@ impl Browser {
             last_boundary_click: None,
             rename: None,
             pending_rename: None,
+            enter_after_rename: false,
             palette: None,
             palette_selection: None,
             palette_offset: (0.0, 0.0),
@@ -81,6 +81,10 @@ impl Browser {
             peek_follow: false,
             trash: false,
             desk: false,
+            desk_editing: None,
+            desk_config: None,
+            overflow_panel: None,
+            overflow_panel_closing: None,
             recent: false,
             search: None,
             search_where: String::new(),
@@ -89,6 +93,25 @@ impl Browser {
             searching: false,
             index: crate::search::IndexWatch::default(),
             recent_sections: view::GridSections::default(),
+            photos: view::PhotosLayout::default(),
+            photos_key: None,
+            photo_dims: crate::photos::Dims::new(),
+            photo_hover: None,
+            photo_swatch_hover: None,
+            panel_text: None,
+            info_selection: Default::default(),
+            folder_views: Vec::new(),
+            photos_row_h: view::PHOTOS_ROW_H,
+            grid_icon: view::DEFAULT_GRID_ICON,
+            photos_group: crate::photos::Grouping::default(),
+            folder_previews: crate::photos::FolderPreviews::new(),
+            photos_slider: Default::default(),
+            zoom_pinch: None,
+            photos_group_open: false,
+            location_open: false,
+            photos_copied: None,
+            photos_anchor: None,
+            scroll_to_after_layout: None,
             trash_pressed: None,
             status: None,
             job: None,
@@ -168,11 +191,7 @@ impl Browser {
     /// else to go.
     pub(super) fn for_desk(config: &crate::desk::DeskConfig) -> Self {
         view::set_shell(view::Shell::Desk);
-        view::set_desk_layout(view::DeskLayout {
-            anchor: config.anchor,
-            size: config.size,
-            padding: config.padding,
-        });
+        view::set_desk_layout(view::DeskLayout::from_config(config));
         view::set_grid_icon(config.icon_size);
         Self::listing_the_desk(config)
     }
@@ -193,6 +212,7 @@ impl Browser {
         // the way a window in the background does.
         browser.focused = false;
         browser.desk = true;
+        browser.desk_config = Some(config.clone());
         browser
     }
 

@@ -75,6 +75,10 @@ pub struct ContextMenu {
     /// A fade-out is in flight. Guards against stacking a second close
     /// transaction (and a second `on_close`) on top of one already running.
     closing: Rc<Cell<bool>>,
+    /// Bumped by every close. A fade-out's completion only tears the menu
+    /// down if no close came after it — [`Self::hide`] may already have, and
+    /// the menu may be up again by the time the fade would have ended.
+    close_generation: Rc<Cell<u64>>,
 
     /// A press landed on one of our client's surfaces that is not part of this
     /// menu. Acted on at the *next* pointer batch — see
@@ -129,6 +133,7 @@ impl ContextMenu {
             on_close: Rc::new(RefCell::new(None)),
             registered_surfaces: Rc::new(RefCell::new(HashMap::new())),
             closing: Rc::new(Cell::new(false)),
+            close_generation: Rc::new(Cell::new(0)),
             dismiss_pending: Rc::new(Cell::new(false)),
             typeahead: Rc::new(RefCell::new((String::new(), Instant::now()))),
         };
@@ -154,6 +159,7 @@ impl ContextMenu {
             on_close: Rc::new(RefCell::new(None)),
             registered_surfaces: Rc::new(RefCell::new(HashMap::new())),
             closing: Rc::new(Cell::new(false)),
+            close_generation: Rc::new(Cell::new(0)),
             dismiss_pending: Rc::new(Cell::new(false)),
             typeahead: Rc::new(RefCell::new((String::new(), Instant::now()))),
         }
@@ -203,6 +209,9 @@ impl ContextMenu {
         // A stale `closing` (e.g. a fade-out whose completion event never
         // arrived) must not wedge the menu permanently open.
         self.closing.set(false);
+        // A fade-out still running must not take down the menu shown now.
+        self.close_generation
+            .set(self.close_generation.get().wrapping_add(1));
         self.dismiss_pending.set(false);
         self.typeahead.borrow_mut().0.clear();
         self.show_menu_at_depth(0, parent, positioner, Some(serial));
@@ -222,6 +231,9 @@ impl ContextMenu {
         positioner: &smithay_client_toolkit::shell::xdg::XdgPositioner,
     ) {
         self.closing.set(false);
+        // A fade-out still running must not take down the menu shown now.
+        self.close_generation
+            .set(self.close_generation.get().wrapping_add(1));
         self.dismiss_pending.set(false);
         self.show_menu_at_depth_for_layer(0, layer_surface, positioner, None);
     }
@@ -240,6 +252,9 @@ impl ContextMenu {
         serial: u32,
     ) {
         self.closing.set(false);
+        // A fade-out still running must not take down the menu shown now.
+        self.close_generation
+            .set(self.close_generation.get().wrapping_add(1));
         self.dismiss_pending.set(false);
         self.typeahead.borrow_mut().0.clear();
         self.show_menu_at_depth_for_layer(0, layer_surface, positioner, Some(serial));
@@ -421,54 +436,11 @@ impl ContextMenu {
         }
     }
 
-    /// Internal: Show layer shell popup at depth (usually just root)
-    #[allow(dead_code)]
-    fn show_at_depth_layer(
-        &self,
-        depth: usize,
-        parent: &wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::ZwlrLayerSurfaceV1,
-        positioner: &smithay_client_toolkit::shell::xdg::XdgPositioner,
-    ) {
-        while self.popups.borrow().len() <= depth {
-            self.popups.borrow_mut().push(Rc::new(RefCell::new(None)));
-        }
-        let style = self.style.borrow().clone();
-        *self.popups.borrow()[depth].borrow_mut() = None;
-
-        let (width, height) = {
-            let state = self.state.borrow();
-            let items = state.items_at_depth(depth);
-            ContextMenuRenderer::measure_items(items, &style)
-        };
-
-        if let Ok(popup) =
-            PopupSurface::new_for_layer(parent, positioner, width as i32, height as i32)
-        {
-            ContextMenu::apply_surface_effects(&style, &popup);
-            let surface_id = popup.wl_surface().id();
-
-            self.registered_surfaces
-                .borrow_mut()
-                .insert(surface_id.clone(), depth);
-            *self.popups.borrow()[depth].borrow_mut() = Some(popup);
-
-            let popup_ref = self.popups.borrow()[depth].clone();
-            let state = self.state.clone();
-
-            AppContext::register_popup_configure_callback(surface_id, move |_serial| {
-                if let Some(popup) = popup_ref.borrow_mut().as_mut() {
-                    ContextMenu::apply_surface_effects(&style, popup);
-                    popup.mark_configured();
-
-                    Self::render_menu_at_depth(&state, &style, &popup_ref, depth);
-                }
-            });
-        }
-    }
-
     /// Hide the menu immediately (closes all popups)
     pub fn hide(&self) {
         tracing::debug!("context_menu: hide()");
+        self.close_generation
+            .set(self.close_generation.get().wrapping_add(1));
         self.closing.set(false);
         self.dismiss_pending.set(false);
         let mut reg = self.registered_surfaces.borrow_mut();
@@ -519,10 +491,17 @@ impl ContextMenu {
             let on_close = self.on_close.clone();
             let closing = self.closing.clone();
             let registered_surfaces = self.registered_surfaces.clone();
+            let generation = self.close_generation.clone();
+            let this_close = generation.get().wrapping_add(1);
+            generation.set(this_close);
             let transaction_id = animation.id();
             AppContext::register_transaction_completion_callback(
                 transaction_id,
                 Box::new(move || {
+                    // Closed for good already, and perhaps open again since.
+                    if generation.get() != this_close {
+                        return;
+                    }
                     for popup in popups.borrow().iter() {
                         if let Some(p) = popup.borrow().as_ref() {
                             registered_surfaces
@@ -648,7 +627,7 @@ impl ContextMenu {
                     let item_h = items_at_depth
                         .get(item_idx)
                         .map(|item| item.height)
-                        .unwrap_or(22.0);
+                        .unwrap_or(23.0);
 
                     // Y position includes top padding
                     (p_width, y_offset + style_borrow.vertical_padding, item_h)

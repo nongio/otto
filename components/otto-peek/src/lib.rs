@@ -75,9 +75,18 @@ pub fn thumbnail(
     modified: Option<std::time::SystemTime>,
     size: thumbcache::Size,
 ) -> Option<skia_safe::Image> {
-    if let Some(image) = thumbcache::lookup(path, modified, size) {
-        return Some(image);
-    }
+    thumbcache::lookup(path, modified, size).or_else(|| generate_thumbnail(path, size))
+}
+
+/// A thumbnail of `path` decoded in the sandbox, without consulting the
+/// shared cache — for a caller that has already looked there and found only
+/// something too small. `None` as for [`thumbnail`].
+///
+/// **Blocks**, and spawns the decode worker: see [`thumbnail`].
+pub fn generate_thumbnail(
+    path: &std::path::Path,
+    size: thumbcache::Size,
+) -> Option<skia_safe::Image> {
     // The same sandboxed decoder Peek uses, asked for a thumbnail-sized
     // picture rather than a panel-sized one. Untrusted bytes are parsed in the
     // worker, never here.

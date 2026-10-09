@@ -165,10 +165,8 @@ documented in `docs/developer/screenshare.md`.
 - The user's answer resolves as:
   - **Chose a source** → stored on the session; response `0`.
   - **Dismissed the dialog** → response `1` (cancelled). Nothing is captured.
-  - **No dialog renderer answered on the bus** → the portal falls back to the pre-picker
-    behaviour for monitors (override file, else first output) so a session without
-    otto-islands still shares a screen. A window is **never** selected on the user's behalf
-    in this path; if only windows were available the call returns response `2`.
+  - **No dialog renderer answered on the bus** → response `2`. Nothing is selected on the
+    user's behalf, neither a monitor nor a window.
 - `Start` calls `RecordMonitor` or `RecordWindow` according to the stored selection, and the
   resulting portal stream carries `source_type` = 1 or 2 to match.
 
@@ -255,28 +253,21 @@ documented in `docs/developer/screenshare.md`.
 - Only window streams raise it. A monitor stream leaves every titlebar unmarked.
 - Windows with client-side decorations get no badge; the compositor draws no bar for them.
 
-### Output-selection override file
+### When no picker answers
 
-- Before falling back to the default, the portal checks for an override file at
-  `$XDG_CONFIG_HOME/otto/screencast-output` (falling back to `~/.config/otto/screencast-output`
-  if `XDG_CONFIG_HOME` is unset). The file is read fresh on every `SelectSources` call — there
-  is no caching — so a user (or script) can change it between screencast sessions without
-  restarting the compositor or the portal.
-- The file's contents, trimmed of surrounding whitespace, are treated as a single output
-  connector name (e.g. `virtual-1`).
-- If the override names a connector present in the current `ListOutputs` result, that output
-  is selected and used for the rest of the session.
-- If the override file is missing, empty, or names a connector **not** present in
-  `ListOutputs`, the portal logs a warning and falls back to selecting the first output from
-  `ListOutputs`, exactly as if no override existed.
+- If no `org.otto.Dialog1` renderer answers, `SelectSources` is refused with
+  response 2. Nothing is picked on the user's behalf: no monitor, no window
+  (`specs/permissions.md`). The former `screencast-output` override file,
+  which picked a monitor here without asking, is gone.
 - If the app requests `multiple` source selection, the portal logs that it is limiting
   selection to a single source and proceeds with the single-choice picker above; it never
   selects more than one source.
-- The override only applies to the no-renderer fallback path; when the picker is reachable
-  the user's answer wins.
 
 ## Constraints & Edge Cases
 
+- **No picker, no share:** a session without otto-islands (or another Access
+  backend) cannot screencast through the portal at all. Consent that cannot be
+  asked for is not assumed.
 - **No SHM fallback pods alongside DMA-BUF pods:** when a GBM device is available and at
   least one modifier survives the allocation probe, Otto advertises *only* DMA-BUF format
   pods — it does not also offer a plain SHM pod as an additional fallback choice in the same
@@ -295,12 +286,6 @@ documented in `docs/developer/screenshare.md`.
   layout while the client reads the buffer as another (tiled-read-as-linear), producing
   visibly corrupted frames rather than a clean failure. This is why an unreadable
   `VideoModifier` is a hard error instead of a silent default to LINEAR.
-- **Output-selection override has no schema/validation beyond existence:** the override file
-  is a single trimmed line with no quoting, comments, or multi-output support; an invalid or
-  stale connector name degrades gracefully (falls back to first output with a warning) rather
-  than failing the session.
-- **The override is now only a fallback:** with the picker in place it applies solely when
-  no `org.otto.Dialog1` renderer answers, keeping headless/islands-less sessions working.
 - **A resized captured window is not renegotiated:** the stream keeps its original
   dimensions for its lifetime, cropping or letterboxing instead. Renegotiating mid-stream
   would require tearing down and re-announcing the PipeWire format, which many consumers
@@ -337,10 +322,6 @@ documented in `docs/developer/screenshare.md`.
   silent LINEAR default produced tiled-content-read-as-linear corrupted frames when the
   actual negotiated modifier could not be determined — a visible failure (session refuses to
   start) is preferable to a silently wrong render.
-- **Re-reading the override file on every `SelectSources` call** avoids requiring a portal
-  restart to pick a different output, which matters for the primary use case (switching
-  which virtual/monitor output gets captured across ad hoc RDP/screenshare testing sessions)
-  where restarting the whole D-Bus session is disruptive.
 
 - **Reusing the Access-style choice dialog for the picker** avoids building a bespoke
   source-picker UI: `org.freedesktop.impl.portal.Access` already defines a labelled radio

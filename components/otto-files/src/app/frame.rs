@@ -38,6 +38,10 @@ impl Browser {
         }
         let depth = self.active.min(self.columns.len() - 1);
         let selected = self.columns[depth].selection.len();
+        // One picked out of the Photos wall: what it can do next.
+        if selected == 1 && self.mode == ViewMode::Photos {
+            return Some(otto_kit::t_owned!("files-photos-one-selected"));
+        }
         (selected > 0).then(|| {
             otto_kit::t_owned!(
                 "files-status-selected",
@@ -75,6 +79,11 @@ impl Browser {
             );
         }
         let count = self.visible_len(depth);
+        // The Photos view counts what it is for: pictures, and the folders
+        // that might hold more.
+        if self.mode == ViewMode::Photos && count > 0 {
+            return self.photos_subtitle(depth);
+        }
         let hidden = self.columns[depth]
             .snapshot
             .entries
@@ -204,9 +213,20 @@ impl Browser {
                 self.decoded_preview(),
                 self.preview.as_ref().and_then(|pane| pane.text),
             ),
+            caption_selection: self
+                .panel_selection(
+                    panel_text::TextPanel::Preview,
+                    &entry.path.to_string_lossy(),
+                )
+                .cloned(),
         });
+        let photos_info = self.photos_info_data();
+        let photos_info_selection = photos_info
+            .as_ref()
+            .and_then(|data| self.panel_selection(panel_text::TextPanel::Photos, &data.subject()));
 
         view::Frame {
+            desk_overflow: self.desk_overflow(),
             width: self.size.0,
             // The *file area's* bottom, not the window's — see
             // [`view::Frame::action_row`]. Every piece of geometry the frame
@@ -225,6 +245,19 @@ impl Browser {
             },
             mode: self.mode,
             grid_sections: &self.recent_sections,
+            photos: &self.photos,
+            photo_hover: self.photo_hover,
+            photo_folders: Some(&self.folder_previews),
+            photos_info,
+            photos_info_selection,
+            photos_controls: self.zoom_range().map(|(min, max, _)| view::PhotosControls {
+                value: self.zoom_value(),
+                min,
+                max,
+                group: (self.mode == ViewMode::Photos).then_some(self.photos_group),
+                group_open: self.photos_group_open,
+                sliding: self.photos_slider.is_dragging(),
+            }),
             // Recent has no path bar and no common parent, so a tile has to
             // name its own folder or there is nothing saying where a file came
             // from.
@@ -248,7 +281,7 @@ impl Browser {
             active: self.active,
             pan: self.pan.offset(),
             pan_bar: (self.mode == ViewMode::Columns).then_some(&self.pan.state),
-            miller_w: self.miller_w,
+            miller: self.miller_widths(),
             sort: self.sort,
             ascending: self.ascending,
             list_columns: self.list_columns,
@@ -271,6 +304,8 @@ impl Browser {
                 filters: &session.filter_labels,
                 current_filter: session.current_filter,
                 filter_open: session.filter_open,
+                location_open: self.location_open,
+                location_icon: self.location_icons().into_iter().next().unwrap_or_default(),
                 hovered: self.footer_hover,
                 pressed: self.footer_pressed,
             }),

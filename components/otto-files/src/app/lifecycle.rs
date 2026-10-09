@@ -158,12 +158,32 @@ impl App for FilesApp {
                     depth,
                     browser.content_h(),
                     browser.pan.offset(),
-                    browser.miller_w,
+                    &browser.miller_widths(),
                 );
                 let strip = view::RowStrip::miller(pane, count, scroll);
                 (
                     Box::new(move |index| strip.rect(index)),
                     strip.visible(pane),
+                )
+            }
+            ViewMode::Grid if browser.desk_overflow().is_some() => {
+                // The desk's overflow tile: the cells up to it, and the
+                // panel's items while it is open. Closed, the tile is one
+                // node.
+                let cells =
+                    view::content_viewport(browser.size.0, browser.content_h(), ViewMode::Grid);
+                let overflow = browser.desk_overflow().expect("checked by the guard");
+                let end = match overflow.panel {
+                    Some(_) => browser.desk_overflow_shown().unwrap_or_default().end,
+                    None => overflow.tile.first + 1,
+                };
+                (
+                    Box::new(move |index| {
+                        overflow.entry_rect(cells, index).unwrap_or_else(|| {
+                            view::grid_cell_rect_in(cells, view::GridSections::FLAT, index, 0.0)
+                        })
+                    }),
+                    0..end.min(count),
                 )
             }
             ViewMode::Grid => {
@@ -176,10 +196,36 @@ impl App for FilesApp {
                     shown,
                 )
             }
+            ViewMode::Photos => {
+                let tiles = browser.photos.area(browser.size.0, browser.content_h());
+                let photos = &browser.photos;
+                let shown = photos.visible_range(tiles, scroll, tiles);
+                let shown = shown.start.min(count)..shown.end.min(count);
+                // Only the rects the tree asks for, rather than the whole
+                // layout moved into the closure.
+                let rects: Vec<(usize, Rect)> = shown
+                    .clone()
+                    .chain(cursor)
+                    .map(|index| (index, photos.tile_rect(tiles, index, scroll)))
+                    .collect();
+                (
+                    Box::new(move |index| {
+                        rects
+                            .iter()
+                            .find(|(i, _)| *i == index)
+                            .map_or_else(Rect::new_empty, |(_, rect)| *rect)
+                    }),
+                    shown,
+                )
+            }
         };
         // The keyboard's row is described wherever it is: it is what the focus
         // names, and a focus pointing at an undescribed node reads as nothing.
         let off_screen_cursor = cursor.filter(|c| *c < count && !shown.contains(c));
+        let closed_tile = browser
+            .desk_overflow()
+            .filter(|overflow| overflow.panel.is_none())
+            .map(|overflow| overflow.tile);
 
         tree.region(
             FILES_LIST,
@@ -193,6 +239,19 @@ impl App for FilesApp {
                     tree.control(row_focus(index), bounds, Role::ListItem, true, |node| {
                         node.set_size_of_set(count);
                         node.set_position_in_set(index + 1);
+                        if let Some(tile) = closed_tile.filter(|tile| tile.first == index) {
+                            node.set_label(otto_kit::t_owned!(
+                                "files-desk-overflow",
+                                count = tile.count as i64
+                            ));
+                            node.set_selected(
+                                tile.range()
+                                    .filter_map(|i| entries.get(i))
+                                    .any(|e| selection.contains(&e.selection_key())),
+                            );
+                            node.add_action(Action::Click);
+                            return;
+                        }
                         node.set_label(entry.name.clone());
                         // What the Kind column says, plus the size for a file: the
                         // two things that tell one listing row from another when
@@ -229,7 +288,7 @@ impl App for FilesApp {
                 browser.columns.len(),
                 browser.content_h(),
                 browser.pan.offset(),
-                browser.miller_w,
+                &browser.miller_widths(),
             );
             tree.preview(PREVIEW_PANE, pane, &name, decoded);
         }
@@ -269,7 +328,11 @@ impl App for FilesApp {
         });
         let Some(index) = target else { return };
 
-        browser.press_entry(depth, index);
+        if browser.closed_tile_at(index).is_some() {
+            browser.open_overflow_panel();
+        } else {
+            browser.press_entry(depth, index);
+        }
         drop(browser);
         self.render();
     }
@@ -300,6 +363,8 @@ impl App for FilesApp {
         // surface has no activated state — and it is read here.
         if view::is_desk() {
             self.follow_desk_focus();
+            self.follow_overflow_focus();
+            self.follow_desk_edit();
         } else if let Some(window) = self.window.as_ref() {
             let area = {
                 let browser = self.state.lock().unwrap();
@@ -321,6 +386,8 @@ impl App for FilesApp {
             scroll_area,
             thumb_jobs,
             ocr_job,
+            dims_jobs,
+            folder_jobs,
         ) = {
             let mut browser = self.state.lock().unwrap();
             let changed = browser.poll();
@@ -333,13 +400,17 @@ impl App for FilesApp {
             browser.tick_palette_scroll();
             // The Open With chooser's list, likewise: its own window.
             browser.tick_open_with_scroll();
+            // And the desk's overflow panel, on its own surface: its scroll,
+            // and its exit, which ends by taking the surface down.
+            browser.tick_overflow_panel();
             let elapsed = browser.caret_elapsed();
             let blinking = browser.tick_caret(elapsed);
             let animating = blinking
                 | browser.peek_animating()
                 | browser.tick_peek_animation()
                 | browser.tick_peek_exit()
-                | browser.tick_open_pulse();
+                | browser.tick_open_pulse()
+                | browser.tick_photos_copied();
             // The docked preview column follows the selection wherever it
             // moves — a click, an arrow key, a directory finishing a load
             // that changes what "the selection" resolves to — so this is
@@ -352,6 +423,9 @@ impl App for FilesApp {
             // switch of view mode — has already happened by the time this
             // runs.
             let thumb_jobs = browser.sync_thumbnails();
+            // And the Photos view's picture sizes, a batch at a time.
+            let dims_jobs = browser.sync_photo_dims();
+            let folder_jobs = browser.sync_folder_previews();
             // And, with nothing else to do, a picture whose text is not yet
             // known to Find.
             let ocr_job = browser.sync_recognition();
@@ -378,6 +452,8 @@ impl App for FilesApp {
                 scroll_area,
                 thumb_jobs,
                 ocr_job,
+                dims_jobs,
+                folder_jobs,
             )
         };
         if let Some(job) = ocr_job {
@@ -388,6 +464,12 @@ impl App for FilesApp {
         }
         for job in thumb_jobs {
             self.start_thumbnail(job);
+        }
+        if !dims_jobs.is_empty() {
+            self.start_photo_dims(dims_jobs);
+        }
+        if !folder_jobs.is_empty() {
+            self.start_folder_previews(folder_jobs);
         }
 
         // One lock, taken once. A `self.state.lock()` in an `if` condition
@@ -433,6 +515,9 @@ impl App for FilesApp {
                 None => self.render(),
             }
         }
+        if view::is_desk() {
+            self.sync_overflow_surface(repaint);
+        }
 
         self.sync_info_window();
         self.sync_open_with_window();
@@ -450,17 +535,21 @@ impl App for FilesApp {
         for column in &mut browser.columns {
             column.scroll.stop();
         }
+        browser.stop_overflow_scroll();
         drop(browser);
         self.render();
     }
 
-    /// A two-finger pinch zooms the open preview's picture.
-    ///
-    /// Only the preview: the browser's own views have no zoom, and a pinch
-    /// with no panel up is left alone rather than repurposed into something
-    /// the gesture does not mean anywhere else.
+    /// A two-finger pinch zooms the open preview's picture, or, with no
+    /// preview up, sizes the Photos view's pictures or the icon view's icons
+    /// the way their slider does. The other views have no zoom, and a pinch
+    /// there is left alone rather than repurposed into something the gesture
+    /// does not mean.
     fn on_pointer_pinch_begin(&mut self, _ctx: &AppContext, fingers: u32) {
         let mut browser = self.state.lock().unwrap();
+        browser.zoom_pinch = (fingers == 2 && browser.peek.is_none())
+            .then(|| browser.zoom_range().map(|_| browser.zoom_value()))
+            .flatten();
         // Where this gesture's scale is measured from. Taken at the start
         // because the protocol reports scale against the start.
         browser.peek_pinch = (fingers == 2)
@@ -477,6 +566,15 @@ impl App for FilesApp {
         _rotation: f64,
     ) {
         let mut browser = self.state.lock().unwrap();
+        if let Some(base) = browser.zoom_pinch {
+            browser.set_zoom(base * scale as f32);
+            let moved = browser.dirty;
+            drop(browser);
+            if moved {
+                self.render();
+            }
+            return;
+        }
         let Some(base) = browser.peek_pinch else {
             return;
         };
@@ -490,7 +588,11 @@ impl App for FilesApp {
     fn on_pointer_pinch_end(&mut self, _ctx: &AppContext, _cancelled: bool) {
         // Nothing to settle: every update already left the zoom clamped and
         // snapped, so the fingers lifting only ends the gesture.
-        self.state.lock().unwrap().peek_pinch = None;
+        let mut browser = self.state.lock().unwrap();
+        browser.peek_pinch = None;
+        if browser.zoom_pinch.take().is_some() {
+            browser.finish_zoom_pinch();
+        }
     }
 
     /// While something is gliding the app needs a steady clock, not just the
@@ -499,6 +601,8 @@ impl App for FilesApp {
         let browser = self.state.lock().unwrap();
         let animating = browser.scroll_animating()
             || browser.peek_animating()
+            // The desk's overflow panel growing, shrinking or gliding.
+            || browser.overflow_animating()
             // An animated preview has a frame due on its own clock, with
             // nothing else on screen moving to ask for one.
             || browser.peek_frames_running()
@@ -531,8 +635,15 @@ impl App for FilesApp {
         let (width, height) = (width as f32, height as f32);
         // Presses land only on the panel. Under `fill` that is the whole
         // surface; a smaller panel leaves the rest of the desktop to the
-        // wallpaper's own clients.
-        window.set_input_region(Some(&[view::desk_panel_rect(width, height)]));
+        // wallpaper's own clients. In edit mode, everywhere: a handle sits
+        // half outside the panel, and a press beside it must not fall through.
+        let region = if self.desk_surface_editing {
+            Rect::from_wh(width, height)
+        } else {
+            view::desk_panel_rect(width, height)
+        };
+        window.set_input_region(Some(&[region]));
+        self.desk_input_region = Some(region);
         {
             let mut browser = self.state.lock().unwrap();
             browser.size = (width, height);
@@ -683,7 +794,13 @@ impl FilesApp {
             let mut search_caret = None;
             let mut save_caret = None;
 
-            if let Some(session) = browser.rename.as_ref() {
+            // A rename in the desk's overflow panel is drawn on the panel's
+            // own surface; see `overflow_surface`.
+            if let Some(session) = browser
+                .rename
+                .as_ref()
+                .filter(|session| !browser.in_overflow_panel(session.index))
+            {
                 let (depth, index) = (session.depth, session.index);
                 let (width, height) = (browser.size.0, browser.content_h());
                 let count = browser.visible(depth).len();
@@ -697,7 +814,7 @@ impl FilesApp {
                         view::miller_rename_rect(
                             height,
                             browser.pan.offset(),
-                            browser.miller_w,
+                            &browser.miller_widths(),
                             depth,
                             count,
                             scroll,
@@ -705,7 +822,19 @@ impl FilesApp {
                             is_dir,
                         )
                     }
-                    ViewMode::Grid => view::grid_rename_rect(width, height, scroll, index),
+                    ViewMode::Grid => match browser.desk_overflow_entry_rect(index) {
+                        Some(cell) => view::grid_rename_rect_over(cell),
+                        None => view::grid_rename_rect(
+                            width,
+                            height,
+                            &browser.recent_sections,
+                            scroll,
+                            index,
+                        ),
+                    },
+                    ViewMode::Photos => {
+                        view::photos_rename_rect(width, height, &browser.photos, scroll, index)
+                    }
                 };
                 let session = browser.rename.as_mut().unwrap();
                 session.input.set_size(rect.width(), rect.height());
@@ -806,7 +935,14 @@ impl FilesApp {
         self.install_palette_pointer();
         self.install_info_window_pointer();
         self.install_open_with_window_pointer();
-        self.install_pointer(&window, self.context_menu.clone().unwrap());
+        // Built here rather than on first use, for the reason the context
+        // menu is: see `DropdownMenu`'s docs.
+        let group_menu = Rc::new(otto_kit::components::dropdown::DropdownMenu::new());
+        self.group_menu = Some(Rc::clone(&group_menu));
+        self.install_pointer(&window, self.context_menu.clone().unwrap(), group_menu);
+        if view::is_desk() {
+            self.install_overflow_pointer(&window, self.context_menu.clone().unwrap());
+        }
         self.install_frame_loop(&window);
         AppContext::register_window(window.clone());
         self.window = Some(window);
@@ -850,6 +986,69 @@ impl FilesApp {
         Ok(())
     }
 
+    /// Keep the desk's surface in step with its config and its edit mode.
+    ///
+    /// A call to `org.otto.Desk1.EditLayout` starts edit mode; a change to
+    /// `files.toml` is re-read; and the surface follows edit mode: above the
+    /// windows and holding the keyboard while it is up, so the outline is not
+    /// hidden under Settings and Escape reaches it, back below them after.
+    fn follow_desk_edit(&mut self) {
+        use otto_kit::surfaces::layer_shell::{KeyboardInteractivity, Layer};
+
+        if self.desk_config_watch.is_none() {
+            let dir = crate::places_config::config_path()
+                .and_then(|path| path.parent().map(Path::to_path_buf));
+            if let Some(dir) = dir {
+                // The folder Otto's own configuration lives in. Made here if
+                // missing, since a folder that does not exist cannot be
+                // watched for the file appearing in it.
+                let _ = std::fs::create_dir_all(&dir);
+                self.desk_config_watch = Some(crate::watch::DirWatch::new(&dir));
+            }
+        }
+        let config_changed = self
+            .desk_config_watch
+            .as_ref()
+            .is_some_and(|watch| watch.take().is_some());
+
+        let (editing, size) = {
+            let mut browser = self.state.lock().unwrap();
+            if crate::desk_service::take_edit_request() {
+                browser.begin_desk_edit();
+            }
+            if config_changed {
+                browser.reload_desk_config();
+            }
+            (browser.desk_editing.is_some(), browser.size)
+        };
+
+        let Some(window) = self.window.as_ref() else {
+            return;
+        };
+        if editing != self.desk_surface_editing {
+            self.desk_surface_editing = editing;
+            if let Some(surface) = window.layer_surface() {
+                if editing {
+                    surface.set_layer(Layer::Top);
+                    surface.set_keyboard_interactivity(KeyboardInteractivity::Exclusive);
+                } else {
+                    surface.set_layer(Layer::Bottom);
+                    surface.set_keyboard_interactivity(KeyboardInteractivity::OnDemand);
+                }
+            }
+        }
+        let region = if editing {
+            Rect::from_wh(size.0, size.1)
+        } else {
+            view::desk_panel_rect(size.0, size.1)
+        };
+        if self.desk_input_region != Some(region) {
+            self.desk_input_region = Some(region);
+            window.set_input_region(Some(&[region]));
+            window.request_frame();
+        }
+    }
+
     /// Whether the desk holds the keyboard, as the browser's chrome reads
     /// focus: the selection is drawn at full strength only while typing
     /// would land here.
@@ -857,8 +1056,11 @@ impl FilesApp {
         let Some(window) = self.window.as_ref() else {
             return;
         };
-        let focused =
-            window.surface_id().is_some() && AppContext::keyboard_focus() == window.surface_id();
+        // The overflow panel's overlay holding it counts: the keys still
+        // land on the desk's icons.
+        let focused = (window.surface_id().is_some()
+            && AppContext::keyboard_focus() == window.surface_id())
+            || self.overflow_has_keyboard();
         let mut browser = self.state.lock().unwrap();
         if browser.focused != focused {
             browser.focused = focused;
@@ -895,6 +1097,7 @@ impl FilesApp {
         let mods = KeyMods {
             shift: false,
             ctrl: false,
+            ..KeyMods::default()
         };
         // A value other than a bare "1" is typed in, so a screenshot can be
         // taken of the palette part-way through a query rather than at rest.
@@ -979,7 +1182,9 @@ impl FilesApp {
         // connection, and the bus starts a fresh one when it is next needed.
         match queue.next_session() {
             Some(session) => {
-                let start = session.request.starting_directory(None);
+                let start = session
+                    .request
+                    .starting_directory(crate::picker_dirs::remembered(&session.request.app_id));
                 let mut browser = self.state.lock().unwrap();
                 let size = browser.size;
                 *browser = Browser::for_picker(session, start);

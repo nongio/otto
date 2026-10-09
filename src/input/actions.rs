@@ -22,7 +22,6 @@ use crate::{
 };
 
 /// Possible results of a keyboard action
-#[allow(dead_code)]
 #[derive(Debug)]
 pub enum KeyAction {
     /// Quit the compositor
@@ -61,6 +60,8 @@ pub enum KeyAction {
     MediaStop,
     /// Lock the session by launching the configured locker
     LockSession,
+    /// Show the side canvas, or hide it if it is shown
+    CanvasToggle,
     // ── Tiling ───────────────────────────────────────────────────────────
     TilingToggle,
     TilingFocus(crate::workspaces::tiling::Direction),
@@ -184,12 +185,17 @@ impl<BackendData: Backend> Otto<BackendData> {
             return;
         }
 
+        // Before `exec_once`, so the session's agent is Otto's unless the
+        // configuration turns it off for one of the user's own.
+        self.start_polkit_agent();
+
         let entries = Config::with(|c| c.exec_once.clone());
         for entry in entries {
             self.launch_program(entry.cmd, entry.args);
         }
 
         self.apply_desk_setting();
+        self.apply_desktop_widget_setting();
         crate::search_index::sync(None);
 
         if Config::with(|c| c.xdg_autostart) {
@@ -288,18 +294,18 @@ impl<BackendData: Backend> Otto<BackendData> {
                 self.launch_program(cmd, args);
             }
 
-            // Locking is launching the locker: it binds
-            // `ext_session_lock_manager_v1` and asks for the lock itself, so
-            // an idle daemon or a suspend hook running the same command takes
-            // exactly the same path. See `src/lock.rs`.
+            // The blank goes up at once and the locker is started into it;
+            // the locker asks for the lock itself. An idle daemon or a suspend
+            // hook goes through logind (`loginctl lock-session`), which ends
+            // up in the same place. See `src/lock.rs`.
             KeyAction::LockSession => {
                 if self.is_session_locked() {
                     return;
                 }
-                let (cmd, args) = crate::lock::locker_command();
-                info!(locker = %cmd, "Locking session");
-                self.launch_program(cmd, args);
+                self.lock_session();
             }
+
+            KeyAction::CanvasToggle => self.canvas_toggle(),
 
             KeyAction::PowerButton => {
                 use crate::config::PowerButtonAction;
@@ -697,13 +703,14 @@ impl<BackendData: Backend> Otto<BackendData> {
         }
     }
 
-    /// Dispatch one action coming from the debug hook rather than from a key
-    /// press. The window-management actions live in the per-backend *keyboard*
-    /// dispatchers, not in [`Self::process_common_key_action`] — which warns
-    /// and drops anything it does not own — so they need explicit arms here.
-    /// Without them the hook logged "executing debug action" and then did
-    /// nothing for the app switcher, tiling, maximize and close.
-    fn process_debug_key_action(&mut self, action: KeyAction) {
+    /// Run `action` if it means the same on every backend, or hand it back.
+    ///
+    /// Both keyboard dispatchers (`process_input_event_windowed`,
+    /// `process_input_event`) and the debug action hook go through here.
+    /// What comes back is either backend-specific — output scale and
+    /// rotation, VT and screen switching — or `TilingDragCancel`, which only
+    /// means something while a titlebar drag is up.
+    pub(crate) fn dispatch_key_action(&mut self, action: KeyAction) -> Option<KeyAction> {
         match action {
             KeyAction::ExposeShowAll => self.handle_expose_show_all(),
             KeyAction::ExposeShowDesktop => self.handle_expose_show_desktop(),
@@ -728,8 +735,43 @@ impl<BackendData: Backend> Otto<BackendData> {
             KeyAction::TilingFocusModeToggle => {
                 let _ = self.handle_tiling_focus_mode(None);
             }
-            KeyAction::TilingDragCancel => self.handle_tiling_drag_cancel(),
-            other => self.process_common_key_action(other),
+            KeyAction::None
+            | KeyAction::Quit
+            | KeyAction::Run(_)
+            | KeyAction::ToggleDecorations
+            | KeyAction::SceneSnapshot
+            | KeyAction::SkpSnapshot
+            | KeyAction::LockSession
+            | KeyAction::CanvasToggle
+            | KeyAction::PowerButton
+            | KeyAction::BrightnessUp
+            | KeyAction::BrightnessDown
+            | KeyAction::VolumeUp
+            | KeyAction::VolumeDown
+            | KeyAction::VolumeMute
+            | KeyAction::MediaPlayPause
+            | KeyAction::MediaNext
+            | KeyAction::MediaPrev
+            | KeyAction::MediaStop => self.process_common_key_action(action),
+            KeyAction::VtSwitch(_)
+            | KeyAction::Screen(_)
+            | KeyAction::ScaleUp
+            | KeyAction::ScaleDown
+            | KeyAction::RotateOutput
+            | KeyAction::TilingDragCancel => return Some(action),
+        }
+        None
+    }
+
+    /// Dispatch one action coming from the debug hook rather than from a key
+    /// press. A titlebar drag can be cancelled from here; anything
+    /// backend-specific falls through to [`Self::process_common_key_action`],
+    /// which warns and drops it.
+    fn process_debug_key_action(&mut self, action: KeyAction) {
+        match self.dispatch_key_action(action) {
+            None => (),
+            Some(KeyAction::TilingDragCancel) => self.handle_tiling_drag_cancel(),
+            Some(other) => self.process_common_key_action(other),
         }
     }
 }
@@ -741,7 +783,20 @@ fn debug_action_file_path() -> String {
     std::env::var("OTTO_ACTION_FILE").unwrap_or_else(|_| "/tmp/otto-action".to_string())
 }
 
+/// Brightness goes through `brightness::blocking`, whose zbus `block_on` starts
+/// its own tokio runtime when the workspace zbus has the `tokio` feature. The
+/// compositor thread is inside `#[tokio::main]`, where that panics, so the call
+/// runs on a short-lived thread outside the runtime and is joined.
 fn adjust_brightness(delta: i32) -> Option<u8> {
+    std::thread::scope(|scope| {
+        scope
+            .spawn(|| adjust_brightness_blocking(delta))
+            .join()
+            .unwrap_or(None)
+    })
+}
+
+fn adjust_brightness_blocking(delta: i32) -> Option<u8> {
     let mut result_level = None;
 
     for device in brightness::blocking::brightness_devices() {
@@ -810,6 +865,7 @@ pub fn resolve_shortcut_action(config: &Config, action: &ShortcutAction) -> Opti
             BuiltinAction::MediaPrev => Some(KeyAction::MediaPrev),
             BuiltinAction::MediaStop => Some(KeyAction::MediaStop),
             BuiltinAction::LockSession => Some(KeyAction::LockSession),
+            BuiltinAction::CanvasToggle => Some(KeyAction::CanvasToggle),
             BuiltinAction::TilingToggle => Some(KeyAction::TilingToggle),
             BuiltinAction::FocusLeft => Some(KeyAction::TilingFocus(Direction::Left)),
             BuiltinAction::FocusRight => Some(KeyAction::TilingFocus(Direction::Right)),

@@ -507,7 +507,7 @@ impl Row {
 }
 
 fn build_rows(pane: &PaneData<'_>, range: (usize, usize), f: &Frame, depth: usize) -> Vec<Row> {
-    let width = f.miller_w;
+    let width = f.miller.width(depth);
     let font = styles::BODY_MEDIUM.font();
     let active = depth == f.active;
 
@@ -651,12 +651,19 @@ mod tests {
         };
         let theme = Theme::light();
         let frame = Frame {
+            desk_overflow: None,
             search: None,
             index_available: true,
             search_focused: false,
             search_placeholder: "",
             search_scope: crate::model::SearchScope::Folder,
             grid_sections: view::GridSections::FLAT,
+            photos: view::PhotosLayout::EMPTY,
+            photo_hover: None,
+            photo_folders: None,
+            photos_controls: None,
+            photos_info: None,
+            photos_info_selection: None,
             show_folders: false,
             mode_locked: false,
             trash: None,
@@ -672,7 +679,7 @@ mod tests {
             active: 0,
             pan: 0.0,
             pan_bar: None,
-            miller_w: view::MILLER_W,
+            miller: view::MillerWidths::default(),
             sort: crate::model::SortKey::Name,
             ascending: true,
             list_columns: view::ListColumnWidths::default(),

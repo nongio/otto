@@ -6,6 +6,7 @@
 
 use otto_kit::components::icon::Icon;
 use otto_kit::components::scroll::{ScrollRenderer, ScrollState};
+use otto_kit::components::selectable_text::{TextRun, TextSelection};
 use otto_kit::components::titlebar::{
     DecorationVariant, WindowControl, WindowControls, WindowControlsState, WindowDecoration,
 };
@@ -221,22 +222,72 @@ fn nav_hidden() -> bool {
 }
 
 /// Where the desk's panel sits inside its surface and how far its icons stay
-/// from the panel's edges. Set once from the `[desk]` config before the first
-/// frame; unused by every other shell.
-#[derive(Debug, Clone, Copy)]
+/// from the panel's edges. Set from the `[desk]` config before the first
+/// frame, and again whenever the config changes; unused by every other shell.
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DeskLayout {
     pub anchor: crate::desk::Anchor,
     pub size: [crate::desk::Extent; 2],
+    pub position: Option<[crate::desk::Extent; 2]>,
     /// Points between the panel's edges and the grid.
     pub padding: f32,
+}
+
+impl DeskLayout {
+    /// The layout `config` asks for.
+    pub fn from_config(config: &crate::desk::DeskConfig) -> Self {
+        Self {
+            anchor: config.anchor,
+            size: config.size,
+            position: config.position,
+            padding: config.padding,
+        }
+    }
 }
 
 /// The whole surface, unpadded: what the desk is until its config is read.
 const UNSET_DESK_LAYOUT: DeskLayout = DeskLayout {
     anchor: crate::desk::Anchor::Fill,
     size: [crate::desk::Extent::Percent(100.0); 2],
+    position: None,
     padding: 0.0,
 };
+
+/// The desk's edit mode, as the view draws it: the panel being dragged, in
+/// surface points, and which of the two buttons is held down.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DeskEdit {
+    pub panel: Rect,
+    pub pressed: Option<DeskEditButton>,
+}
+
+/// The two buttons edit mode shows on the panel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeskEditButton {
+    Cancel,
+    Done,
+}
+
+static DESK_EDIT: std::sync::RwLock<Option<DeskEdit>> = std::sync::RwLock::new(None);
+
+/// Enter, update or (with `None`) leave the desk's edit mode. While it is on,
+/// the panel is the edited rect rather than the configured one, so the grid
+/// reflows under the pointer as it drags.
+pub fn set_desk_edit(edit: Option<DeskEdit>) {
+    if let Ok(mut current) = DESK_EDIT.write() {
+        *current = edit;
+    }
+}
+
+/// The desk's edit mode, while it is on.
+pub fn desk_edit() -> Option<DeskEdit> {
+    DESK_EDIT.read().ok().and_then(|edit| *edit)
+}
+
+/// The desk's layout as last set.
+pub fn desk_layout() -> DeskLayout {
+    DESK_LAYOUT.read().map(|l| *l).unwrap_or(UNSET_DESK_LAYOUT)
+}
 
 static DESK_LAYOUT: std::sync::RwLock<DeskLayout> = std::sync::RwLock::new(UNSET_DESK_LAYOUT);
 
@@ -250,8 +301,165 @@ pub fn set_desk_layout(layout: DeskLayout) {
 /// The desk's panel inside a surface `width` × `height` points: what takes
 /// the pointer, and what the grid is laid out in once padded.
 pub fn desk_panel_rect(width: f32, height: f32) -> Rect {
-    let layout = DESK_LAYOUT.read().map(|l| *l).unwrap_or(UNSET_DESK_LAYOUT);
-    crate::desk::panel_rect(layout.anchor, layout.size, (width, height))
+    if let Some(edit) = desk_edit() {
+        return edit.panel;
+    }
+    let layout = desk_layout();
+    crate::desk::panel_rect(layout.anchor, layout.size, layout.position, (width, height))
+}
+
+/// Edit mode's two buttons: side by side, centred along the bottom of
+/// `panel`, inside it.
+pub fn desk_edit_button_rects(panel: Rect) -> [(DeskEditButton, Rect); 2] {
+    let y = panel.bottom - DESK_EDIT_INSET - DESK_EDIT_BTN_H;
+    let total = DESK_EDIT_BTN_W * 2.0 + DESK_EDIT_GAP;
+    let left = (panel.center_x() - total / 2.0).round();
+    [
+        (
+            DeskEditButton::Cancel,
+            Rect::from_xywh(left, y, DESK_EDIT_BTN_W, DESK_EDIT_BTN_H),
+        ),
+        (
+            DeskEditButton::Done,
+            Rect::from_xywh(
+                left + DESK_EDIT_BTN_W + DESK_EDIT_GAP,
+                y,
+                DESK_EDIT_BTN_W,
+                DESK_EDIT_BTN_H,
+            ),
+        ),
+    ]
+}
+
+/// Which of edit mode's buttons is at (`x`, `y`), if either.
+pub fn desk_edit_button_at(panel: Rect, x: f32, y: f32) -> Option<DeskEditButton> {
+    desk_edit_button_rects(panel)
+        .into_iter()
+        .find(|(_, rect)| rect.contains(Point::new(x, y)))
+        .map(|(button, _)| button)
+}
+
+/// Edit mode's button size and spacing, in points. Two of them and the gap
+/// fit inside [`crate::desk::MIN_PANEL`], so the smallest panel still shows
+/// both.
+const DESK_EDIT_BTN_W: f32 = 76.0;
+const DESK_EDIT_BTN_H: f32 = 28.0;
+const DESK_EDIT_GAP: f32 = 8.0;
+/// How far the buttons sit above the panel's bottom edge.
+const DESK_EDIT_INSET: f32 = 16.0;
+/// The side handles are pills lying along the outline: long enough to find,
+/// thin enough not to hide the icons under them. Sizes in points.
+const DESK_EDIT_PILL_LENGTH: f32 = 36.0;
+const DESK_EDIT_PILL_THICKNESS: f32 = 6.0;
+/// The corner handles are brackets that follow the outline's rounded corner,
+/// drawn as a stroke this thick with arms this long.
+const DESK_EDIT_BRACKET_THICKNESS: f32 = 6.0;
+const DESK_EDIT_BRACKET_ARM: f32 = 22.0;
+/// The outline's corner radius, which the brackets bend round.
+const DESK_EDIT_RADIUS: f32 = 12.0;
+
+/// The desk's edit mode over its grid: the panel's rounded outline in the accent with a bracket at each corner and a
+/// pill on each side, and the Cancel and Done buttons.
+fn draw_desk_edit(canvas: &Canvas, theme: &Theme, surface: Rect, edit: DeskEdit) {
+    let panel = edit.panel;
+    let mut paint = Paint::default();
+    paint.set_anti_alias(true);
+
+    // Inset by half the stroke, so the whole line sits on the panel and none
+    // of it is cut off at the edge of the screen.
+    paint.set_style(skia_safe::PaintStyle::Stroke);
+    paint.set_stroke_width(1.5);
+    paint.set_color(accent(theme));
+    let outline = panel.with_inset((0.75, 0.75));
+    canvas.draw_rrect(
+        RRect::new_rect_xy(outline, DESK_EDIT_RADIUS, DESK_EDIT_RADIUS),
+        &paint,
+    );
+
+    // Each handle is drawn twice: a blurred dark pass for the shadow that
+    // lifts it off any wallpaper, then the white shape itself.
+    let shadow = |paint: &mut Paint| {
+        paint.set_color(Color::from_argb(0x60, 0, 0, 0));
+        paint.set_mask_filter(skia_safe::MaskFilter::blur(
+            skia_safe::BlurStyle::Normal,
+            2.0,
+            None,
+        ));
+    };
+    let face = |paint: &mut Paint| {
+        paint.set_color(Color::WHITE);
+        paint.set_mask_filter(None);
+    };
+
+    let inset = DESK_EDIT_BRACKET_THICKNESS / 2.0;
+    for (i, (x, y)) in crate::desk::Grip::handles(outline).into_iter().enumerate() {
+        if i % 2 == 0 {
+            // A corner: which way the arms run from it.
+            let sx = if x <= outline.center_x() { 1.0 } else { -1.0 };
+            let sy = if y <= outline.center_y() { 1.0 } else { -1.0 };
+            // Pulled in to stay on screen when the panel meets an edge.
+            let x = x.clamp(surface.left + inset, surface.right - inset);
+            let y = y.clamp(surface.top + inset, surface.bottom - inset);
+            let r = DESK_EDIT_RADIUS;
+            let arm = DESK_EDIT_BRACKET_ARM;
+            let mut builder = PathBuilder::new();
+            builder.move_to(Point::new(x + sx * arm, y));
+            builder.line_to(Point::new(x + sx * r, y));
+            builder.quad_to(Point::new(x, y), Point::new(x, y + sy * r));
+            builder.line_to(Point::new(x, y + sy * arm));
+            let path = builder.detach();
+            paint.set_style(skia_safe::PaintStyle::Stroke);
+            paint.set_stroke_width(DESK_EDIT_BRACKET_THICKNESS);
+            paint.set_stroke_cap(skia_safe::paint::Cap::Round);
+            paint.set_stroke_join(skia_safe::paint::Join::Round);
+            for pass in [shadow, face] {
+                pass(&mut paint);
+                canvas.draw_path(&path, &paint);
+            }
+        } else {
+            // A side: the pill lies along it.
+            let along_x = i == 1 || i == 5;
+            let (w, h) = if along_x {
+                (DESK_EDIT_PILL_LENGTH, DESK_EDIT_PILL_THICKNESS)
+            } else {
+                (DESK_EDIT_PILL_THICKNESS, DESK_EDIT_PILL_LENGTH)
+            };
+            let x = x.clamp(surface.left + w / 2.0, surface.right - w / 2.0);
+            let y = y.clamp(surface.top + h / 2.0, surface.bottom - h / 2.0);
+            let pill = Rect::from_xywh(x - w / 2.0, y - h / 2.0, w, h);
+            let rrect = RRect::new_rect_xy(pill, w.min(h) / 2.0, w.min(h) / 2.0);
+            paint.set_style(skia_safe::PaintStyle::Fill);
+            for pass in [shadow, face] {
+                pass(&mut paint);
+                canvas.draw_rrect(rrect, &paint);
+            }
+        }
+    }
+    paint.set_mask_filter(None);
+
+    for (button, rect) in desk_edit_button_rects(panel) {
+        let pressed = edit.pressed == Some(button);
+        match button {
+            DeskEditButton::Cancel => draw_footer_button(
+                canvas,
+                rect,
+                otto_kit::t!("common-cancel"),
+                theme.fill_secondary,
+                theme.text_primary,
+                pressed,
+                true,
+            ),
+            DeskEditButton::Done => draw_footer_button(
+                canvas,
+                rect,
+                otto_kit::t!("files-desk-edit-done"),
+                accent(theme),
+                Color::WHITE,
+                pressed,
+                true,
+            ),
+        }
+    }
 }
 
 fn desk_padding() -> f32 {
@@ -295,20 +503,34 @@ pub const SEARCH_BAND_H: f32 = 46.0;
 /// geometry functions that answer that question take an area and an index, not
 /// a browser. Threading a flag through all of them to say the same thing at
 /// every call site would be noise; one window per process makes it honest.
+#[cfg(not(test))]
 static SEARCH_BAND: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+// Per thread under test: every test runs on a thread of its own, and a
+// search test opening the strip would otherwise move the listing under a
+// test measuring it on another thread.
+#[cfg(test)]
+thread_local! {
+    static SEARCH_BAND: std::sync::atomic::AtomicU32 = const { std::sync::atomic::AtomicU32::new(0) };
+}
 
 /// Open or close the strip. Called when Ctrl+F toggles the field, before
 /// anything asks where the content starts.
 pub fn set_search_band(open: bool) {
-    SEARCH_BAND.store(
-        if open { SEARCH_BAND_H as u32 } else { 0 },
-        std::sync::atomic::Ordering::Relaxed,
-    );
+    let value = if open { SEARCH_BAND_H as u32 } else { 0 };
+    #[cfg(not(test))]
+    SEARCH_BAND.store(value, std::sync::atomic::Ordering::Relaxed);
+    #[cfg(test)]
+    SEARCH_BAND.with(|band| band.store(value, std::sync::atomic::Ordering::Relaxed));
 }
 
 /// How much room the strip is taking right now — zero while it is closed.
 pub fn search_band_h() -> f32 {
-    SEARCH_BAND.load(std::sync::atomic::Ordering::Relaxed) as f32
+    #[cfg(not(test))]
+    let value = SEARCH_BAND.load(std::sync::atomic::Ordering::Relaxed);
+    #[cfg(test)]
+    let value = SEARCH_BAND.with(|band| band.load(std::sync::atomic::Ordering::Relaxed));
+    value as f32
 }
 
 /// Where the content starts: the header, plus the filter strip when it is
@@ -426,6 +648,37 @@ pub fn location_rect(width: f32) -> Rect {
         toolbar_cy() + 15.0,
     )
 }
+
+/// The picker's New Folder button, just after the location control: the
+/// folder it makes goes where that control says you are.
+pub fn new_folder_rect(width: f32) -> Rect {
+    let location = location_rect(width);
+    Rect::from_xywh(
+        location.right + 8.0,
+        location.top,
+        NEW_FOLDER_W,
+        location.height(),
+    )
+}
+const NEW_FOLDER_W: f32 = 36.0;
+
+/// What the picker's toolbar row has under `(x, y)`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolbarButton {
+    Location,
+    NewFolder,
+}
+
+pub fn picker_toolbar_at(x: f32, y: f32, width: f32) -> Option<ToolbarButton> {
+    let point = Point::new(x, y);
+    if location_rect(width).contains(point) {
+        Some(ToolbarButton::Location)
+    } else if new_folder_rect(width).contains(point) {
+        Some(ToolbarButton::NewFolder)
+    } else {
+        None
+    }
+}
 /// Half the height of the band a click on the subtitle lands in: its line of
 /// text with a little slack, so a click just above or below still counts.
 const SUBTITLE_HIT_HALF_H: f32 = 10.0;
@@ -536,13 +789,40 @@ const SEARCH_CHIP_GAP: f32 = 6.0;
 const SEARCH_CHIP_FOLDER_W: f32 = 112.0;
 const SEARCH_CHIP_EVERYWHERE_W: f32 = 112.0;
 
-/// One Miller pane's default width. Every pane shares one width — a column
-/// whose width changes as you descend is disorienting, and this is what makes
-/// the view scannable — but that shared width is user-resizable.
+/// The width a Miller pane opens at. Each pane's divider resizes that pane
+/// alone; see [`MillerWidths`].
 pub const MILLER_W: f32 = 260.0;
 /// Miller panes cannot be dragged narrower than this.
 pub const MILLER_MIN_W: f32 = 140.0;
+/// Miller panes cannot be dragged or fitted wider than this.
 pub const MILLER_MAX_W: f32 = 520.0;
+
+/// The width of each pane in the Miller stack, by depth.
+///
+/// Every pane keeps its own width: dragging one divider resizes the pane to
+/// its left and shifts the ones after it without resizing them. A depth past
+/// the end of the list is at [`MILLER_W`], which is also what
+/// [`MillerWidths::default`] gives every pane.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct MillerWidths(Vec<f32>);
+
+impl MillerWidths {
+    /// The widths of the panes from depth 0 on.
+    pub fn new(widths: impl IntoIterator<Item = f32>) -> Self {
+        Self(widths.into_iter().collect())
+    }
+
+    /// Pane `depth`'s width.
+    pub fn width(&self, depth: usize) -> f32 {
+        self.0.get(depth).copied().unwrap_or(MILLER_W)
+    }
+
+    /// How far pane `depth`'s left edge sits from the start of the stack:
+    /// the widths of every pane before it.
+    pub fn left(&self, depth: usize) -> f32 {
+        (0..depth).map(|d| self.width(d)).sum()
+    }
+}
 
 /// How close the pointer must be to a column boundary to grab it.
 const COLUMN_GRAB: f32 = 4.0;
@@ -606,16 +886,32 @@ const DEFAULT_CELL_H: f32 = 120.0;
 
 /// The grid icon's size in points, as the bits of an `f32`; see
 /// [`set_grid_icon`]. Process-wide for the same reason [`SHELL`] is.
+#[cfg(not(test))]
 static GRID_ICON_BITS: AtomicU32 = AtomicU32::new(DEFAULT_GRID_ICON.to_bits());
 
-/// Change the grid icon's size, once, before the first frame.
+// Per thread under test, like the search band: a test sizing the icons must
+// not move the grid under another test measuring it on another thread.
+#[cfg(test)]
+thread_local! {
+    static GRID_ICON_BITS: AtomicU32 = const { AtomicU32::new(DEFAULT_GRID_ICON.to_bits()) };
+}
+
+/// Change the grid icon's size: the desk sets it once from its config, and
+/// the browser's icon view from its size slider.
 pub fn set_grid_icon(points: f32) {
+    #[cfg(not(test))]
     GRID_ICON_BITS.store(points.to_bits(), Ordering::Relaxed);
+    #[cfg(test)]
+    GRID_ICON_BITS.with(|bits| bits.store(points.to_bits(), Ordering::Relaxed));
 }
 
 /// The grid icon's size, in points.
 pub fn grid_icon() -> f32 {
-    f32::from_bits(GRID_ICON_BITS.load(Ordering::Relaxed))
+    #[cfg(not(test))]
+    let bits = GRID_ICON_BITS.load(Ordering::Relaxed);
+    #[cfg(test)]
+    let bits = GRID_ICON_BITS.with(|bits| bits.load(Ordering::Relaxed));
+    f32::from_bits(bits)
 }
 
 /// A grid cell's width, in points.
@@ -628,6 +924,18 @@ pub fn cell_h() -> f32 {
     DEFAULT_CELL_H + grid_icon() - DEFAULT_GRID_ICON
 }
 const GRID_PAD: f32 = 14.0;
+/// The icon size slider's range in the icon view, and how far one Ctrl+= or
+/// Ctrl+- moves it. The default is [`DEFAULT_GRID_ICON`].
+pub const GRID_ICON_MIN: f32 = 32.0;
+pub const GRID_ICON_MAX: f32 = 256.0;
+pub const GRID_ICON_STEP: f32 = 16.0;
+
+/// How many characters of a name fit on one line of a cell's caption: 13 in
+/// a default cell, more as the cell widens, fewer as it narrows. The type
+/// stays the same size either way — only the room for it changes.
+fn grid_label_chars(cell: Rect) -> usize {
+    ((13.0 * cell.width() / DEFAULT_CELL_W).floor() as usize).max(7)
+}
 /// Space between the bottom of the icon and the optical centre of the
 /// caption's first line. Tuned so the icon's selection rectangle and the
 /// caption's pill meet edge to edge: they read as one highlight, without
@@ -651,11 +959,12 @@ const GRID_ICON_INSET: f32 = 6.0;
 /// the icon inside it. Public because a desktop surface draws the same
 /// highlight against its own cells.
 pub fn grid_icon_highlight_rect(cell: Rect, icon_top: f32) -> Rect {
+    let icon = grid_icon();
     Rect::from_xywh(
-        cell.center_x() - grid_icon() / 2.0 - GRID_ICON_INSET,
+        cell.center_x() - icon / 2.0 - GRID_ICON_INSET,
         icon_top - GRID_ICON_INSET,
-        grid_icon() + GRID_ICON_INSET * 2.0,
-        grid_icon() + GRID_ICON_INSET * 2.0,
+        icon + GRID_ICON_INSET * 2.0,
+        icon + GRID_ICON_INSET * 2.0,
     )
 }
 
@@ -664,6 +973,9 @@ pub enum ViewMode {
     List,
     Columns,
     Grid,
+    /// Pictures at their own proportions in justified rows, under a heading
+    /// per day.
+    Photos,
 }
 
 // ---------------------------------------------------------------------------
@@ -684,7 +996,7 @@ pub fn content_viewport(width: f32, height: f32, mode: ViewMode) -> Rect {
     }
     let top = match mode {
         ViewMode::List => header_h() + COLUMNS_H,
-        ViewMode::Columns | ViewMode::Grid => header_h(),
+        ViewMode::Columns | ViewMode::Grid | ViewMode::Photos => header_h(),
     };
     Rect::from_ltrb(sidebar_w(), top, width, height)
 }
@@ -721,17 +1033,21 @@ pub struct GridSection {
 
 /// How the icon grid is broken up vertically.
 ///
-/// Empty means one plain lattice over the whole listing, which is every
+/// No sections means one plain lattice over the whole listing, which is every
 /// directory. The Recent place fills it with one section per day-bucket.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct GridSections(pub Vec<GridSection>);
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct GridSections {
+    pub sections: Vec<GridSection>,
+}
 
 impl GridSections {
     /// The unsectioned grid: what every directory listing uses.
-    pub const FLAT: &'static GridSections = &GridSections(Vec::new());
+    pub const FLAT: &'static GridSections = &GridSections {
+        sections: Vec::new(),
+    };
 
     pub fn is_flat(&self) -> bool {
-        self.0.is_empty()
+        self.sections.is_empty()
     }
 
     /// The grid's geometry in content coordinates, over `count` cells: the
@@ -743,7 +1059,7 @@ impl GridSections {
             .with_pad(GRID_PAD)
             .with_sections(
                 GRID_HEADER_H,
-                self.0
+                self.sections
                     .iter()
                     .map(|section| KitGridSection {
                         first: section.first,
@@ -758,7 +1074,12 @@ impl GridSections {
 /// How many cells fit across `area`. Never zero, so a very narrow window
 /// degrades to one column rather than dividing by it.
 pub fn grid_columns(area: Rect) -> usize {
-    GridSections::FLAT.layout(0).columns(area.width())
+    grid_columns_in(area, GridSections::FLAT)
+}
+
+/// [`grid_columns`] for a grid of its own size.
+pub fn grid_columns_in(area: Rect, sections: &GridSections) -> usize {
+    sections.layout(0).columns(area.width())
 }
 
 /// The cell rect for `index`, in `area`, scrolled by `scroll`.
@@ -798,18 +1119,13 @@ pub fn grid_section_headers(
         .headers(area.width())
         .into_iter()
         .filter_map(|(index, rect)| {
-            let header = sections.0.get(index)?.header.clone()?;
+            let header = sections.sections.get(index)?.header.clone()?;
             Some((rect.with_offset((area.left, area.top - scroll)), header))
         })
         .collect()
 }
 
-/// The cell index under `(x, y)`, if any.
-pub fn grid_cell_at(area: Rect, x: f32, y: f32, count: usize, scroll: f32) -> Option<usize> {
-    grid_cell_at_in(area, GridSections::FLAT, x, y, count, scroll)
-}
-
-/// [`grid_cell_at`] against a sectioned grid.
+/// The cell index under `(x, y)` in a sectioned grid, if any.
 pub fn grid_cell_at_in(
     area: Rect,
     sections: &GridSections,
@@ -867,7 +1183,7 @@ pub fn grid_visible_range_in(
 }
 
 /// The cells `band` touches — the rubber band's hit test, the counterpart of
-/// [`grid_cell_at`] for a rectangle rather than a point.
+/// [`grid_cell_at_in`] for a rectangle rather than a point.
 ///
 /// Closed-form over the rows and columns the band spans, so sweeping a band
 /// across a directory of ten thousand files costs what the band covers rather
@@ -904,6 +1220,259 @@ pub fn grid_cells_in_rect_in(
     )
 }
 
+/// How many whole cells fit in `area` without scrolling: every column,
+/// times every row whose cells end inside it.
+pub fn grid_capacity(area: Rect) -> usize {
+    let columns = grid_columns(area);
+    let mut rows = 0;
+    // Half a point of slack: a panel sized to exactly a whole number of rows
+    // must not lose its last one to rounding.
+    while grid_cell_rect(area, rows * columns, 0.0).bottom <= area.bottom + 0.5 {
+        rows += 1;
+    }
+    rows * columns
+}
+
+// --- The desk's overflow tile and overflow panel ----------------------------
+
+/// The desk's overflow as a frame draws it: which entries the tile holds
+/// and, while it is open, the overflow panel they are laid out in with the
+/// panel's scroll. See [`crate::desk::overflow_tile`] and `specs/desk.md`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DeskOverflow {
+    pub tile: crate::desk::OverflowTile,
+    pub panel: Option<(crate::desk::OverflowPanel, f32)>,
+}
+
+/// How far the overflow panel keeps from the edges of the desk's surface, in
+/// points.
+const PANEL_MARGIN: f32 = 12.0;
+
+impl DeskOverflow {
+    /// The overflow over `count` entries in the grid at `area`, if they make
+    /// a tile. `panel_scroll` opens its panel, scrolled that far, somewhere
+    /// inside `surface`: the panel is a surface of its own, so it is not
+    /// held inside the grid.
+    pub fn new(area: Rect, surface: Rect, count: usize, panel_scroll: Option<f32>) -> Option<Self> {
+        let tile = crate::desk::overflow_tile(count, grid_capacity(area))?;
+        let panel = panel_scroll.map(|scroll| {
+            let panel = crate::desk::OverflowPanel::new(
+                surface.with_inset((PANEL_MARGIN, PANEL_MARGIN)),
+                grid_cell_rect(area, tile.first, 0.0),
+                tile.count,
+                (cell_w(), cell_h()),
+            );
+            (panel, scroll)
+        });
+        Some(Self { tile, panel })
+    }
+
+    /// Where entry `index` is drawn and hit, when the tile holds it: its cell
+    /// in the panel while the panel is open, the tile's own cell while it is
+    /// not. `None` for an entry in the grid.
+    pub fn entry_rect(&self, area: Rect, index: usize) -> Option<Rect> {
+        if !self.tile.contains(index) {
+            return None;
+        }
+        Some(match self.panel {
+            Some((panel, scroll)) => panel.cell_rect(index - self.tile.first, scroll),
+            None => grid_cell_rect(area, self.tile.first, 0.0),
+        })
+    }
+
+    /// The tile's own cell in the grid at `area`.
+    pub fn cell(&self, area: Rect) -> Rect {
+        grid_cell_rect(area, self.tile.first, 0.0)
+    }
+}
+
+/// How many of the tile's icons are drawn on top of one another. Enough to
+/// read as a stack; more only adds edges.
+pub const OVERFLOW_TILE_LAYERS: usize = 3;
+/// How far each icon under the top one sits up and to the right, in points.
+const TILE_OFFSET: f32 = 5.0;
+/// How far each icon under the top one is turned, in degrees, alternating
+/// sides so the stack looks put down by hand.
+const TILE_TILT: f32 = 3.0;
+/// The count badge's height, and its narrowest width.
+const TILE_BADGE_H: f32 = 20.0;
+
+/// The overflow tile in `cell`: its first few items' icons on top of one
+/// another, the first on top, a badge with how many it holds, and its
+/// caption.
+fn draw_overflow_tile(
+    canvas: &Canvas,
+    f: &Frame,
+    entries: &[&Entry],
+    tile: crate::desk::OverflowTile,
+    cell: Rect,
+    selected: bool,
+) {
+    let icon = grid_icon();
+    let icon_top = cell.top + 8.0;
+    if selected {
+        let mut paint = Paint::default();
+        paint.set_anti_alias(true);
+        paint.set_color(f.theme.material_selection_focused);
+        paint.set_alpha(60);
+        canvas.draw_rrect(
+            RRect::new_rect_xy(grid_icon_highlight_rect(cell, icon_top), 8.0, 8.0),
+            &paint,
+        );
+    }
+    let box_rect = Rect::from_xywh(cell.center_x() - icon / 2.0, icon_top, icon, icon);
+    let layers = tile.count.min(OVERFLOW_TILE_LAYERS);
+    for depth in (0..layers).rev() {
+        let Some(entry) = entries.get(tile.first + depth) else {
+            continue;
+        };
+        let step = depth as f32;
+        let tilt = match depth {
+            0 => 0.0,
+            odd if odd % 2 == 1 => TILE_TILT,
+            _ => -TILE_TILT,
+        };
+        canvas.save();
+        canvas.translate((box_rect.center_x(), box_rect.center_y()));
+        canvas.rotate(tilt, None);
+        canvas.translate((
+            TILE_OFFSET * step - box_rect.width() / 2.0,
+            -TILE_OFFSET * step - box_rect.height() / 2.0,
+        ));
+        draw_grid_icon(
+            canvas,
+            entry,
+            Rect::from_wh(box_rect.width(), box_rect.height()),
+            f.thumbnail(entry),
+        );
+        canvas.restore();
+    }
+    draw_tile_badge(canvas, f.theme, box_rect, tile.count);
+    draw_grid_caption(
+        canvas,
+        f.theme,
+        otto_kit::t!("files-desk-overflow-caption"),
+        cell,
+        selected,
+        false,
+        None,
+    );
+}
+
+/// The badge's text for `count` items: the number, capped at 999+.
+fn tile_badge_text(count: usize) -> String {
+    if count > 999 {
+        "999+".to_string()
+    } else {
+        count.to_string()
+    }
+}
+
+/// Where the badge's text goes so its ink is centred on (`cx`, `cy`): the
+/// left end of its baseline. Centred on the glyphs' own bounds rather than
+/// the line box, since digits have no descender and a line box centres them
+/// visibly high.
+fn tile_badge_origin(font: &skia_safe::Font, text: &str, cx: f32, cy: f32) -> Point {
+    let (_, ink) = font.measure_str(text, None);
+    Point::new(cx - ink.center_x(), cy - ink.center_y())
+}
+
+/// The tile's count, in a pill of the accent colour over the icon's top
+/// trailing corner.
+fn draw_tile_badge(canvas: &Canvas, theme: &Theme, icon: Rect, count: usize) {
+    let text = tile_badge_text(count);
+    let font = styles::FOOTNOTE_EMPHASIZED.font();
+    let text_w = font.measure_str(&text, None).0;
+    let width = (text_w + 12.0).max(TILE_BADGE_H);
+    let badge = Rect::from_xywh(
+        icon.right - width + 6.0,
+        icon.top - 6.0,
+        width,
+        TILE_BADGE_H,
+    );
+    let mut paint = Paint::default();
+    paint.set_anti_alias(true);
+    paint.set_image_filter(skia_safe::image_filters::drop_shadow(
+        (0.0, 1.0),
+        (2.0, 2.0),
+        Color::from_argb(90, 0, 0, 0),
+        None,
+        None,
+        None,
+    ));
+    paint.set_color(theme.accent);
+    let radius = TILE_BADGE_H / 2.0;
+    canvas.draw_rrect(RRect::new_rect_xy(badge, radius, radius), &paint);
+    let mut ink = Paint::default();
+    ink.set_anti_alias(true);
+    ink.set_color(Color::WHITE);
+    let origin = tile_badge_origin(&font, &text, badge.center_x(), badge.center_y());
+    canvas.draw_str(&text, origin, &font, &ink);
+}
+
+/// The overflow panel's ground: dark, so the desk's white captions read on
+/// it the way they do on the wallpaper, in either theme. Translucent over
+/// the compositor's blur; nearly solid when frosting is off.
+pub fn overflow_panel_ground() -> Color {
+    otto_kit::frosting::popup_material(Color::from_argb(150, 24, 24, 28))
+}
+
+/// The overflow panel's corner radius, in points.
+pub const OVERFLOW_PANEL_RADIUS: f32 = 14.0;
+
+/// The open overflow panel: its ground, and the tile's items in their cells,
+/// scrolled by `scroll`, whose viewport is the panel's rect. Drawn in the
+/// desk's coordinates, onto the panel's own surface.
+pub fn draw_overflow_panel(canvas: &Canvas, f: &Frame, scroll: &ScrollState) {
+    let Some(overflow) = f.desk_overflow else {
+        return;
+    };
+    let Some((panel, offset)) = overflow.panel else {
+        return;
+    };
+    let Some(pane) = f.panes.last() else {
+        return;
+    };
+    let rrect = RRect::new_rect_xy(panel.rect, OVERFLOW_PANEL_RADIUS, OVERFLOW_PANEL_RADIUS);
+    let mut ground = Paint::default();
+    ground.set_anti_alias(true);
+    ground.set_color(overflow_panel_ground());
+    canvas.draw_rrect(rrect, &ground);
+    let mut edge = Paint::default();
+    edge.set_anti_alias(true);
+    edge.set_style(skia_safe::paint::Style::Stroke);
+    edge.set_stroke_width(1.0);
+    edge.set_color(Color::from_argb(60, 255, 255, 255));
+    canvas.draw_rrect(rrect.with_inset((0.5, 0.5)), &edge);
+
+    canvas.save();
+    canvas.clip_rrect(rrect, ClipOp::Intersect, true);
+    let first = overflow.tile.first;
+    let origin = (panel.rect.left, panel.rect.top);
+    let depth = f.panes.len() - 1;
+    ScrollRenderer::draw(canvas, scroll, f.theme, |canvas, _band| {
+        for k in panel.visible(overflow.tile.count, offset) {
+            let index = first + k;
+            let Some(entry) = pane.entries.get(index).copied() else {
+                continue;
+            };
+            // Content space: the panel's top-left corner, unscrolled.
+            let cell = panel.cell_rect(k, 0.0).with_offset((-origin.0, -origin.1));
+            draw_grid_cell_with(
+                canvas,
+                f.theme,
+                entry,
+                cell,
+                pane.is_selected(index),
+                f.renaming == Some((depth, index)),
+                f.thumbnail(entry),
+                None,
+            );
+        }
+    });
+    canvas.restore();
+}
+
 /// Total height `count` cells need in `area`.
 pub fn grid_content_height(area: Rect, count: usize) -> f32 {
     grid_content_height_in(area, GridSections::FLAT, count)
@@ -913,6 +1482,226 @@ pub fn grid_content_height(area: Rect, count: usize) -> f32 {
 /// heading between them.
 pub fn grid_content_height_in(area: Rect, sections: &GridSections, count: usize) -> f32 {
     sections.layout(count).length(area.width())
+}
+
+// --- Photos geometry --------------------------------------------------------
+//
+// The Photos view packs pictures at their own proportions into rows that fill
+// the width — the kit's [`JustifiedLayout`] — under a heading per day or
+// month, after a row of folder cards and before everything else. Unlike
+// the grid the rows depend on every picture before them, so the layout is
+// computed once per width and listing, held by the host, and handed to the
+// frame; everything below reads that one result, so what is drawn and what is
+// clicked cannot disagree.
+
+use crate::photos::SectionKind;
+use otto_kit::components::scroll::{Direction, JustifiedLayout, JustifiedSection};
+
+/// The height a row of pictures aims at, unless the size slider says
+/// otherwise. Rows come out at or a little under it, since a row takes as
+/// many pictures as fit before it would be taller.
+pub const PHOTOS_ROW_H: f32 = 190.0;
+/// The size slider's range for the row height.
+pub const PHOTOS_ROW_MIN: f32 = 120.0;
+pub const PHOTOS_ROW_MAX: f32 = 300.0;
+/// How far one Ctrl+= or Ctrl+- moves the row height.
+pub const PHOTOS_ROW_STEP: f32 = 20.0;
+/// A folder card: the mosaic of its newest pictures, and the caption under it
+/// naming the folder and its date.
+pub const FOLDER_CARD_W: f32 = 240.0;
+pub const FOLDER_MOSAIC_H: f32 = 150.0;
+const FOLDER_CAPTION_H: f32 = 46.0;
+const FOLDER_RADIUS: f32 = 10.0;
+/// Space between pictures, across a row and between rows.
+pub const PHOTOS_GAP: f32 = 6.0;
+/// Padding around the whole wall, clear of the file area's edges.
+const PHOTOS_PAD: f32 = 16.0;
+/// A day's heading band, with air above it to separate it from the day
+/// before.
+pub const PHOTOS_HEADER_H: f32 = 44.0;
+/// The tiles' corner radius.
+const PHOTOS_RADIUS: f32 = 6.0;
+
+/// One heading and the run of tiles beneath it, in the pane's visible order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PhotosSection {
+    /// Empty for a section drawn with no heading — the one run of pictures
+    /// when they are not grouped.
+    pub title: String,
+    /// Whether its tiles are folder cards, pictures or other files.
+    pub kind: SectionKind,
+    /// Index of the section's first entry.
+    pub first: usize,
+    pub count: usize,
+}
+
+/// The Photos view's rows, laid out for one width.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct PhotosLayout {
+    pub sections: Vec<PhotosSection>,
+    layout: JustifiedLayout,
+    /// How much of the file area's right the info panel takes, which the
+    /// wall was packed to leave clear. Zero while no panel is up.
+    panel_w: f32,
+}
+
+impl PhotosLayout {
+    /// No tiles at all: what every other view carries.
+    pub const EMPTY: &'static PhotosLayout = &PhotosLayout {
+        sections: Vec::new(),
+        layout: JustifiedLayout::empty(),
+        panel_w: 0.0,
+    };
+
+    /// Lay `sections` out across `width` — the file area's — with `aspects`
+    /// giving every entry's width over height, in the same order, and rows
+    /// aiming at `row_h`. Folder sections are cards of one size and ignore
+    /// their aspects.
+    pub fn new(sections: Vec<PhotosSection>, aspects: &[f32], width: f32, row_h: f32) -> Self {
+        let runs: Vec<JustifiedSection<'_>> = sections
+            .iter()
+            .map(|section| {
+                let header = if section.title.is_empty() {
+                    0.0
+                } else {
+                    PHOTOS_HEADER_H
+                };
+                match section.kind {
+                    SectionKind::Folders => JustifiedSection::cells(
+                        header,
+                        Size::new(FOLDER_CARD_W, FOLDER_MOSAIC_H + FOLDER_CAPTION_H),
+                        section.count,
+                    ),
+                    SectionKind::Photos | SectionKind::Other => JustifiedSection::justified(
+                        header,
+                        aspects
+                            .get(section.first..section.first + section.count)
+                            .unwrap_or_default(),
+                    ),
+                }
+            })
+            .collect();
+        let layout = JustifiedLayout::new(&runs, width, row_h, PHOTOS_GAP, PHOTOS_PAD);
+        Self {
+            sections,
+            layout,
+            panel_w: 0.0,
+        }
+    }
+
+    /// The same layout, packed for a file area whose right `panel_w` points
+    /// the info panel covers. `width` given to [`Self::new`] is what is left.
+    pub fn with_panel(mut self, panel_w: f32) -> Self {
+        self.panel_w = panel_w;
+        self
+    }
+
+    /// The part of the file area the wall occupies, in window coordinates:
+    /// all of it, less the info panel when one is up.
+    pub fn area(&self, width: f32, height: f32) -> Rect {
+        let full = content_viewport(width, height, ViewMode::Photos);
+        Rect::from_ltrb(
+            full.left,
+            full.top,
+            (full.right - self.panel_w).max(full.left),
+            full.bottom,
+        )
+    }
+
+    /// Whether the info panel is up beside the wall.
+    pub fn has_panel(&self) -> bool {
+        self.panel_w > 0.0
+    }
+
+    /// Which kind of section tile `index` is in.
+    pub fn kind_at(&self, index: usize) -> Option<SectionKind> {
+        self.sections
+            .iter()
+            .find(|s| (s.first..s.first + s.count).contains(&index))
+            .map(|s| s.kind)
+    }
+
+    pub fn len(&self) -> usize {
+        self.layout.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.layout.is_empty()
+    }
+
+    /// The scroll view's content length.
+    pub fn content_height(&self) -> f32 {
+        self.layout.length()
+    }
+
+    /// Tile `index` in window coordinates, in `area` scrolled by `scroll`.
+    /// Empty past the end.
+    pub fn tile_rect(&self, area: Rect, index: usize, scroll: f32) -> Rect {
+        let tile = self.layout.rect(index);
+        if tile.is_empty() {
+            return tile;
+        }
+        tile.with_offset((area.left, area.top - scroll))
+    }
+
+    /// The tile under `(x, y)`, if any.
+    pub fn tile_at(&self, area: Rect, x: f32, y: f32, scroll: f32) -> Option<usize> {
+        if !area.contains(Point::new(x, y)) {
+            return None;
+        }
+        self.layout
+            .index_at(Point::new(x - area.left, y - area.top + scroll))
+    }
+
+    /// The tiles whose rows intersect `band`, a strip in window coordinates.
+    pub fn visible_range(&self, area: Rect, scroll: f32, band: Rect) -> std::ops::Range<usize> {
+        if band.is_empty() {
+            return 0..0;
+        }
+        let top = area.top - scroll;
+        self.layout.range(band.top - top, band.bottom - top)
+    }
+
+    /// The tiles `band` touches — the rubber band's hit test. `band` is in
+    /// window coordinates for a pane scrolled by `scroll`.
+    pub fn tiles_in_rect(&self, area: Rect, scroll: f32, band: Rect) -> Vec<usize> {
+        self.layout
+            .cells_in(band.with_offset((-area.left, scroll - area.top)))
+    }
+
+    /// The tile one step from `index`, for the arrow keys.
+    pub fn neighbor(&self, index: usize, direction: Direction) -> Option<usize> {
+        self.layout.neighbor(index, direction)
+    }
+
+    /// Every heading's band in window coordinates, with its section.
+    pub fn headers(&self, area: Rect, scroll: f32) -> Vec<(Rect, &PhotosSection)> {
+        self.layout
+            .headers()
+            .iter()
+            .zip(&self.sections)
+            .filter(|(rect, _)| !rect.is_empty())
+            .map(|(rect, section)| (rect.with_offset((area.left, area.top - scroll)), section))
+            .collect()
+    }
+}
+
+/// Where an in-place rename's field sits over tile `index`: along its foot,
+/// where the hover caption puts the name.
+pub fn photos_rename_rect(
+    width: f32,
+    height: f32,
+    photos: &PhotosLayout,
+    scroll: f32,
+    index: usize,
+) -> Rect {
+    let tile = photos.tile_rect(photos.area(width, height), index, scroll);
+    Rect::from_ltrb(
+        tile.left + 4.0,
+        (tile.bottom - 30.0).max(tile.top),
+        tile.right - 4.0,
+        tile.bottom - 4.0,
+    )
 }
 
 pub fn place_rect(index: usize) -> Rect {
@@ -979,20 +1768,24 @@ pub enum NavButton {
     Forward,
 }
 
-/// The three view-switcher segments, in the header's top right.
+/// The view-switcher segments, in the header's top right.
 ///
 /// On a desktop that puts its window controls at the trailing edge the dots
 /// land on the same band, so the switcher steps left far enough to clear them
 /// — the header has the room, and the alternative is a switcher underneath
 /// three dots.
 pub fn switcher_rect(width: f32) -> Rect {
+    let w = SWITCHER_SEG_W * SWITCHER_MODES.len() as f32;
     Rect::from_xywh(
-        width - CONTENT_PAD - controls_clearance() - 114.0,
+        width - CONTENT_PAD - controls_clearance() - w,
         control_cy() - SWITCHER_H / 2.0,
-        114.0,
+        w,
         SWITCHER_H,
     )
 }
+
+/// One segment of the view switcher: room for a glyph with air either side.
+const SWITCHER_SEG_W: f32 = 38.0;
 
 /// The height of the header's controls, and the line they all sit on: the nav
 /// pair at the leading edge, the view switcher at the trailing one, and the
@@ -1135,7 +1928,558 @@ fn draw_trash_actions(canvas: &Canvas, f: &Frame, chrome: &TrashChrome) {
     );
 }
 
-pub const SWITCHER_MODES: [ViewMode; 3] = [ViewMode::List, ViewMode::Grid, ViewMode::Columns];
+/// The size slider and, in the Photos view, the grouping button, as the
+/// frame carries them.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PhotosControls {
+    /// What the slider is set to — the Photos row height, or the icon view's
+    /// icon size — and its range.
+    pub value: f32,
+    pub min: f32,
+    pub max: f32,
+    /// The Photos view's grouping; `None` in the icon view, which has no
+    /// grouping button.
+    pub group: Option<crate::photos::Grouping>,
+    /// The grouping menu is up.
+    pub group_open: bool,
+    /// The slider's knob is held.
+    pub sliding: bool,
+}
+
+// --- The Photos info panel -------------------------------------------------
+//
+// A column docked along the right of the file area in the Photos view, the
+// way the preview column trails the Miller stack: it takes the same decode
+// and draws it with the same stage. It is there whenever something is
+// selected and gone when nothing is: what is under it is the one file, the
+// one folder, or how many.
+
+/// The info panel's width.
+pub const PHOTOS_INFO_W: f32 = 320.0;
+const INFO_PAD: f32 = 16.0;
+const INFO_STAGE_H: f32 = 220.0;
+const INFO_SWATCH: f32 = 28.0;
+const INFO_SWATCH_GAP: f32 = 12.0;
+/// How much a swatch grows on each side under the pointer.
+const INFO_SWATCH_GROW: f32 = 2.0;
+const INFO_ROW_H: f32 = 24.0;
+
+/// The panel itself, from under the header to the foot of the file area.
+pub fn photos_info_rect(width: f32, height: f32) -> Rect {
+    Rect::from_ltrb(width - PHOTOS_INFO_W, header_h(), width, height)
+}
+
+/// What the info panel is showing.
+pub enum PhotosInfoData<'a> {
+    /// One file selected.
+    One {
+        entry: &'a Entry,
+        /// The preview column's decode, once it lands.
+        decoded: Option<&'a otto_kit::preview::Preview>,
+        /// The picture's size, from the Photos view's size cache.
+        dims: Option<(u32, u32)>,
+        /// The picture's main colours; empty for anything not a picture.
+        swatches: &'a [Color],
+        /// The swatch whose colour was just copied.
+        copied: Option<usize>,
+        /// The swatch under the pointer, which grows and names its colour.
+        hovered: Option<usize>,
+    },
+    /// Several things selected: how many, and how much they weigh.
+    Many { count: usize, bytes: u64 },
+    /// One folder selected: its name, how much is in it, when it changed
+    /// and where it is. A folder has no picture of its own to show.
+    Folder {
+        entry: &'a Entry,
+        /// How many entries it holds, once its card has been looked into.
+        items: Option<usize>,
+    },
+    /// Nothing selected: the folder being shown, and what is in it.
+    Here { name: &'a str, summary: String },
+}
+
+/// Where the parts of the info panel go, for drawing and hit testing alike.
+pub struct InfoLayout {
+    pub stage: Rect,
+    /// The baseline centre of the name, and of the kind line under it.
+    pub name_cy: f32,
+    pub kind_cy: f32,
+    /// Up to five swatches, in a row under the kind line.
+    pub swatches: Vec<Rect>,
+    /// The first key/value row's centre line.
+    pub rows_cy: f32,
+}
+
+/// Lay the panel out: the preview, the name and kind, `swatches` swatches,
+/// and the facts under them.
+pub fn photos_info_layout(panel: Rect, swatches: usize) -> InfoLayout {
+    let inner = panel.with_inset((INFO_PAD, 0.0));
+    let stage = Rect::from_xywh(
+        inner.left,
+        panel.top + INFO_PAD,
+        inner.width(),
+        INFO_STAGE_H,
+    );
+    let name_cy = stage.bottom + 22.0;
+    let kind_cy = name_cy + 20.0;
+    let count = swatches.min(5);
+    // A fixed gap from the left, so two colours sit together rather than at
+    // the two ends of the row.
+    let gap = INFO_SWATCH_GAP;
+    let swatch_top = kind_cy + 20.0;
+    let swatch_rects = (0..count)
+        .map(|i| {
+            Rect::from_xywh(
+                inner.left + i as f32 * (INFO_SWATCH + gap),
+                swatch_top,
+                INFO_SWATCH,
+                INFO_SWATCH,
+            )
+        })
+        .collect();
+    let rows_cy = if count > 0 {
+        swatch_top + INFO_SWATCH + 30.0
+    } else {
+        kind_cy + 32.0
+    };
+    InfoLayout {
+        stage,
+        name_cy,
+        kind_cy,
+        swatches: swatch_rects,
+        rows_cy,
+    }
+}
+
+/// The swatch under `(x, y)`, if the panel is showing one there — the only
+/// thing in it that takes a click.
+pub fn photos_info_swatch_at(
+    panel: Rect,
+    data: &PhotosInfoData<'_>,
+    x: f32,
+    y: f32,
+) -> Option<usize> {
+    let PhotosInfoData::One { swatches, .. } = data else {
+        return None;
+    };
+    let point = Point::new(x, y);
+    photos_info_layout(panel, swatches.len())
+        .swatches
+        .iter()
+        .position(|r| r.contains(point))
+}
+
+/// A colour as the swatches copy it: `#F2845C`.
+pub fn hex_colour(colour: Color) -> String {
+    format!("#{:02X}{:02X}{:02X}", colour.r(), colour.g(), colour.b())
+}
+
+/// The kind line: "JPEG image · 77 KB", or the kind's own name for a file
+/// that is not a picture.
+fn info_kind_line(entry: &Entry) -> String {
+    let kind = if crate::photos::is_photo(entry) {
+        let ext = entry
+            .path
+            .extension()
+            .map(|e| e.to_string_lossy().to_uppercase())
+            .unwrap_or_default();
+        let format = match ext.as_str() {
+            "JPG" | "JPE" => "JPEG".to_string(),
+            "TIF" => "TIFF".to_string(),
+            _ => ext,
+        };
+        otto_kit::t_owned!("files-photos-info-kind", format = format)
+    } else {
+        entry.kind_label().to_string()
+    };
+    match entry.size.filter(|_| !entry.is_dir) {
+        Some(size) => format!("{kind} · {}", model::format_size(size)),
+        None => kind,
+    }
+}
+
+/// The info panel.
+fn draw_photos_info(canvas: &Canvas, f: &Frame, data: &PhotosInfoData<'_>) {
+    let theme = f.theme;
+    let panel = photos_info_rect(f.width, f.height);
+    let mut paint = Paint::default();
+    paint.set_anti_alias(true);
+    paint.set_color(content_ground());
+    canvas.draw_rect(panel, &paint);
+    paint.set_color(theme.fill_tertiary);
+    canvas.draw_line(
+        Point::new(panel.left, panel.top),
+        Point::new(panel.left, panel.bottom),
+        &paint,
+    );
+
+    canvas.save();
+    canvas.clip_rect(panel, ClipOp::Intersect, true);
+    if let PhotosInfoData::One {
+        entry,
+        decoded,
+        swatches,
+        copied,
+        hovered,
+        ..
+    } = data
+    {
+        let layout = photos_info_layout(panel, swatches.len());
+        draw_info_stage(canvas, theme, layout.stage, entry, *decoded);
+        for (i, (rect, colour)) in layout.swatches.iter().zip(swatches.iter()).enumerate() {
+            // The one under the pointer grows a little and wears a ring: it
+            // is something to click, not only a colour to look at.
+            let hot = *hovered == Some(i);
+            let disc = if hot {
+                rect.with_outset((INFO_SWATCH_GROW, INFO_SWATCH_GROW))
+            } else {
+                *rect
+            };
+            let mut fill = Paint::default();
+            fill.set_anti_alias(true);
+            fill.set_color(*colour);
+            canvas.draw_oval(disc, &fill);
+            let mut edge = Paint::default();
+            edge.set_anti_alias(true);
+            edge.set_style(skia_safe::paint::Style::Stroke);
+            edge.set_stroke_width(1.0);
+            edge.set_color(theme.fill_secondary);
+            canvas.draw_oval(disc.with_inset((0.5, 0.5)), &edge);
+            if hot {
+                edge.set_stroke_width(1.5);
+                edge.set_color(theme.text_tertiary);
+                canvas.draw_oval(disc.with_outset((2.5, 2.5)), &edge);
+            }
+            // Under it, what a click would copy — or, just after one, that
+            // it did.
+            let label = if *copied == Some(i) {
+                Some(otto_kit::t!("files-photos-info-copied").to_string())
+            } else {
+                hot.then(|| hex_colour(*colour))
+            };
+            if let Some(label) = label {
+                Label::new(label)
+                    .with_style(styles::CAPTION_1)
+                    .with_color(theme.text_secondary)
+                    .centered_at(rect.center_x(), rect.bottom + 12.0)
+                    .render(canvas);
+            }
+        }
+    }
+    let runs = photos_info_runs(panel, data, theme);
+    if let Some(selection) = f.photos_info_selection {
+        selection.draw_highlight(canvas, &runs, text_selection_colour(theme));
+    }
+    for run in &runs {
+        run.draw(canvas);
+    }
+    canvas.restore();
+}
+
+/// The highlight behind selected text in the info panels.
+pub fn text_selection_colour(theme: &Theme) -> Color {
+    accent(theme).with_a(70)
+}
+
+/// Every piece of text the Photos info panel shows, placed — what it draws,
+/// and what a press or a drag selects from. The swatches' labels are not
+/// among them: they are the swatches' own feedback, not facts to copy.
+pub fn photos_info_runs(panel: Rect, data: &PhotosInfoData<'_>, theme: &Theme) -> Vec<TextRun> {
+    let room = panel.width() - INFO_PAD * 2.0;
+    let left = panel.left + INFO_PAD;
+    let title = |text: &str, cy: f32| {
+        TextRun::at(
+            ellipsize(&styles::HEADLINE.font(), text, room),
+            styles::HEADLINE,
+            theme.text_primary,
+            left,
+            cy,
+        )
+        .with_full(text)
+    };
+    let line = |text: &str, cy: f32| {
+        TextRun::at(
+            ellipsize(&styles::CALLOUT.font(), text, room),
+            styles::CALLOUT,
+            theme.text_secondary,
+            left,
+            cy,
+        )
+        .with_full(text)
+    };
+    let mut runs = Vec::new();
+    let rows = |runs: &mut Vec<TextRun>, top: f32, rows: Vec<(&str, String)>| {
+        let mut cy = top;
+        for (key, value) in rows {
+            runs.extend(info_row_runs(panel, cy, key, &value, theme));
+            cy += INFO_ROW_H;
+        }
+    };
+    let facts = |entry: &Entry, dims: Option<(u32, u32)>| {
+        let mut out: Vec<(&str, String)> = Vec::new();
+        if let Some((w, h)) = dims {
+            out.push((
+                otto_kit::t!("files-photos-info-dimensions"),
+                format!("{w} × {h}"),
+            ));
+        }
+        if let Some(modified) = entry.modified {
+            out.push((
+                otto_kit::t!("files-photos-info-modified"),
+                model::format_time(modified),
+            ));
+        }
+        if let Some(parent) = entry.path.parent() {
+            out.push((
+                otto_kit::t!("files-photos-info-where"),
+                model::abbreviate_home(parent),
+            ));
+        }
+        out
+    };
+    match data {
+        PhotosInfoData::One {
+            entry,
+            dims,
+            swatches,
+            ..
+        } => {
+            let layout = photos_info_layout(panel, swatches.len());
+            runs.push(title(&entry.name, layout.name_cy));
+            runs.push(line(&info_kind_line(entry), layout.kind_cy));
+            rows(&mut runs, layout.rows_cy, facts(entry, *dims));
+        }
+        PhotosInfoData::Many { count, bytes } => {
+            let cy = panel.top + INFO_PAD + 24.0;
+            runs.push(title(
+                &otto_kit::t_owned!("files-photos-info-many", count = *count as i64),
+                cy,
+            ));
+            runs.push(line(&model::format_size(*bytes), cy + 22.0));
+        }
+        PhotosInfoData::Folder { entry, items } => {
+            let cy = panel.top + INFO_PAD + 24.0;
+            runs.push(title(&entry.name, cy));
+            if let Some(items) = items {
+                runs.push(line(
+                    &otto_kit::t_owned!("files-photos-info-many", count = *items as i64),
+                    cy + 22.0,
+                ));
+            }
+            rows(&mut runs, cy + 56.0, facts(entry, None));
+        }
+        PhotosInfoData::Here { name, summary } => {
+            let cy = panel.top + INFO_PAD + 24.0;
+            runs.push(title(name, cy));
+            runs.push(line(summary, cy + 22.0));
+        }
+    }
+    runs
+}
+
+/// One key/value line: the key on the left in the quieter ink, the value
+/// right-aligned and cut short with an ellipsis if it does not fit — which
+/// copies whole all the same.
+fn info_row_runs(panel: Rect, cy: f32, key: &str, value: &str, theme: &Theme) -> [TextRun; 2] {
+    let left = panel.left + INFO_PAD;
+    let right = panel.right - INFO_PAD;
+    let font = styles::CALLOUT.font();
+    let key_run = TextRun::at(key, styles::CALLOUT, theme.text_secondary, left, cy);
+    let shown = ellipsize(
+        &font,
+        value,
+        (right - left - key_run.width() - 16.0).max(20.0),
+    );
+    let mut value_run =
+        TextRun::at(shown, styles::CALLOUT, theme.text_primary, right, cy).with_full(value);
+    value_run.left = right - value_run.width();
+    [key_run, value_run]
+}
+
+impl PhotosInfoData<'_> {
+    /// What the panel is about, so a text selection made over one file is
+    /// not carried onto the next one's facts.
+    pub fn subject(&self) -> String {
+        match self {
+            PhotosInfoData::One { entry, .. } | PhotosInfoData::Folder { entry, .. } => {
+                entry.path.to_string_lossy().into_owned()
+            }
+            PhotosInfoData::Many { count, bytes } => format!("many:{count}:{bytes}"),
+            PhotosInfoData::Here { name, .. } => format!("here:{name}"),
+        }
+    }
+}
+
+/// The panel's picture: the decode fitted into a rounded stage, or the
+/// file's icon until it lands.
+fn draw_info_stage(
+    canvas: &Canvas,
+    theme: &Theme,
+    stage: Rect,
+    entry: &Entry,
+    decoded: Option<&otto_kit::preview::Preview>,
+) {
+    let image = match decoded {
+        Some(otto_kit::preview::Preview::Pixels { pixels, .. }) => pixels.to_image(),
+        _ => None,
+    };
+    let Some(image) = image else {
+        let mut ground = Paint::default();
+        ground.set_anti_alias(true);
+        ground.set_color(theme.fill_quaternary);
+        canvas.draw_rrect(RRect::new_rect_xy(stage, 10.0, 10.0), &ground);
+        draw_preview_stage(
+            canvas,
+            theme,
+            stage,
+            None,
+            None,
+            false,
+            &entry.icon_chain(),
+            0,
+        );
+        return;
+    };
+    // Contained, not cropped: this is the one place the whole picture is
+    // shown, so its own edges are the rounded ones.
+    let (w, h) = (image.width() as f32, image.height() as f32);
+    let scale = (stage.width() / w).min(stage.height() / h);
+    let fitted = Rect::from_xywh(
+        stage.center_x() - w * scale / 2.0,
+        stage.center_y() - h * scale / 2.0,
+        w * scale,
+        h * scale,
+    );
+    canvas.save();
+    canvas.clip_rrect(
+        RRect::new_rect_xy(fitted, 10.0, 10.0),
+        ClipOp::Intersect,
+        true,
+    );
+    canvas.draw_image_rect_with_sampling_options(
+        &image,
+        None,
+        fitted,
+        skia_safe::sampling_options::SamplingOptions::from(
+            skia_safe::sampling_options::CubicResampler::mitchell(),
+        ),
+        &Paint::default(),
+    );
+    canvas.restore();
+    draw_picture_edge(canvas, fitted, 10.0, false);
+}
+
+const PHOTOS_GROUP_W: f32 = 150.0;
+const PHOTOS_SLIDER_W: f32 = 100.0;
+/// Room either end of the slider for the small and large picture glyphs
+/// that say which way is bigger.
+const PHOTOS_SLIDER_GLYPH: f32 = 22.0;
+const PHOTOS_CONTROLS_GAP: f32 = 12.0;
+/// Below this window width the slider gives its room to the title. Ctrl+=,
+/// Ctrl+- and a pinch still size the tiles.
+const PHOTOS_SLIDER_MIN_WIDTH: f32 = 900.0;
+
+/// The grouping button, left of the view switcher.
+pub fn photos_group_rect(width: f32) -> Rect {
+    let switcher = switcher_rect(width);
+    Rect::from_xywh(
+        switcher.left - PHOTOS_CONTROLS_GAP - PHOTOS_GROUP_W,
+        switcher.top,
+        PHOTOS_GROUP_W,
+        switcher.height(),
+    )
+}
+
+/// The Photos view's size slider's track, left of the grouping button, when
+/// the window is wide enough to have one.
+pub fn photos_slider_rect(width: f32) -> Option<Rect> {
+    zoom_slider_rect(width, true)
+}
+
+/// The size slider's track: left of the grouping button when the view has
+/// one (`grouped`), left of the view switcher when it does not. `None` when
+/// the window is too narrow to spare the room.
+pub fn zoom_slider_rect(width: f32, grouped: bool) -> Option<Rect> {
+    if width < PHOTOS_SLIDER_MIN_WIDTH {
+        return None;
+    }
+    let beside = if grouped {
+        photos_group_rect(width)
+    } else {
+        switcher_rect(width)
+    };
+    let right = beside.left - PHOTOS_CONTROLS_GAP - PHOTOS_SLIDER_GLYPH;
+    Some(Rect::from_xywh(
+        right - PHOTOS_SLIDER_W,
+        beside.top,
+        PHOTOS_SLIDER_W,
+        beside.height(),
+    ))
+}
+
+/// The slider and the grouping button, with the glyphs either side of the
+/// slider: a small picture at the small end, a large one at the large end.
+fn draw_photos_controls(canvas: &Canvas, f: &Frame, controls: PhotosControls) {
+    use otto_kit::components::dropdown::{field, DropdownInteraction};
+    use otto_kit::components::slider::{self, SliderInteraction};
+
+    let theme = f.theme;
+    if let Some(track) = zoom_slider_rect(f.width, controls.group.is_some()) {
+        slider::draw(
+            canvas,
+            track,
+            controls.value,
+            controls.min,
+            controls.max,
+            None,
+            if controls.sliding {
+                SliderInteraction::Pressed
+            } else {
+                SliderInteraction::Normal
+            },
+            theme,
+        );
+        let mut glyph = Paint::default();
+        glyph.set_anti_alias(true);
+        glyph.set_style(skia_safe::paint::Style::Stroke);
+        glyph.set_stroke_width(1.2);
+        glyph.set_color(theme.text_secondary);
+        let cy = track.center_y();
+        for (cx, edge) in [
+            (track.left - PHOTOS_SLIDER_GLYPH / 2.0 - 2.0, 8.0),
+            (track.right + PHOTOS_SLIDER_GLYPH / 2.0 + 2.0, 13.0),
+        ] {
+            canvas.draw_rrect(
+                RRect::new_rect_xy(
+                    Rect::from_xywh(cx - edge / 2.0, cy - edge * 0.4, edge, edge * 0.8),
+                    1.5,
+                    1.5,
+                ),
+                &glyph,
+            );
+        }
+    }
+    if let Some(group) = controls.group {
+        field::draw(
+            canvas,
+            photos_group_rect(f.width),
+            group.label(),
+            if controls.group_open {
+                DropdownInteraction::Open
+            } else {
+                DropdownInteraction::Normal
+            },
+            theme,
+        );
+    }
+}
+
+pub const SWITCHER_MODES: [ViewMode; 4] = [
+    ViewMode::List,
+    ViewMode::Grid,
+    ViewMode::Columns,
+    ViewMode::Photos,
+];
 
 /// Which view the switcher segment at `(x, y)` selects, if any.
 pub fn switcher_at(x: f32, y: f32, width: f32) -> Option<ViewMode> {
@@ -1146,8 +2490,9 @@ pub fn switcher_at(x: f32, y: f32, width: f32) -> Option<ViewMode> {
     if !rect.contains(Point::new(x, y)) {
         return None;
     }
-    let segment = ((x - rect.left) / (rect.width() / 3.0)) as usize;
-    SWITCHER_MODES.get(segment.min(2)).copied()
+    let count = SWITCHER_MODES.len();
+    let segment = ((x - rect.left) / (rect.width() / count as f32)) as usize;
+    SWITCHER_MODES.get(segment.min(count - 1)).copied()
 }
 
 pub(crate) fn column_edges(width: f32, widths: ListColumnWidths) -> (f32, f32, f32) {
@@ -1232,14 +2577,14 @@ pub fn list_rename_rect(
 pub fn miller_rename_rect(
     height: f32,
     pan: f32,
-    miller_w: f32,
+    miller: &MillerWidths,
     depth: usize,
     count: usize,
     scroll: f32,
     index: usize,
     is_dir: bool,
 ) -> Rect {
-    let pane = miller_pane_rect(depth, height, pan, miller_w);
+    let pane = miller_pane_rect(depth, height, pan, miller);
     let row = RowStrip::miller(pane, count, scroll).rect(index);
     let name_x = row.left + 14.0 + ICON_SIZE + 8.0;
     let trailing = if is_dir { 24.0 } else { 8.0 };
@@ -1254,9 +2599,19 @@ pub fn miller_rename_rect(
 /// Where an in-place rename's text field sits over grid cell `index` — over
 /// the caption, sized like the selection pill it replaces so the cell does not
 /// visibly change shape when the field appears.
-pub fn grid_rename_rect(width: f32, height: f32, scroll: f32, index: usize) -> Rect {
+pub fn grid_rename_rect(
+    width: f32,
+    height: f32,
+    sections: &GridSections,
+    scroll: f32,
+    index: usize,
+) -> Rect {
     let area = content_viewport(width, height, ViewMode::Grid);
-    let cell = grid_cell_rect(area, index, scroll);
+    grid_rename_rect_over(grid_cell_rect_in(area, sections, index, scroll))
+}
+
+/// [`grid_rename_rect`] over a cell already placed: the caption of `cell`.
+pub fn grid_rename_rect_over(cell: Rect) -> Rect {
     let center_y = cell.top + 8.0 + grid_icon() + GRID_LABEL_GAP;
     Rect::from_ltrb(
         cell.left + 2.0,
@@ -1348,16 +2703,15 @@ pub fn row_at(x: f32, y: f32, width: f32, height: f32, count: usize, scroll: f32
 
 /// The untruncated pane rect, for laying rows out — drawing clips it, but a row
 /// must not shift because its pane is half off-screen.
-pub fn miller_pane_rect(depth: usize, height: f32, pan: f32, miller_w: f32) -> Rect {
-    let left = sidebar_w() + depth as f32 * miller_w - pan;
-    Rect::from_ltrb(left, header_h(), left + miller_w, height)
+pub fn miller_pane_rect(depth: usize, height: f32, pan: f32, miller: &MillerWidths) -> Rect {
+    let left = sidebar_w() + miller.left(depth) - pan;
+    Rect::from_ltrb(left, header_h(), left + miller.width(depth), height)
 }
 
-/// The preview pane's untruncated rect — a trailing member of the stack, one
-/// `miller_w`-wide slot past the last real column, but its own [`PREVIEW_W`]
-/// wide rather than sharing the columns' width.
-pub fn preview_pane_rect(columns_len: usize, height: f32, pan: f32, miller_w: f32) -> Rect {
-    let left = sidebar_w() + columns_len as f32 * miller_w - pan;
+/// The preview pane's untruncated rect — a trailing member of the stack, just
+/// past the last real column, and its own [`PREVIEW_W`] wide.
+pub fn preview_pane_rect(columns_len: usize, height: f32, pan: f32, miller: &MillerWidths) -> Rect {
+    let left = sidebar_w() + miller.left(columns_len) - pan;
     Rect::from_ltrb(left, header_h(), left + PREVIEW_W, height)
 }
 
@@ -1391,7 +2745,7 @@ pub fn drop_highlight_rect(f: &Frame, target: DropHighlight) -> Option<Rect> {
         DropHighlight::Pane { depth } => {
             let viewport = content_viewport(f.width, f.height, f.mode);
             let pane = match f.mode {
-                ViewMode::Columns => miller_pane_rect(depth, f.height, f.pan, f.miller_w),
+                ViewMode::Columns => miller_pane_rect(depth, f.height, f.pan, &f.miller),
                 // One pane fills the content area in the flat views.
                 _ => viewport,
             };
@@ -1404,17 +2758,23 @@ pub fn drop_highlight_rect(f: &Frame, target: DropHighlight) -> Option<Rect> {
         }
         DropHighlight::Row { depth, index } => {
             let pane = f.panes.get(depth)?;
+            let grid = content_viewport(f.width, f.height, ViewMode::Grid);
             let rect = match f.mode {
-                ViewMode::Grid => grid_cell_rect(
-                    content_viewport(f.width, f.height, ViewMode::Grid),
-                    index,
-                    pane.scroll,
-                ),
+                ViewMode::Grid => f
+                    .desk_overflow
+                    .and_then(|overflow| overflow.entry_rect(grid, index))
+                    .unwrap_or_else(|| {
+                        grid_cell_rect_in(grid, f.grid_sections, index, pane.scroll)
+                    }),
+                ViewMode::Photos => {
+                    f.photos
+                        .tile_rect(f.photos.area(f.width, f.height), index, pane.scroll)
+                }
                 ViewMode::List => {
                     RowStrip::list(f.width, pane.entries.len(), pane.scroll).rect(index)
                 }
                 ViewMode::Columns => {
-                    let full = miller_pane_rect(depth, f.height, f.pan, f.miller_w);
+                    let full = miller_pane_rect(depth, f.height, f.pan, &f.miller);
                     RowStrip::miller(full, pane.entries.len(), pane.scroll).rect(index)
                 }
             };
@@ -1476,6 +2836,7 @@ fn drop_ring_radius(mode: ViewMode, target: DropHighlight) -> f32 {
         DropHighlight::Place { .. } => 6.0,
         // A cell in the grid; a band abutting its neighbours anywhere else.
         DropHighlight::Row { .. } if mode == ViewMode::Grid => 8.0,
+        DropHighlight::Row { .. } if mode == ViewMode::Photos => PHOTOS_RADIUS,
         DropHighlight::Row { .. } | DropHighlight::Pane { .. } => 0.0,
     }
 }
@@ -1493,12 +2854,12 @@ pub fn miller_row_rect(
     depth: usize,
     height: f32,
     pan: f32,
-    miller_w: f32,
+    miller: &MillerWidths,
     count: usize,
     index: usize,
     scroll: f32,
 ) -> Rect {
-    let pane = miller_pane_rect(depth, height, pan, miller_w);
+    let pane = miller_pane_rect(depth, height, pan, miller);
     RowStrip::miller(pane, count, scroll).rect(index)
 }
 
@@ -1613,7 +2974,9 @@ fn draw_drag_entry(
     let font = styles::BODY_MEDIUM.font();
 
     match mode {
-        ViewMode::Grid => {
+        // A picture picked up out of the wall travels as a grid cell: the
+        // tile's own shape is the row it sat in, not the thing in hand.
+        ViewMode::Grid | ViewMode::Photos => {
             let cell = Rect::from_wh(cell_w(), cell_h());
             let icon_top = cell.top + 8.0;
             if let Some(image) = thumb {
@@ -1724,7 +3087,7 @@ fn row_icon_lead(mode: ViewMode) -> f32 {
     match mode {
         ViewMode::List => CONTENT_PAD,
         ViewMode::Columns => 14.0,
-        ViewMode::Grid => 0.0,
+        ViewMode::Grid | ViewMode::Photos => 0.0,
     }
 }
 
@@ -1734,7 +3097,7 @@ fn row_icon_lead(mode: ViewMode) -> f32 {
 /// a row-shaped card.
 pub fn drag_image_size(mode: ViewMode) -> (f32, f32) {
     match mode {
-        ViewMode::Grid => (cell_w(), cell_h()),
+        ViewMode::Grid | ViewMode::Photos => (cell_w(), cell_h()),
         ViewMode::List | ViewMode::Columns => (DRAG_IMAGE_W, DRAG_IMAGE_H),
     }
 }
@@ -1748,13 +3111,13 @@ pub fn miller_at(
     columns: &[Column],
     counts: &[usize],
     pan: f32,
-    miller_w: f32,
+    miller: &MillerWidths,
 ) -> Option<(usize, Option<usize>)> {
     if !content_viewport(width, height, ViewMode::Columns).contains(Point::new(x, y)) {
         return None;
     }
     for depth in 0..columns.len() {
-        let pane = miller_pane_rect(depth, height, pan, miller_w);
+        let pane = miller_pane_rect(depth, height, pan, miller);
         if x < pane.left || x >= pane.right {
             continue;
         }
@@ -1779,29 +3142,26 @@ fn pan_for(left: f32, pane_w: f32, width: f32, current: f32) -> f32 {
 }
 
 /// How far the Miller stack must be panned to keep pane `depth` in view.
-pub fn miller_pan_for(depth: usize, width: f32, current: f32, miller_w: f32) -> f32 {
-    pan_for(depth as f32 * miller_w, miller_w, width, current)
+pub fn miller_pan_for(depth: usize, width: f32, current: f32, miller: &MillerWidths) -> f32 {
+    pan_for(miller.left(depth), miller.width(depth), width, current)
 }
 
 /// How far the stack must be panned to bring the preview pane — sitting
 /// right after the last of `columns_len` real columns — fully into view.
 /// The same gesture [`miller_pan_for`] performs for a freshly opened column.
-pub fn preview_pan_for(columns_len: usize, width: f32, current: f32, miller_w: f32) -> f32 {
-    pan_for(columns_len as f32 * miller_w, PREVIEW_W, width, current)
+pub fn preview_pan_for(columns_len: usize, width: f32, current: f32, miller: &MillerWidths) -> f32 {
+    pan_for(miller.left(columns_len), PREVIEW_W, width, current)
 }
 
 /// Total width the whole stack wants: every real column, plus the preview
 /// pane's own width when one is showing.
-pub fn miller_content_width(depth: usize, miller_w: f32, preview_w: f32) -> f32 {
-    depth as f32 * miller_w + preview_w
+pub fn miller_content_width(depth: usize, miller: &MillerWidths, preview_w: f32) -> f32 {
+    miller.left(depth) + preview_w
 }
 
-/// Is the pointer on the draggable edge between two Miller panes? All panes
-/// share one width, so any divider found resizes them all — dragging one
-/// divider is dragging the width. Returns the depth of the pane whose right
-/// edge was grabbed: since that edge sits `(depth + 1) * miller_w` from the
-/// sidebar, the caller needs it to turn pointer travel back into a width
-/// delta that tracks the mouse exactly, however deep the divider is.
+/// Is the pointer on the draggable edge between two Miller panes? Returns the
+/// depth of the pane whose right edge was grabbed, the one pane a drag of
+/// that divider resizes.
 pub fn miller_boundary_at(
     x: f32,
     y: f32,
@@ -1809,14 +3169,14 @@ pub fn miller_boundary_at(
     height: f32,
     pan: f32,
     pane_count: usize,
-    miller_w: f32,
+    miller: &MillerWidths,
 ) -> Option<usize> {
     if !(header_h()..=height).contains(&y) || x < sidebar_w() {
         return None;
     }
     let viewport_right = width;
     (0..pane_count).find(|&depth| {
-        let pane = miller_pane_rect(depth, height, pan, miller_w);
+        let pane = miller_pane_rect(depth, height, pan, miller);
         pane.right >= sidebar_w()
             && pane.right <= viewport_right
             && (x - pane.right).abs() <= COLUMN_GRAB
@@ -1856,12 +3216,12 @@ pub fn pane_viewport(
     mode: ViewMode,
     depth: usize,
     pan: f32,
-    miller_w: f32,
+    miller: &MillerWidths,
 ) -> Rect {
     match mode {
-        ViewMode::List | ViewMode::Grid => content_viewport(width, height, mode),
+        ViewMode::List | ViewMode::Grid | ViewMode::Photos => content_viewport(width, height, mode),
         ViewMode::Columns => {
-            let mut pane = miller_pane_rect(depth, height, pan, miller_w);
+            let mut pane = miller_pane_rect(depth, height, pan, miller);
             // Clipped to what is actually on screen: a pane panned half out of
             // the window must not put its scrollbar under the sidebar.
             if !pane.intersect(content_viewport(width, height, mode)) {
@@ -2116,8 +3476,6 @@ const FOOTER_BTN_H: f32 = 30.0;
 const FOOTER_BTN_MIN_W: f32 = 92.0;
 const FOOTER_BTN_RADIUS: f32 = 8.0;
 const FOOTER_FILTER_W: f32 = 220.0;
-/// One row of the open filter menu.
-const FOOTER_MENU_ROW_H: f32 = 26.0;
 
 /// The action row's own strip, below the file area.
 pub fn footer_rect(width: f32, window_height: f32) -> Rect {
@@ -2157,39 +3515,20 @@ pub fn footer_filter_rect(window_height: f32) -> Rect {
     )
 }
 
-/// One row of the filter menu, which opens *upwards* out of the control —
-/// there is nothing below the action row to open into.
-pub fn footer_filter_option_rect(window_height: f32, index: usize, count: usize) -> Rect {
-    let control = footer_filter_rect(window_height);
-    let height = count as f32 * FOOTER_MENU_ROW_H + 8.0;
-    let top = control.top - 6.0 - height + 4.0 + index as f32 * FOOTER_MENU_ROW_H;
-    Rect::from_ltrb(control.left, top, control.right, top + FOOTER_MENU_ROW_H)
-}
-
 /// What the action row has under `(x, y)`, if anything.
 ///
-/// `window_height` is the whole window, not the file area. Takes the two
-/// facts it needs rather than a [`FooterData`], so a caller can hit-test
-/// without holding a borrow of the state it is about to mutate.
+/// `window_height` is the whole window, not the file area. Takes the facts
+/// it needs rather than a [`FooterData`], so a caller can hit-test without
+/// holding a borrow of the state it is about to mutate.
 pub fn footer_at(
     x: f32,
     y: f32,
     width: f32,
     window_height: f32,
     filter_count: usize,
-    filter_open: bool,
 ) -> Option<FooterButton> {
     let point = Point::new(x, y);
 
-    // The open menu floats above the row and takes the pointer first,
-    // exactly as a context menu would.
-    if filter_open {
-        for index in 0..filter_count {
-            if footer_filter_option_rect(window_height, index, filter_count).contains(point) {
-                return Some(FooterButton::FilterOption(index));
-            }
-        }
-    }
     if footer_accept_rect(width, window_height).contains(point) {
         return Some(FooterButton::Accept);
     }
@@ -2439,63 +3778,6 @@ fn draw_filter_control(canvas: &Canvas, f: &Frame, footer: &FooterData<'_>, wind
     path.line_to((cx, cy - 2.5));
     path.line_to((cx + 4.0, cy + 2.0));
     canvas.draw_path(&path.detach(), &chevron);
-
-    if !footer.filter_open {
-        return;
-    }
-
-    let count = footer.filters.len();
-    let first = footer_filter_option_rect(window_h, 0, count);
-    let last = footer_filter_option_rect(window_h, count - 1, count);
-    let panel = Rect::from_ltrb(rect.left, first.top - 4.0, rect.right, last.bottom + 4.0);
-
-    let mut menu = Paint::default();
-    menu.set_anti_alias(true);
-    menu.set_color(theme.material_popup);
-    canvas.draw_rrect(RRect::new_rect_xy(panel, 8.0, 8.0), &menu);
-
-    for (index, name) in footer.filters.iter().enumerate() {
-        let row = footer_filter_option_rect(window_h, index, count);
-        let hovered = footer.hovered == Some(FooterButton::FilterOption(index));
-        if hovered {
-            let mut hl = Paint::default();
-            hl.set_anti_alias(true);
-            hl.set_color(accent(theme));
-            canvas.draw_rrect(
-                RRect::new_rect_xy(row.with_inset((4.0, 0.0)), 5.0, 5.0),
-                &hl,
-            );
-        }
-        Label::new(name.as_str())
-            .with_style(styles::BODY)
-            .with_color(if hovered {
-                Color::WHITE
-            } else {
-                theme.text_primary
-            })
-            .centered_on(row.left + 24.0, row.center_y())
-            .render(canvas);
-
-        if index == footer.current_filter {
-            let mut tick = Paint::default();
-            tick.set_anti_alias(true);
-            tick.set_color(if hovered {
-                Color::WHITE
-            } else {
-                theme.text_primary
-            });
-            tick.set_style(skia_safe::paint::Style::Stroke);
-            tick.set_stroke_width(1.8);
-            tick.set_stroke_cap(skia_safe::paint::Cap::Round);
-            let mx = row.left + 13.0;
-            let my = row.center_y();
-            let mut p = skia_safe::PathBuilder::new();
-            p.move_to((mx - 4.0, my));
-            p.line_to((mx - 1.0, my + 3.5));
-            p.line_to((mx + 4.5, my - 4.0));
-            canvas.draw_path(&p.detach(), &tick);
-        }
-    }
 }
 
 /// Whether the current colour scheme is the dark one — what the materials
@@ -2506,22 +3788,32 @@ pub fn is_dark() -> bool {
 
 /// How tall one pane's content is, for the same three views.
 pub fn pane_content_height(width: f32, height: f32, mode: ViewMode, count: usize) -> f32 {
-    pane_content_height_in(width, height, mode, count, GridSections::FLAT)
+    pane_content_height_in(
+        width,
+        height,
+        mode,
+        count,
+        GridSections::FLAT,
+        PhotosLayout::EMPTY,
+    )
 }
 
-/// [`pane_content_height`] against a sectioned grid — what the scroll view has
-/// to be told, or the headings' height is scrolled off the bottom.
+/// [`pane_content_height`] against a sectioned grid and the Photos view's
+/// rows — what the scroll view has to be told, or the headings' height is
+/// scrolled off the bottom.
 pub fn pane_content_height_in(
     width: f32,
     height: f32,
     mode: ViewMode,
     count: usize,
     sections: &GridSections,
+    photos: &PhotosLayout,
 ) -> f32 {
     match mode {
         ViewMode::Grid => {
             grid_content_height_in(content_viewport(width, height, mode), sections, count)
         }
+        ViewMode::Photos => photos.content_height(),
         // Miller rows start a little way down the pane; the list starts flush.
         ViewMode::Columns => content_height(count) + MILLER_ROW_INSET,
         ViewMode::List => content_height(count),
@@ -2533,16 +3825,25 @@ pub fn pane_content_height_in(
 /// the geometry a "scroll the cursor into view" needs; the other half is the
 /// pane's viewport height, from [`pane_viewport`].
 pub fn item_span(width: f32, height: f32, mode: ViewMode, index: usize) -> (f32, f32) {
-    item_span_in(width, height, mode, GridSections::FLAT, index)
+    item_span_in(
+        width,
+        height,
+        mode,
+        GridSections::FLAT,
+        PhotosLayout::EMPTY,
+        index,
+    )
 }
 
 /// [`item_span`] against a sectioned grid — Recent, whose day headings push
-/// every tile below them further down than the flat lattice says.
+/// every tile below them further down than the flat lattice says — and the
+/// Photos view's rows.
 pub fn item_span_in(
     width: f32,
     height: f32,
     mode: ViewMode,
     sections: &GridSections,
+    photos: &PhotosLayout,
     index: usize,
 ) -> (f32, f32) {
     match mode {
@@ -2552,7 +3853,11 @@ pub fn item_span_in(
         ViewMode::Grid => {
             let area = content_viewport(width, height, mode);
             let cell = sections.layout(usize::MAX).cell_rect(index, area.width());
-            (cell.top, cell_h())
+            (cell.top, cell.height())
+        }
+        ViewMode::Photos => {
+            let tile = photos.layout.rect(index);
+            (tile.top, tile.height())
         }
     }
 }
@@ -2663,6 +3968,9 @@ impl PaneData<'_> {
 
 /// Everything the view needs for one frame. Rebuilt each frame; owns nothing.
 pub struct Frame<'a> {
+    /// The desk's overflow tile, and its panel while open, when it stacks
+    /// and has more icons than cells.
+    pub desk_overflow: Option<DeskOverflow>,
     pub width: f32,
     pub height: f32,
     pub theme: &'a Theme,
@@ -2681,8 +3989,8 @@ pub struct Frame<'a> {
     /// along the bottom of the stack. `None` outside Miller view, and in
     /// tests with no live view to read.
     pub pan_bar: Option<&'a ScrollState>,
-    /// The Miller view's draggable pane width, shared by every pane.
-    pub miller_w: f32,
+    /// Each Miller pane's draggable width.
+    pub miller: MillerWidths,
     pub sort: SortKey,
     pub ascending: bool,
     /// The list view's draggable Size/Kind/Modified column widths.
@@ -2716,10 +4024,10 @@ pub struct Frame<'a> {
     /// The preview pane — a trailing member of the Miller stack, panned into
     /// and out of view the same as any real column — when one is showing.
     /// `None` outside Miller view or with no single file selected; drawn at
-    /// [`PREVIEW_W`] on its own surface in the stack, the same way [`miller_w`] sizes
-    /// every other pane rather than being carried on `Frame` itself.
+    /// [`PREVIEW_W`] on its own surface in the stack, the same way [`miller`]
+    /// sizes every other pane rather than being carried on `Frame` itself.
     ///
-    /// [`miller_w`]: Frame::miller_w
+    /// [`miller`]: Frame::miller
     pub preview: Option<PreviewData<'a>>,
     /// The picker's action row, when this is a picker window. `None` in the
     /// browser.
@@ -2767,6 +4075,21 @@ pub struct Frame<'a> {
     /// [`GridSections::FLAT`] — for every directory listing; filled only by
     /// the Recent place.
     pub grid_sections: &'a GridSections,
+    /// The Photos view's rows, laid out for the current width and listing.
+    /// [`PhotosLayout::EMPTY`] outside that view.
+    pub photos: &'a PhotosLayout,
+    /// The Photos tile under the pointer, which wears its caption.
+    pub photo_hover: Option<usize>,
+    /// The pictures found for the Photos view's folder cards. `None` where
+    /// there is no store to ask, and every card draws as a plain folder.
+    pub photo_folders: Option<&'a crate::photos::FolderPreviews>,
+    /// The Photos view's header controls: the size slider and the grouping
+    /// button. `None` in every other view.
+    pub photos_controls: Option<PhotosControls>,
+    /// The Photos info panel's content. `None` outside the Photos view.
+    pub photos_info: Option<PhotosInfoData<'a>>,
+    /// Text selected in the Photos info panel, to be highlighted.
+    pub photos_info_selection: Option<&'a TextSelection>,
     /// Whether a grid tile names the folder it came from under its caption.
     /// True only where the listing has no single parent, which is Recent.
     pub show_folders: bool,
@@ -2881,9 +4204,15 @@ pub struct FooterData<'a> {
     /// The filter control's labels. Empty hides the control entirely.
     pub filters: &'a [String],
     pub current_filter: usize,
-    /// The filter menu is open, so the control draws as pressed and its
-    /// options are listed above it.
+    /// The filter menu is open, so the control draws as pressed. The menu
+    /// itself is a popup — see `show_filter_menu` — above the window and
+    /// everything painted into it, the save field included.
     pub filter_open: bool,
+    /// The toolbar's location menu is up, so its capsule draws held.
+    pub location_open: bool,
+    /// The capsule's icon, most specific first: the same one the location
+    /// menu gives the directory being viewed.
+    pub location_icon: Vec<String>,
     pub hovered: Option<FooterButton>,
     pub pressed: Option<FooterButton>,
     /// Save mode: draw the name row above the buttons. The field's own text
@@ -2902,8 +4231,6 @@ pub enum FooterButton {
     Accept,
     Cancel,
     Filter,
-    /// One option of the open filter menu.
-    FilterOption(usize),
 }
 
 /// What the preview pane shows for the current selection.
@@ -2924,6 +4251,8 @@ pub struct PreviewData<'a> {
     /// when it was last written. Already formatted, because the listing has
     /// the same facts in the same words and they are formatted once.
     pub info: Vec<String>,
+    /// Text selected in the caption, to be highlighted.
+    pub caption_selection: Option<TextSelection>,
 }
 
 pub fn draw(canvas: &Canvas, f: &Frame) {
@@ -2942,6 +4271,9 @@ pub fn draw(canvas: &Canvas, f: &Frame) {
         draw_grid(canvas, f);
         draw_drop_highlight(canvas, f);
         draw_open_pulse(canvas, f);
+        if let Some(edit) = desk_edit() {
+            draw_desk_edit(canvas, f.theme, Rect::from_wh(f.width, f.height), edit);
+        }
         return;
     }
 
@@ -2985,6 +4317,12 @@ pub fn draw(canvas: &Canvas, f: &Frame) {
         // [`crate::pane_surfaces`].
         ViewMode::Columns => {}
         ViewMode::Grid => draw_grid(canvas, f),
+        ViewMode::Photos => {
+            draw_photos(canvas, f);
+            if let Some(data) = f.photos_info.as_ref() {
+                draw_photos_info(canvas, f, data);
+            }
+        }
     }
 
     // After the panes and before the chrome: over the rows it points at, under
@@ -3608,6 +4946,7 @@ pub fn preview_content(
     let video_on_surface = data.video_on_surface;
     let first_row = data.first_row;
     let info = data.info.clone();
+    let selection = data.caption_selection.clone();
 
     move |canvas: &Canvas, width: f32, height: f32| {
         let panel = Rect::from_wh(width, height);
@@ -3616,7 +4955,7 @@ pub fn preview_content(
         // way the name and the facts sit on the same line whatever the file
         // is, instead of riding up and down with the size of the thing above
         // them, and the preview gets every point that is not spoken for.
-        draw_preview_caption(canvas, &theme, panel, &name, &info);
+        draw_preview_caption(canvas, &theme, panel, &name, &info, selection.as_ref());
         let stage = preview_stage_rect(panel, info.len());
         draw_preview_stage(
             canvas,
@@ -3865,28 +5204,59 @@ fn preview_caption_rect(panel: Rect, lines: usize) -> Rect {
     )
 }
 
-/// The file's name, and the facts about it, along the bottom of the column.
-fn draw_preview_caption(canvas: &Canvas, theme: &Theme, panel: Rect, name: &str, info: &[String]) {
+/// The file's name, and the facts about it, along the bottom of the column,
+/// with whatever of them is selected highlighted behind.
+fn draw_preview_caption(
+    canvas: &Canvas,
+    theme: &Theme,
+    panel: Rect,
+    name: &str,
+    info: &[String],
+    selection: Option<&TextSelection>,
+) {
+    let runs = preview_caption_runs(panel, name, info, theme);
+    if let Some(selection) = selection {
+        selection.draw_highlight(canvas, &runs, text_selection_colour(theme));
+    }
+    for run in &runs {
+        run.draw(canvas);
+    }
+}
+
+/// The preview column's caption as text runs, in `panel`'s coordinates: the
+/// name, then a line per fact, centred. What it draws and what a press in it
+/// selects from.
+pub fn preview_caption_runs(
+    panel: Rect,
+    name: &str,
+    info: &[String],
+    theme: &Theme,
+) -> Vec<TextRun> {
     let caption = preview_caption_rect(panel, info.len());
-    let room = panel.width() - PREVIEW_PAD * 2.0;
-
-    let name_font = styles::BODY_EMPHASIZED.font();
-    Label::new(ellipsize(&name_font, name, room.max(40.0)))
-        .with_style(styles::BODY_EMPHASIZED)
-        .with_color(theme.text_primary)
-        .centered_at(panel.center_x(), caption.top + PREVIEW_NAME_H / 2.0)
-        .render(canvas);
-
-    let info_font = styles::CALLOUT.font();
+    let room = (panel.width() - PREVIEW_PAD * 2.0).max(40.0);
+    let mut runs = vec![TextRun::centered(
+        ellipsize(&styles::BODY_EMPHASIZED.font(), name, room),
+        styles::BODY_EMPHASIZED,
+        theme.text_primary,
+        panel.center_x(),
+        caption.top + PREVIEW_NAME_H / 2.0,
+    )
+    .with_full(name)];
     let mut y = caption.top + PREVIEW_NAME_H + PREVIEW_INFO_H / 2.0;
     for line in info {
-        Label::new(ellipsize(&info_font, line, room.max(40.0)))
-            .with_style(styles::CALLOUT)
-            .with_color(theme.text_tertiary)
-            .centered_at(panel.center_x(), y)
-            .render(canvas);
+        runs.push(
+            TextRun::centered(
+                ellipsize(&styles::CALLOUT.font(), line, room),
+                styles::CALLOUT,
+                theme.text_tertiary,
+                panel.center_x(),
+                y,
+            )
+            .with_full(line.as_str()),
+        );
         y += PREVIEW_INFO_H;
     }
+    runs
 }
 
 /// The file's icon, as large as the space above the caption allows.
@@ -4015,6 +5385,9 @@ fn draw_header(canvas: &Canvas, f: &Frame) {
     match f.trash.as_ref() {
         Some(chrome) => draw_trash_actions(canvas, f, chrome),
         None => draw_switcher(canvas, f),
+    }
+    if let (Some(controls), None) = (f.photos_controls, f.trash.as_ref()) {
+        draw_photos_controls(canvas, f, controls);
     }
 
     paint.set_color(theme.fill_tertiary);
@@ -4156,20 +5529,72 @@ pub fn draw_search_band(canvas: &Canvas, f: &Frame) {
 /// name in a soft capsule, centred on the toolbar row between the navigation
 /// arrows and the view switcher.
 ///
-/// It does not open a menu yet — it says where you are. The popup of ancestor
-/// directories the reference layout has is the next thing it grows.
+/// A press opens the menu of the directories above this one; the chevron at
+/// its end says so.
 fn draw_location_button(canvas: &Canvas, f: &Frame) {
     let theme = f.theme;
     let cy = toolbar_cy();
     let rect = location_rect(f.width);
+    let open = f.action_row.as_ref().is_some_and(|row| row.location_open);
 
     let mut paint = Paint::default();
     paint.set_anti_alias(true);
-    paint.set_color(theme.fill_tertiary);
+    paint.set_color(if open {
+        theme.fill_secondary
+    } else {
+        theme.fill_tertiary
+    });
     canvas.draw_rrect(RRect::new_rect_xy(rect, NAV_RADIUS, NAV_RADIUS), &paint);
 
+    // Glyphs drawn rather than themed, like the switcher's: the bundled icon
+    // set has neither a downward chevron nor a new-folder sign.
+    let mut glyph = Paint::default();
+    glyph.set_anti_alias(true);
+    glyph.set_color(theme.text_secondary);
+    glyph.set_style(skia_safe::paint::Style::Stroke);
+    glyph.set_stroke_width(1.6);
+    glyph.set_stroke_cap(skia_safe::paint::Cap::Round);
+    glyph.set_stroke_join(skia_safe::paint::Join::Round);
+
+    let cx = rect.right - 14.0;
+    let mut chevron = skia_safe::PathBuilder::new();
+    chevron.move_to((cx - 4.0, cy - 2.0));
+    chevron.line_to((cx, cy + 2.5));
+    chevron.line_to((cx + 4.0, cy - 2.0));
+    canvas.draw_path(&chevron.detach(), &glyph);
+
+    // New Folder, beside it: a plain capsule, the same family as the nav pair.
+    let button = new_folder_rect(f.width);
+    paint.set_color(theme.fill_tertiary);
+    canvas.draw_rrect(RRect::new_rect_xy(button, NAV_RADIUS, NAV_RADIUS), &paint);
+    let (bx, by) = (button.center_x(), button.center_y());
+    // A folder: tab on the top left, body below it.
+    let mut folder = skia_safe::PathBuilder::new();
+    folder.move_to((bx - 8.0, by + 5.5));
+    folder.line_to((bx - 8.0, by - 5.5));
+    folder.line_to((bx - 3.5, by - 5.5));
+    folder.line_to((bx - 1.5, by - 3.5));
+    folder.line_to((bx + 8.0, by - 3.5));
+    folder.line_to((bx + 8.0, by + 5.5));
+    folder.close();
+    canvas.draw_path(&folder.detach(), &glyph);
+    let mut plus = skia_safe::PathBuilder::new();
+    plus.move_to((bx, by - 1.0));
+    plus.line_to((bx, by + 4.0));
+    plus.move_to((bx - 2.5, by + 1.5));
+    plus.line_to((bx + 2.5, by + 1.5));
+    canvas.draw_path(&plus.detach(), &glyph);
+
     let mut text_x = rect.left + 10.0;
-    if let Some(image) = icons::cached_icon_chain(&["folder"], 16) {
+    // The theme's full-colour art, like the listing's rows: the 16px tier of
+    // many themes is a grey outline, which is not the folder the menu shows.
+    let names: Vec<&str> = f
+        .action_row
+        .as_ref()
+        .map(|row| row.location_icon.iter().map(String::as_str).collect())
+        .filter(|names: &Vec<&str>| !names.is_empty())
+        .unwrap_or_else(|| vec!["folder"]);
+    if let Some(image) = icons::cached_icon_chain_at(&names, 16, icons::FULL_COLOUR_SIZE) {
         let dst = Rect::from_xywh(text_x, cy - 8.0, 16.0, 16.0);
         canvas.draw_image_rect(&image, None, dst, &Paint::default());
         text_x += 22.0;
@@ -4283,7 +5708,7 @@ fn draw_nav_button(
 fn draw_switcher(canvas: &Canvas, f: &Frame) {
     let theme = f.theme;
     let rect = switcher_rect(f.width);
-    let seg = rect.width() / 3.0;
+    let seg = rect.width() / SWITCHER_MODES.len() as f32;
     let mut paint = Paint::default();
     paint.set_anti_alias(true);
 
@@ -4354,6 +5779,20 @@ fn draw_switcher(canvas: &Canvas, f: &Frame) {
                     );
                 }
             }
+            // Two rows of tiles of different widths: the justified wall.
+            ViewMode::Photos => {
+                for (x, y, w) in [
+                    (-7.0, -6.0, 8.0),
+                    (2.0, -6.0, 5.0),
+                    (-7.0, 1.0, 5.0),
+                    (-1.0, 1.0, 8.0),
+                ] {
+                    canvas.draw_rrect(
+                        RRect::new_rect_xy(Rect::from_xywh(cx + x, cy + y, w, 5.0), 1.2, 1.2),
+                        &paint,
+                    );
+                }
+            }
         }
     }
 }
@@ -4387,10 +5826,14 @@ fn draw_grid(canvas: &Canvas, f: &Frame) {
     } else if pane.entries.is_empty() {
         draw_centered(canvas, area, empty_message(f), theme.text_tertiary);
     } else {
-        // Only the rows of cells the viewport is asking for are drawn.
+        // Only the rows of cells the viewport is asking for are drawn. On a
+        // desk that stacks, the grid stops at the overflow tile.
         let band = pane.band(area);
         let sections = f.grid_sections;
-        for index in grid_visible_range_in(area, sections, pane.entries.len(), pane.scroll, band) {
+        let in_grid = f
+            .desk_overflow
+            .map_or(pane.entries.len(), |overflow| overflow.tile.first);
+        for index in grid_visible_range_in(area, sections, in_grid, pane.scroll, band) {
             let cell = grid_cell_rect_in(area, sections, index, pane.scroll);
             let entry = pane.entries[index];
             draw_grid_cell_with(
@@ -4405,6 +5848,20 @@ fn draw_grid(canvas: &Canvas, f: &Frame) {
             );
         }
         draw_grid_headers(canvas, theme, area, sections, pane.scroll, band);
+        if let Some(overflow) = f.desk_overflow.as_ref() {
+            // The open panel's tile stays lit: it is where the panel came
+            // from and where it goes back to.
+            let selected = overflow.panel.is_some()
+                || overflow.tile.range().any(|index| pane.is_selected(index));
+            draw_overflow_tile(
+                canvas,
+                f,
+                &pane.entries,
+                overflow.tile,
+                overflow.cell(area),
+                selected,
+            );
+        }
     }
 
     if let Some(band) = f.marquee {
@@ -4413,6 +5870,497 @@ fn draw_grid(canvas: &Canvas, f: &Frame) {
 
     canvas.restore();
     pane.draw_scrollbar(canvas, theme);
+}
+
+/// The Photos view: pictures in justified rows under a heading per day, and
+/// everything else as square tiles after them.
+fn draw_photos(canvas: &Canvas, f: &Frame) {
+    let theme = f.theme;
+    let area = f.photos.area(f.width, f.height);
+    let Some(pane) = f.panes.last() else { return };
+    let depth = f.panes.len() - 1;
+
+    canvas.save();
+    canvas.clip_rect(area, ClipOp::Intersect, true);
+
+    if let Some(error) = pane.error {
+        draw_centered(canvas, area, error, theme.text_secondary);
+    } else if pane.loading {
+        draw_centered(
+            canvas,
+            area,
+            otto_kit::t!("files-loading"),
+            theme.text_tertiary,
+        );
+    } else if pane.entries.is_empty() {
+        draw_centered(canvas, area, empty_message(f), theme.text_tertiary);
+    } else {
+        let band = pane.band(area);
+        let range = f.photos.visible_range(area, pane.scroll, band);
+        for index in range.start..range.end.min(pane.entries.len()) {
+            let tile = f.photos.tile_rect(area, index, pane.scroll);
+            let entry = pane.entries[index];
+            let renaming = f.renaming == Some((depth, index));
+            let state = PhotoTileState {
+                selected: pane.is_selected(index),
+                hovered: f.photo_hover == Some(index) && !renaming,
+                cut: f.cut.iter().any(|path| path == &entry.path),
+            };
+            if f.photos.kind_at(index) == Some(SectionKind::Folders) {
+                let pictures: Option<Vec<Option<&skia_safe::Image>>> = f
+                    .photo_folders
+                    .and_then(|folders| folders.images(entry))
+                    .map(|images| {
+                        images
+                            .iter()
+                            .map(|(path, modified)| {
+                                f.thumbs.and_then(|thumbs| thumbs.image(path, *modified))
+                            })
+                            .collect()
+                    });
+                draw_folder_card(
+                    canvas,
+                    theme,
+                    entry,
+                    tile,
+                    state,
+                    pictures.as_deref(),
+                    renaming,
+                );
+                continue;
+            }
+            draw_photo_tile(canvas, theme, entry, tile, state, f.thumbnail(entry));
+        }
+        draw_photos_headers(canvas, theme, area, f.photos, pane.scroll, band);
+    }
+
+    if let Some(band) = f.marquee {
+        draw_marquee(canvas, theme, band);
+    }
+
+    canvas.restore();
+    pane.draw_scrollbar(canvas, theme);
+}
+
+/// The day headings over the Photos wall, pinned to the top of the band while
+/// their own pictures are scrolled through — the grid's headings, with the
+/// day's count beside the date.
+fn draw_photos_headers(
+    canvas: &Canvas,
+    theme: &Theme,
+    area: Rect,
+    photos: &PhotosLayout,
+    scroll: f32,
+    band: Rect,
+) {
+    let headers = photos.headers(area, scroll);
+    for (index, (rect, section)) in headers.iter().enumerate() {
+        let next_top = headers.get(index + 1).map(|(r, _)| r.top);
+        let stuck = rect.top.max(band.top);
+        let top = match next_top {
+            Some(next) if next <= stuck + PHOTOS_HEADER_H => next - PHOTOS_HEADER_H,
+            _ => stuck,
+        };
+        if top + PHOTOS_HEADER_H < band.top || top > band.bottom {
+            continue;
+        }
+        let placed = Rect::from_xywh(rect.left, top, rect.width(), PHOTOS_HEADER_H);
+        let mut paint = Paint::default();
+        paint.set_anti_alias(true);
+        paint.set_color(content_ground());
+        // Out to the file area's edges, not just the heading's: the tiles
+        // slide under the whole band rather than showing past its ends.
+        canvas.draw_rect(
+            Rect::from_ltrb(area.left, placed.top, area.right, placed.bottom),
+            &paint,
+        );
+
+        // On the band's lower half, so the air above it separates the day
+        // from the one before and the text sits close to its own pictures.
+        let cy = placed.bottom - PHOTOS_HEADER_H * 0.35;
+        let title_style = styles::HEADLINE;
+        let title_w = title_style.font().measure_str(&section.title, None).0;
+        Label::new(section.title.as_str())
+            .with_style(title_style)
+            .with_color(theme.text_primary)
+            .centered_on(placed.left, cy)
+            .render(canvas);
+        Label::new(section.count.to_string())
+            .with_style(styles::SUBHEADLINE)
+            .with_color(theme.text_tertiary)
+            .centered_on(placed.left + title_w + 8.0, cy)
+            .render(canvas);
+    }
+}
+
+/// How one Photos tile is lit.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PhotoTileState {
+    pub selected: bool,
+    /// Under the pointer: the name is shown along the foot of the picture.
+    pub hovered: bool,
+    /// Marked by a pending cut, and dimmed until the paste.
+    pub cut: bool,
+}
+
+/// One Photos tile: the picture cropped to fill the tile, or, for anything
+/// that is not a picture, its icon and name on a quiet card.
+///
+/// Filled rather than fitted, unlike the grid's thumbnails: the tile already
+/// has the picture's proportions, so the crop only trims what the clamp on
+/// very wide and very tall pictures cut off, and a fitted picture would leave
+/// the wall ragged.
+pub fn draw_photo_tile(
+    canvas: &Canvas,
+    theme: &Theme,
+    entry: &Entry,
+    tile: Rect,
+    state: PhotoTileState,
+    thumb: Option<&skia_safe::Image>,
+) {
+    if tile.is_empty() {
+        return;
+    }
+    let shape = RRect::new_rect_xy(tile, PHOTOS_RADIUS, PHOTOS_RADIUS);
+    let photo = crate::photos::is_photo(entry);
+    let mut paint = Paint::default();
+    paint.set_anti_alias(true);
+    if state.cut {
+        paint.set_alpha(110);
+    }
+
+    canvas.save();
+    canvas.clip_rrect(shape, ClipOp::Intersect, true);
+    // The placeholder, and the ground a transparent picture sits on.
+    let mut ground = Paint::default();
+    ground.set_anti_alias(true);
+    ground.set_color(theme.fill_quaternary);
+    canvas.draw_rect(tile, &ground);
+
+    match thumb.filter(|_| photo) {
+        Some(image) => {
+            canvas.draw_image_rect_with_sampling_options(
+                image,
+                Some((
+                    &cover_crop(image, tile),
+                    skia_safe::canvas::SrcRectConstraint::Fast,
+                )),
+                tile,
+                skia_safe::sampling_options::SamplingOptions::from(
+                    skia_safe::sampling_options::CubicResampler::mitchell(),
+                ),
+                &paint,
+            );
+        }
+        None if photo => {}
+        None => draw_photo_card(canvas, theme, entry, tile, thumb, state.cut),
+    }
+
+    if state.hovered && photo {
+        draw_photo_caption(canvas, entry, tile);
+    }
+    canvas.restore();
+    // Over the picture, under the selection's rings.
+    if photo {
+        draw_picture_edge(canvas, tile, PHOTOS_RADIUS, state.cut);
+    }
+
+    if state.selected {
+        draw_photo_selection(canvas, theme, tile, PHOTOS_RADIUS);
+    }
+}
+
+/// A folder in the Photos view: a card of the newest pictures inside it —
+/// one large, two small stacked beside it — over the folder's icon, name and
+/// date.
+///
+/// `pictures` is `None` while the folder has not been looked into yet, and
+/// empty for a folder with no pictures in it; each picture is `None` until
+/// its thumbnail lands. A folder with none shows a plain folder instead.
+pub fn draw_folder_card(
+    canvas: &Canvas,
+    theme: &Theme,
+    entry: &Entry,
+    cell: Rect,
+    state: PhotoTileState,
+    pictures: Option<&[Option<&skia_safe::Image>]>,
+    renaming: bool,
+) {
+    let mosaic = Rect::from_xywh(cell.left, cell.top, cell.width(), FOLDER_MOSAIC_H);
+    let mut paint = Paint::default();
+    paint.set_anti_alias(true);
+    if state.cut {
+        paint.set_alpha(110);
+    }
+    let mut ground = Paint::default();
+    ground.set_anti_alias(true);
+    ground.set_color(theme.fill_quaternary);
+
+    canvas.save();
+    canvas.clip_rrect(
+        RRect::new_rect_xy(mosaic, FOLDER_RADIUS, FOLDER_RADIUS),
+        ClipOp::Intersect,
+        true,
+    );
+    canvas.draw_rect(mosaic, &ground);
+    match pictures {
+        Some(pictures) if !pictures.is_empty() => {
+            for (slot, picture) in folder_mosaic(mosaic, pictures.len())
+                .into_iter()
+                .zip(pictures)
+            {
+                match picture {
+                    Some(image) => {
+                        canvas.draw_image_rect_with_sampling_options(
+                            image,
+                            Some((
+                                &cover_crop(image, slot),
+                                skia_safe::canvas::SrcRectConstraint::Fast,
+                            )),
+                            slot,
+                            skia_safe::sampling_options::SamplingOptions::from(
+                                skia_safe::sampling_options::CubicResampler::mitchell(),
+                            ),
+                            &paint,
+                        );
+                    }
+                    None => {
+                        let mut wait = ground.clone();
+                        wait.set_color(theme.fill_tertiary);
+                        canvas.draw_rect(slot, &wait);
+                    }
+                }
+            }
+        }
+        // Not looked into yet: the plain card, which is also what a folder
+        // with no pictures keeps.
+        _ => {
+            let chain = entry.icon_chain();
+            let refs: Vec<&str> = chain.iter().map(String::as_str).collect();
+            let edge = DEFAULT_GRID_ICON;
+            if let Some(image) =
+                icons::cached_icon_chain_at(&refs, edge as i32, icons::FULL_COLOUR_SIZE)
+            {
+                canvas.draw_image_rect(
+                    &image,
+                    None,
+                    Rect::from_xywh(
+                        mosaic.center_x() - edge / 2.0,
+                        mosaic.center_y() - edge / 2.0,
+                        edge,
+                        edge,
+                    ),
+                    &paint,
+                );
+            }
+        }
+    }
+    canvas.restore();
+    if pictures.is_some_and(|pictures| !pictures.is_empty()) {
+        draw_picture_edge(canvas, mosaic, FOLDER_RADIUS, state.cut);
+    }
+
+    if state.selected {
+        draw_photo_selection(canvas, theme, mosaic, FOLDER_RADIUS);
+    }
+    if renaming {
+        return;
+    }
+
+    // The caption: the icon theme's folder, small, the name beside it, the
+    // date under both.
+    const CAPTION_ICON: f32 = 16.0;
+    let name_cy = mosaic.bottom + 15.0;
+    let chain = entry.icon_chain();
+    let refs: Vec<&str> = chain.iter().map(String::as_str).collect();
+    if let Some(image) =
+        icons::cached_icon_chain_at(&refs, CAPTION_ICON as i32, icons::FULL_COLOUR_SIZE)
+    {
+        canvas.draw_image_rect(
+            &image,
+            None,
+            Rect::from_xywh(
+                cell.left + 2.0,
+                name_cy - CAPTION_ICON / 2.0,
+                CAPTION_ICON,
+                CAPTION_ICON,
+            ),
+            &paint,
+        );
+    }
+    let name_x = cell.left + CAPTION_ICON + 8.0;
+    let style = styles::BODY_EMPHASIZED;
+    let name = ellipsize(&style.font(), &entry.name, cell.right - name_x);
+    let (primary, secondary) = if state.cut {
+        (
+            dim_color(theme.text_primary),
+            dim_color(theme.text_secondary),
+        )
+    } else {
+        (theme.text_primary, theme.text_secondary)
+    };
+    Label::new(name)
+        .with_style(style)
+        .with_color(primary)
+        .centered_on(name_x, name_cy)
+        .render(canvas);
+    if let Some(modified) = entry.modified {
+        Label::new(model::format_time(modified))
+            .with_style(styles::FOOTNOTE)
+            .with_color(secondary)
+            .centered_on(name_x, name_cy + 18.0)
+            .render(canvas);
+    }
+}
+
+/// Where a folder card's pictures go: all of the card for one, two side by
+/// side, or one large on the left with two stacked on the right.
+fn folder_mosaic(mosaic: Rect, count: usize) -> Vec<Rect> {
+    const GAP: f32 = 2.0;
+    let large_w = (mosaic.width() * 0.64).round();
+    let right = Rect::from_ltrb(
+        mosaic.left + large_w + GAP,
+        mosaic.top,
+        mosaic.right,
+        mosaic.bottom,
+    );
+    let large = Rect::from_ltrb(
+        mosaic.left,
+        mosaic.top,
+        mosaic.left + large_w,
+        mosaic.bottom,
+    );
+    match count {
+        0 => Vec::new(),
+        1 => vec![mosaic],
+        2 => vec![large, right],
+        _ => {
+            let half = (mosaic.height() - GAP) / 2.0;
+            vec![
+                large,
+                Rect::from_ltrb(right.left, right.top, right.right, right.top + half),
+                Rect::from_ltrb(right.left, right.bottom - half, right.right, right.bottom),
+            ]
+        }
+    }
+}
+
+/// The part of `image` that fills `tile` without distorting: its centre, cut
+/// to the tile's proportions.
+fn cover_crop(image: &skia_safe::Image, tile: Rect) -> Rect {
+    let (w, h) = (image.width() as f32, image.height() as f32);
+    let tile_aspect = tile.width() / tile.height().max(1.0);
+    if w / h.max(1.0) > tile_aspect {
+        let crop = h * tile_aspect;
+        Rect::from_xywh((w - crop) / 2.0, 0.0, crop, h)
+    } else {
+        let crop = w / tile_aspect;
+        Rect::from_xywh(0.0, (h - crop) / 2.0, w, crop)
+    }
+}
+
+/// A tile for something that is not a picture: its icon, or a thumbnail
+/// fitted rather than cropped, over its name.
+fn draw_photo_card(
+    canvas: &Canvas,
+    theme: &Theme,
+    entry: &Entry,
+    tile: Rect,
+    thumb: Option<&skia_safe::Image>,
+    cut: bool,
+) {
+    let edge = (tile.width().min(tile.height()) * 0.42).min(DEFAULT_GRID_ICON * 1.5);
+    let icon = Rect::from_xywh(
+        tile.center_x() - edge / 2.0,
+        tile.center_y() - edge / 2.0 - 10.0,
+        edge,
+        edge,
+    );
+    match thumb {
+        Some(image) => draw_thumbnail(canvas, image, icon, cut),
+        None => {
+            let chain = entry.icon_chain();
+            let refs: Vec<&str> = chain.iter().map(String::as_str).collect();
+            if let Some(image) =
+                icons::cached_icon_chain_at(&refs, edge as i32, icons::FULL_COLOUR_SIZE)
+            {
+                let mut paint = Paint::default();
+                if cut {
+                    paint.set_alpha(110);
+                }
+                canvas.draw_image_rect(&image, None, icon, &paint);
+            }
+        }
+    }
+    let style = styles::FOOTNOTE;
+    let name = ellipsize(&style.font(), &entry.name, tile.width() - 16.0);
+    Label::new(name)
+        .with_style(style)
+        .with_color(if cut {
+            dim_color(theme.text_secondary)
+        } else {
+            theme.text_secondary
+        })
+        .centered_at(tile.center_x(), icon.bottom + 16.0)
+        .render(canvas);
+}
+
+/// The hover caption: the file's name on a shade rising from the foot of the
+/// picture, dark enough to read over a white sky.
+fn draw_photo_caption(canvas: &Canvas, entry: &Entry, tile: Rect) {
+    const SHADE_H: f32 = 44.0;
+    let shade = Rect::from_ltrb(
+        tile.left,
+        (tile.bottom - SHADE_H).max(tile.top),
+        tile.right,
+        tile.bottom,
+    );
+    let colors = [Color::from_argb(0, 0, 0, 0), Color::from_argb(150, 0, 0, 0)];
+    if let Some(shader) = skia_safe::gradient_shader::linear(
+        (
+            Point::new(shade.left, shade.top),
+            Point::new(shade.left, shade.bottom),
+        ),
+        &colors[..],
+        None,
+        skia_safe::TileMode::Clamp,
+        None,
+        None,
+    ) {
+        let mut paint = Paint::default();
+        paint.set_shader(shader);
+        canvas.draw_rect(shade, &paint);
+    }
+    let style = styles::FOOTNOTE_EMPHASIZED;
+    let name = ellipsize(&style.font(), &entry.name, tile.width() - 16.0);
+    Label::new(name)
+        .with_style(style)
+        .with_color(Color::WHITE)
+        .centered_on(tile.left + 8.0, tile.bottom - 12.0)
+        .render(canvas);
+}
+
+/// A selected tile's rings: the accent around the edge, and a white line
+/// inside it so the accent reads against a picture of the same colour.
+fn draw_photo_selection(canvas: &Canvas, theme: &Theme, tile: Rect, radius: f32) {
+    let accent = accent(theme);
+    let mut ring = Paint::default();
+    ring.set_anti_alias(true);
+    ring.set_style(skia_safe::paint::Style::Stroke);
+
+    ring.set_stroke_width(3.0);
+    ring.set_color(accent);
+    canvas.draw_rrect(
+        RRect::new_rect_xy(tile.with_inset((1.5, 1.5)), radius, radius),
+        &ring,
+    );
+    ring.set_stroke_width(1.5);
+    ring.set_color(Color::WHITE);
+    let inner = (radius - 3.0).max(0.0);
+    canvas.draw_rrect(
+        RRect::new_rect_xy(tile.with_inset((3.75, 3.75)), inner, inner),
+        &ring,
+    );
 }
 
 /// The name of the directory an entry sits in — the grid's substitute for a
@@ -4524,9 +6472,7 @@ pub fn draw_grid_cell_with(
     paint.set_anti_alias(true);
 
     let icon_top = cell.top + 8.0;
-    // The optical centre of the caption's first line, not its top: that is what
-    // `Label::centered_at` wants, and the pill is measured off the same point.
-    let label_center_y = icon_top + grid_icon() + GRID_LABEL_GAP;
+    let icon = grid_icon();
 
     if selected {
         // The highlight hugs the icon, not the cell — a cell-wide wash reads as
@@ -4539,23 +6485,56 @@ pub fn draw_grid_cell_with(
         );
     }
 
-    let box_rect = Rect::from_xywh(
-        cell.center_x() - grid_icon() / 2.0,
-        icon_top,
-        grid_icon(),
-        grid_icon(),
+    let box_rect = Rect::from_xywh(cell.center_x() - icon / 2.0, icon_top, icon, icon);
+    draw_grid_icon(canvas, entry, box_rect, thumb);
+    draw_grid_caption(
+        canvas,
+        theme,
+        &entry.name,
+        cell,
+        selected,
+        renaming,
+        subline,
     );
+}
+
+/// A grid cell's picture in `box_rect`: the thumbnail when there is one, the
+/// file's icon otherwise.
+fn draw_grid_icon(
+    canvas: &Canvas,
+    entry: &Entry,
+    box_rect: Rect,
+    thumb: Option<&skia_safe::Image>,
+) {
     if let Some(image) = thumb {
         draw_thumbnail(canvas, image, box_rect, false);
     } else {
         let chain = entry.icon_chain();
         let refs: Vec<&str> = chain.iter().map(String::as_str).collect();
         if let Some(image) =
-            icons::cached_icon_chain_at(&refs, grid_icon() as i32, icons::FULL_COLOUR_SIZE)
+            icons::cached_icon_chain_at(&refs, box_rect.width() as i32, icons::FULL_COLOUR_SIZE)
         {
             canvas.draw_image_rect(&image, None, box_rect, &Paint::default());
         }
     }
+}
+
+/// A grid cell's caption, `name` on up to two lines under the icon, with
+/// its pill behind it when `selected`, and `subline` under it.
+fn draw_grid_caption(
+    canvas: &Canvas,
+    theme: &Theme,
+    name: &str,
+    cell: Rect,
+    selected: bool,
+    renaming: bool,
+    subline: Option<&str>,
+) {
+    let mut paint = Paint::default();
+    paint.set_anti_alias(true);
+    // The optical centre of the caption's first line, not its top: that is what
+    // `Label::centered_at` wants, and the pill is measured off the same point.
+    let label_center_y = cell.top + 8.0 + grid_icon() + GRID_LABEL_GAP;
 
     // Two lines at most, the second elided — a long name must not push the
     // grid out of alignment.
@@ -4565,8 +6544,8 @@ pub fn draw_grid_cell_with(
     // heading. In a listing sorted by date the folder is the more useful of
     // the two anyway — the tail of a long file name is what can go.
     let (first, second) = match subline {
-        Some(_) => (one_line_label(&entry.name, 13), String::new()),
-        None => split_label(&entry.name, 13),
+        Some(_) => (one_line_label(name, grid_label_chars(cell)), String::new()),
+        None => split_label(name, grid_label_chars(cell)),
     };
     // The desk's ground is the wallpaper, which follows no colour scheme, so
     // its captions are white over a soft shadow whatever the theme: legible
@@ -5168,21 +7147,13 @@ pub(crate) fn draw_thumbnail(canvas: &Canvas, image: &skia_safe::Image, box_rect
     canvas.draw_image_rect(image, None, dst, &paint);
     canvas.restore();
 
-    let mut edge = Paint::default();
-    edge.set_anti_alias(true);
-    edge.set_style(skia_safe::paint::Style::Stroke);
-    edge.set_stroke_width(1.0);
-    edge.set_color(skia_safe::Color::from_argb(
-        if cut { 20 } else { 46 },
-        0,
-        0,
-        0,
-    ));
-    let inner = (radius - 0.5).max(0.0);
-    canvas.draw_rrect(
-        RRect::new_rect_xy(dst.with_inset((0.5, 0.5)), inner, inner),
-        &edge,
-    );
+    draw_picture_edge(canvas, dst, radius, cut);
+}
+
+/// The hairline around a picture — see [`otto_kit::preview::draw_picture_edge`],
+/// which every picture the browser draws wears.
+pub(crate) fn draw_picture_edge(canvas: &Canvas, rect: Rect, radius: f32, cut: bool) {
+    otto_kit::preview::draw_picture_edge(canvas, rect, radius, cut);
 }
 
 /// The corner radius of a thumbnail drawn into `dst`: a fixed share of its
@@ -5806,6 +7777,15 @@ pub fn draw_peek(canvas: &Canvas, f: &Frame, session: &crate::peek::Session, res
                 icons::cached_icon_chain_at(&[name], size, icons::FULL_COLOUR_SIZE)
             },
         );
+        // The same hairline every picture in the browser wears, on the
+        // picture's own edges — or each page's.
+        otto_kit::preview::draw_picture_edges(
+            canvas,
+            content,
+            &session.preview,
+            session.first_row,
+            session.zoom,
+        );
         if let Some(selection) = session.selection {
             otto_kit::preview::draw_selection(
                 canvas,
@@ -5847,7 +7827,13 @@ pub fn peek_text_badge_rect(panel: Rect) -> Rect {
 /// dot as the finished one so the two read as one thing changing rather than
 /// two appearing. It breathes: recognition takes seconds on a big screenshot,
 /// and a still glyph for that long looks like a result rather than a wait.
-fn draw_peek_working_badge(canvas: &Canvas, theme: &Theme, panel: Rect, opacity: f32, phase: f32) {
+pub fn draw_peek_working_badge(
+    canvas: &Canvas,
+    theme: &Theme,
+    panel: Rect,
+    opacity: f32,
+    phase: f32,
+) {
     // A slow breath, never all the way out: the badge stays legible at the
     // bottom of it, so what pulses is attention rather than presence.
     let breath = 0.65 + 0.35 * (phase * std::f32::consts::TAU / WORKING_BADGE_PERIOD).sin();
@@ -5872,7 +7858,7 @@ const WORKING_BADGE_PERIOD: f32 = 1.6;
 /// A dot in the same idiom as the close button, carrying a text-selection
 /// glyph. Its presence is the message: the picture has words in it, and they
 /// can be selected.
-fn draw_peek_text_badge(canvas: &Canvas, theme: &Theme, panel: Rect, opacity: f32) {
+pub fn draw_peek_text_badge(canvas: &Canvas, theme: &Theme, panel: Rect, opacity: f32) {
     draw_peek_badge(
         canvas,
         theme,
@@ -5983,6 +7969,7 @@ pub fn draw_info(
     error: Option<&str>,
     close_hovered: bool,
     shadow: bool,
+    selection: Option<&TextSelection>,
 ) {
     let mut paint = Paint::default();
     paint.set_anti_alias(true);
@@ -6013,27 +8000,119 @@ pub fn draw_info(
         canvas.draw_image_rect(&image, None, dst, &Paint::default());
     }
 
-    Label::new(elide(&info.name, 30))
-        .with_style(styles::TITLE_2_EMPHASIZED)
-        .with_color(theme.text_primary)
-        .centered_at(sheet.center_x(), sheet.top + 118.0)
-        .render(canvas);
+    let runs = info_runs(sheet, info, text, theme);
+    if let Some(selection) = selection {
+        selection.draw_highlight(canvas, &runs, text_selection_colour(theme));
+    }
+    for run in &runs {
+        run.draw(canvas);
+    }
+    let y = sheet.top + 180.0 + info_row_count(info, text) as f32 * INFO_SHEET_ROW;
 
+    // A file that could not be read at all says so instead of showing a
+    // permissions grid for a mode it never managed to load.
+    if let Some(reason) = &info.error {
+        Label::new(otto_kit::typography::ellipsize_chars(reason, 40))
+            .with_style(styles::CALLOUT)
+            .with_color(Color::from_argb(0xFF, 0xD7, 0x3A, 0x2E))
+            .centered_on(sheet.left + 24.0, y + 8.0)
+            .render(canvas);
+        return;
+    }
+
+    draw_permissions(canvas, theme, sheet, info, error);
+}
+
+/// The pitch of Get Info's detail rows.
+const INFO_SHEET_ROW: f32 = 23.0;
+
+/// Get Info's facts, label first, value second; rows with nothing to say are
+/// left out.
+fn info_rows(
+    info: &model::FileInfo,
+    text: Option<crate::ocrcache::Status>,
+) -> Vec<(&'static str, String)> {
+    let mut rows = vec![
+        (
+            otto_kit::t!("files-info-where"),
+            info.path
+                .parent()
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+        ),
+        (otto_kit::t!("files-info-kind"), info.mime.clone()),
+        // What the recogniser has made of the picture, between what the file
+        // is and when it was last touched: it describes the contents, and a
+        // reader who opened the panel to find out whether the words are
+        // coming should not have to read past the dates for the answer.
+        (
+            otto_kit::t!("files-info-text"),
+            text.map(describe_text_status).unwrap_or_default(),
+        ),
+        (
+            otto_kit::t!("files-info-modified"),
+            info.modified.map(model::format_time).unwrap_or_default(),
+        ),
+        (
+            otto_kit::t!("files-info-created"),
+            info.created.map(model::format_time).unwrap_or_default(),
+        ),
+        (
+            otto_kit::t!("files-info-accessed"),
+            info.accessed.map(model::format_time).unwrap_or_default(),
+        ),
+        (
+            otto_kit::t!("files-info-owner"),
+            format!("{} : {}", info.owner, info.group),
+        ),
+    ];
+    if let Some(target) = &info.link_target {
+        rows.push((
+            otto_kit::t!("files-info-links-to"),
+            target.to_string_lossy().into_owned(),
+        ));
+    }
+    rows.retain(|(_, value)| !value.is_empty());
+    rows
+}
+
+fn info_row_count(info: &model::FileInfo, text: Option<crate::ocrcache::Status>) -> usize {
+    info_rows(info, text).len()
+}
+
+/// Get Info's text as runs in the sheet's coordinates: the name and the line
+/// under it, centred, then a label and a value per fact. What it draws and
+/// what a press or a drag in it selects from.
+pub fn info_runs(
+    sheet: Rect,
+    info: &model::FileInfo,
+    text: Option<crate::ocrcache::Status>,
+    theme: &Theme,
+) -> Vec<TextRun> {
+    let mut runs = vec![TextRun::centered(
+        otto_kit::typography::ellipsize_chars(&info.name, 30),
+        styles::TITLE_2_EMPHASIZED,
+        theme.text_primary,
+        sheet.center_x(),
+        sheet.top + 118.0,
+    )
+    .with_full(info.name.as_str())];
     let subtitle = if info.is_dir {
         otto_kit::t_owned!("files-kind-folder")
     } else {
         format!("{} — {}", info.kind.label(), model::format_size(info.size))
     };
-    Label::new(&subtitle)
-        .with_style(styles::CALLOUT)
-        .with_color(theme.text_secondary)
-        .centered_at(sheet.center_x(), sheet.top + 144.0)
-        .render(canvas);
+    runs.push(TextRun::centered(
+        subtitle,
+        styles::CALLOUT,
+        theme.text_secondary,
+        sheet.center_x(),
+        sheet.top + 144.0,
+    ));
 
     // Detail rows. Body text, not a caption: these are the panel's content —
     // the path, the dates, who owns the file — and they were being set two
     // steps smaller than the same facts are shown at in the browser itself.
-    let mut y = sheet.top + 180.0;
     let label_x = sheet.left + 24.0;
     // Where the values start is measured, not fixed. Neither column elides —
     // the label because it is meant to be short, the value because it is
@@ -6044,95 +8123,32 @@ pub fn draw_info(
     let value_x = label_x + info_label_width().max(94.0);
     let value_w = sheet.right - 24.0 - value_x;
     let value_font = styles::BODY.font();
-
-    let row = |label: &str, value: String, canvas: &Canvas, y: &mut f32| {
-        if value.is_empty() {
-            return;
-        }
-        Label::new(label)
-            .with_style(styles::BODY)
-            .with_color(theme.text_tertiary)
-            .centered_on(label_x, *y)
-            .render(canvas);
+    let mut y = sheet.top + 180.0;
+    for (label, value) in info_rows(info, text) {
+        runs.push(TextRun::at(
+            label,
+            styles::BODY,
+            theme.text_tertiary,
+            label_x,
+            y,
+        ));
         // Measured against the font rather than counted in characters: a
         // per-character width estimate is a guess that has to be revisited
         // every time the size changes, and the column is narrow enough that
         // being wrong by a few characters runs the value under the edge.
-        Label::new(ellipsize(&value_font, &value, value_w))
-            .with_style(styles::BODY)
-            .with_color(theme.text_primary)
-            .centered_on(value_x, *y)
-            .render(canvas);
-        *y += 23.0;
-    };
-
-    let where_path = info
-        .path
-        .parent()
-        .map(|p| p.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    row(otto_kit::t!("files-info-where"), where_path, canvas, &mut y);
-    row(
-        otto_kit::t!("files-info-kind"),
-        info.mime.clone(),
-        canvas,
-        &mut y,
-    );
-    // What the recogniser has made of the picture, between what the file is
-    // and when it was last touched: it describes the contents, and a reader
-    // who opened the panel to find out whether the words are coming should
-    // not have to read past the dates for the answer.
-    row(
-        otto_kit::t!("files-info-text"),
-        text.map(describe_text_status).unwrap_or_default(),
-        canvas,
-        &mut y,
-    );
-    row(
-        otto_kit::t!("files-info-modified"),
-        info.modified.map(model::format_time).unwrap_or_default(),
-        canvas,
-        &mut y,
-    );
-    row(
-        otto_kit::t!("files-info-created"),
-        info.created.map(model::format_time).unwrap_or_default(),
-        canvas,
-        &mut y,
-    );
-    row(
-        otto_kit::t!("files-info-accessed"),
-        info.accessed.map(model::format_time).unwrap_or_default(),
-        canvas,
-        &mut y,
-    );
-    row(
-        otto_kit::t!("files-info-owner"),
-        format!("{} : {}", info.owner, info.group),
-        canvas,
-        &mut y,
-    );
-    if let Some(target) = &info.link_target {
-        row(
-            otto_kit::t!("files-info-links-to"),
-            target.to_string_lossy().into_owned(),
-            canvas,
-            &mut y,
+        runs.push(
+            TextRun::at(
+                ellipsize(&value_font, &value, value_w),
+                styles::BODY,
+                theme.text_primary,
+                value_x,
+                y,
+            )
+            .with_full(value),
         );
+        y += INFO_SHEET_ROW;
     }
-
-    // A file that could not be read at all says so instead of showing a
-    // permissions grid for a mode it never managed to load.
-    if let Some(reason) = &info.error {
-        Label::new(elide(reason, 40))
-            .with_style(styles::CALLOUT)
-            .with_color(Color::from_argb(0xFF, 0xD7, 0x3A, 0x2E))
-            .centered_on(sheet.left + 24.0, y + 8.0)
-            .render(canvas);
-        return;
-    }
-
-    draw_permissions(canvas, theme, sheet, info, error);
+    runs
 }
 
 /// What a panel says about the words in a picture: what was found, or that
@@ -6226,23 +8242,12 @@ fn draw_permissions(
 
     // A refused chmod says why, in place, rather than silently reverting.
     if let Some(error) = error {
-        Label::new(elide(error, 42))
+        Label::new(otto_kit::typography::ellipsize_chars(error, 42))
             .with_style(styles::CALLOUT)
             .with_color(Color::from_argb(0xFF, 0xD7, 0x3A, 0x2E))
             .centered_on(ox, oy + PERM_ROWS_TOP + 3.0 * PERM_ROW_H + 12.0)
             .render(canvas);
     }
-}
-
-/// Truncate to `max` characters with an ellipsis. Character-count based, which
-/// is good enough for a fixed-width sheet and needs no font.
-fn elide(text: &str, max: usize) -> String {
-    let chars: Vec<char> = text.chars().collect();
-    if chars.len() <= max {
-        return text.to_string();
-    }
-    let head: String = chars[..max.saturating_sub(1)].iter().collect();
-    format!("{head}…")
 }
 
 // ---------------------------------------------------------------------------
@@ -6297,7 +8302,22 @@ pub fn draw_open_pulse(canvas: &Canvas, f: &Frame) {
         return;
     };
 
-    let rect = cursor_entry_rect(f.width, f.height, f.mode, pane, depth, f.pan, f.miller_w);
+    let in_overflow = f.desk_overflow.and_then(|overflow| {
+        overflow.entry_rect(content_viewport(f.width, f.height, ViewMode::Grid), index)
+    });
+    let rect = in_overflow.unwrap_or_else(|| {
+        cursor_entry_rect_in(
+            f.width,
+            f.height,
+            f.mode,
+            f.grid_sections,
+            f.photos,
+            pane,
+            depth,
+            f.pan,
+            &f.miller,
+        )
+    });
     if rect.is_empty() {
         return;
     }
@@ -6321,6 +8341,17 @@ pub fn draw_open_pulse(canvas: &Canvas, f: &Frame) {
 
     match f.mode {
         ViewMode::Grid => draw_grid_cell(canvas, f.theme, entry, rect, true, false, thumb),
+        ViewMode::Photos => draw_photo_tile(
+            canvas,
+            f.theme,
+            entry,
+            rect,
+            PhotoTileState {
+                selected: true,
+                ..Default::default()
+            },
+            thumb,
+        ),
         ViewMode::List | ViewMode::Columns => {
             // One row on its own is a run of one: rounded at both ends.
             draw_row_background(
@@ -6362,7 +8393,32 @@ pub fn peek_anchor(
     pane: &PaneData,
     depth: usize,
     pan: f32,
-    miller_w: f32,
+    miller: &MillerWidths,
+) -> Rect {
+    peek_anchor_in(
+        width,
+        height,
+        mode,
+        GridSections::FLAT,
+        PhotosLayout::EMPTY,
+        pane,
+        depth,
+        pan,
+        miller,
+    )
+}
+
+/// [`peek_anchor`] with the Photos view's rows to find the tile in.
+pub fn peek_anchor_in(
+    width: f32,
+    height: f32,
+    mode: ViewMode,
+    grid: &GridSections,
+    photos: &PhotosLayout,
+    pane: &PaneData,
+    depth: usize,
+    pan: f32,
+    miller: &MillerWidths,
 ) -> Rect {
     let Some(index) = pane.cursor else {
         return Rect::new_empty();
@@ -6371,7 +8427,7 @@ pub fn peek_anchor(
         return Rect::new_empty();
     }
 
-    let rect = cursor_entry_rect(width, height, mode, pane, depth, pan, miller_w);
+    let rect = cursor_entry_rect_in(width, height, mode, grid, photos, pane, depth, pan, miller);
     if rect.is_empty() {
         return rect;
     }
@@ -6396,7 +8452,32 @@ pub fn cursor_entry_rect(
     pane: &PaneData,
     depth: usize,
     pan: f32,
-    miller_w: f32,
+    miller: &MillerWidths,
+) -> Rect {
+    cursor_entry_rect_in(
+        width,
+        height,
+        mode,
+        GridSections::FLAT,
+        PhotosLayout::EMPTY,
+        pane,
+        depth,
+        pan,
+        miller,
+    )
+}
+
+/// [`cursor_entry_rect`] with the Photos view's rows to find the tile in.
+pub fn cursor_entry_rect_in(
+    width: f32,
+    height: f32,
+    mode: ViewMode,
+    grid: &GridSections,
+    photos: &PhotosLayout,
+    pane: &PaneData,
+    depth: usize,
+    pan: f32,
+    miller: &MillerWidths,
 ) -> Rect {
     let Some(index) = pane.cursor else {
         return Rect::new_empty();
@@ -6409,9 +8490,10 @@ pub fn cursor_entry_rect(
     let count = pane.entries.len();
     let rect = match mode {
         ViewMode::List => RowStrip::list(width, count, pane.scroll).rect(index),
-        ViewMode::Grid => grid_cell_rect(viewport, index, pane.scroll),
+        ViewMode::Grid => grid_cell_rect_in(viewport, grid, index, pane.scroll),
+        ViewMode::Photos => photos.tile_rect(viewport, index, pane.scroll),
         ViewMode::Columns => RowStrip::miller(
-            miller_pane_rect(depth, height, pan, miller_w),
+            miller_pane_rect(depth, height, pan, miller),
             count,
             pane.scroll,
         )
@@ -6439,6 +8521,8 @@ pub(crate) fn entry_icon_rect(rect: Rect, mode: ViewMode) -> Rect {
             grid_icon(),
             grid_icon(),
         ),
+        // A photo tile is the picture itself: Peek grows from all of it.
+        ViewMode::Photos => rect,
         // The list insets its icon by the content padding; a Miller column,
         // which has no such padding, by its own fixed inset.
         ViewMode::List => Rect::from_xywh(
@@ -6649,7 +8733,7 @@ pub fn draw_open_with(canvas: &Canvas, theme: &Theme, sheet: Rect, data: &OpenWi
         canvas.draw_image_rect(&image, None, dst, &Paint::default());
     }
     let text_x = sheet.left + 84.0;
-    Label::new(elide(&chooser.title, 34))
+    Label::new(otto_kit::typography::ellipsize_chars(&chooser.title, 34))
         .with_style(styles::BODY_EMPHASIZED)
         .with_color(theme.text_primary)
         .centered_on(text_x, sheet.top + 60.0)
@@ -6823,7 +8907,7 @@ pub fn draw_open_with(canvas: &Canvas, theme: &Theme, sheet: Rect, data: &OpenWi
 
     // Why the last try did not work, in place, above the buttons.
     if let Some(error) = chooser.error.as_deref() {
-        Label::new(elide(error, 48))
+        Label::new(otto_kit::typography::ellipsize_chars(error, 48))
             .with_style(styles::CALLOUT)
             .with_color(Color::from_argb(0xFF, 0xD7, 0x3A, 0x2E))
             .centered_on(sheet.left + OPEN_WITH_PAD, sheet.bottom - 60.0)
@@ -7155,6 +9239,60 @@ mod geometry_tests {
     }
 
     #[test]
+    fn every_switcher_segment_selects_its_own_view() {
+        let width = 1100.0;
+        let rect = switcher_rect(width);
+        let seg = rect.width() / SWITCHER_MODES.len() as f32;
+        assert_eq!(SWITCHER_MODES.len(), 4);
+        for (i, mode) in SWITCHER_MODES.iter().enumerate() {
+            let x = rect.left + seg * (i as f32 + 0.5);
+            assert_eq!(switcher_at(x, rect.center_y(), width), Some(*mode));
+        }
+        let cy = rect.center_y();
+        assert_eq!(
+            switcher_at(rect.right - 0.01, cy, width),
+            Some(ViewMode::Photos)
+        );
+        assert_eq!(switcher_at(rect.left - 1.0, cy, width), None);
+    }
+
+    #[test]
+    fn a_photos_tile_anchors_peek_to_the_whole_picture() {
+        let owned = entries(3);
+        let sections = vec![PhotosSection {
+            title: "Today".into(),
+            kind: SectionKind::Photos,
+            first: 0,
+            count: 3,
+        }];
+        let area = content_viewport(1100.0, 700.0, ViewMode::Photos);
+        let photos = PhotosLayout::new(sections, &[1.5, 1.0, 0.75], area.width(), PHOTOS_ROW_H);
+        let anchor = peek_anchor_in(
+            1100.0,
+            700.0,
+            ViewMode::Photos,
+            GridSections::FLAT,
+            &photos,
+            &pane(&owned, Some(1), 0.0),
+            0,
+            0.0,
+            &MillerWidths::default(),
+        );
+        assert_eq!(anchor, photos.tile_rect(area, 1, 0.0));
+        assert!(!anchor.is_empty());
+        let (top, h) = item_span_in(
+            1100.0,
+            700.0,
+            ViewMode::Photos,
+            GridSections::FLAT,
+            &photos,
+            1,
+        );
+        assert_eq!(top + area.top, anchor.top);
+        assert_eq!(h, anchor.height());
+    }
+
+    #[test]
     fn the_filter_strip_lays_out_and_moves_the_listing_down() {
         use otto_kit::controls_side::{self, ControlsSide};
         let restore = controls_side::side();
@@ -7212,8 +9350,8 @@ mod geometry_tests {
     /// Build a grid broken into runs of `sizes`, each with a heading.
     fn sectioned(sizes: &[usize]) -> GridSections {
         let mut first = 0;
-        GridSections(
-            sizes
+        GridSections {
+            sections: sizes
                 .iter()
                 .enumerate()
                 .map(|(i, &count)| {
@@ -7226,44 +9364,6 @@ mod geometry_tests {
                     section
                 })
                 .collect(),
-        )
-    }
-
-    /// The whole sectioned-grid refactor rests on this: a listing with no
-    /// sections must lay out exactly as it did before the sections existed.
-    /// Every directory in the browser takes this path, so if the two forms
-    /// ever disagree it is the ordinary case that breaks, not the new one.
-    #[test]
-    fn an_unsectioned_grid_lays_out_exactly_as_a_flat_one() {
-        for width in [420.0, 640.0, 900.0, 1440.0] {
-            let area = content_viewport(width, 600.0, ViewMode::Grid);
-            for count in [0, 1, 7, 30, 199] {
-                let flat = GridSections::default();
-                assert_eq!(
-                    grid_content_height_in(area, &flat, count),
-                    grid_content_height(area, count),
-                    "content height at {width} for {count}"
-                );
-                for index in 0..count {
-                    assert_eq!(
-                        grid_cell_rect_in(area, &flat, index, 0.0),
-                        grid_cell_rect(area, index, 0.0),
-                        "cell {index} at {width}"
-                    );
-                }
-                // And the hit test answers identically, cell centre by cell
-                // centre — including for the cells below the viewport, where
-                // both forms must agree that there is nothing there.
-                for index in 0..count {
-                    let cell = grid_cell_rect(area, index, 0.0);
-                    let (px, py) = (cell.center_x(), cell.center_y());
-                    assert_eq!(
-                        grid_cell_at_in(area, &flat, px, py, count, 0.0),
-                        grid_cell_at(area, px, py, count, 0.0),
-                        "hit test at cell {index}, width {width}"
-                    );
-                }
-            }
         }
     }
 
@@ -7833,7 +9933,7 @@ mod geometry_tests {
             &pane(&owned, None, 0.0),
             0,
             0.0,
-            MILLER_W,
+            &MillerWidths::default(),
         );
         assert!(anchor.is_empty(), "expected an empty rect, got {anchor:?}");
     }
@@ -7848,7 +9948,7 @@ mod geometry_tests {
             &pane(&owned, Some(0), 0.0),
             0,
             0.0,
-            MILLER_W,
+            &MillerWidths::default(),
         );
         assert!(!anchor.is_empty());
         // Inside the window, and below the header — a real place on screen.
@@ -7874,7 +9974,7 @@ mod geometry_tests {
                 &pane(&owned, Some(0), 0.0),
                 0,
                 0.0,
-                MILLER_W,
+                &MillerWidths::default(),
             );
             assert!(!anchor.is_empty(), "{mode:?}: {anchor:?}");
             assert!(
@@ -7899,7 +9999,7 @@ mod geometry_tests {
             &pane(&owned, Some(0), 5_000.0),
             0,
             0.0,
-            MILLER_W,
+            &MillerWidths::default(),
         );
         assert!(anchor.is_empty(), "expected an empty rect, got {anchor:?}");
     }
@@ -7914,26 +10014,9 @@ mod geometry_tests {
             &pane(&owned, Some(9), 0.0),
             0,
             0.0,
-            MILLER_W,
+            &MillerWidths::default(),
         );
         assert!(anchor.is_empty());
-    }
-
-    #[test]
-    fn every_view_mode_produces_an_anchor() {
-        let owned = entries(10);
-        for mode in [ViewMode::List, ViewMode::Grid, ViewMode::Columns] {
-            let anchor = peek_anchor(
-                1100.0,
-                700.0,
-                mode,
-                &pane(&owned, Some(1), 0.0),
-                0,
-                0.0,
-                MILLER_W,
-            );
-            assert!(!anchor.is_empty(), "{mode:?} produced no anchor");
-        }
     }
 
     /// The band a pane of `count` rows would be asked for when the window is
@@ -8031,20 +10114,28 @@ mod geometry_tests {
         }
     }
 
-    /// Draw ops `draw_list` emits for one window height, scrolled to `offset`.
-    fn list_ops(owned: &[Entry], height: f32, offset: f32) -> usize {
-        let state = scrolled(owned.len(), height, offset);
-        let mut data = pane(owned, None, state.offset());
-        data.bar = Some(&state);
-
-        let theme = Theme::light();
-        let frame = Frame {
+    /// A frame over `panes`, `height` points tall and 1100 wide, with
+    /// nothing else up.
+    fn test_frame<'a>(
+        theme: &'a Theme,
+        mode: ViewMode,
+        panes: Vec<PaneData<'a>>,
+        height: f32,
+    ) -> Frame<'a> {
+        Frame {
+            desk_overflow: None,
             search: None,
             index_available: true,
             search_focused: false,
             search_placeholder: "",
             search_scope: SearchScope::Folder,
             grid_sections: GridSections::FLAT,
+            photos: PhotosLayout::EMPTY,
+            photo_hover: None,
+            photo_folders: None,
+            photos_controls: None,
+            photos_info: None,
+            photos_info_selection: None,
             show_folders: false,
             mode_locked: false,
             trash: None,
@@ -8062,17 +10153,17 @@ mod geometry_tests {
             path_entry: false,
             width: 1100.0,
             height,
-            theme: &theme,
+            theme,
             title: "Home",
             subtitle: String::new(),
             places: &[],
             selected_place: None,
-            mode: ViewMode::List,
-            panes: vec![data],
+            mode,
+            panes,
             active: 0,
             pan: 0.0,
             pan_bar: None,
-            miller_w: MILLER_W,
+            miller: MillerWidths::default(),
             sort: SortKey::Name,
             ascending: true,
             list_columns: ListColumnWidths::default(),
@@ -8089,7 +10180,153 @@ mod geometry_tests {
             // No store: this measures the cost of drawing rows, and every
             // entry falling back to its icon is the case being counted.
             thumbs: None,
+        }
+    }
+
+    /// The grid drawn with a desk overflow tile over `count` entries into a
+    /// transparent surface 1100 by 700 points.
+    fn draw_stacked_grid(count: usize) -> (skia_safe::Surface, DeskOverflow, Rect) {
+        let owned = entries(count);
+        let theme = Theme::light();
+        let area = content_viewport(1100.0, 700.0, ViewMode::Grid);
+        let overflow =
+            DeskOverflow::new(area, Rect::from_wh(1100.0, 700.0), count, None).expect("a tile");
+        let mut frame = test_frame(&theme, ViewMode::Grid, vec![pane(&owned, None, 0.0)], 700.0);
+        frame.desk_overflow = Some(overflow);
+        let mut surface = skia_safe::surfaces::raster_n32_premul((1100, 700)).unwrap();
+        surface.canvas().clear(Color::TRANSPARENT);
+        draw_grid(surface.canvas(), &frame);
+        (surface, overflow, area)
+    }
+
+    fn pixel(surface: &mut skia_safe::Surface, x: f32, y: f32) -> Color {
+        let image = surface.image_snapshot();
+        let info = skia_safe::ImageInfo::new(
+            (1, 1),
+            skia_safe::ColorType::RGBA8888,
+            skia_safe::AlphaType::Unpremul,
+            None,
+        );
+        let mut bytes = [0u8; 4];
+        assert!(image.read_pixels(
+            &info,
+            &mut bytes,
+            4,
+            (x as i32, y as i32),
+            skia_safe::image::CachingHint::Allow,
+        ));
+        Color::from_argb(bytes[3], bytes[0], bytes[1], bytes[2])
+    }
+
+    /// The tile carries its count on an accent badge over its icon, and the
+    /// grid draws nothing past it.
+    #[test]
+    fn the_tile_shows_its_count_and_the_grid_stops_there() {
+        let capacity = grid_capacity(content_viewport(1100.0, 700.0, ViewMode::Grid));
+        // Six in the tile: one digit, so the badge is a round dot.
+        let (mut surface, overflow, area) = draw_stacked_grid(capacity + 5);
+        assert_eq!(overflow.tile.count, 6);
+        let cell = overflow.cell(area);
+        let icon = grid_icon();
+        let right = cell.center_x() + icon / 2.0;
+        let top = cell.top + 8.0;
+        // The top of the dot, clear of the digit in its middle.
+        let badge = pixel(
+            &mut surface,
+            right + 6.0 - TILE_BADGE_H / 2.0,
+            top - 6.0 + 3.0,
+        );
+        assert_eq!(badge, Theme::light().accent, "{badge:?}");
+        // The tile ends the last row that fits whole.
+        assert_eq!((overflow.tile.first + 1) % grid_columns(area), 0);
+        let below = grid_cell_rect(area, overflow.tile.first + 1, 0.0);
+        assert!(below.bottom > area.bottom + 0.5);
+    }
+
+    /// The badge's digits are centred on their own ink, one digit or two,
+    /// not on the line box or from their left edge.
+    #[test]
+    fn the_badge_count_is_centred_on_its_ink() {
+        let font = styles::FOOTNOTE_EMPHASIZED.font();
+        for count in [6, 42, 1234] {
+            let text = tile_badge_text(count);
+            let origin = tile_badge_origin(&font, &text, 100.0, 50.0);
+            let (_, ink) = font.measure_str(&text, None);
+            let placed = ink.with_offset((origin.x, origin.y));
+            assert!(
+                (placed.center_x() - 100.0).abs() < 0.01,
+                "{text}: {placed:?}"
+            );
+            assert!(
+                (placed.center_y() - 50.0).abs() < 0.01,
+                "{text}: {placed:?}"
+            );
+        }
+    }
+
+    /// The open overflow panel is no longer drawn into the desk's own
+    /// surface: the grid under where it opens stays the grid.
+    #[test]
+    fn the_desk_draws_no_overflow_panel_of_its_own() {
+        let capacity = grid_capacity(content_viewport(1100.0, 700.0, ViewMode::Grid));
+        let owned = entries(capacity + 20);
+        let theme = Theme::light();
+        let area = content_viewport(1100.0, 700.0, ViewMode::Grid);
+        let surface_rect = Rect::from_wh(1100.0, 700.0);
+        let open = DeskOverflow::new(area, surface_rect, owned.len(), Some(0.0)).unwrap();
+        let closed = DeskOverflow::new(area, surface_rect, owned.len(), None).unwrap();
+        let draw = |overflow: DeskOverflow| {
+            let mut frame =
+                test_frame(&theme, ViewMode::Grid, vec![pane(&owned, None, 0.0)], 700.0);
+            frame.desk_overflow = Some(overflow);
+            let mut surface = skia_safe::surfaces::raster_n32_premul((1100, 700)).unwrap();
+            surface.canvas().clear(Color::TRANSPARENT);
+            draw_grid(surface.canvas(), &frame);
+            surface
         };
+        let (panel, _) = open.panel.unwrap();
+        let (x, y) = (panel.rect.left + 4.0, panel.rect.center_y());
+        assert_eq!(pixel(&mut draw(open), x, y), pixel(&mut draw(closed), x, y));
+    }
+
+    /// Drawn on its own surface, the panel lays its dark ground and shows
+    /// two whole rows.
+    #[test]
+    fn the_overflow_panel_draws_its_ground() {
+        let capacity = grid_capacity(content_viewport(1100.0, 700.0, ViewMode::Grid));
+        let owned = entries(capacity + 20);
+        let theme = Theme::light();
+        let area = content_viewport(1100.0, 700.0, ViewMode::Grid);
+        let overflow =
+            DeskOverflow::new(area, Rect::from_wh(1100.0, 700.0), owned.len(), Some(0.0)).unwrap();
+        let (panel, _) = overflow.panel.unwrap();
+        assert_eq!(
+            panel.rect.height(),
+            2.0 * cell_h() + crate::desk::PANEL_PAD * 2.0
+        );
+        let mut frame = test_frame(&theme, ViewMode::Grid, vec![pane(&owned, None, 0.0)], 700.0);
+        frame.desk_overflow = Some(overflow);
+        let mut scroll = ScrollState::new(panel.rect);
+        scroll.set_content_length(panel.content_h);
+        let mut surface = skia_safe::surfaces::raster_n32_premul((1100, 700)).unwrap();
+        surface.canvas().clear(Color::TRANSPARENT);
+        draw_overflow_panel(surface.canvas(), &frame, &scroll);
+        let ground = pixel(&mut surface, panel.rect.left + 4.0, panel.rect.center_y());
+        assert!(ground.a() >= 140, "{ground:?}");
+        assert!(
+            ground.r() < 60 && ground.g() < 60 && ground.b() < 60,
+            "{ground:?}"
+        );
+    }
+
+    /// Draw ops `draw_list` emits for one window height, scrolled to `offset`.
+    fn list_ops(owned: &[Entry], height: f32, offset: f32) -> usize {
+        let state = scrolled(owned.len(), height, offset);
+        let mut data = pane(owned, None, state.offset());
+        data.bar = Some(&state);
+
+        let theme = Theme::light();
+        let frame = test_frame(&theme, ViewMode::List, vec![data], height);
 
         let mut recorder = skia_safe::PictureRecorder::new();
         let canvas = recorder.begin_recording(Rect::from_wh(1100.0, height), false);
@@ -8126,7 +10363,7 @@ mod geometry_tests {
             &pane(&owned, Some(0), 0.0),
             0,
             5_000.0,
-            MILLER_W,
+            &MillerWidths::default(),
         );
         assert!(anchor.is_empty(), "expected an empty rect, got {anchor:?}");
     }

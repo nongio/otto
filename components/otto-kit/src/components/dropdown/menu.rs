@@ -66,16 +66,16 @@ use wayland_protocols::xdg::shell::client::{xdg_positioner, xdg_surface};
 
 use crate::app_runner::AppContext;
 use crate::components::context_menu::{ContextMenu, ContextMenuStyle};
-use crate::components::menu_item::MenuItem;
+use crate::components::menu_item::{MenuItem, MenuItemIcon};
 
 /// Label size and row height for a pop-up button's menu.
 ///
 /// The size is the field's own — `super::field` draws its label at
-/// [`crate::typography::styles::BODY`], and a menu that drops out of a control
+/// [`crate::typography::styles::CALLOUT`], and a menu that drops out of a control
 /// to list that control's values has to read as the same text, not as a larger
 /// echo of it. The row stays taller than a menu bar's 22pt all the same: a
 /// pop-up button is read one row at a time, not scanned along a crowded strip.
-const ITEM_FONT_SIZE: f32 = crate::typography::styles::BODY.size;
+const ITEM_FONT_SIZE: f32 = crate::typography::styles::CALLOUT.size;
 const ITEM_HEIGHT: f32 = 26.0;
 
 /// Tallest a pop-up button's menu is drawn before its list starts scrolling.
@@ -98,6 +98,10 @@ const MAX_GROWTH: f32 = 1.6;
 /// What an item's label loses to the menu's own padding and to the checkmark
 /// column, so the text it is elided to actually fits the row.
 const TEXT_INSET: f32 = 26.0;
+
+/// What a row's icon takes from its label: the icon and the gap after it, as
+/// `MenuItemRenderer` lays them out.
+const ICON_INSET: f32 = 16.0 + 6.0;
 
 /// How long a type-ahead buffer survives without another key.
 ///
@@ -158,22 +162,13 @@ fn measure(text: &str) -> f32 {
 /// Trim `text` until it fits `width`, marking the cut with a trailing
 /// ellipsis. Returns it unchanged when it already fits.
 fn elide(text: &str, width: f32) -> String {
-    let font = item_font();
-    if width <= 0.0 || crate::typography::measure_runs(&font, text) <= width {
+    if width <= 0.0 {
         return text.to_string();
     }
-    let mut end = text.len();
-    while end > 0 {
-        end -= 1;
-        while end > 0 && !text.is_char_boundary(end) {
-            end -= 1;
-        }
-        let candidate = format!("{}\u{2026}", &text[..end]);
-        if crate::typography::measure_runs(&font, &candidate) <= width {
-            return candidate;
-        }
-    }
-    "\u{2026}".to_string()
+    let font = item_font();
+    crate::typography::ellipsize_by(text, width, |piece| {
+        crate::typography::measure_runs(&font, piece)
+    })
 }
 
 /// Owns the popup lifecycle for one dropdown. The caller keeps one of these
@@ -224,6 +219,17 @@ impl DropdownMenu {
     pub fn close(&self) {
         *self.typeahead.borrow_mut() = None;
         self.menu.hide_animated();
+    }
+
+    /// Take the menu down at once, a fade-out in flight included. For before
+    /// opening a sibling: a new pop-up has to go on the topmost one, so the
+    /// old one cannot still be fading out when it is made.
+    /// A menu that is not up is left alone, rather than reporting a close.
+    pub fn close_now(&self) {
+        *self.typeahead.borrow_mut() = None;
+        if self.is_open() {
+            self.menu.hide();
+        }
     }
 
     /// Feed a key to the open menu: the arrows move the highlight (scrolling
@@ -392,6 +398,37 @@ impl DropdownMenu {
         S: Fn(usize) + 'static,
         D: Fn() + 'static,
     {
+        self.open_with_icons(
+            parent_xdg,
+            field_rect,
+            serial,
+            options,
+            &[],
+            selected,
+            on_select,
+            on_dismiss,
+        );
+    }
+
+    /// [`open`](Self::open), with an icon before each value: `icons[i]` is
+    /// `options[i]`'s, and a row past the end of `icons` has none. A list of
+    /// places — folders, volumes — reads faster by its icons than by its
+    /// names alone.
+    #[allow(clippy::too_many_arguments)]
+    pub fn open_with_icons<S, D>(
+        &self,
+        parent_xdg: &xdg_surface::XdgSurface,
+        field_rect: Rect,
+        serial: u32,
+        options: &[String],
+        icons: &[MenuItemIcon],
+        selected: Option<usize>,
+        on_select: S,
+        on_dismiss: D,
+    ) where
+        S: Fn(usize) + 'static,
+        D: Fn() + 'static,
+    {
         if options.is_empty() {
             return;
         }
@@ -408,11 +445,13 @@ impl DropdownMenu {
         // wants leaves the two controls' edges disagreeing by however long
         // that label happens to be.
         let field_w = field_rect.width().max(1.0);
+        let icon_inset = if icons.is_empty() { 0.0 } else { ICON_INSET };
         let widest = options
             .iter()
             .map(|label| measure(label))
             .fold(0.0_f32, f32::max)
-            + TEXT_INSET;
+            + TEXT_INSET
+            + icon_inset;
         let width = widest.clamp(field_w, field_w * MAX_GROWTH);
         menu.clone().with_style(
             ContextMenuStyle::default()
@@ -430,8 +469,11 @@ impl DropdownMenu {
                 // front of the label: a leading mark indents the chosen row
                 // out of line with every other one, and the values then no
                 // longer share a left edge to be scanned down.
-                let item = MenuItem::action(elide(label, width - TEXT_INSET))
+                let mut item = MenuItem::action(elide(label, width - TEXT_INSET - icon_inset))
                     .with_action_id(i.to_string());
+                if let Some(icon) = icons.get(i) {
+                    item = item.with_icon(icon.clone());
+                }
                 if Some(i) == selected {
                     item.with_shortcut("\u{2713}")
                 } else {

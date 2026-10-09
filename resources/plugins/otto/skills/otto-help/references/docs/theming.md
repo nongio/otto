@@ -89,9 +89,13 @@ and the bar and the launcher are told through the portal's
 ## Wallpaper
 
 ```toml
-background_image = "/usr/share/otto/background.jpg"
-background_color = "#2c2ca0"
+background_image = "/usr/share/otto/wallpaper.jpg"
+background_color = "#102E95"
 ```
+
+Otto's packages ship a wallpaper at `/usr/share/otto/wallpaper.jpg`, and the
+default configuration uses it. Point `background_image` at any other image to
+replace it.
 
 `background_image` is an absolute path to the image shown on the desktop.
 It is scaled to cover the screen, and decoded at the resolution of the largest
@@ -128,9 +132,12 @@ installed on the system works.
 ## Cursor
 
 ```toml
-cursor_theme = "Notwaita-Black"
+cursor_theme = "Otto-MacTahoe"
 cursor_size = 24
 ```
+
+The icon theme Otto ships, `Otto-MacTahoe`, carries its own cursors, so the
+default configuration uses it for both.
 
 Cursor theme names are the directory names under `/usr/share/icons/` and
 `~/.local/share/icons/`, and they are **case-sensitive**. Check what you have:
@@ -145,14 +152,23 @@ cursor-shape protocol get themed cursors without shipping their own bitmaps.
 ## Icon theme
 
 ```toml
-icon_theme = "Adwaita"
+icon_theme = "Otto-MacTahoe"
 ```
 
 Used for application icons in the dock, the app switcher and notification
 islands. Commented out or absent, Otto auto-detects a reasonable theme from
 what is installed.
 
-Popular choices: `Adwaita`, `Papirus`, `WhiteSur`, `Fluent`. Otto's own
+Otto's packages ship the
+[MacTahoe icon theme](https://github.com/vinceliuice/MacTahoe-icon-theme)
+under Otto's own name — `Otto-MacTahoe`, `Otto-MacTahoe-light` and
+`Otto-MacTahoe-dark` — and the default configuration uses it, so a first
+install has a complete set of icons. The separate name keeps it from
+clashing with a MacTahoe you install yourself, which you can select by its
+own name, `MacTahoe`.
+Any other theme under `/usr/share/icons` works the same way.
+
+Popular choices: `Otto-MacTahoe`, `MacTahoe`, `WhiteSur`, `Adwaita`, `Papirus`, `Fluent`. Otto's own
 screenshots use the
 [Fluent icon theme](https://github.com/vinceliuice/Fluent-icon-theme).
 

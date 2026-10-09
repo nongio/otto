@@ -10,6 +10,12 @@ impl Browser {
     /// Both are usable now that the panel is drawn into this same surface.
     pub(super) fn peek_anchor(&self) -> Rect {
         let depth = self.active.min(self.columns.len().saturating_sub(1));
+        if let Some(cell) = self.columns[depth]
+            .cursor
+            .and_then(|index| self.desk_overflow_entry_rect(index))
+        {
+            return view::entry_icon_rect(cell, ViewMode::Grid);
+        }
         let entries = self.visible(depth);
         let column = &self.columns[depth];
         let pane = view::PaneData {
@@ -22,14 +28,16 @@ impl Browser {
             loading: column.awaiting_first_listing(),
             error: None,
         };
-        view::peek_anchor(
+        view::peek_anchor_in(
             self.size.0,
             self.content_h(),
             self.mode,
+            &self.recent_sections,
+            &self.photos,
             &pane,
             depth,
             self.pan.offset(),
-            self.miller_w,
+            &self.miller_widths(),
         )
     }
 
@@ -637,7 +645,7 @@ impl Browser {
                 session.pan_pointer_up();
                 session.select_pointer_up();
                 if let Some(target) = session.link_pointer_up(point.x, point.y, content) {
-                    self.open_in_default_app(target);
+                    self.open_link(&target);
                 }
                 (false, false)
             }

@@ -76,7 +76,10 @@ pub struct UdevData<A: RendererApi> {
     /// libinput has no way to enumerate its devices, so the list is
     /// maintained from the added/removed events instead.
     pub input_devices: Vec<smithay::reexports::input::Device>,
-    #[cfg(feature = "fps_ticker")]
+    /// Touchpad slot sampling and the two-finger edge swipe that drives
+    /// the side canvas.
+    pub edge_swipe: crate::input::edge_swipe::dispatch::EdgeSwipeInput,
+    #[cfg(feature = "ticker")]
     pub(super) fps_texture: Option<smithay::backend::renderer::multigpu::MultiTexture>,
     pub context_id: Option<ContextId<MultiTexture>>,
     /// Bumped by `request_redraw` (input, client commits). A surface whose
@@ -133,9 +136,9 @@ pub struct SurfaceData {
     pub(super) render_node: DrmNode,
     pub(super) global: Option<GlobalId>,
     pub(super) compositor: GbmDrmCompositor,
-    #[cfg(feature = "fps_ticker")]
+    #[cfg(feature = "ticker")]
     pub(super) fps: fps_ticker::Fps,
-    #[cfg(feature = "fps_ticker")]
+    #[cfg(feature = "ticker")]
     pub(super) fps_element:
         Option<crate::drawing::FpsElement<smithay::backend::renderer::multigpu::MultiTexture>>,
     pub(super) dmabuf_feedback: Option<DrmSurfaceDmabufFeedback>,

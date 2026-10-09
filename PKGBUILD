@@ -1,21 +1,21 @@
 # Maintainer: Riccardo Canalicchio <riccardo.canalicchio@gmail.com>
 
 pkgname=otto-bin
-pkgver=1.5.0
+pkgver=1.6.0
 # Cargo's version (names the release tarball) and the git tag. They differ
 # from pkgver for a prerelease: '-' is illegal in pkgver, and pacman sorts
 # a '~' suffix *after* the plain version rather than before it.
-_ver=1.5.0
-_tag=v1.5.0
+_ver=1.6.0
+_tag=v1.6.0
 pkgrel=1
 pkgdesc="A visually-focused desktop system designed around smooth animations, thoughtful gestures and careful attention to detail."
 url="https://github.com/nongio/otto"
-license=("MIT")
+license=("MIT" "GPL-3.0-only")
 arch=("x86_64")
 provides=("otto")
 conflicts=("otto")
-depends=("libdrm" "systemd-libs" "mesa" "libxkbcommon" "wayland" "libinput" "dbus" "seatd" "pipewire" "freetype2" "fontconfig" "pixman" "noto-fonts" "inter-font" "gstreamer" "gst-plugins-base-libs")
-optdepends=("xdg-desktop-portal: Desktop integration" "fprintd: fingerprint unlock for otto-lock and otto-greeter" "greetd: login manager otto --login hosts a greeter for" "gst-plugin-pipewire: otto-rdp video capture" "gst-plugins-bad: otto-rdp hardware H.264 (VA-API)" "gst-plugins-base: Peek video playback (the playbin element)" "gst-plugins-good: Peek playback of MP4 and Matroska" "gst-libav: Peek playback of H.264 and AAC" "localsearch: file search and the Recent listing in otto-files" "vulkan-icd-loader: the Vulkan renderer" "vulkan-intel: the Vulkan renderer on Intel GPUs" "vulkan-radeon: the Vulkan renderer on AMD GPUs")
+depends=("libdrm" "systemd-libs" "mesa" "libxkbcommon" "wayland" "libinput" "dbus" "seatd" "pipewire" "freetype2" "fontconfig" "pixman" "noto-fonts" "inter-font" "gstreamer" "gst-plugins-base-libs" "polkit" "xorg-xwayland")
+optdepends=("xdg-desktop-portal: Desktop integration" "fprintd: fingerprint unlock for otto-lock, otto-greeter and otto-authorize" "greetd: login manager otto --login hosts a greeter for" "gst-plugin-pipewire: otto-rdp video capture" "gst-plugins-bad: otto-rdp hardware H.264 (VA-API)" "gst-plugins-base: Peek video playback (the playbin element)" "gst-plugins-good: Peek playback of MP4 and Matroska" "gst-libav: Peek playback of H.264 and AAC" "localsearch: file search and the Recent listing in otto-files" "vulkan-icd-loader: the Vulkan renderer" "vulkan-intel: the Vulkan renderer on Intel GPUs" "vulkan-radeon: the Vulkan renderer on AMD GPUs" "ewwii: the desktop widgets in Settings ▸ Appearance" "python: the desktop widgets' scripts" "otf-libertinus: the desktop widgets' titles" "noto-fonts-emoji: colour emoji in the emoji picker" "pipewire-pulse: output and input devices in Settings ▸ Sound" "libpulse: pactl, which Settings ▸ Sound drives")
 source=("https://github.com/nongio/otto/releases/download/$_tag/otto-$_ver-x86_64.tar.gz")
 sha256sums=("SKIP")
 # Files pacman must never clobber: a modified config becomes .pacnew on
@@ -33,6 +33,11 @@ package() {
     install -Dm755 target/release/otto-bar "$pkgdir/usr/bin/otto-bar"
     install -Dm755 target/release/otto-islands "$pkgdir/usr/bin/otto-islands"
     install -Dm755 target/release/otto-lock "$pkgdir/usr/bin/otto-lock"
+    install -Dm755 target/release/otto-authorize "$pkgdir/usr/bin/otto-authorize"
+    # The polkit action for protected settings; older tarballs predate it.
+    if [ -f resources/polkit/org.otto.settings.policy ]; then
+        install -Dm644 resources/polkit/org.otto.settings.policy "$pkgdir/usr/share/polkit-1/actions/org.otto.settings.policy"
+    fi
     install -Dm755 target/release/otto-greeter "$pkgdir/usr/bin/otto-greeter"
     install -Dm755 target/release/otto-rdp "$pkgdir/usr/bin/otto-rdp"
     install -Dm755 target/release/otto-settings "$pkgdir/usr/bin/otto-settings"
@@ -40,7 +45,9 @@ package() {
     install -Dm755 target/release/otto-launcher "$pkgdir/usr/bin/otto-launcher"
     install -Dm755 target/release/otto-emoji "$pkgdir/usr/bin/otto-emoji"
     install -Dm755 target/release/otto-stash "$pkgdir/usr/bin/otto-stash"
+    install -Dm755 target/release/otto-canvas "$pkgdir/usr/bin/otto-canvas"
     install -Dm755 target/release/otto-peek "$pkgdir/usr/bin/otto-peek"
+    install -Dm755 target/release/otto-preview "$pkgdir/usr/bin/otto-preview"
     install -Dm755 target/release/otto-msg "$pkgdir/usr/bin/otto-msg"
     install -Dm755 target/release/otto-search "$pkgdir/usr/bin/otto-search"
     install -Dm755 target/release/otto-agents "$pkgdir/usr/bin/otto-agents"
@@ -76,6 +83,7 @@ package() {
     # own icon in the dock and the applications list.
     install -Dm644 resources/otto-trash.desktop "$pkgdir/usr/share/applications/otto-trash.desktop"
     install -Dm644 resources/otto-settings.desktop "$pkgdir/usr/share/applications/otto-settings.desktop"
+    install -Dm644 resources/otto-preview.desktop "$pkgdir/usr/share/applications/otto-preview.desktop"
 
     # Install icons
     for _px in 16 24 32 48 64 128 256 512; do
@@ -83,6 +91,26 @@ package() {
             "$pkgdir/usr/share/icons/hicolor/${_px}x${_px}/apps/otto-files.png"
     done
     install -Dm644 components/otto-files/resources/icons/hicolor/scalable/apps/otto-files.svg "$pkgdir/usr/share/icons/hicolor/scalable/apps/otto-files.svg"
+
+    # The default wallpaper, which the shipped config names. Release
+    # tarballs from before it was added do not carry it.
+    if [ -f resources/wallpaper.jpg ]; then
+        install -Dm644 resources/wallpaper.jpg "$pkgdir/usr/share/otto/wallpaper.jpg"
+    fi
+
+    # Otto-MacTahoe, the default icon theme (MacTahoe, GPL-3.0). Its symlinks
+    # come as a list (see scripts/packaging/fetch-icon-theme.sh); extracting
+    # it here makes pacman own them like any other file. Release
+    # tarballs from before it was added do not carry it.
+    if [ -d icon-theme ]; then
+        install -d "$pkgdir/usr/share/icons"
+        cp -r --no-preserve=ownership icon-theme/Otto-MacTahoe icon-theme/Otto-MacTahoe-light icon-theme/Otto-MacTahoe-dark "$pkgdir/usr/share/icons/"
+        for _links in icon-theme/links-*.tar.gz; do
+            tar -xzf "$_links" -C "$pkgdir/usr/share/icons" --no-same-owner
+        done
+        install -Dm644 icon-theme/COPYING "$pkgdir/usr/share/licenses/$pkgname/MacTahoe-COPYING"
+        install -Dm644 icon-theme/SOURCE "$pkgdir/usr/share/licenses/$pkgname/MacTahoe-SOURCE"
+    fi
     install -Dm644 components/xdg-desktop-portal-otto/otto.portal "$pkgdir/usr/share/xdg-desktop-portal/portals/otto.portal"
     install -Dm644 components/xdg-desktop-portal-otto/org.freedesktop.impl.portal.desktop.otto.service "$pkgdir/usr/share/dbus-1/services/org.freedesktop.impl.portal.desktop.otto.service"
     # The v1.0.0-rc1 tarball shipped without this unit, and the D-Bus service
@@ -124,4 +152,15 @@ UNIT
         install -D -m$_mode "$_file" \
             "$pkgdir/usr/share/otto/plugins/${_file#resources/plugins/}"
     done < <(find "$_plugins" -type f)
+
+    # The desktop widgets: one ewwii configuration, which Otto copies to the
+    # user's cache and runs when a widget is chosen. Installed whole and by
+    # mode, like the plugin above, so its scripts stay executable.
+    _widgets="resources/widgets"
+    [ -d "$_widgets" ] || { echo "missing $_widgets" >&2; return 1; }
+    while IFS= read -r _file; do
+        if [ -x "$_file" ]; then _mode=755; else _mode=644; fi
+        install -D -m$_mode "$_file" \
+            "$pkgdir/usr/share/otto/widgets/${_file#resources/widgets/}"
+    done < <(find "$_widgets" -type f)
 }

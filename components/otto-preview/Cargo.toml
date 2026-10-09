@@ -1,0 +1,30 @@
+[package]
+name = "otto-preview"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "One file in a window of its own, drawn exactly as Peek draws it"
+
+[[bin]]
+name = "otto-preview"
+path = "src/main.rs"
+
+# The preview itself is Peek's: the session that zooms, pans, pages and
+# selects lives in otto-files, the decoder in otto-peek and playback in
+# otto-media-kit. This crate is only the window around them.
+[dependencies]
+otto-kit = { path = "../otto-kit" }
+otto-peek = { path = "../otto-peek" }
+otto-files = { path = "../otto-files" }
+# Library only: the GStreamer worker is its own binary, installed beside this one.
+otto-media-kit = { path = "../otto-media-kit", default-features = false }
+smithay-client-toolkit = { workspace = true, features = ["calloop", "xkbcommon"] }
+wayland-client.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread"] }
+tracing.workspace = true
+zbus.workspace = true
+
+[lints]
+workspace = true

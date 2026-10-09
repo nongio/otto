@@ -8,12 +8,10 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
 
-use zbus::export::futures_util::StreamExt;
+use futures_util::StreamExt;
+use otto_kit::dbus::stash::{StashProxy, SERVICE as NAME};
 use zbus::fdo::DBusProxy;
 use zbus::names::BusName;
-
-const NAME: &str = "org.otto.Stash1";
-const PATH: &str = "/org/otto/Stash1";
 
 /// Whether otto-stash owns its bus name, as last seen.
 static RUNNING: AtomicBool = AtomicBool::new(false);
@@ -71,13 +69,13 @@ pub fn add(paths: Vec<PathBuf>) {
 
 async fn add_all(paths: &[PathBuf]) -> zbus::Result<()> {
     let bus = zbus::Connection::session().await?;
+    let stash = StashProxy::new(&bus).await?;
     for path in paths {
         let Some(path) = path.to_str() else {
             tracing::warn!(path = %path.display(), "not UTF-8; left out of the stash");
             continue;
         };
-        bus.call_method(Some(NAME), PATH, Some(NAME), "AddFile", &(path,))
-            .await?;
+        stash.add_file(path).await?;
     }
     Ok(())
 }

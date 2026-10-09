@@ -6,7 +6,10 @@
 //! signals a `SYNC_FD`-exportable semaphore right after Skia's submit yields
 //! a sync file that signals once the frame has rendered. Waits go the other
 //! way: a client's sync file is imported as a temporary semaphore payload and
-//! waited on by an empty submit ahead of Skia's.
+//! waited on by a submit ahead of Skia's. A semaphore wait only blocks the
+//! batch it belongs to, so that batch also runs a full pipeline barrier,
+//! whose second scope is every command later in submission order: Skia's
+//! following batches wait through it.
 //!
 //! Semaphores and fences are pooled. A semaphore may only be destroyed or
 //! reused once the batch that references it has executed, which the fence
@@ -106,6 +109,9 @@ struct Pending {
 #[derive(Debug, Default)]
 pub(crate) struct SyncPool {
     free: Vec<(vk::Semaphore, vk::Fence)>,
+    /// A command buffer holding only the barrier that carries a semaphore
+    /// wait over to later submissions; recorded once, created on first wait.
+    barrier: Option<(vk::CommandPool, vk::CommandBuffer)>,
     pending: Vec<Pending>,
     submitted: u64,
     completed: u64,
@@ -243,10 +249,64 @@ impl SyncPool {
         }
     }
 
+    /// Returns the barrier command buffer, recording it on first use.
+    fn barrier(&mut self, device: &Device) -> Result<vk::CommandBuffer, SkiaVkError> {
+        if let Some((_, buffer)) = self.barrier {
+            return Ok(buffer);
+        }
+        let vk = device.vk();
+        let pool_info =
+            vk::CommandPoolCreateInfo::default().queue_family_index(device.queue_family_idx());
+        // SAFETY: valid create info on a live device.
+        let pool = unsafe { vk.create_command_pool(&pool_info, None) }?;
+        let record = || -> Result<vk::CommandBuffer, vk::Result> {
+            let alloc = vk::CommandBufferAllocateInfo::default()
+                .command_pool(pool)
+                .level(vk::CommandBufferLevel::PRIMARY)
+                .command_buffer_count(1);
+            // SAFETY: the pool was created above on this device.
+            let buffer = unsafe { vk.allocate_command_buffers(&alloc) }?[0];
+            let begin = vk::CommandBufferBeginInfo::default()
+                .flags(vk::CommandBufferUsageFlags::SIMULTANEOUS_USE);
+            let memory = [vk::MemoryBarrier::default()
+                .src_access_mask(vk::AccessFlags::MEMORY_WRITE)
+                .dst_access_mask(vk::AccessFlags::MEMORY_READ | vk::AccessFlags::MEMORY_WRITE)];
+            // SAFETY: the buffer is freshly allocated and recorded once, on
+            // this thread; it is never reset, so it can stay pending in
+            // several batches at once.
+            unsafe {
+                vk.begin_command_buffer(buffer, &begin)?;
+                vk.cmd_pipeline_barrier(
+                    buffer,
+                    vk::PipelineStageFlags::ALL_COMMANDS,
+                    vk::PipelineStageFlags::ALL_COMMANDS,
+                    vk::DependencyFlags::empty(),
+                    &memory,
+                    &[],
+                    &[],
+                );
+                vk.end_command_buffer(buffer)?;
+            }
+            Ok(buffer)
+        };
+        match record() {
+            Ok(buffer) => {
+                self.barrier = Some((pool, buffer));
+                Ok(buffer)
+            }
+            Err(err) => {
+                // SAFETY: nothing from the pool was submitted.
+                unsafe { vk.destroy_command_pool(pool, None) };
+                Err(err.into())
+            }
+        }
+    }
+
     /// Makes later GPU work on the queue wait for `sync_file`.
     ///
     /// The file is imported as a temporary semaphore payload and waited on
-    /// by an empty submit. Takes ownership of the fd.
+    /// by a submit whose barrier holds back everything submitted after it.
+    /// Takes ownership of the fd.
     ///
     /// # Errors
     ///
@@ -258,6 +318,7 @@ impl SyncPool {
             .ok_or(SkiaVkError::MissingExtension(
                 "VK_KHR_external_semaphore_fd",
             ))?;
+        let barrier = [self.barrier(device)?];
         let (semaphore, fence) = self.acquire(device, true)?;
         let raw = sync_file.into_raw_fd();
         let import = vk::ImportSemaphoreFdInfoKHR::default()
@@ -277,9 +338,11 @@ impl SyncPool {
         let stages = [vk::PipelineStageFlags::ALL_COMMANDS];
         let submit = vk::SubmitInfo::default()
             .wait_semaphores(&wait)
-            .wait_dst_stage_mask(&stages);
+            .wait_dst_stage_mask(&stages)
+            .command_buffers(&barrier);
         // SAFETY: the semaphore carries the imported payload, the fence is
-        // unsignaled, and the queue is only used from this thread.
+        // unsignaled, the barrier buffer is simultaneous-use, and the queue
+        // is only used from this thread.
         match unsafe { device.vk().queue_submit(*device.queue(), &[submit], fence) } {
             Ok(()) => {
                 self.pending.push(Pending {
@@ -302,11 +365,15 @@ impl SyncPool {
         }
     }
 
-    /// Destroys every semaphore and fence.
+    /// Destroys every semaphore, fence and the barrier command buffer.
     ///
     /// The caller has waited for the device to go idle.
     pub fn destroy(&mut self, device: &Device) {
         let vk = device.vk();
+        if let Some((pool, _)) = self.barrier.take() {
+            // SAFETY: the device is idle; destroying the pool frees its buffer.
+            unsafe { vk.destroy_command_pool(pool, None) };
+        }
         let pending = self.pending.drain(..).map(|p| (p.semaphore, p.fence));
         for (semaphore, fence) in self.free.drain(..).chain(pending) {
             // SAFETY: the device is idle, so no batch references them.

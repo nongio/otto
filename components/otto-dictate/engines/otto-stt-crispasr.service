@@ -1,0 +1,17 @@
+# Speech to text for otto-dictate: CrispASR serving Parakeet TDT 0.6B v3 on
+# the GPU, from CrispASR's prebuilt Vulkan release.
+# Only one engine serves 127.0.0.1:8080 at a time; starting this one stops
+# the others.
+
+[Unit]
+Description=Otto speech to text (CrispASR)
+Conflicts=otto-stt-parakeet.service otto-stt-whisper.service
+
+[Service]
+WorkingDirectory=%h/.local/share/otto-voice-poc/crispasr-bin/crispasr-linux-x86_64-vulkan
+ExecStart=%h/.local/share/otto-voice-poc/crispasr-bin/crispasr-linux-x86_64-vulkan/crispasr --server --backend parakeet -m %h/.local/share/otto-voice-poc/models/parakeet-tdt-0.6b-v3-q8_0.gguf --host 127.0.0.1 --port 8080
+Restart=on-failure
+RestartSec=3s
+
+[Install]
+WantedBy=default.target

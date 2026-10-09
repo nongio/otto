@@ -443,10 +443,12 @@ impl DockView {
             "keep_in_dock" => {
                 if let Some(match_id) = self.match_id_for(app_id) {
                     let mut dock_state = self.get_state();
+                    // Only an app with a desktop entry: the menu does not offer
+                    // it otherwise, and the pin would not survive a restart.
                     if let Some(app) = dock_state
                         .running_apps
                         .iter()
-                        .find(|a| a.match_id == match_id)
+                        .find(|a| a.match_id == match_id && a.has_desktop_entry())
                         .cloned()
                     {
                         let bookmark = crate::config::DockBookmark {

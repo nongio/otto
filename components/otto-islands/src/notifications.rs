@@ -7,9 +7,10 @@
 use otto_kit::AppContext;
 use std::collections::HashMap;
 use zbus::zvariant::Value;
-use zbus::{interface, SignalContext};
+use zbus::{interface, object_server::SignalEmitter};
 
 use crate::activity::{NotificationAction, Priority};
+use crate::notification_permission;
 use crate::state::SharedState;
 
 pub const NOTIFICATIONS_DBUS_NAME: &str = "org.freedesktop.Notifications";
@@ -62,6 +63,17 @@ impl NotificationDaemon {
         let desktop_entry = parse_string_hint(&hints, "desktop-entry");
         let transient = parse_bool_hint(&hints, "transient");
         let resident = parse_bool_hint(&hints, "resident");
+
+        // An app switched off in Settings › Privacy is not shown. The caller
+        // still gets an id, as for any notification.
+        let sender =
+            notification_permission::identify(connection, &header, desktop_entry.as_deref()).await;
+        if let notification_permission::Sender::App(app) = &sender {
+            if !notification_permission::allows(connection, app).await {
+                tracing::info!(app, summary, "notification dropped: the app may not notify");
+                return Ok(notification_permission::dropped_id());
+            }
+        }
 
         // Determine app_id: prefer the desktop-entry hint, then app_name.
         // A notification forwarded from a terminal escape sequence carries
@@ -143,7 +155,7 @@ impl NotificationDaemon {
     async fn close_notification(
         &self,
         id: u32,
-        #[zbus(signal_context)] ctxt: SignalContext<'_>,
+        #[zbus(signal_emitter)] ctxt: SignalEmitter<'_>,
     ) -> zbus::fdo::Result<()> {
         let dismissed = {
             let mut state = self.state.lock().unwrap();
@@ -173,7 +185,7 @@ impl NotificationDaemon {
     /// 2 = dismissed by the user, 3 = closed via CloseNotification, 4 = undefined.
     #[zbus(signal)]
     pub async fn notification_closed(
-        ctxt: &SignalContext<'_>,
+        ctxt: &SignalEmitter<'_>,
         id: u32,
         reason: u32,
     ) -> zbus::Result<()>;
@@ -182,7 +194,7 @@ impl NotificationDaemon {
     /// default action by clicking the notification body).
     #[zbus(signal)]
     pub async fn action_invoked(
-        ctxt: &SignalContext<'_>,
+        ctxt: &SignalEmitter<'_>,
         id: u32,
         action_key: &str,
     ) -> zbus::Result<()>;

@@ -848,7 +848,7 @@ mod tests {
     fn size_filters_and_sorts_on_the_file_size() {
         let sparql = plan("size:>1M sort:size").sparql(10);
         assert!(sparql.text.contains("?f nfo:fileSize ?s"));
-        assert!(sparql.text.contains("FILTER(?s >= 1048576)"));
+        assert!(sparql.text.contains("FILTER(?s >= 1000000)"));
         assert!(sparql.text.ends_with("ORDER BY DESC(?s) DESC(?m) LIMIT 10"));
     }
 

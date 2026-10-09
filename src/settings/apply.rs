@@ -43,6 +43,7 @@ pub fn is_applied_live(id: &str) -> bool {
             | "lock.locker_command"
             | "lock.locker_args"
             | "lock.auto_lock_timeout"
+            | "lock.on_suspend"
             | "accent_color"
             | "background_image"
             | "background_color"
@@ -65,6 +66,11 @@ pub fn is_applied_live(id: &str) -> bool {
             | "icon_theme"
             | "input.show_layout_in_bar"
             | "desk.enabled"
+            | "canvas.width"
+            | "desktop.widget"
+            | "topbar.show_app_menu"
+            | "topbar.show_clock"
+            | "topbar.clock_format"
             | "search.folders"
             | "search.skip_code_repositories"
             | "search.index_removable_drives"
@@ -361,12 +367,29 @@ pub fn apply_live<B: Backend + 'static>(state: &mut Otto<B>, id: &str) -> Result
             state.rearm_auto_lock_timer();
             Ok(())
         }
+        // Read by `lock::prepare_for_sleep` when logind announces a suspend.
+        "lock.on_suspend" => Ok(()),
         // The desk is a process the compositor owns, so the setting starts or
         // stops it.
         "desk.enabled" => {
             state.apply_desk_setting();
             Ok(())
         }
+        // Every canvas item is configured at the new width and the column is
+        // laid out again, on screen or not.
+        "canvas.width" => {
+            state.canvas_config_changed();
+            Ok(())
+        }
+        // ewwii is a process the compositor owns too: the setting swaps the
+        // window it shows, or starts or stops it.
+        "desktop.widget" => {
+            state.apply_desktop_widget_setting();
+            Ok(())
+        }
+        // Nothing to do here: otto-bar follows `Changed` and reads the new
+        // value back itself.
+        "topbar.show_app_menu" | "topbar.show_clock" | "topbar.clock_format" => Ok(()),
         // LocalSearch's own settings: pushed to it on a thread of its own,
         // since writing them runs `gsettings`.
         "search.folders" => {
@@ -434,6 +457,7 @@ mod tests {
             "cursor_theme",
             "cursor_size",
             "icon_theme",
+            "desktop.widget",
             "appswitcher.follow_cursor",
             "dock.genie_scale",
             "dock.genie_span",
@@ -493,6 +517,10 @@ mod tests {
             "lock.locker_command",
             "lock.locker_args",
             "lock.auto_lock_timeout",
+            "lock.on_suspend",
+            "topbar.show_app_menu",
+            "topbar.show_clock",
+            "topbar.clock_format",
         ] {
             assert_eq!(
                 schema::lookup(id).expect("in schema").apply,

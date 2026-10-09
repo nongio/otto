@@ -17,6 +17,11 @@ fn type_query(browser: &mut Browser, query: &str) {
     browser.run_search();
 }
 
+/// The entry a listing would make for `path`, as a search result reaches it.
+fn entry_for_path(path: &std::path::Path) -> Option<Entry> {
+    otto_search::Found::stat(path).map(Entry::from)
+}
+
 fn named(names: &[&str]) -> Vec<Entry> {
     names
         .iter()
@@ -267,7 +272,7 @@ fn a_result_can_be_previewed_even_though_it_is_not_in_a_folder() {
     std::fs::write(&file, b"preview me").unwrap();
 
     let mut browser = browser_at(&dir);
-    browser.columns[0].snapshot.entries = vec![model::entry_for_path(&file).expect("a real file")];
+    browser.columns[0].snapshot.entries = vec![entry_for_path(&file).expect("a real file")];
     browser.searching = true;
     browser.select(0, 0);
 
@@ -320,7 +325,7 @@ fn opening_a_folder_from_the_results_goes_to_it() {
     let mut browser = browser_at(&root);
     type_query(&mut browser, "projects");
     // Standing in for what the index would have found.
-    browser.columns[0].snapshot.entries = vec![model::entry_for_path(&target).unwrap()];
+    browser.columns[0].snapshot.entries = vec![entry_for_path(&target).unwrap()];
     browser.select(0, 0);
 
     browser.open_selection();
@@ -479,7 +484,7 @@ fn the_path_bar_names_where_a_selected_result_actually_lives() {
     std::fs::write(&file, b"x").unwrap();
 
     let mut browser = browser_at(&root);
-    browser.columns[0].snapshot.entries = vec![model::entry_for_path(&file).unwrap()];
+    browser.columns[0].snapshot.entries = vec![entry_for_path(&file).unwrap()];
     browser.searching = true;
     browser.select(0, 0);
 
@@ -535,7 +540,7 @@ fn same_named_results_from_different_folders_select_one_at_a_time() {
     let mut browser = browser_at(&root);
     browser.columns[0].snapshot.entries = ["one", "two", "three"]
         .iter()
-        .map(|sub| model::entry_for_path(&root.join(sub).join("Cargo.toml")).unwrap())
+        .map(|sub| entry_for_path(&root.join(sub).join("Cargo.toml")).unwrap())
         .collect();
     browser.searching = true;
 

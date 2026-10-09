@@ -6,9 +6,12 @@
 //! [`AccessPortal`](crate::portal::AccessPortal) brokers to.
 
 use std::collections::HashMap;
-use std::process::Command;
+use std::os::unix::ffi::OsStrExt;
+use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use percent_encoding::{percent_encode, AsciiSet, NON_ALPHANUMERIC};
+use tokio::process::Command;
 use tracing::{info, warn};
 use zbus::interface;
 use zbus::zvariant::{OwnedObjectPath, OwnedValue, Str, Value};
@@ -82,7 +85,7 @@ impl ScreenshotPortal {
 
         match capture_to_file().await {
             Ok(path) => {
-                let uri = format!("file://{path}");
+                let uri = path_to_uri(&path);
                 let mut results = HashMap::new();
                 if let Ok(v) = OwnedValue::try_from(Value::from(Str::from(uri))) {
                     results.insert("uri".to_string(), v);
@@ -98,22 +101,92 @@ impl ScreenshotPortal {
     }
 }
 
-/// Runs `grim` to capture the full output set to a fresh PNG under
-/// `~/Pictures/Screenshots/`, returning the absolute path.
+/// Runs `grim` to capture the full output set to a fresh PNG under the
+/// user's Pictures folder, in `Screenshots/`, returning the absolute path.
 ///
-/// Blocks the calling (zbus executor) thread for the ~100ms `grim` takes —
-/// not a Tokio task, so `spawn_blocking` isn't available here.
-async fn capture_to_file() -> anyhow::Result<String> {
-    let home = std::env::var("HOME").map_err(|_| anyhow::anyhow!("HOME is not set"))?;
-    let dir = format!("{home}/Pictures/Screenshots");
-    std::fs::create_dir_all(&dir)?;
+/// zbus runs on Tokio here, so `grim` is awaited as a child process rather
+/// than blocking the executor for the ~100ms it takes.
+async fn capture_to_file() -> anyhow::Result<PathBuf> {
+    let dir = pictures_dir()?.join("Screenshots");
+    tokio::fs::create_dir_all(&dir).await?;
 
     let ts = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis();
-    let path = format!("{dir}/screenshot-{ts}.png");
+    let path = dir.join(format!("screenshot-{ts}.png"));
 
-    let status = Command::new("grim").arg(&path).status()?;
+    let status = Command::new("grim").arg(&path).status().await?;
     if !status.success() {
         anyhow::bail!("grim exited with {status}");
     }
     Ok(path)
+}
+
+/// `XDG_PICTURES_DIR` from `user-dirs.dirs`, or `~/Pictures`.
+fn pictures_dir() -> anyhow::Result<PathBuf> {
+    let home = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .filter(|home| home.is_absolute())
+        .ok_or_else(|| anyhow::anyhow!("HOME is not set"))?;
+    let config = std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .filter(|dir| dir.is_absolute())
+        .unwrap_or_else(|| home.join(".config"));
+    let dirs = std::fs::read_to_string(config.join("user-dirs.dirs")).unwrap_or_default();
+    Ok(user_dir(&dirs, "XDG_PICTURES_DIR", &home).unwrap_or_else(|| home.join("Pictures")))
+}
+
+/// The folder `variable` names in the text of a `user-dirs.dirs` file,
+/// `$HOME` expanded.
+fn user_dir(dirs: &str, variable: &str, home: &Path) -> Option<PathBuf> {
+    dirs.lines().find_map(|line| {
+        let value = line.trim().strip_prefix(variable)?.strip_prefix('=')?;
+        let value = value.trim().trim_matches('"');
+        let path = match value.strip_prefix("$HOME") {
+            Some(rest) => home.join(rest.trim_start_matches('/')),
+            None => PathBuf::from(value),
+        };
+        Some(path).filter(|path| path.is_absolute())
+    })
+}
+
+/// Everything but RFC 3986's unreserved characters and the `/` separator.
+const PATH: &AsciiSet = &NON_ALPHANUMERIC
+    .remove(b'-')
+    .remove(b'.')
+    .remove(b'_')
+    .remove(b'~')
+    .remove(b'/');
+
+/// A path as a percent-encoded `file://` URI, escaped the way
+/// `otto_kit::uri::path_to_uri` does (the portal does not link the toolkit).
+fn path_to_uri(path: &Path) -> String {
+    format!(
+        "file://{}",
+        percent_encode(path.as_os_str().as_bytes(), PATH)
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_path_with_spaces_and_non_ascii_is_percent_encoded() {
+        assert_eq!(
+            path_to_uri(Path::new("/home/me/Immagini/Schermate 2026/caffè.png")),
+            "file:///home/me/Immagini/Schermate%202026/caff%C3%A8.png"
+        );
+    }
+
+    #[test]
+    fn the_pictures_folder_comes_from_user_dirs() {
+        let home = Path::new("/home/me");
+        let dirs = "# written by xdg-user-dirs-update\n\
+                    XDG_DESKTOP_DIR=\"$HOME/Desktop\"\n\
+                    XDG_PICTURES_DIR=\"$HOME/Immagini\"\n";
+        assert_eq!(
+            user_dir(dirs, "XDG_PICTURES_DIR", home),
+            Some(PathBuf::from("/home/me/Immagini"))
+        );
+        assert_eq!(user_dir("", "XDG_PICTURES_DIR", home), None);
+    }
 }

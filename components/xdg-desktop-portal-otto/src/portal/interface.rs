@@ -4,7 +4,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use async_io::Timer;
 use tokio::sync::Mutex;
 use tracing::{error, info, warn};
 use zbus::fdo;
@@ -14,11 +13,16 @@ use zbus::zvariant::{OwnedFd, OwnedObjectPath, OwnedValue};
 
 use crate::otto_client::screencast::WindowSource;
 use crate::otto_client::OttoClient;
+use crate::portal::remembered;
+
+/// The picker's checkbox group, as otto-islands knows it: the label is the
+/// app's name and islands words the rest.
+const REMEMBER_GROUP: &str = "otto.remember";
 use crate::portal::{
     build_streams_value_from_descriptors, decode_restore_data, encode_restore_data,
-    make_output_mapping_id, resolve_restored, PortalState, Request, RestoredSource, SelectedWindow,
-    Session, SessionState, StreamDescriptor, CURSOR_MODE_EMBEDDED, SOURCE_TYPE_MONITOR,
-    SOURCE_TYPE_WINDOW, SUPPORTED_CURSOR_MODES,
+    make_output_mapping_id, program_display_name, resolve_restored, session_program, PortalState,
+    Request, RestoredSource, SelectedWindow, Session, SessionState, StreamDescriptor,
+    CURSOR_MODE_EMBEDDED, SOURCE_TYPE_MONITOR, SOURCE_TYPE_WINDOW, SUPPORTED_CURSOR_MODES,
 };
 use zbus::zvariant::Str;
 
@@ -57,22 +61,6 @@ pub fn validate_persist_mode(mode: u32) -> Result<u32, fdo::Error> {
     }
 }
 
-/// Reads the user's preferred screencast output from
-/// `$XDG_CONFIG_HOME/otto/screencast-output` (one connector name, e.g.
-/// `virtual-1`). Read per SelectSources call so it can be changed between
-/// sessions without restarting the portal. Stopgap until a proper source
-/// picker exists.
-fn preferred_output_override() -> Option<String> {
-    let base = std::env::var_os("XDG_CONFIG_HOME")
-        .map(std::path::PathBuf::from)
-        .or_else(|| {
-            std::env::var_os("HOME").map(|home| std::path::PathBuf::from(home).join(".config"))
-        })?;
-    let content = std::fs::read_to_string(base.join("otto/screencast-output")).ok()?;
-    let name = content.trim().to_string();
-    (!name.is_empty()).then_some(name)
-}
-
 /// Best-effort human-readable name for a requesting app, for the dialog copy.
 fn display_app_name(app_id: &str) -> String {
     match app_id.rsplit('.').next() {
@@ -81,34 +69,21 @@ fn display_app_name(app_id: &str) -> String {
     }
 }
 
-/// Picks the output to capture when no picker dialog is reachable: the
-/// `screencast-output` override if it names a present output, else the first.
-fn fallback_output(available: &[String]) -> Option<String> {
-    if available.is_empty() {
-        return None;
-    }
-    match preferred_output_override() {
-        Some(preferred) if available.contains(&preferred) => {
-            info!(output = %preferred, "Using screencast-output override");
-            Some(preferred)
-        }
-        Some(preferred) => {
-            warn!(
-                output = %preferred,
-                ?available,
-                "screencast-output override not among available outputs; using first"
-            );
-            available.first().cloned()
-        }
-        None => available.first().cloned(),
-    }
-}
-
 /// What the user picked in the source dialog.
 #[derive(Clone, Debug)]
 pub enum SourceSelection {
     Monitor(String),
     Window(WindowSource),
+}
+
+impl SourceSelection {
+    /// The source as it is remembered: its identity only.
+    pub fn restorable(&self) -> RestoredSource {
+        match self {
+            SourceSelection::Monitor(connector) => RestoredSource::Monitor(connector.clone()),
+            SourceSelection::Window(window) => RestoredSource::Window(window.id.clone()),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -132,12 +107,18 @@ impl ScreenCastPortal {
     /// which bit was set. Returns `Ok(None)` if the user dismissed the dialog,
     /// and `Err` only when no dialog renderer answered (see the caller's
     /// fallback).
+    ///
+    /// When the share can be remembered, `remember_for` names the app and the
+    /// picker carries a "Remember for <app>" checkbox, ticked to start with
+    /// (islands words it; the group's label is the app's name). The answer
+    /// says whether it was still ticked.
     async fn pick_source(
         &self,
         app_id: &str,
+        remember_for: Option<String>,
         outputs: &[String],
         windows: &[WindowSource],
-    ) -> zbus::Result<Option<SourceSelection>> {
+    ) -> zbus::Result<Option<(SourceSelection, bool)>> {
         // Option ids are prefixed so one flat list can carry both kinds.
         let mut options: Vec<(String, String, String)> = Vec::new();
 
@@ -171,6 +152,17 @@ impl ScreenCastPortal {
             return Ok(None);
         };
 
+        // The Access portal's checkbox: a choice with no options, answered
+        // `true` or `false`. On unless the user unticks it.
+        let remember = remember_for.map(|name| {
+            (
+                REMEMBER_GROUP.to_string(),
+                name,
+                Vec::new(),
+                "true".to_string(),
+            )
+        });
+
         let title = "Share your screen";
         let subtitle = format!("{} wants to share your screen", display_app_name(app_id));
         let body = "The selected source will be visible to the application.";
@@ -188,12 +180,14 @@ impl ScreenCastPortal {
                     "Share",
                     "Cancel",
                     true,
-                    vec![(
+                    std::iter::once((
                         "source".to_string(),
                         "Choose what to share".to_string(),
                         options.clone(),
                         default_id.clone(),
-                    )],
+                    ))
+                    .chain(remember.clone())
+                    .collect(),
                 )
                 .await
         }
@@ -224,12 +218,17 @@ impl ScreenCastPortal {
                         "Share",
                         "Cancel",
                         true,
-                        vec![(
+                        std::iter::once((
                             "source".to_string(),
                             "Choose what to share".to_string(),
                             plain,
                             default_id,
-                        )],
+                        ))
+                        .chain(
+                            remember
+                                .map(|(id, label, _, default)| (id, label, Vec::new(), default)),
+                        )
+                        .collect(),
                     )
                     .await?
             }
@@ -239,12 +238,15 @@ impl ScreenCastPortal {
             return Ok(None);
         }
 
+        let remembered = results
+            .iter()
+            .any(|(group, answer)| group == REMEMBER_GROUP && answer == "true");
         let Some((_, choice)) = results.into_iter().find(|(group, _)| group == "source") else {
             warn!("Picker returned no selection for the source group");
             return Ok(None);
         };
 
-        Ok(match choice.split_once(':') {
+        let selection = match choice.split_once(':') {
             Some(("monitor", connector)) => Some(SourceSelection::Monitor(connector.to_string())),
             Some(("window", id)) => windows
                 .iter()
@@ -255,7 +257,8 @@ impl ScreenCastPortal {
                 warn!(%choice, "Picker returned an unrecognised option id");
                 None
             }
-        })
+        };
+        Ok(selection.map(|selection| (selection, remembered)))
     }
 
     /// Record the source this session will capture, however it was chosen.
@@ -399,6 +402,7 @@ impl ScreenCastPortal {
         app_id: String,
         options: HashMap<String, OwnedValue>,
         #[zbus(object_server)] object_server: &ObjectServer,
+        #[zbus(connection)] connection: &zbus::Connection,
     ) -> fdo::Result<(u32, HashMap<String, OwnedValue>)> {
         info!(session = %session_handle, ?app_id, ?options, "SelectSources called");
 
@@ -484,17 +488,22 @@ impl ScreenCastPortal {
             // between the preview in its own picker and the real capture)
             // carries the source the user already approved. Restoring it is
             // what keeps the picker from opening a second time.
-            let restored = options
-                .get("restore_data")
-                .and_then(decode_restore_data)
-                .and_then(|source| {
-                    resolve_restored(
-                        source,
-                        requested_types,
-                        &available_outputs,
-                        &available_windows,
-                    )
-                });
+            // An app that brings no restore data of its own gets the source
+            // remembered for it in the permission store, if there is one and
+            // it is still there (see `remembered`).
+            let from_app = options.get("restore_data").and_then(decode_restore_data);
+            let candidates: Vec<RestoredSource> = match from_app {
+                Some(source) => vec![source],
+                None => remembered::sources(connection, &app_id).await,
+            };
+            let restored = candidates.into_iter().find_map(|source| {
+                resolve_restored(
+                    source,
+                    requested_types,
+                    &available_outputs,
+                    &available_windows,
+                )
+            });
 
             if let Some(selection) = restored {
                 info!(
@@ -512,30 +521,59 @@ impl ScreenCastPortal {
                 return Ok((0, results));
             }
 
-            let selection = match self
-                .pick_source(&app_id, &available_outputs, &available_windows)
+            // Whether this share can be remembered, and who for. An app that
+            // asks to be remembered gets a token only it holds, whatever its
+            // app id; Otto remembers one that does not ask only under a real
+            // app id, as the empty one is every unsandboxed program's.
+            let asked_to_persist = persist_mode.is_some_and(|mode| mode != 0);
+            let remember_for = if !app_id.is_empty() {
+                Some(display_app_name(&app_id))
+            } else if asked_to_persist {
+                let program = session_program(connection, session_handle.as_str()).await;
+                Some(
+                    program
+                        .as_deref()
+                        .map(program_display_name)
+                        .unwrap_or_else(|| display_app_name(&app_id)),
+                )
+            } else {
+                None
+            };
+            let (selection, remember) = match self
+                .pick_source(
+                    &app_id,
+                    remember_for,
+                    &available_outputs,
+                    &available_windows,
+                )
                 .await
             {
-                Ok(Some(selection)) => selection,
+                Ok(Some(answer)) => answer,
                 // User dismissed the picker.
                 Ok(None) => {
                     info!(session = %session_handle, "User cancelled source selection");
                     return Ok((1, HashMap::new()));
                 }
-                // No dialog renderer on the bus. Monitor capture keeps its
-                // pre-picker behaviour so an islands-less session still works;
-                // a window is never picked on the user's behalf.
+                // No dialog renderer on the bus: nobody can say yes, so the
+                // answer is no. Nothing is shared on the user's behalf.
                 Err(err) => {
-                    warn!(session = %session_handle, ?err, "Source picker unavailable");
-                    let Some(fallback) = fallback_output(&available_outputs) else {
-                        return Ok((2, HashMap::new()));
-                    };
-                    SourceSelection::Monitor(fallback)
+                    warn!(session = %session_handle, ?err, "Source picker unavailable; denying");
+                    return Ok((2, HashMap::new()));
                 }
             };
 
+            // Unticked, an app that asked to be remembered is not: no restore
+            // data goes back from Start, so the frontend hands it no token.
+            let persist_mode = if asked_to_persist && !remember {
+                None
+            } else {
+                persist_mode
+            };
             self.store_selection(&session_handle, &selection, cursor_mode, persist_mode)
                 .await?;
+            if remember && !asked_to_persist {
+                remembered::remember(connection, &app_id, &selection.restorable()).await;
+            }
 
             info!(
                 session = %session_handle,
@@ -568,6 +606,7 @@ impl ScreenCastPortal {
         parent_window: &str,
         options: HashMap<String, OwnedValue>,
         #[zbus(object_server)] object_server: &ObjectServer,
+        #[zbus(connection)] connection: &zbus::Connection,
     ) -> fdo::Result<(u32, HashMap<String, OwnedValue>)> {
         info!(session = %session_handle, ?app_id, parent_window, ?options, "Start called");
 
@@ -694,7 +733,7 @@ impl ScreenCastPortal {
                         warn!(attempt = attempt + 1, ?err, "Failed to query node ID");
                     }
                 }
-                Timer::after(NODE_ID_RETRY_DELAY).await;
+                tokio::time::sleep(NODE_ID_RETRY_DELAY).await;
             }
 
             let pipewire_node_id = pipewire_node_id.ok_or_else(|| {
@@ -783,7 +822,13 @@ impl ScreenCastPortal {
                     }
                     SourceSelection::Window(window) => RestoredSource::Window(window.id.clone()),
                 };
-                match encode_restore_data(&restorable) {
+                // A sandboxed app is named by its app id already.
+                let program = if app_id.is_empty() {
+                    session_program(connection, session_handle.as_str()).await
+                } else {
+                    None
+                };
+                match encode_restore_data(&restorable, program.as_deref()) {
                     Ok(value) => {
                         results.insert("restore_data".to_string(), value);
                     }

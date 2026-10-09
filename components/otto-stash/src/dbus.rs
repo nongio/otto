@@ -9,17 +9,17 @@
 use std::path::PathBuf;
 use std::sync::Mutex;
 
+use futures_util::StreamExt;
+use otto_kit::dbus::files::{FilesProxy, SERVICE as FILES_NAME};
+use otto_kit::dbus::settings::SettingsProxy;
 use smithay_client_toolkit::reexports::calloop::channel::Sender;
 use tokio::sync::oneshot;
-use zbus::export::futures_util::StreamExt;
 use zbus::fdo;
 
-pub use otto_kit::components::stashed::{Items, NAME, PATH};
+pub use otto_kit::components::stashed::Items;
+use otto_kit::dbus::stash::StashProxy;
+pub use otto_kit::dbus::stash::{PATH, SERVICE as NAME};
 
-/// Where Files says what is selected in its focused window.
-const FILES_NAME: &str = "org.otto.Files1";
-const FILES_PATH: &str = "/org/otto/Files1";
-const FILES_METHOD: &str = "FocusedSelection";
 /// How long Files is given to say.
 const FILES_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(300);
 
@@ -176,7 +176,7 @@ impl Service {
     /// Everything stashed, after every change.
     #[zbus(signal)]
     async fn changed(
-        emitter: &zbus::object_server::SignalContext<'_>,
+        emitter: &zbus::object_server::SignalEmitter<'_>,
         items: Vec<(String, bool)>,
     ) -> zbus::Result<()>;
 }
@@ -195,7 +195,7 @@ fn to_wire(items: Items) -> Vec<(String, bool)> {
 ///
 /// When the signal cannot be sent.
 pub async fn announce(bus: &zbus::Connection, items: Items) -> zbus::Result<()> {
-    let emitter = zbus::object_server::SignalContext::new(bus, PATH)?;
+    let emitter = zbus::object_server::SignalEmitter::new(bus, PATH)?;
     Service::changed(&emitter, to_wire(items)).await
 }
 
@@ -216,19 +216,15 @@ pub async fn focused_files() -> Option<Vec<PathBuf>> {
         let asks = windows.iter().map(|window| {
             let bus = &bus;
             async move {
-                let reply = bus
-                    .call_method(
-                        Some(window.as_str()),
-                        FILES_PATH,
-                        Some(FILES_NAME),
-                        FILES_METHOD,
-                        &(),
-                    )
-                    .await?;
-                reply.body().deserialize::<Vec<String>>()
+                FilesProxy::builder(bus)
+                    .destination(window.as_str())?
+                    .build()
+                    .await?
+                    .focused_selection()
+                    .await
             }
         });
-        let answers = zbus::export::futures_util::future::join_all(asks).await;
+        let answers = futures_util::future::join_all(asks).await;
         Ok::<_, zbus::Error>(answers.into_iter().find_map(Result::ok))
     })
     .await;
@@ -256,25 +252,21 @@ pub async fn serve(commands: Sender<Command>) -> zbus::Result<zbus::Connection> 
         commands: Mutex::new(commands),
     };
     zbus::connection::Builder::session()?
+        .allow_name_replacements(false)
         .name(NAME)?
         .serve_at(PATH, service)?
         .build()
         .await
 }
 
-/// Call `method` with `body` on the running otto-stash.
+/// The running otto-stash, for the command line to call.
 ///
 /// # Errors
 ///
-/// When otto-stash isn't running or refuses the request.
-pub async fn call<B>(method: &str, body: &B) -> zbus::Result<()>
-where
-    B: serde::Serialize + zbus::zvariant::DynamicType,
-{
+/// When the session bus cannot be reached.
+pub async fn running() -> zbus::Result<StashProxy<'static>> {
     let bus = zbus::Connection::session().await?;
-    bus.call_method(Some(NAME), PATH, Some(NAME), method, body)
-        .await?;
-    Ok(())
+    StashProxy::new(&bus).await
 }
 
 /// The shortcut that opens Ask, as "Ctrl+Alt+A", or failing that the one
@@ -282,17 +274,12 @@ where
 /// settings can't be asked.
 pub async fn send_shortcut() -> Option<String> {
     let bus = zbus::Connection::session().await.ok()?;
-    let reply = bus
-        .call_method(
-            Some("org.otto.Settings"),
-            "/org/otto/Settings",
-            Some("org.otto.Settings"),
-            "ListShortcuts",
-            &(),
-        )
+    let shortcuts = SettingsProxy::new(&bus)
+        .await
+        .ok()?
+        .list_shortcuts()
         .await
         .ok()?;
-    let shortcuts: Vec<(String, String)> = reply.body().deserialize().ok()?;
     let find = |wanted: fn(&str) -> bool| {
         shortcuts
             .iter()

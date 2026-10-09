@@ -36,10 +36,16 @@ impl SubsurfaceSurface {
     /// * `height` - Height in logical pixels
     ///
     /// # Example
+    /// `no_run`: needs a running app connected to a Wayland compositor.
+    ///
     /// ```no_run
     /// use otto_kit::surfaces::SubsurfaceSurface;
+    /// # use wayland_client::protocol::wl_surface::WlSurface;
     ///
-    /// let subsurface = SubsurfaceSurface::new(&parent_surface, 0, 0, 200, 100)?;
+    /// # fn demo(parent_surface: &WlSurface) -> Result<(), otto_kit::surfaces::SurfaceError> {
+    /// let subsurface = SubsurfaceSurface::new(parent_surface, 0, 0, 200, 100)?;
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn new(
         parent_surface: &wl_surface::WlSurface,

@@ -38,7 +38,7 @@ otto-bar looks for a TOML config file in this order:
 | `low_level`         | `20`           | Below this, the fill turns amber                    |
 | `critical_level`    | `10`           | Below this, red                                     |
 | `width` / `height`  | `28` / `13`    | Glyph size in points                                |
-| `color_normal`      | `"#34C759"`    | `#RGB`, `#RRGGBB` or `#AARRGGBB`                    |
+| `color_normal`      | `"#34C759"`    | `#RGB`, `#RRGGBB` or `#RRGGBBAA` (alpha last)       |
 | `color_low`         | `"#FF9F0A"`    |                                                     |
 | `color_critical`    | `"#FF3B30"`    |                                                     |
 | `color_charging`    | `"#34C759"`    |                                                     |
@@ -48,6 +48,10 @@ otto-bar looks for a TOML config file in this order:
 | `show_cpu_info`     | `true`         | CPU frequency and governor in the menu              |
 | `profile_backend`   | `"auto"`       | `"auto"`, `"power-profiles"`, `"commands"`          |
 | `settings_command`  | `"otto-settings"` | Menu's last entry; empty string hides it         |
+
+Up to 1.6.0, eight-digit colours were `#AARRGGBB`. They are now
+`#RRGGBBAA`, alpha last: move the alpha pair to the end (`"#FF34C759"` becomes
+`"#34C759FF"`). An old value still parses, as another colour.
 
 `[[battery.profiles]]` entries define the switchable profiles. When any are
 set they take precedence over power-profiles-daemon, unless `profile_backend`

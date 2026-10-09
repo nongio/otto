@@ -8,51 +8,61 @@ repository.workspace = true
 
 [dependencies]
 laye-rs.workspace = true
+otto-dbus = { path = "../otto-dbus" }
+# For `i18n::chrono_locale`; the feature is what makes chrono's names local.
+chrono = { workspace = true, features = ["unstable-locales"] }
 otto-search = { path = "../otto-search" }
-rustix = { version = "0.38", features = ["fs", "process"], optional = true }
-smithay-client-toolkit = { version = "0.19", default-features = false, features = ["calloop", "xkbcommon"] }
-wayland-client = "0.31"
-wayland-protocols = { version = "0.32", features = ["client", "staging", "unstable"] }
-wayland-protocols-wlr = { version = "0.3", features = ["client"] }
-wayland-egl = "0.32"
-wayland-cursor = "0.31"
-wayland-scanner = "0.31"
-wayland-backend = "0.3"
-gl = "0.14"
-khronos-egl = { version = "6", features = ["dynamic"] }
-calloop = "0.13"
-tracing = "0.1"
-tokio = { version = "1", features = ["full"] }
-zbus = { version = "4", default-features = false, features = ["tokio"] }
-futures-util = "0.3"
+rustix = { version = "0.38", features = ["fs", "process"] }
+smithay-client-toolkit = { workspace = true, features = ["calloop", "xkbcommon"] }
+wayland-client.workspace = true
+wayland-protocols = { workspace = true, features = ["client", "staging", "unstable"] }
+wayland-protocols-wlr = { workspace = true, features = ["client"] }
+wayland-egl.workspace = true
+wayland-scanner.workspace = true
+wayland-backend.workspace = true
+gl.workspace = true
+khronos-egl = { workspace = true, features = ["dynamic"] }
+tracing.workspace = true
+tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
+tokio = { workspace = true, features = ["full"] }
+zbus.workspace = true
+futures-util.workspace = true
 freedesktop-icons = "0.2.4"
 resvg = "0.44.0"
 usvg = "0.44.0"
-lazy_static = "1.4"
-libc = "0.2"
-pipewire = "0.9"
-freedesktop-desktop-entry = "0.7.5"
+libc.workspace = true
+percent-encoding = "2.3"
+freedesktop-desktop-entry.workspace = true
+# Dictation posts audio to a speech-to-text server.
+ureq = { version = "3", optional = true }
+serde_json = { workspace = true, optional = true }
+# Dictation captures the microphone through PipeWire.
+pipewire = { workspace = true, optional = true }
+# Dictation reads its settings from dictation.toml.
+toml_edit = { workspace = true, optional = true }
 # Localisation. fluent-bundle carries the .ftl parser, the selector runtime and
 # the CLDR plural rules; unic-langid does BCP 47 parsing and negotiation.
-fluent-bundle = "0.15"
-unic-langid = { version = "0.9", features = ["macros"] }
+fluent-bundle.workspace = true
+unic-langid = { workspace = true, features = ["macros"] }
 intl-memoizer = "0.5"
 
-# Accessibility. accesskit_unix keeps its default `async-io` executor rather
-# than the tokio one: an otto-kit application's UI thread is a hand-rolled
-# poll loop, not a tokio runtime, and the adapter has to be able to run its
-# D-Bus work without one.
-accesskit = "0.24"
-accesskit_unix = "0.22"
+# Accessibility. An otto-kit application's UI thread is a hand-rolled poll
+# loop, not a tokio runtime, and the adapter has to run its D-Bus work without
+# one: accesskit_unix (tokio feature, set in the workspace) runs it on a
+# current-thread runtime on a thread of its own.
+accesskit.workspace = true
+accesskit_unix.workspace = true
 
 [features]
 default = []
-testing = ["rustix"]
+testing = []
 debugger = ["laye-rs/debugger"]
+# Speech into a text field: see `dictation`.
+dictation = ["dep:ureq", "dep:serde_json", "dep:pipewire", "dep:toml_edit"]
 
 
 [dependencies.skia-safe]
-version = "=0.93"
+workspace = true
 features = ["gl", "textlayout", "svg", "skottie"]
 
 [[example]]
@@ -79,3 +89,8 @@ harness = false
 
 [lints]
 workspace = true
+
+# wayland-backend is only referenced by the code `wayland_scanner::generate_interfaces!`
+# expands to (src/protocols/mod.rs), which cargo-machete cannot see.
+[package.metadata.cargo-machete]
+ignored = ["laye-rs", "wayland-backend"]

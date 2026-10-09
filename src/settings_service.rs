@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use tokio::sync::oneshot;
 use tracing::info;
 use zbus::zvariant::{OwnedValue, Value};
-use zbus::{interface, Connection, SignalContext};
+use zbus::{interface, object_server::SignalEmitter, Connection};
 
 use crate::config::Config;
 use crate::screenshare::CompositorCommand;
@@ -146,6 +146,11 @@ impl SettingsInterface {
         let value = SettingValue::from_variant(&value).ok_or_else(|| {
             SettingsFault::InvalidType(format!("`{id}` was given a value of an unusable type"))
         })?;
+        // Setting a protected value to what it already is changes nothing,
+        // so there is nothing to confirm.
+        if settings::schema::is_protected(id) && settings::value_of(id).as_ref() != Some(&value) {
+            confirm(id).await?;
+        }
 
         let (response_tx, response_rx) = oneshot::channel();
         self.compositor_tx
@@ -166,6 +171,9 @@ impl SettingsInterface {
 
     /// Remove one setting from the writable configuration file.
     async fn reset(&self, id: &str) -> Result<String, SettingsFault> {
+        if settings::schema::is_protected(id) {
+            confirm(id).await?;
+        }
         let (response_tx, response_rx) = oneshot::channel();
         self.compositor_tx
             .send(CompositorCommand::ResetSetting {
@@ -272,7 +280,6 @@ impl SettingsInterface {
     /// A zero width or height leaves the resolution unset, and a zero refresh
     /// leaves the rate unset, so a caller that only wants to move a display
     /// does not have to invent a mode for it.
-    #[allow(clippy::too_many_arguments)]
     async fn set_output_profile(
         &self,
         connector: &str,
@@ -328,7 +335,6 @@ impl SettingsInterface {
     /// node id the output streams to, which is what a capture client needs.
     /// `persist` also writes it to the configuration so it comes back next
     /// session.
-    #[allow(clippy::too_many_arguments)]
     async fn add_virtual_output(
         &self,
         name: &str,
@@ -413,7 +419,7 @@ impl SettingsInterface {
     /// that called `Set` receives this too, and must not suppress its own echo.
     #[zbus(signal)]
     async fn changed(
-        context: &SignalContext<'_>,
+        context: &SignalEmitter<'_>,
         values: HashMap<String, OwnedValue>,
     ) -> zbus::Result<()>;
 }
@@ -428,7 +434,13 @@ pub async fn register_settings_interface(
         .at("/org/otto/Settings", SettingsInterface { compositor_tx })
         .await?;
 
-    connection.request_name("org.otto.Settings").await?;
+    // No AllowReplacement: zbus 5's plain request_name would add it.
+    connection
+        .request_name_with_flags(
+            "org.otto.Settings",
+            zbus::fdo::RequestNameFlags::ReplaceExisting | zbus::fdo::RequestNameFlags::DoNotQueue,
+        )
+        .await?;
 
     // Announcements originate on the compositor thread, which cannot await, so
     // they are handed to a task on this connection's runtime instead.
@@ -453,7 +465,7 @@ pub async fn register_settings_interface(
             match iface {
                 Ok(iface) => {
                     if let Err(err) =
-                        SettingsInterface::changed(iface.signal_context(), values).await
+                        SettingsInterface::changed(iface.signal_emitter(), values).await
                     {
                         tracing::warn!("Could not emit the settings Changed signal: {err}");
                     }
@@ -466,4 +478,14 @@ pub async fn register_settings_interface(
     info!("Settings D-Bus interface registered at org.otto.Settings");
 
     Ok(())
+}
+
+/// Ask polkit, and through it the user, before a protected setting changes
+/// (`src/settings/polkit.rs`).
+async fn confirm(id: &str) -> Result<(), SettingsFault> {
+    settings::polkit::authorize(id).await.map_err(|refusal| {
+        SettingsFault::ZBus(zbus::Error::FDO(Box::new(zbus::fdo::Error::AccessDenied(
+            format!("`{id}`: {refusal}"),
+        ))))
+    })
 }

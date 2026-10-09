@@ -206,6 +206,11 @@ impl Browser {
     /// Descend into the selection: in Miller view the child column already
     /// exists, so this only moves the keyboard into it.
     pub(super) fn open_selection(&mut self) {
+        // Opening the desk's closed overflow tile is opening its panel.
+        if self.cursor_on_closed_tile() {
+            self.open_overflow_panel();
+            return;
+        }
         let depth = self.active;
         let Some(index) = self.columns[depth].cursor else {
             return;
@@ -275,12 +280,13 @@ impl Browser {
                         self.reveal_pane(self.active);
                     }
                 }
-                ViewMode::List | ViewMode::Grid => {
+                ViewMode::List | ViewMode::Grid | ViewMode::Photos => {
                     // These show one directory, so descending replaces it.
                     self.record_location();
                     self.columns.truncate(depth + 1);
                     self.columns.push(Column::new(entry.path.clone()));
                     self.active = self.columns.len() - 1;
+                    self.apply_folder_view(&entry.path);
                 }
             }
             self.dirty = true;
@@ -300,38 +306,48 @@ impl Browser {
     ///
     /// Resolved here, with the same associations and the same reading of the
     /// file's type that Open With shows, so the app marked Default there is
-    /// the one a double-click starts. A type nothing installed claims goes to
-    /// `xdg-open`, which may still know a fallback.
+    /// the one a double-click starts.
     pub(super) fn open_file(&mut self, path: &std::path::Path) {
         let associations = otto_kit::mime_apps::Associations::load();
         let chain = otto_kit::filetype::ancestors(otto_kit::filetype::for_file(path));
-        let Some(app) = associations.default_for(&chain) else {
-            self.open_in_default_app(path);
-            return;
+        let result = match associations.default_for(&chain) {
+            Some(app) => otto_kit::mime_apps::open(app, &[path.to_path_buf()]).map_err(Some),
+            None => Err(None),
         };
-        if let Err(err) = otto_kit::mime_apps::open(app, &[path.to_path_buf()]) {
-            self.status = Some(otto_kit::t_owned!(
-                "files-open-failed",
-                error = super::open_with::open_error_text(&err)
-            ));
-            self.dirty = true;
-        }
+        self.report_open(result);
     }
 
-    /// Hand a URL, or a file nothing here knows how to open, to `xdg-open`.
-    ///
-    /// Detached, like a new window: stdio closed and reaped on a thread of its
-    /// own, so the application outlives the browser that started it.
-    pub(super) fn open_in_default_app(&mut self, target: impl AsRef<std::ffi::OsStr>) {
-        let mut command = std::process::Command::new("xdg-open");
-        command.arg(target);
-        if let Err(err) = spawn_detached(command) {
-            self.status = Some(otto_kit::t_owned!(
-                "files-open-failed",
-                error = err.to_string()
-            ));
-            self.dirty = true;
-        }
+    /// Open a link from a preview: a URL in the application that handles its
+    /// scheme (`x-scheme-handler/https`, say), anything else — a `file://`
+    /// URL included — as a file.
+    pub(super) fn open_link(&mut self, target: &std::ffi::OsStr) {
+        let (uri, mime) = match link_opening(target) {
+            LinkOpening::File(path) => {
+                self.open_file(&path);
+                return;
+            }
+            LinkOpening::Uri { uri, mime } => (uri, mime),
+        };
+        let associations = otto_kit::mime_apps::Associations::load();
+        let result = match associations.default_for(&[mime]) {
+            Some(app) => otto_kit::mime_apps::open_uris(app, &[uri]).map_err(Some),
+            None => Err(None),
+        };
+        self.report_open(result);
+    }
+
+    /// Say why something did not open, if it did not. `Err(None)`: nothing
+    /// installed opens it.
+    fn report_open(&mut self, result: Result<(), Option<otto_kit::mime_apps::OpenError>>) {
+        let Err(err) = result else {
+            return;
+        };
+        let error = match err {
+            Some(err) => super::open_with::open_error_text(&err),
+            None => otto_kit::t_owned!("files-open-no-app"),
+        };
+        self.status = Some(otto_kit::t_owned!("files-open-failed", error = error));
+        self.dirty = true;
     }
 
     /// Open Settings on its Search pane, where the file indexer is looked
@@ -351,6 +367,35 @@ impl Browser {
     // --- The picker's half of "activate" -----------------------------------
 }
 
+/// How a preview link opens.
+#[derive(Debug, PartialEq)]
+enum LinkOpening {
+    /// As a file, in the app its type opens with.
+    File(std::path::PathBuf),
+    /// As a URL, in the app registered for its scheme (`mime`).
+    Uri { uri: String, mime: String },
+}
+
+/// Sort a link into a file or a URL. A `file://` URL is a file: nothing
+/// registers `x-scheme-handler/file`, so handing it on as a URL would only
+/// ever end in "no app".
+fn link_opening(target: &std::ffi::OsStr) -> LinkOpening {
+    let file = || LinkOpening::File(std::path::PathBuf::from(target));
+    let Some(uri) = target.to_str().filter(|t| !t.starts_with('/')) else {
+        return file();
+    };
+    if let Some(path) = otto_kit::uri::uri_to_path(uri) {
+        return LinkOpening::File(path);
+    }
+    match otto_kit::mime_apps::scheme_handler_type(uri) {
+        Some(mime) => LinkOpening::Uri {
+            uri: uri.to_owned(),
+            mime,
+        },
+        None => file(),
+    }
+}
+
 /// Start `command` with its stdio closed, so it outlives the window that
 /// started it. The child is reaped on a thread of its own: nothing else here
 /// would ever wait on it.
@@ -364,4 +409,38 @@ fn spawn_detached(mut command: std::process::Command) -> std::io::Result<()> {
         let _ = child.wait();
     });
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{link_opening, LinkOpening};
+    use std::ffi::OsStr;
+    use std::path::PathBuf;
+
+    #[test]
+    fn a_file_url_opens_as_the_file_it_names() {
+        assert_eq!(
+            link_opening(OsStr::new("file:///home/me/Notes%20Two.md")),
+            LinkOpening::File(PathBuf::from("/home/me/Notes Two.md"))
+        );
+    }
+
+    #[test]
+    fn a_web_url_opens_in_its_scheme_handler() {
+        assert_eq!(
+            link_opening(OsStr::new("https://example.org/a")),
+            LinkOpening::Uri {
+                uri: "https://example.org/a".into(),
+                mime: "x-scheme-handler/https".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn a_path_opens_as_a_file() {
+        assert_eq!(
+            link_opening(OsStr::new("/tmp/a:b.txt")),
+            LinkOpening::File(PathBuf::from("/tmp/a:b.txt"))
+        );
+    }
 }

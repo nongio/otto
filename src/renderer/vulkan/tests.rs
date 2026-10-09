@@ -963,3 +963,196 @@ fn vulkan_plane_surface_draws_dmabuf_textures() {
     drop(release);
     renderer.flush_planes_for_scanout();
 }
+
+/// After a submit, a sampled client dmabuf belongs to the foreign queue
+/// family again, so the client and KMS can use it without an acquire.
+#[test]
+#[ignore = "needs a Vulkan GPU"]
+fn vulkan_sampled_dmabuf_returns_to_foreign_queue() {
+    use layers::skia::gpu::vk as skvk;
+    use smithay::reexports::ash::vk;
+
+    let phd = first_physical_device();
+    let mut renderer = SkiaVkRenderer::new(&phd).expect("vulkan renderer");
+    let texture = xrgb_dmabuf_alpha_zero(&mut renderer);
+    assert_eq!(sample(&mut renderer, &texture)[1], 255, "green is drawn");
+
+    let (_, backend) = renderer.sampled.last().cloned().expect("tracked texture");
+    let state = skvk::mutable_texture_states::new_vulkan(
+        skvk::ImageLayout::GENERAL,
+        vk::QUEUE_FAMILY_FOREIGN_EXT,
+    );
+    let previous = renderer
+        .ctx()
+        .set_backend_texture_state_and_return_previous(&backend, &state)
+        .expect("texture state");
+    assert_eq!(
+        skvk::mutable_texture_states::get_vk_queue_family_index(&previous),
+        vk::QUEUE_FAMILY_FOREIGN_EXT
+    );
+
+    // Sampling again acquires it anew and releases it after the submit.
+    assert_eq!(
+        sample(&mut renderer, &texture)[1],
+        255,
+        "green is drawn again"
+    );
+}
+
+/// A sync file waited on by the GPU holds back the frames submitted after
+/// it, and the frame still renders.
+#[test]
+#[ignore = "needs a Vulkan GPU"]
+fn vulkan_gpu_wait_orders_later_frames() {
+    use smithay::backend::renderer::sync::Fence;
+
+    let phd = first_physical_device();
+    let mut renderer = SkiaVkRenderer::new(&phd).expect("vulkan renderer");
+    assert!(
+        renderer.sync_fd.import && renderer.sync_fd.export,
+        "SYNC_FD semaphores"
+    );
+    let texture = xrgb_dmabuf_alpha_zero(&mut renderer);
+    for _ in 0..3 {
+        let fence = renderer
+            .sync_pool
+            .signal(&renderer.device, renderer.sync_fd)
+            .expect("signal")
+            .expect("sync file");
+        renderer
+            .sync_pool
+            .wait(&renderer.device, fence.export().expect("dup sync file"))
+            .expect("GPU wait");
+        assert_eq!(sample(&mut renderer, &texture)[1], 255, "green is drawn");
+    }
+}
+
+/// An NV12 buffer is offered, imports, and samples as RGB through the
+/// YCbCr conversion (BT.601, limited range).
+#[test]
+#[ignore = "needs a Vulkan GPU"]
+fn vulkan_nv12_dmabuf_samples_as_rgb() {
+    use std::os::fd::AsRawFd;
+
+    let phd = first_physical_device();
+    let mut renderer = SkiaVkRenderer::new(&phd).expect("vulkan renderer");
+    assert!(
+        renderer
+            .dmabuf_formats()
+            .iter()
+            .any(|format| format.code == Fourcc::Nv12 && format.modifier == Modifier::Linear),
+        "linear NV12 is offered"
+    );
+
+    let node = phd.render_node().ok().flatten().expect("render node");
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(node.dev_path().expect("render node path"))
+        .expect("open render node");
+    let gbm =
+        GbmDevice::new(DrmDeviceFd::new(DeviceFd::from(OwnedFd::from(file)))).expect("gbm device");
+    // GBM will not allocate NV12 everywhere; an R8 buffer 1.5 times as tall
+    // holds both planes, one buffer object like a decoder's. 64 rows keep
+    // the chroma plane on a tile boundary for tiled modifiers.
+    let modifier = std::env::var("OTTO_NV12_MODIFIER")
+        .ok()
+        .and_then(|m| u64::from_str_radix(m.trim_start_matches("0x"), 16).ok())
+        .map(Modifier::from)
+        .unwrap_or(Modifier::Linear);
+    eprintln!("modifier {modifier:?}");
+    let mut allocator = GbmAllocator::new(gbm, GbmBufferFlags::empty());
+    let buffer = allocator
+        .create_buffer(64, 96, Fourcc::R8, &[modifier])
+        .expect("gbm R8 buffer");
+    let r8 = buffer.export().expect("export dmabuf");
+    let stride = r8.strides().next().expect("stride");
+    let chroma_offset = stride * 64;
+    let mut builder = Dmabuf::builder((64, 64), Fourcc::Nv12, modifier, DmabufFlags::empty());
+    for offset in [0, chroma_offset] {
+        let fd = r8.handles().next().expect("plane fd");
+        builder.add_plane(fd.try_clone_to_owned().expect("dup fd"), offset, stride);
+    }
+    let dmabuf = builder.build().expect("NV12 view of the buffer");
+
+    // Y = 81, Cb = 90, Cr = 240 is pure red in BT.601 limited range; the
+    // planes are filled whole, so the tiling does not matter.
+    let len = (stride * 96) as usize;
+    let fd = dmabuf.handles().next().expect("plane fd").as_raw_fd();
+    // SAFETY: a shared mapping of the whole buffer; unmapped below.
+    unsafe {
+        let map = libc::mmap(
+            std::ptr::null_mut(),
+            len,
+            libc::PROT_READ | libc::PROT_WRITE,
+            libc::MAP_SHARED,
+            fd,
+            0,
+        );
+        assert_ne!(map, libc::MAP_FAILED, "map the NV12 buffer");
+        let bytes = std::slice::from_raw_parts_mut(map.cast::<u8>(), len);
+        let (luma, chroma) = bytes.split_at_mut(chroma_offset as usize);
+        luma.fill(81);
+        for pair in chroma.chunks_exact_mut(2) {
+            pair.copy_from_slice(&[90, 240]);
+        }
+        libc::munmap(map, len);
+    }
+
+    let texture = renderer.import_dmabuf(&dmabuf, None).expect("import NV12");
+    let [r, g, b, a] = sample(&mut renderer, &texture);
+    assert!(
+        r > 230 && g < 25 && b < 25 && a == 255,
+        "red, got {:?}",
+        [r, g, b, a]
+    );
+
+    // Windows draw their surfaces scaled, with the filter the mapping needs.
+    use layers::skia;
+    let samplings = [
+        ("nearest", skia::SamplingOptions::default()),
+        (
+            "linear",
+            skia::SamplingOptions::new(skia::FilterMode::Linear, skia::MipmapMode::None),
+        ),
+        (
+            "cubic",
+            skia::SamplingOptions::from(skia::CubicResampler::catmull_rom()),
+        ),
+    ];
+    for (name, sampling) in samplings {
+        let target = renderer
+            .create_buffer(Fourcc::Abgr8888, (SIZE, SIZE).into())
+            .expect("offscreen target");
+        let mut surface = target.skia_surface.surface.clone();
+        let canvas = surface.canvas();
+        canvas.clear(skia::Color::TRANSPARENT);
+        canvas.draw_image_rect_with_sampling_options(
+            &texture.image,
+            None,
+            skia::Rect::from_wh(12.0, 12.0),
+            sampling,
+            &skia::Paint::default(),
+        );
+        renderer
+            .submit_target(&target)
+            .expect("submit")
+            .wait()
+            .expect("sync");
+        let mapping = renderer
+            .copy_framebuffer(
+                &target,
+                Rectangle::from_size((SIZE, SIZE).into()),
+                Fourcc::Abgr8888,
+            )
+            .expect("copy framebuffer");
+        let data = renderer.map_texture(&mapping).expect("map").to_vec();
+        let [r, g, b, a] = pixel(&data, 6, 6);
+        eprintln!("{name}: {:?}", [r, g, b, a]);
+        assert!(
+            r > 230 && g < 25 && b < 25 && a == 255,
+            "{name}: red, got {:?}",
+            [r, g, b, a]
+        );
+    }
+}

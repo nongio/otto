@@ -23,17 +23,23 @@ pub fn draw(canvas: &Canvas, name: &str, cx: f32, cy: f32, size: f32, color: Col
     canvas.scale((size / 16.0, size / 16.0));
 
     match name {
+        "person" => person(canvas, &paint),
         "settings" => settings(canvas, &paint),
+        "appearance" => appearance(canvas, &paint, color),
         "monitor" => monitor(canvas, &paint),
         "dock" => dock(canvas, &paint),
+        "top_bar" => top_bar(canvas, &paint),
         "tiling" => tiling(canvas, &paint),
         "keyboard" => keyboard(canvas, &paint),
         "pointer" => pointer(canvas, &paint, color),
         "sound" => sound(canvas, &paint),
+        "microphone" => microphone(canvas, &paint),
         "battery" => battery(canvas, &paint),
         "lock" => lock(canvas, &paint),
         "search" => search(canvas, &paint),
         "agent" => agent(canvas, &paint),
+        "hand" => hand(canvas, &paint),
+        "about" => about(canvas, &paint),
         _ => {
             canvas.draw_circle(Point::new(0.0, 0.0), 2.5, &paint);
         }
@@ -49,6 +55,16 @@ fn settings(canvas: &Canvas, paint: &Paint) {
         let knob_x = [-2.0, 3.0, -4.0][i];
         canvas.draw_circle(Point::new(knob_x, *y), 2.0, paint);
     }
+}
+
+/// A disc, half light and half dark: the colour scheme.
+fn appearance(canvas: &Canvas, paint: &Paint, color: Color) {
+    canvas.draw_circle(Point::new(0.0, 0.0), 6.5, paint);
+    let mut fill = paint.clone();
+    fill.set_style(PaintStyle::Fill);
+    fill.set_color(color);
+    let disc = Rect::from_ltrb(-6.5, -6.5, 6.5, 6.5);
+    canvas.draw_arc(disc, -90.0, 180.0, true, &fill);
 }
 
 /// A magnifying glass.
@@ -81,6 +97,13 @@ fn dock(canvas: &Canvas, paint: &Paint) {
     for x in [-4.0_f32, 0.0, 4.0] {
         canvas.draw_line(Point::new(x, 2.8), Point::new(x, 4.7), paint);
     }
+}
+
+/// A screen with a bar along its top edge: the dock's glyph, turned over.
+fn top_bar(canvas: &Canvas, paint: &Paint) {
+    let screen = Rect::from_ltrb(-7.5, -6.0, 7.5, 6.0);
+    canvas.draw_rrect(RRect::new_rect_xy(screen, 2.0, 2.0), paint);
+    canvas.draw_line(Point::new(-7.5, -2.5), Point::new(7.5, -2.5), paint);
 }
 
 /// Key grid with a spacebar.
@@ -127,6 +150,17 @@ fn sound(canvas: &Canvas, paint: &Paint) {
     }
 }
 
+/// A microphone on a stand: the capsule, the cradle round it, the stem and
+/// the foot.
+fn microphone(canvas: &Canvas, paint: &Paint) {
+    let capsule = Rect::from_ltrb(-2.5, -7.0, 2.5, 2.0);
+    canvas.draw_rrect(RRect::new_rect_xy(capsule, 2.5, 2.5), paint);
+    let cradle = Rect::from_ltrb(-5.5, -4.0, 5.5, 4.5);
+    canvas.draw_arc(cradle, 0.0, 180.0, false, paint);
+    canvas.draw_line(Point::new(0.0, 4.5), Point::new(0.0, 7.0), paint);
+    canvas.draw_line(Point::new(-3.0, 7.0), Point::new(3.0, 7.0), paint);
+}
+
 /// Battery with a bolt.
 fn battery(canvas: &Canvas, paint: &Paint) {
     let body = Rect::from_ltrb(-7.0, -4.0, 5.0, 4.0);
@@ -153,6 +187,14 @@ fn lock(canvas: &Canvas, paint: &Paint) {
     canvas.draw_arc(shackle, 180.0, 180.0, false, paint);
 }
 
+/// A head and shoulders inside a circle — the account.
+fn person(canvas: &Canvas, paint: &Paint) {
+    canvas.draw_circle((0.0, 0.0), 7.0, paint);
+    canvas.draw_circle((0.0, -2.0), 2.5, paint);
+    let shoulders = Rect::from_ltrb(-4.5, 2.0, 4.5, 10.0);
+    canvas.draw_arc(shoulders, 200.0, 140.0, false, paint);
+}
+
 /// A four-pointed spark.
 fn agent(canvas: &Canvas, paint: &Paint) {
     let mut spark = PathBuilder::new();
@@ -163,4 +205,35 @@ fn agent(canvas: &Canvas, paint: &Paint) {
     spark.quad_to(Point::new(-1.0, -1.0), Point::new(0.0, -7.0));
     spark.close();
     canvas.draw_path(&spark.detach(), paint);
+}
+
+/// A raised open hand, palm out: four fingers, a thumb and the palm.
+/// The Otto mark: two dots side by side, inside a rounded square.
+fn about(canvas: &Canvas, paint: &Paint) {
+    canvas.draw_rrect(
+        RRect::new_rect_xy(skia_safe::Rect::from_xywh(-7.0, -7.0, 14.0, 14.0), 3.5, 3.5),
+        paint,
+    );
+    let mut fill = paint.clone();
+    fill.set_style(PaintStyle::Fill);
+    for x in [-2.5_f32, 2.5] {
+        canvas.draw_circle(Point::new(x, 0.0), 1.5, &fill);
+    }
+}
+
+fn hand(canvas: &Canvas, paint: &Paint) {
+    // Fingers, tallest in the middle.
+    for (x, top) in [(-3.6_f32, -3.5_f32), (-1.2, -6.0), (1.2, -6.5), (3.6, -4.5)] {
+        canvas.draw_line(Point::new(x, top), Point::new(x, 1.0), paint);
+    }
+    // Palm: the fingers' base rounding down into the wrist.
+    let mut palm = PathBuilder::new();
+    palm.move_to(Point::new(-3.6, 0.5));
+    palm.line_to(Point::new(-3.6, 3.0));
+    palm.quad_to(Point::new(-3.2, 7.0), Point::new(0.5, 7.0));
+    palm.quad_to(Point::new(3.6, 7.0), Point::new(3.6, 3.5));
+    palm.line_to(Point::new(3.6, 0.5));
+    canvas.draw_path(&palm.detach(), paint);
+    // Thumb, out to the left.
+    canvas.draw_line(Point::new(-3.6, 3.5), Point::new(-6.2, 0.8), paint);
 }

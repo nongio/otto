@@ -14,7 +14,7 @@ use crate::drawing::PointerRenderElement;
 
 use super::{scene_dmabuf_element::SceneDmabufElement, scene_element::SceneElement};
 
-#[cfg(feature = "fps_ticker")]
+#[cfg(feature = "ticker")]
 use crate::drawing::FpsElement;
 
 smithay::backend::renderer::element::render_elements! {
@@ -29,8 +29,8 @@ smithay::backend::renderer::element::render_elements! {
     SceneDmabuf=SceneDmabufElement,
     // this is needed to make the macro work with a lifetime specifier in the where clauses
     PhantomElement=PhantomElement<'a>,
-    #[cfg(feature = "fps_ticker")]
-    Fps=FpsElement<<R as smithay::backend::renderer::Renderer>::TextureId>,
+    #[cfg(feature = "ticker")]
+    Fps=FpsElement<<R as smithay::backend::renderer::RendererSuper>::TextureId>,
 }
 
 // this is needed to make the macro work with a lifetime specifier in the where clauses

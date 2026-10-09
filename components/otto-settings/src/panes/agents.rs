@@ -626,28 +626,50 @@ fn refresh_service() -> Service {
     found
 }
 
-/// Keep [`service`] current, from the first time the pane is built.
+/// How often the service is asked about while the pane is on screen.
+const SERVICE_POLL: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Whether the pane is on screen.
+static SHOWN: AtomicBool = AtomicBool::new(false);
+/// Whether a watcher thread is running.
+static WATCHING: AtomicBool = AtomicBool::new(false);
+
+/// Tell the pane whether it is on screen, which starts and stops keeping
+/// [`service`] current.
 ///
-/// A poll, every five seconds, on a thread of its own: the service can stop
-/// or start from anywhere, systemd has nothing this app can cheaply wait on
-/// without a bus connection of its own, and the draw path must never run a
-/// process. The thread only touches the two atomics and wakes the main loop,
-/// the arrangement `settings_client::spawn_change_listener` uses.
-fn watch_service() {
-    static STARTED: std::sync::Once = std::sync::Once::new();
-    STARTED.call_once(|| {
-        let spawned = std::thread::Builder::new()
-            .name("agents-service".into())
-            .spawn(|| {
-                // Without systemd the answer cannot change, so it is asked once.
-                while refresh_service() != Service::Unmanaged {
-                    std::thread::sleep(std::time::Duration::from_secs(5));
+/// A poll, every five seconds while shown, on a thread of its own: the
+/// service can stop or start from anywhere, and the draw path must never run
+/// a process. The thread only touches the atomics and wakes the main loop,
+/// the arrangement `settings_client::spawn_change_listener` uses. It is the
+/// Search pane's arrangement too, so a hidden pane costs nothing.
+pub fn set_shown(shown: bool) {
+    SHOWN.store(shown, Ordering::Relaxed);
+    // Without systemd the answer cannot change, so it is not asked again.
+    if !shown || service() == Service::Unmanaged || WATCHING.swap(true, Ordering::Relaxed) {
+        return;
+    }
+    let spawned = std::thread::Builder::new()
+        .name("agents-service".into())
+        .spawn(|| loop {
+            if refresh_service() == Service::Unmanaged {
+                WATCHING.store(false, Ordering::Relaxed);
+                return;
+            }
+            std::thread::sleep(SERVICE_POLL);
+            if !SHOWN.load(Ordering::Relaxed) {
+                WATCHING.store(false, Ordering::Relaxed);
+                // Shown again between the check and the store, with no
+                // thread started for it: this one carries on.
+                if SHOWN.load(Ordering::Relaxed) && !WATCHING.swap(true, Ordering::Relaxed) {
+                    continue;
                 }
-            });
-        if let Err(err) = spawned {
-            eprintln!("agents: could not watch {SERVICE}: {err}");
-        }
-    });
+                return;
+            }
+        });
+    if let Err(err) = spawned {
+        WATCHING.store(false, Ordering::Relaxed);
+        eprintln!("agents: could not watch {SERVICE}: {err}");
+    }
 }
 
 /// Whether the service's state moved since the last call; `on_update` polls
@@ -1217,9 +1239,7 @@ fn open_buttons() -> &'static [&'static str] {
 /// Hand a file to whatever the desktop opens it with, the way the General
 /// pane opens the compositor's config.
 fn open(path: &Path) {
-    if let Err(err) = std::process::Command::new("xdg-open").arg(path).spawn() {
-        eprintln!("agents: could not open {}: {err}", path.display());
-    }
+    super::open_in_default_app(path);
 }
 
 /// Where Ask starts a session whose agent names no folder: a scratch folder
@@ -1367,7 +1387,6 @@ fn row(label: &'static str, control: Control, id: &'static str) -> Row {
 }
 
 pub fn build() -> Pane {
-    watch_service();
     let state = state().read().unwrap();
     let name = otto_kit::t!("settings-pane-agents");
     let intro = Some(otto_kit::t!("settings-agents-intro"));

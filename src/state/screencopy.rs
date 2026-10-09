@@ -57,7 +57,6 @@ pub struct ScreencopyFrameData {
     pub width: u32,
     pub height: u32,
     pub stride: u32,
-    #[allow(dead_code)]
     state: Mutex<FrameState>,
 }
 
@@ -113,6 +112,11 @@ where
     Otto<BackendData>: Dispatch<ZwlrScreencopyManagerV1, ()>,
     Otto<BackendData>: Dispatch<ZwlrScreencopyFrameV1, ScreencopyFrameData>,
 {
+    /// Never offered to sandboxed clients (see `src/sandbox.rs`).
+    fn can_view(client: Client, _global_data: &()) -> bool {
+        !crate::sandbox::is_sandboxed_client(&client)
+    }
+
     fn bind(
         _state: &mut Otto<BackendData>,
         _display: &DisplayHandle,
@@ -457,12 +461,25 @@ fn copy_to_shm(
     };
     let scale = output.current_scale().fractional_scale();
 
-    let result = shm::with_buffer_contents(buffer, |ptr, len, buf_data| {
+    let result = shm::with_buffer_contents_mut(buffer, |ptr, len, buf_data| {
         if buf_data.format != wl_shm::Format::Argb8888 {
             return false;
         }
+        // The client must hand us a buffer with exactly the layout we
+        // advertised in `buffer`; anything else is a protocol error we
+        // answer with `failed` rather than writing a mismatched layout.
+        if buf_data.width as u32 != p.width
+            || buf_data.height as u32 != p.height
+            || buf_data.stride as u32 != p.stride
+        {
+            return false;
+        }
+        // `ptr` points at the start of the pool, not of this buffer.
+        let Ok(offset) = usize::try_from(buf_data.offset) else {
+            return false;
+        };
         let expected = p.stride as usize * p.height as usize;
-        if len < expected {
+        if offset.checked_add(expected).is_none_or(|end| end > len) {
             return false;
         }
 
@@ -482,7 +499,14 @@ fn copy_to_shm(
             None,
         );
 
-        let dst = unsafe { std::slice::from_raw_parts_mut(ptr as *mut u8, expected) };
+        // SAFETY: `with_buffer_contents_mut` maps the pool writable with `len`
+        // bytes at `ptr` for the duration of this closure, and
+        // `offset + expected <= len` was checked above. The memory is shared
+        // with the client, which could write to it concurrently; that can
+        // only corrupt the client's own frame (it is told to wait for
+        // `ready` before reading), the same contract every compositor's
+        // screencopy relies on.
+        let dst = unsafe { std::slice::from_raw_parts_mut(ptr.add(offset), expected) };
 
         if !skia_surface.read_pixels(&info, dst, p.stride as usize, (x_off, y_off)) {
             return false;

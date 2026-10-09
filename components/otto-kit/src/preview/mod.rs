@@ -1065,6 +1065,55 @@ fn draw_pixels(
     canvas.restore();
 }
 
+/// The hairline around a picture drawn into `rect` with corners of `radius`:
+/// a single low-contrast edge that closes a white sky off from what is around
+/// it and keeps a dark one from reading as a hole. Inset by half the stroke
+/// so it lands on the picture's own edge. `faded` is for a picture drawn
+/// dimmed, whose edge steps back with it.
+///
+/// Shared by every host that draws pictures — thumbnails, a wall of photos,
+/// the preview panels — so a picture is framed the same wherever it appears.
+pub fn draw_picture_edge(canvas: &Canvas, rect: Rect, radius: f32, faded: bool) {
+    let mut edge = Paint::default();
+    edge.set_anti_alias(true);
+    edge.set_style(skia_safe::paint::Style::Stroke);
+    edge.set_stroke_width(1.0);
+    edge.set_color(Color::from_argb(if faded { 20 } else { 46 }, 0, 0, 0));
+    let inner = (radius - 0.5).max(0.0);
+    canvas.draw_rrect(
+        skia_safe::RRect::new_rect_xy(rect.with_inset((0.5, 0.5)), inner, inner),
+        &edge,
+    );
+}
+
+/// Frame the pictures of a preview laid out in `bounds` the way
+/// [`draw`] placed them: the image's own rect, or each page of a document
+/// that is on screen. Everything else — text, listings, cards — has no edges
+/// of its own and is left alone.
+pub fn draw_picture_edges(
+    canvas: &Canvas,
+    bounds: Rect,
+    preview: &Preview,
+    first_row: usize,
+    zoom: Zoom,
+) {
+    let geometry = layout(bounds, preview, first_row, zoom);
+    canvas.save();
+    canvas.clip_rect(geometry.inner, None, true);
+    match preview {
+        Preview::Pixels { .. } => draw_picture_edge(canvas, geometry.content, 0.0, false),
+        Preview::Pages { .. } => {
+            for rect in &geometry.page_rects {
+                if rect.bottom >= geometry.inner.top && rect.top <= geometry.inner.bottom {
+                    draw_picture_edge(canvas, *rect, 0.0, false);
+                }
+            }
+        }
+        _ => {}
+    }
+    canvas.restore();
+}
+
 /// The transparency checkerboard, drawn only where the content will land.
 fn draw_checkerboard(canvas: &Canvas, rect: Rect, theme: &Theme) {
     const SQUARE: f32 = 8.0;
@@ -1192,7 +1241,7 @@ fn draw_rows(
             .render(canvas);
 
         if !row.is_dir && row.size > 0 {
-            Label::new(human_size(row.size))
+            Label::new(crate::format::file_size(row.size))
                 .with_style(styles::CAPTION_1)
                 .with_color(theme.text_secondary)
                 .with_width(SIZE_COLUMN)
@@ -1375,21 +1424,6 @@ fn mono() -> TextStyle {
     let mut style = styles::FOOTNOTE;
     style.family = "monospace";
     style
-}
-
-/// Human-readable byte count.
-pub fn human_size(bytes: u64) -> String {
-    const UNITS: [&str; 5] = ["bytes", "KB", "MB", "GB", "TB"];
-    if bytes < 1024 {
-        return format!("{bytes} bytes");
-    }
-    let mut value = bytes as f64;
-    let mut unit = 0;
-    while value >= 1024.0 && unit + 1 < UNITS.len() {
-        value /= 1024.0;
-        unit += 1;
-    }
-    format!("{value:.1} {}", UNITS[unit])
 }
 
 /// The material a preview sits on. Exposed so the compositor and an
@@ -1827,6 +1861,42 @@ mod tests {
             },
         );
         assert!(refitted.is_fit(), "{refitted:?}");
+    }
+
+    #[test]
+    fn a_picture_is_framed_and_text_is_not() {
+        let white = Pixels {
+            width: 40,
+            height: 20,
+            intrinsic_width: 400,
+            intrinsic_height: 200,
+            data: vec![255; 40 * 20 * 4],
+            frame_delays: Vec::new(),
+            words: Vec::new(),
+        };
+        let picture = Preview::Pixels {
+            pixels: white,
+            pages: 1,
+            page: 1,
+        };
+        let bounds = Rect::from_wh(200.0, 200.0);
+        let content = layout(bounds, &picture, 0, Zoom::FIT).content;
+        let edge_at = |preview: &Preview| {
+            let mut surface = skia_safe::surfaces::raster_n32_premul((200, 200)).unwrap();
+            surface.canvas().clear(Color::WHITE);
+            draw_picture_edges(surface.canvas(), bounds, preview, 0, Zoom::FIT);
+            let pixmap = surface.canvas().peek_pixels().unwrap();
+            pixmap
+                .get_color((content.left as i32, content.center_y() as i32))
+                .r()
+        };
+        assert!(edge_at(&picture) < 250, "the picture's edge is drawn");
+        let text = Preview::Text {
+            lines: vec!["one".into()],
+            truncated: false,
+            language: String::new(),
+        };
+        assert_eq!(edge_at(&text), 255, "text has no frame");
     }
 
     #[test]

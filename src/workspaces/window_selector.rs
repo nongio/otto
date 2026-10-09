@@ -174,9 +174,6 @@ impl WindowSelectorView {
             position: taffy::Position::Absolute,
             ..Default::default()
         });
-        // let mut overlay_color = theme_colors().accents_green;
-        // overlay_color.alpha = 0.5;
-        // window_selector_view.set_background_color(overlay_color, None);
         window_selector_view.set_size(layers::types::Size::percent(1.0, 1.0), None);
         window_selector_view.set_pointer_events(false);
         window_selector_view.set_opacity(0.0_f32, None);

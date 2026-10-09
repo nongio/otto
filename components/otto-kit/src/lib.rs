@@ -6,17 +6,23 @@ pub mod accessibility;
 pub mod app_runner;
 pub mod backdrop;
 pub mod clipboard;
+pub mod color;
 pub mod color_scheme;
 pub mod common;
 pub mod components;
 pub mod controls_side;
+/// Typed client proxies for Otto's own `org.otto.*` D-Bus interfaces.
+pub use otto_dbus as dbus;
 pub mod corners;
 pub mod desktop_appearance;
 pub mod desktop_entry;
+#[cfg(feature = "dictation")]
+pub mod dictation;
 pub mod dnd;
 pub mod filetype;
 pub mod focus;
 pub mod foreign;
+pub mod format;
 pub mod frosted;
 pub mod frosting;
 pub mod fs;
@@ -25,13 +31,16 @@ pub mod icon_theme;
 pub mod icons;
 pub mod input;
 pub mod key_capture;
+pub mod logging;
 pub mod lottie;
 /// Name matching lives with file search, which the agents daemon links
 /// without the toolkit; re-exported so apps keep one import path.
 pub use otto_search::matching;
 pub mod maximize_button;
 pub mod mime_apps;
+pub mod permission_store;
 mod portal_runtime;
+mod portal_settings;
 pub mod preview;
 pub mod protocols;
 pub mod rendering;
@@ -41,7 +50,10 @@ pub mod theme;
 pub mod tile_decoration;
 pub mod trash;
 pub mod typography;
+pub mod uri;
 pub mod utils;
+pub mod xdg;
+pub mod xml;
 
 // Re-export commonly used items
 pub use common::Renderable;

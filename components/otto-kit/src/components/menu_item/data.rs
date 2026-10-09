@@ -5,6 +5,10 @@ use std::hash::Hash;
 pub enum MenuItemIcon {
     /// Named icon from the XDG icon theme
     Named(String),
+    /// The first of these XDG theme icons the theme has, most specific first,
+    /// in its full-colour art rather than the outline glyph many themes ship
+    /// at menu size — a folder that should read as a folder, not a symbol.
+    Themed(Vec<String>),
     /// Raw ARGB32 pixel data (network byte order / big-endian)
     Pixmap {
         data: Vec<u8>,
@@ -109,8 +113,8 @@ impl MenuItem {
     /// Create new menu item data
     pub fn new(kind: MenuItemKind) -> Self {
         let height = match kind {
-            MenuItemKind::Separator => 9.0,
-            _ => 22.0, // LINE_HEIGHT
+            MenuItemKind::Separator => 11.0, // MenuItemStyle::separator_height
+            _ => 23.0,                       // MenuItemStyle::line_height
         };
 
         Self {
@@ -283,7 +287,7 @@ mod tests {
         assert_eq!(item.shortcut(), Some("Ctrl+C"));
         assert!(!item.has_submenu());
         assert!(item.is_enabled());
-        assert_eq!(item.height, 22.0);
+        assert_eq!(item.height, 23.0);
     }
 
     #[test]
@@ -292,7 +296,7 @@ mod tests {
 
         assert!(item.is_separator());
         assert_eq!(item.label(), None);
-        assert_eq!(item.height, 9.0);
+        assert_eq!(item.height, 11.0);
     }
 
     #[test]

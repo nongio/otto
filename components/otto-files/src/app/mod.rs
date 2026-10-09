@@ -36,8 +36,11 @@ use view::ViewMode;
 
 mod construct;
 mod cursor;
+mod desk_edit;
+mod desk_overflow;
 mod drag_drop;
 mod file_ops;
+mod folder_views;
 mod frame;
 mod info;
 mod input;
@@ -51,8 +54,11 @@ mod navigation;
 mod ocr;
 mod open_with;
 mod opening;
+mod overflow_surface;
 mod palette_session;
+mod panel_text;
 mod peek_session;
+mod photos_view;
 mod picking;
 mod pointer;
 mod present;
@@ -284,10 +290,9 @@ struct Browser {
     /// A column divider currently being dragged: which one, the pointer x it
     /// started at, and the width it started with.
     column_resize: Option<(view::ColumnBoundary, f32, f32)>,
-    /// The Miller view's shared, draggable pane width.
-    miller_w: f32,
-    /// A Miller pane divider being dragged: its depth, the pointer x it
-    /// started at, and the width it started with.
+    /// A Miller pane divider being dragged: the depth of the pane it
+    /// resizes, the pointer x it started at, and the width that pane started
+    /// with. Each pane's width lives on its [`Column`].
     miller_resize: Option<(usize, f32, f32)>,
     /// The last Miller divider clicked and when, so a second click shortly
     /// after reads as a double-click rather than a fresh drag.
@@ -431,6 +436,18 @@ struct Browser {
     ///
     /// A shell like [`Self::trash`], set once at startup.
     desk: bool,
+    /// The desk's edit mode, while the panel is being moved and resized with
+    /// the pointer. See [`desk_edit`].
+    desk_editing: Option<desk_edit::Editing>,
+    /// The `[desk]` config the desk is showing, so a change to the file can
+    /// be told from a write that changed nothing. `None` outside the desk.
+    desk_config: Option<crate::desk::DeskConfig>,
+    /// The desk's overflow panel while it is open: its scroll and when it
+    /// opened. `None` while it is closed. See [`desk_overflow`].
+    overflow_panel: Option<desk_overflow::OverflowSession>,
+    /// The overflow panel on its way back into its tile: drawn, but no
+    /// longer answering for the pointer or the keyboard.
+    overflow_panel_closing: Option<desk_overflow::OverflowSession>,
     /// This window is showing the Recent listing rather than a directory:
     /// what was written most recently across the user's folders, newest first,
     /// under a heading per day.
@@ -463,6 +480,47 @@ struct Browser {
     /// The recent listing's day sections, rebuilt whenever the listing is.
     /// Empty — a flat grid — whenever [`Self::recent`] is false.
     recent_sections: view::GridSections,
+    /// The Photos view's rows, rebuilt when the width, the listing or a
+    /// picture's size changes. Empty outside that view.
+    photos: view::PhotosLayout,
+    /// What [`Self::photos`] was built from; see `rebuild_photos_layout`.
+    photos_key: Option<photos_view::PhotosKey>,
+    /// The pictures' sizes, probed off the UI thread.
+    photo_dims: crate::photos::Dims,
+    /// The Photos tile under the pointer, which shows its name.
+    photo_hover: Option<usize>,
+    /// The info panel's colour swatch under the pointer.
+    photo_swatch_hover: Option<usize>,
+    /// Text selected in an info panel of the main window.
+    panel_text: Option<panel_text::PanelText>,
+    /// Text selected in Get Info.
+    info_selection: otto_kit::components::selectable_text::TextSelection,
+    /// The view the user chose for each folder, least recently chosen first.
+    folder_views: Vec<(PathBuf, ViewMode)>,
+    /// The Photos view's target row height, from the size slider.
+    photos_row_h: f32,
+    /// The icon view's icon size, from its size slider.
+    grid_icon: f32,
+    /// How the Photos view groups its pictures.
+    photos_group: crate::photos::Grouping,
+    /// The pictures shown on the Photos view's folder cards.
+    folder_previews: crate::photos::FolderPreviews,
+    /// A drag on the Photos size slider.
+    photos_slider: otto_kit::components::slider::SliderDrag,
+    /// The row height a pinch started from, while one is on the Photos view.
+    zoom_pinch: Option<f32>,
+    /// The grouping menu is up, so its button draws open.
+    photos_group_open: bool,
+    /// The picker's location menu is up, so its control draws open.
+    location_open: bool,
+    /// The info panel's swatch whose colour was just copied, and when.
+    photos_copied: Option<(usize, std::time::Instant)>,
+    /// Where the Photos wall should be scrolled to once it has been packed
+    /// again at a new size, so the picture that was at the top stays there.
+    photos_anchor: Option<(usize, f32)>,
+    /// The scroll offset that anchor resolved to, applied once the pane's
+    /// content length is known.
+    scroll_to_after_layout: Option<f32>,
     /// Which of the Trash header's two buttons is held down.
     trash_pressed: Option<view::TrashAction>,
     /// The Get Info panel, when one is open. Not modal: it is a window of its
@@ -511,6 +569,10 @@ struct Browser {
     /// column's snapshot yet when `new_folder` returns — the pane and the name
     /// are held here until the re-read lands.
     pending_rename: Option<(usize, String)>,
+    /// The picker made the folder now being renamed, and wants to be inside it
+    /// once it has its name: the place a save lands is the directory being
+    /// viewed, so a new folder left merely selected is not where it goes.
+    enter_after_rename: bool,
     /// The command palette, open on Ctrl+P. While it is up it takes the
     /// keyboard whole; the browser underneath is untouched until a command
     /// actually runs. See `specs/file-command-palette.md`.
@@ -751,6 +813,7 @@ fn view_id(mode: ViewMode) -> &'static str {
         ViewMode::List => "list",
         ViewMode::Grid => "grid",
         ViewMode::Columns => "columns",
+        ViewMode::Photos => "photos",
     }
 }
 
@@ -759,6 +822,7 @@ fn view_from_id(id: &str) -> Option<ViewMode> {
         "list" => Some(ViewMode::List),
         "grid" => Some(ViewMode::Grid),
         "columns" => Some(ViewMode::Columns),
+        "photos" => Some(ViewMode::Photos),
         _ => None,
     }
 }
@@ -851,6 +915,8 @@ struct PreviewPaneState {
     /// read while drawing: the answer comes off the disk, and the caption is
     /// rebuilt every frame.
     text: Option<ocrcache::Status>,
+    /// The picture's main colours, for the Photos info panel's swatches.
+    palette: Vec<skia_safe::Color>,
 }
 
 /// An in-place rename in progress: which row it belongs to and the text
@@ -1080,6 +1146,10 @@ struct FilesApp {
     /// until `on_app_ready` constructs it, which is the earliest point
     /// `AppContext` is set up.
     context_menu: Option<ContextMenu>,
+    /// The Photos view's grouping menu, built with the context menu and for
+    /// the same reason. Held here as well as by the pointer handler so the
+    /// keyboard can drive it while it is open.
+    group_menu: Option<Rc<otto_kit::components::dropdown::DropdownMenu>>,
     /// Peek's surfaces and its card's rect within its own, published by the
     /// render path for the pointer callback below. See
     /// [`pane_surfaces::PaneSurfaces::peek_target`].
@@ -1108,6 +1178,23 @@ struct FilesApp {
     /// The Open With chooser's window, while one is open. Shared with its
     /// pointer callback for the same reason as [`Self::info_window`].
     open_with_window: Rc<RefCell<Option<Window>>>,
+    /// Whether the desk's surface is set up for edit mode: above the windows,
+    /// taking the keyboard and every press. Compared with the browser's
+    /// [`Browser::desk_editing`] each update, so the surface follows it.
+    desk_surface_editing: bool,
+    /// The desk's input region as last set, so it is only sent again when
+    /// the panel moves or edit mode comes or goes.
+    desk_input_region: Option<Rect>,
+    /// A watch on the folder `files.toml` lives in, so the desk follows an
+    /// edit to its config. `None` outside the desk.
+    desk_config_watch: Option<crate::watch::DirWatch>,
+    /// The desk's overflow panel on screen, while it is. Shared with the
+    /// pointer callback, registered once, for the reason
+    /// [`Self::info_window`] is.
+    overflow_surface: Rc<RefCell<Option<overflow_surface::OverflowSurface>>>,
+    /// Whether the keyboard has been in this process since the overflow
+    /// panel opened. See [`FilesApp::follow_overflow_focus`].
+    overflow_focus_seen: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -1250,6 +1337,15 @@ pub fn run_desk() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
     let config = crate::desk::DeskConfig::load();
+    // Settings asks the desk for edit mode over the bus. Without a runtime or
+    // a bus the desk still runs; it just cannot be asked.
+    if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+        runtime.spawn(async {
+            if let Err(error) = crate::desk_service::serve().await {
+                tracing::warn!(%error, "cannot serve org.otto.Desk1");
+            }
+        });
+    }
     run_app(Browser::for_desk(&config), None)
 }
 
@@ -1302,7 +1398,9 @@ pub async fn run_picker() -> Result<(), Box<dyn std::error::Error>> {
     // idle picker: no Wayland connection, no window, no watchers.
     let session = queue.next_session_async().await;
 
-    let start = session.request.starting_directory(None);
+    let start = session
+        .request
+        .starting_directory(crate::picker_dirs::remembered(&session.request.app_id));
     run_app(Browser::for_picker(session, start), Some(queue))
 }
 
@@ -1331,14 +1429,29 @@ fn info_pointer(
         .contains(point);
 
     match kind {
-        PointerEventKind::Press { .. } => {
+        PointerEventKind::Press { button, .. } if *button != BTN_RIGHT => {
             if over_close {
                 browser.close_info();
-            } else if let Some((who, what)) = view::perm_box_at(sheet, x, y) {
-                browser.toggle_permission(who, what);
-            } else if view::info_titlebar_rect(sheet).contains(point) {
-                return true;
+                return false;
             }
+            if let Some((who, what)) = view::perm_box_at(sheet, x, y) {
+                browser.toggle_permission(who, what);
+                return false;
+            }
+            // The facts are text to select; a press anywhere else lets go
+            // of what was selected.
+            let runs = browser.info_runs();
+            let had = browser.info_selection.has_selection();
+            let on_text = browser
+                .info_selection
+                .press(&runs, x, y, std::time::Instant::now());
+            if on_text || had {
+                browser.info_dirty = true;
+            }
+            !on_text && view::info_titlebar_rect(sheet).contains(point)
+        }
+        PointerEventKind::Release { .. } => {
+            browser.info_selection.release();
             false
         }
         PointerEventKind::Motion { .. } | PointerEventKind::Enter { .. } => {
@@ -1346,6 +1459,21 @@ fn info_pointer(
                 browser.info_close_hovered = over_close;
                 browser.info_dirty = true;
             }
+            let runs = browser.info_runs();
+            if browser.info_selection.drag(&runs, x, y) {
+                browser.info_dirty = true;
+            }
+            AppContext::set_cursor_shape(
+                if browser.info_selection.is_dragging()
+                    || otto_kit::components::selectable_text::TextSelection::is_over_text(
+                        &runs, x, y,
+                    )
+                {
+                    CursorShape::Text
+                } else {
+                    CursorShape::Default
+                },
+            );
             false
         }
         PointerEventKind::Leave { .. } => {
@@ -1389,10 +1517,16 @@ fn run_app(
         opaque_region: None,
         modifiers: Arc::new(Mutex::new(Modifiers::default())),
         context_menu: None,
+        group_menu: None,
         peek_target: Arc::new(Mutex::new(None)),
         palette_target: Arc::new(Mutex::new(None)),
         picker_queue,
         selection_queue,
+        desk_surface_editing: false,
+        desk_input_region: None,
+        desk_config_watch: None,
+        overflow_surface: Rc::new(RefCell::new(None)),
+        overflow_focus_seen: false,
     };
 
     AppRunner::new(app).run()
@@ -1422,8 +1556,16 @@ mod test_support;
 mod sort_default_tests;
 
 #[cfg(test)]
+mod photos_tests;
+
+#[cfg(test)]
+mod folder_views_tests;
+
+#[cfg(test)]
 mod rename_tests;
 
+#[cfg(test)]
+mod picker_toolbar_tests;
 #[cfg(test)]
 mod typeahead_tests;
 
@@ -1433,6 +1575,10 @@ mod palette_tests;
 
 #[cfg(test)]
 mod dnd_tests;
+
+/// The desk's overflow tile and its panel, under `overflow = "stack"`.
+#[cfg(test)]
+mod desk_overflow_tests;
 
 #[cfg(test)]
 mod watch_tests;
