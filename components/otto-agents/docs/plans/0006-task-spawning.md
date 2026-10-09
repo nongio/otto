@@ -33,26 +33,27 @@ launcher's Sessions, the islands and editors.
 - **Notifications** come from the service (0007), so they arrive even when no GUI is
   open.
 
-## Automations
+## Scheduled tasks
 
-Spec references: `guide/automations.md` and `specification/automation-channel.md`.
-These channels are at **stability 1.0 (early development)**, so expect churn, and gate
-everything behind the capability.
+No code. Reminders and scheduled work are recipes in the otto-help skill
+(`resources/plugins/otto/skills/otto-help/references/later.md`): an agent writes
+systemd user units named `otto-later-<name>`, which run `notify-send` for a nudge or
+the agent's own headless command for work. systemd already provides calendar
+expressions, catch-up after the machine was off (`Persistent=true`), persistence, logs,
+and commands to list, run and remove, so the person can see and debug every schedule
+with standard tools.
 
-- **Capability.** Advertise `InitializeResult.automations` (`create`, `schedules`,
-  `runCancellation`, `runHistoryLimit`).
-- **Catalogue.** `ahp-automations://` holds definitions: `title`, `message`, a
-  `session` template (agent and folder), `enabled` and `triggers`.
-- **Persistence.** Definitions and run records live in SQLite under
-  `$XDG_STATE_HOME/otto-agents/`. Each run is recorded before its session is created.
-- **Runs.** `runAutomation { automation, requestId }` is idempotent on `requestId`. Each
-  run gets an `ahp-automation-run:/<id>` channel linking its sessions.
-- **Scheduler.** One scheduler task evaluates cron triggers in each automation's time
-  zone, claims each occurrence atomically, and applies the misfire policy on startup.
-- **Event triggers.** These are host-defined and listed by
-  `listAutomationTriggerDefinitions`. Start with file-system watches; add Otto desktop
-  events later, from `org.otto.Shell1` window and workspace signals.
-- **Concurrency cap.** Limit automation-started runs; runs over the cap stay `pending`.
+Known limit: a scheduled run of work happens outside otto-agents, so it does not show
+up in Sessions. Its result arrives as a notification and a file.
+
+### Not now: AHP automations
+
+`guide/automations.md` and `specification/automation-channel.md` define a host-side
+scheduler, SQLite persistence, run channels, cancellation and event triggers, at
+stability 1.0 (early development). Adopt them only if the recipes fall short, for
+example if scheduled runs need to be sessions, or if AHP clients need to browse and
+edit schedules. A recipe already holds what a definition needs: a name, a calendar
+expression, an agent, a folder and a message.
 
 ## CLI
 
@@ -61,9 +62,6 @@ A thin AHP client built on the `ahp` crate.
 ```sh
 otto-agents task "summarise today's commits" --agent claude --folder ~/dev/otto   # start and stream
 otto-agents task "..." --detach                                                   # print the session URI and exit
-otto-agents automation add triage --cron "30 9 * * MON-FRI" --tz Europe/Rome \
-  --agent claude --folder ~/dev/otto --message "triage new issues"
-otto-agents automation list | run triage | disable triage | runs triage
 ```
 
 ## Dependencies
@@ -71,21 +69,12 @@ otto-agents automation list | run triage | disable triage | runs triage
 - [0002](0002-core-protocol-loop.md): sessions and sequencing
 - [0003](0003-acp-agent-backend.md): real agents
 - [0004](0004-agent-configuration.md): agents and defaults
-- [0005](0005-authentication.md): no credentials stored in definitions
+- [0005](0005-authentication.md): no credentials stored in tasks
 
 ## Testing
 
-- **Scheduler:** a fake clock covers cron evaluation, DST gaps and repeated local
-  minutes, and both misfire policies
-- **Idempotency:** retrying `runAutomation` with the same `requestId` returns the same
-  run URI
-- **Cancellation race:** the run completes before its cancellation takes effect
-- **Restart recovery:** after otto-agents restarts, run records persist and scheduling
-  resumes
 - **CLI:** end-to-end against a real server with the fake ACP agent
 
 ## Open questions
 
-- Is automations' early-development status acceptable, or should v1 ship only one-off
-  tasks plus the CLI?
 - Where do a task's results go: the transcript only, or also a notification summary?
