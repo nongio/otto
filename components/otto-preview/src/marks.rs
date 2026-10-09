@@ -11,21 +11,29 @@
 //! drawn beside them, so "brighten 1, remove 2" works in the chat. Marks not
 //! yet sent go with the next message (see [`Marks::export`]); sent ones stay,
 //! fainter. The agent's marks come in layers it names, so it can redraw or
-//! take back one set at a time.
+//! take back one set at a time, and may be pictures as well as lines: a file
+//! laid over the document between two corners.
+//!
+//! Any mark is moved by dragging its badge, and deleted from the cross that
+//! shows beside the badge while the pointer is over it.
 
 // Rust guideline compliant 2026-02-21
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::{LazyLock, Mutex};
 
 use otto_kit::prelude::*;
 use otto_kit::preview::{Preview, PreviewLayout};
-use otto_kit::skia::{Contains, PaintCap, PaintJoin, PaintStyle, PathBuilder, Point};
+use otto_kit::skia::{Contains, Image, PaintCap, PaintJoin, PaintStyle, PathBuilder, Point};
 use serde_json::{json, Value};
 
 /// The stroke a mark is drawn with on screen, in points.
 const STROKE: f32 = 3.0;
 /// The number badge's radius.
 const BADGE: f32 = 9.0;
+/// The room between a badge and the cross beside it.
+const DELETE_GAP: f32 = 3.0;
 /// How far a freehand stroke's points must be apart to be kept, in points.
 const STEP: f32 = 2.0;
 
@@ -47,6 +55,14 @@ pub enum Shape {
     Ellipse((f32, f32), (f32, f32)),
     /// An arrow from the first point to the second.
     Arrow((f32, f32), (f32, f32)),
+    /// A picture file laid over the box of two opposite corners, at an
+    /// opacity from 0 to 1.
+    Image {
+        from: (f32, f32),
+        to: (f32, f32),
+        path: PathBuf,
+        opacity: f32,
+    },
 }
 
 impl Shape {
@@ -54,6 +70,26 @@ impl Shape {
         match self {
             Self::Path(points) => points.clone(),
             Self::Rect(a, b) | Self::Ellipse(a, b) | Self::Arrow(a, b) => vec![*a, *b],
+            Self::Image { from, to, .. } => vec![*from, *to],
+        }
+    }
+
+    /// The same shape moved by `(dx, dy)`.
+    fn translate(&mut self, dx: f32, dy: f32) {
+        let shift = |(x, y): &mut (f32, f32)| {
+            *x += dx;
+            *y += dy;
+        };
+        match self {
+            Self::Path(points) => points.iter_mut().for_each(shift),
+            Self::Rect(a, b) | Self::Ellipse(a, b) | Self::Arrow(a, b) => {
+                shift(a);
+                shift(b);
+            }
+            Self::Image { from, to, .. } => {
+                shift(from);
+                shift(to);
+            }
         }
     }
 
@@ -84,6 +120,18 @@ impl Shape {
             Self::Rect(a, b) => json!({ "kind": "rect", "from": round(*a), "to": round(*b) }),
             Self::Ellipse(a, b) => json!({ "kind": "ellipse", "from": round(*a), "to": round(*b) }),
             Self::Arrow(a, b) => json!({ "kind": "arrow", "from": round(*a), "to": round(*b) }),
+            Self::Image {
+                from,
+                to,
+                path,
+                opacity,
+            } => json!({
+                "kind": "image",
+                "from": round(*from),
+                "to": round(*to),
+                "path": path,
+                "opacity": opacity,
+            }),
         }
     }
 
@@ -106,6 +154,20 @@ impl Shape {
             "rect" => ends().map(|(a, b)| Self::Rect(a, b)),
             "ellipse" => ends().map(|(a, b)| Self::Ellipse(a, b)),
             "arrow" => ends().map(|(a, b)| Self::Arrow(a, b)),
+            "image" => {
+                let (from, to) = ends()?;
+                let path = PathBuf::from(value.get("path")?.as_str()?);
+                let opacity = value
+                    .get("opacity")
+                    .and_then(Value::as_f64)
+                    .map_or(1.0, |opacity| (opacity as f32).clamp(0.05, 1.0));
+                path.is_absolute().then_some(Self::Image {
+                    from,
+                    to,
+                    path,
+                    opacity,
+                })
+            }
             _ => None,
         }
     }
@@ -200,9 +262,22 @@ pub struct Marks {
     /// The person's next number.
     next: u32,
     stroke: Option<Stroke>,
-    /// The mark whose badge the pointer is over: the badge shows a cross,
-    /// and a click there deletes the mark.
+    /// The mark whose badge, or the cross beside it, the pointer is over: the
+    /// cross shows while it is.
     pub hovered: Option<usize>,
+    /// Whether the pointer is on that cross, where a click deletes the mark.
+    pub over_delete: bool,
+    /// The mark being dragged by its badge.
+    moving: Option<Moving>,
+}
+
+/// A mark being dragged by its badge.
+#[derive(Debug, Clone, Copy)]
+struct Moving {
+    index: usize,
+    frame: Frame,
+    /// Where the pointer was last, in the document's units.
+    last: (f32, f32),
 }
 
 impl Marks {
@@ -283,16 +358,86 @@ impl Marks {
             .rev()
             .find_map(|(index, mark)| {
                 let frame = frames.iter().find(|frame| frame.page == mark.page)?;
-                let (rect, _) = badge(frame, mark, 1.0, false)?;
+                let (rect, _) = badge(frame, mark, 1.0)?;
                 rect.with_outset((2.0, 2.0)).contains(at).then_some(index)
             })
     }
 
-    /// Follow the pointer over the badges. Returns whether the one under it
-    /// changed.
+    /// The hovered mark, when `at` is on the cross beside its badge.
+    pub fn delete_at(&self, frames: &[Frame], at: Point) -> Option<usize> {
+        let index = self.hovered?;
+        let mark = self.list.get(index)?;
+        let frame = frames.iter().find(|frame| frame.page == mark.page)?;
+        delete_button(frame, mark, 1.0)?
+            .with_outset((2.0, 2.0))
+            .contains(at)
+            .then_some(index)
+    }
+
+    /// Follow the pointer over the badges and the cross beside the hovered
+    /// one. Returns whether anything shown changed.
     pub fn hover(&mut self, frames: &[Frame], at: Option<Point>) -> bool {
-        let hovered = at.and_then(|at| self.badge_at(frames, at));
-        std::mem::replace(&mut self.hovered, hovered) != hovered
+        let (hovered, over_delete) = match at {
+            Some(at) if self.delete_at(frames, at).is_some() => (self.hovered, true),
+            Some(at) => (self.badge_at(frames, at), false),
+            None => (None, false),
+        };
+        let changed = hovered != self.hovered || over_delete != self.over_delete;
+        self.hovered = hovered;
+        self.over_delete = over_delete;
+        changed
+    }
+
+    /// Start dragging the mark whose badge is under `at`. Returns whether
+    /// there was one.
+    pub fn grab(&mut self, frames: &[Frame], at: Point) -> bool {
+        let Some(index) = self.badge_at(frames, at) else {
+            return false;
+        };
+        let Some(frame) = frames
+            .iter()
+            .find(|frame| frame.page == self.list[index].page)
+            .copied()
+        else {
+            return false;
+        };
+        self.moving = Some(Moving {
+            index,
+            frame,
+            last: frame.to_document(at),
+        });
+        true
+    }
+
+    pub fn moving(&self) -> bool {
+        self.moving.is_some()
+    }
+
+    /// Carry the dragged mark along to `at`. A mark of the person's moved
+    /// after it was sent goes again with the next message, where it is now.
+    pub fn move_to(&mut self, at: Point) -> bool {
+        let Some(moving) = &mut self.moving else {
+            return false;
+        };
+        let now = moving.frame.to_document(at);
+        let (dx, dy) = (now.0 - moving.last.0, now.1 - moving.last.1);
+        if dx == 0.0 && dy == 0.0 {
+            return false;
+        }
+        moving.last = now;
+        let Some(mark) = self.list.get_mut(moving.index) else {
+            return false;
+        };
+        mark.shape.translate(dx, dy);
+        if mark.by == Author::Person {
+            mark.sent = false;
+        }
+        true
+    }
+
+    /// Let go of the dragged mark.
+    pub fn drop_moving(&mut self) -> bool {
+        self.moving.take().is_some()
     }
 
     /// Delete the mark at `index`, the person's or the agent's.
@@ -353,7 +498,7 @@ impl Marks {
             let shape = mark
                 .get("shape")
                 .and_then(Shape::from_json)
-                .ok_or_else(|| format!("mark {index}: a shape is {{\"kind\": \"rect\"|\"ellipse\"|\"arrow\", \"from\": [x, y], \"to\": [x, y]}} or {{\"kind\": \"path\", \"points\": [[x, y], ...]}}"))?;
+                .ok_or_else(|| format!("mark {index}: a shape is {{\"kind\": \"rect\"|\"ellipse\"|\"arrow\", \"from\": [x, y], \"to\": [x, y]}}, {{\"kind\": \"path\", \"points\": [[x, y], ...]}} or {{\"kind\": \"image\", \"path\": \"/absolute/file.png\", \"from\": [x, y], \"to\": [x, y], \"opacity\"?: 0..1}}"))?;
             taken.push(Mark {
                 n: None,
                 by: Author::Agent,
@@ -567,7 +712,7 @@ pub fn draw(canvas: &Canvas, frames: &[Frame], marks: &Marks) {
 fn anchor(frame: &Frame, mark: &Mark) -> Option<Point> {
     match &mark.shape {
         Shape::Path(points) => points.first().map(|point| frame.to_screen(*point)),
-        Shape::Rect(a, b) | Shape::Ellipse(a, b) => {
+        Shape::Rect(a, b) | Shape::Ellipse(a, b) | Shape::Image { from: a, to: b, .. } => {
             let (a, b) = (frame.to_screen(*a), frame.to_screen(*b));
             Some(Point::new(a.x.min(b.x), a.y.min(b.y)))
         }
@@ -575,25 +720,18 @@ fn anchor(frame: &Frame, mark: &Mark) -> Option<Point> {
     }
 }
 
-/// The badge beside a mark and what it says: the person's number, the
-/// agent's label or a dot, and a cross while the pointer is over it.
-fn badge(frame: &Frame, mark: &Mark, scale: f32, hovered: bool) -> Option<(Rect, String)> {
+/// The badge beside a mark, the handle it is dragged by, and what it says:
+/// the person's number, the agent's label or a dot.
+fn badge(frame: &Frame, mark: &Mark, scale: f32) -> Option<(Rect, String)> {
     let anchor = anchor(frame, mark)?;
-    let text = match (hovered, mark.n, &mark.label) {
-        (true, ..) => "\u{2715}".to_owned(),
-        (false, Some(n), _) => n.to_string(),
-        (false, None, Some(label)) => label.clone(),
-        (false, None, None) => "\u{2022}".to_owned(),
+    let text = match (mark.n, &mark.label) {
+        (Some(n), _) => n.to_string(),
+        (None, Some(label)) => label.clone(),
+        (None, None) => "\u{2022}".to_owned(),
     };
     let radius = BADGE * scale;
     let (text_w, _) = badge_style(scale).font().measure_str(&text, None);
-    // A label keeps its width while it shows the cross, so the pointer
-    // stays on it.
-    let shown = match (hovered, mark.n, &mark.label) {
-        (true, None, Some(label)) => badge_style(scale).font().measure_str(label, None).0,
-        _ => text_w,
-    };
-    let width = (shown + radius).max(2.0 * radius);
+    let width = (text_w + radius).max(2.0 * radius);
     let rect = Rect::from_xywh(
         anchor.x - radius,
         anchor.y - 2.0 * radius - 2.0,
@@ -601,6 +739,47 @@ fn badge(frame: &Frame, mark: &Mark, scale: f32, hovered: bool) -> Option<(Rect,
         2.0 * radius,
     );
     Some((rect, text))
+}
+
+/// The round cross after a mark's badge, shown while the pointer is over
+/// either.
+fn delete_button(frame: &Frame, mark: &Mark, scale: f32) -> Option<Rect> {
+    let (pill, _) = badge(frame, mark, scale)?;
+    Some(Rect::from_xywh(
+        pill.right + DELETE_GAP * scale,
+        pill.top,
+        pill.height(),
+        pill.height(),
+    ))
+}
+
+/// A picture laid over a document, by when its file was last changed.
+type Decoded = (Option<std::time::SystemTime>, Option<Image>);
+
+/// The pictures laid over documents, decoded once per file and change.
+static IMAGES: LazyLock<Mutex<HashMap<PathBuf, Decoded>>> = LazyLock::new(Mutex::default);
+
+/// The picture at `path`, decoded, or `None` when it can't be read.
+fn overlay_image(path: &Path) -> Option<Image> {
+    let modified = std::fs::metadata(path)
+        .and_then(|meta| meta.modified())
+        .ok();
+    let mut images = IMAGES
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some((when, image)) = images.get(path) {
+        if *when == modified {
+            return image.clone();
+        }
+    }
+    let image = std::fs::read(path)
+        .ok()
+        .and_then(|bytes| Image::from_encoded(otto_kit::skia::Data::new_copy(&bytes)));
+    if image.is_none() {
+        tracing::warn!(path = %path.display(), "could not show a picture laid over the document");
+    }
+    images.insert(path.to_owned(), (modified, image.clone()));
+    image
 }
 
 fn badge_style(scale: f32) -> TextStyle {
@@ -669,9 +848,33 @@ fn draw_mark(canvas: &Canvas, frame: &Frame, mark: &Mark, scale: f32, faint: boo
                 );
             }
         }
+        Shape::Image {
+            from,
+            to,
+            path,
+            opacity,
+        } => {
+            let rect = corners(*from, *to);
+            let mut paint = Paint::default();
+            paint.set_anti_alias(true);
+            paint.set_alpha_f(*opacity * if faint { 0.45 } else { 1.0 });
+            match overlay_image(path) {
+                Some(image) => {
+                    canvas.draw_image_rect(&image, None, rect, &paint);
+                }
+                // Where it would be, so it can still be moved or deleted.
+                None => {
+                    canvas.draw_rect(rect, &stroke);
+                }
+            }
+            if hovered {
+                stroke.set_stroke_width(1.0 * scale);
+                canvas.draw_rect(rect, &stroke);
+            }
+        }
     }
     // The number, label or dot in a filled pill.
-    let Some((pill, text)) = badge(frame, mark, scale, hovered) else {
+    let Some((pill, text)) = badge(frame, mark, scale) else {
         return;
     };
     let radius = BADGE * scale;
@@ -684,6 +887,16 @@ fn draw_mark(canvas: &Canvas, frame: &Frame, mark: &Mark, scale: f32, faint: boo
         .with_color(Color::WHITE)
         .centered_at(pill.center_x(), pill.center_y())
         .render(canvas);
+    // The cross that deletes it, while the pointer is over the badge.
+    if let Some(cross) = delete_button(frame, mark, scale).filter(|_| hovered) {
+        fill.set_color(Color::from_argb(220, 60, 60, 67));
+        canvas.draw_circle((cross.center_x(), cross.center_y()), radius, &fill);
+        Label::new("\u{2715}".to_owned())
+            .with_style(badge_style(scale))
+            .with_color(Color::WHITE)
+            .centered_at(cross.center_x(), cross.center_y())
+            .render(canvas);
+    }
 }
 
 #[cfg(test)]
@@ -764,8 +977,55 @@ mod tests {
         assert_eq!(marks.badge_at(&[frame], on_badge), Some(0));
         assert_eq!(marks.badge_at(&[frame], Point::new(250.0, 150.0)), None);
         assert!(marks.hover(&[frame], Some(on_badge)));
+        assert!(!marks.over_delete);
+        // The cross beside the badge deletes; the badge itself does not.
+        assert_eq!(marks.delete_at(&[frame], on_badge), None);
+        let cross = delete_button(&frame, &marks.list[0], 1.0).unwrap();
+        let on_cross = Point::new(cross.center_x(), cross.center_y());
+        assert!(marks.hover(&[frame], Some(on_cross)));
+        assert!(marks.over_delete);
+        assert_eq!(marks.hovered, Some(0));
+        assert_eq!(marks.delete_at(&[frame], on_cross), Some(0));
         assert!(marks.remove(0));
         assert!(marks.list.is_empty());
+    }
+
+    #[test]
+    fn a_mark_moves_by_its_badge_in_the_documents_units() {
+        let frame = picture_frame();
+        let mut marks = Marks::default();
+        marks.begin(&[frame], Point::new(200.0, 100.0), true);
+        marks.extend(Point::new(300.0, 200.0));
+        marks.finish();
+        marks.list[0].sent = true;
+        let on_badge = Point::new(200.0 + 2.0, 100.0 - BADGE - 2.0);
+        assert!(marks.grab(&[frame], on_badge));
+        assert!(marks.moving());
+        // Ten points on screen are a hundred of the picture's pixels.
+        assert!(marks.move_to(Point::new(on_badge.x + 10.0, on_badge.y + 20.0)));
+        assert!(marks.drop_moving());
+        assert_eq!(
+            marks.list[0].shape,
+            Shape::Rect((1100.0, 700.0), (2100.0, 1700.0))
+        );
+        assert_eq!(marks.pending(), vec![1], "moved, it goes again");
+        assert!(!marks.grab(&[frame], Point::new(450.0, 300.0)));
+    }
+
+    #[test]
+    fn the_agent_lays_a_picture_over_the_document() {
+        let mut marks = Marks::default();
+        let drawn = json!([{
+            "shape": { "kind": "image", "path": "/tmp/logo.png", "from": [10, 20], "to": [110, 70], "opacity": 0.5 },
+            "label": "logo here?"
+        }]);
+        assert_eq!(marks.draw_agent("ideas", &drawn), Ok(1));
+        let shape = &marks.list[0].shape;
+        assert_eq!(shape.bounds(), [10.0, 20.0, 100.0, 50.0]);
+        assert_eq!(Shape::from_json(&shape.to_json()).as_ref(), Some(shape));
+        // A relative path is not a picture anyone can find.
+        let relative = json!([{ "shape": { "kind": "image", "path": "logo.png", "from": [0, 0], "to": [1, 1] } }]);
+        assert!(marks.draw_agent("ideas", &relative).is_err());
     }
 
     #[test]

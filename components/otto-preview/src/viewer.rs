@@ -359,21 +359,44 @@ impl Viewer {
             return false;
         }
         let frames = self.frames();
-        let Some(index) = self.marks.badge_at(&frames, at) else {
+        let Some(index) = self.marks.delete_at(&frames, at) else {
             return false;
         };
         self.dirty |= self.marks.remove(index);
+        self.marks.hover(&frames, Some(at));
         true
     }
 
-    /// Carry a mark being drawn on to `at`.
-    pub fn mark_motion(&mut self, at: Point) {
-        self.dirty |= self.marks.extend(at);
+    /// Start dragging the mark whose badge is under `at`, pen or not.
+    pub fn mark_grab(&mut self, at: Point) -> bool {
+        if self.marks_hidden {
+            return false;
+        }
+        let frames = self.frames();
+        self.marks.grab(&frames, at)
     }
 
-    /// Finish a mark being drawn.
+    /// Carry a mark being drawn, or dragged, on to `at`.
+    pub fn mark_motion(&mut self, at: Point) {
+        if self.marks.moving() {
+            self.dirty |= self.marks.move_to(at);
+        } else {
+            self.dirty |= self.marks.extend(at);
+        }
+    }
+
+    /// Whether a mark is being drawn or dragged.
+    pub fn mark_busy(&self) -> bool {
+        self.marks.drawing() || self.marks.moving()
+    }
+
+    /// Finish a mark being drawn, or let go of one dragged.
     pub fn mark_release(&mut self) {
-        self.dirty |= self.marks.finish();
+        if self.marks.drop_moving() {
+            self.dirty = true;
+        } else {
+            self.dirty |= self.marks.finish();
+        }
     }
 
     /// The chat panel's box, when it shows: the window's trailing edge, under
@@ -921,9 +944,16 @@ impl Viewer {
         if self.drag.is_some() {
             return CursorShape::Grabbing;
         }
-        if self.marks.hovered.is_some() {
+        if self.marks.moving() {
+            return CursorShape::Grabbing;
+        }
+        if self.marks.over_delete {
             // The bin: a click here deletes the mark (see `crate::cursors`).
             return CursorShape::NotAllowed;
+        }
+        if self.marks.hovered.is_some() {
+            // The badge is the mark's handle.
+            return CursorShape::Grab;
         }
         if self.marking {
             return CursorShape::Crosshair;

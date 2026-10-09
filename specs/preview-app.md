@@ -161,9 +161,13 @@ in another app, `xdg-open`, the command line.
   chat opening and the file being reloaded.
 - The person's marks are red and numbered in drawing order, the number in a
   badge at the mark's start. The agent's are blue, with its label (or a dot)
-  in the badge.
-- Hovering a badge shows a cross and a bin cursor; a click deletes the mark,
-  the person's or the agent's. Backspace takes back the person's last mark
+  in the badge. The agent can also lay a picture over a box of the document
+  (a variant, a logo, a crop to compare), at an opacity it chooses.
+- The badge is the mark's handle: dragging it (a grab cursor) moves the mark,
+  pen or not, in the document's units. A mark of the person's moved after it
+  was sent goes again with the next message.
+- Hovering a badge shows a round cross beside it; over the cross the cursor
+  is a bin, and a click deletes the mark, the person's or the agent's. Backspace takes back the person's last mark
   not yet sent.
 - The eye hides every mark, to see the document as it is, and turns the pen
   off; badges can't be hovered or deleted while hidden. The marks show again

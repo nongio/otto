@@ -26,6 +26,10 @@ what you point at is the answer; keep the words short.
   boxes, ellipses, arrows or paths with a short label, in the same
   coordinates, in a layer you name. They show over the file in a colour of
   their own, apart from the person's. `preview_clear` takes a layer away.
+- To show a picture over the file without changing it (a variant to
+  compare, a logo where it would go), write it somewhere and draw it as an
+  `image` shape over the box it belongs in. The person can move or delete any
+  mark; `preview_marks` says where they left yours.
 - Never draw into the file to point at something. A circle asked for is a
   mark, not a change.
 

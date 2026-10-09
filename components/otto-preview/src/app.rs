@@ -475,7 +475,7 @@ fn handle_pointer(
                 }
                 // Always forwarded: a selection or a bar dragged past the
                 // content's edge keeps going.
-                if v.marks.drawing() {
+                if v.mark_busy() {
                     v.mark_motion(at);
                 } else {
                     v.mark_hover(content.contains(at).then_some(at));
@@ -552,7 +552,9 @@ fn handle_pointer(
                     continue;
                 }
                 // A click on a mark's badge deletes the mark.
-                if content.contains(at) && (v.mark_delete_at(at) || v.mark_press(at)) {
+                if content.contains(at)
+                    && (v.mark_delete_at(at) || v.mark_grab(at) || v.mark_press(at))
+                {
                     continue;
                 }
                 v.content_pointer(VideoPointer::Press, at);
@@ -598,7 +600,7 @@ fn handle_pointer(
                     v.dirty |= chat.borrow_mut().release(panel, at);
                 }
                 v.sidebar_release();
-                if v.marks.drawing() {
+                if v.mark_busy() {
                     v.mark_release();
                 }
                 let link = v.content_pointer(VideoPointer::Release, at);

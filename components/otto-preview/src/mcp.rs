@@ -113,9 +113,11 @@ fn error(id: Value, code: i64, message: &str) -> Value {
 fn tools() -> Value {
     let shape = json!({
         "type": "object",
-        "description": "{\"kind\": \"rect\"|\"ellipse\"|\"arrow\", \"from\": [x, y], \"to\": [x, y]} or {\"kind\": \"path\", \"points\": [[x, y], ...]}",
+        "description": "{\"kind\": \"rect\"|\"ellipse\"|\"arrow\", \"from\": [x, y], \"to\": [x, y]}, {\"kind\": \"path\", \"points\": [[x, y], ...]}, or {\"kind\": \"image\", \"path\": \"/absolute/picture.png\", \"from\": [x, y], \"to\": [x, y], \"opacity\": 0..1} to lay a picture over the box (a variant, a logo, a crop to compare)",
         "properties": {
-            "kind": { "type": "string", "enum": ["rect", "ellipse", "arrow", "path"] },
+            "kind": { "type": "string", "enum": ["rect", "ellipse", "arrow", "path", "image"] },
+            "path": { "type": "string", "description": "For an image: the picture file, an absolute path." },
+            "opacity": { "type": "number", "description": "For an image: 0 to 1, default 1." },
             "from": { "type": "array", "items": { "type": "number" } },
             "to": { "type": "array", "items": { "type": "number" } },
             "points": { "type": "array", "items": { "type": "array", "items": { "type": "number" } } }
@@ -170,7 +172,7 @@ fn tools() -> Value {
         },
         {
             "name": "preview_draw",
-            "description": "Draw marks on the file to point at things: boxes, ellipses, arrows or paths with short labels, in the picture's pixels (or PDF points with \"page\"). Replaces the layer of the same name.",
+            "description": "Draw marks on the file to point at things: boxes, ellipses, arrows or paths with short labels, or pictures laid over a box, in the picture's pixels (or PDF points with \"page\"). The person can move a mark by its label and delete it. Replaces the layer of the same name.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
