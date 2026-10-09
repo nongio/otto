@@ -953,6 +953,12 @@ impl Ask {
         Some(terminal)
     }
 
+    /// Where the listed session at `index` opens: in Preview when Preview
+    /// started it about a file, otherwise here.
+    pub fn opener_at(&self, index: usize) -> crate::opener::Opener {
+        crate::opener::Opener::from_meta(self.sessions.get(index).and_then(|s| s.meta.as_ref()))
+    }
+
     /// What the agent whose provider id is `provider` is called.
     fn agent_name(&self, provider: &str) -> Option<&str> {
         self.agents
@@ -3672,5 +3678,39 @@ mod tests {
             })
         });
         assert!(done, "{:?}", second.transcript());
+    }
+
+    /// Against a live service, like the tests above: a session made with an
+    /// app's `_meta` is listed with it, so a list opens it in that app.
+    #[test]
+    #[ignore = "needs a running `otto-agents serve --echo`"]
+    fn a_session_made_beside_a_file_opens_in_preview() {
+        let url = std::env::var("OTTO_AGENTS_URL").unwrap_or_else(|_| default_url());
+        let mut first = Ask::connect("otto-preview", url.clone(), std::env::temp_dir());
+        first.set_subject([PathBuf::from("/tmp/photo.jpg")]);
+        first.set_session_meta(json!({ "otto": {
+            "app": "otto-preview",
+            "subject": ["file:///tmp/photo.jpg"],
+            "instructions": "You are beside /tmp/photo.jpg."
+        }}));
+        first.send("warmer", None);
+        assert!(pump_until(&mut first, |ask| ask.transcript().is_some_and(
+            |t| t.status.is_none() && said(&t.entries[0]).contains("warmer")
+        )));
+        let entries = first.transcript().unwrap().entries;
+        assert!(
+            entries[0].attachments.is_empty(),
+            "the subject is not listed"
+        );
+        drop(first);
+
+        let mut second = Ask::connect("otto-launcher", url, std::env::temp_dir());
+        assert!(pump_until(&mut second, Ask::sessions_listed));
+        assert_eq!(
+            second.opener_at(0),
+            crate::opener::Opener::Preview {
+                file: PathBuf::from("/tmp/photo.jpg")
+            }
+        );
     }
 }

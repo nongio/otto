@@ -15,6 +15,7 @@ pub mod chat;
 pub mod keys;
 pub mod link;
 pub mod log;
+pub mod opener;
 pub mod sessions;
 
 // The rows and their ranking are otto-kit's, so an app with no agent in it —

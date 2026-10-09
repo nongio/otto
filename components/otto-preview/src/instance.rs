@@ -33,6 +33,9 @@ pub struct Request {
     pub token: Option<String>,
     /// Whether the chat shows beside the file from the start.
     pub chat: bool,
+    /// The agent session to carry on in that chat, rather than a new one:
+    /// one this app started about the file, picked from a list.
+    pub session: Option<String>,
 }
 
 /// Requests from other starts, waiting for the UI loop.
@@ -83,6 +86,18 @@ impl Service {
     /// As `Open`, with the chat showing beside the file.
     fn open_chat(&self, path: String, token: String) {
         self.push(path, token, true);
+    }
+
+    /// As `OpenChat`, carrying on the agent session `session` in the chat.
+    fn open_session(&self, path: String, session: String, token: String) {
+        let token = (!token.is_empty()).then_some(token);
+        self.inbox.lock().unwrap().push(Request {
+            path: PathBuf::from(path),
+            token,
+            chat: true,
+            session: Some(session),
+        });
+        AppContext::request_wakeup();
     }
 
     /// What the window showing `path` shows, as JSON.
@@ -171,6 +186,7 @@ impl Service {
             path: PathBuf::from(path),
             token,
             chat,
+            session: None,
         });
         AppContext::request_wakeup();
     }
@@ -214,14 +230,29 @@ pub async fn claim_or_forward(
 
     let path = request.path.to_string_lossy().into_owned();
     let token = request.token.clone().unwrap_or_default();
-    connection
-        .call_method(
-            Some(DBUS_NAME),
-            DBUS_PATH,
-            Some(DBUS_NAME),
-            if request.chat { "OpenChat" } else { "Open" },
-            &(path, token),
-        )
-        .await?;
+    match &request.session {
+        Some(session) => {
+            connection
+                .call_method(
+                    Some(DBUS_NAME),
+                    DBUS_PATH,
+                    Some(DBUS_NAME),
+                    "OpenSession",
+                    &(path, session.as_str(), token),
+                )
+                .await?
+        }
+        None => {
+            connection
+                .call_method(
+                    Some(DBUS_NAME),
+                    DBUS_PATH,
+                    Some(DBUS_NAME),
+                    if request.chat { "OpenChat" } else { "Open" },
+                    &(path, token),
+                )
+                .await?
+        }
+    };
     Ok(Role::Forwarded)
 }

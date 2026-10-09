@@ -952,6 +952,16 @@ impl Launcher {
             self.close();
             return;
         }
+        // A session an app started about one of its files opens in that app,
+        // beside the file: Preview's, in Preview.
+        let opened_elsewhere = self.ask.as_ref().is_some_and(|ask| {
+            ask.session_at(index)
+                .is_some_and(|session| ask.opener_at(index).open(session))
+        });
+        if opened_elsewhere {
+            self.close();
+            return;
+        }
         self.opened_session = self
             .ask
             .as_ref()

@@ -37,6 +37,7 @@ use std::time::{Duration, Instant};
 
 use otto_agents_kit::item::Item;
 use otto_agents_kit::keys::{self, FieldEdit};
+use otto_agents_kit::opener::Opener;
 use otto_agents_kit::rows::{
     divider_color, field_style, paint_item_rows, row_font, row_highlight_color, row_highlight_rect,
     row_subtitle_color, RowIcons, HIGHLIGHT_RADIUS, ROW_H,
@@ -136,6 +137,8 @@ struct Sessions {
     rows: Vec<Item>,
     /// Every session's URI, in the order of the last listing.
     resources: Vec<String>,
+    /// Where each of those opens: Preview's sessions in Preview.
+    openers: Vec<Opener>,
     /// Whether the service is there and has listed the sessions.
     status: FeedStatus,
     /// The prompt: a new request, asked on Enter.
@@ -169,6 +172,7 @@ impl Sessions {
             feed: None,
             rows: Vec::new(),
             resources: Vec::new(),
+            openers: Vec::new(),
             status: FeedStatus::Connecting,
             input,
             selected: None,
@@ -291,12 +295,20 @@ impl Sessions {
         }
     }
 
-    /// Open the session in row `index` in the launcher, and send the canvas
-    /// away: the launcher's card is where it carries on.
+    /// Open the session in row `index` where it belongs, the launcher's card
+    /// or the app that started it, and send the canvas away.
     fn open(&mut self, index: usize) {
         let Some(resource) = self.resource_at(index).map(str::to_string) else {
             return;
         };
+        let opener = self
+            .rows
+            .get(index)
+            .and_then(|row| self.openers.get(row.origin.index));
+        if opener.is_some_and(|opener| opener.open(&resource)) {
+            self.dismiss();
+            return;
+        }
         match launch(&["--session", &resource]) {
             Ok(()) => self.dismiss(),
             Err(err) => {
@@ -381,6 +393,11 @@ impl Sessions {
             .sessions()
             .iter()
             .map(|session| session.resource.clone())
+            .collect();
+        self.openers = feed
+            .sessions()
+            .iter()
+            .map(|session| Opener::from_meta(session.meta.as_ref()))
             .collect();
         self.keep_selection();
         self.dirty = true;

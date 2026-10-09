@@ -67,6 +67,9 @@ pub struct Chat {
     /// The numbers of the marks that go with the next message, shown over
     /// the field. Set by the window before each paint.
     pub pending_marks: Vec<u32>,
+    /// An agent session to carry on when the chat connects, rather than
+    /// starting one: picked from a list, which sent it here.
+    resume: Option<String>,
 }
 
 /// Where the panel's parts sit, for one panel box.
@@ -137,6 +140,7 @@ impl Chat {
             pressed_answer: None,
             log_h: 0.0,
             pending_marks: Vec::new(),
+            resume: None,
         }
     }
 
@@ -152,10 +156,24 @@ impl Chat {
             .is_some_and(|ask| ask.unreachable().is_some() && !ask.running());
         if self.ask.is_none() || stale {
             let mut ask = Ask::open(CLIENT);
-            ask.set_subject([self.path.clone()]);
-            ask.set_session_meta(session_meta(&self.path));
+            match self.resume.take() {
+                // The session already has its meta, its tools and the file.
+                Some(session) => ask.resume(&session),
+                None => {
+                    ask.set_subject([self.path.clone()]);
+                    ask.set_session_meta(session_meta(&self.path));
+                }
+            }
             self.ask = Some(ask);
             self.relayout();
+        }
+    }
+
+    /// Carry on agent session `session` when the chat connects. A chat
+    /// already connected keeps its own conversation.
+    pub fn carry_on(&mut self, session: String) {
+        if self.ask.is_none() {
+            self.resume = Some(session);
         }
     }
 
@@ -577,6 +595,24 @@ fn field_style(dark: bool) -> TextInputStyle {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_session_is_made_for_the_file_with_the_document_tools() {
+        let meta = session_meta(std::path::Path::new("/home/me/photo 1.jpg"));
+        let otto = &meta["otto"];
+        assert_eq!(otto["app"], CLIENT);
+        assert_eq!(otto["subject"][0], "file:///home/me/photo%201.jpg");
+        assert!(otto["instructions"]
+            .as_str()
+            .unwrap()
+            .contains("preview_reload"));
+        let server = &otto["mcpServers"][0];
+        assert_eq!(server["args"][0], "--mcp");
+        assert_eq!(server["env"][crate::mcp::DOC_ENV], "/home/me/photo 1.jpg");
+        // otto-agents only runs Otto's own programs, by absolute path.
+        let command = std::path::PathBuf::from(server["command"].as_str().unwrap());
+        assert!(command.is_absolute());
+    }
 
     const PANEL: Rect = Rect {
         left: 600.0,

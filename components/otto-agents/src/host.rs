@@ -876,8 +876,19 @@ impl Host {
         }
         pending.escalated = true;
         tracing::info!(session_uri, tool_call_id, "{why}; asking in a dialog");
+        let opens = state
+            .sessions
+            .get(session_uri)
+            .map_or(dialog::Opens::Ask, |session| {
+                dialog::Opens::of(session.state.meta.as_ref())
+            });
+        let pending = state
+            .sessions
+            .get(session_uri)
+            .and_then(|session| session.questions.get(tool_call_id))
+            .expect("checked above");
         let prompt = Prompt {
-            open: dialog::open_in_ask_label(),
+            open: opens.label(),
             cookie: dialog_cookie(session_uri, tool_call_id),
             quiet,
             ..pending.prompt.clone()
@@ -897,7 +908,7 @@ impl Host {
                         state.unescalate(&session_uri, &tool_call_id);
                         state.watched_grace
                     };
-                    prompter.open(&session_uri);
+                    opens.open(prompter.as_ref(), &session_uri);
                     // Should Ask not come up, or not be answered in, the
                     // question comes back rather than waiting on nobody.
                     host.escalate_after(grace, &session_uri, &tool_call_id);
@@ -950,6 +961,7 @@ impl Host {
                 |agent| agent.display_name.clone(),
             );
         let provider = session.state.provider.clone();
+        let session_meta = session.state.meta.clone();
         let icon = state.backend.icon(&provider);
         let Some(pending) = state
             .sessions
@@ -967,9 +979,11 @@ impl Host {
             request_id,
             "no client is watching; asking in a dialog"
         );
+        let opens = dialog::Opens::of(session_meta.as_ref());
         let prompt = Prompt {
             cookie: dialog_cookie(session_uri, request_id),
             quiet,
+            open: opens.label(),
             ..question_prompt(&agent, &provider, icon, &request)
         };
         let prompter = Arc::clone(&self.prompter);
@@ -994,7 +1008,7 @@ impl Host {
                         state.unescalate_input(&session_uri, &request_id);
                         state.watched_grace
                     };
-                    prompter.open(&session_uri);
+                    opens.open(prompter.as_ref(), &session_uri);
                     // As for a permission question.
                     host.escalate_input_after(grace, &session_uri, &request_id);
                     return;

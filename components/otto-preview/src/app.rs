@@ -103,6 +103,9 @@ impl PreviewApp {
     fn open(&mut self, request: Request) -> Result<(), Box<dyn std::error::Error>> {
         let key = resolved(&request.path);
         if let Some(doc) = self.docs.iter().find(|doc| doc.key == key) {
+            if let Some(session) = request.session {
+                doc.chat.borrow_mut().carry_on(session);
+            }
             if request.chat {
                 doc.show_chat();
             }
@@ -114,6 +117,9 @@ impl PreviewApp {
         let shape = Shape::of(&request.path);
         let mut doc = Doc::open(request.path, key, shape)?;
         doc.chat_on_configure = request.chat;
+        if let Some(session) = request.session {
+            doc.chat.borrow_mut().carry_on(session);
+        }
         self.documents
             .lock()
             .unwrap()

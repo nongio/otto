@@ -36,6 +36,53 @@ pub fn open_in_ask_label() -> String {
     i18n::t("agents-permission-open-in-ask", None)
 }
 
+/// Where a session's questions are answered when the dialog hands them on:
+/// Ask, or the app that started the session about one of its files.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Opens {
+    Ask,
+    /// Preview, beside this file: the session's `otto.app` is
+    /// `otto-preview` and its `otto.subject` names the file.
+    Preview(std::path::PathBuf),
+}
+
+impl Opens {
+    /// Where the session whose `_meta` is `meta` opens.
+    pub fn of(meta: Option<&serde_json::Map<String, serde_json::Value>>) -> Self {
+        let otto = meta.and_then(|meta| meta.get("otto"));
+        let preview = otto
+            .and_then(|otto| otto.get("app"))
+            .and_then(serde_json::Value::as_str)
+            == Some("otto-preview");
+        let file = otto
+            .and_then(|otto| otto.get("subject"))
+            .and_then(serde_json::Value::as_array)
+            .and_then(|subject| subject.first())
+            .and_then(serde_json::Value::as_str)
+            .and_then(crate::uri::to_path);
+        match (preview, file) {
+            (true, Some(file)) => Self::Preview(file),
+            _ => Self::Ask,
+        }
+    }
+
+    /// The dialog's button that hands the question there.
+    pub fn label(&self) -> String {
+        match self {
+            Self::Ask => open_in_ask_label(),
+            Self::Preview(_) => i18n::t("agents-permission-open-in-preview", None),
+        }
+    }
+
+    /// Open session `session_uri` there.
+    pub fn open(&self, prompter: &dyn Prompter, session_uri: &str) {
+        match self {
+            Self::Ask => prompter.open(session_uri),
+            Self::Preview(file) => open_in_preview(session_uri, file),
+        }
+    }
+}
+
 /// What a dialog says.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Prompt {
@@ -131,37 +178,53 @@ pub trait Prompter: Send + Sync {
 /// sits outside this unit's sandbox and cgroup. Without a user manager it
 /// falls back to a child in a process group of its own.
 pub fn open_in_ask(session_uri: &str) {
+    run_detached(
+        "otto-ask",
+        vec!["--session".into(), session_uri.into()],
+        session_uri,
+    );
+}
+
+/// Starts `otto-preview --session <session_uri> <file>`, as [`open_in_ask`]
+/// starts Ask: the file in Preview with the session's chat beside it.
+pub fn open_in_preview(session_uri: &str, file: &std::path::Path) {
+    run_detached(
+        "otto-preview",
+        vec![
+            "--session".into(),
+            session_uri.into(),
+            file.as_os_str().to_owned(),
+        ],
+        session_uri,
+    );
+}
+
+/// Start `program` with `args` as a transient unit, falling back to a child
+/// in a process group of its own; see [`open_in_ask`].
+fn run_detached(program: &'static str, args: Vec<std::ffi::OsString>, session_uri: &str) {
     let session_uri = session_uri.to_owned();
     tokio::spawn(async move {
         let mut command = tokio::process::Command::new("systemd-run");
-        command.args([
-            "--user",
-            "--collect",
-            "--quiet",
-            "--",
-            "otto-ask",
-            "--session",
-        ]);
-        command.arg(&session_uri);
+        command.args(["--user", "--collect", "--quiet", "--", program]);
+        command.args(&args);
         match run_quietly(command).await {
-            Ok(()) => tracing::info!(session_uri, "opening the session in Ask"),
+            Ok(()) => tracing::info!(session_uri, program, "opening the session"),
             Err(err) => {
-                tracing::debug!(%err, "systemd-run failed; starting otto-ask directly");
-                let mut command = tokio::process::Command::new("otto-ask");
+                tracing::debug!(%err, "systemd-run failed; starting {program} directly");
+                let mut command = tokio::process::Command::new(program);
                 command
-                    .arg("--session")
-                    .arg(&session_uri)
+                    .args(&args)
                     .stdin(std::process::Stdio::null())
                     .stdout(std::process::Stdio::null())
                     .stderr(std::process::Stdio::null())
                     .process_group(0);
                 match command.spawn() {
                     Ok(mut child) => {
-                        tracing::info!(session_uri, "opening the session in Ask");
+                        tracing::info!(session_uri, program, "opening the session");
                         // Reaped once it exits, so it never lingers as a zombie.
                         let _ = child.wait().await;
                     }
-                    Err(err) => tracing::warn!(%err, session_uri, "could not start otto-ask"),
+                    Err(err) => tracing::warn!(%err, session_uri, "could not start {program}"),
                 }
             }
         }
@@ -670,6 +733,21 @@ impl Prompter for Islands {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_session_started_in_preview_is_handed_back_to_preview() {
+        let meta = serde_json::json!({ "otto": {
+            "app": "otto-preview",
+            "subject": ["file:///home/me/a%20b.pdf"]
+        }});
+        assert_eq!(
+            Opens::of(meta.as_object()),
+            Opens::Preview("/home/me/a b.pdf".into())
+        );
+        assert_eq!(Opens::of(None), Opens::Ask);
+        let other = serde_json::json!({ "otto": { "app": "otto-files" } });
+        assert_eq!(Opens::of(other.as_object()), Opens::Ask);
+    }
     use agent_client_protocol::schema::v1::{
         Diff, ToolCallLocation, ToolCallUpdate, ToolCallUpdateFields,
     };
