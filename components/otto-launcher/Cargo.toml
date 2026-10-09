@@ -9,26 +9,17 @@ description = "A keyboard-driven launcher for Otto — type to filter apps and w
 
 [dependencies]
 laye-rs.workspace = true
+# Ask mode, its chat and its log are otto-agents-kit's, shared with the
+# other apps that host a conversation.
 otto-agents-kit = { path = "../otto-agents-kit" }
 otto-kit = { path = "../otto-kit" }
 otto-peek = { path = "../otto-peek" }
-otto-md-kit = { path = "../otto-md-kit" }
 taffy.workspace = true
 tracing.workspace = true
 wayland-client.workspace = true
 smithay-client-toolkit = { workspace = true, features = ["calloop", "xkbcommon"] }
 wayland-protocols-wlr = { workspace = true, features = ["client"] }
 freedesktop-desktop-entry.workspace = true
-# Ask mode hands requests to otto-agents, the agent service, over the Agent
-# Host Protocol. otto-agents-client carries the transport, the socket's
-# whereabouts and the URI spellings, so both ends cannot drift apart.
-ahp.workspace = true
-ahp-types.workspace = true
-otto-agents-client = { path = "../otto-agents-client" }
-serde_json.workspace = true
-tokio = { workspace = true, features = ["macros", "net", "rt", "sync", "time"] }
-uuid = { workspace = true, features = ["v4"] }
-
 
 [dependencies.skia-safe]
 workspace = true
@@ -36,7 +27,3 @@ features = ["gl", "textlayout", "svg", "skottie"]
 
 [lints]
 workspace = true
-
-[dev-dependencies]
-# The picture the ask log draws is a real file on disk; the test needs one.
-tempfile.workspace = true

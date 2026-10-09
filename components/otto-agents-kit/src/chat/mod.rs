@@ -16,15 +16,15 @@
 //! open — the request sits in the chat as an input request, and the launcher
 //! asks its questions one at a time, with the answers as rows and the field
 //! taking typed ones. Drafts and answers are shared as they are given, so a
-//! request answered somewhere else closes here too; see [`crate::input`].
+//! request answered somewhere else closes here too; see [`crate::chat::input`].
 //!
 //! Files handed to the launcher go with the next request, as attachments that
 //! point the agent at them. And instead of starting a session, the launcher
 //! can open one that is already there — named on the command line, or picked
 //! from the list in agents mode — to follow it and carry it on.
 //!
-//! The connection lives on a thread of its own, because the launcher's loop
-//! has no async runtime. The thread connects as soon as the launcher opens —
+//! The connection lives on a thread of its own, a [`Link`], because the
+//! launcher's loop has no async runtime. The thread connects as soon as the launcher opens —
 //! so the list of agents is there by the time anyone looks — and reports back
 //! over a channel, waking the loop through a socket the launcher polls.
 //!
@@ -35,13 +35,12 @@
 //! nothing: the service already owns the requests, and the session carries on
 //! without anyone watching.
 
+pub mod input;
+pub mod transcript;
+
 use std::collections::HashMap;
-use std::io::{ErrorKind, Read, Write};
-use std::os::fd::{AsRawFd, RawFd};
-use std::os::unix::net::UnixStream;
+use std::os::fd::RawFd;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc;
-use std::time::Duration;
 
 use ahp::reducers::apply_action_to_chat;
 use ahp::{Client, SubscriptionEvent};
@@ -60,14 +59,15 @@ use ahp_types::ROOT_RESOURCE_URI;
 use otto_agents_client::default_url;
 use otto_agents_client::session::{self, SESSION_SCHEME};
 use otto_agents_client::uri::{from_path as file_uri, to_path as path_from_uri};
-pub use otto_kit::components::attachments::Attachment;
 use serde_json::{json, Value};
 use tokio::sync::mpsc as async_mpsc;
+pub use transcript::{Attachment, Picture, Said};
 
-use crate::input::{self, Change, InputRequest, Outcome};
+use crate::item::{Item, Origin};
+use crate::link::{self, Link};
 use crate::log::Style;
-use otto_agents_kit::item::{Item, Origin};
-use otto_agents_kit::sessions::{self, list_sessions, session_items, BoxError};
+use crate::sessions::{list_sessions, session_items, BoxError};
+use input::{Change, InputRequest, Outcome};
 
 /// The folder a session starts in when neither the agent nor anyone else
 /// names one: a scratch folder of Ask's own, `$XDG_STATE_HOME/otto/ask`.
@@ -110,10 +110,6 @@ fn folders_from_meta(meta: Option<&serde_json::Map<String, Value>>) -> HashMap<S
         })
         .unwrap_or_default()
 }
-
-/// Connecting is one round trip to a local service. Past this, the service is
-/// not answering, and saying so beats a launcher that looks like it is.
-const TIMEOUT: Duration = sessions::CONNECT_TIMEOUT;
 
 /// What the connection thread reports.
 #[derive(Debug)]
@@ -411,57 +407,6 @@ pub struct Request {
     pub attachments: Vec<Attachment>,
 }
 
-/// A piece of what the agent answered.
-///
-/// An answer is mostly Markdown, and the pieces of it that arrive one after
-/// another read as one document. A picture breaks it in two: what was said
-/// before it, the picture, then the rest — so a diagram sits where the agent put
-/// it rather than at the end.
-#[derive(Clone, Debug, PartialEq)]
-pub enum Said {
-    /// Markdown, as [`otto_md_kit`] reads it.
-    Text(String),
-    /// A picture the agent sent, as the file the service keeps it in.
-    Image(Picture),
-}
-
-/// A picture in an answer.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Picture {
-    pub path: PathBuf,
-    /// What it is called, for a screen reader and for when it cannot be drawn:
-    /// the file's name without the digest the service appends to it.
-    pub label: String,
-}
-
-impl Picture {
-    /// The picture at `uri`, when it is a local file the launcher can read.
-    ///
-    /// The service writes pictures under its own cache and names them
-    /// `<label>-<digest>.<extension>`; the digest is how the same picture stays
-    /// one file, and is not something to show anyone.
-    fn at(uri: &str, content_type: Option<&str>) -> Option<Self> {
-        let path = path_from_uri(uri)?;
-        if !content_type.is_none_or(|kind| kind.starts_with("image/")) {
-            return None;
-        }
-        let stem = path.file_stem()?.to_string_lossy();
-        let label = match stem.rsplit_once('-') {
-            Some((label, digest)) if is_digest(digest) && !label.is_empty() => {
-                label.replace('-', " ")
-            }
-            _ => stem.into_owned(),
-        };
-        Some(Self { path, label })
-    }
-}
-
-/// Whether `text` is the hexadecimal digest the service appends to a picture's
-/// name, rather than part of what the picture is called.
-fn is_digest(text: &str) -> bool {
-    text.len() == 16 && text.bytes().all(|byte| byte.is_ascii_hexdigit())
-}
-
 /// One request and what came of it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Entry {
@@ -714,12 +659,12 @@ impl Terminal {
 
     /// Brings the terminal that has the session open to the front, when there
     /// is one and its window can be told apart. Says whether it did.
-    pub fn focus(&self) -> bool {
-        self.already_open()
-            && self
-                .session
-                .as_deref()
-                .is_some_and(crate::windows::focus_matching)
+    ///
+    /// `focus_matching` brings forward the first window whose app id or title
+    /// holds the text it is given, and says whether there was one: finding
+    /// windows is the host's, over its own Wayland connection.
+    pub fn focus(&self, focus_matching: impl FnOnce(&str) -> bool) -> bool {
+        self.already_open() && self.session.as_deref().is_some_and(focus_matching)
     }
 
     /// Whether a terminal already has the session open: some process names
@@ -820,8 +765,7 @@ fn window_title(agent: Option<&str>, title: &str) -> String {
 
 pub struct Ask {
     commands: async_mpsc::UnboundedSender<Command>,
-    updates: mpsc::Receiver<Update>,
-    wake: UnixStream,
+    link: Link<Update>,
     agents: Vec<AgentInfo>,
     /// The material each coloured agent wears, by provider id.
     colours: HashMap<String, String>,
@@ -843,48 +787,25 @@ pub struct Ask {
 }
 
 impl Ask {
-    /// Connect to otto-agents in the background, with sessions created in
-    /// [`default_folder`].
-    pub fn open() -> Self {
+    /// Connect to otto-agents in the background, introducing the client as
+    /// `client`, with sessions created in [`default_folder`].
+    pub fn open(client: &str) -> Self {
         let url = std::env::var("OTTO_AGENTS_URL").unwrap_or_else(|_| default_url());
-        Self::connect(url, default_folder())
+        Self::connect(client, url, default_folder())
     }
 
-    pub fn connect(url: String, folder: PathBuf) -> Self {
+    /// Connect to otto-agents at `url`, introducing the client as `client`,
+    /// with sessions created in `folder`.
+    pub fn connect(client: &str, url: String, folder: PathBuf) -> Self {
         let (commands, command_rx) = async_mpsc::unbounded_channel();
-        let (update_tx, updates) = mpsc::channel();
-        let (wake, wake_tx) = match UnixStream::pair() {
-            Ok(pair) => pair,
-            Err(err) => panic!("cannot create the launcher's wake-up socket: {err}"),
-        };
-        let _ = wake.set_nonblocking(true);
-        let _ = wake_tx.set_nonblocking(true);
-        let reporter = Reporter {
-            updates: update_tx,
-            wake: wake_tx,
-        };
-
-        std::thread::Builder::new()
-            .name("otto-agents".into())
-            .spawn(move || {
-                let runtime = match tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                {
-                    Ok(runtime) => runtime,
-                    Err(err) => {
-                        reporter.send(Update::Unreachable(err.to_string()));
-                        return;
-                    }
-                };
-                runtime.block_on(serve(&url, &folder, command_rx, &reporter));
-            })
-            .expect("cannot start the otto-agents connection thread");
+        let client = client.to_owned();
+        let link = Link::start("otto-agents", Update::Unreachable, |reporter| async move {
+            serve(&url, &client, &folder, command_rx, &reporter).await;
+        });
 
         Self {
             commands,
-            updates,
-            wake,
+            link,
             agents: Vec::new(),
             colours: HashMap::new(),
             sessions: Vec::new(),
@@ -1072,25 +993,15 @@ impl Ask {
 
     /// The socket that becomes readable when there is news.
     pub fn poll_fd(&self) -> RawFd {
-        self.wake.as_raw_fd()
+        self.link.poll_fd()
     }
 
     /// Take in whatever the connection thread has reported. Never blocks.
     /// Returns whether anything changed.
     pub fn pump(&mut self) -> bool {
-        let mut buffer = [0u8; 64];
-        loop {
-            match self.wake.read(&mut buffer) {
-                Ok(0) => break,
-                Ok(_) => continue,
-                Err(err) if err.kind() == ErrorKind::Interrupted => continue,
-                Err(_) => break,
-            }
-        }
-
-        let mut changed = false;
-        while let Ok(update) = self.updates.try_recv() {
-            changed = true;
+        let updates: Vec<Update> = self.link.drain().collect();
+        let changed = !updates.is_empty();
+        for update in updates {
             self.apply(update);
         }
         changed
@@ -2105,40 +2016,22 @@ fn error_message(parts: &[ResponsePart]) -> String {
 }
 
 /// The connection thread's side of the channel.
-struct Reporter {
-    updates: mpsc::Sender<Update>,
-    wake: UnixStream,
-}
-
-impl Reporter {
-    fn send(&self, update: Update) {
-        if self.updates.send(update).is_ok() {
-            // A full socket already has a wake-up in it, which is all a byte
-            // is for.
-            let _ = (&self.wake).write(&[1]);
-        }
-    }
-}
+type Reporter = link::Reporter<Update>;
 
 /// The connection thread: connect and list the agents, wait for the first
 /// request and hand it off, then follow the chat, queue the requests that
 /// follow and send the answers, until the launcher goes.
 async fn serve(
     url: &str,
+    name: &str,
     folder: &Path,
     mut commands: async_mpsc::UnboundedReceiver<Command>,
     reporter: &Reporter,
 ) {
-    let client = match tokio::time::timeout(TIMEOUT, connect(url)).await {
-        Ok(Ok(client)) => client,
-        Ok(Err(err)) => {
-            reporter.send(Update::Unreachable(format!("otto-agents at {url}: {err}")));
-            return;
-        }
-        Err(_) => {
-            reporter.send(Update::Unreachable(format!(
-                "otto-agents at {url} did not answer"
-            )));
+    let client = match link::reach(url, name).await {
+        Ok(client) => client,
+        Err(err) => {
+            reporter.send(Update::Unreachable(err));
             return;
         }
     };
@@ -2336,10 +2229,6 @@ async fn serve(
     client.shutdown().await;
 }
 
-async fn connect(url: &str) -> Result<Client, BoxError> {
-    sessions::connect(url, "otto-launcher").await
-}
-
 /// A followed session: its chat's URI, with the session's and the chat's event
 /// streams.
 type Followed = (String, ahp::SessionSubscription, ahp::SessionSubscription);
@@ -2516,20 +2405,24 @@ fn attachment(file: &Path) -> MessageAttachment {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::item::Activity;
+    use crate::sessions::{session_activity, session_subtitle};
     use ahp_types::state::{
         ActiveTurn, ConfirmationOption, ErrorInfo, ErrorResponsePart, MarkdownResponsePart,
         PendingMessage, ReasoningResponsePart, ToolCallCancellationReason, ToolCallCancelledState,
         ToolCallPendingConfirmationState, ToolCallResponsePart, Turn,
     };
-    use otto_agents_kit::item::Activity;
-    use otto_agents_kit::sessions::{session_activity, session_subtitle};
-    use std::time::Instant;
+    use std::time::{Duration, Instant};
 
     #[test]
     fn an_unreachable_service_is_reported_rather_than_waited_on() {
         // Port 9 is the discard port; nothing speaks WebSocket there.
-        let mut ask = Ask::connect("ws://127.0.0.1:9".into(), PathBuf::from("/"));
-        let deadline = Instant::now() + TIMEOUT + Duration::from_secs(2);
+        let mut ask = Ask::connect(
+            "otto-launcher",
+            "ws://127.0.0.1:9".into(),
+            PathBuf::from("/"),
+        );
+        let deadline = Instant::now() + crate::sessions::CONNECT_TIMEOUT + Duration::from_secs(2);
         while ask.unreachable().is_none() && Instant::now() < deadline {
             ask.pump();
             std::thread::sleep(Duration::from_millis(20));
@@ -3105,7 +2998,11 @@ mod tests {
     /// An `Ask` whose connection never gets anywhere, for driving its state by
     /// hand. Nothing is pumped, so the connection's failure never lands.
     fn offline() -> Ask {
-        Ask::connect("ws://127.0.0.1:9".into(), PathBuf::from("/"))
+        Ask::connect(
+            "otto-launcher",
+            "ws://127.0.0.1:9".into(),
+            PathBuf::from("/"),
+        )
     }
 
     fn attached(file: &str) -> MessageAttachment {
@@ -3599,7 +3496,7 @@ mod tests {
     #[ignore = "needs a running `otto-agents serve --echo`"]
     fn follows_a_conversation_to_its_answers() {
         let url = std::env::var("OTTO_AGENTS_URL").unwrap_or_else(|_| default_url());
-        let mut ask = Ask::connect(url, std::env::temp_dir());
+        let mut ask = Ask::connect("otto-launcher", url, std::env::temp_dir());
 
         assert!(pump_until(&mut ask, |ask| !ask.agents.is_empty()));
         assert!(
@@ -3631,7 +3528,7 @@ mod tests {
     #[ignore = "needs a running `otto-agents serve --echo`"]
     fn opens_a_session_with_its_attachments_and_carries_it_on() {
         let url = std::env::var("OTTO_AGENTS_URL").unwrap_or_else(|_| default_url());
-        let mut first = Ask::connect(url.clone(), std::env::temp_dir());
+        let mut first = Ask::connect("otto-launcher", url.clone(), std::env::temp_dir());
         first.attach([PathBuf::from("/tmp/notes.md")]);
         first.send("resume me", None);
         assert!(pump_until(&mut first, |ask| ask.transcript().is_some_and(
@@ -3640,7 +3537,7 @@ mod tests {
         drop(first);
 
         // The newest session is the one just made.
-        let mut second = Ask::connect(url, std::env::temp_dir());
+        let mut second = Ask::connect("otto-launcher", url, std::env::temp_dir());
         assert!(pump_until(&mut second, Ask::sessions_listed));
         assert!(second.resume_at(0));
         assert!(pump_until(&mut second, |ask| ask

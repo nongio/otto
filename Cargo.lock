@@ -5118,10 +5118,14 @@ dependencies = [
  "ahp-types",
  "otto-agents-client",
  "otto-kit",
+ "otto-md-kit",
  "serde_json",
+ "skia-safe",
  "smithay-client-toolkit 0.19.2",
+ "tempfile",
  "tokio",
  "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -5324,23 +5328,15 @@ dependencies = [
 name = "otto-launcher"
 version = "1.6.0"
 dependencies = [
- "ahp",
- "ahp-types",
  "freedesktop-desktop-entry",
  "laye-rs",
- "otto-agents-client",
  "otto-agents-kit",
  "otto-kit",
- "otto-md-kit",
  "otto-peek",
- "serde_json",
  "skia-safe",
  "smithay-client-toolkit 0.19.2",
  "taffy",
- "tempfile",
- "tokio",
  "tracing",
- "uuid",
  "wayland-client",
  "wayland-protocols-wlr",
 ]
