@@ -78,13 +78,17 @@ const SETTLE_BOUNCE: f32 = 0.05;
 /// that fingers coming to rest before lifting do not count as a flick.
 const FLICK_VELOCITY: f64 = 300.0;
 
-/// Room around the items, in logical points, for what an item draws past its
-/// edges: the drop shadow a panel asks for through its surface style.
+/// Room around the items, in physical pixels, for what an item draws past
+/// its edges: the drop shadow a panel asks for through its surface style.
 ///
-/// The column clips to the items' area grown by this on every side, so
-/// overflow is still cut, but a panel's shadow is not. Enough for the
-/// desktop's floating panels' shadow, 32 points of blur 12 points down.
-const SHADOW_BLEED: f64 = 48.0;
+/// The column clips to the items' area grown by this on every side, so a
+/// panel's shadow is not cut. A shadow's radius reaches the scene unscaled,
+/// as physical pixels, and lay-rs blurs it with that radius as the Gaussian's
+/// sigma, which fades out about three radii past the layer. The desktop's
+/// floating panels ask for a radius of 32 and an offset of 12 down
+/// (`otto-launcher`, `otto-stash`, `otto-canvas`): 3 × 32 + 12 = 108. A
+/// larger shadow is cut at this distance.
+const SHADOW_BLEED_PX: f64 = 108.0;
 
 /// One client surface in the column.
 struct CanvasItem {
@@ -1048,8 +1052,10 @@ impl<B: Backend> Otto<B> {
             ..Default::default()
         });
         column.set_pointer_events(false);
-        // Overflow is clipped: items taller than the space left are cut at
-        // the bottom of the usable area.
+        // Overflow is clipped: items taller than the space left are cut
+        // [`SHADOW_BLEED_PX`] below the bottom of the usable area, the room
+        // left there for a shadow. Only items that do not fit their share
+        // (before version 5, or too many for the minimums) overflow at all.
         column.set_clip_children(true, None);
         column.set_clip_content(true, None);
         self.canvas.column = Some(column.clone());
@@ -1217,7 +1223,7 @@ impl<B: Backend> Otto<B> {
         let right = f64::from(usable.loc.x - output_geo.loc.x + usable.size.w) - margin;
         let top = f64::from(usable.loc.y - output_geo.loc.y) + margin;
         let height = (f64::from(usable.size.h) - 2.0 * margin).max(0.0);
-        let bleed_px = (SHADOW_BLEED * scale).round();
+        let bleed_px = SHADOW_BLEED_PX;
         Some(ColumnGeometry {
             scale,
             shown_x_px: ((right - width) * scale).round(),
@@ -1236,7 +1242,7 @@ impl<B: Backend> Otto<B> {
         let column = self.canvas.column.as_ref()?;
         let origin = self.workspaces.output_geometry(output)?.loc.to_f64();
         let scale = output.current_scale().fractional_scale();
-        let bleed_px = (SHADOW_BLEED * scale).round();
+        let bleed_px = SHADOW_BLEED_PX;
         let at = column.render_position();
         let size = column.render_size();
         Some(Rectangle::new(
