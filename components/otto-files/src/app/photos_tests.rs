@@ -229,10 +229,7 @@ fn the_info_panel_is_always_up_and_describes_the_selection() {
         browser.photos_info_data(),
         Some(view::PhotosInfoData::One { .. })
     ));
-    assert_eq!(
-        browser.path_bar_note().as_deref(),
-        Some("1 of 4 selected")
-    );
+    assert_eq!(browser.path_bar_note().as_deref(), Some("1 of 4 selected"));
     // A press in the panel is the panel's, not a click on nothing.
     let panel = view::photos_info_rect(browser.size.0, browser.content_h());
     assert!(browser
