@@ -204,6 +204,10 @@ impl Backend for AcpBackend {
             meta,
             mcp_servers(&spec.mcp_servers),
             spec.instructions,
+            ShownBeside::new(
+                spec.mcp_servers.iter().map(|server| server.name.as_str()),
+                spec.subject,
+            ),
             self.images.clone(),
             commands,
             events,
@@ -263,10 +267,14 @@ pub async fn run_session(
     meta: Option<Meta>,
     servers: Vec<McpServer>,
     instructions: Option<String>,
+    beside: ShownBeside,
     images: Option<ImageCache>,
     mut commands: mpsc::UnboundedReceiver<SessionCommand>,
     events: mpsc::UnboundedSender<SessionEvent>,
 ) {
+    // What the client already shows next to the chat, whose pictures stay
+    // with the agent.
+    let beside = Arc::new(Mutex::new(beside));
     // The turn whose updates are being streamed, shared with the update handler.
     let current_turn: Arc<Mutex<Option<String>>> = Arc::default();
     // The modes the agent advertised when the session opened and the
@@ -298,27 +306,24 @@ pub async fn run_session(
                 let modes = Arc::clone(&modes);
                 let images = images.clone();
                 let shown = Arc::clone(&shown);
+                let beside = Arc::clone(&beside);
                 async move |notification: SessionNotification, _connection| {
+                    let mut update = notification.update;
+                    lock(&beside).strip(&mut update);
                     // A mode change belongs to the session, not to a turn or
                     // the replay: the agent switched itself, or someone did
                     // from its own interface.
-                    if let SessionUpdate::CurrentModeUpdate(update) = &notification.update {
+                    if let SessionUpdate::CurrentModeUpdate(update) = &update {
                         announce_modes(&events, &modes, update.current_mode_id.to_string());
                         return Ok(());
                     }
                     // No turn runs while the agent replays its history, so
                     // those updates belong to the replay.
                     if let Some(replay) = lock(&replay).as_mut() {
-                        replay.take(notification.update);
+                        replay.take(update);
                         return Ok(());
                     }
-                    forward_update(
-                        &current_turn,
-                        &events,
-                        images.as_ref(),
-                        &shown,
-                        notification.update,
-                    );
+                    forward_update(&current_turn, &events, images.as_ref(), &shown, update);
                     Ok(())
                 }
             },
@@ -1046,6 +1051,105 @@ fn forward_tool_pictures(
     }
 }
 
+/// What a session's client already shows beside the chat: the answers of its
+/// own MCP servers and the files the session is about. Preview gives its
+/// server and the file in its window, so a picture from `preview_render`, or
+/// from the agent reading that file, would be the window next to the chat
+/// again: it stays with the agent and out of the answer.
+#[derive(Debug, Default)]
+pub struct ShownBeside {
+    /// `mcp__<server>__`, the prefix Claude gives a server's tools.
+    tools: Vec<String>,
+    files: Vec<PathBuf>,
+    /// The tool calls found to be about one of them. A call is reported
+    /// several times, and what it is about may only arrive with its input.
+    calls: BTreeSet<String>,
+}
+
+impl ShownBeside {
+    pub fn new<'a>(servers: impl Iterator<Item = &'a str>, files: Vec<PathBuf>) -> Self {
+        Self {
+            tools: servers.map(|name| format!("mcp__{name}__")).collect(),
+            files,
+            calls: BTreeSet::new(),
+        }
+    }
+
+    /// Takes the pictures out of a tool call's `update` when the call is
+    /// about what the client shows.
+    fn strip(&mut self, update: &mut SessionUpdate) {
+        if self.tools.is_empty() && self.files.is_empty() {
+            return;
+        }
+        let (id, content) = match update {
+            SessionUpdate::ToolCall(call) => {
+                let id = call.tool_call_id.to_string();
+                let names = [tool_name_in(call.meta.as_ref()), Some(call.title.as_str())];
+                let paths = call
+                    .locations
+                    .iter()
+                    .map(|location| location.path.as_path());
+                if self.about(&names, paths, call.raw_input.as_ref()) {
+                    self.calls.insert(id.clone());
+                }
+                (id, Some(&mut call.content))
+            }
+            SessionUpdate::ToolCallUpdate(update) => {
+                let id = update.tool_call_id.to_string();
+                let fields = &mut update.fields;
+                let names = [tool_name_in(update.meta.as_ref()), fields.title.as_deref()];
+                let paths = fields
+                    .locations
+                    .iter()
+                    .flatten()
+                    .map(|location| location.path.as_path());
+                if self.about(&names, paths, fields.raw_input.as_ref()) {
+                    self.calls.insert(id.clone());
+                }
+                (id, fields.content.as_mut())
+            }
+            _ => return,
+        };
+        if let Some(content) = content.filter(|_| self.calls.contains(&id)) {
+            content.retain(|piece| {
+                !matches!(
+                    piece,
+                    ToolCallContent::Content(piece)
+                        if matches!(piece.content, ContentBlock::Image(_) | ContentBlock::ResourceLink(_))
+                )
+            });
+        }
+    }
+
+    /// Whether a tool named one of `names`, about `paths` and `input`, is one
+    /// of the client's own or reads one of its files.
+    fn about<'a>(
+        &self,
+        names: &[Option<&str>],
+        paths: impl Iterator<Item = &'a Path>,
+        input: Option<&'a serde_json::Value>,
+    ) -> bool {
+        let own = names.iter().flatten().any(|name| {
+            self.tools
+                .iter()
+                .any(|prefix| name.starts_with(prefix.as_str()))
+        });
+        let input_path = input
+            .and_then(|input| input.get("file_path").or_else(|| input.get("path")))
+            .and_then(serde_json::Value::as_str)
+            .map(Path::new);
+        own || paths
+            .chain(input_path)
+            .any(|path| self.files.iter().any(|file| file == path))
+    }
+}
+
+/// The tool's own name in a tool call's `_meta`, where claude-agent-acp keeps
+/// it (`claudeCode.toolName`).
+fn tool_name_in(meta: Option<&Meta>) -> Option<&str> {
+    meta?.get("claudeCode")?.get("toolName")?.as_str()
+}
+
 /// How the note on a message written away from the desktop starts, so the
 /// history can leave it out again.
 const REMOTE_NOTE: &str = "[Otto: written on the person's phone";
@@ -1155,6 +1259,95 @@ mod replay_tests {
 
     fn asked(text: &str) -> SessionUpdate {
         SessionUpdate::UserMessageChunk(ContentChunk::new(said(text)))
+    }
+
+    /// The `_meta` claude-agent-acp puts on a call to `tool`.
+    fn claude_tool(tool: &str) -> Meta {
+        serde_json::json!({ "claudeCode": { "toolName": tool } })
+            .as_object()
+            .unwrap()
+            .clone()
+    }
+
+    /// A tool call that answered with a picture.
+    fn pictured(call: ToolCall) -> SessionUpdate {
+        use agent_client_protocol::schema::v1::{Content, ImageContent};
+        SessionUpdate::ToolCall(call.content(vec![
+            ToolCallContent::Content(Content::new(ContentBlock::Image(ImageContent::new(
+                "iVBORw0KGgo=",
+                "image/png",
+            )))),
+            ToolCallContent::Content(Content::new(said("rendered"))),
+        ]))
+    }
+
+    fn pictures(update: &SessionUpdate) -> usize {
+        let SessionUpdate::ToolCall(call) = update else {
+            return 0;
+        };
+        call.content
+            .iter()
+            .filter(|piece| {
+                matches!(piece, ToolCallContent::Content(piece) if matches!(piece.content, ContentBlock::Image(_)))
+            })
+            .count()
+    }
+
+    #[test]
+    fn pictures_of_what_the_client_shows_stay_with_the_agent() {
+        use agent_client_protocol::schema::v1::ToolCallLocation;
+        let file = PathBuf::from("/home/me/Pictures/a.jpg");
+        let mut beside = ShownBeside::new(["preview"].into_iter(), vec![file.clone()]);
+
+        // The client's own server, by the tool's name.
+        let mut render = pictured(
+            ToolCall::new("1", "preview_render").meta(claude_tool("mcp__preview__preview_render")),
+        );
+        beside.strip(&mut render);
+        assert_eq!(pictures(&render), 0);
+        // Its words stay.
+        let SessionUpdate::ToolCall(call) = &render else {
+            unreachable!()
+        };
+        assert_eq!(call.content.len(), 1);
+
+        // Reading the file the client shows.
+        let mut read = pictured(
+            ToolCall::new("2", "Read a.jpg").locations(vec![ToolCallLocation::new(file.clone())]),
+        );
+        beside.strip(&mut read);
+        assert_eq!(pictures(&read), 0);
+
+        // A later update of a call found to be about it loses its pictures too.
+        let mut later = SessionUpdate::ToolCallUpdate(ToolCallUpdate::new(
+            "2",
+            ToolCallUpdateFields::new().content(vec![ToolCallContent::Content(
+                agent_client_protocol::schema::v1::Content::new(ContentBlock::ResourceLink(
+                    ResourceLink::new("a.jpg", "file:///home/me/Pictures/a.jpg"),
+                )),
+            )]),
+        ));
+        beside.strip(&mut later);
+        let SessionUpdate::ToolCallUpdate(update) = &later else {
+            unreachable!()
+        };
+        assert_eq!(update.fields.content.as_ref().map(Vec::len), Some(0));
+
+        // Anything else is shown as before.
+        let mut other =
+            pictured(
+                ToolCall::new("3", "Read b.jpg").locations(vec![ToolCallLocation::new(
+                    PathBuf::from("/home/me/Pictures/b.jpg"),
+                )]),
+            );
+        beside.strip(&mut other);
+        assert_eq!(pictures(&other), 1);
+        let mut elsewhere = ShownBeside::default();
+        let mut render = pictured(
+            ToolCall::new("4", "preview_render").meta(claude_tool("mcp__preview__preview_render")),
+        );
+        elsewhere.strip(&mut render);
+        assert_eq!(pictures(&render), 1);
     }
 
     fn answered(text: &str) -> SessionUpdate {

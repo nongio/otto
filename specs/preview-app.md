@@ -136,6 +136,9 @@ in another app, `xdg-open`, the command line.
 - The file goes with the first message, but is never shown as an attachment,
   since it is open beside the chat. Marks going with a message are not shown
   as attachments either.
+- Pictures the agent gets from Preview's own tools (`preview_render`) or from
+  reading the file itself stay with the agent and out of the log: they are
+  the window beside it again.
 - Return sends. Up and Down pick an answer while one is waited for; Return
   or a click gives it. Ctrl+C stops a running turn, or copies the selection.
 - A press in the panel gives it the keyboard; a press on the document, or

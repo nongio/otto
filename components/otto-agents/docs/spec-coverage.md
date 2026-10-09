@@ -75,7 +75,9 @@ Where we agree, and it is most of it:
   `_meta.otto`): `app` and `subject`, copied onto the session's state so every
   list can open it in that app; `agent`, a plugin agent to run as in place of
   the configured one (Preview's `studio`, marked `session-only` so it is never
-  offered for desktop questions), falling back when no plugin has it; `instructions`, given to the agent ahead of
+  offered for desktop questions), falling back when no plugin has it; pictures from
+  a tool call to the client's own MCP servers, or about a subject file, are
+  left out of the answer, since the client shows those already; `instructions`, given to the agent ahead of
   its first turn and never shown in the chat; and `mcpServers`, stdio MCP
   servers handed to the agent with ACP's `mcpServers`, Otto programs named by
   absolute path only. The last two are not stored with the session yet: a

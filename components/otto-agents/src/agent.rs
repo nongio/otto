@@ -39,6 +39,22 @@ pub struct SessionSpec {
     /// `_meta.otto.agent`; a name no plugin has falls back to the configured
     /// one.
     pub runs_as: Option<String>,
+    /// The files the session is about (`_meta.otto.subject`), which its
+    /// client shows beside the chat.
+    pub subject: Vec<PathBuf>,
+}
+
+/// The local files in the `_meta.otto.subject` a client created a session
+/// with.
+pub fn subject_from_meta(
+    meta: Option<&serde_json::Map<String, serde_json::Value>>,
+) -> Vec<PathBuf> {
+    meta.and_then(|meta| meta.get("otto")?.get("subject")?.as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(serde_json::Value::as_str)
+        .filter_map(crate::uri::to_path)
+        .collect()
 }
 
 /// The `_meta.otto.agent` a client created a session with: a plugin agent's
