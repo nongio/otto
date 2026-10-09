@@ -31,6 +31,10 @@ thread_local! {
     static TYPED_QUEUE_HANDLE: RefCell<Option<Box<dyn std::any::Any>>> = const { RefCell::new(None) };
     #[allow(clippy::type_complexity)]
     static FRAME_REQUEST_FN: RefCell<Option<Box<dyn Fn(&wl_surface::WlSurface)>>> = const { RefCell::new(None) };
+    /// Makes a window's `org_kde_kwin_appmenu` on the app's own queue, which
+    /// only the runner knows the type of. See [`AppContext::appmenu_for`].
+    #[allow(clippy::type_complexity)]
+    static APPMENU_FN: RefCell<Option<Box<dyn Fn(&wl_surface::WlSurface) -> Option<crate::protocols::org_kde_kwin_appmenu::OrgKdeKwinAppmenu>>>> = const { RefCell::new(None) };
     static CURRENT_CONFIGURE: RefCell<Option<(ObjectId, WindowConfigure, u32)>> = const { RefCell::new(None) };
     static WINDOWS: RefCell<Vec<crate::components::window::Window>> = const { RefCell::new(Vec::new()) };
     /// Per-window handlers for the compositor's "please close" request, keyed
@@ -323,6 +327,10 @@ pub struct AppContextData {
         Option<crate::protocols::otto_canvas_manager_v1::OttoCanvasManagerV1>,
     pub otto_text_cursor_manager:
         Option<crate::protocols::otto_text_cursor_manager_v1::OttoTextCursorManagerV1>,
+    /// `org_kde_kwin_appmenu_manager`: tells the compositor where a window's
+    /// menu is served, for the top bar. See [`crate::app_menu`].
+    pub kde_appmenu_manager:
+        Option<crate::protocols::org_kde_kwin_appmenu_manager::OrgKdeKwinAppmenuManager>,
     /// The other side of the caret: `otto_text_cursor_manager_v1` says where
     /// *someone else's* caret is, this says where ours is. `None` on a
     /// compositor without `zwp_text_input_v3`.
@@ -992,6 +1000,16 @@ impl<'a> AppContext<'a> {
         let qh_clone = queue_handle.clone();
         TYPED_QUEUE_HANDLE.with(|qh| {
             *qh.borrow_mut() = Some(Box::new(qh_clone));
+        });
+
+        let manager = context_data.kde_appmenu_manager.clone();
+        let qh_clone = queue_handle.clone();
+        APPMENU_FN.with(|make| {
+            *make.borrow_mut() = Some(Box::new(move |surface: &wl_surface::WlSurface| {
+                manager
+                    .as_ref()
+                    .map(|manager| manager.create(surface, &qh_clone, ()))
+            }));
         });
 
         let qh_clone = queue_handle.clone();
@@ -1878,6 +1896,15 @@ impl<'a> AppContext<'a> {
 
     /// The surface holding the keyboard, or `None` when no window of this
     /// application does.
+    /// A new `org_kde_kwin_appmenu` for `surface`, to say where its menu is
+    /// served; `None` on a compositor without the protocol, or before the
+    /// app runs. Used by [`crate::app_menu::AppMenu::attach`].
+    pub fn appmenu_for(
+        surface: &wl_surface::WlSurface,
+    ) -> Option<crate::protocols::org_kde_kwin_appmenu::OrgKdeKwinAppmenu> {
+        APPMENU_FN.with(|make| make.borrow().as_ref().and_then(|make| make(surface)))
+    }
+
     /// Start watching the desktop's text cursor, and return the object doing
     /// the watching — it has to be kept alive for the events to keep coming.
     ///
@@ -2203,6 +2230,7 @@ impl<'a> AppContext<'a> {
         APP_CONTEXT_PTR.with(|ptr| *ptr.borrow_mut() = None);
         TYPED_QUEUE_HANDLE.with(|qh| *qh.borrow_mut() = None);
         FRAME_REQUEST_FN.with(|f| *f.borrow_mut() = None);
+        APPMENU_FN.with(|f| *f.borrow_mut() = None);
         CURRENT_CONFIGURE.with(|cfg| *cfg.borrow_mut() = None);
         WINDOWS.with(|w| w.borrow_mut().clear());
 

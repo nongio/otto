@@ -12,9 +12,9 @@ pub use context::{AppContext, CursorImage};
 pub use smithay_client_toolkit::seat::keyboard::Modifiers;
 
 use crate::protocols::{
-    otto_dock_item_v1, otto_dock_manager_v1, otto_style_transaction_v1,
-    otto_surface_style_manager_v1, otto_surface_style_v1, otto_text_cursor_manager_v1,
-    otto_text_cursor_v1, otto_timing_function_v1,
+    org_kde_kwin_appmenu, org_kde_kwin_appmenu_manager, otto_dock_item_v1, otto_dock_manager_v1,
+    otto_style_transaction_v1, otto_surface_style_manager_v1, otto_surface_style_v1,
+    otto_text_cursor_manager_v1, otto_text_cursor_v1, otto_timing_function_v1,
 };
 use smithay_client_toolkit::{
     compositor::{CompositorHandler, CompositorState},
@@ -573,6 +573,10 @@ impl<A: App + 'static> AppRunnerWithType<A> {
         // any compositor but Otto, which is why it is optional.
         let otto_text_cursor_manager: Option<otto_text_cursor_manager_v1::OttoTextCursorManagerV1> =
             globals.bind(&qh, 1..=1, ()).ok();
+        // Where a window's menu is served, for the top bar to show. Any
+        // compositor with KDE's appmenu protocol; optional like the rest.
+        let kde_appmenu_manager: Option<org_kde_kwin_appmenu_manager::OrgKdeKwinAppmenuManager> =
+            globals.bind(&qh, 1..=2, ()).ok();
         // Where *our* caret is, which the compositor hands to input methods
         // and to anything watching `otto_text_cursor_manager_v1`. The object
         // itself needs a seat and is made in `new_capability`.
@@ -640,6 +644,7 @@ impl<A: App + 'static> AppRunnerWithType<A> {
             output_state,
             surface_style_manager,
             otto_text_cursor_manager,
+            kde_appmenu_manager,
             text_input_manager,
             text_input: None,
             wlr_layer_shell,
@@ -2085,6 +2090,32 @@ impl<A: App + 'static>
         // [`AppContext::report_text_cursor`] deliberately never sends. When
         // the toolkit grows preedit, this is where the input method's text
         // comes in.
+    }
+}
+
+impl<A: App + 'static> Dispatch<org_kde_kwin_appmenu_manager::OrgKdeKwinAppmenuManager, ()>
+    for AppData<A>
+{
+    fn event(
+        _state: &mut Self,
+        _proxy: &org_kde_kwin_appmenu_manager::OrgKdeKwinAppmenuManager,
+        _event: org_kde_kwin_appmenu_manager::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+    }
+}
+
+impl<A: App + 'static> Dispatch<org_kde_kwin_appmenu::OrgKdeKwinAppmenu, ()> for AppData<A> {
+    fn event(
+        _state: &mut Self,
+        _proxy: &org_kde_kwin_appmenu::OrgKdeKwinAppmenu,
+        _event: org_kde_kwin_appmenu::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
     }
 }
 

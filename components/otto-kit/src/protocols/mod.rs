@@ -36,6 +36,17 @@ mod otto_text_cursor_protocol {
     wayland_scanner::generate_client_code!("../../protocols/otto-text-cursor-v1.xml");
 }
 
+mod kde_appmenu_protocol {
+    use wayland_client;
+
+    pub use wayland_client::protocol::{__interfaces::*, wl_surface};
+
+    wayland_scanner::generate_interfaces!("../../protocols/kde-appmenu.xml");
+    wayland_scanner::generate_client_code!("../../protocols/kde-appmenu.xml");
+}
+
+pub use kde_appmenu_protocol::{org_kde_kwin_appmenu, org_kde_kwin_appmenu_manager};
+
 pub use sc_layer_protocol::{
     otto_style_transaction_v1, otto_surface_style_manager_v1, otto_surface_style_v1,
     otto_timing_function_v1,
