@@ -288,8 +288,12 @@ impl Browser {
             PointerEventKind::Leave { .. } => Some(peek::VideoPointer::Leave),
             PointerEventKind::Axis { .. } => None,
         };
+        let serial = match event.kind {
+            PointerEventKind::Press { serial, .. } => Some(serial),
+            _ => None,
+        };
         if let Some(kind) = video_pointer {
-            if self.preview_video_pointer(kind, x, y) {
+            if self.preview_video_pointer(kind, x, y, serial) {
                 AppContext::request_wakeup();
                 return Some(After::Next);
             }
@@ -870,6 +874,16 @@ impl Browser {
             && (self.entry_at(x, y).is_some() || self.preview_grab_at(x, y).is_some())
         {
             self.drag_armed = Some((x, y, serial));
+        }
+
+        // A second press on the preview's picture opens the file, as a
+        // second click on its row would.
+        if let Some(stage) = self.preview_grab_at(x, y) {
+            if self.note_preview_click() {
+                self.drag_armed = None;
+                self.open_from_preview(stage);
+                return After::Next;
+            }
         }
 
         if let Some(action) = self.trash_action_at(x, y) {

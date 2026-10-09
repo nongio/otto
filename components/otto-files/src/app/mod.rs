@@ -491,6 +491,21 @@ struct Browser {
     photo_hover: Option<usize>,
     /// The info panel's colour swatch under the pointer.
     photo_swatch_hover: Option<usize>,
+    /// The Photos info panel's turn or flip button under the pointer.
+    photo_tool_hover: Option<usize>,
+    /// The info panel video's repaint key as last drawn, so a new frame
+    /// marks the window dirty — see [`Self::tick_photos_video`].
+    photos_video_key: Option<u64>,
+    /// The last press on a preview's picture — the preview column's, or the
+    /// Photos info panel's — so a second one soon after opens the file.
+    last_preview_click: Option<std::time::Instant>,
+    /// A press on a preview's *video* that has not yet said whether it is a
+    /// click, which plays or pauses it, or the start of a drag, which picks
+    /// the file up. Settled by the release, or cancelled by the drag.
+    video_click_pending: bool,
+    /// Where an open pulse rises from when the file was opened from its
+    /// preview rather than its row: the picture it was double-clicked on.
+    opening_stage: Option<Rect>,
     /// Text selected in an info panel of the main window.
     panel_text: Option<panel_text::PanelText>,
     /// Text selected in Get Info.
@@ -917,6 +932,8 @@ struct PreviewPaneState {
     text: Option<ocrcache::Status>,
     /// The picture's main colours, for the Photos info panel's swatches.
     palette: Vec<skia_safe::Color>,
+    /// What the camera wrote down about the picture, read with the decode.
+    camera: Option<crate::camera::Shot>,
 }
 
 /// An in-place rename in progress: which row it belongs to and the text

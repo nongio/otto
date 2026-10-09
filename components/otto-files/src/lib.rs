@@ -20,6 +20,7 @@
 mod bench;
 
 pub mod app;
+pub mod camera;
 pub mod command;
 pub mod dbus;
 pub mod desk;
@@ -30,9 +31,11 @@ pub mod launch;
 pub mod model;
 pub mod ocrcache;
 pub mod open_with;
+pub mod orient;
 pub mod palette;
 pub mod pane_surfaces;
 pub mod peek;
+pub mod peek_cache;
 pub mod perf;
 pub mod photos;
 pub mod picker;
@@ -46,6 +49,7 @@ pub mod scripts;
 pub mod search;
 pub mod stash;
 pub mod tasks;
+pub mod videosize;
 pub use otto_peek::thumbcache;
 pub mod thumbnails;
 pub mod undo_history;

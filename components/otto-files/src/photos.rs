@@ -20,10 +20,22 @@ use crate::recent;
 use crate::view::PhotosSection;
 use otto_search::dates::civil_from_days;
 
-/// Whether an entry is laid out as a picture, at its own proportions, rather
-/// than as a square tile in the trailing "Other Files" section.
+/// Whether an entry is a picture: what can be turned, has a palette, and is
+/// counted as a photo.
 pub fn is_photo(entry: &Entry) -> bool {
     !entry.is_dir && entry.kind == Kind::Image
+}
+
+/// Whether an entry is a video.
+pub fn is_video(entry: &Entry) -> bool {
+    !entry.is_dir && entry.kind == Kind::Video
+}
+
+/// Whether an entry is laid out on the wall at its own proportions, its
+/// thumbnail filling the tile — a picture, or a video's poster frame — rather
+/// than as a square tile in the trailing "Other Files" section.
+pub fn is_media(entry: &Entry) -> bool {
+    is_photo(entry) || is_video(entry)
 }
 
 const DAY: i64 = 86_400;
@@ -144,22 +156,22 @@ pub enum SectionKind {
 pub fn kind_of(entry: &Entry) -> SectionKind {
     if entry.is_dir {
         SectionKind::Folders
-    } else if is_photo(entry) {
+    } else if is_media(entry) {
         SectionKind::Photos
     } else {
         SectionKind::Other
     }
 }
 
-/// The run a picture falls in under `grouping`: its local day, its month
-/// counted from the epoch, or one run for all. `None` for a picture whose
-/// date could not be read.
-pub fn group_key(modified: Option<SystemTime>, grouping: Grouping) -> Option<i64> {
+/// The run a picture falls in under `grouping`, given the day it belongs to
+/// (see [`Dims::day`]): that day, its month counted from the epoch, or one
+/// run for all. `None` for a picture whose date could not be read.
+pub fn group_key(day: Option<i64>, grouping: Grouping) -> Option<i64> {
     match grouping {
         Grouping::None => Some(0),
-        Grouping::Day => local_day(modified),
+        Grouping::Day => day,
         Grouping::Month => {
-            let (year, month, _) = civil_from_days(local_day(modified)?);
+            let (year, month, _) = civil_from_days(day?);
             Some(year * 12 + month as i64 - 1)
         }
     }
@@ -197,13 +209,18 @@ fn group_heading(key: Option<i64>, grouping: Grouping, today: i64) -> String {
 /// are together (see `Browser::ensure_sorted`), so a run is a group — and if
 /// one ever were not, a second heading for it is a truer picture of the order
 /// than folding tiles under a heading they do not sit beneath.
-pub fn sections(entries: &[&Entry], today: i64, grouping: Grouping) -> Vec<PhotosSection> {
+pub fn sections(
+    entries: &[&Entry],
+    today: i64,
+    grouping: Grouping,
+    dims: &Dims,
+) -> Vec<PhotosSection> {
     let mut out: Vec<PhotosSection> = Vec::new();
     let mut run: Option<(SectionKind, Option<i64>)> = None;
     for (index, entry) in entries.iter().enumerate() {
         let kind = kind_of(entry);
         let key = match kind {
-            SectionKind::Photos => group_key(entry.modified, grouping),
+            SectionKind::Photos => group_key(dims.day(entry), grouping),
             SectionKind::Folders | SectionKind::Other => None,
         };
         match out.last_mut() {
@@ -238,6 +255,10 @@ pub fn sections(entries: &[&Entry], today: i64, grouping: Grouping) -> Vec<Photo
 /// when the answer lands.
 pub const PLACEHOLDER_ASPECT: f32 = 1.5;
 
+/// The aspect a video is laid out at until its header is read, and when it
+/// cannot be: 16:9, what nearly everything records at.
+pub const VIDEO_ASPECT: f32 = 16.0 / 9.0;
+
 /// The widest and tallest a tile may be, as width over height. A panorama at
 /// its true proportions would be a strip too thin to see, and a tall
 /// screenshot would take a whole row to itself; past these the thumbnail is
@@ -269,25 +290,39 @@ const CAPACITY: usize = 50_000;
 /// does not know, which the layout shows square.
 ///
 /// **Blocks** on the file. Belongs on a background thread.
-pub fn probe(path: &Path) -> Option<(u32, u32)> {
-    let mut file = std::fs::File::open(path).ok()?;
+///
+/// The day the picture was taken comes back with it, from the EXIF in the
+/// same bytes: every format that carries one — JPEG, TIFF and the raws, HEIC
+/// — writes it at the head of the file, before the header ends.
+pub fn probe(path: &Path) -> (Option<(u32, u32)>, Option<i64>) {
+    let Ok(mut file) = std::fs::File::open(path) else {
+        return (None, None);
+    };
     let mut bytes = Vec::new();
+    let mut size = None;
     for limit in PROBE_READS {
         let have = bytes.len() as u64;
-        (&mut file)
+        if (&mut file)
             .take(limit - have)
             .read_to_end(&mut bytes)
-            .ok()?;
+            .is_err()
+        {
+            break;
+        }
         match imagesize::parse(&bytes) {
-            Header::Size(w, h) => return Some((w, h)),
-            Header::Unknown => return None,
+            Header::Size(w, h) => {
+                size = Some((w, h));
+                break;
+            }
+            Header::Unknown => break,
             // Short of the limit means the whole file is in hand, and there
             // is no more to read.
-            Header::NeedMore if (bytes.len() as u64) < limit => return None,
+            Header::NeedMore if (bytes.len() as u64) < limit => break,
             Header::NeedMore => {}
         }
     }
-    None
+    let taken = crate::camera::parse(&bytes).and_then(|shot| shot.taken);
+    (size, taken)
 }
 
 /// [`probe`] over bytes already read.
@@ -298,19 +333,21 @@ pub fn probe_bytes(bytes: &[u8]) -> Option<(u32, u32)> {
     }
 }
 
-/// What is known about one file's size.
+/// What is known about one file's size, and the day it was taken.
 struct Known {
     /// The modification time it was probed against.
     modified: Option<SystemTime>,
     /// `None` when the probe could not read a size.
     size: Option<(u32, u32)>,
+    /// The day the camera says it was taken, from the same header read.
+    taken: Option<i64>,
 }
 
 /// One file for the background probe.
 pub type ProbeJob = (PathBuf, Option<SystemTime>);
 
 /// One file's answer from the background probe.
-pub type ProbeResult = (PathBuf, Option<SystemTime>, Option<(u32, u32)>);
+pub type ProbeResult = (PathBuf, Option<SystemTime>, Option<(u32, u32)>, Option<i64>);
 
 /// The sizes of the pictures this window has seen.
 ///
@@ -345,15 +382,23 @@ impl Dims {
     /// hold. [`PLACEHOLDER_ASPECT`] until it is known; square for a picture
     /// whose size could not be read, and for anything that is not a picture.
     pub fn aspect(&self, entry: &Entry) -> f32 {
-        if !is_photo(entry) {
+        if !is_media(entry) {
             return 1.0;
         }
+        // A video whose header could not be read is still a video, and
+        // nearly every video is widescreen.
+        let unknown = if is_video(entry) { VIDEO_ASPECT } else { 1.0 };
+        let placeholder = if is_video(entry) {
+            VIDEO_ASPECT
+        } else {
+            PLACEHOLDER_ASPECT
+        };
         let aspect = match self.known.get(&entry.path) {
             Some(known) if known.modified == entry.modified => match known.size {
                 Some((w, h)) => w as f32 / h as f32,
-                None => 1.0,
+                None => unknown,
             },
-            _ => PLACEHOLDER_ASPECT,
+            _ => placeholder,
         };
         aspect.clamp(MIN_ASPECT, MAX_ASPECT)
     }
@@ -370,7 +415,7 @@ impl Dims {
         }
         let jobs: Vec<ProbeJob> = entries
             .into_iter()
-            .filter(|entry| is_photo(entry) && entry.modified.is_some())
+            .filter(|entry| is_media(entry) && entry.modified.is_some())
             .filter(|entry| {
                 self.known
                     .get(&entry.path)
@@ -391,14 +436,37 @@ impl Dims {
             .and_then(|known| known.size)
     }
 
+    /// The day `entry` belongs to in the Photos view: the day it was taken,
+    /// when the camera wrote it down and it has been read, else the local day
+    /// it was last modified.
+    ///
+    /// Taken first because a modification time is a fact about the file, not
+    /// the photograph: copying a card, unpacking an archive or editing a tag
+    /// sets it, and a folder of holiday pictures unzipped last week — or
+    /// stamped 1980 by the zip — would otherwise be filed under that.
+    pub fn day(&self, entry: &Entry) -> Option<i64> {
+        self.known
+            .get(&entry.path)
+            .filter(|known| known.modified == entry.modified)
+            .and_then(|known| known.taken)
+            .or_else(|| local_day(entry.modified))
+    }
+
     /// Record a batch's answers.
     pub fn finish(&mut self, results: Vec<ProbeResult>) {
         self.in_flight = false;
         if self.known.len() + results.len() > CAPACITY {
             self.known.clear();
         }
-        for (path, modified, size) in results {
-            self.known.insert(path, Known { modified, size });
+        for (path, modified, size, taken) in results {
+            self.known.insert(
+                path,
+                Known {
+                    modified,
+                    size,
+                    taken,
+                },
+            );
         }
         self.epoch = self.epoch.wrapping_add(1);
     }
@@ -408,10 +476,35 @@ impl Dims {
 pub fn probe_all(jobs: Vec<ProbeJob>) -> Vec<ProbeResult> {
     jobs.into_iter()
         .map(|(path, modified)| {
-            let size = probe(&path);
-            (path, modified, size)
+            let (size, taken) = if is_video_path(&path) {
+                probe_video(&path)
+            } else {
+                probe(&path)
+            };
+            (path, modified, size, taken)
         })
         .collect()
+}
+
+/// Whether a probe job is a video. Named rather than sniffed: the job
+/// carries a path, and its entry was laid out as a video by the same name.
+fn is_video_path(path: &Path) -> bool {
+    path.file_name().is_some_and(|name| {
+        otto_kit::filetype::kind_for_name(&name.to_string_lossy()) == Kind::Video
+    })
+}
+
+/// [`probe`] for a video: its size as shown, and the day it was recorded,
+/// from the container's header.
+pub fn probe_video(path: &Path) -> (Option<(u32, u32)>, Option<i64>) {
+    let Some(video) = crate::videosize::read(path) else {
+        return (None, None);
+    };
+    let day = video
+        .recorded
+        .and_then(|secs| u64::try_from(secs).ok())
+        .map(|secs| SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(secs));
+    (video.size, local_day(day))
 }
 
 // ---------------------------------------------------------------------------
@@ -607,7 +700,7 @@ mod tests {
             entry("notes.txt", Kind::Text, Some(noon(20_721))),
         ];
         let refs: Vec<&Entry> = owned.iter().collect();
-        let sections = sections(&refs, 20_722, Grouping::Day);
+        let sections = sections(&refs, 20_722, Grouping::Day, &Dims::new());
         assert_eq!(
             shape(&sections),
             vec![
@@ -632,7 +725,7 @@ mod tests {
         ];
         let refs: Vec<&Entry> = owned.iter().collect();
         // 20,721 and 20,700 are both September 2026; 20,690 is August.
-        let months = sections(&refs, 20_722, Grouping::Month);
+        let months = sections(&refs, 20_722, Grouping::Month, &Dims::new());
         assert_eq!(
             shape(&months),
             vec![(SectionKind::Photos, 0, 2), (SectionKind::Photos, 2, 1)]
@@ -640,7 +733,7 @@ mod tests {
         assert_eq!(months[0].title, "September 2026");
         assert_eq!(months[1].title, "August 2026");
 
-        let one = sections(&refs, 20_722, Grouping::None);
+        let one = sections(&refs, 20_722, Grouping::None, &Dims::new());
         assert_eq!(shape(&one), vec![(SectionKind::Photos, 0, 3)]);
         assert!(one[0].title.is_empty());
     }
@@ -760,10 +853,10 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("tall.png");
         std::fs::write(&path, png(12, 48)).unwrap();
-        assert_eq!(probe(&path), Some((12, 48)));
+        assert_eq!(probe(&path), (Some((12, 48)), None));
         let junk = dir.join("junk.png");
         std::fs::write(&junk, b"nope").unwrap();
-        assert_eq!(probe(&junk), None);
+        assert_eq!(probe(&junk), (None, None));
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -785,7 +878,7 @@ mod tests {
         assert!(dims.wanted(owned.iter()).is_empty(), "one batch at a time");
 
         let epoch = dims.epoch();
-        dims.finish(vec![(owned[0].path.clone(), when, Some((10, 40)))]);
+        dims.finish(vec![(owned[0].path.clone(), when, Some((10, 40)), None)]);
         assert_ne!(dims.epoch(), epoch);
         assert_eq!(dims.aspect(&owned[0]), MIN_ASPECT, "clamped");
         assert!(dims.wanted(owned.iter()).is_empty(), "nothing left to ask");

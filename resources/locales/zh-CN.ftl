@@ -685,6 +685,9 @@ files-undo-move = 移动
 files-undo-copy = 拷贝
 files-undo-delete = 删除
 files-undo-rename = 重命名
+files-undo-rotate = 旋转
+files-undo-flip = 翻转
+files-turn-failed = 无法旋转“{ $name }”：{ $error }
 # $name is a file or folder name, already wrapped in quotation marks.
 files-renamed-to = 已重命名为“{ $name }”
 files-new-folder-created = 新文件夹“{ $name }”
@@ -1871,11 +1874,14 @@ files-photos-info-copied = 已拷贝
 files-photos-info-dimensions = 尺寸
 files-photos-info-modified = 修改时间
 files-photos-info-where = 位置
+files-photos-info-camera = 相机
+files-photos-info-lens = 镜头
+files-photos-info-exposure = 曝光
+files-photos-info-location = 拍摄地点
 files-photos-info-many =
     { $count ->
        *[other] { $count } 项
     }
-files-photos-one-selected = 已选择 1 项 · 空格预览 · ↵ 打开
 
 
 ## otto-authorize — the panel that asks for the password before a sensitive setting changes.

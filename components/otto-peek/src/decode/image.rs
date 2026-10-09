@@ -14,7 +14,7 @@ use skia_safe::{Codec, Data, ISize, ImageInfo};
 use crate::payload;
 use crate::payload::{Pixels, PreviewPayload};
 
-use super::{read_capped, Request};
+use super::{external, read_capped, Request};
 
 /// The most pixels a single decode may produce. A 100 MP decode at RGBA is
 /// 400 MB, which is already past what a preview should ever hold; the sample
@@ -51,24 +51,182 @@ const ANIMATION_SIZE_FLOOR: f32 = 0.5;
 const MAX_CARRIED_DELAY_MS: u32 = 100;
 
 pub fn raster(file: &mut File, request: &Request) -> PreviewPayload {
+    match read_capped(file, request.budget.max_read) {
+        Ok(bytes) => decoded(&bytes, request),
+        Err(err) => unreadable(&err),
+    }
+}
+
+fn unreadable(err: &std::io::Error) -> PreviewPayload {
+    payload::unavailable(otto_kit::t_owned!(
+        "peek-error-read-image",
+        error = err.to_string()
+    ))
+}
+
+/// The types read by [`heif`]: HEIC from a phone, AVIF from the web, and the
+/// sequences either can hold.
+pub fn is_heif(mime: &str) -> bool {
+    matches!(
+        mime,
+        "image/heif" | "image/heic" | "image/heif-sequence" | "image/heic-sequence" | "image/avif"
+    )
+}
+
+/// The longest edge a HEIF is converted at, whatever the zoom asks for. The
+/// ceiling [`MAX_DECODE_PIXELS`] puts on any other picture, as an edge.
+const MAX_CONVERT_EDGE: u32 = 8_192;
+
+/// Converters for HEIF, tried in order. Each is libheif underneath; they
+/// differ in which a distribution happens to have installed, and in speed —
+/// libvips assembles a phone's grid of tiles several times faster.
+///
+/// Both are told how many threads to start. Left to choose, each starts one
+/// per core, and under the worker's address-space cap the pool is what fails
+/// to come up — on exactly the large pictures a phone takes.
+///
+/// No `ffmpeg` row, though it reads HEIF: a phone's photograph is a grid of
+/// tiles, and an `ffmpeg` that does not assemble them hands back nothing or
+/// one tile — a confident crop, which is worse than the file's icon.
+const HEIF_CONVERTERS: &[external::Tool] = &[
+    external::Tool {
+        command: "vipsthumbnail",
+        args: |ask| {
+            vec![
+                "stdin".into(),
+                "--vips-concurrency=2".into(),
+                // `>`: only ever shrink. The camera's orientation is applied
+                // without being asked.
+                "--size".into(),
+                format!("{}x{}>", ask.width, ask.height),
+                // A bare suffix is libvips for "this format, on stdout".
+                "-o".into(),
+                ".png".into(),
+            ]
+        },
+    },
+    external::Tool {
+        command: "magick",
+        args: |ask| {
+            vec![
+                "-limit".into(),
+                "thread".into(),
+                "2".into(),
+                // Naming the coder keeps ImageMagick from choosing one by
+                // sniffing, which is a much larger surface than libheif. It
+                // reads AVIF too: the coder is libheif's, not HEVC's.
+                "heic:/dev/stdin".into(),
+                // The camera's orientation, so the picture comes back the way
+                // up it was taken.
+                "-auto-orient".into(),
+                "-thumbnail".into(),
+                format!("{}x{}>", ask.width, ask.height),
+                "png:-".into(),
+            ]
+        },
+    },
+];
+
+/// A HEIF picture.
+///
+/// Skia can be built with HEIF and AVIF codecs and this one is not, so the
+/// picture is converted by a program on the system at the size it is wanted,
+/// and from there it is a picture like any other. A Skia that *can* decode it
+/// is given it first.
+pub fn heif(file: &mut File, request: &Request) -> PreviewPayload {
     let bytes = match read_capped(file, request.budget.max_read) {
         Ok(bytes) => bytes,
-        Err(err) => {
-            return payload::unavailable(otto_kit::t_owned!(
-                "peek-error-read-image",
-                error = err.to_string()
-            ))
-        }
+        Err(err) => return unreadable(&err),
     };
-    let data = Data::new_copy(&bytes);
+    if Codec::from_data(Data::new_copy(&bytes)).is_some() {
+        return decoded(&bytes, request);
+    }
+
+    let zoom = request.zoom.max(1.0);
+    let edge = |pixels: u32| ((pixels as f32 * zoom).ceil() as u32).clamp(1, MAX_CONVERT_EDGE);
+    let ask = external::Ask {
+        width: edge(request.width),
+        height: edge(request.height),
+        at: None,
+    };
+    let Some(mut pixels) = external::picture(HEIF_CONVERTERS, file, &ask) else {
+        return payload::unavailable(otto_kit::t_owned!("peek-error-image-unsupported"));
+    };
+
+    // The converter's picture is the size that was asked for; the file's is
+    // usually larger, and saying so is what lets a zoom ask for more.
+    if let Some((width, height)) = heif_size(&bytes, pixels.width, pixels.height) {
+        pixels.intrinsic_width = width;
+        pixels.intrinsic_height = height;
+    }
+    if request.ocr {
+        pixels.words =
+            crate::ocr::recognise(&pixels, request.recogniser_command(), &request.languages);
+    }
+    PreviewPayload::Pixels {
+        pixels,
+        pages: 1,
+        page: 1,
+    }
+}
+
+/// The size of a HEIF's picture, from its `ispe` boxes, turned the way the
+/// converted picture `width` × `height` is.
+///
+/// A file has one `ispe` per image item — the picture, its thumbnail, and on
+/// a phone every tile of the grid the picture is assembled from — so the
+/// largest is the picture. Rotation is a separate box the converter has
+/// already applied, so the shape is taken from what it made rather than read
+/// and reapplied. `None` when there is none, or it is smaller than what was
+/// converted and so cannot be the picture's.
+fn heif_size(bytes: &[u8], width: u32, height: u32) -> Option<(u32, u32)> {
+    let (mut long, mut short) = (0u32, 0u32);
+    let mut at = 0;
+    while let Some(found) = bytes[at..].windows(4).position(|w| w == b"ispe") {
+        let start = at + found + 4;
+        at = start;
+        // Version and flags, then the width and the height.
+        let Some(fields) = bytes.get(start + 4..start + 12) else {
+            break;
+        };
+        let w = u32::from_be_bytes([fields[0], fields[1], fields[2], fields[3]]);
+        let h = u32::from_be_bytes([fields[4], fields[5], fields[6], fields[7]]);
+        if u64::from(w) * u64::from(h) > u64::from(long) * u64::from(short) {
+            (long, short) = (w.max(h), w.min(h));
+        }
+    }
+    if long < width.max(height) || short < width.min(height) {
+        return None;
+    }
+    Some(if width >= height {
+        (long, short)
+    } else {
+        (short, long)
+    })
+}
+
+fn decoded(bytes: &[u8], request: &Request) -> PreviewPayload {
+    let data = Data::new_copy(bytes);
     let Some(mut codec) = Codec::from_data(data) else {
         return payload::unavailable(otto_kit::t_owned!("peek-error-image-unsupported"));
     };
 
-    let intrinsic = codec.dimensions();
-    if intrinsic.width <= 0 || intrinsic.height <= 0 {
+    let encoded = codec.dimensions();
+    if encoded.width <= 0 || encoded.height <= 0 {
         return payload::unavailable(otto_kit::t_owned!("peek-error-image-no-size"));
     }
+    // A photo stored on its side, with EXIF saying which way up it goes:
+    // `get_image` turns it upright, and wants the size it is to be turned
+    // *into*. So everything from here on is measured the way it is shown.
+    let swaps = codec.origin().swaps_width_height();
+    let upright = |size: ISize| {
+        if swaps {
+            ISize::new(size.height, size.width)
+        } else {
+            size
+        }
+    };
+    let intrinsic = upright(encoded);
 
     let target = target_size(intrinsic, request);
 
@@ -89,11 +247,11 @@ pub fn raster(file: &mut File, request: &Request) -> PreviewPayload {
     // The codec picks the nearest sample size it can actually deliver, which is
     // rarely exactly what was asked for.
     let scale = (target.width as f32 / intrinsic.width as f32).clamp(0.0, 1.0);
-    let scaled = if scale >= 1.0 {
-        intrinsic
+    let scaled = upright(if scale >= 1.0 {
+        encoded
     } else {
         codec.get_scaled_dimensions(scale)
-    };
+    });
 
     if pixel_count(scaled) > MAX_DECODE_PIXELS {
         return too_large(intrinsic, request);
@@ -517,6 +675,31 @@ fn to_pixels_at(image: &skia_safe::Image, intrinsic: ISize, size: ISize) -> Opti
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn ispe(width: u32, height: u32) -> Vec<u8> {
+        let mut bytes = 20u32.to_be_bytes().to_vec();
+        bytes.extend_from_slice(b"ispe");
+        bytes.extend_from_slice(&[0; 4]);
+        bytes.extend_from_slice(&width.to_be_bytes());
+        bytes.extend_from_slice(&height.to_be_bytes());
+        bytes
+    }
+
+    /// A phone's HEIC: a 512-pixel tile repeated, and the grid they make.
+    /// The grid is the picture, turned the way the converter turned it.
+    #[test]
+    fn a_heif_is_as_large_as_its_largest_image() {
+        let mut file = b"....ftypheic".to_vec();
+        file.extend(ispe(512, 512));
+        file.extend(ispe(4032, 3024));
+        file.extend(ispe(512, 512));
+        assert_eq!(heif_size(&file, 2048, 1536), Some((4032, 3024)));
+        assert_eq!(heif_size(&file, 1536, 2048), Some((3024, 4032)));
+        // Smaller than what was converted, so not the picture's.
+        assert_eq!(heif_size(&ispe(256, 256), 1024, 768), None);
+        // Cut off mid-box.
+        assert_eq!(heif_size(&ispe(4032, 3024)[..14], 64, 48), None);
+    }
 
     /// PNG cannot be decoded at a sample size, so without a resample a big
     /// one would come back whole however small the request.

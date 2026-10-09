@@ -34,7 +34,8 @@ impl Browser {
         // re-filters in place, with no filesystem access, and picking the
         // same one re-uses the order already computed.
         let filter = self.picker.as_ref().map(|p| p.current_filter).unwrap_or(0);
-        let photos = (self.mode == ViewMode::Photos).then_some(self.photos_group);
+        let photos =
+            (self.mode == ViewMode::Photos).then_some((self.photos_group, self.photo_dims.epoch()));
         let key = (
             column.epoch,
             self.sort,
@@ -54,7 +55,7 @@ impl Browser {
                 None => true,
             })
             .collect();
-        if let Some(grouping) = photos {
+        if let Some((grouping, _)) = photos {
             // Folders, then pictures a group at a time, then everything
             // else: the Photos view's sections are runs of this order, so
             // each day or month has to be one run whatever the sort within
@@ -65,7 +66,7 @@ impl Browser {
                 .map(|e| {
                     let kind = crate::photos::kind_of(e);
                     let group = (kind == crate::photos::SectionKind::Photos)
-                        .then(|| crate::photos::group_key(e.modified, grouping))
+                        .then(|| crate::photos::group_key(self.photo_dims.day(e), grouping))
                         .flatten();
                     (kind, group)
                 })

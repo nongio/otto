@@ -410,7 +410,8 @@ impl App for FilesApp {
                 | browser.tick_peek_animation()
                 | browser.tick_peek_exit()
                 | browser.tick_open_pulse()
-                | browser.tick_photos_copied();
+                | browser.tick_photos_copied()
+                | browser.tick_photos_video();
             // The docked preview column follows the selection wherever it
             // moves — a click, an arrow key, a directory finishing a load
             // that changes what "the selection" resolves to — so this is

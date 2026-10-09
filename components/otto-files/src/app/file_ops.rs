@@ -868,6 +868,8 @@ pub(super) fn sounds_like(changes: &[model::Change]) -> model::OpResult {
             model::Change::Created { .. } => result.copied += 1,
             model::Change::Moved { .. } => result.moved += 1,
             model::Change::Trashed { .. } => result.trashed += 1,
+            // Scripts do not turn photographs; nothing to hear if one did.
+            model::Change::Oriented { .. } => {}
         }
     }
     result

@@ -36,6 +36,9 @@ folders never changes the view; only going somewhere new does, such as a
 sidebar place or Back.
 
 Pictures, PDFs and videos show a thumbnail instead of a generic type icon.
+Video thumbnails need `ffmpegthumbnailer` or `ffmpeg` installed, and HEIC and
+AVIF photos — what a phone takes — need `libvips` or ImageMagick; without them
+those files keep their type icon.
 Files reads the shared thumbnail cache that other file managers write, so
 folders another manager has already been through come up with pictures
 immediately. Files does not write to that cache yet, so thumbnails it makes for

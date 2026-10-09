@@ -10,7 +10,7 @@
 pub const DAY: i64 = 86_400;
 
 /// Days since 1970-01-01 of a civil date. `month` is 1 to 12.
-pub(crate) fn days_from_civil(year: i32, month: u32, day: u32) -> i64 {
+pub fn days_from_civil(year: i32, month: u32, day: u32) -> i64 {
     let year = i64::from(year) - i64::from(month <= 2);
     let era = year.div_euclid(400);
     let year_of_era = year - era * 400;

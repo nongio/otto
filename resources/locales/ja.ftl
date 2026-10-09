@@ -685,6 +685,9 @@ files-undo-move = 移動
 files-undo-copy = コピー
 files-undo-delete = 削除
 files-undo-rename = 名称変更
+files-undo-rotate = 回転
+files-undo-flip = 反転
+files-turn-failed = 「{ $name }」を回転できませんでした: { $error }
 # $name is a file or folder name, already wrapped in quotation marks.
 files-renamed-to = 「{ $name }」に名称変更しました
 files-new-folder-created = 新規フォルダ「{ $name }」
@@ -1867,11 +1870,14 @@ files-photos-info-copied = コピーしました
 files-photos-info-dimensions = サイズ
 files-photos-info-modified = 変更日
 files-photos-info-where = 場所
+files-photos-info-camera = カメラ
+files-photos-info-lens = レンズ
+files-photos-info-exposure = 露出
+files-photos-info-location = 撮影地
 files-photos-info-many =
     { $count ->
        *[other] { $count } 項目
     }
-files-photos-one-selected = 1 項目を選択 · Space でプレビュー · ↵ で開く
 
 
 ## otto-authorize — the panel that asks for the password before a sensitive setting changes.

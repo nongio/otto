@@ -790,3 +790,17 @@ fn the_drop_target_clears_once_it_has_been_applied() {
     assert_eq!(browser.drop_target, None, "the outline goes with the drop");
     assert!(browser.dirty, "and the window repaints");
 }
+
+/// A press on a preview's picture opens the file only when it is the second
+/// of a pair, and the pair is spent by opening: a third press starts over.
+#[test]
+fn a_preview_opens_on_its_second_press() {
+    let (mut browser, _dir) = browser_over(&["a.png"], &[]);
+    assert!(!browser.note_preview_click());
+    assert!(browser.note_preview_click());
+    assert!(!browser.note_preview_click());
+    // Too slow to be a double click.
+    browser.last_preview_click =
+        Some(std::time::Instant::now() - DOUBLE_CLICK_WINDOW - std::time::Duration::from_millis(1));
+    assert!(!browser.note_preview_click());
+}
