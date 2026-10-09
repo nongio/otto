@@ -1827,6 +1827,9 @@ fn convert_dbusmenu_items(items: &[crate::dbusmenu::MenuItem]) -> Vec<KitMenuIte
                 kit
             } else {
                 let mut kit = KitMenuItem::action(&label).with_action_id(item.id.to_string());
+                if let Some(shortcut) = &item.shortcut {
+                    kit = kit.with_shortcut(shortcut.clone());
+                }
                 if let Some(icon) = icon {
                     kit = kit.with_icon(icon);
                 }

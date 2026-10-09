@@ -627,7 +627,7 @@ impl ContextMenu {
                     let item_h = items_at_depth
                         .get(item_idx)
                         .map(|item| item.height)
-                        .unwrap_or(22.0);
+                        .unwrap_or(23.0);
 
                     // Y position includes top padding
                     (p_width, y_offset + style_borrow.vertical_padding, item_h)

@@ -57,6 +57,8 @@ pub struct MenuItem {
     pub icon_name: Option<String>,
     /// Raw ARGB32 pixmap from `icon-data` property: (width, height, bytes)
     pub icon_data: Option<(i32, i32, Vec<u8>)>,
+    /// The key combination, ready to show (`⌃⇧T`).
+    pub shortcut: Option<String>,
     pub item_type: MenuItemType,
     pub children: Vec<MenuItem>,
 }
@@ -255,6 +257,7 @@ fn parse_menu_item(value: &OwnedValue) -> Option<MenuItem> {
     let visible = prop_bool(&props, "visible").unwrap_or(true);
     let icon_name = prop_string(&props, "icon-name");
     let icon_data = prop_icon_data(&props, "icon-data");
+    let shortcut = prop_shortcut(&props, "shortcut");
 
     let type_str = prop_string(&props, "type").unwrap_or_default();
 
@@ -271,6 +274,7 @@ fn parse_menu_item(value: &OwnedValue) -> Option<MenuItem> {
         visible,
         icon_name,
         icon_data,
+        shortcut,
         item_type,
         children: children_val,
     })
@@ -313,10 +317,76 @@ fn prop_string(props: &HashMap<String, OwnedValue>, key: &str) -> Option<String>
 fn prop_bool(props: &HashMap<String, OwnedValue>, key: &str) -> Option<bool> {
     let val = props.get(key)?;
     let v: Value<'_> = Value::try_from(val).ok()?;
+    // The `a{sv}` value arrives still in its variant, as with strings:
+    // without unwrapping it every `enabled: false` read as missing, and
+    // missing means enabled.
     match v {
         Value::Bool(b) => Some(b),
+        Value::Value(boxed) => match *boxed {
+            Value::Bool(b) => Some(b),
+            _ => None,
+        },
         _ => None,
     }
+}
+
+/// Parse `shortcut`: `aas`, each inner array one key combination as
+/// modifier names then the key (`["Control", "Shift", "t"]`). Only the
+/// first combination is shown, in the glyphs Otto's own menus use (`⌃⇧T`).
+fn prop_shortcut(props: &HashMap<String, OwnedValue>, key: &str) -> Option<String> {
+    let val = props.get(key)?;
+    let v: Value<'_> = Value::try_from(val).ok()?;
+    let v = match v {
+        Value::Value(boxed) => *boxed,
+        other => other,
+    };
+    let Value::Array(combos) = v else {
+        return None;
+    };
+    let combo: Vec<String> = match combos.iter().next()? {
+        Value::Array(keys) => keys
+            .iter()
+            .filter_map(|k| match k {
+                Value::Str(s) => Some(s.to_string()),
+                _ => None,
+            })
+            .collect(),
+        _ => return None,
+    };
+    format_shortcut(&combo)
+}
+
+/// `["Control", "Shift", "t"]` → `⌃⇧T`, modifiers in the conventional
+/// ⌃⌥⇧⌘ order whatever order the app listed them in.
+fn format_shortcut(combo: &[String]) -> Option<String> {
+    let (key, modifiers) = combo.split_last()?;
+    let mut out = String::new();
+    for (name, glyph) in [
+        ("Control", "⌃"),
+        ("Alt", "⌥"),
+        ("Shift", "⇧"),
+        ("Super", "⌘"),
+    ] {
+        if modifiers.iter().any(|m| m == name) {
+            out.push_str(glyph);
+        }
+    }
+    let key = match key.as_str() {
+        "\u{1b}" | "Escape" => "⎋".to_string(),
+        "\u{7f}" | "Delete" => "⌦".to_string(),
+        "BackSpace" | "\u{8}" => "⌫".to_string(),
+        "Return" | "\r" => "↩".to_string(),
+        "Tab" | "\t" => "⇥".to_string(),
+        "space" | " " => "Space".to_string(),
+        "Left" => "←".to_string(),
+        "Right" => "→".to_string(),
+        "Up" => "↑".to_string(),
+        "Down" => "↓".to_string(),
+        "" => return None,
+        other => other.to_uppercase(),
+    };
+    out.push_str(&key);
+    Some(out)
 }
 
 /// Parse `icon-data` property: `a(iiay)` — array of (width, height, ARGB32 bytes).
@@ -367,4 +437,49 @@ fn prop_icon_data(props: &HashMap<String, OwnedValue>, key: &str) -> Option<(i32
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn props(entries: Vec<(&str, Value<'static>)>) -> HashMap<String, OwnedValue> {
+        entries
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), OwnedValue::try_from(v).unwrap()))
+            .collect()
+    }
+
+    #[test]
+    fn a_disabled_item_reads_disabled_inside_its_variant() {
+        let p = props(vec![("enabled", Value::new(Value::Bool(false)))]);
+        assert_eq!(prop_bool(&p, "enabled"), Some(false));
+        let p = props(vec![("enabled", Value::Bool(false))]);
+        assert_eq!(prop_bool(&p, "enabled"), Some(false));
+    }
+
+    #[test]
+    fn shortcuts_read_as_glyphs_in_the_usual_order() {
+        let combo = |keys: &[&str]| keys.iter().map(|k| k.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            format_shortcut(&combo(&["Control", "h"])).as_deref(),
+            Some("⌃H")
+        );
+        assert_eq!(
+            format_shortcut(&combo(&["Shift", "Control", "t"])).as_deref(),
+            Some("⌃⇧T")
+        );
+        assert_eq!(
+            format_shortcut(&combo(&["Shift", "\u{1b}"])).as_deref(),
+            Some("⇧⎋")
+        );
+        assert_eq!(format_shortcut(&combo(&[])), None);
+    }
+
+    #[test]
+    fn the_first_combination_of_a_shortcut_is_shown() {
+        let combos = Value::new(vec![vec!["Control", "Shift", "t"], vec!["Alt", "x"]]);
+        let p = props(vec![("shortcut", combos)]);
+        assert_eq!(prop_shortcut(&p, "shortcut").as_deref(), Some("⌃⇧T"));
+    }
 }
