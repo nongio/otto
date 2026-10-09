@@ -528,6 +528,51 @@ impl Marks {
         before - self.list.len()
     }
 
+    /// Every mark, as kept with the agent session: the list
+    /// [`Self::to_json`] writes, which [`Self::restore`] reads back.
+    pub fn kept(&self) -> Value {
+        let mut all = self.to_json(Path::new(""), None, false);
+        all["marks"].take()
+    }
+
+    /// The marks a session kept, in place of any there are. Ones that can't
+    /// be read are left out.
+    pub fn restore(&mut self, kept: &Value) {
+        let Some(list) = kept.as_array() else {
+            return;
+        };
+        self.list = list
+            .iter()
+            .filter_map(|mark| {
+                Some(Mark {
+                    n: mark.get("n").and_then(Value::as_u64).map(|n| n as u32),
+                    by: match mark.get("by")?.as_str()? {
+                        "person" => Author::Person,
+                        "agent" => Author::Agent,
+                        _ => return None,
+                    },
+                    page: mark
+                        .get("page")
+                        .and_then(Value::as_u64)
+                        .map(|page| page as usize),
+                    shape: Shape::from_json(mark.get("shape")?)?,
+                    label: mark.get("label").and_then(Value::as_str).map(str::to_owned),
+                    layer: mark.get("layer").and_then(Value::as_str).map(str::to_owned),
+                    sent: mark.get("sent").and_then(Value::as_bool).unwrap_or(false),
+                })
+            })
+            .collect();
+        self.next = self
+            .list
+            .iter()
+            .filter(|mark| mark.by == Author::Person)
+            .filter_map(|mark| mark.n)
+            .max()
+            .unwrap_or(0);
+        self.hovered = None;
+        self.over_delete = false;
+    }
+
     /// Take away the person's marks.
     pub fn clear_person(&mut self) -> usize {
         let before = self.list.len();
@@ -1026,6 +1071,27 @@ mod tests {
         // A relative path is not a picture anyone can find.
         let relative = json!([{ "shape": { "kind": "image", "path": "logo.png", "from": [0, 0], "to": [1, 1] } }]);
         assert!(marks.draw_agent("ideas", &relative).is_err());
+    }
+
+    #[test]
+    fn marks_kept_with_the_session_come_back_as_they_were() {
+        let frame = picture_frame();
+        let mut marks = Marks::default();
+        marks.begin(&[frame], Point::new(200.0, 100.0), true);
+        marks.extend(Point::new(300.0, 200.0));
+        marks.finish();
+        marks.list[0].sent = true;
+        let drawn = json!([{ "shape": { "kind": "arrow", "from": [0, 0], "to": [90, 90] }, "label": "here" }]);
+        marks.draw_agent("notes", &drawn).unwrap();
+
+        let mut again = Marks::default();
+        again.restore(&marks.kept());
+        assert_eq!(again.list, marks.list);
+        // The person's next mark carries on the numbers.
+        again.begin(&[frame], Point::new(150.0, 100.0), true);
+        again.extend(Point::new(180.0, 140.0));
+        again.finish();
+        assert_eq!(again.list.last().unwrap().n, Some(2));
     }
 
     #[test]

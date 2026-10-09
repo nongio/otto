@@ -172,6 +172,9 @@ in another app, `xdg-open`, the command line.
 - The eye hides every mark, to see the document as it is, and turns the pen
   off; badges can't be hovered or deleted while hidden. The marks show again
   from the eye, when the pen is turned on, or when the agent draws.
+- Every mark, the person's and the agent's, is kept with the agent session
+  (in its `_meta.otto.marks`) once the chat has a session, and comes back
+  when the session is opened in Preview again.
 - The person's marks not yet sent go with the next message: the line over
   the field says which. They are written to `$XDG_RUNTIME_DIR/otto-preview/`
   as `marks-*.json` (shapes and bounds in the document's units) and, for a

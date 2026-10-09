@@ -10,7 +10,7 @@ use ahp::{Client, ClientError, SessionSubscription, SubscriptionEvent};
 use ahp_types::ROOT_RESOURCE_URI;
 use ahp_types::actions::{
     ActionEnvelope, ChatPendingMessageSetAction, ChatTurnCancelledAction, ChatTurnStartedAction,
-    StateAction,
+    SessionMetaChangedAction, StateAction,
 };
 use ahp_types::commands::ListSessionsResult;
 use ahp_types::errors::{ahp_error_codes, json_rpc_error_codes};
@@ -575,4 +575,60 @@ async fn a_session_is_entered_one_way_before_it_has_a_history_and_another_after(
         &json!(["agent", "--resume", "agent-1"]),
         "once the agent has written the session, it is resumed"
     );
+}
+
+async fn next_meta(subscription: &mut SessionSubscription) -> serde_json::Map<String, Value> {
+    loop {
+        if let StateAction::SessionMetaChanged(changed) = next_envelope(subscription).await.action {
+            return changed.meta.expect("a meta");
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_client_keeps_its_marks_with_the_session_and_nothing_else() {
+    let client = serving(Arc::new(EchoBackend)).await.client;
+    let uri = new_session_uri();
+    let _: Value = client
+        .request(
+            "createSession",
+            json!({
+                "channel": uri,
+                "provider": "echo",
+                "workingDirectories": [temp_dir_uri()],
+                "_meta": { "otto": { "app": "otto-preview" } }
+            }),
+        )
+        .await
+        .expect("createSession");
+    let (_, mut session_events) = client.subscribe(uri.clone()).await.expect("subscribe");
+
+    let keep = |otto: Value| {
+        StateAction::SessionMetaChanged(SessionMetaChangedAction {
+            meta: json!({ "otto": otto }).as_object().cloned(),
+        })
+    };
+    let marks = json!([{ "by": "person", "n": 1, "shape": { "kind": "rect", "from": [0, 0], "to": [9, 9] } }]);
+    client
+        .dispatch(
+            uri.clone(),
+            keep(json!({ "marks": marks, "app": "something-else" })),
+        )
+        .await
+        .expect("dispatch");
+    let meta = next_meta(&mut session_events).await;
+    assert_eq!(meta["otto"]["marks"], marks);
+    assert_eq!(
+        meta["otto"]["app"], "otto-preview",
+        "only the marks are the client's"
+    );
+
+    // Without marks, the session keeps none.
+    client
+        .dispatch(uri.clone(), keep(json!({})))
+        .await
+        .expect("dispatch");
+    let meta = next_meta(&mut session_events).await;
+    assert!(meta["otto"].get("marks").is_none());
+    assert_eq!(meta["otto"]["app"], "otto-preview");
 }

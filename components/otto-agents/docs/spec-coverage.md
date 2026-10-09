@@ -82,6 +82,10 @@ Where we agree, and it is most of it:
   servers handed to the agent with ACP's `mcpServers`, Otto programs named by
   absolute path only. The last two are not stored with the session yet: a
   session restored after a restart starts its agent without them.
+  After that a client may keep `marks` with a client-dispatched `session/metaChanged`
+  on the session's channel: the host takes only the keys a client may set
+  (`otto.marks`), merges them into the session's `_meta`, stores it and
+  broadcasts the merged whole.
   The doctrine allows this and warns that anything interoperable clients come
   to need should graduate into typed state.
 

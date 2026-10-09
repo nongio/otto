@@ -773,6 +773,24 @@ impl Doc {
 }
 
 impl Doc {
+    /// The marks and the agent session agree: a session carried on here
+    /// brings back the marks it kept, and marks changed since are kept with
+    /// it, once a stroke or a drag is over.
+    fn sync_marks(&self, chat: &mut Chat) {
+        let mut viewer = self.viewer.lock().unwrap();
+        if let Some(kept) = chat.restored_marks() {
+            viewer.marks.restore(&kept);
+            chat.marks_restored(&viewer.marks);
+            viewer.dirty = true;
+            drop(viewer);
+            self.window.request_frame();
+            return;
+        }
+        if !viewer.mark_busy() {
+            chat.keep_marks(&viewer.marks);
+        }
+    }
+
     /// Show the file again when its folder has changed and the file with
     /// it. A file that has gone keeps showing what it was.
     fn follow_file(&self) {
@@ -982,6 +1000,7 @@ impl App for PreviewApp {
         for doc in &self.docs {
             doc.update();
             let mut chat = doc.chat.borrow_mut();
+            doc.sync_marks(&mut chat);
             if chat.pump() | chat.tick(delta) {
                 drop(chat);
                 doc.redraw();

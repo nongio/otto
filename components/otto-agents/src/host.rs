@@ -627,6 +627,15 @@ impl Host {
         let channel = params.channel;
         let mut state = self.lock();
 
+        // What a client keeps with a session, in its `_meta`: Preview's marks.
+        if let StateAction::SessionMetaChanged(changed) = &params.action {
+            if state.sessions.contains_key(&channel) {
+                let meta = changed.meta.clone();
+                state.set_client_meta(&channel, meta.as_ref(), origin);
+                self.flush_withdrawals(&mut state);
+                return;
+            }
+        }
         let Some(session_uri) = state.chat_sessions.get(&channel).cloned() else {
             if channel == ROOT_RESOURCE_URI || state.sessions.contains_key(&channel) {
                 let reason = "this host does not accept client actions on this channel yet";
@@ -2369,6 +2378,36 @@ impl HostState {
         self.mark_unsaved(session_uri);
     }
 
+    /// Keeps what a client asked to keep with the session: the keys of its
+    /// `_meta.otto` in [`CLIENT_META`], each set, or cleared when it is not
+    /// there. Everything else in the session's `_meta` is the service's, and
+    /// stays as it is. Stored with the session, so it is there when the
+    /// session is opened again.
+    fn set_client_meta(
+        &mut self,
+        session_uri: &str,
+        meta: Option<&JsonObject>,
+        origin: ActionOrigin,
+    ) {
+        let Some(session) = self.sessions.get(session_uri) else {
+            return;
+        };
+        let asked = meta
+            .and_then(|meta| meta.get("otto"))
+            .and_then(Value::as_object);
+        let mut merged = session.state.meta.clone();
+        for key in CLIENT_META {
+            let value = asked.and_then(|otto| otto.get(*key)).cloned();
+            merged = with_otto_meta(merged, key, value);
+        }
+        if merged == session.state.meta {
+            return;
+        }
+        let changed = StateAction::SessionMetaChanged(SessionMetaChangedAction { meta: merged });
+        self.apply(session_uri, changed, Some(origin));
+        self.mark_unsaved(session_uri);
+    }
+
     /// Says in the session's `_meta`, as `otto.remote`, which chat app it was
     /// last written to from, so lists can tell it from the desktop's own.
     fn mark_remote(&mut self, session_uri: &str, via: &str) {
@@ -3139,6 +3178,10 @@ fn terminal_meta(
 /// `meta` with `otto.<key>` set to `value`, or taken out for `None`. The
 /// service owns the whole of a session's `_meta`, and every key under `otto`
 /// is kept independently of the others; an empty `_meta` is `None`.
+/// The keys of a session's `_meta.otto` a client may set: `marks`, what
+/// Preview has drawn on the file, so the session shows them again.
+const CLIENT_META: &[&str] = &["marks"];
+
 fn with_otto_meta(meta: Option<JsonObject>, key: &str, value: Option<Value>) -> Option<JsonObject> {
     let mut meta = meta.unwrap_or_default();
     let otto = meta

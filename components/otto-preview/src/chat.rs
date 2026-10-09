@@ -90,6 +90,8 @@ pub struct Chat {
     /// The numbers of the marks that go with the next message, shown over
     /// the field. Set by the window before each paint.
     pub pending_marks: Vec<u32>,
+    /// The marks as last kept with the session, to tell when they changed.
+    kept_marks: Option<Vec<crate::marks::Mark>>,
     /// An agent session to carry on when the chat connects, rather than
     /// starting one: picked from a list, which sent it here.
     resume: Option<String>,
@@ -162,6 +164,7 @@ impl Chat {
             selected: 0,
             pressed_answer: None,
             log_h: 0.0,
+            kept_marks: None,
             width: WIDTH,
             pending_marks: Vec::new(),
             resume: None,
@@ -485,6 +488,35 @@ impl Chat {
             Released::Taken => true,
             Released::Missed => false,
         }
+    }
+
+    /// Keep `marks` with the agent session when they changed since they were
+    /// last kept, so opening the session again shows them. Nothing before
+    /// the chat has been opened: there is no session to keep them with.
+    pub fn keep_marks(&mut self, marks: &crate::marks::Marks) {
+        let Some(ask) = &mut self.ask else {
+            return;
+        };
+        if self.kept_marks.as_ref() == Some(&marks.list) {
+            return;
+        }
+        // Nothing drawn and nothing kept yet: nothing to say.
+        if self.kept_marks.is_none() && marks.list.is_empty() {
+            return;
+        }
+        ask.save_marks(marks.kept());
+        self.kept_marks = Some(marks.list.clone());
+    }
+
+    /// The marks a session carried on here had kept, once.
+    pub fn restored_marks(&mut self) -> Option<serde_json::Value> {
+        let marks = self.ask.as_mut()?.restored_marks()?;
+        Some(marks)
+    }
+
+    /// Take the marks just restored as the ones kept already.
+    pub fn marks_restored(&mut self, marks: &crate::marks::Marks) {
+        self.kept_marks = Some(marks.list.clone());
     }
 
     /// A wheel or two-finger scroll over the panel; `stop` is the fingers

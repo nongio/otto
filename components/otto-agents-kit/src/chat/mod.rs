@@ -46,7 +46,7 @@ use ahp::reducers::apply_action_to_chat;
 use ahp::{Client, SubscriptionEvent};
 use ahp_types::actions::{
     ChatInputAnswerChangedAction, ChatInputCompletedAction, ChatPendingMessageSetAction,
-    ChatToolCallConfirmedAction, ChatTurnCancelledAction, StateAction,
+    ChatToolCallConfirmedAction, ChatTurnCancelledAction, SessionMetaChangedAction, StateAction,
 };
 use ahp_types::common::StringOrMarkdown;
 use ahp_types::state::{
@@ -134,6 +134,9 @@ enum Update {
     /// The agent's modes and the one it is in, as the service says in the
     /// session's `_meta`; `None` for an agent without any.
     Modes(Option<Modes>),
+    /// What the client keeps with the session, as its `_meta.otto.marks`
+    /// says: Preview's marks.
+    Marks(Option<Value>),
     /// The session's chat, as it stood when the launcher subscribed to it.
     Chat(Box<ChatState>),
     /// A change to that chat.
@@ -184,6 +187,10 @@ enum Command {
     /// it advertised.
     SetMode {
         mode_id: String,
+    },
+    /// Keep `marks` with the open session, in its `_meta.otto.marks`.
+    SetMarks {
+        marks: Value,
     },
     /// An answer to the agent's question.
     Confirm {
@@ -563,6 +570,11 @@ impl Modes {
     }
 }
 
+/// What a client keeps with the session, under `otto.marks` in its `_meta`.
+fn marks_from_meta(meta: Option<&serde_json::Map<String, Value>>) -> Option<Value> {
+    meta?.get("otto")?.get("marks").cloned()
+}
+
 /// The agent's modes, as the service says in the session's `_meta`.
 fn modes_from_meta(meta: Option<&serde_json::Map<String, Value>>) -> Option<Modes> {
     let modes = meta?.get("otto")?.get("modes")?;
@@ -796,6 +808,12 @@ pub struct Ask {
     /// The `_meta` a session this chat creates is created with: what the
     /// host asks otto-agents for, such as its own tools for the agent.
     session_meta: Option<Value>,
+    /// Marks to keep with the session once it exists; see [`Self::save_marks`].
+    marks_out: Option<Value>,
+    /// The marks the session had when it was opened again, until taken.
+    marks_in: Option<Value>,
+    /// Whether the session was opened again and its marks are still to come.
+    marks_wanted: bool,
     /// What otto-stash has stashed, after the files above: it goes with
     /// the next request too, but otto-stash keeps it, and changes to it go
     /// there. Each with its file and whether it is struck out.
@@ -836,6 +854,9 @@ impl Ask {
             unlisted: Vec::new(),
             hidden: Vec::new(),
             session_meta: None,
+            marks_out: None,
+            marks_in: None,
+            marks_wanted: false,
             stashed: Vec::new(),
             handing_over: false,
             unreachable: None,
@@ -993,6 +1014,7 @@ impl Ask {
             modes: None,
             session: None,
         });
+        self.marks_wanted = true;
         let _ = self.commands.send(Command::Resume {
             session: session.to_string(),
         });
@@ -1045,6 +1067,17 @@ impl Ask {
             Update::Session(session) => {
                 if let Some(run) = self.run.as_mut() {
                     run.session = Some(session);
+                }
+                // Marks drawn before the session existed are kept now.
+                if let Some(marks) = self.marks_out.take() {
+                    self.save_marks(marks);
+                }
+            }
+            Update::Marks(marks) => {
+                // Only what the session had when it was opened again: after
+                // that, the client's own marks are the newer ones.
+                if std::mem::take(&mut self.marks_wanted) {
+                    self.marks_in = marks;
                 }
             }
             Update::Provider(provider) => {
@@ -1476,6 +1509,22 @@ impl Ask {
     /// given, Otto programs only. A session already open keeps what it has.
     pub fn set_session_meta(&mut self, meta: Value) {
         self.session_meta = Some(meta);
+    }
+
+    /// Keep `marks` with the session, in its `_meta.otto.marks`, so opening
+    /// it again shows them; held until the session exists.
+    pub fn save_marks(&mut self, marks: Value) {
+        let open = self.run.as_ref().is_some_and(|run| run.session.is_some());
+        if !open {
+            self.marks_out = Some(marks);
+            return;
+        }
+        let _ = self.commands.send(Command::SetMarks { marks });
+    }
+
+    /// The marks a session opened again had kept, once.
+    pub fn restored_marks(&mut self) -> Option<Value> {
+        self.marks_in.take()
     }
 
     pub fn send(&mut self, prompt: &str, agent: Option<usize>) -> bool {
@@ -2236,6 +2285,19 @@ async fn serve(
                         set_mode(&client, session_events.uri(), &mode_id).await;
                         continue;
                     }
+                    Command::SetMarks { marks } => {
+                        let mut otto = serde_json::Map::new();
+                        otto.insert("marks".into(), marks);
+                        let mut meta = serde_json::Map::new();
+                        meta.insert("otto".into(), Value::Object(otto));
+                        let action = StateAction::SessionMetaChanged(SessionMetaChangedAction {
+                            meta: Some(meta),
+                        });
+                        if let Err(err) = client.dispatch(session_events.uri().to_owned(), action).await {
+                            tracing::warn!(%err, "could not keep the marks with the session");
+                        }
+                        continue;
+                    }
                     Command::Ask { prompt, attachments, .. } => {
                         match queue(&client, &chat_uri, &prompt, &attachments).await {
                             Ok(()) => reporter.send(Update::HandedOff),
@@ -2284,6 +2346,7 @@ async fn serve(
                         reporter.send(Update::Terminal(Terminal::from_meta(changed.meta.as_ref())));
                         reporter.send(Update::Loading(loading_from_meta(changed.meta.as_ref())));
                         reporter.send(Update::Modes(modes_from_meta(changed.meta.as_ref())));
+                        reporter.send(Update::Marks(marks_from_meta(changed.meta.as_ref())));
                     }
                     _ => {}
                 },
@@ -2385,6 +2448,7 @@ async fn follow(
             reporter.send(Update::Terminal(Terminal::from_meta(state.meta.as_ref())));
             reporter.send(Update::Loading(loading_from_meta(state.meta.as_ref())));
             reporter.send(Update::Modes(modes_from_meta(state.meta.as_ref())));
+            reporter.send(Update::Marks(marks_from_meta(state.meta.as_ref())));
             state.default_chat.ok_or("the session has no chat")?
         }
         _ => return Err("the service sent no session".into()),
