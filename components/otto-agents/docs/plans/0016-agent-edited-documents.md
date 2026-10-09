@@ -30,7 +30,8 @@ Three things make this more than "an image next to a chat":
   undo works the same for you and the agent.
 - **The agent can show things,** not only change the document: a histogram, a
   table, four variants to pick from, marks drawn on the document.
-- **You can point,** and what you point at goes to the agent with your message.
+- **You can point by drawing,** and your marks go to the agent with your
+  message. The agent draws on the same layer to point back.
 
 ## Decisions
 
@@ -48,6 +49,12 @@ Three things make this more than "an image next to a chat":
   history and permissions. Only where they open is different (see below).
 - **The chat is shared, not copied.** The Ask model and chat drawing move out of
   the launcher into `otto-agents-kit`, which both apps use (see 0017).
+- **The chat is a sidebar you open.** A toolbar button (and a shortcut) toggles
+  it; Preview opens as a plain viewer without it. The session starts when you
+  first send, so opening the panel costs nothing.
+- **One mark layer, two authors.** Your strokes and the agent's drawings are the
+  same kind of thing, in the same format and coordinates, so either side can
+  refer to the other's marks.
 - **The viewer is the generic output surface.** Anything the agent wants to show
   is a file in a format Preview already renders. No separate widget vocabulary.
 
@@ -102,10 +109,12 @@ document of its own session.
 | Method | Tool | What it does |
 |---|---|---|
 | `Show(source, slot, title, id)` | `preview_show` | Shows a file (or small inline data with a MIME type) without making it a version. Same `id` again replaces it in place, so a histogram can follow the edits |
-| `Annotate(regions, style, label, id)` | `preview_annotate` | Draws marks on the document, in document coordinates: dust spots, detected faces, a proposed crop, a sentence in a PDF |
-| `Clear(id)` | `preview_clear` | Removes a shown item or marks |
+| `Draw(marks, layer)` | `preview_draw` | Draws marks (see [Marks](#marks)) on the overlay: dust spots, detected faces, an arrow, a note, a sentence in a PDF. Same `layer` again redraws it in place, so a detection can follow the edits |
+| `Marks(by) → marks` | `preview_marks`, read-only | The marks on the document, yours and the agent's, with their numbers |
+| `Propose(mark, prompt) → mark` | `preview_propose` | Draws a mark you can adjust (a crop, a selection) and returns it as you confirm it. `Choose` for geometry. The call waits |
+| `Clear(id)` | `preview_clear` | Removes a shown item or a layer of marks |
 | `Choose(items, prompt) → pick` | `preview_choose` | Shows options (variants, crops) and returns the one you click. The call waits for the click |
-| `Render(page, region) → image` | `preview_render`, read-only | What the viewer actually shows, as a picture, so the agent can check its result as you see it |
+| `Render(page, region, marks) → image` | `preview_render`, read-only | What the viewer actually shows, as a picture, with or without the marks, so the agent can check its result as you see it |
 
 Slots for `Show`:
 
@@ -113,7 +122,7 @@ Slots for `Show`:
   tables, notes.
 - **main**: replaces the document for a while, with a way back. Variant grids,
   long reports.
-- **overlay**: on top of the document. `Annotate` is the usual way in.
+- **overlay**: on top of the document. `Draw` is the usual way in.
 
 Shown items are kept with the session, so reopening it brings them back. The chat
 gets a short reference ("Histogram, in the side panel") so the history reads
@@ -152,17 +161,56 @@ later, if SVG turns out awkward.
   the subject and allows them in the workspace. `preview_save` is the one tool
   that touches the original, and it asks.
 
-## Pointing
+## Marks
 
-What you select in Preview travels with your next message as structured context,
-and `preview_info` returns it too:
+The overlay is a vector layer over the document. You draw on it to point; the
+agent draws on it to show and to point back.
 
-- a region on a picture or video frame,
-- a page, or a text selection, in PDF and Markdown,
-- a time range in video and audio,
-- a cell range in a table.
+**Your drawing tools:** pen, box, lasso, brush (for masks), arrow, text note,
+eraser. The selections you already make (a text selection, a page, a time range,
+a cell range) become marks too.
 
-It uses the same region format as `Annotate`, which is the agent pointing back.
+**Pending marks** appear as chips in the chat input ("② region, 120×80") and go
+out with your next message. Drawing while the chat is closed opens it. After
+sending, the marks stay in the session history, dimmed, and can be shown again.
+
+**Every mark gets a number,** drawn as a badge, so "brighten 1, remove 2" works,
+and so does the agent's "2 looks like a sensor spot".
+
+```jsonc
+{ "id": "m2", "n": 2, "by": "user",            // or "agent"
+  "anchor": { "version": 7, "page": 3 },       // or "time": 12.4 for video
+  "shape": { "rect": [x, y, w, h] },           // ellipse, polygon, path + width,
+                                               // arrow [from, to], text + at,
+                                               // mask (a PNG in the store)
+  "style": { "color": "#ff3b30", "fill": 0.2 },
+  "label": "dust?",
+  "text": "…"                                  // the text under it, for PDF/Markdown
+}
+```
+
+Coordinates are in document space (source pixels for pictures, PDF points per
+page), so marks stay put through zoom, pan and new versions.
+
+### What the model gets
+
+Models read pointing best in more than one form, so a message with marks
+carries all of these:
+
+1. **The view with the marks burned in,** numbers included. Vision models follow
+   drawn circles and arrows well, and this works with any multimodal model.
+2. **The clean document and a crop of each mark** at full resolution, so detail
+   isn't hidden under the strokes.
+3. **The marks as JSON,** with coordinates also given as fractions of the
+   document. Tools act on these, not on pixels: a crop, a darktable or
+   RawTherapee mask, an inpainting call that takes an image and a mask, or a
+   segmentation model refining a rough lasso into an object.
+4. **For text documents, the text under the strokes.** A stroke across a PDF
+   paragraph or a Markdown section snaps to the text it covers and goes as a
+   quote with its page and position, not as a doodle over glyphs.
+
+`preview_marks` and `preview_render(marks: true)` give the agent the same views
+later, so it can look again without you resending.
 
 ## Formats
 
@@ -204,15 +252,17 @@ styles you made.
    launcher's `view.rs` into `otto-agents-kit`, as
    [0017](0017-agents-ui-kit.md) plans. The launcher is its first user and
    doesn't change.
-3. **Chat in Preview.** A side panel that starts a document session with the
-   subject attached.
+3. **Chat in Preview.** The sidebar button and the panel, starting a document
+   session with the subject attached on first send.
 4. **Versions and the editing tools.** The store, `Workspace`, `Commit`,
    `Write`/`Patch`, `Versions`, `Undo`/`Redo`, `Save`/`Export`, the ◀ ▶ strip and
    before/after, `preview.toml` in the gateway, the permission rule.
 5. **Document sessions in the Sessions panel.** `otto.app`, the handler lookup,
    `OpenSession`, thumbnails, "Open in Preview" in the launcher.
-6. **Showing things.** `Show`, `Annotate`, `Clear`, `Render`, then `Choose`.
-7. **Pointing.** Regions, page and text selections, time ranges.
+6. **Showing things.** `Show`, `Draw`, `Clear`, `Render`, then `Choose` and
+   `Propose`.
+7. **Drawing.** Your drawing tools, numbered marks, chips in the input, and the
+   four forms a message carries; then text snapping, time ranges and masks.
 8. **The photo skill,** then the others.
 
 ## Testing
@@ -224,8 +274,11 @@ styles you made.
   through the gateway's existing fake-bus harness.
 - **Permissions:** in a document session against the echo backend, a write to
   the subject is denied, a write to the workspace is allowed, `preview_save` asks.
-- **Manual:** open a RAW, ask for "warmer, lift the shadows", draw a box and ask
-  to brighten it, step back twice with Ctrl+Z, ask for "three looks to pick
+- **Marks:** a mark's document coordinates survive zoom and a new version; the
+  burned-in render, crops and JSON agree; a stroke over a PDF line snaps to its
+  text.
+- **Manual:** open a RAW, ask for "warmer, lift the shadows", circle two spots and
+  ask to "remove 1, brighten 2", step back twice with Ctrl+Z, ask for "three looks to pick
   from", pick one, save. Close Preview, open the session from the Sessions panel:
   same document, same version, same history.
 
@@ -247,6 +300,10 @@ styles you made.
 - **MCP Apps.** Real controls (sliders, crop handles) would want views the agent's
   tools bring along. MCP Apps is the standard for that, but needs a web engine
   and the gateway proxying the agent's MCP servers. Later, if `Choose` and
-  pointing aren't enough.
+  marks aren't enough.
+- **Masks as assets.** Keep a brush mask per version ("the sky") so later edits
+  and the next photos reuse it? Likely yes for photos.
+- **Where agent marks live.** With the session (the default here), or kept with
+  a version when `Commit` asks?
 - **Session grouping.** Document sessions with the others in the Sessions panel,
   or in their own section?
