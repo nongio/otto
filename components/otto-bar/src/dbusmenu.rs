@@ -361,7 +361,12 @@ fn prop_shortcut(props: &HashMap<String, OwnedValue>, key: &str) -> Option<Strin
 fn format_shortcut(combo: &[String]) -> Option<String> {
     let (key, modifiers) = combo.split_last()?;
     let mut out = String::new();
-    for (name, glyph) in [("Control", "⌃"), ("Alt", "⌥"), ("Shift", "⇧"), ("Super", "⌘")] {
+    for (name, glyph) in [
+        ("Control", "⌃"),
+        ("Alt", "⌥"),
+        ("Shift", "⇧"),
+        ("Super", "⌘"),
+    ] {
         if modifiers.iter().any(|m| m == name) {
             out.push_str(glyph);
         }
@@ -456,12 +461,18 @@ mod tests {
     #[test]
     fn shortcuts_read_as_glyphs_in_the_usual_order() {
         let combo = |keys: &[&str]| keys.iter().map(|k| k.to_string()).collect::<Vec<_>>();
-        assert_eq!(format_shortcut(&combo(&["Control", "h"])).as_deref(), Some("⌃H"));
+        assert_eq!(
+            format_shortcut(&combo(&["Control", "h"])).as_deref(),
+            Some("⌃H")
+        );
         assert_eq!(
             format_shortcut(&combo(&["Shift", "Control", "t"])).as_deref(),
             Some("⌃⇧T")
         );
-        assert_eq!(format_shortcut(&combo(&["Shift", "\u{1b}"])).as_deref(), Some("⇧⎋"));
+        assert_eq!(
+            format_shortcut(&combo(&["Shift", "\u{1b}"])).as_deref(),
+            Some("⇧⎋")
+        );
         assert_eq!(format_shortcut(&combo(&[])), None);
     }
 
