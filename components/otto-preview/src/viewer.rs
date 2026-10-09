@@ -22,6 +22,7 @@ use otto_kit::theme::ColorScheme;
 use otto_kit::CursorShape;
 
 use crate::chrome::{self, Tool};
+use crate::marks::{self, Frame, Marks};
 use crate::sidebar::{self, SidebarLayout};
 
 /// How much one press of a zoom button or a zoom shortcut magnifies.
@@ -99,6 +100,11 @@ pub struct Viewer {
     pub stamp: Option<Stamp>,
     /// Whether the chat shows beside the document.
     pub chat_open: bool,
+    /// The marks on the document: the person's and the agent's.
+    pub marks: Marks,
+    /// Whether a press on the document draws a mark rather than pans or
+    /// selects: the pen in the toolbar.
+    pub marking: bool,
     /// The chat panel as last painted, in window coordinates.
     pub chat_picture: Option<otto_kit::skia::Picture>,
     /// Whether the window grew to make room for the chat, and so shrinks
@@ -194,6 +200,8 @@ impl Viewer {
             thumbs: HashMap::new(),
             thumbs_pending: HashSet::new(),
             chat_open: false,
+            marks: Marks::default(),
+            marking: false,
             chat_picture: None,
             chat_grew: false,
             floating: true,
@@ -261,6 +269,88 @@ impl Viewer {
             content.left = (content.left + sidebar::WIDTH).min(content.right - 1.0);
         }
         content
+    }
+
+    /// What the window shows, for the agent: the file, what kind of thing it
+    /// is and its size in the units marks use, the page and the zoom, the
+    /// marks waiting to be sent, and whether the file is being read again.
+    pub fn info(&self) -> serde_json::Value {
+        let (kind, size, pages) = match &self.session.preview {
+            Preview::Pixels { pixels, .. } => (
+                "picture",
+                Some([
+                    pixels.intrinsic_width as f32,
+                    pixels.intrinsic_height as f32,
+                ]),
+                None,
+            ),
+            Preview::Pages { pages, .. } => ("pages", None, Some(pages.len())),
+            _ if self.session.loading => ("loading", None, None),
+            _ => ("other", None, None),
+        };
+        serde_json::json!({
+            "file": self.path,
+            "kind": kind,
+            "size": size,
+            "pages": pages,
+            "page": self.page_status().map(|(page, _)| page),
+            "zoom_percent": self.zoom_percent(),
+            "marks": self.marks.list.len(),
+            "pending_marks": self.marks.pending(),
+            "reloading": self.reloading.is_some(),
+        })
+    }
+
+    /// Where the document's own coordinates land on screen now: the picture
+    /// or each page. Empty for what can't be marked.
+    pub fn frames(&self) -> Vec<Frame> {
+        if self.session.loading || self.session.video.is_some() {
+            return Vec::new();
+        }
+        let layout = otto_kit::preview::layout(
+            self.content(),
+            &self.session.preview,
+            self.session.first_row,
+            self.session.zoom,
+        );
+        marks::frames(&self.session.preview, &layout)
+    }
+
+    /// Start a mark at `at`, when the pen is on. Shift draws a box.
+    pub fn mark_press(&mut self, at: Point) -> bool {
+        if !self.marking {
+            return false;
+        }
+        let frames = self.frames();
+        let shift = self.modifiers.shift;
+        self.dirty |= self.marks.begin(&frames, at, shift);
+        true
+    }
+
+    /// Follow the pointer over the marks' badges; `None` when it left.
+    pub fn mark_hover(&mut self, at: Option<Point>) {
+        let frames = self.frames();
+        self.dirty |= self.marks.hover(&frames, at);
+    }
+
+    /// Delete the mark whose badge is under `at`. Returns whether one was.
+    pub fn mark_delete_at(&mut self, at: Point) -> bool {
+        let frames = self.frames();
+        let Some(index) = self.marks.badge_at(&frames, at) else {
+            return false;
+        };
+        self.dirty |= self.marks.remove(index);
+        true
+    }
+
+    /// Carry a mark being drawn on to `at`.
+    pub fn mark_motion(&mut self, at: Point) {
+        self.dirty |= self.marks.extend(at);
+    }
+
+    /// Finish a mark being drawn.
+    pub fn mark_release(&mut self) {
+        self.dirty |= self.marks.finish();
     }
 
     /// The chat panel's box, when it shows: the window's trailing edge, under
@@ -573,6 +663,7 @@ impl Viewer {
             Tool::NextPage => self.page_status().is_some_and(|(page, pages)| page < pages),
             Tool::Sidebar => self.has_pages(),
             Tool::Chat => true,
+            Tool::Mark => self.marking || !self.frames().is_empty(),
         }
     }
 
@@ -738,6 +829,13 @@ impl Viewer {
         if self.drag.is_some() {
             return CursorShape::Grabbing;
         }
+        if self.marks.hovered.is_some() {
+            // The bin: a click here deletes the mark (see `crate::cursors`).
+            return CursorShape::NotAllowed;
+        }
+        if self.marking {
+            return CursorShape::Crosshair;
+        }
         if self.session.link_at(at.x, at.y, content).is_some() {
             CursorShape::Pointer
         } else if self.session.word_at(at.x, at.y, content).is_some() {
@@ -772,6 +870,10 @@ impl Viewer {
             Tool::Chat => {
                 self.toggle_chat();
             }
+            Tool::Mark => {
+                self.marking = !self.marking;
+                self.dirty = true;
+            }
         }
     }
 
@@ -781,6 +883,16 @@ impl Viewer {
         let content = self.content();
         let screen = (content.height() - KEY_STEP).max(KEY_STEP);
         match keysym {
+            Keysym::Escape if self.marking => {
+                self.marking = false;
+                self.dirty = true;
+                KeyOutcome::Handled
+            }
+            // The person's last mark, until it goes with a message.
+            Keysym::BackSpace | Keysym::Delete if !self.marks.pending().is_empty() => {
+                self.dirty |= self.marks.undo();
+                KeyOutcome::Handled
+            }
             Keysym::w | Keysym::W | Keysym::q | Keysym::Q if ctrl => KeyOutcome::Close,
             Keysym::c | Keysym::C if ctrl => match self.session.selected_text() {
                 Some(text) => KeyOutcome::Copy(text),

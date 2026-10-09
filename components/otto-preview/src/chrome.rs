@@ -46,6 +46,8 @@ pub enum Tool {
     Sidebar,
     /// Shows or hides the chat beside the document.
     Chat,
+    /// Turns drawing marks on the document on or off.
+    Mark,
 }
 
 /// Where the toolbar's buttons sit for one window width.
@@ -124,8 +126,10 @@ pub fn toolbar_layout(
     let y = top + (TOOLBAR_H - BUTTON) / 2.0;
     let square = |x: f32| Rect::from_xywh(x, y, BUTTON, BUTTON);
     let mut buttons = Vec::with_capacity(7);
-    // The chat at the trailing edge, on its own.
+    // The chat at the trailing edge, and the pen that points things out to
+    // it beside it.
     buttons.push((Tool::Chat, square(width - EDGE - BUTTON)));
+    buttons.push((Tool::Mark, square(width - EDGE - 2.0 * BUTTON - GAP * 4.0)));
 
     let mut x = EDGE;
     if sidebar {
@@ -186,7 +190,8 @@ pub fn draw(canvas: &Canvas, viewer: &Viewer, theme: &Theme) {
         // shows.
         let pressed = pressed
             || (*tool == Tool::Sidebar && viewer.sidebar_open())
-            || (*tool == Tool::Chat && viewer.chat_open);
+            || (*tool == Tool::Chat && viewer.chat_open)
+            || (*tool == Tool::Mark && viewer.marking);
         draw_icon_button(canvas, theme, *rect, *tool, enabled, hovered, pressed);
     }
 
@@ -258,6 +263,10 @@ fn draw_icon_button(
         draw_chat_glyph(canvas, dst, color);
         return;
     }
+    if tool == Tool::Mark {
+        draw_pen_glyph(canvas, dst, color);
+        return;
+    }
     match icons::cached_icon_chain(icon_names(tool), GLYPH as i32) {
         Some(image) => {
             // Symbolic art recoloured to the text tone, as the rest of the
@@ -282,7 +291,7 @@ fn icon_names(tool: Tool) -> &'static [&'static str] {
         Tool::PreviousPage => &["go-up-symbolic", "pan-up-symbolic"],
         Tool::NextPage => &["go-down-symbolic", "pan-down-symbolic"],
         // Never looked up; see `draw_sidebar_glyph` and `draw_chat_glyph`.
-        Tool::Sidebar | Tool::Chat => &[],
+        Tool::Sidebar | Tool::Chat | Tool::Mark => &[],
     }
 }
 
@@ -333,6 +342,7 @@ fn draw_fallback_glyph(canvas: &Canvas, dst: Rect, tool: Tool, color: Color) {
         }
         Tool::Sidebar => draw_sidebar_glyph(canvas, dst, color),
         Tool::Chat => draw_chat_glyph(canvas, dst, color),
+        Tool::Mark => draw_pen_glyph(canvas, dst, color),
     }
     canvas.draw_path(&path.detach(), &stroke);
 }
@@ -367,6 +377,32 @@ fn draw_sidebar_glyph(canvas: &Canvas, dst: Rect, color: Color) {
     stroke.set_color(color);
     canvas.draw_rrect(RRect::new_rect_xy(frame, radius, radius), &stroke);
     canvas.draw_line((divider, frame.top), (divider, frame.bottom), &stroke);
+}
+
+/// A pen, nib down to the lower leading corner, drawing a short line.
+fn draw_pen_glyph(canvas: &Canvas, dst: Rect, color: Color) {
+    let mut stroke = Paint::default();
+    stroke.set_anti_alias(true);
+    stroke.set_style(PaintStyle::Stroke);
+    stroke.set_stroke_width(1.5);
+    stroke.set_stroke_join(otto_kit::skia::PaintJoin::Round);
+    stroke.set_stroke_cap(otto_kit::skia::PaintCap::Round);
+    stroke.set_color(color);
+    let (l, t, r, b) = (
+        dst.left + 1.5,
+        dst.top + 1.5,
+        dst.right - 1.5,
+        dst.bottom - 1.5,
+    );
+    let mut pen = PathBuilder::new();
+    // The barrel, a slanted box from the top trailing corner to the nib.
+    pen.move_to((r - 3.0, t));
+    pen.line_to((r, t + 3.0));
+    pen.line_to((l + 4.0, b - 1.0));
+    pen.line_to((l, b));
+    pen.line_to((l + 1.0, b - 4.0));
+    pen.close();
+    canvas.draw_path(&pen.detach(), &stroke);
 }
 
 /// A speech bubble: a rounded box with a tail at its lower leading corner.

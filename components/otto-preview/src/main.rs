@@ -17,7 +17,10 @@ mod app;
 mod chat;
 mod chrome;
 mod content;
+mod cursors;
 mod instance;
+mod marks;
+mod mcp;
 mod sidebar;
 mod viewer;
 
@@ -47,6 +50,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // First, before the runtime starts a thread: the sandboxed decode worker
     // is this binary re-executed, and this returns at once on a normal start.
     otto_peek::run_worker_if_requested();
+    // The document tools for an agent: no display, no window, no runtime.
+    if std::env::args().nth(1).as_deref() == Some("--mcp") {
+        return mcp::serve();
+    }
     otto_kit::i18n::init_from_desktop();
 
     let Some((path, chat)) = path_from_args() else {
@@ -99,21 +106,23 @@ async fn run(path: PathBuf, chat: bool) -> Result<(), Box<dyn std::error::Error>
         chat,
     };
     let inbox = instance::Inbox::default();
+    let documents = instance::Documents::default();
     // Held for the life of the process: the bus name goes with it.
-    let _service = match instance::claim_or_forward(&request, inbox.clone()).await {
-        Ok(instance::Role::Forwarded) => return Ok(()),
-        Ok(instance::Role::Owner(connection)) => Some(connection),
-        Err(err) => {
-            tracing::warn!(%err, "no session bus; this Preview stands alone");
-            None
-        }
-    };
+    let _service =
+        match instance::claim_or_forward(&request, inbox.clone(), documents.clone()).await {
+            Ok(instance::Role::Forwarded) => return Ok(()),
+            Ok(instance::Role::Owner(connection)) => Some(connection),
+            Err(err) => {
+                tracing::warn!(%err, "no session bus; this Preview stands alone");
+                None
+            }
+        };
 
     // Needs the runtime: without the icon theme every lookup searches hicolor
     // alone, and a card or a listing draws with no icons.
     otto_kit::icon_theme::spawn_icon_theme_watcher();
 
-    otto_kit::AppRunner::new(app::PreviewApp::new(request, inbox)).run()
+    otto_kit::AppRunner::new(app::PreviewApp::new(request, inbox, documents)).run()
 }
 
 /// What decides the window's size on opening.

@@ -31,7 +31,7 @@ use wayland_client::protocol::wl_keyboard;
 
 use crate::chat::Chat;
 use crate::chrome::{self, Tool};
-use crate::instance::{Inbox, Request};
+use crate::instance::{Documents, Inbox, Request};
 use crate::viewer::{KeyOutcome, Stamp, Viewer};
 use crate::Shape;
 
@@ -56,6 +56,8 @@ pub struct PreviewApp {
     first: Option<Request>,
     /// Files asked for by later starts, handed over the bus.
     inbox: Inbox,
+    /// The windows' viewers, for the document tools on the bus.
+    documents: Documents,
     /// When the loop last turned, for the caret's blink.
     last_update: Instant,
 }
@@ -86,11 +88,12 @@ struct Doc {
 impl PreviewApp {
     /// An application that opens `first` when it is ready, and then whatever
     /// arrives in `inbox`.
-    pub fn new(first: Request, inbox: Inbox) -> Self {
+    pub fn new(first: Request, inbox: Inbox, documents: Documents) -> Self {
         Self {
             docs: Vec::new(),
             first: Some(first),
             inbox,
+            documents,
             last_update: Instant::now(),
         }
     }
@@ -111,6 +114,10 @@ impl PreviewApp {
         let shape = Shape::of(&request.path);
         let mut doc = Doc::open(request.path, key, shape)?;
         doc.chat_on_configure = request.chat;
+        self.documents
+            .lock()
+            .unwrap()
+            .insert(doc.key.clone(), Arc::clone(&doc.viewer));
         self.docs.push(doc);
         Ok(())
     }
@@ -457,6 +464,11 @@ fn handle_pointer(
                 }
                 // Always forwarded: a selection or a bar dragged past the
                 // content's edge keeps going.
+                if v.marks.drawing() {
+                    v.mark_motion(at);
+                } else {
+                    v.mark_hover(content.contains(at).then_some(at));
+                }
                 v.content_pointer(VideoPointer::Motion, at);
                 v.sidebar_motion(at);
                 let mut chat_cursor = None;
@@ -472,7 +484,7 @@ fn handle_pointer(
                 };
                 if shape != v.cursor {
                     v.cursor = shape;
-                    AppContext::set_cursor_shape(shape);
+                    crate::cursors::show(shape);
                 }
             }
             PointerEventKind::Press {
@@ -523,6 +535,10 @@ fn handle_pointer(
                     v.sidebar_press(at);
                     continue;
                 }
+                // A click on a mark's badge deletes the mark.
+                if content.contains(at) && (v.mark_delete_at(at) || v.mark_press(at)) {
+                    continue;
+                }
                 v.content_pointer(VideoPointer::Press, at);
                 if v.drag.is_some() && v.cursor != CursorShape::Grabbing {
                     v.cursor = CursorShape::Grabbing;
@@ -561,10 +577,13 @@ fn handle_pointer(
                     v.dirty |= chat.borrow_mut().release(panel, at);
                 }
                 v.sidebar_release();
+                if v.marks.drawing() {
+                    v.mark_release();
+                }
                 let link = v.content_pointer(VideoPointer::Release, at);
                 if v.cursor == CursorShape::Grabbing {
                     v.cursor = v.content_cursor(at);
-                    AppContext::set_cursor_shape(v.cursor);
+                    crate::cursors::show(v.cursor);
                 }
                 if let Some(link) = link {
                     xdg_open(&link);
@@ -577,6 +596,7 @@ fn handle_pointer(
                     v.dirty = true;
                 }
                 v.content_pointer(VideoPointer::Leave, at);
+                v.mark_hover(None);
                 v.sidebar_scroll.on_pointer_leave();
                 v.dirty |= chat.borrow_mut().leave();
                 v.cursor = CursorShape::Default;
@@ -618,6 +638,7 @@ fn handle_pointer(
 /// Paint the chat, when it shows, into the picture the draw puts beside the
 /// document. Called before every repaint the chat may have changed for.
 fn paint_chat(viewer: &mut Viewer, chat: &mut Chat) {
+    chat.pending_marks = viewer.marks.pending();
     viewer.chat_picture = viewer.chat_rect().and_then(|panel| {
         let mut recorder = otto_kit::skia::PictureRecorder::new();
         let canvas = recorder.begin_recording(panel, false);
@@ -802,6 +823,24 @@ impl App for PreviewApp {
             if viewer.chat_open {
                 let mut chat = doc.chat.borrow_mut();
                 if chat.focused {
+                    // The marks not yet sent go with this message, as files
+                    // the agent reads and the chat doesn't list.
+                    if chat.sends(event) {
+                        let dir = crate::marks::dir();
+                        let (path, files) = {
+                            let viewer = &mut *viewer;
+                            let files =
+                                viewer
+                                    .marks
+                                    .export(&viewer.path, &viewer.session.preview, &dir);
+                            (viewer.path.clone(), files)
+                        };
+                        if !files.is_empty() {
+                            tracing::debug!(path = %path.display(), count = files.len(), "marks go with the message");
+                            viewer.dirty = true;
+                        }
+                        chat.attach_unlisted(files);
+                    }
                     let handled = chat.key(event, modifiers, serial);
                     drop(chat);
                     drop(viewer);
@@ -894,9 +933,11 @@ impl App for PreviewApp {
                 tracing::warn!(%err, "could not open a window");
             }
         }
+        let documents = &self.documents;
         self.docs.retain(|doc| {
             let closing = doc.viewer.lock().unwrap().closing;
             if closing {
+                documents.lock().unwrap().remove(&doc.key);
                 doc.window.close();
             }
             !closing

@@ -1758,6 +1758,12 @@ peek-page-of = { $page } / { $pages }
 preview-chat-placeholder = Ask about { $name }
 # Shown in the empty chat beside a file, until something is asked.
 preview-chat-empty = Ask an agent about this file, or to change it.
+# Over the chat field in Preview, when marks drawn on the file will go with
+# the next message. $marks lists their numbers ("1, 2"); $count is how many.
+preview-chat-marks = { $count ->
+    [one] Mark { $marks } goes with your message
+   *[other] Marks { $marks } go with your message
+}
 
 
 ## Peek — listings

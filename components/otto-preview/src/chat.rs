@@ -32,6 +32,8 @@ pub const WIDTH: f32 = 360.0;
 const FIELD_H: f32 = 34.0;
 /// Around the field and the answers.
 const PAD: f32 = 10.0;
+/// Above the log, under the toolbar.
+const LOG_TOP: f32 = 16.0;
 /// One answer to a question.
 const ROW_H: f32 = 30.0;
 /// The line saying the agents can't be reached, under the log.
@@ -62,6 +64,9 @@ pub struct Chat {
     pressed_answer: Option<usize>,
     /// The log's height when last drawn, for paging and following.
     log_h: f32,
+    /// The numbers of the marks that go with the next message, shown over
+    /// the field. Set by the window before each paint.
+    pub pending_marks: Vec<u32>,
 }
 
 /// Where the panel's parts sit, for one panel box.
@@ -87,7 +92,12 @@ impl Layout {
             panel.right - PAD,
             field.top - PAD,
         );
-        let log = Rect::from_ltrb(panel.left + 1.0, panel.top, panel.right, answers.top);
+        let log = Rect::from_ltrb(
+            panel.left + 1.0,
+            panel.top + LOG_TOP,
+            panel.right,
+            answers.top,
+        );
         Self {
             log,
             answers,
@@ -126,6 +136,7 @@ impl Chat {
             selected: 0,
             pressed_answer: None,
             log_h: 0.0,
+            pending_marks: Vec::new(),
         }
     }
 
@@ -142,6 +153,7 @@ impl Chat {
         if self.ask.is_none() || stale {
             let mut ask = Ask::open(CLIENT);
             ask.set_subject([self.path.clone()]);
+            ask.set_session_meta(session_meta(&self.path));
             self.ask = Some(ask);
             self.relayout();
         }
@@ -251,6 +263,22 @@ impl Chat {
         }
         self.follow = true;
         self.relayout();
+    }
+
+    /// Whether `event` sends what is in the field as a new message: Return
+    /// with text, while no question waits.
+    pub fn sends(&self, event: &KeyEvent) -> bool {
+        matches!(event.keysym, Keysym::Return | Keysym::KP_Enter)
+            && !self.field.value().trim().is_empty()
+            && self.answers().is_empty()
+    }
+
+    /// Send `files` with the next message without listing them: the marks
+    /// drawn on the document.
+    pub fn attach_unlisted(&mut self, files: Vec<PathBuf>) {
+        if let Some(ask) = &mut self.ask {
+            ask.attach_unlisted(files);
+        }
     }
 
     /// A key while the panel has the keyboard. Returns whether to repaint;
@@ -472,6 +500,19 @@ impl Chat {
                 .render(canvas);
         }
 
+        if !self.pending_marks.is_empty() {
+            let numbers: Vec<String> = self.pending_marks.iter().map(u32::to_string).collect();
+            Label::new(otto_kit::t_owned!(
+                "preview-chat-marks",
+                count = self.pending_marks.len() as i64,
+                marks = numbers.join(", ")
+            ))
+            .with_style(styles::FOOTNOTE)
+            .with_color(theme.text_secondary)
+            .with_width(layout.field.width())
+            .centered_on(layout.field.left + 4.0, layout.field.top - 10.0)
+            .render(canvas);
+        }
         paint.set_color(theme.fill_quaternary);
         canvas.draw_rrect(RRect::new_rect_xy(layout.field, 8.0, 8.0), &paint);
         self.field.state.set_focused(self.focused);
@@ -503,6 +544,28 @@ impl Chat {
     }
 }
 
+/// What a session started here is created with: that it belongs to Preview
+/// and is about the file, so the desktop opens it here again; what the agent
+/// is told about working beside the window; and the document tools, served by
+/// this same program in `--mcp` mode.
+pub fn session_meta(path: &std::path::Path) -> serde_json::Value {
+    let program =
+        std::env::current_exe().unwrap_or_else(|_| PathBuf::from("/usr/bin/otto-preview"));
+    serde_json::json!({
+        "otto": {
+            "app": CLIENT,
+            "subject": [otto_agents_client::uri::from_path(path)],
+            "instructions": crate::mcp::instructions(path),
+            "mcpServers": [{
+                "name": "preview",
+                "command": program,
+                "args": ["--mcp"],
+                "env": { crate::mcp::DOC_ENV: path },
+            }],
+        }
+    })
+}
+
 /// The field: a plain, rounded box, smaller than the launcher's.
 fn field_style(dark: bool) -> TextInputStyle {
     let mut style = TextInputStyle::with_theme(if dark { Theme::dark() } else { Theme::light() });
@@ -527,7 +590,7 @@ mod tests {
         let layout = Layout::new(PANEL, 0);
         assert_eq!(layout.field.bottom, PANEL.bottom - PAD);
         assert_eq!(layout.field.height(), FIELD_H);
-        assert_eq!(layout.log.top, PANEL.top);
+        assert_eq!(layout.log.top, PANEL.top + LOG_TOP);
         assert!(layout.log.bottom <= layout.field.top);
     }
 
