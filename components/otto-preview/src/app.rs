@@ -14,6 +14,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use otto_files::peek::{self, Session, VideoPointer};
+use otto_files::watch::{Change, DirWatch};
 use otto_kit::components::titlebar::WindowControl;
 use otto_kit::components::window::resize;
 use otto_kit::prelude::*;
@@ -28,7 +29,7 @@ use wayland_client::protocol::wl_keyboard;
 
 use crate::chrome;
 use crate::instance::{Inbox, Request};
-use crate::viewer::{KeyOutcome, Viewer};
+use crate::viewer::{KeyOutcome, Stamp, Viewer};
 use crate::Shape;
 
 /// The desktop entry this binary is installed under, and the window's app id.
@@ -63,6 +64,10 @@ struct Doc {
     /// Whether the first configure has been answered, which is when the
     /// window takes its opening size.
     sized: bool,
+    /// The file's folder, watched so the file is shown again when something
+    /// changes it: an agent, an editor, a script. A folder rather than the
+    /// file, because most tools save by writing a new file over the old.
+    watch: Option<DirWatch>,
 }
 
 impl PreviewApp {
@@ -152,12 +157,14 @@ impl Doc {
         });
 
         AppContext::register_window(window.clone());
+        let watch = key.parent().map(DirWatch::new);
         Ok(Self {
             viewer,
             window,
             key,
             shape,
             sized: false,
+            watch,
         })
     }
 
@@ -170,7 +177,11 @@ impl Doc {
     fn start_decode(&self, path: PathBuf, panel: Rect, scale: f32) {
         let viewer = Arc::clone(&self.viewer);
         tokio::task::spawn_blocking(move || {
-            let name = viewer.lock().unwrap().name.clone();
+            let (name, generation) = {
+                let mut viewer = viewer.lock().unwrap();
+                viewer.stamp = Stamp::of(&path);
+                (viewer.name.clone(), viewer.generation)
+            };
             let mut preview = peek::decode_document(&path, panel, scale, 1);
             let video = (path.is_file() && otto_media_kit::player::available())
                 .then(|| peek::video_options(panel, scale, true));
@@ -208,8 +219,9 @@ impl Doc {
                 if needs_recognising {
                     session.start_recognising(Instant::now());
                 }
-                viewer.session = session;
-                viewer.dirty = true;
+                if !viewer.land(generation, session) {
+                    return;
+                }
             }
             AppContext::request_wakeup();
 
@@ -226,6 +238,9 @@ impl Doc {
             );
             {
                 let mut viewer = viewer.lock().unwrap();
+                if viewer.generation != generation {
+                    return;
+                }
                 match words {
                     Some(words) => viewer.session.attach_words(words),
                     None => viewer.session.stop_recognising(),
@@ -241,7 +256,10 @@ impl Doc {
     fn follow_document(&self) {
         let scale = AppContext::scale_factor().max(1) as f32;
         // The sidebar's thumbnails, small decodes of their own pages.
-        let thumbs = self.viewer.lock().unwrap().thumb_work(scale);
+        let (thumbs, generation) = {
+            let mut viewer = self.viewer.lock().unwrap();
+            (viewer.thumb_work(scale), viewer.generation)
+        };
         if let Some((requests, path)) = thumbs {
             for request in requests {
                 let viewer = Arc::clone(&self.viewer);
@@ -251,7 +269,10 @@ impl Doc {
                         Preview::Pixels { pixels, .. } => pixels.to_image(),
                         _ => None,
                     };
-                    viewer.lock().unwrap().finish_thumb(request.page, image);
+                    viewer
+                        .lock()
+                        .unwrap()
+                        .finish_thumb(generation, request.page, image);
                     AppContext::request_wakeup();
                 });
             }
@@ -273,7 +294,10 @@ impl Doc {
                     Preview::Pixels { pixels, .. } => Some(pixels),
                     _ => None,
                 };
-                viewer.lock().unwrap().finish_page(request.page, pixels);
+                viewer
+                    .lock()
+                    .unwrap()
+                    .finish_page(generation, request.page, pixels);
                 AppContext::request_wakeup();
             });
         }
@@ -284,6 +308,9 @@ impl Doc {
                     return;
                 };
                 let mut viewer = viewer.lock().unwrap();
+                if viewer.generation != generation {
+                    return;
+                }
                 if viewer.session.attach_text_layer(measured, words) {
                     viewer.dirty = true;
                 }
@@ -546,6 +573,7 @@ impl Doc {
     /// One turn of the loop: start the decode once the window is
     /// configured, follow the document, and step whatever moves.
     fn update(&self) {
+        self.follow_file();
         // The decode waits for the first configure, by which time the window
         // knows its real size and the output's scale.
         let start = {
@@ -564,6 +592,28 @@ impl Doc {
         if self.viewer.lock().unwrap().tick() {
             self.window.request_frame();
         }
+    }
+}
+
+impl Doc {
+    /// Show the file again when its folder has changed and the file with
+    /// it. A file that has gone keeps showing what it was.
+    fn follow_file(&self) {
+        let Some(watch) = &self.watch else {
+            return;
+        };
+        if watch.take() != Some(Change::Modified) {
+            return;
+        }
+        let mut viewer = self.viewer.lock().unwrap();
+        let now = Stamp::of(&viewer.path);
+        if now.is_none() || now == viewer.stamp {
+            return;
+        }
+        tracing::debug!(path = %viewer.path.display(), "the file changed; reloading");
+        viewer.reload();
+        drop(viewer);
+        self.window.request_frame();
     }
 }
 

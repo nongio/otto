@@ -63,6 +63,19 @@ in another app, `xdg-open`, the command line.
   With no path the usage is printed and the exit status is 2.
 - The window's app id is `otto-preview`, matching its desktop entry.
 
+### Following the file
+
+- When the file changes on disk (an agent, an editor or a script saved it),
+  the window shows it again by itself. The folder is watched rather than the
+  file, so a tool that saves by writing a new file and renaming it over the
+  old one is followed too.
+- A change is the file's inode, size or modification time moving; another file
+  changing in the same folder does nothing. Bursts are taken once, after
+  100 ms.
+- The old content stays on screen until the new decode replaces it, and the
+  zoom, the scroll and the page showing are kept.
+- A file deleted or moved away keeps showing what it was.
+
 ### Titlebar
 
 - The file's name is centred, ellipsised to stay clear of the lights.
@@ -115,7 +128,8 @@ in another app, `xdg-open`, the command line.
 
 ### Resizing
 
-- A resize lays the content out again. Nothing is decoded again, except that
+- A resize lays the content out again. Nothing is decoded again (unless the
+  file changes, as above), except that
   a document asks for the pages newly in view, at the width they are now
   drawn at, as scrolling does.
 

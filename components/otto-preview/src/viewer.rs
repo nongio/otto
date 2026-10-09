@@ -8,14 +8,15 @@
 // Rust guideline compliant 2026-02-21
 
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
-use std::time::Instant;
+use std::os::unix::fs::MetadataExt;
+use std::path::{Path, PathBuf};
+use std::time::{Instant, SystemTime};
 
 use otto_files::peek::{PageRequest, Session, VideoPointer};
 use otto_kit::components::scroll::ScrollView;
 use otto_kit::components::titlebar::{DecorationVariant, WindowControlsState};
 use otto_kit::prelude::*;
-use otto_kit::preview::{Preview, ROW_HEIGHT};
+use otto_kit::preview::{Preview, Zoom, ROW_HEIGHT};
 use otto_kit::skia::{Contains, Image, Point};
 use otto_kit::theme::ColorScheme;
 use otto_kit::CursorShape;
@@ -91,6 +92,44 @@ pub struct Viewer {
     pub thumbs: HashMap<u32, Image>,
     /// Thumbnails whose rasterising is in flight.
     pub thumbs_pending: HashSet<u32>,
+    /// Counts the decodes: work started for an earlier one lands after a
+    /// reload has replaced it, and is dropped.
+    pub generation: u64,
+    /// The file as last decoded, to tell a real change from a neighbour's.
+    pub stamp: Option<Stamp>,
+    /// Where the view was when the file changed, put back once the new
+    /// decode lands. Set from the reload until then.
+    pub reloading: Option<Place>,
+}
+
+/// What tells one version of a file from the next without reading it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Stamp {
+    inode: u64,
+    len: u64,
+    modified: Option<SystemTime>,
+}
+
+impl Stamp {
+    /// The stamp of the file at `path` now; `None` while it is missing.
+    pub fn of(path: &Path) -> Option<Self> {
+        let metadata = std::fs::metadata(path).ok()?;
+        Some(Self {
+            inode: metadata.ino(),
+            len: metadata.len(),
+            modified: metadata.modified().ok(),
+        })
+    }
+}
+
+/// Where the view is in the content: kept across a reload, so a file edited
+/// elsewhere changes under the reader without moving them.
+#[derive(Debug, Clone, Copy)]
+pub struct Place {
+    zoom: Zoom,
+    first_row: usize,
+    /// The page at the top of the box and how far down it, for a document.
+    page: Option<(usize, f32)>,
 }
 
 /// What a key press asks the window to do beyond changing the viewer.
@@ -143,7 +182,53 @@ impl Viewer {
             sidebar_followed: 0,
             thumbs: HashMap::new(),
             thumbs_pending: HashSet::new(),
+            generation: 0,
+            stamp: None,
+            reloading: None,
         }
+    }
+
+    /// Decode the file again because it changed on disk. The old content
+    /// stays on screen until the new decode replaces it.
+    pub fn reload(&mut self) {
+        self.reloading = Some(Place {
+            zoom: self.session.zoom,
+            first_row: self.session.first_row,
+            page: self.place(),
+        });
+        self.generation += 1;
+        self.started = false;
+        self.text_asked = false;
+        self.pages_pending.clear();
+        self.thumbs_pending.clear();
+        self.thumbs.clear();
+        self.dirty = true;
+    }
+
+    /// Put a decode that has landed into the window, unless a later one has
+    /// been started since. Returns whether it was taken.
+    pub fn land(&mut self, generation: u64, session: Session) -> bool {
+        if generation != self.generation {
+            return false;
+        }
+        self.session = session;
+        if let Some(place) = self.reloading.take() {
+            self.session.first_row = place.first_row;
+            // Through the pan, so the scroll views follow the zoom; clamped
+            // there to what the new content allows.
+            let content = self.content();
+            self.session.zoom = Zoom {
+                scale: place.zoom.scale,
+                ..Zoom::FIT
+            };
+            self.session
+                .pan_by(place.zoom.offset.0, place.zoom.offset.1, content);
+            if let Some(page) = place.page {
+                self.restore_place(page);
+            }
+        }
+        self.dirty = true;
+        true
     }
 
     pub fn dark(&self) -> bool {
@@ -212,20 +297,26 @@ impl Viewer {
         let place = self.place();
         self.sidebar_choice = Some(!self.sidebar_open());
         self.sidebar_followed = 0;
-        if let Some((index, along)) = place {
-            let content = self.content();
-            let layout = otto_kit::preview::layout(
-                content,
-                &self.session.preview,
-                self.session.first_row,
-                self.session.zoom,
-            );
-            if let Some(rect) = layout.page_rects.get(index) {
-                let target = rect.top + along * rect.height();
-                self.session.pan_by(0.0, layout.inner.top - target, content);
-            }
+        if let Some(place) = place {
+            self.restore_place(place);
         }
         self.dirty = true;
+    }
+
+    /// Scroll the document so the content box's top edge falls `along` the
+    /// way down page `index`, as [`Self::place`] measured it.
+    fn restore_place(&mut self, (index, along): (usize, f32)) {
+        let content = self.content();
+        let layout = otto_kit::preview::layout(
+            content,
+            &self.session.preview,
+            self.session.first_row,
+            self.session.zoom,
+        );
+        if let Some(rect) = layout.page_rects.get(index) {
+            let target = rect.top + along * rect.height();
+            self.session.pan_by(0.0, layout.inner.top - target, content);
+        }
     }
 
     /// The page at the top of the content box and how far down it the box's
@@ -327,6 +418,9 @@ impl Viewer {
     /// with the file they come from. Thumbnails scrolled well out of the box
     /// are let go of.
     pub fn thumb_work(&mut self, scale: f32) -> Option<(Vec<PageRequest>, PathBuf)> {
+        if self.reloading.is_some() {
+            return None;
+        }
         let layout = self.sidebar()?;
         let kept = layout.pages_in_view(THUMBS_KEPT);
         self.thumbs.retain(|page, _| kept.contains(page));
@@ -347,7 +441,10 @@ impl Viewer {
     }
 
     /// Put a rasterised thumbnail in the sidebar.
-    pub fn finish_thumb(&mut self, page: u32, image: Option<Image>) {
+    pub fn finish_thumb(&mut self, generation: u64, page: u32, image: Option<Image>) {
+        if generation != self.generation {
+            return;
+        }
         self.thumbs_pending.remove(&page);
         if let Some(image) = image {
             self.thumbs.insert(page, image);
@@ -698,7 +795,7 @@ impl Viewer {
     /// and whether its text layer is still to be read. `None` when there is
     /// nothing to do.
     pub fn document_work(&mut self, scale: f32) -> Option<(Vec<PageRequest>, bool)> {
-        if self.session.pages().is_empty() {
+        if self.reloading.is_some() || self.session.pages().is_empty() {
             return None;
         }
         let content = self.content();
@@ -721,7 +818,15 @@ impl Viewer {
     }
 
     /// Put a rasterised page in the strip.
-    pub fn finish_page(&mut self, page: u32, pixels: Option<otto_kit::preview::Pixels>) {
+    pub fn finish_page(
+        &mut self,
+        generation: u64,
+        page: u32,
+        pixels: Option<otto_kit::preview::Pixels>,
+    ) {
+        if generation != self.generation {
+            return;
+        }
         self.pages_pending.remove(&page);
         let content = self.content();
         if let Some(pixels) = pixels {
@@ -761,3 +866,51 @@ impl Viewer {
 }
 
 pub use smithay_client_toolkit::seat::keyboard::Keysym;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn waiting(name: &str) -> Session {
+        Session::waiting(name.to_string(), false, Rect::new_empty(), Instant::now())
+    }
+
+    #[test]
+    fn a_decode_started_before_a_reload_is_dropped() {
+        let mut viewer = Viewer::new(PathBuf::from("/tmp/a.png"), (800.0, 600.0));
+        let first = viewer.generation;
+        viewer.reload();
+        assert!(!viewer.started);
+        assert!(!viewer.land(first, waiting("old")));
+        assert!(
+            viewer.reloading.is_some(),
+            "still waiting for the new decode"
+        );
+        assert!(viewer.land(viewer.generation, waiting("new")));
+        assert!(viewer.reloading.is_none());
+        assert_eq!(viewer.session.name, "new");
+    }
+
+    #[test]
+    fn no_pages_are_asked_for_while_reloading() {
+        let mut viewer = Viewer::new(PathBuf::from("/tmp/a.pdf"), (800.0, 600.0));
+        viewer.reload();
+        assert!(viewer.document_work(1.0).is_none());
+        assert!(viewer.thumb_work(1.0).is_none());
+    }
+
+    #[test]
+    fn a_rewritten_file_has_a_new_stamp() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("note.md");
+        std::fs::write(&path, "one").unwrap();
+        let before = Stamp::of(&path);
+        // Written to a new file and renamed over, as most tools save.
+        let next = dir.path().join(".note.md.tmp");
+        std::fs::write(&next, "two, longer").unwrap();
+        std::fs::rename(&next, &path).unwrap();
+        assert!(before.is_some());
+        assert_ne!(Stamp::of(&path), before);
+        assert_eq!(Stamp::of(&dir.path().join("missing")), None);
+    }
+}
