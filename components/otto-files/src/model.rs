@@ -962,6 +962,12 @@ pub fn format_time(time: SystemTime) -> String {
     format_time_at(secs, otto_search::dates::local_offset(secs))
 }
 
+/// [`format_time`] for a wall-clock time with no zone — a camera's — given
+/// as seconds since the epoch read as UTC.
+pub fn format_wall_time(secs: i64) -> String {
+    format_time_at(secs, 0)
+}
+
 /// [`format_time`] for `secs` since the epoch, shifted `offset` seconds east
 /// of UTC.
 fn format_time_at(secs: i64, offset: i64) -> String {

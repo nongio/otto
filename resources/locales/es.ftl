@@ -1916,6 +1916,7 @@ files-photos-info-kind = Imagen { $format }
 files-photos-info-copied = Copiado
 files-photos-info-dimensions = Dimensiones
 files-photos-info-modified = Modificado
+files-photos-info-taken = Tomada
 files-photos-info-where = Ubicación
 files-photos-info-camera = Cámara
 files-photos-info-lens = Objetivo
