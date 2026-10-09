@@ -655,4 +655,55 @@ mod tests {
         assert!(!enabled);
         assert!(!redo.contains_key("toggle-type"));
     }
+
+    /// Over a real session bus, as the top bar reads it: the layout, then a
+    /// click that comes back as the item's id.
+    #[test]
+    #[ignore = "needs a session bus"]
+    fn the_bar_reads_the_menus_and_a_click_comes_back() {
+        let menu = AppMenu::serve(menus()).expect("a session bus");
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        runtime.block_on(async {
+            let bus = zbus::Connection::session().await.unwrap();
+            let reply = bus
+                .call_method(
+                    Some(menu.service.as_str()),
+                    MENU_PATH,
+                    Some("com.canonical.dbusmenu"),
+                    "GetLayout",
+                    &(0i32, -1i32, Vec::<String>::new()),
+                )
+                .await
+                .unwrap();
+            let (revision, (root, _, children)): (
+                u32,
+                (i32, HashMap<String, OwnedValue>, Vec<OwnedValue>),
+            ) = reply.body().deserialize().unwrap();
+            assert_eq!((revision, root, children.len()), (1, 0, 2));
+            // The Panels submenu on its own.
+            let reply = bus
+                .call_method(
+                    Some(menu.service.as_str()),
+                    MENU_PATH,
+                    Some("com.canonical.dbusmenu"),
+                    "GetLayout",
+                    &(8i32, -1i32, Vec::<String>::new()),
+                )
+                .await
+                .unwrap();
+            let (_, (id, _, children)): (u32, (i32, HashMap<String, OwnedValue>, Vec<OwnedValue>)) =
+                reply.body().deserialize().unwrap();
+            assert_eq!((id, children.len()), (8, 1));
+            bus.call_method(
+                Some(menu.service.as_str()),
+                MENU_PATH,
+                Some("com.canonical.dbusmenu"),
+                "Event",
+                &(9i32, "clicked", Value::from(0i32), 0u32),
+            )
+            .await
+            .unwrap();
+        });
+        assert_eq!(menu.take_picked(), ["chat"]);
+    }
 }
