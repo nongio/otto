@@ -100,29 +100,79 @@ in another app, `xdg-open`, the command line.
 - Centre, only for a document of more than one page: previous page, "N / M"
   showing the page with most of the window, next page. Each button is
   disabled at its end.
-- Trailing: the chat button, a toggle that stays down while the chat shows.
+- Trailing: the pen, a toggle that stays down while it is on (see *Marks*),
+  and the chat button, a toggle that stays down while the chat shows.
+- A button fires when the press and the release both land on it.
 - There is no button to open the file in another application: Preview is
   the viewer for the types it handles.
 
 ### Chat
 
 - The chat button or Ctrl+K shows a 360-point panel at the window's trailing
-  edge, under the toolbar; the document narrows and keeps its place. Hiding
-  it keeps the conversation for as long as the window is open.
+  edge, under the toolbar. A floating window with room to spare grows by the
+  panel's width, so the document keeps its size, and shrinks back when the
+  chat hides; a tiled, maximized or too-wide window narrows the document
+  instead, keeping its place. Hiding the panel keeps the conversation for as
+  long as the window is open.
+- `--chat` opens the file with the chat showing; `--session URI` carries on
+  that agent session beside the file (a session this app started, picked
+  from a list) and implies `--chat`. A later start hands both over the bus
+  (`OpenChat`, `OpenSession`).
 - The panel is the Ask chat from otto-agents-kit, as in the launcher: the log
   on top, the answers to a waiting question or input request above the
   field, and the field at the bottom ("Ask about NAME").
 - Opening the panel connects to otto-agents in the background; nothing
-  reaches an agent until something is sent. The file goes with the first
-  message, but is never shown as an attachment, since it is open beside
-  the chat.
+  reaches an agent until something is sent. Hiding and showing it again
+  connects again when the service couldn't be reached.
+- The first message creates the session with `_meta.otto`: `app`
+  (`otto-preview`) and `subject` (the file's URI), so lists open it here
+  again; `instructions`, which otto-agents hands the agent ahead of its first
+  turn (it is working on the file shown beside the chat, edits it in place
+  and calls `preview_reload`); and `mcpServers`, this program in `--mcp` mode
+  with the file in `OTTO_PREVIEW_DOC` (see *Document tools*).
+- The file goes with the first message, but is never shown as an attachment,
+  since it is open beside the chat. Marks going with a message are not shown
+  as attachments either.
 - Return sends. Up and Down pick an answer while one is waited for; Return
   or a click gives it. Ctrl+C stops a running turn, or copies the selection.
 - A press in the panel gives it the keyboard; a press on the document, or
   Escape in the field, gives the keyboard back to the document. Ctrl+C with
   text selected in the log copies it, wherever the keyboard is.
 - When otto-agents can't be reached, the panel says why.
-- A button fires when the press and the release both land on it.
+
+### Marks
+
+- The pen turns marking on: a drag on a picture or a page draws a freehand
+  mark, a drag with Shift a box, and the cursor is a pencil. Escape turns
+  the pen off. Text, listings and video can't be marked.
+- Marks are kept in the document's own units, a picture's pixels or a page's
+  PDF points, so they stay on what they mark through zoom, scrolling, the
+  chat opening and the file being reloaded.
+- The person's marks are red and numbered in drawing order, the number in a
+  badge at the mark's start. The agent's are blue, with its label (or a dot)
+  in the badge.
+- Hovering a badge shows a cross and a bin cursor; a click deletes the mark,
+  the person's or the agent's. Backspace takes back the person's last mark
+  not yet sent.
+- The person's marks not yet sent go with the next message: the line over
+  the field says which. They are written to `$XDG_RUNTIME_DIR/otto-preview/`
+  as `marks-*.json` (shapes and bounds in the document's units) and, for a
+  picture, `marks-*.png` (the picture with the marks drawn and numbered), and
+  attached without being listed. Sent marks stay, fainter.
+
+### Document tools
+
+- `org.otto.Preview1` also offers, for the window showing a path: `Info`
+  (what it shows, as JSON), `Marks` (every mark, as JSON), `Draw` (replace
+  one of the agent's named layers of marks), `Clear` (a layer, every agent
+  mark, or the person's marks), `Reload` (read the file again, keeping the
+  view) and `Render` (the picture as shown, with or without marks, as a PNG
+  path). A path no window shows is an error.
+- `otto-preview --mcp` is a stdio MCP server over those methods, for the
+  file in `OTTO_PREVIEW_DOC`: `preview_info`, `preview_marks`,
+  `preview_draw`, `preview_clear`, `preview_reload` and `preview_render`
+  (which returns the image). Its `initialize` answer carries the same
+  instructions as the session. It never connects to the display.
 
 ### Content input
 

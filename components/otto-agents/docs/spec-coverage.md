@@ -71,6 +71,13 @@ Where we agree, and it is most of it:
   which is the line the doctrine draws.
 - **Escape hatches stay explicit.** `otto.modes`, `otto.terminal` and
   `otto.defaultOption` live in `_meta` rather than in invented typed fields.
+  So does what a client asks for when it creates a session (`createSession`'s
+  `_meta.otto`): `app` and `subject`, copied onto the session's state so every
+  list can open it in that app; `instructions`, given to the agent ahead of
+  its first turn and never shown in the chat; and `mcpServers`, stdio MCP
+  servers handed to the agent with ACP's `mcpServers`, Otto programs named by
+  absolute path only. The last two are not stored with the session yet: a
+  session restored after a restart starts its agent without them.
   The doctrine allows this and warns that anything interoperable clients come
   to need should graduate into typed state.
 
