@@ -86,8 +86,21 @@ told: `sudo apt install --allow-downgrades ./otto-amd64.deb`,
 ```sh
 git clone https://github.com/nongio/otto
 cd otto
-cargo build --release
+cargo build --release --workspace --exclude otto-rdp
+cp otto_config.example.toml otto_config.toml
+PATH="$PWD/target/release:$PATH" target/release/otto --winit
 ```
+
+Otto starts its top bar, dynamic island, file manager and Settings as
+separate programs, by name, through `PATH`. A build leaves them in
+`target/release`, which is not on your `PATH`. The last line puts that
+directory first on `PATH` for this one run, so Otto finds what you just built.
+Without `--workspace`, `cargo build` only builds `otto` itself. The copied
+`otto_config.toml` is read from the working directory as a local override, and
+its `[[exec_once]]` entries autostart the top bar and island; a source build has
+no `/etc/otto/config.toml`. Leave `--winit` off to choose the backend
+automatically (see [Launching](#launching)). For a real session, copy the
+binaries somewhere on your `PATH`, such as `~/.local/bin`.
 
 You need `libwayland`, `libxkbcommon`, `libudev`, `libinput`, `libgbm` and
 [`libseat`](https://git.sr.ht/~kennylevinsen/seatd); the full list, with the
