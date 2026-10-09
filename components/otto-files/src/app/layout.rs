@@ -215,7 +215,11 @@ impl Browser {
                 let depth = self.columns.len() - 1;
                 let scroll = self.columns[depth].scroll.offset();
                 let area = self.photos.area(width, height);
-                if !self.photos.shown(width, height).contains(skia_safe::Point::new(x, y)) {
+                if !self
+                    .photos
+                    .shown(width, height)
+                    .contains(skia_safe::Point::new(x, y))
+                {
                     return None;
                 }
                 self.photos

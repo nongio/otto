@@ -237,7 +237,9 @@ fn the_info_panel_peeks_past_the_wall_and_describes_the_selection() {
     ));
     assert_eq!(browser.path_bar_note().as_deref(), Some("1 of 4 selected"));
     // A press in the panel is the panel's, not a click on nothing.
-    let panel = browser.photos.panel_rect(browser.size.0, browser.content_h());
+    let panel = browser
+        .photos
+        .panel_rect(browser.size.0, browser.content_h());
     assert!(browser
         .photos_controls_press(panel.center_x(), panel.center_y(), 1)
         .is_some());
@@ -277,7 +279,9 @@ fn the_info_panel_copies_a_swatch() {
         skia_safe::Color::from_rgb(0x20, 0x20, 0x20),
     ];
 
-    let panel = browser.photos.panel_rect(browser.size.0, browser.content_h());
+    let panel = browser
+        .photos
+        .panel_rect(browser.size.0, browser.content_h());
     let layout = view::photos_info_layout(panel, 2);
     // Two colours sit together at the left, not at the two ends of the row.
     assert!(layout.swatches[1].left - layout.swatches[0].right < 20.0);
@@ -355,7 +359,9 @@ fn the_info_panel_text_can_be_selected_and_copied() {
     browser.sync_scroll_metrics();
     reveal_info_panel(&mut browser);
     let data = browser.photos_info_data().unwrap();
-    let panel = browser.photos.panel_rect(browser.size.0, browser.content_h());
+    let panel = browser
+        .photos
+        .panel_rect(browser.size.0, browser.content_h());
     let runs = view::photos_info_runs(panel, &data, &otto_kit::theme::Theme::light());
     let name = runs[0].rect();
     let (x, y) = (name.center_x(), name.center_y());
