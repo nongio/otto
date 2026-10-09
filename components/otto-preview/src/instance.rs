@@ -14,6 +14,7 @@
 
 // Rust guideline compliant 2026-02-21
 
+use crate::versions::Versions;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -148,8 +149,37 @@ impl Service {
     }
 
     /// Read the file again and show it, as a change on disk would.
-    fn reload(&self, path: String) -> fdo::Result<()> {
-        self.change(&path, Viewer::reload)
+    /// Read the file again, and keep it as a version named by `note`.
+    fn reload(&self, path: String, note: String) -> fdo::Result<()> {
+        self.change(&path, |viewer| {
+            viewer.reload();
+            viewer.keep_version(Some(&note));
+        })
+    }
+
+    /// The file's versions, as JSON.
+    fn versions(&self, path: String) -> fdo::Result<String> {
+        let viewer = self.viewer(&path)?;
+        let viewer = viewer.lock().unwrap();
+        Ok(viewer
+            .versions
+            .as_ref()
+            .map(Versions::to_json)
+            .unwrap_or_else(|| serde_json::json!({ "versions": [] }))
+            .to_string())
+    }
+
+    /// Put version `version` back in place of the file. The window follows.
+    fn revert(&self, path: String, version: u32) -> fdo::Result<()> {
+        self.change(&path, |viewer| {
+            let versions = viewer
+                .versions
+                .as_mut()
+                .ok_or_else(|| fdo::Error::Failed("no versions are kept for this file".into()))?;
+            versions
+                .revert(version)
+                .map_err(|err| fdo::Error::Failed(err.to_string()))
+        })?
     }
 
     /// The picture as the window shows it, with the marks drawn when `marks`,

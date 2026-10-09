@@ -34,10 +34,12 @@ pub fn instructions(file: &Path) -> String {
          The person sees the file in the window next to this chat, so keep answers short: \
          the result is on screen.\n\
          - Change the file only when the person asks for a change to it. Edit it in place \
-         with your usual tools, keeping its format. There is no undo yet: before the first change, copy the original somewhere outside \
-         the person's folders (for example /tmp) so it can be restored.\n\
-         - After each change call preview_reload, so the window shows the new version, then \
-         preview_render to look at the result as the person sees it.\n\
+         with your usual tools, keeping its format.\n\
+         - After each change call preview_reload with a short note of what changed: the window \
+         shows the new version and Preview keeps it, so the person can step back with undo. \
+         preview_versions lists them and preview_revert puts one back; there is no need to \
+         back the file up yourself. Then call preview_render to look at the result as the \
+         person sees it.\n\
          - The person points by drawing numbered marks on the file. Their marks come with \
          their message as a marks-*.json file (and a marks-*.png with the marks drawn); \
          preview_marks reads them again. Coordinates are the picture's pixels, or PDF points \
@@ -130,8 +132,26 @@ fn tools() -> Value {
         },
         {
             "name": "preview_reload",
-            "description": "Show the file again after changing it on disk. Call after every edit; the window keeps its zoom and place.",
-            "inputSchema": nothing
+            "description": "Show the file again after changing it on disk, and keep it as a version the person can step back from. Call after every edit with a short note of what changed; the window keeps its zoom and place.",
+            "inputSchema": {
+                "type": "object",
+                "properties": { "note": { "type": "string", "description": "What this change did, in a few words: \"background removed\"." } }
+            }
+        },
+        {
+            "name": "preview_versions",
+            "description": "The file's versions, oldest first: the file as it was before the chat, then each change, with its note and which one the file is at now.",
+            "inputSchema": nothing,
+            "annotations": { "readOnlyHint": true }
+        },
+        {
+            "name": "preview_revert",
+            "description": "Put an earlier (or later) version back in place of the file; the window shows it. Versions after it stay until the file changes again.",
+            "inputSchema": {
+                "type": "object",
+                "properties": { "version": { "type": "integer", "description": "The version's number, from preview_versions." } },
+                "required": ["version"]
+            }
         },
         {
             "name": "preview_render",
@@ -196,8 +216,22 @@ fn call(bus: &Connection, doc: &Path, params: &Value) -> Value {
             "preview_info" => text(dbus::<String>(bus, "Info", &(path.as_str(),))?),
             "preview_marks" => text(dbus::<String>(bus, "Marks", &(path.as_str(),))?),
             "preview_reload" => {
-                dbus::<()>(bus, "Reload", &(path.as_str(),))?;
-                text("Reloaded: the window shows the file as it is on disk now.".into())
+                let note = arguments.get("note").and_then(Value::as_str).unwrap_or("");
+                dbus::<()>(bus, "Reload", &(path.as_str(), note))?;
+                text(
+                    "Reloaded: the window shows the file as it is on disk now, kept as a version."
+                        .into(),
+                )
+            }
+            "preview_versions" => text(dbus::<String>(bus, "Versions", &(path.as_str(),))?),
+            "preview_revert" => {
+                let Some(version) = arguments.get("version").and_then(Value::as_u64) else {
+                    return Ok(
+                        json!({ "content": [{ "type": "text", "text": "Say which version." }], "isError": true }),
+                    );
+                };
+                dbus::<()>(bus, "Revert", &(path.as_str(), version as u32))?;
+                text(format!("Version {version} is back in place of the file."))
             }
             "preview_draw" => {
                 let layer = arguments
@@ -276,8 +310,16 @@ mod tests {
     fn every_tool_has_a_name_a_description_and_a_schema() {
         let tools = tools();
         let tools = tools.as_array().unwrap();
-        assert_eq!(tools.len(), 6);
+        assert_eq!(tools.len(), 8);
+        // The Studio agent runs with a list of the tools it may use: one
+        // missing there is a tool it never sees.
+        let studio = include_str!("../../../resources/plugins/otto/agents/studio.md");
         for tool in tools {
+            let name = tool["name"].as_str().unwrap();
+            assert!(
+                studio.contains(&format!("mcp__preview__{name}")),
+                "{name} is not in studio.md's tools"
+            );
             assert!(tool["name"].as_str().unwrap().starts_with("preview_"));
             assert!(!tool["description"].as_str().unwrap().is_empty());
             assert_eq!(tool["inputSchema"]["type"], "object");

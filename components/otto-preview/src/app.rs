@@ -772,6 +772,7 @@ impl Doc {
         }
         tracing::debug!(path = %viewer.path.display(), "the file changed; reloading");
         viewer.reload();
+        viewer.track_version();
         drop(viewer);
         self.window.request_frame();
     }
@@ -834,6 +835,9 @@ impl App for PreviewApp {
                     // The marks not yet sent go with this message, as files
                     // the agent reads and the chat doesn't list.
                     if chat.sends(event) {
+                        // The file as it is before the agent hears of it, so
+                        // there is always a version to come back to.
+                        viewer.keep_version(None);
                         let dir = crate::marks::dir();
                         let (path, files) = {
                             let viewer = &mut *viewer;

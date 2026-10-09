@@ -50,6 +50,10 @@ pub enum Tool {
     Mark,
     /// Hides or shows the marks, the person's and the agent's.
     ShowMarks,
+    /// Steps the file back a version.
+    Undo,
+    /// Steps the file forward again.
+    Redo,
 }
 
 /// Where the toolbar's buttons sit for one window width.
@@ -123,6 +127,7 @@ pub fn toolbar_layout(
     variant: DecorationVariant,
     paged: bool,
     sidebar: bool,
+    versions: bool,
 ) -> ToolbarLayout {
     let top = titlebar_h(variant);
     let y = top + (TOOLBAR_H - BUTTON) / 2.0;
@@ -133,7 +138,14 @@ pub fn toolbar_layout(
     buttons.push((Tool::Chat, square(width - EDGE - BUTTON)));
     let pen = width - EDGE - 2.0 * BUTTON - GAP * 4.0;
     buttons.push((Tool::Mark, square(pen)));
-    buttons.push((Tool::ShowMarks, square(pen - BUTTON - GAP)));
+    let eye = pen - BUTTON - GAP;
+    buttons.push((Tool::ShowMarks, square(eye)));
+    // Back and forward through the file's versions, once there are any.
+    if versions {
+        let redo = eye - BUTTON - GAP * 4.0;
+        buttons.push((Tool::Redo, square(redo)));
+        buttons.push((Tool::Undo, square(redo - BUTTON - GAP)));
+    }
 
     let mut x = EDGE;
     if sidebar {
@@ -300,6 +312,8 @@ fn icon_names(tool: Tool) -> &'static [&'static str] {
         Tool::ZoomIn => &["zoom-in-symbolic"],
         Tool::PreviousPage => &["go-up-symbolic", "pan-up-symbolic"],
         Tool::NextPage => &["go-down-symbolic", "pan-down-symbolic"],
+        Tool::Undo => &["edit-undo-symbolic"],
+        Tool::Redo => &["edit-redo-symbolic"],
         // Never looked up; see `draw_sidebar_glyph` and `draw_chat_glyph`.
         Tool::Sidebar | Tool::Chat | Tool::Mark | Tool::ShowMarks => &[],
     }
@@ -354,6 +368,21 @@ fn draw_fallback_glyph(canvas: &Canvas, dst: Rect, tool: Tool, color: Color) {
         Tool::Chat => draw_chat_glyph(canvas, dst, color),
         Tool::Mark => draw_pen_glyph(canvas, dst, color),
         Tool::ShowMarks => draw_eye_glyph(canvas, dst, color, false),
+        Tool::Undo | Tool::Redo => {
+            // A hooked arrow, pointing back for undo.
+            let dx = if tool == Tool::Undo { 1.0 } else { -1.0 };
+            let (start, end) = if dx > 0.0 {
+                (r.left, r.right)
+            } else {
+                (r.right, r.left)
+            };
+            path.move_to((start + dx * 3.0, cy - 4.0));
+            path.line_to((start, cy));
+            path.line_to((start + dx * 3.0, cy + 4.0));
+            path.move_to((start, cy));
+            path.line_to((end - dx * 3.0, cy));
+            path.quad_to((end, cy), (end, cy + 3.0));
+        }
     }
     canvas.draw_path(&path.detach(), &stroke);
 }
@@ -482,7 +511,13 @@ mod tests {
 
     #[test]
     fn the_page_controls_clear_the_zoom_group_in_the_narrowest_window() {
-        let layout = toolbar_layout(crate::app::MIN_W, DecorationVariant::default(), true, true);
+        let layout = toolbar_layout(
+            crate::app::MIN_W,
+            DecorationVariant::default(),
+            true,
+            true,
+            true,
+        );
         let leading = button(&layout, Tool::ZoomFit).right;
         let previous = button(&layout, Tool::PreviousPage).left;
         assert!(previous > leading, "{previous} <= {leading}");
@@ -490,7 +525,7 @@ mod tests {
 
     #[test]
     fn the_zoom_level_sits_between_zoom_out_and_zoom_in() {
-        let layout = toolbar_layout(900.0, DecorationVariant::default(), false, false);
+        let layout = toolbar_layout(900.0, DecorationVariant::default(), false, false, false);
         assert!(button(&layout, Tool::ZoomOut).right <= layout.zoom_label.left);
         assert!(layout.zoom_label.right <= button(&layout, Tool::ZoomIn).left);
     }

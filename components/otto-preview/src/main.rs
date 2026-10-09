@@ -22,6 +22,7 @@ mod instance;
 mod marks;
 mod mcp;
 mod sidebar;
+mod versions;
 mod viewer;
 
 use std::io::Read;

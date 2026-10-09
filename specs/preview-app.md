@@ -100,7 +100,8 @@ in another app, `xdg-open`, the command line.
 - Centre, only for a document of more than one page: previous page, "N / M"
   showing the page with most of the window, next page. Each button is
   disabled at its end.
-- Trailing: the eye, a toggle that stays down (struck through) while the
+- Trailing: undo and redo, once the file has more than one version (see
+  *Versions*); the eye, a toggle that stays down (struck through) while the
   marks are hidden; the pen, a toggle that stays down while it is on (see
   *Marks*); and the chat button, a toggle that stays down while the chat
   shows.
@@ -169,17 +170,34 @@ in another app, `xdg-open`, the command line.
   picture, `marks-*.png` (the picture with the marks drawn and numbered), and
   attached without being listed. Sent marks stay, fainter.
 
+### Versions
+
+- From the first message sent in the chat, Preview keeps the file's
+  versions: the file as it was then, and the file each time it changes after
+  that, whoever changed it. They are kept under
+  `$XDG_STATE_HOME/otto-preview/versions/`, survive closing the window, and
+  are taken up again when the file is opened later.
+- Undo and redo in the toolbar, or Ctrl+Z and Ctrl+Shift+Z with the document
+  focused, step back and forward: the version is copied over the file
+  (through a file renamed into place), and the window follows the change as
+  for any other.
+- The file matching a version already kept is that version, not a new one. A
+  change after stepping back drops the versions stepped back from.
+- At most 50 versions are kept; the oldest go first, except the first.
+
 ### Document tools
 
 - `org.otto.Preview1` also offers, for the window showing a path: `Info`
   (what it shows, as JSON), `Marks` (every mark, as JSON), `Draw` (replace
   one of the agent's named layers of marks), `Clear` (a layer, every agent
   mark, or the person's marks), `Reload` (read the file again, keeping the
-  view) and `Render` (the picture as shown, with or without marks, as a PNG
+  view, and keep it as a version with the agent's note), `Versions` (the
+  versions, as JSON), `Revert` (put one back) and `Render` (the picture as shown, with or without marks, as a PNG
   path). A path no window shows is an error.
 - `otto-preview --mcp` is a stdio MCP server over those methods, for the
   file in `OTTO_PREVIEW_DOC`: `preview_info`, `preview_marks`,
-  `preview_draw`, `preview_clear`, `preview_reload` and `preview_render`
+  `preview_draw`, `preview_clear`, `preview_reload` (with a note),
+  `preview_versions`, `preview_revert` and `preview_render`
   (which returns the image). Its `initialize` answer carries the same
   instructions as the session. It never connects to the display.
 

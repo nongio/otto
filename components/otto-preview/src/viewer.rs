@@ -7,6 +7,7 @@
 
 // Rust guideline compliant 2026-02-21
 
+use crate::versions::Versions;
 use std::collections::{HashMap, HashSet};
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
@@ -108,6 +109,9 @@ pub struct Viewer {
     /// Whether the marks are hidden, to see the document as it is. They
     /// show again when the pen is taken up or the agent draws.
     pub marks_hidden: bool,
+    /// The file's versions, once a chat about it has started; see
+    /// [`crate::versions`].
+    pub versions: Option<Versions>,
     /// The chat panel as last painted, in window coordinates.
     pub chat_picture: Option<otto_kit::skia::Picture>,
     /// Whether the window grew to make room for the chat, and so shrinks
@@ -164,6 +168,8 @@ pub enum KeyOutcome {
 impl Viewer {
     /// A viewer on `path`, waiting for its decode.
     pub fn new(path: PathBuf, size: (f32, f32)) -> Self {
+        // What a chat about this file kept before, taken up again.
+        let versions = Versions::existing(&path);
         let name = path
             .file_name()
             .map(|name| name.to_string_lossy().into_owned())
@@ -206,6 +212,7 @@ impl Viewer {
             marks: Marks::default(),
             marking: false,
             marks_hidden: false,
+            versions,
             chat_picture: None,
             chat_grew: false,
             floating: true,
@@ -673,6 +680,8 @@ impl Viewer {
             Tool::Chat => true,
             Tool::Mark => self.marking || !self.frames().is_empty(),
             Tool::ShowMarks => self.marks_hidden || !self.marks.list.is_empty(),
+            Tool::Undo => self.versions.as_ref().is_some_and(Versions::can_undo),
+            Tool::Redo => self.versions.as_ref().is_some_and(Versions::can_redo),
         }
     }
 
@@ -683,7 +692,47 @@ impl Viewer {
             self.variant,
             self.page_status().is_some(),
             self.has_pages(),
+            self.versions
+                .as_ref()
+                .is_some_and(|versions| versions.len() > 1),
         )
+    }
+
+    /// Keep the file's versions from now on, starting with the file as it
+    /// is, or take the file as it is now as one. `note` names what changed.
+    pub fn keep_version(&mut self, note: Option<&str>) {
+        let kept = match &mut self.versions {
+            Some(versions) => versions.record(note).map(|_| ()),
+            None => Versions::start(&self.path).map(|versions| self.versions = Some(versions)),
+        };
+        if let Err(err) = kept {
+            tracing::warn!(path = %self.path.display(), %err, "could not keep a version of the file");
+        }
+        self.dirty = true;
+    }
+
+    /// Take a version the file changed into, when versions are kept.
+    pub fn track_version(&mut self) {
+        if self.versions.is_some() {
+            self.keep_version(None);
+        }
+    }
+
+    /// Step the file back (or forward again) a version. The window follows
+    /// the file changing, as for any other change.
+    pub fn step_version(&mut self, back: bool) {
+        let Some(versions) = &mut self.versions else {
+            return;
+        };
+        let stepped = if back {
+            versions.undo()
+        } else {
+            versions.redo()
+        };
+        if let Err(err) = stepped {
+            tracing::warn!(path = %self.path.display(), %err, "could not step through the versions");
+        }
+        self.dirty = true;
     }
 
     /// Zoom to `scale` about `focus`, a window-local point. Returns whether
@@ -886,6 +935,8 @@ impl Viewer {
                 }
                 self.dirty = true;
             }
+            Tool::Undo => self.step_version(true),
+            Tool::Redo => self.step_version(false),
             Tool::ShowMarks => {
                 self.marks_hidden = !self.marks_hidden;
                 if self.marks_hidden {
@@ -906,6 +957,11 @@ impl Viewer {
             Keysym::Escape if self.marking => {
                 self.marking = false;
                 self.dirty = true;
+                KeyOutcome::Handled
+            }
+            // The file's versions, once a chat keeps them.
+            Keysym::z | Keysym::Z if ctrl && self.versions.is_some() => {
+                self.step_version(!self.modifiers.shift);
                 KeyOutcome::Handled
             }
             // The person's last mark, until it goes with a message.
