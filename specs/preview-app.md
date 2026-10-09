@@ -127,7 +127,13 @@ in another app, `xdg-open`, the command line.
   (`OpenChat`, `OpenSession`).
 - The panel is the Ask chat from otto-agents-kit, as in the launcher: the log
   on top, the answers to a waiting question or input request above the
-  field, and the field at the bottom ("Ask about NAME").
+  field, and the field at the bottom ("Ask about NAME"). The field is filled
+  a step lighter than the panel, and its text starts on the log's left edge,
+  at the log's size, so the two read as one column. The footer names the
+  agent Studio.
+- Long words in the log, paths and addresses, break after a `/`, `-`, `_` or
+  `.` rather than run past the edge. A tool call shows its first line, in
+  at most two lines; closed, a run of calls is the last of them on one line.
 - Opening the panel connects to otto-agents in the background; nothing
   reaches an agent until something is sent. Hiding and showing it again
   connects again when the service couldn't be reached.
@@ -176,7 +182,7 @@ in another app, `xdg-open`, the command line.
   (in its `_meta.otto.marks`) once the chat has a session, and comes back
   when the session is opened in Preview again.
 - The person's marks not yet sent go with the next message: the line over
-  the field says which. They are written to `$XDG_RUNTIME_DIR/otto-preview/`
+  the field, in a band of its own on the log's left edge, says which. They are written to `$XDG_RUNTIME_DIR/otto-preview/`
   as `marks-*.json` (shapes and bounds in the document's units) and, for a
   picture, `marks-*.png` (the picture with the marks drawn and numbered), and
   attached without being listed. Sent marks stay, fainter.

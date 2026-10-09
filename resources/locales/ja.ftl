@@ -1648,7 +1648,9 @@ preview-chat-placeholder = { $name } について質問
 preview-chat-empty = このファイルについてエージェントに質問したり、変更を頼んだりできます。
 # Over the chat field in Preview, when marks drawn on the file will go with
 # the next message. $marks lists their numbers ("1, 2"); $count is how many.
-preview-chat-marks = マーク { $marks } をメッセージと一緒に送ります
+preview-chat-marks = { $count ->
+   *[other] マーク { $marks } をメッセージと一緒に送ります
+}
 
 
 ## Peek — listings

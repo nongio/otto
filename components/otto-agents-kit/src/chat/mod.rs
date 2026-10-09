@@ -814,6 +814,9 @@ pub struct Ask {
     marks_in: Option<Value>,
     /// Whether the session was opened again and its marks are still to come.
     marks_wanted: bool,
+    /// The agent's name in the footer, when the host knows it better than
+    /// the provider does; see [`Self::set_agent_title`].
+    agent_title: Option<String>,
     /// What otto-stash has stashed, after the files above: it goes with
     /// the next request too, but otto-stash keeps it, and changes to it go
     /// there. Each with its file and whether it is struck out.
@@ -857,6 +860,7 @@ impl Ask {
             marks_out: None,
             marks_in: None,
             marks_wanted: false,
+            agent_title: None,
             stashed: Vec::new(),
             handing_over: false,
             unreachable: None,
@@ -1504,6 +1508,12 @@ impl Ask {
         self.unlisted.extend(files);
     }
 
+    /// Name the agent `title` in the footer, rather than by its provider: a
+    /// host whose sessions run one plugin agent, as Preview's run Studio.
+    pub fn set_agent_title(&mut self, title: impl Into<String>) {
+        self.agent_title = Some(title.into());
+    }
+
     /// Create the session this chat starts with `meta` as its `_meta`.
     /// otto-agents reads `otto.mcpServers` there: MCP servers the agent is
     /// given, Otto programs only. A session already open keeps what it has.
@@ -1635,9 +1645,10 @@ impl Ask {
     pub fn mode_line(&self) -> Option<ModeLine> {
         let run = self.run.as_ref()?;
         let modes = run.modes.as_ref()?;
-        let agent = run
-            .agent
+        let agent = self
+            .agent_title
             .clone()
+            .or_else(|| run.agent.clone())
             .or_else(|| {
                 run.provider
                     .as_deref()

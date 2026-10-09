@@ -58,8 +58,12 @@ const PAD: f32 = 10.0;
 const LOG_TOP: f32 = 16.0;
 /// One answer to a question.
 const ROW_H: f32 = 30.0;
+/// The band over the field saying which marks go with the next message.
+const NOTE_H: f32 = 22.0;
 /// The line saying the agents can't be reached, under the log.
 const UNREACHABLE_H: f32 = 36.0;
+/// The agent sessions started here run, as the footer names it.
+const AGENT_TITLE: &str = "Studio";
 /// The client name otto-agents shows for sessions started here.
 const CLIENT: &str = "otto-preview";
 
@@ -105,7 +109,9 @@ struct Layout {
 }
 
 impl Layout {
-    fn new(panel: Rect, answers: usize) -> Self {
+    /// `note` is whether the band saying which marks go with the next
+    /// message is shown, over the field and under the log.
+    fn new(panel: Rect, answers: usize, note: bool) -> Self {
         let field = Rect::from_ltrb(
             panel.left + PAD,
             panel.bottom - PAD - FIELD_H,
@@ -114,11 +120,12 @@ impl Layout {
         );
         let rows_h = answers as f32 * ROW_H;
         let gap = if answers > 0 { PAD } else { 0.0 };
+        let above = field.top - PAD - if note { NOTE_H } else { 0.0 };
         let answers = Rect::from_ltrb(
             panel.left + PAD,
-            field.top - PAD - rows_h - gap,
+            above - rows_h - gap,
             panel.right - PAD,
-            field.top - PAD,
+            above,
         );
         let log = Rect::from_ltrb(
             panel.left + 1.0,
@@ -183,6 +190,7 @@ impl Chat {
             .is_some_and(|ask| ask.unreachable().is_some() && !ask.running());
         if self.ask.is_none() || stale {
             let mut ask = Ask::open(CLIENT);
+            ask.set_agent_title(AGENT_TITLE);
             match self.resume.take() {
                 // The session already has its meta, its tools and the file.
                 Some(session) => ask.resume(&session),
@@ -411,7 +419,7 @@ impl Chat {
 
     /// The pointer moved over the panel, or left it (`None`).
     pub fn motion(&mut self, panel: Rect, at: Option<Point>) -> (bool, CursorShape) {
-        let layout = Layout::new(panel, self.answers().len());
+        let layout = Layout::new(panel, self.answers().len(), self.noting());
         if let Some(at) = at {
             if self.scroll.on_pointer_drag(at.x, at.y) {
                 self.update_follow();
@@ -444,7 +452,7 @@ impl Chat {
     pub fn press(&mut self, panel: Rect, at: Point, time: u32, serial: u32) -> bool {
         self.focused = true;
         let answers = self.answers().len();
-        let layout = Layout::new(panel, answers);
+        let layout = Layout::new(panel, answers, self.noting());
         if let Some(index) = layout.answer_at(at, answers) {
             self.selected = index;
             self.pressed_answer = Some(index);
@@ -465,7 +473,7 @@ impl Chat {
     pub fn release(&mut self, panel: Rect, at: Point) -> bool {
         self.scroll.on_pointer_up();
         let answers = self.answers().len();
-        let layout = Layout::new(panel, answers);
+        let layout = Layout::new(panel, answers, self.noting());
         if let Some(index) = self.pressed_answer.take() {
             if layout.answer_at(at, answers) == Some(index) {
                 self.answer(index);
@@ -555,6 +563,12 @@ impl Chat {
         )
     }
 
+    /// Whether the band over the field says which marks go with the next
+    /// message.
+    fn noting(&self) -> bool {
+        !self.pending_marks.is_empty()
+    }
+
     /// Paint the panel into `panel`.
     pub fn draw(&mut self, canvas: &Canvas, panel: Rect, theme: &Theme) {
         if panel.width() != self.width {
@@ -562,7 +576,7 @@ impl Chat {
             self.relayout();
         }
         let answers = self.answers();
-        let layout = Layout::new(panel, answers.len());
+        let layout = Layout::new(panel, answers.len(), self.noting());
 
         let mut paint = Paint::default();
         paint.set_anti_alias(true);
@@ -632,8 +646,11 @@ impl Chat {
             ))
             .with_style(styles::FOOTNOTE)
             .with_color(theme.text_secondary)
-            .with_width(layout.field.width())
-            .centered_on(layout.field.left + 4.0, layout.field.top - 10.0)
+            .with_width(panel.width() - 2.0 * INSET)
+            .centered_on(
+                panel.left + INSET,
+                layout.field.top - PAD / 2.0 - NOTE_H / 2.0,
+            )
             .render(canvas);
         }
         let field = RRect::new_rect_xy(layout.field, 8.0, 8.0);
@@ -714,6 +731,10 @@ fn field_style(dark: bool) -> TextInputStyle {
     let mut style = TextInputStyle::with_theme(if dark { Theme::dark() } else { Theme::light() });
     style.background = Color::TRANSPARENT;
     style.focus_ring_width = 0.0;
+    // Its text on the log's left edge and at the log's size, so the two read
+    // as one column.
+    style.horizontal_padding = INSET - PAD;
+    style.text_style = otto_agents_kit::log::body();
     style
 }
 
@@ -740,15 +761,17 @@ mod tests {
             chat.carry_on(session.clone());
             chat.opened();
             chat.focused = false;
+            // A mark waiting to go, so the note over the field shows.
+            chat.pending_marks = vec![2];
             // Until the log stops growing for a while.
             let mut last = (0.0, std::time::Instant::now());
-            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(90);
             while std::time::Instant::now() < deadline {
                 chat.pump();
                 let length = chat.view.length();
                 if length != last.0 {
                     last = (length, std::time::Instant::now());
-                } else if length > 0.0 && last.1.elapsed().as_millis() > 1500 {
+                } else if length > 0.0 && last.1.elapsed().as_millis() > 8000 {
                     break;
                 }
                 std::thread::sleep(std::time::Duration::from_millis(30));
@@ -810,7 +833,7 @@ mod tests {
 
     #[test]
     fn the_field_sits_at_the_bottom_and_the_log_fills_the_rest() {
-        let layout = Layout::new(PANEL, 0);
+        let layout = Layout::new(PANEL, 0, false);
         assert_eq!(layout.field.bottom, PANEL.bottom - PAD);
         assert_eq!(layout.field.height(), FIELD_H);
         assert_eq!(layout.log.top, PANEL.top + LOG_TOP);
@@ -819,8 +842,8 @@ mod tests {
 
     #[test]
     fn answers_take_room_from_the_log_and_are_hit_by_row() {
-        let without = Layout::new(PANEL, 0);
-        let with = Layout::new(PANEL, 3);
+        let without = Layout::new(PANEL, 0, false);
+        let with = Layout::new(PANEL, 3, false);
         assert!(with.log.height() < without.log.height());
         let first = Point::new(with.answers.center_x(), with.answers.top + PAD + 1.0);
         let last = Point::new(with.answers.center_x(), with.answers.bottom - 1.0);

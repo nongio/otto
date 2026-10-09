@@ -1735,7 +1735,10 @@ preview-chat-placeholder = Спросить о { $name }
 preview-chat-empty = Спросите агента об этом файле или попросите изменить его.
 # Over the chat field in Preview, when marks drawn on the file will go with
 # the next message. $marks lists their numbers ("1, 2"); $count is how many.
-preview-chat-marks = С сообщением уйдут пометки: { $marks }
+preview-chat-marks = { $count ->
+    [one] С сообщением уйдёт пометка { $marks }
+   *[other] С сообщением уйдут пометки: { $marks }
+}
 
 
 ## Peek — listings
