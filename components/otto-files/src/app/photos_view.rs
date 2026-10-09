@@ -449,14 +449,14 @@ impl Browser {
     /// when it is showing one: what a press plays, picks the file up by or
     /// double-clicks open.
     pub(super) fn photos_info_stage(&self) -> Option<Rect> {
-        if !self.photos.has_panel() {
+        if !self.photos.has_panel(self.size.0, self.content_h()) {
             return None;
         }
         let data = self.photos_info_data()?;
         let view::PhotosInfoData::One { swatches, .. } = &data else {
             return None;
         };
-        let panel = view::photos_info_rect(self.size.0, self.content_h());
+        let panel = self.photos.panel_rect(self.size.0, self.content_h());
         Some(view::photos_info_layout(panel, swatches.len()).stage)
     }
 
@@ -592,10 +592,10 @@ impl Browser {
 
     /// The info panel's turn or flip button under `(x, y)`, if any.
     pub(super) fn photos_tool_at(&self, x: f32, y: f32) -> Option<usize> {
-        if self.mode != ViewMode::Photos || !self.photos.has_panel() {
+        if self.mode != ViewMode::Photos || !self.photos.has_panel(self.size.0, self.content_h()) {
             return None;
         }
-        let panel = view::photos_info_rect(self.size.0, self.content_h());
+        let panel = self.photos.panel_rect(self.size.0, self.content_h());
         if !panel.contains(skia_safe::Point::new(x, y)) {
             return None;
         }
