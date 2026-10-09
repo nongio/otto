@@ -11,8 +11,8 @@ description = "A keyboard-driven launcher for Otto — type to filter apps and w
 laye-rs.workspace = true
 # Ask mode, its chat and its log are otto-agents-kit's, shared with the
 # other apps that host a conversation.
-otto-agents-kit = { path = "../otto-agents-kit" }
-otto-kit = { path = "../otto-kit", features = ["dictation"] }
+otto-agents-kit = { path = "../otto-agents-kit", features = ["dictation"] }
+otto-kit = { path = "../otto-kit" }
 otto-peek = { path = "../otto-peek" }
 # Ask's drafts, kept per session.
 serde_json.workspace = true
