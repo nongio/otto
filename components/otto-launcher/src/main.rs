@@ -414,7 +414,7 @@ impl Launcher {
     fn dictation_key(&mut self, keysym: Keysym, control: Option<char>) -> bool {
         let Some(dictation) = self.dictation.as_mut() else {
             if control == Some('d') {
-                let mut dictation = Dictation::start(Engine::from_env(), &mut self.input);
+                let mut dictation = Dictation::start(Engine::from_config(), &mut self.input);
                 // A list is picked from, so what is heard is one of its
                 // names. A request to an agent is free speech.
                 if self.ask.is_none() {

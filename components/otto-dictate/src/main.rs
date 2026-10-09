@@ -16,11 +16,15 @@
 //! - Any other key stops listening, like the toggle. The key itself is not
 //!   passed on.
 //!
-//! Environment:
+//! Settings come from `~/.config/otto/dictation.toml` (`url`, `language`,
+//! `hotwords_boost`), which the Settings app's Dictation pane writes. It is
+//! read again each time listening starts. The environment overrides it:
 //! - `OTTO_DICTATE_URL`: the server's `/inference` endpoint
 //!   (default `http://127.0.0.1:8080/inference`).
 //! - `OTTO_DICTATE_LANGUAGE`: an ISO 639-1 code or `auto` (default: from
 //!   `LANG`).
+//! - `OTTO_DICTATE_HOTWORDS_BOOST`: how much hotwords are favoured, for
+//!   engines that take them (default 4).
 //! - `OTTO_DICTATE_WAV`: a 16 kHz mono WAV played in place of the microphone.
 
 mod balloon;
@@ -101,7 +105,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
-    let engine = Engine::from_env();
+    let engine = Engine::from_config();
     tracing::info!(url = %engine.url, language = %engine.language, "otto-dictate starting");
 
     let conn = Connection::connect_to_env()?;
@@ -310,7 +314,10 @@ impl State {
             },
             None => Capture::start(),
         };
-        tracing::info!("start listening");
+        // Read again for every dictation, so a change in Settings applies
+        // without restarting the input method.
+        self.engine = Engine::from_config();
+        tracing::info!(url = %self.engine.url, language = %self.engine.language, "start listening");
         self.generation += 1;
         self.bars = Bars::default();
         self.listening = Some(Listening {

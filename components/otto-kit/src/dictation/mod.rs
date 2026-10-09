@@ -11,7 +11,7 @@
 //!
 //! ```ignore
 //! // A key starts it...
-//! self.dictation = Some(Dictation::start(Engine::from_env(), &mut self.input));
+//! self.dictation = Some(Dictation::start(Engine::from_config(), &mut self.input));
 //! // ...every frame, and when its poll fd wakes...
 //! if let Some(dictation) = self.dictation.as_mut() {
 //!     if dictation.update(&mut self.input) == Status::Done {

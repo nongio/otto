@@ -10,7 +10,10 @@ at a time.
 | Whisper small.en | `otto-stt-whisper` | English | honours `OTTO_DICTATE_LANGUAGE` and the prompt |
 | CrispASR, Parakeet v3 q8 | `otto-stt-crispasr` | 25 European, detected | prebuilt; takes the vocabulary as hotwords (`OTTO_DICTATE_HOTWORDS_BOOST`, default 4) |
 
-All run on the GPU through Vulkan. Switch with one of:
+All run on the GPU through Vulkan. Settings › Dictation switches between
+them, and writes the engine, the language and the hotword boost to
+`~/.config/otto/dictation.toml`; the `OTTO_DICTATE_*` variables override that
+file. By hand, switch with one of:
 
 ```sh
 systemctl --user enable --now otto-stt-parakeet

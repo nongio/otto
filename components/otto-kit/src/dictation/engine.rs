@@ -54,8 +54,97 @@ const TIMEOUT: Duration = Duration::from_secs(20);
 /// the form values.
 const BOUNDARY: &str = "otto-dictation-7f3a9c1e5b";
 
+/// The local server every engine answers on.
+const DEFAULT_URL: &str = "http://127.0.0.1:8080/inference";
+/// How much hotwords are favoured when nothing says otherwise.
+const DEFAULT_HOTWORDS_BOOST: f32 = 4.0;
+
+/// What `dictation.toml` sets, each key `None` where the file leaves it out.
+///
+/// The file is dictation's own, `$XDG_CONFIG_HOME/otto/dictation.toml`,
+/// written by the Settings app's Dictation pane and read by whichever app
+/// dictates, the way `agents.toml` and `files.toml` belong to their
+/// components. Dictation runs inside otto-kit clients, not the compositor,
+/// so its settings are not in the compositor's `config.toml`.
+///
+/// ```toml
+/// engine = "crispasr"      # parakeet | whisper | crispasr
+/// language = "auto"        # auto, or an ISO 639-1 code
+/// hotwords_boost = 4.0
+/// url = "http://127.0.0.1:8080/inference"
+/// ```
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct Config {
+    /// Which engine's service serves the endpoint. Recorded for the Settings
+    /// app, which starts that service; every engine is spoken to the same
+    /// way, so it does not change what is sent.
+    pub engine: Option<String>,
+    /// An ISO 639-1 code, or `auto`.
+    pub language: Option<String>,
+    pub hotwords_boost: Option<f32>,
+    /// The server's `/inference` endpoint.
+    pub url: Option<String>,
+}
+
+impl Config {
+    /// The keys `text` sets. A file that does not parse, or a key of the
+    /// wrong type, sets nothing: dictation still works on the defaults.
+    pub fn parse(text: &str) -> Self {
+        let Ok(doc) = text.parse::<toml_edit::DocumentMut>() else {
+            return Self::default();
+        };
+        let text = |key: &str| {
+            doc.get(key)
+                .and_then(|item| item.as_str())
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+        };
+        Self {
+            engine: text("engine"),
+            language: text("language"),
+            hotwords_boost: doc.get("hotwords_boost").and_then(|item| {
+                item.as_float()
+                    .or_else(|| item.as_integer().map(|n| n as f64))
+                    .map(|n| n as f32)
+            }),
+            url: text("url"),
+        }
+    }
+
+    /// The file at `path`, or nothing set when there is none.
+    pub fn load_from(path: &std::path::Path) -> Self {
+        std::fs::read_to_string(path)
+            .map(|text| Self::parse(&text))
+            .unwrap_or_default()
+    }
+
+    /// The user's `dictation.toml`.
+    pub fn load() -> Self {
+        crate::xdg::otto_config_file("dictation.toml")
+            .map(|path| Self::load_from(&path))
+            .unwrap_or_default()
+    }
+}
+
 impl Engine {
-    /// The engine the environment names, or the local server.
+    /// The engine the environment and `dictation.toml` name, or the local
+    /// server. Meant to be called as each dictation starts, so a change made
+    /// in Settings applies to the next one.
+    ///
+    /// Each value comes from the first of these that sets it:
+    ///
+    /// 1. The environment: `OTTO_DICTATE_URL`, `OTTO_DICTATE_LANGUAGE`,
+    ///    `OTTO_DICTATE_HOTWORDS_BOOST`.
+    /// 2. `$XDG_CONFIG_HOME/otto/dictation.toml` (see [`Config`]).
+    /// 3. The defaults: `http://127.0.0.1:8080/inference`, the language of
+    ///    `LANG`, a boost of 4.
+    pub fn from_config() -> Self {
+        Self::resolve(&Config::load(), |key| std::env::var(key).ok())
+    }
+
+    /// The engine the environment names, or the local server, ignoring
+    /// `dictation.toml`.
     ///
     /// - `OTTO_DICTATE_URL`: the server's `/inference` endpoint (default
     ///   `http://127.0.0.1:8080/inference`).
@@ -64,14 +153,22 @@ impl Engine {
     /// - `OTTO_DICTATE_HOTWORDS_BOOST`: how much hotwords are favoured
     ///   (default 4).
     pub fn from_env() -> Self {
+        Self::resolve(&Config::default(), |key| std::env::var(key).ok())
+    }
+
+    /// The engine `config` describes, each value looked up in `env` first.
+    fn resolve(config: &Config, env: impl Fn(&str) -> Option<String>) -> Self {
         Self {
-            url: std::env::var("OTTO_DICTATE_URL")
-                .unwrap_or_else(|_| "http://127.0.0.1:8080/inference".into()),
-            language: std::env::var("OTTO_DICTATE_LANGUAGE").unwrap_or_else(|_| system_language()),
-            hotwords_boost: std::env::var("OTTO_DICTATE_HOTWORDS_BOOST")
-                .ok()
+            url: env("OTTO_DICTATE_URL")
+                .or_else(|| config.url.clone())
+                .unwrap_or_else(|| DEFAULT_URL.into()),
+            language: env("OTTO_DICTATE_LANGUAGE")
+                .or_else(|| config.language.clone())
+                .unwrap_or_else(|| system_language(env("LANG"))),
+            hotwords_boost: env("OTTO_DICTATE_HOTWORDS_BOOST")
                 .and_then(|boost| boost.parse().ok())
-                .unwrap_or(4.0),
+                .or(config.hotwords_boost)
+                .unwrap_or(DEFAULT_HOTWORDS_BOOST),
         }
     }
 
@@ -121,10 +218,8 @@ impl Engine {
 }
 
 /// `LANG=it_IT.UTF-8` → `it`; `auto` when it is unset or `C`.
-fn system_language() -> String {
-    std::env::var("LANG")
-        .ok()
-        .and_then(|lang| lang.get(..2).map(str::to_ascii_lowercase))
+fn system_language(lang: Option<String>) -> String {
+    lang.and_then(|lang| lang.get(..2).map(str::to_ascii_lowercase))
         .filter(|code| code.chars().all(|c| c.is_ascii_lowercase()) && code != "c")
         .unwrap_or_else(|| "auto".into())
 }
@@ -348,6 +443,83 @@ mod tests {
             strip_markers("Hi *Sounds of a dead man* there [BLANK_AUDIO]"),
             "Hi  there "
         );
+    }
+
+    #[test]
+    fn the_file_reads_its_keys_and_ignores_the_rest() {
+        let config = Config::parse(
+            "# Dictation\nengine = \"crispasr\"\nlanguage = \"it\"\nhotwords_boost = 5\nother = 1\n",
+        );
+        assert_eq!(config.engine.as_deref(), Some("crispasr"));
+        assert_eq!(config.language.as_deref(), Some("it"));
+        assert_eq!(config.hotwords_boost, Some(5.0));
+        assert_eq!(config.url, None);
+        assert_eq!(
+            Config::parse("hotwords_boost = 2.5").hotwords_boost,
+            Some(2.5)
+        );
+        // A broken file, or a key of the wrong type, sets nothing.
+        assert_eq!(Config::parse("engine = "), Config::default());
+        assert_eq!(Config::parse("language = 3").language, None);
+    }
+
+    #[test]
+    fn a_file_on_disk_is_read_and_a_missing_one_sets_nothing() {
+        let dir = std::env::temp_dir().join(format!("otto-dictation-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("dictation.toml");
+        std::fs::write(&path, "url = \"http://box:9000/inference\"\n").unwrap();
+        let config = Config::load_from(&path);
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(config.url.as_deref(), Some("http://box:9000/inference"));
+        assert_eq!(Config::load_from(&path), Config::default());
+    }
+
+    /// An environment holding only `vars`.
+    fn env(vars: &'static [(&'static str, &'static str)]) -> impl Fn(&str) -> Option<String> {
+        move |key| {
+            vars.iter()
+                .find(|(name, _)| *name == key)
+                .map(|(_, value)| value.to_string())
+        }
+    }
+
+    #[test]
+    fn the_environment_beats_the_file_which_beats_the_defaults() {
+        let file = Config {
+            engine: None,
+            language: Some("de".into()),
+            hotwords_boost: Some(6.0),
+            url: Some("http://file/inference".into()),
+        };
+
+        let engine = Engine::resolve(&file, env(&[("LANG", "it_IT.UTF-8")]));
+        assert_eq!(engine.url, "http://file/inference");
+        assert_eq!(engine.language, "de");
+        assert_eq!(engine.hotwords_boost, 6.0);
+
+        let engine = Engine::resolve(
+            &file,
+            env(&[
+                ("OTTO_DICTATE_URL", "http://env/inference"),
+                ("OTTO_DICTATE_LANGUAGE", "auto"),
+                ("OTTO_DICTATE_HOTWORDS_BOOST", "2"),
+            ]),
+        );
+        assert_eq!(engine.url, "http://env/inference");
+        assert_eq!(engine.language, "auto");
+        assert_eq!(engine.hotwords_boost, 2.0);
+
+        let engine = Engine::resolve(&Config::default(), env(&[("LANG", "it_IT.UTF-8")]));
+        assert_eq!(engine.url, DEFAULT_URL);
+        assert_eq!(engine.language, "it");
+        assert_eq!(engine.hotwords_boost, DEFAULT_HOTWORDS_BOOST);
+        // No usable LANG lets the engine detect the language.
+        let language = |vars: &'static [(&'static str, &'static str)]| {
+            Engine::resolve(&Config::default(), env(vars)).language
+        };
+        assert_eq!(language(&[]), "auto");
+        assert_eq!(language(&[("LANG", "C")]), "auto");
     }
 
     #[test]
