@@ -1540,9 +1540,10 @@ pub struct PhotosSection {
 pub struct PhotosLayout {
     pub sections: Vec<PhotosSection>,
     layout: JustifiedLayout,
-    /// How much of the file area's right the info panel takes, which the
-    /// wall was packed to leave clear. Zero while no panel is up.
-    panel_w: f32,
+    /// How far the file area is panned toward the info panel, which trails
+    /// the wall the way the preview column trails the Miller stack. Stays
+    /// zero while the window is wide enough for both.
+    pan: f32,
 }
 
 impl PhotosLayout {
@@ -1550,7 +1551,7 @@ impl PhotosLayout {
     pub const EMPTY: &'static PhotosLayout = &PhotosLayout {
         sections: Vec::new(),
         layout: JustifiedLayout::empty(),
-        panel_w: 0.0,
+        pan: 0.0,
     };
 
     /// Lay `sections` out across `width` — the file area's — with `aspects`
@@ -1585,32 +1586,48 @@ impl PhotosLayout {
         Self {
             sections,
             layout,
-            panel_w: 0.0,
+            pan: 0.0,
         }
     }
 
-    /// The same layout, packed for a file area whose right `panel_w` points
-    /// the info panel covers. `width` given to [`Self::new`] is what is left.
-    pub fn with_panel(mut self, panel_w: f32) -> Self {
-        self.panel_w = panel_w;
-        self
+    /// Pan the file area `pan` points toward the info panel.
+    pub fn set_pan(&mut self, pan: f32) {
+        self.pan = pan.clamp(0.0, PHOTOS_INFO_W);
     }
 
-    /// The part of the file area the wall occupies, in window coordinates:
-    /// all of it, less the info panel when one is up.
+    /// The wall in window coordinates: [`photos_wall_width`] wide, slid left
+    /// by the pan. Its left may lie under the sidebar; what can be seen of
+    /// it is [`Self::shown`].
     pub fn area(&self, width: f32, height: f32) -> Rect {
         let full = content_viewport(width, height, ViewMode::Photos);
+        let left = full.left - self.pan;
         Rect::from_ltrb(
-            full.left,
+            left,
             full.top,
-            (full.right - self.panel_w).max(full.left),
+            left + photos_wall_width(full.width()),
             full.bottom,
         )
     }
 
-    /// Whether the info panel is up beside the wall.
-    pub fn has_panel(&self) -> bool {
-        self.panel_w > 0.0
+    /// The part of the wall that can be seen: the file area, less what the
+    /// pan has slid behind the sidebar or given over to the panel.
+    pub fn shown(&self, width: f32, height: f32) -> Rect {
+        let full = content_viewport(width, height, ViewMode::Photos);
+        let area = self.area(width, height);
+        Rect::from_ltrb(full.left, full.top, area.right.max(full.left), full.bottom)
+    }
+
+    /// The info panel, just past the wall's right edge: off the window until
+    /// the file area is panned toward it.
+    pub fn panel_rect(&self, width: f32, height: f32) -> Rect {
+        let left = self.area(width, height).right;
+        Rect::from_ltrb(left, header_h(), left + PHOTOS_INFO_W, height)
+    }
+
+    /// Whether any of the info panel is in view.
+    pub fn has_panel(&self, width: f32, height: f32) -> bool {
+        let full = content_viewport(width, height, ViewMode::Photos);
+        self.panel_rect(width, height).left < full.right - 1.0
     }
 
     /// Which kind of section tile `index` is in.
@@ -1948,14 +1965,28 @@ pub struct PhotosControls {
 
 // --- The Photos info panel -------------------------------------------------
 //
-// A column docked along the right of the file area in the Photos view, the
-// way the preview column trails the Miller stack: it takes the same decode
-// and draws it with the same stage. It is there whenever something is
-// selected and gone when nothing is: what is under it is the one file, the
-// one folder, or how many.
+// A column trailing the Photos wall, the way the preview column trails the
+// Miller stack: its edge shows in the file area's last fifteen percent, and
+// the rest of it is panned to. It takes the same decode as the preview column and
+// draws it with the same stage, and describes the one file, the one folder,
+// how many are selected, or with nothing selected, the folder itself.
 
 /// The info panel's width.
 pub const PHOTOS_INFO_W: f32 = 320.0;
+/// The share of the file area the wall keeps. The info panel starts in what
+/// is left, showing its edge, and the rest of it is panned to.
+pub const PHOTOS_WALL_SHARE: f32 = 0.85;
+
+/// How wide the wall is in a file area `viewport` wide: its share of it, or
+/// all the info panel leaves when that is more.
+pub fn photos_wall_width(viewport: f32) -> f32 {
+    (viewport - PHOTOS_INFO_W).max(viewport * PHOTOS_WALL_SHARE)
+}
+
+/// How far the Photos view reaches across: the wall, then the info panel.
+pub fn photos_content_width(viewport: f32) -> f32 {
+    photos_wall_width(viewport) + PHOTOS_INFO_W
+}
 const INFO_PAD: f32 = 16.0;
 const INFO_STAGE_H: f32 = 220.0;
 const INFO_SWATCH: f32 = 28.0;
@@ -1963,10 +1994,32 @@ const INFO_SWATCH_GAP: f32 = 12.0;
 /// How much a swatch grows on each side under the pointer.
 const INFO_SWATCH_GROW: f32 = 2.0;
 const INFO_ROW_H: f32 = 24.0;
+/// A turn or flip button under the picture, and the room between two.
+const INFO_TOOL: f32 = 32.0;
+const INFO_TOOL_GAP: f32 = 8.0;
 
-/// The panel itself, from under the header to the foot of the file area.
-pub fn photos_info_rect(width: f32, height: f32) -> Rect {
-    Rect::from_ltrb(width - PHOTOS_INFO_W, header_h(), width, height)
+/// The buttons under the Photos info panel's picture, left to right.
+pub const PHOTOS_TOOLS: [crate::orient::Turn; 4] = [
+    crate::orient::Turn::Left,
+    crate::orient::Turn::Right,
+    crate::orient::Turn::FlipHorizontal,
+    crate::orient::Turn::FlipVertical,
+];
+
+/// The turn or flip button under `(x, y)`, when one picture is in the panel.
+pub fn photos_info_tool_at(
+    panel: Rect,
+    data: &PhotosInfoData<'_>,
+    x: f32,
+    y: f32,
+) -> Option<usize> {
+    let PhotosInfoData::One { swatches, .. } = data else {
+        return None;
+    };
+    photos_info_layout(panel, swatches.len())
+        .tools
+        .iter()
+        .position(|rect| rect.contains(Point::new(x, y)))
 }
 
 /// What the info panel is showing.
@@ -1984,6 +2037,16 @@ pub enum PhotosInfoData<'a> {
         copied: Option<usize>,
         /// The swatch under the pointer, which grows and names its colour.
         hovered: Option<usize>,
+        /// What the camera wrote down about it, once the decode lands.
+        camera: Option<&'a crate::camera::Shot>,
+        /// Whether its turn and flip buttons work: a JPEG. They are drawn
+        /// either way, so the panel keeps its shape from file to file.
+        turnable: bool,
+        /// The turn or flip button under the pointer.
+        tool_hover: Option<usize>,
+        /// A video's player, which the stage plays in place of a picture —
+        /// the same one the preview column plays.
+        video: Option<&'a crate::peek::Video>,
     },
     /// Several things selected: how many, and how much they weigh.
     Many { count: usize, bytes: u64 },
@@ -2001,6 +2064,9 @@ pub enum PhotosInfoData<'a> {
 /// Where the parts of the info panel go, for drawing and hit testing alike.
 pub struct InfoLayout {
     pub stage: Rect,
+    /// The turn and flip buttons, in a row under the picture, in the order
+    /// of [`PHOTOS_TOOLS`].
+    pub tools: [Rect; 4],
     /// The baseline centre of the name, and of the kind line under it.
     pub name_cy: f32,
     pub kind_cy: f32,
@@ -2020,7 +2086,19 @@ pub fn photos_info_layout(panel: Rect, swatches: usize) -> InfoLayout {
         inner.width(),
         INFO_STAGE_H,
     );
-    let name_cy = stage.bottom + 22.0;
+    let row = PHOTOS_TOOLS.len() as f32;
+    let tools_w = row * INFO_TOOL + (row - 1.0) * INFO_TOOL_GAP;
+    let tools_left = stage.center_x() - tools_w / 2.0;
+    let tools_top = stage.bottom + 10.0;
+    let tools = std::array::from_fn(|i| {
+        Rect::from_xywh(
+            tools_left + i as f32 * (INFO_TOOL + INFO_TOOL_GAP),
+            tools_top,
+            INFO_TOOL,
+            INFO_TOOL,
+        )
+    });
+    let name_cy = tools_top + INFO_TOOL + 22.0;
     let kind_cy = name_cy + 20.0;
     let count = swatches.min(5);
     // A fixed gap from the left, so two colours sit together rather than at
@@ -2044,6 +2122,7 @@ pub fn photos_info_layout(panel: Rect, swatches: usize) -> InfoLayout {
     };
     InfoLayout {
         stage,
+        tools,
         name_cy,
         kind_cy,
         swatches: swatch_rects,
@@ -2101,7 +2180,10 @@ fn info_kind_line(entry: &Entry) -> String {
 /// The info panel.
 fn draw_photos_info(canvas: &Canvas, f: &Frame, data: &PhotosInfoData<'_>) {
     let theme = f.theme;
-    let panel = photos_info_rect(f.width, f.height);
+    let panel = f.photos.panel_rect(f.width, f.height);
+    if !f.photos.has_panel(f.width, f.height) {
+        return;
+    }
     let mut paint = Paint::default();
     paint.set_anti_alias(true);
     paint.set_color(content_ground());
@@ -2121,11 +2203,38 @@ fn draw_photos_info(canvas: &Canvas, f: &Frame, data: &PhotosInfoData<'_>) {
         swatches,
         copied,
         hovered,
+        turnable,
+        tool_hover,
+        video,
         ..
     } = data
     {
         let layout = photos_info_layout(panel, swatches.len());
-        draw_info_stage(canvas, theme, layout.stage, entry, *decoded);
+        match video {
+            // Played where the picture would be, transport and all, as the
+            // preview column plays it.
+            Some(video) => draw_preview_stage(
+                canvas,
+                theme,
+                layout.stage,
+                *decoded,
+                Some(&video.snapshot()),
+                false,
+                &entry.icon_chain(),
+                0,
+            ),
+            None => draw_info_stage(canvas, theme, layout.stage, entry, *decoded),
+        }
+        for (i, (rect, turn)) in layout.tools.iter().zip(PHOTOS_TOOLS).enumerate() {
+            draw_photos_tool(
+                canvas,
+                theme,
+                *rect,
+                turn,
+                *turnable,
+                *tool_hover == Some(i),
+            );
+        }
         for (i, (rect, colour)) in layout.swatches.iter().zip(swatches.iter()).enumerate() {
             // The one under the pointer grows a little and wears a ring: it
             // is something to click, not only a colour to look at.
@@ -2242,12 +2351,18 @@ pub fn photos_info_runs(panel: Rect, data: &PhotosInfoData<'_>, theme: &Theme) -
             entry,
             dims,
             swatches,
+            camera,
             ..
         } => {
             let layout = photos_info_layout(panel, swatches.len());
             runs.push(title(&entry.name, layout.name_cy));
             runs.push(line(&info_kind_line(entry), layout.kind_cy));
-            rows(&mut runs, layout.rows_cy, facts(entry, *dims));
+            // How it was taken goes after its size, before what the disk
+            // says about the file.
+            let mut all = facts(entry, *dims);
+            let at = usize::from(dims.is_some());
+            all.splice(at..at, camera.map(shot_rows).unwrap_or_default());
+            rows(&mut runs, layout.rows_cy, all);
         }
         PhotosInfoData::Many { count, bytes } => {
             let cy = panel.top + INFO_PAD + 24.0;
@@ -2275,6 +2390,25 @@ pub fn photos_info_runs(panel: Rect, data: &PhotosInfoData<'_>, theme: &Theme) -
         }
     }
     runs
+}
+
+/// The info panel's rows for what the camera wrote down: with what, how,
+/// and where.
+fn shot_rows(shot: &crate::camera::Shot) -> Vec<(&'static str, String)> {
+    let mut out = Vec::new();
+    if let Some(camera) = &shot.camera {
+        out.push((otto_kit::t!("files-photos-info-camera"), camera.clone()));
+    }
+    if let Some(lens) = &shot.lens {
+        out.push((otto_kit::t!("files-photos-info-lens"), lens.clone()));
+    }
+    if let Some(exposure) = shot.exposure_line() {
+        out.push((otto_kit::t!("files-photos-info-exposure"), exposure));
+    }
+    if let Some(location) = shot.location_line() {
+        out.push((otto_kit::t!("files-photos-info-location"), location));
+    }
+    out
 }
 
 /// One key/value line: the key on the left in the quieter ink, the value
@@ -2341,7 +2475,7 @@ fn draw_info_stage(
         return;
     };
     // Contained, not cropped: this is the one place the whole picture is
-    // shown, so its own edges are the rounded ones.
+    // shown, square-cornered like a print, lifted off the panel by a shadow.
     let (w, h) = (image.width() as f32, image.height() as f32);
     let scale = (stage.width() / w).min(stage.height() / h);
     let fitted = Rect::from_xywh(
@@ -2350,12 +2484,9 @@ fn draw_info_stage(
         w * scale,
         h * scale,
     );
+    draw_picture_shadow(canvas, fitted);
     canvas.save();
-    canvas.clip_rrect(
-        RRect::new_rect_xy(fitted, 10.0, 10.0),
-        ClipOp::Intersect,
-        true,
-    );
+    canvas.clip_rect(fitted, ClipOp::Intersect, true);
     canvas.draw_image_rect_with_sampling_options(
         &image,
         None,
@@ -2366,8 +2497,141 @@ fn draw_info_stage(
         &Paint::default(),
     );
     canvas.restore();
-    draw_picture_edge(canvas, fitted, 10.0, false);
+    draw_picture_edge(canvas, fitted, 0.0, false);
 }
+
+/// One turn or flip button: its glyph, on a rounded ground while the pointer
+/// is over it. Dimmed, and with no ground, for a file it cannot turn.
+fn draw_photos_tool(
+    canvas: &Canvas,
+    theme: &Theme,
+    rect: Rect,
+    turn: crate::orient::Turn,
+    enabled: bool,
+    hovered: bool,
+) {
+    if enabled && hovered {
+        let mut ground = Paint::default();
+        ground.set_anti_alias(true);
+        ground.set_color(theme.fill_tertiary);
+        canvas.draw_rrect(RRect::new_rect_xy(rect, 8.0, 8.0), &ground);
+    }
+    let ink = if enabled {
+        theme.text_secondary
+    } else {
+        fade(theme.text_tertiary, 0.5)
+    };
+    draw_turn_glyph(
+        canvas,
+        Point::new(
+            rect.center_x() - TURN_GLYPH / 2.0,
+            rect.center_y() - TURN_GLYPH / 2.0,
+        ),
+        turn,
+        ink,
+    );
+}
+
+/// The edge of the square a turn or flip glyph is drawn in.
+const TURN_GLYPH: f32 = 16.0;
+
+/// A turn or flip glyph, drawn rather than taken from the icon theme: few
+/// themes have `object-rotate-*` and `object-flip-*` at all, so the four
+/// buttons came from whichever inherited theme did and did not match each
+/// other or anything else in the window. Stroked like the breadcrumb chevron.
+///
+/// Two shapes make all four: the picture with an arrow over its corner,
+/// mirrored for the other way round, and two triangles either side of an
+/// axis — the original filled, its mirror image outlined — turned on its side
+/// for the other flip.
+fn draw_turn_glyph(canvas: &Canvas, origin: Point, turn: crate::orient::Turn, ink: Color) {
+    use crate::orient::Turn;
+
+    let mut stroke = Paint::default();
+    stroke.set_anti_alias(true);
+    stroke.set_style(skia_safe::paint::Style::Stroke);
+    stroke.set_stroke_width(1.3);
+    stroke.set_stroke_cap(skia_safe::paint::Cap::Round);
+    stroke.set_stroke_join(skia_safe::paint::Join::Round);
+    stroke.set_color(ink);
+
+    canvas.save();
+    canvas.translate(origin);
+    match turn {
+        Turn::Left | Turn::FlipHorizontal => {}
+        Turn::Right => {
+            canvas.translate((TURN_GLYPH, 0.0));
+            canvas.scale((-1.0, 1.0));
+        }
+        // x and y exchanged: the horizontal flip, on its side.
+        Turn::FlipVertical => {
+            canvas.concat(&skia_safe::Matrix::new_all(
+                0.0, 1.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
+            ));
+        }
+    }
+
+    match turn {
+        Turn::Left | Turn::Right => {
+            // The picture.
+            canvas.draw_rrect(
+                RRect::new_rect_xy(Rect::from_ltrb(6.0, 7.0, 14.5, 14.5), 1.8, 1.8),
+                &stroke,
+            );
+            // The arrow, sweeping back over its top-left corner.
+            let mut arc = PathBuilder::new();
+            arc.move_to(Point::new(11.5, 3.0));
+            arc.quad_to(Point::new(3.0, 2.5), Point::new(3.0, 9.5));
+            arc.move_to(Point::new(1.0, 7.5));
+            arc.line_to(Point::new(3.0, 9.5));
+            arc.line_to(Point::new(5.0, 7.5));
+            canvas.draw_path(&arc.detach(), &stroke);
+        }
+        Turn::FlipHorizontal | Turn::FlipVertical => {
+            let triangle = |tip: f32, base: f32| {
+                let mut path = PathBuilder::new();
+                path.move_to(Point::new(tip, 3.5));
+                path.line_to(Point::new(tip, 12.5));
+                path.line_to(Point::new(base, 12.5));
+                path.close();
+                path.detach()
+            };
+            let original = triangle(6.5, 1.5);
+            let mut fill = stroke.clone();
+            fill.set_style(skia_safe::paint::Style::StrokeAndFill);
+            canvas.draw_path(&original, &fill);
+            canvas.draw_path(&triangle(9.5, 14.5), &stroke);
+
+            let mut axis = stroke.clone();
+            axis.set_stroke_width(1.0);
+            axis.set_path_effect(skia_safe::PathEffect::dash(&[1.5, 2.0], 0.0));
+            canvas.draw_line((8.0, 1.5), (8.0, 14.5), &axis);
+        }
+    }
+    canvas.restore();
+}
+
+/// The soft shadow a picture casts on the panel it is shown in: a blurred
+/// dark copy of its rect, dropped a little, drawn before the picture so the
+/// picture covers all but what falls outside its edges.
+fn draw_picture_shadow(canvas: &Canvas, picture: Rect) {
+    if picture.width() < 1.0 || picture.height() < 1.0 {
+        return;
+    }
+    let mut paint = Paint::default();
+    paint.set_anti_alias(true);
+    paint.set_color(Color::from_argb(0x55, 0, 0, 0));
+    paint.set_mask_filter(skia_safe::MaskFilter::blur(
+        skia_safe::BlurStyle::Normal,
+        PICTURE_SHADOW_BLUR,
+        None,
+    ));
+    canvas.draw_rect(picture.with_offset((0.0, PICTURE_SHADOW_DROP)), &paint);
+}
+
+/// How soft a picture's shadow is, as a blur sigma, and how far it falls.
+const PICTURE_SHADOW_BLUR: f32 = 6.0;
+const PICTURE_SHADOW_DROP: f32 = 3.0;
 
 const PHOTOS_GROUP_W: f32 = 150.0;
 const PHOTOS_SLIDER_W: f32 = 100.0;
@@ -4000,6 +4264,9 @@ pub struct Frame<'a> {
     /// that pane's cursor — opening acts on the selection — so only the pane
     /// and the progress are needed here.
     pub opening: Option<(usize, f32)>,
+    /// The picture an open pulse rises from when the file was opened from
+    /// its preview, in place of its row or tile.
+    pub opening_stage: Option<Rect>,
     /// Depth and row index of an in-place rename in progress. That row's
     /// name label is skipped so the host's text field shows through instead.
     pub renaming: Option<(usize, usize)>,
@@ -4321,6 +4588,9 @@ pub fn draw(canvas: &Canvas, f: &Frame) {
             draw_photos(canvas, f);
             if let Some(data) = f.photos_info.as_ref() {
                 draw_photos_info(canvas, f, data);
+            }
+            if let Some(pan) = f.pan_bar {
+                ScrollRenderer::draw(canvas, pan, f.theme, |_, _| {});
             }
         }
     }
@@ -5088,6 +5358,12 @@ fn draw_preview_stage(
     // long entry names, a text file with no line breaks — and the one
     // place that must not depend on the file being reasonable is the one
     // where overflow would draw over the caption below it.
+    //
+    // A picture's shadow is the exception: it falls just outside the
+    // picture, and is drawn first so the picture sits on it.
+    if let Some(picture) = preview_picture_rect(stage, decoded, first_row) {
+        draw_picture_shadow(canvas, picture);
+    }
     canvas.save();
     canvas.clip_rect(stage, None, false);
     match decoded {
@@ -5145,6 +5421,39 @@ fn draw_preview_stage(
         }
     }
     canvas.restore();
+}
+
+/// Where the preview column draws a picture in `stage`: the decode's own,
+/// or a card's artwork. `None` for anything that is not a picture.
+fn preview_picture_rect(
+    stage: Rect,
+    decoded: Option<&otto_kit::preview::Preview>,
+    first_row: usize,
+) -> Option<Rect> {
+    let pixels = match decoded? {
+        otto_kit::preview::Preview::Pixels { pixels, .. } => pixels,
+        otto_kit::preview::Preview::Card {
+            hero: Some(pixels), ..
+        } => pixels,
+        _ => return None,
+    };
+    // Laid out from its size alone: the frames are not copied for it.
+    let picture = otto_kit::preview::Preview::Pixels {
+        pixels: otto_kit::preview::Pixels {
+            width: pixels.width,
+            height: pixels.height,
+            intrinsic_width: pixels.intrinsic_width,
+            intrinsic_height: pixels.intrinsic_height,
+            data: Vec::new(),
+            frame_delays: Vec::new(),
+            words: Vec::new(),
+        },
+        pages: 1,
+        page: 1,
+    };
+    let content =
+        otto_kit::preview::layout(stage, &picture, first_row, otto_kit::preview::Zoom::FIT).content;
+    (content.width() >= 1.0 && content.height() >= 1.0).then_some(content)
 }
 
 /// A hairline around the picture's own edges — the fitted rect, not the
@@ -5881,7 +6190,7 @@ fn draw_photos(canvas: &Canvas, f: &Frame) {
     let depth = f.panes.len() - 1;
 
     canvas.save();
-    canvas.clip_rect(area, ClipOp::Intersect, true);
+    canvas.clip_rect(f.photos.shown(f.width, f.height), ClipOp::Intersect, true);
 
     if let Some(error) = pane.error {
         draw_centered(canvas, area, error, theme.text_secondary);
@@ -6003,8 +6312,9 @@ pub struct PhotoTileState {
     pub cut: bool,
 }
 
-/// One Photos tile: the picture cropped to fill the tile, or, for anything
-/// that is not a picture, its icon and name on a quiet card.
+/// One Photos tile: the picture — or a video's poster frame, with a play
+/// badge over it — cropped to fill the tile, or, for anything else, its icon
+/// and name on a quiet card.
 ///
 /// Filled rather than fitted, unlike the grid's thumbnails: the tile already
 /// has the picture's proportions, so the crop only trims what the clamp on
@@ -6022,7 +6332,9 @@ pub fn draw_photo_tile(
         return;
     }
     let shape = RRect::new_rect_xy(tile, PHOTOS_RADIUS, PHOTOS_RADIUS);
-    let photo = crate::photos::is_photo(entry);
+    // A video is laid out and drawn as its poster frame, like a picture.
+    let photo = crate::photos::is_media(entry);
+    let video = crate::photos::is_video(entry);
     let mut paint = Paint::default();
     paint.set_anti_alias(true);
     if state.cut {
@@ -6056,6 +6368,9 @@ pub fn draw_photo_tile(
         None => draw_photo_card(canvas, theme, entry, tile, thumb, state.cut),
     }
 
+    if video {
+        draw_play_badge(canvas, tile, state.cut);
+    }
     if state.hovered && photo {
         draw_photo_caption(canvas, entry, tile);
     }
@@ -6068,6 +6383,43 @@ pub fn draw_photo_tile(
     if state.selected {
         draw_photo_selection(canvas, theme, tile, PHOTOS_RADIUS);
     }
+}
+
+/// The badge that says a tile is a video: a play triangle on a dark disc,
+/// centred, sized to the tile within limits so it reads on a small tile and
+/// does not shout on a large one. Drawn whether or not the poster has landed,
+/// so a video is a video from the first frame.
+fn draw_play_badge(canvas: &Canvas, tile: Rect, cut: bool) {
+    let radius = (tile.width().min(tile.height()) * 0.14).clamp(12.0, 26.0);
+    let (cx, cy) = (tile.center_x(), tile.center_y());
+    let fade = if cut { 0.45 } else { 1.0 };
+
+    let mut disc = Paint::default();
+    disc.set_anti_alias(true);
+    disc.set_color(Color::from_argb((110.0 * fade) as u8, 0, 0, 0));
+    canvas.draw_circle((cx, cy), radius, &disc);
+
+    let mut ring = Paint::default();
+    ring.set_anti_alias(true);
+    ring.set_style(skia_safe::paint::Style::Stroke);
+    ring.set_stroke_width(1.5);
+    ring.set_color(Color::from_argb((200.0 * fade) as u8, 255, 255, 255));
+    canvas.draw_circle((cx, cy), radius, &ring);
+
+    // The triangle's centroid sits a third of the way in from its flat side,
+    // so it is nudged right to look centred in the disc.
+    let side = radius * 0.95;
+    let half = side * 0.5;
+    let left = cx - side * 0.36;
+    let mut triangle = PathBuilder::new();
+    triangle.move_to(Point::new(left, cy - half));
+    triangle.line_to(Point::new(left + side * 0.87, cy));
+    triangle.line_to(Point::new(left, cy + half));
+    triangle.close();
+    let mut ink = Paint::default();
+    ink.set_anti_alias(true);
+    ink.set_color(Color::from_argb((240.0 * fade) as u8, 255, 255, 255));
+    canvas.draw_path(&triangle.detach(), &ink);
 }
 
 /// A folder in the Photos view: a card of the newest pictures inside it —
@@ -8292,6 +8644,58 @@ pub fn open_pulse(t: f32) -> (f32, u8) {
 /// rather than the icon alone is what makes it read as *that file* opening: in
 /// the grid the caption pill goes with it, and in the row views the highlight
 /// band does.
+/// The open pulse for a file opened from its preview: its picture swelling
+/// out of the preview and fading, as a tile's does out of the wall. The
+/// thumbnail is drawn at the picture's own proportions, centred in the
+/// preview where the picture sits; a file with none swells as a plain card.
+fn draw_preview_open_pulse(canvas: &Canvas, f: &Frame, entry: &Entry, stage: Rect, t: f32) {
+    let thumb = f.thumbnail(entry);
+    let rect = match thumb {
+        Some(image) => {
+            let (w, h) = (image.width() as f32, image.height() as f32);
+            let scale = (stage.width() / w).min(stage.height() / h);
+            Rect::from_xywh(
+                stage.center_x() - w * scale / 2.0,
+                stage.center_y() - h * scale / 2.0,
+                w * scale,
+                h * scale,
+            )
+        }
+        None => stage,
+    };
+    if rect.is_empty() {
+        return;
+    }
+    let (scale, alpha) = open_pulse(t);
+    let grown = Rect::from_xywh(
+        rect.center_x() - rect.width() * scale / 2.0,
+        rect.center_y() - rect.height() * scale / 2.0,
+        rect.width() * scale,
+        rect.height() * scale,
+    );
+    canvas.save_layer_alpha(Some(grown), alpha as u32);
+    match thumb {
+        Some(image) => {
+            canvas.draw_image_rect_with_sampling_options(
+                image,
+                None,
+                grown,
+                skia_safe::sampling_options::SamplingOptions::from(
+                    skia_safe::sampling_options::CubicResampler::mitchell(),
+                ),
+                &Paint::default(),
+            );
+        }
+        None => {
+            let mut card = Paint::default();
+            card.set_anti_alias(true);
+            card.set_color(f.theme.fill_tertiary);
+            canvas.draw_rrect(RRect::new_rect_xy(grown, 10.0, 10.0), &card);
+        }
+    }
+    canvas.restore();
+}
+
 pub fn draw_open_pulse(canvas: &Canvas, f: &Frame) {
     let Some((depth, t)) = f.opening else { return };
     let Some(pane) = f.panes.get(depth) else {
@@ -8302,6 +8706,10 @@ pub fn draw_open_pulse(canvas: &Canvas, f: &Frame) {
         return;
     };
 
+    if let Some(stage) = f.opening_stage {
+        draw_preview_open_pulse(canvas, f, entry, stage, t);
+        return;
+    }
     let in_overflow = f.desk_overflow.and_then(|overflow| {
         overflow.entry_rect(content_viewport(f.width, f.height, ViewMode::Grid), index)
     });
@@ -10168,6 +10576,7 @@ mod geometry_tests {
             ascending: true,
             list_columns: ListColumnWidths::default(),
             opening: None,
+            opening_stage: None,
             renaming: None,
             cut: Vec::new(),
             controls: WindowControlsState::new(),

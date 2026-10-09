@@ -449,14 +449,16 @@ impl Column {
 
 /// What a column's cached order was computed from: the column epoch, the
 /// sort key and direction, whether hidden files show, the picker's filter,
-/// and the Photos view's grouping when the order is that view's.
+/// and the Photos view's grouping when the order is that view's — with the
+/// epoch of the dates the pictures were taken, which arrive after the listing
+/// and move pictures between groups.
 pub type SortCacheKey = (
     u64,
     SortKey,
     bool,
     bool,
     usize,
-    Option<crate::photos::Grouping>,
+    Option<(crate::photos::Grouping, u64)>,
 );
 
 /// The filtered, sorted order of a column's listing, remembered between
@@ -1433,6 +1435,10 @@ pub enum Change {
         to: PathBuf,
         info: PathBuf,
     },
+    /// A photograph at `path` was turned or flipped: its EXIF Orientation went
+    /// from `from` to `to`. Undone by writing `from` back — the pixels were
+    /// never touched, so that is the whole of it.
+    Oriented { path: PathBuf, from: u16, to: u16 },
 }
 
 /// The outcome of a paste.
@@ -1641,6 +1647,13 @@ pub fn undo(changes: &[Change]) -> OpResult {
                 let trashed = move_to_trash(std::slice::from_ref(path));
                 result.trashed += trashed.trashed;
                 result.errors.extend(trashed.errors);
+            }
+            Change::Oriented { path, from, .. } => {
+                if let Err(err) = crate::orient::set(path, *from) {
+                    result
+                        .errors
+                        .push(format!("\u{201c}{}\u{201d}: {err}", name_of(path)));
+                }
             }
             Change::Trashed { from, to, .. } => {
                 // The same operation the Trash window's Put Back runs, and

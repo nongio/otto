@@ -1356,7 +1356,7 @@ pub fn decode_page(path: &Path, page: u32, width: u32) -> Preview {
             .unwrap_or_default(),
         ..Request::default()
     };
-    otto_peek::decode_path(path, &request)
+    crate::peek_cache::decode(path, &request)
 }
 
 /// Decode a file for a host that **scrolls documents**: a paginated file comes
@@ -1391,7 +1391,7 @@ fn decode_with(
     text: bool,
 ) -> Preview {
     let request = decode_request(path, panel, scale, page, document, text);
-    otto_peek::decode_path(path, &request)
+    crate::peek_cache::decode(path, &request)
 }
 
 /// What the worker is asked for.

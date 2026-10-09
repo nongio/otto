@@ -288,8 +288,12 @@ impl Browser {
             PointerEventKind::Leave { .. } => Some(peek::VideoPointer::Leave),
             PointerEventKind::Axis { .. } => None,
         };
+        let serial = match event.kind {
+            PointerEventKind::Press { serial, .. } => Some(serial),
+            _ => None,
+        };
         if let Some(kind) = video_pointer {
-            if self.preview_video_pointer(kind, x, y) {
+            if self.preview_video_pointer(kind, x, y, serial) {
                 AppContext::request_wakeup();
                 return Some(After::Next);
             }
@@ -609,7 +613,7 @@ impl Browser {
         self.sync_scroll_metrics();
         let hovered = self.pane_under(x, y);
         let mut moved = self.pan.on_pointer_drag(x, y);
-        if self.mode == ViewMode::Columns {
+        if matches!(self.mode, ViewMode::Columns | ViewMode::Photos) {
             moved |= self.pan.on_pointer_move(x, y);
         } else {
             self.pan.on_pointer_leave();
@@ -852,7 +856,7 @@ impl Browser {
         // pane, crossing the foot of each pane's own gutter,
         // so it is asked first where the two overlap.
         let depth = self.pane_under(x, y);
-        let panning = self.mode == ViewMode::Columns;
+        let panning = matches!(self.mode, ViewMode::Columns | ViewMode::Photos);
         if (panning && self.pan.on_pointer_down(x, y))
             || self.columns[depth].scroll.on_pointer_down(x, y)
         {
@@ -870,6 +874,16 @@ impl Browser {
             && (self.entry_at(x, y).is_some() || self.preview_grab_at(x, y).is_some())
         {
             self.drag_armed = Some((x, y, serial));
+        }
+
+        // A second press on the preview's picture opens the file, as a
+        // second click on its row would.
+        if let Some(stage) = self.preview_grab_at(x, y) {
+            if self.note_preview_click() {
+                self.drag_armed = None;
+                self.open_from_preview(stage);
+                return After::Next;
+            }
         }
 
         if let Some(action) = self.trash_action_at(x, y) {
@@ -1052,7 +1066,8 @@ impl Browser {
         let discrete = vertical.discrete != 0 || horizontal.discrete != 0;
         // One gesture belongs to one axis, chosen by its first
         // delta and kept until it lifts.
-        let leading = if self.mode == ViewMode::Columns && dx.abs() > dy.abs() {
+        let pans = matches!(self.mode, ViewMode::Columns | ViewMode::Photos);
+        let leading = if pans && dx.abs() > dy.abs() {
             Axis::Horizontal
         } else {
             Axis::Vertical

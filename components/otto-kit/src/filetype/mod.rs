@@ -89,13 +89,14 @@ impl Kind {
 
     /// Can Otto *generate* a thumbnail for this kind itself?
     ///
-    /// Only images, which Skia and resvg decode in-process. This is narrower
-    /// than "has a thumbnail": every kind is worth a shared-cache *lookup*,
-    /// because other applications write there too — Peek contributes PDF
-    /// first pages, and other file managers contribute video frames. Look up
-    /// for anything; generate only for these.
+    /// Images, and videos — whose poster frame Peek's worker has a program
+    /// on the system make, and which are left as their icon where there is
+    /// none. This is narrower than "has a thumbnail": every kind is worth a
+    /// shared-cache *lookup*, because other applications write there too —
+    /// Peek contributes PDF first pages, other file managers video frames.
+    /// Look up for anything; generate only for these.
     pub fn thumbnailable(self) -> bool {
-        matches!(self, Kind::Image)
+        matches!(self, Kind::Image | Kind::Video)
     }
 }
 
@@ -208,7 +209,8 @@ pub fn sniff(bytes: &[u8]) -> Option<&'static str> {
         }
         if &b[4..8] == b"ftyp" {
             return Some(match &b[8..12] {
-                b"heic" | b"heix" | b"mif1" => "image/heif",
+                b"heic" | b"heix" | b"heim" | b"heis" | b"mif1" => "image/heif",
+                b"hevc" | b"hevx" | b"msf1" => "image/heif-sequence",
                 b"avif" => "image/avif",
                 _ => "video/mp4",
             });

@@ -33,11 +33,15 @@ impl Browser {
         }
         let depth = self.columns.len() - 1;
         self.ensure_sorted(depth);
-        // The info panel is always up beside the wall, which is packed into
-        // what it leaves.
-        let panel_w = view::PHOTOS_INFO_W;
+        // The wall takes its share of the file area and the info panel
+        // comes after it, panned to the rest of the way.
         let full = view::content_viewport(self.size.0, self.content_h(), ViewMode::Photos);
-        let area = Rect::from_ltrb(full.left, full.top, full.right - panel_w, full.bottom);
+        let area = Rect::from_xywh(
+            full.left,
+            full.top,
+            view::photos_wall_width(full.width()),
+            full.height(),
+        );
         let today = photos::today();
         let key = PhotosKey {
             width: area.width().round() as u32,
@@ -62,10 +66,10 @@ impl Browser {
             self.photos_anchor = self.photos_on_screen_anchor(depth);
         }
         let entries = self.visible(depth);
-        let sections = photos::sections(&entries, today, self.photos_group);
+        let sections = photos::sections(&entries, today, self.photos_group, &self.photo_dims);
         let aspects: Vec<f32> = entries.iter().map(|e| self.photo_dims.aspect(e)).collect();
-        self.photos = view::PhotosLayout::new(sections, &aspects, area.width(), self.photos_row_h)
-            .with_panel(panel_w);
+        self.photos = view::PhotosLayout::new(sections, &aspects, area.width(), self.photos_row_h);
+        self.photos.set_pan(self.pan.offset());
         self.photos_key = Some(key);
         if let Some((index, above)) = self.photos_anchor.take() {
             let tile = self.photos.tile_rect(area, index, 0.0);
@@ -181,8 +185,8 @@ impl Browser {
             return None;
         }
         let point = skia_safe::Point::new(x, y);
-        if self.photos.has_panel() {
-            let panel = view::photos_info_rect(self.size.0, self.content_h());
+        if self.photos.has_panel(self.size.0, self.content_h()) {
+            let panel = self.photos.panel_rect(self.size.0, self.content_h());
             if panel.contains(point) {
                 self.photos_info_press(panel, x, y, serial);
                 return Some(listing_pointer::After::Stop);
@@ -414,13 +418,19 @@ impl Browser {
                 Some(view::PhotosInfoData::One {
                     entry,
                     decoded: pane.and_then(|p| p.decoded.as_ref()),
-                    dims: picture.then(|| self.photo_dims.size(entry)).flatten(),
+                    dims: photos::is_media(entry)
+                        .then(|| self.photo_dims.size(entry))
+                        .flatten(),
                     swatches: pane
                         .filter(|_| picture)
                         .map(|p| p.palette.as_slice())
                         .unwrap_or_default(),
                     copied: self.photos_copied.map(|(i, _)| i),
                     hovered: self.photo_swatch_hover,
+                    camera: pane.and_then(|p| p.camera.as_ref()),
+                    turnable: picture && crate::orient::supported(&entry.path),
+                    tool_hover: self.photo_tool_hover,
+                    video: pane.and_then(|p| p.video.as_ref()),
                 })
             }
             count => Some(view::PhotosInfoData::Many {
@@ -435,8 +445,59 @@ impl Browser {
         }
     }
 
-    /// A press inside the info panel: a swatch copies its colour.
+    /// Where the info panel shows the one selected file's picture or video,
+    /// when it is showing one: what a press plays, picks the file up by or
+    /// double-clicks open.
+    pub(super) fn photos_info_stage(&self) -> Option<Rect> {
+        if !self.photos.has_panel(self.size.0, self.content_h()) {
+            return None;
+        }
+        let data = self.photos_info_data()?;
+        let view::PhotosInfoData::One { swatches, .. } = &data else {
+            return None;
+        };
+        let panel = self.photos.panel_rect(self.size.0, self.content_h());
+        Some(view::photos_info_layout(panel, swatches.len()).stage)
+    }
+
+    /// Repaint for the info panel's video: its frames arrive on their own
+    /// clock, and the panel is drawn with the window rather than on a
+    /// surface of its own, so a new frame has to mark the window dirty.
+    /// Never asks the loop to keep spinning — the player wakes it per frame.
+    pub(super) fn tick_photos_video(&mut self) -> bool {
+        let key = self
+            .photos_info_wants_preview()
+            .then(|| self.preview.as_ref().and_then(|p| p.video.as_ref()))
+            .flatten()
+            .map(|video| video.key());
+        if key != self.photos_video_key {
+            self.photos_video_key = key;
+            self.dirty |= key.is_some();
+        }
+        false
+    }
+
+    /// A press inside the info panel: a swatch copies its colour, and a turn
+    /// or flip button turns the picture.
     fn photos_info_press(&mut self, panel: Rect, x: f32, y: f32, serial: u32) {
+        // The picture: picked up by a drag, opened by a second press — the
+        // preview column's picture does both, and this is the same picture.
+        if let Some(stage) = self.preview_grab_at(x, y) {
+            if self.note_preview_click() {
+                self.drag_armed = None;
+                self.open_from_preview(stage);
+            } else if self.dnd_enabled() {
+                self.drag_armed = Some((x, y, serial));
+            }
+            return;
+        }
+        let tool = self
+            .photos_info_data()
+            .and_then(|data| view::photos_info_tool_at(panel, &data, x, y));
+        if let Some(index) = tool {
+            self.turn_selected_photo(view::PHOTOS_TOOLS[index]);
+            return;
+        }
         let swatch = self
             .photos_info_data()
             .and_then(|data| view::photos_info_swatch_at(panel, &data, x, y));
@@ -522,14 +583,72 @@ impl Browser {
             self.photo_swatch_hover = swatch;
             self.dirty = true;
         }
+        let tool = self.photos_tool_at(x, y);
+        if tool != self.photo_tool_hover {
+            self.photo_tool_hover = tool;
+            self.dirty = true;
+        }
+    }
+
+    /// The info panel's turn or flip button under `(x, y)`, if any.
+    pub(super) fn photos_tool_at(&self, x: f32, y: f32) -> Option<usize> {
+        if self.mode != ViewMode::Photos || !self.photos.has_panel(self.size.0, self.content_h()) {
+            return None;
+        }
+        let panel = self.photos.panel_rect(self.size.0, self.content_h());
+        if !panel.contains(skia_safe::Point::new(x, y)) {
+            return None;
+        }
+        self.photos_info_data()
+            .and_then(|data| view::photos_info_tool_at(panel, &data, x, y))
+    }
+
+    /// Turn or flip the one selected photograph, by its EXIF orientation:
+    /// lossless, and undone with Ctrl+Z like any other change to a file.
+    pub(super) fn turn_selected_photo(&mut self, turn: crate::orient::Turn) {
+        let Some(entry) = self.selected_entry() else {
+            return;
+        };
+        if self.trash || !photos::is_photo(&entry) || !crate::orient::supported(&entry.path) {
+            return;
+        }
+        match crate::orient::apply(&entry.path, turn) {
+            Ok((from, to)) => {
+                let label = match turn {
+                    crate::orient::Turn::Left | crate::orient::Turn::Right => {
+                        otto_kit::t!("files-undo-rotate")
+                    }
+                    _ => otto_kit::t!("files-undo-flip"),
+                };
+                self.record_undo(
+                    label,
+                    vec![model::Change::Oriented {
+                        path: entry.path.clone(),
+                        from,
+                        to,
+                    }],
+                );
+                // Decoded again the way up it now goes; the listing re-read
+                // brings the new mtime, which re-measures it on the wall and
+                // asks for a new thumbnail.
+                self.preview = None;
+                self.reload_all();
+            }
+            Err(err) => self.refuse(otto_kit::t_owned!(
+                "files-turn-failed",
+                name = entry.name.clone(),
+                error = err.to_string()
+            )),
+        }
+        self.dirty = true;
     }
 
     /// The info panel's swatch under `(x, y)`, if any.
     pub(super) fn photos_swatch_at(&self, x: f32, y: f32) -> Option<usize> {
-        if self.mode != ViewMode::Photos || !self.photos.has_panel() {
+        if self.mode != ViewMode::Photos || !self.photos.has_panel(self.size.0, self.content_h()) {
             return None;
         }
-        let panel = view::photos_info_rect(self.size.0, self.content_h());
+        let panel = self.photos.panel_rect(self.size.0, self.content_h());
         if !panel.contains(skia_safe::Point::new(x, y)) {
             return None;
         }

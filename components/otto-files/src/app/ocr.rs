@@ -399,6 +399,7 @@ mod tests {
             video: None,
             text: None,
             palette: Vec::new(),
+            camera: None,
         });
 
         browser.begin_reading(path.clone());

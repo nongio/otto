@@ -41,11 +41,11 @@ impl Browser {
         let theme = layout_theme();
         match panel {
             TextPanel::Photos => {
-                if !self.photos.has_panel() {
+                if !self.photos.has_panel(self.size.0, self.content_h()) {
                     return None;
                 }
                 let data = self.photos_info_data()?;
-                let rect = view::photos_info_rect(self.size.0, self.content_h());
+                let rect = self.photos.panel_rect(self.size.0, self.content_h());
                 Some((data.subject(), view::photos_info_runs(rect, &data, &theme)))
             }
             TextPanel::Preview => {

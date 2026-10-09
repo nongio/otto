@@ -38,10 +38,6 @@ impl Browser {
         }
         let depth = self.active.min(self.columns.len() - 1);
         let selected = self.columns[depth].selection.len();
-        // One picked out of the Photos wall: what it can do next.
-        if selected == 1 && self.mode == ViewMode::Photos {
-            return Some(otto_kit::t_owned!("files-photos-one-selected"));
-        }
         (selected > 0).then(|| {
             otto_kit::t_owned!(
                 "files-status-selected",
@@ -280,12 +276,14 @@ impl Browser {
             panes,
             active: self.active,
             pan: self.pan.offset(),
-            pan_bar: (self.mode == ViewMode::Columns).then_some(&self.pan.state),
+            pan_bar: matches!(self.mode, ViewMode::Columns | ViewMode::Photos)
+                .then_some(&self.pan.state),
             miller: self.miller_widths(),
             sort: self.sort,
             ascending: self.ascending,
             list_columns: self.list_columns,
             opening: self.opening_progress(),
+            opening_stage: self.opening_stage,
             renaming: self.rename.as_ref().map(|r| (r.depth, r.index)),
             controls: self.controls,
             focused: self.focused,

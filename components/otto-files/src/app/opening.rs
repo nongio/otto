@@ -14,6 +14,7 @@ impl Browser {
     pub(super) fn tick_open_pulse(&mut self) -> bool {
         if self.opening.is_some() && self.opening_progress().is_none() {
             self.opening = None;
+            self.opening_stage = None;
             self.dirty = true;
         }
         self.opening.is_some()
@@ -57,6 +58,7 @@ impl Browser {
     /// must not narrow to one of them when the button comes up.
     pub(super) fn drag_started(&mut self) {
         self.press_pending = None;
+        self.video_click_pending = false;
     }
 
     /// Is `index` one of *several* entries selected in `depth`?
@@ -239,6 +241,7 @@ impl Browser {
         // the row on top of that is one answer too many.
         if !entry.is_dir {
             self.opening = Some((depth, std::time::Instant::now()));
+            self.opening_stage = None;
             self.dirty = true;
         }
 

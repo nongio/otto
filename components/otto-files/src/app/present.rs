@@ -294,10 +294,12 @@ impl FilesApp {
             .then(|| peek::video_options(panel, scale, false));
         tokio::task::spawn_blocking(move || {
             let preview = peek::decode(&path, panel, scale, 1);
+            // A few header bytes, read here rather than on the UI thread.
+            let camera = crate::camera::read(&path);
             state
                 .lock()
                 .unwrap()
-                .finish_preview(generation, preview, video);
+                .finish_preview(generation, preview, video, camera);
             AppContext::request_wakeup();
         });
     }

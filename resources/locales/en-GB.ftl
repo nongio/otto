@@ -829,6 +829,11 @@ files-undo-copy = Copy
 files-undo-delete = Delete
 files-undo-new-folder-with-selection = New Folder with Selection
 files-undo-rename = Rename
+# A photograph turned or flipped from the Photos info panel, for Undo, and
+# the message when its file could not be changed.
+files-undo-rotate = Rotate
+files-undo-flip = Flip
+files-turn-failed = Couldn’t turn “{ $name }”: { $error }
 # $name is a file or folder name, already wrapped in quotation marks.
 files-renamed-to = Renamed to “{ $name }”
 files-new-folder-created = New folder “{ $name }”
@@ -1000,13 +1005,18 @@ files-photos-info-copied = Copied
 files-photos-info-dimensions = Dimensions
 files-photos-info-modified = Modified
 files-photos-info-where = Where
+# How the picture was taken, from its EXIF: the camera, the lens, and the
+# exposure ("ƒ/1.8 · 1/120 s · ISO 100 · 26 mm").
+files-photos-info-camera = Camera
+files-photos-info-lens = Lens
+files-photos-info-exposure = Exposure
+# Where the picture was taken, from its GPS: "45.4642° N, 9.1900° E".
+files-photos-info-location = Location
 files-photos-info-many =
     { $count ->
         [one] 1 item
        *[other] { $count } items
     }
-# The path bar's note with one picture selected in the Photos view.
-files-photos-one-selected = 1 selected · Space to preview · ↵ to open
 # The Photos view's header line, e.g. "36 images, 2 folders". $images and
 # $folders are already-formatted counts from the two messages below it.
 files-photos-summary = { $images }, { $folders }

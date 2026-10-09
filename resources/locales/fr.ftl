@@ -713,6 +713,9 @@ files-undo-move = Déplacer
 files-undo-copy = Copier
 files-undo-delete = Supprimer
 files-undo-rename = Renommer
+files-undo-rotate = Rotation
+files-undo-flip = Retournement
+files-turn-failed = Impossible de faire pivoter « { $name } » : { $error }
 # $name is a file or folder name, already wrapped in quotation marks.
 files-renamed-to = Renommé en « { $name } »
 files-new-folder-created = Nouveau dossier « { $name } »
@@ -1925,12 +1928,15 @@ files-photos-info-copied = Copié
 files-photos-info-dimensions = Dimensions
 files-photos-info-modified = Modifié
 files-photos-info-where = Emplacement
+files-photos-info-camera = Appareil
+files-photos-info-lens = Objectif
+files-photos-info-exposure = Exposition
+files-photos-info-location = Lieu
 files-photos-info-many =
     { $count ->
         [one] 1 élément
        *[other] { $count } éléments
     }
-files-photos-one-selected = 1 sélectionné · Espace pour l’aperçu · ↵ pour ouvrir
 
 
 ## otto-authorize — the panel that asks for the password before a sensitive setting changes.
