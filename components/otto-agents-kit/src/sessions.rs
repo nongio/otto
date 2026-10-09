@@ -27,6 +27,7 @@ use tokio::sync::oneshot;
 
 use crate::item::{Activity, Item, Origin};
 use crate::link::{reach, Link, Reporter};
+use crate::opener::Opener;
 
 /// How long connecting may take before the service counts as not running.
 ///
@@ -63,8 +64,8 @@ pub async fn list_sessions(client: &Client) -> Result<Vec<SessionSummary>, BoxEr
     Ok(listed.items)
 }
 
-/// The sessions whose titles, or the chat app they came from, contain
-/// `query`, as rows from `source`.
+/// The sessions whose titles, or the word in their pill, contain `query`, as
+/// rows from `source`.
 ///
 /// Each row's [`Origin::index`] is the session's place in `sessions`, so a row
 /// picked from a narrowed list still names the right session. `agents` names
@@ -89,7 +90,7 @@ pub fn session_items(
         .filter(|(_, session)| {
             query.is_empty()
                 || session.title.to_lowercase().contains(&query)
-                || session_remote(session).is_some_and(|via| via.to_lowercase().contains(&query))
+                || session_pill(session).is_some_and(|pill| pill.to_lowercase().contains(&query))
         })
         .map(|(index, session)| Item {
             title: if session.title.is_empty() {
@@ -106,11 +107,25 @@ pub fn session_items(
             activity: Some(session_activity(session)),
             checked: None,
             search_terms: Vec::new(),
-            pill: session_remote(session),
+            pill: session_pill(session),
             origin: Origin { source, index },
         })
         .collect()
 }
+
+/// The word in a session's pill, which tells where it is had: "Studio" for
+/// one Preview started about a file, which opens there again; otherwise the
+/// chat app it was last written to from, as [`session_remote`] says. A local
+/// session wears none.
+pub fn session_pill(session: &SessionSummary) -> Option<String> {
+    match Opener::from_meta(session.meta.as_ref()) {
+        Opener::Preview { .. } => Some(STUDIO.to_owned()),
+        Opener::Ask => session_remote(session),
+    }
+}
+
+/// The pill of a session Preview started: the name of its agent.
+const STUDIO: &str = "Studio";
 
 /// The chat app the session was last written to from, away from the desktop,
 /// as the service keeps it in the session's `_meta` under `otto.remote`.
@@ -397,6 +412,31 @@ mod tests {
             std::thread::sleep(Duration::from_millis(20));
         }
         false
+    }
+
+    #[test]
+    fn studio_and_telegram_sessions_wear_their_own_pills() {
+        let mut studio = summary("a", "Brighter sky", "claude");
+        studio.meta = json!({ "otto": {
+            "app": "otto-preview",
+            "subject": ["file:///home/me/sky.jpg"],
+            "remote": "Telegram",
+        } })
+        .as_object()
+        .cloned();
+        let mut phone = summary("b", "Groceries", "claude");
+        phone.meta = json!({ "otto": { "remote": "Telegram" } })
+            .as_object()
+            .cloned();
+        let local = summary("c", "Fix the build", "claude");
+        let sessions = [studio, phone, local];
+
+        let rows = session_items(&sessions, &[], 0, "");
+        let pills: Vec<_> = rows.iter().map(|row| row.pill.as_deref()).collect();
+        assert_eq!(pills, [Some("Studio"), Some("Telegram"), None]);
+        let rows = session_items(&sessions, &[], 0, "studio");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].title, "Brighter sky");
     }
 
     #[test]
