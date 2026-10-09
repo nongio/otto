@@ -65,9 +65,16 @@ pub fn picture(tools: &[Tool], file: &mut File, ask: &Ask) -> Option<Pixels> {
 /// decoder and again for the encoder, and under the worker's address-space
 /// cap the encoder's pool is what fails to start.
 pub fn ffmpeg_frame(ask: &Ask) -> Vec<String> {
-    let mut args: Vec<String> = ["-nostdin", "-hide_banner", "-loglevel", "error", "-threads", "1"]
-        .map(String::from)
-        .to_vec();
+    let mut args: Vec<String> = [
+        "-nostdin",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-threads",
+        "1",
+    ]
+    .map(String::from)
+    .to_vec();
     if let Some(at) = ask.at {
         // Before `-i`, so the demuxer seeks rather than decoding up to it.
         args.extend(["-ss".into(), format!("{at:.3}")]);

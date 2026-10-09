@@ -567,7 +567,6 @@ fn run(command: &str, args: &[String], document: &[u8]) -> Option<Vec<u8>> {
     Some(out)
 }
 
-
 /// Page count, read out of the document's own structure.
 ///
 /// Counts `/Type /Page` objects, which is approximate for documents using

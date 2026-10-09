@@ -34,8 +34,8 @@ impl Browser {
         // re-filters in place, with no filesystem access, and picking the
         // same one re-uses the order already computed.
         let filter = self.picker.as_ref().map(|p| p.current_filter).unwrap_or(0);
-        let photos = (self.mode == ViewMode::Photos)
-            .then_some((self.photos_group, self.photo_dims.epoch()));
+        let photos =
+            (self.mode == ViewMode::Photos).then_some((self.photos_group, self.photo_dims.epoch()));
         let key = (
             column.epoch,
             self.sort,

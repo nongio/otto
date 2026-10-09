@@ -107,8 +107,7 @@ pub fn generate_thumbnail(
         // A card's artwork is a picture of the file: a video's poster frame,
         // a song's cover.
         Preview::Card {
-            hero: Some(pixels),
-            ..
+            hero: Some(pixels), ..
         } => pixels.to_image(),
         // Everything else a previewer can return — a text listing, an
         // archive's contents, an unavailable file — is not a picture, and

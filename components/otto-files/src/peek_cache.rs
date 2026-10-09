@@ -78,7 +78,9 @@ pub fn decode(path: &Path, request: &Request) -> Preview {
 fn lock() -> std::sync::MutexGuard<'static, Cache> {
     // A thread that panicked while holding it left a cache, not a broken
     // invariant worth refusing previews over.
-    CACHE.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    CACHE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 fn key_for(path: &Path, request: &Request) -> Option<Key> {

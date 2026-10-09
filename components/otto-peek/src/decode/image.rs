@@ -69,11 +69,7 @@ fn unreadable(err: &std::io::Error) -> PreviewPayload {
 pub fn is_heif(mime: &str) -> bool {
     matches!(
         mime,
-        "image/heif"
-            | "image/heic"
-            | "image/heif-sequence"
-            | "image/heic-sequence"
-            | "image/avif"
+        "image/heif" | "image/heic" | "image/heif-sequence" | "image/heic-sequence" | "image/avif"
     )
 }
 
