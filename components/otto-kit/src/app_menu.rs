@@ -725,7 +725,7 @@ mod tests {
         let paste = id_of(&again, "Paste");
         assert!(tree.find(paste).is_none());
         // A greyed item is served, but would not run.
-        assert_eq!(actions[&id_of(&again, "Redo")].1, false);
+        assert!(!actions[&id_of(&again, "Redo")].1);
     }
 
     #[test]
@@ -750,6 +750,9 @@ mod tests {
         assert!(!enabled);
         assert!(!redo.contains_key("toggle-type"));
     }
+
+    /// A `GetLayout` reply: the revision, then the node asked for.
+    type Layout = (u32, (i32, HashMap<String, OwnedValue>, Vec<OwnedValue>));
 
     /// Over a real session bus, as the top bar reads it: the layout, then a
     /// click that comes back as the item's id.
@@ -783,10 +786,7 @@ mod tests {
                 )
                 .await
                 .unwrap();
-            let (revision, (root, _, children)): (
-                u32,
-                (i32, HashMap<String, OwnedValue>, Vec<OwnedValue>),
-            ) = reply.body().deserialize().unwrap();
+            let (revision, (root, _, children)): Layout = reply.body().deserialize().unwrap();
             assert_eq!((revision, root, children.len()), (1, 0, 2));
             // The Panels submenu on its own.
             let reply = bus
@@ -799,8 +799,7 @@ mod tests {
                 )
                 .await
                 .unwrap();
-            let (_, (id, _, children)): (u32, (i32, HashMap<String, OwnedValue>, Vec<OwnedValue>)) =
-                reply.body().deserialize().unwrap();
+            let (_, (id, _, children)): Layout = reply.body().deserialize().unwrap();
             assert_eq!((id, children.len()), (panels, 1));
             bus.call_method(
                 Some(service.as_str()),
