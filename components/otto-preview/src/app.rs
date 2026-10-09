@@ -240,6 +240,22 @@ impl Doc {
     /// layer, both off the UI thread.
     fn follow_document(&self) {
         let scale = AppContext::scale_factor().max(1) as f32;
+        // The sidebar's thumbnails, small decodes of their own pages.
+        let thumbs = self.viewer.lock().unwrap().thumb_work(scale);
+        if let Some((requests, path)) = thumbs {
+            for request in requests {
+                let viewer = Arc::clone(&self.viewer);
+                let path = path.clone();
+                tokio::task::spawn_blocking(move || {
+                    let image = match peek::decode_page(&path, request.page, request.width) {
+                        Preview::Pixels { pixels, .. } => pixels.to_image(),
+                        _ => None,
+                    };
+                    viewer.lock().unwrap().finish_thumb(request.page, image);
+                    AppContext::request_wakeup();
+                });
+            }
+        }
         let work = {
             let mut viewer = self.viewer.lock().unwrap();
             viewer
@@ -368,6 +384,7 @@ fn handle_pointer(viewer: &Mutex<Viewer>, window: &Window, events: &[PointerEven
                 // Always forwarded: a selection or a bar dragged past the
                 // content's edge keeps going.
                 v.content_pointer(VideoPointer::Motion, at);
+                v.sidebar_motion(at);
                 let shape = match edge {
                     Some(edge) if v.drag.is_none() => edge.cursor(),
                     _ if content.contains(at) || v.drag.is_some() => v.content_cursor(at),
@@ -412,6 +429,10 @@ fn handle_pointer(viewer: &Mutex<Viewer>, window: &Window, events: &[PointerEven
                     }
                     continue;
                 }
+                if v.sidebar().is_some_and(|sidebar| sidebar.rect.contains(at)) {
+                    v.sidebar_press(at);
+                    continue;
+                }
                 v.content_pointer(VideoPointer::Press, at);
                 if v.drag.is_some() && v.cursor != CursorShape::Grabbing {
                     v.cursor = CursorShape::Grabbing;
@@ -441,6 +462,7 @@ fn handle_pointer(viewer: &Mutex<Viewer>, window: &Window, events: &[PointerEven
                         v.run_tool(tool);
                     }
                 }
+                v.sidebar_release();
                 let link = v.content_pointer(VideoPointer::Release, at);
                 if v.cursor == CursorShape::Grabbing {
                     v.cursor = v.content_cursor(at);
@@ -457,6 +479,7 @@ fn handle_pointer(viewer: &Mutex<Viewer>, window: &Window, events: &[PointerEven
                     v.dirty = true;
                 }
                 v.content_pointer(VideoPointer::Leave, at);
+                v.sidebar_scroll.on_pointer_leave();
                 v.cursor = CursorShape::Default;
             }
             PointerEventKind::Axis {
@@ -464,6 +487,13 @@ fn handle_pointer(viewer: &Mutex<Viewer>, window: &Window, events: &[PointerEven
                 vertical,
                 ..
             } => {
+                let stop = vertical.stop || horizontal.stop;
+                let discrete = vertical.discrete != 0 || horizontal.discrete != 0;
+                if v.wheel_goes_to_sidebar(at, stop, discrete) {
+                    v.sidebar_wheel(vertical.absolute as f32, stop, discrete);
+                    redraw |= std::mem::take(&mut v.dirty);
+                    continue;
+                }
                 v.wheel(
                     horizontal.absolute as f32,
                     vertical.absolute as f32,

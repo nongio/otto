@@ -27,6 +27,10 @@ const GAP: f32 = 2.0;
 const EDGE: f32 = 10.0;
 /// The page counter between the two page buttons.
 const PAGE_LABEL_W: f32 = 76.0;
+/// The zoom level between the zoom-out and zoom-in buttons.
+const ZOOM_LABEL_W: f32 = 48.0;
+/// The least room between the leading buttons and the page controls.
+const GROUP_GAP: f32 = 12.0;
 /// A symbolic icon's size inside a button.
 const GLYPH: f32 = 16.0;
 
@@ -38,6 +42,8 @@ pub enum Tool {
     ZoomIn,
     PreviousPage,
     NextPage,
+    /// Shows or hides the pages sidebar.
+    Sidebar,
 }
 
 /// Where the toolbar's buttons sit for one window width.
@@ -46,6 +52,8 @@ pub struct ToolbarLayout {
     pub buttons: Vec<(Tool, Rect)>,
     /// The page counter's box, when the preview has pages.
     pub page_label: Option<Rect>,
+    /// The zoom level's box, between zoom out and zoom in.
+    pub zoom_label: Rect,
 }
 
 impl ToolbarLayout {
@@ -100,23 +108,39 @@ pub fn control_at(viewer: &Viewer, x: f32, y: f32) -> Option<WindowControl> {
 
 /// Lay the toolbar out for a window `width` points wide.
 ///
-/// The zoom buttons sit at the leading edge, and the page controls in the
-/// middle when there are pages.
-pub fn toolbar_layout(width: f32, variant: DecorationVariant, paged: bool) -> ToolbarLayout {
+/// The sidebar button leads when the preview is a document of pages, then
+/// zoom out, the zoom level, zoom in and fit. The page controls sit in the
+/// middle when there are pages to turn, pushed along when a narrow window
+/// leaves the middle to the leading buttons.
+pub fn toolbar_layout(
+    width: f32,
+    variant: DecorationVariant,
+    paged: bool,
+    sidebar: bool,
+) -> ToolbarLayout {
     let top = titlebar_h(variant);
     let y = top + (TOOLBAR_H - BUTTON) / 2.0;
     let square = |x: f32| Rect::from_xywh(x, y, BUTTON, BUTTON);
-    let mut buttons = Vec::with_capacity(5);
+    let mut buttons = Vec::with_capacity(6);
 
     let mut x = EDGE;
-    for tool in [Tool::ZoomOut, Tool::ZoomFit, Tool::ZoomIn] {
-        buttons.push((tool, square(x)));
-        x += BUTTON + GAP;
+    if sidebar {
+        buttons.push((Tool::Sidebar, square(x)));
+        // Its own group, apart from the zoom.
+        x += BUTTON + GAP * 4.0;
     }
+    buttons.push((Tool::ZoomOut, square(x)));
+    x += BUTTON;
+    let zoom_label = Rect::from_xywh(x, y, ZOOM_LABEL_W, BUTTON);
+    x += ZOOM_LABEL_W;
+    buttons.push((Tool::ZoomIn, square(x)));
+    x += BUTTON + GAP * 4.0;
+    buttons.push((Tool::ZoomFit, square(x)));
+    x += BUTTON;
 
     let page_label = paged.then(|| {
         let group = BUTTON * 2.0 + PAGE_LABEL_W;
-        let left = (width - group) / 2.0;
+        let left = ((width - group) / 2.0).max(x + GROUP_GAP);
         buttons.push((Tool::PreviousPage, square(left)));
         buttons.push((Tool::NextPage, square(left + BUTTON + PAGE_LABEL_W)));
         Rect::from_xywh(left + BUTTON, y, PAGE_LABEL_W, BUTTON)
@@ -125,6 +149,7 @@ pub fn toolbar_layout(width: f32, variant: DecorationVariant, paged: bool) -> To
     ToolbarLayout {
         buttons,
         page_label,
+        zoom_label,
     }
 }
 
@@ -132,6 +157,8 @@ pub fn toolbar_layout(width: f32, variant: DecorationVariant, paged: bool) -> To
 pub fn draw(canvas: &Canvas, viewer: &Viewer, theme: &Theme) {
     let (width, _) = viewer.size;
     let decoration = decoration(viewer);
+
+    crate::sidebar::draw(canvas, viewer, theme);
 
     // The toolbar first, so the titlebar's bottom hairline lands over it.
     let top = titlebar_h(viewer.variant);
@@ -146,12 +173,24 @@ pub fn draw(canvas: &Canvas, viewer: &Viewer, theme: &Theme) {
     decoration.draw(canvas);
 
     let paged = viewer.page_status();
-    let layout = toolbar_layout(width, viewer.variant, paged.is_some());
+    let layout = viewer.toolbar();
     for (tool, rect) in &layout.buttons {
         let enabled = viewer.tool_enabled(*tool);
         let hovered = enabled && viewer.hovered_tool == Some(*tool);
         let pressed = hovered && viewer.pressed_tool == Some(*tool);
+        // The sidebar button is a toggle: it stays down while the sidebar
+        // shows.
+        let pressed = pressed || (*tool == Tool::Sidebar && viewer.sidebar_open());
         draw_icon_button(canvas, theme, *rect, *tool, enabled, hovered, pressed);
+    }
+
+    if let Some(percent) = viewer.zoom_percent() {
+        let rect = layout.zoom_label;
+        Label::new(format!("{percent}%"))
+            .with_style(styles::SUBHEADLINE)
+            .with_color(theme.text_secondary)
+            .centered_at(rect.center_x(), rect.center_y())
+            .render(canvas);
     }
 
     if let (Some(rect), Some((page, pages))) = (layout.page_label, paged) {
@@ -202,6 +241,12 @@ fn draw_icon_button(
         GLYPH,
         GLYPH,
     );
+    if tool == Tool::Sidebar {
+        // Drawn rather than looked up: themes disagree on what the sidebar
+        // icon is, and some put an arrow in it.
+        draw_sidebar_glyph(canvas, dst, color);
+        return;
+    }
     match icons::cached_icon_chain(icon_names(tool), GLYPH as i32) {
         Some(image) => {
             // Symbolic art recoloured to the text tone, as the rest of the
@@ -225,6 +270,8 @@ fn icon_names(tool: Tool) -> &'static [&'static str] {
         Tool::ZoomIn => &["zoom-in-symbolic"],
         Tool::PreviousPage => &["go-up-symbolic", "pan-up-symbolic"],
         Tool::NextPage => &["go-down-symbolic", "pan-down-symbolic"],
+        // Never looked up; see `draw_sidebar_glyph`.
+        Tool::Sidebar => &[],
     }
 }
 
@@ -273,6 +320,68 @@ fn draw_fallback_glyph(canvas: &Canvas, dst: Rect, tool: Tool, color: Color) {
             path.line_to((cx, cy + dy * half / 2.0));
             path.line_to((cx + half, cy - dy * half / 2.0));
         }
+        Tool::Sidebar => draw_sidebar_glyph(canvas, dst, color),
     }
     canvas.draw_path(&path.detach(), &stroke);
+}
+
+/// The sidebar button's icon: a rounded window with a shaded pane down its
+/// leading edge, the shape every desktop draws for "sidebar".
+fn draw_sidebar_glyph(canvas: &Canvas, dst: Rect, color: Color) {
+    let frame = Rect::from_ltrb(
+        dst.left + 0.75,
+        dst.top + 2.25,
+        dst.right - 0.75,
+        dst.bottom - 2.25,
+    );
+    let radius = 2.5;
+    let divider = frame.left + frame.width() * 0.36;
+
+    let mut pane = Paint::default();
+    pane.set_anti_alias(true);
+    pane.set_color(color.with_a((color.a() as f32 * 0.35) as u8));
+    canvas.save();
+    canvas.clip_rrect(RRect::new_rect_xy(frame, radius, radius), None, true);
+    canvas.draw_rect(
+        Rect::from_ltrb(frame.left, frame.top, divider, frame.bottom),
+        &pane,
+    );
+    canvas.restore();
+
+    let mut stroke = Paint::default();
+    stroke.set_anti_alias(true);
+    stroke.set_style(PaintStyle::Stroke);
+    stroke.set_stroke_width(1.5);
+    stroke.set_color(color);
+    canvas.draw_rrect(RRect::new_rect_xy(frame, radius, radius), &stroke);
+    canvas.draw_line((divider, frame.top), (divider, frame.bottom), &stroke);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn button(layout: &ToolbarLayout, wanted: Tool) -> Rect {
+        layout
+            .buttons
+            .iter()
+            .find(|(tool, _)| *tool == wanted)
+            .map(|(_, rect)| *rect)
+            .unwrap()
+    }
+
+    #[test]
+    fn the_page_controls_clear_the_zoom_group_in_the_narrowest_window() {
+        let layout = toolbar_layout(crate::app::MIN_W, DecorationVariant::default(), true, true);
+        let leading = button(&layout, Tool::ZoomFit).right;
+        let previous = button(&layout, Tool::PreviousPage).left;
+        assert!(previous > leading, "{previous} <= {leading}");
+    }
+
+    #[test]
+    fn the_zoom_level_sits_between_zoom_out_and_zoom_in() {
+        let layout = toolbar_layout(900.0, DecorationVariant::default(), false, false);
+        assert!(button(&layout, Tool::ZoomOut).right <= layout.zoom_label.left);
+        assert!(layout.zoom_label.right <= button(&layout, Tool::ZoomIn).left);
+    }
 }
