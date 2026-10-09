@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Dictation
+Comment=Speech to text in any text field
+Exec=otto-dictate
+NoDisplay=true
+X-GNOME-Autostart-enabled=true

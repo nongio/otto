@@ -2044,3 +2044,29 @@ settings-users-delete-action = Видалити користувача
 settings-users-invalid-name = Назва облікового запису починається з малої латинської літери й містить лише a–z, 0–9, - та _
 settings-users-name-taken = Обліковий запис із такою назвою вже існує
 settings-users-password-missing = Введіть пароль для облікового запису
+
+## Налаштування › Диктування
+
+settings-pane-dictation = Диктування
+settings-dictation-intro = Мовлення набирається в текстове поле й розпізнається на цьому комп'ютері. Ctrl+D вмикає диктування в лаунчері; в інших застосунках це робить комбінація клавіш, призначена на otto-dictate toggle.
+settings-dictation-engine = Рушій
+settings-dictation-engine-detail = Вибір рушія запускає його мовний сервер і зупиняє решту
+settings-dictation-engine-parakeet = Parakeet
+settings-dictation-engine-whisper = Whisper (лише англійська)
+settings-dictation-engine-crispasr = CrispASR
+settings-dictation-server = Мовний сервер
+settings-dictation-server-checking = Перевірка…
+settings-dictation-server-running = Працює
+settings-dictation-server-stopped = Зупинений. Диктування нічого не чує, доки він не запуститься.
+settings-dictation-server-failed = Зупинений після помилки. Причину покаже journalctl --user -u { $unit }.
+settings-dictation-server-missing = Не встановлений. Встановити його можна командою components/otto-dictate/engines/install.sh { $engine }.
+settings-dictation-server-unmanaged = Невідомо: у цій системі немає systemctl
+settings-dictation-start = Запустити
+settings-dictation-restart = Перезапустити
+settings-dictation-language = Мова
+settings-dictation-language-auto = Автоматично
+settings-dictation-language-detail = Мова мовлення. Parakeet і CrispASR визначають її самі.
+settings-dictation-hotwords-boost = Підсилення назв
+settings-dictation-hotwords-boost-detail = Наскільки перевага надається назвам, яких очікує поле. Понад 6 слова навколо назви починають спотворюватися.
+settings-dictation-autostart = Запускати диктування під час входу
+settings-dictation-autostart-detail = Запускає otto-dictate з ~/.config/autostart — Otto читає цю теку, коли ввімкнено xdg_autostart

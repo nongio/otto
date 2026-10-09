@@ -1980,3 +1980,29 @@ settings-users-delete-action = Elimina utente
 settings-users-invalid-name = I nomi account iniziano con una lettera minuscola e usano solo a–z, 0–9, - e _
 settings-users-name-taken = Esiste già un account con questo nome
 settings-users-password-missing = Inserisci una password per l'account
+
+## Impostazioni › Dettatura
+
+settings-pane-dictation = Dettatura
+settings-dictation-intro = La voce viene scritta in un campo di testo e riconosciuta su questo computer. Ctrl+D detta nel launcher; nelle altre app lo fa una scorciatoia assegnata a otto-dictate toggle.
+settings-dictation-engine = Motore
+settings-dictation-engine-detail = Sceglierne uno avvia il suo server vocale e ferma gli altri
+settings-dictation-engine-parakeet = Parakeet
+settings-dictation-engine-whisper = Whisper (solo inglese)
+settings-dictation-engine-crispasr = CrispASR
+settings-dictation-server = Server vocale
+settings-dictation-server-checking = Verifica…
+settings-dictation-server-running = Attivo
+settings-dictation-server-stopped = Fermo. La dettatura non sente nulla finché non parte.
+settings-dictation-server-failed = Fermato da un errore. journalctl --user -u { $unit } dice perché.
+settings-dictation-server-missing = Non installato. components/otto-dictate/engines/install.sh { $engine } lo installa.
+settings-dictation-server-unmanaged = Non si sa: questo sistema non ha systemctl
+settings-dictation-start = Avvia
+settings-dictation-restart = Riavvia
+settings-dictation-language = Lingua
+settings-dictation-language-auto = Automatica
+settings-dictation-language-detail = La lingua parlata. Parakeet e CrispASR la riconoscono da soli.
+settings-dictation-hotwords-boost = Rinforzo dei nomi
+settings-dictation-hotwords-boost-detail = Quanto sono favoriti i nomi che un campo si aspetta. Oltre 6, le parole intorno a un nome iniziano a storpiarsi.
+settings-dictation-autostart = Avvia la dettatura all'accesso
+settings-dictation-autostart-detail = Avvia otto-dictate da ~/.config/autostart, che Otto legge quando xdg_autostart è attivo

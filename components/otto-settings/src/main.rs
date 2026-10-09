@@ -639,6 +639,8 @@ fn open_menu(
             choices
         } else if let Some(choices) = panes::desk::menu_choices(select.id) {
             choices
+        } else if let Some(choices) = panes::dictation::menu_choices(select.id) {
+            choices
         } else if let Some(choices) = panes::top_bar::menu_choices(select.id, &select.current) {
             choices
         } else if let Some(values) = display_slot {
@@ -715,6 +717,7 @@ fn open_menu(
                     || panes::sound::choose(id, value)
                     || panes::keyboard_layouts::choose(id, value)
                     || panes::desk::choose(id, value)
+                    || panes::dictation::choose(id, value)
                 {
                 } else if displays::menu_choices(id).is_some() {
                     displays::choose(id, value);
@@ -800,6 +803,7 @@ fn activate(held: view::Pressed, editing: &Arc<Mutex<Option<Editing>>>) {
             panes::agents::press(row, button);
             panes::search::press(row, button);
             panes::desk::press(row, button);
+            panes::dictation::press(row, button);
             panes::keyboard_layouts::press(row, button);
             if let Some((id, name)) = agents::take_rename() {
                 start_edit(
@@ -895,6 +899,11 @@ fn apply(id: &str, value: settings_client::Value) {
     }
     // The desk's icon size is in files.toml, not a setting.
     if panes::desk::apply(id, &value) {
+        return;
+    }
+    // Dictation keeps its settings in dictation.toml and its login switch
+    // in the autostart folder.
+    if panes::dictation::apply(id, &value) {
         return;
     }
     if settings_client::is_sensitive(id) {
@@ -1099,6 +1108,7 @@ fn describe_row(tree: &mut A11yTree, row: &model::Row, bounds: Rect) {
                 Some(id) => panes::keyboard_layouts::display(id, current)
                     .or_else(|| panes::top_bar::display(id, current))
                     .or_else(|| panes::desk::display(id, current))
+                    .or_else(|| panes::dictation::display(id, current))
                     .or_else(|| panes::sound::display(id, current))
                     .unwrap_or_else(|| settings_client::display_choice(id, current)),
                 None => current.clone(),
@@ -3061,11 +3071,14 @@ impl App for SettingsApp {
         // The Agents pane asks systemd about its service only while it is on
         // screen.
         agents::set_shown(*self.selected.lock().unwrap() == model::AGENTS_PANE);
+        // So does the Dictation pane about its engines.
+        panes::dictation::set_shown(*self.selected.lock().unwrap() == model::DICTATION_PANE);
 
         if settings_client::take_dirty()
             | agents::take_service_dirty()
             | panes::search::take_dirty()
             | panes::desk::take_dirty()
+            | panes::dictation::take_dirty()
             | panes::account::take_dirty()
         {
             // Values, not chrome: only the pane has to be repainted.

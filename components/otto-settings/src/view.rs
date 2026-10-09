@@ -2642,6 +2642,7 @@ impl Settings {
                     Some(id) => crate::panes::keyboard_layouts::display(id, value)
                         .or_else(|| crate::panes::top_bar::display(id, value))
                         .or_else(|| crate::panes::desk::display(id, value))
+                        .or_else(|| crate::panes::dictation::display(id, value))
                         .or_else(|| crate::panes::sound::display(id, value))
                         .unwrap_or_else(|| settings_client::display_choice(id, value)),
                     None => value.clone(),

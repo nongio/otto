@@ -1961,3 +1961,29 @@ settings-users-delete-action = Benutzer löschen
 settings-users-invalid-name = Accountnamen beginnen mit einem Kleinbuchstaben und enthalten nur a–z, 0–9, - und _
 settings-users-name-taken = Es gibt bereits einen Account mit diesem Namen
 settings-users-password-missing = Gib ein Passwort für den Account ein
+
+## Einstellungen › Diktat
+
+settings-pane-dictation = Diktat
+settings-dictation-intro = Gesprochenes wird in ein Textfeld geschrieben und auf diesem Computer erkannt. Strg+D diktiert im Launcher; in anderen Apps übernimmt das ein Tastenkürzel für otto-dictate toggle.
+settings-dictation-engine = Erkennung
+settings-dictation-engine-detail = Die Auswahl startet ihren Sprachserver und stoppt die anderen
+settings-dictation-engine-parakeet = Parakeet
+settings-dictation-engine-whisper = Whisper (nur Englisch)
+settings-dictation-engine-crispasr = CrispASR
+settings-dictation-server = Sprachserver
+settings-dictation-server-checking = Wird geprüft…
+settings-dictation-server-running = Läuft
+settings-dictation-server-stopped = Gestoppt. Das Diktat hört nichts, bis er startet.
+settings-dictation-server-failed = Nach einem Fehler gestoppt. journalctl --user -u { $unit } nennt den Grund.
+settings-dictation-server-missing = Nicht installiert. components/otto-dictate/engines/install.sh { $engine } richtet ihn ein.
+settings-dictation-server-unmanaged = Unbekannt: Dieses System hat kein systemctl
+settings-dictation-start = Starten
+settings-dictation-restart = Neu starten
+settings-dictation-language = Sprache
+settings-dictation-language-auto = Automatisch
+settings-dictation-language-detail = Die gesprochene Sprache. Parakeet und CrispASR erkennen sie selbst.
+settings-dictation-hotwords-boost = Namensverstärkung
+settings-dictation-hotwords-boost-detail = Wie stark die Namen bevorzugt werden, die ein Feld erwartet. Über 6 werden die Wörter um einen Namen herum verzerrt.
+settings-dictation-autostart = Diktat beim Anmelden starten
+settings-dictation-autostart-detail = Startet otto-dictate aus ~/.config/autostart, das Otto liest, wenn xdg_autostart an ist

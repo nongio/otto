@@ -1984,3 +1984,29 @@ settings-users-delete-action = Excluir usuário
 settings-users-invalid-name = Nomes de conta começam com uma letra minúscula e usam apenas a–z, 0–9, - e _
 settings-users-name-taken = Já existe uma conta com esse nome
 settings-users-password-missing = Digite uma senha para a conta
+
+## Ajustes › Ditado
+
+settings-pane-dictation = Ditado
+settings-dictation-intro = A fala é digitada em um campo de texto e reconhecida neste computador. Ctrl+D dita no lançador; em outros apps, um atalho associado a otto-dictate toggle faz isso.
+settings-dictation-engine = Motor
+settings-dictation-engine-detail = Escolher um inicia o servidor de voz dele e para os outros
+settings-dictation-engine-parakeet = Parakeet
+settings-dictation-engine-whisper = Whisper (só inglês)
+settings-dictation-engine-crispasr = CrispASR
+settings-dictation-server = Servidor de voz
+settings-dictation-server-checking = Verificando…
+settings-dictation-server-running = Em execução
+settings-dictation-server-stopped = Parado. O ditado não ouve nada até que ele inicie.
+settings-dictation-server-failed = Parado após um erro. journalctl --user -u { $unit } mostra o motivo.
+settings-dictation-server-missing = Não instalado. components/otto-dictate/engines/install.sh { $engine } faz a instalação.
+settings-dictation-server-unmanaged = Não dá para saber: este sistema não tem systemctl
+settings-dictation-start = Iniciar
+settings-dictation-restart = Reiniciar
+settings-dictation-language = Idioma
+settings-dictation-language-auto = Automático
+settings-dictation-language-detail = O idioma falado. Parakeet e CrispASR o detectam sozinhos.
+settings-dictation-hotwords-boost = Reforço de nomes
+settings-dictation-hotwords-boost-detail = O quanto os nomes que um campo espera são favorecidos. Acima de 6, as palavras em volta de um nome começam a se deformar.
+settings-dictation-autostart = Iniciar o ditado ao entrar
+settings-dictation-autostart-detail = Executa o otto-dictate a partir de ~/.config/autostart, que o Otto lê quando xdg_autostart está ativado

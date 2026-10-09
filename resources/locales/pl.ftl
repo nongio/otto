@@ -2056,3 +2056,29 @@ settings-users-delete-action = Usuń użytkownika
 settings-users-invalid-name = Nazwy kont zaczynają się od małej litery i zawierają tylko a–z, 0–9, - i _
 settings-users-name-taken = Konto o tej nazwie już istnieje
 settings-users-password-missing = Wpisz hasło dla konta
+
+## Ustawienia › Dyktowanie
+
+settings-pane-dictation = Dyktowanie
+settings-dictation-intro = Mowa wpisywana w pole tekstowe, rozpoznawana na tym komputerze. Ctrl+D dyktuje w launcherze; w innych aplikacjach robi to skrót przypisany do otto-dictate toggle.
+settings-dictation-engine = Silnik
+settings-dictation-engine-detail = Wybranie jednego uruchamia jego serwer mowy i zatrzymuje pozostałe
+settings-dictation-engine-parakeet = Parakeet
+settings-dictation-engine-whisper = Whisper (tylko angielski)
+settings-dictation-engine-crispasr = CrispASR
+settings-dictation-server = Serwer mowy
+settings-dictation-server-checking = Sprawdzanie…
+settings-dictation-server-running = Działa
+settings-dictation-server-stopped = Zatrzymany. Dyktowanie nic nie słyszy, dopóki się nie uruchomi.
+settings-dictation-server-failed = Zatrzymany po błędzie. Przyczynę podaje journalctl --user -u { $unit }.
+settings-dictation-server-missing = Nie zainstalowano. components/otto-dictate/engines/install.sh { $engine } go instaluje.
+settings-dictation-server-unmanaged = Nie wiadomo: w tym systemie nie ma systemctl
+settings-dictation-start = Uruchom
+settings-dictation-restart = Uruchom ponownie
+settings-dictation-language = Język
+settings-dictation-language-auto = Automatycznie
+settings-dictation-language-detail = Język mówiony. Parakeet i CrispASR rozpoznają go same.
+settings-dictation-hotwords-boost = Wzmocnienie nazw
+settings-dictation-hotwords-boost-detail = Jak mocno faworyzowane są nazwy, których oczekuje pole. Powyżej 6 słowa wokół nazwy zaczynają się zniekształcać.
+settings-dictation-autostart = Uruchamiaj dyktowanie po zalogowaniu
+settings-dictation-autostart-detail = Uruchamia otto-dictate z ~/.config/autostart, który Otto czyta, gdy xdg_autostart jest włączone

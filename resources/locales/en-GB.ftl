@@ -2037,3 +2037,39 @@ settings-users-delete-action = Delete User
 settings-users-invalid-name = Account names start with a lower-case letter and use only a–z, 0–9, - and _
 settings-users-name-taken = There's already an account with that name
 settings-users-password-missing = Type a password for the account
+
+## Settings › Dictation: speech typed into a text field, recognised by a
+## speech server on this computer.
+
+settings-pane-dictation = Dictation
+# Ctrl+D is the launcher's key; otto-dictate toggle is a command, left as is.
+settings-dictation-intro = Speech typed into a text field, recognised on this computer. Ctrl+D dictates in the launcher; in other apps, a shortcut bound to otto-dictate toggle does.
+# The speech-to-text engine. Parakeet, Whisper and CrispASR are names.
+settings-dictation-engine = Engine
+settings-dictation-engine-detail = Picking one starts its speech server and stops the others
+settings-dictation-engine-parakeet = Parakeet
+settings-dictation-engine-whisper = Whisper (English only)
+settings-dictation-engine-crispasr = CrispASR
+# Whether the picked engine's server is running, with Start or Restart.
+settings-dictation-server = Speech server
+settings-dictation-server-checking = Checking…
+settings-dictation-server-running = Running
+settings-dictation-server-stopped = Stopped. Dictation hears nothing until it starts.
+# $unit is the server's systemd unit, such as otto-stt-parakeet.service.
+settings-dictation-server-failed = Stopped after an error. journalctl --user -u { $unit } says why.
+# $engine is the engine as the install script takes it, such as parakeet.
+settings-dictation-server-missing = Not installed. components/otto-dictate/engines/install.sh { $engine } sets it up.
+settings-dictation-server-unmanaged = Can't tell: this system has no systemctl
+settings-dictation-start = Start
+settings-dictation-restart = Restart
+settings-dictation-language = Language
+# Lets the engine work out the language itself.
+settings-dictation-language-auto = Automatic
+settings-dictation-language-detail = The language spoken. Parakeet and CrispASR detect it themselves.
+# How strongly the engine favours the names a field expects (hotwords).
+settings-dictation-hotwords-boost = Hotword boost
+settings-dictation-hotwords-boost-detail = How strongly the names a field expects are favoured. Above 6, the words around a name start to garble.
+settings-dictation-autostart = Start dictation at login
+# ~/.config/autostart is a folder and xdg_autostart a configuration key; both
+# stay as they are.
+settings-dictation-autostart-detail = Runs otto-dictate from ~/.config/autostart, which Otto reads when xdg_autostart is on

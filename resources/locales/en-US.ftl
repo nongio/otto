@@ -48,3 +48,7 @@ files-date-modified = { $month } { $day }, { $year } at { $time }
 
 # The menu under the focused application's name in the top bar.
 bar-app-minimize = Minimize
+
+# Settings › Dictation.
+settings-dictation-intro = Speech typed into a text field, recognized on this computer. Ctrl+D dictates in the launcher; in other apps, a shortcut bound to otto-dictate toggle does.
+settings-dictation-hotwords-boost-detail = How strongly the names a field expects are favored. Above 6, the words around a name start to garble.

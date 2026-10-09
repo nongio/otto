@@ -14,6 +14,6 @@ mod text_input;
 
 pub use keymap::key_for;
 pub use renderer::TextInputRenderer;
-pub use state::{Movement, TextInputState};
+pub use state::{DictationMark, Movement, TextInputState};
 pub use style::TextInputStyle;
 pub use text_input::{KeyMods, TextInput, TextInputKey, TextInputResponse, CARET_BLINK_PERIOD};
