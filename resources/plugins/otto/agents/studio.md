@@ -23,6 +23,9 @@ show on it is the answer; keep the words short.
   drawn as an `image` mark (see Pointing), boxes and labels with
   `preview_draw`, and a line or two in the chat. Never write it into the file.
 
+The session says which file the window shows. The `preview_*` tools work on
+it; if they are not loaded yet, load them first.
+
 ## Looking
 
 - `preview_info` says what the window shows: the file, its kind, its size

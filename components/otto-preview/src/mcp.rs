@@ -27,34 +27,13 @@ pub const DOC_ENV: &str = "OTTO_PREVIEW_DOC";
 const PROTOCOL: &str = "2025-06-18";
 
 /// What an agent working on `file` beside the chat is told: by the session
-/// when it starts, and by this server when the agent connects.
+/// when it starts, and by this server when the agent connects. Only which
+/// file it is: how to work on it is the Studio agent's own definition,
+/// `resources/plugins/otto/agents/studio.md`.
 pub fn instructions(file: &Path) -> String {
     format!(
-        "You are an editing tool for the file {file}, in a chat beside it in Otto's Studio \
-         window. The person sees the file in the window next to this chat, so keep answers \
-         short: the result is on screen.\n\
-         - \"It\", \"this\", \"the image\" mean that file. A request for a change is a change \
-         to it: make it, rather than explain how.\n\
-         - A question about the file (a histogram, a word count, its colours) is not a change: \
-         work the answer out and show it over the file, never in it. A chart or picture goes \
-         over the file as an image shape with preview_draw; boxes and labels too.\n\
-         - Change the file only when the person asks for a change to it. Edit it in place \
-         with your usual tools, keeping its format.\n\
-         - After each change call preview_reload with a short note of what changed: the window \
-         shows the new version and Preview keeps it, so the person can step back with undo. \
-         preview_versions lists them and preview_revert puts one back; there is no need to \
-         back the file up yourself. Then call preview_render to look at the result as the \
-         person sees it.\n\
-         - The person points by drawing numbered marks on the file. Their marks come with \
-         their message as a marks-*.json file (and a marks-*.png with the marks drawn); \
-         preview_marks reads them again. Coordinates are the picture's pixels, or PDF points \
-         per page.\n\
-         - To point at, circle, highlight or label something, never draw into the file: \
-         call preview_draw, which lays boxes, ellipses, arrows or paths with short labels over \
-         the file, in the same coordinates, in a layer you name, in a colour of their own so \
-         the person tells them from theirs. preview_clear takes a layer away. If the preview \
-         tools are not loaded yet, load them first.",
-        file = file.display()
+        "The file in the Studio window beside this chat is {}.",
+        file.display()
     )
 }
 
@@ -334,9 +313,8 @@ mod tests {
     }
 
     #[test]
-    fn the_instructions_name_the_file_and_the_reload() {
+    fn the_instructions_name_the_file() {
         let text = instructions(Path::new("/home/me/photo.jpg"));
         assert!(text.contains("/home/me/photo.jpg"));
-        assert!(text.contains("preview_reload"));
     }
 }

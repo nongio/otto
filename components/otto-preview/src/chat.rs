@@ -858,7 +858,7 @@ mod tests {
         assert!(otto["instructions"]
             .as_str()
             .unwrap()
-            .contains("preview_reload"));
+            .contains("/home/me/photo 1.jpg"));
         let server = &otto["mcpServers"][0];
         assert_eq!(server["args"][0], "--mcp");
         assert_eq!(server["env"][crate::mcp::DOC_ENV], "/home/me/photo 1.jpg");
