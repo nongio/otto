@@ -19,7 +19,7 @@ use otto_agents_kit::chat::Ask;
 use otto_agents_kit::keys::{self, FieldEdit};
 use otto_agents_kit::log::paint::INSET;
 use otto_agents_kit::log::{ChatView, Key as ChatKey, Keyed, Pressed, Released};
-use otto_kit::components::scroll::ScrollContent;
+use otto_kit::components::scroll::{ScrollContent, ScrollView};
 use otto_kit::components::text_input::{TextInput, TextInputStyle};
 use otto_kit::prelude::*;
 use otto_kit::skia::{Contains, Point, RRect};
@@ -38,8 +38,6 @@ const LOG_TOP: f32 = 16.0;
 const ROW_H: f32 = 30.0;
 /// The line saying the agents can't be reached, under the log.
 const UNREACHABLE_H: f32 = 36.0;
-/// What one notch of a wheel scrolls the log by.
-const NOTCH: f32 = 48.0;
 /// The client name otto-agents shows for sessions started here.
 const CLIENT: &str = "otto-preview";
 
@@ -54,8 +52,9 @@ pub struct Chat {
     field: TextInput,
     /// Whether keys go to the field rather than the document.
     pub focused: bool,
-    /// How far down the log is scrolled, in points.
-    scroll: f32,
+    /// The log's scroll: momentum, the rubber band at the ends and the bar,
+    /// as in the launcher and the canvas.
+    scroll: ScrollView,
     /// Whether the log keeps its last line in view as the answer grows.
     follow: bool,
     /// The answer highlighted while a question waits.
@@ -134,7 +133,7 @@ impl Chat {
             view: ChatView::new(dark),
             field,
             focused: false,
-            scroll: 0.0,
+            scroll: ScrollView::new(Rect::from_wh(0.0, 0.0)),
             follow: true,
             selected: 0,
             pressed_answer: None,
@@ -202,32 +201,55 @@ impl Chat {
 
     /// Keep the caret blinking. Returns whether it flipped.
     pub fn tick(&mut self, delta: f32) -> bool {
+        let mut repaint = false;
+        if self.scroll.is_animating() && self.scroll.tick() {
+            self.update_follow();
+            repaint = true;
+        }
         if !self.focused {
-            return false;
+            return repaint;
         }
         let shown = self.field.caret_visible();
         self.field.tick(delta);
-        shown != self.field.caret_visible()
+        repaint | (shown != self.field.caret_visible())
     }
 
     fn relayout(&mut self) {
         if let Some(ask) = &self.ask {
             self.view.lay_out(ask, WIDTH - 2.0 * INSET);
         }
-        if self.follow {
-            self.scroll = self.max_scroll();
-        }
+        self.scroll.set_content_length(self.view.length());
+        self.keep_following();
     }
 
     fn max_scroll(&self) -> f32 {
         (self.view.length() - self.log_h).max(0.0)
     }
 
+    /// Keep the last line in view while following, unless the log is being
+    /// pulled past its end, which springs back by itself.
+    fn keep_following(&mut self) {
+        let max = self.max_scroll();
+        if self.follow && self.scroll.offset() < max {
+            self.scroll.scroll_to(max);
+        }
+    }
+
+    /// Following resumes when the log is scrolled back to its end.
+    fn update_follow(&mut self) {
+        self.follow = self.scroll.offset() >= self.max_scroll() - 1.0;
+    }
+
     fn scroll_by(&mut self, dy: f32) -> bool {
-        let before = self.scroll;
-        self.scroll = (self.scroll + dy).clamp(0.0, self.max_scroll());
-        self.follow = self.scroll >= self.max_scroll() - 1.0;
-        before != self.scroll
+        let moved = self.scroll.scroll_to(self.scroll.offset() + dy);
+        self.update_follow();
+        moved
+    }
+
+    /// Whether the log's scroll is still moving or its bar fading, so the
+    /// window keeps ticking.
+    pub fn scrolling(&self) -> bool {
+        self.scroll.is_animating()
     }
 
     /// The answers a waiting question or input request offers, in order.
@@ -362,6 +384,13 @@ impl Chat {
     /// The pointer moved over the panel, or left it (`None`).
     pub fn motion(&mut self, panel: Rect, at: Option<Point>) -> (bool, CursorShape) {
         let layout = Layout::new(panel, self.answers().len());
+        if let Some(at) = at {
+            if self.scroll.on_pointer_drag(at.x, at.y) {
+                self.update_follow();
+                return (true, CursorShape::Default);
+            }
+        }
+        let bar = at.is_some_and(|at| self.scroll.on_pointer_move(at.x, at.y));
         if self.view.is_selecting() {
             if let Some(at) = at {
                 let point = self.log_point_clamped(&layout, at);
@@ -369,7 +398,7 @@ impl Chat {
             }
         }
         let point = at.and_then(|at| self.log_point(&layout, at));
-        let repaint = self.view.hover(point);
+        let repaint = self.view.hover(point) | bar;
         let cursor = match at {
             Some(at) if layout.field.contains(at) => CursorShape::Text,
             Some(_) if point.is_some() => self.view.cursor(point),
@@ -379,6 +408,7 @@ impl Chat {
     }
 
     pub fn leave(&mut self) -> bool {
+        self.scroll.on_pointer_leave();
         self.view.leave()
     }
 
@@ -392,6 +422,9 @@ impl Chat {
             self.pressed_answer = Some(index);
             return true;
         }
+        if self.scroll.on_pointer_down(at.x, at.y) {
+            return true;
+        }
         let point = self.log_point(&layout, at);
         if (point.is_some() || self.view.has_selection())
             && self.view.press(point, (at.x, at.y), time, serial) == Pressed::Toggled
@@ -402,6 +435,7 @@ impl Chat {
     }
 
     pub fn release(&mut self, panel: Rect, at: Point) -> bool {
+        self.scroll.on_pointer_up();
         let answers = self.answers().len();
         let layout = Layout::new(panel, answers);
         if let Some(index) = self.pressed_answer.take() {
@@ -428,9 +462,19 @@ impl Chat {
         }
     }
 
-    /// A wheel or two-finger scroll over the panel.
-    pub fn wheel(&mut self, dy: f32, discrete: bool) -> bool {
-        self.scroll_by(if discrete { dy.signum() * NOTCH } else { dy })
+    /// A wheel or two-finger scroll over the panel; `stop` is the fingers
+    /// lifting, which lets the log coast.
+    pub fn wheel(&mut self, dy: f32, discrete: bool, stop: bool) -> bool {
+        let moved = if stop {
+            self.scroll.on_wheel_end();
+            true
+        } else if discrete {
+            self.scroll.on_wheel_discrete(dy)
+        } else {
+            self.scroll.on_wheel(dy)
+        };
+        self.update_follow();
+        moved
     }
 
     /// Copy the log's selection, for Ctrl+C with the document focused.
@@ -439,16 +483,19 @@ impl Chat {
     }
 
     fn log_point(&self, layout: &Layout, at: Point) -> Option<(f32, f32)> {
-        layout
-            .log
-            .contains(at)
-            .then_some((at.x - layout.log.left, at.y - layout.log.top + self.scroll))
+        layout.log.contains(at).then_some((
+            at.x - layout.log.left,
+            at.y - layout.log.top + self.scroll.offset(),
+        ))
     }
 
     fn log_point_clamped(&self, layout: &Layout, at: Point) -> (f32, f32) {
         let x = at.x.clamp(layout.log.left, layout.log.right);
         let y = at.y.clamp(layout.log.top, layout.log.bottom);
-        (x - layout.log.left, y - layout.log.top + self.scroll)
+        (
+            x - layout.log.left,
+            y - layout.log.top + self.scroll.offset(),
+        )
     }
 
     /// Paint the panel into `panel`.
@@ -465,11 +512,6 @@ impl Chat {
         );
 
         // The log, scrolled, inside its box.
-        self.log_h = layout.log.height();
-        if self.follow {
-            self.scroll = self.max_scroll();
-        }
-        self.scroll = self.scroll.clamp(0.0, self.max_scroll());
         let unreachable = self.ask.as_ref().and_then(Ask::unreachable);
         if self.view.is_empty() {
             self.draw_empty(canvas, layout.log, theme);
@@ -491,12 +533,14 @@ impl Chat {
             if unreachable.is_some() {
                 log.bottom -= UNREACHABLE_H;
             }
-            canvas.save();
-            canvas.clip_rect(log, None, Some(true));
-            canvas.translate((layout.log.left, layout.log.top - self.scroll));
-            let band = Rect::from_xywh(0.0, self.scroll, layout.log.width(), layout.log.height());
-            ScrollContent::paint(&self.view, canvas, band);
-            canvas.restore();
+            self.log_h = log.height();
+            self.scroll.set_viewport(log);
+            self.scroll.set_content_length(self.view.length());
+            self.keep_following();
+            let view = &self.view;
+            self.scroll.render(canvas, theme, |canvas, band| {
+                ScrollContent::paint(view, canvas, band)
+            });
         }
 
         for (index, label) in answers.iter().enumerate() {
@@ -572,6 +616,9 @@ pub fn session_meta(path: &std::path::Path) -> serde_json::Value {
     serde_json::json!({
         "otto": {
             "app": CLIENT,
+            // The plugin agent for working on one file: Otto's desktop
+            // helper stays out of it.
+            "agent": "studio",
             "subject": [otto_agents_client::uri::from_path(path)],
             "instructions": crate::mcp::instructions(path),
             "mcpServers": [{

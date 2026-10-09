@@ -615,7 +615,9 @@ fn handle_pointer(
                 let stop = vertical.stop || horizontal.stop;
                 let discrete = vertical.discrete != 0 || horizontal.discrete != 0;
                 if in_chat {
-                    v.dirty |= chat.borrow_mut().wheel(vertical.absolute as f32, discrete);
+                    v.dirty |= chat
+                        .borrow_mut()
+                        .wheel(vertical.absolute as f32, discrete, stop);
                     redraw |= std::mem::take(&mut v.dirty);
                     continue;
                 }
@@ -970,7 +972,7 @@ impl App for PreviewApp {
         if self
             .docs
             .iter()
-            .any(|doc| doc.viewer.lock().unwrap().animating())
+            .any(|doc| doc.viewer.lock().unwrap().animating() || doc.chat.borrow().scrolling())
         {
             return Some(FRAME);
         }
