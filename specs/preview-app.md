@@ -117,6 +117,10 @@ in another app, `xdg-open`, the command line.
   chat hides; a tiled, maximized or too-wide window narrows the document
   instead, keeping its place. Hiding the panel keeps the conversation for as
   long as the window is open.
+- Dragging the panel's leading edge (a column-resize cursor) widens or
+  narrows it, from 280 to 720 points and leaving the document at least 240;
+  the document keeps its place. Windows opened after take the last width
+  dragged to.
 - `--chat` opens the file with the chat showing; `--session URI` carries on
   that agent session beside the file (a session this app started, picked
   from a list) and implies `--chat`. A later start hands both over the bus

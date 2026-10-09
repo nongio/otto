@@ -458,6 +458,11 @@ fn handle_pointer(
         match &event.kind {
             PointerEventKind::Enter { .. } | PointerEventKind::Motion { .. } => {
                 v.pointer = Some(at);
+                if v.chat_resizing {
+                    v.resize_chat_to(at.x);
+                    redraw |= std::mem::take(&mut v.dirty);
+                    continue;
+                }
                 let control = chrome::control_at(&v, at.x, at.y);
                 v.dirty |= v.controls.on_motion(control);
                 let tool = v
@@ -485,6 +490,7 @@ fn handle_pointer(
                 }
                 let shape = match edge {
                     Some(edge) if v.drag.is_none() => edge.cursor(),
+                    _ if v.drag.is_none() && v.on_chat_edge(at) => CursorShape::ColResize,
                     _ if content.contains(at) || v.drag.is_some() => v.content_cursor(at),
                     _ => chat_cursor.unwrap_or(CursorShape::Default),
                 };
@@ -505,6 +511,10 @@ fn handle_pointer(
                     if let Some(seat) = seat() {
                         window.start_resize(&seat, *serial, edge);
                     }
+                    continue;
+                }
+                if v.on_chat_edge(at) {
+                    v.chat_resizing = true;
                     continue;
                 }
                 let control = chrome::control_at(&v, at.x, at.y);
@@ -553,6 +563,11 @@ fn handle_pointer(
             }
             PointerEventKind::Release { button, .. } => {
                 if *button != BTN_LEFT {
+                    continue;
+                }
+                if std::mem::take(&mut v.chat_resizing) {
+                    // New windows open their panel at this width.
+                    crate::chat::remember_width(v.chat_w);
                     continue;
                 }
                 let control = chrome::control_at(&v, at.x, at.y);

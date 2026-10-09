@@ -27,6 +27,8 @@ use crate::marks::{self, Frame, Marks};
 use crate::sidebar::{self, SidebarLayout};
 
 /// How much one press of a zoom button or a zoom shortcut magnifies.
+/// How far either side of the chat panel's edge a press drags it.
+const CHAT_EDGE: f32 = 4.0;
 const ZOOM_STEP: f32 = 1.25;
 /// What an arrow key moves the content by, in points.
 const KEY_STEP: f32 = 48.0;
@@ -116,7 +118,11 @@ pub struct Viewer {
     pub chat_picture: Option<otto_kit::skia::Picture>,
     /// Whether the window grew to make room for the chat, and so shrinks
     /// back when it hides.
-    pub chat_grew: bool,
+    pub chat_grew: Option<f32>,
+    /// The chat panel's width, dragged from its leading edge.
+    pub chat_w: f32,
+    /// Whether the chat panel's edge is being dragged.
+    pub chat_resizing: bool,
     /// Whether the window sizes itself: floating, not maximized or tiled.
     pub floating: bool,
     /// The room the compositor last said a window has, in points.
@@ -214,7 +220,9 @@ impl Viewer {
             marks_hidden: false,
             versions,
             chat_picture: None,
-            chat_grew: false,
+            chat_grew: None,
+            chat_w: crate::chat::remembered_width(),
+            chat_resizing: false,
             floating: true,
             room: None,
             generation: 0,
@@ -274,7 +282,7 @@ impl Viewer {
     pub fn content(&self) -> Rect {
         let mut content = chrome::content_rect(self.size.0, self.size.1, self.variant);
         if self.chat_open {
-            content.right = (content.right - crate::chat::WIDTH).max(content.left + 1.0);
+            content.right = (content.right - self.chat_w).max(content.left + 1.0);
         }
         if self.sidebar_open() {
             content.left = (content.left + sidebar::WIDTH).min(content.right - 1.0);
@@ -376,11 +384,37 @@ impl Viewer {
         }
         let full = chrome::content_rect(self.size.0, self.size.1, self.variant);
         Some(Rect::from_ltrb(
-            (full.right - crate::chat::WIDTH).max(full.left),
+            (full.right - self.chat_w).max(full.left),
             full.top,
             full.right,
             full.bottom,
         ))
+    }
+
+    /// The strip along the chat panel's leading edge that drags its width.
+    pub fn on_chat_edge(&self, at: Point) -> bool {
+        self.chat_rect().is_some_and(|panel| {
+            (at.x - panel.left).abs() <= CHAT_EDGE && at.y >= panel.top && at.y <= panel.bottom
+        })
+    }
+
+    /// Drag the chat panel's leading edge to `x`: the panel widens or
+    /// narrows, within its limits and leaving the document some room, and
+    /// the document keeps its place.
+    pub fn resize_chat_to(&mut self, x: f32) {
+        let full = chrome::content_rect(self.size.0, self.size.1, self.variant);
+        let widest = (full.width() - crate::chat::MIN_DOCUMENT)
+            .clamp(crate::chat::MIN_WIDTH, crate::chat::MAX_WIDTH);
+        let width = (full.right - x).clamp(crate::chat::MIN_WIDTH, widest);
+        if width == self.chat_w {
+            return;
+        }
+        let place = self.place();
+        self.chat_w = width;
+        if let Some(place) = place {
+            self.restore_place(place);
+        }
+        self.dirty = true;
     }
 
     /// Show or hide the chat. A floating window with room to spare grows by
@@ -394,13 +428,13 @@ impl Viewer {
         let resized = if self.chat_open {
             let fits = self
                 .room
-                .is_none_or(|(room, _)| width + crate::chat::WIDTH <= room);
-            self.chat_grew = self.floating && fits;
-            self.chat_grew
-                .then_some((width + crate::chat::WIDTH, height))
+                .is_none_or(|(room, _)| width + self.chat_w <= room);
+            self.chat_grew = (self.floating && fits).then_some(self.chat_w);
+            self.chat_grew.map(|grew| (width + grew, height))
         } else {
-            std::mem::take(&mut self.chat_grew)
-                .then_some(((width - crate::chat::WIDTH).max(crate::app::MIN_W), height))
+            self.chat_grew
+                .take()
+                .map(|grew| ((width - grew).max(crate::app::MIN_W), height))
         };
         if let Some(size) = resized {
             self.size = size;
@@ -1173,6 +1207,27 @@ mod tests {
         assert_eq!(viewer.content().right, wide.right - crate::chat::WIDTH);
         assert_eq!(panel.top, wide.top);
         assert_eq!(viewer.toggle_chat(), None, "nothing to shrink back");
+    }
+
+    #[test]
+    fn the_chat_edge_drags_its_width_within_limits() {
+        let mut viewer = Viewer::new(PathBuf::from("/tmp/a.png"), (1200.0, 800.0));
+        viewer.room = Some((1200.0, 1080.0));
+        viewer.toggle_chat();
+        let panel = viewer.chat_rect().unwrap();
+        let middle = Point::new(panel.left, panel.center_y());
+        assert!(viewer.on_chat_edge(middle));
+        assert!(!viewer.on_chat_edge(Point::new(panel.left + 20.0, panel.center_y())));
+
+        viewer.resize_chat_to(panel.left - 100.0);
+        assert_eq!(viewer.chat_w, crate::chat::WIDTH + 100.0);
+        assert_eq!(viewer.content().right, viewer.chat_rect().unwrap().left);
+        // Never narrower than the least, nor leaving the document no room.
+        viewer.resize_chat_to(panel.right);
+        assert_eq!(viewer.chat_w, crate::chat::MIN_WIDTH);
+        viewer.resize_chat_to(0.0);
+        assert_eq!(viewer.chat_w, crate::chat::MAX_WIDTH);
+        assert!(viewer.content().width() >= crate::chat::MIN_DOCUMENT);
     }
 
     #[test]

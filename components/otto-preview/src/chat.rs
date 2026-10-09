@@ -28,6 +28,28 @@ use smithay_client_toolkit::seat::keyboard::{KeyEvent, Keysym};
 
 /// The panel's width, in points.
 pub const WIDTH: f32 = 360.0;
+/// The narrowest the panel is dragged to.
+pub const MIN_WIDTH: f32 = 280.0;
+/// The widest, however wide the window.
+pub const MAX_WIDTH: f32 = 720.0;
+/// The least of the document left beside a widened panel.
+pub const MIN_DOCUMENT: f32 = 240.0;
+
+/// The width the panel was last dragged to, for windows opened after.
+static LAST_WIDTH: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// The width a new window's panel opens at: the last one dragged, else the
+/// default.
+pub fn remembered_width() -> f32 {
+    match f32::from_bits(LAST_WIDTH.load(std::sync::atomic::Ordering::Relaxed)) {
+        width if width >= MIN_WIDTH => width,
+        _ => WIDTH,
+    }
+}
+
+pub fn remember_width(width: f32) {
+    LAST_WIDTH.store(width.to_bits(), std::sync::atomic::Ordering::Relaxed);
+}
 /// The field's height.
 const FIELD_H: f32 = 34.0;
 /// Around the field and the answers.
@@ -63,6 +85,8 @@ pub struct Chat {
     pressed_answer: Option<usize>,
     /// The log's height when last drawn, for paging and following.
     log_h: f32,
+    /// The panel's width when last drawn; the log is laid out for it.
+    width: f32,
     /// The numbers of the marks that go with the next message, shown over
     /// the field. Set by the window before each paint.
     pub pending_marks: Vec<u32>,
@@ -138,6 +162,7 @@ impl Chat {
             selected: 0,
             pressed_answer: None,
             log_h: 0.0,
+            width: WIDTH,
             pending_marks: Vec::new(),
             resume: None,
         }
@@ -216,7 +241,7 @@ impl Chat {
 
     fn relayout(&mut self) {
         if let Some(ask) = &self.ask {
-            self.view.lay_out(ask, WIDTH - 2.0 * INSET);
+            self.view.lay_out(ask, self.width - 2.0 * INSET);
         }
         self.scroll.set_content_length(self.view.length());
         self.keep_following();
@@ -500,6 +525,10 @@ impl Chat {
 
     /// Paint the panel into `panel`.
     pub fn draw(&mut self, canvas: &Canvas, panel: Rect, theme: &Theme) {
+        if panel.width() != self.width {
+            self.width = panel.width();
+            self.relayout();
+        }
         let answers = self.answers();
         let layout = Layout::new(panel, answers.len());
 
