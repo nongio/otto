@@ -5318,6 +5318,7 @@ dependencies = [
  "otto-dbus",
  "otto-search",
  "percent-encoding",
+ "pipewire",
  "resvg",
  "rustix 0.38.44",
  "serde_json",
