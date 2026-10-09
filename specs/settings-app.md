@@ -66,8 +66,8 @@ D-Bus client that reads a described schema, sets values, and observes changes.
 - Configuring anything Otto does not already have a configuration key for.
   This app exposes the existing surface; it does not motivate new features.
   The exceptions are services Otto's features stand on that keep their own
-  configuration: the agents service ([Agents](#agents)) and the desktop's
-  file indexer ([Search](#search)).
+  configuration: the agents service ([Agents](#agents)), dictation
+  ([Dictation](#dictation)) and the desktop's file indexer ([Search](#search)).
 - Application-level settings for other Otto components (bar layout, launcher
   behaviour) unless they are already compositor configuration keys.
 - Exposing the whole configuration surface. The app presents a curated set of
@@ -84,8 +84,10 @@ D-Bus client that reads a described schema, sets values, and observes changes.
 
 The compositor owns the writable configuration file. It is the only process
 that writes it. The app never reads or writes the compositor's configuration
-files. The one file it does write is `agents.toml`, whose owner, the
-otto-agents service, serves no settings interface (see [Agents](#agents)).
+files. The files it does write belong to components that serve no settings
+interface: `agents.toml`, the otto-agents service's (see [Agents](#agents)),
+and `dictation.toml` with otto-dictate's autostart entry (see
+[Dictation](#dictation)).
 
 The compositor's in-memory configuration is mutable at runtime. When a value
 changes — from any source — the compositor must, in this order:
@@ -368,8 +370,9 @@ caused it.
 The window presents a list of panes and the selected pane's contents, and opens
 on the first. The sidebar lists them the system first, then the desktop, input,
 and accounts, with About last: General, Appearance, Displays, Sound, Power, Dock,
-Top bar, Tiling, Search, Agents, Keyboard, Trackpad & Mouse, Users, Lock & Login,
-Privacy, About. The panes are:
+Top bar, Tiling, Search, Agents, Keyboard, Dictation, Trackpad & Mouse, Users,
+Lock & Login, Privacy, About. Dictation sits with the keyboard because it is
+another way of typing. The panes are:
 
 - **Users** — not Otto settings: everyone who can log in.
   It is a list and a detail. The users list (otto-kit's `selection_list`) sits
@@ -779,6 +782,53 @@ key as they were. An empty model or folder, or a colour of None, removes the
 key. When the agent list came from the system file, the first change to an
 agent copies that list into the user's file, since a user file that lists
 agents replaces the system list.
+
+### Dictation
+
+The dictation pane edits `$XDG_CONFIG_HOME/otto/dictation.toml`, the file the
+launcher and otto-dictate read as each dictation starts (see
+[dictation.md](./dictation.md#settings)), so a change applies to the next
+dictation and nothing is held for an Apply. Each change writes its one key
+with `toml_edit`, leaving comments and keys the pane does not show (`url`) as
+they were; a file that does not parse is left alone. Its intro says that
+Ctrl+D dictates in the launcher and that `otto-dictate toggle` can be bound to
+a shortcut for other apps. `otto-settings --pane dictation` opens on it.
+
+- **Engine** is a pop-up of Parakeet, Whisper (English only) and CrispASR. A
+  pick writes `engine`, then, on a thread of its own, runs `systemctl --user
+  disable` for the other engines' units and `enable --now` for
+  `otto-stt-<engine>.service`: the units conflict, so starting one stops the
+  others, and the next login starts the same one. Without an `engine` in the
+  file the pop-up shows the engine whose unit is running, else the one
+  enabled, else Parakeet, since `install.sh` picks one without writing the
+  file.
+- **Speech server** says whether the picked engine's unit is running, stopped,
+  stopped after an error (naming the `journalctl` line), not installed (naming
+  `install.sh` with the engine), or unknown without `systemctl`, with Start
+  when it is down and Restart when it is up. It is asked with `systemctl
+  --user show` every five seconds while the pane is on screen, on a thread of
+  its own, as the Agents pane asks about its service; a hidden pane asks
+  nothing.
+- **Language** is a pop-up of Automatic (`auto`) and the languages Otto has a
+  catalogue for (English, German, Spanish, French, Italian, Japanese, Polish,
+  Portuguese, Russian, Ukrainian, Chinese), each by its own name, written as
+  `language`. Without one in the file it shows the language a dictation would
+  use, the one `LANG` names.
+- **Hotword boost** is a slider from 1 to 8 in steps of 0.5, written as
+  `hotwords_boost`, shown only while the engine is CrispASR, the one that takes
+  hotwords.
+- **Start dictation at login** is otto-dictate's XDG autostart entry,
+  `$XDG_CONFIG_HOME/autostart/otto-dictate.desktop`, and touches no other.
+  It is on when the user's entry, or failing one a system entry of the same
+  name, is neither `Hidden=true` nor `X-GNOME-Autostart-enabled=false`.
+  Turning it off writes `Hidden=true` (and `X-GNOME-Autostart-enabled=false`)
+  into the user's entry rather than deleting it: the autostart specification
+  reads a hidden entry as deleted, and a user's entry overrides a system one
+  of the same name, so this also switches off an entry a package installed,
+  and keeps the user's `Exec` line. Turning it on sets them back, or writes an
+  entry running `~/.local/bin/otto-dictate` where `install.sh` put it, else
+  `otto-dictate`. Otto reads autostart entries only with `xdg_autostart` on,
+  which the row says.
 
 ### Search
 

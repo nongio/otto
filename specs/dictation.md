@@ -1,7 +1,7 @@
 # Dictation
 
 **Status:** draft
-**Related specs:** [launcher.md](./launcher.md), [localisation.md](./localisation.md)
+**Related specs:** [launcher.md](./launcher.md), [localisation.md](./localisation.md), [settings-app.md](./settings-app.md#dictation)
 
 ## Summary
 
@@ -27,10 +27,12 @@ offers the same in any field that supports input methods.
 
 - Speech output (reading answers aloud).
 - Cloud recognition services.
-- Settings for dictation in Otto's configuration or the Settings app; for now
-  it is set through the environment.
+- Settings for dictation in the compositor's `config.toml` or on
+  `org.otto.Settings`. Dictation has a file of its own (see
+  [Settings](#settings)).
 - Voice commands. What is said is text, never an instruction to the app.
-- Managing the speech server. It is a user service the user installs and runs.
+- Installing the speech server. Each engine is a user service the user
+  installs; the Settings app only picks, starts and restarts one.
 
 ## Behavior
 
@@ -136,18 +138,20 @@ prompt, so a pass that starts mid-sentence keeps its context.
 
 ### Language
 
-- The language is taken from the system locale (`LANG`): `it_IT.UTF-8` means
-  Italian. When `LANG` is unset or `C`, the engine detects the language.
-- `OTTO_DICTATE_LANGUAGE` overrides it with an ISO 639-1 code, or `auto` to
-  let the engine detect it.
+- The language is `language` in `dictation.toml`: an ISO 639-1 code, or
+  `auto` to let the engine detect it.
+- Without one, it is taken from the system locale (`LANG`): `it_IT.UTF-8`
+  means Italian. When `LANG` is unset or `C`, the engine detects the language.
+- `OTTO_DICTATE_LANGUAGE` overrides both with an ISO 639-1 code, or `auto`.
 - The language is sent with every pass. Parakeet detects the language itself
   and ignores it.
 
 ### Engines
 
 Recognition runs on a speech server at `http://127.0.0.1:8080/inference`,
-speaking whisper.cpp's server API. `OTTO_DICTATE_URL` points elsewhere. Three
-engines can serve it, each as a user service; one runs at a time, and starting
+speaking whisper.cpp's server API. `url` in `dictation.toml`, or
+`OTTO_DICTATE_URL`, points elsewhere. Three engines can serve it, each as a
+user service, `otto-stt-<engine>.service`; one runs at a time, and starting
 one stops the others.
 
 | Engine | Languages | Notes |
@@ -156,8 +160,8 @@ one stops the others.
 | Whisper | English | Uses the prompt |
 | CrispASR, serving Parakeet | 25 European, detected | Uses the hotwords |
 
-`OTTO_DICTATE_HOTWORDS_BOOST` sets how strongly hotwords are favoured (default
-4).
+`hotwords_boost` in `dictation.toml`, or `OTTO_DICTATE_HOTWORDS_BOOST`, sets
+how strongly hotwords are favoured (default 4).
 
 **When the engine is unreachable.** A pass that cannot reach the server, gets
 an error back, or gets an answer with no timed words counts as a pass that
@@ -175,6 +179,32 @@ heard nothing. Nothing is shown to the user:
 
 When the microphone cannot be opened, the bars stay at rest, no pass is sent,
 and stopping ends dictation with nothing typed.
+
+### Settings
+
+Dictation's settings are a file of its own,
+`$XDG_CONFIG_HOME/otto/dictation.toml`:
+
+```toml
+engine = "parakeet"        # parakeet | whisper | crispasr
+language = "auto"          # auto, or an ISO 639-1 code
+hotwords_boost = 4.0
+url = "http://127.0.0.1:8080/inference"
+```
+
+- Every key is optional. Each value comes from the first of these that sets
+  it: the environment (`OTTO_DICTATE_URL`, `OTTO_DICTATE_LANGUAGE`,
+  `OTTO_DICTATE_HOTWORDS_BOOST`), then `dictation.toml`, then the defaults
+  above, with the language from `LANG`.
+- The file is read as each dictation starts, in the launcher and in
+  otto-dictate alike, so a change applies to the next dictation without
+  restarting anything.
+- A file that does not parse, or a key of the wrong type, sets nothing.
+- `engine` records which engine's service serves the endpoint. Every engine
+  is spoken to the same way, so the apps do not use it; the Settings app does.
+
+The Settings app's Dictation pane writes the file and switches the engine's
+service (see [settings-app.md](./settings-app.md#dictation)).
 
 ### The otto-dictate input method
 
@@ -245,6 +275,12 @@ method.
   speaking. Modifiers are exempt because the start shortcut uses one.
 - **A local server on a fixed port.** Apps talk to one address and the user
   picks the engine by starting its service, without reconfiguring anything.
+- **A file of its own, not `config.toml`.** Dictation runs inside otto-kit
+  clients and otto-dictate, not in the compositor, so nothing in the
+  compositor would use its settings, and serving them over `org.otto.Settings`
+  would only relay a file the clients can read themselves. It follows
+  `agents.toml` and `files.toml`, which belong to their components the same
+  way. Reading it at each start replaces a change listener.
 - **otto-dictate commits once.** Fields in other apps may not handle text that
   arrives piece by piece and is later corrected, so the text is committed only
   when the user stops.
@@ -255,8 +291,8 @@ method.
 
 - Should an unreachable engine be reported to the user, for example in the
   placeholder, rather than only in the logs?
-- Should dictation be configured in Otto's settings, with the language taken
-  from Otto's own locale setting rather than `LANG`?
+- Without a language in `dictation.toml`, should it follow Otto's own
+  `locales` setting rather than `LANG`?
 - Should otto-dictate have a default shortcut, and should the standalone
   input method and in-app dictation share one?
 - Should Backspace in the launcher drop the last phrase, as otto-dictate does,
