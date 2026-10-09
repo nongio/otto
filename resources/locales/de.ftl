@@ -1369,7 +1369,7 @@ agents-permission-reject-always = Nie erlauben
 agents-permission-open-in-ask = In Ask öffnen
 # The same button for a session started in Preview about a file: the
 # question opens there, beside the file. Use the app's name as in its menu entry.
-agents-permission-open-in-preview = In Vorschau öffnen
+agents-permission-open-in-preview = In Studio öffnen
 
 
 ## Emoji picker

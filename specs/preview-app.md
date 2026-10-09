@@ -10,6 +10,11 @@ as Peek draws it over the file list. It is what opens a picture, a PDF or a
 Markdown document from anywhere that is not Files' Space bar: a double-click
 in another app, `xdg-open`, the command line.
 
+People know it as **Studio**: that is its name in the desktop entry, the top
+bar, the dock and the agents' "Open in Studio" button, in every language.
+Underneath it is still `otto-preview` (the program, its app id and the
+`org.otto.Preview1` bus name), and this spec calls it Preview.
+
 ## Goals
 
 - `otto-preview PATH` opens one window on `PATH`, titled with the file's name.
