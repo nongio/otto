@@ -55,7 +55,7 @@ use tokio::sync::{mpsc, oneshot};
 use otto_agents_client::session::SESSION_SCHEME;
 
 use crate::agent::{
-    Attachment, Backend, Decision, HistoryPart, HistoryTurn, InputAnswer, Mode, Question,
+    Attachment, Backend, Decision, HistoryPart, HistoryTurn, InputAnswer, McpStdio, Mode, Question,
     QuestionOption, SessionCommand, SessionEvent, SessionSpec, TurnOutcome,
 };
 use crate::dialog::{self, Choice, Prompt, Prompter, Reply};
@@ -182,6 +182,11 @@ struct Session {
     /// process it starts; see [`crate::attached`]. Kept for as long as this
     /// service runs.
     attached: Vec<Attachment>,
+    /// The MCP servers the creating client asked for, given to each agent
+    /// process the session starts. Kept for as long as this service runs.
+    mcp_servers: Vec<McpStdio>,
+    /// What the creating client wants the agent told before its first turn.
+    instructions: Option<String>,
 }
 
 /// The `setMode` request: switch `session`'s agent to the mode `mode_id`, one
@@ -457,6 +462,8 @@ impl Host {
             ));
         }
         let cwd = working_directory(params.working_directories)?;
+        let mcp_servers = McpStdio::from_meta(params.meta.as_ref());
+        let instructions = crate::agent::instructions_from_meta(params.meta.as_ref());
         // What the agent is given, repeated on the session so a client sees it
         // without having to join the two lists itself. Read-only: these are the
         // desktop's own skills, and this host has no way to write into them.
@@ -469,11 +476,26 @@ impl Host {
 
         let now = now();
         let chat_uri = format!("ahp-chat:/{}", uuid::Uuid::new_v4());
+        let mut session_state = SessionState {
+            customizations,
+            ..new_session_state(&provider, &uri::from_path(&cwd))
+        };
+        // Which app the session belongs to and what it is about, as the
+        // creating client said: a session started beside a document in
+        // Preview opens there again, from any list that shows it.
+        let client_otto = params
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.get("otto"))
+            .and_then(Value::as_object);
+        for key in ["app", "subject"] {
+            if let Some(value) = client_otto.and_then(|otto| otto.get(key)) {
+                session_state.meta =
+                    with_otto_meta(session_state.meta.take(), key, Some(value.clone()));
+            }
+        }
         let session = Session {
-            state: SessionState {
-                customizations,
-                ..new_session_state(&provider, &uri::from_path(&cwd))
-            },
+            state: session_state,
             created_at: now.clone(),
             chat: chat_uri.clone(),
             commands: None,
@@ -487,6 +509,8 @@ impl Host {
             written: false,
             releasing: false,
             attached: Vec::new(),
+            mcp_servers,
+            instructions,
         };
         state.sessions.insert(uri.clone(), session);
         state
@@ -1107,6 +1131,10 @@ impl HostState {
                 activity: 0,
                 releasing: false,
                 attached: Vec::new(),
+                // Not kept in the store: a client that wants its tools back
+                // opens a new session. TODO: persist with the session.
+                mcp_servers: Vec::new(),
+                instructions: None,
             };
             self.sessions.insert(resource.clone(), session);
             self.chats.insert(chat_uri.clone(), chat);
@@ -1194,6 +1222,8 @@ impl HostState {
             cwd,
             resume: session.agent_session.clone(),
             attached: session.attached.clone(),
+            mcp_servers: session.mcp_servers.clone(),
+            instructions: session.instructions.clone(),
         };
         self.backend.start(spec, command_rx, events);
         let host = self.host.clone();

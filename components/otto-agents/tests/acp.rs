@@ -403,6 +403,8 @@ impl Session {
             std::env::temp_dir(),
             Vec::new(),
             None,
+            Vec::new(),
+            None,
             images,
             command_rx,
             event_tx,
@@ -941,6 +943,8 @@ async fn a_missing_agent_binary_fails_session_creation() {
         cwd: std::env::temp_dir(),
         resume: None,
         attached: Vec::new(),
+        mcp_servers: Vec::new(),
+        instructions: None,
     };
     backend.start(spec, command_rx, event_tx);
 

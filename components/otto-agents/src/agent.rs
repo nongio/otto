@@ -27,6 +27,94 @@ pub struct SessionSpec {
     /// What the session's prompts attached so far, which a new agent process
     /// may read without asking again; see [`crate::attached`].
     pub attached: Vec<Attachment>,
+    /// MCP servers the client that created the session asked the agent to be
+    /// given: an app's own tools, such as Preview's for the document it shows.
+    pub mcp_servers: Vec<McpStdio>,
+    /// What the client that created the session wants the agent told before
+    /// its first turn: where it is working and how, as Preview says the
+    /// agent is editing the file it shows. From `_meta.otto.instructions`.
+    pub instructions: Option<String>,
+}
+
+/// The `_meta.otto.instructions` a client created a session with.
+pub fn instructions_from_meta(
+    meta: Option<&serde_json::Map<String, serde_json::Value>>,
+) -> Option<String> {
+    meta?
+        .get("otto")?
+        .get("instructions")?
+        .as_str()
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .map(str::to_owned)
+}
+
+/// An MCP server the agent starts and talks to over its stdin and stdout.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct McpStdio {
+    /// The name the agent knows its tools by.
+    pub name: String,
+    /// An absolute path to an Otto program.
+    pub command: PathBuf,
+    pub args: Vec<String>,
+    pub env: Vec<(String, String)>,
+}
+
+impl McpStdio {
+    /// The servers a session's `_meta.otto.mcpServers` asks for. Only Otto's
+    /// own programs, named by absolute path, are taken: a client chooses
+    /// what the agent runs, and that is all it may choose. The rest are
+    /// logged and left out.
+    pub fn from_meta(meta: Option<&serde_json::Map<String, serde_json::Value>>) -> Vec<Self> {
+        let Some(servers) = meta
+            .and_then(|meta| meta.get("otto"))
+            .and_then(|otto| otto.get("mcpServers"))
+            .and_then(serde_json::Value::as_array)
+        else {
+            return Vec::new();
+        };
+        servers
+            .iter()
+            .filter_map(|server| {
+                let name = server.get("name")?.as_str()?.to_owned();
+                let command = PathBuf::from(server.get("command")?.as_str()?);
+                let otto = command.is_absolute()
+                    && command
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .is_some_and(|name| name.starts_with("otto-"));
+                if !otto {
+                    tracing::warn!(%name, command = %command.display(), "not an Otto program; the MCP server is left out");
+                    return None;
+                }
+                let args = server
+                    .get("args")
+                    .and_then(serde_json::Value::as_array)
+                    .map(|args| {
+                        args.iter()
+                            .filter_map(|arg| arg.as_str().map(str::to_owned))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let env = server
+                    .get("env")
+                    .and_then(serde_json::Value::as_object)
+                    .map(|env| {
+                        env.iter()
+                            .filter_map(|(key, value)| Some((key.clone(), value.as_str()?.to_owned())))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                tracing::info!(%name, command = %command.display(), "the session's agent gets an MCP server");
+                Some(Self {
+                    name,
+                    command,
+                    args,
+                    env,
+                })
+            })
+            .collect()
+    }
 }
 
 /// A command the host sends to a running session.
@@ -371,5 +459,42 @@ impl Backend for EchoBackend {
                 }
             }
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn meta(servers: serde_json::Value) -> serde_json::Map<String, serde_json::Value> {
+        serde_json::json!({ "otto": { "mcpServers": servers } })
+            .as_object()
+            .unwrap()
+            .clone()
+    }
+
+    #[test]
+    fn only_otto_programs_by_absolute_path_are_taken() {
+        let meta = meta(serde_json::json!([
+            {
+                "name": "preview",
+                "command": "/usr/bin/otto-preview",
+                "args": ["--mcp"],
+                "env": { "OTTO_PREVIEW_DOC": "/home/me/a.jpg" }
+            },
+            { "name": "relative", "command": "otto-preview" },
+            { "name": "other", "command": "/usr/bin/bash", "args": ["-c", "true"] }
+        ]));
+        let servers = McpStdio::from_meta(Some(&meta));
+        assert_eq!(
+            servers,
+            vec![McpStdio {
+                name: "preview".into(),
+                command: "/usr/bin/otto-preview".into(),
+                args: vec!["--mcp".into()],
+                env: vec![("OTTO_PREVIEW_DOC".into(), "/home/me/a.jpg".into())],
+            }]
+        );
+        assert!(McpStdio::from_meta(None).is_empty());
     }
 }

@@ -12,12 +12,12 @@ use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::schema::v1::{
     AgentCapabilities, CancelNotification, ClientCapabilities, ContentBlock,
     CreateElicitationRequest, CreateElicitationResponse, ElicitationAction,
-    ElicitationCapabilities, ElicitationFormCapabilities, ElicitationMode, InitializeRequest,
-    LoadSessionRequest, Meta, NewSessionRequest, PromptRequest, PromptResponse,
-    RequestPermissionRequest, RequestPermissionResponse, ResourceLink, ResumeSessionRequest,
-    SessionConfigOptionValue, SessionId, SessionModeState, SessionNotification, SessionUpdate,
-    SetSessionConfigOptionRequest, SetSessionModeRequest, StopReason, TextContent, ToolCallContent,
-    ToolCallStatus,
+    ElicitationCapabilities, ElicitationFormCapabilities, ElicitationMode, EnvVariable,
+    InitializeRequest, LoadSessionRequest, McpServer, McpServerStdio, Meta, NewSessionRequest,
+    PromptRequest, PromptResponse, RequestPermissionRequest, RequestPermissionResponse,
+    ResourceLink, ResumeSessionRequest, SessionConfigOptionValue, SessionId, SessionModeState,
+    SessionNotification, SessionUpdate, SetSessionConfigOptionRequest, SetSessionModeRequest,
+    StopReason, TextContent, ToolCallContent, ToolCallStatus,
 };
 use agent_client_protocol::{AcpAgent, AcpAgentConfig, Agent, Client, ConnectTo, ConnectionTo};
 use ahp_types::state::AgentInfo;
@@ -193,6 +193,8 @@ impl Backend for AcpBackend {
             spec.cwd,
             spec.attached,
             meta,
+            mcp_servers(&spec.mcp_servers),
+            spec.instructions,
             self.images.clone(),
             commands,
             events,
@@ -250,6 +252,8 @@ pub async fn run_session(
     cwd: PathBuf,
     earlier: Vec<crate::agent::Attachment>,
     meta: Option<Meta>,
+    servers: Vec<McpServer>,
+    instructions: Option<String>,
     images: Option<ImageCache>,
     mut commands: mpsc::UnboundedReceiver<SessionCommand>,
     events: mpsc::UnboundedSender<SessionEvent>,
@@ -421,6 +425,7 @@ pub async fn run_session(
                     resume,
                     &cwd,
                     meta,
+                    servers,
                     images.as_ref(),
                     &replay,
                 )
@@ -499,6 +504,8 @@ pub async fn run_session(
                 let _ = events.send(SessionEvent::Ready {
                     agent_session: Some(session_id.0.to_string()),
                 });
+                // A session taken up again had them in its first turn.
+                let instructions = instructions.filter(|_| fresh);
                 drive(
                     &connection,
                     session_id,
@@ -507,6 +514,7 @@ pub async fn run_session(
                     &current_turn,
                     &modes,
                     &attached,
+                    instructions,
                 )
                 .await
             }
@@ -671,12 +679,14 @@ struct Opened {
 /// chat is rebuilt from. `session/resume` restores the agent alone and is the
 /// fallback for agents that cannot load; both cost the same, since the agent
 /// reads its own history either way.
+#[allow(clippy::too_many_arguments)]
 async fn open_session(
     connection: &ConnectionTo<Agent>,
     capabilities: &AgentCapabilities,
     resume: Option<String>,
     cwd: &Path,
     meta: Option<Meta>,
+    servers: Vec<McpServer>,
     images: Option<&ImageCache>,
     replay: &Mutex<Option<Replay>>,
 ) -> Result<Opened, agent_client_protocol::Error> {
@@ -686,7 +696,9 @@ async fn open_session(
                 images: images.cloned(),
                 ..Replay::default()
             });
-            let request = LoadSessionRequest::new(id.clone(), cwd).meta(meta.clone());
+            let request = LoadSessionRequest::new(id.clone(), cwd)
+                .mcp_servers(servers.clone())
+                .meta(meta.clone());
             let loaded = connection.send_request(request).block_task().await;
             let collected = lock(replay).take();
             match loaded {
@@ -707,7 +719,9 @@ async fn open_session(
             }
         }
         let taken_up = if capabilities.session_capabilities.resume.is_some() {
-            let request = ResumeSessionRequest::new(id.clone(), cwd).meta(meta.clone());
+            let request = ResumeSessionRequest::new(id.clone(), cwd)
+                .mcp_servers(servers.clone())
+                .meta(meta.clone());
             Some(connection.send_request(request).block_task().await)
         } else {
             None
@@ -736,7 +750,7 @@ async fn open_session(
         }
     }
     let session = connection
-        .send_request(NewSessionRequest::new(cwd).meta(meta))
+        .send_request(NewSessionRequest::new(cwd).mcp_servers(servers).meta(meta))
         .block_task()
         .await?;
     Ok(Opened {
@@ -745,6 +759,26 @@ async fn open_session(
         modes: session.modes,
         fresh: true,
     })
+}
+
+/// The session's MCP servers as ACP describes them.
+fn mcp_servers(servers: &[crate::agent::McpStdio]) -> Vec<McpServer> {
+    servers
+        .iter()
+        .map(|server| {
+            McpServer::Stdio(
+                McpServerStdio::new(server.name.clone(), server.command.clone())
+                    .args(server.args.clone())
+                    .env(
+                        server
+                            .env
+                            .iter()
+                            .map(|(name, value)| EnvVariable::new(name.clone(), value.clone()))
+                            .collect(),
+                    ),
+            )
+        })
+        .collect()
 }
 
 /// The agent's modes as the host keeps them: the current one's id, and the
@@ -800,6 +834,7 @@ fn withdraw_mode(events: &mpsc::UnboundedSender<SessionEvent>, modes: &Mutex<Mod
 
 /// Runs prompts, cancellations and mode changes until the host closes the
 /// session. What each prompt attaches is recorded in `attached`.
+#[allow(clippy::too_many_arguments)]
 async fn drive(
     connection: &ConnectionTo<Agent>,
     session_id: SessionId,
@@ -808,6 +843,7 @@ async fn drive(
     current_turn: &Mutex<Option<String>>,
     modes: &Arc<Mutex<Modes>>,
     attached: &Mutex<Attached>,
+    mut instructions: Option<String>,
 ) -> Result<(), agent_client_protocol::Error> {
     let mut pending: Option<(String, PendingPrompt)> = None;
     loop {
@@ -829,8 +865,17 @@ async fn drive(
                     // of attachments alone has no text block: models refuse
                     // an empty one.
                     let text = (!text.trim().is_empty()).then(|| ContentBlock::Text(TextContent::new(text)));
-                    let prompt = text
+                    // The client's instructions go ahead of the first prompt,
+                    // in a block of their own: the agent reads them, the chat
+                    // never shows them.
+                    let instructions = instructions.take().map(|instructions| {
+                        ContentBlock::Text(TextContent::new(format!(
+                            "<otto-context>\n{instructions}\n</otto-context>"
+                        )))
+                    });
+                    let prompt = instructions
                         .into_iter()
+                        .chain(text)
                         .chain(attachments.into_iter().map(|attachment| {
                             ContentBlock::ResourceLink(ResourceLink::new(attachment.name, attachment.uri))
                         }))

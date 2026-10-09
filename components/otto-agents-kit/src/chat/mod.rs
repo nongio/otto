@@ -153,6 +153,9 @@ enum Command {
         prompt: String,
         provider: Option<String>,
         attachments: Vec<PathBuf>,
+        /// The `_meta` the session is created with, when this request
+        /// creates one.
+        session_meta: Option<Value>,
     },
     /// Open the session `session` names, a URI or the start of its id, in
     /// place of creating one.
@@ -781,6 +784,14 @@ pub struct Ask {
     /// with the attachments or drawn in the log, not even as the service
     /// records the request.
     subject: Vec<PathBuf>,
+    /// Files that go with the next request only, unlisted like the subject:
+    /// what the host made for it, such as the marks drawn on a document.
+    unlisted: Vec<PathBuf>,
+    /// Every unlisted file sent so far, kept out of the log.
+    hidden: Vec<PathBuf>,
+    /// The `_meta` a session this chat creates is created with: what the
+    /// host asks otto-agents for, such as its own tools for the agent.
+    session_meta: Option<Value>,
     /// What otto-stash has stashed, after the files above: it goes with
     /// the next request too, but otto-stash keeps it, and changes to it go
     /// there. Each with its file and whether it is struck out.
@@ -818,6 +829,9 @@ impl Ask {
             attachments: Vec::new(),
             struck: Vec::new(),
             subject: Vec::new(),
+            unlisted: Vec::new(),
+            hidden: Vec::new(),
+            session_meta: None,
             stashed: Vec::new(),
             handing_over: false,
             unreachable: None,
@@ -1431,6 +1445,20 @@ impl Ask {
         self.subject = files.into_iter().collect();
     }
 
+    /// Send `files` with the next request without listing them or drawing
+    /// them in the log: what the host made to go with it, such as the marks
+    /// drawn on the document beside the chat.
+    pub fn attach_unlisted(&mut self, files: impl IntoIterator<Item = PathBuf>) {
+        self.unlisted.extend(files);
+    }
+
+    /// Create the session this chat starts with `meta` as its `_meta`.
+    /// otto-agents reads `otto.mcpServers` there: MCP servers the agent is
+    /// given, Otto programs only. A session already open keeps what it has.
+    pub fn set_session_meta(&mut self, meta: Value) {
+        self.session_meta = Some(meta);
+    }
+
     pub fn send(&mut self, prompt: &str, agent: Option<usize>) -> bool {
         let struck = std::mem::take(&mut self.struck);
         let stashed = std::mem::take(&mut self.stashed);
@@ -1458,6 +1486,12 @@ impl Ask {
                     attachments.push(file.clone());
                 }
             }
+        }
+        for file in std::mem::take(&mut self.unlisted) {
+            if !attachments.contains(&file) {
+                attachments.push(file.clone());
+            }
+            self.hidden.push(file);
         }
         let provider = match self.run.as_mut() {
             Some(run) => {
@@ -1491,6 +1525,7 @@ impl Ask {
             prompt: prompt.to_string(),
             provider,
             attachments,
+            session_meta: self.session_meta.clone(),
         });
         took_stashed
     }
@@ -1650,10 +1685,11 @@ impl Ask {
         }
         // The subject is on screen beside the chat; the service's record of
         // the request lists it, the log doesn't.
-        if !self.subject.is_empty() {
+        if !self.subject.is_empty() || !self.hidden.is_empty() {
+            let hidden = |file: &PathBuf| self.subject.contains(file) || self.hidden.contains(file);
             for entry in &mut transcript.entries {
                 entry.attachments.retain(
-                    |attachment| !matches!(attachment, Attachment::File(file) if self.subject.contains(file)),
+                    |attachment| !matches!(attachment, Attachment::File(file) if hidden(file)),
                 );
             }
         }
@@ -2091,13 +2127,22 @@ async fn serve(
                 prompt,
                 provider,
                 attachments,
+                session_meta,
             }) => {
                 let chosen = provider
                     .as_deref()
                     .and_then(|provider| folders.get(provider))
                     .map_or(folder, PathBuf::as_path);
-                let handed =
-                    hand_off(&client, &prompt, &attachments, provider, chosen, reporter).await;
+                let handed = hand_off(
+                    &client,
+                    &prompt,
+                    &attachments,
+                    provider,
+                    session_meta,
+                    chosen,
+                    reporter,
+                )
+                .await;
                 if handed.is_ok() {
                     reporter.send(Update::HandedOff);
                 }
@@ -2272,6 +2317,7 @@ async fn hand_off(
     request: &str,
     attachments: &[PathBuf],
     provider: Option<String>,
+    session_meta: Option<Value>,
     folder: &Path,
     reporter: &Reporter,
 ) -> Result<Followed, BoxError> {
@@ -2279,6 +2325,9 @@ async fn hand_off(
     let mut params = json!({ "channel": session, "workingDirectories": [file_uri(folder)] });
     if let Some(provider) = provider {
         params["provider"] = Value::String(provider);
+    }
+    if let Some(meta) = session_meta {
+        params["_meta"] = meta;
     }
     client.request::<_, Value>("createSession", params).await?;
 
