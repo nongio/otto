@@ -14,6 +14,7 @@
 // Rust guideline compliant 2026-02-21
 
 mod app;
+mod chat;
 mod chrome;
 mod content;
 mod instance;

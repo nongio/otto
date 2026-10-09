@@ -16,6 +16,8 @@ path = "src/main.rs"
 # otto-media-kit. This crate is only the window around them.
 [dependencies]
 otto-kit = { path = "../otto-kit" }
+# The chat beside the document: the same conversation and log the launcher hosts.
+otto-agents-kit = { path = "../otto-agents-kit" }
 otto-peek = { path = "../otto-peek" }
 otto-files = { path = "../otto-files" }
 # Library only: the GStreamer worker is its own binary, installed beside this one.

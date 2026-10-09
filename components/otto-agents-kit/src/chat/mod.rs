@@ -776,6 +776,11 @@ pub struct Ask {
     attachments: Vec<PathBuf>,
     /// …but for those struck out, which stay listed and stay behind.
     struck: Vec<bool>,
+    /// What the conversation is about, when the host shows it already: the
+    /// file open beside the chat. Sent with the first request, never listed
+    /// with the attachments or drawn in the log, not even as the service
+    /// records the request.
+    subject: Vec<PathBuf>,
     /// What otto-stash has stashed, after the files above: it goes with
     /// the next request too, but otto-stash keeps it, and changes to it go
     /// there. Each with its file and whether it is struck out.
@@ -812,6 +817,7 @@ impl Ask {
             sessions_listed: false,
             attachments: Vec::new(),
             struck: Vec::new(),
+            subject: Vec::new(),
             stashed: Vec::new(),
             handing_over: false,
             unreachable: None,
@@ -1418,6 +1424,13 @@ impl Ask {
     ///
     /// Returns whether what was stashed went with it, so the stash can
     /// be told it is over.
+    /// Make `files` what the conversation is about: they go with the first
+    /// request, as attachments do, but are not shown, because the host shows
+    /// them already. A conversation already under way keeps what it had.
+    pub fn set_subject(&mut self, files: impl IntoIterator<Item = PathBuf>) {
+        self.subject = files.into_iter().collect();
+    }
+
     pub fn send(&mut self, prompt: &str, agent: Option<usize>) -> bool {
         let struck = std::mem::take(&mut self.struck);
         let stashed = std::mem::take(&mut self.stashed);
@@ -1436,6 +1449,16 @@ impl Ask {
                 .map(|file| Attachment::for_file(file))
                 .collect(),
         };
+        // The subject rides with the first request only, after what was
+        // attached by hand, and never twice.
+        let mut attachments = attachments;
+        if self.run.is_none() {
+            for file in &self.subject {
+                if !attachments.contains(file) {
+                    attachments.push(file.clone());
+                }
+            }
+        }
         let provider = match self.run.as_mut() {
             Some(run) => {
                 run.sent.push(request);
@@ -1624,6 +1647,15 @@ impl Ask {
         );
         if run.resumed && run.chat.is_none() && run.failure.is_none() {
             transcript.status = Some(Status::Opening);
+        }
+        // The subject is on screen beside the chat; the service's record of
+        // the request lists it, the log doesn't.
+        if !self.subject.is_empty() {
+            for entry in &mut transcript.entries {
+                entry.attachments.retain(
+                    |attachment| !matches!(attachment, Attachment::File(file) if self.subject.contains(file)),
+                );
+            }
         }
         let turn_running = run
             .chat
@@ -2993,6 +3025,38 @@ mod tests {
         let failed = transcript(Some(&chat), &sent(&["hi"]), &[], Some("gone"), None);
         assert_eq!(failed.status, Some(Status::Failed("gone".into())));
         assert_eq!(failed.entries, vec![entry("hi", "Hel", None)]);
+    }
+
+    #[test]
+    fn the_subject_goes_with_the_first_request_without_being_shown() {
+        let mut ask = offline();
+        ask.set_subject([PathBuf::from("/tmp/photo.jpg")]);
+        assert!(!ask.has_attachments());
+        assert!(ask.pending().is_empty());
+        ask.send("warmer", None);
+        let sent = &ask.run.as_ref().unwrap().sent;
+        assert!(
+            sent[0].attachments.is_empty(),
+            "the log shows no attachment"
+        );
+
+        // As the service records the request: the subject listed, beside a
+        // file attached by hand, which still shows.
+        let mut recorded = message("warmer");
+        recorded.attachments = Some(vec![attached("/tmp/notes.md"), attached("/tmp/photo.jpg")]);
+        let mut chat = with_ended(
+            empty_chat(),
+            "warmer",
+            TurnState::Complete,
+            vec![markdown("Done")],
+        );
+        chat.turns[0].message = recorded;
+        ask.apply(Update::Chat(Box::new(chat)));
+        let entries = ask.transcript().unwrap().entries;
+        assert_eq!(
+            entries[0].attachments,
+            vec![Attachment::File("/tmp/notes.md".into())]
+        );
     }
 
     /// An `Ask` whose connection never gets anywhere, for driving its state by

@@ -97,6 +97,10 @@ pub struct Viewer {
     pub generation: u64,
     /// The file as last decoded, to tell a real change from a neighbour's.
     pub stamp: Option<Stamp>,
+    /// Whether the chat shows beside the document.
+    pub chat_open: bool,
+    /// The chat panel as last painted, in window coordinates.
+    pub chat_picture: Option<otto_kit::skia::Picture>,
     /// Where the view was when the file changed, put back once the new
     /// decode lands. Set from the reload until then.
     pub reloading: Option<Place>,
@@ -182,6 +186,8 @@ impl Viewer {
             sidebar_followed: 0,
             thumbs: HashMap::new(),
             thumbs_pending: HashSet::new(),
+            chat_open: false,
+            chat_picture: None,
             generation: 0,
             stamp: None,
             reloading: None,
@@ -238,10 +244,39 @@ impl Viewer {
     /// The box the preview is drawn in.
     pub fn content(&self) -> Rect {
         let mut content = chrome::content_rect(self.size.0, self.size.1, self.variant);
+        if self.chat_open {
+            content.right = (content.right - crate::chat::WIDTH).max(content.left + 1.0);
+        }
         if self.sidebar_open() {
             content.left = (content.left + sidebar::WIDTH).min(content.right - 1.0);
         }
         content
+    }
+
+    /// The chat panel's box, when it shows: the window's trailing edge, under
+    /// the chrome.
+    pub fn chat_rect(&self) -> Option<Rect> {
+        if !self.chat_open {
+            return None;
+        }
+        let full = chrome::content_rect(self.size.0, self.size.1, self.variant);
+        Some(Rect::from_ltrb(
+            (full.right - crate::chat::WIDTH).max(full.left),
+            full.top,
+            full.right,
+            full.bottom,
+        ))
+    }
+
+    /// Show or hide the chat, keeping the document on the same spot of the
+    /// same page while the content box narrows or widens.
+    pub fn toggle_chat(&mut self) {
+        let place = self.place();
+        self.chat_open = !self.chat_open;
+        if let Some(place) = place {
+            self.restore_place(place);
+        }
+        self.dirty = true;
     }
 
     /// Whether the preview is a document the sidebar can show pages of.
@@ -509,6 +544,7 @@ impl Viewer {
             Tool::PreviousPage => self.page_status().is_some_and(|(page, _)| page > 1),
             Tool::NextPage => self.page_status().is_some_and(|(page, pages)| page < pages),
             Tool::Sidebar => self.has_pages(),
+            Tool::Chat => true,
         }
     }
 
@@ -705,6 +741,7 @@ impl Viewer {
                 self.turn_page(1);
             }
             Tool::Sidebar => self.toggle_sidebar(),
+            Tool::Chat => self.toggle_chat(),
         }
     }
 
@@ -889,6 +926,19 @@ mod tests {
         assert!(viewer.land(viewer.generation, waiting("new")));
         assert!(viewer.reloading.is_none());
         assert_eq!(viewer.session.name, "new");
+    }
+
+    #[test]
+    fn the_chat_takes_its_width_from_the_document() {
+        let mut viewer = Viewer::new(PathBuf::from("/tmp/a.png"), (960.0, 720.0));
+        let wide = viewer.content();
+        assert!(viewer.chat_rect().is_none());
+        viewer.toggle_chat();
+        let panel = viewer.chat_rect().unwrap();
+        assert_eq!(panel.right, 960.0);
+        assert_eq!(panel.width(), crate::chat::WIDTH);
+        assert_eq!(viewer.content().right, wide.right - crate::chat::WIDTH);
+        assert_eq!(panel.top, wide.top);
     }
 
     #[test]

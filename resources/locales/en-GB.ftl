@@ -1751,6 +1751,15 @@ peek-pdf-install-rasteriser = Install one of: { $packages } — to see the pages
 peek-page-of = { $page } / { $pages }
 
 
+## Preview — chat
+
+# The chat field beside a file in Preview, before anything is typed.
+# $name is the file's name.
+preview-chat-placeholder = Ask about { $name }
+# Shown in the empty chat beside a file, until something is asked.
+preview-chat-empty = Ask an agent about this file, or to change it.
+
+
 ## Peek — listings
 ##
 ## A folder or an archive is previewed as a list of what is inside, with one

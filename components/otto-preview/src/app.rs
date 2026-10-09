@@ -7,9 +7,11 @@
 
 // Rust guideline compliant 2026-02-21
 
+use std::cell::RefCell;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -21,13 +23,14 @@ use otto_kit::prelude::*;
 use otto_kit::preview::Preview;
 use otto_kit::skia::{Contains, Point};
 use otto_kit::CursorShape;
-use smithay_client_toolkit::seat::keyboard::KeyEvent;
+use smithay_client_toolkit::seat::keyboard::{KeyEvent, Keysym};
 use smithay_client_toolkit::seat::pointer::{PointerEvent, PointerEventKind};
 use smithay_client_toolkit::shell::xdg::window::WindowConfigure;
 use smithay_client_toolkit::shell::WaylandSurface;
 use wayland_client::protocol::wl_keyboard;
 
-use crate::chrome;
+use crate::chat::Chat;
+use crate::chrome::{self, Tool};
 use crate::instance::{Inbox, Request};
 use crate::viewer::{KeyOutcome, Stamp, Viewer};
 use crate::Shape;
@@ -43,6 +46,8 @@ const CORNER: f32 = 12.0;
 const BTN_LEFT: u32 = 0x110;
 /// How often the loop turns while something moves on its own.
 const FRAME: Duration = Duration::from_millis(16);
+/// How often the loop turns while the chat's caret blinks.
+const BLINK: Duration = Duration::from_millis(100);
 
 /// The application: a window for each open file.
 pub struct PreviewApp {
@@ -51,11 +56,17 @@ pub struct PreviewApp {
     first: Option<Request>,
     /// Files asked for by later starts, handed over the bus.
     inbox: Inbox,
+    /// When the loop last turned, for the caret's blink.
+    last_update: Instant,
 }
 
 /// One file in its window.
 struct Doc {
     viewer: Arc<Mutex<Viewer>>,
+    /// The chat beside the document. It stays on the UI thread: its log
+    /// holds fonts that may not cross to another, so it is painted into the
+    /// viewer's [`Viewer::chat_picture`] for the draw to show.
+    chat: Rc<RefCell<Chat>>,
     window: Window,
     /// The file with its links resolved, to tell a second request for it.
     key: PathBuf,
@@ -78,6 +89,7 @@ impl PreviewApp {
             docs: Vec::new(),
             first: Some(first),
             inbox,
+            last_update: Instant::now(),
         }
     }
 
@@ -120,6 +132,7 @@ fn resolved(path: &Path) -> PathBuf {
 impl Doc {
     /// A window on `path`, sized for `shape`.
     fn open(path: PathBuf, key: PathBuf, shape: Shape) -> Result<Self, Box<dyn std::error::Error>> {
+        let chat = Rc::new(RefCell::new(Chat::new(path.clone(), dark())));
         let viewer = Viewer::new(path, shape.opening_size(None));
         let (name, (width, height)) = (viewer.name.clone(), viewer.size);
         let viewer = Arc::new(Mutex::new(viewer));
@@ -141,12 +154,20 @@ impl Doc {
             let viewer = drawn.lock().unwrap();
             canvas.clear(ground(&theme));
             crate::content::draw(canvas, &viewer, &theme);
+            if viewer.chat_open {
+                if let Some(picture) = &viewer.chat_picture {
+                    canvas.draw_picture(picture, None, None);
+                }
+            }
             chrome::draw(canvas, &viewer, &theme);
         });
 
         let pointed = Arc::clone(&viewer);
+        let pointed_chat = Rc::clone(&chat);
         let handle = window.clone();
-        window.on_pointer_event(move |events| handle_pointer(&pointed, &handle, events));
+        window.on_pointer_event(move |events| {
+            handle_pointer(&pointed, &pointed_chat, &handle, events)
+        });
 
         // The compositor's close (the dock's, a shortcut's) closes this
         // window, not the application with every other file in it.
@@ -160,6 +181,7 @@ impl Doc {
         let watch = key.parent().map(DirWatch::new);
         Ok(Self {
             viewer,
+            chat,
             window,
             key,
             shape,
@@ -168,7 +190,12 @@ impl Doc {
         })
     }
 
+    /// Repaint the window, with the chat painted afresh.
     fn redraw(&self) {
+        paint_chat(
+            &mut self.viewer.lock().unwrap(),
+            &mut self.chat.borrow_mut(),
+        );
         self.window.request_frame();
     }
 
@@ -384,12 +411,24 @@ fn seat() -> Option<wayland_client::protocol::wl_seat::WlSeat> {
     AppContext::seat_state().seats().next()
 }
 
+/// Whether the colour scheme is dark.
+fn dark() -> bool {
+    otto_kit::color_scheme::current_color_scheme() == otto_kit::theme::ColorScheme::Dark
+}
+
 /// Everything the pointer does over the window.
-fn handle_pointer(viewer: &Mutex<Viewer>, window: &Window, events: &[PointerEvent]) {
+fn handle_pointer(
+    viewer: &Mutex<Viewer>,
+    chat: &RefCell<Chat>,
+    window: &Window,
+    events: &[PointerEvent],
+) {
     let mut redraw = false;
     for event in events {
         let at = Point::new(event.position.0 as f32, event.position.1 as f32);
         let mut v = viewer.lock().unwrap();
+        let panel = v.chat_rect();
+        let in_chat = panel.is_some_and(|panel| panel.contains(at));
         let (width, height) = v.size;
         let content = v.content();
         let edge = (!window.is_maximized())
@@ -412,17 +451,27 @@ fn handle_pointer(viewer: &Mutex<Viewer>, window: &Window, events: &[PointerEven
                 // content's edge keeps going.
                 v.content_pointer(VideoPointer::Motion, at);
                 v.sidebar_motion(at);
+                let mut chat_cursor = None;
+                if let Some(panel) = panel {
+                    let (repaint, cursor) = chat.borrow_mut().motion(panel, in_chat.then_some(at));
+                    v.dirty |= repaint;
+                    chat_cursor = in_chat.then_some(cursor);
+                }
                 let shape = match edge {
                     Some(edge) if v.drag.is_none() => edge.cursor(),
                     _ if content.contains(at) || v.drag.is_some() => v.content_cursor(at),
-                    _ => CursorShape::Default,
+                    _ => chat_cursor.unwrap_or(CursorShape::Default),
                 };
                 if shape != v.cursor {
                     v.cursor = shape;
                     AppContext::set_cursor_shape(shape);
                 }
             }
-            PointerEventKind::Press { button, serial, .. } => {
+            PointerEventKind::Press {
+                button,
+                serial,
+                time,
+            } => {
                 if *button != BTN_LEFT {
                     continue;
                 }
@@ -456,6 +505,12 @@ fn handle_pointer(viewer: &Mutex<Viewer>, window: &Window, events: &[PointerEven
                     }
                     continue;
                 }
+                if let Some(panel) = panel.filter(|_| in_chat) {
+                    v.dirty |= chat.borrow_mut().press(panel, at, *time, *serial);
+                    continue;
+                }
+                // A press on the document gives it the keyboard back.
+                v.dirty |= std::mem::replace(&mut chat.borrow_mut().focused, false);
                 if v.sidebar().is_some_and(|sidebar| sidebar.rect.contains(at)) {
                     v.sidebar_press(at);
                     continue;
@@ -487,7 +542,13 @@ fn handle_pointer(viewer: &Mutex<Viewer>, window: &Window, events: &[PointerEven
                     v.dirty = true;
                     if v.toolbar().tool_at(at.x, at.y) == Some(tool) {
                         v.run_tool(tool);
+                        if tool == Tool::Chat {
+                            chat_toggled(&v, chat);
+                        }
                     }
+                }
+                if let Some(panel) = panel {
+                    v.dirty |= chat.borrow_mut().release(panel, at);
                 }
                 v.sidebar_release();
                 let link = v.content_pointer(VideoPointer::Release, at);
@@ -507,6 +568,7 @@ fn handle_pointer(viewer: &Mutex<Viewer>, window: &Window, events: &[PointerEven
                 }
                 v.content_pointer(VideoPointer::Leave, at);
                 v.sidebar_scroll.on_pointer_leave();
+                v.dirty |= chat.borrow_mut().leave();
                 v.cursor = CursorShape::Default;
             }
             PointerEventKind::Axis {
@@ -516,6 +578,11 @@ fn handle_pointer(viewer: &Mutex<Viewer>, window: &Window, events: &[PointerEven
             } => {
                 let stop = vertical.stop || horizontal.stop;
                 let discrete = vertical.discrete != 0 || horizontal.discrete != 0;
+                if in_chat {
+                    v.dirty |= chat.borrow_mut().wheel(vertical.absolute as f32, discrete);
+                    redraw |= std::mem::take(&mut v.dirty);
+                    continue;
+                }
                 if v.wheel_goes_to_sidebar(at, stop, discrete) {
                     v.sidebar_wheel(vertical.absolute as f32, stop, discrete);
                     redraw |= std::mem::take(&mut v.dirty);
@@ -533,7 +600,30 @@ fn handle_pointer(viewer: &Mutex<Viewer>, window: &Window, events: &[PointerEven
         redraw |= std::mem::take(&mut v.dirty);
     }
     if redraw {
+        paint_chat(&mut viewer.lock().unwrap(), &mut chat.borrow_mut());
         window.request_frame();
+    }
+}
+
+/// Paint the chat, when it shows, into the picture the draw puts beside the
+/// document. Called before every repaint the chat may have changed for.
+fn paint_chat(viewer: &mut Viewer, chat: &mut Chat) {
+    viewer.chat_picture = viewer.chat_rect().and_then(|panel| {
+        let mut recorder = otto_kit::skia::PictureRecorder::new();
+        let canvas = recorder.begin_recording(panel, false);
+        chat.draw(canvas, panel, &AppContext::current_theme());
+        recorder.finish_recording_as_picture(None)
+    });
+}
+
+/// The chat was just shown or hidden: a panel shown takes the keyboard, and
+/// connects the first time.
+fn chat_toggled(viewer: &Viewer, chat: &RefCell<Chat>) {
+    let mut chat = chat.borrow_mut();
+    if viewer.chat_open {
+        chat.opened();
+    } else {
+        chat.focused = false;
     }
 }
 
@@ -567,7 +657,7 @@ impl Doc {
         };
         self.window.sync_frame_corners();
         apply_opaque_region(&self.window, size);
-        self.window.request_frame();
+        self.redraw();
     }
 
     /// One turn of the loop: start the decode once the window is
@@ -657,6 +747,36 @@ impl App for PreviewApp {
         let Some(doc) = self.focused() else {
             return;
         };
+        {
+            let mut viewer = doc.viewer.lock().unwrap();
+            let modifiers = viewer.modifiers;
+            // Ctrl+K shows or hides the chat, from anywhere.
+            if modifiers.ctrl && matches!(event.keysym, Keysym::k | Keysym::K) {
+                viewer.toggle_chat();
+                chat_toggled(&viewer, &doc.chat);
+                drop(viewer);
+                doc.redraw();
+                return;
+            }
+            if viewer.chat_open {
+                let mut chat = doc.chat.borrow_mut();
+                if chat.focused {
+                    let handled = chat.key(event, modifiers, serial);
+                    drop(chat);
+                    drop(viewer);
+                    if handled {
+                        doc.redraw();
+                        return;
+                    }
+                } else if modifiers.ctrl
+                    && matches!(event.keysym, Keysym::c | Keysym::C)
+                    && chat.copy(serial)
+                {
+                    // Text selected in the log, with the document focused.
+                    return;
+                }
+            }
+        }
         let outcome = doc.viewer.lock().unwrap().key(event.keysym);
         match outcome {
             KeyOutcome::Close => {
@@ -677,6 +797,7 @@ impl App for PreviewApp {
         for doc in &mut self.docs {
             doc.window
                 .set_background(ground(&AppContext::current_theme()));
+            doc.chat.borrow_mut().set_dark(dark());
             doc.redraw();
         }
     }
@@ -744,15 +865,37 @@ impl App for PreviewApp {
         if self.docs.is_empty() {
             std::process::exit(0);
         }
+        let now = Instant::now();
+        let delta = now.duration_since(self.last_update).as_secs_f32();
+        self.last_update = now;
         for doc in &self.docs {
             doc.update();
+            let mut chat = doc.chat.borrow_mut();
+            if chat.pump() | chat.tick(delta) {
+                drop(chat);
+                doc.redraw();
+            }
         }
     }
 
     fn idle_timeout(&self) -> Option<Duration> {
-        self.docs
+        if self
+            .docs
             .iter()
             .any(|doc| doc.viewer.lock().unwrap().animating())
-            .then_some(FRAME)
+        {
+            return Some(FRAME);
+        }
+        self.docs
+            .iter()
+            .any(|doc| doc.viewer.lock().unwrap().chat_open && doc.chat.borrow().focused)
+            .then_some(BLINK)
+    }
+
+    fn poll_fds(&self) -> Vec<std::os::fd::RawFd> {
+        self.docs
+            .iter()
+            .filter_map(|doc| doc.chat.borrow().poll_fd())
+            .collect()
     }
 }

@@ -38,7 +38,9 @@ in another app, `xdg-open`, the command line.
 
 - Stepping through a folder, a sidebar, thumbnails or any browsing: another
   file is another window.
-- Editing, annotating, rotating, or saving anything.
+- Editing, annotating, rotating, or saving anything from the window's own
+  tools. Changes come from an agent, through the chat (see below and
+  `components/otto-agents/docs/plans/0016-agent-edited-documents.md`).
 - Claiming plain text, archives, audio or video as a default handler. Preview
   can show them when asked by path, but does not advertise them.
 
@@ -98,8 +100,28 @@ in another app, `xdg-open`, the command line.
 - Centre, only for a document of more than one page: previous page, "N / M"
   showing the page with most of the window, next page. Each button is
   disabled at its end.
+- Trailing: the chat button, a toggle that stays down while the chat shows.
 - There is no button to open the file in another application: Preview is
   the viewer for the types it handles.
+
+### Chat
+
+- The chat button or Ctrl+K shows a 360-point panel at the window's trailing
+  edge, under the toolbar; the document narrows and keeps its place. Hiding
+  it keeps the conversation for as long as the window is open.
+- The panel is the Ask chat from otto-agents-kit, as in the launcher: the log
+  on top, the answers to a waiting question or input request above the
+  field, and the field at the bottom ("Ask about NAME").
+- Opening the panel connects to otto-agents in the background; nothing
+  reaches an agent until something is sent. The file goes with the first
+  message, but is never shown as an attachment, since it is open beside
+  the chat.
+- Return sends. Up and Down pick an answer while one is waited for; Return
+  or a click gives it. Ctrl+C stops a running turn, or copies the selection.
+- A press in the panel gives it the keyboard; a press on the document, or
+  Escape in the field, gives the keyboard back to the document. Ctrl+C with
+  text selected in the log copies it, wherever the keyboard is.
+- When otto-agents can't be reached, the panel says why.
 - A button fires when the press and the release both land on it.
 
 ### Content input

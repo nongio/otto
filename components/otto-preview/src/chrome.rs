@@ -44,6 +44,8 @@ pub enum Tool {
     NextPage,
     /// Shows or hides the pages sidebar.
     Sidebar,
+    /// Shows or hides the chat beside the document.
+    Chat,
 }
 
 /// Where the toolbar's buttons sit for one window width.
@@ -121,7 +123,9 @@ pub fn toolbar_layout(
     let top = titlebar_h(variant);
     let y = top + (TOOLBAR_H - BUTTON) / 2.0;
     let square = |x: f32| Rect::from_xywh(x, y, BUTTON, BUTTON);
-    let mut buttons = Vec::with_capacity(6);
+    let mut buttons = Vec::with_capacity(7);
+    // The chat at the trailing edge, on its own.
+    buttons.push((Tool::Chat, square(width - EDGE - BUTTON)));
 
     let mut x = EDGE;
     if sidebar {
@@ -180,7 +184,9 @@ pub fn draw(canvas: &Canvas, viewer: &Viewer, theme: &Theme) {
         let pressed = hovered && viewer.pressed_tool == Some(*tool);
         // The sidebar button is a toggle: it stays down while the sidebar
         // shows.
-        let pressed = pressed || (*tool == Tool::Sidebar && viewer.sidebar_open());
+        let pressed = pressed
+            || (*tool == Tool::Sidebar && viewer.sidebar_open())
+            || (*tool == Tool::Chat && viewer.chat_open);
         draw_icon_button(canvas, theme, *rect, *tool, enabled, hovered, pressed);
     }
 
@@ -247,6 +253,11 @@ fn draw_icon_button(
         draw_sidebar_glyph(canvas, dst, color);
         return;
     }
+    if tool == Tool::Chat {
+        // Drawn too: few themes have a chat bubble, and fewer agree on one.
+        draw_chat_glyph(canvas, dst, color);
+        return;
+    }
     match icons::cached_icon_chain(icon_names(tool), GLYPH as i32) {
         Some(image) => {
             // Symbolic art recoloured to the text tone, as the rest of the
@@ -270,8 +281,8 @@ fn icon_names(tool: Tool) -> &'static [&'static str] {
         Tool::ZoomIn => &["zoom-in-symbolic"],
         Tool::PreviousPage => &["go-up-symbolic", "pan-up-symbolic"],
         Tool::NextPage => &["go-down-symbolic", "pan-down-symbolic"],
-        // Never looked up; see `draw_sidebar_glyph`.
-        Tool::Sidebar => &[],
+        // Never looked up; see `draw_sidebar_glyph` and `draw_chat_glyph`.
+        Tool::Sidebar | Tool::Chat => &[],
     }
 }
 
@@ -321,6 +332,7 @@ fn draw_fallback_glyph(canvas: &Canvas, dst: Rect, tool: Tool, color: Color) {
             path.line_to((cx + half, cy - dy * half / 2.0));
         }
         Tool::Sidebar => draw_sidebar_glyph(canvas, dst, color),
+        Tool::Chat => draw_chat_glyph(canvas, dst, color),
     }
     canvas.draw_path(&path.detach(), &stroke);
 }
@@ -355,6 +367,28 @@ fn draw_sidebar_glyph(canvas: &Canvas, dst: Rect, color: Color) {
     stroke.set_color(color);
     canvas.draw_rrect(RRect::new_rect_xy(frame, radius, radius), &stroke);
     canvas.draw_line((divider, frame.top), (divider, frame.bottom), &stroke);
+}
+
+/// A speech bubble: a rounded box with a tail at its lower leading corner.
+fn draw_chat_glyph(canvas: &Canvas, dst: Rect, color: Color) {
+    let bubble = Rect::from_ltrb(
+        dst.left + 1.0,
+        dst.top + 2.0,
+        dst.right - 1.0,
+        dst.bottom - 4.5,
+    );
+    let mut stroke = Paint::default();
+    stroke.set_anti_alias(true);
+    stroke.set_style(PaintStyle::Stroke);
+    stroke.set_stroke_width(1.5);
+    stroke.set_stroke_join(otto_kit::skia::PaintJoin::Round);
+    stroke.set_color(color);
+    canvas.draw_rrect(RRect::new_rect_xy(bubble, 4.0, 4.0), &stroke);
+    let mut tail = PathBuilder::new();
+    tail.move_to((bubble.left + 3.5, bubble.bottom));
+    tail.line_to((bubble.left + 3.0, dst.bottom - 1.0));
+    tail.line_to((bubble.left + 7.5, bubble.bottom));
+    canvas.draw_path(&tail.detach(), &stroke);
 }
 
 #[cfg(test)]

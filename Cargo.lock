@@ -5418,6 +5418,7 @@ dependencies = [
 name = "otto-preview"
 version = "1.6.0"
 dependencies = [
+ "otto-agents-kit",
  "otto-files",
  "otto-kit",
  "otto-media-kit",
