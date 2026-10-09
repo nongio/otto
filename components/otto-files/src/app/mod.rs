@@ -34,6 +34,7 @@ use listing_pointer::{After, DragStart, MenuAt};
 use model::{Column, Entry, Place, SortKey};
 use view::ViewMode;
 
+mod app_menu;
 mod construct;
 mod cursor;
 mod desk_edit;
@@ -1121,6 +1122,12 @@ fn row_focus(index: usize) -> otto_kit::focus::FocusId {
 
 struct FilesApp {
     window: Option<Window>,
+    /// The window's menus in the top bar; `None` on the desk, in a file
+    /// dialog, and without a session bus. See [`app_menu`].
+    app_menu: Option<otto_kit::app_menu::AppMenu>,
+    /// When the menus were last brought up to date, to do it a few times a
+    /// second rather than on every pass.
+    app_menu_at: std::time::Instant,
     state: Arc<Mutex<Browser>>,
     /// The panel materials' fade, which the scene runs and this drains: the
     /// blur it wants switched, and whether it is still running. Held here
@@ -1510,6 +1517,8 @@ fn run_app(
     let app = FilesApp {
         pane_surfaces: None,
         window: None,
+        app_menu: None,
+        app_menu_at: std::time::Instant::now(),
         info_window: Rc::new(RefCell::new(None)),
         open_with_window: Rc::new(RefCell::new(None)),
         state: Arc::clone(&state),

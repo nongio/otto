@@ -19,7 +19,7 @@
 use std::sync::Arc;
 
 use crate::components::icon::Icon;
-use crate::typography::{draw_runs, measure_runs};
+use crate::typography::{draw_runs, fit_break, measure_runs};
 use crate::Renderable;
 use skia_safe::{Canvas, Color, Font, Paint, Rect};
 
@@ -510,16 +510,40 @@ fn wrap_spans(
     for span in spans {
         let font = font_for(base, span.style);
         for word in words(&span.text) {
-            let measured = measure_runs(&font, &word);
-            if x > text_left && x + measured > width {
-                flush(&mut current, y, &mut first_line);
-                x = text_left;
-                // A wrapped line does not open with the space that broke it.
-                let word = word.trim_start().to_string();
-                if word.is_empty() {
+            let mut word = word;
+            loop {
+                let measured = measure_runs(&font, &word);
+                if x > text_left && x + measured > width {
+                    flush(&mut current, y, &mut first_line);
+                    x = text_left;
+                    // A wrapped line does not open with the space that broke it.
+                    word = word.trim_start().to_string();
+                    if word.is_empty() {
+                        break;
+                    }
                     continue;
                 }
-                let measured = measure_runs(&font, &word);
+                // Wider than a whole line, a path or an address say: broken
+                // across lines rather than run past the edge, where it is cut
+                // off.
+                let room = width - text_left;
+                if measured > room && word.chars().nth(1).is_some() {
+                    let at = fit_break(&word, room, |piece| measure_runs(&font, piece));
+                    let rest = word.split_off(at);
+                    current.push(Run {
+                        width: measure_runs(&font, &word),
+                        text: word,
+                        x,
+                        style: span.style,
+                        href: span.href.clone(),
+                        base,
+                        muted,
+                    });
+                    flush(&mut current, y, &mut first_line);
+                    x = text_left;
+                    word = rest;
+                    continue;
+                }
                 current.push(Run {
                     text: word,
                     x,
@@ -530,18 +554,8 @@ fn wrap_spans(
                     muted,
                 });
                 x += measured;
-                continue;
+                break;
             }
-            current.push(Run {
-                text: word,
-                x,
-                width: measured,
-                style: span.style,
-                href: span.href.clone(),
-                base,
-                muted,
-            });
-            x += measured;
         }
     }
     flush(&mut current, y, &mut first_line);
@@ -878,6 +892,47 @@ mod tests {
         Block::Paragraph {
             spans: vec![Span::plain(text)],
         }
+    }
+
+    /// A path wider than the column is broken across lines between its
+    /// parts, and nothing of it runs past the edge.
+    #[test]
+    fn a_word_wider_than_the_column_is_broken_not_cut_off() {
+        let blocks = vec![Block::Paragraph {
+            spans: vec![
+                Span::plain("The original is saved at "),
+                Span {
+                    style: SpanStyle {
+                        code: true,
+                        ..SpanStyle::default()
+                    },
+                    ..Span::plain("/home/riccardo/.local/state/otto/ask/hist/original-backup.jpg")
+                },
+                Span::plain(". Done."),
+            ],
+        }];
+        let lines = wrap(&blocks, 200.0);
+        let text: String = lines
+            .iter()
+            .flat_map(|line| line.runs.iter().map(|run| run.text.as_str()))
+            .collect();
+        assert!(text.contains("hist/original-backup.jpg"), "{text}");
+        for line in &lines {
+            for run in &line.runs {
+                assert!(
+                    run.x + run.width <= 200.0 + 1.0,
+                    "{:?} runs past the edge",
+                    run.text
+                );
+            }
+        }
+        // Broken just after a slash.
+        let first_code = lines
+            .iter()
+            .flat_map(|line| &line.runs)
+            .find(|run| run.style.code)
+            .unwrap();
+        assert!(first_code.text.ends_with('/'), "{:?}", first_code.text);
     }
 
     #[test]

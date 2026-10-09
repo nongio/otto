@@ -1423,6 +1423,9 @@ agents-permission-reject = Отклонить
 agents-permission-reject-always = Никогда не разрешать
 # The button that hands the question to the Ask window instead.
 agents-permission-open-in-ask = Открыть в Ask
+# The same button for a session started in Preview about a file: the
+# question opens there, beside the file. Use the app's name as in its menu entry.
+agents-permission-open-in-preview = Открыть в Studio
 
 
 ## Emoji picker
@@ -1721,6 +1724,21 @@ peek-pdf-install-rasteriser = Чтобы увидеть страницы, уст
 # $page and $pages are whole numbers. Very little room — keep it to a few
 # characters, and drop the word for "page" if the language can.
 peek-page-of = { $page } / { $pages }
+
+
+## Preview — chat
+
+# The chat field beside a file in Preview, before anything is typed.
+# $name is the file's name.
+preview-chat-placeholder = Спросить о { $name }
+# Shown in the empty chat beside a file, until something is asked.
+preview-chat-empty = Спросите агента об этом файле или попросите изменить его.
+# Over the chat field in Preview, when marks drawn on the file will go with
+# the next message. $marks lists their numbers ("1, 2"); $count is how many.
+preview-chat-marks = { $count ->
+    [one] С сообщением уйдёт пометка { $marks }
+   *[other] С сообщением уйдут пометки: { $marks }
+}
 
 
 ## Peek — listings
@@ -2083,3 +2101,39 @@ settings-dictation-hotwords-boost = Усиление имён
 settings-dictation-hotwords-boost-detail = Насколько предпочитаются имена, которых ожидает поле. Выше 6 слова вокруг имени начинают искажаться.
 settings-dictation-autostart = Запускать диктовку при входе
 settings-dictation-autostart-detail = Запускает otto-dictate из ~/.config/autostart — Otto читает эту папку, когда включён xdg_autostart
+
+## Studio — menus and the keyboard shortcuts sheet
+
+studio-menu-file = Файл
+studio-menu-edit = Правка
+studio-menu-marks = Пометки
+studio-menu-view = Вид
+studio-menu-help = Справка
+studio-close = Закрыть окно
+studio-undo = Отменить
+studio-redo = Повторить
+studio-copy = Копировать
+studio-select-all = Выбрать всё
+studio-pen = Перо
+studio-show-marks = Показывать пометки
+studio-delete-mark = Удалить последнюю пометку
+studio-zoom-in = Увеличить
+studio-zoom-out = Уменьшить
+studio-zoom-fit = По размеру окна
+studio-previous-page = Предыдущая страница
+studio-next-page = Следующая страница
+studio-sidebar = Показывать страницы
+studio-chat = Показывать чат
+studio-shortcuts = Сочетания клавиш
+studio-sheet-document = Документ
+studio-sheet-chat = Чат
+studio-sheet-scroll = Прокрутка
+studio-sheet-page = Следующий экран
+studio-sheet-ends = Начало и конец
+studio-sheet-zoom-pointer = Масштаб у указателя
+studio-sheet-stop = Отложить перо
+studio-sheet-send = Отправить
+studio-sheet-dictate = Диктовать
+studio-sheet-stop-agent = Остановить агента
+studio-sheet-to-document = Вернуться к документу
+studio-sheet-cmd = Cmd работает везде, где Ctrl

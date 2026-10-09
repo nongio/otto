@@ -79,6 +79,13 @@ pub struct MenuItem {
 
     /// Optional icon shown before the label
     pub icon: Option<MenuItemIcon>,
+
+    /// `Some` for a toggle: a check before the label when it is on.
+    pub checked: Option<bool>,
+
+    /// Room before the label for a check, so the items of a menu with any
+    /// toggle in it keep their labels in line.
+    pub check_gutter: bool,
 }
 impl Hash for MenuItem {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
@@ -106,6 +113,8 @@ impl Hash for MenuItem {
         }
         self.visual_state.hash(state);
         self.enabled.hash(state);
+        self.checked.hash(state);
+        self.check_gutter.hash(state);
         self.height.to_bits().hash(state);
     }
 }
@@ -123,6 +132,8 @@ impl MenuItem {
             enabled: true,
             height,
             icon: None,
+            checked: None,
+            check_gutter: false,
         }
     }
 
@@ -236,6 +247,19 @@ impl MenuItem {
 
     pub fn with_visual_state(mut self, state: VisualState) -> Self {
         self.visual_state = state;
+        self
+    }
+
+    /// A toggle, checked when `checked`.
+    pub fn with_checked(mut self, checked: bool) -> Self {
+        self.checked = Some(checked);
+        self.check_gutter = true;
+        self
+    }
+
+    /// Room for a check before the label, though this item has none.
+    pub fn with_check_gutter(mut self) -> Self {
+        self.check_gutter = true;
         self
     }
 

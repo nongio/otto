@@ -1346,6 +1346,9 @@ agents-permission-reject = 拒绝
 agents-permission-reject-always = 从不允许
 # The button that hands the question to the Ask window instead.
 agents-permission-open-in-ask = 在 Ask 中打开
+# The same button for a session started in Preview about a file: the
+# question opens there, beside the file. Use the app's name as in its menu entry.
+agents-permission-open-in-preview = 在 Studio 中打开
 
 
 ## Emoji picker
@@ -1638,6 +1641,20 @@ peek-pdf-install-rasteriser = 安装其中之一即可看到页面：{ $packages
 # $page and $pages are whole numbers. Very little room — keep it to a few
 # characters, and drop the word for "page" if the language can.
 peek-page-of = { $page } / { $pages }
+
+
+## Preview — chat
+
+# The chat field beside a file in Preview, before anything is typed.
+# $name is the file's name.
+preview-chat-placeholder = 询问关于 { $name }
+# Shown in the empty chat beside a file, until something is asked.
+preview-chat-empty = 向代理询问此文件，或让它修改文件。
+# Over the chat field in Preview, when marks drawn on the file will go with
+# the next message. $marks lists their numbers ("1, 2"); $count is how many.
+preview-chat-marks = { $count ->
+   *[other] 标记 { $marks } 会随消息一起发送
+}
 
 
 ## Peek — listings
@@ -1990,3 +2007,39 @@ settings-dictation-hotwords-boost = 名称加权
 settings-dictation-hotwords-boost-detail = 对文本框预期的名称的偏好程度。超过 6 后，名称周围的词语会开始失真。
 settings-dictation-autostart = 登录时启动听写
 settings-dictation-autostart-detail = 从 ~/.config/autostart 启动 otto-dictate；xdg_autostart 开启时 Otto 会读取该文件夹
+
+## Studio — menus and the keyboard shortcuts sheet
+
+studio-menu-file = 文件
+studio-menu-edit = 编辑
+studio-menu-marks = 标记
+studio-menu-view = 显示
+studio-menu-help = 帮助
+studio-close = 关闭窗口
+studio-undo = 撤销
+studio-redo = 重做
+studio-copy = 拷贝
+studio-select-all = 全选
+studio-pen = 画笔
+studio-show-marks = 显示标记
+studio-delete-mark = 删除最后一个标记
+studio-zoom-in = 放大
+studio-zoom-out = 缩小
+studio-zoom-fit = 缩放至窗口大小
+studio-previous-page = 上一页
+studio-next-page = 下一页
+studio-sidebar = 显示页面
+studio-chat = 显示聊天
+studio-shortcuts = 键盘快捷键
+studio-sheet-document = 文档
+studio-sheet-chat = 聊天
+studio-sheet-scroll = 滚动
+studio-sheet-page = 下一屏
+studio-sheet-ends = 开头和结尾
+studio-sheet-zoom-pointer = 在指针处缩放
+studio-sheet-stop = 放下画笔
+studio-sheet-send = 发送
+studio-sheet-dictate = 听写
+studio-sheet-stop-agent = 停止代理
+studio-sheet-to-document = 返回文档
+studio-sheet-cmd = Cmd 在任何 Ctrl 可用的地方都可用

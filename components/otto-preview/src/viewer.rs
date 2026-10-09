@@ -7,22 +7,27 @@
 
 // Rust guideline compliant 2026-02-21
 
+use crate::versions::Versions;
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
-use std::time::Instant;
+use std::os::unix::fs::MetadataExt;
+use std::path::{Path, PathBuf};
+use std::time::{Instant, SystemTime};
 
 use otto_files::peek::{PageRequest, Session, VideoPointer};
 use otto_kit::components::scroll::ScrollView;
 use otto_kit::components::titlebar::{DecorationVariant, WindowControlsState};
 use otto_kit::prelude::*;
-use otto_kit::preview::{Preview, ROW_HEIGHT};
+use otto_kit::preview::{Preview, Zoom, ROW_HEIGHT};
 use otto_kit::skia::{Contains, Image, Point};
 use otto_kit::theme::ColorScheme;
 use otto_kit::CursorShape;
 
 use crate::chrome::{self, Tool};
+use crate::marks::{self, Frame, Marks};
 use crate::sidebar::{self, SidebarLayout};
 
+/// How far either side of the chat panel's edge a press drags it.
+const CHAT_EDGE: f32 = 4.0;
 /// How much one press of a zoom button or a zoom shortcut magnifies.
 const ZOOM_STEP: f32 = 1.25;
 /// What an arrow key moves the content by, in points.
@@ -91,6 +96,73 @@ pub struct Viewer {
     pub thumbs: HashMap<u32, Image>,
     /// Thumbnails whose rasterising is in flight.
     pub thumbs_pending: HashSet<u32>,
+    /// Counts the decodes: work started for an earlier one lands after a
+    /// reload has replaced it, and is dropped.
+    pub generation: u64,
+    /// The file as last decoded, to tell a real change from a neighbour's.
+    pub stamp: Option<Stamp>,
+    /// Whether the chat shows beside the document.
+    pub chat_open: bool,
+    /// Whether the keyboard shortcuts sheet is over the window; see
+    /// [`crate::shortcuts`].
+    pub shortcuts_open: bool,
+    /// The marks on the document: the person's and the agent's.
+    pub marks: Marks,
+    /// Whether a press on the document draws a mark rather than pans or
+    /// selects: the pen in the toolbar.
+    pub marking: bool,
+    /// Whether the marks are hidden, to see the document as it is. They
+    /// show again when the pen is taken up or the agent draws.
+    pub marks_hidden: bool,
+    /// The file's versions, once a chat about it has started; see
+    /// [`crate::versions`].
+    pub versions: Option<Versions>,
+    /// The chat panel as last painted, in window coordinates.
+    pub chat_picture: Option<otto_kit::skia::Picture>,
+    /// Whether the window grew to make room for the chat, and so shrinks
+    /// back when it hides.
+    pub chat_grew: Option<f32>,
+    /// The chat panel's width, dragged from its leading edge.
+    pub chat_w: f32,
+    /// Whether the chat panel's edge is being dragged.
+    pub chat_resizing: bool,
+    /// Whether the window sizes itself: floating, not maximized or tiled.
+    pub floating: bool,
+    /// The room the compositor last said a window has, in points.
+    pub room: Option<(f32, f32)>,
+    /// Where the view was when the file changed, put back once the new
+    /// decode lands. Set from the reload until then.
+    pub reloading: Option<Place>,
+}
+
+/// What tells one version of a file from the next without reading it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Stamp {
+    inode: u64,
+    len: u64,
+    modified: Option<SystemTime>,
+}
+
+impl Stamp {
+    /// The stamp of the file at `path` now; `None` while it is missing.
+    pub fn of(path: &Path) -> Option<Self> {
+        let metadata = std::fs::metadata(path).ok()?;
+        Some(Self {
+            inode: metadata.ino(),
+            len: metadata.len(),
+            modified: metadata.modified().ok(),
+        })
+    }
+}
+
+/// Where the view is in the content: kept across a reload, so a file edited
+/// elsewhere changes under the reader without moving them.
+#[derive(Debug, Clone, Copy)]
+pub struct Place {
+    zoom: Zoom,
+    first_row: usize,
+    /// The page at the top of the box and how far down it, for a document.
+    page: Option<(usize, f32)>,
 }
 
 /// What a key press asks the window to do beyond changing the viewer.
@@ -105,6 +177,8 @@ pub enum KeyOutcome {
 impl Viewer {
     /// A viewer on `path`, waiting for its decode.
     pub fn new(path: PathBuf, size: (f32, f32)) -> Self {
+        // What a chat about this file kept before, taken up again.
+        let versions = Versions::existing(&path);
         let name = path
             .file_name()
             .map(|name| name.to_string_lossy().into_owned())
@@ -143,7 +217,65 @@ impl Viewer {
             sidebar_followed: 0,
             thumbs: HashMap::new(),
             thumbs_pending: HashSet::new(),
+            chat_open: false,
+            shortcuts_open: false,
+            marks: Marks::default(),
+            marking: false,
+            marks_hidden: false,
+            versions,
+            chat_picture: None,
+            chat_grew: None,
+            chat_w: crate::chat::remembered_width(),
+            chat_resizing: false,
+            floating: true,
+            room: None,
+            generation: 0,
+            stamp: None,
+            reloading: None,
         }
+    }
+
+    /// Decode the file again because it changed on disk. The old content
+    /// stays on screen until the new decode replaces it.
+    pub fn reload(&mut self) {
+        self.reloading = Some(Place {
+            zoom: self.session.zoom,
+            first_row: self.session.first_row,
+            page: self.place(),
+        });
+        self.generation += 1;
+        self.started = false;
+        self.text_asked = false;
+        self.pages_pending.clear();
+        self.thumbs_pending.clear();
+        self.thumbs.clear();
+        self.dirty = true;
+    }
+
+    /// Put a decode that has landed into the window, unless a later one has
+    /// been started since. Returns whether it was taken.
+    pub fn land(&mut self, generation: u64, session: Session) -> bool {
+        if generation != self.generation {
+            return false;
+        }
+        self.session = session;
+        if let Some(place) = self.reloading.take() {
+            self.session.first_row = place.first_row;
+            // Through the pan, so the scroll views follow the zoom; clamped
+            // there to what the new content allows.
+            let content = self.content();
+            self.session.zoom = Zoom {
+                scale: place.zoom.scale,
+                ..Zoom::FIT
+            };
+            self.session
+                .pan_by(place.zoom.offset.0, place.zoom.offset.1, content);
+            if let Some(page) = place.page {
+                self.restore_place(page);
+            }
+        }
+        self.dirty = true;
+        true
     }
 
     pub fn dark(&self) -> bool {
@@ -153,10 +285,192 @@ impl Viewer {
     /// The box the preview is drawn in.
     pub fn content(&self) -> Rect {
         let mut content = chrome::content_rect(self.size.0, self.size.1, self.variant);
+        if self.chat_open {
+            content.right = (content.right - self.chat_w).max(content.left + 1.0);
+        }
         if self.sidebar_open() {
             content.left = (content.left + sidebar::WIDTH).min(content.right - 1.0);
         }
         content
+    }
+
+    /// What the window shows, for the agent: the file, what kind of thing it
+    /// is and its size in the units marks use, the page and the zoom, the
+    /// marks waiting to be sent, and whether the file is being read again.
+    pub fn info(&self) -> serde_json::Value {
+        let (kind, size, pages) = match &self.session.preview {
+            Preview::Pixels { pixels, .. } => (
+                "picture",
+                Some([
+                    pixels.intrinsic_width as f32,
+                    pixels.intrinsic_height as f32,
+                ]),
+                None,
+            ),
+            Preview::Pages { pages, .. } => ("pages", None, Some(pages.len())),
+            _ if self.session.loading => ("loading", None, None),
+            _ => ("other", None, None),
+        };
+        serde_json::json!({
+            "file": self.path,
+            "kind": kind,
+            "size": size,
+            "pages": pages,
+            "page": self.page_status().map(|(page, _)| page),
+            "zoom_percent": self.zoom_percent(),
+            "marks": self.marks.list.len(),
+            "pending_marks": self.marks.pending(),
+            "reloading": self.reloading.is_some(),
+        })
+    }
+
+    /// Where the document's own coordinates land on screen now: the picture
+    /// or each page. Empty for what can't be marked.
+    pub fn frames(&self) -> Vec<Frame> {
+        if self.session.loading || self.session.video.is_some() {
+            return Vec::new();
+        }
+        let layout = otto_kit::preview::layout(
+            self.content(),
+            &self.session.preview,
+            self.session.first_row,
+            self.session.zoom,
+        );
+        marks::frames(&self.session.preview, &layout)
+    }
+
+    /// Start a mark at `at`, when the pen is on. Shift draws a box.
+    pub fn mark_press(&mut self, at: Point) -> bool {
+        if !self.marking {
+            return false;
+        }
+        let frames = self.frames();
+        let shift = self.modifiers.shift;
+        self.dirty |= self.marks.begin(&frames, at, shift);
+        true
+    }
+
+    /// Follow the pointer over the marks' badges; `None` when it left.
+    pub fn mark_hover(&mut self, at: Option<Point>) {
+        let at = at.filter(|_| !self.marks_hidden);
+        let frames = self.frames();
+        self.dirty |= self.marks.hover(&frames, at);
+    }
+
+    /// Delete the mark whose badge is under `at`. Returns whether one was.
+    pub fn mark_delete_at(&mut self, at: Point) -> bool {
+        if self.marks_hidden {
+            return false;
+        }
+        let frames = self.frames();
+        let Some(index) = self.marks.delete_at(&frames, at) else {
+            return false;
+        };
+        self.dirty |= self.marks.remove(index);
+        self.marks.hover(&frames, Some(at));
+        true
+    }
+
+    /// Start dragging the mark whose badge is under `at`, pen or not.
+    pub fn mark_grab(&mut self, at: Point) -> bool {
+        if self.marks_hidden {
+            return false;
+        }
+        let frames = self.frames();
+        self.marks.grab(&frames, at)
+    }
+
+    /// Carry a mark being drawn, or dragged, on to `at`.
+    pub fn mark_motion(&mut self, at: Point) {
+        if self.marks.moving() {
+            self.dirty |= self.marks.move_to(at);
+        } else {
+            self.dirty |= self.marks.extend(at);
+        }
+    }
+
+    /// Whether a mark is being drawn or dragged.
+    pub fn mark_busy(&self) -> bool {
+        self.marks.drawing() || self.marks.moving()
+    }
+
+    /// Finish a mark being drawn, or let go of one dragged.
+    pub fn mark_release(&mut self) {
+        if self.marks.drop_moving() {
+            self.dirty = true;
+        } else {
+            self.dirty |= self.marks.finish();
+        }
+    }
+
+    /// The chat panel's box, when it shows: the window's trailing edge, under
+    /// the chrome.
+    pub fn chat_rect(&self) -> Option<Rect> {
+        if !self.chat_open {
+            return None;
+        }
+        let full = chrome::content_rect(self.size.0, self.size.1, self.variant);
+        Some(Rect::from_ltrb(
+            (full.right - self.chat_w).max(full.left),
+            full.top,
+            full.right,
+            full.bottom,
+        ))
+    }
+
+    /// The strip along the chat panel's leading edge that drags its width.
+    pub fn on_chat_edge(&self, at: Point) -> bool {
+        self.chat_rect().is_some_and(|panel| {
+            (at.x - panel.left).abs() <= CHAT_EDGE && at.y >= panel.top && at.y <= panel.bottom
+        })
+    }
+
+    /// Drag the chat panel's leading edge to `x`: the panel widens or
+    /// narrows, within its limits and leaving the document some room, and
+    /// the document keeps its place.
+    pub fn resize_chat_to(&mut self, x: f32) {
+        let full = chrome::content_rect(self.size.0, self.size.1, self.variant);
+        let widest = (full.width() - crate::chat::MIN_DOCUMENT)
+            .clamp(crate::chat::MIN_WIDTH, crate::chat::MAX_WIDTH);
+        let width = (full.right - x).clamp(crate::chat::MIN_WIDTH, widest);
+        if width == self.chat_w {
+            return;
+        }
+        let place = self.place();
+        self.chat_w = width;
+        if let Some(place) = place {
+            self.restore_place(place);
+        }
+        self.dirty = true;
+    }
+
+    /// Show or hide the chat. A floating window with room to spare grows by
+    /// the panel's width, so the document keeps its size, and shrinks back
+    /// when the chat hides; otherwise the document narrows, keeping its place.
+    /// Returns the size the window should take, when it changes.
+    pub fn toggle_chat(&mut self) -> Option<(f32, f32)> {
+        let place = self.place();
+        self.chat_open = !self.chat_open;
+        let (width, height) = self.size;
+        let resized = if self.chat_open {
+            let fits = self
+                .room
+                .is_none_or(|(room, _)| width + self.chat_w <= room);
+            self.chat_grew = (self.floating && fits).then_some(self.chat_w);
+            self.chat_grew.map(|grew| (width + grew, height))
+        } else {
+            self.chat_grew
+                .take()
+                .map(|grew| ((width - grew).max(crate::app::MIN_W), height))
+        };
+        if let Some(size) = resized {
+            self.size = size;
+        }
+        if let Some(place) = place {
+            self.restore_place(place);
+        }
+        self.dirty = true;
+        resized
     }
 
     /// Whether the preview is a document the sidebar can show pages of.
@@ -212,20 +526,26 @@ impl Viewer {
         let place = self.place();
         self.sidebar_choice = Some(!self.sidebar_open());
         self.sidebar_followed = 0;
-        if let Some((index, along)) = place {
-            let content = self.content();
-            let layout = otto_kit::preview::layout(
-                content,
-                &self.session.preview,
-                self.session.first_row,
-                self.session.zoom,
-            );
-            if let Some(rect) = layout.page_rects.get(index) {
-                let target = rect.top + along * rect.height();
-                self.session.pan_by(0.0, layout.inner.top - target, content);
-            }
+        if let Some(place) = place {
+            self.restore_place(place);
         }
         self.dirty = true;
+    }
+
+    /// Scroll the document so the content box's top edge falls `along` the
+    /// way down page `index`, as [`Self::place`] measured it.
+    fn restore_place(&mut self, (index, along): (usize, f32)) {
+        let content = self.content();
+        let layout = otto_kit::preview::layout(
+            content,
+            &self.session.preview,
+            self.session.first_row,
+            self.session.zoom,
+        );
+        if let Some(rect) = layout.page_rects.get(index) {
+            let target = rect.top + along * rect.height();
+            self.session.pan_by(0.0, layout.inner.top - target, content);
+        }
     }
 
     /// The page at the top of the content box and how far down it the box's
@@ -327,6 +647,9 @@ impl Viewer {
     /// with the file they come from. Thumbnails scrolled well out of the box
     /// are let go of.
     pub fn thumb_work(&mut self, scale: f32) -> Option<(Vec<PageRequest>, PathBuf)> {
+        if self.reloading.is_some() {
+            return None;
+        }
         let layout = self.sidebar()?;
         let kept = layout.pages_in_view(THUMBS_KEPT);
         self.thumbs.retain(|page, _| kept.contains(page));
@@ -347,7 +670,10 @@ impl Viewer {
     }
 
     /// Put a rasterised thumbnail in the sidebar.
-    pub fn finish_thumb(&mut self, page: u32, image: Option<Image>) {
+    pub fn finish_thumb(&mut self, generation: u64, page: u32, image: Option<Image>) {
+        if generation != self.generation {
+            return;
+        }
         self.thumbs_pending.remove(&page);
         if let Some(image) = image {
             self.thumbs.insert(page, image);
@@ -412,6 +738,11 @@ impl Viewer {
             Tool::PreviousPage => self.page_status().is_some_and(|(page, _)| page > 1),
             Tool::NextPage => self.page_status().is_some_and(|(page, pages)| page < pages),
             Tool::Sidebar => self.has_pages(),
+            Tool::Chat => true,
+            Tool::Mark => self.marking || !self.frames().is_empty(),
+            Tool::ShowMarks => self.marks_hidden || !self.marks.list.is_empty(),
+            Tool::Undo => self.versions.as_ref().is_some_and(Versions::can_undo),
+            Tool::Redo => self.versions.as_ref().is_some_and(Versions::can_redo),
         }
     }
 
@@ -422,7 +753,47 @@ impl Viewer {
             self.variant,
             self.page_status().is_some(),
             self.has_pages(),
+            self.versions
+                .as_ref()
+                .is_some_and(|versions| versions.len() > 1),
         )
+    }
+
+    /// Keep the file's versions from now on, starting with the file as it
+    /// is, or take the file as it is now as one. `note` names what changed.
+    pub fn keep_version(&mut self, note: Option<&str>) {
+        let kept = match &mut self.versions {
+            Some(versions) => versions.record(note).map(|_| ()),
+            None => Versions::start(&self.path).map(|versions| self.versions = Some(versions)),
+        };
+        if let Err(err) = kept {
+            tracing::warn!(path = %self.path.display(), %err, "could not keep a version of the file");
+        }
+        self.dirty = true;
+    }
+
+    /// Take a version the file changed into, when versions are kept.
+    pub fn track_version(&mut self) {
+        if self.versions.is_some() {
+            self.keep_version(None);
+        }
+    }
+
+    /// Step the file back (or forward again) a version. The window follows
+    /// the file changing, as for any other change.
+    pub fn step_version(&mut self, back: bool) {
+        let Some(versions) = &mut self.versions else {
+            return;
+        };
+        let stepped = if back {
+            versions.undo()
+        } else {
+            versions.redo()
+        };
+        if let Err(err) = stepped {
+            tracing::warn!(path = %self.path.display(), %err, "could not step through the versions");
+        }
+        self.dirty = true;
     }
 
     /// Zoom to `scale` about `focus`, a window-local point. Returns whether
@@ -577,6 +948,20 @@ impl Viewer {
         if self.drag.is_some() {
             return CursorShape::Grabbing;
         }
+        if self.marks.moving() {
+            return CursorShape::Grabbing;
+        }
+        if self.marks.over_delete {
+            // The bin: a click here deletes the mark (see `crate::cursors`).
+            return CursorShape::NotAllowed;
+        }
+        if self.marks.hovered.is_some() {
+            // The badge is the mark's handle.
+            return CursorShape::Grab;
+        }
+        if self.marking {
+            return CursorShape::Crosshair;
+        }
         if self.session.link_at(at.x, at.y, content).is_some() {
             CursorShape::Pointer
         } else if self.session.word_at(at.x, at.y, content).is_some() {
@@ -608,15 +993,61 @@ impl Viewer {
                 self.turn_page(1);
             }
             Tool::Sidebar => self.toggle_sidebar(),
+            Tool::Chat => {
+                self.toggle_chat();
+            }
+            Tool::Mark => {
+                self.marking = !self.marking;
+                if self.marking {
+                    self.marks_hidden = false;
+                }
+                self.dirty = true;
+            }
+            Tool::Undo => self.step_version(true),
+            Tool::Redo => self.step_version(false),
+            Tool::ShowMarks => {
+                self.marks_hidden = !self.marks_hidden;
+                if self.marks_hidden {
+                    self.marking = false;
+                    self.marks.hover(&[], None);
+                }
+                self.dirty = true;
+            }
         }
     }
 
     /// A key press, already filtered to presses.
+    /// The document's text selected now, if any.
+    pub fn selected_text(&self) -> Option<String> {
+        self.session.selected_text()
+    }
+
+    pub fn has_selection(&self) -> bool {
+        self.selected_text().is_some()
+    }
+
+    /// Select every word of the document.
+    pub fn select_all(&mut self) {
+        self.dirty |= self.session.select_all_words();
+    }
+
     pub fn key(&mut self, keysym: Keysym) -> KeyOutcome {
-        let ctrl = self.modifiers.ctrl;
+        // Cmd reaches an app as `logo`, or as `ctrl` when the session maps
+        // the Cmd keys to Control; either counts.
+        let ctrl = self.modifiers.ctrl || self.modifiers.logo;
         let content = self.content();
         let screen = (content.height() - KEY_STEP).max(KEY_STEP);
         match keysym {
+            Keysym::Escape if self.marking => {
+                self.marking = false;
+                self.dirty = true;
+                KeyOutcome::Handled
+            }
+            // The person's last mark, until it goes with a message.
+            Keysym::BackSpace | Keysym::Delete if !self.marks.pending().is_empty() => {
+                self.dirty |= self.marks.undo();
+                KeyOutcome::Handled
+            }
             Keysym::w | Keysym::W | Keysym::q | Keysym::Q if ctrl => KeyOutcome::Close,
             Keysym::c | Keysym::C if ctrl => match self.session.selected_text() {
                 Some(text) => KeyOutcome::Copy(text),
@@ -698,7 +1129,7 @@ impl Viewer {
     /// and whether its text layer is still to be read. `None` when there is
     /// nothing to do.
     pub fn document_work(&mut self, scale: f32) -> Option<(Vec<PageRequest>, bool)> {
-        if self.session.pages().is_empty() {
+        if self.reloading.is_some() || self.session.pages().is_empty() {
             return None;
         }
         let content = self.content();
@@ -721,7 +1152,15 @@ impl Viewer {
     }
 
     /// Put a rasterised page in the strip.
-    pub fn finish_page(&mut self, page: u32, pixels: Option<otto_kit::preview::Pixels>) {
+    pub fn finish_page(
+        &mut self,
+        generation: u64,
+        page: u32,
+        pixels: Option<otto_kit::preview::Pixels>,
+    ) {
+        if generation != self.generation {
+            return;
+        }
         self.pages_pending.remove(&page);
         let content = self.content();
         if let Some(pixels) = pixels {
@@ -761,3 +1200,101 @@ impl Viewer {
 }
 
 pub use smithay_client_toolkit::seat::keyboard::Keysym;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn waiting(name: &str) -> Session {
+        Session::waiting(name.to_string(), false, Rect::new_empty(), Instant::now())
+    }
+
+    #[test]
+    fn a_decode_started_before_a_reload_is_dropped() {
+        let mut viewer = Viewer::new(PathBuf::from("/tmp/a.png"), (800.0, 600.0));
+        let first = viewer.generation;
+        viewer.reload();
+        assert!(!viewer.started);
+        assert!(!viewer.land(first, waiting("old")));
+        assert!(
+            viewer.reloading.is_some(),
+            "still waiting for the new decode"
+        );
+        assert!(viewer.land(viewer.generation, waiting("new")));
+        assert!(viewer.reloading.is_none());
+        assert_eq!(viewer.session.name, "new");
+    }
+
+    #[test]
+    fn with_room_the_window_grows_for_the_chat_and_shrinks_back() {
+        let mut viewer = Viewer::new(PathBuf::from("/tmp/a.png"), (960.0, 720.0));
+        viewer.room = Some((1920.0, 1080.0));
+        let document = viewer.content();
+        assert_eq!(
+            viewer.toggle_chat(),
+            Some((960.0 + crate::chat::WIDTH, 720.0))
+        );
+        assert_eq!(viewer.content(), document, "the document keeps its size");
+        let panel = viewer.chat_rect().unwrap();
+        assert_eq!(panel.left, document.right);
+        assert_eq!(panel.width(), crate::chat::WIDTH);
+        assert_eq!(viewer.toggle_chat(), Some((960.0, 720.0)));
+    }
+
+    #[test]
+    fn without_room_the_chat_takes_its_width_from_the_document() {
+        let mut viewer = Viewer::new(PathBuf::from("/tmp/a.png"), (960.0, 720.0));
+        viewer.room = Some((1100.0, 1080.0));
+        let wide = viewer.content();
+        assert_eq!(viewer.toggle_chat(), None);
+        let panel = viewer.chat_rect().unwrap();
+        assert_eq!(panel.right, 960.0);
+        assert_eq!(viewer.content().right, wide.right - crate::chat::WIDTH);
+        assert_eq!(panel.top, wide.top);
+        assert_eq!(viewer.toggle_chat(), None, "nothing to shrink back");
+    }
+
+    #[test]
+    fn the_chat_edge_drags_its_width_within_limits() {
+        let mut viewer = Viewer::new(PathBuf::from("/tmp/a.png"), (1200.0, 800.0));
+        viewer.room = Some((1200.0, 1080.0));
+        viewer.toggle_chat();
+        let panel = viewer.chat_rect().unwrap();
+        let middle = Point::new(panel.left, panel.center_y());
+        assert!(viewer.on_chat_edge(middle));
+        assert!(!viewer.on_chat_edge(Point::new(panel.left + 20.0, panel.center_y())));
+
+        viewer.resize_chat_to(panel.left - 100.0);
+        assert_eq!(viewer.chat_w, crate::chat::WIDTH + 100.0);
+        assert_eq!(viewer.content().right, viewer.chat_rect().unwrap().left);
+        // Never narrower than the least, nor leaving the document no room.
+        viewer.resize_chat_to(panel.right);
+        assert_eq!(viewer.chat_w, crate::chat::MIN_WIDTH);
+        viewer.resize_chat_to(0.0);
+        assert_eq!(viewer.chat_w, crate::chat::MAX_WIDTH);
+        assert!(viewer.content().width() >= crate::chat::MIN_DOCUMENT);
+    }
+
+    #[test]
+    fn no_pages_are_asked_for_while_reloading() {
+        let mut viewer = Viewer::new(PathBuf::from("/tmp/a.pdf"), (800.0, 600.0));
+        viewer.reload();
+        assert!(viewer.document_work(1.0).is_none());
+        assert!(viewer.thumb_work(1.0).is_none());
+    }
+
+    #[test]
+    fn a_rewritten_file_has_a_new_stamp() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("note.md");
+        std::fs::write(&path, "one").unwrap();
+        let before = Stamp::of(&path);
+        // Written to a new file and renamed over, as most tools save.
+        let next = dir.path().join(".note.md.tmp");
+        std::fs::write(&next, "two, longer").unwrap();
+        std::fs::rename(&next, &path).unwrap();
+        assert!(before.is_some());
+        assert_ne!(Stamp::of(&path), before);
+        assert_eq!(Stamp::of(&dir.path().join("missing")), None);
+    }
+}

@@ -40,10 +40,10 @@ use ahp_types::state::{
     ChatInputQuestion, ChatInputRequest, ChatInputResponseKind, ChatInputSelectedAnswerValue,
     ChatInputSelectedManyAnswerValue, ChatOrigin, ChatState, ChatSummary, ConfirmationOption,
     ConfirmationOptionKind, ErrorInfo, ErrorResponsePart, MarkdownResponsePart, Message,
-    MessageAttachment, MessageKind, MessageOrigin, PendingMessageKind, ReasoningResponsePart,
-    ResourceResponsePart, ResponsePart, RootState, SessionChatInputRequest, SessionInputRequest,
-    SessionLifecycle, SessionState, SessionStatus, SessionSummary, Snapshot, SnapshotState,
-    ToolCallCancellationReason, ToolCallCompletedState, ToolCallConfirmationReason,
+    MessageAttachment, MessageKind, MessageOrigin, MessageResourceAttachment, PendingMessageKind,
+    ReasoningResponsePart, ResourceResponsePart, ResponsePart, RootState, SessionChatInputRequest,
+    SessionInputRequest, SessionLifecycle, SessionState, SessionStatus, SessionSummary, Snapshot,
+    SnapshotState, ToolCallCancellationReason, ToolCallCompletedState, ToolCallConfirmationReason,
     ToolCallResponsePart, ToolCallResult, ToolCallState, ToolInput, Turn, TurnState,
 };
 use ahp_types::{PROTOCOL_VERSION, ROOT_RESOURCE_URI};
@@ -55,7 +55,7 @@ use tokio::sync::{mpsc, oneshot};
 use otto_agents_client::session::SESSION_SCHEME;
 
 use crate::agent::{
-    Attachment, Backend, Decision, HistoryPart, HistoryTurn, InputAnswer, Mode, Question,
+    Attachment, Backend, Decision, HistoryPart, HistoryTurn, InputAnswer, McpStdio, Mode, Question,
     QuestionOption, SessionCommand, SessionEvent, SessionSpec, TurnOutcome,
 };
 use crate::dialog::{self, Choice, Prompt, Prompter, Reply};
@@ -182,6 +182,15 @@ struct Session {
     /// process it starts; see [`crate::attached`]. Kept for as long as this
     /// service runs.
     attached: Vec<Attachment>,
+    /// The MCP servers the creating client asked for, given to each agent
+    /// process the session starts. Kept for as long as this service runs.
+    mcp_servers: Vec<McpStdio>,
+    /// What the creating client wants the agent told before its first turn.
+    instructions: Option<String>,
+    /// The plugin agent the creating client asked the session to run as.
+    runs_as: Option<String>,
+    /// The files the creating client shows beside the chat.
+    subject: Vec<PathBuf>,
 }
 
 /// The `setMode` request: switch `session`'s agent to the mode `mode_id`, one
@@ -457,6 +466,10 @@ impl Host {
             ));
         }
         let cwd = working_directory(params.working_directories)?;
+        let mcp_servers = McpStdio::from_meta(params.meta.as_ref());
+        let instructions = crate::agent::instructions_from_meta(params.meta.as_ref());
+        let runs_as = crate::agent::runs_as_from_meta(params.meta.as_ref());
+        let subject = crate::agent::subject_from_meta(params.meta.as_ref());
         // What the agent is given, repeated on the session so a client sees it
         // without having to join the two lists itself. Read-only: these are the
         // desktop's own skills, and this host has no way to write into them.
@@ -469,11 +482,26 @@ impl Host {
 
         let now = now();
         let chat_uri = format!("ahp-chat:/{}", uuid::Uuid::new_v4());
+        let mut session_state = SessionState {
+            customizations,
+            ..new_session_state(&provider, &uri::from_path(&cwd))
+        };
+        // Which app the session belongs to and what it is about, as the
+        // creating client said: a session started beside a document in
+        // Preview opens there again, from any list that shows it.
+        let client_otto = params
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.get("otto"))
+            .and_then(Value::as_object);
+        for key in ["app", "subject"] {
+            if let Some(value) = client_otto.and_then(|otto| otto.get(key)) {
+                session_state.meta =
+                    with_otto_meta(session_state.meta.take(), key, Some(value.clone()));
+            }
+        }
         let session = Session {
-            state: SessionState {
-                customizations,
-                ..new_session_state(&provider, &uri::from_path(&cwd))
-            },
+            state: session_state,
             created_at: now.clone(),
             chat: chat_uri.clone(),
             commands: None,
@@ -487,6 +515,10 @@ impl Host {
             written: false,
             releasing: false,
             attached: Vec::new(),
+            mcp_servers,
+            instructions,
+            runs_as,
+            subject,
         };
         state.sessions.insert(uri.clone(), session);
         state
@@ -595,6 +627,15 @@ impl Host {
         let channel = params.channel;
         let mut state = self.lock();
 
+        // What a client keeps with a session, in its `_meta`: Preview's marks.
+        if let StateAction::SessionMetaChanged(changed) = &params.action {
+            if state.sessions.contains_key(&channel) {
+                let meta = changed.meta.clone();
+                state.set_client_meta(&channel, meta.as_ref(), origin);
+                self.flush_withdrawals(&mut state);
+                return;
+            }
+        }
         let Some(session_uri) = state.chat_sessions.get(&channel).cloned() else {
             if channel == ROOT_RESOURCE_URI || state.sessions.contains_key(&channel) {
                 let reason = "this host does not accept client actions on this channel yet";
@@ -852,8 +893,19 @@ impl Host {
         }
         pending.escalated = true;
         tracing::info!(session_uri, tool_call_id, "{why}; asking in a dialog");
+        let opens = state
+            .sessions
+            .get(session_uri)
+            .map_or(dialog::Opens::Ask, |session| {
+                dialog::Opens::of(session.state.meta.as_ref())
+            });
+        let pending = state
+            .sessions
+            .get(session_uri)
+            .and_then(|session| session.questions.get(tool_call_id))
+            .expect("checked above");
         let prompt = Prompt {
-            open: dialog::open_in_ask_label(),
+            open: opens.label(),
             cookie: dialog_cookie(session_uri, tool_call_id),
             quiet,
             ..pending.prompt.clone()
@@ -873,7 +925,7 @@ impl Host {
                         state.unescalate(&session_uri, &tool_call_id);
                         state.watched_grace
                     };
-                    prompter.open(&session_uri);
+                    opens.open(prompter.as_ref(), &session_uri);
                     // Should Ask not come up, or not be answered in, the
                     // question comes back rather than waiting on nobody.
                     host.escalate_after(grace, &session_uri, &tool_call_id);
@@ -926,6 +978,7 @@ impl Host {
                 |agent| agent.display_name.clone(),
             );
         let provider = session.state.provider.clone();
+        let session_meta = session.state.meta.clone();
         let icon = state.backend.icon(&provider);
         let Some(pending) = state
             .sessions
@@ -943,9 +996,11 @@ impl Host {
             request_id,
             "no client is watching; asking in a dialog"
         );
+        let opens = dialog::Opens::of(session_meta.as_ref());
         let prompt = Prompt {
             cookie: dialog_cookie(session_uri, request_id),
             quiet,
+            open: opens.label(),
             ..question_prompt(&agent, &provider, icon, &request)
         };
         let prompter = Arc::clone(&self.prompter);
@@ -970,7 +1025,7 @@ impl Host {
                         state.unescalate_input(&session_uri, &request_id);
                         state.watched_grace
                     };
-                    prompter.open(&session_uri);
+                    opens.open(prompter.as_ref(), &session_uri);
                     // As for a permission question.
                     host.escalate_input_after(grace, &session_uri, &request_id);
                     return;
@@ -1107,6 +1162,12 @@ impl HostState {
                 activity: 0,
                 releasing: false,
                 attached: Vec::new(),
+                // Not kept in the store: a client that wants its tools back
+                // opens a new session. TODO: persist with the session.
+                mcp_servers: Vec::new(),
+                instructions: None,
+                runs_as: None,
+                subject: Vec::new(),
             };
             self.sessions.insert(resource.clone(), session);
             self.chats.insert(chat_uri.clone(), chat);
@@ -1194,6 +1255,10 @@ impl HostState {
             cwd,
             resume: session.agent_session.clone(),
             attached: session.attached.clone(),
+            mcp_servers: session.mcp_servers.clone(),
+            instructions: session.instructions.clone(),
+            runs_as: session.runs_as.clone(),
+            subject: session.subject.clone(),
         };
         self.backend.start(spec, command_rx, events);
         let host = self.host.clone();
@@ -2313,6 +2378,36 @@ impl HostState {
         self.mark_unsaved(session_uri);
     }
 
+    /// Keeps what a client asked to keep with the session: the keys of its
+    /// `_meta.otto` in [`CLIENT_META`], each set, or cleared when it is not
+    /// there. Everything else in the session's `_meta` is the service's, and
+    /// stays as it is. Stored with the session, so it is there when the
+    /// session is opened again.
+    fn set_client_meta(
+        &mut self,
+        session_uri: &str,
+        meta: Option<&JsonObject>,
+        origin: ActionOrigin,
+    ) {
+        let Some(session) = self.sessions.get(session_uri) else {
+            return;
+        };
+        let asked = meta
+            .and_then(|meta| meta.get("otto"))
+            .and_then(Value::as_object);
+        let mut merged = session.state.meta.clone();
+        for key in CLIENT_META {
+            let value = asked.and_then(|otto| otto.get(*key)).cloned();
+            merged = with_otto_meta(merged, key, value);
+        }
+        if merged == session.state.meta {
+            return;
+        }
+        let changed = StateAction::SessionMetaChanged(SessionMetaChangedAction { meta: merged });
+        self.apply(session_uri, changed, Some(origin));
+        self.mark_unsaved(session_uri);
+    }
+
     /// Says in the session's `_meta`, as `otto.remote`, which chat app it was
     /// last written to from, so lists can tell it from the desktop's own.
     fn mark_remote(&mut self, session_uri: &str, via: &str) {
@@ -3083,6 +3178,10 @@ fn terminal_meta(
 /// `meta` with `otto.<key>` set to `value`, or taken out for `None`. The
 /// service owns the whole of a session's `_meta`, and every key under `otto`
 /// is kept independently of the others; an empty `_meta` is `None`.
+/// The keys of a session's `_meta.otto` a client may set: `marks`, what
+/// Preview has drawn on the file, so the session shows them again.
+const CLIENT_META: &[&str] = &["marks"];
+
 fn with_otto_meta(meta: Option<JsonObject>, key: &str, value: Option<Value>) -> Option<JsonObject> {
     let mut meta = meta.unwrap_or_default();
     let otto = meta
@@ -3286,7 +3385,24 @@ fn history_turn(turn: HistoryTurn) -> Turn {
             origin: MessageOrigin {
                 kind: MessageKind::User,
             },
-            attachments: None,
+            attachments: (!turn.attachments.is_empty()).then(|| {
+                turn.attachments
+                    .into_iter()
+                    .map(|attachment| {
+                        MessageAttachment::Resource(MessageResourceAttachment {
+                            label: attachment.name,
+                            uri: attachment.uri,
+                            range: None,
+                            display_kind: None,
+                            meta: None,
+                            size_hint: None,
+                            content_type: None,
+                            nonce: None,
+                            selection: None,
+                        })
+                    })
+                    .collect()
+            }),
             model: None,
             agent: None,
             meta: None,

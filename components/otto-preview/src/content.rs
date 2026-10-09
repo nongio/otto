@@ -62,6 +62,9 @@ pub fn draw(canvas: &Canvas, viewer: &Viewer, theme: &Theme) {
                 selection,
             );
         }
+        if !viewer.marks_hidden {
+            crate::marks::draw(canvas, &viewer.frames(), &viewer.marks);
+        }
     }
 
     // The pan's bars, inside the clip of the picture they belong to. Nothing

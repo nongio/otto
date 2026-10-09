@@ -458,6 +458,7 @@ mod tests {
             tools: vec!["Read".into(), "Bash".into()],
             model: None,
             skills: vec!["otto".into()],
+            session_only: false,
             body: "You are Otto, the desktop's own helper.\n\n## How you talk\n\n- Short sentences.".into(),
             path: root.join("plugins/otto/agents/otto.md"),
         }

@@ -25,6 +25,11 @@ uuid = { workspace = true, features = ["v4"] }
 workspace = true
 features = ["gl", "textlayout", "svg", "skottie"]
 
+[features]
+# Ctrl+D dictation into a host's field. It brings in the microphone and
+# the engine's client, so hosts with no chat field leave it off.
+dictation = ["otto-kit/dictation"]
+
 [lints]
 workspace = true
 

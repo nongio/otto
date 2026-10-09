@@ -19,7 +19,6 @@ use otto_kit::components::attachments::ICON_SIZE;
 use otto_kit::components::scroll::{Axis, RowLayout, ScrollContent, ScrollPane};
 use otto_kit::components::stashed::Stashed;
 use otto_kit::components::text_input::{TextInput, CARET_BLINK_PERIOD};
-use otto_kit::dictation::{self, Dictation, Engine, Vocabulary};
 use otto_kit::focus::FocusId;
 use otto_kit::frosted::Frosted;
 use otto_kit::protocols::otto_surface_style_v1::{BlendMode, ClipMode, ContentsGravity};
@@ -41,6 +40,7 @@ use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::{
 };
 
 use otto_agents_kit::chat::{Ask, Terminal};
+use otto_agents_kit::dictation::{DictationKey, FieldDictation, Vocabulary};
 use otto_agents_kit::item::{rank, Item, Origin};
 use otto_agents_kit::keys::{self, FieldEdit};
 use otto_agents_kit::log::{AttachmentHit, ChatView, Key as ChatKey, Keyed, Pressed, Released};
@@ -173,10 +173,7 @@ struct Launcher {
     ask: Option<Ask>,
     /// Speech going into the field, from Ctrl+D until its last words are
     /// typed.
-    dictation: Option<Dictation>,
-    /// Enter stopped the dictation: what it typed goes as soon as it is all
-    /// in.
-    send_after_dictation: bool,
+    dictation: FieldDictation,
     /// What otto-stash has stashed, shown with the next request in its
     /// card's place; `None` outside asking.
     stashed: Option<Stashed>,
@@ -364,8 +361,7 @@ impl Launcher {
             last_tick: Instant::now(),
             stashed: None,
             thumbnailer: None,
-            dictation: None,
-            send_after_dictation: false,
+            dictation: FieldDictation::default(),
             ask,
             chat: ChatView::new(dark()),
             log_following: true,
@@ -412,51 +408,20 @@ impl Launcher {
         }
     }
 
-    /// Ctrl+D starts dictating into the field, and stops it. When the field
-    /// picks from a list, the list's names are what it expects to hear.
-    /// While it runs, Escape or Backspace takes back what it typed, Enter
-    /// stops it and sends the request once the last words are in, and any
-    /// other key stops it. Returns whether the key was taken.
+    /// Ctrl+D starts dictating into the field, and stops it; the keys are
+    /// otto-agents-kit's. When the field picks from a list, the list's names
+    /// are what it expects to hear. Returns whether the key was taken.
     fn dictation_key(&mut self, keysym: Keysym, control: Option<char>) -> bool {
-        let Some(dictation) = self.dictation.as_mut() else {
-            if control == Some('d') {
-                let mut dictation = Dictation::start(Engine::from_config(), &mut self.input);
-                // A list is picked from, so what is heard is one of its
-                // names. A request to an agent is free speech.
-                if self.ask.is_none() {
-                    dictation.set_vocabulary(Vocabulary::new(
-                        self.items.iter().map(|item| item.title.clone()),
-                    ));
-                }
-                self.dictation = Some(dictation);
-                self.dirty = true;
-                return true;
-            }
-            return false;
-        };
-        match keysym {
-            Keysym::Escape | Keysym::BackSpace => {
-                if let Some(dictation) = self.dictation.take() {
-                    dictation.cancel(&mut self.input);
-                }
-                self.send_after_dictation = false;
-                self.refilter();
-            }
-            Keysym::Return | Keysym::KP_Enter => {
-                dictation.stop();
-                self.send_after_dictation = true;
-            }
-            // Modifiers never stop it: Ctrl+D itself starts with one.
-            Keysym::Control_L
-            | Keysym::Control_R
-            | Keysym::Alt_L
-            | Keysym::Alt_R
-            | Keysym::Super_L
-            | Keysym::Super_R
-            | Keysym::Meta_L
-            | Keysym::Meta_R
-            | Keysym::Caps_Lock => {}
-            _ => dictation.stop(),
+        // A request to an agent is free speech.
+        let picks = self.ask.is_none();
+        let items = &self.items;
+        let key = self.dictation.key(keysym, control, &mut self.input, || {
+            picks.then(|| Vocabulary::new(items.iter().map(|item| item.title.clone())))
+        });
+        match key {
+            DictationKey::Ignored => return false,
+            DictationKey::Taken => {}
+            DictationKey::Cancelled => self.refilter(),
         }
         self.dirty = true;
         true
@@ -465,20 +430,15 @@ impl Launcher {
     /// Type in what the dictation heard, move its equaliser, and send the
     /// request when Enter asked for it and the last words are in.
     fn follow_dictation(&mut self) {
-        let Some(dictation) = self.dictation.as_mut() else {
+        let Some(followed) = self.dictation.follow(&mut self.input) else {
             return;
         };
-        let before = self.input.value().len();
-        let status = dictation.update(&mut self.input);
         self.dirty = true;
-        if self.input.value().len() != before {
+        if followed.changed {
             self.refilter();
         }
-        if status == dictation::Status::Done {
-            self.dictation = None;
-            if std::mem::take(&mut self.send_after_dictation) {
-                self.activate();
-            }
+        if followed.send {
+            self.activate();
         }
     }
 
@@ -990,6 +950,16 @@ impl Launcher {
             .and_then(|ask| ask.terminal_at(index))
             .is_some_and(|terminal| terminal.focus(windows::focus_matching));
         if in_terminal {
+            self.close();
+            return;
+        }
+        // A session an app started about one of its files opens in that app,
+        // beside the file: Preview's, in Preview.
+        let opened_elsewhere = self.ask.as_ref().is_some_and(|ask| {
+            ask.session_at(index)
+                .is_some_and(|session| ask.opener_at(index).open(session))
+        });
+        if opened_elsewhere {
             self.close();
             return;
         }
@@ -2144,9 +2114,7 @@ impl App for Launcher {
     }
 
     fn on_keyboard_leave(&mut self, _ctx: &AppContext, _surface: &wl_surface::WlSurface) {
-        if let Some(dictation) = self.dictation.as_mut() {
-            dictation.stop();
-        }
+        self.dictation.stop();
         // Something else has taken the keyboard. A modal that has lost its
         // input is only in the way — but not before it has ever had it, which
         // is what `engaged` guards against at startup.
@@ -2553,8 +2521,8 @@ impl App for Launcher {
         if self.closing_at.is_some() {
             return Some(Duration::from_millis(8));
         }
-        if self.dictation.is_some() {
-            return Some(dictation::FRAME);
+        if let Some(timeout) = self.dictation.idle_timeout() {
+            return Some(timeout);
         }
         Some(
             if self.settle_until.is_some() || self.list_busy || self.log_busy {
@@ -2572,7 +2540,7 @@ impl App for Launcher {
             .iter()
             .filter_map(|s| s.poll_fd())
             .chain(self.ask.as_ref().map(Ask::poll_fd))
-            .chain(self.dictation.as_ref().map(Dictation::poll_fd))
+            .chain(self.dictation.poll_fd())
             .chain(self.stashed.as_ref().map(Stashed::poll_fd))
             .chain(self.thumbnailer.as_ref().map(Thumbnailer::poll_fd))
             .collect()

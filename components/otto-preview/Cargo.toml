@@ -16,6 +16,9 @@ path = "src/main.rs"
 # otto-media-kit. This crate is only the window around them.
 [dependencies]
 otto-kit = { path = "../otto-kit" }
+# The chat beside the document: the same conversation and log the launcher hosts.
+otto-agents-kit = { path = "../otto-agents-kit", features = ["dictation"] }
+otto-agents-client = { path = "../otto-agents-client" }
 otto-peek = { path = "../otto-peek" }
 otto-files = { path = "../otto-files" }
 # Library only: the GStreamer worker is its own binary, installed beside this one.
@@ -24,7 +27,14 @@ smithay-client-toolkit = { workspace = true, features = ["calloop", "xkbcommon"]
 wayland-client.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread"] }
 tracing.workspace = true
+# Marks and the MCP tools speak JSON; a rendered view goes back as base64.
+serde_json.workspace = true
+serde.workspace = true
+base64 = "0.22"
 zbus.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
 
 [lints]
 workspace = true

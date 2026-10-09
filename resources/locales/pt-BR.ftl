@@ -1381,6 +1381,9 @@ agents-permission-reject = Recusar
 agents-permission-reject-always = Nunca permitir
 # The button that hands the question to the Ask window instead.
 agents-permission-open-in-ask = Abrir no Ask
+# The same button for a session started in Preview about a file: the
+# question opens there, beside the file. Use the app's name as in its menu entry.
+agents-permission-open-in-preview = Abrir no Studio
 
 
 ## Emoji picker
@@ -1678,6 +1681,21 @@ peek-pdf-install-rasteriser = Para ver as páginas, instale um destes: { $packag
 # $page and $pages are whole numbers. Very little room — keep it to a few
 # characters, and drop the word for "page" if the language can.
 peek-page-of = { $page } / { $pages }
+
+
+## Preview — chat
+
+# The chat field beside a file in Preview, before anything is typed.
+# $name is the file's name.
+preview-chat-placeholder = Pergunte sobre { $name }
+# Shown in the empty chat beside a file, until something is asked.
+preview-chat-empty = Pergunte a um agente sobre este arquivo ou peça para alterá-lo.
+# Over the chat field in Preview, when marks drawn on the file will go with
+# the next message. $marks lists their numbers ("1, 2"); $count is how many.
+preview-chat-marks = { $count ->
+    [one] A marca { $marks } vai com a sua mensagem
+   *[other] As marcas { $marks } vão com a sua mensagem
+}
 
 
 ## Peek — listings
@@ -2018,3 +2036,39 @@ settings-dictation-hotwords-boost = Reforço de nomes
 settings-dictation-hotwords-boost-detail = O quanto os nomes que um campo espera são favorecidos. Acima de 6, as palavras em volta de um nome começam a se deformar.
 settings-dictation-autostart = Iniciar o ditado ao entrar
 settings-dictation-autostart-detail = Executa o otto-dictate a partir de ~/.config/autostart, que o Otto lê quando xdg_autostart está ativado
+
+## Studio — menus and the keyboard shortcuts sheet
+
+studio-menu-file = Arquivo
+studio-menu-edit = Editar
+studio-menu-marks = Marcas
+studio-menu-view = Visualizar
+studio-menu-help = Ajuda
+studio-close = Fechar janela
+studio-undo = Desfazer
+studio-redo = Refazer
+studio-copy = Copiar
+studio-select-all = Selecionar tudo
+studio-pen = Caneta
+studio-show-marks = Mostrar marcas
+studio-delete-mark = Apagar a última marca
+studio-zoom-in = Ampliar
+studio-zoom-out = Reduzir
+studio-zoom-fit = Ajustar à janela
+studio-previous-page = Página anterior
+studio-next-page = Próxima página
+studio-sidebar = Mostrar páginas
+studio-chat = Mostrar chat
+studio-shortcuts = Atalhos de teclado
+studio-sheet-document = Documento
+studio-sheet-chat = Chat
+studio-sheet-scroll = Rolar
+studio-sheet-page = Próxima tela
+studio-sheet-ends = Início e fim
+studio-sheet-zoom-pointer = Zoom no ponteiro
+studio-sheet-stop = Largar a caneta
+studio-sheet-send = Enviar
+studio-sheet-dictate = Ditar
+studio-sheet-stop-agent = Parar o agente
+studio-sheet-to-document = Voltar ao documento
+studio-sheet-cmd = Cmd funciona onde o Ctrl funciona

@@ -12,20 +12,20 @@ use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::schema::v1::{
     AgentCapabilities, CancelNotification, ClientCapabilities, ContentBlock,
     CreateElicitationRequest, CreateElicitationResponse, ElicitationAction,
-    ElicitationCapabilities, ElicitationFormCapabilities, ElicitationMode, InitializeRequest,
-    LoadSessionRequest, Meta, NewSessionRequest, PromptRequest, PromptResponse,
-    RequestPermissionRequest, RequestPermissionResponse, ResourceLink, ResumeSessionRequest,
-    SessionConfigOptionValue, SessionId, SessionModeState, SessionNotification, SessionUpdate,
-    SetSessionConfigOptionRequest, SetSessionModeRequest, StopReason, TextContent, ToolCallContent,
-    ToolCallStatus,
+    ElicitationCapabilities, ElicitationFormCapabilities, ElicitationMode, EnvVariable,
+    InitializeRequest, LoadSessionRequest, McpServer, McpServerStdio, Meta, NewSessionRequest,
+    PromptRequest, PromptResponse, RequestPermissionRequest, RequestPermissionResponse,
+    ResourceLink, ResumeSessionRequest, SessionConfigOptionValue, SessionId, SessionModeState,
+    SessionNotification, SessionUpdate, SetSessionConfigOptionRequest, SetSessionModeRequest,
+    StopReason, TextContent, ToolCallContent, ToolCallStatus,
 };
 use agent_client_protocol::{AcpAgent, AcpAgentConfig, Agent, Client, ConnectTo, ConnectionTo};
 use ahp_types::state::AgentInfo;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::agent::{
-    Backend, Decision, HistoryPart, HistoryTurn, Mode, SessionCommand, SessionEvent, SessionSpec,
-    TurnOutcome, agent_info,
+    Attachment, Backend, Decision, HistoryPart, HistoryTurn, Mode, SessionCommand, SessionEvent,
+    SessionSpec, TurnOutcome, agent_info,
 };
 use crate::attached::Attached;
 use crate::config::{self, AgentConfig, PermissionPolicy, SkillDelivery};
@@ -157,14 +157,26 @@ impl Backend for AcpBackend {
             .args(crate::config::expand_args(&agent.args))
             .envs(crate::config::expand_env(&agent.env));
         let transport = AcpAgent::new(config);
+        // A session may ask for another of the plugins' agents, as Preview's
+        // asks for `studio`; one no plugin has leaves the configured agent.
+        let asked = spec.runs_as.as_deref().filter(|name| {
+            let found = skills::agent_file(&self.plugins, name).is_some();
+            if !found {
+                tracing::warn!(agent = name, "the session asked for an agent no plugin has");
+            }
+            found
+        });
+        // Its questions are asked in its own name and with its own face.
         let permissions = Permissions {
             policy: agent.permissions,
-            agent: agent.name.clone(),
-            icon: dialog::agent_icon(agent.agent.as_deref()),
+            agent: asked
+                .map(dialog::agent_name)
+                .unwrap_or_else(|| agent.name.clone()),
+            icon: dialog::agent_icon(asked.or(agent.agent.as_deref())),
         };
         // Claude loads plugins itself, on every session it opens, resumed or
         // not: what it knows of them lives in the process, not the history.
-        let run_as = agent.agent.as_deref().and_then(|name| {
+        let run_as = asked.or(agent.agent.as_deref()).and_then(|name| {
             let found = skills::agent_file(&self.plugins, name);
             if found.is_none() {
                 tracing::warn!(agent = name, "no plugin has an agent file by that name");
@@ -193,6 +205,12 @@ impl Backend for AcpBackend {
             spec.cwd,
             spec.attached,
             meta,
+            mcp_servers(&spec.mcp_servers),
+            spec.instructions,
+            ShownBeside::new(
+                spec.mcp_servers.iter().map(|server| server.name.as_str()),
+                spec.subject,
+            ),
             self.images.clone(),
             commands,
             events,
@@ -250,10 +268,16 @@ pub async fn run_session(
     cwd: PathBuf,
     earlier: Vec<crate::agent::Attachment>,
     meta: Option<Meta>,
+    servers: Vec<McpServer>,
+    instructions: Option<String>,
+    beside: ShownBeside,
     images: Option<ImageCache>,
     mut commands: mpsc::UnboundedReceiver<SessionCommand>,
     events: mpsc::UnboundedSender<SessionEvent>,
 ) {
+    // What the client already shows next to the chat, whose pictures stay
+    // with the agent.
+    let beside = Arc::new(Mutex::new(beside));
     // The turn whose updates are being streamed, shared with the update handler.
     let current_turn: Arc<Mutex<Option<String>>> = Arc::default();
     // The modes the agent advertised when the session opened and the
@@ -285,27 +309,24 @@ pub async fn run_session(
                 let modes = Arc::clone(&modes);
                 let images = images.clone();
                 let shown = Arc::clone(&shown);
+                let beside = Arc::clone(&beside);
                 async move |notification: SessionNotification, _connection| {
+                    let mut update = notification.update;
+                    lock(&beside).strip(&mut update);
                     // A mode change belongs to the session, not to a turn or
                     // the replay: the agent switched itself, or someone did
                     // from its own interface.
-                    if let SessionUpdate::CurrentModeUpdate(update) = &notification.update {
+                    if let SessionUpdate::CurrentModeUpdate(update) = &update {
                         announce_modes(&events, &modes, update.current_mode_id.to_string());
                         return Ok(());
                     }
                     // No turn runs while the agent replays its history, so
                     // those updates belong to the replay.
                     if let Some(replay) = lock(&replay).as_mut() {
-                        replay.take(notification.update);
+                        replay.take(update);
                         return Ok(());
                     }
-                    forward_update(
-                        &current_turn,
-                        &events,
-                        images.as_ref(),
-                        &shown,
-                        notification.update,
-                    );
+                    forward_update(&current_turn, &events, images.as_ref(), &shown, update);
                     Ok(())
                 }
             },
@@ -421,6 +442,7 @@ pub async fn run_session(
                     resume,
                     &cwd,
                     meta,
+                    servers,
                     images.as_ref(),
                     &replay,
                 )
@@ -499,6 +521,8 @@ pub async fn run_session(
                 let _ = events.send(SessionEvent::Ready {
                     agent_session: Some(session_id.0.to_string()),
                 });
+                // A session taken up again had them in its first turn.
+                let instructions = instructions.filter(|_| fresh);
                 drive(
                     &connection,
                     session_id,
@@ -507,6 +531,7 @@ pub async fn run_session(
                     &current_turn,
                     &modes,
                     &attached,
+                    instructions,
                 )
                 .await
             }
@@ -550,6 +575,22 @@ impl Replay {
     fn take(&mut self, update: SessionUpdate) {
         match update {
             SessionUpdate::UserMessageChunk(chunk) => {
+                // A file that went with the message, replayed as the link it
+                // was sent as.
+                if let ContentBlock::ResourceLink(link) = &chunk.content {
+                    let attachment = Attachment {
+                        name: link.name.clone(),
+                        uri: link.uri.clone(),
+                    };
+                    match self.turns.last_mut() {
+                        Some(turn) if turn.parts.is_empty() => turn.attachments.push(attachment),
+                        _ => self.turns.push(HistoryTurn {
+                            attachments: vec![attachment],
+                            ..HistoryTurn::default()
+                        }),
+                    }
+                    return;
+                }
                 let Some(text) = text(chunk.content) else {
                     return;
                 };
@@ -566,7 +607,7 @@ impl Replay {
                     Some(turn) if turn.parts.is_empty() => turn.prompt.push_str(&text),
                     _ => self.turns.push(HistoryTurn {
                         prompt: text,
-                        parts: Vec::new(),
+                        ..HistoryTurn::default()
                     }),
                 }
             }
@@ -629,6 +670,26 @@ impl Replay {
         }
     }
 
+    /// The turns replayed, each prompt as the person wrote it.
+    ///
+    /// An agent may replay a prompt as the one text it made of it: Otto's
+    /// instructions to the agent ahead of it, and each file that went with
+    /// it as a `[@name](uri)` link after it. The instructions are taken out,
+    /// as the chat never showed them, and the links become the turn's
+    /// attachments again.
+    fn finish(self) -> Vec<HistoryTurn> {
+        self.turns
+            .into_iter()
+            .map(|mut turn| {
+                let prompt = without_context(&turn.prompt);
+                let (prompt, linked) = take_file_links(&prompt);
+                turn.prompt = prompt;
+                turn.attachments.extend(linked);
+                turn
+            })
+            .collect()
+    }
+
     /// Puts every picture in a replayed tool call's `content` into the turn, as
     /// [`forward_tool_pictures`] does for a turn as it happens.
     fn take_pictures(&mut self, tool_call_id: &str, content: &[ToolCallContent]) {
@@ -678,12 +739,14 @@ struct Opened {
 /// chat is rebuilt from. `session/resume` restores the agent alone and is the
 /// fallback for agents that cannot load; both cost the same, since the agent
 /// reads its own history either way.
+#[allow(clippy::too_many_arguments)]
 async fn open_session(
     connection: &ConnectionTo<Agent>,
     capabilities: &AgentCapabilities,
     resume: Option<String>,
     cwd: &Path,
     meta: Option<Meta>,
+    servers: Vec<McpServer>,
     images: Option<&ImageCache>,
     replay: &Mutex<Option<Replay>>,
 ) -> Result<Opened, agent_client_protocol::Error> {
@@ -693,7 +756,9 @@ async fn open_session(
                 images: images.cloned(),
                 ..Replay::default()
             });
-            let request = LoadSessionRequest::new(id.clone(), cwd).meta(meta.clone());
+            let request = LoadSessionRequest::new(id.clone(), cwd)
+                .mcp_servers(servers.clone())
+                .meta(meta.clone());
             let loaded = connection.send_request(request).block_task().await;
             let collected = lock(replay).take();
             match loaded {
@@ -701,7 +766,7 @@ async fn open_session(
                     tracing::info!(agent_session = %id, "agent session loaded with its history");
                     return Ok(Opened {
                         session_id: SessionId::from(id),
-                        history: collected.map(|replay| replay.turns),
+                        history: collected.map(Replay::finish),
                         modes: loaded.modes,
                         fresh: false,
                     });
@@ -714,7 +779,9 @@ async fn open_session(
             }
         }
         let taken_up = if capabilities.session_capabilities.resume.is_some() {
-            let request = ResumeSessionRequest::new(id.clone(), cwd).meta(meta.clone());
+            let request = ResumeSessionRequest::new(id.clone(), cwd)
+                .mcp_servers(servers.clone())
+                .meta(meta.clone());
             Some(connection.send_request(request).block_task().await)
         } else {
             None
@@ -743,7 +810,7 @@ async fn open_session(
         }
     }
     let session = connection
-        .send_request(NewSessionRequest::new(cwd).meta(meta))
+        .send_request(NewSessionRequest::new(cwd).mcp_servers(servers).meta(meta))
         .block_task()
         .await?;
     Ok(Opened {
@@ -752,6 +819,26 @@ async fn open_session(
         modes: session.modes,
         fresh: true,
     })
+}
+
+/// The session's MCP servers as ACP describes them.
+fn mcp_servers(servers: &[crate::agent::McpStdio]) -> Vec<McpServer> {
+    servers
+        .iter()
+        .map(|server| {
+            McpServer::Stdio(
+                McpServerStdio::new(server.name.clone(), server.command.clone())
+                    .args(server.args.clone())
+                    .env(
+                        server
+                            .env
+                            .iter()
+                            .map(|(name, value)| EnvVariable::new(name.clone(), value.clone()))
+                            .collect(),
+                    ),
+            )
+        })
+        .collect()
 }
 
 /// The agent's modes as the host keeps them: the current one's id, and the
@@ -807,6 +894,7 @@ fn withdraw_mode(events: &mpsc::UnboundedSender<SessionEvent>, modes: &Mutex<Mod
 
 /// Runs prompts, cancellations and mode changes until the host closes the
 /// session. What each prompt attaches is recorded in `attached`.
+#[allow(clippy::too_many_arguments)]
 async fn drive(
     connection: &ConnectionTo<Agent>,
     session_id: SessionId,
@@ -815,6 +903,7 @@ async fn drive(
     current_turn: &Mutex<Option<String>>,
     modes: &Arc<Mutex<Modes>>,
     attached: &Mutex<Attached>,
+    mut instructions: Option<String>,
 ) -> Result<(), agent_client_protocol::Error> {
     let mut pending: Option<(String, PendingPrompt)> = None;
     loop {
@@ -836,11 +925,20 @@ async fn drive(
                     // of attachments alone has no text block: models refuse
                     // an empty one.
                     let text = (!text.trim().is_empty()).then(|| ContentBlock::Text(TextContent::new(text)));
+                    // The client's instructions go ahead of the first prompt,
+                    // in a block of their own: the agent reads them, the chat
+                    // never shows them.
+                    let instructions = instructions.take().map(|instructions| {
+                        ContentBlock::Text(TextContent::new(format!(
+                            "<otto-context>\n{instructions}\n</otto-context>"
+                        )))
+                    });
                     // Written away from the desktop: said first, so the agent
                     // answers someone on their phone rather than at the desk.
                     let remote = remote.map(|via| ContentBlock::Text(TextContent::new(remote_note(&via))));
-                    let prompt = remote
+                    let prompt = instructions
                         .into_iter()
+                        .chain(remote)
                         .chain(text)
                         .chain(attachments.into_iter().map(|attachment| {
                             ContentBlock::ResourceLink(ResourceLink::new(attachment.name, attachment.uri))
@@ -992,6 +1090,105 @@ fn forward_tool_pictures(
     }
 }
 
+/// What a session's client already shows beside the chat: the answers of its
+/// own MCP servers and the files the session is about. Preview gives its
+/// server and the file in its window, so a picture from `preview_render`, or
+/// from the agent reading that file, would be the window next to the chat
+/// again: it stays with the agent and out of the answer.
+#[derive(Debug, Default)]
+pub struct ShownBeside {
+    /// `mcp__<server>__`, the prefix Claude gives a server's tools.
+    tools: Vec<String>,
+    files: Vec<PathBuf>,
+    /// The tool calls found to be about one of them. A call is reported
+    /// several times, and what it is about may only arrive with its input.
+    calls: BTreeSet<String>,
+}
+
+impl ShownBeside {
+    pub fn new<'a>(servers: impl Iterator<Item = &'a str>, files: Vec<PathBuf>) -> Self {
+        Self {
+            tools: servers.map(|name| format!("mcp__{name}__")).collect(),
+            files,
+            calls: BTreeSet::new(),
+        }
+    }
+
+    /// Takes the pictures out of a tool call's `update` when the call is
+    /// about what the client shows.
+    fn strip(&mut self, update: &mut SessionUpdate) {
+        if self.tools.is_empty() && self.files.is_empty() {
+            return;
+        }
+        let (id, content) = match update {
+            SessionUpdate::ToolCall(call) => {
+                let id = call.tool_call_id.to_string();
+                let names = [tool_name_in(call.meta.as_ref()), Some(call.title.as_str())];
+                let paths = call
+                    .locations
+                    .iter()
+                    .map(|location| location.path.as_path());
+                if self.about(&names, paths, call.raw_input.as_ref()) {
+                    self.calls.insert(id.clone());
+                }
+                (id, Some(&mut call.content))
+            }
+            SessionUpdate::ToolCallUpdate(update) => {
+                let id = update.tool_call_id.to_string();
+                let fields = &mut update.fields;
+                let names = [tool_name_in(update.meta.as_ref()), fields.title.as_deref()];
+                let paths = fields
+                    .locations
+                    .iter()
+                    .flatten()
+                    .map(|location| location.path.as_path());
+                if self.about(&names, paths, fields.raw_input.as_ref()) {
+                    self.calls.insert(id.clone());
+                }
+                (id, fields.content.as_mut())
+            }
+            _ => return,
+        };
+        if let Some(content) = content.filter(|_| self.calls.contains(&id)) {
+            content.retain(|piece| {
+                !matches!(
+                    piece,
+                    ToolCallContent::Content(piece)
+                        if matches!(piece.content, ContentBlock::Image(_) | ContentBlock::ResourceLink(_))
+                )
+            });
+        }
+    }
+
+    /// Whether a tool named one of `names`, about `paths` and `input`, is one
+    /// of the client's own or reads one of its files.
+    fn about<'a>(
+        &self,
+        names: &[Option<&str>],
+        paths: impl Iterator<Item = &'a Path>,
+        input: Option<&'a serde_json::Value>,
+    ) -> bool {
+        let own = names.iter().flatten().any(|name| {
+            self.tools
+                .iter()
+                .any(|prefix| name.starts_with(prefix.as_str()))
+        });
+        let input_path = input
+            .and_then(|input| input.get("file_path").or_else(|| input.get("path")))
+            .and_then(serde_json::Value::as_str)
+            .map(Path::new);
+        own || paths
+            .chain(input_path)
+            .any(|path| self.files.iter().any(|file| file == path))
+    }
+}
+
+/// The tool's own name in a tool call's `_meta`, where claude-agent-acp keeps
+/// it (`claudeCode.toolName`).
+fn tool_name_in(meta: Option<&Meta>) -> Option<&str> {
+    meta?.get("claudeCode")?.get("toolName")?.as_str()
+}
+
 /// How the note on a message written away from the desktop starts, so the
 /// history can leave it out again.
 const REMOTE_NOTE: &str = "[Otto: written on the person's phone";
@@ -1011,6 +1208,52 @@ fn without_remote_note(text: &str) -> &str {
     text.strip_prefix(REMOTE_NOTE)
         .and_then(|rest| rest.find(']').map(|end| rest[end + 1..].trim_start()))
         .unwrap_or(text)
+}
+
+/// `text` without the `<otto-context>` block Otto put ahead of a first
+/// prompt for the agent.
+fn without_context(text: &str) -> String {
+    const OPEN: &str = "<otto-context>";
+    const CLOSE: &str = "</otto-context>";
+    let Some(start) = text.find(OPEN) else {
+        return text.to_owned();
+    };
+    let end = text[start..]
+        .find(CLOSE)
+        .map_or(text.len(), |end| start + end + CLOSE.len());
+    format!("{}{}", &text[..start], &text[end..])
+        .trim()
+        .to_owned()
+}
+
+/// `text` without the `[@name](uri)` links an agent replays a message's files
+/// as, and the files.
+fn take_file_links(text: &str) -> (String, Vec<Attachment>) {
+    let mut kept = String::new();
+    let mut files = Vec::new();
+    let mut rest = text;
+    while let Some(start) = rest.find("[@") {
+        let link = rest[start + 2..]
+            .split_once("](")
+            .and_then(|(name, after)| {
+                let (uri, after) = after.split_once(')')?;
+                let plain = !name.contains(['[', ']', '\n']) && !uri.contains(char::is_whitespace);
+                (plain && uri.contains("://")).then_some((name, uri, after))
+            });
+        let Some((name, uri, after)) = link else {
+            kept.push_str(&rest[..start + 2]);
+            rest = &rest[start + 2..];
+            continue;
+        };
+        kept.push_str(&rest[..start]);
+        files.push(Attachment {
+            name: name.to_owned(),
+            uri: uri.to_owned(),
+        });
+        rest = after;
+    }
+    kept.push_str(rest);
+    (kept.trim().to_owned(), files)
 }
 
 fn text(content: ContentBlock) -> Option<String> {
@@ -1101,6 +1344,149 @@ mod replay_tests {
 
     fn asked(text: &str) -> SessionUpdate {
         SessionUpdate::UserMessageChunk(ContentChunk::new(said(text)))
+    }
+
+    /// A first prompt replayed as one text: Otto's instructions, what was
+    /// typed and the files, which come back as the person sent them.
+    #[test]
+    fn a_replayed_prompt_comes_back_as_the_person_sent_it() {
+        let mut replay = Replay::default();
+        replay.take(asked(
+            "<otto-context>\nYou are working inside Preview.\n</otto-context>show me the \
+             histogram of this image[@a 1.jpg](file:///home/me/a%201.jpg)",
+        ));
+        replay.take(SessionUpdate::AgentMessageChunk(ContentChunk::new(said(
+            "Here.",
+        ))));
+        replay.take(asked(
+            "which is this?[@marks-1.json](file:///run/m-1.json)[@marks-1.png](file:///run/m-1.png)",
+        ));
+        replay.take(SessionUpdate::AgentMessageChunk(ContentChunk::new(said(
+            "Chrome.",
+        ))));
+        replay.take(asked("and [@ me](not a link) [x](file:///y)"));
+        let turns = replay.finish();
+        assert_eq!(turns[0].prompt, "show me the histogram of this image");
+        assert_eq!(
+            turns[0].attachments,
+            [Attachment {
+                name: "a 1.jpg".into(),
+                uri: "file:///home/me/a%201.jpg".into()
+            }]
+        );
+        assert_eq!(turns[1].prompt, "which is this?");
+        assert_eq!(turns[2].prompt, "and [@ me](not a link) [x](file:///y)");
+        assert!(turns[2].attachments.is_empty());
+        assert_eq!(
+            turns[1]
+                .attachments
+                .iter()
+                .map(|a| a.name.as_str())
+                .collect::<Vec<_>>(),
+            ["marks-1.json", "marks-1.png"]
+        );
+    }
+
+    /// An agent that replays a message's files as links of their own.
+    #[test]
+    fn replayed_resource_links_go_with_their_message() {
+        let mut replay = Replay::default();
+        replay.take(asked("look"));
+        replay.take(SessionUpdate::UserMessageChunk(ContentChunk::new(
+            ContentBlock::ResourceLink(ResourceLink::new("a.jpg", "file:///a.jpg")),
+        )));
+        let turns = replay.finish();
+        assert_eq!(turns[0].prompt, "look");
+        assert_eq!(turns[0].attachments[0].uri, "file:///a.jpg");
+    }
+
+    /// The `_meta` claude-agent-acp puts on a call to `tool`.
+    fn claude_tool(tool: &str) -> Meta {
+        serde_json::json!({ "claudeCode": { "toolName": tool } })
+            .as_object()
+            .unwrap()
+            .clone()
+    }
+
+    /// A tool call that answered with a picture.
+    fn pictured(call: ToolCall) -> SessionUpdate {
+        use agent_client_protocol::schema::v1::{Content, ImageContent};
+        SessionUpdate::ToolCall(call.content(vec![
+            ToolCallContent::Content(Content::new(ContentBlock::Image(ImageContent::new(
+                "iVBORw0KGgo=",
+                "image/png",
+            )))),
+            ToolCallContent::Content(Content::new(said("rendered"))),
+        ]))
+    }
+
+    fn pictures(update: &SessionUpdate) -> usize {
+        let SessionUpdate::ToolCall(call) = update else {
+            return 0;
+        };
+        call.content
+            .iter()
+            .filter(|piece| {
+                matches!(piece, ToolCallContent::Content(piece) if matches!(piece.content, ContentBlock::Image(_)))
+            })
+            .count()
+    }
+
+    #[test]
+    fn pictures_of_what_the_client_shows_stay_with_the_agent() {
+        use agent_client_protocol::schema::v1::ToolCallLocation;
+        let file = PathBuf::from("/home/me/Pictures/a.jpg");
+        let mut beside = ShownBeside::new(["preview"].into_iter(), vec![file.clone()]);
+
+        // The client's own server, by the tool's name.
+        let mut render = pictured(
+            ToolCall::new("1", "preview_render").meta(claude_tool("mcp__preview__preview_render")),
+        );
+        beside.strip(&mut render);
+        assert_eq!(pictures(&render), 0);
+        // Its words stay.
+        let SessionUpdate::ToolCall(call) = &render else {
+            unreachable!()
+        };
+        assert_eq!(call.content.len(), 1);
+
+        // Reading the file the client shows.
+        let mut read = pictured(
+            ToolCall::new("2", "Read a.jpg").locations(vec![ToolCallLocation::new(file.clone())]),
+        );
+        beside.strip(&mut read);
+        assert_eq!(pictures(&read), 0);
+
+        // A later update of a call found to be about it loses its pictures too.
+        let mut later = SessionUpdate::ToolCallUpdate(ToolCallUpdate::new(
+            "2",
+            ToolCallUpdateFields::new().content(vec![ToolCallContent::Content(
+                agent_client_protocol::schema::v1::Content::new(ContentBlock::ResourceLink(
+                    ResourceLink::new("a.jpg", "file:///home/me/Pictures/a.jpg"),
+                )),
+            )]),
+        ));
+        beside.strip(&mut later);
+        let SessionUpdate::ToolCallUpdate(update) = &later else {
+            unreachable!()
+        };
+        assert_eq!(update.fields.content.as_ref().map(Vec::len), Some(0));
+
+        // Anything else is shown as before.
+        let mut other =
+            pictured(
+                ToolCall::new("3", "Read b.jpg").locations(vec![ToolCallLocation::new(
+                    PathBuf::from("/home/me/Pictures/b.jpg"),
+                )]),
+            );
+        beside.strip(&mut other);
+        assert_eq!(pictures(&other), 1);
+        let mut elsewhere = ShownBeside::default();
+        let mut render = pictured(
+            ToolCall::new("4", "preview_render").meta(claude_tool("mcp__preview__preview_render")),
+        );
+        elsewhere.strip(&mut render);
+        assert_eq!(pictures(&render), 1);
     }
 
     fn answered(text: &str) -> SessionUpdate {

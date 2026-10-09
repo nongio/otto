@@ -1343,6 +1343,9 @@ agents-permission-reject = 拒否
 agents-permission-reject-always = 許可しない
 # The button that hands the question to the Ask window instead.
 agents-permission-open-in-ask = Ask で開く
+# The same button for a session started in Preview about a file: the
+# question opens there, beside the file. Use the app's name as in its menu entry.
+agents-permission-open-in-preview = Studio で開く
 
 
 ## Emoji picker
@@ -1634,6 +1637,20 @@ peek-pdf-install-rasteriser = ページを表示するには次のいずれか�
 # パネルのタイトル帯の隅に出る、PDF の何ページ目かの表示。
 # $page と $pages は整数。幅がとても狭いので数文字に収める。
 peek-page-of = { $page } / { $pages }
+
+
+## Preview — chat
+
+# The chat field beside a file in Preview, before anything is typed.
+# $name is the file's name.
+preview-chat-placeholder = { $name } について質問
+# Shown in the empty chat beside a file, until something is asked.
+preview-chat-empty = このファイルについてエージェントに質問したり、変更を頼んだりできます。
+# Over the chat field in Preview, when marks drawn on the file will go with
+# the next message. $marks lists their numbers ("1, 2"); $count is how many.
+preview-chat-marks = { $count ->
+   *[other] マーク { $marks } をメッセージと一緒に送ります
+}
 
 
 ## Peek — listings
@@ -1986,3 +2003,39 @@ settings-dictation-hotwords-boost = 名前の優先度
 settings-dictation-hotwords-boost-detail = フィールドが想定する名前をどれだけ優先するか。6 を超えると、名前の前後の言葉が崩れはじめます。
 settings-dictation-autostart = ログイン時に音声入力を起動
 settings-dictation-autostart-detail = ~/.config/autostart から otto-dictate を起動します。Otto は xdg_autostart がオンのときにこのフォルダを読み込みます
+
+## Studio — menus and the keyboard shortcuts sheet
+
+studio-menu-file = ファイル
+studio-menu-edit = 編集
+studio-menu-marks = マーク
+studio-menu-view = 表示
+studio-menu-help = ヘルプ
+studio-close = ウインドウを閉じる
+studio-undo = 取り消す
+studio-redo = やり直す
+studio-copy = コピー
+studio-select-all = すべてを選択
+studio-pen = ペン
+studio-show-marks = マークを表示
+studio-delete-mark = 最後のマークを削除
+studio-zoom-in = 拡大
+studio-zoom-out = 縮小
+studio-zoom-fit = ウインドウに合わせる
+studio-previous-page = 前のページ
+studio-next-page = 次のページ
+studio-sidebar = ページを表示
+studio-chat = チャットを表示
+studio-shortcuts = キーボードショートカット
+studio-sheet-document = 書類
+studio-sheet-chat = チャット
+studio-sheet-scroll = スクロール
+studio-sheet-page = 次の画面
+studio-sheet-ends = 先頭と末尾
+studio-sheet-zoom-pointer = ポインタ位置でズーム
+studio-sheet-stop = ペンを置く
+studio-sheet-send = 送信
+studio-sheet-dictate = 音声入力
+studio-sheet-stop-agent = エージェントを停止
+studio-sheet-to-document = 書類に戻る
+studio-sheet-cmd = Cmd は Ctrl と同じように使えます

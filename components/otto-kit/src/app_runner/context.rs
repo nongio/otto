@@ -31,6 +31,10 @@ thread_local! {
     static TYPED_QUEUE_HANDLE: RefCell<Option<Box<dyn std::any::Any>>> = const { RefCell::new(None) };
     #[allow(clippy::type_complexity)]
     static FRAME_REQUEST_FN: RefCell<Option<Box<dyn Fn(&wl_surface::WlSurface)>>> = const { RefCell::new(None) };
+    /// Makes a window's `org_kde_kwin_appmenu` on the app's own queue, which
+    /// only the runner knows the type of. See [`AppContext::appmenu_for`].
+    #[allow(clippy::type_complexity)]
+    static APPMENU_FN: RefCell<Option<Box<dyn Fn(&wl_surface::WlSurface) -> Option<crate::protocols::org_kde_kwin_appmenu::OrgKdeKwinAppmenu>>>> = const { RefCell::new(None) };
     static CURRENT_CONFIGURE: RefCell<Option<(ObjectId, WindowConfigure, u32)>> = const { RefCell::new(None) };
     static WINDOWS: RefCell<Vec<crate::components::window::Window>> = const { RefCell::new(Vec::new()) };
     /// Per-window handlers for the compositor's "please close" request, keyed
@@ -196,6 +200,34 @@ thread_local! {
 thread_local! {
     static CURSOR_SHAPE_DEVICE: RefCell<Option<wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_device_v1::WpCursorShapeDeviceV1>> = const { RefCell::new(None) };
     static LAST_POINTER_ENTER_SERIAL: RefCell<u32> = const { RefCell::new(0) };
+    /// A drawn cursor asked for during the pointer batch, set once it ends.
+    static PENDING_CURSOR_IMAGE: RefCell<Option<CursorImage>> = const { RefCell::new(None) };
+    /// The drawn cursor showing now, its surface, and the memory behind it.
+    static CURSOR_IMAGE: RefCell<Option<CursorImageState>> = const { RefCell::new(None) };
+}
+
+/// A cursor drawn by the app rather than named from the theme: a pen over a
+/// canvas, a bin over something that a click deletes.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CursorImage {
+    /// Tells one picture from another, so the same one is not sent again.
+    pub key: String,
+    /// Premultiplied pixels, B, G, R, A in memory (`wl_shm` ARGB8888 on a
+    /// little-endian machine, Skia's N32), `width * 4` bytes a row.
+    pub pixels: Vec<u8>,
+    pub width: u32,
+    pub height: u32,
+    /// How many pixels make a point: the picture is drawn this much larger.
+    pub scale: u32,
+    /// The point that is the cursor's position, in points from the top left.
+    pub hotspot: (i32, i32),
+}
+
+struct CursorImageState {
+    key: String,
+    surface: wayland_client::protocol::wl_surface::WlSurface,
+    pool: smithay_client_toolkit::shm::slot::SlotPool,
+    _buffer: smithay_client_toolkit::shm::slot::Buffer,
 }
 
 // -- Rendering state --
@@ -295,6 +327,10 @@ pub struct AppContextData {
         Option<crate::protocols::otto_canvas_manager_v1::OttoCanvasManagerV1>,
     pub otto_text_cursor_manager:
         Option<crate::protocols::otto_text_cursor_manager_v1::OttoTextCursorManagerV1>,
+    /// `org_kde_kwin_appmenu_manager`: tells the compositor where a window's
+    /// menu is served, for the top bar. See [`crate::app_menu`].
+    pub kde_appmenu_manager:
+        Option<crate::protocols::org_kde_kwin_appmenu_manager::OrgKdeKwinAppmenuManager>,
     /// The other side of the caret: `otto_text_cursor_manager_v1` says where
     /// *someone else's* caret is, this says where ours is. `None` on a
     /// compositor without `zwp_text_input_v3`.
@@ -966,6 +1002,16 @@ impl<'a> AppContext<'a> {
             *qh.borrow_mut() = Some(Box::new(qh_clone));
         });
 
+        let manager = context_data.kde_appmenu_manager.clone();
+        let qh_clone = queue_handle.clone();
+        APPMENU_FN.with(|make| {
+            *make.borrow_mut() = Some(Box::new(move |surface: &wl_surface::WlSurface| {
+                manager
+                    .as_ref()
+                    .map(|manager| manager.create(surface, &qh_clone, ()))
+            }));
+        });
+
         let qh_clone = queue_handle.clone();
         FRAME_REQUEST_FN.with(|frame_fn| {
             *frame_fn.borrow_mut() = Some(Box::new(move |surface: &wl_surface::WlSurface| {
@@ -1057,6 +1103,83 @@ impl<'a> AppContext<'a> {
         });
     }
 
+    /// Set the cursor to a picture the app drew, for a shape the theme has no
+    /// name for. Like [`Self::set_cursor_shape`], call it from pointer
+    /// handling; the picture goes up when the pointer batch ends, and only
+    /// when it differs from the one showing.
+    pub fn set_cursor_image(image: CursorImage) {
+        PENDING_CURSOR_IMAGE.with(|pending| *pending.borrow_mut() = Some(image));
+    }
+
+    /// Put up a drawn cursor asked for during the batch just handled.
+    pub(crate) fn apply_cursor_image<A: super::App + 'static>(
+        context_data: &AppContextData,
+        pointer: &wayland_client::protocol::wl_pointer::WlPointer,
+        qh: &QueueHandle<super::AppData<A>>,
+    ) {
+        use smithay_client_toolkit::shm::slot::SlotPool;
+        use wayland_client::protocol::wl_shm;
+
+        let Some(image) = PENDING_CURSOR_IMAGE.with(|pending| pending.borrow_mut().take()) else {
+            return;
+        };
+        let serial = LAST_POINTER_ENTER_SERIAL.with(|s| *s.borrow());
+        CURSOR_IMAGE.with(|current| {
+            let mut current = current.borrow_mut();
+            if let Some(state) = current.as_ref().filter(|state| state.key == image.key) {
+                // The same picture: only show it again, as a shape set since
+                // may have replaced it.
+                pointer.set_cursor(
+                    serial,
+                    Some(&state.surface),
+                    image.hotspot.0,
+                    image.hotspot.1,
+                );
+                return;
+            }
+            let stride = image.width as i32 * 4;
+            let bytes = (stride * image.height as i32) as usize;
+            if image.pixels.len() < bytes {
+                tracing::warn!(key = image.key, "a cursor image smaller than its size says");
+                return;
+            }
+            let (surface, mut pool) = match current.take() {
+                Some(state) => (state.surface, state.pool),
+                None => {
+                    let surface = context_data.compositor_state.create_surface(qh);
+                    let Ok(pool) = SlotPool::new(bytes.max(4096), &context_data.shm_state) else {
+                        tracing::warn!("no shared memory for a cursor image");
+                        return;
+                    };
+                    (surface, pool)
+                }
+            };
+            let Ok((buffer, canvas)) = pool.create_buffer(
+                image.width as i32,
+                image.height as i32,
+                stride,
+                wl_shm::Format::Argb8888,
+            ) else {
+                tracing::warn!("no buffer for a cursor image");
+                return;
+            };
+            canvas[..bytes].copy_from_slice(&image.pixels[..bytes]);
+            if buffer.attach_to(&surface).is_err() {
+                return;
+            }
+            surface.set_buffer_scale(image.scale.max(1) as i32);
+            surface.damage_buffer(0, 0, image.width as i32, image.height as i32);
+            surface.commit();
+            pointer.set_cursor(serial, Some(&surface), image.hotspot.0, image.hotspot.1);
+            *current = Some(CursorImageState {
+                key: image.key,
+                surface,
+                pool,
+                _buffer: buffer,
+            });
+        });
+    }
+
     /// Set the cursor shape for the current pointer.
     ///
     /// Uses `wp_cursor_shape_v1` — no bitmap loading needed.
@@ -1064,6 +1187,8 @@ impl<'a> AppContext<'a> {
     pub fn set_cursor_shape(
         shape: wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_device_v1::Shape,
     ) {
+        // A named shape replaces a drawn cursor asked for in the same batch.
+        PENDING_CURSOR_IMAGE.with(|pending| *pending.borrow_mut() = None);
         let serial = LAST_POINTER_ENTER_SERIAL.with(|s| *s.borrow());
         CURSOR_SHAPE_DEVICE.with(|d| {
             if let Some(ref device) = *d.borrow() {
@@ -1769,6 +1894,15 @@ impl<'a> AppContext<'a> {
         });
     }
 
+    /// A new `org_kde_kwin_appmenu` for `surface`, to say where its menu is
+    /// served; `None` on a compositor without the protocol, or before the
+    /// app runs. Used by [`crate::app_menu::AppMenu::attach`].
+    pub fn appmenu_for(
+        surface: &wl_surface::WlSurface,
+    ) -> Option<crate::protocols::org_kde_kwin_appmenu::OrgKdeKwinAppmenu> {
+        APPMENU_FN.with(|make| make.borrow().as_ref().and_then(|make| make(surface)))
+    }
+
     /// The surface holding the keyboard, or `None` when no window of this
     /// application does.
     /// Start watching the desktop's text cursor, and return the object doing
@@ -2096,6 +2230,7 @@ impl<'a> AppContext<'a> {
         APP_CONTEXT_PTR.with(|ptr| *ptr.borrow_mut() = None);
         TYPED_QUEUE_HANDLE.with(|qh| *qh.borrow_mut() = None);
         FRAME_REQUEST_FN.with(|f| *f.borrow_mut() = None);
+        APPMENU_FN.with(|f| *f.borrow_mut() = None);
         CURRENT_CONFIGURE.with(|cfg| *cfg.borrow_mut() = None);
         WINDOWS.with(|w| w.borrow_mut().clear());
 

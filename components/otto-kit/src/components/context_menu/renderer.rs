@@ -134,6 +134,9 @@ impl ContextMenuRenderer {
             if item.icon.is_some() {
                 row_w += icon_size + icon_gap;
             }
+            if item.check_gutter {
+                row_w += crate::components::menu_item::CHECK_GUTTER;
+            }
             if let Some(sc) = shortcut {
                 let (sc_w, _) = font.measure_str(sc, None);
                 row_w += sc_w + 20.0; // gap between label and shortcut

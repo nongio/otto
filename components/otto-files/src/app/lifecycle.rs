@@ -80,6 +80,19 @@ impl App for FilesApp {
             self.frost = Some(scene.frost_state());
         }
 
+        // The menus in the top bar, for a browser window; a file dialog
+        // belongs to the app that opened it, whose menus stay.
+        let menus = {
+            let browser = self.state.lock().unwrap();
+            browser.picker.is_none().then(|| browser.app_menus())
+        };
+        if let Some(menus) = menus {
+            self.app_menu = otto_kit::app_menu::AppMenu::serve(menus);
+            if let (Some(menu), Some(surface)) = (self.app_menu.as_ref(), window.wl_surface()) {
+                menu.attach(&surface);
+            }
+        }
+
         self.install_window(window, scene);
         Ok(())
     }
@@ -338,6 +351,8 @@ impl App for FilesApp {
     }
 
     fn on_update(&mut self, _ctx: &AppContext) {
+        self.follow_app_menu();
+
         // The scene decides when the compositor's backdrop blur may be
         // switched — it owns the fade the switch has to hide under — but the
         // window is what carries the request, so it is applied here.
@@ -739,6 +754,31 @@ impl App for FilesApp {
 }
 
 impl FilesApp {
+    /// Run what was picked from the menus, and keep them saying what the
+    /// window can do now.
+    fn follow_app_menu(&mut self) {
+        let Some(menu) = &self.app_menu else {
+            return;
+        };
+        let picked = menu.take_picked();
+        let due = self.app_menu_at.elapsed() >= std::time::Duration::from_millis(250);
+        if picked.is_empty() && !due {
+            return;
+        }
+        let mut browser = self.state.lock().unwrap();
+        for id in &picked {
+            browser.run_app_menu_pick(id, AppContext::last_input_serial());
+        }
+        menu.set(browser.app_menus());
+        drop(browser);
+        self.app_menu_at = std::time::Instant::now();
+        if !picked.is_empty() {
+            if let Some(window) = &self.window {
+                window.request_frame();
+            }
+        }
+    }
+
     /// What every Files window — the browser's toplevel or the desk's layer
     /// surface — does once it exists: the draw, the surfaces beside it, and
     /// the pointer, drag and frame wiring.

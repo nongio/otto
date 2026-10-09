@@ -1418,6 +1418,9 @@ agents-permission-reject = Відхилити
 agents-permission-reject-always = Ніколи не дозволяти
 # The button that hands the question to the Ask window instead.
 agents-permission-open-in-ask = Відкрити в Ask
+# The same button for a session started in Preview about a file: the
+# question opens there, beside the file. Use the app's name as in its menu entry.
+agents-permission-open-in-preview = Відкрити в Studio
 
 
 ## Emoji picker
@@ -1716,6 +1719,21 @@ peek-pdf-install-rasteriser = Щоб побачити сторінки, вста
 # $page and $pages are whole numbers. Very little room — keep it to a few
 # characters, and drop the word for "page" if the language can.
 peek-page-of = { $page } / { $pages }
+
+
+## Preview — chat
+
+# The chat field beside a file in Preview, before anything is typed.
+# $name is the file's name.
+preview-chat-placeholder = Запитати про { $name }
+# Shown in the empty chat beside a file, until something is asked.
+preview-chat-empty = Запитайте агента про цей файл або попросіть змінити його.
+# Over the chat field in Preview, when marks drawn on the file will go with
+# the next message. $marks lists their numbers ("1, 2"); $count is how many.
+preview-chat-marks = { $count ->
+    [one] З повідомленням піде позначка { $marks }
+   *[other] З повідомленням підуть позначки: { $marks }
+}
 
 
 ## Peek — listings
@@ -2078,3 +2096,39 @@ settings-dictation-hotwords-boost = Підсилення назв
 settings-dictation-hotwords-boost-detail = Наскільки перевага надається назвам, яких очікує поле. Понад 6 слова навколо назви починають спотворюватися.
 settings-dictation-autostart = Запускати диктування під час входу
 settings-dictation-autostart-detail = Запускає otto-dictate з ~/.config/autostart — Otto читає цю теку, коли ввімкнено xdg_autostart
+
+## Studio — menus and the keyboard shortcuts sheet
+
+studio-menu-file = Файл
+studio-menu-edit = Редагування
+studio-menu-marks = Позначки
+studio-menu-view = Вигляд
+studio-menu-help = Довідка
+studio-close = Закрити вікно
+studio-undo = Скасувати
+studio-redo = Повторити
+studio-copy = Копіювати
+studio-select-all = Вибрати все
+studio-pen = Перо
+studio-show-marks = Показувати позначки
+studio-delete-mark = Видалити останню позначку
+studio-zoom-in = Збільшити
+studio-zoom-out = Зменшити
+studio-zoom-fit = За розміром вікна
+studio-previous-page = Попередня сторінка
+studio-next-page = Наступна сторінка
+studio-sidebar = Показувати сторінки
+studio-chat = Показувати чат
+studio-shortcuts = Сполучення клавіш
+studio-sheet-document = Документ
+studio-sheet-chat = Чат
+studio-sheet-scroll = Прокручування
+studio-sheet-page = Наступний екран
+studio-sheet-ends = Початок і кінець
+studio-sheet-zoom-pointer = Масштаб біля вказівника
+studio-sheet-stop = Відкласти перо
+studio-sheet-send = Надіслати
+studio-sheet-dictate = Диктувати
+studio-sheet-stop-agent = Зупинити агента
+studio-sheet-to-document = Повернутися до документа
+studio-sheet-cmd = Cmd працює всюди, де Ctrl

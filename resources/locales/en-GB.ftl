@@ -1468,6 +1468,9 @@ agents-permission-reject = Reject
 agents-permission-reject-always = Never allow
 # The button that hands the question to the Ask window instead.
 agents-permission-open-in-ask = Open in Ask
+# The same button for a session started in Studio about a file: the
+# question opens there, beside the file. Use the app's name as in its menu entry.
+agents-permission-open-in-preview = Open in Studio
 
 ## Emoji picker
 
@@ -1759,6 +1762,65 @@ peek-pdf-install-rasteriser = Install one of: { $packages } — to see the pages
 # $page and $pages are whole numbers. Very little room — keep it to a few
 # characters, and drop the word for "page" if the language can.
 peek-page-of = { $page } / { $pages }
+
+
+## Studio — menus and the keyboard shortcuts sheet
+##
+## Studio's menus in the top bar, and the sheet (Help › Keyboard Shortcuts)
+## that lists every command with its key.
+
+studio-menu-file = File
+studio-menu-edit = Edit
+studio-menu-marks = Marks
+studio-menu-view = View
+studio-menu-help = Help
+studio-close = Close Window
+studio-undo = Undo
+studio-redo = Redo
+studio-copy = Copy
+studio-select-all = Select All
+# The pen: a press on the document draws a mark.
+studio-pen = Pen
+# Toggle: whether the marks show over the document.
+studio-show-marks = Show Marks
+# Takes away the person's last mark not yet sent.
+studio-delete-mark = Delete Last Mark
+studio-zoom-in = Zoom In
+studio-zoom-out = Zoom Out
+studio-zoom-fit = Zoom to Fit
+studio-previous-page = Previous Page
+studio-next-page = Next Page
+studio-sidebar = Show Pages
+studio-chat = Show Chat
+studio-shortcuts = Keyboard Shortcuts
+# Sections of the sheet for keys that are in no menu.
+studio-sheet-document = Document
+studio-sheet-chat = Chat
+studio-sheet-scroll = Scroll
+studio-sheet-page = Next screen
+studio-sheet-ends = Top and bottom
+studio-sheet-zoom-pointer = Zoom at the pointer
+studio-sheet-stop = Put the pen down
+studio-sheet-send = Send
+studio-sheet-dictate = Dictate
+studio-sheet-stop-agent = Stop the agent
+studio-sheet-to-document = Back to the document
+# Over the sheet: the Cmd key does what Ctrl does in every shortcut.
+studio-sheet-cmd = Cmd works wherever Ctrl does
+
+## Preview — chat
+
+# The chat field beside a file in Preview, before anything is typed.
+# $name is the file's name.
+preview-chat-placeholder = Ask about { $name }
+# Shown in the empty chat beside a file, until something is asked.
+preview-chat-empty = Ask an agent about this file, or to change it.
+# Over the chat field in Preview, when marks drawn on the file will go with
+# the next message. $marks lists their numbers ("1, 2"); $count is how many.
+preview-chat-marks = { $count ->
+    [one] Mark { $marks } goes with your message
+   *[other] Marks { $marks } go with your message
+}
 
 
 ## Peek — listings

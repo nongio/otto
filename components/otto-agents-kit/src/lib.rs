@@ -9,12 +9,16 @@
 //!
 //! The Ask chat lives here too, so any app can host it: the conversation and
 //! its connection ([`chat`]), and its log, laid out and painted at the
-//! host's width ([`log`]).
+//! host's width ([`log`]). With the `dictation` feature, Ctrl+D dictates
+//! into a host's field ([`dictation`]).
 
 pub mod chat;
+#[cfg(feature = "dictation")]
+pub mod dictation;
 pub mod keys;
 pub mod link;
 pub mod log;
+pub mod opener;
 pub mod sessions;
 
 // The rows and their ranking are otto-kit's, so an app with no agent in it —

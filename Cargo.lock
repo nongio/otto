@@ -5420,11 +5420,17 @@ dependencies = [
 name = "otto-preview"
 version = "1.6.0"
 dependencies = [
+ "base64 0.22.1",
+ "otto-agents-client",
+ "otto-agents-kit",
  "otto-files",
  "otto-kit",
  "otto-media-kit",
  "otto-peek",
+ "serde",
+ "serde_json",
  "smithay-client-toolkit 0.19.2",
+ "tempfile",
  "tokio",
  "tracing",
  "wayland-client",

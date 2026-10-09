@@ -10,6 +10,11 @@ as Peek draws it over the file list. It is what opens a picture, a PDF or a
 Markdown document from anywhere that is not Files' Space bar: a double-click
 in another app, `xdg-open`, the command line.
 
+People know it as **Studio**: that is its name in the desktop entry, the top
+bar, the dock and the agents' "Open in Studio" button, in every language.
+Underneath it is still `otto-preview` (the program, its app id and the
+`org.otto.Preview1` bus name), and this spec calls it Preview.
+
 ## Goals
 
 - `otto-preview PATH` opens one window on `PATH`, titled with the file's name.
@@ -38,7 +43,9 @@ in another app, `xdg-open`, the command line.
 
 - Stepping through a folder, a sidebar, thumbnails or any browsing: another
   file is another window.
-- Editing, annotating, rotating, or saving anything.
+- Editing, annotating, rotating, or saving anything from the window's own
+  tools. Changes come from an agent, through the chat (see below and
+  `components/otto-agents/docs/plans/0016-agent-edited-documents.md`).
 - Claiming plain text, archives, audio or video as a default handler. Preview
   can show them when asked by path, but does not advertise them.
 
@@ -63,6 +70,19 @@ in another app, `xdg-open`, the command line.
   With no path the usage is printed and the exit status is 2.
 - The window's app id is `otto-preview`, matching its desktop entry.
 
+### Following the file
+
+- When the file changes on disk (an agent, an editor or a script saved it),
+  the window shows it again by itself. The folder is watched rather than the
+  file, so a tool that saves by writing a new file and renaming it over the
+  old one is followed too.
+- A change is the file's inode, size or modification time moving; another file
+  changing in the same folder does nothing. Bursts are taken once, after
+  100 ms.
+- The old content stays on screen until the new decode replaces it, and the
+  zoom, the scroll and the page showing are kept.
+- A file deleted or moved away keeps showing what it was.
+
 ### Titlebar
 
 - The file's name is centred, ellipsised to stay clear of the lights.
@@ -85,9 +105,128 @@ in another app, `xdg-open`, the command line.
 - Centre, only for a document of more than one page: previous page, "N / M"
   showing the page with most of the window, next page. Each button is
   disabled at its end.
+- Trailing: undo and redo, once the file has more than one version (see
+  *Versions*); the eye, a toggle that stays down (struck through) while the
+  marks are hidden; the pen, a toggle that stays down while it is on (see
+  *Marks*); and the chat button, a toggle that stays down while the chat
+  shows.
+- A button fires when the press and the release both land on it.
 - There is no button to open the file in another application: Preview is
   the viewer for the types it handles.
-- A button fires when the press and the release both land on it.
+
+### Chat
+
+- The chat button or Ctrl+K shows a 360-point panel at the window's trailing
+  edge, under the toolbar. A floating window with room to spare grows by the
+  panel's width, so the document keeps its size, and shrinks back when the
+  chat hides; a tiled, maximized or too-wide window narrows the document
+  instead, keeping its place. Hiding the panel keeps the conversation for as
+  long as the window is open.
+- Dragging the panel's leading edge (a column-resize cursor) widens or
+  narrows it, from 280 to 720 points and leaving the document at least 240;
+  the document keeps its place. Windows opened after take the last width
+  dragged to.
+- `--chat` opens the file with the chat showing; `--session URI` carries on
+  that agent session beside the file (a session this app started, picked
+  from a list) and implies `--chat`. A later start hands both over the bus
+  (`OpenChat`, `OpenSession`).
+- The panel is the Ask chat from otto-agents-kit, as in the launcher: the log
+  on top, the answers to a waiting question or input request above the
+  field, and the field at the bottom ("Ask about NAME"). The field is filled
+  a step lighter than the panel, and its text starts on the log's left edge,
+  at the log's size, so the two read as one column. The footer names the
+  agent Studio.
+- Long words in the log, paths and addresses, break after a `/`, `-`, `_` or
+  `.` rather than run past the edge. A tool call shows its first line, in
+  at most two lines; closed, a run of calls is the last of them on one line.
+- Ctrl+D dictates into the field, with the keys of an agent chat in
+  [dictation.md](./dictation.md#dictation-in-an-agent-chat). Return during a
+  dictation sends once the last words are in, with the marks not yet sent,
+  as Return does. Giving the keyboard back to the document stops the
+  dictation without sending.
+- Opening the panel connects to otto-agents in the background; nothing
+  reaches an agent until something is sent. Hiding and showing it again
+  connects again when the service couldn't be reached.
+- The first message creates the session with `_meta.otto`: `app`
+  (`otto-preview`) and `subject` (the file's URI), so lists open it here
+  again; `agent` (`studio`), the plugin agent for working on one file, so
+  Otto's desktop helper stays out of it; `instructions`, which otto-agents hands the agent ahead of its first
+  turn (it is working on the file shown beside the chat, edits it in place
+  and calls `preview_reload`); and `mcpServers`, this program in `--mcp` mode
+  with the file in `OTTO_PREVIEW_DOC` (see *Document tools*).
+- The file goes with the first message, but is never shown as an attachment,
+  since it is open beside the chat. Marks going with a message are not shown
+  as attachments either.
+- Pictures the agent gets from Preview's own tools (`preview_render`) or from
+  reading the file itself stay with the agent and out of the log: they are
+  the window beside it again.
+- Return sends. Up and Down pick an answer while one is waited for; Return
+  or a click gives it. Ctrl+C stops a running turn, or copies the selection.
+- A press in the panel gives it the keyboard; a press on the document, or
+  Escape in the field, gives the keyboard back to the document. Ctrl+C with
+  text selected in the log copies it, wherever the keyboard is.
+- When otto-agents can't be reached, the panel says why.
+
+### Marks
+
+- The pen turns marking on: a drag on a picture or a page draws a freehand
+  mark, a drag with Shift a box, and the cursor is a pencil. Escape turns
+  the pen off. Text, listings and video can't be marked.
+- Marks are kept in the document's own units, a picture's pixels or a page's
+  PDF points, so they stay on what they mark through zoom, scrolling, the
+  chat opening and the file being reloaded.
+- The person's marks are red and numbered in drawing order, the number in a
+  badge at the mark's start. The agent's are blue, with its label (or a dot)
+  in the badge. The agent can also lay a picture over a box of the document
+  (a variant, a logo, a crop to compare), at an opacity it chooses.
+- The badge is the mark's handle: dragging it (a grab cursor) moves the mark,
+  pen or not, in the document's units. A mark of the person's moved after it
+  was sent goes again with the next message.
+- Hovering a badge shows a round cross beside it; over the cross the cursor
+  is a bin, and a click deletes the mark, the person's or the agent's. Backspace takes back the person's last mark
+  not yet sent.
+- The eye hides every mark, to see the document as it is, and turns the pen
+  off; badges can't be hovered or deleted while hidden. The marks show again
+  from the eye, when the pen is turned on, or when the agent draws.
+- Every mark, the person's and the agent's, is kept with the agent session
+  (in its `_meta.otto.marks`) once the chat has a session, and comes back
+  when the session is opened in Preview again.
+- The person's marks not yet sent go with the next message: the line over
+  the field, in a band of its own on the log's left edge, says which. They are written to `$XDG_RUNTIME_DIR/otto-preview/`
+  as `marks-*.json` (shapes and bounds in the document's units) and, for a
+  picture, `marks-*.png` (the picture with the marks drawn and numbered), and
+  attached without being listed. Sent marks stay, fainter.
+
+### Versions
+
+- From the first message sent in the chat, Preview keeps the file's
+  versions: the file as it was then, and the file each time it changes after
+  that, whoever changed it. They are kept under
+  `$XDG_STATE_HOME/otto-preview/versions/`, survive closing the window, and
+  are taken up again when the file is opened later.
+- Undo and redo in the toolbar, or Ctrl+Z and Ctrl+Shift+Z with the document
+  focused, step back and forward: the version is copied over the file
+  (through a file renamed into place), and the window follows the change as
+  for any other.
+- The file matching a version already kept is that version, not a new one. A
+  change after stepping back drops the versions stepped back from.
+- At most 50 versions are kept; the oldest go first, except the first.
+
+### Document tools
+
+- `org.otto.Preview1` also offers, for the window showing a path: `Info`
+  (what it shows, as JSON), `Marks` (every mark, as JSON), `Draw` (replace
+  one of the agent's named layers of marks), `Clear` (a layer, every agent
+  mark, or the person's marks), `Reload` (read the file again, keeping the
+  view, and keep it as a version with the agent's note), `Versions` (the
+  versions, as JSON), `Revert` (put one back) and `Render` (the picture as shown, with or without marks, as a PNG
+  path). A path no window shows is an error.
+- `otto-preview --mcp` is a stdio MCP server over those methods, for the
+  file in `OTTO_PREVIEW_DOC`: `preview_info`, `preview_marks`,
+  `preview_draw`, `preview_clear`, `preview_reload` (with a note),
+  `preview_versions`, `preview_revert` and `preview_render`
+  (which returns the image). Its `initialize` answer carries the same
+  instructions as the session. It never connects to the display.
 
 ### Content input
 
@@ -112,10 +251,31 @@ in another app, `xdg-open`, the command line.
   there is nothing to pan sideways.
 - Home and End go to the start and the end.
 - Ctrl+W and Ctrl+Q close the window.
+- Ctrl+Z steps the file back a version and Ctrl+Y (or Ctrl+Shift+Z) forward.
+- From anywhere, the chat included: Ctrl+K shows or hides the chat,
+  Ctrl+Shift+A takes up or puts down the pen, Ctrl+Shift+H shows or hides
+  the marks, and Ctrl+/ shows the keyboard shortcuts sheet.
+- Cmd works wherever Ctrl does: Otto hands it to apps as either.
+
+### Menus and the shortcuts sheet
+
+- The window's menus show in the top bar while it has focus (served over
+  `com.canonical.dbusmenu`, pointed at with `org_kde_kwin_appmenu`; see
+  `otto_kit::app_menu`): File (Close Window), Edit (Undo, Redo, Copy, Select
+  All), Marks (Pen, Show Marks, Delete Last Mark), View (zoom, pages, Show
+  Pages, Show Chat) and Help (Keyboard Shortcuts).
+- Each item shows its key, and is greyed out when it cannot run. Pen, Show
+  Marks, Show Pages and Show Chat are toggles and say whether they are on.
+- One list of commands (`commands.rs`) feeds the menus, the keys and the
+  sheet, so a key the menu shows is a key that works.
+- Help › Keyboard Shortcuts, or Ctrl+/, lays a card over the window listing
+  every command with its key, then the keys that are in no menu (the
+  document's and the chat's). Escape or a click puts it away.
 
 ### Resizing
 
-- A resize lays the content out again. Nothing is decoded again, except that
+- A resize lays the content out again. Nothing is decoded again (unless the
+  file changes, as above), except that
   a document asks for the pages newly in view, at the width they are now
   drawn at, as scrolling does.
 

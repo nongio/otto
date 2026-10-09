@@ -59,6 +59,8 @@ pub struct MenuItem {
     pub icon_data: Option<(i32, i32, Vec<u8>)>,
     /// The key combination, ready to show (`⌃⇧T`).
     pub shortcut: Option<String>,
+    /// `Some` for a `checkmark` or `radio` toggle: whether it is on.
+    pub checked: Option<bool>,
     pub item_type: MenuItemType,
     pub children: Vec<MenuItem>,
 }
@@ -258,6 +260,10 @@ fn parse_menu_item(value: &OwnedValue) -> Option<MenuItem> {
     let icon_name = prop_string(&props, "icon-name");
     let icon_data = prop_icon_data(&props, "icon-data");
     let shortcut = prop_shortcut(&props, "shortcut");
+    let checked = match prop_string(&props, "toggle-type").as_deref() {
+        Some("checkmark" | "radio") => Some(prop_i32(&props, "toggle-state") == Some(1)),
+        _ => None,
+    };
 
     let type_str = prop_string(&props, "type").unwrap_or_default();
 
@@ -275,6 +281,7 @@ fn parse_menu_item(value: &OwnedValue) -> Option<MenuItem> {
         icon_name,
         icon_data,
         shortcut,
+        checked,
         item_type,
         children: children_val,
     })
@@ -308,6 +315,19 @@ fn prop_string(props: &HashMap<String, OwnedValue>, key: &str) -> Option<String>
         Value::Str(s) => Some(s.to_string()),
         Value::Value(boxed) => match *boxed {
             Value::Str(s) => Some(s.to_string()),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// An `int32` property, unwrapped from its variant as [`prop_bool`] does.
+fn prop_i32(props: &HashMap<String, OwnedValue>, key: &str) -> Option<i32> {
+    let val = props.get(key)?;
+    match Value::try_from(val).ok()? {
+        Value::I32(n) => Some(n),
+        Value::Value(boxed) => match *boxed {
+            Value::I32(n) => Some(n),
             _ => None,
         },
         _ => None,
@@ -382,6 +402,11 @@ fn format_shortcut(combo: &[String]) -> Option<String> {
         "Right" => "→".to_string(),
         "Up" => "↑".to_string(),
         "Down" => "↓".to_string(),
+        "Page_Up" | "Prior" => "⇞".to_string(),
+        "Page_Down" | "Next" => "⇟".to_string(),
+        "plus" => "+".to_string(),
+        "minus" => "-".to_string(),
+        "slash" => "/".to_string(),
         "" => return None,
         other => other.to_uppercase(),
     };

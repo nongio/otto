@@ -46,7 +46,7 @@ use ahp::reducers::apply_action_to_chat;
 use ahp::{Client, SubscriptionEvent};
 use ahp_types::actions::{
     ChatInputAnswerChangedAction, ChatInputCompletedAction, ChatPendingMessageSetAction,
-    ChatToolCallConfirmedAction, ChatTurnCancelledAction, StateAction,
+    ChatToolCallConfirmedAction, ChatTurnCancelledAction, SessionMetaChangedAction, StateAction,
 };
 use ahp_types::common::StringOrMarkdown;
 use ahp_types::state::{
@@ -134,6 +134,9 @@ enum Update {
     /// The agent's modes and the one it is in, as the service says in the
     /// session's `_meta`; `None` for an agent without any.
     Modes(Option<Modes>),
+    /// What the client keeps with the session, as its `_meta.otto.marks`
+    /// says: Preview's marks.
+    Marks(Option<Value>),
     /// The session's chat, as it stood when the launcher subscribed to it.
     Chat(Box<ChatState>),
     /// A change to that chat.
@@ -155,6 +158,9 @@ enum Command {
         prompt: String,
         provider: Option<String>,
         attachments: Vec<PathBuf>,
+        /// The `_meta` the session is created with, when this request
+        /// creates one.
+        session_meta: Option<Value>,
     },
     /// Open the session `session` names, a URI or the start of its id, in
     /// place of creating one.
@@ -181,6 +187,10 @@ enum Command {
     /// it advertised.
     SetMode {
         mode_id: String,
+    },
+    /// Keep `marks` with the open session, in its `_meta.otto.marks`.
+    SetMarks {
+        marks: Value,
     },
     /// An answer to the agent's question.
     Confirm {
@@ -560,6 +570,11 @@ impl Modes {
     }
 }
 
+/// What a client keeps with the session, under `otto.marks` in its `_meta`.
+fn marks_from_meta(meta: Option<&serde_json::Map<String, Value>>) -> Option<Value> {
+    meta?.get("otto")?.get("marks").cloned()
+}
+
 /// The agent's modes, as the service says in the session's `_meta`.
 fn modes_from_meta(meta: Option<&serde_json::Map<String, Value>>) -> Option<Modes> {
     let modes = meta?.get("otto")?.get("modes")?;
@@ -780,6 +795,28 @@ pub struct Ask {
     attachments: Vec<PathBuf>,
     /// …but for those struck out, which stay listed and stay behind.
     struck: Vec<bool>,
+    /// What the conversation is about, when the host shows it already: the
+    /// file open beside the chat. Sent with the first request, never listed
+    /// with the attachments or drawn in the log, not even as the service
+    /// records the request.
+    subject: Vec<PathBuf>,
+    /// Files that go with the next request only, unlisted like the subject:
+    /// what the host made for it, such as the marks drawn on a document.
+    unlisted: Vec<PathBuf>,
+    /// Every unlisted file sent so far, kept out of the log.
+    hidden: Vec<PathBuf>,
+    /// The `_meta` a session this chat creates is created with: what the
+    /// host asks otto-agents for, such as its own tools for the agent.
+    session_meta: Option<Value>,
+    /// Marks to keep with the session once it exists; see [`Self::save_marks`].
+    marks_out: Option<Value>,
+    /// The marks the session had when it was opened again, until taken.
+    marks_in: Option<Value>,
+    /// Whether the session was opened again and its marks are still to come.
+    marks_wanted: bool,
+    /// The agent's name in the footer, when the host knows it better than
+    /// the provider does; see [`Self::set_agent_title`].
+    agent_title: Option<String>,
     /// What otto-stash has stashed, after the files above: it goes with
     /// the next request too, but otto-stash keeps it, and changes to it go
     /// there. Each with its file and whether it is struck out.
@@ -816,6 +853,14 @@ impl Ask {
             sessions_listed: false,
             attachments: Vec::new(),
             struck: Vec::new(),
+            subject: Vec::new(),
+            unlisted: Vec::new(),
+            hidden: Vec::new(),
+            session_meta: None,
+            marks_out: None,
+            marks_in: None,
+            marks_wanted: false,
+            agent_title: None,
             stashed: Vec::new(),
             handing_over: false,
             unreachable: None,
@@ -937,6 +982,12 @@ impl Ask {
         Some(terminal)
     }
 
+    /// Where the listed session at `index` opens: in Preview when Preview
+    /// started it about a file, otherwise here.
+    pub fn opener_at(&self, index: usize) -> crate::opener::Opener {
+        crate::opener::Opener::from_meta(self.sessions.get(index).and_then(|s| s.meta.as_ref()))
+    }
+
     /// What the agent whose provider id is `provider` is called.
     fn agent_name(&self, provider: &str) -> Option<&str> {
         self.agents
@@ -967,6 +1018,7 @@ impl Ask {
             modes: None,
             session: None,
         });
+        self.marks_wanted = true;
         let _ = self.commands.send(Command::Resume {
             session: session.to_string(),
         });
@@ -1019,6 +1071,17 @@ impl Ask {
             Update::Session(session) => {
                 if let Some(run) = self.run.as_mut() {
                     run.session = Some(session);
+                }
+                // Marks drawn before the session existed are kept now.
+                if let Some(marks) = self.marks_out.take() {
+                    self.save_marks(marks);
+                }
+            }
+            Update::Marks(marks) => {
+                // Only what the session had when it was opened again: after
+                // that, the client's own marks are the newer ones.
+                if std::mem::take(&mut self.marks_wanted) {
+                    self.marks_in = marks;
                 }
             }
             Update::Provider(provider) => {
@@ -1431,6 +1494,49 @@ impl Ask {
     ///
     /// Returns whether what was stashed went with it, so the stash can
     /// be told it is over.
+    /// Make `files` what the conversation is about: they go with the first
+    /// request, as attachments do, but are not shown, because the host shows
+    /// them already. A conversation already under way keeps what it had.
+    pub fn set_subject(&mut self, files: impl IntoIterator<Item = PathBuf>) {
+        self.subject = files.into_iter().collect();
+    }
+
+    /// Send `files` with the next request without listing them or drawing
+    /// them in the log: what the host made to go with it, such as the marks
+    /// drawn on the document beside the chat.
+    pub fn attach_unlisted(&mut self, files: impl IntoIterator<Item = PathBuf>) {
+        self.unlisted.extend(files);
+    }
+
+    /// Name the agent `title` in the footer, rather than by its provider: a
+    /// host whose sessions run one plugin agent, as Preview's run Studio.
+    pub fn set_agent_title(&mut self, title: impl Into<String>) {
+        self.agent_title = Some(title.into());
+    }
+
+    /// Create the session this chat starts with `meta` as its `_meta`.
+    /// otto-agents reads `otto.mcpServers` there: MCP servers the agent is
+    /// given, Otto programs only. A session already open keeps what it has.
+    pub fn set_session_meta(&mut self, meta: Value) {
+        self.session_meta = Some(meta);
+    }
+
+    /// Keep `marks` with the session, in its `_meta.otto.marks`, so opening
+    /// it again shows them; held until the session exists.
+    pub fn save_marks(&mut self, marks: Value) {
+        let open = self.run.as_ref().is_some_and(|run| run.session.is_some());
+        if !open {
+            self.marks_out = Some(marks);
+            return;
+        }
+        let _ = self.commands.send(Command::SetMarks { marks });
+    }
+
+    /// The marks a session opened again had kept, once.
+    pub fn restored_marks(&mut self) -> Option<Value> {
+        self.marks_in.take()
+    }
+
     pub fn send(&mut self, prompt: &str, agent: Option<usize>) -> bool {
         let struck = std::mem::take(&mut self.struck);
         let stashed = std::mem::take(&mut self.stashed);
@@ -1449,6 +1555,22 @@ impl Ask {
                 .map(|file| Attachment::for_file(file))
                 .collect(),
         };
+        // The subject rides with the first request only, after what was
+        // attached by hand, and never twice.
+        let mut attachments = attachments;
+        if self.run.is_none() {
+            for file in &self.subject {
+                if !attachments.contains(file) {
+                    attachments.push(file.clone());
+                }
+            }
+        }
+        for file in std::mem::take(&mut self.unlisted) {
+            if !attachments.contains(&file) {
+                attachments.push(file.clone());
+            }
+            self.hidden.push(file);
+        }
         let provider = match self.run.as_mut() {
             Some(run) => {
                 run.sent.push(request);
@@ -1482,6 +1604,7 @@ impl Ask {
             prompt: prompt.to_string(),
             provider,
             attachments,
+            session_meta: self.session_meta.clone(),
         });
         took_stashed
     }
@@ -1522,9 +1645,10 @@ impl Ask {
     pub fn mode_line(&self) -> Option<ModeLine> {
         let run = self.run.as_ref()?;
         let modes = run.modes.as_ref()?;
-        let agent = run
-            .agent
+        let agent = self
+            .agent_title
             .clone()
+            .or_else(|| run.agent.clone())
             .or_else(|| {
                 run.provider
                     .as_deref()
@@ -1644,6 +1768,16 @@ impl Ask {
         );
         if run.resumed && run.chat.is_none() && run.failure.is_none() {
             transcript.status = Some(Status::Opening);
+        }
+        // The subject is on screen beside the chat; the service's record of
+        // the request lists it, the log doesn't.
+        if !self.subject.is_empty() || !self.hidden.is_empty() {
+            let hidden = |file: &PathBuf| self.subject.contains(file) || self.hidden.contains(file);
+            for entry in &mut transcript.entries {
+                entry.attachments.retain(
+                    |attachment| !matches!(attachment, Attachment::File(file) if hidden(file)),
+                );
+            }
         }
         let turn_running = run
             .chat
@@ -2079,13 +2213,22 @@ async fn serve(
                 prompt,
                 provider,
                 attachments,
+                session_meta,
             }) => {
                 let chosen = provider
                     .as_deref()
                     .and_then(|provider| folders.get(provider))
                     .map_or(folder, PathBuf::as_path);
-                let handed =
-                    hand_off(&client, &prompt, &attachments, provider, chosen, reporter).await;
+                let handed = hand_off(
+                    &client,
+                    &prompt,
+                    &attachments,
+                    provider,
+                    session_meta,
+                    chosen,
+                    reporter,
+                )
+                .await;
                 if handed.is_ok() {
                     reporter.send(Update::HandedOff);
                 }
@@ -2153,6 +2296,19 @@ async fn serve(
                         set_mode(&client, session_events.uri(), &mode_id).await;
                         continue;
                     }
+                    Command::SetMarks { marks } => {
+                        let mut otto = serde_json::Map::new();
+                        otto.insert("marks".into(), marks);
+                        let mut meta = serde_json::Map::new();
+                        meta.insert("otto".into(), Value::Object(otto));
+                        let action = StateAction::SessionMetaChanged(SessionMetaChangedAction {
+                            meta: Some(meta),
+                        });
+                        if let Err(err) = client.dispatch(session_events.uri().to_owned(), action).await {
+                            tracing::warn!(%err, "could not keep the marks with the session");
+                        }
+                        continue;
+                    }
                     Command::Ask { prompt, attachments, .. } => {
                         match queue(&client, &chat_uri, &prompt, &attachments).await {
                             Ok(()) => reporter.send(Update::HandedOff),
@@ -2201,6 +2357,7 @@ async fn serve(
                         reporter.send(Update::Terminal(Terminal::from_meta(changed.meta.as_ref())));
                         reporter.send(Update::Loading(loading_from_meta(changed.meta.as_ref())));
                         reporter.send(Update::Modes(modes_from_meta(changed.meta.as_ref())));
+                        reporter.send(Update::Marks(marks_from_meta(changed.meta.as_ref())));
                     }
                     _ => {}
                 },
@@ -2260,6 +2417,7 @@ async fn hand_off(
     request: &str,
     attachments: &[PathBuf],
     provider: Option<String>,
+    session_meta: Option<Value>,
     folder: &Path,
     reporter: &Reporter,
 ) -> Result<Followed, BoxError> {
@@ -2267,6 +2425,9 @@ async fn hand_off(
     let mut params = json!({ "channel": session, "workingDirectories": [file_uri(folder)] });
     if let Some(provider) = provider {
         params["provider"] = Value::String(provider);
+    }
+    if let Some(meta) = session_meta {
+        params["_meta"] = meta;
     }
     client.request::<_, Value>("createSession", params).await?;
 
@@ -2298,6 +2459,7 @@ async fn follow(
             reporter.send(Update::Terminal(Terminal::from_meta(state.meta.as_ref())));
             reporter.send(Update::Loading(loading_from_meta(state.meta.as_ref())));
             reporter.send(Update::Modes(modes_from_meta(state.meta.as_ref())));
+            reporter.send(Update::Marks(marks_from_meta(state.meta.as_ref())));
             state.default_chat.ok_or("the session has no chat")?
         }
         _ => return Err("the service sent no session".into()),
@@ -3016,6 +3178,38 @@ mod tests {
         assert_eq!(failed.entries, vec![entry("hi", "Hel", None)]);
     }
 
+    #[test]
+    fn the_subject_goes_with_the_first_request_without_being_shown() {
+        let mut ask = offline();
+        ask.set_subject([PathBuf::from("/tmp/photo.jpg")]);
+        assert!(!ask.has_attachments());
+        assert!(ask.pending().is_empty());
+        ask.send("warmer", None);
+        let sent = &ask.run.as_ref().unwrap().sent;
+        assert!(
+            sent[0].attachments.is_empty(),
+            "the log shows no attachment"
+        );
+
+        // As the service records the request: the subject listed, beside a
+        // file attached by hand, which still shows.
+        let mut recorded = message("warmer");
+        recorded.attachments = Some(vec![attached("/tmp/notes.md"), attached("/tmp/photo.jpg")]);
+        let mut chat = with_ended(
+            empty_chat(),
+            "warmer",
+            TurnState::Complete,
+            vec![markdown("Done")],
+        );
+        chat.turns[0].message = recorded;
+        ask.apply(Update::Chat(Box::new(chat)));
+        let entries = ask.transcript().unwrap().entries;
+        assert_eq!(
+            entries[0].attachments,
+            vec![Attachment::File("/tmp/notes.md".into())]
+        );
+    }
+
     /// An `Ask` whose connection never gets anywhere, for driving its state by
     /// hand. Nothing is pumped, so the connection's failure never lands.
     fn offline() -> Ask {
@@ -3580,5 +3774,39 @@ mod tests {
             })
         });
         assert!(done, "{:?}", second.transcript());
+    }
+
+    /// Against a live service, like the tests above: a session made with an
+    /// app's `_meta` is listed with it, so a list opens it in that app.
+    #[test]
+    #[ignore = "needs a running `otto-agents serve --echo`"]
+    fn a_session_made_beside_a_file_opens_in_preview() {
+        let url = std::env::var("OTTO_AGENTS_URL").unwrap_or_else(|_| default_url());
+        let mut first = Ask::connect("otto-preview", url.clone(), std::env::temp_dir());
+        first.set_subject([PathBuf::from("/tmp/photo.jpg")]);
+        first.set_session_meta(json!({ "otto": {
+            "app": "otto-preview",
+            "subject": ["file:///tmp/photo.jpg"],
+            "instructions": "You are beside /tmp/photo.jpg."
+        }}));
+        first.send("warmer", None);
+        assert!(pump_until(&mut first, |ask| ask.transcript().is_some_and(
+            |t| t.status.is_none() && said(&t.entries[0]).contains("warmer")
+        )));
+        let entries = first.transcript().unwrap().entries;
+        assert!(
+            entries[0].attachments.is_empty(),
+            "the subject is not listed"
+        );
+        drop(first);
+
+        let mut second = Ask::connect("otto-launcher", url, std::env::temp_dir());
+        assert!(pump_until(&mut second, Ask::sessions_listed));
+        assert_eq!(
+            second.opener_at(0),
+            crate::opener::Opener::Preview {
+                file: PathBuf::from("/tmp/photo.jpg")
+            }
+        );
     }
 }

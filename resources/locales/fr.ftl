@@ -1390,6 +1390,9 @@ agents-permission-reject = Refuser
 agents-permission-reject-always = Ne jamais autoriser
 # The button that hands the question to the Ask window instead.
 agents-permission-open-in-ask = Ouvrir dans Ask
+# The same button for a session started in Preview about a file: the
+# question opens there, beside the file. Use the app's name as in its menu entry.
+agents-permission-open-in-preview = Ouvrir dans Studio
 
 
 ## Emoji picker
@@ -1682,6 +1685,21 @@ peek-pdf-install-rasteriser = Installer l’un de ces paquets : { $packages } 
 # $page and $pages are whole numbers. Very little room — keep it to a few
 # characters, and drop the word for "page" if the language can.
 peek-page-of = { $page } / { $pages }
+
+
+## Preview — chat
+
+# The chat field beside a file in Preview, before anything is typed.
+# $name is the file's name.
+preview-chat-placeholder = Poser une question sur { $name }
+# Shown in the empty chat beside a file, until something is asked.
+preview-chat-empty = Interrogez un agent sur ce fichier, ou demandez-lui de le modifier.
+# Over the chat field in Preview, when marks drawn on the file will go with
+# the next message. $marks lists their numbers ("1, 2"); $count is how many.
+preview-chat-marks = { $count ->
+    [one] La marque { $marks } part avec votre message
+   *[other] Les marques { $marks } partent avec votre message
+}
 
 
 ## Peek — listings
@@ -2019,3 +2037,39 @@ settings-dictation-hotwords-boost = Renfort des noms
 settings-dictation-hotwords-boost-detail = À quel point les noms attendus par un champ sont favorisés. Au-delà de 6, les mots autour d’un nom commencent à se déformer.
 settings-dictation-autostart = Lancer la dictée à l’ouverture de session
 settings-dictation-autostart-detail = Lance otto-dictate depuis ~/.config/autostart, qu’Otto lit quand xdg_autostart est activé
+
+## Studio — menus and the keyboard shortcuts sheet
+
+studio-menu-file = Fichier
+studio-menu-edit = Édition
+studio-menu-marks = Marques
+studio-menu-view = Présentation
+studio-menu-help = Aide
+studio-close = Fermer la fenêtre
+studio-undo = Annuler
+studio-redo = Rétablir
+studio-copy = Copier
+studio-select-all = Tout sélectionner
+studio-pen = Crayon
+studio-show-marks = Afficher les marques
+studio-delete-mark = Supprimer la dernière marque
+studio-zoom-in = Zoom avant
+studio-zoom-out = Zoom arrière
+studio-zoom-fit = Ajuster à la fenêtre
+studio-previous-page = Page précédente
+studio-next-page = Page suivante
+studio-sidebar = Afficher les pages
+studio-chat = Afficher la discussion
+studio-shortcuts = Raccourcis clavier
+studio-sheet-document = Document
+studio-sheet-chat = Discussion
+studio-sheet-scroll = Défiler
+studio-sheet-page = Écran suivant
+studio-sheet-ends = Début et fin
+studio-sheet-zoom-pointer = Zoomer sur le pointeur
+studio-sheet-stop = Poser le crayon
+studio-sheet-send = Envoyer
+studio-sheet-dictate = Dicter
+studio-sheet-stop-agent = Arrêter l’agent
+studio-sheet-to-document = Retour au document
+studio-sheet-cmd = Cmd fonctionne partout comme Ctrl

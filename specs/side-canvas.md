@@ -280,7 +280,10 @@ are read the next time the column is laid out.
     Ctrl+C/X/V (clipboard) and Ctrl+W (delete a word).
 - Opening a session (click, Enter with nothing typed, Right) runs
   `otto-launcher --session <session URI>`, which opens the launcher card in
-  ask mode on that session, then sends `dismiss` on the item.
+  ask mode on that session, then sends `dismiss` on the item. A session
+  Preview started about a file (`_meta.otto.app` is `otto-preview`) runs
+  `otto-preview --session <session URI> <file>` instead: the file, with the
+  conversation beside it.
 - Sending a request (Enter or Ctrl+L with text typed) runs
   `otto-launcher --ask --send -- <text>`, so the launcher opens with the
   request already sent and the conversation running, then sends `dismiss`.

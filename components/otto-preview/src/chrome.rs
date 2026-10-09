@@ -44,6 +44,16 @@ pub enum Tool {
     NextPage,
     /// Shows or hides the pages sidebar.
     Sidebar,
+    /// Shows or hides the chat beside the document.
+    Chat,
+    /// Turns drawing marks on the document on or off.
+    Mark,
+    /// Hides or shows the marks, the person's and the agent's.
+    ShowMarks,
+    /// Steps the file back a version.
+    Undo,
+    /// Steps the file forward again.
+    Redo,
 }
 
 /// Where the toolbar's buttons sit for one window width.
@@ -117,11 +127,25 @@ pub fn toolbar_layout(
     variant: DecorationVariant,
     paged: bool,
     sidebar: bool,
+    versions: bool,
 ) -> ToolbarLayout {
     let top = titlebar_h(variant);
     let y = top + (TOOLBAR_H - BUTTON) / 2.0;
     let square = |x: f32| Rect::from_xywh(x, y, BUTTON, BUTTON);
-    let mut buttons = Vec::with_capacity(6);
+    let mut buttons = Vec::with_capacity(7);
+    // The chat at the trailing edge, and the pen that points things out to
+    // it beside it.
+    buttons.push((Tool::Chat, square(width - EDGE - BUTTON)));
+    let pen = width - EDGE - 2.0 * BUTTON - GAP * 4.0;
+    buttons.push((Tool::Mark, square(pen)));
+    let eye = pen - BUTTON - GAP;
+    buttons.push((Tool::ShowMarks, square(eye)));
+    // Back and forward through the file's versions, once there are any.
+    if versions {
+        let redo = eye - BUTTON - GAP * 4.0;
+        buttons.push((Tool::Redo, square(redo)));
+        buttons.push((Tool::Undo, square(redo - BUTTON - GAP)));
+    }
 
     let mut x = EDGE;
     if sidebar {
@@ -180,7 +204,11 @@ pub fn draw(canvas: &Canvas, viewer: &Viewer, theme: &Theme) {
         let pressed = hovered && viewer.pressed_tool == Some(*tool);
         // The sidebar button is a toggle: it stays down while the sidebar
         // shows.
-        let pressed = pressed || (*tool == Tool::Sidebar && viewer.sidebar_open());
+        let pressed = pressed
+            || (*tool == Tool::Sidebar && viewer.sidebar_open())
+            || (*tool == Tool::Chat && viewer.chat_open)
+            || (*tool == Tool::Mark && viewer.marking)
+            || (*tool == Tool::ShowMarks && viewer.marks_hidden);
         draw_icon_button(canvas, theme, *rect, *tool, enabled, hovered, pressed);
     }
 
@@ -247,6 +275,20 @@ fn draw_icon_button(
         draw_sidebar_glyph(canvas, dst, color);
         return;
     }
+    if tool == Tool::Chat {
+        // Drawn too: few themes have a chat bubble, and fewer agree on one.
+        draw_chat_glyph(canvas, dst, color);
+        return;
+    }
+    if tool == Tool::Mark {
+        draw_pen_glyph(canvas, dst, color);
+        return;
+    }
+    if tool == Tool::ShowMarks {
+        // Crossed out while the marks are hidden, which is when it is down.
+        draw_eye_glyph(canvas, dst, color, pressed);
+        return;
+    }
     match icons::cached_icon_chain(icon_names(tool), GLYPH as i32) {
         Some(image) => {
             // Symbolic art recoloured to the text tone, as the rest of the
@@ -270,8 +312,10 @@ fn icon_names(tool: Tool) -> &'static [&'static str] {
         Tool::ZoomIn => &["zoom-in-symbolic"],
         Tool::PreviousPage => &["go-up-symbolic", "pan-up-symbolic"],
         Tool::NextPage => &["go-down-symbolic", "pan-down-symbolic"],
-        // Never looked up; see `draw_sidebar_glyph`.
-        Tool::Sidebar => &[],
+        Tool::Undo => &["edit-undo-symbolic"],
+        Tool::Redo => &["edit-redo-symbolic"],
+        // Never looked up; see `draw_sidebar_glyph` and `draw_chat_glyph`.
+        Tool::Sidebar | Tool::Chat | Tool::Mark | Tool::ShowMarks => &[],
     }
 }
 
@@ -321,6 +365,24 @@ fn draw_fallback_glyph(canvas: &Canvas, dst: Rect, tool: Tool, color: Color) {
             path.line_to((cx + half, cy - dy * half / 2.0));
         }
         Tool::Sidebar => draw_sidebar_glyph(canvas, dst, color),
+        Tool::Chat => draw_chat_glyph(canvas, dst, color),
+        Tool::Mark => draw_pen_glyph(canvas, dst, color),
+        Tool::ShowMarks => draw_eye_glyph(canvas, dst, color, false),
+        Tool::Undo | Tool::Redo => {
+            // A hooked arrow, pointing back for undo.
+            let dx = if tool == Tool::Undo { 1.0 } else { -1.0 };
+            let (start, end) = if dx > 0.0 {
+                (r.left, r.right)
+            } else {
+                (r.right, r.left)
+            };
+            path.move_to((start + dx * 3.0, cy - 4.0));
+            path.line_to((start, cy));
+            path.line_to((start + dx * 3.0, cy + 4.0));
+            path.move_to((start, cy));
+            path.line_to((end - dx * 3.0, cy));
+            path.quad_to((end, cy), (end, cy + 3.0));
+        }
     }
     canvas.draw_path(&path.detach(), &stroke);
 }
@@ -357,6 +419,83 @@ fn draw_sidebar_glyph(canvas: &Canvas, dst: Rect, color: Color) {
     canvas.draw_line((divider, frame.top), (divider, frame.bottom), &stroke);
 }
 
+/// A pen, nib down to the lower leading corner, drawing a short line.
+fn draw_pen_glyph(canvas: &Canvas, dst: Rect, color: Color) {
+    let mut stroke = Paint::default();
+    stroke.set_anti_alias(true);
+    stroke.set_style(PaintStyle::Stroke);
+    stroke.set_stroke_width(1.5);
+    stroke.set_stroke_join(otto_kit::skia::PaintJoin::Round);
+    stroke.set_stroke_cap(otto_kit::skia::PaintCap::Round);
+    stroke.set_color(color);
+    let (l, t, r, b) = (
+        dst.left + 1.5,
+        dst.top + 1.5,
+        dst.right - 1.5,
+        dst.bottom - 1.5,
+    );
+    let mut pen = PathBuilder::new();
+    // The barrel, a slanted box from the top trailing corner to the nib.
+    pen.move_to((r - 3.0, t));
+    pen.line_to((r, t + 3.0));
+    pen.line_to((l + 4.0, b - 1.0));
+    pen.line_to((l, b));
+    pen.line_to((l + 1.0, b - 4.0));
+    pen.close();
+    canvas.draw_path(&pen.detach(), &stroke);
+}
+
+/// An eye, for the marks shown over the document; struck through when they
+/// are hidden.
+fn draw_eye_glyph(canvas: &Canvas, dst: Rect, color: Color, struck: bool) {
+    let mut stroke = Paint::default();
+    stroke.set_anti_alias(true);
+    stroke.set_style(PaintStyle::Stroke);
+    stroke.set_stroke_width(1.5);
+    stroke.set_stroke_join(otto_kit::skia::PaintJoin::Round);
+    stroke.set_stroke_cap(otto_kit::skia::PaintCap::Round);
+    stroke.set_color(color);
+    let (l, r, cy) = (dst.left + 1.0, dst.right - 1.0, dst.center_y());
+    let cx = dst.center_x();
+    let lid = dst.height() * 0.42;
+    let mut eye = PathBuilder::new();
+    eye.move_to((l, cy));
+    eye.quad_to((cx, cy - lid), (r, cy));
+    eye.quad_to((cx, cy + lid), (l, cy));
+    eye.close();
+    canvas.draw_path(&eye.detach(), &stroke);
+    canvas.draw_circle((cx, cy), 2.25, &stroke);
+    if struck {
+        canvas.draw_line(
+            (dst.left + 2.5, dst.bottom - 2.0),
+            (dst.right - 2.5, dst.top + 2.0),
+            &stroke,
+        );
+    }
+}
+
+/// A speech bubble: a rounded box with a tail at its lower leading corner.
+fn draw_chat_glyph(canvas: &Canvas, dst: Rect, color: Color) {
+    let bubble = Rect::from_ltrb(
+        dst.left + 1.0,
+        dst.top + 2.0,
+        dst.right - 1.0,
+        dst.bottom - 4.5,
+    );
+    let mut stroke = Paint::default();
+    stroke.set_anti_alias(true);
+    stroke.set_style(PaintStyle::Stroke);
+    stroke.set_stroke_width(1.5);
+    stroke.set_stroke_join(otto_kit::skia::PaintJoin::Round);
+    stroke.set_color(color);
+    canvas.draw_rrect(RRect::new_rect_xy(bubble, 4.0, 4.0), &stroke);
+    let mut tail = PathBuilder::new();
+    tail.move_to((bubble.left + 3.5, bubble.bottom));
+    tail.line_to((bubble.left + 3.0, dst.bottom - 1.0));
+    tail.line_to((bubble.left + 7.5, bubble.bottom));
+    canvas.draw_path(&tail.detach(), &stroke);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -372,7 +511,13 @@ mod tests {
 
     #[test]
     fn the_page_controls_clear_the_zoom_group_in_the_narrowest_window() {
-        let layout = toolbar_layout(crate::app::MIN_W, DecorationVariant::default(), true, true);
+        let layout = toolbar_layout(
+            crate::app::MIN_W,
+            DecorationVariant::default(),
+            true,
+            true,
+            true,
+        );
         let leading = button(&layout, Tool::ZoomFit).right;
         let previous = button(&layout, Tool::PreviousPage).left;
         assert!(previous > leading, "{previous} <= {leading}");
@@ -380,7 +525,7 @@ mod tests {
 
     #[test]
     fn the_zoom_level_sits_between_zoom_out_and_zoom_in() {
-        let layout = toolbar_layout(900.0, DecorationVariant::default(), false, false);
+        let layout = toolbar_layout(900.0, DecorationVariant::default(), false, false, false);
         assert!(button(&layout, Tool::ZoomOut).right <= layout.zoom_label.left);
         assert!(layout.zoom_label.right <= button(&layout, Tool::ZoomIn).left);
     }

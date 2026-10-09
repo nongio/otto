@@ -76,14 +76,20 @@ is idle or stopped (a failed session included — the subtitle says it failed).
 The colours come from the theme, so the dot follows the user's accent and the
 colour scheme.
 
-**Sessions from the phone.** A session written to through a chat bridge
-carries a pill at the end of its row naming the chat app, "Telegram", from
-the session's `otto.remote`, shaped and filled as the mode's pill in the
-log. Typing the app's name narrows the list to those sessions.
+**Sessions from the phone, and from Studio.** A session written to through a
+chat bridge carries a pill at the end of its row naming the chat app,
+"Telegram", from the session's `otto.remote`, shaped and filled as the mode's
+pill in the log. A session Preview started about a file (one that opens in
+Preview, below) carries "Studio" instead, even after it was written to from
+the phone. A local session carries none. Typing the pill's word narrows the
+list to those sessions.
 
 **In and out of a session.** With nothing typed, Left leaves a conversation
 for the list of sessions, and Right opens the highlighted session again; Enter
-opens it too. The two arrows walk the same step in both directions, so the
+opens it too. A session open in a terminal brings its terminal forward
+instead, and a session Preview started about a file (`_meta.otto.app` is
+`otto-preview`) opens in Preview, beside the file; the card closes either
+way. The two arrows walk the same step in both directions, so the
 list is never a dead end. Ctrl+L or Cmd+L is the same step without the empty
 field: from a request being written or a conversation it shows the list, and
 from the list it starts a fresh request, whatever is typed. Neither key is
