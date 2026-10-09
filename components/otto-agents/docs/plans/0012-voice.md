@@ -25,11 +25,18 @@ saying, with the same bars moving to its voice.
   - *Text to speech* runs in **otto-agents**. The service already sees every
     `ChatDelta`, keeps running when the launcher closes, and is the one place that
     knows when a turn ends. The launcher closing never cuts the agent off mid-sentence.
-- **The STT engine is Otto config.** It lives in `config.toml` under
-  `[speech_to_text]`, with entries in the settings schema (`src/settings/schema.rs`),
-  so `org.otto.Settings` serves it and announces changes with `Changed`. The launcher
-  reads it over that interface and follows it live, so switching engines needs no
-  restart. `agents.toml` keeps only what the agents service owns (`[tts]`).
+- **The STT engine is dictation's own file, not Otto config.** *(Revised; this
+  first said `[speech_to_text]` in `config.toml`, served over `org.otto.Settings`.)*
+  It lives in `$XDG_CONFIG_HOME/otto/dictation.toml` (`engine`, `language`,
+  `hotwords_boost`, `url`), which otto-kit's dictation reads as each dictation starts,
+  with the `OTTO_DICTATE_*` variables over it. Settings › Dictation writes it and
+  switches the engine's `otto-stt-<engine>` unit. Why not `config.toml`: dictation
+  runs inside otto-kit clients (the launcher) and otto-dictate, not in the
+  compositor, so the compositor would only relay a file the clients can read
+  themselves, and reading it at each start gives the no-restart switch without a
+  `Changed` listener. It mirrors `agents.toml` and `files.toml`, which belong to
+  their components the same way. `agents.toml` keeps only what the agents service
+  owns (`[tts]`). See `specs/dictation.md` (Settings).
 - **One shared crate, `otto-voice`.** Capture, playback, WAV encoding, the level
   meter, sentence splitting and the provider clients live in a leaf crate that the
   launcher, islands and the service all use. It has no AHP, Wayland or Skia code.
@@ -85,6 +92,10 @@ saying, with the same bars moving to its voice.
 ## Configuration
 
 ### Speech to text: Otto's `config.toml`
+
+> **Superseded** by `dictation.toml` (see Decisions). The `[speech_to_text]` table
+> below is the original design and was not built; `provider`, `live` and
+> `send_on_release` have no counterpart yet.
 
 ```toml
 [speech_to_text]
@@ -241,6 +252,10 @@ Left before it merges:
 
 ### 3. The engine in Otto's config
 
+> **Done differently:** `dictation.toml`, read by otto-kit's `Engine::from_config`, and
+> a Dictation pane in otto-settings (see Decisions). The steps below are the original
+> plan.
+
 - `[speech_to_text]` in `Config` (`src/config/mod.rs`), with its schema entries, all
   applied live.
 - `org.otto.Settings` serves them through `Get` and `GetAll` and emits `Changed` when
@@ -378,9 +393,9 @@ On a live session, before each milestone merges:
 
 ## Open questions
 
-- **TTS config.** Speech to text is Otto config; should `[tts]` follow it into
-  `config.toml` so both engines are set in one place, with otto-agents reading it
-  over `org.otto.Settings`?
+- **TTS config.** Speech to text has its own `dictation.toml`; should `[tts]` stay in
+  `agents.toml`, the service's own file, or join it in a shared voice file so both
+  engines are set in one place?
 - **Mic in use.** Should a small island mark the microphone as live while the launcher
   listens, for privacy? It would reuse `LevelMeter` with `Target::DefaultSource`.
 - **Where the island gets its stop.** Islands calling otto-agents over AHP adds an
