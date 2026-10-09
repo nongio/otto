@@ -187,6 +187,8 @@ struct Session {
     mcp_servers: Vec<McpStdio>,
     /// What the creating client wants the agent told before its first turn.
     instructions: Option<String>,
+    /// The plugin agent the creating client asked the session to run as.
+    runs_as: Option<String>,
 }
 
 /// The `setMode` request: switch `session`'s agent to the mode `mode_id`, one
@@ -464,6 +466,7 @@ impl Host {
         let cwd = working_directory(params.working_directories)?;
         let mcp_servers = McpStdio::from_meta(params.meta.as_ref());
         let instructions = crate::agent::instructions_from_meta(params.meta.as_ref());
+        let runs_as = crate::agent::runs_as_from_meta(params.meta.as_ref());
         // What the agent is given, repeated on the session so a client sees it
         // without having to join the two lists itself. Read-only: these are the
         // desktop's own skills, and this host has no way to write into them.
@@ -511,6 +514,7 @@ impl Host {
             attached: Vec::new(),
             mcp_servers,
             instructions,
+            runs_as,
         };
         state.sessions.insert(uri.clone(), session);
         state
@@ -1149,6 +1153,7 @@ impl HostState {
                 // opens a new session. TODO: persist with the session.
                 mcp_servers: Vec::new(),
                 instructions: None,
+                runs_as: None,
             };
             self.sessions.insert(resource.clone(), session);
             self.chats.insert(chat_uri.clone(), chat);
@@ -1238,6 +1243,7 @@ impl HostState {
             attached: session.attached.clone(),
             mcp_servers: session.mcp_servers.clone(),
             instructions: session.instructions.clone(),
+            runs_as: session.runs_as.clone(),
         };
         self.backend.start(spec, command_rx, events);
         let host = self.host.clone();

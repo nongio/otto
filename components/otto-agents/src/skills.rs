@@ -80,6 +80,10 @@ pub struct AgentFile {
     /// The frontmatter's `skills`, comma-separated there: the skills the agent
     /// is given when it runs.
     pub skills: Vec<String>,
+    /// The frontmatter's `session-only: true`: an agent a session runs as only
+    /// when its client asks for it (Preview's `studio`), never one offered for
+    /// questions about the desktop.
+    pub session_only: bool,
     /// The system prompt: everything under the frontmatter, trimmed.
     pub body: String,
     /// The file itself, absolute.
@@ -277,6 +281,9 @@ fn read_agents(dir: &Path) -> Vec<AgentFile> {
                 tools: comma_list(keys.get("tools")),
                 model: keys.remove("model").filter(|model| !model.is_empty()),
                 skills: comma_list(keys.get("skills")),
+                session_only: keys
+                    .get("session-only")
+                    .is_some_and(|value| value == "true"),
                 body: body(&text).to_owned(),
                 path: file,
             })
@@ -377,6 +384,7 @@ pub fn claude_system_prompt(plugins: &[Plugin]) -> String {
     let agent_names: Vec<String> = plugins
         .iter()
         .flat_map(|plugin| &plugin.agents)
+        .filter(|agent| !agent.session_only)
         .map(|agent| format!("`{}`", agent.name))
         .collect();
     let loaded = match plugin_names.len() {
@@ -1117,6 +1125,22 @@ mod tests {
             ),
             "{prompt}"
         );
+
+        // An agent a session runs as only when asked for is not offered.
+        agent_file(
+            &helper,
+            "studio",
+            "description: Works on a file\nsession-only: true\n",
+        );
+        let plugins = discover_in(std::slice::from_ref(&root));
+        assert!(
+            plugins
+                .iter()
+                .flat_map(|plugin| &plugin.agents)
+                .any(|agent| agent.session_only)
+        );
+        let prompt = claude_system_prompt(&plugins);
+        assert!(!prompt.contains("`studio`"), "{prompt}");
 
         std::fs::remove_dir_all(&root).unwrap();
     }

@@ -73,7 +73,9 @@ Where we agree, and it is most of it:
   `otto.defaultOption` live in `_meta` rather than in invented typed fields.
   So does what a client asks for when it creates a session (`createSession`'s
   `_meta.otto`): `app` and `subject`, copied onto the session's state so every
-  list can open it in that app; `instructions`, given to the agent ahead of
+  list can open it in that app; `agent`, a plugin agent to run as in place of
+  the configured one (Preview's `studio`, marked `session-only` so it is never
+  offered for desktop questions), falling back when no plugin has it; `instructions`, given to the agent ahead of
   its first turn and never shown in the chat; and `mcpServers`, stdio MCP
   servers handed to the agent with ACP's `mcpServers`, Otto programs named by
   absolute path only. The last two are not stored with the session yet: a

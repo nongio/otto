@@ -34,6 +34,29 @@ pub struct SessionSpec {
     /// its first turn: where it is working and how, as Preview says the
     /// agent is editing the file it shows. From `_meta.otto.instructions`.
     pub instructions: Option<String>,
+    /// The plugin agent the client asked the session to run as, in place of
+    /// the one `agents.toml` names: Preview's `studio`. From
+    /// `_meta.otto.agent`; a name no plugin has falls back to the configured
+    /// one.
+    pub runs_as: Option<String>,
+}
+
+/// The `_meta.otto.agent` a client created a session with: a plugin agent's
+/// name, letters, digits, `-` and `_` only.
+pub fn runs_as_from_meta(
+    meta: Option<&serde_json::Map<String, serde_json::Value>>,
+) -> Option<String> {
+    meta?
+        .get("otto")?
+        .get("agent")?
+        .as_str()
+        .filter(|name| {
+            !name.is_empty()
+                && name
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        })
+        .map(str::to_owned)
 }
 
 /// The `_meta.otto.instructions` a client created a session with.
@@ -499,5 +522,23 @@ mod tests {
             }]
         );
         assert!(McpStdio::from_meta(None).is_empty());
+    }
+
+    #[test]
+    fn a_session_names_its_plugin_agent_by_a_plain_name() {
+        let meta = |agent: serde_json::Value| {
+            serde_json::json!({ "otto": { "agent": agent } })
+                .as_object()
+                .unwrap()
+                .clone()
+        };
+        assert_eq!(
+            runs_as_from_meta(Some(&meta("studio".into()))),
+            Some("studio".into())
+        );
+        assert_eq!(runs_as_from_meta(Some(&meta("../otto".into()))), None);
+        assert_eq!(runs_as_from_meta(Some(&meta("".into()))), None);
+        assert_eq!(runs_as_from_meta(Some(&meta(3.into()))), None);
+        assert_eq!(runs_as_from_meta(None), None);
     }
 }

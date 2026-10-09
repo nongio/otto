@@ -998,6 +998,7 @@ mod tests {
                 tools: vec!["Read".into()],
                 model: None,
                 skills: vec!["otto".into()],
+                session_only: false,
                 body: "You are Otto.".into(),
                 path: "/usr/share/otto/plugins/otto/agents/otto.md".into(),
             }],

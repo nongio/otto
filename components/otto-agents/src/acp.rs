@@ -164,7 +164,16 @@ impl Backend for AcpBackend {
         };
         // Claude loads plugins itself, on every session it opens, resumed or
         // not: what it knows of them lives in the process, not the history.
-        let run_as = agent.agent.as_deref().and_then(|name| {
+        // A session may ask for another of the plugins' agents, as Preview's
+        // asks for `studio`; one no plugin has leaves the configured agent.
+        let asked = spec.runs_as.as_deref().filter(|name| {
+            let found = skills::agent_file(&self.plugins, name).is_some();
+            if !found {
+                tracing::warn!(agent = name, "the session asked for an agent no plugin has");
+            }
+            found
+        });
+        let run_as = asked.or(agent.agent.as_deref()).and_then(|name| {
             let found = skills::agent_file(&self.plugins, name);
             if found.is_none() {
                 tracing::warn!(agent = name, "no plugin has an agent file by that name");

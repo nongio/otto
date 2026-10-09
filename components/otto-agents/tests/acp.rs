@@ -946,6 +946,7 @@ async fn a_missing_agent_binary_fails_session_creation() {
         attached: Vec::new(),
         mcp_servers: Vec::new(),
         instructions: None,
+        runs_as: None,
     };
     backend.start(spec, command_rx, event_tx);
 
