@@ -1789,6 +1789,10 @@ fn collect_id_labels(items: &[crate::dbusmenu::MenuItem], map: &mut HashMap<i32,
     }
 }
 fn convert_dbusmenu_items(items: &[crate::dbusmenu::MenuItem]) -> Vec<KitMenuItem> {
+    // A menu with a toggle in it keeps every label in line with the toggle's.
+    let gutter = items
+        .iter()
+        .any(|item| item.visible && item.checked.is_some());
     items
         .iter()
         .filter(|item| item.visible)
@@ -1829,6 +1833,11 @@ fn convert_dbusmenu_items(items: &[crate::dbusmenu::MenuItem]) -> Vec<KitMenuIte
                 let mut kit = KitMenuItem::action(&label).with_action_id(item.id.to_string());
                 if let Some(shortcut) = &item.shortcut {
                     kit = kit.with_shortcut(shortcut.clone());
+                }
+                match item.checked {
+                    Some(checked) => kit = kit.with_checked(checked),
+                    None if gutter => kit = kit.with_check_gutter(),
+                    None => {}
                 }
                 if let Some(icon) = icon {
                     kit = kit.with_icon(icon);

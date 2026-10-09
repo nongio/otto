@@ -6,7 +6,7 @@ mod style;
 
 pub use data::{MenuItem, MenuItemIcon, MenuItemKind, VisualState};
 pub use group::MenuItemGroup;
-pub use renderer::MenuItemRenderer;
+pub use renderer::{MenuItemRenderer, CHECK_GUTTER};
 pub use style::MenuItemStyle;
 
 // Backward compatibility alias

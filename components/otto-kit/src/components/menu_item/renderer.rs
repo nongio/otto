@@ -1,6 +1,9 @@
 use super::{MenuItem, MenuItemIcon, MenuItemStyle, VisualState};
 
 use crate::{components::icon::Icon, Renderable};
+
+/// Room before a toggle's label for its check.
+pub const CHECK_GUTTER: f32 = 16.0;
 use skia_safe::{Canvas, Font, Paint, Point, RRect, Rect};
 
 /// Pure rendering functions for MenuItem
@@ -68,11 +71,22 @@ impl MenuItemRenderer {
         // Draw label (offset by icon if present)
         let icon_size = 16.0;
         let icon_gap = 6.0;
-        let label_x_offset = if data.icon.is_some() {
-            icon_size + icon_gap
-        } else {
-            0.0
-        };
+        let gutter = if data.check_gutter { CHECK_GUTTER } else { 0.0 };
+        let label_x_offset = gutter
+            + if data.icon.is_some() {
+                icon_size + icon_gap
+            } else {
+                0.0
+            };
+        if data.checked == Some(true) {
+            Self::draw_check(
+                canvas,
+                text_color,
+                x + style.horizontal_padding,
+                y,
+                data.height,
+            );
+        }
         Self::draw_label(
             canvas,
             label,
@@ -91,7 +105,7 @@ impl MenuItemRenderer {
                 canvas,
                 icon,
                 text_color,
-                x,
+                x + gutter,
                 y,
                 data.height,
                 style,
@@ -115,6 +129,23 @@ impl MenuItemRenderer {
                 style,
             );
         }
+    }
+
+    /// A check mark in the gutter at `left`, for a toggle that is on.
+    fn draw_check(canvas: &Canvas, color: skia_safe::Color, left: f32, y: f32, height: f32) {
+        let mut paint = Paint::default();
+        paint.set_color(color);
+        paint.set_anti_alias(true);
+        paint.set_style(skia_safe::PaintStyle::Stroke);
+        paint.set_stroke_width(1.6);
+        paint.set_stroke_cap(skia_safe::paint::Cap::Round);
+        paint.set_stroke_join(skia_safe::paint::Join::Round);
+        let mid = y + height / 2.0;
+        let mut path = skia_safe::PathBuilder::new();
+        path.move_to((left + 1.5, mid));
+        path.line_to((left + 4.5, mid + 3.0));
+        path.line_to((left + 10.0, mid - 3.5));
+        canvas.draw_path(&path.detach(), &paint);
     }
 
     /// Draw hover background
