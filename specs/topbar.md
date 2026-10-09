@@ -76,7 +76,8 @@ The Top Bar is a persistent, full-width panel anchored to the top edge of the pr
 15. When a submenu is opened or the pointer moves between menu depths, only one item is selected across the entire menu tree. If a submenu is visible, parent menu items are not highlighted.
 16. If no dbusmenu is registered for the focused app, the left zone shows only the application name with no menu entries.
 16a. The `topbar.show_app_menu` setting (Settings, Top bar, "Show application menus", on by default) turns the global menu off. While it is false the left zone shows only the application name, an open application menu closes, and the bar releases the `com.canonical.AppMenu.Registrar` name, so applications that look for a registrar keep the menu bar in their own window. The bar reads the setting before it first asks for the name, so a bar starting with the menu off never claims it. Turning the setting back on claims the name again and fetches the focused window's menu.
-17. Menu entries support: labels, icons, keyboard shortcuts (displayed right-aligned), separators, checkboxes, radio groups, and submenus.
+17. Menu entries support: labels, icons, keyboard shortcuts (displayed right-aligned), separators, checkboxes, radio groups, and submenus. A `checkmark` or `radio` entry (`toggle-type`) that is on (`toggle-state` 1) shows a check before its label; a menu with any such entry keeps room for the check on every row, so the labels stay in line.
+17a. Otto's own applications serve their menus with `otto_kit::app_menu`: `com.canonical.dbusmenu` on a session-bus connection of their own, pointed at from the window with `org_kde_kwin_appmenu`, which reaches the bar as `otto_appmenu`. Studio and Files are the first.
 18. Disabled menu entries are rendered at reduced opacity and do not respond to activation.
 
 ### System Tray — StatusNotifierItem (Right Zone)

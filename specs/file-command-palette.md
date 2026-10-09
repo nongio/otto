@@ -101,6 +101,17 @@ a path to go to or a new name to give a file.
 - Tab on the highlighted command always enters argument mode when it takes an
   argument. On a command that takes none, Tab does nothing.
 
+### In the top bar
+
+A browser window's menus in the top bar are the same commands: a menu per
+group (Go, File, Edit, View), holding what the palette's resting list holds
+for where the window is now, with their keys. The View menu leads with the
+views as checks, the one on ticked, and their Ctrl+1–4. A command whose
+argument is one of a few choices (Sort By, Go to Place) is a submenu of them,
+the sort in force ticked; one that needs something typed reads "…" and opens
+the palette on itself, as the context menu does. The desk and a file dialog
+have no menus of their own.
+
 ### Argument mode
 
 - Entering argument mode replaces the query with a prompt: the command's name
