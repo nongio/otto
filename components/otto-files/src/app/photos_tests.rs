@@ -511,3 +511,18 @@ fn a_window_with_room_for_the_whole_panel_does_not_pan() {
     assert_eq!(browser.pan.state.max_offset(), 0.0);
     assert_eq!(browser.photos.panel_rect(width, height).right, full.right);
 }
+
+#[test]
+fn a_maximised_window_shows_the_whole_panel_beside_the_wall() {
+    let mut browser = photos_over(vec![entry("a.jpg", Kind::Image, 0)]);
+    browser.size.0 = 1920.0;
+    browser.sync_scroll_metrics();
+    let (width, height) = (browser.size.0, browser.content_h());
+    let full = view::content_viewport(width, height, ViewMode::Photos);
+    assert_eq!(browser.pan.state.max_offset(), 0.0);
+    assert_eq!(
+        browser.photos.area(width, height).right,
+        full.right - view::PHOTOS_INFO_W
+    );
+    assert_eq!(browser.photos.panel_rect(width, height).right, full.right);
+}
