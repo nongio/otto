@@ -1977,10 +1977,19 @@ pub const PHOTOS_INFO_W: f32 = 320.0;
 /// is left, showing its edge, and the rest of it is panned to.
 pub const PHOTOS_WALL_SHARE: f32 = 0.85;
 
-/// How wide the wall is in a file area `viewport` wide: its share of it, or
-/// all the info panel leaves when that is more.
+/// The narrowest wall the info panel sits beside in full. A file area with
+/// room for this and the whole panel shows both and does not pan.
+pub const PHOTOS_WALL_MIN: f32 = 800.0;
+
+/// How wide the wall is in a file area `viewport` wide: all the info panel
+/// leaves when that is at least [`PHOTOS_WALL_MIN`], else its share of it.
 pub fn photos_wall_width(viewport: f32) -> f32 {
-    (viewport - PHOTOS_INFO_W).max(viewport * PHOTOS_WALL_SHARE)
+    let beside = viewport - PHOTOS_INFO_W;
+    if beside >= PHOTOS_WALL_MIN {
+        beside
+    } else {
+        viewport * PHOTOS_WALL_SHARE
+    }
 }
 
 /// How far the Photos view reaches across: the wall, then the info panel.
@@ -2362,6 +2371,20 @@ pub fn photos_info_runs(panel: Rect, data: &PhotosInfoData<'_>, theme: &Theme) -
             let mut all = facts(entry, *dims);
             let at = usize::from(dims.is_some());
             all.splice(at..at, camera.map(shot_rows).unwrap_or_default());
+            // When the camera says when it was taken, that is the date that
+            // means something: a copy, an unzip or a sync resets the file's
+            // own, and a zip stamps 1980.
+            if let Some(taken) = camera.and_then(|shot| shot.taken_at) {
+                let modified = otto_kit::t!("files-photos-info-modified");
+                let row = (
+                    otto_kit::t!("files-photos-info-taken"),
+                    model::format_wall_time(taken),
+                );
+                match all.iter().position(|(key, _)| *key == modified) {
+                    Some(i) => all[i] = row,
+                    None => all.push(row),
+                }
+            }
             rows(&mut runs, layout.rows_cy, all);
         }
         PhotosInfoData::Many { count, bytes } => {

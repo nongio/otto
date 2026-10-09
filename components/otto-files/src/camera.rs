@@ -40,6 +40,9 @@ pub struct Shot {
     /// clock — the calendar day where the picture was taken, which is the one
     /// it belongs to, wherever it is looked at later.
     pub taken: Option<i64>,
+    /// The moment it was taken, to the second, by the camera's own clock: a
+    /// wall-clock time with no zone, as seconds since the epoch read as UTC.
+    pub taken_at: Option<i64>,
 }
 
 impl Shot {
@@ -145,6 +148,20 @@ fn heif_exif(bytes: &[u8]) -> Option<&[u8]> {
         from += found + 1;
     }
     None
+}
+
+/// An EXIF date, `2024:11:29 13:25:59`, as the moment it names on the
+/// camera's clock, in seconds since the epoch read as UTC.
+fn exif_moment(text: &str) -> Option<i64> {
+    let day = exif_day(text)?;
+    let mut parts = text.get(11..19)?.split(':');
+    let hour: i64 = parts.next()?.parse().ok()?;
+    let minute: i64 = parts.next()?.parse().ok()?;
+    let second: i64 = parts.next()?.parse().ok()?;
+    if hour > 23 || minute > 59 || second > 60 {
+        return None;
+    }
+    Some(day * otto_search::dates::DAY + hour * 3600 + minute * 60 + second)
 }
 
 /// An EXIF date, `2024:11:29 13:25:59`, as the day it names. A camera with
@@ -350,7 +367,7 @@ impl<'a> Tiff<'a> {
                 match tag {
                     IFD0_MAKE => make = self.text(&field),
                     IFD0_MODEL => model = self.text(&field),
-                    IFD0_DATETIME => written = self.text(&field).as_deref().and_then(exif_day),
+                    IFD0_DATETIME => written = self.text(&field),
                     IFD0_EXIF => exif = self.number(&field),
                     IFD0_GPS => gps = self.number(&field),
                     _ => {}
@@ -381,13 +398,18 @@ impl<'a> Tiff<'a> {
                     EXIF_LENS_MAKE => lens_make = self.text(&field),
                     EXIF_LENS_MODEL => lens_model = self.text(&field),
                     EXIF_DATE_ORIGINAL => {
-                        shot.taken = self.text(&field).as_deref().and_then(exif_day)
+                        let text = self.text(&field);
+                        shot.taken = text.as_deref().and_then(exif_day);
+                        shot.taken_at = text.as_deref().and_then(exif_moment);
                     }
                     _ => {}
                 }
             }
         }
-        shot.taken = shot.taken.or(written);
+        if shot.taken.is_none() {
+            shot.taken = written.as_deref().and_then(exif_day);
+            shot.taken_at = written.as_deref().and_then(exif_moment);
+        }
         shot.focal = focal_35.map(|mm| mm as f32).or(focal);
         // The lens's own model says enough ("iPhone 15 back dual wide camera
         // 5.96mm f/1.6"); its maker is the camera's, or on the model already.
@@ -661,6 +683,10 @@ mod tests {
             .build();
         let day = otto_search::dates::days_from_civil(2024, 11, 29);
         assert_eq!(parse(&jpeg(&taken)).unwrap().taken, Some(day));
+        assert_eq!(
+            parse(&jpeg(&taken)).unwrap().taken_at,
+            Some(day * otto_search::dates::DAY + 13 * 3600 + 25 * 60 + 59)
+        );
 
         let written = Builder::new()
             .ifd0(IFD0_DATETIME, ascii("2024:11:29 23:59:59"))
@@ -671,6 +697,7 @@ mod tests {
             .exif(EXIF_DATE_ORIGINAL, ascii("0000:00:00 00:00:00"))
             .build();
         assert_eq!(parse(&unset).unwrap().taken, None);
+        assert_eq!(parse(&unset).unwrap().taken_at, None);
     }
 
     /// A phone's HEIC: the EXIF item's name in the index first, then the

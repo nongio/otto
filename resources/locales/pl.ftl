@@ -1996,6 +1996,7 @@ files-photos-info-kind = Obraz { $format }
 files-photos-info-copied = Skopiowano
 files-photos-info-dimensions = Wymiary
 files-photos-info-modified = Zmodyfikowano
+files-photos-info-taken = Zrobiono
 files-photos-info-where = Miejsce
 files-photos-info-camera = Aparat
 files-photos-info-lens = Obiektyw
