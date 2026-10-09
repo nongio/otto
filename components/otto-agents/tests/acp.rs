@@ -447,6 +447,7 @@ impl Session {
             turn_id: turn_id.into(),
             text: text.into(),
             attachments,
+            remote: None,
         };
         self.commands.send(command).expect("session is running");
     }

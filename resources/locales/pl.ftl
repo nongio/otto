@@ -444,6 +444,14 @@ settings-agents-service-missing = Nie zainstalowano
 settings-agents-service-unmanaged = Nie wiadomo: w tym systemie nie ma systemctl
 settings-agents-start = Uruchom
 settings-agents-restart = Uruchom ponownie
+settings-agents-bridge-group = Most czatu
+settings-agents-bridge = Most
+settings-agents-bridge-off = Wyłączony. Aplikacje czatu nie dotrą do twoich agentów.
+settings-agents-bridge-unset = Ustaw poniżej polecenie i je zastosuj, a potem włącz to.
+settings-agents-bridge-failed = Zatrzymany po błędzie. Przyczynę podaje journalctl --user -u otto-agents-bridge.
+settings-agents-bridge-missing = Nie zainstalowano
+settings-agents-bridge-command = Polecenie
+settings-agents-bridge-command-detail = To, co uruchamia most, na przykład bramka skonfigurowana tak, by uruchamiała otto-agents acp jako swojego agenta.
 # The row that opens agents.toml. Its path is shown under it.
 settings-agents-file = Plik konfiguracji
 settings-agents-none = Brak skonfigurowanych agentów

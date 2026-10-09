@@ -52,6 +52,7 @@ impl Source for Calculator {
             activity: None,
             checked: None,
             search_terms: Vec::new(),
+            pill: None,
             origin: Origin {
                 source: self.index,
                 index: 0,

@@ -32,6 +32,10 @@ const ICON: f32 = 28.0;
 const DOT_RADIUS: f32 = 4.0;
 /// How far a row's content and highlight sit in from the list's edges.
 const ROW_INSET: f32 = 8.0;
+/// Room either side of a pill's word, and its height — the mode pill's in the
+/// ask log.
+const PILL_PAD_X: f32 = 7.0;
+const PILL_H: f32 = 16.0;
 /// Corner radius of the selection's highlight.
 pub const HIGHLIGHT_RADIUS: f32 = 9.0;
 
@@ -194,6 +198,7 @@ pub fn paint_item_rows_styled(
             (row.width(), row.height()),
             item,
             labels.get(item.origin.source).copied().unwrap_or(""),
+            theme.fill_secondary,
             &fonts,
             (title_color, subtitle_color),
             marked,
@@ -305,28 +310,46 @@ struct RowFonts {
 
 /// A row's text: the badge at its end, then the title — with the characters
 /// in `marked` drawn in their colour — and the second line under it.
+///
+/// An item with a [`Item::pill`] wears it in place of `badge`: its word in
+/// the title's colour, on a pill filled with `pill_fill`.
+#[allow(clippy::too_many_arguments)]
 fn paint_text(
     canvas: &Canvas,
     (width, height): (f32, f32),
     item: &Item,
     badge: &str,
+    pill_fill: Color,
     fonts: &RowFonts,
     (title_color, subtitle_color): (Color, Color),
     marked: Option<(Vec<usize>, Color)>,
 ) {
+    let (badge, fill, badge_color) = match item.pill.as_deref() {
+        Some(pill) => (pill, Some(pill_fill), title_color),
+        None => (badge, None, subtitle_color),
+    };
     // The badge is measured first: the title is clipped to what is left, so a
     // long window title cannot run underneath it.
-    let mut badge_paint = Paint::new(Color4f::from(subtitle_color), None);
+    let mut badge_paint = Paint::new(Color4f::from(badge_color), None);
     badge_paint.set_anti_alias(true);
+    // A pill's text sits inside it, with room either side.
+    let padding = if fill.is_some() { PILL_PAD_X } else { 0.0 };
     let badge_width = if badge.is_empty() {
         0.0
     } else {
-        fonts.badge.measure_str(badge, Some(&badge_paint)).0
+        fonts.badge.measure_str(badge, Some(&badge_paint)).0 + 2.0 * padding
     };
     if !badge.is_empty() {
+        let left = width - ROW_INSET - 8.0 - badge_width;
+        if let Some(fill) = fill {
+            let mut fill = Paint::new(Color4f::from(fill), None);
+            fill.set_anti_alias(true);
+            let rect = Rect::from_xywh(left, (height - PILL_H) / 2.0, badge_width, PILL_H);
+            canvas.draw_round_rect(rect, PILL_H / 2.0, PILL_H / 2.0, &fill);
+        }
         canvas.draw_str(
             badge,
-            (width - ROW_INSET - 8.0 - badge_width, height / 2.0 + 4.0),
+            (left + padding, height / 2.0 + 4.0),
             &fonts.badge,
             &badge_paint,
         );

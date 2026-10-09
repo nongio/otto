@@ -366,6 +366,7 @@ assets = [
     # The D-Bus service file above names this unit in SystemdService=.
     ["components/xdg-desktop-portal-otto/xdg-desktop-portal-otto.service", "usr/lib/systemd/user/", "644"],
     ["components/otto-agents/otto-agents.service", "usr/lib/systemd/user/", "644"],
+    ["components/otto-agents/otto-agents-bridge.service", "usr/lib/systemd/user/", "644"],
     # The plugin otto-agents hands agents, by directory (see resources/plugins/README.md).
     # Globs keep the path under their fixed prefix; the script is listed apart so it stays executable.
     ["resources/plugins/otto/.claude-plugin/*", "usr/share/otto/plugins/otto/.claude-plugin/", "644"],
@@ -373,6 +374,8 @@ assets = [
     ["resources/plugins/otto/skills/otto-help/*.md", "usr/share/otto/plugins/otto/skills/otto-help/", "644"],
     ["resources/plugins/otto/skills/otto-help/references/**/*", "usr/share/otto/plugins/otto/skills/otto-help/references/", "644"],
     ["resources/plugins/otto/skills/otto-help/scripts/*", "usr/share/otto/plugins/otto/skills/otto-help/scripts/", "755"],
+    ["resources/plugins/otto/skills/send-to-phone/*.md", "usr/share/otto/plugins/otto/skills/send-to-phone/", "644"],
+    ["resources/plugins/otto/skills/send-to-phone/scripts/*", "usr/share/otto/plugins/otto/skills/send-to-phone/scripts/", "755"],
     # The desktop widgets' ewwii configuration; ewwii itself is optional.
     ["resources/widgets/ewwii/ewwii.*", "usr/share/otto/widgets/ewwii/", "644"],
     ["resources/widgets/ewwii/scripts/*", "usr/share/otto/widgets/ewwii/scripts/", "755"],
@@ -474,12 +477,15 @@ assets = [
     { source = "components/xdg-desktop-portal-otto/org.freedesktop.impl.portal.desktop.otto.service", dest = "/usr/share/dbus-1/services/org.freedesktop.impl.portal.desktop.otto.service", mode = "644" },
     { source = "components/xdg-desktop-portal-otto/xdg-desktop-portal-otto.service", dest = "/usr/lib/systemd/user/xdg-desktop-portal-otto.service", mode = "644" },
     { source = "components/otto-agents/otto-agents.service", dest = "/usr/lib/systemd/user/otto-agents.service", mode = "644" },
+    { source = "components/otto-agents/otto-agents-bridge.service", dest = "/usr/lib/systemd/user/otto-agents-bridge.service", mode = "644" },
     # The plugin otto-agents hands agents (see resources/plugins/README.md); the script is listed apart so it stays executable.
     { source = "resources/plugins/otto/.claude-plugin/*", dest = "/usr/share/otto/plugins/otto/.claude-plugin/", mode = "644" },
     { source = "resources/plugins/otto/agents/*.md", dest = "/usr/share/otto/plugins/otto/agents/", mode = "644" },
     { source = "resources/plugins/otto/skills/otto-help/*.md", dest = "/usr/share/otto/plugins/otto/skills/otto-help/", mode = "644" },
     { source = "resources/plugins/otto/skills/otto-help/references/**/*", dest = "/usr/share/otto/plugins/otto/skills/otto-help/references/", mode = "644" },
     { source = "resources/plugins/otto/skills/otto-help/scripts/*", dest = "/usr/share/otto/plugins/otto/skills/otto-help/scripts/", mode = "755" },
+    { source = "resources/plugins/otto/skills/send-to-phone/*.md", dest = "/usr/share/otto/plugins/otto/skills/send-to-phone/", mode = "644" },
+    { source = "resources/plugins/otto/skills/send-to-phone/scripts/*", dest = "/usr/share/otto/plugins/otto/skills/send-to-phone/scripts/", mode = "755" },
     # The desktop widgets' ewwii configuration; ewwii itself is optional.
     { source = "resources/widgets/ewwii/ewwii.*", dest = "/usr/share/otto/widgets/ewwii/", mode = "644" },
     { source = "resources/widgets/ewwii/scripts/*", dest = "/usr/share/otto/widgets/ewwii/scripts/", mode = "755" },
@@ -597,12 +603,15 @@ files = [
     ["target/release/otto-search", "/usr/bin/otto-search", "755"],
     ["target/release/otto-agents", "/usr/bin/otto-agents", "755"],
     ["components/otto-agents/otto-agents.service", "/usr/lib/systemd/user/otto-agents.service", "644"],
+    ["components/otto-agents/otto-agents-bridge.service", "/usr/lib/systemd/user/otto-agents-bridge.service", "644"],
     # The plugin otto-agents hands agents (see resources/plugins/README.md); the script is listed apart so it stays executable.
     ["resources/plugins/otto/.claude-plugin/*", "/usr/share/otto/plugins/otto/.claude-plugin/", "644"],
     ["resources/plugins/otto/agents/*.md", "/usr/share/otto/plugins/otto/agents/", "644"],
     ["resources/plugins/otto/skills/otto-help/*.md", "/usr/share/otto/plugins/otto/skills/otto-help/", "644"],
     ["resources/plugins/otto/skills/otto-help/references/**/*", "/usr/share/otto/plugins/otto/skills/otto-help/references/", "644"],
     ["resources/plugins/otto/skills/otto-help/scripts/*", "/usr/share/otto/plugins/otto/skills/otto-help/scripts/", "755"],
+    ["resources/plugins/otto/skills/send-to-phone/*.md", "/usr/share/otto/plugins/otto/skills/send-to-phone/", "644"],
+    ["resources/plugins/otto/skills/send-to-phone/scripts/*", "/usr/share/otto/plugins/otto/skills/send-to-phone/scripts/", "755"],
     # The desktop widgets' ewwii configuration; ewwii itself is optional.
     ["resources/widgets/ewwii/ewwii.*", "/usr/share/otto/widgets/ewwii/", "644"],
     ["resources/widgets/ewwii/scripts/*", "/usr/share/otto/widgets/ewwii/scripts/", "755"],

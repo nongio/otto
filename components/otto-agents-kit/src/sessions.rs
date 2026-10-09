@@ -63,7 +63,8 @@ pub async fn list_sessions(client: &Client) -> Result<Vec<SessionSummary>, BoxEr
     Ok(listed.items)
 }
 
-/// The sessions whose titles contain `query`, as rows from `source`.
+/// The sessions whose titles, or the chat app they came from, contain
+/// `query`, as rows from `source`.
 ///
 /// Each row's [`Origin::index`] is the session's place in `sessions`, so a row
 /// picked from a narrowed list still names the right session. `agents` names
@@ -85,7 +86,11 @@ pub fn session_items(
     sessions
         .iter()
         .enumerate()
-        .filter(|(_, session)| query.is_empty() || session.title.to_lowercase().contains(&query))
+        .filter(|(_, session)| {
+            query.is_empty()
+                || session.title.to_lowercase().contains(&query)
+                || session_remote(session).is_some_and(|via| via.to_lowercase().contains(&query))
+        })
         .map(|(index, session)| Item {
             title: if session.title.is_empty() {
                 otto_kit::t_owned!("launcher-agents-untitled")
@@ -101,9 +106,22 @@ pub fn session_items(
             activity: Some(session_activity(session)),
             checked: None,
             search_terms: Vec::new(),
+            pill: session_remote(session),
             origin: Origin { source, index },
         })
         .collect()
+}
+
+/// The chat app the session was last written to from, away from the desktop,
+/// as the service keeps it in the session's `_meta` under `otto.remote`.
+pub fn session_remote(session: &SessionSummary) -> Option<String> {
+    let via = session
+        .meta
+        .as_ref()?
+        .get("otto")?
+        .get("remote")?
+        .as_str()?;
+    (!via.trim().is_empty()).then(|| via.to_owned())
 }
 
 /// What a session is doing, as the dot in its row shows it.

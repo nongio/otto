@@ -76,6 +76,11 @@ is idle or stopped (a failed session included — the subtitle says it failed).
 The colours come from the theme, so the dot follows the user's accent and the
 colour scheme.
 
+**Sessions from the phone.** A session written to through a chat bridge
+carries a pill at the end of its row naming the chat app, "Telegram", from
+the session's `otto.remote`, shaped and filled as the mode's pill in the
+log. Typing the app's name narrows the list to those sessions.
+
 **In and out of a session.** With nothing typed, Left leaves a conversation
 for the list of sessions, and Right opens the highlighted session again; Enter
 opens it too. A session open in a terminal brings its terminal forward
@@ -87,6 +92,15 @@ field: from a request being written or a conversation it shows the list, and
 from the list it starts a fresh request, whatever is typed. Neither key is
 taken while a request is still on its way to the service, which leaving would
 lose.
+
+**Drafts.** What is typed and not sent is kept when the launcher closes or
+leaves a session, under the session it was for, and is back in the field the
+next time that session is opened — from the list, with `--session`, or by
+Ctrl+L between the two. A request that has no session yet is kept as the one
+draft of a new request, and comes back the next time Ask opens fresh. Sending
+forgets the draft, as does closing with the field empty. The drafts live in
+`$XDG_STATE_HOME/otto/ask-drafts.json`, the 64 most recently written; the
+field of the list of sessions is a search, and is not kept.
 
 **Choosing the agent.** The empty field names the agent the request would go
 to — "Ask @Otto…" — from the start: the default agent is the first the service

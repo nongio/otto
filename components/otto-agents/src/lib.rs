@@ -12,6 +12,7 @@ pub mod client;
 pub mod config;
 pub mod dialog;
 pub mod elicitation;
+pub mod facade;
 pub mod host;
 pub mod i18n;
 pub mod images;

@@ -440,7 +440,20 @@ pub fn claude_session_meta(
         .iter()
         .map(|plugin| serde_json::json!({ "type": "local", "path": plugin.dir }))
         .collect();
-    let mut options = serde_json::json!({ "plugins": dirs });
+    // Loading one of the desktop's own skills is reading its instructions:
+    // nothing to ask about, and a question on every request otherwise. What
+    // a skill then runs is still asked about, unless its `allowed-tools`
+    // says otherwise.
+    let allowed: Vec<String> = plugins
+        .iter()
+        .flat_map(|plugin| {
+            plugin.skills.iter().flat_map(move |skill| {
+                let name = format!("{}:{}", plugin.name, skill.name);
+                [format!("Skill({name})"), format!("Skill({name}:*)")]
+            })
+        })
+        .collect();
+    let mut options = serde_json::json!({ "plugins": dirs, "allowedTools": allowed });
     // `run_as` is Claude's own `--agent plugin:name`: Claude reads the agent
     // file itself and honours its instructions, tools, skills and model. It
     // travels as a CLI flag because the adapter drops the SDK's `agent`
@@ -1003,7 +1016,10 @@ mod tests {
         assert_eq!(
             serde_json::Value::Object(meta),
             serde_json::json!({
-                "claudeCode": { "options": { "plugins": [{ "type": "local", "path": dir }] } },
+                "claudeCode": { "options": {
+                    "plugins": [{ "type": "local", "path": dir }],
+                    "allowedTools": ["Skill(otto:otto)", "Skill(otto:otto:*)"],
+                } },
                 "systemPrompt": { "append": claude_system_prompt(&plugins) },
             }),
             "`append` extends the adapter's claude_code preset; a string would replace it"
