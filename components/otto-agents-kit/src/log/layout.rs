@@ -362,12 +362,17 @@ pub fn lay_out(
     lines
 }
 
+/// The most lines one tool call takes in the log. A call's title can be a
+/// whole script; the log says which call it was, not all of it.
+const STEP_LINES: usize = 2;
+
 /// The tool calls of request `block`, as one thing that can be opened.
 ///
-/// Closed, a run of calls is the last of them and an ellipsis: the ones above
-/// it are how the agent got there, and a conversation should not be mostly
-/// the agent's working. One call on its own is that call, plainly — there is
-/// nothing to open.
+/// Closed, a run of calls is the last of them, on one line, and an ellipsis:
+/// the ones above it are how the agent got there, and a conversation should
+/// not be mostly the agent's working. One call on its own is that call,
+/// plainly — there is nothing to open. Open or alone, each call is its first
+/// line, in at most [`STEP_LINES`].
 fn steps(
     lines: &mut Vec<Line>,
     block: usize,
@@ -376,11 +381,12 @@ fn steps(
     width: f32,
     measure: &impl Fn(&str, Style) -> f32,
 ) {
-    let note = |text: &str, width: f32| wrap(text, width, |piece| measure(piece, Style::Note));
+    let note =
+        |text: &str, most: usize| clipped(text, width, most, |piece| measure(piece, Style::Note));
     // One call is not a group: it is already the only thing there is to see,
     // and a line that opens onto itself is a cheat.
     if let [only] = steps {
-        for text in note(only, width) {
+        for text in note(only, STEP_LINES) {
             place(
                 lines,
                 Style::Note.line_h(),
@@ -397,16 +403,14 @@ fn steps(
         [] => return,
         _ if expanded => {
             for step in steps {
-                wrapped.extend(note(step, width));
+                wrapped.extend(note(step, STEP_LINES));
             }
         }
         _ => {
             let last = steps.last().map(String::as_str).unwrap_or_default();
-            wrapped = note(last, width - measure(ELLIPSIS, Style::Note));
-            match wrapped.last_mut() {
-                Some(line) => line.push_str(ELLIPSIS),
-                None => wrapped.push(ELLIPSIS.trim_start().to_string()),
-            }
+            wrapped = clipped(&format!("{last}\n…"), width, 1, |piece| {
+                measure(piece, Style::Note)
+            });
         }
     }
     if wrapped.is_empty() {
@@ -422,6 +426,29 @@ fn steps(
             expanded,
         },
     );
+}
+
+/// `text` wrapped to `width`, from its first line only and in at most `most`
+/// lines; what is left out is said by an ellipsis at the end.
+fn clipped(text: &str, width: f32, most: usize, measure: impl Fn(&str) -> f32) -> Vec<String> {
+    let first = text.trim().lines().next().unwrap_or_default();
+    let more_lines = text.trim().lines().nth(1).is_some();
+    let mut wrapped = wrap(first, width, &measure);
+    if wrapped.len() <= most && !more_lines {
+        return wrapped;
+    }
+    wrapped.truncate(most);
+    let Some(last) = wrapped.last_mut() else {
+        return vec![ELLIPSIS.trim_start().to_owned()];
+    };
+    // Room for the ellipsis, taken from the end of the last line.
+    while !last.is_empty() && measure(&format!("{last}{ELLIPSIS}")) > width {
+        last.pop();
+    }
+    let kept = last.trim_end().len();
+    last.truncate(kept);
+    last.push_str(ELLIPSIS);
+    wrapped
 }
 
 /// A request in its bubble, wrapped inside the bubble's padding and no wider
@@ -578,6 +605,23 @@ mod tests {
             action: &[],
             note,
         }
+    }
+
+    /// A call whose title is a script takes two lines in the log, and one
+    /// as the last of a closed group, with an ellipsis for the rest.
+    #[test]
+    fn a_long_tool_call_is_clipped_to_its_first_lines() {
+        let script = format!(
+            "✓ cd /tmp && cat > a.py <<'EOF' {}\nimport sys\nprint(sys.argv)\nEOF",
+            "word ".repeat(40)
+        );
+        let measure = |text: &str| text.chars().count() as f32 * 6.0;
+        let alone = clipped(&script, 300.0, STEP_LINES, measure);
+        assert_eq!(alone.len(), 2);
+        assert!(alone[1].ends_with(ELLIPSIS));
+        assert!(alone.iter().all(|line| measure(line) <= 300.0));
+        assert_eq!(clipped("✓ ls\nmore", 300.0, 1, measure), ["✓ ls …"]);
+        assert_eq!(clipped("✓ ls", 300.0, 1, measure), ["✓ ls"]);
     }
 
     #[test]

@@ -747,8 +747,9 @@ fn longest_fit(len: usize, fits: impl Fn(usize) -> bool) -> usize {
 /// Greedy word wrap of `text` into lines no wider than `width`.
 ///
 /// Line breaks in `text` are kept (a blank line stays a blank line); a word
-/// wider than the line on its own is broken between characters, because it
-/// has nowhere else to go. Empty text is no lines.
+/// wider than the line on its own is broken, because it has nowhere else to
+/// go: after a `/`, `-`, `_` or `.` late enough in the line, as a path or an
+/// address reads, or else between any two characters. Empty text is no lines.
 pub fn wrap(text: &str, width: f32, measure: impl Fn(&str) -> f32) -> Vec<String> {
     let mut lines = Vec::new();
     if text.is_empty() {
@@ -774,7 +775,11 @@ pub fn wrap(text: &str, width: f32, measure: impl Fn(&str) -> f32) -> Vec<String
                 let mut next = line.clone();
                 next.push(c);
                 if !line.is_empty() && measure(&next) > width {
-                    lines.push(std::mem::take(&mut line));
+                    let rest = match soft_break(&line) {
+                        Some(at) => line.split_off(at),
+                        None => String::new(),
+                    };
+                    lines.push(std::mem::replace(&mut line, rest));
                     line.push(c);
                 } else {
                     line = next;
@@ -786,9 +791,54 @@ pub fn wrap(text: &str, width: f32, measure: impl Fn(&str) -> f32) -> Vec<String
     lines
 }
 
+/// Where to cut `word`, too wide for a line `room` wide on its own: the
+/// most of it that fits, cut back to a [`soft_break`] when it has one, and
+/// never less than one character.
+pub(crate) fn fit_break(word: &str, room: f32, measure: impl Fn(&str) -> f32) -> usize {
+    let mut fits = word.chars().next().map_or(word.len(), char::len_utf8);
+    for (at, c) in word.char_indices().skip(1) {
+        if measure(&word[..at + c.len_utf8()]) > room {
+            break;
+        }
+        fits = at + c.len_utf8();
+    }
+    soft_break(&word[..fits]).unwrap_or(fits)
+}
+
+/// Where a word too long for its line breaks best: just after the last `/`,
+/// `-`, `_` or `.` in the back half of what fits, so a path breaks between
+/// its parts. `None` when there is none there.
+pub(crate) fn soft_break(line: &str) -> Option<usize> {
+    let at = line
+        .char_indices()
+        .filter(|(_, c)| matches!(c, '/' | '-' | '_' | '.'))
+        .map(|(i, c)| i + c.len_utf8())
+        .next_back()?;
+    (at >= line.len() / 2 && at < line.len()).then_some(at)
+}
+
 #[cfg(test)]
 mod text_fit_tests {
     use super::*;
+
+    #[test]
+    fn a_path_too_long_for_the_line_breaks_between_its_parts() {
+        let lines = wrap(
+            "/home/riccardo/Pictures/Screenshots/vortice-20260922.jpg",
+            24.0,
+            chars,
+        );
+        assert_eq!(
+            lines,
+            [
+                "/home/riccardo/Pictures/",
+                "Screenshots/vortice-",
+                "20260922.jpg"
+            ]
+        );
+        // Nothing to break at: between characters, as before.
+        assert_eq!(wrap("abcdefgh", 3.0, chars), ["abc", "def", "gh"]);
+    }
 
     /// One point per character, so widths read as character counts.
     fn chars(text: &str) -> f32 {
