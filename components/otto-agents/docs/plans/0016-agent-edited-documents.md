@@ -284,8 +284,8 @@ styles you made.
 
 ## Open questions
 
-- **Name.** Once it edits through an agent, "Preview" undersells it. Settle with
-  the copywriter.
+- **Name.** Once it edits through an agent, "Preview" undersells it.
+  [0018](0018-preview-rename.md) prefers Studio, renamed with milestone 3.
 - **Quick actions.** Rotate, crop and flip through a model is slow and costs
   money. Buttons that run a skill's recipe directly, with no model, keep the
   editing in skills. Which ones, and does that bend "the app has no editing
