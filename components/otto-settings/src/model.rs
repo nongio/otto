@@ -354,6 +354,8 @@ pub fn panes() -> Vec<Pane> {
         panes::search::build(),
         panes::agents::build(),
         panes::keyboard::build(),
+        // Dictation is another way of typing, so it sits with the keyboard.
+        panes::dictation::build(),
         panes::pointing::build(),
         panes::account::build(),
         panes::lock_and_login::build(),
@@ -372,11 +374,15 @@ pub const SOUND_PANE: usize = 3;
 
 /// Where the Privacy pane sits in [`panes`]: it reads the permission store
 /// only while it is on screen.
-pub const PRIVACY_PANE: usize = 14;
+pub const PRIVACY_PANE: usize = 15;
 
 /// Where the Agents pane sits in [`panes`]: it watches its service only while
 /// it is on screen.
 pub const AGENTS_PANE: usize = 9;
+
+/// Where the Dictation pane sits in [`panes`]: it watches its engines' units
+/// only while it is on screen.
+pub const DICTATION_PANE: usize = 11;
 
 pub(crate) fn group(title: impl Into<Cow<'static, str>>, rows: Vec<Row>) -> Group {
     Group {
@@ -945,7 +951,12 @@ mod readout_tests {
 
 #[cfg(test)]
 mod pane_order_tests {
-    use super::{panes, AGENTS_PANE, PRIVACY_PANE, SEARCH_PANE, SOUND_PANE};
+    use super::{panes, AGENTS_PANE, DICTATION_PANE, PRIVACY_PANE, SEARCH_PANE, SOUND_PANE};
+
+    #[test]
+    fn the_dictation_pane_sits_where_main_looks_for_it() {
+        assert_eq!(panes()[DICTATION_PANE].icon, "microphone");
+    }
 
     #[test]
     fn the_search_pane_sits_where_main_looks_for_it() {

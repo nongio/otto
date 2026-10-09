@@ -8,6 +8,7 @@ pub mod account;
 pub mod agents;
 pub mod appearance;
 pub mod desk;
+pub mod dictation;
 pub mod displays;
 pub mod dock;
 pub mod general;

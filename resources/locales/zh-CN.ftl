@@ -1956,3 +1956,29 @@ settings-users-delete-action = 删除用户
 settings-users-invalid-name = 账户名须以小写字母开头，且只能包含 a–z、0–9、- 和 _
 settings-users-name-taken = 已存在同名账户
 settings-users-password-missing = 请为该账户输入密码
+
+## 设置 › 听写
+
+settings-pane-dictation = 听写
+settings-dictation-intro = 语音在本机识别后输入到文本框中。在启动器中按 Ctrl+D 即可听写；在其他应用中，可使用绑定到 otto-dictate toggle 的快捷键。
+settings-dictation-engine = 引擎
+settings-dictation-engine-detail = 选择一个引擎会启动其语音服务器，并停止其他引擎
+settings-dictation-engine-parakeet = Parakeet
+settings-dictation-engine-whisper = Whisper（仅英语）
+settings-dictation-engine-crispasr = CrispASR
+settings-dictation-server = 语音服务器
+settings-dictation-server-checking = 正在检查…
+settings-dictation-server-running = 正在运行
+settings-dictation-server-stopped = 已停止。服务器启动前，听写听不到任何内容。
+settings-dictation-server-failed = 因错误而停止。原因可通过 journalctl --user -u { $unit } 查看。
+settings-dictation-server-missing = 未安装。可通过 components/otto-dictate/engines/install.sh { $engine } 安装。
+settings-dictation-server-unmanaged = 无法确定：此系统没有 systemctl
+settings-dictation-start = 启动
+settings-dictation-restart = 重启
+settings-dictation-language = 语言
+settings-dictation-language-auto = 自动
+settings-dictation-language-detail = 所说的语言。Parakeet 和 CrispASR 会自行识别。
+settings-dictation-hotwords-boost = 名称加权
+settings-dictation-hotwords-boost-detail = 对文本框预期的名称的偏好程度。超过 6 后，名称周围的词语会开始失真。
+settings-dictation-autostart = 登录时启动听写
+settings-dictation-autostart-detail = 从 ~/.config/autostart 启动 otto-dictate；xdg_autostart 开启时 Otto 会读取该文件夹

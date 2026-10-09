@@ -33,6 +33,7 @@ pub fn draw(canvas: &Canvas, name: &str, cx: f32, cy: f32, size: f32, color: Col
         "keyboard" => keyboard(canvas, &paint),
         "pointer" => pointer(canvas, &paint, color),
         "sound" => sound(canvas, &paint),
+        "microphone" => microphone(canvas, &paint),
         "battery" => battery(canvas, &paint),
         "lock" => lock(canvas, &paint),
         "search" => search(canvas, &paint),
@@ -147,6 +148,17 @@ fn sound(canvas: &Canvas, paint: &Paint) {
         let arc = Rect::from_ltrb(2.0 - r, -r, 2.0 + r, r);
         canvas.draw_arc(arc, -sweep / 2.0, sweep, false, paint);
     }
+}
+
+/// A microphone on a stand: the capsule, the cradle round it, the stem and
+/// the foot.
+fn microphone(canvas: &Canvas, paint: &Paint) {
+    let capsule = Rect::from_ltrb(-2.5, -7.0, 2.5, 2.0);
+    canvas.draw_rrect(RRect::new_rect_xy(capsule, 2.5, 2.5), paint);
+    let cradle = Rect::from_ltrb(-5.5, -4.0, 5.5, 4.5);
+    canvas.draw_arc(cradle, 0.0, 180.0, false, paint);
+    canvas.draw_line(Point::new(0.0, 4.5), Point::new(0.0, 7.0), paint);
+    canvas.draw_line(Point::new(-3.0, 7.0), Point::new(3.0, 7.0), paint);
 }
 
 /// Battery with a bolt.

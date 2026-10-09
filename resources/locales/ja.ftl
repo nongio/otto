@@ -1952,3 +1952,29 @@ settings-users-delete-action = ユーザを削除
 settings-users-invalid-name = アカウント名は英小文字で始まり、a–z、0–9、- と _ のみ使用できます
 settings-users-name-taken = その名前のアカウントはすでにあります
 settings-users-password-missing = アカウントのパスワードを入力してください
+
+## 設定 › 音声入力
+
+settings-pane-dictation = 音声入力
+settings-dictation-intro = 話した言葉をこのコンピュータ上で認識し、テキストフィールドに入力します。ランチャーでは Ctrl+D で音声入力でき、ほかのアプリでは otto-dictate toggle に割り当てたショートカットで行えます。
+settings-dictation-engine = エンジン
+settings-dictation-engine-detail = 選ぶとその音声サーバーが起動し、ほかは停止します
+settings-dictation-engine-parakeet = Parakeet
+settings-dictation-engine-whisper = Whisper（英語のみ）
+settings-dictation-engine-crispasr = CrispASR
+settings-dictation-server = 音声サーバー
+settings-dictation-server-checking = 確認中…
+settings-dictation-server-running = 実行中
+settings-dictation-server-stopped = 停止中。起動するまで、音声入力は何も聞き取りません。
+settings-dictation-server-failed = エラーで停止しました。理由は journalctl --user -u { $unit } で確認できます。
+settings-dictation-server-missing = 未インストール。components/otto-dictate/engines/install.sh { $engine } で導入できます。
+settings-dictation-server-unmanaged = 不明：このシステムには systemctl がありません
+settings-dictation-start = 起動
+settings-dictation-restart = 再起動
+settings-dictation-language = 言語
+settings-dictation-language-auto = 自動
+settings-dictation-language-detail = 話す言語。Parakeet と CrispASR は自分で判別します。
+settings-dictation-hotwords-boost = 名前の優先度
+settings-dictation-hotwords-boost-detail = フィールドが想定する名前をどれだけ優先するか。6 を超えると、名前の前後の言葉が崩れはじめます。
+settings-dictation-autostart = ログイン時に音声入力を起動
+settings-dictation-autostart-detail = ~/.config/autostart から otto-dictate を起動します。Otto は xdg_autostart がオンのときにこのフォルダを読み込みます

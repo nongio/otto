@@ -1985,3 +1985,29 @@ settings-users-delete-action = Supprimer l’utilisateur
 settings-users-invalid-name = Les noms de compte commencent par une minuscule et n’utilisent que a–z, 0–9, - et _
 settings-users-name-taken = Un compte porte déjà ce nom
 settings-users-password-missing = Saisissez un mot de passe pour le compte
+
+## Réglages › Dictée
+
+settings-pane-dictation = Dictée
+settings-dictation-intro = La parole est saisie dans un champ de texte et reconnue sur cet ordinateur. Ctrl+D dicte dans le lanceur ; dans les autres apps, un raccourci associé à otto-dictate toggle s’en charge.
+settings-dictation-engine = Moteur
+settings-dictation-engine-detail = En choisir un démarre son serveur vocal et arrête les autres
+settings-dictation-engine-parakeet = Parakeet
+settings-dictation-engine-whisper = Whisper (anglais uniquement)
+settings-dictation-engine-crispasr = CrispASR
+settings-dictation-server = Serveur vocal
+settings-dictation-server-checking = Vérification…
+settings-dictation-server-running = Actif
+settings-dictation-server-stopped = Arrêté. La dictée n’entend rien tant qu’il n’a pas démarré.
+settings-dictation-server-failed = Arrêté après une erreur. journalctl --user -u { $unit } en donne la raison.
+settings-dictation-server-missing = Non installé. components/otto-dictate/engines/install.sh { $engine } l’installe.
+settings-dictation-server-unmanaged = Impossible à savoir : ce système n’a pas systemctl
+settings-dictation-start = Démarrer
+settings-dictation-restart = Redémarrer
+settings-dictation-language = Langue
+settings-dictation-language-auto = Automatique
+settings-dictation-language-detail = La langue parlée. Parakeet et CrispASR la détectent d’eux-mêmes.
+settings-dictation-hotwords-boost = Renfort des noms
+settings-dictation-hotwords-boost-detail = À quel point les noms attendus par un champ sont favorisés. Au-delà de 6, les mots autour d’un nom commencent à se déformer.
+settings-dictation-autostart = Lancer la dictée à l’ouverture de session
+settings-dictation-autostart-detail = Lance otto-dictate depuis ~/.config/autostart, qu’Otto lit quand xdg_autostart est activé

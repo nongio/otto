@@ -2049,3 +2049,29 @@ settings-users-delete-action = Удалить пользователя
 settings-users-invalid-name = Имя учётной записи начинается со строчной латинской буквы и содержит только a–z, 0–9, - и _
 settings-users-name-taken = Учётная запись с таким именем уже есть
 settings-users-password-missing = Введите пароль для учётной записи
+
+## Настройки › Диктовка
+
+settings-pane-dictation = Диктовка
+settings-dictation-intro = Речь набирается в текстовое поле и распознаётся на этом компьютере. Ctrl+D включает диктовку в лаунчере; в других приложениях это делает сочетание клавиш, назначенное на otto-dictate toggle.
+settings-dictation-engine = Движок
+settings-dictation-engine-detail = Выбор движка запускает его речевой сервер и останавливает остальные
+settings-dictation-engine-parakeet = Parakeet
+settings-dictation-engine-whisper = Whisper (только английский)
+settings-dictation-engine-crispasr = CrispASR
+settings-dictation-server = Речевой сервер
+settings-dictation-server-checking = Проверка…
+settings-dictation-server-running = Работает
+settings-dictation-server-stopped = Остановлен. Диктовка ничего не слышит, пока он не запустится.
+settings-dictation-server-failed = Остановлен после ошибки. Причину покажет journalctl --user -u { $unit }.
+settings-dictation-server-missing = Не установлен. Установить его можно командой components/otto-dictate/engines/install.sh { $engine }.
+settings-dictation-server-unmanaged = Неизвестно: в этой системе нет systemctl
+settings-dictation-start = Запустить
+settings-dictation-restart = Перезапустить
+settings-dictation-language = Язык
+settings-dictation-language-auto = Автоматически
+settings-dictation-language-detail = Язык речи. Parakeet и CrispASR определяют его сами.
+settings-dictation-hotwords-boost = Усиление имён
+settings-dictation-hotwords-boost-detail = Насколько предпочитаются имена, которых ожидает поле. Выше 6 слова вокруг имени начинают искажаться.
+settings-dictation-autostart = Запускать диктовку при входе
+settings-dictation-autostart-detail = Запускает otto-dictate из ~/.config/autostart — Otto читает эту папку, когда включён xdg_autostart
