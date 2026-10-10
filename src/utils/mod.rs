@@ -23,10 +23,14 @@ pub use otto_kit::icons::image_from_path;
 /// Find an icon using the configured theme or auto-detection.
 ///
 /// Reads the theme name from otto's Config and delegates to otto-kit.
+///
+/// With no theme configured — and Otto's own not installed — the desktop's is
+/// used, as otto-kit apps do, rather than hicolor alone.
 pub fn find_icon_with_theme(icon_name: &str, size: i32, scale: i32) -> Option<String> {
-    Config::with(|config| {
-        otto_kit::icons::find_icon_in_theme(icon_name, size, scale, config.icon_theme.as_deref())
-    })
+    static DESKTOP_THEME: std::sync::LazyLock<Option<String>> =
+        std::sync::LazyLock::new(otto_kit::icon_theme::desktop_theme);
+    let theme = Config::with(|config| config.icon_theme.clone()).or_else(|| DESKTOP_THEME.clone());
+    otto_kit::icons::find_icon_in_theme(icon_name, size, scale, theme.as_deref())
 }
 
 /// Look up a themed icon for compositor chrome.

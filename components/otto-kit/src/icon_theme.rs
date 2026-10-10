@@ -66,7 +66,7 @@ pub fn spawn_icon_theme_watcher() {
 
     // Before the portal answers — and in place of it, where there is none.
     if current_icon_theme().is_none() {
-        if let Some(theme) = desktop_file_theme().or_else(installed_default_theme) {
+        if let Some(theme) = desktop_theme() {
             tracing::debug!("icon-theme from the desktop's files: {theme}");
             set_theme(theme);
         }
@@ -142,6 +142,12 @@ fn desktop_file_theme() -> Option<String> {
     found.filter(|theme| is_installed(theme))
 }
 
+/// The theme the desktop Otto runs in would use: the one its own files name,
+/// or else Breeze or Adwaita — for a process that has no portal to ask.
+pub fn desktop_theme() -> Option<String> {
+    desktop_file_theme().or_else(installed_default_theme)
+}
+
 /// A complete theme to fall back on, where the desktop names none that is
 /// installed. Anything is better than `hicolor` alone.
 fn installed_default_theme() -> Option<String> {
@@ -153,7 +159,7 @@ fn installed_default_theme() -> Option<String> {
 
 /// Whether a theme called `name` has an `index.theme` anywhere icons are
 /// looked for.
-fn is_installed(name: &str) -> bool {
+pub fn is_installed(name: &str) -> bool {
     if name.is_empty() || name.contains('/') {
         return false;
     }

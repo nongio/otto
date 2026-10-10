@@ -155,7 +155,10 @@ impl Default for Config {
             screen_scale: 1.0,
             displays: DisplaysConfig::default(),
             cursor_theme: "Otto-MacTahoe".to_string(),
-            icon_theme: None,
+            // Otto's own theme wherever it is installed — the packages carry
+            // it — and otherwise the desktop's, as otto-kit detects it.
+            icon_theme: otto_kit::icon_theme::is_installed(crate::checkout::ICON_THEME)
+                .then(|| crate::checkout::ICON_THEME.to_string()),
             cursor_size: 24,
             input: InputConfig::default(),
             dock: DockConfig::default(),
@@ -169,7 +172,9 @@ impl Default for Config {
             keyboard_repeat_rate: 30,
             theme_scheme: ThemeScheme::Light,
             gtk_theme: None,
-            background_image: "".to_string(),
+            background_image: crate::checkout::wallpaper()
+                .map(|path| path.to_string_lossy().into_owned())
+                .unwrap_or_default(),
             background_color: "#1a1a2e".to_string(),
             locales: Vec::new(),
             use_10bit_color: false,
