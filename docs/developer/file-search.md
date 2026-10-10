@@ -17,7 +17,7 @@ second source of matches and has its own page,
 | `components/otto-search` | The query language, SPARQL, the wire to LocalSearch, name scoring, and `find`: paging past rows that are gone, statting, rechecking, ranking and capping. Also the `otto-search` command. No toolkit, no Wayland: the agents daemon and command-line tools can link it. |
 | `components/otto-files/src/search.rs` | The worker thread and cancellation, turning results into `Entry`s, merging in words read from pictures. |
 
-`otto_kit::matching` is a re-export of `otto_search::matching`, so the launcher
+`otto_kit::matching` and otto-search both use `otto_foundations::matching`, so the launcher
 and the command palette score with the same code.
 
 ## One source, and why
@@ -153,7 +153,7 @@ the field is kept as a seam for a caller that needs one.
 
 ## Ranking
 
-Scoring is `otto_search::matching::score`, shared with the launcher. It matches
+Scoring is `otto_foundations::matching::score`, shared with the launcher. It matches
 by **subsequence**, not edit distance: +8 for a matched character, +14 at a
 word boundary, +20 at the start, +12 for staying adjacent, −1 per skipped
 character up to ten, and a length penalty of −len/6 at the end.
@@ -341,7 +341,7 @@ stderr; the window then opens at home.
 - The in-app **command palette** has *Search* and *Recent* in its Go group. A
   query given as the command's argument is a Return already pressed.
 - **otto-launcher** does not search files yet. It shares only
-  `otto_search::matching::score` with otto-files.
+  `otto_foundations::matching::score` with otto-files.
 - otto-files exports **no search interface** over D-Bus. Its only interface is
   `org.otto.FilePicker1`, which the portal brokers, and the picker has no Find
   strip.
