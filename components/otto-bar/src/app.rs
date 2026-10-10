@@ -115,6 +115,8 @@ pub struct TopBarApp {
     open_app_menu: Option<OpenAppMenu>,
     /// Left panel item index awaiting an async submenu fetch.
     pending_app_menu_index: Option<usize>,
+    /// `(service, menu_path)` of the app menu the left panel shows.
+    app_menu_address: Option<(String, String)>,
     /// The power menu, when the battery indicator has one open.
     open_power_menu: Option<PowerMenu>,
     /// The keyboard layout menu, while it is open.
@@ -148,6 +150,7 @@ impl TopBarApp {
             pending_menu_index: None,
             open_app_menu: None,
             pending_app_menu_index: None,
+            app_menu_address: None,
             open_power_menu: None,
             open_layout_menu: None,
             open_otto_menu: None,
@@ -506,11 +509,15 @@ impl TopBarApp {
         }
 
         let id_labels = build_id_label_map(&top_item.children);
+        // The app this popup was built from: clicks go there even if focus
+        // has moved to another app since.
+        let service = pending.service.clone();
+        let menu_path = pending.menu_path.clone();
 
         let menu = ContextMenu::new(kit_items).on_item_click(move |action_id| {
             if let Ok(id) = action_id.parse::<i32>() {
                 let label = id_labels.get(&id).cloned().unwrap_or_default();
-                crate::appmenu::activate_menu_item(id, &label);
+                crate::appmenu::activate_menu_item(&service, &menu_path, id, &label);
             }
         });
 
@@ -1492,10 +1499,18 @@ impl App for TopBarApp {
             } else {
                 // Menu layout itself changed — update left panel items
                 let menu = crate::appmenu::current_menu();
-                if menu.is_none() {
-                    // Gone, or turned off in Settings: nothing to keep open.
+                let address = menu
+                    .as_ref()
+                    .map(|m| (m.service.clone(), m.menu_path.clone()));
+                if address.is_none() || address != self.app_menu_address {
+                    // Gone, turned off in Settings, or another app's menu
+                    // (focus can move through two windows between frames):
+                    // nothing of the old one stays open, and a submenu still
+                    // being fetched for it is dropped (appmenu.rs) rather
+                    // than left pending under a highlighted title.
                     self.close_app_menu();
                 }
+                self.app_menu_address = address;
                 self.left.set_app_menu(menu.as_ref());
                 self.update_left_panel(true);
             }
