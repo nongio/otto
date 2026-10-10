@@ -19,14 +19,14 @@ use toml_edit::{ArrayOfTables, DocumentMut, Item, Table, Value};
 /// whatever the user was in the middle of typing.
 ///
 /// While Otto has no configuration file at all, a missing one starts from
-/// [`super::demo_settings`] instead: the first setting the user changes
-/// creates the file, and the wallpaper and icons must not vanish with it.
+/// [`super::demo_config`] instead: the first setting the user changes
+/// creates the file, and the rest of the shipped look must not vanish with it.
 pub fn load_document(path: &Path) -> Result<DocumentMut, String> {
     let raw = match std::fs::read_to_string(path) {
         Ok(raw) => raw,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
             if super::is_unconfigured() {
-                toml::to_string(&super::demo_settings()).unwrap_or_default()
+                super::demo_config()
             } else {
                 String::new()
             }

@@ -447,6 +447,7 @@ magnification = true
 # `<snap>_<app>.desktop`), so a system shows whichever of them it has.
 bookmarks = [
   { desktop_id = "otto-files.desktop" },
+  { desktop_id = "otto-preview.desktop" },
   { desktop_id = "otto-settings.desktop" },
   { desktop_id = "org.gnome.Console.desktop" },
   { desktop_id = "org.kde.konsole.desktop" },

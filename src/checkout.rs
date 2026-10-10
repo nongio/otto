@@ -6,11 +6,12 @@
 //! comes up on a flat gradient, hicolor's handful of icons and DejaVu.
 //!
 //! So the checkout stands in for the install. The wallpaper is read from
-//! `resources/`, and `scripts/fetch-dev-assets.sh` stages the icon theme and
-//! Inter under `target/share`, which [`use_staged_assets`] puts in front of
-//! the system's own directories. Every one of these is only a fallback: an
-//! installed asset always wins. They are picked as settings only while there
-//! is no configuration file (`crate::config::demo_settings`).
+//! `resources/`. [`use_checkout_assets`] links the apps' desktop entries into
+//! `target/share`, where `scripts/fetch-dev-assets.sh` also stages the icon
+//! theme and Inter, and puts that directory in front of the system's own, and
+//! the build directory in front of `PATH`: a run from the checkout launches
+//! the checkout's apps. Whether the shipped look is used at all is up to the
+//! configuration: only while there is none (`crate::config::demo_config`).
 
 use std::path::{Path, PathBuf};
 
@@ -41,37 +42,78 @@ pub fn wallpaper() -> Option<PathBuf> {
         .find(|path| path.is_file())
 }
 
-/// Make the assets staged in the checkout visible to the compositor and to
+/// The checkout's own desktop entries, as the packages install them to
+/// `/usr/share/applications`: the apps the shipped dock pins.
+const DESKTOP_ENTRIES: [&str; 4] = [
+    "otto-files.desktop",
+    "otto-preview.desktop",
+    "otto-settings.desktop",
+    "otto-trash.desktop",
+];
+
+/// Make the checkout stand in for the install, for the compositor and for
 /// everything it launches.
 ///
 /// Runs before the configuration is first read, since the icon theme an
 /// unconfigured Otto picks depends on what is installed.
-pub fn use_staged_assets() {
-    let Some(share) = staged_share() else {
+pub fn use_checkout_assets() {
+    let (Some(checkout), Some(share)) = (dir(), staged_share()) else {
         return;
     };
 
-    if share
-        .join("icons")
-        .join(ICON_THEME)
-        .join("index.theme")
-        .is_file()
+    // The apps are the ones built next to this binary: `cargo build
+    // --workspace` puts otto-bar, otto-files and the rest there, and their
+    // desktop entries name them by bare command.
+    if let Some(bin) = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(Path::to_path_buf))
+        .filter(|bin| bin.starts_with(checkout))
     {
-        let mut dirs = vec![share.clone()];
-        dirs.extend(otto_kit::xdg::data_dirs());
-        if let Ok(joined) = std::env::join_paths(dirs) {
-            tracing::info!("icons from the checkout: {}", share.display());
-            // SAFETY: called from main before any thread reads the environment
-            unsafe { std::env::set_var("XDG_DATA_DIRS", joined) };
+        prepend_env("PATH", bin, Vec::new());
+    }
+
+    // The desktop entries and otto-files' own icon, linked into the staged
+    // data directory under the names an install gives them. Best effort: a
+    // link that cannot be made is an icon missing from the dock, not a reason
+    // to stop the session.
+    let mut links: Vec<(PathBuf, PathBuf)> = DESKTOP_ENTRIES
+        .iter()
+        .map(|entry| {
+            (
+                checkout.join("resources").join(entry),
+                share.join("applications").join(entry),
+            )
+        })
+        .collect();
+    links.push((
+        checkout.join("components/otto-files/resources/icons/hicolor"),
+        share.join("icons").join("hicolor"),
+    ));
+    for (target, link) in links {
+        if link.symlink_metadata().is_ok() {
+            continue;
+        }
+        let made = link
+            .parent()
+            .map_or(Ok(()), std::fs::create_dir_all)
+            .and_then(|()| std::os::unix::fs::symlink(&target, &link));
+        if let Err(err) = made {
+            tracing::warn!("cannot link {}: {err}", link.display());
         }
     }
+
+    tracing::info!(
+        "apps, icons and fonts from the checkout: {}",
+        share.display()
+    );
+    prepend_env("XDG_DATA_DIRS", share.clone(), otto_kit::xdg::data_dirs());
 
     // fontconfig reads no XDG data directory for fonts, so the staged
     // configuration includes the system's and adds the checkout's fonts.
     let fonts_conf = share.join("fonts.conf");
     if fonts_conf.is_file() && std::env::var_os("FONTCONFIG_FILE").is_none() {
-        tracing::info!("fonts from the checkout: {}", fonts_conf.display());
-        // SAFETY: as above, and before fontconfig is first initialised
+        // SAFETY: called from main before any thread reads the environment,
+        // and before fontconfig is first initialised
         unsafe { std::env::set_var("FONTCONFIG_FILE", &fonts_conf) };
     }
 
@@ -80,5 +122,19 @@ pub fn use_staged_assets() {
             "{ICON_THEME} is not installed: run scripts/fetch-dev-assets.sh \
              to stage it and Inter in the checkout"
         );
+    }
+}
+
+/// Put `dir` in front of the path list in `var`. An unset variable is read as
+/// `default` — XDG_DATA_DIRS has one that setting it would otherwise drop.
+fn prepend_env(var: &str, dir: PathBuf, default: Vec<PathBuf>) {
+    let rest = match std::env::var_os(var) {
+        Some(value) => std::env::split_paths(&value).collect(),
+        None => default,
+    };
+    let dirs = std::iter::once(dir.clone()).chain(rest.into_iter().filter(|d| *d != dir));
+    if let Ok(joined) = std::env::join_paths(dirs) {
+        // SAFETY: called from main before any thread reads the environment
+        unsafe { std::env::set_var(var, joined) };
     }
 }

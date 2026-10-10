@@ -6,10 +6,12 @@ This directory contains helper scripts for working with Otto compositor.
 
 ### `fetch-dev-assets.sh` - Icons and font without installing
 
-A `cargo run -- --winit` straight from a clone finds the wallpaper in
-`resources/` on its own, but the Otto-MacTahoe icon theme and Inter are not in
-the repository. This stages both under `target/share`, where Otto picks them up
-whenever it runs from the checkout and they are not installed:
+With no configuration file, Otto runs the shipped `otto_config.example.toml`.
+Started from a clone (`cargo run -- --winit`) it also takes the wallpaper from
+`resources/`, links the apps' desktop entries into `target/share`, and launches
+the apps built next to it — `cargo build --workspace` first for the bar and the
+dock's apps. The Otto-MacTahoe icon theme and Inter are not in the repository;
+this stages both under `target/share` too:
 
 ```bash
 ./scripts/fetch-dev-assets.sh

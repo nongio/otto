@@ -100,7 +100,7 @@ async fn main() {
     // A run from the source checkout borrows the checkout's assets where
     // nothing is installed. Before the configuration is first read: the
     // default icon theme depends on what is found.
-    otto::checkout::use_staged_assets();
+    otto::checkout::use_checkout_assets();
 
     // Load the string catalogues before any chrome is built — the dock's
     // context menus are assembled during construction. `config.locales`

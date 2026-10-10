@@ -330,8 +330,11 @@ impl Config {
 
         let layers = config_layers();
         let found_any_config = !layers.is_empty();
-        if !found_any_config {
-            merge_value(&mut merged, toml::Value::Table(demo_settings()));
+        if is_unconfigured() {
+            match toml::from_str::<toml::Value>(&demo_config()) {
+                Ok(demo) => merge_value(&mut merged, demo),
+                Err(err) => errors.push(format!("Failed to parse the shipped config: {err}")),
+            }
         }
         let writable = without.map(|_| writable_config_path());
 
@@ -444,30 +447,41 @@ fn in_working_directory(name: &str) -> PathBuf {
     }
 }
 
+/// The configuration the packages install as `/etc/otto/config.toml`.
+const SHIPPED_CONFIG: &str = include_str!("../../otto_config.example.toml");
+
 /// Whether Otto runs with no configuration file at all: a first run before
 /// anything is installed, or `cargo run` from a fresh clone.
+///
+/// Never in a headless session: its tests are written against the bare
+/// defaults, not against whatever the shipped file autostarts and pins.
 pub fn is_unconfigured() -> bool {
-    config_layers().is_empty()
+    isolated_config_file().is_none() && config_layers().is_empty()
 }
 
-/// The settings an unconfigured Otto starts from, on top of the defaults: the
-/// shipped wallpaper and icon theme, wherever they can be found, so that the
-/// first look is Otto's rather than a flat gradient and hicolor's handful of
-/// icons. Inter is the default font already.
+/// What an unconfigured Otto runs with: the shipped configuration, so the
+/// first look is the one a fresh install has — the bar, the dock's apps, the
+/// wallpaper and the icons — rather than a bare desktop on a flat gradient.
 ///
-/// A configuration file that leaves these out means what it always has.
-pub fn demo_settings() -> toml::Table {
-    let mut settings = toml::Table::new();
-    if let Some(wallpaper) = crate::checkout::wallpaper() {
-        settings.insert(
-            "background_image".into(),
-            wallpaper.to_string_lossy().into_owned().into(),
-        );
+/// The shipped file names the wallpaper and icon theme where the packages put
+/// them. Without the packages the wallpaper comes from the checkout, and an
+/// icon theme that is nowhere to be found is left to the desktop's.
+pub fn demo_config() -> String {
+    let mut doc: toml_edit::DocumentMut =
+        SHIPPED_CONFIG.parse().expect("the shipped config parses");
+    match crate::checkout::wallpaper() {
+        Some(wallpaper) => {
+            doc["background_image"] = toml_edit::value(wallpaper.to_string_lossy().as_ref())
+        }
+        None => {
+            doc.remove("background_image");
+        }
     }
-    if otto_kit::icon_theme::is_installed(crate::checkout::ICON_THEME) {
-        settings.insert("icon_theme".into(), crate::checkout::ICON_THEME.into());
+    let icon_theme = doc.get("icon_theme").and_then(|item| item.as_str());
+    if !icon_theme.is_some_and(otto_kit::icon_theme::is_installed) {
+        doc.remove("icon_theme");
     }
-    settings
+    doc.to_string()
 }
 
 fn get_system_config_path() -> Option<PathBuf> {
@@ -3264,22 +3278,26 @@ bookmarks = []
         );
     }
 
-    /// An unconfigured Otto shows the shipped wallpaper — from the checkout
-    /// when it is not installed — and the result is a valid configuration.
+    /// An unconfigured Otto runs the shipped configuration, with a wallpaper
+    /// that is really there — the checkout's, when it is not installed.
     #[test]
-    fn an_unconfigured_otto_has_the_shipped_wallpaper() {
-        let demo = demo_settings();
-        let wallpaper = demo
-            .get("background_image")
-            .and_then(|value| value.as_str())
-            .expect("the checkout has a wallpaper")
-            .to_string();
-        assert!(std::path::Path::new(&wallpaper).is_file());
-
+    fn an_unconfigured_otto_runs_the_shipped_config() {
         let mut merged = toml::Value::try_from(Config::default()).unwrap();
-        merge_value(&mut merged, toml::Value::Table(demo));
-        let config: Config = merged.try_into().expect("demo settings deserialize");
-        assert_eq!(config.background_image, wallpaper);
+        merge_value(&mut merged, toml::from_str(&demo_config()).unwrap());
+        let config: Config = merged.try_into().expect("the demo config deserializes");
+
+        assert!(std::path::Path::new(&config.background_image).is_file());
+        let pinned: Vec<&str> = config
+            .dock
+            .bookmarks
+            .iter()
+            .map(|b| b.desktop_id.as_str())
+            .collect();
+        assert!(pinned.starts_with(&[
+            "otto-files.desktop",
+            "otto-preview.desktop",
+            "otto-settings.desktop"
+        ]));
     }
 
     /// The example config is what the packages install as
@@ -3289,7 +3307,7 @@ bookmarks = []
     /// island start, and the dock is not empty.
     #[test]
     fn shipped_example_config_is_a_usable_default() {
-        let toml_str = include_str!("../../otto_config.example.toml");
+        let toml_str = SHIPPED_CONFIG;
         let mut config: Config = toml::from_str(toml_str).expect("example config deserializes");
         config.rebuild_shortcut_bindings();
 
