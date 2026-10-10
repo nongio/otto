@@ -466,8 +466,15 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
                     tracing::warn!("SC::resize on different surface");
                     return;
                 }
+                // A minimised window is unmapped from every space: it has no
+                // location to resize from, and nothing on screen to drag.
+                if window.is_minimised() {
+                    return;
+                }
                 let geometry = window.geometry();
-                let loc = self.workspaces.element_location(window).unwrap();
+                let Some(loc) = self.workspaces.element_location(window) else {
+                    return;
+                };
                 let (initial_window_location, initial_window_size) = (loc, geometry.size);
 
                 with_states(top_level.wl_surface(), move |states| {
@@ -507,9 +514,14 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
             return;
         }
 
-        let start_data = pointer.grab_start_data().unwrap();
+        let Some(start_data) = pointer.grab_start_data() else {
+            return;
+        };
 
-        let window = self.workspaces.get_window_for_surface(&sid).unwrap();
+        // The client may have destroyed the toplevel's window already.
+        let Some(window) = self.workspaces.get_window_for_surface(&sid) else {
+            return;
+        };
 
         // If the focus was for a different surface, ignore the request.
         if start_data.focus.is_none()
@@ -523,8 +535,17 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
             return;
         }
 
+        // A minimised window is unmapped from every space: the serial can be
+        // from a click in another of the client's windows, but there is
+        // nothing on screen to resize (#322).
+        if window.is_minimised() {
+            return;
+        }
+
         let geometry = window.geometry();
-        let loc = self.workspaces.element_location(window).unwrap();
+        let Some(loc) = self.workspaces.element_location(window) else {
+            return;
+        };
         let (initial_window_location, initial_window_size) = (loc, geometry.size);
 
         let window = window.clone();
@@ -1473,7 +1494,15 @@ impl<BackendData: Backend> Otto<BackendData> {
                     return;
                 }
 
-                let mut initial_window_location = self.workspaces.element_location(window).unwrap();
+                // A minimised window is unmapped from every space: nothing
+                // on screen to move, and no location to move it from (#322).
+                if window.is_minimised() {
+                    return;
+                }
+                let Some(mut initial_window_location) = self.workspaces.element_location(window)
+                else {
+                    return;
+                };
 
                 // If surface is maximized then unmaximize it
                 let is_maximized = surface.with_pending_state(|state| {
@@ -1481,7 +1510,9 @@ impl<BackendData: Backend> Otto<BackendData> {
                 });
                 if is_maximized {
                     // Get current maximized geometry before unmaximizing
-                    let maximized_geometry = self.workspaces.element_geometry(window).unwrap();
+                    let Some(maximized_geometry) = self.workspaces.element_geometry(window) else {
+                        return;
+                    };
                     let touch_location = start_data.location;
 
                     // Calculate grab point relative to maximized window
@@ -1634,6 +1665,9 @@ impl<BackendData: Backend> Otto<BackendData> {
         let Some(toplevel) = window.toplevel().cloned() else {
             return;
         };
+        if window.is_minimised() {
+            return;
+        }
         // A tile's border drags the split under it, not the window.
         match self.tiling_resize_begin(window, edges) {
             TilingResizeStart::Started => {
@@ -1696,7 +1730,15 @@ impl<BackendData: Backend> Otto<BackendData> {
         let Some(pointer) = seat.get_pointer() else {
             return;
         };
-        let initial_window_location = self.workspaces.element_location(window).unwrap();
+        // A minimised window is unmapped from every space, so it has no
+        // location: a client can still ask to move it, with a serial from a
+        // click in another of its windows (#322).
+        if window.is_minimised() {
+            return;
+        }
+        let Some(initial_window_location) = self.workspaces.element_location(window) else {
+            return;
+        };
 
         // A maximized or tiled window is restored INTO the drag, by the grab
         // itself, once the pointer has actually travelled — see

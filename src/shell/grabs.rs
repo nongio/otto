@@ -152,6 +152,13 @@ impl<B: Backend> PointerGrab<Otto<B>> for PointerMoveSurfaceGrab<B> {
         // a frosted surface (the renderer reads this stamp's recency).
         state.pointer_interaction = Some((self.window.id(), std::time::Instant::now()));
 
+        // Minimised mid-drag: the window was unmapped from every space, and
+        // following the pointer would map it back. The release still ends
+        // the grab as usual.
+        if self.window.is_minimised() {
+            return;
+        }
+
         // The layer lives under the OWNING output's subtree — use that
         // output for both the scale and the global→output-local rebase.
         // (outputs_for_element can be empty mid-drag near output edges.)
@@ -300,7 +307,7 @@ impl<B: Backend> PointerGrab<Otto<B>> for PointerMoveSurfaceGrab<B> {
             // refreshed on motion, so letting go of Ctrl and then of the
             // button without moving would otherwise still tile the window.
             let zone = self.active_zone.take();
-            if let Some(zone) = zone.filter(|_| ctrl_held(data)) {
+            if let Some(zone) = zone.filter(|_| ctrl_held(data) && !self.window.is_minimised()) {
                 data.apply_tile(&self.window, zone);
             } else {
                 // The window moved out from under any popup it has open. Its
@@ -398,6 +405,10 @@ impl<BackendData: Backend> TouchGrab<Otto<BackendData>> for TouchMoveSurfaceGrab
         }
 
         self.last_location = event.location;
+        // Minimised mid-drag: moving it would map it back into the space.
+        if self.window.is_minimised() {
+            return;
+        }
         if self.pending_tiling_detach {
             let travel = event.location - self.start_data.location;
             if travel.x.abs() < DRAG_THRESHOLD && travel.y.abs() < DRAG_THRESHOLD {
@@ -612,6 +623,12 @@ impl<B: Backend> PointerGrab<Otto<B>> for PointerResizeSurfaceGrab<B> {
             return;
         }
 
+        // Minimised mid-drag: the window is unmapped and has no location to
+        // resize from. The release still ends the grab as usual.
+        if self.window.is_minimised() {
+            return;
+        }
+
         let (mut dx, mut dy) = (event.location - self.start_data.location).into();
 
         let mut new_window_width = self.initial_window_size.w;
@@ -680,7 +697,9 @@ impl<B: Backend> PointerGrab<Otto<B>> for PointerResizeSurfaceGrab<B> {
                 // Reposition window during resize if resizing from top or left edges
                 if self.edges.intersects(ResizeEdge::TOP_LEFT) {
                     let geometry = self.window.geometry();
-                    let mut location = data.workspaces.element_location(&self.window).unwrap();
+                    let Some(mut location) = data.workspaces.element_location(&self.window) else {
+                        return;
+                    };
 
                     if self.edges.intersects(ResizeEdge::LEFT) {
                         location.x = self.initial_window_location.x
@@ -697,7 +716,9 @@ impl<B: Backend> PointerGrab<Otto<B>> for PointerResizeSurfaceGrab<B> {
             }
             #[cfg(feature = "xwayland")]
             WindowSurface::X11(x11) => {
-                let mut location = data.workspaces.element_location(&self.window).unwrap();
+                let Some(mut location) = data.workspaces.element_location(&self.window) else {
+                    return;
+                };
 
                 // Reposition window during resize if resizing from top or left edges
                 if self.edges.intersects(ResizeEdge::TOP_LEFT) {
@@ -766,9 +787,11 @@ impl<B: Backend> PointerGrab<Otto<B>> for PointerResizeSurfaceGrab<B> {
                 }
                 #[cfg(feature = "xwayland")]
                 WindowSurface::X11(x11) => {
-                    let location = state.workspaces.element_location(&self.window).unwrap();
-                    x11.configure(Rectangle::new(location, self.last_window_size))
-                        .unwrap();
+                    // Unmapped (minimised) windows keep the X11 geometry they had.
+                    if let Some(location) = state.workspaces.element_location(&self.window) {
+                        x11.configure(Rectangle::new(location, self.last_window_size))
+                            .unwrap();
+                    }
 
                     let Some(surface) = self.window.wl_surface() else {
                         // X11 Window got unmapped, abort
@@ -862,9 +885,11 @@ impl<BackendData: Backend> TouchGrab<Otto<BackendData>> for TouchResizeSurfaceGr
             }
             #[cfg(feature = "xwayland")]
             WindowSurface::X11(x11) => {
-                let location = state.workspaces.element_location(&self.window).unwrap();
-                x11.configure(Rectangle::new(location, self.last_window_size))
-                    .unwrap();
+                // Unmapped (minimised) windows keep the X11 geometry they had.
+                if let Some(location) = state.workspaces.element_location(&self.window) {
+                    x11.configure(Rectangle::new(location, self.last_window_size))
+                        .unwrap();
+                }
 
                 let Some(surface) = self.window.wl_surface() else {
                     // X11 Window got unmapped, abort
@@ -903,6 +928,12 @@ impl<BackendData: Backend> TouchGrab<Otto<BackendData>> for TouchResizeSurfaceGr
         // It is impossible to get `min_size` and `max_size` of dead toplevel, so we return early.
         if !self.window.alive() {
             handle.unset_grab(self, data);
+            return;
+        }
+
+        // Minimised mid-drag: the window is unmapped and has no location to
+        // resize from. The touch-up still ends the grab as usual.
+        if self.window.is_minimised() {
             return;
         }
 
@@ -974,7 +1005,9 @@ impl<BackendData: Backend> TouchGrab<Otto<BackendData>> for TouchResizeSurfaceGr
 
                 // Reposition window during resize if resizing from top or left edges
                 if self.edges.intersects(ResizeEdge::TOP_LEFT) {
-                    let mut location = data.workspaces.element_location(&self.window).unwrap();
+                    let Some(mut location) = data.workspaces.element_location(&self.window) else {
+                        return;
+                    };
 
                     if self.edges.intersects(ResizeEdge::LEFT) {
                         location.x = self.initial_window_location.x
@@ -991,7 +1024,9 @@ impl<BackendData: Backend> TouchGrab<Otto<BackendData>> for TouchResizeSurfaceGr
             }
             #[cfg(feature = "xwayland")]
             WindowSurface::X11(x11) => {
-                let mut location = data.workspaces.element_location(&self.window).unwrap();
+                let Some(mut location) = data.workspaces.element_location(&self.window) else {
+                    return;
+                };
 
                 // Reposition window during resize if resizing from top or left edges
                 if self.edges.intersects(ResizeEdge::TOP_LEFT) {
