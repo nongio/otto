@@ -99,6 +99,8 @@ impl Browser {
             photo_hover: None,
             photo_swatch_hover: None,
             photo_tool_hover: None,
+            photo_turns: std::collections::VecDeque::new(),
+            photo_turning: false,
             photos_video_key: None,
             last_preview_click: None,
             video_click_pending: false,

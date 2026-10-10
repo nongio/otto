@@ -70,7 +70,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use rustix::fs::{self as rfs, AtFlags, FileType, Mode, OFlags};
 use rustix::io::Errno;
 
-use crate::fs::move_entry;
+use crate::fs::{move_no_replace, rename_no_replace_at};
 
 /// `$XDG_DATA_HOME/Trash`, falling back to `~/.local/share/Trash`: the
 /// "home trashcan" the freedesktop Trash spec describes.
@@ -761,18 +761,27 @@ fn place(
         }
         drop(file);
         let target = can.files_dir().join(&candidate);
+        // Never on top of anything: the check above is only a check, and
+        // whatever takes the name between it and the move is someone's file.
+        // A name taken by then is passed over like one taken before.
         let moved = if can.owner().is_some() {
             // Into the directory that was checked, not whatever its path
             // names by now. A topdir can is on the source's own filesystem,
             // so this is always a rename.
-            rfs::renameat(rfs::CWD, source, &files, candidate.as_os_str())
-                .map_err(|e| io::Error::from(e).to_string())
+            rename_no_replace_at(rfs::CWD, source, &files, Path::new(&candidate))
         } else {
-            move_entry(source, &target)
+            move_no_replace(source, &target)
         };
-        if let Err(err) = moved {
-            drop_sidecar();
-            return Err(err);
+        match moved {
+            Ok(()) => {}
+            Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {
+                drop_sidecar();
+                continue;
+            }
+            Err(err) => {
+                drop_sidecar();
+                return Err(err.to_string());
+            }
         }
         if rfs::statat(&files, candidate.as_os_str(), AtFlags::SYMLINK_NOFOLLOW)
             .is_ok_and(|stat| FileType::from_raw_mode(stat.st_mode) == FileType::Directory)
@@ -889,7 +898,10 @@ fn restore_as(item: &Path, origin: &Path, uid: u32) -> Result<(), String> {
             if let Some(parent) = origin.parent() {
                 std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
             }
-            move_entry(item, origin)?;
+            move_no_replace(item, origin).map_err(|err| match err.kind() {
+                io::ErrorKind::AlreadyExists => SOMETHING_THERE.to_string(),
+                _ => err.to_string(),
+            })?;
         }
         Kind::Topdir { topdir, .. } => {
             let outside = || "the place it records is outside the disk it is on".to_string();
@@ -930,18 +942,15 @@ fn restore_as(item: &Path, origin: &Path, uid: u32) -> Result<(), String> {
             if rfs::statat(&parent, last, AtFlags::SYMLINK_NOFOLLOW).is_ok() {
                 return Err(SOMETHING_THERE.to_string());
             }
-            match rfs::renameat_with(&files, name, &parent, last, rfs::RenameFlags::NOREPLACE) {
+            match rename_no_replace_at(&files, Path::new(name), &parent, Path::new(last)) {
                 Ok(()) => {}
-                Err(Errno::EXIST) => return Err(SOMETHING_THERE.to_string()),
-                // A filesystem without RENAME_NOREPLACE: the check above is
-                // what stands in for it.
-                Err(Errno::INVAL | Errno::NOSYS) => {
-                    rfs::renameat(&files, name, &parent, last).map_err(text)?;
+                Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {
+                    return Err(SOMETHING_THERE.to_string())
                 }
-                Err(Errno::XDEV) => {
+                Err(err) if err.raw_os_error() == Some(libc::EXDEV) => {
                     return Err("it is on another disk than the place it came from".to_string())
                 }
-                Err(err) => return Err(text(err)),
+                Err(err) => return Err(err.to_string()),
             }
         }
     }
@@ -1347,6 +1356,29 @@ mod tests {
             "orphan"
         );
         assert!(!trash.join("info/x.txt.trashinfo").exists());
+    }
+
+    /// In a topdir can too, where the move is a rename by descriptor: a name
+    /// already taken in `files/`, even by a dangling link, is passed over for
+    /// the next free one and what holds it is left alone.
+    #[test]
+    fn a_topdir_trash_onto_a_taken_name_picks_another() {
+        let me = uid();
+        let top = Tmp::new("topdir-taken");
+        let source = top.0.join("x.txt");
+        std::fs::write(&source, "new").unwrap();
+        let can = topdir_can(&top.0, me).unwrap();
+        let files = can.files_dir();
+        std::fs::create_dir_all(&files).unwrap();
+        std::os::unix::fs::symlink(top.0.join("nowhere"), files.join("x.txt")).unwrap();
+
+        let (to, info) = place(&source, &source, &can, Some(&top.0)).unwrap();
+
+        assert_eq!(to, files.join("x 2.txt"));
+        assert_eq!(std::fs::read_to_string(&to).unwrap(), "new");
+        assert!(info.ends_with("x 2.txt.trashinfo"));
+        assert!(files.join("x.txt").symlink_metadata().unwrap().is_symlink());
+        assert!(!source.exists());
     }
 
     /// A failed move takes its reservation back.

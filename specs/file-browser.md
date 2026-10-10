@@ -1012,6 +1012,14 @@ progress, and can cancel it.
   entry is refused — the status line says it is already there — and nothing
   is replaced: the rename asks the kernel for `RENAME_NOREPLACE`, falling back
   to a check before a plain rename where the filesystem lacks it.
+
+  That is the one move every operation that puts a file under a name goes
+  through (`otto_kit::fs::rename_no_replace`): the inline rename, the pattern
+  rename, a paste that moves, an undo putting a file back, and the Trash
+  choosing a name in its can. A name taken between the check and the move is
+  an error — or, for the Trash, the next free name — never a file replaced.
+  Only a paste the user explicitly told to **Replace** may land on a taken
+  name.
 - **New folder** — creates `untitled folder`, disambiguating with a numeric
   suffix, and immediately enters inline rename on it, scrolling the view to it
   first: the sort can put the new folder anywhere, and a rename field off

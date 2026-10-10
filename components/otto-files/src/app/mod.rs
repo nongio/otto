@@ -494,6 +494,12 @@ struct Browser {
     photo_swatch_hover: Option<usize>,
     /// The Photos info panel's turn or flip button under the pointer.
     photo_tool_hover: Option<usize>,
+    /// Turns and flips asked for and not yet carried out, oldest first. They
+    /// rewrite the file, so they run off the UI thread, one at a time: two at
+    /// once on the same photo would each read what the other is replacing.
+    photo_turns: std::collections::VecDeque<photos_view::PhotoTurn>,
+    /// A turn from [`Self::photo_turns`] is running on a worker.
+    photo_turning: bool,
     /// The info panel video's repaint key as last drawn, so a new frame
     /// marks the window dirty — see [`Self::tick_photos_video`].
     photos_video_key: Option<u64>,

@@ -214,7 +214,9 @@ the palette adds no new capability.
   something in the folder that is not being renamed, is drawn in red and the
   summary says so; Return then refuses and nothing moves. A name another file
   is *giving up* is not taken: `1 → 2, 2 → 3` is fine, because the renames go
-  through temporary names.
+  through temporary names. Every one of those moves refuses to replace, so a
+  file that takes one of the names after the dry run was drawn is left alone:
+  the batch fails naming it, and everything that had moved goes back.
 - Running it is one undo entry. The dry run's lines are read, not picked:
   the arrows do nothing on them and Return runs the command.
 

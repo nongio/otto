@@ -20,6 +20,10 @@ const READ_LIMIT: u64 = 4 << 20;
 /// Seconds from the QuickTime epoch, 1904-01-01, to the Unix one.
 const QUICKTIME_EPOCH: i64 = 2_082_844_800;
 
+/// The widest or tallest picture believed, twice 16K video. A larger side is
+/// a damaged header, and laying it out would make a tile nobody can see.
+const MAX_SIDE: u32 = 32_768;
+
 /// What the header says.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Video {
@@ -133,11 +137,14 @@ fn track_size(tkhd: &[u8]) -> Option<(u32, u32)> {
     let word = |at: usize| -> Option<i32> {
         Some(i32::from_be_bytes(tkhd.get(at..at + 4)?.try_into().ok()?))
     };
-    let width = (word(size)? >> 16) as u32;
-    let height = (word(size + 4)? >> 16) as u32;
-    if width == 0 || height == 0 {
-        return None;
-    }
+    // Width and height are unsigned 16.16 fixed point. Read signed, a
+    // damaged or hostile header's top bit made them four billion wide.
+    let side = |at: usize| -> Option<u32> {
+        let fixed = u32::from_be_bytes(tkhd.get(at..at + 4)?.try_into().ok()?);
+        Some(fixed >> 16).filter(|side| (1..=MAX_SIDE).contains(side))
+    };
+    let width = side(size)?;
+    let height = side(size + 4)?;
     // A quarter turn either way puts zeros on the matrix's diagonal.
     let turned = word(matrix)? == 0 && word(matrix + 16)? == 0;
     Some(if turned {
@@ -235,6 +242,24 @@ mod tests {
             let path = entry.path();
             println!("{}: {:?}", path.display(), read(&path));
         }
+    }
+
+    /// A size with its top bit set, which read as a signed number came out
+    /// as a negative one cast to four billion, or one past any real video,
+    /// is no size at all.
+    #[test]
+    fn a_negative_or_impossible_size_is_nothing_known() {
+        let mut negative = tkhd(1280, 720, false);
+        // Width -1.0 in 16.16, the header's offset past the box's own eight.
+        negative[8 + 76..8 + 80].copy_from_slice(&(-(1i32 << 16)).to_be_bytes());
+        let size = |file: Vec<u8>| parse(&file).and_then(|video| video.size);
+        assert_eq!(size(movie(&[negative], 0)), None);
+        assert_eq!(size(movie(&[tkhd(40_000, 720, false)], 0)), None);
+        // The real track after a bad one is still found.
+        assert_eq!(
+            size(movie(&[tkhd(0, 720, false), tkhd(1280, 720, false)], 0)),
+            Some((1280, 720))
+        );
     }
 
     #[test]

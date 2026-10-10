@@ -265,22 +265,53 @@ fn exif_segment(value: u16) -> Vec<u8> {
 
 /// Replace the file at `path` with `bytes`, through a temporary file beside
 /// it so a failure part-way leaves the original whole. Keeps its permissions.
+///
+/// The temporary file is made fresh, `O_EXCL` under a name no other turn is
+/// using: whatever already holds a name — a symlink planted to point the
+/// write somewhere else among them — is passed over, never written through.
 fn replace(path: &Path, bytes: &[u8]) -> io::Result<()> {
-    let dir = path.parent().unwrap_or(Path::new("."));
-    let name = path.file_name().unwrap_or_default().to_string_lossy();
-    let temp = dir.join(format!(".{name}.otto-turn"));
     let permissions = fs::metadata(path)?.permissions();
+    let (temp, mut file) = create_temp(path)?;
     let result = (|| {
-        let mut file = fs::File::create(&temp)?;
         file.write_all(bytes)?;
+        // On the open file, not by name: the name could be anything by now.
+        file.set_permissions(fs::Permissions::from_mode(permissions.mode()))?;
         file.sync_all()?;
-        fs::set_permissions(&temp, fs::Permissions::from_mode(permissions.mode()))?;
         fs::rename(&temp, path)
     })();
     if result.is_err() {
         let _ = fs::remove_file(&temp);
     }
     result
+}
+
+/// The temporary name for the `attempt`th try at replacing `path`.
+fn temp_name(path: &Path, attempt: u32) -> std::path::PathBuf {
+    let dir = path.parent().unwrap_or(Path::new("."));
+    let name = path.file_name().unwrap_or_default().to_string_lossy();
+    dir.join(format!(
+        ".{name}.otto-turn-{}-{attempt}",
+        std::process::id()
+    ))
+}
+
+/// A new, empty, private file beside `path`, and its name.
+fn create_temp(path: &Path) -> io::Result<(std::path::PathBuf, fs::File)> {
+    use std::os::unix::fs::OpenOptionsExt;
+    for attempt in 0..100 {
+        let temp = temp_name(path, attempt);
+        match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&temp)
+        {
+            Ok(file) => return Ok((temp, file)),
+            Err(err) if err.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(err) => return Err(err),
+        }
+    }
+    Err(io::ErrorKind::AlreadyExists.into())
 }
 
 #[cfg(test)]
@@ -353,6 +384,27 @@ mod tests {
         set(&path, 1).unwrap();
         assert_eq!(apply(&path, Turn::FlipHorizontal).unwrap(), (1, 2));
         let _ = fs::remove_file(&path);
+    }
+
+    /// A symlink planted at the temporary name is never written through:
+    /// the file it points at is untouched and the photo still turns.
+    #[test]
+    fn a_symlink_at_the_temporary_name_is_not_followed() {
+        let victim = temp("victim.txt", b"keep me");
+        // A photo with EXIF is turned in place; one without goes through
+        // `replace`, which is what makes the temporary file.
+        let plain = temp("planted-plain.jpg", &jpeg(None));
+        let planted_plain = temp_name(&plain, 0);
+        let _ = fs::remove_file(&planted_plain);
+        std::os::unix::fs::symlink(&victim, &planted_plain).unwrap();
+        assert_eq!(apply(&plain, Turn::Right).unwrap(), (1, 6));
+
+        assert_eq!(fs::read(&victim).unwrap(), b"keep me");
+        assert_eq!(orientation(&plain).unwrap(), 6);
+        assert!(planted_plain.symlink_metadata().unwrap().is_symlink());
+        for file in [&victim, &plain, &planted_plain] {
+            let _ = fs::remove_file(file);
+        }
     }
 
     #[test]
