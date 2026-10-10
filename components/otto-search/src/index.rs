@@ -454,48 +454,17 @@ fn cursor_rows(buffer: &[u8]) -> Vec<Vec<String>> {
 
 /// A path as a `file:` URL, percent-encoding what has to be encoded.
 pub fn file_url(path: &Path) -> String {
-    use std::fmt::Write as _;
-    use std::os::unix::ffi::OsStrExt;
-    let mut out = String::from("file://");
-    for &byte in path.as_os_str().as_bytes() {
-        match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' | b'/' => {
-                out.push(char::from(byte));
-            }
-            _ => {
-                let _ = write!(out, "%{byte:02X}");
-            }
-        }
-    }
-    out
+    otto_foundations::uri::path_to_uri(path)
 }
 
 /// The path a `file:` URL names, or `None` if it names something else.
+///
+/// Lenient about a stray `%`, which is a literal `%`: the index hands back
+/// whatever URL a crawler stored.
 pub fn path_from_file_url(url: &str) -> Option<PathBuf> {
-    use std::os::unix::ffi::OsStringExt;
     // Only this host's own files. `file://otherhost/...` is not ours to open.
-    let rest = url.strip_prefix("file:///")?;
-
-    let bytes = rest.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len() + 1);
-    out.push(b'/');
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'%' {
-            let byte = bytes
-                .get(i + 1..i + 3)
-                .and_then(|hex| std::str::from_utf8(hex).ok())
-                .and_then(|hex| u8::from_str_radix(hex, 16).ok());
-            if let Some(byte) = byte {
-                out.push(byte);
-                i += 3;
-                continue;
-            }
-        }
-        out.push(bytes[i]);
-        i += 1;
-    }
-    Some(PathBuf::from(std::ffi::OsString::from_vec(out)))
+    url.strip_prefix("file:///")?;
+    Some(otto_foundations::uri::decode_path(&url["file://".len()..]))
 }
 
 #[cfg(test)]
@@ -546,6 +515,16 @@ mod tests {
         assert_eq!(
             path_from_file_url("file:///a%zz"),
             Some(PathBuf::from("/a%zz"))
+        );
+        // A sign is not a hex digit, though `from_str_radix` would take one.
+        assert_eq!(
+            path_from_file_url("file:///a%+fb"),
+            Some(PathBuf::from("/a%+fb"))
+        );
+        assert_eq!(
+            path_from_file_url("file://localhost/x"),
+            None,
+            "only an empty authority"
         );
     }
 

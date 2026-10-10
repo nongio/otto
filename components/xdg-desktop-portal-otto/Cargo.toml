@@ -16,7 +16,7 @@ tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
 zbus.workspace = true
 futures-util.workspace = true
 otto-dbus = { path = "../otto-dbus" }
-percent-encoding = "2.3"
+otto-foundations = { path = "../otto-foundations" }
 
 [lints]
 workspace = true

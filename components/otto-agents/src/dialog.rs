@@ -580,7 +580,7 @@ pub fn default_option<O: HasKind>(
 
 /// `cwd` for people: under the home folder as `~/…`.
 pub fn folder(cwd: &Path) -> String {
-    crate::xdg::tilde_from_env(cwd)
+    crate::xdg::tilde(cwd)
 }
 
 /// How the dialog should set what it is given. Only presentation: the words

@@ -55,6 +55,7 @@ is the place to start.
 | [Settings D-Bus API](settings-dbus-api.md) | The `org.otto.Settings` wire contract |
 | [Shell D-Bus API](shell-dbus-api.md) | The `org.otto.Shell1` wire contract: i3-syntax commands, the tree as JSON, `otto-msg` |
 | [otto-dbus](otto-dbus.md) | The one client proxy per `org.otto.*` interface, and where a new one goes |
+| [otto-foundations](otto-foundations.md) | The UI-free base: XDG directories, `user-dirs.dirs`, `file://` URIs and name matching |
 | [RDP Bridge](rdp-virtual-output.md) | Serving a virtual output over RDP (`otto-rdp`) |
 | [Debug Action Hook](debug-action-hook.md) | Driving builtin shortcut actions from a script (`$OTTO_ACTION_FILE`) |
 | [Versioning & Releases](versioning.md) | One workspace version for the compositor and every component, and how to bump it |

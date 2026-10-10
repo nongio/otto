@@ -5084,6 +5084,7 @@ dependencies = [
  "jiff",
  "otto-agents-client",
  "otto-dbus",
+ "otto-foundations",
  "serde",
  "serde_json",
  "tempfile",
@@ -5105,6 +5106,7 @@ dependencies = [
  "ahp-types",
  "ahp-ws",
  "futures-util",
+ "otto-foundations",
  "serde_json",
  "tokio",
  "tokio-tungstenite 0.29.0",
@@ -5254,6 +5256,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "otto-foundations"
+version = "1.6.0"
+dependencies = [
+ "percent-encoding",
+]
+
+[[package]]
 name = "otto-greeter"
 version = "1.6.0"
 dependencies = [
@@ -5316,8 +5325,7 @@ dependencies = [
  "laye-rs",
  "libc",
  "otto-dbus",
- "otto-search",
- "percent-encoding",
+ "otto-foundations",
  "pipewire",
  "resvg",
  "rustix 0.38.44",
@@ -5476,6 +5484,7 @@ name = "otto-search"
 version = "1.6.0"
 dependencies = [
  "libc",
+ "otto-foundations",
  "tokio",
  "tracing",
  "zbus",
@@ -9991,7 +10000,7 @@ dependencies = [
  "anyhow",
  "futures-util",
  "otto-dbus",
- "percent-encoding",
+ "otto-foundations",
  "tokio",
  "tracing",
  "tracing-subscriber",

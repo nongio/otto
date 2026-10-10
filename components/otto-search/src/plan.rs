@@ -280,7 +280,7 @@ impl Plan {
             let lower = name.to_lowercase();
             let hit = match filter {
                 Filter::Phrase(_) => lower.contains(needle.as_str()).then_some(0),
-                _ => crate::matching::score(name, needle),
+                _ => otto_foundations::matching::score(name, needle),
             };
             match (negated, hit) {
                 (false, Some(score)) => total += i64::from(score),
@@ -573,7 +573,7 @@ fn folder_url(path: &Path) -> String {
 }
 
 /// A regular expression matching names that contain `word`'s characters in
-/// order, as [`crate::matching::score`] does.
+/// order, as [`otto_foundations::matching::score`] does.
 fn subsequence_pattern(word: &str) -> String {
     let mut pattern = String::new();
     for (i, c) in word.chars().enumerate() {

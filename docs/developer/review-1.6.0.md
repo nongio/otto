@@ -99,6 +99,7 @@ otto-kit, so the portal and otto-agents need not link Skia): `xdg`, `dbus`,
   different validation (`otto-files/src/model.rs:810`,
   `otto-settings/src/panes/search.rs:444`). **M**
   - *Partly done in #261: `otto_kit::xdg` added and the listed helpers migrated; other ad-hoc `HOME`/`XDG_*` readers remain (listed in the PR).*
+  - *#326: `xdg` moved to the UI-free `otto-foundations` crate (otto-kit re-exports it) with `user_dirs`/`parse_user_dirs` and `tilde`. otto-agents' copy, otto-agents-client's `runtime_dir`, and the `user-dirs.dirs` parsers in otto-files, otto-settings and the portal now use it, as do the `~` spellings in otto-agents, otto-agents-kit, otto-settings (desk) and otto-files. otto-authorize's `home_as_tilde` stays: it works on strings and treats a `/` home differently. Other ad-hoc `HOME`/`XDG_*` readers remain.*
 - [x] **`dbus`**: one client proxy per `org.otto.*` interface.
   `org.otto.Dialog1` ×3, `org.otto.Settings` ×3 plus raw calls,
   `org.otto.ScreenCast` raw in otto-rdp, `org.otto.Shell1` raw in otto-msg,
@@ -111,6 +112,7 @@ otto-kit, so the portal and otto-agents need not link Skia): `xdg`, `dbus`,
   otto-peek, otto-agents-client, otto-search, `src/desktop_widget.rs`); use
   `percent-encoding`/`url` (in Cargo.lock). **S**
   - *Partly done in #261: `otto_kit::uri` added; thumbnail URIs now match GLib. otto-search `file_url` and otto-agents-client `uri.rs` remain (no otto-kit dependency).*
+  - *#326: `uri` moved to `otto-foundations`; otto-search's `file_url`/`path_from_file_url`, otto-agents-client's `uri.rs` and the portal's screenshot URI now use it. The strict decoder (`try_decode_path`) and the lenient one agree on what counts as an escape: `%+f` is not one, which `from_str_radix` used to accept.*
 - [x] **hex colours**: one `otto_kit::theme::parse_hex` (see §1). **S** Fixed in #261.
 - [x] **`logging`**: the same `tracing_subscriber` block in 14–15 `main.rs`,
   with inconsistent default filters; `otto_kit::init()` doing logging + i18n. **S** Fixed in #261.
@@ -145,9 +147,10 @@ otto-kit, so the portal and otto-agents need not link Skia): `xdg`, `dbus`,
 
 ### Layering
 
-- [ ] otto-kit depends on otto-search (a binary with zbus+tokio) only for the
+- [x] otto-kit depends on otto-search (a binary with zbus+tokio) only for the
   103-line `matching.rs`. Move it into otto-kit. **S**
   - *Not done: otto-search is deliberately toolkit-free (the agents daemon and CLI link it); only a tiny `otto-matching` crate would fix the direction.*
+  - *Fixed in #326: `matching` moved to `otto-foundations`, which both otto-kit and otto-search depend on; otto-kit no longer depends on otto-search.*
 - [ ] otto-preview depends on the otto-files *app* and reaches into its
   internals. Extract the shared browser model/view into a library. **M**
 - [ ] otto-peek is both app and library (4 consumers of thumbnailer,
