@@ -224,6 +224,11 @@ method.
 - `otto-dictate toggle` starts dictating into the focused text field, and
   stops it again. No key is bound to it by default; the user binds a shortcut
   in Otto to that command.
+- The toggle travels over `otto-dictate.sock` in the user's runtime directory
+  (`$XDG_RUNTIME_DIR`, else `/run/user/<uid>`). There is no `/tmp` fallback:
+  without a runtime directory otto-dictate exits with an error. Each
+  connection gets one second to send one line (`toggle`); a client that stays
+  silent is dropped instead of blocking the next.
 - With no text field focused, toggle does nothing.
 - While listening, a balloon under the caret shows an equaliser and the words
   heard so far, settled words bright and the rest dimmed. It grows to three
