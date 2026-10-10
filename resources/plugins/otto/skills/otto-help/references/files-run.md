@@ -26,6 +26,10 @@ pdf ocr: Searchable PDF from Pictures [files: some of png,jpg,…] [--arg: Read 
 zip compress: Compress to Zip [files: some] [--arg: Archive name; default Archive.zip]
 ```
 
+This runs every published script's `describe`, so it is not pre-approved:
+the harness asks the person first. Expect the prompt and say you are looking
+up their Files commands.
+
 The list is the person's own: commands come and go as they add them. Look
 before saying one exists, and do not invent one that is not listed.
 

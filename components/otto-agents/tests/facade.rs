@@ -136,7 +136,8 @@ struct Seen {
 }
 
 /// Starts `otto-agents acp` against `url` and runs `body` with a connection to
-/// it. Permission requests are answered with `allow`.
+/// it, with `--permissions client`. Permission requests are answered with
+/// `allow`.
 async fn with_facade<T: Send + 'static>(
     url: &str,
     seen: Arc<Mutex<Seen>>,
@@ -144,7 +145,7 @@ async fn with_facade<T: Send + 'static>(
     + Send
     + 'static,
 ) -> T {
-    with_facade_args(url, &[], seen, body).await
+    with_facade_args(url, &["--permissions", "client"], seen, body).await
 }
 
 /// As [`with_facade`], with more arguments for `otto-agents acp`.
@@ -284,16 +285,14 @@ async fn a_chat_bridge_drives_a_desktop_session() {
     );
     assert!(text.contains("you said again"), "{text}");
 
-    // A client that answers permission requests by a fixed policy, as
-    // some bridges do, leaves them to the desktop. It resumes the session
-    // without a replay, is never asked, and closes the session when done.
+    // By default (`--permissions desktop`, also for a client that answers
+    // by a fixed policy) permission requests stay on the desktop. The
+    // client resumes the session without a replay, is never asked, and
+    // closes the session when done.
     let id = session.0.to_string();
     let seen = Arc::new(Mutex::new(Seen::default()));
-    let (asked_stop, after_close) = with_facade_args(
-        &url,
-        &["--permissions", "desktop"],
-        Arc::clone(&seen),
-        async move |connection| {
+    let (asked_stop, after_close) =
+        with_facade_args(&url, &[], Arc::clone(&seen), async move |connection| {
             let id = agent_client_protocol::schema::v1::SessionId::new(id);
             let cwd = std::env::temp_dir();
             connection
@@ -315,9 +314,8 @@ async fn a_chat_bridge_drives_a_desktop_session() {
                 .block_task()
                 .await;
             Ok((asked.stop_reason, after_close.is_err()))
-        },
-    )
-    .await;
+        })
+        .await;
     assert_eq!(asked_stop, StopReason::Cancelled);
     assert!(after_close, "a closed session takes no more prompts");
     let seen = std::mem::take(&mut *seen.lock().unwrap());

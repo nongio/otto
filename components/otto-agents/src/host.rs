@@ -1582,8 +1582,10 @@ impl HostState {
         } else {
             prompt.subtitle.clone()
         };
-        // In the agent's order; which one to start on travels in `_meta`, as
-        // AHP has no field for it.
+        // In the agent's order; which one to start on, and whether each
+        // option is once or always, travel in `_meta`, as AHP has no field for
+        // either: a client relaying the question (`otto-agents acp`) must not
+        // show an "always" as a "once".
         let confirmation_options = options
             .iter()
             .map(|option| ConfirmationOption {
@@ -1597,11 +1599,7 @@ impl HostState {
                 group: None,
             })
             .collect();
-        let meta = default_option_id.map(|id| {
-            let mut meta = serde_json::Map::new();
-            meta.insert("otto".into(), serde_json::json!({ "defaultOption": id }));
-            meta
-        });
+        let meta = question_meta(default_option_id, &options);
         let tool_input = tool_input.map(|input| ToolInput::Inline(input.to_string()));
         let edits = (!edits.is_empty()).then(|| serde_json::Value::Array(edits));
         let title = prompt.title.clone();
@@ -2159,7 +2157,8 @@ impl HostState {
             action.message.text.clone()
         };
         self.title_from_prompt(session_uri, &title_from);
-        let attached = attachments(&action.message);
+        let remote = remote_origin(&action.message);
+        let attached = shared(&action.message);
         if let Some(session) = self.sessions.get_mut(session_uri) {
             for attachment in &attached {
                 if !session.attached.contains(attachment) {
@@ -2167,7 +2166,6 @@ impl HostState {
                 }
             }
         }
-        let remote = remote_origin(&action.message);
         if let Some(via) = &remote {
             self.mark_remote(session_uri, via);
         }
@@ -3297,6 +3295,17 @@ fn attachments(message: &Message) -> Vec<Attachment> {
         .collect()
 }
 
+/// What a prompt shares with the agent, which may read it without asking:
+/// its attachments, except from a chat app. A message marked as written there
+/// shares nothing, so whoever can reach a bridge cannot point the agent at a
+/// file and have it read without the person at the desk being asked.
+fn shared(message: &Message) -> Vec<Attachment> {
+    if remote_origin(message).is_some() {
+        return Vec::new();
+    }
+    attachments(message)
+}
+
 /// The current time as an RFC 3339 timestamp with millisecond precision.
 pub fn now() -> String {
     format!("{:.3}", jiff::Timestamp::now())
@@ -3413,6 +3422,31 @@ fn history_turn(turn: HistoryTurn) -> Turn {
     }
 }
 
+/// The `_meta` a question's tool call carries: `otto.defaultOption`, the
+/// option to start on, and `otto.optionKinds`, each option's ACP kind by id
+/// (`allow_once`, `allow_always`, `reject_once`, `reject_always`).
+fn question_meta(
+    default_option_id: Option<String>,
+    options: &[QuestionOption],
+) -> Option<serde_json::Map<String, serde_json::Value>> {
+    let mut otto = serde_json::Map::new();
+    if let Some(id) = default_option_id {
+        otto.insert("defaultOption".into(), id.into());
+    }
+    let kinds: serde_json::Map<String, serde_json::Value> = options
+        .iter()
+        .filter_map(|option| Some((option.id.clone(), serde_json::to_value(option.kind).ok()?)))
+        .collect();
+    if !kinds.is_empty() {
+        otto.insert("optionKinds".into(), kinds.into());
+    }
+    (!otto.is_empty()).then(|| {
+        let mut meta = serde_json::Map::new();
+        meta.insert("otto".into(), otto.into());
+        meta
+    })
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -3450,6 +3484,16 @@ mod tests {
                 meta: None,
             },
         }
+    }
+
+    #[test]
+    fn a_message_from_a_chat_app_shares_no_files() {
+        let mut message = queued("read this", &["file:///home/me/.ssh/id_rsa"]).message;
+        assert_eq!(shared(&message).len(), 1);
+        let mut meta = JsonObject::new();
+        meta.insert("otto".into(), json!({ "remote": { "via": "Telegram" } }));
+        message.meta = Some(meta);
+        assert!(shared(&message).is_empty());
     }
 
     #[test]

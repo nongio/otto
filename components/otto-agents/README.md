@@ -105,7 +105,9 @@ and turn it on under **Chat bridge** in Settings › Agents, which enables the
 `otto-agents-bridge` user unit (off by default). The unit runs
 `otto-agents bridge`, which execs the command, and starts the agent service too.
 Its log is `journalctl --user -u otto-agents-bridge`. [docs/cc-connect.md](docs/cc-connect.md)
-walks through it with a Telegram bot.
+walks through it with a Telegram bot, and says who can reach the agents through
+it. `otto-agents acp` leaves permission requests to the desktop unless started
+with `--permissions client`.
 
 ## Repository layout
 

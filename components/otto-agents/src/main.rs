@@ -93,10 +93,11 @@ enum Command {
         /// it is shown under. Defaults to the service's first agent.
         #[arg(long)]
         agent: Option<String>,
-        /// Who answers the agent's permission requests: the ACP client as
-        /// well as the desktop (first answer wins), or the desktop only, for
-        /// clients that answer by a fixed policy rather than asking anyone.
-        #[arg(long, value_enum, default_value = "client")]
+        /// Who answers the agent's permission requests: the desktop only (the
+        /// default), or the ACP client as well as the desktop, first answer
+        /// wins. `client` lets whoever can write to the bridge approve tool
+        /// calls, "always" rules included, so it is opt-in.
+        #[arg(long, value_enum, default_value = "desktop")]
         permissions: facade::Permissions,
         /// The chat app messages are relayed from, such as `Telegram`: each
         /// one tells the agent it was written away from the desktop, on the

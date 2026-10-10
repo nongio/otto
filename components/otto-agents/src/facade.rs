@@ -9,9 +9,10 @@
 //! from a chat app shows up in Sessions, and one begun at the desk can be
 //! carried on from the phone.
 //!
-//! Permission requests reach the ACP client as `session/request_permission`
-//! while the desktop gets them as it always does; whichever answers first
-//! wins, and the host ignores the late one.
+//! Permission requests stay on the desktop unless `--permissions client`:
+//! then they reach the ACP client as `session/request_permission` while the
+//! desktop gets them as it always does; whichever answers first wins, and the
+//! host ignores the late one.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -57,10 +58,12 @@ const START_TIMEOUT: Duration = Duration::from_secs(120);
 /// Who answers the agent's permission requests.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
 pub enum Permissions {
-    /// The ACP client as well as the desktop; the first answer wins.
+    /// The ACP client as well as the desktop; the first answer wins. Whoever
+    /// can write to the client, such as everyone a chat bridge lets in, can
+    /// then approve tool calls.
     Client,
-    /// The desktop only. For clients that answer every request by a fixed
-    /// policy rather than asking anyone.
+    /// The desktop only: the default. Also for clients that answer every
+    /// request by a fixed policy rather than asking anyone.
     Desktop,
 }
 
@@ -708,10 +711,12 @@ impl Pump {
             .confirmation_title
             .map(text_of)
             .unwrap_or_else(|| text_of(ready.invocation_message));
+        let kinds = option_kinds(ready.meta.as_ref());
         let acp_options = options
             .iter()
             .map(|option| {
-                PermissionOption::new(option.id.clone(), option.label.clone(), kind(option))
+                let kind = kind(option, &kinds);
+                PermissionOption::new(option.id.clone(), option.label.clone(), kind)
             })
             .collect();
         let fields = ToolCallUpdateFields::new().title(title);
@@ -763,16 +768,45 @@ impl Pump {
     }
 }
 
-fn kind(option: &ConfirmationOption) -> PermissionOptionKind {
-    match option.kind {
-        ConfirmationOptionKind::Approve => PermissionOptionKind::AllowOnce,
+/// Each option's ACP kind by id, as the host puts it in the tool call's
+/// `_meta.otto.optionKinds`.
+fn option_kinds(meta: Option<&JsonObject>) -> HashMap<String, PermissionOptionKind> {
+    meta.and_then(|meta| meta.get("otto")?.get("optionKinds")?.as_object())
+        .map(|kinds| {
+            kinds
+                .iter()
+                .filter_map(|(id, kind)| {
+                    Some((id.clone(), serde_json::from_value(kind.clone()).ok()?))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// The ACP kind of `option`: the agent's own, once or always, from `kinds`
+/// when it agrees with whether the option approves; otherwise the narrowest
+/// one, so an option is never offered as wider than it is known to be.
+fn kind(
+    option: &ConfirmationOption,
+    kinds: &HashMap<String, PermissionOptionKind>,
+) -> PermissionOptionKind {
+    let approve = option.kind == ConfirmationOptionKind::Approve;
+    match kinds.get(&option.id) {
+        Some(kind @ (PermissionOptionKind::AllowOnce | PermissionOptionKind::AllowAlways))
+            if approve =>
+        {
+            *kind
+        }
+        Some(kind @ (PermissionOptionKind::RejectOnce | PermissionOptionKind::RejectAlways))
+            if !approve =>
+        {
+            *kind
+        }
+        _ if approve => PermissionOptionKind::AllowOnce,
         _ => PermissionOptionKind::RejectOnce,
     }
 }
 
-/// An ACP prompt as a chat message. Text is kept as written; links become
-/// attachments, which the agent may read without asking; embedded text
-/// resources are inlined. Pictures and audio have nowhere to go yet.
 /// The chat app a chat bridge relays from, as cc-connect tells the agent it
 /// starts: the platform at the head of `CC_SESSION_KEY`, such as
 /// `telegram:<chat>:<user>`.
@@ -784,13 +818,28 @@ pub fn remote_from_env() -> Option<String> {
     Some(first.to_uppercase().chain(letters).collect())
 }
 
-/// `prompt` as a chat message, marked as written in `remote` when it was.
+/// An ACP prompt as a chat message, marked as written in `remote` when it
+/// was. Text is kept as written; links become attachments, which the agent
+/// may read without asking, except from a chat app (`remote`), where they are
+/// dropped; embedded text resources are inlined. Pictures and audio have
+/// nowhere to go yet.
 fn message(prompt: Vec<ContentBlock>, remote: Option<&str>) -> Message {
     let mut text = Vec::new();
     let mut attachments = Vec::new();
     for block in prompt {
         match block {
             ContentBlock::Text(content) => text.push(content.text),
+            // An attachment is something the agent may read without asking,
+            // so one sent from a chat app is left out: whoever can write in
+            // that chat must not be able to have files on this computer read
+            // unasked. The agent is told, so it can say so.
+            ContentBlock::ResourceLink(link) if remote.is_some() => {
+                let label = link.title.unwrap_or(link.name);
+                tracing::warn!(uri = %link.uri, "dropping a link sent from a chat app");
+                text.push(format!(
+                    "({label} was not attached: files cannot be attached from a chat app.)"
+                ));
+            }
             ContentBlock::ResourceLink(link) => {
                 attachments.push(MessageAttachment::Resource(MessageResourceAttachment {
                     label: link.title.clone().unwrap_or(link.name.clone()),
@@ -863,4 +912,124 @@ fn internal(err: anyhow::Error) -> agent_client_protocol::Error {
 
 fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use agent_client_protocol::schema::v1::ResourceLink;
+
+    fn option(id: &str, kind: ConfirmationOptionKind) -> ConfirmationOption {
+        ConfirmationOption {
+            id: id.into(),
+            label: id.into(),
+            kind,
+            group: None,
+        }
+    }
+
+    fn meta(kinds: Value) -> JsonObject {
+        let mut meta = JsonObject::new();
+        meta.insert("otto".into(), json!({ "optionKinds": kinds }));
+        meta
+    }
+
+    #[test]
+    fn options_keep_the_agents_once_or_always() {
+        let meta = meta(json!({
+            "always": "allow_always",
+            "once": "allow_once",
+            "never": "reject_always",
+            "no": "reject_once",
+        }));
+        let kinds = option_kinds(Some(&meta));
+        let approve = ConfirmationOptionKind::Approve;
+        let deny = ConfirmationOptionKind::Deny;
+        assert_eq!(
+            kind(&option("always", approve.clone()), &kinds),
+            PermissionOptionKind::AllowAlways
+        );
+        assert_eq!(
+            kind(&option("once", approve), &kinds),
+            PermissionOptionKind::AllowOnce
+        );
+        assert_eq!(
+            kind(&option("never", deny.clone()), &kinds),
+            PermissionOptionKind::RejectAlways
+        );
+        assert_eq!(
+            kind(&option("no", deny), &kinds),
+            PermissionOptionKind::RejectOnce
+        );
+    }
+
+    #[test]
+    fn options_without_a_known_kind_are_the_narrowest() {
+        let approve = ConfirmationOptionKind::Approve;
+        let deny = ConfirmationOptionKind::Deny;
+        // No `_meta` at all: once.
+        let none = option_kinds(None);
+        assert_eq!(
+            kind(&option("a", approve.clone()), &none),
+            PermissionOptionKind::AllowOnce
+        );
+        assert_eq!(
+            kind(&option("r", deny.clone()), &none),
+            PermissionOptionKind::RejectOnce
+        );
+        // A kind that contradicts the option, or one not known, is not taken.
+        let kinds = option_kinds(Some(&meta(json!({
+            "a": "reject_always",
+            "r": "allow_always",
+            "x": "allow_forever",
+        }))));
+        assert_eq!(
+            kind(&option("a", approve.clone()), &kinds),
+            PermissionOptionKind::AllowOnce
+        );
+        assert_eq!(
+            kind(&option("r", deny), &kinds),
+            PermissionOptionKind::RejectOnce
+        );
+        assert_eq!(
+            kind(&option("x", approve), &kinds),
+            PermissionOptionKind::AllowOnce
+        );
+    }
+
+    fn prompt() -> Vec<ContentBlock> {
+        vec![
+            ContentBlock::Text(TextContent::new("read this")),
+            ContentBlock::ResourceLink(ResourceLink::new("id_rsa", "file:///home/me/.ssh/id_rsa")),
+        ]
+    }
+
+    #[test]
+    fn links_from_the_desktop_are_attached() {
+        let message = message(prompt(), None);
+        let attachments = message.attachments.expect("attached");
+        assert_eq!(attachments.len(), 1);
+        let MessageAttachment::Resource(resource) = &attachments[0] else {
+            panic!("not a resource: {attachments:?}");
+        };
+        assert_eq!(resource.uri, "file:///home/me/.ssh/id_rsa");
+        assert!(message.meta.is_none());
+    }
+
+    #[test]
+    fn links_from_a_chat_app_are_dropped() {
+        let message = message(prompt(), Some("Telegram"));
+        assert!(message.attachments.is_none(), "{:?}", message.attachments);
+        assert!(!message.text.contains("file://"), "{}", message.text);
+        assert!(message.text.starts_with("read this"), "{}", message.text);
+        assert!(
+            message.text.contains("id_rsa was not attached"),
+            "{}",
+            message.text
+        );
+        assert_eq!(
+            message.meta.as_ref().unwrap()["otto"]["remote"]["via"],
+            "Telegram"
+        );
+    }
 }
