@@ -19,15 +19,18 @@ session should pay for. Build with `cargo build --features "debug-hooks"`
 (or `dev`) to use it; see `src/debug_hooks.rs`.
 
 ```sh
-echo ExposeShowAll > /tmp/otto-action
+echo ExposeShowAll > "$XDG_RUNTIME_DIR/otto-action"
 ```
 
 The file is consumed (deleted) when it is read.
 
 ## `OTTO_ACTION_FILE`
 
-The path defaults to `/tmp/otto-action` and is overridden by the
-`OTTO_ACTION_FILE` environment variable, read from Otto's own environment:
+The path defaults to `otto-action` in the user's runtime directory
+(`$XDG_RUNTIME_DIR`, else `/run/user/<uid>`), never `/tmp`, where any local
+user could write actions into the session; with no runtime directory and no
+override the hook is off. It is overridden by the `OTTO_ACTION_FILE`
+environment variable, read once from Otto's own environment:
 
 ```sh
 OTTO_ACTION_FILE=/run/user/1000/otto-harness.action cargo run --release

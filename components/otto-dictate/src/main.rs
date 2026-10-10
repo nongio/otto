@@ -31,7 +31,7 @@ mod balloon;
 
 // Rust guideline compliant 2026-02-21
 
-use std::io::{Read, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
 use std::thread;
@@ -100,7 +100,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .init();
 
     if std::env::args().nth(1).as_deref() == Some("toggle") {
-        let mut stream = UnixStream::connect(socket_path())?;
+        let mut stream = UnixStream::connect(socket_path()?)?;
         stream.write_all(b"toggle\n")?;
         return Ok(());
     }
@@ -170,26 +170,50 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 }
 
-fn socket_path() -> PathBuf {
-    let dir = std::env::var_os("XDG_RUNTIME_DIR").unwrap_or_else(|| "/tmp".into());
-    PathBuf::from(dir).join("otto-dictate.sock")
+/// The toggle socket, in the user's runtime directory.
+///
+/// There is no shared fallback such as `/tmp`: a socket there could be bound
+/// or connected to by any local user.
+fn socket_path() -> Result<PathBuf, String> {
+    otto_kit::xdg::runtime_dir()
+        .map(|dir| dir.join("otto-dictate.sock"))
+        .ok_or_else(|| {
+            "XDG_RUNTIME_DIR is not set (and /run/user/<uid> does not exist); \
+             otto-dictate needs a private runtime directory for its socket"
+                .to_string()
+        })
 }
 
+/// How long a connection gets to send its request line.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(1);
+/// Longest request line read; `toggle\n` is all there is.
+const REQUEST_BYTES: u64 = 64;
+
 /// Accept `toggle` requests on a Unix socket, each one a message on `tx`.
-fn listen_for_toggles(tx: Sender<()>) -> std::io::Result<()> {
-    let path = socket_path();
+fn listen_for_toggles(tx: Sender<()>) -> Result<(), Box<dyn std::error::Error>> {
+    let path = socket_path()?;
     let _ = std::fs::remove_file(&path);
     let listener = UnixListener::bind(&path)?;
     thread::spawn(move || {
         for stream in listener.incoming().flatten() {
-            let mut line = String::new();
-            let _ = stream.take(64).read_to_string(&mut line);
-            if line.trim() == "toggle" && tx.send(()).is_err() {
+            if read_request(&stream).as_deref() == Some("toggle") && tx.send(()).is_err() {
                 break;
             }
         }
     });
     Ok(())
+}
+
+/// The first line a client sends, trimmed. A client that sends nothing, or
+/// never ends its line, is dropped after [`REQUEST_TIMEOUT`] rather than
+/// holding up the next one.
+fn read_request(stream: &UnixStream) -> Option<String> {
+    stream.set_read_timeout(Some(REQUEST_TIMEOUT)).ok()?;
+    let mut line = String::new();
+    BufReader::new(stream.take(REQUEST_BYTES))
+        .read_line(&mut line)
+        .ok()?;
+    Some(line.trim().to_string())
 }
 
 /// A pass that came back from the engine.
@@ -688,3 +712,24 @@ delegate_noop!(State: ignore wl_compositor::WlCompositor);
 delegate_noop!(State: ignore wl_surface::WlSurface);
 delegate_noop!(State: ignore wl_seat::WlSeat);
 delegate_noop!(State: ignore ZwpInputMethodManagerV2);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_request_is_read_without_waiting_for_the_client_to_close() {
+        let (mut client, server) = UnixStream::pair().unwrap();
+        client.write_all(b"toggle\n").unwrap();
+        // `client` stays open: one line is enough.
+        assert_eq!(read_request(&server).as_deref(), Some("toggle"));
+    }
+
+    #[test]
+    fn a_silent_client_times_out() {
+        let (_client, server) = UnixStream::pair().unwrap();
+        let started = Instant::now();
+        assert_eq!(read_request(&server), None);
+        assert!(started.elapsed() < REQUEST_TIMEOUT * 3);
+    }
+}

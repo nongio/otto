@@ -20,8 +20,8 @@ use crate::portal::remembered;
 const REMEMBER_GROUP: &str = "otto.remember";
 use crate::portal::{
     build_streams_value_from_descriptors, decode_restore_data, encode_restore_data,
-    make_output_mapping_id, program_display_name, resolve_restored, session_program, PortalState,
-    Request, RestoredSource, SelectedWindow, Session, SessionState, StreamDescriptor,
+    make_output_mapping_id, program_display_name, resolve_restored, session_program, Cancellation,
+    PortalState, Request, RestoredSource, SelectedWindow, Session, SessionState, StreamDescriptor,
     CURSOR_MODE_EMBEDDED, SOURCE_TYPE_MONITOR, SOURCE_TYPE_WINDOW, SUPPORTED_CURSOR_MODES,
 };
 use zbus::zvariant::Str;
@@ -295,16 +295,20 @@ impl ScreenCastPortal {
         Ok(())
     }
 
-    /// Export a temporary Request object in dbus so the frontend can listen for the response signal.
+    /// Export a temporary Request object in dbus so the frontend can listen
+    /// for the response signal, and close the request. The returned handle
+    /// fires when it does.
     async fn register_request(
         &self,
         object_server: &ObjectServer,
         path: &OwnedObjectPath,
-    ) -> fdo::Result<()> {
+    ) -> fdo::Result<Cancellation> {
+        let request = Request::new(path.clone());
+        let cancellation = request.cancellation();
         object_server
-            .at(path.clone(), Request::new(path.clone()))
+            .at(path.clone(), request)
             .await
-            .map(|_| ())
+            .map(|_| cancellation)
             .map_err(|err| fdo::Error::Failed(err.to_string()))
     }
 
@@ -346,16 +350,34 @@ impl ScreenCastPortal {
                 .map_err(|err| fdo::Error::Failed(format!("Failed to export Session: {err}")))?;
 
             let default_cursor_mode = CURSOR_MODE_EMBEDDED;
-            let sc_session_path = self
-                .sc_client
-                .create_session(default_cursor_mode)
-                .await
-                .map_err(|err| {
-                    fdo::Error::Failed(format!("Failed to create ScreenComposer session: {err}"))
-                })?;
+            let created = async {
+                let path = self
+                    .sc_client
+                    .create_session(default_cursor_mode)
+                    .await
+                    .map_err(|err| {
+                        fdo::Error::Failed(format!(
+                            "Failed to create ScreenComposer session: {err}"
+                        ))
+                    })?;
+                OwnedObjectPath::try_from(path)
+                    .map_err(|err| fdo::Error::Failed(format!("Invalid session path: {err}")))
+            }
+            .await;
 
-            let sc_session_obj_path = OwnedObjectPath::try_from(sc_session_path.clone())
-                .map_err(|err| fdo::Error::Failed(format!("Invalid session path: {err}")))?;
+            // A Session exported for a compositor session that never came to
+            // be would stay on the bus with nothing behind it.
+            let sc_session_obj_path = match created {
+                Ok(path) => path,
+                Err(err) => {
+                    if let Err(remove_err) =
+                        object_server.remove::<Session, _>(&session_handle).await
+                    {
+                        warn!(session = %session_handle, ?remove_err, "Failed to remove session object");
+                    }
+                    return Err(err);
+                }
+            };
 
             {
                 let mut state = self.state.lock().await;
@@ -374,7 +396,7 @@ impl ScreenCastPortal {
 
             info!(
                 portal_session = %session_handle,
-                sc_session = %sc_session_path,
+                sc_session = %sc_session_obj_path,
                 "Created ScreenComposer session"
             );
 
@@ -406,10 +428,11 @@ impl ScreenCastPortal {
     ) -> fdo::Result<(u32, HashMap<String, OwnedValue>)> {
         info!(session = %session_handle, ?app_id, ?options, "SelectSources called");
 
-        self.register_request(object_server, &request_handle)
+        let cancellation = self
+            .register_request(object_server, &request_handle)
             .await?;
 
-        let result = async {
+        let work = async {
             let requested_types = options
                 .get("types")
                 .and_then(|value| u32::try_from(value).ok())
@@ -589,8 +612,11 @@ impl ScreenCastPortal {
             }
 
             Ok((0, results))
-        }
-        .await;
+        };
+        let result = cancellation.run(work).await.unwrap_or_else(|| {
+            info!(session = %session_handle, "Request closed by the frontend");
+            Ok((1, HashMap::new()))
+        });
 
         self.unregister_request(object_server, &request_handle)
             .await;
@@ -610,10 +636,11 @@ impl ScreenCastPortal {
     ) -> fdo::Result<(u32, HashMap<String, OwnedValue>)> {
         info!(session = %session_handle, ?app_id, parent_window, ?options, "Start called");
 
-        self.register_request(object_server, &request_handle)
+        let cancellation = self
+            .register_request(object_server, &request_handle)
             .await?;
 
-        let result = async {
+        let work = async {
             let (sc_session_path, selected_source, cursor_mode, stream_index, persist_mode) = {
                 let mut state = self.state.lock().await;
                 let entry = state
@@ -837,8 +864,11 @@ impl ScreenCastPortal {
             }
 
             Ok((0, results))
-        }
-        .await;
+        };
+        let result = cancellation.run(work).await.unwrap_or_else(|| {
+            info!(session = %session_handle, "Request closed by the frontend");
+            Ok((1, HashMap::new()))
+        });
 
         self.unregister_request(object_server, &request_handle)
             .await;

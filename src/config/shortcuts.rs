@@ -267,7 +267,7 @@ pub fn describe_action(cfg: &ShortcutActionConfig) -> String {
     }
 }
 
-/// Parse a bare builtin action name — used by the `/tmp/otto-action`
+/// Parse a bare builtin action name — used by the `otto-action`
 /// debug trigger to execute shortcut actions remotely.
 pub fn parse_builtin_name(name: &str) -> Option<BuiltinAction> {
     parse_builtin(name, None).ok()

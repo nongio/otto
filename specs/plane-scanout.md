@@ -520,7 +520,7 @@ so seeding it alone would leave the window underneath sharp.
   real underrun — useful for confirming a fallback configuration renders
   correctly. It fires once per file creation; remove and re-touch the file
   to trigger it again.
-- A separate debug trigger (`echo ActionName > /tmp/otto-action`) executes
+- A separate debug trigger (`echo ActionName > $XDG_RUNTIME_DIR/otto-action`) executes
   a builtin shortcut action (e.g. an expose or workspace-switch action) as
   if its key had been pressed, then requests a redraw so the resulting
   scheduled scene changes apply on the next frame. This exists because

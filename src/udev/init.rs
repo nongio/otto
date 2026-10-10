@@ -715,7 +715,7 @@ pub fn run_udev<A: RendererApi>() {
             }
         }
 
-        // Scripted-gesture driver (`/tmp/otto-gesture`), `debug-hooks` builds
+        // Scripted-gesture driver (`otto-gesture`), `debug-hooks` builds
         // only: the timer alone wakes the loop 125 times a second.
         if crate::debug_hooks::ENABLED {
             let interval = std::time::Duration::from_millis(8);
