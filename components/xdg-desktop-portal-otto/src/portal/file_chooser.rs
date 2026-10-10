@@ -30,8 +30,8 @@ const MODE_SAVE_FILES: u32 = 2;
 /// window that asked.
 ///
 /// Unlike the portal's shared [`Request`](crate::portal::Request), which only
-/// logs, this one forwards: without it a dialog whose application has gone
-/// stays on screen until somebody dismisses it by hand.
+/// cancels the pending call, this one forwards: without it a dialog whose
+/// application has gone stays on screen until somebody dismisses it by hand.
 struct FileChooserRequest {
     client: OttoClient,
     handle: String,

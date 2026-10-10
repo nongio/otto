@@ -33,7 +33,7 @@ pub use settings::{spawn_change_relay, SettingsPortal};
 pub use state::{PortalState, SelectedWindow, SessionState};
 pub use stream::{build_streams_value_from_descriptors, StreamDescriptor};
 
-pub(crate) use request::Request;
+pub(crate) use request::{Cancellation, Request};
 pub(crate) use session::Session;
 
 /// D-Bus object path for the portal desktop interface.

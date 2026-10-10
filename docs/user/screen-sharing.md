@@ -183,6 +183,9 @@ Applications that ask through the desktop portal are answered too, whether GTK
 and Qt screenshot tools or sandboxed apps that cannot talk to Wayland directly.
 Otto captures the whole screen to `~/Pictures/Screenshots/` and returns the file.
 That path runs `grim`, so install it if you want portal screenshots to work.
+Nothing is captured without your say: Otto shows a **Take Screenshot** dialog
+unless the portal has already checked the app's permission (see
+[Privacy](privacy.md), Screenshots) and the app did not ask for a dialog.
 
 There is no built-in screenshot UI for selecting a region or a window
 interactively, and **per-window capture through screencopy is not implemented**:
