@@ -5,6 +5,14 @@ use super::*;
 use crate::photos;
 use otto_kit::components::scroll::Direction;
 
+/// A turn or flip of one photo, waiting for or running on a worker.
+pub(super) struct PhotoTurn {
+    pub(super) path: PathBuf,
+    /// The file's name, for the message if it cannot be turned.
+    pub(super) name: String,
+    pub(super) turn: crate::orient::Turn,
+}
+
 /// Everything the Photos layout is computed from. The layout is rebuilt only
 /// when one of these moves: packing rows walks every entry, which is not a
 /// cost to pay on every frame of a scroll.
@@ -605,6 +613,10 @@ impl Browser {
 
     /// Turn or flip the one selected photograph, by its EXIF orientation:
     /// lossless, and undone with Ctrl+Z like any other change to a file.
+    ///
+    /// Only asked for here. Rewriting the file is disk work, which the update
+    /// pass hands to a worker ([`Self::take_photo_turn`]); the view refreshes
+    /// when [`Self::finish_photo_turn`] says it is done.
     pub(super) fn turn_selected_photo(&mut self, turn: crate::orient::Turn) {
         let Some(entry) = self.selected_entry() else {
             return;
@@ -612,9 +624,35 @@ impl Browser {
         if self.trash || !photos::is_photo(&entry) || !crate::orient::supported(&entry.path) {
             return;
         }
-        match crate::orient::apply(&entry.path, turn) {
+        self.photo_turns.push_back(PhotoTurn {
+            path: entry.path.clone(),
+            name: entry.name.clone(),
+            turn,
+        });
+        self.dirty = true;
+    }
+
+    /// The next turn to run on a worker, unless one is running already.
+    pub(super) fn take_photo_turn(&mut self) -> Option<PhotoTurn> {
+        if self.photo_turning {
+            return None;
+        }
+        let job = self.photo_turns.pop_front()?;
+        self.photo_turning = true;
+        Some(job)
+    }
+
+    /// A worker's turn is done: record it for undo and show the photo the
+    /// way up it now goes, or say why it could not be turned.
+    pub(super) fn finish_photo_turn(
+        &mut self,
+        job: PhotoTurn,
+        result: std::io::Result<(u16, u16)>,
+    ) {
+        self.photo_turning = false;
+        match result {
             Ok((from, to)) => {
-                let label = match turn {
+                let label = match job.turn {
                     crate::orient::Turn::Left | crate::orient::Turn::Right => {
                         otto_kit::t!("files-undo-rotate")
                     }
@@ -623,7 +661,7 @@ impl Browser {
                 self.record_undo(
                     label,
                     vec![model::Change::Oriented {
-                        path: entry.path.clone(),
+                        path: job.path,
                         from,
                         to,
                     }],
@@ -636,11 +674,21 @@ impl Browser {
             }
             Err(err) => self.refuse(otto_kit::t_owned!(
                 "files-turn-failed",
-                name = entry.name.clone(),
+                name = job.name,
                 error = err.to_string()
             )),
         }
         self.dirty = true;
+    }
+
+    /// Run every queued turn here and now, as the worker would: for tests,
+    /// which have no update loop to hand them out.
+    #[cfg(test)]
+    pub(super) fn run_photo_turns(&mut self) {
+        while let Some(job) = self.take_photo_turn() {
+            let result = crate::orient::apply(&job.path, job.turn);
+            self.finish_photo_turn(job, result);
+        }
     }
 
     /// The info panel's swatch under `(x, y)`, if any.

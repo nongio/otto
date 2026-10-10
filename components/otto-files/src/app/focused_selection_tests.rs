@@ -106,9 +106,28 @@ fn a_photo_turned_from_the_info_panel_is_undone() {
     browser.set_mode(ViewMode::Photos);
     browser.select(0, row_of(&browser, "shot.jpg"));
 
+    // Asked for, then carried out off the UI thread: nothing is written
+    // until the worker runs.
     browser.turn_selected_photo(Turn::Right);
+    browser.turn_selected_photo(Turn::FlipHorizontal);
+    assert_eq!(orientation(&shot).unwrap(), 1, "not on the UI thread");
+    browser.run_photo_turns();
+    assert_eq!(
+        orientation(&shot).unwrap(),
+        5,
+        "a quarter turn, then a flip"
+    );
+
+    browser.undo_last();
+    assert_eq!(orientation(&shot).unwrap(), 6, "the flip taken back");
+    browser.undo_last();
+    assert_eq!(orientation(&shot).unwrap(), 1, "and the turn");
+
+    browser.turn_selected_photo(Turn::Right);
+    browser.run_photo_turns();
     assert_eq!(orientation(&shot).unwrap(), 6, "a quarter turn clockwise");
     browser.turn_selected_photo(Turn::FlipHorizontal);
+    browser.run_photo_turns();
     assert_eq!(orientation(&shot).unwrap(), 5);
 
     browser.undo_last();

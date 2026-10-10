@@ -12,7 +12,7 @@ use std::time::SystemTime;
 
 use otto_kit::components::scroll::ScrollView;
 use otto_kit::filetype::{self, Kind};
-use otto_kit::fs::{copy_entry, first_free_name, move_entry, unique_name};
+use otto_kit::fs::{copy_entry, first_free_name, move_entry, move_entry_replacing, unique_name};
 use skia_safe::Rect;
 
 /// One entry in a directory.
@@ -1555,7 +1555,7 @@ pub fn paste_reporting(
             // Copying into the same directory: always keep both, or the file
             // would be asked to replace itself.
             target = unique_name(dest, name);
-        } else if target.exists() {
+        } else if target.symlink_metadata().is_ok() {
             match on_conflict {
                 OnConflict::Skip => {
                     result.skipped += 1;
@@ -1571,8 +1571,17 @@ pub fn paste_reporting(
         // removing our copy would not bring the old one back — so that one is
         // not recorded as undoable at all.
         let replaced = !clipboard.cut && target.exists();
+        // Only a Replace the user chose may land on a taken name. Any other
+        // move goes to a name that must still be free when it lands: one that
+        // appears in the meantime is an error, never a file overwritten.
+        let replacing = on_conflict == OnConflict::Replace && target.symlink_metadata().is_ok();
         let outcome = if clipboard.cut {
-            move_entry(source, &target).map(|_| {
+            let moved = if replacing {
+                move_entry_replacing(source, &target)
+            } else {
+                move_entry(source, &target)
+            };
+            moved.map(|_| {
                 result.moved += 1;
                 result.changes.push(Change::Moved {
                     from: source.clone(),
@@ -1619,7 +1628,10 @@ pub fn undo(changes: &[Change]) -> OpResult {
     for change in changes.iter().rev() {
         match change {
             Change::Moved { from, to } => {
-                if from.exists() {
+                // Not `exists`, which follows a symlink: a dangling one is
+                // still something there. The move itself refuses to replace
+                // as well, so a name taken after this check is safe too.
+                if from.symlink_metadata().is_ok() {
                     result.errors.push(format!(
                         "Can\u{2019}t put \u{201c}{}\u{201d} back \u{2014} something is there now.",
                         name_of(from)
@@ -1713,53 +1725,10 @@ pub fn create_folder_named(dest: &Path, name: &str) -> Result<PathBuf, String> {
 
 /// Rename `from` to `to` without replacing anything already at `to`.
 ///
-/// `rename(2)` quietly clobbers the destination, and undo cannot bring that
-/// back, so this asks the kernel for `RENAME_NOREPLACE` and reports a taken
-/// name as `AlreadyExists`. A filesystem without the flag falls back to a
-/// check before a plain rename, as `otto_kit::trash` does.
+/// The one no-replace move, [`otto_kit::fs::rename_no_replace`]: a taken
+/// name is `AlreadyExists`, never a clobbered file undo cannot bring back.
 pub fn rename_no_replace(from: &Path, to: &Path) -> std::io::Result<()> {
-    use std::ffi::CString;
-    use std::io::{Error, ErrorKind};
-    use std::os::unix::ffi::OsStrExt;
-
-    let c = |path: &Path| {
-        CString::new(path.as_os_str().as_bytes()).map_err(|_| Error::from(ErrorKind::InvalidInput))
-    };
-    let (from_c, to_c) = (c(from)?, c(to)?);
-    // SAFETY: both pointers are NUL-terminated strings that outlive the call.
-    let result = unsafe {
-        libc::renameat2(
-            libc::AT_FDCWD,
-            from_c.as_ptr(),
-            libc::AT_FDCWD,
-            to_c.as_ptr(),
-            libc::RENAME_NOREPLACE,
-        )
-    };
-    if result == 0 {
-        return Ok(());
-    }
-    let err = Error::last_os_error();
-    match err.raw_os_error() {
-        // On a case-insensitive filesystem "a" → "A" finds the file itself
-        // at the destination; that is a rename, not a collision.
-        Some(libc::EEXIST) if same_file(from, to) => std::fs::rename(from, to),
-        Some(libc::EINVAL | libc::ENOSYS) => {
-            if to.symlink_metadata().is_ok() && !same_file(from, to) {
-                return Err(ErrorKind::AlreadyExists.into());
-            }
-            std::fs::rename(from, to)
-        }
-        _ => Err(err),
-    }
-}
-
-fn same_file(a: &Path, b: &Path) -> bool {
-    use std::os::unix::fs::MetadataExt;
-    match (a.symlink_metadata(), b.symlink_metadata()) {
-        (Ok(a), Ok(b)) => a.dev() == b.dev() && a.ino() == b.ino(),
-        _ => false,
-    }
+    otto_kit::fs::rename_no_replace(from, to)
 }
 
 #[cfg(test)]

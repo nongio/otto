@@ -344,6 +344,17 @@ impl FilesApp {
         });
     }
 
+    /// Turn or flip a photo off the UI thread: it reads and may rewrite the
+    /// whole file. The view is refreshed when it lands.
+    pub(super) fn start_photo_turn(&self, job: super::photos_view::PhotoTurn) {
+        let state = Arc::clone(&self.state);
+        tokio::task::spawn_blocking(move || {
+            let result = crate::orient::apply(&job.path, job.turn);
+            state.lock().unwrap().finish_photo_turn(job, result);
+            AppContext::request_wakeup();
+        });
+    }
+
     /// Look into a batch of folders for their cards' pictures, off the UI
     /// thread.
     pub(super) fn start_folder_previews(&self, jobs: Vec<crate::photos::FolderJob>) {

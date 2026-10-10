@@ -487,6 +487,12 @@ impl App for FilesApp {
         if !folder_jobs.is_empty() {
             self.start_folder_previews(folder_jobs);
         }
+        // A photo turn asked for, one at a time. The guard is dropped at the
+        // end of the `let`, before the worker is started.
+        let turn = self.state.lock().unwrap().take_photo_turn();
+        if let Some(job) = turn {
+            self.start_photo_turn(job);
+        }
 
         // One lock, taken once. A `self.state.lock()` in an `if` condition
         // holds its guard for the whole `if`, so locking again inside the body
