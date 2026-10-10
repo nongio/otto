@@ -41,9 +41,9 @@ static SHOWN: AtomicBool = AtomicBool::new(true);
 // Global shared state
 // ---------------------------------------------------------------------------
 
-/// Map from window-id → registration info.
-static REGISTRATIONS: LazyLock<Mutex<HashMap<u32, Registration>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
+/// Every menu apps have registered with the registrar.
+static REGISTRATIONS: LazyLock<Mutex<Registrations>> =
+    LazyLock::new(|| Mutex::new(Registrations::default()));
 
 /// The current app menu ready for the UI.
 static CURRENT_MENU: LazyLock<Mutex<Option<AppMenu>>> = LazyLock::new(|| Mutex::new(None));
@@ -69,6 +69,68 @@ struct Registration {
     /// The process that owns `service`, for apps whose window id means
     /// nothing to the bar.
     pid: Option<u32>,
+    /// Registration order: when two connections claim the same window id
+    /// (an app restarted before its old connection was pruned), the later
+    /// one wins.
+    seq: u64,
+}
+
+/// The registrar's table, keyed by `(sender, window_id)`.
+///
+/// Nothing stops two connections from registering the same window id, so
+/// the sender is part of the key: one app's `UnregisterWindow` cannot remove
+/// another's menu, and when a connection leaves the bus all of its
+/// registrations go with it.
+#[derive(Debug, Default)]
+struct Registrations {
+    map: HashMap<(String, u32), Registration>,
+    next_seq: u64,
+}
+
+impl Registrations {
+    fn register(&mut self, sender: &str, window_id: u32, menu_path: &str, pid: Option<u32>) {
+        self.next_seq += 1;
+        self.map.insert(
+            (sender.to_string(), window_id),
+            Registration {
+                service: sender.to_string(),
+                menu_path: menu_path.to_string(),
+                pid,
+                seq: self.next_seq,
+            },
+        );
+    }
+
+    /// Remove `sender`'s registration for `window_id`. Returns whether there
+    /// was one.
+    fn unregister(&mut self, sender: &str, window_id: u32) -> bool {
+        self.map.remove(&(sender.to_string(), window_id)).is_some()
+    }
+
+    /// Drop everything a connection that left the bus registered. Returns
+    /// whether anything went.
+    fn prune_owner(&mut self, name: &str) -> bool {
+        let before = self.map.len();
+        self.map.retain(|(sender, _), _| sender != name);
+        self.map.len() != before
+    }
+
+    /// The latest registration for `window_id`, whoever made it.
+    fn by_window(&self, window_id: u32) -> Option<&Registration> {
+        self.map
+            .iter()
+            .filter(|((_, id), _)| *id == window_id)
+            .map(|(_, reg)| reg)
+            .max_by_key(|reg| reg.seq)
+    }
+
+    /// The latest registration made by process `pid`.
+    fn by_pid(&self, pid: u32) -> Option<&Registration> {
+        self.map
+            .values()
+            .filter(|reg| reg.pid == Some(pid))
+            .max_by_key(|reg| reg.seq)
+    }
 }
 
 /// What identifies the focused window's menu.
@@ -114,14 +176,14 @@ impl FocusedWindow {
     }
 
     /// Where this window's menu is, if it has one.
-    fn menu_address(&self, regs: &HashMap<u32, Registration>) -> Option<(String, String)> {
+    fn menu_address(&self, regs: &Registrations) -> Option<(String, String)> {
         if let Some(address) = &self.kde_appmenu {
             return Some(address.clone());
         }
-        let reg = self.x11_window.and_then(|id| regs.get(&id)).or_else(|| {
-            let pid = self.pid?;
-            regs.values().find(|r| r.pid == Some(pid))
-        })?;
+        let reg = self
+            .x11_window
+            .and_then(|id| regs.by_window(id))
+            .or_else(|| regs.by_pid(self.pid?))?;
         Some((reg.service.clone(), reg.menu_path.clone()))
     }
 }
@@ -242,16 +304,18 @@ fn set_focused(focused: Option<FocusedWindow>) {
     refresh();
 }
 
-/// Activate a menu item in the current app menu.
-pub fn activate_menu_item(item_id: i32, item_label: &str) {
-    let menu = CURRENT_MENU.lock().unwrap().clone();
-    let Some(menu) = menu else { return };
-
+/// Activate an item of the menu served at `service`/`menu_path`.
+///
+/// The address is the one the popup was built from, not whatever menu is
+/// current when the click lands: focus can move while a popup is open, and
+/// an item id sent to the newly focused app would activate one of its items
+/// instead.
+pub fn activate_menu_item(service: &str, menu_path: &str, item_id: i32, item_label: &str) {
     let conn = APPMENU_CONNECTION.lock().unwrap().clone();
     let Some(conn) = conn else { return };
 
-    let service = menu.service;
-    let menu_path = menu.menu_path;
+    let service = service.to_string();
+    let menu_path = menu_path.to_string();
     let label = item_label.to_string();
 
     let handle = tokio::runtime::Handle::current();
@@ -293,7 +357,14 @@ pub fn fetch_submenu_for_item(item_index: usize, anchor_x: i32) {
         // Apps fill a submenu when told it is about to show; then re-fetch
         // the full layout so we get fresh children.
         crate::dbusmenu::about_to_show(&conn, &service, &menu_path, top_id).await;
-        match crate::dbusmenu::fetch_menu(&conn, &service, &menu_path).await {
+        let fetched = crate::dbusmenu::fetch_menu(&conn, &service, &menu_path).await;
+        // Focus may have moved on while the app answered: its submenu would
+        // open under another app's menu bar.
+        if !is_current_menu(&service, &menu_path) {
+            tracing::debug!("appmenu: dropping submenu for {app_id}, menu changed");
+            return;
+        }
+        match fetched {
             Ok(layout) => {
                 *PENDING_SUBMENU.lock().unwrap() = Some(PendingSubmenu {
                     app_id,
@@ -328,9 +399,27 @@ pub struct PendingSubmenu {
 static PENDING_SUBMENU: LazyLock<Mutex<Option<PendingSubmenu>>> =
     LazyLock::new(|| Mutex::new(None));
 
-/// Take the pending submenu (if any) for rendering.
+/// Take the pending submenu (if any) for rendering, unless the menu it came
+/// from is no longer the one shown.
 pub fn take_pending_submenu() -> Option<PendingSubmenu> {
-    PENDING_SUBMENU.lock().unwrap().take()
+    let pending = PENDING_SUBMENU.lock().unwrap().take()?;
+    is_current_menu(&pending.service, &pending.menu_path).then_some(pending)
+}
+
+/// Whether `service`/`menu_path` is the menu the bar shows now.
+fn is_current_menu(service: &str, menu_path: &str) -> bool {
+    same_menu(CURRENT_MENU.lock().unwrap().as_ref(), service, menu_path)
+}
+
+/// Whether `current` is the menu at `service`/`menu_path`.
+///
+/// Compared by address rather than by `LOOKUP`: that is bumped whenever any
+/// app registers a menu, which refetches the same menu and should not cancel
+/// a submenu about to open. A move to another window clears the current
+/// menu at once (`set_focused`), so a submenu fetched for the old one never
+/// matches.
+fn same_menu(current: Option<&AppMenu>, service: &str, menu_path: &str) -> bool {
+    current.is_some_and(|m| m.service == service && m.menu_path == menu_path)
 }
 
 // ---------------------------------------------------------------------------
@@ -351,22 +440,24 @@ impl AppMenuRegistrar {
         let sender = header.sender().map(|s| s.to_string()).unwrap_or_default();
         let pid = sender_pid(&sender).await;
 
-        REGISTRATIONS.lock().unwrap().insert(
-            window_id,
-            Registration {
-                service: sender,
-                menu_path: menu_object_path.to_string(),
-                pid,
-            },
-        );
+        REGISTRATIONS
+            .lock()
+            .unwrap()
+            .register(&sender, window_id, menu_object_path, pid);
         // The app may well have focus already: menus register after mapping.
         refresh();
     }
 
     /// Called by apps to unregister their window's menu.
-    fn unregister_window(&mut self, window_id: u32) {
-        REGISTRATIONS.lock().unwrap().remove(&window_id);
-        refresh();
+    fn unregister_window(
+        &mut self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+        window_id: u32,
+    ) {
+        let sender = header.sender().map(|s| s.to_string()).unwrap_or_default();
+        if REGISTRATIONS.lock().unwrap().unregister(&sender, window_id) {
+            refresh();
+        }
     }
 
     /// Query which service provides the menu for a given window.
@@ -375,7 +466,7 @@ impl AppMenuRegistrar {
         window_id: u32,
     ) -> zbus::fdo::Result<(String, zbus::zvariant::OwnedObjectPath)> {
         let regs = REGISTRATIONS.lock().unwrap();
-        if let Some(reg) = regs.get(&window_id) {
+        if let Some(reg) = regs.by_window(window_id) {
             Ok((
                 reg.service.clone(),
                 zbus::zvariant::OwnedObjectPath::try_from(reg.menu_path.clone()).unwrap_or_else(
@@ -386,6 +477,25 @@ impl AppMenuRegistrar {
             Err(zbus::fdo::Error::Failed(format!(
                 "no menu registered for window {window_id}"
             )))
+        }
+    }
+}
+
+/// Drop the registrations of every connection that leaves the bus. An app
+/// that crashes, or exits without `UnregisterWindow`, would otherwise leave
+/// its menu registered under a window id that may be handed out again.
+async fn prune_departed(mut changes: zbus::fdo::NameOwnerChangedStream) {
+    while let Some(signal) = changes.next().await {
+        let Ok(args) = signal.args() else { continue };
+        if args.new_owner().is_some() {
+            continue;
+        }
+        if REGISTRATIONS
+            .lock()
+            .unwrap()
+            .prune_owner(args.name().as_str())
+        {
+            refresh();
         }
     }
 }
@@ -472,6 +582,15 @@ async fn run_registrar() -> Result<(), Box<dyn std::error::Error + Send + Sync>>
         .at("/com/canonical/AppMenu/Registrar", AppMenuRegistrar)
         .await?;
 
+    // Apps that leave the bus take their registrations with them. Subscribed
+    // here, before follow_setting claims the registrar's name, so no app can
+    // register before its departure would be seen.
+    let departures = zbus::fdo::DBusProxy::new(&conn)
+        .await?
+        .receive_name_owner_changed()
+        .await?;
+    tokio::spawn(prune_departed(departures));
+
     // Focus is followed for the life of the bar; the registrar itself lives
     // in zbus's loop.
     tokio::spawn({
@@ -552,12 +671,12 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    fn registration(service: &str, pid: Option<u32>) -> Registration {
-        Registration {
-            service: service.into(),
-            menu_path: "/MenuBar/1".into(),
-            pid,
+    fn regs(entries: &[(&str, u32, Option<u32>)]) -> Registrations {
+        let mut regs = Registrations::default();
+        for (service, window, pid) in entries {
+            regs.register(service, *window, "/MenuBar/1", *pid);
         }
+        regs
     }
 
     #[test]
@@ -567,7 +686,7 @@ mod tests {
             "otto_appmenu": {"service": ":1.5", "object_path": "/MenuBar/3"},
         }))
         .unwrap();
-        let regs = HashMap::from([(7, registration(":1.9", Some(42)))]);
+        let regs = regs(&[(":1.9", 7, Some(42))]);
         assert_eq!(
             window.menu_address(&regs),
             Some((":1.5".into(), "/MenuBar/3".into()))
@@ -576,10 +695,7 @@ mod tests {
 
     #[test]
     fn x11_window_id_then_pid() {
-        let regs = HashMap::from([
-            (7, registration(":1.7", Some(1))),
-            (9, registration(":1.9", Some(42))),
-        ]);
+        let regs = regs(&[(":1.7", 7, Some(1)), (":1.9", 9, Some(42))]);
         let x11 =
             FocusedWindow::from_node(&json!({"app_id": "gimp", "pid": 42, "window": 7})).unwrap();
         assert_eq!(x11.menu_address(&regs).unwrap().0, ":1.7");
@@ -590,6 +706,56 @@ mod tests {
 
         let unknown = FocusedWindow::from_node(&json!({"app_id": "foot", "pid": 3})).unwrap();
         assert_eq!(unknown.menu_address(&regs), None);
+    }
+
+    #[test]
+    fn registrations_are_keyed_by_sender_and_window() {
+        let mut regs = regs(&[(":1.1", 7, Some(10))]);
+        // Another connection claims the same window id: the later one wins,
+        // and the first is still there underneath.
+        regs.register(":1.2", 7, "/MenuBar/2", Some(20));
+        assert_eq!(regs.by_window(7).unwrap().service, ":1.2");
+
+        // One app cannot unregister another's menu.
+        assert!(!regs.unregister(":1.3", 7));
+        assert_eq!(regs.by_window(7).unwrap().service, ":1.2");
+
+        assert!(regs.unregister(":1.2", 7));
+        assert_eq!(regs.by_window(7).unwrap().service, ":1.1");
+        assert!(regs.unregister(":1.1", 7));
+        assert!(regs.by_window(7).is_none());
+    }
+
+    #[test]
+    fn a_departed_connection_takes_its_menus_with_it() {
+        let mut regs = regs(&[
+            (":1.1", 7, Some(10)),
+            (":1.1", 8, Some(10)),
+            (":1.2", 9, None),
+        ]);
+        assert!(regs.prune_owner(":1.1"));
+        assert!(regs.by_window(7).is_none());
+        assert!(regs.by_window(8).is_none());
+        assert!(regs.by_pid(10).is_none());
+        assert_eq!(regs.by_window(9).unwrap().service, ":1.2");
+        // A name that registered nothing changes nothing.
+        assert!(!regs.prune_owner(":1.5"));
+    }
+
+    #[test]
+    fn a_submenu_belongs_to_the_menu_it_was_fetched_from() {
+        let menu = AppMenu {
+            app_id: "gimp".into(),
+            service: ":1.7".into(),
+            menu_path: "/MenuBar/1".into(),
+            layout: MenuLayout { items: Vec::new() },
+        };
+        assert!(same_menu(Some(&menu), ":1.7", "/MenuBar/1"));
+        // Focus moved to another app, or another window of the same app.
+        assert!(!same_menu(Some(&menu), ":1.9", "/MenuBar/1"));
+        assert!(!same_menu(Some(&menu), ":1.7", "/MenuBar/2"));
+        // Focus moved and the new window's menu has not arrived.
+        assert!(!same_menu(None, ":1.7", "/MenuBar/1"));
     }
 
     #[test]
