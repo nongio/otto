@@ -420,6 +420,10 @@ impl<BackendData: Backend> XwmHandler for Otto<BackendData> {
             return;
         };
 
+        // A minimised window is off screen: nothing to resize (#322).
+        if element.is_minimised() {
+            return;
+        }
         let geometry = element.geometry();
         // Both are gone once the window was unmapped in the meantime.
         let Some(loc) = self.workspaces.element_location(&element) else {
@@ -969,6 +973,10 @@ impl<BackendData: Backend> Otto<BackendData> {
             return;
         };
 
+        // A minimised window is off screen: nothing to move (#322).
+        if element.is_minimised() {
+            return;
+        }
         let Some(mut initial_window_location) = self.workspaces.element_location(&element) else {
             return;
         };

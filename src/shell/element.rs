@@ -493,14 +493,9 @@ impl WindowElement {
             return Some(resolved.clone());
         }
 
-        let surface = self.wl_surface()?;
-
-        // Get the client from the surface
-        let client = display_handle.get_client(surface.id()).ok()?;
-
-        // Get client PID from credentials
-        let credentials = client.get_credentials(display_handle).ok()?;
-        let pid = credentials.pid;
+        // The owning process, not the Wayland client: for an X11 window the
+        // client is Xwayland, which would name every X11 app "Xwayland".
+        let pid = self.client_pid(display_handle)?;
 
         // Read /proc/PID/exe to get the executable path
         let exe_path = fs::read_link(format!("/proc/{}/exe", pid)).ok()?;
