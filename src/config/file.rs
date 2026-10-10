@@ -17,10 +17,20 @@ use toml_edit::{ArrayOfTables, DocumentMut, Item, Table, Value};
 /// Parse `path` as an editable document. A missing file is an empty document;
 /// an unparsable one is an error, because writing over it would destroy
 /// whatever the user was in the middle of typing.
+///
+/// While Otto has no configuration file at all, a missing one starts from
+/// [`super::demo_settings`] instead: the first setting the user changes
+/// creates the file, and the wallpaper and icons must not vanish with it.
 pub fn load_document(path: &Path) -> Result<DocumentMut, String> {
     let raw = match std::fs::read_to_string(path) {
         Ok(raw) => raw,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            if super::is_unconfigured() {
+                toml::to_string(&super::demo_settings()).unwrap_or_default()
+            } else {
+                String::new()
+            }
+        }
         Err(err) => return Err(format!("cannot read {}: {err}", path.display())),
     };
     raw.parse::<DocumentMut>()

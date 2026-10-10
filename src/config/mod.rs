@@ -155,10 +155,7 @@ impl Default for Config {
             screen_scale: 1.0,
             displays: DisplaysConfig::default(),
             cursor_theme: "Otto-MacTahoe".to_string(),
-            // Otto's own theme wherever it is installed — the packages carry
-            // it — and otherwise the desktop's, as otto-kit detects it.
-            icon_theme: otto_kit::icon_theme::is_installed(crate::checkout::ICON_THEME)
-                .then(|| crate::checkout::ICON_THEME.to_string()),
+            icon_theme: None,
             cursor_size: 24,
             input: InputConfig::default(),
             dock: DockConfig::default(),
@@ -172,9 +169,7 @@ impl Default for Config {
             keyboard_repeat_rate: 30,
             theme_scheme: ThemeScheme::Light,
             gtk_theme: None,
-            background_image: crate::checkout::wallpaper()
-                .map(|path| path.to_string_lossy().into_owned())
-                .unwrap_or_default(),
+            background_image: "".to_string(),
             background_color: "#1a1a2e".to_string(),
             locales: Vec::new(),
             use_10bit_color: false,
@@ -335,6 +330,9 @@ impl Config {
 
         let layers = config_layers();
         let found_any_config = !layers.is_empty();
+        if !found_any_config {
+            merge_value(&mut merged, toml::Value::Table(demo_settings()));
+        }
         let writable = without.map(|_| writable_config_path());
 
         for layer in layers {
@@ -363,7 +361,7 @@ impl Config {
 
         if !found_any_config {
             warn!(
-                "No configuration file found, using default config. \
+                "No configuration file found, using the default look. \
                  Copy /etc/otto/config.example.toml to \
                  ~/.config/otto/config.toml (or /etc/otto/config.toml) to \
                  customise the dock, displays and input."
@@ -444,6 +442,32 @@ fn in_working_directory(name: &str) -> PathBuf {
         Ok(dir) => dir.join(name),
         Err(_) => PathBuf::from(name),
     }
+}
+
+/// Whether Otto runs with no configuration file at all: a first run before
+/// anything is installed, or `cargo run` from a fresh clone.
+pub fn is_unconfigured() -> bool {
+    config_layers().is_empty()
+}
+
+/// The settings an unconfigured Otto starts from, on top of the defaults: the
+/// shipped wallpaper and icon theme, wherever they can be found, so that the
+/// first look is Otto's rather than a flat gradient and hicolor's handful of
+/// icons. Inter is the default font already.
+///
+/// A configuration file that leaves these out means what it always has.
+pub fn demo_settings() -> toml::Table {
+    let mut settings = toml::Table::new();
+    if let Some(wallpaper) = crate::checkout::wallpaper() {
+        settings.insert(
+            "background_image".into(),
+            wallpaper.to_string_lossy().into_owned().into(),
+        );
+    }
+    if otto_kit::icon_theme::is_installed(crate::checkout::ICON_THEME) {
+        settings.insert("icon_theme".into(), crate::checkout::ICON_THEME.into());
+    }
+    settings
 }
 
 fn get_system_config_path() -> Option<PathBuf> {
@@ -3238,6 +3262,24 @@ bookmarks = []
             config.exec_once.is_empty(),
             "exec_once should default to empty"
         );
+    }
+
+    /// An unconfigured Otto shows the shipped wallpaper — from the checkout
+    /// when it is not installed — and the result is a valid configuration.
+    #[test]
+    fn an_unconfigured_otto_has_the_shipped_wallpaper() {
+        let demo = demo_settings();
+        let wallpaper = demo
+            .get("background_image")
+            .and_then(|value| value.as_str())
+            .expect("the checkout has a wallpaper")
+            .to_string();
+        assert!(std::path::Path::new(&wallpaper).is_file());
+
+        let mut merged = toml::Value::try_from(Config::default()).unwrap();
+        merge_value(&mut merged, toml::Value::Table(demo));
+        let config: Config = merged.try_into().expect("demo settings deserialize");
+        assert_eq!(config.background_image, wallpaper);
     }
 
     /// The example config is what the packages install as

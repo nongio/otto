@@ -9,7 +9,8 @@
 //! `resources/`, and `scripts/fetch-dev-assets.sh` stages the icon theme and
 //! Inter under `target/share`, which [`use_staged_assets`] puts in front of
 //! the system's own directories. Every one of these is only a fallback: an
-//! installed asset always wins.
+//! installed asset always wins. They are picked as settings only while there
+//! is no configuration file (`crate::config::demo_settings`).
 
 use std::path::{Path, PathBuf};
 
@@ -43,8 +44,8 @@ pub fn wallpaper() -> Option<PathBuf> {
 /// Make the assets staged in the checkout visible to the compositor and to
 /// everything it launches.
 ///
-/// Runs before the configuration is first read, since the default icon theme
-/// depends on what is installed.
+/// Runs before the configuration is first read, since the icon theme an
+/// unconfigured Otto picks depends on what is installed.
 pub fn use_staged_assets() {
     let Some(share) = staged_share() else {
         return;
