@@ -24,7 +24,7 @@ use otto_agents_client::session::{self, SESSION_SCHEME, session_id};
 
 use crate::uri;
 use crate::vendors::{self, Done, Home, State, Target, Vendor, first_sentence};
-use crate::xdg::tilde;
+use crate::xdg::tilde_in;
 
 const SHORT_ID_LEN: usize = 8;
 
@@ -313,7 +313,7 @@ pub fn install_plugins(
         {
             out.push_str(&format!(
                 "removed {}: the skill it pointed at is gone\n",
-                tilde(&stale, Some(&home.root))
+                tilde_in(&stale, Some(&home.root))
             ));
         }
         let installed = skills::install(&plugins, &dir)
@@ -399,7 +399,7 @@ fn render_installed(
     }
     let mut out = String::new();
     for Installed { entry, created } in installed {
-        let link = tilde(&entry.link, home);
+        let link = tilde_in(&entry.link, home);
         out.push_str(&match (entry.state, created) {
             (LinkState::Linked, true) => format!("linked {link} -> {}\n", entry.source.display()),
             (LinkState::Linked, false) => format!("already linked: {link}\n"),
@@ -412,7 +412,7 @@ fn render_installed(
     }
     out.push_str(&format!(
         "Agents that read {} will find them from their next session.\n",
-        tilde(dir, home)
+        tilde_in(dir, home)
     ));
     out
 }
@@ -438,7 +438,7 @@ fn render_skills_status(plugins: &[Plugin], entries: &[Entry], home: Option<&Pat
                 "  {:<24} {:<11} {}\n",
                 entry.name,
                 state,
-                tilde(&entry.link, home)
+                tilde_in(&entry.link, home)
             ));
         }
         for agent in &plugin.agents {
@@ -691,7 +691,7 @@ fn folder(session: &SessionSummary, home: Option<&Path>) -> String {
     else {
         return "-".to_owned();
     };
-    tilde(&path, home)
+    tilde_in(&path, home)
 }
 
 /// Checks the things that stop Ask working, in the order they fail.

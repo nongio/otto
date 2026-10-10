@@ -14,8 +14,13 @@
 //!   thumbnail standard names a thumbnail by the MD5 of this text, so it has
 //!   to agree byte for byte with every other file manager on the system.
 //!
-//! Decoding is lenient: a `%` not followed by two hex digits is a literal
-//! `%`, because file names really do contain them.
+//! Decoding comes in two strengths. [`decode_path`] is lenient: a `%` not
+//! followed by two hex digits is a literal `%`, because file names really do
+//! contain them and a URI from another program may not have escaped one.
+//! [`try_decode_path`] is strict, and refuses such a `%` outright — for a wire
+//! where both ends are ours, a malformed escape is a bug to surface, not a
+//! name to guess at. Both take only hex digits after a `%`: `%+f` is
+//! not an escape, though `u8::from_str_radix("+f", 16)` would say it is.
 
 use std::ffi::OsString;
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
@@ -72,6 +77,30 @@ pub fn decode_path(text: &str) -> PathBuf {
     PathBuf::from(OsString::from_vec(
         percent_decode(text.as_bytes()).collect(),
     ))
+}
+
+/// Undo percent-encoding strictly, into a path: `None` when a `%` is not
+/// followed by two hex digits. See the module docs.
+pub fn try_decode_path(text: &str) -> Option<PathBuf> {
+    let bytes = text.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' {
+            let high = hex_digit(*bytes.get(i + 1)?)?;
+            let low = hex_digit(*bytes.get(i + 2)?)?;
+            decoded.push(high << 4 | low);
+            i += 3;
+        } else {
+            decoded.push(bytes[i]);
+            i += 1;
+        }
+    }
+    Some(PathBuf::from(OsString::from_vec(decoded)))
+}
+
+fn hex_digit(byte: u8) -> Option<u8> {
+    char::from(byte).to_digit(16).map(|digit| digit as u8)
 }
 
 /// The local path a `file://` URI names, or `None` for anything that is not
@@ -153,6 +182,31 @@ mod tests {
             Some("/tmp/100%.txt".into())
         );
         assert_eq!(decode_path("/tmp/50%zz"), PathBuf::from("/tmp/50%zz"));
+    }
+
+    /// `from_str_radix` takes a leading sign, so a hand-written decoder built
+    /// on it read `%+f` as byte 0x0f. Neither decoder here does.
+    #[test]
+    fn a_sign_is_not_a_hex_digit() {
+        assert_eq!(decode_path("/a%+fb"), PathBuf::from("/a%+fb"));
+        assert_eq!(decode_path("/a%-1b"), PathBuf::from("/a%-1b"));
+        assert_eq!(try_decode_path("/a%+fb"), None);
+        assert_eq!(try_decode_path("/a%-1b"), None);
+    }
+
+    #[test]
+    fn the_strict_decoder_refuses_what_the_lenient_one_keeps() {
+        assert_eq!(
+            try_decode_path("/My%20Projects/caf%C3%a9"),
+            Some(PathBuf::from("/My Projects/café"))
+        );
+        assert_eq!(try_decode_path("/plain"), Some(PathBuf::from("/plain")));
+        for malformed in ["/truncated%", "/truncated%4", "/bad%zz", "/100%.txt"] {
+            assert_eq!(try_decode_path(malformed), None, "{malformed}");
+            assert_eq!(decode_path(malformed), PathBuf::from(malformed));
+        }
+        let path = PathBuf::from(OsString::from_vec(b"/tmp/bad\xffname".to_vec()));
+        assert_eq!(try_decode_path(&encode_path(&path)), Some(path));
     }
 
     /// Checked against `GLib.filename_to_uri` itself: the sub-delimiters

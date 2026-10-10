@@ -430,23 +430,16 @@ fn xdg_variable(keyword: &str) -> Option<&'static str> {
 /// The folder `variable` names in the text of a `user-dirs.dirs` file,
 /// `$HOME` expanded.
 fn user_dir(dirs: &str, variable: &str, home: &Path) -> Option<PathBuf> {
-    dirs.lines().find_map(|line| {
-        let value = line.trim().strip_prefix(variable)?.strip_prefix('=')?;
-        let value = value.trim().trim_matches('"');
-        Some(match value.strip_prefix("$HOME") {
-            Some(rest) => home.join(rest.trim_start_matches('/')),
-            None => PathBuf::from(value),
-        })
-    })
+    otto_kit::xdg::parse_user_dirs(dirs, home)
+        .into_iter()
+        .find_map(|(key, path)| (key == variable).then_some(path))
 }
 
 /// The `user-dirs.dirs` file, empty when there is none.
 fn user_dirs_file() -> String {
-    let config = std::env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .filter(|dir| dir.is_absolute())
-        .unwrap_or_else(|| home().join(".config"));
-    std::fs::read_to_string(config.join("user-dirs.dirs")).unwrap_or_default()
+    otto_kit::xdg::config_home()
+        .and_then(|config| std::fs::read_to_string(config.join("user-dirs.dirs")).ok())
+        .unwrap_or_default()
 }
 
 /// One entry of LocalSearch's folder lists as the pane names it.

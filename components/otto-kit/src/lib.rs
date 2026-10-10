@@ -34,9 +34,6 @@ pub mod input;
 pub mod key_capture;
 pub mod logging;
 pub mod lottie;
-/// Name matching lives with file search, which the agents daemon links
-/// without the toolkit; re-exported so apps keep one import path.
-pub use otto_search::matching;
 pub mod maximize_button;
 pub mod mime_apps;
 pub mod permission_store;
@@ -51,10 +48,13 @@ pub mod theme;
 pub mod tile_decoration;
 pub mod trash;
 pub mod typography;
-pub mod uri;
 pub mod utils;
-pub mod xdg;
 pub mod xml;
+
+/// The UI-free base: XDG directories, `file://` URIs and name matching live
+/// in `otto-foundations`, which programs that do not link the toolkit share;
+/// re-exported so apps keep one import path.
+pub use otto_foundations::{matching, uri, xdg};
 
 // Re-export commonly used items
 pub use common::Renderable;

@@ -1,0 +1,17 @@
+[package]
+name = "otto-foundations"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Otto's UI-free base: XDG directories, file URIs and name matching"
+
+# No toolkit, no async runtime, no D-Bus: the portal, the agents daemon and
+# otto-search link this as well as otto-kit, so it stays a handful of pure
+# functions over the standard library.
+[dependencies]
+percent-encoding = "2.3"
+
+[lints]
+workspace = true

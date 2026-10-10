@@ -102,8 +102,6 @@ fn config_path() -> Option<PathBuf> {
     otto_kit::xdg::otto_config_file("files.toml")
 }
 
-use otto_kit::xdg::home;
-
 /// Read the parts of `text`'s `[desk]` section this group shows.
 fn read_desk(text: &str) -> DeskFile {
     let Ok(doc) = text.parse::<DocumentMut>() else {
@@ -255,16 +253,6 @@ fn write_atomically(path: &Path, text: &str) -> std::io::Result<()> {
     let temp = path.with_extension(format!("toml.tmp.{}", std::process::id()));
     std::fs::write(&temp, text)?;
     std::fs::rename(&temp, path)
-}
-
-/// `path` the way a person writes it in the file: under the home folder,
-/// starting with `~`.
-fn tilde(path: &Path, home: Option<&Path>) -> String {
-    match home.and_then(|home| path.strip_prefix(home).ok()) {
-        Some(rest) if rest.as_os_str().is_empty() => "~".to_string(),
-        Some(rest) => format!("~/{}", rest.display()),
-        None => path.display().to_string(),
-    }
 }
 
 fn folder_label() -> &'static str {
@@ -428,7 +416,7 @@ fn choose_folder() {
         let Some(path) = path else {
             return;
         };
-        let folder = tilde(&path, home().as_deref());
+        let folder = otto_kit::xdg::tilde(&path);
         write(|text| with_folder(text, &folder));
     });
 }
@@ -534,16 +522,5 @@ mod tests {
         assert!(next.starts_with("# mine"));
         assert!(next.contains("icon_size = 80\n"));
         assert_eq!(read_desk(&next).icon_size, 80.0);
-    }
-
-    #[test]
-    fn a_folder_under_home_is_written_with_a_tilde() {
-        let home = Path::new("/home/someone");
-        assert_eq!(
-            tilde(Path::new("/home/someone/Desktop"), Some(home)),
-            "~/Desktop"
-        );
-        assert_eq!(tilde(Path::new("/home/someone"), Some(home)), "~");
-        assert_eq!(tilde(Path::new("/srv/desk"), Some(home)), "/srv/desk");
     }
 }

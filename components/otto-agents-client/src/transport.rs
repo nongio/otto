@@ -19,17 +19,9 @@ pub const LOOPBACK: &str = "127.0.0.1:4800";
 /// The service's socket, relative to the runtime directory.
 pub const SOCKET_PATH: &str = "otto-agents/agents.sock";
 
-/// `$XDG_RUNTIME_DIR`, or `/run/user/<uid>` when that is a directory.
-pub fn runtime_dir() -> Option<PathBuf> {
-    use std::os::unix::fs::MetadataExt;
-    std::env::var_os("XDG_RUNTIME_DIR")
-        .map(PathBuf::from)
-        .filter(|dir| dir.is_absolute() && dir.is_dir())
-        .or_else(|| {
-            let uid = std::fs::metadata("/proc/self").ok()?.uid();
-            Some(PathBuf::from(format!("/run/user/{uid}"))).filter(|dir| dir.is_dir())
-        })
-}
+/// `$XDG_RUNTIME_DIR`, or `/run/user/<uid>` when that is a directory: the
+/// one resolver every Otto program uses.
+pub use otto_foundations::xdg::runtime_dir;
 
 /// `$XDG_RUNTIME_DIR/otto-agents/agents.sock`; `None` with no runtime
 /// directory.

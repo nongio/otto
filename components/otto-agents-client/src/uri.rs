@@ -1,22 +1,17 @@
 //! Conversion between `file://` URIs and local paths.
+//!
+//! The escaping is `otto_foundations::uri`'s, so a URI made here is the one
+//! the toolkit makes; the decoding is its strict form, because both ends of
+//! the socket are ours.
 
-use std::ffi::OsString;
-use std::os::unix::ffi::OsStringExt;
 use std::path::{Path, PathBuf};
+
+use otto_foundations::uri;
 
 /// `path` as a `file://` URI, percent-encoding everything outside the
 /// unreserved set.
 pub fn from_path(path: &Path) -> String {
-    let mut uri = String::from("file://");
-    for &byte in path.as_os_str().as_encoded_bytes() {
-        match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' | b'/' => {
-                uri.push(byte as char)
-            }
-            _ => uri.push_str(&format!("%{byte:02X}")),
-        }
-    }
-    uri
+    uri::path_to_uri(path)
 }
 
 /// The local path of an absolute `file://` URI.
@@ -24,23 +19,11 @@ pub fn from_path(path: &Path) -> String {
 /// A relative URI is not a path, and a truncated escape is not a literal `%`:
 /// both give `None`, so a folder means one thing on both sides of the socket.
 pub fn to_path(uri: &str) -> Option<PathBuf> {
-    let encoded = uri.strip_prefix("file://")?.as_bytes();
-    if encoded.first() != Some(&b'/') {
+    let path = uri.strip_prefix("file://")?;
+    if !path.starts_with('/') {
         return None;
     }
-    let mut decoded = Vec::with_capacity(encoded.len());
-    let mut i = 0;
-    while i < encoded.len() {
-        if encoded[i] == b'%' {
-            let hex = encoded.get(i + 1..i + 3)?;
-            decoded.push(u8::from_str_radix(std::str::from_utf8(hex).ok()?, 16).ok()?);
-            i += 3;
-        } else {
-            decoded.push(encoded[i]);
-            i += 1;
-        }
-    }
-    Some(PathBuf::from(OsString::from_vec(decoded)))
+    uri::try_decode_path(path)
 }
 
 #[cfg(test)]
@@ -68,5 +51,6 @@ mod tests {
         assert_eq!(to_path("/home/me"), None);
         assert_eq!(to_path("file:///truncated%"), None);
         assert_eq!(to_path("file:///bad%zz"), None);
+        assert_eq!(to_path("file:///signed%+f"), None);
     }
 }
