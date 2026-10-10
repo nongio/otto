@@ -21,10 +21,10 @@ up. It is used as a tool, not built on: its repository carries no licence.
 | ACP | What the facade does |
 |---|---|
 | `session/new` | `createSession` with `--agent` (else the default agent) in the given folder |
-| `session/load` | takes up an existing session by its id or the start of it, replaying its turns |
+| `session/load` | takes up an existing session by its id or the start of it, replaying its turns. Any desktop session, with the grants its agent already has: not limited to the bridge's own (see [cc-connect.md](../cc-connect.md#who-can-reach-the-agents)) |
 | `session/resume` | the same, without the replay |
-| `session/prompt` | queues the prompt on the chat, streams the turn back as `session/update`, returns when it ends |
-| `session/request_permission` | sent for each tool call awaiting confirmation; the desktop is asked too, and the first answer wins. `--permissions desktop` keeps them on the desktop, for a client that answers by a fixed policy |
+| `session/prompt` | queues the prompt on the chat, streams the turn back as `session/update`, returns when it ends. With `--remote`, resource links are dropped rather than attached, since an attachment is read without asking |
+| `session/request_permission` | only with `--permissions client`: sent for each tool call awaiting confirmation, with each option's kind as the agent gave it (once or always); the desktop is asked too, and the first answer wins. The default, `--permissions desktop`, keeps them on the desktop, so whoever can write to the bridge cannot approve tool calls |
 | `session/cancel` | cancels the turn, or the queued prompt as soon as it starts |
 | `session/close` | cancels the prompt in hand and stops following; the desktop keeps the session |
 | `session/list` | the desktop's sessions, most recently changed first; those in `cwd` when one is given |

@@ -531,12 +531,20 @@ async fn a_watching_client_answers_in_the_chat() {
     until(&mut chat, &mut events, |chat| pending(chat).is_some()).await;
     let (tool_call_id, options) = pending(&chat).unwrap();
     assert_eq!(options, ["allow_always", "allow", "reject"]);
-    // The chat is told which option to start on and what the tool would
-    // touch, so a client need not work either out for itself.
+    // The chat is told which option to start on, whether each is once or
+    // always, and what the tool would touch, so a client need not work any
+    // of it out for itself.
     let state = pending_state(&chat).unwrap();
     assert_eq!(
         state.meta.as_ref().and_then(|meta| meta.get("otto")),
-        Some(&json!({ "defaultOption": "allow" }))
+        Some(&json!({
+            "defaultOption": "allow",
+            "optionKinds": {
+                "allow_always": "allow_always",
+                "allow": "allow_once",
+                "reject": "reject_once",
+            },
+        }))
     );
     assert_eq!(
         state.tool_input,

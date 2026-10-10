@@ -18,9 +18,18 @@ from the phone.
 - **One session per chat.** Your first message starts a desktop session in the
   bridge's folder. Later messages from the same chat go to that session. It
   shows in Sessions, and `otto-agents enter <id>` picks it up at the desk.
-- **Permission requests reach the chat and the desktop.** A tool call that
-  needs approval is asked in Telegram at once, and as Otto's dialog 20 seconds
-  later (sooner nobody watches). Whichever you answer first wins.
+- **Permission requests are answered at the desk.** By default
+  (`--permissions desktop`) a tool call that needs approval is asked only as
+  Otto's dialog on the desktop. With `--permissions client` it is also asked
+  in Telegram at once, and as Otto's dialog 20 seconds later (sooner nobody
+  watches); whichever you answer first wins. Turn that on only once
+  `allow_from` is right: see [Who can reach the agents](#who-can-reach-the-agents).
+- **"Always" means always.** An option such as Claude's "Always allow" reaches
+  the chat as an always option, not as a one-off, so a bridge that answers by
+  a policy can tell the two apart.
+- **Links sent from the chat are not attached.** A file attached at the desk
+  is something the agent may read without asking; one named in a chat message
+  is not attached, so reading it is a tool call like any other and is asked.
 - **The agent knows you are on your phone.** `otto-agents acp` marks each
   message as written in the chat app (`--remote Telegram`; under cc-connect
   the platform is taken from `CC_SESSION_KEY`), and the agent is told so ahead
@@ -85,8 +94,9 @@ type = "acp"
 [projects.agent.options]
 work_dir = "/home/you/.local/state/otto/remote"
 cmd = "/usr/local/bin/otto-agents"          # `which otto-agents`
-# `client`: permission requests go to the chat as well as the desktop.
-args = ["acp", "--agent", "claude", "--permissions", "client"]
+# Permission requests are answered on the desktop. Add "--permissions",
+# "client" to answer them from the chat too (see "Who can reach the agents").
+args = ["acp", "--agent", "claude"]
 display_name = "Otto"
 
 [[projects.platforms]]
@@ -119,9 +129,10 @@ The log says `telegram: connected`. Then, in the chat with the bot:
    while the agent starts. `otto-agents sessions` lists the new session in
    `~/.local/state/otto/remote`.
 2. **Something that needs permission,** such as
-   `create notes.txt with a haiku in it`. Telegram asks; answer there, or on
-   the desktop once Otto's dialog appears. The otto-agents journal says who
-   answered (`from_client=true` for the chat).
+   `create notes.txt with a haiku in it`. Otto's dialog asks on the desktop.
+   With `--permissions client`, Telegram asks too; answer there, or on the
+   desktop once the dialog appears. The otto-agents journal says who answered
+   (`from_client=true` for the chat).
 3. **At the desk:** `otto-agents show <id>` prints the conversation;
    `otto-agents enter <id>` carries it on in a terminal.
 
@@ -140,10 +151,35 @@ Stop any cc-connect you started by hand first: two copies with one config
 refuse to run (`--force` would kill the other), and two pollers on one bot
 token fight. Don't also use `cc-connect daemon install`, its own service.
 
+## Who can reach the agents
+
+Everyone cc-connect lets in speaks to the agent as you do, so the bridge is
+only as private as its configuration:
+
+- **Who may write.** Only the accounts in each platform's `allow_from`. Anyone
+  who can post as one of them (a stolen phone, a shared Telegram login, a
+  group the bot was added to with that member in it) reaches the agent.
+  Without `admin_from` and with the commands in `disabled_commands` off,
+  cc-connect itself runs nothing for them; the agent does.
+- **Which sessions.** Not only the chat's own: `/list` shows the desktop's
+  sessions in the bridge's folder, and `/switch <id>` (`session/load` or
+  `session/resume`, by the start of an id) takes up **any** desktop session,
+  wherever it works, with whatever its agent was already allowed in it, such
+  as "always allow" rules given at the desk. That is deliberate, so a
+  conversation begun at the desk can be carried on from the phone, and it is
+  not limited yet. Keep `allow_from` to yourself.
+- **Who approves.** By default only the person at the desk: a tool call that
+  needs permission waits for Otto's dialog. With `--permissions client`,
+  everyone in `allow_from` can approve it from the chat, an "always" option
+  included, which adds a standing rule to that agent.
+- **What runs without asking.** Whatever the agent's own permission rules and
+  the loaded skills pre-approve (see below), the same as at the desk. Files
+  named in a chat message are not attached, so reading one is asked.
+
 ## 6. What the phone may do without asking
 
-Every tool call that needs permission is a question on the phone. Three
-things keep those few:
+With `--permissions client`, every tool call that needs permission is a
+question on the phone. Three things keep those few:
 
 - **Otto's own skills load without asking.** otto-agents allows
   `Skill(<plugin>:<skill>)` for every skill of the desktop's plugins when it
