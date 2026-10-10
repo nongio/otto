@@ -173,6 +173,7 @@ members = [
     "components/otto-stash",
     "components/otto-canvas",
     "components/otto-search",
+    "components/otto-foundations",
     "components/otto-dictate",
     "sample-clients/client-rainbow",
     "sample-clients/submenu",

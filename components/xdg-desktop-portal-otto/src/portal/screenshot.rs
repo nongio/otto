@@ -8,11 +8,11 @@
 //! app did not ask for an interactive capture (see [`needs_confirmation`]).
 
 use std::collections::HashMap;
-use std::os::unix::ffi::OsStrExt;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use percent_encoding::{percent_encode, AsciiSet, NON_ALPHANUMERIC};
+use otto_foundations::uri::path_to_uri;
+use otto_foundations::xdg;
 use tokio::process::Command;
 use tracing::{info, warn};
 use zbus::zvariant::{OwnedObjectPath, OwnedValue, Str, Value};
@@ -173,52 +173,14 @@ async fn capture_to_file() -> anyhow::Result<PathBuf> {
 
 /// `XDG_PICTURES_DIR` from `user-dirs.dirs`, or `~/Pictures`.
 fn pictures_dir() -> anyhow::Result<PathBuf> {
-    let home = std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .filter(|home| home.is_absolute())
-        .ok_or_else(|| anyhow::anyhow!("HOME is not set"))?;
-    let config = std::env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .filter(|dir| dir.is_absolute())
-        .unwrap_or_else(|| home.join(".config"));
-    let dirs = std::fs::read_to_string(config.join("user-dirs.dirs")).unwrap_or_default();
-    Ok(user_dir(&dirs, "XDG_PICTURES_DIR", &home).unwrap_or_else(|| home.join("Pictures")))
-}
-
-/// The folder `variable` names in the text of a `user-dirs.dirs` file,
-/// `$HOME` expanded.
-fn user_dir(dirs: &str, variable: &str, home: &Path) -> Option<PathBuf> {
-    dirs.lines().find_map(|line| {
-        let value = line.trim().strip_prefix(variable)?.strip_prefix('=')?;
-        let value = value.trim().trim_matches('"');
-        let path = match value.strip_prefix("$HOME") {
-            Some(rest) => home.join(rest.trim_start_matches('/')),
-            None => PathBuf::from(value),
-        };
-        Some(path).filter(|path| path.is_absolute())
-    })
-}
-
-/// Everything but RFC 3986's unreserved characters and the `/` separator.
-const PATH: &AsciiSet = &NON_ALPHANUMERIC
-    .remove(b'-')
-    .remove(b'.')
-    .remove(b'_')
-    .remove(b'~')
-    .remove(b'/');
-
-/// A path as a percent-encoded `file://` URI, escaped the way
-/// `otto_kit::uri::path_to_uri` does (the portal does not link the toolkit).
-fn path_to_uri(path: &Path) -> String {
-    format!(
-        "file://{}",
-        percent_encode(path.as_os_str().as_bytes(), PATH)
-    )
+    let home = xdg::home().ok_or_else(|| anyhow::anyhow!("HOME is not set"))?;
+    Ok(xdg::user_dir("XDG_PICTURES_DIR").unwrap_or_else(|| home.join("Pictures")))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
 
     fn options(pairs: &[(&str, bool)]) -> HashMap<String, OwnedValue> {
         pairs
@@ -250,24 +212,13 @@ mod tests {
         ])));
     }
 
+    /// The escaping is the toolkit's, so the URI an app is handed opens
+    /// the file it names.
     #[test]
     fn a_path_with_spaces_and_non_ascii_is_percent_encoded() {
         assert_eq!(
             path_to_uri(Path::new("/home/me/Immagini/Schermate 2026/caffè.png")),
             "file:///home/me/Immagini/Schermate%202026/caff%C3%A8.png"
         );
-    }
-
-    #[test]
-    fn the_pictures_folder_comes_from_user_dirs() {
-        let home = Path::new("/home/me");
-        let dirs = "# written by xdg-user-dirs-update\n\
-                    XDG_DESKTOP_DIR=\"$HOME/Desktop\"\n\
-                    XDG_PICTURES_DIR=\"$HOME/Immagini\"\n";
-        assert_eq!(
-            user_dir(dirs, "XDG_PICTURES_DIR", home),
-            Some(PathBuf::from("/home/me/Immagini"))
-        );
-        assert_eq!(user_dir("", "XDG_PICTURES_DIR", home), None);
     }
 }

@@ -24,15 +24,15 @@
 //!   really on disk, paging past the ones the index remembers wrongly.
 //! - [`dates`] is the calendar arithmetic underneath, shared with anything
 //!   else that shows a date without a date crate.
-//! - [`matching`] scores names, and is shared with anything else that ranks
-//!   typed text against names.
+//!
+//! Names are scored with `otto_foundations::matching`, the same scorer the
+//! launcher and every list in the toolkit rank with.
 
 // Rust guideline compliant 2026-02-21
 
 pub mod dates;
 pub mod find;
 pub mod index;
-pub mod matching;
 mod plan;
 pub mod query;
 

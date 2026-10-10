@@ -76,6 +76,7 @@ applications share:
 | `otto-msg` | Drives the compositor from a script, the way `i3-msg` and `swaymsg` do |
 | `otto-search` | File search over the desktop's index: the query language, shared by Files, and the `otto-search` command |
 | `otto-agents` | Runs ACP agents and serves them over the Agent Host Protocol |
+| `otto-foundations` | Library: the UI-free base, XDG directories, `file://` URIs and name matching; see [otto-foundations.md](otto-foundations.md) |
 | `otto-agents-client` | Library: talking to `otto-agents`, its socket, session URIs and file URIs |
 | `otto-media-kit` | Library: video playback for Otto apps; a sandboxed GStreamer worker plus the player view that draws its frames |
 | `otto-md-kit` | Library: Markdown parsed into the toolkit's block vocabulary |

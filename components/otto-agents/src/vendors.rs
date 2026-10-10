@@ -293,7 +293,7 @@ impl Home {
 
     /// `path` with `root` written as `~`.
     pub fn tilde(&self, path: &Path) -> String {
-        crate::xdg::tilde(path, Some(&self.root))
+        crate::xdg::tilde_in(path, Some(&self.root))
     }
 }
 

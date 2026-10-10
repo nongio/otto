@@ -183,16 +183,8 @@ pub fn session_subtitle(
         format!("@{agent} · {status}")
     };
     match folder {
-        Some(folder) => format!("{head} · {}", home_relative(&folder, home)),
+        Some(folder) => format!("{head} · {}", otto_kit::xdg::tilde_in(&folder, home)),
         None => head,
-    }
-}
-
-fn home_relative(path: &Path, home: Option<&Path>) -> String {
-    match home.and_then(|home| path.strip_prefix(home).ok()) {
-        Some(rest) if rest.as_os_str().is_empty() => "~".to_string(),
-        Some(rest) => format!("~/{}", rest.display()),
-        None => path.display().to_string(),
     }
 }
 

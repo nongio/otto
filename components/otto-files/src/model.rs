@@ -891,32 +891,10 @@ pub(crate) fn user_dir(home: &Path, key: &str) -> Option<PathBuf> {
 }
 
 fn user_dirs(home: &Path) -> Vec<(String, PathBuf)> {
-    let config = std::env::var("XDG_CONFIG_HOME")
-        .ok()
-        .filter(|s| !s.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| home.join(".config"));
-
-    let Ok(text) = std::fs::read_to_string(config.join("user-dirs.dirs")) else {
-        return Vec::new();
-    };
-
-    text.lines()
-        .filter_map(|line| {
-            let line = line.trim();
-            if line.is_empty() || line.starts_with('#') {
-                return None;
-            }
-            let (key, value) = line.split_once('=')?;
-            let value = value.trim().trim_matches('"');
-            let expanded = match value.strip_prefix("$HOME/") {
-                Some(rest) => home.join(rest),
-                None if value == "$HOME" => home.to_path_buf(),
-                None => PathBuf::from(value),
-            };
-            Some((key.trim().to_string(), expanded))
-        })
-        .collect()
+    otto_kit::xdg::config_home()
+        .and_then(|config| std::fs::read_to_string(config.join("user-dirs.dirs")).ok())
+        .map(|text| otto_kit::xdg::parse_user_dirs(&text, home))
+        .unwrap_or_default()
 }
 
 /// A path written the way a person would say it: `~/Documents` rather than
@@ -924,15 +902,7 @@ fn user_dirs(home: &Path) -> Vec<(String, PathBuf)> {
 /// where the leading `/home/<login>/` is the same on every row and pushes the
 /// part that differs off the end of the cell.
 pub fn abbreviate_home(path: &Path) -> String {
-    let text = path.to_string_lossy();
-    match home_dir() {
-        Some(home) if path == home => "~".to_string(),
-        Some(home) => match path.strip_prefix(&home) {
-            Ok(rest) => format!("~/{}", rest.display()),
-            Err(_) => text.into_owned(),
-        },
-        None => text.into_owned(),
-    }
+    otto_kit::xdg::tilde_in(path, home_dir().as_deref())
 }
 
 pub fn home_dir() -> Option<PathBuf> {

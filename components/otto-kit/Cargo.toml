@@ -11,7 +11,7 @@ laye-rs.workspace = true
 otto-dbus = { path = "../otto-dbus" }
 # For `i18n::chrono_locale`; the feature is what makes chrono's names local.
 chrono = { workspace = true, features = ["unstable-locales"] }
-otto-search = { path = "../otto-search" }
+otto-foundations = { path = "../otto-foundations" }
 rustix = { version = "0.38", features = ["fs", "process"] }
 smithay-client-toolkit = { workspace = true, features = ["calloop", "xkbcommon"] }
 wayland-client.workspace = true
@@ -31,7 +31,6 @@ freedesktop-icons = "0.2.4"
 resvg = "0.44.0"
 usvg = "0.44.0"
 libc.workspace = true
-percent-encoding = "2.3"
 freedesktop-desktop-entry.workspace = true
 # Dictation posts audio to a speech-to-text server.
 ureq = { version = "3", optional = true }

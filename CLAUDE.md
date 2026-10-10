@@ -100,7 +100,8 @@ The state module also contains protocol handler implementations (`*_handler.rs` 
 ### Components
 
 - `components/otto-kit/` — UI toolkit for building Otto apps (menu bars, context menus, popups, the searchable item list the launcher and settings search share)
-- `components/otto-search/` — File search: the query language, SPARQL over LocalSearch, name scoring (no toolkit deps)
+- `components/otto-foundations/` — UI-free base (no toolkit, no runtime): `xdg` dirs and `user-dirs.dirs`, `tilde`, `file://` `uri`, name `matching`; otto-kit re-exports it
+- `components/otto-search/` — File search: the query language, SPARQL over LocalSearch (no toolkit deps)
 - `components/otto-agents-kit/` — Shared parts of the agent UIs (launcher ask and agents modes, otto-canvas): session feed, connection thread, the Ask chat and its log (laid out and painted at the host's width), list keys, and a re-export of otto-kit's list rows and row/field painters
 - `components/otto-bar/` — Top menu bar component
 - `components/apps-manager/` — **WIP**: a command-line probe for the foreign-toplevel protocol, not a launcher
