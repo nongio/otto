@@ -673,7 +673,8 @@ impl<BackendData: Backend> Otto<BackendData> {
     /// Poll the debug action file and execute whatever builtin action name it
     /// holds, as if that action's shortcut key had been pressed.
     ///
-    /// `echo ExposeShowAll > $OTTO_ACTION_FILE` (default `/tmp/otto-action`).
+    /// `echo ExposeShowAll > $OTTO_ACTION_FILE` (default
+    /// `$XDG_RUNTIME_DIR/otto-action`).
     /// Virtual-keyboard input (`wtype`, the RDP bridge…) is forwarded straight
     /// to the focused client and never runs the shortcut filter, so this is
     /// the only way a harness can drive compositor UI from a script.
@@ -683,7 +684,7 @@ impl<BackendData: Backend> Otto<BackendData> {
     /// and without it the scheduled lay-rs transactions never tick and the
     /// action stays invisible.
     pub(crate) fn poll_debug_action_file(&mut self) -> bool {
-        let Some(name) = crate::debug_hooks::take_file(&debug_action_file_path()) else {
+        let Some(name) = debug_action_file_path().and_then(crate::debug_hooks::take_file) else {
             return false;
         };
         let name = name.trim();
@@ -776,11 +777,13 @@ impl<BackendData: Backend> Otto<BackendData> {
     }
 }
 
-/// Where the debug action hook looks for an action name. Overridable so that
-/// two sessions on one machine (a harness on a tty and a nested winit, say)
-/// do not fight over a single well-known path.
-fn debug_action_file_path() -> String {
-    std::env::var("OTTO_ACTION_FILE").unwrap_or_else(|_| "/tmp/otto-action".to_string())
+/// Where the debug action hook looks for an action name: `otto-action` in
+/// the runtime directory. Overridable so that two sessions on one machine (a
+/// harness on a tty and a nested winit, say) do not fight over one path.
+fn debug_action_file_path() -> Option<&'static str> {
+    static PATH: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    PATH.get_or_init(|| crate::debug_hooks::command_file_path("OTTO_ACTION_FILE", "otto-action"))
+        .as_deref()
 }
 
 /// Brightness goes through `brightness::blocking`, whose zbus `block_on` starts

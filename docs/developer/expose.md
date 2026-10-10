@@ -321,7 +321,7 @@ instead.
   `cargo test --features headless --test workspace_selector` (and
   `--test app_switcher`).
 - **Debug lever:** `echo ActionName > $OTTO_ACTION_FILE` (default
-  `/tmp/otto-action`, polled once per frame by both backends in
+  `$XDG_RUNTIME_DIR/otto-action`, polled once per frame by both backends in
   `debug-hooks` builds; see
   [the debug action hook](debug-action-hook.md)) runs a builtin shortcut
   action as if its key had been pressed. That is useful for driving
