@@ -218,8 +218,3 @@ reason = "The renderer setting offers Vulkan only when udev's Vulkan probe succe
 module = "state"
 uses = "udev"
 reason = "Night light and output ids downcast the backend data to reach udev's DRM backends and gamma tables, and screencopy names udev::UdevRenderer. Belongs behind the Backend trait."
-
-[[allow]]
-module = "skia_renderer"
-uses = "workspaces"
-reason = "The GPU-memory log (target otto::gpumem) counts workspaces::zombie_windows(); the count belongs in stats the renderer is handed."
