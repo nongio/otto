@@ -13,14 +13,10 @@ const BEGIN: &str = "<!-- otto-arch:graph:begin (generated: cargo run -p otto-ar
 const END: &str = "<!-- otto-arch:graph:end -->";
 
 /// The generated section: one subgraph per layer, an edge per dependency
-/// between workspace crates. Sample clients and tools depend on nothing and
-/// are left out to keep the picture readable.
+/// between workspace crates. Layers with `graph = false` (sample clients,
+/// tools: standalone by definition) are left out to keep the picture readable.
 fn graph(rules: &Rules, crates: &[Package]) -> String {
-    let shown: Vec<_> = rules
-        .layers
-        .iter()
-        .filter(|l| !l.may_use.is_empty() || l.name == "foundation")
-        .collect();
+    let shown: Vec<_> = rules.layers.iter().filter(|l| l.graph).collect();
     let names: BTreeSet<&str> = shown
         .iter()
         .flat_map(|l| l.crates.iter().map(String::as_str))

@@ -20,6 +20,7 @@ is the place to start.
 | Page | What it covers |
 |------|----------------|
 | [Project Structure](project-structure.md) | Where everything lives, feature flags, how to build |
+| [Architecture Rules](architecture.md) | Crate layers and module boundaries, and how CI checks them |
 | [Rendering](rendering.md) | Scene graph → render elements → Skia → screen |
 | [Render Loop](render_loop.md) | When Otto wakes up, when it renders, damage tracking |
 | [Wayland Protocols](wayland.md) | The one-big-state pattern and how to find any protocol handler |

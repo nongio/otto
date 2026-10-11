@@ -113,7 +113,7 @@ Located in `src/screenshare/`. See [docs/developer/screenshare.md](./docs/develo
 
 ### Architecture Rules
 
-The crate layers (foundation → service → toolkit → kit → app; the compositor uses only foundation), the compositor's module boundaries and single-home code (XDG lookups only in `otto_foundations::xdg`) are rules in `architecture.toml`, checked by `cargo run -p otto-arch` (CI's `architecture` job). Third-party policy (who may link Smithay, GStreamer, PipeWire) is in `deny.toml`: `cargo deny --workspace check bans`. A new crate goes in its layer, then `cargo run -p otto-arch -- --bless` refreshes the graph in `docs/developer/architecture.md`. Existing violations are `[[allow]]` entries with a reason; fix code rather than add entries. See [docs/developer/architecture.md](./docs/developer/architecture.md).
+The crate layers (foundation → service → toolkit → kit → app; the compositor may use foundation and toolkit), the compositor's module boundaries and single-home code (XDG lookups only in `otto_foundations::xdg`) are rules in `architecture.toml`, checked by `cargo run -p otto-arch` (CI's `architecture` job). Third-party policy (who may link Smithay, GStreamer, PipeWire) is in `deny.toml`: `cargo deny --workspace check bans -D unused-wrapper` (without `--workspace` it only checks the compositor). A new crate goes in its layer, then `cargo run -p otto-arch -- --bless` refreshes the graph in `docs/developer/architecture.md`. Existing violations are `[[allow]]` entries with a reason; fix code rather than add entries. See [docs/developer/architecture.md](./docs/developer/architecture.md).
 
 ## Coordinate Systems & Naming Conventions
 

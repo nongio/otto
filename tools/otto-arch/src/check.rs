@@ -3,21 +3,29 @@
 //! `architecture.toml` can only shrink.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::ops::RangeInclusive;
 use std::path::{Path, PathBuf};
 
+use proc_macro2::{TokenStream, TokenTree};
+use syn::spanned::Spanned;
 use syn::visit::Visit;
 
 use crate::rules::{Exception, Rules};
-use crate::workspace::Package;
+use crate::workspace::{Graph, Package};
 
-pub fn all(root: &Path, rules: &Rules, crates: &[Package]) -> Result<Vec<String>, String> {
+pub fn all(
+    root: &Path,
+    rules: &Rules,
+    crates: &[Package],
+    graph: &Graph,
+) -> Result<Vec<String>, String> {
     let exceptions = rules.exceptions()?;
     let mut used = BTreeSet::new();
     let mut problems = Vec::new();
 
     placement(rules, crates, &mut problems);
     lib_lints(rules, crates, &mut problems)?;
-    crate_deps(rules, crates, &exceptions, &mut used, &mut problems);
+    crate_deps(rules, crates, graph, &exceptions, &mut used, &mut problems);
     modules(root, rules, &exceptions, &mut used, &mut problems)?;
     sources(root, rules, crates, &exceptions, &mut used, &mut problems)?;
 
@@ -59,9 +67,12 @@ fn placement(rules: &Rules, crates: &[Package], problems: &mut Vec<String>) {
     }
 }
 
+/// Workspace dependencies against `may_use` (declared, direct), and
+/// `forbid_deps` against everything a crate pulls in (resolved, transitive).
 fn crate_deps(
     rules: &Rules,
     crates: &[Package],
+    graph: &Graph,
     exceptions: &[Exception],
     used: &mut BTreeSet<Exception>,
     problems: &mut Vec<String>,
@@ -70,6 +81,7 @@ fn crate_deps(
         let Some(layer) = rules.layer_of(&c.name) else {
             continue;
         };
+        let mut found: Vec<(String, String)> = Vec::new();
         // A crate can list one dependency several times (per target, per
         // kind); judge each name once.
         let deps: BTreeSet<&str> = c
@@ -79,8 +91,12 @@ fn crate_deps(
             .map(|d| d.name.as_str())
             .collect();
         for dep in deps {
-            let problem = if let Some(dep_layer) = rules.layer_of(dep) {
-                (!layer.may_use.contains(&dep_layer.name)).then(|| {
+            let Some(dep_layer) = rules.layer_of(dep) else {
+                continue;
+            };
+            if !layer.may_use.contains(&dep_layer.name) {
+                found.push((
+                    dep.to_owned(),
                     format!(
                         "crate {} ({}) depends on {dep} ({})\n  Layer {} may use: {}.",
                         c.name,
@@ -88,20 +104,30 @@ fn crate_deps(
                         dep_layer.name,
                         layer.name,
                         list(&layer.may_use)
-                    )
-                })
-            } else {
-                layer.forbid_deps.iter().any(|f| f == dep).then(|| {
+                    ),
+                ));
+            }
+        }
+        for banned in &layer.forbid_deps {
+            if let Some(chain) = graph.path(&c.name, banned) {
+                found.push((
+                    banned.clone(),
                     format!(
-                        "crate {} ({}) depends on {dep}, which layer {} must stay free of\n  {}",
-                        c.name, layer.name, layer.name, layer.description
-                    )
-                })
-            };
-            let Some(problem) = problem else { continue };
+                        "crate {} ({}) pulls in {banned}, which layer {} must stay free of\n  \
+                         Through: {}\n  {}",
+                        c.name,
+                        layer.name,
+                        layer.name,
+                        chain.join(" -> "),
+                        layer.description
+                    ),
+                ));
+            }
+        }
+        for (dep, problem) in found {
             let key = Exception::Crate {
                 krate: c.name.clone(),
-                dep: dep.to_owned(),
+                dep,
             };
             if exceptions.contains(&key) {
                 used.insert(key);
@@ -113,7 +139,8 @@ fn crate_deps(
 }
 
 /// Library layers keep their public API deliberate by turning lints on in
-/// lib.rs; `[lints]` cannot, because members inherit the workspace table.
+/// the crate root; `[lints]` cannot, because members inherit the workspace
+/// table.
 fn lib_lints(rules: &Rules, crates: &[Package], problems: &mut Vec<String>) -> Result<(), String> {
     for c in crates {
         let Some(layer) = rules.layer_of(&c.name) else {
@@ -122,27 +149,50 @@ fn lib_lints(rules: &Rules, crates: &[Package], problems: &mut Vec<String>) -> R
         if layer.lib_lints.is_empty() {
             continue;
         }
-        let lib = c.manifest_path.parent().unwrap().join("src/lib.rs");
-        let text = std::fs::read_to_string(&lib).unwrap_or_default();
+        let Some(lib) = c.lib_root() else {
+            problems.push(format!(
+                "crate {} ({}) has no library target, but its layer is for libraries",
+                c.name, layer.name
+            ));
+            continue;
+        };
+        let text =
+            std::fs::read_to_string(lib).map_err(|e| format!("reading {}: {e}", lib.display()))?;
         let ast = syn::parse_file(&text).map_err(|e| format!("parsing {}: {e}", lib.display()))?;
         for lint in &layer.lib_lints {
-            let on =
-                ast.attrs.iter().any(|a| {
-                    ["warn", "deny", "forbid"].iter().any(|l| a.path().is_ident(l))
-                    && a.parse_args_with(
-                        syn::punctuated::Punctuated::<syn::Path, syn::Token![,]>::parse_terminated,
-                    )
-                    .is_ok_and(|lints| lints.iter().any(|p| p.is_ident(lint)))
-                });
-            if !on {
+            if !turns_on(&ast.attrs, lint) {
                 problems.push(format!(
-                    "crate {} ({}) does not turn on {lint}\n  Add `#![warn({lint})]` to its src/lib.rs.",
-                    c.name, layer.name
+                    "crate {} ({}) does not turn on {lint}\n  Add `#![warn({lint})]` to {}.",
+                    c.name,
+                    layer.name,
+                    lib.display()
                 ));
             }
         }
     }
     Ok(())
+}
+
+/// Whether `#![warn(..)]`, `deny` or `forbid` among `attrs` names `lint`
+/// (a plain lint or a tool lint such as `clippy::foo`).
+fn turns_on(attrs: &[syn::Attribute], lint: &str) -> bool {
+    attrs.iter().any(|a| {
+        ["warn", "deny", "forbid"]
+            .iter()
+            .any(|l| a.path().is_ident(l))
+            && a.parse_args_with(
+                syn::punctuated::Punctuated::<syn::Path, syn::Token![,]>::parse_terminated,
+            )
+            .is_ok_and(|lints| lints.iter().any(|p| path_string(p) == lint))
+    })
+}
+
+fn path_string(p: &syn::Path) -> String {
+    p.segments
+        .iter()
+        .map(|s| s.ident.to_string())
+        .collect::<Vec<_>>()
+        .join("::")
 }
 
 fn list(items: &[String]) -> String {
@@ -158,8 +208,11 @@ fn list(items: &[String]) -> String {
 // ---------------------------------------------------------------------------
 
 /// For each top-level module of `src/`, the top-level modules it names
-/// through `crate::`, with one place each is named from.
+/// through `crate::`, with one place each is named from. A name re-exported
+/// from the crate root (`crate::Otto`) counts as the module it comes from.
+/// Test code counts too: a test reaching into a backend couples the same way.
 pub fn module_graph(src: &Path) -> Result<BTreeMap<String, BTreeMap<String, String>>, String> {
+    let reexports = root_reexports(&src.join("lib.rs"))?;
     let mut graph: BTreeMap<String, BTreeMap<String, String>> = BTreeMap::new();
     for file in rust_files(src)? {
         let rel = file.strip_prefix(src).unwrap();
@@ -173,13 +226,12 @@ pub fn module_graph(src: &Path) -> Result<BTreeMap<String, BTreeMap<String, Stri
         if top == "lib" || top == "main" {
             continue;
         }
-        let text = std::fs::read_to_string(&file)
-            .map_err(|e| format!("reading {}: {e}", file.display()))?;
-        let ast = syn::parse_file(&text).map_err(|e| format!("parsing {}: {e}", file.display()))?;
+        let ast = parse(&file)?;
         let mut v = CratePaths::default();
         v.visit_file(&ast);
         let entry = graph.entry(top.clone()).or_default();
-        for (target, line) in v.found {
+        for (name, line) in v.found {
+            let target = reexports.get(&name).cloned().unwrap_or(name);
             if target != top {
                 entry
                     .entry(target)
@@ -190,7 +242,46 @@ pub fn module_graph(src: &Path) -> Result<BTreeMap<String, BTreeMap<String, Stri
     Ok(graph)
 }
 
-/// Collects the first segment after `crate::` in paths and `use` trees.
+/// `pub use module::{Name, ..}` in the crate root, as name -> module.
+fn root_reexports(lib: &Path) -> Result<BTreeMap<String, String>, String> {
+    fn leaves(tree: &syn::UseTree, module: &str, out: &mut BTreeMap<String, String>) {
+        match tree {
+            syn::UseTree::Path(p) => leaves(&p.tree, module, out),
+            syn::UseTree::Name(n) => {
+                out.insert(n.ident.to_string(), module.to_owned());
+            }
+            syn::UseTree::Rename(r) => {
+                out.insert(r.rename.to_string(), module.to_owned());
+            }
+            syn::UseTree::Group(g) => g.items.iter().for_each(|t| leaves(t, module, out)),
+            syn::UseTree::Glob(_) => {}
+        }
+    }
+    let mut out = BTreeMap::new();
+    if !lib.is_file() {
+        return Ok(out);
+    }
+    for item in parse(lib)?.items {
+        let syn::Item::Use(u) = item else { continue };
+        if !matches!(u.vis, syn::Visibility::Public(_)) {
+            continue;
+        }
+        let syn::UseTree::Path(mut p) = u.tree else {
+            continue;
+        };
+        if p.ident == "crate" {
+            let syn::UseTree::Path(inner) = *p.tree else {
+                continue;
+            };
+            p = inner;
+        }
+        leaves(&p.tree, &p.ident.to_string(), &mut out);
+    }
+    Ok(out)
+}
+
+/// Collects the first segment after `crate::` in paths, `use` trees and the
+/// tokens of macro calls, which syn leaves unparsed.
 #[derive(Default)]
 struct CratePaths {
     found: Vec<(String, usize)>,
@@ -210,6 +301,26 @@ impl CratePaths {
     fn push(&mut self, ident: &syn::Ident) {
         self.found
             .push((ident.to_string(), ident.span().start().line));
+    }
+
+    /// `crate :: name` anywhere in a token stream, nested groups included.
+    fn tokens(&mut self, tokens: TokenStream) {
+        let tts: Vec<TokenTree> = tokens.into_iter().collect();
+        for (i, tt) in tts.iter().enumerate() {
+            match tt {
+                TokenTree::Group(g) => self.tokens(g.stream()),
+                TokenTree::Ident(id) if id == "crate" => {
+                    if let [TokenTree::Punct(a), TokenTree::Punct(b), TokenTree::Ident(name), ..] =
+                        &tts[i + 1..]
+                    {
+                        if a.as_char() == ':' && b.as_char() == ':' {
+                            self.push(name);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
     }
 }
 
@@ -231,6 +342,11 @@ impl<'ast> Visit<'ast> for CratePaths {
         }
         syn::visit::visit_path(self, path);
     }
+
+    fn visit_macro(&mut self, mac: &'ast syn::Macro) {
+        self.tokens(mac.tokens.clone());
+        syn::visit::visit_macro(self, mac);
+    }
 }
 
 fn modules(
@@ -250,14 +366,12 @@ fn modules(
                 ));
             }
         }
+        // "*" covers every module, the targets too: one backend naming
+        // another breaks backends-are-leaves as well. Self-references never
+        // reach the graph.
         let wildcard = rule.from.iter().any(|f| f == "*");
         for (module, uses) in &graph {
-            let covered = if wildcard {
-                !rule.to.contains(module)
-            } else {
-                rule.from.contains(module)
-            };
-            if !covered {
+            if !wildcard && !rule.from.contains(module) {
                 continue;
             }
             for (target, at) in uses {
@@ -321,25 +435,101 @@ fn sources(
             }
             let text = std::fs::read_to_string(file)
                 .map_err(|e| format!("reading {}: {e}", file.display()))?;
-            let Some(m) = re.find(&text) else { continue };
+            if !re.is_match(&text) {
+                continue;
+            }
+            // Tests that save and restore the environment are not lookups.
+            let tests =
+                test_lines(&syn::parse_file(&text).map_err(|e| format!("parsing {rel}: {e}"))?);
+            let lines: Vec<usize> = re
+                .find_iter(&text)
+                .map(|m| text[..m.start()].matches('\n').count() + 1)
+                .filter(|l| !tests.iter().any(|r| r.contains(l)))
+                .collect();
+            if lines.is_empty() {
+                continue;
+            }
             let key = Exception::Source {
                 rule: rule.name.clone(),
                 file: rel.clone(),
             };
-            if exceptions.contains(&key) {
-                used.insert(key);
-            } else {
-                let line = text[..m.start()].lines().count().max(1);
-                problems.push(format!(
-                    "{rel}:{line} matches {}: `{}`\n  {}",
-                    rule.name,
-                    m.as_str(),
-                    rule.reason
-                ));
+            let at = lines
+                .iter()
+                .map(|l| l.to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
+            match rules.allowed_count(&rule.name, &rel) {
+                Some(n) if exceptions.contains(&key) => {
+                    used.insert(key);
+                    if lines.len() > n {
+                        problems.push(format!(
+                            "{rel} has {} matches of {} (lines {at}); [[allow]] grants {n}\n  {}",
+                            lines.len(),
+                            rule.name,
+                            rule.reason
+                        ));
+                    } else if lines.len() < n {
+                        problems.push(format!(
+                            "{rel} is down to {} matches of {}; lower its [[allow]] count from {n}",
+                            lines.len(),
+                            rule.name
+                        ));
+                    }
+                }
+                _ => problems.push(format!(
+                    "{rel} matches {} (lines {at})\n  {}",
+                    rule.name, rule.reason
+                )),
             }
         }
     }
     Ok(())
+}
+
+/// Line ranges of `#[test]` functions and `#[cfg(test)]` items.
+fn test_lines(file: &syn::File) -> Vec<RangeInclusive<usize>> {
+    #[derive(Default)]
+    struct Tests(Vec<RangeInclusive<usize>>);
+    impl Tests {
+        fn item(&mut self, attrs: &[syn::Attribute], node: &impl Spanned) -> bool {
+            let test = attrs.iter().any(|a| {
+                a.path().is_ident("test")
+                    || (a.path().is_ident("cfg")
+                        && a.parse_args::<syn::Ident>().is_ok_and(|i| i == "test"))
+            });
+            if test {
+                let span = node.span();
+                self.0.push(span.start().line..=span.end().line);
+            }
+            test
+        }
+    }
+    impl<'ast> Visit<'ast> for Tests {
+        fn visit_item_fn(&mut self, i: &'ast syn::ItemFn) {
+            if !self.item(&i.attrs, i) {
+                syn::visit::visit_item_fn(self, i);
+            }
+        }
+        fn visit_item_mod(&mut self, i: &'ast syn::ItemMod) {
+            if !self.item(&i.attrs, i) {
+                syn::visit::visit_item_mod(self, i);
+            }
+        }
+        fn visit_item_impl(&mut self, i: &'ast syn::ItemImpl) {
+            if !self.item(&i.attrs, i) {
+                syn::visit::visit_item_impl(self, i);
+            }
+        }
+    }
+    let mut t = Tests::default();
+    t.visit_file(file);
+    t.0
+}
+
+fn parse(file: &Path) -> Result<syn::File, String> {
+    let text =
+        std::fs::read_to_string(file).map_err(|e| format!("reading {}: {e}", file.display()))?;
+    syn::parse_file(&text).map_err(|e| format!("parsing {}: {e}", file.display()))
 }
 
 fn rust_files(dir: &Path) -> Result<Vec<PathBuf>, String> {
@@ -374,48 +564,88 @@ mod tests {
     }
 
     #[test]
-    fn finds_crate_paths_in_uses_and_expressions() {
+    fn finds_crate_paths_in_uses_expressions_and_macros() {
         let found = paths(
             "use crate::{a::X, b, c as d, e::{f, g}};
              use crate::h::*;
              use std::fmt;
              use super::i;
-             fn f() { crate::j::k(); let _: crate::l::M; }",
+             fn f() {
+                 crate::j::k();
+                 let _: crate::l::M;
+                 tracing::info!(n = crate::m::count(), \"{}\", vec![crate::n::x()].len());
+             }
+             macro_rules! o { () => { crate::o::p() }; }",
         );
-        assert_eq!(found, ["a", "b", "c", "e", "h", "j", "l"]);
+        assert_eq!(found, ["a", "b", "c", "e", "h", "j", "l", "m", "n", "o"]);
+    }
+
+    /// A unique scratch directory, created fresh so a leftover can't be
+    /// mistaken for it.
+    struct Scratch(PathBuf);
+
+    impl Scratch {
+        fn new() -> Self {
+            let nanos = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos();
+            let dir =
+                std::env::temp_dir().join(format!("otto-arch-test-{}-{nanos}", std::process::id()));
+            std::fs::create_dir(&dir).unwrap();
+            Scratch(dir)
+        }
+
+        fn write(&self, path: &str, text: &str) {
+            let p = self.0.join(path);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, text).unwrap();
+        }
+    }
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
     }
 
     fn package(root: &Path, name: &str, dir: &str, deps: &[(&str, Option<&str>)]) -> Package {
-        Package {
-            name: name.into(),
-            manifest_path: root.join(dir).join("Cargo.toml"),
-            dependencies: deps
+        serde_json::from_value(serde_json::json!({
+            "name": name,
+            "manifest_path": root.join(dir).join("Cargo.toml"),
+            "dependencies": deps
                 .iter()
-                .map(|(n, kind)| crate::workspace::Dependency {
-                    name: (*n).into(),
-                    kind: kind.map(Into::into),
-                })
-                .collect(),
-        }
+                .map(|(n, kind)| serde_json::json!({ "name": n, "kind": kind }))
+                .collect::<Vec<_>>(),
+        }))
+        .unwrap()
     }
 
     /// One problem of every kind, in a throwaway workspace.
     #[test]
     fn reports_each_kind_of_violation() {
-        let root = std::env::temp_dir().join(format!("otto-arch-test-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
-        let write = |path: &str, text: &str| {
-            let p = root.join(path);
-            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
-            std::fs::write(p, text).unwrap();
-        };
-        write("src/lib.rs", "use crate::udev::X;");
-        write("src/udev.rs", "pub struct X;");
-        write("src/render.rs", "fn f() { let _ = crate::udev::X; }");
-        write("src/input.rs", "use crate::udev::X;");
-        write(
+        let ws = Scratch::new();
+        ws.write("src/lib.rs", "pub use state::Otto;\nuse crate::udev::X;");
+        ws.write("src/state.rs", "pub struct Otto;");
+        ws.write("src/udev.rs", "pub struct X;");
+        ws.write("src/winit.rs", "use crate::udev::X;");
+        ws.write(
+            "src/render.rs",
+            "fn f() { log!(crate::udev::X); }\nfn g(_: crate::Otto) {}",
+        );
+        ws.write("src/input.rs", "use crate::udev::X;");
+        ws.write(
             "components/app/src/main.rs",
-            r#"fn f() { std::env::var("HOME"); }"#,
+            "fn f() { std::env::var(\"HOME\"); }\n\
+             #[cfg(test)]\nmod tests { fn t() { std::env::var(\"HOME\"); } }",
+        );
+        ws.write(
+            "components/other-app/src/main.rs",
+            "fn f() { std::env::var(\"HOME\"); std::env::var(\"HOME\"); }",
+        );
+        ws.write(
+            "components/third-app/src/main.rs",
+            "fn f() { std::env::var(\"HOME\"); }",
         );
 
         let rules: Rules = toml::from_str(
@@ -430,13 +660,19 @@ mod tests {
             [[layer]]
             name = "app"
             description = "programs"
-            crates = ["app", "other-app"]
+            crates = ["app", "other-app", "third-app"]
             may_use = ["base"]
 
             [[module_rule]]
             name = "backends-are-leaves"
             from = ["*"]
-            to = ["udev"]
+            to = ["udev", "winit"]
+            reason = "r"
+
+            [[module_rule]]
+            name = "render-below-state"
+            from = ["render"]
+            to = ["state"]
             reason = "r"
 
             [[source_rule]]
@@ -454,40 +690,67 @@ mod tests {
             crate = "app"
             dep = "base"
             reason = "never needed"
+
+            [[allow]]
+            rule = "xdg"
+            reason = "known"
+            files = [
+                { path = "components/other-app/src/main.rs", count = 1 },
+                { path = "components/third-app/src/main.rs", count = 2 },
+            ]
             "#,
         )
         .unwrap();
         // Sorted by name, as cargo metadata returns them.
+        let root = &ws.0;
         let crates = [
             package(
-                &root,
+                root,
                 "app",
                 "components/app",
                 &[("base", None), ("other-app", None)],
             ),
             package(
-                &root,
+                root,
                 "base",
                 "components/base",
-                &[("tokio", None), ("app", Some("dev"))],
+                &[("zbus", None), ("app", Some("dev"))],
             ),
-            package(&root, "other-app", "components/other-app", &[]),
-            package(&root, "stray", "components/stray", &[]),
+            package(root, "other-app", "components/other-app", &[]),
+            package(root, "stray", "components/stray", &[]),
+            package(root, "third-app", "components/third-app", &[]),
         ];
+        let mut graph = Graph::default();
+        graph.edges.insert("base".into(), ["zbus".into()].into());
+        graph.edges.insert("zbus".into(), ["tokio".into()].into());
 
-        let problems = all(&root, &rules, &crates).unwrap();
-        let _ = std::fs::remove_dir_all(&root);
+        let problems = all(root, &rules, &crates, &graph).unwrap();
         let starts: Vec<_> = problems.iter().map(|p| p.lines().next().unwrap()).collect();
         assert_eq!(
             starts,
             [
                 "crate stray is in no layer",
                 "crate app (app) depends on other-app (app)",
-                "crate base (base) depends on tokio, which layer base must stay free of",
+                "crate base (base) pulls in tokio, which layer base must stay free of",
                 "module render uses udev (src/render.rs:1), breaking backends-are-leaves",
-                "components/app/src/main.rs:1 matches xdg: `env::var(\"HOME\")`",
+                "module winit uses udev (src/winit.rs:1), breaking backends-are-leaves",
+                "module render uses state (src/render.rs:2), breaking render-below-state",
+                "components/app/src/main.rs matches xdg (lines 1)",
+                "components/other-app/src/main.rs has 2 matches of xdg (lines 1, 1); [[allow]] grants 1",
+                "components/third-app/src/main.rs is down to 1 matches of xdg; lower its [[allow]] count from 2",
                 "stale [[allow]] crate = \"app\", dep = \"base\"",
             ]
         );
+        assert!(problems[2].contains("Through: base -> zbus -> tokio"));
+    }
+
+    #[test]
+    fn lib_lints_accept_tool_lints() {
+        let attrs = syn::parse_file("#![warn(unreachable_pub, clippy::pedantic)]")
+            .unwrap()
+            .attrs;
+        assert!(turns_on(&attrs, "unreachable_pub"));
+        assert!(turns_on(&attrs, "clippy::pedantic"));
+        assert!(!turns_on(&attrs, "missing_docs"));
     }
 }

@@ -9,13 +9,17 @@ where the strongest available tool can check it:
 | Which Otto crate may depend on which (layers) | `architecture.toml` | `cargo run -p otto-arch` |
 | Which compositor module may reach into which | `architecture.toml` | `cargo run -p otto-arch` |
 | Code that has exactly one home (XDG lookups) | `architecture.toml` | `cargo run -p otto-arch` |
-| Which crates may link Smithay, GStreamer, PipeWire; no OpenSSL | `deny.toml` | `cargo deny --workspace check bans` |
+| Which crates may link Smithay, the Wayland server, GStreamer, PipeWire; no OpenSSL | `deny.toml` | `cargo deny --workspace check bans -D unused-wrapper` |
 | APIs nobody calls directly | `clippy.toml` | `cargo clippy` |
 | What a module exposes | the code: `pub(crate)`, sealed traits, newtypes | the compiler |
 
-CI runs `otto-arch` and `cargo-deny` in the `architecture` job, which needs no
-system libraries and fails before the compositor is built. `cargo test -p
-otto-arch` runs the same check.
+CI runs both in the `architecture` job, which needs no system libraries and
+fails before the compositor is built. `cargo test -p otto-arch` runs the
+check, along with the checker's own tests.
+
+Run cargo-deny with `--workspace`: the root manifest is also the
+compositor's package, and without the flag cargo-deny judges only the
+compositor's graph and passes.
 
 ## Crate layers
 
@@ -33,12 +37,15 @@ an app.
   kit.
 - **app**: programs. Nothing depends on an app; code two apps share moves
   down into a kit.
-- **compositor**: `otto`. It uses only the foundation layer, and never links
-  a client toolkit.
+- **compositor**: `otto`. It draws with the same toolkit as the apps
+  (titlebars, text, icons, theme), so it may use `otto-kit`; it never uses a
+  kit or an app.
 - **sample** and **tool**: standalone.
 
-A layer can also forbid third-party crates (`forbid_deps`): the foundation
-layer, for example, stays free of Skia, Wayland and tokio.
+A layer can also forbid third-party crates (`forbid_deps`), judged on the
+resolved graph, so a crate pulled in through another dependency counts too:
+the foundation and service layers stay free of Skia, the scene graph and
+Wayland. The error names the chain that brings the crate in.
 
 <!-- otto-arch:graph:begin (generated: cargo run -p otto-arch -- --bless) -->
 ```mermaid
@@ -141,12 +148,15 @@ flowchart BT
 ## Compositor modules
 
 Inside one crate the compiler draws no boundary, so `otto-arch` parses `src/`
-with `syn` and collects each top-level module's `crate::` paths. A
-`[[module_rule]]` forbids one group of modules from naming another:
+with `syn` and collects each top-level module's `crate::` paths: in code, in
+`use` trees and inside macro calls. A name the crate root re-exports
+(`crate::Otto`) counts as the module it comes from. Test code counts too: a
+test that reaches into a backend couples the same way. A `[[module_rule]]`
+forbids one group of modules from naming another:
 
 - **backends-are-leaves**: nothing names `udev`, `winit`, `x11` or
-  `headless`. A backend drives the shared compositor through the `Backend`
-  trait.
+  `headless`, another backend included. A backend drives the shared
+  compositor through the `Backend` trait.
 - **render-stack-below-window-management**: the renderer does not reach into
   `state`, `shell`, `workspaces` or input.
 - **config-is-a-leaf**: `config`, `theme` and `utils` depend on nothing that
@@ -157,16 +167,20 @@ with `syn` and collects each top-level module's `crate::` paths. A
 ## Single-home source patterns
 
 A `[[source_rule]]` is a regular expression that may only match under its
-`allowed_in` paths. Today there is one: the XDG base directories are read
-only in `otto_foundations::xdg`.
+`allowed_in` paths. `#[test]` functions and `#[cfg(test)]` items are skipped,
+since a test that saves and restores the environment is not a lookup. Today
+there is one rule: the XDG base directories are read only in
+`otto_foundations::xdg`.
 
 ## Known debt
 
 Code that breaks a rule today is listed under `[[allow]]` in
 `architecture.toml`, each entry with the reason it is still there and where
 the code belongs. The checker fails on an entry the code no longer needs, so
-fixing a violation means deleting its entry, and the list only shrinks. Add
-an entry only with a reason a reviewer would accept.
+fixing a violation means deleting its entry, and the list only shrinks.
+Source-rule entries carry a match count per file: a new match in a listed
+file fails, and a fixed one asks for the count to come down. Add an entry
+only with a reason a reviewer would accept.
 
 ## Inside a crate: visibility and types
 

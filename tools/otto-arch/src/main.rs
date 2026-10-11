@@ -28,8 +28,8 @@ fn main() -> ExitCode {
                 eprintln!("{p}\n");
             }
             eprintln!(
-                "architecture: {} problem(s). Fix the code, or, when it has to stay for now, \
-                 add an [[allow]] entry with its reason to architecture.toml.",
+                "architecture: {} problem(s). docs/developer/architecture.md says what each \
+                 rule protects and how to move the code.",
                 problems.len()
             );
             ExitCode::FAILURE
@@ -52,8 +52,8 @@ fn repo_root() -> PathBuf {
 
 fn run(root: &Path, bless: bool) -> Result<Vec<String>, String> {
     let rules = rules::load(&root.join("architecture.toml"))?;
-    let crates = workspace::crates(root)?;
-    let mut problems = check::all(root, &rules, &crates)?;
+    let (crates, graph) = workspace::load(root)?;
+    let mut problems = check::all(root, &rules, &crates, &graph)?;
     let doc = root.join(docs::DOC);
     if bless {
         docs::write(&doc, &rules, &crates)?;

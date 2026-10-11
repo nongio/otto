@@ -24,12 +24,21 @@ pub struct Layer {
     pub description: String,
     pub crates: Vec<String>,
     pub may_use: Vec<String>,
+    /// Third-party crates no crate in the layer may pull in, directly or
+    /// through any other dependency.
     #[serde(default)]
     pub forbid_deps: Vec<String>,
     /// Lints every crate's `src/lib.rs` turns on (`#![warn(..)]`, `deny` or
     /// `forbid`).
     #[serde(default)]
     pub lib_lints: Vec<String>,
+    /// Drawn in the generated crate graph.
+    #[serde(default = "yes")]
+    pub graph: bool,
+}
+
+fn yes() -> bool {
+    true
 }
 
 #[derive(Debug, Deserialize)]
@@ -62,8 +71,17 @@ pub struct Allow {
     pub uses: Option<String>,
     pub rule: Option<String>,
     #[serde(default)]
-    pub files: Vec<String>,
+    pub files: Vec<FileCount>,
     pub reason: String,
+}
+
+/// A file that still holds `count` matches of a source rule. The count makes
+/// a new match in the same file fail, and a fixed one shrink the entry.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FileCount {
+    pub path: String,
+    pub count: usize,
 }
 
 /// What an [`Allow`] excuses, as a key the checks compare against.
@@ -106,7 +124,7 @@ impl Allow {
             (None, None, None, None, Some(r), false) => Ok(self
                 .files
                 .iter()
-                .map(|f| Exception::Source { rule: r.clone(), file: f.clone() })
+                .map(|f| Exception::Source { rule: r.clone(), file: f.path.clone() })
                 .collect()),
             _ => Err(format!(
                 "an [[allow]] entry needs exactly one of crate+dep, module+uses or rule+files: {self:?}"
@@ -130,6 +148,16 @@ impl Rules {
             }
         }
         Ok(out)
+    }
+
+    /// How many matches of `rule` an [[allow]] entry grants `file`.
+    pub fn allowed_count(&self, rule: &str, file: &str) -> Option<usize> {
+        self.allows
+            .iter()
+            .filter(|a| a.rule.as_deref() == Some(rule))
+            .flat_map(|a| &a.files)
+            .find(|f| f.path == file)
+            .map(|f| f.count)
     }
 
     pub fn layer_of(&self, krate: &str) -> Option<&Layer> {

@@ -1,6 +1,11 @@
 # Third-party dependency policy, checked by cargo-deny:
 #
-#   cargo deny check bans
+#   cargo deny --workspace check bans -D unused-wrapper
+#
+# --workspace matters: the root manifest is also the compositor's package, and
+# without it cargo-deny judges only the compositor's graph and passes. With
+# -D unused-wrapper a wrapper nothing uses any more fails, as a stale
+# [[allow]] does in architecture.toml.
 #
 # The workspace's own layering (which Otto crate may use which) is in
 # architecture.toml. This file covers the outside world: which crates may
@@ -24,6 +29,18 @@ deny = [
     # The server side of Wayland. Only the compositor speaks it; a client
     # that needs a compositor-side type wants a protocol instead.
     { crate = "smithay", wrappers = ["otto"], reason = "only the compositor links the Wayland server" },
+    { crate = "smithay-drm-extras", wrappers = ["otto"], reason = "only the compositor drives DRM" },
+    # The server library itself, so a client cannot go around Smithay. The
+    # third-party wrappers are protocol crates whose `server` feature the
+    # compositor turns on.
+    { crate = "wayland-server", wrappers = [
+        "otto",
+        "smithay",
+        "gbm",
+        "wayland-protocols",
+        "wayland-protocols-misc",
+        "wayland-protocols-wlr",
+    ], reason = "only the compositor speaks the server side of Wayland" },
 
     # Media decoding goes through otto-media-kit; otto-rdp encodes the
     # remote desktop stream.
