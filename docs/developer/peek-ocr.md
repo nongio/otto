@@ -177,8 +177,9 @@ on the first Find is the next step; a database is not.
 
 ## Configuration
 
-`~/.config/otto/files.toml`, read once per process by `otto_peek::config`,
-so Files and Preview agree:
+`~/.config/otto/files.toml`, read by `otto_peek::config::load()` so Files
+and Preview agree. Files reads it once per process; Preview reads it each time
+it looks up the recogniser:
 
 ```toml
 [peek]
