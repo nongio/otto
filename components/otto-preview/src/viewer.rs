@@ -149,6 +149,9 @@ pub struct Viewer {
     pub choices: Option<crate::editing::Choices>,
     /// Whether "save changes?" is up, asked by a close with unsaved changes.
     pub confirm_close: bool,
+    /// The file the window was just saved as, for the app to follow: its
+    /// folder watched, its name on the window.
+    pub renamed: Option<PathBuf>,
     /// The last press: when, where, and how many came quickly before it in
     /// the same place, to tell a double click.
     pub last_press: Option<(u32, Point, u32)>,
@@ -259,6 +262,7 @@ impl Viewer {
             choices: None,
             last_press: None,
             confirm_close: false,
+            renamed: None,
         }
     }
 

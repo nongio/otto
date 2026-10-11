@@ -303,6 +303,8 @@ pub enum Job {
     Replay(Vec<Vec<Edit>>),
     /// Write the document over the file.
     Save,
+    /// Write the document to another file, and carry on with that one.
+    SaveAs(std::path::PathBuf),
 }
 
 /// Work on the document, and the pages it will need drawn again.
@@ -328,13 +330,24 @@ pub fn run_batch(viewer: &Mutex<Viewer>, batch: &Batch) -> Result<Snapshot, otto
             let mut doc = batch.doc.lock().unwrap();
             doc.save().map(|()| doc.snapshot())
         }
+        Job::SaveAs(path) => save_as(&batch.doc, path),
     };
-    if batch.job != Job::Save {
+    if matches!(batch.job, Job::Apply(_) | Job::Replay(_)) {
         redraw(viewer, batch);
     }
     viewer.lock().unwrap().finish_batch(batch, outcome.clone());
     AppContext::request_wakeup();
     outcome
+}
+
+/// Write `doc` to `path`, then open that file in its place: the window
+/// carries on with the new file, its changes saved there.
+fn save_as(doc: &Mutex<Document>, path: &std::path::Path) -> Result<Snapshot, otto_pdf::Error> {
+    let mut doc = doc.lock().unwrap();
+    doc.save_to(path)?;
+    let fresh = otto_pdf::open(path, None)?;
+    *doc = fresh;
+    Ok(doc.snapshot())
 }
 
 /// Open the saved file again in place of `doc` and make `batches` on it.
@@ -598,9 +611,9 @@ impl Viewer {
                     }
                     pages
                 }),
-            Job::Save => Vec::new(),
+            Job::Save | Job::SaveAs(_) => Vec::new(),
         };
-        if job != Job::Save {
+        if matches!(job, Job::Apply(_) | Job::Replay(_)) {
             editing.unsaved = true;
         }
         editing.busy += 1;
@@ -629,6 +642,15 @@ impl Viewer {
             self.keep_version(None);
         }
         self.queue(Job::Save);
+    }
+
+    /// Write the document to `path` and carry on with that file.
+    pub fn save_as(&mut self, path: std::path::PathBuf) {
+        self.commit_editor();
+        if self.editing.is_none() {
+            return;
+        }
+        self.queue(Job::SaveAs(path));
     }
 
     /// Whether Undo or Redo have an unsaved edit to take back or make again.
@@ -737,9 +759,24 @@ impl Viewer {
         {
             editing.selected = None;
         }
-        if batch.job != Job::Save {
-            return;
+        let saved_as = match &batch.job {
+            Job::Save => None,
+            Job::SaveAs(path) => Some(path.clone()),
+            Job::Apply(_) | Job::Replay(_) => return,
+        };
+        if let Some(path) = saved_as {
+            // A new file: its own name, folder and versions from now on.
+            self.path = path.clone();
+            self.name = path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_else(|| path.to_string_lossy().into_owned());
+            self.versions = crate::versions::Versions::existing(&path);
+            self.renamed = Some(path);
         }
+        let Some(editing) = &mut self.editing else {
+            return;
+        };
         // Saved: the edits are the file's now, and the change on disk is
         // this window's own, not a reason to read the file again.
         editing.undo.clear();

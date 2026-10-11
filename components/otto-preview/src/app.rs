@@ -85,6 +85,10 @@ struct Doc {
     choices: otto_kit::components::dropdown::DropdownMenu,
     /// The choice made from that menu, waiting for the loop.
     chosen: Rc<std::cell::Cell<Option<(otto_pdf::AnnotId, usize)>>>,
+    /// "Save changes?", built with the window for the same reason.
+    confirm: crate::confirm::ConfirmPopup,
+    /// The answer to it, waiting for the loop.
+    answered: Rc<std::cell::Cell<Option<crate::confirm::Answer>>>,
     /// Whether the first configure has been answered, which is when the
     /// window takes its opening size.
     sized: bool,
@@ -146,9 +150,10 @@ impl PreviewApp {
     /// The window holding the keyboard.
     fn focused(&self) -> Option<&Doc> {
         let focus = AppContext::keyboard_focus()?;
-        self.docs
-            .iter()
-            .find(|doc| doc.window.surface_id().as_ref() == Some(&focus))
+        self.docs.iter().find(|doc| {
+            doc.window.surface_id().as_ref() == Some(&focus)
+                || doc.confirm.surface_id().as_ref() == Some(&focus)
+        })
     }
 
     /// The window under the pointer.
@@ -199,9 +204,6 @@ impl Doc {
             if let Some(pad) = &viewer.signature_pad {
                 pad.draw(canvas, viewer.size, &theme);
             }
-            if viewer.confirm_close {
-                crate::confirm::draw(canvas, viewer.size, &viewer.name, &theme);
-            }
         });
 
         let pointed = Arc::clone(&viewer);
@@ -233,6 +235,8 @@ impl Doc {
             shape,
             choices: otto_kit::components::dropdown::DropdownMenu::new(),
             chosen: Rc::new(std::cell::Cell::new(None)),
+            confirm: crate::confirm::ConfirmPopup::new(),
+            answered: Rc::new(std::cell::Cell::new(None)),
             sized: false,
             chat_on_configure: false,
             menu,
@@ -251,6 +255,12 @@ impl Doc {
             }
             commands::Command::Shortcuts => viewer.shortcuts_open = !viewer.shortcuts_open,
             commands::Command::Close => viewer.request_close(),
+            commands::Command::SaveAs => {
+                viewer.commit_editor();
+                if viewer.editable() {
+                    ask_save_as(Arc::clone(&self.viewer), viewer.path.clone());
+                }
+            }
             commands::Command::Copy => {
                 if let Some(text) = viewer.selected_text() {
                     otto_kit::clipboard::set_text(&text, serial);
@@ -484,6 +494,24 @@ fn open_for_editing(viewer: &Mutex<Viewer>, path: &Path, generation: u64) {
     AppContext::request_wakeup();
 }
 
+/// Ask where to save a copy of `file` on a thread of its own (the dialog
+/// blocks), then save there and carry on with that file.
+fn ask_save_as(viewer: Arc<Mutex<Viewer>>, file: PathBuf) {
+    std::thread::spawn(move || {
+        let title = otto_kit::t_owned!("studio-save-as-title");
+        match crate::save_as::ask(&file, &title) {
+            crate::save_as::Outcome::Chosen(path) => {
+                viewer.lock().unwrap().save_as(path);
+                AppContext::request_wakeup();
+            }
+            crate::save_as::Outcome::Dismissed => {}
+            crate::save_as::Outcome::Failed(why) => {
+                tracing::warn!(%why, "no save dialog");
+            }
+        }
+    });
+}
+
 /// Whether the file at `path` is a PDF, by its first bytes.
 fn is_pdf(path: &Path) -> bool {
     use std::io::Read;
@@ -662,13 +690,6 @@ fn handle_pointer(
                     continue;
                 }
                 let size = v.size;
-                if v.confirm_close {
-                    if let Some(answer) = crate::confirm::press(size, at) {
-                        v.answer_close(answer);
-                    }
-                    redraw = true;
-                    continue;
-                }
                 if let Some(pad) = &mut v.signature_pad {
                     match pad.press(size, at) {
                         crate::signature::PadAction::None => {}
@@ -991,6 +1012,7 @@ impl Doc {
         if let Some((field, index)) = self.chosen.take() {
             self.viewer.lock().unwrap().choose(field, index);
         }
+        self.follow_confirm();
         let (batches, choices) = {
             let mut viewer = self.viewer.lock().unwrap();
             (viewer.take_batches(), viewer.choices.take())
@@ -1025,6 +1047,63 @@ impl Doc {
                 AppContext::request_wakeup();
             },
             AppContext::request_wakeup,
+        );
+    }
+
+    /// Follow the file the window was saved as: listed under its new path,
+    /// its folder watched, its name on the window.
+    fn follow_rename(&mut self, documents: &Documents) {
+        let Some(path) = self.viewer.lock().unwrap().renamed.take() else {
+            return;
+        };
+        let mut documents = documents.lock().unwrap();
+        documents.remove(&self.key);
+        self.key = resolved(&path);
+        documents.insert(self.key.clone(), Arc::clone(&self.viewer));
+        self.watch = path.parent().map(DirWatch::new);
+        let name = self.viewer.lock().unwrap().name.clone();
+        self.window.set_title(&name);
+        self.redraw();
+    }
+
+    /// Show "save changes?" while the viewer asks it, and hand its answer
+    /// back.
+    fn follow_confirm(&self) {
+        if let Some(answer) = self.answered.take() {
+            self.viewer.lock().unwrap().answer_close(answer);
+            self.redraw();
+        }
+        let (asking, size, name) = {
+            let viewer = self.viewer.lock().unwrap();
+            (viewer.confirm_close, viewer.size, viewer.name.clone())
+        };
+        if !asking {
+            if self.confirm.is_open() {
+                self.confirm.close();
+            }
+            return;
+        }
+        if self.confirm.is_open() {
+            return;
+        }
+        let Some(parent) = self
+            .window
+            .surface()
+            .map(|surface| surface.xdg_window().xdg_surface().clone())
+        else {
+            return;
+        };
+        let answered = Rc::clone(&self.answered);
+        self.confirm.open(
+            &parent,
+            size,
+            &name,
+            AppContext::current_theme(),
+            AppContext::last_input_serial(),
+            move |answer| {
+                answered.set(Some(answer));
+                AppContext::request_wakeup();
+            },
         );
     }
 
@@ -1198,6 +1277,13 @@ impl App for PreviewApp {
             }
         }
         let modifiers = doc.viewer.lock().unwrap().modifiers;
+        if (modifiers.ctrl || modifiers.logo)
+            && modifiers.shift
+            && matches!(event.keysym, Keysym::s | Keysym::S)
+        {
+            doc.run(commands::Command::SaveAs, serial);
+            return;
+        }
         if let Some(command) = commands::document_key(event.keysym, modifiers) {
             if !in_chat {
                 doc.run(command, serial);
@@ -1286,6 +1372,9 @@ impl App for PreviewApp {
             }
             !closing
         });
+        for doc in &mut self.docs {
+            doc.follow_rename(documents);
+        }
         // The last window closed is the application closed; the bus name
         // goes with the process, and the next start owns it.
         if self.docs.is_empty() {

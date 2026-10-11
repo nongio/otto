@@ -14,6 +14,7 @@ use crate::viewer::Viewer;
 pub enum Command {
     Close,
     Save,
+    SaveAs,
     Undo,
     Redo,
     Copy,
@@ -33,9 +34,10 @@ pub enum Command {
     Shortcuts,
 }
 
-const ALL: [Command; 19] = [
+const ALL: [Command; 20] = [
     Command::Close,
     Command::Save,
+    Command::SaveAs,
     Command::Undo,
     Command::Redo,
     Command::Copy,
@@ -61,6 +63,7 @@ impl Command {
         match self {
             Self::Close => "close",
             Self::Save => "save",
+            Self::SaveAs => "save_as",
             Self::Undo => "undo",
             Self::Redo => "redo",
             Self::Copy => "copy",
@@ -89,6 +92,7 @@ impl Command {
         match self {
             Self::Close => otto_kit::t_owned!("studio-close"),
             Self::Save => otto_kit::t_owned!("studio-save"),
+            Self::SaveAs => otto_kit::t_owned!("studio-save-as"),
             Self::Undo => otto_kit::t_owned!("studio-undo"),
             Self::Redo => otto_kit::t_owned!("studio-redo"),
             Self::Copy => otto_kit::t_owned!("studio-copy"),
@@ -115,6 +119,7 @@ impl Command {
         Some(match self {
             Self::Close => "Ctrl+W",
             Self::Save => "Ctrl+S",
+            Self::SaveAs => "Ctrl+Shift+S",
             Self::Undo => "Ctrl+Z",
             Self::Redo => "Ctrl+Y",
             Self::Copy => "Ctrl+C",
@@ -166,6 +171,7 @@ impl Command {
                 .as_ref()
                 .is_some_and(|editing| editing.selected.is_some()),
             Self::Close | Self::SelectAll | Self::Shortcuts => true,
+            Self::SaveAs => viewer.editable(),
             command => command.tool().is_none_or(|tool| viewer.tool_enabled(tool)),
         }
     }
@@ -217,7 +223,7 @@ fn sections() -> Vec<(String, Vec<Vec<Command>>)> {
     vec![
         (
             otto_kit::t_owned!("studio-menu-file"),
-            vec![vec![Save], vec![Close]],
+            vec![vec![Save, SaveAs], vec![Close]],
         ),
         (
             otto_kit::t_owned!("studio-menu-edit"),

@@ -262,9 +262,16 @@ no markup button.
 - **Undo and Redo** take back and make again the changes not yet saved, by
   opening the saved file again and making all but the last; once there are
   none they step through the file's versions as before. A save clears them.
+- **Save As** (File › Save As…, Ctrl+Shift+S) asks for a name and a folder
+  in the desktop's save dialog (the file-chooser portal's `SaveFile`,
+  starting on the file's own name and folder, PDFs only; a name without an
+  extension gets `.pdf`), writes the document there with its changes, and
+  the window carries on with that file: its title, its folder watched, its
+  own versions. The file it was opened from is left as it was saved last.
 - **Closing with unsaved changes** asks "Save changes to NAME?" with Don't
-  Save, Cancel and Save (Return saves, Escape cancels, a click outside
-  cancels). Save closes the window once the file is written. Ctrl+W, the
+  Save, Cancel and Save, in a popup of its own over the middle of the window,
+  rounded, blurred and casting the same shadow as a menu (Return saves,
+  Escape or a click outside cancels). Save closes the window once the file is written. Ctrl+W, the
   close light and the compositor's close all ask.
 - **Redrawing.** The pages a change touched (every page a field's name is
   on, for a field) and their thumbnails are drawn again by PDFium from the
@@ -339,7 +346,7 @@ no markup button.
   there is nothing to pan sideways.
 - Home and End go to the start and the end.
 - Ctrl+W and Ctrl+Q close the window, asking first when a PDF has unsaved
-  changes; Ctrl+S saves them.
+  changes; Ctrl+S saves them, Ctrl+Shift+S saves them as another file.
 - Ctrl+Z steps the file back a version and Ctrl+Y (or Ctrl+Shift+Z) forward.
 - From anywhere, the chat included: Ctrl+K shows or hides the chat,
   Ctrl+Shift+A takes up or puts down the pen, Ctrl+Shift+H shows or hides
@@ -353,7 +360,7 @@ no markup button.
 
 - The window's menus show in the top bar while it has focus (served over
   `com.canonical.dbusmenu`, pointed at with `org_kde_kwin_appmenu`; see
-  `otto_kit::app_menu`): File (Save, Close Window), Edit (Undo, Redo, Copy, Select
+  `otto_kit::app_menu`): File (Save, Save As…, Close Window), Edit (Undo, Redo, Copy, Select
   All, Markup Tools, Delete Selection), Marks (Pen, Show Marks, Delete Last Mark), View (zoom, pages, Show
   Pages, Show Chat) and Help (Keyboard Shortcuts).
 - Each item shows its key, and is greyed out when it cannot run. Pen, Show

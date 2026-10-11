@@ -1823,6 +1823,10 @@ studio-sheet-cmd = Cmd works wherever Ctrl does
 studio-markup = Markup Tools
 # Writes a PDF's form and markup changes over the file.
 studio-save = Save
+# Saves the PDF under another name or in another folder, and carries on with that file.
+studio-save-as = Save As…
+# The save dialog's title.
+studio-save-as-title = Save a Copy
 # The window's title while a PDF has changes not yet saved. $name is the file's name.
 studio-title-edited = { $name } (edited)
 # Asked when a window with unsaved changes is closed. $name is the file's name.
