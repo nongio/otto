@@ -30,7 +30,7 @@ mod viewer;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
-use otto_files::imagesize::{self, Header};
+use otto_peek::imagesize::{self, Header};
 
 /// The largest window a picture is fitted into when it opens, in points.
 const FIT_W: f32 = 1100.0;

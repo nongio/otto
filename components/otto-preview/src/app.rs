@@ -440,7 +440,7 @@ impl Doc {
 /// The recogniser's command line, when recognition is on: the one configured
 /// in `files.toml`'s `[peek]` section, else the default.
 fn recogniser() -> Option<String> {
-    let config = otto_files::places_config::peek();
+    let config = otto_peek::config::load();
     if !config.recognise_text {
         return None;
     }

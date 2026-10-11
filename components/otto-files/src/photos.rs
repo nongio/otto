@@ -14,10 +14,10 @@ use std::time::SystemTime;
 
 use otto_kit::filetype::Kind;
 
-use crate::imagesize::{self, Header};
 use crate::model::Entry;
 use crate::recent;
 use crate::view::PhotosSection;
+use otto_peek::imagesize::{self, Header};
 use otto_search::dates::civil_from_days;
 
 /// Whether an entry is a picture: what can be turned, has a palette, and is
@@ -284,7 +284,7 @@ const CAPACITY: usize = 50_000;
 /// A picture's size as it is shown, width then height, with a JPEG's EXIF
 /// orientation applied so a portrait shot on a phone held upright is tall.
 ///
-/// Reads the header only, parsed by [`crate::imagesize`] rather than by a
+/// Reads the header only, parsed by [`otto_peek::imagesize`] rather than by a
 /// codec: these bytes are untrusted, and this runs in the file manager's own
 /// process rather than in Peek's sandbox. `None` for a format that reader
 /// does not know, which the layout shows square.

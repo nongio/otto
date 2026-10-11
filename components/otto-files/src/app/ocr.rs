@@ -17,9 +17,9 @@ use skia_safe::Rect;
 use super::*;
 
 /// The `[peek]` section, read once per process.
-fn config() -> &'static crate::places_config::PeekConfig {
-    static CONFIG: OnceLock<crate::places_config::PeekConfig> = OnceLock::new();
-    CONFIG.get_or_init(crate::places_config::peek)
+fn config() -> &'static otto_peek::config::PeekConfig {
+    static CONFIG: OnceLock<otto_peek::config::PeekConfig> = OnceLock::new();
+    CONFIG.get_or_init(otto_peek::config::load)
 }
 
 /// Whether pictures are recognised at all. On unless `files.toml` says

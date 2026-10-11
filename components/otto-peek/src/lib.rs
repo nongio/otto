@@ -48,7 +48,9 @@
 // call goes is the thing being documented.
 #![allow(clippy::needless_doctest_main)]
 
+pub mod config;
 pub mod decode;
+pub mod imagesize;
 pub mod ocr;
 pub mod opening;
 pub mod payload;
