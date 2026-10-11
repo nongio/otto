@@ -259,8 +259,6 @@ files = [
     { path = "components/otto-files/src/remembered.rs", count = 2 },
     { path = "components/otto-files/src/scripts.rs", count = 2 },
     { path = "components/otto-files/src/undo_history.rs", count = 1 },
-    { path = "components/otto-kit/src/sound.rs", count = 1 },
-    { path = "components/otto-kit/src/testing.rs", count = 1 },
     { path = "components/otto-launcher/src/apps.rs", count = 2 },
     { path = "components/otto-launcher/src/drafts.rs", count = 2 },
     { path = "components/otto-preview/src/marks.rs", count = 1 },

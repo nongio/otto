@@ -184,12 +184,9 @@ impl Dispatch<wl_callback::WlCallback, SyncDone> for TestClientState {
 impl TestClient {
     /// Connect to the compositor at the given socket name.
     pub fn connect(socket_name: &str) -> Result<Self, Box<dyn std::error::Error>> {
-        let socket_path = std::env::var("XDG_RUNTIME_DIR")
-            .map(|dir| format!("{}/{}", dir, socket_name))
-            .unwrap_or_else(|_| {
-                let uid = rustix::process::getuid().as_raw();
-                format!("/run/user/{}/{}", uid, socket_name)
-            });
+        let socket_path = crate::xdg::runtime_dir()
+            .ok_or("no runtime directory to find the compositor's socket in")?
+            .join(socket_name);
 
         Self::from_stream(UnixStream::connect(&socket_path)?)
     }

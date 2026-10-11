@@ -233,13 +233,11 @@ fn find_in_theme(event: &str, theme: &str) -> Option<PathBuf> {
 
 /// Where themes are installed, user directory first so it can override.
 fn base_dirs() -> Vec<PathBuf> {
-    let mut dirs = Vec::new();
-    if let Some(home) = std::env::var_os("HOME") {
-        dirs.push(PathBuf::from(home).join(".local/share/sounds"));
-    }
-    dirs.push(PathBuf::from("/usr/local/share/sounds"));
-    dirs.push(PathBuf::from("/usr/share/sounds"));
-    dirs
+    crate::xdg::data_home()
+        .into_iter()
+        .chain(crate::xdg::data_dirs())
+        .map(|dir| dir.join("sounds"))
+        .collect()
 }
 
 /// Themes worth trying when none is configured, best guess first.
