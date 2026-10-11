@@ -430,6 +430,18 @@ pub fn kind_of(mime: &str) -> Kind {
     }
 }
 
+/// Whether a file of this name is a picture with pixels to read. The one
+/// spelling of the question, so the palette, the recogniser and every
+/// window that offers to read a picture cannot disagree about what they are
+/// offering to read.
+///
+/// An SVG is drawn from text, not photographed: whatever words it has are in
+/// the file already, and rendering it only to recognise them back is work for
+/// an answer nobody needs.
+pub fn is_picture_name(name: &str) -> bool {
+    mime_for_name(name).is_some_and(|mime| mime != "image/svg+xml" && kind_of(mime) == Kind::Image)
+}
+
 fn document_or_archive(mime: &str, sub: &str) -> Kind {
     const ARCHIVES: &[&str] = &[
         "zip",

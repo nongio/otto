@@ -16,12 +16,12 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use otto_files::peek::{self, Session, VideoPointer};
-use otto_files::watch::{Change, DirWatch};
 use otto_kit::components::titlebar::WindowControl;
 use otto_kit::components::window::resize;
 use otto_kit::prelude::*;
 use otto_kit::preview::Preview;
 use otto_kit::skia::{Contains, Point};
+use otto_kit::watch::{Change, DirWatch};
 use otto_kit::CursorShape;
 use smithay_client_toolkit::seat::keyboard::{KeyEvent, Keysym};
 use smithay_client_toolkit::seat::pointer::{PointerEvent, PointerEventKind};
@@ -306,7 +306,7 @@ impl Doc {
             // the picture goes up now and the recogniser follows.
             let recogniser = recogniser();
             let picture = recogniser.is_some()
-                && otto_files::command::is_picture_name(&name)
+                && otto_kit::filetype::is_picture_name(&name)
                 && matches!(&preview, Preview::Pixels { pixels, .. } if pixels.words.is_empty());
             let mut needs_recognising = false;
             if picture {

@@ -304,11 +304,14 @@ impl Situation {
     /// the same names and must reach the same answer.
     fn targets_a_picture(&self) -> bool {
         if self.selection.is_empty() {
-            return self.cursor_name.as_deref().is_some_and(is_picture_name);
+            return self
+                .cursor_name
+                .as_deref()
+                .is_some_and(otto_kit::filetype::is_picture_name);
         }
         self.selection.iter().any(|path| {
             path.file_name()
-                .is_some_and(|name| is_picture_name(&name.to_string_lossy()))
+                .is_some_and(|name| otto_kit::filetype::is_picture_name(&name.to_string_lossy()))
         })
     }
 
@@ -648,20 +651,6 @@ pub fn sort_choices() -> Vec<Choice> {
         Choice::new("kind", otto_kit::t_owned!("files-column-kind")),
         Choice::new("modified", otto_kit::t_owned!("files-column-date-modified")),
     ]
-}
-
-/// Whether a file of this name is a picture with pixels to read. The one
-/// spelling of the question, so the palette and the recogniser cannot
-/// disagree about what they are offering to read.
-///
-/// An SVG is drawn from text, not photographed: whatever words it has are in
-/// the file already, and rendering it only to recognise them back is work for
-/// an answer nobody needs.
-pub fn is_picture_name(name: &str) -> bool {
-    otto_kit::filetype::mime_for_name(name).is_some_and(|mime| {
-        mime != "image/svg+xml"
-            && otto_kit::filetype::kind_of(mime) == otto_kit::filetype::Kind::Image
-    })
 }
 
 /// The window's own commands.

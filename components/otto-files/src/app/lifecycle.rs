@@ -1070,7 +1070,7 @@ impl FilesWindow {
                 // missing, since a folder that does not exist cannot be
                 // watched for the file appearing in it.
                 let _ = std::fs::create_dir_all(&dir);
-                self.desk_config_watch = Some(crate::watch::DirWatch::new(&dir));
+                self.desk_config_watch = Some(otto_kit::watch::DirWatch::new(&dir));
             }
         }
         let config_changed = self

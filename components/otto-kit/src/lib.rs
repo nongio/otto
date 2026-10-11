@@ -53,6 +53,7 @@ pub mod tile_decoration;
 pub mod trash;
 pub mod typography;
 pub mod utils;
+pub mod watch;
 pub mod xml;
 
 /// The UI-free base: XDG directories, `file://` URIs and name matching live

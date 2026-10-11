@@ -54,4 +54,3 @@ pub use otto_peek::thumbcache;
 pub mod thumbnails;
 pub mod undo_history;
 pub mod view;
-pub mod watch;

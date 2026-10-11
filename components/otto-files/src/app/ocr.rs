@@ -142,7 +142,7 @@ fn pictures_under(paths: &[PathBuf]) -> Vec<PathBuf> {
 
 pub(super) fn is_picture(path: &Path) -> bool {
     path.file_name()
-        .is_some_and(|name| crate::command::is_picture_name(&name.to_string_lossy()))
+        .is_some_and(|name| otto_kit::filetype::is_picture_name(&name.to_string_lossy()))
 }
 
 /// A picture to recognise, and how much of a hurry it is in.

@@ -199,7 +199,7 @@ impl Watcher {
             if timeout {
                 // A debounce came due while nothing else happened; the UI
                 // thread is idle and commits no frames, so it needs telling.
-                otto_kit::prelude::AppContext::request_wakeup();
+                crate::AppContext::request_wakeup();
             }
         }
     }
@@ -256,7 +256,7 @@ impl Watcher {
             }
         }
         if woke {
-            otto_kit::prelude::AppContext::request_wakeup();
+            crate::AppContext::request_wakeup();
         }
     }
 
