@@ -48,13 +48,17 @@
 // call goes is the thing being documented.
 #![allow(clippy::needless_doctest_main)]
 
+pub mod badge;
 pub mod config;
 pub mod decode;
+mod decode_cache;
 pub mod imagesize;
 pub mod ocr;
+pub mod ocrcache;
 pub mod opening;
 pub mod payload;
 pub mod sandbox;
+pub mod session;
 pub mod spawn;
 pub mod thumbcache;
 pub mod thumbnailer;

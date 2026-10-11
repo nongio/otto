@@ -31,15 +31,15 @@ pub const KEEP_FOR: Duration = Duration::from_secs(90 * 24 * 60 * 60);
 /// What was recognised in one picture.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Entry {
-    pub mtime: u64,
-    pub languages: String,
+    pub(crate) mtime: u64,
+    pub(crate) languages: String,
     /// The recogniser command line the words came out of. An entry made by a
     /// different engine still selects and searches, but the background pass
     /// reads the picture again, so changing the setting improves what is
     /// remembered without throwing any of it away.
     pub recogniser: String,
     pub width: u32,
-    pub height: u32,
+    pub(crate) height: u32,
     pub words: Vec<Word>,
 }
 
@@ -141,7 +141,7 @@ pub fn is_current(
 
 /// Remember what was recognised. Written whole to a temporary file and
 /// renamed into place, so a reader never sees half an entry.
-pub fn store(
+pub(crate) fn store(
     path: &Path,
     page: u32,
     modified: SystemTime,
@@ -213,7 +213,7 @@ pub fn matches(query: &str) -> Vec<PathBuf> {
         if !contains_words(&entry.words, &needle) {
             continue;
         }
-        let Some(path) = otto_peek::uri::uri_to_path(&uri) else {
+        let Some(path) = crate::uri::uri_to_path(&uri) else {
             continue;
         };
         let Ok(meta) = fs::metadata(&path) else {
@@ -277,7 +277,7 @@ pub fn prune(older_than: Duration) {
 
 /// Words recognised on a `from`-sized decode, re-expressed for a `to`-sized
 /// one of the same picture.
-pub fn scale_words(words: &[Word], from: (u32, u32), to: (u32, u32)) -> Vec<Word> {
+pub(crate) fn scale_words(words: &[Word], from: (u32, u32), to: (u32, u32)) -> Vec<Word> {
     if from == to || from.0 == 0 || from.1 == 0 {
         return words.to_vec();
     }

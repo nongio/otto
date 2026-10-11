@@ -358,9 +358,9 @@ fn ask_pictures(plan: &Plan, results: &mut otto_search::Results) {
     let Some((first, rest)) = needles.split_first() else {
         return;
     };
-    let mut paths = crate::ocrcache::matches(first);
+    let mut paths = otto_peek::ocrcache::matches(first);
     for needle in rest {
-        let also = crate::ocrcache::matches(needle);
+        let also = otto_peek::ocrcache::matches(needle);
         paths.retain(|path| also.contains(path));
     }
     for path in paths {

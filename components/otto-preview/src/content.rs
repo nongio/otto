@@ -76,11 +76,9 @@ pub fn draw(canvas: &Canvas, viewer: &Viewer, theme: &Theme) {
 
     // The recogniser working, or finished with text to select.
     match session.recognising_phase() {
-        Some(phase) => {
-            otto_files::view::draw_peek_working_badge(canvas, theme, content, 1.0, phase)
-        }
+        Some(phase) => otto_peek::badge::draw_working(canvas, theme, content, 1.0, phase),
         None if !session.words().is_empty() => {
-            otto_files::view::draw_peek_text_badge(canvas, theme, content, 1.0);
+            otto_peek::badge::draw_text(canvas, theme, content, 1.0);
         }
         None => {}
     }

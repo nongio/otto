@@ -1,7 +1,8 @@
 use crate::{
-    command, model, ocrcache, palette, pane_surfaces, peek, perf, picker, remembered, rename,
-    scene, scripts, thumbcache, thumbnails, view,
+    command, model, palette, pane_surfaces, perf, picker, remembered, rename, scene, scripts,
+    thumbcache, thumbnails, view,
 };
+use otto_peek::{ocrcache, session as peek};
 
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};

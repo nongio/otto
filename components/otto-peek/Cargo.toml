@@ -20,6 +20,9 @@ path = "src/main.rs"
 [dependencies]
 otto-kit = { path = "../otto-kit" }
 otto-md-kit = { path = "../otto-md-kit" }
+# Playback inside the embedded session. Library only: the GStreamer worker is
+# a separate binary built from that crate, found at run time.
+otto-media-kit = { path = "../otto-media-kit", default-features = false }
 tracing.workspace = true
 libc.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "sync", "macros"] }

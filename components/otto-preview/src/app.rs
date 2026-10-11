@@ -15,7 +15,6 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use otto_files::peek::{self, Session, VideoPointer};
 use otto_kit::components::titlebar::WindowControl;
 use otto_kit::components::window::resize;
 use otto_kit::prelude::*;
@@ -23,6 +22,7 @@ use otto_kit::preview::Preview;
 use otto_kit::skia::{Contains, Point};
 use otto_kit::watch::{Change, DirWatch};
 use otto_kit::CursorShape;
+use otto_peek::session::{self as peek, Session, VideoPointer};
 use smithay_client_toolkit::seat::keyboard::{KeyEvent, Keysym};
 use smithay_client_toolkit::seat::pointer::{PointerEvent, PointerEventKind};
 use smithay_client_toolkit::shell::xdg::window::WindowConfigure;

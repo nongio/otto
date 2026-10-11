@@ -1,30 +1,36 @@
-//! Peek, embedded — the Space-bar preview.
+//! Peek, embedded — the Space-bar preview, as a session a host window drives.
 //!
 //! Peek used to be a separate application reached over `org.otto.Peek1`.
-//! It is now a library this window embeds, because the preview wants to be a
-//! subsurface of the file view and a subsurface's parent must be a `wl_surface`
-//! owned by the same client: "parented to the browser" and "separate process"
-//! are mutually exclusive. Being parented also dissolves the anchor problem —
-//! the row's rect is already in this surface's coordinates — and hands
-//! stacking, focus and dismissal to this window instead of leaving them to be
-//! managed by hand.
+//! It is now a library the host window embeds, because the preview wants to
+//! be a subsurface of the file view and a subsurface's parent must be a
+//! `wl_surface` owned by the same client: "parented to the browser" and
+//! "separate process" are mutually exclusive. Being parented also dissolves
+//! the anchor problem — the row's rect is already in the host surface's
+//! coordinates — and hands stacking, focus and dismissal to the host window
+//! instead of leaving them to be managed by hand.
+//!
+//! Two shells drive the same [`Session`]: the file browser (otto-files), which
+//! opens it over a row, and otto-preview, which gives one file a window of its
+//! own. The session owns what the preview *does* — zoom, pan, pages, text
+//! selection, links, playback; each host owns its window, chrome and input
+//! routing, and hands the session rects in its own coordinates.
 //!
 //! What is still a separate process is the *decoder*. Untrusted bytes are
-//! parsed by a sandboxed worker that is this binary re-executed, which is why
-//! `main` must call [`otto_peek::run_worker_if_requested`] before anything
-//! else. This module never interprets file bytes; it receives a validated
-//! [`Preview`] and draws it.
+//! parsed by a sandboxed worker that is the host's binary re-executed, which
+//! is why the host's `main` must call [`crate::run_worker_if_requested`]
+//! before anything else. This module never interprets file bytes; it receives
+//! a validated [`Preview`] and draws it.
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
+use crate::decode::Request;
+use crate::opening;
 use otto_kit::components::scroll::{Axis, ScrollState, ScrollView};
 use otto_kit::preview::{self, Page, Pixels, Preview, Word, WordSelection, Zoom};
 use otto_media_kit::transport::TransportHit;
 use otto_media_kit::{Frame, Options, Playback, Player, State};
-use otto_peek::decode::Request;
-use otto_peek::opening;
 use skia_safe::{Contains, Rect};
 
 /// The title strip along the top of the panel: the file's name, and the
@@ -35,8 +41,8 @@ pub const TITLEBAR_H: f32 = 30.0;
 /// The panel's share of the window, and the least it may shrink to. A preview
 /// that filled the window would stop reading as something laid over the file
 /// list; one that scaled without a floor would be useless in a small window.
-pub const PANEL_FRACTION: f32 = 0.72;
-pub const PANEL_MIN: (f32, f32) = (420.0, 320.0);
+pub(crate) const PANEL_FRACTION: f32 = 0.72;
+pub(crate) const PANEL_MIN: (f32, f32) = (420.0, 320.0);
 
 /// The pan of a zoomed picture, run as a pair of scroll views.
 ///
@@ -61,7 +67,7 @@ pub const PANEL_MIN: (f32, f32) = (420.0, 320.0);
 /// against a `Zoom`. [`Session::pull_pan`] copies one into the other after
 /// every step, and [`Session::push_pan`] goes the other way for the one thing
 /// that moves the picture without scrolling it — a pinch.
-pub struct Pan {
+pub(crate) struct Pan {
     x: ScrollView,
     y: ScrollView,
 }
@@ -118,7 +124,7 @@ impl Video {
     /// Start playing `path`, if the decoded `preview` says it is a video
     /// and a player can be started.
     ///
-    /// Only for a preview [`otto_peek::payload::is_video`] vouches for:
+    /// Only for a preview [`crate::payload::is_video`] vouches for:
     /// the sandboxed decoder read the bytes and said video, which is the one
     /// opinion that counts before a demuxer is handed the file. A worker
     /// that cannot be found or started leaves the card as it was, and says
@@ -130,7 +136,7 @@ impl Video {
         options: Options,
         wake: impl Fn() + Send + Sync + 'static,
     ) -> Option<Video> {
-        if !otto_peek::payload::is_video(preview) {
+        if !crate::payload::is_video(preview) {
             return None;
         }
         match Player::open(path, options, wake) {
@@ -297,7 +303,7 @@ pub struct Session {
     /// with `zoom` rather than replacing it: a scroll view holds a position
     /// and the feel of moving it, while the drawing wants the geometry a
     /// `Zoom` describes.
-    pub pan: Pan,
+    pub(crate) pan: Pan,
     /// The row this grew out of, in surface-local coordinates. Empty means
     /// "open in place" — a row scrolled out of view, or a panned-away Miller
     /// column.
@@ -697,13 +703,13 @@ impl Session {
     }
 
     /// How far into the entrance the panel is, 0 → 1.
-    pub fn entrance_t(&self) -> f32 {
+    pub(crate) fn entrance_t(&self) -> f32 {
         let elapsed = self.opened_at.elapsed().as_secs_f32();
         (elapsed / opening::geometry_in().as_secs_f32()).clamp(0.0, 1.0)
     }
 
     /// How far into the exit the panel is, 0 → 1. Always 0 while open.
-    pub fn exit_t(&self) -> f32 {
+    pub(crate) fn exit_t(&self) -> f32 {
         let Some(started) = self.closing else {
             return 0.0;
         };
@@ -786,7 +792,7 @@ impl Session {
 
     /// Which pages are on screen, or near enough to be worth having ready.
     /// Empty for everything that is not a document.
-    pub fn pages_in_view(&self, content: Rect) -> Vec<usize> {
+    pub(crate) fn pages_in_view(&self, content: Rect) -> Vec<usize> {
         let layout = preview::layout(content, &self.preview, self.first_row, self.zoom);
         layout
             .page_rects
@@ -1225,7 +1231,7 @@ const MAX_PAGE_WIDTH: u32 = 2_048;
 fn waiting_preview(name: &str, is_dir: bool) -> Preview {
     Preview::Unavailable {
         reason: otto_kit::t_owned!("files-status-opening-preview"),
-        icon: otto_peek::payload::icon_names_for(name, is_dir),
+        icon: crate::payload::icon_names_for(name, is_dir),
     }
 }
 
@@ -1235,7 +1241,7 @@ fn waiting_preview(name: &str, is_dir: bool) -> Preview {
 /// `None` for a link within the document (`#heading`), which has nowhere
 /// outside the panel to go, and for a relative path with no folder to
 /// resolve it against.
-pub fn link_target(href: &str, dir: Option<&Path>) -> Option<OsString> {
+pub(crate) fn link_target(href: &str, dir: Option<&Path>) -> Option<OsString> {
     let href = href.trim();
     if href.is_empty() || href.starts_with('#') {
         return None;
@@ -1254,9 +1260,9 @@ pub fn link_target(href: &str, dir: Option<&Path>) -> Option<OsString> {
     let uri = if path.starts_with('/') {
         format!("file://{path}")
     } else {
-        format!("{}/{path}", otto_peek::uri::path_to_uri(dir?))
+        format!("{}/{path}", crate::uri::path_to_uri(dir?))
     };
-    otto_peek::uri::uri_to_path(&uri).map(PathBuf::into_os_string)
+    crate::uri::uri_to_path(&uri).map(PathBuf::into_os_string)
 }
 
 /// Where the panel rests, centred in a window of `width` × `height`.
@@ -1264,9 +1270,29 @@ pub fn panel_rect(width: f32, height: f32) -> Rect {
     resting_in(Rect::from_wh(width, height), false)
 }
 
+/// What is left of the panel for the preview itself.
+///
+/// Inset on every side, not just below the title strip: the card reads as a
+/// mount around the content rather than a window whose content is jammed
+/// against the glass, and an image that reaches the edge no longer collides
+/// with the panel's own rounded corners.
+///
+/// Narrow, because it is not the only inset the content gets: the preview
+/// pads itself as well ([`otto_kit::preview::PADDING`], and less than that
+/// for a picture). This one only has to clear the corners and the border.
+pub fn content_rect(panel: Rect) -> Rect {
+    const INSET: f32 = 4.0;
+    Rect::from_ltrb(
+        panel.left + INSET,
+        panel.top + TITLEBAR_H + INSET,
+        panel.right - INSET,
+        panel.bottom - INSET,
+    )
+}
+
 /// What an expanded panel leaves around itself. Enough to still read as a
 /// card laid over the desktop rather than a window that replaced it.
-pub const EXPANDED_MARGIN: f32 = 12.0;
+pub(crate) const EXPANDED_MARGIN: f32 = 12.0;
 
 /// Where the panel rests inside `space` — a window or a display, in points.
 ///
@@ -1313,7 +1339,7 @@ pub fn entrance_at(anchor: Rect, resting: Rect, t: f32) -> Rect {
 }
 
 /// The reverse: the panel on its way back to the item it grew out of.
-pub fn exit_at(anchor: Rect, resting: Rect, t: f32) -> Rect {
+pub(crate) fn exit_at(anchor: Rect, resting: Rect, t: f32) -> Rect {
     let rect = opening::sample_out(to_opening(anchor), to_opening(resting), t);
     Rect::from_xywh(rect.x, rect.y, rect.width, rect.height)
 }
@@ -1356,7 +1382,7 @@ pub fn decode_page(path: &Path, page: u32, width: u32) -> Preview {
             .unwrap_or_default(),
         ..Request::default()
     };
-    crate::peek_cache::decode(path, &request)
+    crate::decode_cache::decode(path, &request)
 }
 
 /// Decode a file for a host that **scrolls documents**: a paginated file comes
@@ -1391,7 +1417,7 @@ fn decode_with(
     text: bool,
 ) -> Preview {
     let request = decode_request(path, panel, scale, page, document, text);
-    crate::peek_cache::decode(path, &request)
+    crate::decode_cache::decode(path, &request)
 }
 
 /// What the worker is asked for.
@@ -1446,7 +1472,7 @@ fn page_box(panel: Rect, scale: f32) -> (u32, u32) {
 /// The size a picture is decoded at for `panel`, so a second decode of the
 /// same file lands on the same pixels as the first — and so the words a
 /// recogniser reads off one decode box a selection against the other.
-pub fn decode_size(panel: Rect, scale: f32) -> (u32, u32) {
+pub(crate) fn decode_size(panel: Rect, scale: f32) -> (u32, u32) {
     (
         ((panel.width() * scale * OVERSAMPLE) as u32).clamp(64, 4096),
         ((panel.height() * scale * OVERSAMPLE) as u32).clamp(64, 4096),
@@ -1481,7 +1507,7 @@ impl Priority {
 }
 
 /// Recognise the text in a picture with `recogniser` — a command line, see
-/// `otto_peek::ocr` — at the size [`decode`] shows it, and remember
+/// `crate::ocr` — at the size [`decode`] shows it, and remember
 /// it. Returns the words in the coordinates of that decode, or
 /// `None` when the file is not a picture or nothing could be recognised
 /// (in which case nothing is remembered either, so a transient failure is
@@ -1507,20 +1533,20 @@ pub fn recognise(
         // selection is made against the picture on screen.
         oversample: OVERSAMPLE,
         ocr: true,
-        languages: otto_peek::ocr::languages(),
+        languages: crate::ocr::languages(),
         recogniser: recogniser.to_string(),
         name: path
             .file_name()
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_default(),
-        budget: otto_peek::sandbox::Budget {
+        budget: crate::sandbox::Budget {
             nice: priority.nice(),
             ..Default::default()
         },
         ..Request::default()
     };
     let modified = std::fs::metadata(path).ok()?.modified().ok()?;
-    match otto_peek::decode_path(path, &request) {
+    match crate::decode_path(path, &request) {
         Preview::Pixels { pixels, .. } => {
             if let Err(err) = crate::ocrcache::store(
                 path,
@@ -1829,7 +1855,7 @@ mod tests {
 
     /// The content box of a panel resting in a window of a comfortable size.
     fn content() -> Rect {
-        crate::view::peek_content_rect(panel_rect(1100.0, 700.0))
+        content_rect(panel_rect(1100.0, 700.0))
     }
 
     /// Arrow-keying on must not leave the last file's picture on screen under

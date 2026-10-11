@@ -6,7 +6,7 @@
 //! to convert — a video's poster frame, a phone's HEIC — a slow one: a few
 //! hundred milliseconds the panel would otherwise spend showing the icon.
 //!
-//! Kept in memory, for as long as Files runs, and keyed on everything that
+//! Kept in memory, for as long as the host runs, and keyed on everything that
 //! decides what the worker would make: the file, its modification time and
 //! length, and the request itself. A file rewritten under us, or a panel of a
 //! different size, is decoded afresh rather than served stale or blurred.
@@ -16,17 +16,17 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::SystemTime;
 
+use crate::decode::Request;
 use otto_kit::preview::{Pixels, Preview};
-use otto_peek::decode::Request;
 
 /// How many bytes of decoded previews to keep. A panel-sized picture is a
 /// handful of megabytes, so this is a few dozen of them.
-pub const BUDGET_BYTES: usize = 192 << 20;
+pub(crate) const BUDGET_BYTES: usize = 192 << 20;
 
 /// The largest preview worth keeping. An animation can come back as a strip
 /// of frames a large share of the budget on its own; keeping it would push
 /// out everything else to save one decode.
-pub const MAX_ENTRY_BYTES: usize = 64 << 20;
+pub(crate) const MAX_ENTRY_BYTES: usize = 64 << 20;
 
 /// What decides the worker's answer.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -47,7 +47,7 @@ struct Entry {
 
 /// Most recently used last.
 #[derive(Default)]
-pub struct Cache {
+pub(crate) struct Cache {
     entries: VecDeque<Entry>,
     bytes: usize,
 }
@@ -59,8 +59,8 @@ static CACHE: Mutex<Cache> = Mutex::new(Cache {
 
 /// `path` decoded for `request`: from the cache when it is there, from the
 /// worker otherwise.
-pub fn decode(path: &Path, request: &Request) -> Preview {
-    let decode = || otto_peek::decode_path(path, request);
+pub(crate) fn decode(path: &Path, request: &Request) -> Preview {
+    let decode = || crate::decode_path(path, request);
     let Some(key) = key_for(path, request) else {
         // Gone, or unreadable: the worker says so better than a cache could.
         return decode();

@@ -115,7 +115,7 @@ impl Browser {
         let panel = self
             .peek_panel
             .unwrap_or_else(|| self.peek_fallback_panel());
-        let content = view::peek_content_rect(panel);
+        let content = peek::content_rect(panel);
         let Some(session) = self.peek.as_mut() else {
             return false;
         };
@@ -147,7 +147,7 @@ impl Browser {
         let panel = self
             .peek_panel
             .unwrap_or_else(|| self.peek_fallback_panel());
-        let content = view::peek_content_rect(panel);
+        let content = peek::content_rect(panel);
         let scale = AppContext::scale_factor().max(1) as f32;
         let session = self.peek.as_ref()?;
         if session.pages().is_empty() {
@@ -185,7 +185,7 @@ impl Browser {
         let panel = self
             .peek_panel
             .unwrap_or_else(|| self.peek_fallback_panel());
-        let content = view::peek_content_rect(panel);
+        let content = peek::content_rect(panel);
         let Some((session, pixels)) = self.peek.as_mut().zip(pixels) else {
             return;
         };
@@ -326,7 +326,7 @@ impl Browser {
     /// Whether the pointer at `point` is over a recognised word, so the
     /// cursor can say the picture has text to select.
     pub(super) fn peek_over_word(&self, point: skia_safe::Point, panel: Rect) -> bool {
-        let content = view::peek_content_rect(panel);
+        let content = peek::content_rect(panel);
         self.peek
             .as_ref()
             .is_some_and(|session| session.word_at(point.x, point.y, content).is_some())
@@ -334,7 +334,7 @@ impl Browser {
 
     /// Whether the pointer at `point` is over a link in a Markdown preview.
     fn peek_over_link(&self, point: skia_safe::Point, panel: Rect) -> bool {
-        let content = view::peek_content_rect(panel);
+        let content = peek::content_rect(panel);
         self.peek
             .as_ref()
             .is_some_and(|session| session.link_at(point.x, point.y, content).is_some())
@@ -547,11 +547,11 @@ impl Browser {
                 let panel = self
                     .peek_panel
                     .unwrap_or_else(|| self.peek_fallback_panel());
-                let content = view::peek_content_rect(panel);
+                let content = peek::content_rect(panel);
                 ((content.center_x(), content.center_y()), panel)
             }
         };
-        let content = view::peek_content_rect(panel);
+        let content = peek::content_rect(panel);
         let Some(session) = self.peek.as_mut() else {
             return false;
         };
@@ -568,7 +568,7 @@ impl Browser {
     /// out the same whichever of the two the compositor happened to deliver
     /// the event to.
     pub(super) fn peek_wheel(&mut self, dx: f32, dy: f32, panel: Rect, stop: bool, discrete: bool) {
-        let content = view::peek_content_rect(panel);
+        let content = peek::content_rect(panel);
         let pannable = self
             .peek
             .as_ref()
@@ -607,7 +607,7 @@ impl Browser {
         point: skia_safe::Point,
         panel: Rect,
     ) -> bool {
-        let content = view::peek_content_rect(panel);
+        let content = peek::content_rect(panel);
         let Some(session) = self.peek.as_mut() else {
             return false;
         };
@@ -668,7 +668,7 @@ impl Browser {
         let panel = self
             .peek_panel
             .unwrap_or_else(|| self.peek_fallback_panel());
-        let content = view::peek_content_rect(panel);
+        let content = peek::content_rect(panel);
         let Some(session) = self.peek.as_mut() else {
             return false;
         };

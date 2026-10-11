@@ -13,7 +13,6 @@ use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::time::{Instant, SystemTime};
 
-use otto_files::peek::{PageRequest, Session, VideoPointer};
 use otto_kit::components::scroll::ScrollView;
 use otto_kit::components::titlebar::{DecorationVariant, WindowControlsState};
 use otto_kit::prelude::*;
@@ -21,6 +20,7 @@ use otto_kit::preview::{Preview, Zoom, ROW_HEIGHT};
 use otto_kit::skia::{Contains, Image, Point};
 use otto_kit::theme::ColorScheme;
 use otto_kit::CursorShape;
+use otto_peek::session::{PageRequest, Session, VideoPointer};
 
 use crate::chrome::{self, Tool};
 use crate::marks::{self, Frame, Marks};
