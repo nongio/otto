@@ -14,6 +14,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use otto_kit::components::label::Label;
+use otto_kit::components::push_button::{self, PushButton, Role};
 use otto_kit::prelude::*;
 use otto_kit::protocols::otto_surface_style_v1::{BlendMode, ClipMode};
 use otto_kit::skia::{Contains, Point, RRect};
@@ -32,8 +33,6 @@ const CARD_W: f32 = 380.0;
 const MARGIN: f32 = 20.0;
 const TITLE_H: f32 = 26.0;
 const BODY_H: f32 = 36.0;
-const BUTTON_W: f32 = 96.0;
-const BUTTON_H: f32 = 28.0;
 const CORNER: f32 = 12.0;
 /// The evdev code of the primary button.
 const BTN_LEFT: u32 = 0x110;
@@ -50,7 +49,7 @@ pub enum Answer {
 fn card_size(window_w: f32) -> (f32, f32) {
     (
         CARD_W.min((window_w - 2.0 * MARGIN).max(340.0)),
-        TITLE_H + BODY_H + BUTTON_H + 3.0 * MARGIN,
+        TITLE_H + BODY_H + push_button::HEIGHT + 3.0 * MARGIN,
     )
 }
 
@@ -62,14 +61,31 @@ struct Buttons {
 }
 
 fn buttons((width, height): (f32, f32)) -> Buttons {
-    let y = height - MARGIN - BUTTON_H;
-    let save = Rect::from_xywh(width - MARGIN - BUTTON_W, y, BUTTON_W, BUTTON_H);
-    let cancel = Rect::from_xywh(save.left - 8.0 - BUTTON_W, y, BUTTON_W, BUTTON_H);
-    let discard = Rect::from_xywh(MARGIN, y, BUTTON_W, BUTTON_H);
+    let h = push_button::HEIGHT;
+    let y = height - MARGIN - h;
+    let wide = |answer: Answer| push_button::width(&label(answer));
+    let save = Rect::from_xywh(
+        width - MARGIN - wide(Answer::Save),
+        y,
+        wide(Answer::Save),
+        h,
+    );
+    let cancel_w = wide(Answer::Cancel);
+    let cancel = Rect::from_xywh(save.left - 8.0 - cancel_w, y, cancel_w, h);
+    let discard = Rect::from_xywh(MARGIN, y, wide(Answer::Discard), h);
     Buttons {
         save,
         cancel,
         discard,
+    }
+}
+
+/// A button's label.
+fn label(answer: Answer) -> String {
+    match answer {
+        Answer::Save => otto_kit::t_owned!("studio-save"),
+        Answer::Discard => otto_kit::t_owned!("studio-close-discard"),
+        Answer::Cancel => otto_kit::t_owned!("studio-signature-cancel"),
     }
 }
 
@@ -87,9 +103,9 @@ fn press(size: (f32, f32), at: Point) -> Option<Answer> {
     }
 }
 
-/// Paint the card, `size` big, asking about the file `name`; `hovered` is
-/// the button the pointer is over.
-fn draw(canvas: &Canvas, size: (f32, f32), name: &str, hovered: Option<Answer>, theme: &Theme) {
+/// Paint the card, `size` big, asking about the file `name`; `pressed` is
+/// the button held down with the pointer over it.
+fn draw(canvas: &Canvas, size: (f32, f32), name: &str, pressed: Option<Answer>, theme: &Theme) {
     let card = Rect::from_wh(size.0, size.1);
     let mut paint = Paint::default();
     paint.set_anti_alias(true);
@@ -120,47 +136,24 @@ fn draw(canvas: &Canvas, size: (f32, f32), name: &str, hovered: Option<Answer>, 
         .render(canvas);
 
     let buttons = buttons(size);
-    let button = |rect: Rect, label: String, answer: Answer| {
-        let primary = answer == Answer::Save;
-        let over = hovered == Some(answer);
-        let mut paint = Paint::default();
-        paint.set_anti_alias(true);
-        let ground = if primary {
-            theme.accent
+    for (answer, rect) in [
+        (Answer::Discard, buttons.discard),
+        (Answer::Cancel, buttons.cancel),
+        (Answer::Save, buttons.save),
+    ] {
+        let role = if answer == Answer::Save {
+            Role::Default
         } else {
-            theme.fill_tertiary
+            Role::Normal
         };
-        paint.set_color(if over {
-            ground.with_a(ground.a().saturating_add(40).max(ground.a()))
-        } else {
-            ground
-        });
-        canvas.draw_rrect(RRect::new_rect_xy(rect, 7.0, 7.0), &paint);
-        Label::new(label)
-            .with_style(styles::BODY)
-            .with_color(if primary {
-                Color::WHITE
-            } else {
-                theme.text_primary
-            })
-            .centered_at(rect.center_x(), rect.center_y())
-            .render(canvas);
-    };
-    button(
-        buttons.discard,
-        otto_kit::t_owned!("studio-close-discard"),
-        Answer::Discard,
-    );
-    button(
-        buttons.cancel,
-        otto_kit::t_owned!("studio-signature-cancel"),
-        Answer::Cancel,
-    );
-    button(
-        buttons.save,
-        otto_kit::t_owned!("studio-save"),
-        Answer::Save,
-    );
+        push_button::draw(
+            canvas,
+            rect,
+            &label(answer),
+            PushButton::new(role).pressed(pressed == Some(answer)),
+            theme,
+        );
+    }
 }
 
 struct Inner {
@@ -168,7 +161,8 @@ struct Inner {
     surface_id: Option<ObjectId>,
     name: String,
     theme: Theme,
-    hovered: Option<Answer>,
+    /// The button a press began on, and whether the pointer is still on it.
+    held: Option<(Answer, bool)>,
     on_answer: Option<Rc<dyn Fn(Answer)>>,
 }
 
@@ -186,7 +180,7 @@ impl ConfirmPopup {
             surface_id: None,
             name: String::new(),
             theme: Theme::light(),
-            hovered: None,
+            held: None,
             on_answer: None,
         }));
         let pointed = Rc::clone(&inner);
@@ -205,26 +199,40 @@ impl ConfirmPopup {
                     let (w, h) = popup.dimensions();
                     (w as f32, h as f32)
                 };
+                // A button acts when released over the one the press began
+                // on; sliding off before letting go takes it back.
                 match event.kind {
-                    PointerEventKind::Motion { .. } | PointerEventKind::Enter { .. } => {
-                        let hovered = press(size, at);
+                    PointerEventKind::Motion { .. } => {
                         let changed = {
                             let mut state = pointed.borrow_mut();
-                            std::mem::replace(&mut state.hovered, hovered) != hovered
+                            match &mut state.held {
+                                Some((answer, over)) => {
+                                    let now = press(size, at) == Some(*answer);
+                                    std::mem::replace(over, now) != now
+                                }
+                                None => false,
+                            }
                         };
                         if changed {
                             Self::render(&pointed);
                         }
                     }
-                    PointerEventKind::Leave { .. } => {
-                        pointed.borrow_mut().hovered = None;
-                        Self::render(&pointed);
-                    }
                     PointerEventKind::Press {
                         button: BTN_LEFT, ..
                     } => {
-                        if let Some(answer) = press(size, at) {
-                            Self::answer(&pointed, answer);
+                        let held = press(size, at).map(|answer| (answer, true));
+                        pointed.borrow_mut().held = held;
+                        Self::render(&pointed);
+                    }
+                    PointerEventKind::Release {
+                        button: BTN_LEFT, ..
+                    } => {
+                        let held = pointed.borrow_mut().held.take();
+                        match held {
+                            Some((answer, true)) if press(size, at) == Some(answer) => {
+                                Self::answer(&pointed, answer);
+                            }
+                            _ => Self::render(&pointed),
                         }
                     }
                     _ => {}
@@ -251,7 +259,7 @@ impl ConfirmPopup {
         }
         state.surface_id = None;
         state.on_answer = None;
-        state.hovered = None;
+        state.held = None;
     }
 
     /// Ask about the file `name` over the middle of a window `window_size`
@@ -302,7 +310,7 @@ impl ConfirmPopup {
             let mut state = self.inner.borrow_mut();
             state.name = name.to_owned();
             state.theme = theme;
-            state.hovered = None;
+            state.held = None;
             state.on_answer = Some(Rc::new(on_answer));
             state.surface_id = Some(surface_id.clone());
             state.popup = Some(popup);
@@ -334,7 +342,7 @@ impl ConfirmPopup {
                 popup.destroy();
             }
             state.surface_id = None;
-            state.hovered = None;
+            state.held = None;
         }
         if let Some(on_answer) = on_answer {
             on_answer(answer);
@@ -352,7 +360,7 @@ impl ConfirmPopup {
                 canvas,
                 (w as f32, h as f32),
                 &state.name,
-                state.hovered,
+                state.held.and_then(|(answer, over)| over.then_some(answer)),
                 &state.theme,
             );
         });

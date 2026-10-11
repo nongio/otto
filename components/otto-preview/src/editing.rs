@@ -2150,7 +2150,7 @@ mod tests {
             let y = start.y + (step as f32 * 0.6).sin() * 22.0;
             pad.motion(size, Point::new(x, y));
         }
-        pad.release();
+        pad.release(size, start);
         pad.draw(canvas, size, &Theme::light());
         let png = surface
             .image_snapshot()

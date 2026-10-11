@@ -698,23 +698,8 @@ fn handle_pointer(
                 }
                 let size = v.size;
                 if let Some(pad) = &mut v.signature_pad {
-                    match pad.press(size, at) {
-                        crate::signature::PadAction::None => {}
-                        crate::signature::PadAction::Cancel => {
-                            v.signature_pad = None;
-                            if crate::signature::load().is_none() {
-                                v.markup = v.markup.map(|_| crate::editing::MarkupTool::Select);
-                            }
-                        }
-                        crate::signature::PadAction::Done => {
-                            if let Some(signature) = pad.signature() {
-                                if let Err(err) = crate::signature::save(&signature) {
-                                    tracing::warn!(%err, "could not keep the signature");
-                                }
-                            }
-                            v.signature_pad = None;
-                        }
-                    }
+                    let action = pad.press(size, at);
+                    pad_action(&mut v, action);
                     redraw = true;
                     continue;
                 }
@@ -816,8 +801,11 @@ fn handle_pointer(
                     v.dirty |= chat.borrow_mut().release(panel, at);
                 }
                 v.sidebar_release();
+                let size = v.size;
                 if let Some(pad) = &mut v.signature_pad {
-                    pad.release();
+                    let action = pad.release(size, at);
+                    pad_action(&mut v, action);
+                    redraw = true;
                     continue;
                 }
                 if v.mark_busy() {
@@ -879,6 +867,32 @@ fn handle_pointer(
         paint_chat(&mut viewer.lock().unwrap(), &mut chat.borrow_mut());
         window.request_frame();
     }
+}
+
+/// Do what the signature pad asked: keep the signature, or put the pad away.
+fn pad_action(viewer: &mut Viewer, action: crate::signature::PadAction) {
+    match action {
+        crate::signature::PadAction::None => {}
+        crate::signature::PadAction::Cancel => {
+            viewer.signature_pad = None;
+            if crate::signature::load().is_none() {
+                viewer.markup = viewer.markup.map(|_| crate::editing::MarkupTool::Select);
+            }
+        }
+        crate::signature::PadAction::Done => {
+            let signature = viewer
+                .signature_pad
+                .as_ref()
+                .and_then(|pad| pad.signature());
+            if let Some(signature) = signature {
+                if let Err(err) = crate::signature::save(&signature) {
+                    tracing::warn!(%err, "could not keep the signature");
+                }
+            }
+            viewer.signature_pad = None;
+        }
+    }
+    viewer.dirty = true;
 }
 
 /// Attach the marks not yet sent to the message about to go, as files the

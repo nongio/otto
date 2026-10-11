@@ -11,6 +11,7 @@
 use std::path::PathBuf;
 
 use otto_kit::components::label::Label;
+use otto_kit::components::push_button::{self, PushButton, Role};
 use otto_kit::prelude::*;
 use otto_kit::skia::{Contains, PaintCap, PaintJoin, PaintStyle, PathBuilder, Point, RRect};
 use otto_kit::typography::styles;
@@ -22,8 +23,6 @@ const PAD_H: f32 = 170.0;
 /// Room around the card's edge.
 const MARGIN: f32 = 20.0;
 const TITLE_H: f32 = 30.0;
-const BUTTON_W: f32 = 84.0;
-const BUTTON_H: f32 = 28.0;
 /// How far a stroke's points must be apart to be kept, in points.
 const STEP: f32 = 1.5;
 
@@ -112,11 +111,32 @@ pub enum PadAction {
     Done,
 }
 
+/// The pad's buttons.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Control {
+    Clear,
+    Cancel,
+    Done,
+}
+
+impl Control {
+    fn label(self) -> String {
+        match self {
+            Self::Clear => otto_kit::t_owned!("studio-signature-clear"),
+            Self::Cancel => otto_kit::t_owned!("studio-signature-cancel"),
+            Self::Done => otto_kit::t_owned!("studio-signature-done"),
+        }
+    }
+}
+
 /// The pad a signature is drawn on: a card over the window.
 #[derive(Debug, Clone, Default)]
 pub struct Pad {
     strokes: Vec<Vec<(f32, f32)>>,
     drawing: bool,
+    /// The button a press began on, and whether the pointer is still on it:
+    /// a button acts on release, over the one it was pressed on.
+    held: Option<(Control, bool)>,
 }
 
 /// Where the pad's parts are for a window of `size`.
@@ -131,7 +151,7 @@ struct PadLayout {
 fn layout((width, height): (f32, f32)) -> PadLayout {
     let pad_w = PAD_W.min(width - 4.0 * MARGIN).max(160.0);
     let card_w = pad_w + 2.0 * MARGIN;
-    let card_h = TITLE_H + PAD_H + BUTTON_H + 3.0 * MARGIN;
+    let card_h = TITLE_H + PAD_H + push_button::HEIGHT + 3.0 * MARGIN;
     let card = Rect::from_xywh(
         (width - card_w) / 2.0,
         ((height - card_h) / 2.0).max(MARGIN),
@@ -144,16 +164,40 @@ fn layout((width, height): (f32, f32)) -> PadLayout {
         pad_w,
         PAD_H,
     );
-    let y = area.bottom + MARGIN;
-    let done = Rect::from_xywh(card.right - MARGIN - BUTTON_W, y, BUTTON_W, BUTTON_H);
-    let cancel = Rect::from_xywh(done.left - 8.0 - BUTTON_W, y, BUTTON_W, BUTTON_H);
-    let clear = Rect::from_xywh(card.left + MARGIN, y, BUTTON_W, BUTTON_H);
+    let (y, h) = (area.bottom + MARGIN, push_button::HEIGHT);
+    let wide = |control: Control| push_button::width(&control.label());
+    let done_w = wide(Control::Done);
+    let done = Rect::from_xywh(card.right - MARGIN - done_w, y, done_w, h);
+    let cancel_w = wide(Control::Cancel);
+    let cancel = Rect::from_xywh(done.left - 8.0 - cancel_w, y, cancel_w, h);
+    let clear = Rect::from_xywh(card.left + MARGIN, y, wide(Control::Clear), h);
     PadLayout {
         card,
         area,
         clear,
         cancel,
         done,
+    }
+}
+
+impl PadLayout {
+    fn control_at(&self, at: Point) -> Option<Control> {
+        [
+            (Control::Clear, self.clear),
+            (Control::Cancel, self.cancel),
+            (Control::Done, self.done),
+        ]
+        .into_iter()
+        .find(|(_, rect)| rect.contains(at))
+        .map(|(control, _)| control)
+    }
+
+    fn rect(&self, control: Control) -> Rect {
+        match control {
+            Control::Clear => self.clear,
+            Control::Cancel => self.cancel,
+            Control::Done => self.done,
+        }
     }
 }
 
@@ -165,7 +209,8 @@ impl Pad {
         })
     }
 
-    /// A press anywhere in a window of `size`.
+    /// A press anywhere in a window of `size`: a stroke on the paper, a
+    /// button held, or a cancel outside the card.
     pub fn press(&mut self, size: (f32, f32), at: Point) -> PadAction {
         let layout = layout(size);
         if layout.area.contains(at) {
@@ -174,21 +219,22 @@ impl Pad {
             self.drawing = true;
             return PadAction::None;
         }
-        if layout.clear.contains(at) {
-            self.strokes.clear();
+        if let Some(control) = layout.control_at(at) {
+            self.held = Some((control, true));
             return PadAction::None;
         }
-        if layout.cancel.contains(at) || !layout.card.contains(at) {
+        if !layout.card.contains(at) {
             return PadAction::Cancel;
-        }
-        if layout.done.contains(at) && !self.strokes.is_empty() {
-            return PadAction::Done;
         }
         PadAction::None
     }
 
     /// The pointer moved. Returns whether the pad changed.
     pub fn motion(&mut self, size: (f32, f32), at: Point) -> bool {
+        if let Some((control, over)) = &mut self.held {
+            let now = layout(size).control_at(at) == Some(*control);
+            return std::mem::replace(over, now) != now;
+        }
         if !self.drawing {
             return false;
         }
@@ -208,14 +254,33 @@ impl Pad {
         true
     }
 
-    pub fn release(&mut self) {
-        self.drawing = false;
-        // A click is a dot.
-        if let Some(stroke) = self.strokes.last_mut() {
-            if stroke.len() == 1 {
-                let (x, y) = stroke[0];
-                stroke.push((x + 0.5, y + 0.5));
+    /// The button went up at `at`: a stroke ends, or the held button acts
+    /// if the pointer is still on it.
+    pub fn release(&mut self, size: (f32, f32), at: Point) -> PadAction {
+        if std::mem::take(&mut self.drawing) {
+            // A click is a dot.
+            if let Some(stroke) = self.strokes.last_mut() {
+                if stroke.len() == 1 {
+                    let (x, y) = stroke[0];
+                    stroke.push((x + 0.5, y + 0.5));
+                }
             }
+            return PadAction::None;
+        }
+        let Some((control, _)) = self.held.take() else {
+            return PadAction::None;
+        };
+        if layout(size).control_at(at) != Some(control) {
+            return PadAction::None;
+        }
+        match control {
+            Control::Clear => {
+                self.strokes.clear();
+                PadAction::None
+            }
+            Control::Cancel => PadAction::Cancel,
+            Control::Done if self.strokes.is_empty() => PadAction::None,
+            Control::Done => PadAction::Done,
         }
     }
 
@@ -280,45 +345,25 @@ impl Pad {
             canvas.draw_path(&path.detach(), &ink);
         }
 
-        let button = |rect: Rect, label: String, primary: bool, enabled: bool| {
-            let mut paint = Paint::default();
-            paint.set_anti_alias(true);
-            paint.set_color(if primary && enabled {
-                theme.accent
-            } else {
-                theme.fill_tertiary
-            });
-            canvas.draw_rrect(RRect::new_rect_xy(rect, 7.0, 7.0), &paint);
-            let color = match (primary, enabled) {
-                (_, false) => theme.text_tertiary,
-                (true, true) => Color::WHITE,
-                (false, true) => theme.text_primary,
-            };
-            Label::new(label)
-                .with_style(styles::BODY)
-                .with_color(color)
-                .centered_at(rect.center_x(), rect.center_y())
-                .render(canvas);
-        };
         let drawn = !self.strokes.is_empty();
-        button(
-            layout.clear,
-            otto_kit::t_owned!("studio-signature-clear"),
-            false,
-            drawn,
-        );
-        button(
-            layout.cancel,
-            otto_kit::t_owned!("studio-signature-cancel"),
-            false,
-            true,
-        );
-        button(
-            layout.done,
-            otto_kit::t_owned!("studio-signature-done"),
-            true,
-            drawn,
-        );
+        let held = self
+            .held
+            .and_then(|(control, over)| over.then_some(control));
+        for (control, role, enabled) in [
+            (Control::Clear, Role::Normal, drawn),
+            (Control::Cancel, Role::Normal, true),
+            (Control::Done, Role::Default, drawn),
+        ] {
+            push_button::draw(
+                canvas,
+                layout.rect(control),
+                &control.label(),
+                PushButton::new(role)
+                    .pressed(held == Some(control))
+                    .enabled(enabled),
+                theme,
+            );
+        }
     }
 }
 
@@ -347,23 +392,25 @@ mod tests {
         let mut pad = Pad::default();
         // Done does nothing with nothing drawn.
         let done = layout(size).done;
-        assert_eq!(
-            pad.press(size, Point::new(done.center_x(), done.center_y())),
-            PadAction::None
-        );
-        assert_eq!(
-            pad.press(size, Point::new(area.left + 10.0, area.top + 10.0)),
-            PadAction::None
-        );
-        assert!(pad.motion(size, Point::new(area.left + 40.0, area.top + 30.0)));
-        pad.release();
+        let on_done = Point::new(done.center_x(), done.center_y());
+        let click = |pad: &mut Pad, at: Point| {
+            pad.press(size, at);
+            pad.release(size, at)
+        };
+        assert_eq!(click(&mut pad, on_done), PadAction::None);
+        let start = Point::new(area.left + 10.0, area.top + 10.0);
+        assert_eq!(pad.press(size, start), PadAction::None);
+        let end = Point::new(area.left + 40.0, area.top + 30.0);
+        assert!(pad.motion(size, end));
+        pad.release(size, end);
         assert_eq!(pad.signature().unwrap().strokes[0].len(), 2);
-        assert_eq!(
-            pad.press(size, Point::new(done.center_x(), done.center_y())),
-            PadAction::Done
-        );
+        // A press on Done let go elsewhere takes it back.
+        pad.press(size, on_done);
+        assert!(pad.motion(size, Point::new(2.0, 2.0)));
+        assert_eq!(pad.release(size, Point::new(2.0, 2.0)), PadAction::None);
+        assert_eq!(click(&mut pad, on_done), PadAction::Done);
         let clear = layout(size).clear;
-        pad.press(size, Point::new(clear.center_x(), clear.center_y()));
+        click(&mut pad, Point::new(clear.center_x(), clear.center_y()));
         assert!(pad.signature().is_none());
         // Outside the card is a cancel.
         assert_eq!(pad.press(size, Point::new(2.0, 2.0)), PadAction::Cancel);
