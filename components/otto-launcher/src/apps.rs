@@ -161,12 +161,11 @@ impl Source for Apps {
 /// Where the history lives — state rather than config: it is written by the
 /// program, and losing it costs nothing.
 fn history_path() -> Option<PathBuf> {
-    let dir = std::env::var_os("XDG_STATE_HOME")
-        .map(PathBuf::from)
-        .or_else(|| {
-            std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/state"))
-        })?;
-    Some(dir.join("otto").join("launcher-history"))
+    Some(
+        otto_kit::xdg::state_home()?
+            .join("otto")
+            .join("launcher-history"),
+    )
 }
 
 /// Desktop file ids, most recently launched first.

@@ -56,13 +56,7 @@ pub struct Versions {
 impl Versions {
     /// Where every file's versions are kept.
     pub fn root() -> Option<PathBuf> {
-        let state = std::env::var_os("XDG_STATE_HOME")
-            .map(PathBuf::from)
-            .filter(|dir| dir.is_absolute())
-            .or_else(|| {
-                std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/state"))
-            })?;
-        Some(state.join("otto-preview/versions"))
+        Some(otto_kit::xdg::state_home()?.join("otto-preview/versions"))
     }
 
     /// The versions a chat about `file` kept before, if any did.

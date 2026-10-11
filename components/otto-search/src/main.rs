@@ -133,7 +133,7 @@ fn main() -> ExitCode {
         return ExitCode::from(USAGE_ERROR);
     }
 
-    let home = std::env::var_os("HOME").map(PathBuf::from);
+    let home = otto_foundations::xdg::home();
     let cwd = std::env::current_dir().ok();
     let roots = if args.roots.is_empty() {
         home.iter().cloned().collect()

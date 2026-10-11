@@ -673,8 +673,7 @@ impl Marks {
 /// Where the marks going with a message, and the views an agent asks for,
 /// are written for the agent to read.
 pub fn dir() -> PathBuf {
-    std::env::var_os("XDG_RUNTIME_DIR")
-        .map(PathBuf::from)
+    otto_kit::xdg::runtime_dir()
         .unwrap_or_else(std::env::temp_dir)
         .join("otto-preview")
 }
