@@ -2,7 +2,7 @@
 
 use super::*;
 
-impl FilesApp {
+impl FilesWindow {
     /// The palette's card handles its own pointer, for the same reason Quick
     /// View's does: dragged clear of the window, it sits over pixels the
     /// toplevel is never told about.
@@ -16,10 +16,15 @@ impl FilesApp {
     /// the press. That is what lets the card keep up with a fast drag instead
     /// of being dropped the moment the pointer outruns it.
     pub(super) fn install_palette_pointer(&self) {
-        let state = Arc::clone(&self.state);
+        // Weak: the callback is never taken off again, and must not keep a
+        // closed window's browser alive.
+        let state = Arc::downgrade(&self.state);
         let target = Arc::clone(&self.palette_target);
 
         AppContext::register_pointer_callback(move |events| {
+            let Some(state) = state.upgrade() else {
+                return;
+            };
             for event in events {
                 use smithay_client_toolkit::seat::pointer::PointerEventKind;
                 use wayland_client::Proxy;
@@ -33,7 +38,7 @@ impl FilesApp {
                 // into the window points everything else measures in.
                 let x = event.position.0 as f32 + rect.left;
                 let y = event.position.1 as f32 + rect.top;
-                let mut browser = state.lock().unwrap();
+                let mut browser = state.browse();
                 if browser.palette.is_none() {
                     continue;
                 }
@@ -79,10 +84,15 @@ impl FilesApp {
     /// and dismisses the preview. The overlay covers the display, so that
     /// press never reaches whatever is underneath.
     pub(super) fn install_peek_pointer(&self) {
-        let state = Arc::clone(&self.state);
+        // Weak: the callback is never taken off again, and must not keep a
+        // closed window's browser alive.
+        let state = Arc::downgrade(&self.state);
         let target = Arc::clone(&self.peek_target);
 
         AppContext::register_pointer_callback(move |events| {
+            let Some(state) = state.upgrade() else {
+                return;
+            };
             for event in events {
                 use wayland_client::Proxy;
                 let Some(pane_surfaces::PeekTarget {
@@ -94,7 +104,7 @@ impl FilesApp {
                     continue;
                 };
                 if event.surface.id() == overlay {
-                    let mut browser = state.lock().unwrap();
+                    let mut browser = state.browse();
                     match event.kind {
                         PointerEventKind::Press { .. } => {
                             browser.close_peek();
@@ -126,7 +136,7 @@ impl FilesApp {
                     .with_outset((4.0, 4.0))
                     .contains(point);
 
-                let mut browser = state.lock().unwrap();
+                let mut browser = state.browse();
                 match event.kind {
                     PointerEventKind::Press { .. } if over => {
                         browser.close_peek();
@@ -193,12 +203,17 @@ impl FilesApp {
     }
 
     /// The Get Info window's pointer. Registered once, for whichever panel is
-    /// open — see [`FilesApp::info_window`].
+    /// open — see [`FilesWindow::info_window`].
     pub(super) fn install_info_window_pointer(&self) {
-        let state = Arc::clone(&self.state);
+        // Weak: the callback is never taken off again, and must not keep a
+        // closed window's browser alive.
+        let state = Arc::downgrade(&self.state);
         let info_window = Rc::clone(&self.info_window);
 
         AppContext::register_pointer_callback(move |events| {
+            let Some(state) = state.upgrade() else {
+                return;
+            };
             use wayland_client::Proxy;
             let window = info_window.borrow().clone();
             let Some(window) = window else { return };
@@ -215,7 +230,7 @@ impl FilesApp {
                 }
                 let point = (event.position.0 as f32, event.position.1 as f32);
                 let drag = {
-                    let mut browser = state.lock().unwrap();
+                    let mut browser = state.browse();
                     info_pointer(&mut browser, &event.kind, sheet, point)
                 };
                 if drag {
@@ -232,10 +247,15 @@ impl FilesApp {
 
     /// The Open With chooser's pointer. Registered once, like Get Info's.
     pub(super) fn install_open_with_window_pointer(&self) {
-        let state = Arc::clone(&self.state);
+        // Weak: the callback is never taken off again, and must not keep a
+        // closed window's browser alive.
+        let state = Arc::downgrade(&self.state);
         let open_with_window = Rc::clone(&self.open_with_window);
 
         AppContext::register_pointer_callback(move |events| {
+            let Some(state) = state.upgrade() else {
+                return;
+            };
             use wayland_client::Proxy;
             let window = open_with_window.borrow().clone();
             let Some(window) = window else { return };
@@ -247,7 +267,7 @@ impl FilesApp {
                     continue;
                 }
                 let (x, y) = (event.position.0 as f32, event.position.1 as f32);
-                let drag = state.lock().unwrap().open_with_pointer(&event.kind, x, y);
+                let drag = state.browse().open_with_pointer(&event.kind, x, y);
                 if drag {
                     if let PointerEventKind::Press { serial, .. } = event.kind {
                         if let Some(seat) = AppContext::seat_state().seats().next() {
@@ -269,17 +289,21 @@ impl FilesApp {
         use otto_kit::dnd::{self, DragEvent};
         use wayland_client::Proxy;
 
-        let state = Arc::clone(&self.state);
-        let window = window.clone();
+        // Weak, and the surface rather than the window: the callback is
+        // never taken off again, and must not keep a closed window alive.
+        let state = Arc::downgrade(&self.state);
+        let toplevel = window.wl_surface().map(|surface| surface.id());
         // Enter names the surface; motion and drop do not. A drag over some
-        // other surface of ours — Peek, the info sheet — is not a drop
-        // target, so what the enter decided has to be remembered.
+        // other surface of ours — Peek, the info sheet, another window — is
+        // not a drop target here, so what the enter decided has to be
+        // remembered.
         let on_toplevel = std::cell::Cell::new(false);
 
         dnd::register(move |event| {
-            let is_ours = |id: &wayland_client::backend::ObjectId| {
-                window.wl_surface().is_some_and(|s| s.id() == *id)
+            let Some(state) = state.upgrade() else {
+                return;
             };
+            let is_ours = |id: &wayland_client::backend::ObjectId| toplevel.as_ref() == Some(id);
 
             match event {
                 DragEvent::Enter { surface, x, y } => {
@@ -299,7 +323,7 @@ impl FilesApp {
                     if !on_toplevel.replace(false) {
                         return;
                     }
-                    let mut browser = state.lock().unwrap();
+                    let mut browser = state.browse();
                     browser.dirty |= browser.drop_target.take().is_some();
                     drop(browser);
                     AppContext::request_wakeup();
@@ -323,7 +347,7 @@ impl FilesApp {
                         dnd::receive_files().map(|(paths, _)| paths)
                     };
 
-                    let mut browser = state.lock().unwrap();
+                    let mut browser = state.browse();
                     // Resolved again at the drop's own position rather than
                     // trusting the last motion: the release may land somewhere
                     // no motion reported.
@@ -433,7 +457,7 @@ fn show_group_menu(
         .map(|g| g.label().to_string())
         .collect();
     let selected = {
-        let browser = state.lock().unwrap();
+        let browser = state.browse();
         crate::photos::Grouping::ALL
             .iter()
             .position(|g| *g == browser.photos_group)
@@ -482,7 +506,7 @@ fn show_location_menu(
         Vec<String>,
         Vec<otto_kit::components::menu_item::MenuItemIcon>,
     ) = {
-        let browser = state.lock().unwrap();
+        let browser = state.browse();
         let options = browser
             .location_ancestors()
             .iter()
@@ -628,7 +652,7 @@ pub(super) fn show_context_menu_over(
 
     let click_state = Arc::clone(state);
     context_menu.clone().on_item_click(move |action_id| {
-        let mut browser = click_state.lock().unwrap();
+        let mut browser = click_state.browse();
         match action_id {
             "open" => browser.open_selection(),
             "open_with" => browser.open_with_selection(),

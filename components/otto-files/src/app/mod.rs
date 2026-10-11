@@ -69,6 +69,10 @@ mod renaming;
 mod scroll;
 mod searching;
 mod selection;
+mod windows;
+
+use windows::Browse;
+pub use windows::{claim_or_forward, hosting, run_windows, Claim, Request};
 
 /// Reading text out of pictures from the command line, with no window.
 pub use ocr::recognise_paths;
@@ -212,7 +216,7 @@ impl DropTarget {
 fn hover_drag(state: &Arc<Mutex<Browser>>, x: f32, y: f32) {
     use otto_kit::dnd;
 
-    let mut browser = state.lock().unwrap();
+    let mut browser = state.browse();
     let target = browser.drop_target_at(x, y);
     let mime = dnd::first_offered(clipboard::file_mime_preference());
 
@@ -421,7 +425,7 @@ struct Browser {
     /// survivor — rather than through an arrow key. Peek follows the
     /// cursor, so it has to re-decode for those moves too, and the deleted
     /// file's preview must not be left up over a file that no longer exists.
-    /// Drained by the host, which owns the decode; see [`FilesApp::follow_peek`].
+    /// Drained by the host, which owns the decode; see [`FilesWindow::follow_peek`].
     peek_follow: bool,
     /// This window is the Trash: one flat listing of the trash can, with Put
     /// Back and Empty Trash in place of the view switcher, and every command
@@ -574,6 +578,13 @@ struct Browser {
     /// its title and traffic lights go gray, and the compositor stops blurring
     /// behind it.
     focused: bool,
+    /// The decoration the compositor's last configure implies for this
+    /// window. See [`Browser::enter_view`].
+    decoration: otto_kit::components::titlebar::DecorationVariant,
+    /// Whether the window has been asked to close: its close control, the
+    /// compositor's close, or the menus. The app takes it down on its next
+    /// pass; the other windows carry on.
+    closing: bool,
     /// Whether the compositor can blur behind the window at all. False when it
     /// carries no surface style — running under another compositor — or when
     /// the blur has been turned off for measurement. The materials are filled
@@ -1143,7 +1154,7 @@ fn row_focus(index: usize) -> otto_kit::focus::FocusId {
     otto_kit::focus::FocusId::new(format!("entry-{index}"))
 }
 
-struct FilesApp {
+struct FilesWindow {
     window: Option<Window>,
     /// The window's menus in the top bar; `None` on the desk, in a file
     /// dialog, and without a session bus. See [`app_menu`].
@@ -1191,9 +1202,6 @@ struct FilesApp {
     /// The picker's request queue, when this process is serving
     /// `org.otto.FilePicker1`. `None` in the browser.
     picker_queue: Option<crate::dbus::SharedQueue>,
-    /// Questions from `org.otto.Files1` waiting for the UI thread. `None` in
-    /// the picker, whose selection belongs to the application it serves.
-    selection_queue: Option<crate::files_service::SharedQueue>,
     /// The surfaces the window hangs over itself: each column's scroll pane,
     /// the stack's bar, Peek, the palette and the preview's player.
     /// `None` until the window exists.
@@ -1223,7 +1231,7 @@ struct FilesApp {
     /// [`Self::info_window`] is.
     overflow_surface: Rc<RefCell<Option<overflow_surface::OverflowSurface>>>,
     /// Whether the keyboard has been in this process since the overflow
-    /// panel opened. See [`FilesApp::follow_overflow_focus`].
+    /// panel opened. See [`FilesWindow::follow_overflow_focus`].
     overflow_focus_seen: bool,
 }
 
@@ -1325,25 +1333,6 @@ fn app_id() -> &'static str {
     }
 }
 
-/// Open a browser window at `start` and run until it is closed.
-pub fn run_browser(start: crate::launch::Start) -> Result<(), Box<dyn std::error::Error>> {
-    let mut browser = Browser::new(start.folder);
-    browser.remember(&remembered::Remembered::load());
-    if !start.select.is_empty() {
-        browser.pending_select = Some(
-            start
-                .select
-                .iter()
-                .map(|path| path.to_string_lossy().into_owned())
-                .collect(),
-        );
-    }
-    if let Some((query, scope)) = start.search {
-        browser.start_search(query, scope);
-    }
-    run_app(browser, None)
-}
-
 /// Show the desk and run until the session ends.
 ///
 /// Another shell over this view layer: the icon grid alone, on a transparent
@@ -1376,28 +1365,7 @@ pub fn run_desk() -> Result<(), Box<dyn std::error::Error>> {
             }
         });
     }
-    run_app(Browser::for_desk(&config), None)
-}
-
-/// Open the Trash window and run until it is closed.
-///
-/// The third shell over this view layer, beside the browser and the picker —
-/// its own window and its own entry in the applications list, out of the same
-/// binary, because a listing of the trash is a listing.
-pub fn run_trash() -> Result<(), Box<dyn std::error::Error>> {
-    run_app(Browser::for_trash(), None)
-}
-
-/// The Trash window with the Empty Trash question already up.
-///
-/// What the dock's *Empty Trash* runs. It is the window rather than a bare
-/// confirmation because the question is about a listing, and showing what is
-/// being destroyed is the point of asking; the operation, the wording and the
-/// count are the window's own, so the two routes cannot drift.
-pub fn run_empty_trash() -> Result<(), Box<dyn std::error::Error>> {
-    let mut browser = Browser::for_trash();
-    browser.pending_empty_ask = true;
-    run_app(browser, None)
+    windows::run_single(Browser::for_desk(&config), None)
 }
 
 /// Serve `org.otto.FilePicker1` until there is nothing left to serve.
@@ -1431,10 +1399,9 @@ pub async fn run_picker() -> Result<(), Box<dyn std::error::Error>> {
     let start = session
         .request
         .starting_directory(crate::picker_dirs::remembered(&session.request.app_id));
-    run_app(Browser::for_picker(session, start), Some(queue))
+    windows::run_single(Browser::for_picker(session, start), Some(queue))
 }
 
-/// Run the app shell around an already-built [`Browser`].
 /// One pointer event inside the Get Info window.
 ///
 /// `sheet` is the panel's rect in that window's own coordinates, which is the
@@ -1517,68 +1484,32 @@ fn info_pointer(
     }
 }
 
-fn run_app(
-    browser: Browser,
-    picker_queue: Option<crate::dbus::SharedQueue>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let state = Arc::new(Mutex::new(browser));
-
-    // Resolve the file-operation sounds off the main thread now, so the first
-    // delete of the session does not pay for a walk of every theme directory
-    // at the moment it wants to make a noise.
-    let sounds: Vec<&str> = SOUND_DESTROYED
-        .iter()
-        .chain(SOUND_REMOVED.iter())
-        .chain(SOUND_RESTORED.iter())
-        .chain(SOUND_ARRIVED.iter())
-        .copied()
-        .collect();
-    otto_kit::sound::prewarm(&sounds);
-
-    let selection_queue = picker_queue.is_none().then(serve_files_interface);
-
-    let app = FilesApp {
-        pane_surfaces: None,
-        window: None,
-        app_menu: None,
-        app_menu_at: std::time::Instant::now(),
-        info_window: Rc::new(RefCell::new(None)),
-        open_with_window: Rc::new(RefCell::new(None)),
-        state: Arc::clone(&state),
-        frost: None,
-        opaque_region: None,
-        modifiers: Arc::new(Mutex::new(Modifiers::default())),
-        context_menu: None,
-        group_menu: None,
-        peek_target: Arc::new(Mutex::new(None)),
-        palette_target: Arc::new(Mutex::new(None)),
-        picker_queue,
-        selection_queue,
-        desk_surface_editing: false,
-        desk_input_region: None,
-        desk_config_watch: None,
-        overflow_surface: Rc::new(RefCell::new(None)),
-        overflow_focus_seen: false,
-    };
-
-    AppRunner::new(app).run()
-}
-
-/// Start serving `org.otto.Files1` for this window.
-///
-/// Outside a tokio runtime the queue is never fed and the window simply
-/// cannot be asked. A bus that refuses us costs nothing but that either.
-fn serve_files_interface() -> crate::files_service::SharedQueue {
-    let queue = crate::files_service::SharedQueue::default();
-    if let Ok(runtime) = tokio::runtime::Handle::try_current() {
-        let service_queue = Arc::clone(&queue);
-        runtime.spawn(async move {
-            if let Err(error) = crate::files_service::serve(service_queue).await {
-                tracing::warn!(%error, "cannot serve org.otto.Files1");
-            }
-        });
+impl FilesWindow {
+    /// A window over `browser`, not yet on screen; see [`FilesWindow::show`].
+    fn new(browser: Browser, picker_queue: Option<crate::dbus::SharedQueue>) -> Self {
+        Self {
+            pane_surfaces: None,
+            window: None,
+            app_menu: None,
+            app_menu_at: std::time::Instant::now(),
+            info_window: Rc::new(RefCell::new(None)),
+            open_with_window: Rc::new(RefCell::new(None)),
+            state: Arc::new(Mutex::new(browser)),
+            frost: None,
+            opaque_region: None,
+            modifiers: Arc::new(Mutex::new(Modifiers::default())),
+            context_menu: None,
+            group_menu: None,
+            peek_target: Arc::new(Mutex::new(None)),
+            palette_target: Arc::new(Mutex::new(None)),
+            picker_queue,
+            desk_surface_editing: false,
+            desk_input_region: None,
+            desk_config_watch: None,
+            overflow_surface: Rc::new(RefCell::new(None)),
+            overflow_focus_seen: false,
+        }
     }
-    queue
 }
 
 #[cfg(test)]

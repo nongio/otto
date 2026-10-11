@@ -46,40 +46,38 @@ const INTEREST: u32 = libc::IN_CREATE
 /// A watch on one directory, held for as long as that directory is displayed.
 ///
 /// Dropping it drops the kernel watch, once the last holder of that path is
-/// gone — two panes on the same directory share one inotify descriptor.
+/// gone — two panes on the same directory share one inotify descriptor. Each
+/// holder is told of a change on its own: two windows on one folder both
+/// refresh.
 pub struct DirWatch {
     path: PathBuf,
-    /// False when inotify was unavailable, so `Drop` has nothing to undo and
-    /// [`Self::take`] has nothing to report.
-    live: bool,
+    /// This holder's own, to take its changes by. `None` when inotify was
+    /// unavailable, so `Drop` has nothing to undo and [`Self::take`] has
+    /// nothing to report.
+    id: Option<u64>,
 }
 
 impl DirWatch {
     /// Start watching `path`. A failure here is not an error the user needs to
     /// see: the pane keeps working, it just will not notice changes on its own.
     pub fn new(path: &Path) -> Self {
-        let live = watcher().is_some_and(|w| w.add(path));
+        let id = watcher().and_then(|w| w.add(path));
         Self {
             path: path.to_path_buf(),
-            live,
+            id,
         }
     }
 
     /// The change to act on, if the debounce has elapsed. Never blocks.
     pub fn take(&self) -> Option<Change> {
-        if !self.live {
-            return None;
-        }
-        watcher()?.take(&self.path)
+        watcher()?.take(self.id?)
     }
 }
 
 impl Drop for DirWatch {
     fn drop(&mut self) {
-        if self.live {
-            if let Some(w) = watcher() {
-                w.remove(&self.path);
-            }
+        if let (Some(id), Some(w)) = (self.id, watcher()) {
+            w.remove(&self.path, id);
         }
     }
 }
@@ -90,19 +88,22 @@ impl Drop for DirWatch {
 
 struct Entry {
     wd: i32,
-    /// How many `DirWatch` handles want this path.
-    refs: usize,
+    /// The `DirWatch` handles that want this path.
+    holders: Vec<u64>,
 }
 
 #[derive(Default)]
 struct Inner {
     by_path: HashMap<PathBuf, Entry>,
     by_wd: HashMap<i32, PathBuf>,
-    /// Dirty directories, each remembering when it first went dirty — that is
-    /// what the debounce is measured from, so a steady stream of writes still
-    /// refreshes every 100 ms instead of never.
-    dirty: HashMap<PathBuf, Instant>,
-    gone: HashSet<PathBuf>,
+    /// Holders whose directory is dirty, each remembering when it first went
+    /// dirty — that is what the debounce is measured from, so a steady stream
+    /// of writes still refreshes every 100 ms instead of never.
+    dirty: HashMap<u64, Instant>,
+    /// Holders whose directory went away.
+    gone: HashSet<u64>,
+    /// The id the next holder gets.
+    next: u64,
 }
 
 struct Watcher {
@@ -131,55 +132,61 @@ fn watcher() -> Option<&'static Watcher> {
 }
 
 impl Watcher {
-    fn add(&self, path: &Path) -> bool {
+    /// Watch `path` for a new holder, and return the holder's id.
+    fn add(&self, path: &Path) -> Option<u64> {
         let mut inner = self.inner.lock().unwrap();
+        let id = inner.next;
         if let Some(entry) = inner.by_path.get_mut(path) {
-            entry.refs += 1;
-            return true;
+            entry.holders.push(id);
+            inner.next += 1;
+            return Some(id);
         }
-        let Ok(c_path) = std::ffi::CString::new(path.as_os_str().as_encoded_bytes()) else {
-            return false;
-        };
+        let c_path = std::ffi::CString::new(path.as_os_str().as_encoded_bytes()).ok()?;
         let wd = unsafe { libc::inotify_add_watch(self.fd, c_path.as_ptr(), INTEREST) };
         if wd < 0 {
             // An unwatchable path is normal — a network mount, or a directory
             // that vanished between the listing and this call.
-            return false;
+            return None;
         }
-        inner
-            .by_path
-            .insert(path.to_path_buf(), Entry { wd, refs: 1 });
+        inner.by_path.insert(
+            path.to_path_buf(),
+            Entry {
+                wd,
+                holders: vec![id],
+            },
+        );
         inner.by_wd.insert(wd, path.to_path_buf());
-        true
+        inner.next += 1;
+        Some(id)
     }
 
-    fn remove(&self, path: &Path) {
+    fn remove(&self, path: &Path, id: u64) {
         let mut inner = self.inner.lock().unwrap();
+        inner.dirty.remove(&id);
+        inner.gone.remove(&id);
         let Some(entry) = inner.by_path.get_mut(path) else {
             return;
         };
-        entry.refs -= 1;
-        if entry.refs > 0 {
+        entry.holders.retain(|holder| *holder != id);
+        if !entry.holders.is_empty() {
             return;
         }
         let wd = entry.wd;
         inner.by_path.remove(path);
         inner.by_wd.remove(&wd);
-        inner.dirty.remove(path);
-        inner.gone.remove(path);
         unsafe { libc::inotify_rm_watch(self.fd, wd) };
     }
 
-    fn take(&self, path: &Path) -> Option<Change> {
+    fn take(&self, id: u64) -> Option<Change> {
         let mut inner = self.inner.lock().unwrap();
-        if inner.gone.remove(path) {
+        if inner.gone.remove(&id) {
             return Some(Change::Gone);
         }
-        let since = *inner.dirty.get(path)?;
+        let since = *inner.dirty.get(&id)?;
         if since.elapsed() < DEBOUNCE {
             return None;
         }
-        inner.dirty.remove(path);
+        inner.dirty.remove(&id);
         Some(Change::Modified)
     }
 
@@ -262,9 +269,13 @@ impl Watcher {
             // Events were lost, so nothing on screen can be trusted: every
             // watched directory is re-read.
             let now = Instant::now();
-            let paths: Vec<PathBuf> = inner.by_path.keys().cloned().collect();
-            for path in paths {
-                inner.dirty.entry(path).or_insert(now);
+            let holders: Vec<u64> = inner
+                .by_path
+                .values()
+                .flat_map(|entry| entry.holders.iter().copied())
+                .collect();
+            for id in holders {
+                inner.dirty.entry(id).or_insert(now);
             }
             return false;
         }
@@ -278,12 +289,22 @@ impl Watcher {
             // concerned.
             if let Some(entry) = inner.by_path.remove(&path) {
                 inner.by_wd.remove(&entry.wd);
+                for id in entry.holders {
+                    inner.dirty.remove(&id);
+                    inner.gone.insert(id);
+                }
             }
-            inner.dirty.remove(&path);
-            inner.gone.insert(path);
             return true;
         }
-        inner.dirty.entry(path).or_insert_with(Instant::now);
+        let holders = inner
+            .by_path
+            .get(&path)
+            .map(|entry| entry.holders.clone())
+            .unwrap_or_default();
+        let now = Instant::now();
+        for id in holders {
+            inner.dirty.entry(id).or_insert(now);
+        }
         false
     }
 }
@@ -372,6 +393,18 @@ mod tests {
         // Dropping one must not take the other's watch with it.
         drop(first);
         std::fs::write(dir.0.join("landed"), b"x").expect("write");
+        assert_eq!(wait(&second), Some(Change::Modified));
+    }
+
+    #[test]
+    fn each_holder_is_told_of_a_change() {
+        let dir = Tmp::new("both");
+        let first = DirWatch::new(&dir.0);
+        let second = DirWatch::new(&dir.0);
+        std::fs::write(dir.0.join("landed"), b"x").expect("write");
+        // Two windows on one folder: the first to look must not take the
+        // change from the other.
+        assert_eq!(wait(&first), Some(Change::Modified));
         assert_eq!(wait(&second), Some(Change::Modified));
     }
 }

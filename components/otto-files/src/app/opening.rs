@@ -139,11 +139,16 @@ impl Browser {
 
     /// Open a second browser window on `path`.
     ///
-    /// A window is a process here — the app shell is built around a single
-    /// toplevel — so this re-executes this binary with the directory on its
-    /// command line. Shared by Ctrl+double-click and by the New Window
-    /// shortcut, which differ only in which directory they name.
+    /// In this process when it hosts the browser windows. The desk and the
+    /// picker do not, so they start this binary with the directory on its
+    /// command line, and that start hands it to the Files that does. Shared
+    /// by Ctrl+double-click and by the New Window shortcut, which differ only
+    /// in which directory they name.
     pub(super) fn spawn_window(&mut self, path: &Path) {
+        if super::hosting() {
+            super::windows::open(super::Request::Folder(path.to_path_buf()));
+            return;
+        }
         let exe = match std::env::current_exe() {
             Ok(exe) => exe,
             Err(err) => {

@@ -1420,6 +1420,16 @@ impl<'a> AppContext<'a> {
         });
     }
 
+    /// Forget `surface_id`'s frame callback, and whatever it holds. A window
+    /// does this as it closes; see [`Window::close`](crate::components::window::Window::close).
+    pub fn unregister_frame_callback(surface_id: &ObjectId) {
+        let _ = FRAME_CALLBACKS.try_with(|callbacks| {
+            if let Ok(mut callbacks) = callbacks.try_borrow_mut() {
+                callbacks.remove(surface_id);
+            }
+        });
+    }
+
     pub fn register_transaction_completion_callback(
         transaction_id: ObjectId,
         callback: Box<dyn FnOnce()>,

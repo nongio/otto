@@ -780,7 +780,7 @@ impl Browser {
     }
 
     /// Whether a palette command asked for Peek. Drained by the host,
-    /// which owns the decode — see [`FilesApp::follow_peek`].
+    /// which owns the decode — see [`FilesWindow::follow_peek`].
     pub(super) fn take_palette_peek(&mut self) -> bool {
         std::mem::take(&mut self.palette_peek)
     }

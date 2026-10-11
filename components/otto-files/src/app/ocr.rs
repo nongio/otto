@@ -311,14 +311,14 @@ impl Browser {
     }
 }
 
-impl FilesApp {
+impl FilesWindow {
     /// Recognise one picture off the UI thread, for Find.
     pub(super) fn start_recognition(&self, job: Job) {
         let state = Arc::clone(&self.state);
         let scale = AppContext::scale_factor().max(1) as f32;
         tokio::task::spawn_blocking(move || {
             let _ = peek::recognise(&job.path, pass_panel(), scale, 1, command(), job.priority);
-            state.lock().unwrap().end_reading(&job.path);
+            state.browse().end_reading(&job.path);
             // Another picture may be waiting its turn; the frame loop hands
             // it out.
             AppContext::request_wakeup();

@@ -132,6 +132,8 @@ impl Browser {
             open_with_dirty: false,
             controls: WindowControlsState::new(),
             focused: true,
+            decoration: otto_kit::components::titlebar::DecorationVariant::Floating,
+            closing: false,
             blur_available: false,
             dirty: true,
             scroll_moved: false,
@@ -165,11 +167,11 @@ impl Browser {
     /// browser's geometry is written against where the file area starts. What
     /// is set here is only what the *listing* is.
     pub(super) fn for_trash() -> Self {
-        // Two things are set, and this is the only place either is: the view
-        // layer's shell, which decides the chrome and is process-wide because
-        // a window does not change shell, and this browser's own flag, which
-        // decides what the commands do. Nothing else may set the global —
-        // that is what keeps the window's behaviour and its chrome agreeing.
+        // Two things are set: the view layer's shell, which decides the
+        // chrome, and this browser's own flag, which decides what the
+        // commands do. The shell is put back from the flag whenever this
+        // window is locked (see `Browser::enter_view`), which is what keeps
+        // the window's behaviour and its chrome agreeing.
         view::set_shell(view::Shell::Trash);
         Self::listing_the_trash()
     }
