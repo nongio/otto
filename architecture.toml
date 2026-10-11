@@ -245,12 +245,6 @@ reason = "utils shares workspaces::utils::FONT_CACHE; the cache belongs in utils
 rule = "xdg-dirs-through-foundations"
 reason = "Written before otto_foundations::xdg existed, or before it covered the directory. Each one moves to otto_foundations::xdg (otto_kit::xdg in toolkit users)."
 files = [
-    { path = "src/config/mod.rs", count = 2 },
-    { path = "src/desktop_widget.rs", count = 3 },
-    { path = "src/input/actions.rs", count = 4 },
-    { path = "src/main.rs", count = 2 },
-    { path = "src/search_index.rs", count = 1 },
-    { path = "src/udev/debug.rs", count = 3 },
     { path = "components/otto-agents/src/cli.rs", count = 2 },
     { path = "components/otto-agents/src/config.rs", count = 1 },
     { path = "components/otto-agents/src/host.rs", count = 2 },

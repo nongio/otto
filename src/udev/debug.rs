@@ -143,7 +143,8 @@ pub(super) fn maybe_dump_planes(surface: &SurfaceData) {
     {
         return;
     }
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
+    let home = otto_kit::xdg::home().unwrap_or_else(|| "/tmp".into());
+    let home = home.display();
     let dir = format!("{home}/Pictures/Screenshots");
     let _ = std::fs::create_dir_all(&dir);
     macro_rules! dump_plane {
@@ -207,7 +208,8 @@ fn dump_backdrop_image(surface: &SurfaceData, dir: &str) {
 /// massively (PNG encode per plane per frame) — that's fine, it makes the
 /// transition observable in slow motion while recording it.
 pub(super) fn dump_transition_frame(surface: &SurfaceData, idx: u8) {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
+    let home = otto_kit::xdg::home().unwrap_or_else(|| "/tmp".into());
+    let home = home.display();
     let dir = format!("{home}/Pictures/Screenshots/otto_transition");
     let _ = std::fs::create_dir_all(&dir);
     macro_rules! dump_plane {
@@ -241,7 +243,8 @@ pub(super) fn maybe_save_planes(surface: &SurfaceData) {
             }
         };
     }
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
+    let home = otto_kit::xdg::home().unwrap_or_else(|| "/tmp".into());
+    let home = home.display();
     let ss_dir = std::path::PathBuf::from(format!("{home}/Pictures/Screenshots"));
     macro_rules! ss_path {
         ($name:literal) => {

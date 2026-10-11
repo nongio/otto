@@ -484,16 +484,7 @@ fn user_config_file() -> Option<PathBuf> {
     if let Some(path) = isolated_config_file() {
         return Some(path);
     }
-    let config_dir = std::env::var("XDG_CONFIG_HOME")
-        .ok()
-        .map(PathBuf::from)
-        .or_else(|| {
-            std::env::var("HOME")
-                .ok()
-                .map(|home| PathBuf::from(home).join(".config"))
-        })?;
-
-    Some(config_dir.join("otto").join("config.toml"))
+    otto_kit::xdg::otto_config_file("config.toml")
 }
 
 fn get_user_config_path() -> Option<PathBuf> {

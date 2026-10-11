@@ -239,12 +239,7 @@ fn run_udev(args: &[String]) {
 /// just ends. The default hook still runs, so a terminal session prints the
 /// panic as before.
 fn install_panic_log() {
-    let Some(state_dir) = std::env::var_os("XDG_STATE_HOME")
-        .map(std::path::PathBuf::from)
-        .or_else(|| {
-            std::env::var_os("HOME").map(|home| std::path::Path::new(&home).join(".local/state"))
-        })
-    else {
+    let Some(state_dir) = otto_kit::xdg::state_home() else {
         return;
     };
     let dir = state_dir.join("otto");

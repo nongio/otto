@@ -205,19 +205,15 @@ impl<BackendData: Backend> Otto<BackendData> {
 
     fn launch_xdg_autostart(&mut self) {
         // Collect autostart .desktop files from system then user dirs (user overrides system)
-        let xdg_config_dirs =
-            std::env::var("XDG_CONFIG_DIRS").unwrap_or_else(|_| "/etc/xdg".to_string());
-        let xdg_config_home = std::env::var("XDG_CONFIG_HOME").unwrap_or_else(|_| {
-            let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
-            format!("{}/.config", home)
-        });
+        let xdg_config_home = otto_kit::xdg::config_home()
+            .unwrap_or_else(|| std::path::PathBuf::from("/root/.config"));
 
         // Build ordered list: system dirs first, user dir last (user overrides by basename)
-        let mut search_dirs: Vec<std::path::PathBuf> = xdg_config_dirs
-            .split(':')
-            .map(|d| std::path::PathBuf::from(d).join("autostart"))
+        let mut search_dirs: Vec<std::path::PathBuf> = otto_kit::xdg::config_dirs()
+            .into_iter()
+            .map(|d| d.join("autostart"))
             .collect();
-        search_dirs.push(std::path::PathBuf::from(&xdg_config_home).join("autostart"));
+        search_dirs.push(xdg_config_home.join("autostart"));
 
         // Collect entries: later entries (user) override earlier (system) by filename
         let mut entries: std::collections::HashMap<String, std::path::PathBuf> =
@@ -438,8 +434,8 @@ impl<BackendData: Backend> Otto<BackendData> {
 
                 if let Some(picture) = recorder.finish_recording_as_picture(None) {
                     let data = picture.serialize();
-                    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
-                    let dir = std::path::PathBuf::from(&home).join("Pictures/Screenshots");
+                    let home = otto_kit::xdg::home().unwrap_or_else(|| "/tmp".into());
+                    let dir = home.join("Pictures/Screenshots");
                     let _ = fs::create_dir_all(&dir);
                     let secs = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
