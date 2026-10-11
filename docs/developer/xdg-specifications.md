@@ -75,7 +75,7 @@ same protocols the compositor serves.
 | [XDG Desktop Portal](https://flatpak.github.io/xdg-desktop-portal/docs/) | Backend. `org.freedesktop.impl.portal.{ScreenCast, Settings, Access, Screenshot, FileChooser}`, registered in `otto.portal` | `components/xdg-desktop-portal-otto/src/portal/` |
 | [XDG user directories](https://www.freedesktop.org/wiki/Software/xdg-user-dirs/) | Read. `user-dirs.dirs` supplies the Files sidebar's Desktop, Downloads, Documents… places, and the portal's screenshot folder | `components/otto-foundations/src/xdg.rs` (`user_dirs`), used by `components/otto-files/src/model.rs` |
 | [Cursor theme (Xcursor)](https://www.freedesktop.org/wiki/Specifications/cursor-spec/) | Read. `XCURSOR_THEME` / `XCURSOR_SIZE`, loaded per named cursor and scale | `src/cursor.rs` |
-| [Fontconfig](https://www.freedesktop.org/wiki/Software/fontconfig/) | Read, indirectly. Skia's `FontMgr` on Linux is the fontconfig-backed one, so family lookup, aliases (`sans-serif`) and the user's `fonts.conf` resolve normally; see [Fonts and text](#fonts-and-text) for what is *not* honoured | `components/otto-kit/src/typography.rs`, `src/workspaces/utils/mod.rs` |
+| [Fontconfig](https://www.freedesktop.org/wiki/Software/fontconfig/) | Read, indirectly. Skia's `FontMgr` on Linux is the fontconfig-backed one, so family lookup, aliases (`sans-serif`) and the user's `fonts.conf` resolve normally; see [Fonts and text](#fonts-and-text) for what is *not* honoured | `components/otto-kit/src/typography.rs`, `src/utils/font_cache.rs` |
 
 ### Fonts and text
 
@@ -107,7 +107,7 @@ the otto-kit applications, which are separate Wayland clients but draw through
 grows with each first-party app.
 
 **What is not honoured.** Every font construction site in `typography.rs` and
-`src/workspaces/utils/mod.rs` hardcodes `set_subpixel(true)` and
+`src/utils/font_cache.rs` hardcodes `set_subpixel(true)` and
 `Edging::SubpixelAntiAlias`, and nothing reads fontconfig's `antialias`,
 `hinting`, `hintstyle`, `rgba` or `lcdfilter`. Two separate consequences, and
 they need untangling before either is worked on:
