@@ -20,11 +20,10 @@ use smithay::{
 
 use crate::{
     renderer::{
-        active::{RendererApi, SkiaDeviceRenderer},
+        active::{RendererApi, SkiaDeviceRenderer, UdevRenderer},
         BlitCurrentFrame,
     },
     state::{Backend, Otto},
-    udev::UdevRenderer,
 };
 
 #[derive(Debug)]

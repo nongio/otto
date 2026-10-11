@@ -203,9 +203,3 @@ reason = "Edge swipe, tablet, pointer and gesture handling have udev-only impls 
 module = "input_handler"
 uses = "udev"
 reason = "udev-only input handling (VT switching, the renderer API) is an impl on Otto<UdevData>."
-
-
-[[allow]]
-module = "state"
-uses = "udev"
-reason = "Night light and output ids downcast the backend data to reach udev's DRM backends and gamma tables, and screencopy names udev::UdevRenderer. Belongs behind the Backend trait."
