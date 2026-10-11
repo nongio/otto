@@ -255,15 +255,13 @@ impl ConfirmPopup {
     }
 
     /// Ask about the file `name` over the middle of a window `window_size`
-    /// big, parented to `parent`. `on_answer` gets what was picked; a press
-    /// outside or Escape is [`Answer::Cancel`].
+    /// big, parented to `parent`. `on_answer` gets what was picked.
     pub fn open(
         &self,
         parent: &xdg_surface::XdgSurface,
         window_size: (f32, f32),
         name: &str,
         theme: Theme,
-        serial: u32,
         on_answer: impl Fn(Answer) + 'static,
     ) {
         if self.is_open() {
@@ -287,10 +285,17 @@ impl ConfirmPopup {
             xdg_positioner::ConstraintAdjustment::SlideX
                 | xdg_positioner::ConstraintAdjustment::SlideY,
         );
-        let Ok(popup) =
-            PopupSurface::new_with_grab(parent, &positioner, w as i32, h as i32, Some(serial))
-        else {
-            return;
+        // No grab: a grab needs the serial of an input the compositor takes
+        // for one, and a close can come from a key or from the compositor
+        // itself. The window keeps the keyboard (Return saves, Escape stays)
+        // and takes a press outside the card as a cancel.
+        let popup = match PopupSurface::new_with_grab(parent, &positioner, w as i32, h as i32, None)
+        {
+            Ok(popup) => popup,
+            Err(err) => {
+                tracing::warn!(%err, "could not open the save question");
+                return;
+            }
         };
         let surface_id = popup.wl_surface().id();
         {

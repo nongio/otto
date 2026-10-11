@@ -689,6 +689,13 @@ fn handle_pointer(
                 if *button != BTN_LEFT {
                     continue;
                 }
+                // A press in the window while "save changes?" is up, outside
+                // its card, is a cancel.
+                if v.confirm_close {
+                    v.answer_close(crate::confirm::Answer::Cancel);
+                    redraw = true;
+                    continue;
+                }
                 let size = v.size;
                 if let Some(pad) = &mut v.signature_pad {
                     match pad.press(size, at) {
@@ -1099,7 +1106,6 @@ impl Doc {
             size,
             &name,
             AppContext::current_theme(),
-            AppContext::last_input_serial(),
             move |answer| {
                 answered.set(Some(answer));
                 AppContext::request_wakeup();
