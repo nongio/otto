@@ -121,7 +121,7 @@ const RASTERISERS: &[Rasteriser] = &[
 /// comfortably above a full-screen panel's own pixels on a HiDPI display.
 const MAX_WIDTH: u32 = 2_048;
 
-pub fn render(file: &mut File, request: &Request) -> PreviewPayload {
+pub(super) fn render(file: &mut File, request: &Request) -> PreviewPayload {
     // Read the document once and hand it to the rasteriser on stdin. Passing
     // bytes rather than a path is the point: the child never resolves a name,
     // so nothing can be substituted between the worker's stat and its open.

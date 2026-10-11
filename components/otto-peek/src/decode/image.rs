@@ -50,7 +50,7 @@ const ANIMATION_SIZE_FLOOR: f32 = 0.5;
 /// stepping, which costs more than the size does.
 const MAX_CARRIED_DELAY_MS: u32 = 100;
 
-pub fn raster(file: &mut File, request: &Request) -> PreviewPayload {
+pub(super) fn raster(file: &mut File, request: &Request) -> PreviewPayload {
     match read_capped(file, request.budget.max_read) {
         Ok(bytes) => decoded(&bytes, request),
         Err(err) => unreadable(&err),
@@ -66,7 +66,7 @@ fn unreadable(err: &std::io::Error) -> PreviewPayload {
 
 /// The types read by [`heif`]: HEIC from a phone, AVIF from the web, and the
 /// sequences either can hold.
-pub fn is_heif(mime: &str) -> bool {
+pub(super) fn is_heif(mime: &str) -> bool {
     matches!(
         mime,
         "image/heif" | "image/heic" | "image/heif-sequence" | "image/heic-sequence" | "image/avif"
@@ -133,7 +133,7 @@ const HEIF_CONVERTERS: &[external::Tool] = &[
 /// picture is converted by a program on the system at the size it is wanted,
 /// and from there it is a picture like any other. A Skia that *can* decode it
 /// is given it first.
-pub fn heif(file: &mut File, request: &Request) -> PreviewPayload {
+pub(super) fn heif(file: &mut File, request: &Request) -> PreviewPayload {
     let bytes = match read_capped(file, request.budget.max_read) {
         Ok(bytes) => bytes,
         Err(err) => return unreadable(&err),
@@ -489,7 +489,7 @@ fn fit_within(size: ISize, bounds: ISize) -> ISize {
 /// SVG, rendered at the size it will be shown rather than at some nominal one,
 /// so it stays sharp at every zoom level. Skia's own SVG module does this —
 /// Peek deliberately does not become a new consumer of `resvg`.
-pub fn svg(file: &mut File, request: &Request) -> PreviewPayload {
+pub(super) fn svg(file: &mut File, request: &Request) -> PreviewPayload {
     let bytes = match read_capped(file, request.budget.max_read.min(64 * 1024 * 1024)) {
         Ok(bytes) => bytes,
         Err(err) => {

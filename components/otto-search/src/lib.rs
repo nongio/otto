@@ -28,6 +28,10 @@
 //! Names are scored with `otto_foundations::matching`, the same scorer the
 //! launcher and every list in the toolkit rank with.
 
+// A `pub` item nothing outside the crate can reach is an accident: say
+// `pub(crate)` or `pub(super)`, so the public API is what lib.rs exports.
+#![warn(unreachable_pub)]
+
 // Rust guideline compliant 2026-02-21
 
 pub mod dates;

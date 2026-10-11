@@ -3,7 +3,7 @@
 mod sc_layer_protocol {
     use wayland_client;
 
-    pub use wayland_client::protocol::{__interfaces::*, wl_surface};
+    pub(super) use wayland_client::protocol::{__interfaces::*, wl_surface};
 
     wayland_scanner::generate_interfaces!("../../protocols/otto-surface-style-unstable-v1.xml");
     wayland_scanner::generate_client_code!("../../protocols/otto-surface-style-unstable-v1.xml");
@@ -12,7 +12,7 @@ mod sc_layer_protocol {
 mod otto_dock_protocol {
     use wayland_client;
 
-    pub use wayland_client::protocol::{__interfaces::*, wl_surface};
+    pub(super) use wayland_client::protocol::{__interfaces::*, wl_surface};
 
     wayland_scanner::generate_interfaces!("../../protocols/otto-dock-v1.xml");
     wayland_scanner::generate_client_code!("../../protocols/otto-dock-v1.xml");
@@ -21,7 +21,7 @@ mod otto_dock_protocol {
 mod otto_canvas_protocol {
     use wayland_client;
 
-    pub use wayland_client::protocol::{__interfaces::*, wl_surface};
+    pub(super) use wayland_client::protocol::{__interfaces::*, wl_surface};
 
     wayland_scanner::generate_interfaces!("../../protocols/otto-canvas-v1.xml");
     wayland_scanner::generate_client_code!("../../protocols/otto-canvas-v1.xml");
@@ -30,7 +30,7 @@ mod otto_canvas_protocol {
 mod otto_text_cursor_protocol {
     use wayland_client;
 
-    pub use wayland_client::protocol::{__interfaces::*, wl_seat};
+    pub(super) use wayland_client::protocol::{__interfaces::*, wl_seat};
 
     wayland_scanner::generate_interfaces!("../../protocols/otto-text-cursor-v1.xml");
     wayland_scanner::generate_client_code!("../../protocols/otto-text-cursor-v1.xml");
@@ -39,7 +39,7 @@ mod otto_text_cursor_protocol {
 mod kde_appmenu_protocol {
     use wayland_client;
 
-    pub use wayland_client::protocol::{__interfaces::*, wl_surface};
+    pub(super) use wayland_client::protocol::{__interfaces::*, wl_surface};
 
     wayland_scanner::generate_interfaces!("../../protocols/kde-appmenu.xml");
     wayland_scanner::generate_client_code!("../../protocols/kde-appmenu.xml");

@@ -21,6 +21,10 @@
 //!
 //! Sizes are logical points, on a canvas the caller has already scaled.
 
+// A `pub` item nothing outside the crate can reach is an accident: say
+// `pub(crate)` or `pub(super)`, so the public API is what lib.rs exports.
+#![warn(unreachable_pub)]
+
 mod appearance;
 mod pacing;
 #[cfg(feature = "pam")]

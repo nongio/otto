@@ -178,6 +178,36 @@ jobs:
       - name: Unused dependencies
         run: cargo machete
 
+  # Cheap and early: the layering rules in architecture.toml (otto-arch) and
+  # the third-party policy in deny.toml (cargo-deny). Both read manifests and
+  # source only, so this needs no system libraries.
+  # See docs/developer/architecture.md.
+  architecture:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@1.97.0
+      - name: Cargo cache (registry + target)
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: architecture
+          cache-on-failure: true
+      # Pinned: a new cargo-deny can change the deny.toml schema.
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny@0.20.2
+      # The checker's own tests, then the workspace against the rules; a
+      # violation prints the same report `cargo run -p otto-arch` does.
+      - name: Layers and module boundaries
+        run: cargo test --locked -p otto-arch
+      # --workspace: the root manifest is also the compositor's package, and
+      # without it cargo-deny would only judge the compositor's graph.
+      - name: Third-party dependency policy
+        run: cargo deny --workspace check bans -D unused-wrapper
+
   # Cheap and early: a locale missing keys otherwise only surfaces in the
   # otto-kit unit tests, after the compositor has been built and linted.
   locales:
@@ -523,13 +553,14 @@ jobs:
     # nightly channel. `check` is skipped when nothing Rust changed, which
     # counts as passing — but only when `changes` itself succeeded, since a
     # failed classifier skips `check` too. The other two never skip.
-    needs: [changes, check, locales, ahp-conformance, build-arch, build-deb, build-rpm]
+    needs: [changes, check, locales, architecture, ahp-conformance, build-arch, build-deb, build-rpm]
     if: >-
       ${{ !cancelled()
           && github.event_name == 'push' && github.ref == 'refs/heads/main'
           && needs.changes.result == 'success'
           && (needs.check.result == 'success' || needs.check.result == 'skipped')
           && needs.locales.result == 'success'
+          && needs.architecture.result == 'success'
           && needs.ahp-conformance.result == 'success'
           && needs.build-arch.result == 'success'
           && needs.build-deb.result == 'success'
@@ -681,13 +712,14 @@ jobs:
   
   release:
     # The same gate as the nightly: a tag whose tests fail gets no draft.
-    needs: [changes, check, locales, ahp-conformance, build-deb, build-rpm, build-arch, validate-pkgbuild]
+    needs: [changes, check, locales, architecture, ahp-conformance, build-deb, build-rpm, build-arch, validate-pkgbuild]
     if: >-
       ${{ !cancelled()
           && startsWith(github.ref, 'refs/tags/v')
           && needs.changes.result == 'success'
           && (needs.check.result == 'success' || needs.check.result == 'skipped')
           && needs.locales.result == 'success'
+          && needs.architecture.result == 'success'
           && needs.ahp-conformance.result == 'success'
           && needs.build-deb.result == 'success'
           && needs.build-rpm.result == 'success'

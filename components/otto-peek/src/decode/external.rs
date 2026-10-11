@@ -28,7 +28,7 @@ use super::on_path;
 
 /// What a tool is asked to make.
 #[derive(Debug, Clone, Copy)]
-pub struct Ask {
+pub(super) struct Ask {
     /// The box the picture must fit inside, in pixels. A source smaller than
     /// the box is not grown into it.
     pub width: u32,
@@ -39,7 +39,7 @@ pub struct Ask {
 }
 
 /// A program, and how to ask it for a PNG of `/dev/stdin` on stdout.
-pub struct Tool {
+pub(super) struct Tool {
     /// The binary, looked up on `PATH`.
     pub command: &'static str,
     pub args: fn(&Ask) -> Vec<String>,
@@ -51,7 +51,7 @@ const MAX_OUTPUT: u64 = 256 * 1024 * 1024;
 
 /// The first picture one of `tools` makes of `file`. `None` when none of them
 /// is installed, or every one that is failed.
-pub fn picture(tools: &[Tool], file: &mut File, ask: &Ask) -> Option<Pixels> {
+pub(super) fn picture(tools: &[Tool], file: &mut File, ask: &Ask) -> Option<Pixels> {
     tools
         .iter()
         .filter(|tool| on_path(tool.command))
@@ -64,7 +64,7 @@ pub fn picture(tools: &[Tool], file: &mut File, ask: &Ask) -> Option<Pixels> {
 /// Single-threaded on both sides. Its default is a thread per core for the
 /// decoder and again for the encoder, and under the worker's address-space
 /// cap the encoder's pool is what fails to start.
-pub fn ffmpeg_frame(ask: &Ask) -> Vec<String> {
+pub(super) fn ffmpeg_frame(ask: &Ask) -> Vec<String> {
     let mut args: Vec<String> = [
         "-nostdin",
         "-hide_banner",
@@ -136,7 +136,7 @@ fn run(command: &str, args: &[String], file: &mut File) -> Option<Vec<u8>> {
 }
 
 /// A PNG from one of these tools, as pixels.
-pub fn decode_png(png: &[u8]) -> Option<Pixels> {
+pub(super) fn decode_png(png: &[u8]) -> Option<Pixels> {
     let mut codec = Codec::from_data(Data::new_copy(png))?;
     let info = codec
         .info()

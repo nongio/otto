@@ -25,7 +25,7 @@ use super::{external, human_size, Request};
 const HEADER_BYTES: u64 = 1024 * 1024;
 
 /// The last resort: a file we can name and size but not interpret.
-pub fn generic(metadata: &Metadata, request: &Request, mime: &str) -> PreviewPayload {
+pub(super) fn generic(metadata: &Metadata, request: &Request, mime: &str) -> PreviewPayload {
     PreviewPayload::Card {
         title: request.name.clone(),
         subtitle: filetype::kind_of(mime).label().to_string(),
@@ -45,7 +45,7 @@ pub fn generic(metadata: &Metadata, request: &Request, mime: &str) -> PreviewPay
     }
 }
 
-pub fn audio(
+pub(super) fn audio(
     file: &mut File,
     metadata: &Metadata,
     request: &Request,
@@ -91,7 +91,7 @@ pub fn audio(
     }
 }
 
-pub fn video(
+pub(super) fn video(
     file: &mut File,
     metadata: &Metadata,
     request: &Request,

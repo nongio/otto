@@ -15,7 +15,7 @@ use super::{read_capped, Request};
 /// as plain text, for the same reason: generated Markdown gets very large.
 const MAX_BYTES: u64 = 8 * 1024 * 1024;
 
-pub fn read(file: &mut File, _request: &Request) -> PreviewPayload {
+pub(super) fn read(file: &mut File, _request: &Request) -> PreviewPayload {
     let bytes = match read_capped(file, MAX_BYTES) {
         Ok(bytes) => bytes,
         Err(err) => {

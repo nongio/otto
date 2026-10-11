@@ -25,6 +25,10 @@
 //! carries the same containment Peek's decoder does — no network, no
 //! new privileges, hard descriptor and memory limits — for the same reason.
 
+// A `pub` item nothing outside the crate can reach is an accident: say
+// `pub(crate)` or `pub(super)`, so the public API is what lib.rs exports.
+#![warn(unreachable_pub)]
+
 pub mod player;
 pub mod protocol;
 pub mod transport;

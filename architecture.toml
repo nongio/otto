@@ -1,0 +1,283 @@
+# Otto's architecture, as rules a machine checks.
+#
+#   cargo run -p otto-arch            # check (CI runs this)
+#   cargo run -p otto-arch -- --bless # also rewrite the graph in docs/developer/architecture.md
+#
+# Three kinds of rule live here:
+#
+#   [[layer]]        which workspace crates may depend on which, and which
+#                    third-party crates a layer must stay free of
+#   [[module_rule]]  which top-level modules of the compositor (`src/`) may
+#                    not reach into which others: inside one crate the
+#                    compiler draws no boundary, so this file does
+#   [[source_rule]]  a pattern that belongs in exactly one place
+#
+# Code that breaks a rule today is listed under [[allow]] with the reason it
+# is still there. An entry is debt, not permission: once the code is fixed the
+# checker fails on the stale entry, so the list only shrinks. A new violation
+# is never fixed by adding an entry without a reason someone would accept in
+# review.
+#
+# Third-party *policy* (only the compositor links the Smithay server, only the
+# media crates link GStreamer, …) lives in deny.toml, where cargo-deny also
+# sees transitive dependencies.
+
+# ---------------------------------------------------------------------------
+# Crate layers
+# ---------------------------------------------------------------------------
+#
+# Every workspace member belongs to exactly one layer; a new crate fails the
+# check until it is placed. `may_use` lists the layers a crate in this layer
+# may depend on (normal and build dependencies; dev-dependencies are free, so
+# a test can drive an app). A layer may only use itself when it says so.
+# `forbid_deps` are third-party crates no crate in the layer may pull in,
+# directly or through anything else (judged on the resolved graph). Which
+# crates may link a library directly is deny.toml's job.
+# `lib_lints` are lints each crate's lib root must turn on: library layers
+# use `unreachable_pub` so their public API is exactly what lib.rs exports.
+# `graph = false` leaves a layer out of the generated picture.
+
+[[layer]]
+name = "foundation"
+description = "UI-free base: pure functions over std, and the D-Bus interface definitions"
+crates = ["otto-foundations", "otto-dbus"]
+may_use = []
+lib_lints = ["unreachable_pub"]
+forbid_deps = [
+    "skia-safe",
+    "laye-rs",
+    "smithay-client-toolkit",
+    "wayland-client",
+]
+
+[[layer]]
+name = "service"
+description = "Clients of system services with no toolkit: search, the agents protocol"
+crates = ["otto-search", "otto-agents-client"]
+may_use = ["foundation"]
+lib_lints = ["unreachable_pub"]
+forbid_deps = [
+    "skia-safe",
+    "laye-rs",
+    "smithay-client-toolkit",
+    "wayland-client",
+]
+
+[[layer]]
+name = "toolkit"
+description = "otto-kit: windows, drawing, menus and the shared widgets every app is built from"
+crates = ["otto-kit"]
+may_use = ["foundation"]
+lib_lints = ["unreachable_pub"]
+
+[[layer]]
+name = "kit"
+description = "Feature libraries on top of the toolkit, shared by more than one app"
+crates = [
+    "otto-md-kit",
+    "otto-media-kit",
+    "otto-auth-ui",
+    "otto-peek",
+    "otto-agents-kit",
+]
+may_use = ["foundation", "service", "toolkit", "kit"]
+lib_lints = ["unreachable_pub"]
+
+[[layer]]
+name = "app"
+description = "Programs: Wayland clients, daemons and the portal. Nothing depends on an app"
+crates = [
+    "otto-bar",
+    "otto-islands",
+    "otto-launcher",
+    "otto-emoji",
+    "otto-settings",
+    "otto-files",
+    "otto-preview",
+    "otto-stash",
+    "otto-canvas",
+    "otto-greeter",
+    "otto-lock",
+    "otto-authorize",
+    "otto-input-overlay",
+    "otto-dictate",
+    "otto-msg",
+    "otto-agents",
+    "otto-rdp",
+    "xdg-desktop-portal-otto",
+    "apps-manager",
+]
+may_use = ["foundation", "service", "toolkit", "kit"]
+
+[[layer]]
+name = "compositor"
+description = "The compositor. It draws with the same toolkit as the apps (titlebars, text, icons, theme), so it may use otto-kit, but no kit or app"
+crates = ["otto"]
+may_use = ["foundation", "toolkit"]
+
+[[layer]]
+name = "sample"
+description = "Sample and test clients: standalone, they exercise the protocols from outside"
+crates = ["client-rainbow", "submenu", "submenu-gtk", "deadlock-test"]
+may_use = []
+graph = false
+
+[[layer]]
+name = "tool"
+description = "Repository tooling"
+crates = ["otto-arch"]
+may_use = []
+graph = false
+
+# ---------------------------------------------------------------------------
+# Compositor module rules
+# ---------------------------------------------------------------------------
+#
+# Modules are the top-level entries of src/ (a file or a directory). A rule
+# forbids any module in `from` from naming a module in `to` through a
+# `crate::` path, in code, use trees or macro calls; a name the crate root
+# re-exports (`crate::Otto`) counts as its module. "*" in `from` means every
+# module, so one backend naming another breaks backends-are-leaves too. Test
+# code counts. The crate roots (lib.rs, main.rs) wire everything together and
+# are exempt.
+
+[[module_rule]]
+name = "backends-are-leaves"
+from = ["*"]
+to = ["udev", "winit", "x11", "headless"]
+reason = "A backend drives the shared compositor, never the other way round: code that needs something from a backend takes it through the Backend trait or a value the backend hands over."
+
+[[module_rule]]
+name = "render-stack-below-window-management"
+from = ["drawing", "renderer", "render_elements", "skia_renderer", "textures_storage"]
+to = ["state", "shell", "workspaces", "input", "input_handler", "focus"]
+reason = "The renderer turns elements into pixels; deciding what is on screen belongs to workspaces and shell, which hand it elements."
+
+[[module_rule]]
+name = "config-is-a-leaf"
+from = ["config", "theme", "utils"]
+to = [
+    "state",
+    "shell",
+    "workspaces",
+    "input",
+    "input_handler",
+    "render",
+    "renderer",
+    "skia_renderer",
+    "udev",
+    "winit",
+    "x11",
+    "headless",
+]
+reason = "Configuration, theme and utilities are read by everything, so they can depend on nothing that reads them."
+
+# ---------------------------------------------------------------------------
+# Source rules
+# ---------------------------------------------------------------------------
+#
+# Scanned over src/ and components/*/src, skipping `#[test]` functions and
+# `#[cfg(test)]` items. `allowed_in` lists path prefixes (from the repository
+# root) where the pattern is the implementation.
+
+[[source_rule]]
+name = "xdg-dirs-through-foundations"
+pattern = 'env::var(_os)?\(\s*"(HOME|XDG_(CONFIG|DATA|STATE|CACHE)_HOME|XDG_RUNTIME_DIR|XDG_(DATA|CONFIG)_DIRS)"'
+allowed_in = ["components/otto-foundations/"]
+reason = "The XDG base directories, with their fallbacks, are otto_foundations::xdg (re-exported as otto_kit::xdg). A hand-rolled lookup drifts: a missing fallback, or a relative path the spec says to ignore."
+
+# ---------------------------------------------------------------------------
+# Known debt
+# ---------------------------------------------------------------------------
+
+# Crates.
+
+[[allow]]
+crate = "otto-preview"
+dep = "otto-files"
+reason = "Preview reuses otto-files' peek session, directory watch and badge painters. They belong in a kit (otto-peek or a new files kit) both apps share."
+
+# Compositor modules.
+
+[[allow]]
+module = "input"
+uses = "udev"
+reason = "Edge swipe, tablet, pointer and gesture handling have udev-only impls on Otto<UdevData> (evdev fds, the renderer API)."
+
+[[allow]]
+module = "input_handler"
+uses = "udev"
+reason = "udev-only input handling (VT switching, the renderer API) is an impl on Otto<UdevData>."
+
+[[allow]]
+module = "renderer"
+uses = "udev"
+reason = "Switching the active renderer builds the Vulkan backend from udev::vulkan_api, which belongs in renderer."
+
+[[allow]]
+module = "settings"
+uses = "udev"
+reason = "The renderer setting offers Vulkan only when udev's Vulkan probe succeeded (udev::vulkan_fallback)."
+
+[[allow]]
+module = "state"
+uses = "udev"
+reason = "Night light and output ids downcast the backend data to reach udev's DRM backends and gamma tables, and screencopy names udev::UdevRenderer. Belongs behind the Backend trait."
+
+[[allow]]
+module = "skia_renderer"
+uses = "workspaces"
+reason = "The GPU-memory log (target otto::gpumem) counts workspaces::zombie_windows(); the count belongs in stats the renderer is handed."
+
+[[allow]]
+module = "config"
+uses = "workspaces"
+reason = "Config::gaps returns workspaces::tiling::Gaps; the conversion belongs in workspaces."
+
+[[allow]]
+module = "utils"
+uses = "workspaces"
+reason = "utils shares workspaces::utils::FONT_CACHE; the cache belongs in utils."
+
+# Source patterns.
+
+[[allow]]
+rule = "xdg-dirs-through-foundations"
+reason = "Written before otto_foundations::xdg existed, or before it covered the directory. Each one moves to otto_foundations::xdg (otto_kit::xdg in toolkit users)."
+files = [
+    { path = "src/config/mod.rs", count = 2 },
+    { path = "src/desktop_widget.rs", count = 3 },
+    { path = "src/input/actions.rs", count = 4 },
+    { path = "src/main.rs", count = 2 },
+    { path = "src/search_index.rs", count = 1 },
+    { path = "src/udev/debug.rs", count = 3 },
+    { path = "components/otto-agents/src/cli.rs", count = 2 },
+    { path = "components/otto-agents/src/config.rs", count = 1 },
+    { path = "components/otto-agents/src/host.rs", count = 2 },
+    { path = "components/otto-agents/src/skills.rs", count = 1 },
+    { path = "components/otto-agents-kit/src/chat/mod.rs", count = 2 },
+    { path = "components/otto-agents-kit/src/sessions.rs", count = 1 },
+    { path = "components/otto-authorize/src/polkit/mod.rs", count = 1 },
+    { path = "components/otto-files/src/desk.rs", count = 1 },
+    { path = "components/otto-files/src/model.rs", count = 1 },
+    { path = "components/otto-files/src/ocrcache.rs", count = 2 },
+    { path = "components/otto-files/src/picker_dirs.rs", count = 2 },
+    { path = "components/otto-files/src/remembered.rs", count = 2 },
+    { path = "components/otto-files/src/scripts.rs", count = 2 },
+    { path = "components/otto-files/src/undo_history.rs", count = 1 },
+    { path = "components/otto-kit/src/sound.rs", count = 1 },
+    { path = "components/otto-kit/src/testing.rs", count = 1 },
+    { path = "components/otto-launcher/src/apps.rs", count = 2 },
+    { path = "components/otto-launcher/src/drafts.rs", count = 2 },
+    { path = "components/otto-preview/src/marks.rs", count = 1 },
+    { path = "components/otto-preview/src/versions.rs", count = 2 },
+    { path = "components/otto-rdp/src/tls.rs", count = 2 },
+    { path = "components/otto-search/src/main.rs", count = 1 },
+    { path = "components/otto-settings/src/discovery.rs", count = 4 },
+    { path = "components/otto-settings/src/panes/account.rs", count = 2 },
+    { path = "components/otto-settings/src/panes/agents/instructions.rs", count = 2 },
+    { path = "components/otto-settings/src/panes/agents.rs", count = 7 },
+    { path = "components/otto-settings/src/panes/appearance.rs", count = 2 },
+    { path = "components/otto-settings/src/panes/search.rs", count = 1 },
+    { path = "components/xdg-desktop-portal-otto/src/portal/restore.rs", count = 3 },
+]
