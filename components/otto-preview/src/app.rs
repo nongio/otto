@@ -1052,6 +1052,15 @@ impl Doc {
             return;
         }
         let mut viewer = self.viewer.lock().unwrap();
+        // The window's own save, seen before it has finished saying so: the
+        // edit redraws its own pages.
+        if viewer
+            .editing
+            .as_ref()
+            .is_some_and(|editing| editing.busy > 0)
+        {
+            return;
+        }
         let now = Stamp::of(&viewer.path);
         if now.is_none() || now == viewer.stamp {
             return;

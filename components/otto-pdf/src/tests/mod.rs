@@ -1361,3 +1361,41 @@ fn real_world_document() {
         reopened.annotations.len()
     );
 }
+
+/// How long an edit takes, step by step, on `OTTO_PDF_TIMING` (a PDF with a
+/// text field): open, then a few fills, each applied and saved.
+#[test]
+#[ignore = "prints timings for a file named by OTTO_PDF_TIMING"]
+fn edit_timings() {
+    let Some(source) = std::env::var_os("OTTO_PDF_TIMING") else {
+        return;
+    };
+    if !pdfium() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("timing.pdf");
+    std::fs::copy(source, &path).unwrap();
+    let started = std::time::Instant::now();
+    let mut doc = Document::open(path.clone(), None).unwrap();
+    println!("open {:?}", started.elapsed());
+    let snap = doc.snapshot();
+    let field = snap
+        .fields
+        .iter()
+        .find(|field| matches!(field.kind, FieldKind::Text { .. }) && !field.read_only)
+        .expect("a text field")
+        .id;
+    for round in 0..4 {
+        let started = std::time::Instant::now();
+        doc.apply(&[Edit::SetText {
+            field,
+            text: format!("Round {round}"),
+        }])
+        .unwrap();
+        let applied = started.elapsed();
+        let started = std::time::Instant::now();
+        doc.save().unwrap();
+        println!("apply {applied:?} save {:?}", started.elapsed());
+    }
+}
