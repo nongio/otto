@@ -1396,6 +1396,59 @@ fn edit_timings() {
         let applied = started.elapsed();
         let started = std::time::Instant::now();
         doc.save().unwrap();
-        println!("apply {applied:?} save {:?}", started.elapsed());
+        let saved = started.elapsed();
+        let started = std::time::Instant::now();
+        doc.render(field.page, 1800).unwrap();
+        println!(
+            "apply {applied:?} save {saved:?} render 1800px {:?}",
+            started.elapsed()
+        );
     }
+}
+
+#[test]
+fn a_page_draws_in_its_shape_with_unsaved_edits_on_it() {
+    if !pdfium() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let path = write_fixture(dir.path(), "render.pdf");
+    let mut doc = Document::open(path, None).unwrap();
+    let snapshot = doc.snapshot();
+    let page = snapshot.pages[0];
+    let (height, before) = doc.render(0, 400).unwrap();
+    assert_eq!(
+        height,
+        (400.0 * page.height / page.width).round() as u32,
+        "the page's own shape"
+    );
+    assert_eq!(before.len(), 400 * height as usize * 4);
+    // White paper, opaque, in the corner.
+    assert_eq!(&before[..4], &[255, 255, 255, 255]);
+
+    let agree = field(&snapshot, "agree");
+    doc.apply(&[Edit::SetChecked {
+        field: agree.id,
+        checked: true,
+    }])
+    .unwrap();
+    let (_, after) = doc.render(0, 400).unwrap();
+    // Somewhere inside the checkbox, the tick shows before any save.
+    let scale = 400.0 / page.width;
+    let (left, top) = (
+        (agree.rect.left * scale) as usize,
+        (agree.rect.top * scale) as usize,
+    );
+    let (right, bottom) = (
+        (agree.rect.right * scale).ceil() as usize,
+        (agree.rect.bottom * scale).ceil() as usize,
+    );
+    let changed = (top..bottom).any(|y| {
+        (left..right).any(|x| {
+            let at = (y * 400 + x) * 4;
+            before[at..at + 4] != after[at..at + 4]
+        })
+    });
+    assert!(changed, "the tick is drawn");
+    assert!(doc.render(9, 400).is_err());
 }

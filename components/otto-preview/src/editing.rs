@@ -286,38 +286,48 @@ pub struct Batch {
     pub pages: Vec<usize>,
 }
 
-/// Apply a batch and save it, then draw again the pages it touched, the old
-/// drawing staying up until each new one lands. Blocks: run it off the UI
-/// thread.
+/// Apply a batch, draw the pages it touched from the document as it is now,
+/// then save it. The pages are drawn by PDFium from memory before the save,
+/// so what the person did shows at once rather than after the file is
+/// written and rasterised again. Blocks: run it off the UI thread.
 ///
 /// # Errors
 ///
 /// What the engine said when an edit or the save failed; the window keeps
 /// showing the file as it was.
 pub fn run_batch(viewer: &Mutex<Viewer>, batch: &Batch) -> Result<Snapshot, otto_pdf::Error> {
-    let outcome = {
-        let mut doc = batch.doc.lock().unwrap();
-        doc.apply(&batch.edits)
-            .and_then(|snapshot| doc.save().map(|()| snapshot))
+    let applied = batch.doc.lock().unwrap().apply(&batch.edits);
+    let (pages, generation) = {
+        let viewer = viewer.lock().unwrap();
+        (viewer.redraw_widths(batch), viewer.generation)
     };
-    let (redraw, generation, path) = {
-        let mut viewer = viewer.lock().unwrap();
-        let redraw = viewer.finish_batch(batch, outcome.clone());
-        (redraw, viewer.generation, viewer.path.clone())
-    };
-    AppContext::request_wakeup();
-    for (page, width) in redraw {
-        let pixels = match otto_files::peek::decode_page(&path, page, width) {
-            otto_kit::preview::Preview::Pixels { pixels, .. } => Some(pixels),
-            _ => None,
+    for (page, width) in pages {
+        let drawn = batch.doc.lock().unwrap().render(page, width);
+        let pixels = match drawn {
+            Ok((height, data)) => otto_kit::preview::Pixels {
+                width,
+                height,
+                intrinsic_width: width,
+                intrinsic_height: height,
+                data,
+                frame_delays: Vec::new(),
+                words: Vec::new(),
+            },
+            Err(err) => {
+                tracing::warn!(page, %err, "an edited page could not be drawn");
+                continue;
+            }
         };
         let mut viewer = viewer.lock().unwrap();
         if viewer.generation == generation {
-            viewer.finish_redraw(page, pixels);
+            viewer.finish_redraw(page as u32 + 1, Some(pixels));
         }
         drop(viewer);
         AppContext::request_wakeup();
     }
+    let outcome = applied.and_then(|snapshot| batch.doc.lock().unwrap().save().map(|()| snapshot));
+    viewer.lock().unwrap().finish_batch(batch, outcome.clone());
+    AppContext::request_wakeup();
     outcome
 }
 
@@ -516,20 +526,25 @@ impl Viewer {
         std::mem::take(&mut self.batches)
     }
 
+    /// The pages a batch touched that are drawn now, 0-based, with the width
+    /// each is drawn at, so it can be drawn again at the same size.
+    pub fn redraw_widths(&self, batch: &Batch) -> Vec<(usize, u32)> {
+        let pages = self.session.pages();
+        batch
+            .pages
+            .iter()
+            .filter_map(|&page| Some((page, pages.get(page)?.pixels.as_ref()?.width)))
+            .collect()
+    }
+
     /// A batch has been applied and saved (or failed): take the document as
-    /// it is now, keep the file as a version, and draw its pages again.
-    /// Returns the pages to rasterise again, 1-based, with the width each
-    /// was drawn at.
-    pub fn finish_batch(
-        &mut self,
-        batch: &Batch,
-        outcome: Result<Snapshot, otto_pdf::Error>,
-    ) -> Vec<(u32, u32)> {
+    /// it is now and keep the file as a version.
+    pub fn finish_batch(&mut self, batch: &Batch, outcome: Result<Snapshot, otto_pdf::Error>) {
         let Some(editing) = &mut self.editing else {
-            return Vec::new();
+            return;
         };
         if !Arc::ptr_eq(&editing.doc, &batch.doc) {
-            return Vec::new();
+            return;
         }
         editing.busy = editing.busy.saturating_sub(1);
         self.dirty = true;
@@ -550,22 +565,14 @@ impl Viewer {
             Err(err) => {
                 tracing::warn!(path = %self.path.display(), %err, "an edit could not be saved");
                 editing.settling.clear();
-                return Vec::new();
+                return;
             }
         }
         self.track_version();
-        let pages = self.session.pages();
-        batch
-            .pages
-            .iter()
-            .filter_map(|&page| {
-                let width = pages.get(page)?.pixels.as_ref()?.width;
-                Some((page as u32 + 1, width))
-            })
-            .inspect(|(page, _)| {
-                self.thumbs.remove(page);
-            })
-            .collect()
+        // The sidebar's thumbnails of those pages are drawn again too.
+        for page in &batch.pages {
+            self.thumbs.remove(&(*page as u32 + 1));
+        }
     }
 
     /// A page drawn again after an edit has landed: what was settling on it

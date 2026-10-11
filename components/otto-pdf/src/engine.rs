@@ -120,6 +120,48 @@ impl Doc {
         Ok(doc)
     }
 
+    /// Draws page `index` as it is now, form fields and annotations
+    /// included, `width` pixels wide on white: RGBA, four bytes a pixel,
+    /// opaque. Returns the height with the pixels.
+    pub fn render(&self, index: usize, width: u32) -> Result<(u32, Vec<u8>)> {
+        let shown = self
+            .pages
+            .get(index)
+            .ok_or_else(|| Error::Invalid(format!("there is no page {}", index + 1)))?
+            .geometry
+            .page();
+        let width = width.clamp(1, 8192);
+        let height = ((width as f32 * shown.height / shown.width.max(1.0)).round() as u32).max(1);
+        let page = self.page(index)?;
+        let stride = width as usize * 4;
+        let mut pixels = vec![0u8; stride * height as usize];
+        let (w, h) = (width as c_int, height as c_int);
+        // SAFETY: the bitmap wraps `pixels`, which is `stride * height`
+        // bytes and outlives it (destroyed below, before `pixels` moves);
+        // the page and the form are live.
+        unsafe {
+            let bitmap = (self.ffi.FPDFBitmap_CreateEx)(
+                w,
+                h,
+                ffi::FPDF_BITMAP_BGRA,
+                pixels.as_mut_ptr().cast::<c_void>(),
+                stride as c_int,
+            );
+            if bitmap.is_null() {
+                return Err(Error::Failed("couldn't make a bitmap to draw into".into()));
+            }
+            (self.ffi.FPDFBitmap_FillRect)(bitmap, 0, 0, w, h, 0xFFFF_FFFF);
+            let flags = ffi::FPDF_RENDER_ANNOT | ffi::FPDF_RENDER_REVERSE_BYTE_ORDER;
+            (self.ffi.FPDF_RenderPageBitmap)(bitmap, page.raw, 0, 0, w, h, 0, flags);
+            if !self.form.is_null() {
+                (self.ffi.FPDF_FFLDraw)(self.form, bitmap, page.raw, 0, 0, w, h, 0, flags);
+            }
+            (self.ffi.FPDFBitmap_Destroy)(bitmap);
+        }
+        drop(page);
+        Ok((height, pixels))
+    }
+
     /// Whether any signature field holds a signature: PDFium counts the
     /// empty ones too, so each is asked for its contents.
     fn has_signature(&self) -> bool {

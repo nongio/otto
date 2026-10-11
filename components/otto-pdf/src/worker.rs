@@ -168,6 +168,21 @@ impl Document {
         outcome.map(|()| self.snapshot.clone())
     }
 
+    /// Draws page `page` (0-based) as the document is now, unsaved edits
+    /// included: `width` pixels wide, RGBA, opaque. Returns the height with
+    /// the pixels.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Invalid`] for a page the document doesn't have,
+    /// [`Error::Failed`] when PDFium can't draw it.
+    pub fn render(&self, page: usize, width: u32) -> Result<(u32, Vec<u8>)> {
+        let id = self.id;
+        call(&self.worker, move |engine| {
+            engine.doc(id)?.render(page, width)
+        })?
+    }
+
     /// Saves over the file it was opened from.
     ///
     /// A signed document is saved by appending the changes, so its

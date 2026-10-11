@@ -66,6 +66,13 @@ pub type FPDF_BYTESTRING = *const c_char;
 pub const FPDF_ERR_PASSWORD: c_ulong = 4;
 
 /// `FPDF_INCREMENTAL`: append the changes after the original bytes.
+/// `FPDFBitmap_BGRA` (`fpdfview.h`): four bytes a pixel.
+pub const FPDF_BITMAP_BGRA: c_int = 4;
+/// `FPDF_ANNOT` (`fpdfview.h`): draw the page's annotations.
+pub const FPDF_RENDER_ANNOT: c_int = 0x01;
+/// `FPDF_REVERSE_BYTE_ORDER` (`fpdfview.h`): write RGBA rather than BGRA.
+pub const FPDF_RENDER_REVERSE_BYTE_ORDER: c_int = 0x10;
+
 pub const FPDF_INCREMENTAL: FPDF_DWORD = 1 << 0;
 /// `FPDF_NO_INCREMENTAL`: write the whole file afresh.
 pub const FPDF_NO_INCREMENTAL: FPDF_DWORD = 1 << 1;
@@ -326,6 +333,9 @@ bindings! {
 
     fn FPDFBitmap_CreateEx(width: c_int, height: c_int, format: c_int, first_scan: *mut c_void, stride: c_int) -> FPDF_BITMAP;
     fn FPDFBitmap_Destroy(bitmap: FPDF_BITMAP);
+    fn FPDFBitmap_FillRect(bitmap: FPDF_BITMAP, left: c_int, top: c_int, width: c_int, height: c_int, color: FPDF_DWORD) -> FPDF_BOOL;
+    fn FPDF_RenderPageBitmap(bitmap: FPDF_BITMAP, page: FPDF_PAGE, start_x: c_int, start_y: c_int, size_x: c_int, size_y: c_int, rotate: c_int, flags: c_int);
+    fn FPDF_FFLDraw(form: FPDF_FORMHANDLE, bitmap: FPDF_BITMAP, page: FPDF_PAGE, start_x: c_int, start_y: c_int, size_x: c_int, size_y: c_int, rotate: c_int, flags: c_int);
     fn FPDFPageObj_NewImageObj(document: FPDF_DOCUMENT) -> FPDF_PAGEOBJECT;
     fn FPDFImageObj_SetBitmap(pages: *mut FPDF_PAGE, count: c_int, image: FPDF_PAGEOBJECT, bitmap: FPDF_BITMAP) -> FPDF_BOOL;
     fn FPDFPageObj_SetMatrix(object: FPDF_PAGEOBJECT, matrix: *const FS_MATRIX) -> FPDF_BOOL;
