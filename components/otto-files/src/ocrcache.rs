@@ -85,11 +85,7 @@ fn root() -> Option<PathBuf> {
     if let Some(dir) = std::env::var_os("OTTO_OCR_CACHE") {
         return Some(PathBuf::from(dir));
     }
-    let base = std::env::var_os("XDG_CACHE_HOME")
-        .map(PathBuf::from)
-        .filter(|p| p.is_absolute())
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache")))?;
-    Some(base.join("otto").join("ocr"))
+    Some(otto_kit::xdg::cache_home()?.join("otto").join("ocr"))
 }
 
 fn file_name(path: &Path, page: u32) -> String {

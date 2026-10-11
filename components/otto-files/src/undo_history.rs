@@ -221,8 +221,11 @@ fn shared_path() -> Option<PathBuf> {
     if let Some(path) = std::env::var_os("OTTO_FILES_UNDO") {
         return Some(PathBuf::from(path));
     }
-    let base = std::env::var_os("XDG_RUNTIME_DIR").filter(|value| !value.is_empty())?;
-    Some(PathBuf::from(base).join("otto").join("files-undo.json"))
+    Some(
+        otto_kit::xdg::runtime_dir()?
+            .join("otto")
+            .join("files-undo.json"),
+    )
 }
 
 #[cfg(test)]

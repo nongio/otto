@@ -735,17 +735,11 @@ pub fn scripts_dir() -> Option<PathBuf> {
     if let Some(path) = std::env::var_os("OTTO_FILES_SCRIPTS") {
         return Some(PathBuf::from(path));
     }
-    let base = std::env::var("XDG_CONFIG_HOME")
-        .ok()
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-        .or_else(|| {
-            std::env::var("HOME")
-                .ok()
-                .filter(|value| !value.is_empty())
-                .map(|home| PathBuf::from(home).join(".config"))
-        })?;
-    Some(base.join("otto").join("files-scripts"))
+    Some(
+        otto_kit::xdg::config_home()?
+            .join("otto")
+            .join("files-scripts"),
+    )
 }
 
 /// A `&'static str` for an undo label that came out of a script.

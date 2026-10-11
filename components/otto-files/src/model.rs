@@ -906,10 +906,7 @@ pub fn abbreviate_home(path: &Path) -> String {
 }
 
 pub fn home_dir() -> Option<PathBuf> {
-    std::env::var("HOME")
-        .ok()
-        .filter(|h| !h.is_empty())
-        .map(PathBuf::from)
+    otto_kit::xdg::home()
 }
 
 // ---------------------------------------------------------------------------
