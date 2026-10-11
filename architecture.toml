@@ -258,11 +258,5 @@ files = [
     { path = "components/otto-preview/src/versions.rs", count = 2 },
     { path = "components/otto-rdp/src/tls.rs", count = 2 },
     { path = "components/otto-search/src/main.rs", count = 1 },
-    { path = "components/otto-settings/src/discovery.rs", count = 4 },
-    { path = "components/otto-settings/src/panes/account.rs", count = 2 },
-    { path = "components/otto-settings/src/panes/agents/instructions.rs", count = 2 },
-    { path = "components/otto-settings/src/panes/agents.rs", count = 7 },
-    { path = "components/otto-settings/src/panes/appearance.rs", count = 2 },
-    { path = "components/otto-settings/src/panes/search.rs", count = 1 },
     { path = "components/xdg-desktop-portal-otto/src/portal/restore.rs", count = 3 },
 ]

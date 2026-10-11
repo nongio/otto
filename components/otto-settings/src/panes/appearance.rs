@@ -142,16 +142,9 @@ fn desktop_widget_row() -> Row {
 fn user_theme_dir() -> String {
     static DIR: OnceLock<String> = OnceLock::new();
     DIR.get_or_init(|| {
-        let home = std::env::var("HOME").unwrap_or_default();
-        let config = std::env::var("XDG_CONFIG_HOME")
-            .ok()
-            .filter(|dir| !dir.is_empty())
-            .unwrap_or_else(|| format!("{home}/.config"));
-        let dir = format!("{config}/otto/widgets/ewwii");
-        match dir.strip_prefix(&home) {
-            Some(rest) if !home.is_empty() => format!("~{rest}"),
-            _ => dir,
-        }
+        let config =
+            otto_kit::xdg::config_home().unwrap_or_else(|| std::path::PathBuf::from("~/.config"));
+        otto_kit::xdg::tilde(&config.join("otto/widgets/ewwii"))
     })
     .clone()
 }
