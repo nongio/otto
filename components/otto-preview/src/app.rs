@@ -395,19 +395,32 @@ impl Doc {
     fn follow_document(&self) {
         let scale = AppContext::scale_factor().max(1) as f32;
         // The sidebar's thumbnails, small decodes of their own pages.
-        let (thumbs, generation) = {
+        // A PDF open for editing is drawn from the document in memory, so
+        // its unsaved changes show on every page drawn, not only the ones
+        // an edit touched; anything else is rasterised from the file.
+        let (thumbs, generation, editing) = {
             let mut viewer = self.viewer.lock().unwrap();
-            (viewer.thumb_work(scale), viewer.generation)
+            (
+                viewer.thumb_work(scale),
+                viewer.generation,
+                viewer.editing_doc(),
+            )
+        };
+        let draw = move |path: &Path, page: u32, width: u32| match &editing {
+            Some(doc) => crate::editing::draw_page(doc, page as usize - 1, width),
+            None => match peek::decode_page(path, page, width) {
+                Preview::Pixels { pixels, .. } => Some(pixels),
+                _ => None,
+            },
         };
         if let Some((requests, path)) = thumbs {
             for request in requests {
                 let viewer = Arc::clone(&self.viewer);
                 let path = path.clone();
+                let draw = draw.clone();
                 tokio::task::spawn_blocking(move || {
-                    let image = match peek::decode_page(&path, request.page, request.width) {
-                        Preview::Pixels { pixels, .. } => pixels.to_image(),
-                        _ => None,
-                    };
+                    let image = draw(&path, request.page, request.width)
+                        .and_then(|pixels| pixels.to_image());
                     viewer
                         .lock()
                         .unwrap()
@@ -428,11 +441,9 @@ impl Doc {
         for request in pages {
             let viewer = Arc::clone(&self.viewer);
             let path = path.clone();
+            let draw = draw.clone();
             tokio::task::spawn_blocking(move || {
-                let pixels = match peek::decode_page(&path, request.page, request.width) {
-                    Preview::Pixels { pixels, .. } => Some(pixels),
-                    _ => None,
-                };
+                let pixels = draw(&path, request.page, request.width);
                 viewer
                     .lock()
                     .unwrap()

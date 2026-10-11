@@ -1452,3 +1452,76 @@ fn a_page_draws_in_its_shape_with_unsaved_edits_on_it() {
     assert!(changed, "the tick is drawn");
     assert!(doc.render(9, 400).is_err());
 }
+
+/// Every kind of annotation added shows in the page as drawn right after,
+/// before any save: markup, ink and text have no appearance of their own
+/// until one is made, and the page is drawn from memory.
+#[test]
+fn added_annotations_show_in_the_page_drawn_before_a_save() {
+    if !pdfium() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let path = write_fixture(dir.path(), "annot-render.pdf");
+    let mut doc = Document::open(path, None).unwrap();
+    let page = doc.snapshot().pages[0];
+    let width = 600_u32;
+    let scale = width as f32 / page.width;
+    let (_, before) = doc.render(0, width).unwrap();
+    let changed_in = |after: &[u8], rect: Rect| {
+        let (left, top) = ((rect.left * scale) as usize, (rect.top * scale) as usize);
+        let (right, bottom) = (
+            (rect.right * scale).ceil() as usize,
+            (rect.bottom * scale).ceil() as usize,
+        );
+        (top..bottom).any(|y| {
+            (left..right).any(|x| {
+                let at = (y * width as usize + x) * 4;
+                before[at..at + 4] != after[at..at + 4]
+            })
+        })
+    };
+    let cases: Vec<(&str, NewAnnotation, Rect)> = vec![
+        (
+            "highlight",
+            NewAnnotation::Markup {
+                markup: Markup::Highlight,
+                quads: vec![line_quad(300.0, 600.0, 450.0, 615.0)],
+                color: Rgb(1.0, 0.85, 0.1),
+            },
+            Rect::new(300.0, 600.0, 450.0, 615.0),
+        ),
+        (
+            "ink",
+            NewAnnotation::Ink {
+                strokes: vec![vec![(300.0, 650.0), (400.0, 680.0), (450.0, 650.0)]],
+                width: 2.0,
+                color: Rgb(0.1, 0.3, 1.0),
+            },
+            Rect::new(300.0, 645.0, 450.0, 685.0),
+        ),
+        (
+            "text",
+            NewAnnotation::Text {
+                at: (300.0, 700.0),
+                text: "Hello".into(),
+                size: 14.0,
+                color: Rgb(0.8, 0.1, 0.1),
+            },
+            Rect::new(300.0, 700.0, 360.0, 720.0),
+        ),
+    ];
+    let mut missing = Vec::new();
+    for (name, annotation, rect) in cases {
+        doc.apply(&[Edit::Add {
+            page: 0,
+            annotation,
+        }])
+        .unwrap();
+        let (_, after) = doc.render(0, width).unwrap();
+        if !changed_in(&after, rect) {
+            missing.push(name);
+        }
+    }
+    assert!(missing.is_empty(), "not drawn: {missing:?}");
+}

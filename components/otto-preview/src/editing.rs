@@ -340,6 +340,31 @@ pub fn run_batch(viewer: &Mutex<Viewer>, batch: &Batch) -> Result<Snapshot, otto
     outcome
 }
 
+/// Draw page `page` (0-based) of `doc` as it is in memory, unsaved changes
+/// included, `width` pixels wide: how a PDF open for editing is drawn, so
+/// a page scrolled back to or zoomed shows the changes and not the file.
+pub fn draw_page(
+    doc: &Mutex<Document>,
+    page: usize,
+    width: u32,
+) -> Option<otto_kit::preview::Pixels> {
+    match doc.lock().unwrap().render(page, width) {
+        Ok((height, data)) => Some(otto_kit::preview::Pixels {
+            width,
+            height,
+            intrinsic_width: width,
+            intrinsic_height: height,
+            data,
+            frame_delays: Vec::new(),
+            words: Vec::new(),
+        }),
+        Err(err) => {
+            tracing::warn!(page, %err, "a page could not be drawn");
+            None
+        }
+    }
+}
+
 /// Write `doc` to `path`, then open that file in its place: the window
 /// carries on with the new file, its changes saved there.
 fn save_as(doc: &Mutex<Document>, path: &std::path::Path) -> Result<Snapshot, otto_pdf::Error> {
@@ -373,21 +398,8 @@ fn redraw(viewer: &Mutex<Viewer>, batch: &Batch) {
             viewer.generation,
         )
     };
-    let draw = |page: usize, width: u32| match batch.doc.lock().unwrap().render(page, width) {
-        Ok((height, data)) => Some(otto_kit::preview::Pixels {
-            width,
-            height,
-            intrinsic_width: width,
-            intrinsic_height: height,
-            data,
-            frame_delays: Vec::new(),
-            words: Vec::new(),
-        }),
-        Err(err) => {
-            tracing::warn!(page, %err, "an edited page could not be drawn");
-            None
-        }
-    };
+    tracing::debug!(touched = ?batch.pages, ?pages, ?thumbs, "drawing edited pages");
+    let draw = |page: usize, width: u32| draw_page(&batch.doc, page, width);
     for (page, width) in pages {
         let Some(pixels) = draw(page, width) else {
             continue;
@@ -623,6 +635,13 @@ impl Viewer {
             pages,
         });
         self.dirty = true;
+    }
+
+    /// The document open for editing, which pages are drawn from.
+    pub fn editing_doc(&self) -> Option<Arc<Mutex<Document>>> {
+        self.editing
+            .as_ref()
+            .map(|editing| Arc::clone(&editing.doc))
     }
 
     /// Whether the document holds changes the file doesn't.
