@@ -297,26 +297,32 @@ pub struct Batch {
 /// showing the file as it was.
 pub fn run_batch(viewer: &Mutex<Viewer>, batch: &Batch) -> Result<Snapshot, otto_pdf::Error> {
     let applied = batch.doc.lock().unwrap().apply(&batch.edits);
-    let (pages, generation) = {
+    let (pages, thumbs, generation) = {
         let viewer = viewer.lock().unwrap();
-        (viewer.redraw_widths(batch), viewer.generation)
+        (
+            viewer.redraw_widths(batch),
+            viewer.thumb_widths(batch),
+            viewer.generation,
+        )
+    };
+    let draw = |page: usize, width: u32| match batch.doc.lock().unwrap().render(page, width) {
+        Ok((height, data)) => Some(otto_kit::preview::Pixels {
+            width,
+            height,
+            intrinsic_width: width,
+            intrinsic_height: height,
+            data,
+            frame_delays: Vec::new(),
+            words: Vec::new(),
+        }),
+        Err(err) => {
+            tracing::warn!(page, %err, "an edited page could not be drawn");
+            None
+        }
     };
     for (page, width) in pages {
-        let drawn = batch.doc.lock().unwrap().render(page, width);
-        let pixels = match drawn {
-            Ok((height, data)) => otto_kit::preview::Pixels {
-                width,
-                height,
-                intrinsic_width: width,
-                intrinsic_height: height,
-                data,
-                frame_delays: Vec::new(),
-                words: Vec::new(),
-            },
-            Err(err) => {
-                tracing::warn!(page, %err, "an edited page could not be drawn");
-                continue;
-            }
+        let Some(pixels) = draw(page, width) else {
+            continue;
         };
         let mut viewer = viewer.lock().unwrap();
         if viewer.generation == generation {
@@ -324,6 +330,18 @@ pub fn run_batch(viewer: &Mutex<Viewer>, batch: &Batch) -> Result<Snapshot, otto
         }
         drop(viewer);
         AppContext::request_wakeup();
+    }
+    // The sidebar's thumbnails of those pages, drawn the same way and put in
+    // place of the old ones, so the sidebar never shows a blank page.
+    for (page, width) in thumbs {
+        let Some(image) = draw(page, width).and_then(|pixels| pixels.to_image()) else {
+            continue;
+        };
+        let mut viewer = viewer.lock().unwrap();
+        if viewer.generation == generation {
+            viewer.thumbs.insert(page as u32 + 1, image);
+            viewer.dirty = true;
+        }
     }
     let outcome = applied.and_then(|snapshot| batch.doc.lock().unwrap().save().map(|()| snapshot));
     viewer.lock().unwrap().finish_batch(batch, outcome.clone());
@@ -537,6 +555,19 @@ impl Viewer {
             .collect()
     }
 
+    /// The thumbnails a batch touched that the sidebar holds now, 0-based,
+    /// with the width each was drawn at.
+    pub fn thumb_widths(&self, batch: &Batch) -> Vec<(usize, u32)> {
+        batch
+            .pages
+            .iter()
+            .filter_map(|&page| {
+                let image = self.thumbs.get(&(page as u32 + 1))?;
+                Some((page, image.width().max(1) as u32))
+            })
+            .collect()
+    }
+
     /// A batch has been applied and saved (or failed): take the document as
     /// it is now and keep the file as a version.
     pub fn finish_batch(&mut self, batch: &Batch, outcome: Result<Snapshot, otto_pdf::Error>) {
@@ -569,10 +600,6 @@ impl Viewer {
             }
         }
         self.track_version();
-        // The sidebar's thumbnails of those pages are drawn again too.
-        for page in &batch.pages {
-            self.thumbs.remove(&(*page as u32 + 1));
-        }
     }
 
     /// A page drawn again after an edit has landed: what was settling on it
