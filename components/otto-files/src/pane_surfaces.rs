@@ -860,6 +860,13 @@ impl PaneSurfaces {
         painted
     }
 
+    /// Take down what does not go with the window on its own: Peek's
+    /// overlay, a surface of its own rather than one of the window's
+    /// children. Called as the window closes.
+    pub fn close(&mut self) {
+        self.close_peek_overlay();
+    }
+
     /// Take the panel and its overlay down. Destroying the overlay is what
     /// hands the keyboard back to the window, or the desk, it was taken from.
     fn close_peek_overlay(&mut self) -> bool {

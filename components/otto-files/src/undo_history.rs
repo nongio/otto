@@ -1,11 +1,12 @@
 //! The undo history, one for every file browser window in the session.
 //!
-//! Each window is its own process, but the files they change are the same
-//! files: a drag from one window into another is one operation, and asking
-//! which of the two remembers it is a question nobody should have to answer.
-//! So the history lives in `$XDG_RUNTIME_DIR/otto/files-undo.json`, and every
-//! window pushes onto and pops from that one stack. Ctrl+Z in any window takes
-//! back the newest operation from any of them.
+//! The browser windows share a process, but the desk and the file dialogs
+//! are processes of their own, and they all change the same files: a drag
+//! from one into another is one operation, and asking which of the two
+//! remembers it is a question nobody should have to answer. So the history
+//! lives in `$XDG_RUNTIME_DIR/otto/files-undo.json`, and every window pushes
+//! onto and pops from that one stack. Ctrl+Z in any window takes back the
+//! newest operation from any of them.
 //!
 //! The runtime directory is the right lifetime: it goes away at logout, and
 //! the history is a session's worth of work, never something to carry into

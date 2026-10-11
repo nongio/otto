@@ -4,15 +4,16 @@
 //! has the keyboard. otto-stash's shortcut is a compositor keybinding, so
 //! Files never sees the key press; otto-stash asks here instead.
 //!
-//! Every browser window is its own process, so every one of them serves this
-//! interface. Each asks for the well-known name *without* `DoNotQueue`: one
-//! owns it and the rest wait in its queue, which makes
-//! `org.freedesktop.DBus.ListQueuedOwners("org.otto.Files1")` the list of
-//! every Files window on the bus. A caller asks each unique name in turn; at
-//! most one of them holds the keyboard. That one answers, with an empty list
-//! when nothing is selected; the others answer with an error, so a caller
-//! can tell "Files has the keyboard" from "some other app has it". A name nobody may replace would hide every window but the
-//! first, and a signal broadcast would need a reply channel of its own.
+//! Every Files process serves this interface: the one hosting the browser
+//! and Trash windows, and the desk. Each asks for the well-known name
+//! *without* `DoNotQueue`: one owns it and the rest wait in its queue, which
+//! makes `org.freedesktop.DBus.ListQueuedOwners("org.otto.Files1")` the list
+//! of every Files process on the bus. A caller asks each unique name in turn;
+//! at most one of them holds the keyboard. That one answers from the window
+//! holding it, with an empty list when nothing is selected; the others answer
+//! with an error, so a caller can tell "Files has the keyboard" from "some
+//! other app has it". A name nobody may replace would hide every process but
+//! the first, and a signal broadcast would need a reply channel of its own.
 //!
 //! The bridge is the picker's (see `dbus.rs`): the zbus task parks a one-shot
 //! sender, wakes the UI loop, and awaits the reply. Nothing in the UI thread
@@ -59,10 +60,10 @@ struct FilesService {
 
 #[interface(name = "org.otto.Files1")]
 impl FilesService {
-    /// Absolute paths of the items selected in this process's window, while
-    /// it holds the keyboard; empty when nothing is selected. Fails with
-    /// `org.freedesktop.DBus.Error.Failed` when the window does not hold the
-    /// keyboard.
+    /// Absolute paths of the items selected in this process's window that
+    /// holds the keyboard; empty when nothing is selected. Fails with
+    /// `org.freedesktop.DBus.Error.Failed` when no window of this process
+    /// holds the keyboard.
     async fn focused_selection(&self) -> zbus::fdo::Result<Vec<String>> {
         let (tx, rx) = oneshot::channel();
         self.queue.push(tx);

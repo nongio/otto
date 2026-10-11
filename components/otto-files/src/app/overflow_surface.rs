@@ -195,7 +195,7 @@ fn style_card(card: &PlacedSurface) {
     });
 }
 
-impl FilesApp {
+impl FilesWindow {
     /// Bring the overflow panel's surfaces into line with the browser: open
     /// them when the panel opens, move and paint the card on every frame of
     /// its entrance and exit and whenever what it shows changes, and take
@@ -207,7 +207,7 @@ impl FilesApp {
         let Some(desk) = self.window.as_ref().and_then(Window::wl_surface) else {
             return;
         };
-        let mut browser = self.state.lock().unwrap();
+        let mut browser = self.state.browse();
         browser.settle_overflow_panel();
         let shown = browser.overflow_shown();
         let mut slot = self.overflow_surface.borrow_mut();
@@ -293,7 +293,7 @@ impl FilesApp {
     /// is open. A panel opened without the keyboard — by a screen reader,
     /// say — waits until the keyboard has been here once.
     pub(super) fn follow_overflow_focus(&mut self) {
-        let open = self.state.lock().unwrap().overflow_panel.is_some();
+        let open = self.state.browse().overflow_panel.is_some();
         if !open {
             self.overflow_focus_seen = false;
             return;
@@ -304,7 +304,7 @@ impl FilesApp {
         }
         if self.overflow_focus_seen {
             self.overflow_focus_seen = false;
-            self.state.lock().unwrap().close_overflow_panel();
+            self.state.browse().close_overflow_panel();
         }
     }
 
@@ -342,7 +342,7 @@ impl FilesApp {
                     // nothing of ours, and wears the ordinary arrow.
                     match event.kind {
                         PointerEventKind::Press { .. } => {
-                            state.lock().unwrap().close_overflow_panel();
+                            state.browse().close_overflow_panel();
                             if let Some(surface) = surface.borrow_mut().as_mut() {
                                 surface.release_input();
                             }
@@ -358,7 +358,7 @@ impl FilesApp {
                 let mut moved = event.clone();
                 moved.position = (x as f64, y as f64);
                 let mods = *modifiers.lock().unwrap();
-                let after = state.lock().unwrap().on_pointer(&moved, mods, &window);
+                let after = state.browse().on_pointer(&moved, mods, &window);
                 match after {
                     After::Next
                     | After::Stop
@@ -370,7 +370,7 @@ impl FilesApp {
                         // is dropped; the panel goes back into its tile and
                         // out of the way first, so the drop lands on what is
                         // under it.
-                        state.lock().unwrap().close_overflow_panel();
+                        state.browse().close_overflow_panel();
                         if let Some(surface) = surface.borrow_mut().as_mut() {
                             surface.release_input();
                         }

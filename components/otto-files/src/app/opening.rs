@@ -120,10 +120,9 @@ impl Browser {
 
     /// Open one directory in a second browser window — Ctrl+double-click.
     ///
-    /// A window is a process here: the app shell is built around a single
-    /// toplevel, so the second window is a second `otto-files` handed the
-    /// directory on its command line. Anything that is not a directory falls
-    /// back to plain activation, which is all a new window could do with it.
+    /// See [`Browser::spawn_window`] for where the window opens. Anything that
+    /// is not a directory falls back to plain activation, which is all a new
+    /// window could do with it.
     pub(super) fn open_in_new_window(&mut self, depth: usize, index: usize) {
         let Some(entry) = self.visible(depth).get(index).map(|e| (*e).clone()) else {
             return;
@@ -139,11 +138,16 @@ impl Browser {
 
     /// Open a second browser window on `path`.
     ///
-    /// A window is a process here — the app shell is built around a single
-    /// toplevel — so this re-executes this binary with the directory on its
-    /// command line. Shared by Ctrl+double-click and by the New Window
-    /// shortcut, which differ only in which directory they name.
+    /// In this process when it hosts the browser windows. The desk and the
+    /// picker do not, so they start this binary with the directory on its
+    /// command line, and that start hands it to the Files that does. Shared
+    /// by Ctrl+double-click and by the New Window shortcut, which differ only
+    /// in which directory they name.
     pub(super) fn spawn_window(&mut self, path: &Path) {
+        if super::hosting() {
+            super::windows::open(super::Request::Folder(path.to_path_buf()));
+            return;
+        }
         let exe = match std::env::current_exe() {
             Ok(exe) => exe,
             Err(err) => {

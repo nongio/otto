@@ -57,6 +57,10 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         return otto_files::app::run_picker().await;
     }
 
+    // A launcher that brought us up with an activation token passes it on,
+    // so the Files that ends up showing the window may come forward with it.
+    let token = std::env::var("XDG_ACTIVATION_TOKEN").ok();
+
     // `--trash` is the Trash window: the same view layer with none of the
     // browser's chrome. Its own .desktop entry launches us this way.
     //
@@ -68,7 +72,11 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // navigate to (see `specs/file-browser.md`), so both spellings land in the
     // same window and neither becomes a path in the location bar.
     if std::env::args().any(|a| a == "--trash" || is_trash_uri(&a)) {
-        return otto_files::app::run_trash();
+        return run_windows(otto_files::app::Request::Trash {
+            empty: false,
+            token,
+        })
+        .await;
     }
 
     // `--desk` is the folder on the desktop: the icon grid on a layer surface
@@ -81,7 +89,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // The Trash window with its Empty Trash question already asked — the
     // desktop entry's `empty` action, which the dock offers on the Trash icon.
     if std::env::args().any(|a| a == "--empty-trash") {
-        return otto_files::app::run_empty_trash();
+        return run_windows(otto_files::app::Request::Trash { empty: true, token }).await;
     }
 
     // A folder, files to select, or a search to open on; see `launch`.
@@ -93,8 +101,30 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         eprintln!("otto-files: {warning}");
     }
 
+    run_windows(otto_files::app::Request::Browse {
+        args: std::env::args_os().skip(1).collect(),
+        cwd,
+        token,
+    })
+    .await
+}
+
+/// Show the window `request` asks for: in the Files already running, or as
+/// the first window of this one. See `otto_files::app::run_windows`.
+async fn run_windows(request: otto_files::app::Request) -> Result<(), Box<dyn std::error::Error>> {
+    use otto_files::app::Claim;
+
+    // Held for the life of the process: the bus name goes with it.
+    let _service = match otto_files::app::claim_or_forward(&request).await {
+        Ok(Claim::Forwarded) => return Ok(()),
+        Ok(Claim::Owner(connection)) => Some(connection),
+        Err(err) => {
+            tracing::warn!(%err, "no session bus; this Files stands alone");
+            None
+        }
+    };
     otto_files::stash::watch();
-    otto_files::app::run_browser(start)
+    otto_files::app::run_windows(request)
 }
 
 /// Whether `arg` is the freedesktop trash URI, in any of the spellings that

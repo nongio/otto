@@ -690,14 +690,14 @@ impl Browser {
         self.dirty |= self.controls.pressed().is_some();
         match self.controls.on_release(control) {
             // In the picker, closing the window *is*
-            // cancelling: exiting here would leave the
+            // cancelling: closing it here would leave the
             // requesting application waiting on a reply that
             // no longer has a sender.
             Some(WindowControl::Close) => {
                 if self.picker.is_some() {
                     self.picker_cancel();
                 } else {
-                    std::process::exit(0)
+                    self.closing = true;
                 }
             }
             Some(WindowControl::Minimize) => window.minimize(),

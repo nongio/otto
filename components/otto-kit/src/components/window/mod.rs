@@ -901,12 +901,19 @@ impl Window {
     pub fn close(&self) {
         if let Some(id) = self.surface_id() {
             AppContext::unregister_close_handler(&id);
+            AppContext::unregister_frame_callback(&id);
             // The window is what an assistive technology was reading; nothing
             // is left to describe once it is unmapped.
             AppContext::disable_accessibility(&id);
         }
         if let Ok(mut guard) = self.surface.write() {
             guard.take();
+        }
+        // The draw closure goes too, with whatever it holds: clones of the
+        // handle live on in callbacks that are never taken off, and would
+        // otherwise keep the window's state alive for the rest of the process.
+        if let Ok(mut draw_fn) = self.on_draw_fn.lock() {
+            draw_fn.take();
         }
         // A layer surface has no role object that goes on drop, so its
         // destruction is asked for explicitly.

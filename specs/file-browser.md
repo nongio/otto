@@ -610,11 +610,44 @@ which the compositor pushes to LocalSearch and Settings ▸ Search edits (see
 [settings-app.md](./settings-app.md#search)). Files itself never writes the
 indexer's settings.
 
+### One process, many windows
+
+Every browser and Trash window in a session lives in one `otto-files`
+process. The first start owns the session-bus name `org.otto.FilesWindows1`;
+a later start calls it and exits:
+
+- `Open(args: aay, cwd: ay, token: s)` — a browser window for `args`, a
+  command line as `otto-files` takes it, resolved against `cwd`, the folder
+  it was given in.
+- `OpenTrash(empty: b, token: s)` — the Trash window, or, when one is open,
+  that window brought forward through xdg-activation. With `empty` its Empty
+  Trash question is put up.
+
+`token` is the launcher's `XDG_ACTIVATION_TOKEN`, empty when there is none.
+Ctrl+N and Ctrl+double-click open their window in the same process without
+going over the bus. Closing a window (its close control, or the compositor's
+close) closes only that window, with its Get Info and Open With panels and
+Peek; the last one closed ends the process, and the name with it. Without a
+session bus every start stands alone.
+
+The desk and the file picker stay processes of their own: the desk is a layer
+surface that lasts the session, and the picker is a dialog the bus starts and
+stops. A new window asked for from either starts `otto-files`, which hands it
+to the running Files.
+
+What the windows share: the directory watcher (each pane is told of a change
+to its folder on its own, so two windows on one folder both refresh), the
+caches, the undo history and `org.otto.Files1`, which answers from the window
+holding the keyboard. The view layer's per-window settings (the shell, the
+decoration, the filter strip, the icon size) are put back for each window
+before it is measured, drawn or given input.
+
 ### Starting on a file or a search
 
 The command line can open a window already showing something, which is how
 the agents and scripts hand an answer to the person rather than printing
-paths. Every window is its own process, so each of these starts a new one.
+paths. Each of these opens a new window in the Files already running, when
+there is one (see *One process, many windows* above).
 
 | Command | Opens |
 |---|---|
@@ -733,8 +766,7 @@ than the icon alone, so it reads as *that file* opening: in the grid the caption
 pill goes with it, in the row views the highlight band does.
 
 - A directory is navigated into, in this window. **Ctrl+double-click opens it
-  in a new window instead** — a second `otto-files` process pointed at that
-  directory, since the app shell is one toplevel per process. The Ctrl+click
+  in a new window instead**, in this same process. The Ctrl+click
   that starts the pair still toggles the row into the selection the way a
   single Ctrl+click does; the second click opens rather than toggling back out.
   In the picker, which answers one request in one window, Ctrl+click only ever
@@ -1506,12 +1538,12 @@ call for.
 
 ### Wire contract: `org.otto.Files1`
 
-Every browser window serves this interface on the session bus, at object path
-`/org/otto/Files1`. Each window is its own process and queues for the bus name
-`org.otto.Files1` without replacing the owner, so the name's queued owners are
-the list of open Files windows, and a caller asks each by its unique name.
-Picker windows do not serve it: their selection belongs to the application
-they serve.
+The process hosting the browser windows, and the desk, serve this interface on
+the session bus, at object path `/org/otto/Files1`. Each queues for the bus
+name `org.otto.Files1` without replacing the owner, so the name's queued owners
+are the list of Files processes, and a caller asks each by its unique name; a
+process answers from its window holding the keyboard. Picker windows do not
+serve it: their selection belongs to the application they serve.
 
 ```
 FocusedSelection() → as

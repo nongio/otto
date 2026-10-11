@@ -34,7 +34,7 @@ pub fn corner() -> f32 {
     WindowDecoration::corner_radius_for(decoration_variant(), CORNER)
 }
 
-/// The decoration this window is currently wearing.
+/// The decoration the window being measured or drawn is wearing.
 ///
 /// A tiled window abuts its neighbours, so it follows `[tiling] decoration`
 /// (`specs/tiling.md`, *Decorations*) — but the browser's chrome is a header
@@ -177,12 +177,14 @@ pub enum Shell {
     Desk,
 }
 
-/// Fixed at startup — a window does not change shell — which is why it is a
-/// process-wide value rather than a parameter on all forty geometry
-/// functions below, each of which starts from where the file area does.
+/// The shell of the window being measured or drawn: a process-wide value
+/// rather than a parameter on all forty geometry functions below, each of
+/// which starts from where the file area does. A process with several
+/// windows puts each one's back before touching it; see
+/// `Browser::enter_view` in the app.
 static SHELL: AtomicU8 = AtomicU8::new(0);
 
-/// Choose the shell, once, before the first frame.
+/// Choose the shell of the window about to be measured or drawn.
 pub fn set_shell(shell: Shell) {
     let code = match shell {
         Shell::Browser => 0,
@@ -502,7 +504,8 @@ pub const SEARCH_BAND_H: f32 = 46.0;
 /// strip changes where *everything* below the header sits, and the two dozen
 /// geometry functions that answer that question take an area and an index, not
 /// a browser. Threading a flag through all of them to say the same thing at
-/// every call site would be noise; one window per process makes it honest.
+/// every call site would be noise. It holds the strip of the window being
+/// measured or drawn, put back with the rest of that window's settings.
 #[cfg(not(test))]
 static SEARCH_BAND: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
@@ -7390,7 +7393,7 @@ pub fn search_field_style(theme: Theme) -> TextInputStyle {
 ///
 /// The panel materials are translucent because they are meant to sit over the
 /// compositor's blur. An unfocused window has no blur behind it — see
-/// `FilesApp::on_app_ready` — and a translucent material over the bare desktop
+/// `FilesWindow::on_app_ready` — and a translucent material over the bare desktop
 /// is not a softer version of itself: it is the wallpaper showing through,
 /// which drags the contrast of everything drawn on top down with it. Without
 /// the blur the materials are filled in instead.

@@ -3,7 +3,7 @@
 use super::*;
 use otto_kit::components::scroll::Direction;
 
-impl FilesApp {
+impl FilesWindow {
     pub(super) fn handle_key(
         &mut self,
         event: &KeyEvent,
@@ -18,7 +18,7 @@ impl FilesApp {
         if let Some(menu) = self.group_menu.as_ref().filter(|menu| menu.is_open()) {
             menu.handle_key_event(event, key_state);
             if !menu.is_open() {
-                let mut browser = self.state.lock().unwrap();
+                let mut browser = self.state.browse();
                 browser.photos_group_open = false;
                 browser.location_open = false;
                 browser.dirty = true;
@@ -48,7 +48,7 @@ impl FilesApp {
         // Return both finish it and keep the new geometry, the way Done does,
         // and nothing else reaches the icons behind it.
         {
-            let mut browser = self.state.lock().unwrap();
+            let mut browser = self.state.browse();
             if browser.desk_editing.is_some() {
                 if matches!(
                     event.keysym,
@@ -84,11 +84,10 @@ impl FilesApp {
                 _ => None,
             };
             if let Some(key) = key {
-                self.state.lock().unwrap().open_with_key(key, field_mods);
+                self.state.browse().open_with_key(key, field_mods);
             } else if let Some((edit, mods)) = field_edit(event, field_mods) {
                 self.state
-                    .lock()
-                    .unwrap()
+                    .browse()
                     .open_with_key(OpenWithKey::Edit(edit), mods);
             }
             return;
@@ -106,13 +105,13 @@ impl FilesApp {
         if info_focused
             && ctrl
             && event.keysym == Keysym::c
-            && self.state.lock().unwrap().copy_info_text(serial)
+            && self.state.browse().copy_info_text(serial)
         {
             return;
         }
 
         {
-            let mut browser = self.state.lock().unwrap();
+            let mut browser = self.state.browse();
 
             // The confirmation sheet is modal, so it takes the keyboard
             // whole: Return is the answer it is asking for and Escape backs

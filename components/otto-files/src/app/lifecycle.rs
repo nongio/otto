@@ -6,13 +6,12 @@ use super::*;
 /// person writes for it, knows the desk's surface by.
 const DESK_NAMESPACE: &str = "otto-desk";
 
-impl App for FilesApp {
-    fn on_app_ready(&mut self, _ctx: &AppContext) -> Result<(), Box<dyn std::error::Error>> {
+/// What [`FilesApp`](super::windows::FilesApp) hands each window: the same
+/// questions the toolkit asks an app, about this window alone.
+impl FilesWindow {
+    /// Put the window on screen. The layer engine is already up.
+    pub(super) fn show(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         self.context_menu = Some(ContextMenu::new(Vec::new()));
-
-        // Before the window: a surface builds its own root layer node at
-        // construction, and that node is what the scene hangs off.
-        AppContext::enable_layer_engine(view::WINDOW_W, view::WINDOW_H);
 
         if view::is_desk() {
             return self.desk_ready();
@@ -47,7 +46,7 @@ impl App for FilesApp {
 
         // Serving a portal request, this window is that application's file
         // dialog rather than a document window of ours.
-        Self::adopt_picker_parent(&window, &self.state.lock().unwrap());
+        Self::adopt_picker_parent(&window, &self.state.browse());
 
         // otto-kit's materials are translucent by design — they expect a
         // blurred backdrop behind them. Without one the desktop shows through
@@ -63,7 +62,7 @@ impl App for FilesApp {
         // translucent.
         let blur = otto_kit::backdrop::blur_available();
         window.set_background_blur(blur);
-        self.state.lock().unwrap().blur_available = blur;
+        self.state.browse().blur_available = blur;
 
         // The panels' scene. `None` only where the engine could not be brought
         // up, which is the case the immediate-mode chrome still covers: the
@@ -83,7 +82,7 @@ impl App for FilesApp {
         // The menus in the top bar, for a browser window; a file dialog
         // belongs to the app that opened it, whose menus stay.
         let menus = {
-            let browser = self.state.lock().unwrap();
+            let browser = self.state.browse();
             browser.picker.is_none().then(|| browser.app_menus())
         };
         if let Some(menus) = menus {
@@ -92,6 +91,14 @@ impl App for FilesApp {
                 menu.attach(&surface);
             }
         }
+
+        // The compositor's close (the dock's, a shortcut's) closes this
+        // window, not the application with every other window in it.
+        let state = Arc::clone(&self.state);
+        window.on_close_request(move || {
+            state.browse().closing = true;
+            AppContext::request_wakeup();
+        });
 
         self.install_window(window, scene);
         Ok(())
@@ -111,12 +118,12 @@ impl App for FilesApp {
     /// The browser moves its own cursor with the arrows, so there is no
     /// traversal ring here — the cursor row *is* the focus, which is what makes
     /// each file read out as the user moves through the directory.
-    fn accessibility(
+    pub(super) fn accessibility(
         &mut self,
         _ctx: &AppContext,
         _surface: &wayland_client::backend::ObjectId,
     ) -> Option<A11yTree> {
-        let browser = self.state.lock().ok()?;
+        let browser = self.state.browse();
         let depth = browser.active.min(browser.columns.len().saturating_sub(1));
         let column = browser.columns.get(depth)?;
 
@@ -321,7 +328,7 @@ impl App for FilesApp {
     }
 
     /// A screen reader picked a row: select it, exactly as a click does.
-    fn on_accessibility_action(
+    pub(super) fn on_accessibility_action(
         &mut self,
         _ctx: &AppContext,
         _surface: &wayland_client::backend::ObjectId,
@@ -331,9 +338,7 @@ impl App for FilesApp {
             return;
         }
 
-        let Ok(mut browser) = self.state.lock() else {
-            return;
-        };
+        let mut browser = self.state.browse();
         let depth = browser.active.min(browser.columns.len().saturating_sub(1));
         let count = browser.visible_len(depth);
         let target = (0..count).find(|index| {
@@ -350,7 +355,7 @@ impl App for FilesApp {
         self.render();
     }
 
-    fn on_update(&mut self, _ctx: &AppContext) {
+    pub(super) fn on_update(&mut self, _ctx: &AppContext) {
         self.follow_app_menu();
 
         // The scene decides when the compositor's backdrop blur may be
@@ -382,7 +387,7 @@ impl App for FilesApp {
             self.follow_desk_edit();
         } else if let Some(window) = self.window.as_ref() {
             let area = {
-                let browser = self.state.lock().unwrap();
+                let browser = self.state.browse();
                 let top = view::header_h();
                 let bottom = (browser.content_h() + browser.path_bar_h() - view::corner()).max(top);
                 Rect::from_ltrb(view::sidebar_w(), top, browser.size.0, bottom)
@@ -404,7 +409,7 @@ impl App for FilesApp {
             dims_jobs,
             folder_jobs,
         ) = {
-            let mut browser = self.state.lock().unwrap();
+            let mut browser = self.state.browse();
             let changed = browser.poll();
             // Momentum, the overscroll bounce and the scrollbar's fade all
             // advance here rather than on input, since they keep running after
@@ -489,7 +494,7 @@ impl App for FilesApp {
         }
         // A photo turn asked for, one at a time. The guard is dropped at the
         // end of the `let`, before the worker is started.
-        let turn = self.state.lock().unwrap().take_photo_turn();
+        let turn = self.state.browse().take_photo_turn();
         if let Some(job) = turn {
             self.start_photo_turn(job);
         }
@@ -498,7 +503,7 @@ impl App for FilesApp {
         // holds its guard for the whole `if`, so locking again inside the body
         // deadlocks the update loop — which is exactly what it did.
         let open_now = {
-            let mut browser = self.state.lock().unwrap();
+            let mut browser = self.state.browse();
             let depth = browser.active;
             let ready = browser.peek_auto && !browser.visible(depth).is_empty();
             if ready {
@@ -508,7 +513,7 @@ impl App for FilesApp {
             ready
         };
         if open_now {
-            let mut browser = self.state.lock().unwrap();
+            let mut browser = self.state.browse();
             self.start_peek(&mut browser);
         }
         self.follow_peek();
@@ -544,14 +549,13 @@ impl App for FilesApp {
         self.sync_info_window();
         self.sync_open_with_window();
         self.advance_picker();
-        self.answer_selection_asks();
     }
 
     /// A hand laid on the touchpad stops whatever is gliding, the way a
     /// finger on a spinning wheel does. Nothing else in the pointer stream
     /// says so: a hold carries no motion and no button.
-    fn on_pointer_hold_begin(&mut self, _ctx: &AppContext, _fingers: u32) {
-        let mut browser = self.state.lock().unwrap();
+    pub(super) fn on_pointer_hold_begin(&mut self, _ctx: &AppContext, _fingers: u32) {
+        let mut browser = self.state.browse();
         browser.pan.stop();
         browser.gesture_axis = None;
         for column in &mut browser.columns {
@@ -567,8 +571,8 @@ impl App for FilesApp {
     /// the way their slider does. The other views have no zoom, and a pinch
     /// there is left alone rather than repurposed into something the gesture
     /// does not mean.
-    fn on_pointer_pinch_begin(&mut self, _ctx: &AppContext, fingers: u32) {
-        let mut browser = self.state.lock().unwrap();
+    pub(super) fn on_pointer_pinch_begin(&mut self, _ctx: &AppContext, fingers: u32) {
+        let mut browser = self.state.browse();
         browser.zoom_pinch = (fingers == 2 && browser.peek.is_none())
             .then(|| browser.zoom_range().map(|_| browser.zoom_value()))
             .flatten();
@@ -579,7 +583,7 @@ impl App for FilesApp {
             .flatten();
     }
 
-    fn on_pointer_pinch_update(
+    pub(super) fn on_pointer_pinch_update(
         &mut self,
         _ctx: &AppContext,
         dx: f64,
@@ -587,7 +591,7 @@ impl App for FilesApp {
         scale: f64,
         _rotation: f64,
     ) {
-        let mut browser = self.state.lock().unwrap();
+        let mut browser = self.state.browse();
         if let Some(base) = browser.zoom_pinch {
             browser.set_zoom(base * scale as f32);
             let moved = browser.dirty;
@@ -607,10 +611,10 @@ impl App for FilesApp {
         }
     }
 
-    fn on_pointer_pinch_end(&mut self, _ctx: &AppContext, _cancelled: bool) {
+    pub(super) fn on_pointer_pinch_end(&mut self, _ctx: &AppContext, _cancelled: bool) {
         // Nothing to settle: every update already left the zoom clamped and
         // snapped, so the fingers lifting only ends the gesture.
-        let mut browser = self.state.lock().unwrap();
+        let mut browser = self.state.browse();
         browser.peek_pinch = None;
         if browser.zoom_pinch.take().is_some() {
             browser.finish_zoom_pinch();
@@ -619,8 +623,8 @@ impl App for FilesApp {
 
     /// While something is gliding the app needs a steady clock, not just the
     /// next input event.
-    fn idle_timeout(&self) -> Option<std::time::Duration> {
-        let browser = self.state.lock().unwrap();
+    pub(super) fn idle_timeout(&self) -> Option<std::time::Duration> {
+        let browser = self.state.browse();
         let animating = browser.scroll_animating()
             || browser.peek_animating()
             // The desk's overflow panel growing, shrinking or gliding.
@@ -646,7 +650,13 @@ impl App for FilesApp {
     /// The desk's size: the usable area of its output, which the compositor
     /// works out around every reserved zone. The surface has already taken
     /// it by the time this runs.
-    fn on_configure_layer(&mut self, _ctx: &AppContext, _width: i32, _height: i32, _serial: u32) {
+    pub(super) fn on_configure_layer(
+        &mut self,
+        _ctx: &AppContext,
+        _width: i32,
+        _height: i32,
+        _serial: u32,
+    ) {
         if !view::is_desk() {
             return;
         }
@@ -667,25 +677,33 @@ impl App for FilesApp {
         window.set_input_region(Some(&[region]));
         self.desk_input_region = Some(region);
         {
-            let mut browser = self.state.lock().unwrap();
+            let mut browser = self.state.browse();
             browser.size = (width, height);
             browser.dirty = true;
         }
         self.render();
     }
 
-    fn on_configure(&mut self, _ctx: &AppContext, configure: WindowConfigure, _serial: u32) {
+    pub(super) fn on_configure(
+        &mut self,
+        _ctx: &AppContext,
+        configure: WindowConfigure,
+        _serial: u32,
+    ) {
         // Whether the window is tiled arrives on the configure — otto-kit has
         // already read it by the time this runs — and the chrome follows the
         // decoration a tile wears: the lights' size and row, the header and
         // sidebar under them, and the frame's corners, which the window
         // itself re-sends.
+        let mut browser = self.state.browse();
         if let Some(window) = self.window.as_ref() {
-            if view::set_decoration_variant(window.decoration_variant()) {
-                self.state.lock().unwrap().dirty = true;
+            let variant = window.decoration_variant();
+            if browser.decoration != variant {
+                browser.decoration = variant;
+                browser.dirty = true;
             }
+            view::set_decoration_variant(variant);
         }
-        let mut browser = self.state.lock().unwrap();
         if let (Some(w), Some(h)) = (configure.new_size.0, configure.new_size.1) {
             browser.size = (w.get() as f32, h.get() as f32);
             browser.dirty = true;
@@ -694,9 +712,6 @@ impl App for FilesApp {
         if browser.focused != configure.is_activated() {
             browser.focused = configure.is_activated();
             browser.dirty = true;
-            // A running job is reported on the island only while the user is
-            // somewhere else; in front of this window the status line has it.
-            crate::tasks::set_watched(browser.focused);
         }
         drop(browser);
         self.render();
@@ -704,7 +719,7 @@ impl App for FilesApp {
 
     /// The authoritative modifier state, sent before the key event it
     /// belongs to and again whenever the window takes focus.
-    fn on_modifiers(&mut self, _ctx: &AppContext, modifiers: Modifiers) {
+    pub(super) fn on_modifiers(&mut self, _ctx: &AppContext, modifiers: Modifiers) {
         *self.modifiers.lock().unwrap() = modifiers;
     }
 
@@ -720,7 +735,7 @@ impl App for FilesApp {
     /// The window's own leave closes the palette. Not Peek: opening Peek is
     /// what takes the keyboard from the window. A leave on the Get Info panel
     /// is focus moving between two of our windows, not away from the browser.
-    fn on_keyboard_leave(&mut self, _ctx: &AppContext, surface: &wl_surface::WlSurface) {
+    pub(super) fn on_keyboard_leave(&mut self, _ctx: &AppContext, surface: &wl_surface::WlSurface) {
         use wayland_client::Proxy;
         let on_peek = self
             .pane_surfaces
@@ -737,7 +752,7 @@ impl App for FilesApp {
         }
         // A panel that is nothing but a place to type has no reason to stay up
         // once the typing would land elsewhere.
-        let mut browser = self.state.lock().unwrap();
+        let mut browser = self.state.browse();
         let changed = if on_peek {
             browser.close_peek()
         } else {
@@ -749,7 +764,7 @@ impl App for FilesApp {
         }
     }
 
-    fn on_key_event(
+    pub(super) fn on_key_event(
         &mut self,
         _ctx: &AppContext,
         event: &KeyEvent,
@@ -760,7 +775,7 @@ impl App for FilesApp {
     }
 }
 
-impl FilesApp {
+impl FilesWindow {
     /// Run what was picked from the menus, and keep them saying what the
     /// window can do now.
     fn follow_app_menu(&mut self) {
@@ -772,7 +787,7 @@ impl FilesApp {
         if picked.is_empty() && !due {
             return;
         }
-        let mut browser = self.state.lock().unwrap();
+        let mut browser = self.state.browse();
         for id in &picked {
             browser.run_app_menu_pick(id, AppContext::last_input_serial());
         }
@@ -791,8 +806,9 @@ impl FilesApp {
     /// the pointer, drag and frame wiring.
     fn install_window(&mut self, mut window: Window, scene: Arc<Mutex<Option<scene::Scene>>>) {
         let state = Arc::clone(&self.state);
+        let surface_id = window.surface_id();
         window.on_draw(move |canvas| {
-            let mut browser = state.lock().unwrap();
+            let mut browser = state.browse();
 
             // Drain finished directory reads. This is the UI thread by
             // construction, which is what the poll needs — see
@@ -944,18 +960,22 @@ impl FilesApp {
             //
             // The `or` chain is [`Browser::focused_input`]'s precedence rather
             // than the order the fields are painted in: the caret to report is
-            // the one the keys are going to.
-            otto_kit::AppContext::report_text_cursor(
-                browser
-                    .palette
-                    .is_some()
-                    .then_some(browser.palette_caret)
-                    .flatten()
-                    .or(rename_caret)
-                    .or(path_caret)
-                    .or(save_caret)
-                    .or(search_caret),
-            );
+            // the one the keys are going to. Only from the window holding the
+            // keyboard: the compositor keeps the caret against that surface,
+            // whichever of our windows reports it.
+            if surface_id.is_some() && AppContext::keyboard_focus() == surface_id {
+                otto_kit::AppContext::report_text_cursor(
+                    browser
+                        .palette
+                        .is_some()
+                        .then_some(browser.palette_caret)
+                        .flatten()
+                        .or(rename_caret)
+                        .or(path_caret)
+                        .or(save_caret)
+                        .or(search_caret),
+                );
+            }
 
             // Last of all, because it is modal and dims everything above.
             if let Some(sheet) = browser.confirm.as_ref() {
@@ -1059,7 +1079,7 @@ impl FilesApp {
             .is_some_and(|watch| watch.take().is_some());
 
         let (editing, size) = {
-            let mut browser = self.state.lock().unwrap();
+            let mut browser = self.state.browse();
             if crate::desk_service::take_edit_request() {
                 browser.begin_desk_edit();
             }
@@ -1108,7 +1128,7 @@ impl FilesApp {
         let focused = (window.surface_id().is_some()
             && AppContext::keyboard_focus() == window.surface_id())
             || self.overflow_has_keyboard();
-        let mut browser = self.state.lock().unwrap();
+        let mut browser = self.state.browse();
         if browser.focused != focused {
             browser.focused = focused;
             browser.dirty = true;
@@ -1118,7 +1138,7 @@ impl FilesApp {
     /// Open the palette on its own, for looking at. See
     /// [`Browser::palette_auto`] — never on in a real session.
     pub(super) fn auto_palette(&self) {
-        let mut browser = self.state.lock().unwrap();
+        let mut browser = self.state.browse();
         let depth = browser.active;
         if browser.palette_auto.is_none() || browser.visible(depth).is_empty() {
             return;
@@ -1177,27 +1197,6 @@ impl FilesApp {
         browser.dirty = true;
     }
 
-    /// Answer `org.otto.Files1.FocusedSelection` for every call waiting on
-    /// it.
-    ///
-    /// "Focused" is any surface of this process holding the keyboard: the
-    /// window itself, or its Get Info panel or menus, which are about the
-    /// same selection.
-    fn answer_selection_asks(&mut self) {
-        let Some(queue) = self.selection_queue.as_ref() else {
-            return;
-        };
-        let asks = queue.take();
-        if asks.is_empty() {
-            return;
-        }
-        let focused = AppContext::keyboard_focus().is_some();
-        let answer = self.state.lock().unwrap().focused_selection(focused);
-        for ask in asks {
-            let _ = ask.send(answer.clone());
-        }
-    }
-
     /// Move the picker on when its request is done with, and notice when the
     /// portal withdraws the one on screen.
     ///
@@ -1209,7 +1208,7 @@ impl FilesApp {
         };
 
         {
-            let mut browser = self.state.lock().unwrap();
+            let mut browser = self.state.browse();
             let Some(session) = browser.picker.as_mut() else {
                 return;
             };
@@ -1232,7 +1231,7 @@ impl FilesApp {
                 let start = session
                     .request
                     .starting_directory(crate::picker_dirs::remembered(&session.request.app_id));
-                let mut browser = self.state.lock().unwrap();
+                let mut browser = self.state.browse();
                 let size = browser.size;
                 *browser = Browser::for_picker(session, start);
                 browser.size = size;

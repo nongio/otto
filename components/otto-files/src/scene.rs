@@ -13,7 +13,7 @@
 //! actually feeds it changes.
 //!
 //! The window's own background is a style too, but one the *compositor* holds
-//! — see `FilesApp::on_app_ready`. It has to be, because a client cannot blur
+//! — see `FilesWindow::on_app_ready`. It has to be, because a client cannot blur
 //! what is behind itself.
 //!
 //! What is still immediate-mode, drawn over this scene by [`crate::view::draw`]:

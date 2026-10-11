@@ -1420,6 +1420,20 @@ impl<'a> AppContext<'a> {
         });
     }
 
+    /// Forgets `surface_id`'s frame callback, and whatever it holds.
+    ///
+    /// A window does this as it closes; see
+    /// [`Window::close`](crate::components::window::Window::close). Called from
+    /// inside a frame callback, while the table is in use, the callback stays.
+    pub fn unregister_frame_callback(surface_id: &ObjectId) {
+        let _ = FRAME_CALLBACKS.try_with(|callbacks| match callbacks.try_borrow_mut() {
+            Ok(mut callbacks) => {
+                callbacks.remove(surface_id);
+            }
+            Err(_) => tracing::debug!("frame callbacks in use; one stays registered"),
+        });
+    }
+
     pub fn register_transaction_completion_callback(
         transaction_id: ObjectId,
         callback: Box<dyn FnOnce()>,
