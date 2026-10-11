@@ -125,7 +125,9 @@ Otto has two coordinate spaces — mixing them causes subtle scale-dependent bug
 Always use the **per-output scale**: `output.current_scale().fractional_scale() as f32`.
 `WorkspacesModel.scale` is a global fallback only — avoid it in geometry code.
 
-**Naming convention:** suffix physical-pixel variables with `_px` (e.g. `width_px`, `offset_px`) to make the space explicit.
+**Typed geometry is preferred:** Smithay's `Point`/`Size`/`Rectangle<_, Physical>` vs `<_, Logical>`, with the lay-rs edge helpers in `src/utils/geometry.rs` (see `docs/developer/README.md`).
+
+**Naming convention:** where a value is still a bare scalar, suffix physical-pixel variables with `_px` (e.g. `width_px`, `offset_px`) to make the space explicit.
 
 ## Configuration
 

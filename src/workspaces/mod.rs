@@ -978,29 +978,27 @@ impl Workspaces {
     /// that output's physical resolution. Called whenever workspaces, the
     /// current index, or output geometry change.
     fn refresh_output_selectors(&self) {
-        let (fallback_w, fallback_h) = self.with_model(|m| (m.width as f32, m.height as f32));
+        use crate::utils::geometry::PhysicalSize;
+        // The model's size is physical too, so it is a like-for-like fallback.
+        let fallback_size = self.with_model(|m| PhysicalSize::new(m.width as f32, m.height as f32));
         for (name, ows) in self.output_workspaces.iter() {
             let output = self.outputs.iter().find(|o| o.name() == *name);
-            let (w, h) = output
+            let workspace_size = output
                 .and_then(|o| o.current_mode())
-                .map(|m| (m.size.w as f32, m.size.h as f32))
-                .unwrap_or((fallback_w, fallback_h));
+                .map(|m| PhysicalSize::new(m.size.w as f32, m.size.h as f32))
+                .unwrap_or(fallback_size);
             let scale = output
                 .map(|o| o.current_scale().fractional_scale() as f32)
                 .unwrap_or(1.0);
             let origin = output
-                .map(|o| {
-                    let loc = o.current_location();
-                    (loc.x as f64, loc.y as f64)
-                })
-                .unwrap_or((0.0, 0.0));
+                .map(|o| o.current_location().to_f64())
+                .unwrap_or_default();
             ows.workspace_selector.set_output_origin(origin);
             ows.workspace_selector.set_output_name(name);
             ows.workspace_selector.set_workspaces(
                 &ows.workspace_views,
                 ows.current_workspace,
-                w,
-                h,
+                workspace_size,
                 scale,
             );
         }
