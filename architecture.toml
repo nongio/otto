@@ -204,15 +204,6 @@ module = "input_handler"
 uses = "udev"
 reason = "udev-only input handling (VT switching, the renderer API) is an impl on Otto<UdevData>."
 
-[[allow]]
-module = "renderer"
-uses = "udev"
-reason = "Switching the active renderer builds the Vulkan backend from udev::vulkan_api, which belongs in renderer."
-
-[[allow]]
-module = "settings"
-uses = "udev"
-reason = "The renderer setting offers Vulkan only when udev's Vulkan probe succeeded (udev::vulkan_fallback)."
 
 [[allow]]
 module = "state"
