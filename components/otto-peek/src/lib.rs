@@ -9,9 +9,11 @@
 //! its own surface — and hands stacking, focus and dismissal to the parent
 //! window instead of leaving them to be managed by hand.
 //!
-//! Three hosts embed it: the file browser, the save/open file dialog, and the
-//! desktop's file view. The `otto-peek` binary remains for previewing a
-//! path from a terminal.
+//! Peek decodes and presents. otto-files embeds it in three hosts (the file
+//! browser, the save/open file dialog and the desktop's file view), and
+//! otto-preview gives one file a window of its own around the same
+//! [`session::Session`]: two shells, one Peek. The `otto-peek` binary remains
+//! for previewing a path from a terminal.
 //!
 //! # What lives where
 //!
@@ -23,6 +25,14 @@
 //!   worker, enforce the deadline.
 //! * [`opening`] — the entrance geometry, now usable for real: the host has the
 //!   item's rect, so the card can grow out of the file.
+//! * [`session`] — the embedded preview a host drives: zoom, pan, pages, text
+//!   selection, links and playback, with a cache of recent decodes so opening
+//!   a file again does not run the worker twice.
+//! * [`ocr`], [`ocrcache`] and [`badge`] — text in pictures: the recogniser,
+//!   the words it found remembered between runs, and the corner badge that
+//!   says so. [`config`] is the `[peek]` section that turns it on and off.
+//! * [`imagesize`] — a picture's size from its header, for a layout that
+//!   cannot wait for the decode.
 //!
 //! # Embedding
 //!

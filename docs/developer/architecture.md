@@ -128,9 +128,9 @@ flowchart BT
   otto_msg --> otto_dbus
   otto_peek --> otto_kit
   otto_peek --> otto_md_kit
+  otto_peek --> otto_media_kit
   otto_preview --> otto_agents_client
   otto_preview --> otto_agents_kit
-  otto_preview --> otto_files
   otto_preview --> otto_kit
   otto_preview --> otto_media_kit
   otto_preview --> otto_peek

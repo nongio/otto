@@ -19,19 +19,24 @@ Three neighbouring pieces have their own pages: the video worker,
 components/
 ├── otto-kit/src/preview/          Preview payload types, layout, draw, zoom maths (pure Skia)
 ├── otto-kit/src/filetype/         name → type of record, bytes → sniffed type
-├── otto-peek/                     the decode worker and everything around it
+├── otto-peek/                     decode and present: the worker and the session hosts embed
 │   ├── src/spawn.rs               open a file, run a worker on it, read the payload back
 │   ├── src/sandbox.rs             rlimits, namespaces, fd hygiene, --sandbox-selftest
 │   ├── src/payload.rs             the wire format ("OQV2") and its validation
 │   ├── src/decode/                one decoder per content type, run in the worker
 │   ├── src/opening.rs             entrance/exit geometry for the panel
+│   ├── src/session.rs             Session, zoom/pan, Video, decode request sizing
+│   ├── src/decode_cache.rs        recent decodes, so reopening a file skips the worker
+│   ├── src/ocrcache.rs            words recognised in pictures, kept between runs
+│   ├── src/badge.rs               the text-recognition badge in the preview's corner
+│   ├── src/imagesize.rs           a picture's size from its header
 │   ├── src/render.rs              PNG rendering for the standalone CLI only
 │   └── src/main.rs                `otto-peek` CLI: --describe, --render, --filmstrip
 ├── otto-media-kit/                video: Player (library) + otto-media-worker (GStreamer)
+├── otto-preview/                  one file in a window, around the same Session
 └── otto-files/src/
     ├── thumbnails.rs              in-memory thumbnail store (no threads, no I/O)
     ├── thumbcache.rs              read-only freedesktop thumbnail cache
-    ├── peek.rs                    Session, zoom/pan, Video, decode request sizing
     ├── pane_surfaces.rs           Peek's overlay and the preview video's subsurfaces
     ├── view.rs                    draw_peek, preview column stage, draw_thumbnail
     └── app.rs                     wiring: sync_thumbnails, start_preview, start_peek
@@ -527,7 +532,7 @@ Unit tests cover:
 - the payload round trip and rejection of bad input;
 - decoder limits, text encodings and PDF page counts;
 - `opening.rs` geometry;
-- zoom and pan in both `otto_kit::preview` and `peek.rs`;
+- zoom and pan in both `otto_kit::preview` and `otto_peek::session`;
 - the thumbnail store's throttling and eviction;
 - cache naming and mtime checks;
 - the media-kit protocol and transport layout.

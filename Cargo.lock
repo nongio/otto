@@ -5446,7 +5446,6 @@ dependencies = [
  "base64 0.22.1",
  "otto-agents-client",
  "otto-agents-kit",
- "otto-files",
  "otto-kit",
  "otto-media-kit",
  "otto-peek",
