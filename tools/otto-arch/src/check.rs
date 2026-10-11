@@ -411,13 +411,14 @@ fn sources(
     if rules.source_rules.is_empty() {
         return Ok(());
     }
-    // The compositor's src/ and every component's; sample clients and tools
-    // are outside the product.
+    // The compositor's src/, its crates/ and every component's; sample
+    // clients and tools are outside the product.
     let mut files = Vec::new();
     for c in crates {
         let dir = c.manifest_path.parent().unwrap();
         let rel = dir.strip_prefix(root).unwrap_or(dir);
-        if rel.as_os_str().is_empty() || rel.starts_with("components") {
+        if rel.as_os_str().is_empty() || rel.starts_with("components") || rel.starts_with("crates")
+        {
             files.extend(rust_files(&dir.join("src"))?);
         }
     }

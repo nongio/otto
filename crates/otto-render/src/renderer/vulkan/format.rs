@@ -28,7 +28,7 @@ pub(crate) struct SkiaFormat {
 
 impl SkiaFormat {
     /// Alpha type for images of this format.
-    pub fn alpha_type(&self) -> skia::AlphaType {
+    pub(super) fn alpha_type(&self) -> skia::AlphaType {
         if self.opaque {
             skia::AlphaType::Opaque
         } else {
@@ -37,7 +37,7 @@ impl SkiaFormat {
     }
 
     /// Skia image info of a `width` x `height` image in this format.
-    pub fn image_info(&self, width: i32, height: i32) -> skia::ImageInfo {
+    pub(super) fn image_info(&self, width: i32, height: i32) -> skia::ImageInfo {
         skia::ImageInfo::new((width, height), self.color_type, self.alpha_type(), None)
     }
 }

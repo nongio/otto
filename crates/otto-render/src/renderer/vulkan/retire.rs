@@ -74,7 +74,7 @@ pub(crate) struct Graveyard {
 
 impl Graveyard {
     /// The queue textures and targets retire into.
-    pub fn queue(&self) -> RetireQueue {
+    pub(super) fn queue(&self) -> RetireQueue {
         self.queue.clone()
     }
 
@@ -83,7 +83,7 @@ impl Graveyard {
     /// `submitted` is the serial of the last frame submitted to the GPU,
     /// `completed` the last one the GPU finished. Call after a submit, so
     /// every draw recorded so far belongs to `submitted` or earlier.
-    pub fn reap(&mut self, submitted: u64, completed: u64) {
+    pub(super) fn reap(&mut self, submitted: u64, completed: u64) {
         self.entries
             .append(&mut self.queue.lock().unwrap_or_else(|e| e.into_inner()));
         for entry in &mut self.entries {
@@ -96,7 +96,7 @@ impl Graveyard {
     }
 
     /// Destroys everything. The GPU must be idle.
-    pub fn clear(&mut self) {
+    pub(super) fn clear(&mut self) {
         self.queue.lock().unwrap_or_else(|e| e.into_inner()).clear();
         self.entries.clear();
     }

@@ -207,7 +207,7 @@ chain on the Framework laptop's Iris Xe with ANV:
 ## Phase 3 status
 
 The `vulkan` feature is on by default, so a stock build can run the udev
-backend on `SkiaVkRenderer` (`src/renderer/vulkan/`) or on the GL
+backend on `SkiaVkRenderer` (`crates/otto-render/src/renderer/vulkan/`) or on the GL
 `SkiaRenderer`; the choice is made at startup. Vulkan is the default;
 `otto --tty-udev --renderer gl` selects GL, and so does `renderer = "gl"`
 under `[rendering]` in the config (Settings > General > Renderer writes that
@@ -224,7 +224,7 @@ instead, and Settings reports Vulkan as unavailable on this machine through
 at startup and the user would be looping at the greeter. Startup logs the
 choice (`otto::udev`: `renderer: vulkan`).
 
-The udev backend is generic over `RendererApi` (`src/renderer/active.rs`):
+The udev backend is generic over `RendererApi` (`crates/otto-render/src/renderer/active.rs`):
 `UdevData<A>` and every `impl Otto<UdevData<A>>` are monomorphised once per
 renderer, and `GlApi` / `VulkanApi` supply the multi-GPU api, the device
 renderer, its texture and error types, the render-node lookup and whether
@@ -233,13 +233,13 @@ surfaces, render formats, the Skia context) go through the small
 `SkiaDeviceRenderer` trait both renderers implement, and the render elements
 draw into whatever frame they are given through `FrameSurface`. winit and x11
 stay on the GL `SkiaRenderer`. The drawing itself lives once, in
-`src/renderer/draw.rs` and the elements' canvas helpers, and both frames
+`crates/otto-render/src/renderer/draw.rs` and the elements' canvas helpers, and both frames
 call it.
 
 What works, covered by the ignored GPU tests
 (`cargo test --features vulkan --lib -- --ignored vulkan`):
 
-- `GbmVulkanBackend` (`src/renderer/vulkan_api.rs`) is the Smithay
+- `GbmVulkanBackend` (`crates/otto-render/src/renderer/vulkan_api.rs`) is the Smithay
   `GraphicsApi`: one renderer per DRM node, on the physical device whose
   render or primary node matches, created when the node is added so a
   device Vulkan cannot drive fails `device_added` with a named error. Startup

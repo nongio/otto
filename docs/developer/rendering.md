@@ -6,10 +6,14 @@ display", and where you would hook into that.
 Files to follow along with:
 
 - `src/render.rs` builds the element list for each output
-- `src/skia_renderer.rs` is the Skia wrapper over Smithay's GL renderer
-- `src/render_elements/scene_element.rs` draws the scene graph
+- `crates/otto-render/src/skia_renderer.rs` is the Skia wrapper over Smithay's GL renderer
+- `crates/otto-render/src/render_elements/scene_element.rs` draws the scene graph
 - `src/udev/render.rs` is the DRM frame path (the real one)
 - `src/winit.rs` is the windowed dev path
+
+The renderer and the render elements are the `otto-render` crate
+(`crates/otto-render/`). The compositor re-exports its modules under their old
+paths, so code in `src/` still says `crate::skia_renderer::SkiaRenderer`.
 
 ## The mental model
 

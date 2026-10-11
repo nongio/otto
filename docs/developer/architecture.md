@@ -37,9 +37,13 @@ an app.
   kit.
 - **app**: programs. Nothing depends on an app; code two apps share moves
   down into a kit.
+- **compositor-core**: the compositor's own libraries under `crates/`, split
+  out of it so the compiler holds a boundary the module rules used to:
+  `otto-render`, the render stack. It may use foundation only, never the
+  toolkit or the compositor.
 - **compositor**: `otto`. It draws with the same toolkit as the apps
-  (titlebars, text, icons, theme), so it may use `otto-kit`; it never uses a
-  kit or an app.
+  (titlebars, text, icons, theme), so it may use `otto-kit`, and it uses its
+  compositor-core crates; it never uses a kit or an app.
 - **sample** and **tool**: standalone.
 
 A layer can also forbid third-party crates (`forbid_deps`), judged on the
@@ -89,10 +93,14 @@ flowchart BT
     xdg_desktop_portal_otto[xdg-desktop-portal-otto]
     apps_manager[apps-manager]
   end
+  subgraph compositor-core["compositor-core"]
+    otto_render[otto-render]
+  end
   subgraph compositor["compositor"]
     otto[otto]
   end
   otto --> otto_kit
+  otto --> otto_render
   otto_agents --> otto_agents_client
   otto_agents --> otto_dbus
   otto_agents --> otto_foundations
@@ -136,6 +144,7 @@ flowchart BT
   otto_preview --> otto_peek
   otto_rdp --> otto_dbus
   otto_rdp --> otto_foundations
+  otto_render --> otto_foundations
   otto_search --> otto_foundations
   otto_settings --> otto_kit
   otto_settings --> otto_search
@@ -158,17 +167,27 @@ forbids one group of modules from naming another:
 - **backends-are-leaves**: nothing names `udev`, `winit`, `x11` or
   `headless`, another backend included. A backend drives the shared
   compositor through the `Backend` trait.
-- **render-stack-below-window-management**: the renderer does not reach into
-  `state`, `shell`, `workspaces` or input.
 - **config-is-a-leaf**: `config`, `theme` and `utils` depend on nothing that
   reads them.
 
 `lib.rs` and `main.rs` wire the modules together and are exempt.
 
+A boundary that holds can become a crate boundary, which the compiler checks
+and no rule needs. The render stack went first: `drawing`, `renderer`,
+`render_elements`, `skia_renderer`, `textures_storage`, `render_phase_stats`
+and `debug_hooks` are the `otto-render` crate (compositor-core), which cannot
+name the compositor at all, so the old render-stack-below-window-management
+rule is gone. `lib.rs` re-exports the moved modules under their old paths,
+and the scan counts `crate::renderer::…` as a use of `otto_render`. Settings
+the renderer needs are handed in by the compositor (the occlusion-culling
+switch is a function `SceneElement::with_engine` takes), not read from
+`config`.
+
 ## Single-home source patterns
 
 A `[[source_rule]]` is a regular expression that may only match under its
-`allowed_in` paths. `#[test]` functions and `#[cfg(test)]` items are skipped,
+`allowed_in` paths; it is matched over `src/`, `crates/*/src` and
+`components/*/src`. `#[test]` functions and `#[cfg(test)]` items are skipped,
 since a test that saves and restores the environment is not a lookup. Today
 there is one rule: the XDG base directories are read only in
 `otto_foundations::xdg`.

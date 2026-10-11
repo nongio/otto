@@ -110,10 +110,17 @@ crates = [
 may_use = ["foundation", "service", "toolkit", "kit"]
 
 [[layer]]
+name = "compositor-core"
+description = "The compositor's own libraries, split out of it so the compiler keeps them below window management: the render stack"
+crates = ["otto-render"]
+may_use = ["foundation"]
+lib_lints = ["unreachable_pub"]
+
+[[layer]]
 name = "compositor"
 description = "The compositor. It draws with the same toolkit as the apps (titlebars, text, icons, theme), so it may use otto-kit, but no kit or app"
 crates = ["otto"]
-may_use = ["foundation", "toolkit"]
+may_use = ["foundation", "toolkit", "compositor-core"]
 
 [[layer]]
 name = "sample"
@@ -140,18 +147,18 @@ graph = false
 # module, so one backend naming another breaks backends-are-leaves too. Test
 # code counts. The crate roots (lib.rs, main.rs) wire everything together and
 # are exempt.
+#
+# A boundary that holds can become a crate boundary, which the compiler
+# enforces and these rules no longer need: the render stack (renderer,
+# skia_renderer, render_elements, drawing, …) is the otto-render crate, which
+# cannot name the compositor at all. lib.rs re-exports its modules under their
+# old paths, so `crate::renderer::…` counts as a use of `otto_render`.
 
 [[module_rule]]
 name = "backends-are-leaves"
 from = ["*"]
 to = ["udev", "winit", "x11", "headless"]
 reason = "A backend drives the shared compositor, never the other way round: code that needs something from a backend takes it through the Backend trait or a value the backend hands over."
-
-[[module_rule]]
-name = "render-stack-below-window-management"
-from = ["drawing", "renderer", "render_elements", "skia_renderer", "textures_storage"]
-to = ["state", "shell", "workspaces", "input", "input_handler", "focus"]
-reason = "The renderer turns elements into pixels; deciding what is on screen belongs to workspaces and shell, which hand it elements."
 
 [[module_rule]]
 name = "config-is-a-leaf"
@@ -163,8 +170,6 @@ to = [
     "input",
     "input_handler",
     "render",
-    "renderer",
-    "skia_renderer",
     "udev",
     "winit",
     "x11",
@@ -176,9 +181,9 @@ reason = "Configuration, theme and utilities are read by everything, so they can
 # Source rules
 # ---------------------------------------------------------------------------
 #
-# Scanned over src/ and components/*/src, skipping `#[test]` functions and
-# `#[cfg(test)]` items. `allowed_in` lists path prefixes (from the repository
-# root) where the pattern is the implementation.
+# Scanned over src/, crates/*/src and components/*/src, skipping `#[test]`
+# functions and `#[cfg(test)]` items. `allowed_in` lists path prefixes (from
+# the repository root) where the pattern is the implementation.
 
 [[source_rule]]
 name = "xdg-dirs-through-foundations"

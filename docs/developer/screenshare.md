@@ -381,7 +381,7 @@ without a daemon.
 | `src/screenshare/pipewire_stream.rs` | PipeWire stream, buffer pool, format/modifier negotiation |
 | `src/state/screencopy.rs` | `zwlr_screencopy_manager_v1` |
 | `src/state/window_throttle.rs` | Frame pacing, including the `Captured` state |
-| `src/renderer/mod.rs` | `BlitCurrentFrame`, the shared GPU blit |
+| `crates/otto-render/src/renderer/mod.rs` | `BlitCurrentFrame`, the shared GPU blit |
 | `src/udev/render.rs` | Per-frame delivery, render triggers |
 | `tests/screenshare.rs` | Headless end-to-end tests for the control plane |
 | `src/winit.rs` | Starts the D-Bus service only; no frame delivery |
