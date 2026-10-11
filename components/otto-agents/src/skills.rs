@@ -513,7 +513,7 @@ pub fn claude_cli_args(plugins: &[Plugin], run_as: Option<&str>) -> Vec<String> 
 /// directory the Agent Skills convention names and Copilot, Codex and Claude
 /// read. `None` without a home directory.
 pub fn default_skills_dir() -> Option<PathBuf> {
-    std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".agents/skills"))
+    crate::xdg::home().map(|home| home.join(".agents/skills"))
 }
 
 /// One skill's place in a skills directory.

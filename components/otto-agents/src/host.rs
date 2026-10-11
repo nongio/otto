@@ -2284,8 +2284,7 @@ impl HostState {
             }),
             meta: None,
             snapshots,
-            default_directory: std::env::var_os("HOME")
-                .map(|home| uri::from_path(&PathBuf::from(home))),
+            default_directory: crate::xdg::home().map(|home| uri::from_path(&home)),
             completion_trigger_characters: None,
             terminal_command_prefix: None,
             telemetry: None,
@@ -3126,7 +3125,7 @@ fn session_cwd(state: &SessionState) -> PathBuf {
         .flatten()
         .next()
         .and_then(|dir| uri::to_path(dir))
-        .or_else(|| std::env::var_os("HOME").map(PathBuf::from))
+        .or_else(crate::xdg::home)
         .unwrap_or_else(|| PathBuf::from("/"))
 }
 

@@ -80,18 +80,13 @@ use input::{Change, InputRequest, Outcome};
 /// should start somewhere else says so with `folder` in `agents.toml`, which
 /// arrives as `otto.folders.<id>`.
 fn default_folder() -> PathBuf {
-    let home = std::env::var_os("HOME").map(PathBuf::from);
-    let state = std::env::var_os("XDG_STATE_HOME")
-        .map(PathBuf::from)
-        .filter(|dir| dir.is_absolute())
-        .or_else(|| home.as_ref().map(|home| home.join(".local/state")));
-    let Some(folder) = state.map(|state| state.join("otto/ask")) else {
+    let Some(folder) = otto_kit::xdg::state_home().map(|state| state.join("otto/ask")) else {
         return PathBuf::from("/");
     };
     // The service refuses a folder that is not there, so it is made here.
     if let Err(err) = std::fs::create_dir_all(&folder) {
         tracing::warn!(%err, folder = %folder.display(), "could not make the scratch folder");
-        return home.unwrap_or_else(|| PathBuf::from("/"));
+        return otto_kit::xdg::home().unwrap_or_else(|| PathBuf::from("/"));
     }
     folder
 }

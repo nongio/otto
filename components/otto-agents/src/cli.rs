@@ -37,14 +37,10 @@ pub async fn list_sessions(url: &str) -> anyhow::Result<()> {
     let sessions = fetch_sessions(&client).await?;
     client.shutdown().await;
 
-    let home = std::env::var_os("HOME");
+    let home = crate::xdg::home();
     print!(
         "{}",
-        render(
-            &sessions,
-            jiff::Timestamp::now(),
-            home.as_deref().map(Path::new)
-        )
+        render(&sessions, jiff::Timestamp::now(), home.as_deref())
     );
     Ok(())
 }
@@ -94,14 +90,14 @@ pub async fn show_session(url: &str, session: Option<&str>, follow: bool) -> any
     };
     let mut chat = *chat;
 
-    let home = std::env::var_os("HOME");
+    let home = crate::xdg::home();
     let mut out = std::io::stdout();
     writeln!(
         out,
         "{} · {} · {}\n",
         title(summary),
         summary.provider,
-        folder(summary, home.as_deref().map(Path::new))
+        folder(summary, home.as_deref())
     )?;
     write!(out, "{}", render_chat(&chat))?;
 
