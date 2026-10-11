@@ -756,7 +756,12 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                     state.gaps,
                 )
             })
-            .unwrap_or_else(|_| (Config::with(|config| config.tiling.gaps()), None));
+            .unwrap_or_else(|_| {
+                (
+                    Config::with(|config| Gaps::from_config(&config.tiling)),
+                    None,
+                )
+            });
 
         if let Ok(state) = view.tiling.read() {
             if state.enabled {

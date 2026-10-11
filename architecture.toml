@@ -224,10 +224,6 @@ module = "skia_renderer"
 uses = "workspaces"
 reason = "The GPU-memory log (target otto::gpumem) counts workspaces::zombie_windows(); the count belongs in stats the renderer is handed."
 
-[[allow]]
-module = "config"
-uses = "workspaces"
-reason = "Config::gaps returns workspaces::tiling::Gaps; the conversion belongs in workspaces."
 
 [[allow]]
 module = "utils"
