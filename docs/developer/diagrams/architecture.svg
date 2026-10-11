@@ -57,7 +57,7 @@
 
   <path class="ln" d="M380 248 L380 264"/>
   <rect class="box" x="36" y="264" width="688" height="30" rx="7"/>
-  <text class="t"  x="50" y="284">SkiaRenderer  —  wraps Smithay's GlesRenderer; draws the scene onto the EGL framebuffer  (src/skia_renderer.rs)</text>
+  <text class="t"  x="50" y="284">SkiaRenderer  —  wraps Smithay's GlesRenderer; draws the scene onto the EGL framebuffer  (otto-render crate)</text>
 
   <path class="ln" d="M380 300 L380 326"/>
 
