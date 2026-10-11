@@ -108,8 +108,9 @@ Underneath it is still `otto-preview` (the program, its app id and the
 - Centre, only for a document of more than one page: previous page, "N / M"
   showing the page with most of the window, next page. Each button is
   disabled at its end.
-- Trailing: undo and redo, once the file has more than one version (see
-  *Versions*); the markup button, for a PDF that can be edited (see *Form
+- Trailing: Save, while a PDF has unsaved changes (see *Form and markup*);
+  undo and redo, once the file has more than one version (see *Versions*)
+  or there are unsaved changes to take back; the markup button, for a PDF that can be edited (see *Form
   and markup*), a toggle that stays down while the markup strip shows; the
   eye, a toggle that stays down (struck through) while the
   marks are hidden; the pen, a toggle that stays down while it is on (see
@@ -250,22 +251,34 @@ no markup button.
   A double-click on a text box edits its text; emptying it deletes it.
   Annotations the agent added are selected, moved and deleted the same way;
   locked or read-only ones are not.
-- **Saving.** Every change is applied and saved over the file at once,
-  through a temporary file renamed into place, keeping the file's
-  permissions and encryption. A signed PDF is saved as an incremental update,
-  so its signature stays valid for what it covers. Each save is kept as a
-  version (see *Versions*), the file as it was before the first change
-  included, so Undo steps a change back.
-- **Redrawing.** Only the pages a change touched are rasterised again (every
-  page a field's name is on, for a field), and the old drawing stays up until
-  the new one lands, so nothing blinks. Text just written is drawn over its
-  field until then. The file changing because of this window's own save is
-  not taken for someone else's change: the window does not decode it again.
-  A change from anywhere else reopens the document.
+- **Saving.** Changes are made in memory and shown at once; the file is
+  written only when the person saves: the Save button (in the toolbar while
+  there are unsaved changes), File › Save, or Ctrl+S. Until then the title
+  reads "NAME (edited)". A save goes through a temporary file renamed into
+  place, keeping the file's permissions and encryption; a signed PDF is saved
+  as an incremental update, so its signature stays valid for what it covers.
+  Each save is kept as a version (see *Versions*), the file as it was before
+  the first save included.
+- **Undo and Redo** take back and make again the changes not yet saved, by
+  opening the saved file again and making all but the last; once there are
+  none they step through the file's versions as before. A save clears them.
+- **Closing with unsaved changes** asks "Save changes to NAME?" with Don't
+  Save, Cancel and Save (Return saves, Escape cancels, a click outside
+  cancels). Save closes the window once the file is written. Ctrl+W, the
+  close light and the compositor's close all ask.
+- **Redrawing.** The pages a change touched (every page a field's name is
+  on, for a field) and their thumbnails are drawn again by PDFium from the
+  document in memory and put in place of the old drawing, so a change shows
+  in a few tens of milliseconds and nothing blinks. Text just written is
+  drawn over its field until then. The file changing because of this
+  window's own save is not taken for someone else's change, and a change on
+  disk from anywhere else is ignored while there are unsaved changes;
+  otherwise it reopens the document.
 - **The agent** reads and changes the same form and annotations with
   `preview_fields`, `preview_annotations` and `preview_edit` (see *Document
   tools*), so what it fills in is an ordinary field value the person can
   change, and what it adds is markup the person can select, move and delete.
+  Its changes are unsaved like the person's: the person saves them.
 
 ### Versions
 
@@ -293,8 +306,8 @@ no markup button.
   path), and for a PDF that can be edited `Fields` (its form, as JSON, one
   entry per field name with every place it shows), `Annotations` (its
   annotations, each with an id `page:index`) and `Edit` (fill fields by name,
-  add, change and delete annotations, from JSON; returns the fields and
-  annotations after). A path no window shows is an error.
+  add, change and delete annotations, from JSON, shown and left unsaved for
+  the person to save; returns the fields and annotations after). A path no window shows is an error.
 - `otto-preview --mcp` is a stdio MCP server over those methods, for the
   file in `OTTO_PREVIEW_DOC`: `preview_info`, `preview_marks`,
   `preview_draw`, `preview_clear`, `preview_reload` (with a note),
@@ -325,7 +338,8 @@ no markup button.
 - Arrow keys move the content by a step; Left and Right turn a page when
   there is nothing to pan sideways.
 - Home and End go to the start and the end.
-- Ctrl+W and Ctrl+Q close the window.
+- Ctrl+W and Ctrl+Q close the window, asking first when a PDF has unsaved
+  changes; Ctrl+S saves them.
 - Ctrl+Z steps the file back a version and Ctrl+Y (or Ctrl+Shift+Z) forward.
 - From anywhere, the chat included: Ctrl+K shows or hides the chat,
   Ctrl+Shift+A takes up or puts down the pen, Ctrl+Shift+H shows or hides
@@ -339,7 +353,7 @@ no markup button.
 
 - The window's menus show in the top bar while it has focus (served over
   `com.canonical.dbusmenu`, pointed at with `org_kde_kwin_appmenu`; see
-  `otto_kit::app_menu`): File (Close Window), Edit (Undo, Redo, Copy, Select
+  `otto_kit::app_menu`): File (Save, Close Window), Edit (Undo, Redo, Copy, Select
   All, Markup Tools, Delete Selection), Marks (Pen, Show Marks, Delete Last Mark), View (zoom, pages, Show
   Pages, Show Chat) and Help (Keyboard Shortcuts).
 - Each item shows its key, and is greyed out when it cannot run. Pen, Show

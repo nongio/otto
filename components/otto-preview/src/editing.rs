@@ -241,8 +241,19 @@ pub struct Editing {
     pub editor: Option<Editor>,
     pub settling: Vec<Settling>,
     gesture: Option<Gesture>,
-    /// Edits sent and not yet saved.
+    /// Jobs sent and not yet finished.
     pub busy: usize,
+    /// The edits made since the file was last saved, oldest first: what
+    /// Undo takes back, by opening the saved file again and making all but
+    /// the last.
+    pub undo: Vec<Vec<Edit>>,
+    /// Edits taken back, most recent last, for Redo.
+    pub redo: Vec<Vec<Edit>>,
+    /// Whether the document holds changes the file doesn't.
+    pub unsaved: bool,
+    /// Close the window once the save in flight is done: Save picked when
+    /// closing with changes.
+    pub close_after_save: bool,
     /// The file as this window last saved it, so the change it sees on disk
     /// afterwards is known to be its own.
     pub saved: Option<Stamp>,
@@ -274,29 +285,73 @@ impl Editing {
             gesture: None,
             busy: 0,
             saved: None,
+            undo: Vec::new(),
+            redo: Vec::new(),
+            unsaved: false,
+            close_after_save: false,
         }
     }
 }
 
-/// Edits on their way to the file, and the pages they will need drawn again.
+/// What a batch does to the document.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Job {
+    /// Make edits, in memory.
+    Apply(Vec<Edit>),
+    /// Open the saved file again and make these edits, batch by batch: an
+    /// undo, which leaves out the last.
+    Replay(Vec<Vec<Edit>>),
+    /// Write the document over the file.
+    Save,
+}
+
+/// Work on the document, and the pages it will need drawn again.
 #[derive(Debug, Clone)]
 pub struct Batch {
     pub doc: Arc<Mutex<Document>>,
-    pub edits: Vec<Edit>,
+    pub job: Job,
     pub pages: Vec<usize>,
 }
 
-/// Apply a batch, draw the pages it touched from the document as it is now,
-/// then save it. The pages are drawn by PDFium from memory before the save,
-/// so what the person did shows at once rather than after the file is
-/// written and rasterised again. Blocks: run it off the UI thread.
+/// Run a batch, then draw the pages it touched from the document as it is
+/// now, by PDFium from memory, so what the person did shows at once. Edits
+/// stay in memory until a [`Job::Save`]. Blocks: run it off the UI thread.
 ///
 /// # Errors
 ///
-/// What the engine said when an edit or the save failed; the window keeps
-/// showing the file as it was.
+/// What the engine said when an edit, the reopening or the save failed.
 pub fn run_batch(viewer: &Mutex<Viewer>, batch: &Batch) -> Result<Snapshot, otto_pdf::Error> {
-    let applied = batch.doc.lock().unwrap().apply(&batch.edits);
+    let outcome = match &batch.job {
+        Job::Apply(edits) => batch.doc.lock().unwrap().apply(edits),
+        Job::Replay(batches) => replay(&batch.doc, batches),
+        Job::Save => {
+            let mut doc = batch.doc.lock().unwrap();
+            doc.save().map(|()| doc.snapshot())
+        }
+    };
+    if batch.job != Job::Save {
+        redraw(viewer, batch);
+    }
+    viewer.lock().unwrap().finish_batch(batch, outcome.clone());
+    AppContext::request_wakeup();
+    outcome
+}
+
+/// Open the saved file again in place of `doc` and make `batches` on it.
+fn replay(doc: &Mutex<Document>, batches: &[Vec<Edit>]) -> Result<Snapshot, otto_pdf::Error> {
+    let mut doc = doc.lock().unwrap();
+    let fresh = otto_pdf::open(doc.path(), None)?;
+    *doc = fresh;
+    let mut snapshot = doc.snapshot();
+    for edits in batches {
+        snapshot = doc.apply(edits)?;
+    }
+    Ok(snapshot)
+}
+
+/// Draw the pages a batch touched, and their thumbnails, from the document
+/// as it is now, in place of what is on screen.
+fn redraw(viewer: &Mutex<Viewer>, batch: &Batch) {
     let (pages, thumbs, generation) = {
         let viewer = viewer.lock().unwrap();
         (
@@ -343,10 +398,6 @@ pub fn run_batch(viewer: &Mutex<Viewer>, batch: &Batch) -> Result<Snapshot, otto
             viewer.dirty = true;
         }
     }
-    let outcome = applied.and_then(|snapshot| batch.doc.lock().unwrap().save().map(|()| snapshot));
-    viewer.lock().unwrap().finish_batch(batch, outcome.clone());
-    AppContext::request_wakeup();
-    outcome
 }
 
 /// The pages a set of edits touches, given the document they apply to.
@@ -514,8 +565,8 @@ impl Viewer {
         strip.rect.contains(at)
     }
 
-    /// Send edits to be applied and saved; they come back through
-    /// [`Viewer::take_batches`].
+    /// Make edits, in memory: shown at once, written to the file on
+    /// [`Viewer::save`]. They come back through [`Viewer::take_batches`].
     pub fn submit(&mut self, edits: Vec<Edit>) {
         if edits.is_empty() {
             return;
@@ -523,20 +574,111 @@ impl Viewer {
         let Some(editing) = &mut self.editing else {
             return;
         };
-        let pages = pages_of(&editing.snapshot, &edits);
-        editing.busy += 1;
-        let batch = Batch {
-            doc: Arc::clone(&editing.doc),
-            edits,
-            pages,
+        editing.undo.push(edits.clone());
+        editing.redo.clear();
+        self.queue(Job::Apply(edits));
+    }
+
+    /// Queue `job` on the open document.
+    fn queue(&mut self, job: Job) {
+        let Some(editing) = &mut self.editing else {
+            return;
         };
-        // The file as it is before the first change, so there is always a
+        let pages = match &job {
+            Job::Apply(edits) => pages_of(&editing.snapshot, edits),
+            // Every page an edit taken back or made again was on.
+            Job::Replay(_) => editing
+                .undo
+                .iter()
+                .chain(editing.redo.iter())
+                .flat_map(|edits| pages_of(&editing.snapshot, edits))
+                .fold(Vec::new(), |mut pages, page| {
+                    if !pages.contains(&page) {
+                        pages.push(page);
+                    }
+                    pages
+                }),
+            Job::Save => Vec::new(),
+        };
+        if job != Job::Save {
+            editing.unsaved = true;
+        }
+        editing.busy += 1;
+        self.batches.push(Batch {
+            doc: Arc::clone(&editing.doc),
+            job,
+            pages,
+        });
+        self.dirty = true;
+    }
+
+    /// Whether the document holds changes the file doesn't.
+    pub fn unsaved(&self) -> bool {
+        self.editing.as_ref().is_some_and(|editing| editing.unsaved)
+    }
+
+    /// Write the document's changes over the file.
+    pub fn save(&mut self) {
+        self.commit_editor();
+        if !self.unsaved() {
+            return;
+        }
+        // The file as it is before the first save, so there is always a
         // version to step back to.
         if self.versions.is_none() {
             self.keep_version(None);
         }
-        self.batches.push(batch);
-        self.dirty = true;
+        self.queue(Job::Save);
+    }
+
+    /// Whether Undo or Redo have an unsaved edit to take back or make again.
+    pub fn can_undo_edit(&self) -> bool {
+        self.editing
+            .as_ref()
+            .is_some_and(|editing| !editing.undo.is_empty())
+    }
+
+    pub fn can_redo_edit(&self) -> bool {
+        self.editing
+            .as_ref()
+            .is_some_and(|editing| !editing.redo.is_empty())
+    }
+
+    /// Take back the last unsaved edit. Returns whether there was one.
+    pub fn undo_edit(&mut self) -> bool {
+        self.cancel_editor();
+        let Some(editing) = &mut self.editing else {
+            return false;
+        };
+        let Some(last) = editing.undo.pop() else {
+            return false;
+        };
+        editing.redo.push(last);
+        editing.selected = None;
+        let replay = editing.undo.clone();
+        let back_to_saved = replay.is_empty();
+        self.queue(Job::Replay(replay));
+        if back_to_saved {
+            if let Some(editing) = &mut self.editing {
+                editing.unsaved = false;
+            }
+        }
+        true
+    }
+
+    /// Make the last edit taken back again. Returns whether there was one.
+    pub fn redo_edit(&mut self) -> bool {
+        self.cancel_editor();
+        let Some(editing) = &mut self.editing else {
+            return false;
+        };
+        let Some(edits) = editing.redo.pop() else {
+            return false;
+        };
+        editing.undo.push(edits.clone());
+        editing.selected = None;
+        self.queue(Job::Apply(edits));
+        true
     }
 
     /// The edits waiting to be applied, for the app to run off the UI thread.
@@ -568,8 +710,8 @@ impl Viewer {
             .collect()
     }
 
-    /// A batch has been applied and saved (or failed): take the document as
-    /// it is now and keep the file as a version.
+    /// A batch has finished (or failed): take the document as it is now,
+    /// and after a save keep the file as a version.
     pub fn finish_batch(&mut self, batch: &Batch, outcome: Result<Snapshot, otto_pdf::Error>) {
         let Some(editing) = &mut self.editing else {
             return;
@@ -579,27 +721,70 @@ impl Viewer {
         }
         editing.busy = editing.busy.saturating_sub(1);
         self.dirty = true;
-        match outcome {
-            Ok(snapshot) => {
-                editing.snapshot = snapshot;
-                if editing
-                    .selected
-                    .is_some_and(|id| editing.snapshot.annotation(id).is_none())
-                {
-                    editing.selected = None;
-                }
-                // Its own change: not a reason to read the whole file again.
-                let now = Stamp::of(&self.path);
-                editing.saved = now;
-                self.stamp = now;
-            }
+        let snapshot = match outcome {
+            Ok(snapshot) => snapshot,
             Err(err) => {
-                tracing::warn!(path = %self.path.display(), %err, "an edit could not be saved");
+                tracing::warn!(path = %self.path.display(), %err, "an edit could not be made");
                 editing.settling.clear();
+                editing.close_after_save = false;
                 return;
             }
+        };
+        editing.snapshot = snapshot;
+        if editing
+            .selected
+            .is_some_and(|id| editing.snapshot.annotation(id).is_none())
+        {
+            editing.selected = None;
         }
+        if batch.job != Job::Save {
+            return;
+        }
+        // Saved: the edits are the file's now, and the change on disk is
+        // this window's own, not a reason to read the file again.
+        editing.undo.clear();
+        editing.redo.clear();
+        editing.unsaved = editing.busy > 0;
+        let close = std::mem::take(&mut editing.close_after_save);
+        let now = Stamp::of(&self.path);
+        editing.saved = now;
+        self.stamp = now;
         self.track_version();
+        if close {
+            self.closing = true;
+            AppContext::request_wakeup();
+        }
+    }
+
+    /// Close the window, or ask first when it holds unsaved changes.
+    pub fn request_close(&mut self) {
+        self.commit_editor();
+        if self.unsaved() {
+            self.confirm_close = true;
+            self.dirty = true;
+        } else {
+            self.closing = true;
+            AppContext::request_wakeup();
+        }
+    }
+
+    /// The answer to "save changes?" when closing.
+    pub fn answer_close(&mut self, answer: crate::confirm::Answer) {
+        self.confirm_close = false;
+        self.dirty = true;
+        match answer {
+            crate::confirm::Answer::Save => {
+                if let Some(editing) = &mut self.editing {
+                    editing.close_after_save = true;
+                }
+                self.save();
+            }
+            crate::confirm::Answer::Discard => {
+                self.closing = true;
+                AppContext::request_wakeup();
+            }
+            crate::confirm::Answer::Cancel => {}
+        }
     }
 
     /// A page drawn again after an edit has landed: what was settling on it

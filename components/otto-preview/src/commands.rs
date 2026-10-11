@@ -13,6 +13,7 @@ use crate::viewer::Viewer;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Command {
     Close,
+    Save,
     Undo,
     Redo,
     Copy,
@@ -32,8 +33,9 @@ pub enum Command {
     Shortcuts,
 }
 
-const ALL: [Command; 18] = [
+const ALL: [Command; 19] = [
     Command::Close,
+    Command::Save,
     Command::Undo,
     Command::Redo,
     Command::Copy,
@@ -58,6 +60,7 @@ impl Command {
     pub fn id(self) -> &'static str {
         match self {
             Self::Close => "close",
+            Self::Save => "save",
             Self::Undo => "undo",
             Self::Redo => "redo",
             Self::Copy => "copy",
@@ -85,6 +88,7 @@ impl Command {
     pub fn label(self) -> String {
         match self {
             Self::Close => otto_kit::t_owned!("studio-close"),
+            Self::Save => otto_kit::t_owned!("studio-save"),
             Self::Undo => otto_kit::t_owned!("studio-undo"),
             Self::Redo => otto_kit::t_owned!("studio-redo"),
             Self::Copy => otto_kit::t_owned!("studio-copy"),
@@ -110,6 +114,7 @@ impl Command {
     pub fn shortcut(self) -> Option<&'static str> {
         Some(match self {
             Self::Close => "Ctrl+W",
+            Self::Save => "Ctrl+S",
             Self::Undo => "Ctrl+Z",
             Self::Redo => "Ctrl+Y",
             Self::Copy => "Ctrl+C",
@@ -135,6 +140,7 @@ impl Command {
     pub fn tool(self) -> Option<Tool> {
         Some(match self {
             Self::Undo => Tool::Undo,
+            Self::Save => Tool::Save,
             Self::Redo => Tool::Redo,
             Self::Pen => Tool::Mark,
             Self::ShowMarks => Tool::ShowMarks,
@@ -209,7 +215,10 @@ pub fn menus(viewer: &Viewer) -> Vec<Menu> {
 fn sections() -> Vec<(String, Vec<Vec<Command>>)> {
     use Command::*;
     vec![
-        (otto_kit::t_owned!("studio-menu-file"), vec![vec![Close]]),
+        (
+            otto_kit::t_owned!("studio-menu-file"),
+            vec![vec![Save], vec![Close]],
+        ),
         (
             otto_kit::t_owned!("studio-menu-edit"),
             vec![

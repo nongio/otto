@@ -56,6 +56,8 @@ pub enum Tool {
     Redo,
     /// Shows or hides the markup strip: filling and marking up a PDF.
     Markup,
+    /// Writes the PDF's changes over the file; shown while there are any.
+    Save,
 }
 
 /// Where the toolbar's buttons sit for one window width.
@@ -109,7 +111,12 @@ pub fn decoration(viewer: &Viewer) -> WindowDecoration {
     // Clear of the lights at both ends, since the title is centred.
     let room = (width - 2.0 * 90.0).max(40.0);
     let font = WindowDecoration::title_style_for(variant).font();
-    decoration.title = ellipsize(&font, &viewer.name, room);
+    let title = if viewer.unsaved() {
+        otto_kit::t_owned!("studio-title-edited", name = viewer.name.clone())
+    } else {
+        viewer.name.clone()
+    };
+    decoration.title = ellipsize(&font, &title, room);
     decoration
 }
 
@@ -131,6 +138,7 @@ pub fn toolbar_layout(
     sidebar: bool,
     versions: bool,
     markup: bool,
+    unsaved: bool,
 ) -> ToolbarLayout {
     let top = titlebar_h(variant);
     let y = top + (TOOLBAR_H - BUTTON) / 2.0;
@@ -153,7 +161,12 @@ pub fn toolbar_layout(
     if versions {
         let redo = before - BUTTON - GAP * 4.0;
         buttons.push((Tool::Redo, square(redo)));
-        buttons.push((Tool::Undo, square(redo - BUTTON - GAP)));
+        before = redo - BUTTON - GAP;
+        buttons.push((Tool::Undo, square(before)));
+    }
+    // Save, while the document holds changes the file doesn't.
+    if unsaved {
+        buttons.push((Tool::Save, square(before - BUTTON - GAP * 4.0)));
     }
 
     let mut x = EDGE;
@@ -329,6 +342,7 @@ fn icon_names(tool: Tool) -> &'static [&'static str] {
         Tool::NextPage => &["go-down-symbolic", "pan-down-symbolic"],
         Tool::Undo => &["edit-undo-symbolic"],
         Tool::Redo => &["edit-redo-symbolic"],
+        Tool::Save => &["document-save-symbolic"],
         // Never looked up; see `draw_sidebar_glyph` and `draw_chat_glyph`.
         Tool::Sidebar | Tool::Chat | Tool::Mark | Tool::ShowMarks | Tool::Markup => &[],
     }
@@ -384,6 +398,18 @@ fn draw_fallback_glyph(canvas: &Canvas, dst: Rect, tool: Tool, color: Color) {
         Tool::Mark => draw_pen_glyph(canvas, dst, color),
         Tool::Markup => draw_markup_glyph(canvas, dst, color),
         Tool::ShowMarks => draw_eye_glyph(canvas, dst, color, false),
+        Tool::Save => {
+            // An arrow down into a tray.
+            path.move_to((cx, r.top));
+            path.line_to((cx, cy + 2.0));
+            path.move_to((cx - 3.5, cy - 1.5));
+            path.line_to((cx, cy + 2.0));
+            path.line_to((cx + 3.5, cy - 1.5));
+            path.move_to((r.left, cy + 1.0));
+            path.line_to((r.left, r.bottom));
+            path.line_to((r.right, r.bottom));
+            path.line_to((r.right, cy + 1.0));
+        }
         Tool::Undo | Tool::Redo => {
             // A hooked arrow, pointing back for undo.
             let dx = if tool == Tool::Undo { 1.0 } else { -1.0 };
@@ -570,6 +596,7 @@ mod tests {
             true,
             true,
             true,
+            true,
         );
         let leading = button(&layout, Tool::ZoomFit).right;
         let previous = button(&layout, Tool::PreviousPage).left;
@@ -581,6 +608,7 @@ mod tests {
         let layout = toolbar_layout(
             900.0,
             DecorationVariant::default(),
+            false,
             false,
             false,
             false,

@@ -199,6 +199,9 @@ impl Doc {
             if let Some(pad) = &viewer.signature_pad {
                 pad.draw(canvas, viewer.size, &theme);
             }
+            if viewer.confirm_close {
+                crate::confirm::draw(canvas, viewer.size, &viewer.name, &theme);
+            }
         });
 
         let pointed = Arc::clone(&viewer);
@@ -212,7 +215,7 @@ impl Doc {
         // window, not the application with every other file in it.
         let closed = Arc::clone(&viewer);
         window.on_close_request(move || {
-            closed.lock().unwrap().closing = true;
+            closed.lock().unwrap().request_close();
             AppContext::request_wakeup();
         });
 
@@ -247,10 +250,7 @@ impl Doc {
                 chat_toggled(&viewer, &self.chat, &self.window, resized);
             }
             commands::Command::Shortcuts => viewer.shortcuts_open = !viewer.shortcuts_open,
-            commands::Command::Close => {
-                viewer.closing = true;
-                AppContext::request_wakeup();
-            }
+            commands::Command::Close => viewer.request_close(),
             commands::Command::Copy => {
                 if let Some(text) = viewer.selected_text() {
                     otto_kit::clipboard::set_text(&text, serial);
@@ -662,6 +662,13 @@ fn handle_pointer(
                     continue;
                 }
                 let size = v.size;
+                if v.confirm_close {
+                    if let Some(answer) = crate::confirm::press(size, at) {
+                        v.answer_close(answer);
+                    }
+                    redraw = true;
+                    continue;
+                }
                 if let Some(pad) = &mut v.signature_pad {
                     match pad.press(size, at) {
                         crate::signature::PadAction::None => {}
@@ -761,10 +768,7 @@ fn handle_pointer(
                 let fired = v.controls.on_release(control);
                 v.dirty |= armed;
                 match fired {
-                    Some(WindowControl::Close) => {
-                        v.closing = true;
-                        AppContext::request_wakeup();
-                    }
+                    Some(WindowControl::Close) => v.request_close(),
                     Some(WindowControl::Minimize) => window.minimize(),
                     Some(WindowControl::Zoom) => window.toggle_maximized(),
                     None => {}
@@ -1057,7 +1061,7 @@ impl Doc {
         if viewer
             .editing
             .as_ref()
-            .is_some_and(|editing| editing.busy > 0)
+            .is_some_and(|editing| editing.busy > 0 || editing.unsaved)
         {
             return;
         }
@@ -1123,6 +1127,19 @@ impl App for PreviewApp {
         {
             let mut viewer = doc.viewer.lock().unwrap();
             let modifiers = viewer.modifiers;
+            // "Save changes?" keeps every key: Return saves, Escape stays.
+            if viewer.confirm_close {
+                match event.keysym {
+                    Keysym::Return | Keysym::KP_Enter => {
+                        viewer.answer_close(crate::confirm::Answer::Save)
+                    }
+                    Keysym::Escape => viewer.answer_close(crate::confirm::Answer::Cancel),
+                    _ => {}
+                }
+                drop(viewer);
+                doc.redraw();
+                return;
+            }
             // The signature pad keeps every key; Escape puts it away.
             if viewer.signature_pad.is_some() {
                 if event.keysym == Keysym::Escape {
@@ -1189,10 +1206,7 @@ impl App for PreviewApp {
         }
         let outcome = doc.viewer.lock().unwrap().key(event.keysym);
         match outcome {
-            KeyOutcome::Close => {
-                doc.viewer.lock().unwrap().closing = true;
-                AppContext::request_wakeup();
-            }
+            KeyOutcome::Close => doc.viewer.lock().unwrap().request_close(),
             KeyOutcome::Copy(text) => {
                 otto_kit::clipboard::set_text(&text, serial);
             }

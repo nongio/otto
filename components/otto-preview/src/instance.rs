@@ -222,6 +222,8 @@ impl Service {
         }
         let snapshot = last.ok_or_else(|| fdo::Error::Failed("nothing was changed".into()))?;
         Ok(serde_json::json!({
+            "saved": false,
+            "note": "Shown in the window, not yet saved: the person saves the file.",
             "fields": crate::pdf_tools::fields_json(&snapshot)["fields"],
             "annotations": crate::pdf_tools::annotations_json(&snapshot)["annotations"],
         })

@@ -1821,6 +1821,14 @@ studio-sheet-cmd = Cmd works wherever Ctrl does
 # Toggle: the strip of tools that fill in and mark up a PDF, written into
 # the file itself.
 studio-markup = Markup Tools
+# Writes a PDF's form and markup changes over the file.
+studio-save = Save
+# The window's title while a PDF has changes not yet saved. $name is the file's name.
+studio-title-edited = { $name } (edited)
+# Asked when a window with unsaved changes is closed. $name is the file's name.
+studio-close-title = Save changes to { $name }?
+studio-close-body = Your changes are lost if you don't save them.
+studio-close-discard = Don't Save
 # Deletes the highlight, drawing, text or signature selected on the page.
 studio-delete-selection = Delete Selection
 studio-sheet-next-field = Next form field

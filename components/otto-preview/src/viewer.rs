@@ -147,6 +147,8 @@ pub struct Viewer {
     pub signature_pad: Option<crate::signature::Pad>,
     /// A field's list of choices, waiting for the app to show as a menu.
     pub choices: Option<crate::editing::Choices>,
+    /// Whether "save changes?" is up, asked by a close with unsaved changes.
+    pub confirm_close: bool,
     /// The last press: when, where, and how many came quickly before it in
     /// the same place, to tell a double click.
     pub last_press: Option<(u32, Point, u32)>,
@@ -256,6 +258,7 @@ impl Viewer {
             signature_pad: None,
             choices: None,
             last_press: None,
+            confirm_close: false,
         }
     }
 
@@ -787,8 +790,16 @@ impl Viewer {
             Tool::Chat => true,
             Tool::Mark => self.marking || !self.frames().is_empty(),
             Tool::ShowMarks => self.marks_hidden || !self.marks.list.is_empty(),
-            Tool::Undo => self.versions.as_ref().is_some_and(Versions::can_undo),
-            Tool::Redo => self.versions.as_ref().is_some_and(Versions::can_redo),
+            // Unsaved edits first, then the file's versions.
+            Tool::Undo => {
+                self.can_undo_edit()
+                    || (!self.unsaved() && self.versions.as_ref().is_some_and(Versions::can_undo))
+            }
+            Tool::Redo => {
+                self.can_redo_edit()
+                    || (!self.unsaved() && self.versions.as_ref().is_some_and(Versions::can_redo))
+            }
+            Tool::Save => self.unsaved(),
             Tool::Markup => self.editable(),
         }
     }
@@ -802,8 +813,11 @@ impl Viewer {
             self.has_pages(),
             self.versions
                 .as_ref()
-                .is_some_and(|versions| versions.len() > 1),
+                .is_some_and(|versions| versions.len() > 1)
+                || self.can_undo_edit()
+                || self.can_redo_edit(),
             self.editable(),
+            self.unsaved(),
         )
     }
 
@@ -1055,8 +1069,17 @@ impl Viewer {
                 self.dirty = true;
             }
             Tool::Markup => self.toggle_markup(),
-            Tool::Undo => self.step_version(true),
-            Tool::Redo => self.step_version(false),
+            Tool::Undo => {
+                if !self.undo_edit() {
+                    self.step_version(true);
+                }
+            }
+            Tool::Redo => {
+                if !self.redo_edit() {
+                    self.step_version(false);
+                }
+            }
+            Tool::Save => self.save(),
             Tool::ShowMarks => {
                 self.marks_hidden = !self.marks_hidden;
                 if self.marks_hidden {
@@ -1101,6 +1124,10 @@ impl Viewer {
                 KeyOutcome::Handled
             }
             Keysym::w | Keysym::W | Keysym::q | Keysym::Q if ctrl => KeyOutcome::Close,
+            Keysym::s | Keysym::S if ctrl => {
+                self.save();
+                KeyOutcome::Handled
+            }
             Keysym::c | Keysym::C if ctrl => match self.session.selected_text() {
                 Some(text) => KeyOutcome::Copy(text),
                 None => KeyOutcome::Ignored,

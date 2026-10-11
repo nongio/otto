@@ -17,6 +17,7 @@ mod app;
 mod chat;
 mod chrome;
 mod commands;
+mod confirm;
 mod content;
 mod cursors;
 mod editing;

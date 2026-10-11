@@ -60,8 +60,9 @@ it; if they are not loaded yet, load them first.
   a script of your own: `preview_fields` lists the form (fill it by field
   name), `preview_annotations` what is marked on it. "Fill this in", "tick
   yes", "highlight the dates", "add a note" are `preview_edit` calls; they
-  are written into the file, kept as a version and shown, so no reload is
-  needed. Find where text is with `pdftotext -bbox-layout` (points from the
+  are shown in the window at once but not saved: the person saves the file
+  (Ctrl+S), so tell them to when you are done, and don't call
+  `preview_reload` after them (it would read the file without them). Find where text is with `pdftotext -bbox-layout` (points from the
   page's top-left, as the tools use) to place a highlight over it. Ask for
   what you don't know (a date of birth, an ID number) rather than make it
   up. Signing is the person's: leave signature fields to them.

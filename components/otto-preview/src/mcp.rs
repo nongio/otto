@@ -191,7 +191,7 @@ fn tools() -> Value {
         },
         {
             "name": "preview_edit",
-            "description": "Fill a PDF's form and add, change or delete annotations, written into the file (any PDF reader shows them), kept as a version and shown in the window. Use this rather than editing a PDF with your own tools. Returns the fields and annotations after.",
+            "description": "Fill a PDF's form and add, change or delete annotations, shown in the window at once and written into the file (any PDF reader shows them) when the person saves. Use this rather than editing a PDF with your own tools. Returns the fields and annotations after.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
