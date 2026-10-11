@@ -167,6 +167,7 @@ members = [
     "components/otto-files",
     "components/otto-peek",
     "components/otto-preview",
+    "components/otto-pdf",
     "components/otto-media-kit",
     "components/otto-md-kit",
     "components/otto-msg",
@@ -412,6 +413,10 @@ assets = [
     ["resources/icon-theme-links", "usr/lib/otto/icon-theme-links", "755"],
     ["target/icon-theme/COPYING", "usr/share/doc/otto/MacTahoe-COPYING", "644"],
     ["target/icon-theme/SOURCE", "usr/share/doc/otto/MacTahoe-SOURCE", "644"],
+    # PDFium, which Studio fills and marks up PDFs with; staged by
+    # scripts/packaging/fetch-pdfium.sh.
+    ["target/pdfium/libpdfium.so", "usr/lib/otto/libpdfium.so", "755"],
+    ["target/pdfium/LICENSE", "usr/share/doc/otto/PDFium-LICENSE", "644"],
 ]
 
 [package.metadata.generate-rpm]
@@ -445,6 +450,8 @@ assets = [
     { source = "target/release/otto-canvas", dest = "/usr/bin/otto-canvas", mode = "755" },
     { source = "target/release/otto-peek", dest = "/usr/bin/otto-peek", mode = "755" },
     { source = "target/release/otto-preview", dest = "/usr/bin/otto-preview", mode = "755" },
+    { source = "target/pdfium/libpdfium.so", dest = "/usr/lib/otto/libpdfium.so", mode = "755" },
+    { source = "target/pdfium/LICENSE", dest = "/usr/share/doc/otto/PDFium-LICENSE", mode = "644" },
     { source = "target/release/otto-msg", dest = "/usr/bin/otto-msg", mode = "755" },
     { source = "target/release/otto-search", dest = "/usr/bin/otto-search", mode = "755" },
     { source = "target/release/otto-agents", dest = "/usr/bin/otto-agents", mode = "755" },

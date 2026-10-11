@@ -178,6 +178,54 @@ fn tools() -> Value {
             }
         },
         {
+            "name": "preview_fields",
+            "description": "A PDF's form: every field by name, with its type (text, checkbox, radio, choice, list, signature), value, options, and where it is (page and rect in PDF points from the page's top-left).",
+            "inputSchema": nothing,
+            "annotations": { "readOnlyHint": true }
+        },
+        {
+            "name": "preview_annotations",
+            "description": "A PDF's annotations (highlights, drawings, text boxes, notes, stamps...), each with an id \"page:index\", type, rect in PDF points from the page's top-left, colour and text.",
+            "inputSchema": nothing,
+            "annotations": { "readOnlyHint": true }
+        },
+        {
+            "name": "preview_edit",
+            "description": "Fill a PDF's form and add, change or delete annotations, written into the file (any PDF reader shows them), kept as a version and shown in the window. Use this rather than editing a PDF with your own tools. Returns the fields and annotations after.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "fill": { "type": "object", "description": "Field name to value: text for a text field, true/false for a checkbox, an option for a radio group, choice or list." },
+                    "add": {
+                        "type": "array",
+                        "description": "Annotations to add, in PDF points from the page's top-left.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "type": { "type": "string", "enum": ["highlight", "underline", "strikeout", "squiggly", "ink", "text", "note"] },
+                                "page": { "type": "integer", "description": "0-based page." },
+                                "rect": { "type": "array", "items": { "type": "number" }, "description": "Markup: [left, top, right, bottom] over one line of text." },
+                                "rects": { "type": "array", "items": { "type": "array", "items": { "type": "number" } }, "description": "Markup over several lines: one rect each." },
+                                "strokes": { "type": "array", "items": { "type": "array", "items": { "type": "array", "items": { "type": "number" } } }, "description": "Ink: [[[x, y], ...], ...]." },
+                                "width": { "type": "number", "description": "Ink: line width, default 1.5." },
+                                "at": { "type": "array", "items": { "type": "number" }, "description": "Text or note: top-left [x, y]." },
+                                "text": { "type": "string" },
+                                "size": { "type": "number", "description": "Text: font size, default 12." },
+                                "color": { "type": "string", "description": "#rrggbb." }
+                            },
+                            "required": ["type", "page"]
+                        }
+                    },
+                    "change": {
+                        "type": "array",
+                        "description": "Changes to annotations: {\"id\": \"0:3\", \"dx\": 10, \"dy\": 0, \"text\": \"...\", \"color\": \"#rrggbb\"}, any of them.",
+                        "items": { "type": "object" }
+                    },
+                    "delete": { "type": "array", "items": { "type": "string" }, "description": "Annotation ids to delete." }
+                }
+            }
+        },
+        {
             "name": "preview_clear",
             "description": "Take away your layer of marks, all your marks when layer is empty, or the person's marks when layer is \"person\".",
             "inputSchema": {
@@ -210,6 +258,13 @@ fn call(bus: &Connection, doc: &Path, params: &Value) -> Value {
                 )
             }
             "preview_versions" => text(dbus::<String>(bus, "Versions", &(path.as_str(),))?),
+            "preview_fields" => text(dbus::<String>(bus, "Fields", &(path.as_str(),))?),
+            "preview_annotations" => text(dbus::<String>(bus, "Annotations", &(path.as_str(),))?),
+            "preview_edit" => text(dbus::<String>(
+                bus,
+                "Edit",
+                &(path.as_str(), arguments.to_string().as_str()),
+            )?),
             "preview_revert" => {
                 let Some(version) = arguments.get("version").and_then(Value::as_u64) else {
                     return Ok(
@@ -296,7 +351,7 @@ mod tests {
     fn every_tool_has_a_name_a_description_and_a_schema() {
         let tools = tools();
         let tools = tools.as_array().unwrap();
-        assert_eq!(tools.len(), 8);
+        assert_eq!(tools.len(), 11);
         // The Studio agent runs with a list of the tools it may use: one
         // missing there is a tool it never sees.
         let studio = include_str!("../../../resources/plugins/otto/agents/studio.md");

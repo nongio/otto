@@ -54,6 +54,8 @@ pub enum Tool {
     Undo,
     /// Steps the file forward again.
     Redo,
+    /// Shows or hides the markup strip: filling and marking up a PDF.
+    Markup,
 }
 
 /// Where the toolbar's buttons sit for one window width.
@@ -128,6 +130,7 @@ pub fn toolbar_layout(
     paged: bool,
     sidebar: bool,
     versions: bool,
+    markup: bool,
 ) -> ToolbarLayout {
     let top = titlebar_h(variant);
     let y = top + (TOOLBAR_H - BUTTON) / 2.0;
@@ -140,9 +143,15 @@ pub fn toolbar_layout(
     buttons.push((Tool::Mark, square(pen)));
     let eye = pen - BUTTON - GAP;
     buttons.push((Tool::ShowMarks, square(eye)));
+    // The markup strip's button, its own group before the marks.
+    let mut before = eye;
+    if markup {
+        before = eye - BUTTON - GAP * 4.0;
+        buttons.push((Tool::Markup, square(before)));
+    }
     // Back and forward through the file's versions, once there are any.
     if versions {
-        let redo = eye - BUTTON - GAP * 4.0;
+        let redo = before - BUTTON - GAP * 4.0;
         buttons.push((Tool::Redo, square(redo)));
         buttons.push((Tool::Undo, square(redo - BUTTON - GAP)));
     }
@@ -195,6 +204,7 @@ pub fn draw(canvas: &Canvas, viewer: &Viewer, theme: &Theme) {
         .with_border_bottom(theme.fill_tertiary)
         .render(canvas);
     decoration.draw(canvas);
+    crate::editing::draw_strip(canvas, viewer, theme, decoration.material_tint(false));
 
     let paged = viewer.page_status();
     let layout = viewer.toolbar();
@@ -208,7 +218,8 @@ pub fn draw(canvas: &Canvas, viewer: &Viewer, theme: &Theme) {
             || (*tool == Tool::Sidebar && viewer.sidebar_open())
             || (*tool == Tool::Chat && viewer.chat_open)
             || (*tool == Tool::Mark && viewer.marking)
-            || (*tool == Tool::ShowMarks && viewer.marks_hidden);
+            || (*tool == Tool::ShowMarks && viewer.marks_hidden)
+            || (*tool == Tool::Markup && viewer.markup.is_some());
         draw_icon_button(canvas, theme, *rect, *tool, enabled, hovered, pressed);
     }
 
@@ -284,6 +295,10 @@ fn draw_icon_button(
         draw_pen_glyph(canvas, dst, color);
         return;
     }
+    if tool == Tool::Markup {
+        draw_markup_glyph(canvas, dst, color);
+        return;
+    }
     if tool == Tool::ShowMarks {
         // Crossed out while the marks are hidden, which is when it is down.
         draw_eye_glyph(canvas, dst, color, pressed);
@@ -315,7 +330,7 @@ fn icon_names(tool: Tool) -> &'static [&'static str] {
         Tool::Undo => &["edit-undo-symbolic"],
         Tool::Redo => &["edit-redo-symbolic"],
         // Never looked up; see `draw_sidebar_glyph` and `draw_chat_glyph`.
-        Tool::Sidebar | Tool::Chat | Tool::Mark | Tool::ShowMarks => &[],
+        Tool::Sidebar | Tool::Chat | Tool::Mark | Tool::ShowMarks | Tool::Markup => &[],
     }
 }
 
@@ -367,6 +382,7 @@ fn draw_fallback_glyph(canvas: &Canvas, dst: Rect, tool: Tool, color: Color) {
         Tool::Sidebar => draw_sidebar_glyph(canvas, dst, color),
         Tool::Chat => draw_chat_glyph(canvas, dst, color),
         Tool::Mark => draw_pen_glyph(canvas, dst, color),
+        Tool::Markup => draw_markup_glyph(canvas, dst, color),
         Tool::ShowMarks => draw_eye_glyph(canvas, dst, color, false),
         Tool::Undo | Tool::Redo => {
             // A hooked arrow, pointing back for undo.
@@ -445,6 +461,42 @@ fn draw_pen_glyph(canvas: &Canvas, dst: Rect, color: Color) {
     canvas.draw_path(&pen.detach(), &stroke);
 }
 
+/// A page with a pen's line across it, for the markup strip: what is done
+/// to the document itself rather than pointed out over it.
+fn draw_markup_glyph(canvas: &Canvas, dst: Rect, color: Color) {
+    let mut stroke = Paint::default();
+    stroke.set_anti_alias(true);
+    stroke.set_style(PaintStyle::Stroke);
+    stroke.set_stroke_width(1.5);
+    stroke.set_stroke_join(otto_kit::skia::PaintJoin::Round);
+    stroke.set_stroke_cap(otto_kit::skia::PaintCap::Round);
+    stroke.set_color(color);
+    let page = Rect::from_ltrb(
+        dst.left + 2.0,
+        dst.top + 1.0,
+        dst.right - 4.0,
+        dst.bottom - 1.0,
+    );
+    canvas.draw_rrect(RRect::new_rect_xy(page, 2.0, 2.0), &stroke);
+    for (index, y) in [5.0, 8.5].into_iter().enumerate() {
+        let right = if index == 0 {
+            page.right - 2.5
+        } else {
+            page.right - 5.0
+        };
+        canvas.draw_line(
+            (page.left + 2.5, page.top + y),
+            (right, page.top + y),
+            &stroke,
+        );
+    }
+    // A pen crossing the page's lower corner.
+    let mut pen = PathBuilder::new();
+    pen.move_to((dst.right - 1.0, dst.top + 7.0));
+    pen.line_to((dst.left + 7.5, dst.bottom - 1.5));
+    canvas.draw_path(&pen.detach(), &stroke);
+}
+
 /// An eye, for the marks shown over the document; struck through when they
 /// are hidden.
 fn draw_eye_glyph(canvas: &Canvas, dst: Rect, color: Color, struck: bool) {
@@ -517,6 +569,7 @@ mod tests {
             true,
             true,
             true,
+            true,
         );
         let leading = button(&layout, Tool::ZoomFit).right;
         let previous = button(&layout, Tool::PreviousPage).left;
@@ -525,7 +578,14 @@ mod tests {
 
     #[test]
     fn the_zoom_level_sits_between_zoom_out_and_zoom_in() {
-        let layout = toolbar_layout(900.0, DecorationVariant::default(), false, false, false);
+        let layout = toolbar_layout(
+            900.0,
+            DecorationVariant::default(),
+            false,
+            false,
+            false,
+            false,
+        );
         assert!(button(&layout, Tool::ZoomOut).right <= layout.zoom_label.left);
         assert!(layout.zoom_label.right <= button(&layout, Tool::ZoomIn).left);
     }

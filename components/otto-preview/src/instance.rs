@@ -182,6 +182,52 @@ impl Service {
         })?
     }
 
+    /// The PDF's form fields, as JSON.
+    fn fields(&self, path: String) -> fdo::Result<String> {
+        let viewer = self.viewer(&path)?;
+        let viewer = viewer.lock().unwrap();
+        let editing = editing_of(&viewer)?;
+        Ok(crate::pdf_tools::fields_json(&editing.snapshot).to_string())
+    }
+
+    /// The PDF's annotations, form widgets aside, as JSON.
+    fn annotations(&self, path: String) -> fdo::Result<String> {
+        let viewer = self.viewer(&path)?;
+        let viewer = viewer.lock().unwrap();
+        let editing = editing_of(&viewer)?;
+        Ok(crate::pdf_tools::annotations_json(&editing.snapshot).to_string())
+    }
+
+    /// Fill the PDF's form and change its annotations as `request` (JSON)
+    /// says, save it as a version, and show it. Returns the fields and
+    /// annotations as they are after.
+    fn edit(&self, path: String, request: String) -> fdo::Result<String> {
+        let request: serde_json::Value = serde_json::from_str(&request)
+            .map_err(|err| fdo::Error::InvalidArgs(format!("not JSON: {err}")))?;
+        let viewer = self.viewer(&path)?;
+        let batches = {
+            let mut viewer = viewer.lock().unwrap();
+            let editing = editing_of(&viewer)?;
+            let edits = crate::pdf_tools::edits_from_json(&editing.snapshot, &request)
+                .map_err(fdo::Error::InvalidArgs)?;
+            viewer.submit(edits);
+            viewer.take_batches()
+        };
+        let mut last = None;
+        for batch in &batches {
+            last = Some(
+                crate::editing::run_batch(&viewer, batch)
+                    .map_err(|err| fdo::Error::Failed(err.to_string()))?,
+            );
+        }
+        let snapshot = last.ok_or_else(|| fdo::Error::Failed("nothing was changed".into()))?;
+        Ok(serde_json::json!({
+            "fields": crate::pdf_tools::fields_json(&snapshot)["fields"],
+            "annotations": crate::pdf_tools::annotations_json(&snapshot)["annotations"],
+        })
+        .to_string())
+    }
+
     /// The picture as the window shows it, with the marks drawn when `marks`,
     /// written as PNG. Returns the PNG's path.
     fn render(&self, path: String, marks: bool) -> fdo::Result<String> {
@@ -194,6 +240,18 @@ impl Service {
         .ok_or_else(|| fdo::Error::NotSupported("only a picture can be rendered so far".into()))?;
         write_render(&png).map_err(|err| fdo::Error::IOError(err.to_string()))
     }
+}
+
+/// The window's document opened for editing, or why it isn't.
+fn editing_of(viewer: &Viewer) -> fdo::Result<&crate::editing::Editing> {
+    viewer.editing.as_ref().ok_or_else(|| {
+        let why = if otto_pdf::available() {
+            "the window doesn't show a PDF that can be edited (or it is still opening)"
+        } else {
+            "PDF editing isn't installed: libpdfium.so is missing"
+        };
+        fdo::Error::NotSupported(why.into())
+    })
 }
 
 /// Write a rendered view where the agent can read it.

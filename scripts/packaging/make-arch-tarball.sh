@@ -116,6 +116,11 @@ cp -a target/icon-theme/Otto-MacTahoe target/icon-theme/Otto-MacTahoe-light \
       target/icon-theme/Otto-MacTahoe-dark target/icon-theme/links-*.tar.gz \
       target/icon-theme/COPYING target/icon-theme/SOURCE "$tmpdir/$PKGDIR/icon-theme/"
 
+# PDFium, which Studio fills and marks up PDFs with.
+scripts/packaging/fetch-pdfium.sh
+mkdir -p "$tmpdir/$PKGDIR/pdfium"
+cp -a target/pdfium/libpdfium.so target/pdfium/LICENSE target/pdfium/licenses "$tmpdir/$PKGDIR/pdfium/"
+
 install -m644 PKGBUILD-git "$tmpdir/$PKGDIR/PKGBUILD-git"
 
 # Which build this is, as the nightly package's pkgver. PKGBUILD-nightly-bin

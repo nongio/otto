@@ -1818,6 +1818,18 @@ studio-sheet-stop-agent = Stop the agent
 studio-sheet-to-document = Back to the document
 # Over the sheet: the Cmd key does what Ctrl does in every shortcut.
 studio-sheet-cmd = Cmd works wherever Ctrl does
+# Toggle: the strip of tools that fill in and mark up a PDF, written into
+# the file itself.
+studio-markup = Markup Tools
+# Deletes the highlight, drawing, text or signature selected on the page.
+studio-delete-selection = Delete Selection
+studio-sheet-next-field = Next form field
+# The card a signature is drawn on, once, before it is placed on a PDF.
+studio-signature-title = Draw your signature
+studio-signature-hint = Sign above the line
+studio-signature-clear = Clear
+studio-signature-cancel = Cancel
+studio-signature-done = Done
 
 ## Preview — chat
 

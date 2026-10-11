@@ -62,8 +62,10 @@ pub fn draw(canvas: &Canvas, viewer: &Viewer, theme: &Theme) {
                 selection,
             );
         }
+        let frames = viewer.frames();
+        crate::editing::draw(canvas, viewer, &frames, theme);
         if !viewer.marks_hidden {
-            crate::marks::draw(canvas, &viewer.frames(), &viewer.marks);
+            crate::marks::draw(canvas, &frames, &viewer.marks);
         }
     }
 

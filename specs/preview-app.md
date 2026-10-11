@@ -43,9 +43,12 @@ Underneath it is still `otto-preview` (the program, its app id and the
 
 - Stepping through a folder, a sidebar, thumbnails or any browsing: another
   file is another window.
-- Editing, annotating, rotating, or saving anything from the window's own
-  tools. Changes come from an agent, through the chat (see below and
-  `components/otto-agents/docs/plans/0016-agent-edited-documents.md`).
+- Editing pictures and Markdown, rotating, or saving anything from the
+  window's own tools: those changes come from an agent, through the chat (see
+  below and `components/otto-agents/docs/plans/0016-agent-edited-documents.md`).
+  A PDF's form and markup are the exception (see *Form and markup*).
+- Digital signatures (signing with a certificate). The signature tool places
+  a drawn signature; certificate signing is a later step of its own.
 - Claiming plain text, archives, audio or video as a default handler. Preview
   can show them when asked by path, but does not advertise them.
 
@@ -106,7 +109,9 @@ Underneath it is still `otto-preview` (the program, its app id and the
   showing the page with most of the window, next page. Each button is
   disabled at its end.
 - Trailing: undo and redo, once the file has more than one version (see
-  *Versions*); the eye, a toggle that stays down (struck through) while the
+  *Versions*); the markup button, for a PDF that can be edited (see *Form
+  and markup*), a toggle that stays down while the markup strip shows; the
+  eye, a toggle that stays down (struck through) while the
   marks are hidden; the pen, a toggle that stays down while it is on (see
   *Marks*); and the chat button, a toggle that stays down while the chat
   shows.
@@ -197,6 +202,71 @@ Underneath it is still `otto-preview` (the program, its app id and the
   picture, `marks-*.png` (the picture with the marks drawn and numbered), and
   attached without being listed. Sent marks stay, fainter.
 
+### Form and markup
+
+A PDF's form is filled in, and the PDF marked up, in the window itself:
+written into the file, so any PDF reader shows the result. The engine is
+PDFium, through the `otto-pdf` crate, loaded from `libpdfium.so` (see
+*Constraints*). Without it, or for a file PDFium can't open (one with a user
+password included), Preview shows the PDF as before, with no form tint and
+no markup button.
+
+- **Fields.** A PDF's form fields are live whenever the window shows it: a
+  faint accent tint shows each one that can be filled (stronger under the
+  pointer, outlined when the form marks it required). A click on a text
+  field puts a caret in it, over the field and in the page's own scale;
+  Return or a click elsewhere writes it, Escape drops it, Tab and Shift+Tab
+  write it and go to the next or previous text field, turning the page if
+  that field is off screen. Shift+Return makes a new line in a field that
+  takes several. A click on a checkbox ticks or unticks it; on a radio button
+  ticks it and unticks the rest of its group. A choice or list field drops
+  down its options as a menu from the field. A click on an empty signature
+  field places the person's signature fitted to it. Read-only fields, push
+  buttons and signed signature fields take no input.
+- **The markup strip.** The markup button (or Edit › Markup Tools,
+  Ctrl+Shift+E) shows a strip under the toolbar. It holds Select, then
+  Highlight, Underline, Strike Out, Draw, Text and Signature; six colours,
+  highlighter yellow first; and a bin that deletes what is selected. Taking
+  up the pen (see *Marks*) puts the strip away, and the strip puts the pen
+  down: both want the press.
+- **Highlight, Underline, Strike Out** work on the PDF's own text: a drag
+  selects words as usual and the release marks them, one quad per line, in
+  the chosen colour. Picking one of these tools with words already selected
+  marks them at once.
+- **Draw** makes a freehand stroke, 1.5 pt wide in the chosen colour, written
+  as an ink annotation on release; a click is a dot.
+- **Text** puts a caret where the page is clicked; what is typed is written
+  as a text box (a FreeText annotation, 12 pt) on Return or a click
+  elsewhere. Text in highlighter yellow is written in the darkest colour
+  instead, to be readable.
+- **Signature**: the first use opens a pad over the window to draw the
+  signature on (Clear, Cancel, Done; Escape cancels). It is kept as strokes
+  in `$XDG_DATA_HOME/otto/signature.json` and placed after that with a
+  click, 150 pt wide and centred on it, as dark blue ink.
+- **Select** picks up what is on the page: a click on a highlight, drawing,
+  text box, note or stamp selects it (an accent outline); a drag moves it
+  (Shift keeps the move to one axis); a colour swatch recolours it; the bin,
+  Backspace, Delete or Edit › Delete Selection deletes it; Escape lets it go.
+  A double-click on a text box edits its text; emptying it deletes it.
+  Annotations the agent added are selected, moved and deleted the same way;
+  locked or read-only ones are not.
+- **Saving.** Every change is applied and saved over the file at once,
+  through a temporary file renamed into place, keeping the file's
+  permissions and encryption. A signed PDF is saved as an incremental update,
+  so its signature stays valid for what it covers. Each save is kept as a
+  version (see *Versions*), the file as it was before the first change
+  included, so Undo steps a change back.
+- **Redrawing.** Only the pages a change touched are rasterised again (every
+  page a field's name is on, for a field), and the old drawing stays up until
+  the new one lands, so nothing blinks. Text just written is drawn over its
+  field until then. The file changing because of this window's own save is
+  not taken for someone else's change: the window does not decode it again.
+  A change from anywhere else reopens the document.
+- **The agent** reads and changes the same form and annotations with
+  `preview_fields`, `preview_annotations` and `preview_edit` (see *Document
+  tools*), so what it fills in is an ordinary field value the person can
+  change, and what it adds is markup the person can select, move and delete.
+
 ### Versions
 
 - From the first message sent in the chat, Preview keeps the file's
@@ -219,13 +289,18 @@ Underneath it is still `otto-preview` (the program, its app id and the
   one of the agent's named layers of marks), `Clear` (a layer, every agent
   mark, or the person's marks), `Reload` (read the file again, keeping the
   view, and keep it as a version with the agent's note), `Versions` (the
-  versions, as JSON), `Revert` (put one back) and `Render` (the picture as shown, with or without marks, as a PNG
-  path). A path no window shows is an error.
+  versions, as JSON), `Revert` (put one back), `Render` (the picture as shown, with or without marks, as a PNG
+  path), and for a PDF that can be edited `Fields` (its form, as JSON, one
+  entry per field name with every place it shows), `Annotations` (its
+  annotations, each with an id `page:index`) and `Edit` (fill fields by name,
+  add, change and delete annotations, from JSON; returns the fields and
+  annotations after). A path no window shows is an error.
 - `otto-preview --mcp` is a stdio MCP server over those methods, for the
   file in `OTTO_PREVIEW_DOC`: `preview_info`, `preview_marks`,
   `preview_draw`, `preview_clear`, `preview_reload` (with a note),
-  `preview_versions`, `preview_revert` and `preview_render`
-  (which returns the image). Its `initialize` answer carries the same
+  `preview_versions`, `preview_revert`, `preview_render`
+  (which returns the image), `preview_fields`, `preview_annotations` and
+  `preview_edit`. Its `initialize` answer carries the same
   instructions as the session. It never connects to the display.
 
 ### Content input
@@ -254,7 +329,10 @@ Underneath it is still `otto-preview` (the program, its app id and the
 - Ctrl+Z steps the file back a version and Ctrl+Y (or Ctrl+Shift+Z) forward.
 - From anywhere, the chat included: Ctrl+K shows or hides the chat,
   Ctrl+Shift+A takes up or puts down the pen, Ctrl+Shift+H shows or hides
-  the marks, and Ctrl+/ shows the keyboard shortcuts sheet.
+  the marks, Ctrl+Shift+E shows or hides the markup strip, and Ctrl+/ shows
+  the keyboard shortcuts sheet.
+- While text is being typed on the page, every key goes to it, before any of
+  the window's own.
 - Cmd works wherever Ctrl does: Otto hands it to apps as either.
 
 ### Menus and the shortcuts sheet
@@ -262,7 +340,7 @@ Underneath it is still `otto-preview` (the program, its app id and the
 - The window's menus show in the top bar while it has focus (served over
   `com.canonical.dbusmenu`, pointed at with `org_kde_kwin_appmenu`; see
   `otto_kit::app_menu`): File (Close Window), Edit (Undo, Redo, Copy, Select
-  All), Marks (Pen, Show Marks, Delete Last Mark), View (zoom, pages, Show
+  All, Markup Tools, Delete Selection), Marks (Pen, Show Marks, Delete Last Mark), View (zoom, pages, Show
   Pages, Show Chat) and Help (Keyboard Shortcuts).
 - Each item shows its key, and is greyed out when it cannot run. Pen, Show
   Marks, Show Pages and Show Chat are toggles and say whether they are on.
@@ -294,6 +372,14 @@ Underneath it is still `otto-preview` (the program, its app id and the
   once from the shared cache.
 - Measuring a picture's size for the first window reads only its header, and
   never from anything that is not a regular file (a pipe would block).
+- `libpdfium.so` is looked for at `$OTTO_PDFIUM`, beside the executable, in
+  `../lib/otto/` from it, `/usr/lib/otto/`, `/usr/local/lib/otto/`,
+  `~/.local/lib/otto/`, then by the system loader. The packages install a
+  prebuilt one at `/usr/lib/otto/libpdfium.so`
+  (`scripts/packaging/fetch-pdfium.sh` pins it). PDFium is not thread-safe:
+  one thread owns it and every open document.
+- A text field is edited on one line; a field that takes several shows the
+  new lines once written.
 
 ## Rationale
 
@@ -314,5 +400,7 @@ Underneath it is still `otto-preview` (the program, its app id and the
 ## Open Questions
 
 - Should the toolbar grow Rotate, Share or Print?
+- Signing with a certificate: PDFium reads signatures but can't make them,
+  so it needs a signing step of its own, appended after every other change.
 - Should the decode be repeated at a larger size when the window is made much
   bigger than it opened at?

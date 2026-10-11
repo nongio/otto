@@ -19,11 +19,14 @@ mod chrome;
 mod commands;
 mod content;
 mod cursors;
+mod editing;
 mod instance;
 mod marks;
 mod mcp;
+mod pdf_tools;
 mod shortcuts;
 mod sidebar;
+mod signature;
 mod versions;
 mod viewer;
 

@@ -1,0 +1,20 @@
+[package]
+name = "otto-pdf"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Editing PDFs in place: form fields and annotations, through PDFium"
+
+# PDFium is loaded when first asked for, never linked: a system without it
+# still runs everything else, and only the editing is missing.
+[dependencies]
+libloading = "0.8"
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

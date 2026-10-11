@@ -5423,6 +5423,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "otto-pdf"
+version = "1.6.0"
+dependencies = [
+ "libloading 0.8.9",
+ "tempfile",
+ "tracing",
+]
+
+[[package]]
 name = "otto-peek"
 version = "1.6.0"
 dependencies = [
@@ -5449,6 +5458,7 @@ dependencies = [
  "otto-agents-kit",
  "otto-kit",
  "otto-media-kit",
+ "otto-pdf",
  "otto-peek",
  "serde",
  "serde_json",

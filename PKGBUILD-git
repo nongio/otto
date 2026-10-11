@@ -71,6 +71,8 @@ build() {
     cargo build --release -p otto-agents
     # The MacTahoe icon theme package() installs as the default.
     scripts/packaging/fetch-icon-theme.sh
+    # PDFium, which Studio fills and marks up PDFs with.
+    scripts/packaging/fetch-pdfium.sh
 }
 
 package() {
@@ -150,6 +152,10 @@ package() {
     done
     install -Dm644 target/icon-theme/COPYING "$pkgdir/usr/share/licenses/$pkgname/MacTahoe-COPYING"
     install -Dm644 target/icon-theme/SOURCE "$pkgdir/usr/share/licenses/$pkgname/MacTahoe-SOURCE"
+    # PDFium (BSD-3-Clause / Apache-2.0), where otto-pdf looks for it.
+    install -Dm755 target/pdfium/libpdfium.so "$pkgdir/usr/lib/otto/libpdfium.so"
+    install -Dm644 target/pdfium/LICENSE "$pkgdir/usr/share/licenses/$pkgname/PDFium-LICENSE"
+    cp -r --no-preserve=ownership target/pdfium/licenses "$pkgdir/usr/share/licenses/$pkgname/PDFium-licenses"
     install -Dm644 components/xdg-desktop-portal-otto/otto.portal "$pkgdir/usr/share/xdg-desktop-portal/portals/otto.portal"
     install -Dm644 components/xdg-desktop-portal-otto/org.freedesktop.impl.portal.desktop.otto.service "$pkgdir/usr/share/dbus-1/services/org.freedesktop.impl.portal.desktop.otto.service"
     install -Dm644 components/xdg-desktop-portal-otto/xdg-desktop-portal-otto.service "$pkgdir/usr/lib/systemd/user/xdg-desktop-portal-otto.service"

@@ -26,6 +26,7 @@ use otto_peek::session::{self as peek, Session, VideoPointer};
 use smithay_client_toolkit::seat::keyboard::{KeyEvent, Keysym};
 use smithay_client_toolkit::seat::pointer::{PointerEvent, PointerEventKind};
 use smithay_client_toolkit::shell::xdg::window::WindowConfigure;
+use smithay_client_toolkit::shell::xdg::XdgSurface;
 use smithay_client_toolkit::shell::WaylandSurface;
 use wayland_client::protocol::wl_keyboard;
 
@@ -79,6 +80,11 @@ struct Doc {
     key: PathBuf,
     /// What the opening size is fitted to.
     shape: Shape,
+    /// The menu a form field's choices drop down in; built with the window,
+    /// as a menu must be (see `DropdownMenu`).
+    choices: otto_kit::components::dropdown::DropdownMenu,
+    /// The choice made from that menu, waiting for the loop.
+    chosen: Rc<std::cell::Cell<Option<(otto_pdf::AnnotId, usize)>>>,
     /// Whether the first configure has been answered, which is when the
     /// window takes its opening size.
     sized: bool,
@@ -190,6 +196,9 @@ impl Doc {
             }
             chrome::draw(canvas, &viewer, &theme);
             crate::shortcuts::draw(canvas, &viewer, &theme);
+            if let Some(pad) = &viewer.signature_pad {
+                pad.draw(canvas, viewer.size, &theme);
+            }
         });
 
         let pointed = Arc::clone(&viewer);
@@ -219,6 +228,8 @@ impl Doc {
             window,
             key,
             shape,
+            choices: otto_kit::components::dropdown::DropdownMenu::new(),
+            chosen: Rc::new(std::cell::Cell::new(None)),
             sized: false,
             chat_on_configure: false,
             menu,
@@ -247,6 +258,7 @@ impl Doc {
             }
             commands::Command::SelectAll => viewer.select_all(),
             commands::Command::DeleteMark => viewer.dirty |= viewer.marks.undo(),
+            commands::Command::DeleteSelection => viewer.delete_selected(),
             command => {
                 if let Some(tool) = command.tool() {
                     viewer.run_tool(tool);
@@ -340,6 +352,7 @@ impl Doc {
                 }
             }
             AppContext::request_wakeup();
+            open_for_editing(&viewer, &path, generation);
 
             let Some(command) = recogniser.filter(|_| needs_recognising) else {
                 return;
@@ -437,6 +450,51 @@ impl Doc {
     }
 }
 
+/// Open the PDF the window shows for editing, once its decode has landed:
+/// its form and annotations, through PDFium. The document opened before is
+/// kept when the file on disk is the one this window saved last.
+fn open_for_editing(viewer: &Mutex<Viewer>, path: &Path, generation: u64) {
+    if !is_pdf(path) || !otto_pdf::available() {
+        return;
+    }
+    {
+        let mut viewer = viewer.lock().unwrap();
+        if let Some(editing) = &mut viewer.editing {
+            if editing.saved.is_some() && editing.saved == Stamp::of(path) {
+                editing.generation = generation;
+                return;
+            }
+        }
+    }
+    let doc = match otto_pdf::open(path, None) {
+        Ok(doc) => doc,
+        Err(err) => {
+            tracing::info!(path = %path.display(), %err, "the PDF can't be edited here");
+            viewer.lock().unwrap().editing = None;
+            return;
+        }
+    };
+    let mut viewer = viewer.lock().unwrap();
+    if viewer.generation != generation {
+        return;
+    }
+    viewer.editing = Some(crate::editing::Editing::new(doc, generation));
+    viewer.dirty = true;
+    drop(viewer);
+    AppContext::request_wakeup();
+}
+
+/// Whether the file at `path` is a PDF, by its first bytes.
+fn is_pdf(path: &Path) -> bool {
+    use std::io::Read;
+    let mut head = [0u8; 1024];
+    let Ok(mut file) = std::fs::File::open(path) else {
+        return false;
+    };
+    let read = file.read(&mut head).unwrap_or(0);
+    head[..read].windows(5).any(|window| window == b"%PDF-")
+}
+
 /// The recogniser's command line, when recognition is on: the one configured
 /// in `files.toml`'s `[peek]` section, else the default.
 fn recogniser() -> Option<String> {
@@ -526,6 +584,21 @@ fn handle_pointer(
         match &event.kind {
             PointerEventKind::Enter { .. } | PointerEventKind::Motion { .. } => {
                 v.pointer = Some(at);
+                let size = v.size;
+                if let Some(pad) = &mut v.signature_pad {
+                    v.dirty |= pad.motion(size, at);
+                    redraw |= std::mem::take(&mut v.dirty);
+                    continue;
+                }
+                if v.strip().is_some() {
+                    // The strip's hover is drawn from the pointer.
+                    v.dirty = true;
+                }
+                if v.edit_busy() {
+                    v.edit_motion(at);
+                    redraw |= std::mem::take(&mut v.dirty);
+                    continue;
+                }
                 if v.chat_resizing {
                     v.resize_chat_to(at.x);
                     redraw |= std::mem::take(&mut v.dirty);
@@ -547,6 +620,7 @@ fn handle_pointer(
                     v.mark_motion(at);
                 } else {
                     v.mark_hover(content.contains(at).then_some(at));
+                    v.edit_hover(content.contains(at).then_some(at));
                 }
                 v.content_pointer(VideoPointer::Motion, at);
                 v.sidebar_motion(at);
@@ -559,6 +633,12 @@ fn handle_pointer(
                 let shape = match edge {
                     Some(edge) if v.drag.is_none() => edge.cursor(),
                     _ if v.drag.is_none() && v.on_chat_edge(at) => CursorShape::ColResize,
+                    _ if content.contains(at)
+                        && v.drag.is_none()
+                        && v.edit_cursor(at).is_some() =>
+                    {
+                        v.edit_cursor(at).unwrap_or(CursorShape::Default)
+                    }
                     _ if content.contains(at) || v.drag.is_some() => v.content_cursor(at),
                     _ => chat_cursor.unwrap_or(CursorShape::Default),
                 };
@@ -581,6 +661,29 @@ fn handle_pointer(
                 if *button != BTN_LEFT {
                     continue;
                 }
+                let size = v.size;
+                if let Some(pad) = &mut v.signature_pad {
+                    match pad.press(size, at) {
+                        crate::signature::PadAction::None => {}
+                        crate::signature::PadAction::Cancel => {
+                            v.signature_pad = None;
+                            if crate::signature::load().is_none() {
+                                v.markup = v.markup.map(|_| crate::editing::MarkupTool::Select);
+                            }
+                        }
+                        crate::signature::PadAction::Done => {
+                            if let Some(signature) = pad.signature() {
+                                if let Err(err) = crate::signature::save(&signature) {
+                                    tracing::warn!(%err, "could not keep the signature");
+                                }
+                            }
+                            v.signature_pad = None;
+                        }
+                    }
+                    redraw = true;
+                    continue;
+                }
+                let clicks = v.count_click(*time, at);
                 if let Some(edge) = edge {
                     if let Some(seat) = seat() {
                         window.start_resize(&seat, *serial, edge);
@@ -594,6 +697,9 @@ fn handle_pointer(
                 let control = chrome::control_at(&v, at.x, at.y);
                 if v.controls.on_press(control) {
                     v.dirty = true;
+                    continue;
+                }
+                if v.strip_press(at) {
                     continue;
                 }
                 if at.y < content.top {
@@ -629,6 +735,10 @@ fn handle_pointer(
                 if content.contains(at)
                     && (v.mark_delete_at(at) || v.mark_grab(at) || v.mark_press(at))
                 {
+                    continue;
+                }
+                // The form, and the markup tools.
+                if content.contains(at) && v.edit_press(at, clicks) {
                     continue;
                 }
                 v.content_pointer(VideoPointer::Press, at);
@@ -674,10 +784,15 @@ fn handle_pointer(
                     v.dirty |= chat.borrow_mut().release(panel, at);
                 }
                 v.sidebar_release();
+                if let Some(pad) = &mut v.signature_pad {
+                    pad.release();
+                    continue;
+                }
                 if v.mark_busy() {
                     v.mark_release();
                 }
                 let link = v.content_pointer(VideoPointer::Release, at);
+                v.edit_release();
                 if v.cursor == CursorShape::Grabbing {
                     v.cursor = v.content_cursor(at);
                     crate::cursors::show(v.cursor);
@@ -857,6 +972,7 @@ impl Doc {
             self.start_decode(path, panel, scale);
         }
         self.follow_document();
+        self.follow_edits();
         if self.viewer.lock().unwrap().tick() {
             self.window.request_frame();
         }
@@ -864,6 +980,50 @@ impl Doc {
 }
 
 impl Doc {
+    /// Apply and save the edits made since the last turn, off the UI thread,
+    /// and draw again the pages they touched; show a field's choices when
+    /// one was pressed, and take the one picked.
+    fn follow_edits(&self) {
+        if let Some((field, index)) = self.chosen.take() {
+            self.viewer.lock().unwrap().choose(field, index);
+        }
+        let (batches, choices) = {
+            let mut viewer = self.viewer.lock().unwrap();
+            (viewer.take_batches(), viewer.choices.take())
+        };
+        for batch in batches {
+            let viewer = Arc::clone(&self.viewer);
+            tokio::task::spawn_blocking(move || {
+                let _ = crate::editing::run_batch(&viewer, &batch);
+            });
+        }
+        let Some(choices) = choices else {
+            return;
+        };
+        let Some(parent) = self
+            .window
+            .surface()
+            .map(|surface| surface.xdg_window().xdg_surface().clone())
+        else {
+            return;
+        };
+        let chosen = Rc::clone(&self.chosen);
+        let field = choices.field;
+        self.choices.close_now();
+        self.choices.open(
+            &parent,
+            choices.rect,
+            AppContext::last_input_serial(),
+            &choices.options,
+            choices.selected,
+            move |index| {
+                chosen.set(Some((field, index)));
+                AppContext::request_wakeup();
+            },
+            AppContext::request_wakeup,
+        );
+    }
+
     /// The marks and the agent session agree: a session carried on here
     /// brings back the marks it kept, and marks changed since are kept with
     /// it, once a stroke or a drag is over.
@@ -954,6 +1114,22 @@ impl App for PreviewApp {
         {
             let mut viewer = doc.viewer.lock().unwrap();
             let modifiers = viewer.modifiers;
+            // The signature pad keeps every key; Escape puts it away.
+            if viewer.signature_pad.is_some() {
+                if event.keysym == Keysym::Escape {
+                    viewer.signature_pad = None;
+                }
+                drop(viewer);
+                doc.redraw();
+                return;
+            }
+            // Text typed into the document, and the keys for what is
+            // selected on it, before any of the window's own.
+            if !in_chat && !viewer.shortcuts_open && viewer.edit_key(event, serial) {
+                drop(viewer);
+                doc.redraw();
+                return;
+            }
             // The shortcuts sheet goes with Escape, and keeps every other key
             // but the window's own from what is under it.
             if viewer.shortcuts_open && event.keysym == Keysym::Escape {
@@ -1098,6 +1274,13 @@ impl App for PreviewApp {
         for doc in &self.docs {
             doc.update();
             doc.follow_menu();
+            {
+                let mut viewer = doc.viewer.lock().unwrap();
+                if viewer.edit_tick(delta) && std::mem::take(&mut viewer.dirty) {
+                    drop(viewer);
+                    doc.window.request_frame();
+                }
+            }
             let mut chat = doc.chat.borrow_mut();
             doc.sync_marks(&mut chat);
             let dictated = chat.follow_dictation();
@@ -1121,7 +1304,10 @@ impl App for PreviewApp {
         }
         self.docs
             .iter()
-            .any(|doc| doc.viewer.lock().unwrap().chat_open && doc.chat.borrow().focused)
+            .any(|doc| {
+                let viewer = doc.viewer.lock().unwrap();
+                (viewer.chat_open && doc.chat.borrow().focused) || viewer.edit_animating()
+            })
             .then_some(BLINK)
     }
 

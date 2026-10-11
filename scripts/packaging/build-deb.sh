@@ -15,6 +15,8 @@ cd "$(dirname "$0")/../.."
 
 # The MacTahoe icon theme the package ships as its default.
 scripts/packaging/fetch-icon-theme.sh
+# PDFium, which Studio fills and marks up PDFs with.
+scripts/packaging/fetch-pdfium.sh
 
 args=(--no-build --no-strip)
 if [ "${OTTO_NIGHTLY:-1}" = 1 ]; then

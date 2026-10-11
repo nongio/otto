@@ -183,6 +183,12 @@ crate, PDF library, archive crate or syntax highlighter. That is a deliberate
 choice. PDF rasterisers are run as programs rather than linked, so a new format
 can often be supported by adding a command to a table.
 
+Editing a PDF is apart from previewing one. Studio fills a PDF's form and
+marks it up through the `otto-pdf` crate, which loads PDFium
+(`libpdfium.so`) when first asked for and never links it; see
+`specs/preview-app.md`, *Form and markup*. Peek and the decoders above
+don't use it.
+
 `Request` sizes are in physical pixels. The host already asks for about twice
 the panel size, so **decoders must not double it again**.
 
