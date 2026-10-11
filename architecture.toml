@@ -238,13 +238,3 @@ reason = "Config::gaps returns workspaces::tiling::Gaps; the conversion belongs 
 module = "utils"
 uses = "workspaces"
 reason = "utils shares workspaces::utils::FONT_CACHE; the cache belongs in utils."
-
-# Source patterns.
-
-[[allow]]
-rule = "xdg-dirs-through-foundations"
-reason = "Written before otto_foundations::xdg existed, or before it covered the directory. Each one moves to otto_foundations::xdg (otto_kit::xdg in toolkit users)."
-files = [
-    { path = "components/otto-rdp/src/tls.rs", count = 2 },
-    { path = "components/xdg-desktop-portal-otto/src/portal/restore.rs", count = 3 },
-]

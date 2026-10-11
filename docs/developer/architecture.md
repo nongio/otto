@@ -135,6 +135,7 @@ flowchart BT
   otto_preview --> otto_media_kit
   otto_preview --> otto_peek
   otto_rdp --> otto_dbus
+  otto_rdp --> otto_foundations
   otto_search --> otto_foundations
   otto_settings --> otto_kit
   otto_settings --> otto_search

@@ -5476,6 +5476,7 @@ dependencies = [
  "libc",
  "memfd",
  "otto-dbus",
+ "otto-foundations",
  "pipewire",
  "rcgen",
  "rustls",

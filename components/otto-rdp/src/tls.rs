@@ -17,10 +17,8 @@ use tokio_rustls::TlsAcceptor;
 
 /// `$XDG_STATE_HOME/otto-rdp` (or `~/.local/state/otto-rdp`).
 fn state_dir() -> anyhow::Result<PathBuf> {
-    let base = std::env::var_os("XDG_STATE_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/state")))
-        .context("neither XDG_STATE_HOME nor HOME is set")?;
+    let base =
+        otto_foundations::xdg::state_home().context("neither XDG_STATE_HOME nor HOME is set")?;
     Ok(base.join("otto-rdp"))
 }
 
