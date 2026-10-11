@@ -152,7 +152,8 @@ graph = false
 # enforces and these rules no longer need: the render stack (renderer,
 # skia_renderer, render_elements, drawing, …) is the otto-render crate, which
 # cannot name the compositor at all. lib.rs re-exports its modules under their
-# old paths, so `crate::renderer::…` counts as a use of `otto_render`.
+# old paths; a rule's `to` may name such a re-exported module (`renderer`),
+# reached as `crate::renderer::…` or `otto_render::renderer::…`.
 
 [[module_rule]]
 name = "backends-are-leaves"
@@ -170,6 +171,9 @@ to = [
     "input",
     "input_handler",
     "render",
+    "renderer",
+    "render_elements",
+    "skia_renderer",
     "udev",
     "winit",
     "x11",
