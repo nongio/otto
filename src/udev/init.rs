@@ -20,15 +20,13 @@ use tracing::{error, info, warn};
 
 use crate::{
     config::Config,
-    input::edge_swipe::{
-        dispatch::Filtered,
-        evdev::{EvdevFds, TrackingInterface},
-    },
+    input::edge_swipe::evdev::{EvdevFds, TrackingInterface},
     renderer::active::RendererApi,
     state::{Backend, Otto},
 };
 
 use super::{
+    edge_swipe::Filtered,
     feedback::get_surface_dmabuf_feedback,
     types::{DeviceAddError, UdevData},
 };
@@ -226,7 +224,7 @@ pub fn run_udev<A: RendererApi>() {
         gpus,
         backends: HashMap::new(),
         input_devices: Vec::new(),
-        edge_swipe: crate::input::edge_swipe::dispatch::EdgeSwipeInput::new(evdev_fds.clone()),
+        edge_swipe: super::edge_swipe::EdgeSwipeInput::new(evdev_fds.clone()),
         #[cfg(feature = "ticker")]
         fps_texture: None,
 

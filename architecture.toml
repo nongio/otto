@@ -192,14 +192,4 @@ reason = "The XDG base directories, with their fallbacks, are otto_foundations::
 
 # Crates: none.
 
-# Compositor modules.
-
-[[allow]]
-module = "input"
-uses = "udev"
-reason = "Edge swipe, tablet, pointer and gesture handling have udev-only impls on Otto<UdevData> (evdev fds, the renderer API)."
-
-[[allow]]
-module = "input_handler"
-uses = "udev"
-reason = "udev-only input handling (VT switching, the renderer API) is an impl on Otto<UdevData>."
+# Compositor modules: none.

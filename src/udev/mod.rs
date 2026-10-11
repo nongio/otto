@@ -6,9 +6,11 @@
 pub mod backdrop;
 pub mod debug;
 pub mod device;
+pub mod edge_swipe;
 pub mod feedback;
 pub mod gamma;
 pub mod init;
+pub mod input;
 pub mod input_config;
 pub mod planes;
 pub mod render;

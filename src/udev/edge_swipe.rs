@@ -17,10 +17,15 @@ use smithay::{
     reexports::input::{Device as LibinputDevice, DeviceCapability},
 };
 
-use super::{
-    evdev::EvdevFds, Context, EdgeSwipe, Scroll, Touch, TouchOrigins, Verdict, MAX_COMPENSATION_MM,
+use super::UdevData;
+use crate::{
+    input::edge_swipe::{
+        evdev::EvdevFds, Context, EdgeSwipe, Scroll, Touch, TouchOrigins, Verdict,
+        MAX_COMPENSATION_MM,
+    },
+    renderer::active::RendererApi,
+    Otto,
 };
-use crate::{renderer::active::RendererApi, udev::UdevData, Otto};
 
 /// libinput scroll units per millimetre of finger travel.
 ///
