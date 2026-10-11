@@ -87,8 +87,7 @@ impl FilesWindow {
                 self.state.browse().open_with_key(key, field_mods);
             } else if let Some((edit, mods)) = field_edit(event, field_mods) {
                 self.state
-                    .lock()
-                    .unwrap()
+                    .browse()
                     .open_with_key(OpenWithKey::Edit(edit), mods);
             }
             return;

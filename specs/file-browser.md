@@ -647,7 +647,7 @@ before it is measured, drawn or given input.
 The command line can open a window already showing something, which is how
 the agents and scripts hand an answer to the person rather than printing
 paths. Each of these opens a new window in the Files already running, when
-there is one (see *One process, many windows* below).
+there is one (see *One process, many windows* above).
 
 | Command | Opens |
 |---|---|
@@ -1538,12 +1538,12 @@ call for.
 
 ### Wire contract: `org.otto.Files1`
 
-Every browser window serves this interface on the session bus, at object path
-`/org/otto/Files1`. Each window is its own process and queues for the bus name
-`org.otto.Files1` without replacing the owner, so the name's queued owners are
-the list of open Files windows, and a caller asks each by its unique name.
-Picker windows do not serve it: their selection belongs to the application
-they serve.
+The process hosting the browser windows, and the desk, serve this interface on
+the session bus, at object path `/org/otto/Files1`. Each queues for the bus
+name `org.otto.Files1` without replacing the owner, so the name's queued owners
+are the list of Files processes, and a caller asks each by its unique name; a
+process answers from its window holding the keyboard. Picker windows do not
+serve it: their selection belongs to the application they serve.
 
 ```
 FocusedSelection() → as

@@ -135,18 +135,6 @@ pub async fn claim_or_forward(request: &Request) -> zbus::Result<Claim> {
                 )
                 .await?;
         }
-        Request::Folder(folder) => {
-            let args = vec![folder.as_os_str().as_bytes()];
-            connection
-                .call_method(
-                    Some(DBUS_NAME),
-                    DBUS_PATH,
-                    Some(DBUS_NAME),
-                    "Open",
-                    &(args, b"/".as_slice(), ""),
-                )
-                .await?;
-        }
         Request::Trash { empty, token } => {
             connection
                 .call_method(
@@ -158,6 +146,18 @@ pub async fn claim_or_forward(request: &Request) -> zbus::Result<Claim> {
                 )
                 .await?;
         }
+        // The folder is absolute, so any working directory will do.
+        Request::Folder(folder) => {
+            connection
+                .call_method(
+                    Some(DBUS_NAME),
+                    DBUS_PATH,
+                    Some(DBUS_NAME),
+                    "Open",
+                    &(vec![folder.as_os_str().as_bytes()], b"/".as_slice(), ""),
+                )
+                .await?;
+        }
     }
     Ok(Claim::Forwarded)
 }
@@ -166,6 +166,7 @@ pub async fn claim_or_forward(request: &Request) -> zbus::Result<Claim> {
 /// for, until the last of them is closed.
 pub fn run_windows(first: Request) -> Result<(), Box<dyn std::error::Error>> {
     HOSTING.store(true, Ordering::Relaxed);
+    UI_THREAD.with(|ui| ui.set(true));
     let selection_queue = Some(serve_files_interface());
     let mut app = FilesApp::new(Vec::new(), selection_queue);
     app.hosting = true;
@@ -180,6 +181,7 @@ pub(super) fn run_single(
     browser: Browser,
     picker_queue: Option<crate::dbus::SharedQueue>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    UI_THREAD.with(|ui| ui.set(true));
     let selection_queue = picker_queue.is_none().then(serve_files_interface);
     let window = FilesWindow::new(browser, picker_queue);
     prewarm_sounds();
@@ -236,7 +238,16 @@ fn browser_for(start: crate::launch::Start) -> Browser {
     browser
 }
 
-/// A window's browser, locked with the view layer set up for it.
+thread_local! {
+    /// Whether this thread runs the windows. Only it measures, draws and
+    /// hit-tests, so only it may set the view layer's cells: a worker
+    /// finishing a thumbnail must not change them under a window the UI
+    /// thread is in the middle of drawing.
+    static UI_THREAD: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// A window's browser, locked, and on the UI thread with the view layer set
+/// up for it.
 pub(super) trait Browse {
     fn browse(&self) -> MutexGuard<'_, Browser>;
 }
@@ -244,7 +255,9 @@ pub(super) trait Browse {
 impl Browse for Mutex<Browser> {
     fn browse(&self) -> MutexGuard<'_, Browser> {
         let browser = self.lock().unwrap();
-        browser.enter_view();
+        if UI_THREAD.with(std::cell::Cell::get) {
+            browser.enter_view();
+        }
         browser
     }
 }
@@ -307,15 +320,20 @@ impl FilesApp {
 
     /// Open the window `request` asks for, or bring forward the Trash.
     fn open(&mut self, request: Request) -> Result<(), Box<dyn std::error::Error>> {
+        let mut activation = None;
         let browser = match request {
-            Request::Browse { args, cwd, .. } => {
+            // The start that sent this has already said what it could not
+            // honour, on its own stderr.
+            Request::Browse { args, cwd, token } => {
+                activation = token;
                 let home = crate::model::home_dir().unwrap_or_else(|| PathBuf::from("/"));
                 let args = crate::launch::parse(args);
-                let start = crate::launch::resolve(&args, &home, &cwd, crate::launch::Probe::disk);
-                for warning in &start.warnings {
-                    tracing::warn!("{warning}");
-                }
-                browser_for(start)
+                browser_for(crate::launch::resolve(
+                    &args,
+                    &home,
+                    &cwd,
+                    crate::launch::Probe::disk,
+                ))
             }
             Request::Folder(folder) => browser_for(crate::launch::Start {
                 folder,
@@ -334,6 +352,7 @@ impl FilesApp {
                     window.render();
                     return Ok(());
                 }
+                activation = token;
                 let mut browser = Browser::for_trash();
                 browser.pending_empty_ask = empty;
                 browser
@@ -341,6 +360,13 @@ impl FilesApp {
         };
         let mut window = FilesWindow::new(browser, None);
         window.show()?;
+        // A launcher's token lets the new window come forward the way the
+        // launcher asked; the compositor spends it when the window maps.
+        if let (Some(token), Some(surface)) =
+            (activation, window.window.as_ref().and_then(Window::surface))
+        {
+            AppContext::activate(surface.xdg_window().wl_surface(), Some(token));
+        }
         self.windows.push(window);
         Ok(())
     }

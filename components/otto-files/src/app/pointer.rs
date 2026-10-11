@@ -372,17 +372,19 @@ impl FilesWindow {
         context_menu: ContextMenu,
         group_menu: Rc<otto_kit::components::dropdown::DropdownMenu>,
     ) {
-        let state = Arc::clone(&self.state);
+        // Weak: otto-kit keeps the handler for the life of the process, and
+        // it must not keep a closed window's browser alive.
+        let state = Arc::downgrade(&self.state);
         let window_for_events = window.clone();
         let modifiers = Arc::clone(&self.modifiers);
 
         window.on_pointer_event(move |events| {
+            let Some(state) = state.upgrade() else {
+                return;
+            };
             for event in events {
                 let mods = *modifiers.lock().unwrap();
-                let after = state
-                    .lock()
-                    .unwrap()
-                    .on_pointer(event, mods, &window_for_events);
+                let after = state.browse().on_pointer(event, mods, &window_for_events);
                 match after {
                     After::Next => {}
                     After::Stop => return,
@@ -462,8 +464,9 @@ fn show_group_menu(
             .iter()
             .position(|g| *g == browser.photos_group)
     };
-    let chosen = Arc::clone(state);
-    let dismissed = Arc::clone(state);
+    // Weak: the menu outlives the window, in a callback never taken off.
+    let chosen = Arc::downgrade(state);
+    let dismissed = Arc::downgrade(state);
     menu.open(
         &parent_xdg,
         rect,
@@ -472,12 +475,17 @@ fn show_group_menu(
         selected,
         move |index| {
             if let Some(group) = crate::photos::Grouping::ALL.get(index) {
-                chosen.lock().unwrap().set_photos_group(*group);
+                if let Some(chosen) = chosen.upgrade() {
+                    chosen.browse().set_photos_group(*group);
+                }
             }
             AppContext::request_wakeup();
         },
         move || {
-            let mut browser = dismissed.lock().unwrap();
+            let Some(dismissed) = dismissed.upgrade() else {
+                return;
+            };
+            let mut browser = dismissed.browse();
             browser.photos_group_open = false;
             browser.dirty = true;
             drop(browser);
@@ -519,8 +527,9 @@ fn show_location_menu(
             .collect();
         (options, icons)
     };
-    let chosen = Arc::clone(state);
-    let dismissed = Arc::clone(state);
+    // Weak: the menu outlives the window, in a callback never taken off.
+    let chosen = Arc::downgrade(state);
+    let dismissed = Arc::downgrade(state);
     menu.open_with_icons(
         &parent_xdg,
         rect,
@@ -529,11 +538,16 @@ fn show_location_menu(
         &icons,
         Some(0),
         move |index| {
-            chosen.lock().unwrap().location_choose(index);
+            if let Some(chosen) = chosen.upgrade() {
+                chosen.browse().location_choose(index);
+            }
             AppContext::request_wakeup();
         },
         move || {
-            let mut browser = dismissed.lock().unwrap();
+            let Some(dismissed) = dismissed.upgrade() else {
+                return;
+            };
+            let mut browser = dismissed.browse();
             browser.location_open = false;
             browser.dirty = true;
             drop(browser);
@@ -558,16 +572,16 @@ fn show_filter_menu(
         return;
     };
     let Some((options, current)) = state
-        .lock()
-        .unwrap()
+        .browse()
         .picker
         .as_ref()
         .map(|session| (session.filter_labels.clone(), session.current_filter))
     else {
         return;
     };
-    let chosen = Arc::clone(state);
-    let dismissed = Arc::clone(state);
+    // Weak: the menu outlives the window, in a callback never taken off.
+    let chosen = Arc::downgrade(state);
+    let dismissed = Arc::downgrade(state);
     menu.open(
         &parent_xdg,
         rect,
@@ -575,11 +589,16 @@ fn show_filter_menu(
         &options,
         Some(current),
         move |index| {
-            chosen.lock().unwrap().set_filter(index);
+            if let Some(chosen) = chosen.upgrade() {
+                chosen.browse().set_filter(index);
+            }
             AppContext::request_wakeup();
         },
         move || {
-            let mut browser = dismissed.lock().unwrap();
+            let Some(dismissed) = dismissed.upgrade() else {
+                return;
+            };
+            let mut browser = dismissed.browse();
             if let Some(session) = browser.picker.as_mut() {
                 session.filter_open = false;
             }
@@ -650,8 +669,12 @@ pub(super) fn show_context_menu_over(
             | xdg_positioner::ConstraintAdjustment::FlipY,
     );
 
-    let click_state = Arc::clone(state);
+    // Weak, for the reason the menus above are.
+    let click_state = Arc::downgrade(state);
     context_menu.clone().on_item_click(move |action_id| {
+        let Some(click_state) = click_state.upgrade() else {
+            return;
+        };
         let mut browser = click_state.browse();
         match action_id {
             "open" => browser.open_selection(),

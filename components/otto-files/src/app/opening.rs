@@ -120,10 +120,9 @@ impl Browser {
 
     /// Open one directory in a second browser window — Ctrl+double-click.
     ///
-    /// A window is a process here: the app shell is built around a single
-    /// toplevel, so the second window is a second `otto-files` handed the
-    /// directory on its command line. Anything that is not a directory falls
-    /// back to plain activation, which is all a new window could do with it.
+    /// See [`Browser::spawn_window`] for where the window opens. Anything that
+    /// is not a directory falls back to plain activation, which is all a new
+    /// window could do with it.
     pub(super) fn open_in_new_window(&mut self, depth: usize, index: usize) {
         let Some(entry) = self.visible(depth).get(index).map(|e| (*e).clone()) else {
             return;

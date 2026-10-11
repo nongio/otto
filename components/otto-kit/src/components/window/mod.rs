@@ -909,6 +909,12 @@ impl Window {
         if let Ok(mut guard) = self.surface.write() {
             guard.take();
         }
+        // The draw closure goes too, with whatever it holds: clones of the
+        // handle live on in callbacks that are never taken off, and would
+        // otherwise keep the window's state alive for the rest of the process.
+        if let Ok(mut draw_fn) = self.on_draw_fn.lock() {
+            draw_fn.take();
+        }
         // A layer surface has no role object that goes on drop, so its
         // destruction is asked for explicitly.
         if let Some(layer) = self.layer.write().ok().and_then(|mut guard| guard.take()) {
