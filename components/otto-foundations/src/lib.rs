@@ -13,6 +13,10 @@
 //! that does not link the toolkit (the portal, the agents daemon, otto-search)
 //! depends on this crate directly.
 
+// A `pub` item nothing outside the crate can reach is an accident: say
+// `pub(crate)` or `pub(super)`, so the public API is what lib.rs exports.
+#![warn(unreachable_pub)]
+
 pub mod matching;
 pub mod uri;
 pub mod xdg;

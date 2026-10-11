@@ -5131,6 +5131,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "otto-arch"
+version = "1.6.0"
+dependencies = [
+ "proc-macro2",
+ "regex",
+ "serde",
+ "serde_json",
+ "syn 2.0.119",
+ "toml 1.1.2+spec-1.1.0",
+]
+
+[[package]]
 name = "otto-auth-ui"
 version = "1.6.0"
 dependencies = [

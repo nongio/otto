@@ -1,0 +1,50 @@
+# Third-party dependency policy, checked by cargo-deny:
+#
+#   cargo deny check bans
+#
+# The workspace's own layering (which Otto crate may use which) is in
+# architecture.toml. This file covers the outside world: which crates may
+# link a heavy or privileged library directly, and which libraries Otto does
+# not take at all. cargo-deny judges the resolved graph, so a ban holds
+# however deep the dependency is pulled in.
+#
+# `wrappers` lists every crate allowed to depend on the banned crate
+# directly, third-party ones included. Adding a crate to a list is a design
+# decision: say why in the review.
+
+[graph]
+all-features = true
+
+[bans]
+# Path dependencies between workspace members carry no version.
+wildcards = "allow"
+multiple-versions = "allow"
+
+deny = [
+    # The server side of Wayland. Only the compositor speaks it; a client
+    # that needs a compositor-side type wants a protocol instead.
+    { crate = "smithay", wrappers = ["otto"], reason = "only the compositor links the Wayland server" },
+
+    # Media decoding goes through otto-media-kit; otto-rdp encodes the
+    # remote desktop stream.
+    { crate = "gstreamer", wrappers = [
+        "otto-media-kit",
+        "otto-rdp",
+        "gstreamer-app",
+        "gstreamer-base",
+    ], reason = "decode through otto-media-kit" },
+
+    # Screen capture: the compositor produces streams, otto-kit and the
+    # islands consume them, otto-rdp forwards them.
+    { crate = "pipewire", wrappers = [
+        "otto",
+        "otto-kit",
+        "otto-islands",
+        "otto-rdp",
+    ], reason = "consume streams through otto-kit" },
+
+    # TLS is rustls (otto-rdp); a second TLS stack means a second set of
+    # certificates and CVEs to track.
+    { crate = "openssl-sys", reason = "use rustls" },
+    { crate = "native-tls", reason = "use rustls" },
+]

@@ -33,6 +33,10 @@
 //! assert!(matches!(blocks[0], Block::Heading { level: 1, .. }));
 //! ```
 
+// A `pub` item nothing outside the crate can reach is an accident: say
+// `pub(crate)` or `pub(super)`, so the public API is what lib.rs exports.
+#![warn(unreachable_pub)]
+
 mod block;
 mod inline;
 

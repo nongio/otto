@@ -74,7 +74,7 @@ const DEFAULT_HOTWORDS_BOOST: f32 = 4.0;
 /// url = "http://127.0.0.1:8080/inference"
 /// ```
 #[derive(Debug, Default, Clone, PartialEq)]
-pub struct Config {
+pub(super) struct Config {
     /// Which engine's service serves the endpoint. Recorded for the Settings
     /// app, which starts that service; every engine is spoken to the same
     /// way, so it does not change what is sent.
@@ -89,7 +89,7 @@ pub struct Config {
 impl Config {
     /// The keys `text` sets. A file that does not parse, or a key of the
     /// wrong type, sets nothing: dictation still works on the defaults.
-    pub fn parse(text: &str) -> Self {
+    pub(super) fn parse(text: &str) -> Self {
         let Ok(doc) = text.parse::<toml_edit::DocumentMut>() else {
             return Self::default();
         };
@@ -113,14 +113,14 @@ impl Config {
     }
 
     /// The file at `path`, or nothing set when there is none.
-    pub fn load_from(path: &std::path::Path) -> Self {
+    pub(super) fn load_from(path: &std::path::Path) -> Self {
         std::fs::read_to_string(path)
             .map(|text| Self::parse(&text))
             .unwrap_or_default()
     }
 
     /// The user's `dictation.toml`.
-    pub fn load() -> Self {
+    pub(super) fn load() -> Self {
         crate::xdg::otto_config_file("dictation.toml")
             .map(|path| Self::load_from(&path))
             .unwrap_or_default()

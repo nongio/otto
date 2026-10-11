@@ -12,6 +12,10 @@
 //! host's width ([`log`]). With the `dictation` feature, Ctrl+D dictates
 //! into a host's field ([`dictation`]).
 
+// A `pub` item nothing outside the crate can reach is an accident: say
+// `pub(crate)` or `pub(super)`, so the public API is what lib.rs exports.
+#![warn(unreachable_pub)]
+
 pub mod chat;
 #[cfg(feature = "dictation")]
 pub mod dictation;

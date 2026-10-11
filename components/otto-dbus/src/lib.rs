@@ -13,6 +13,10 @@
 //!
 //! See `docs/developer/otto-dbus.md`.
 
+// A `pub` item nothing outside the crate can reach is an accident: say
+// `pub(crate)` or `pub(super)`, so the public API is what lib.rs exports.
+#![warn(unreachable_pub)]
+
 pub mod compositor;
 pub mod desk;
 pub mod dialog;

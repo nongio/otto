@@ -24,7 +24,7 @@ const MAX_LINE_BYTES: usize = 2_000;
 /// bundles and log files run to hundreds of megabytes.
 const MAX_TEXT_BYTES: u64 = 8 * 1024 * 1024;
 
-pub fn read(file: &mut File, request: &Request, mime: &str) -> PreviewPayload {
+pub(super) fn read(file: &mut File, request: &Request, mime: &str) -> PreviewPayload {
     let bytes = match read_capped(file, MAX_TEXT_BYTES) {
         Ok(bytes) => bytes,
         Err(err) => {

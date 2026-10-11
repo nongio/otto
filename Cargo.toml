@@ -175,6 +175,7 @@ members = [
     "components/otto-search",
     "components/otto-foundations",
     "components/otto-dictate",
+    "tools/otto-arch",
     "sample-clients/client-rainbow",
     "sample-clients/submenu",
     "sample-clients/submenu-gtk",

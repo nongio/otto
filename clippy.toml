@@ -5,3 +5,15 @@
 # is `Arc::ptr_eq` on the flag. So a key's hash and equality cannot change
 # while it is in a map.
 ignore-interior-mutability = ["wayland_backend::server::ObjectId"]
+
+# Architecture rules clippy can see at a call site; the layering rules are in
+# architecture.toml (checked by `cargo run -p otto-arch`). This file is shared
+# by every workspace crate, so a rule here must hold everywhere. A call that
+# genuinely needs the banned item takes `#[expect(clippy::disallowed_methods,
+# reason = "…")]`.
+disallowed-methods = [
+    { path = "std::env::home_dir", reason = "use otto_foundations::xdg::home (otto_kit::xdg::home), which every XDG lookup shares" },
+]
+disallowed-macros = [
+    { path = "std::dbg", reason = "a debugging leftover: use tracing::debug!" },
+]
