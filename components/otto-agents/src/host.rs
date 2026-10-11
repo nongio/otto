@@ -2636,6 +2636,11 @@ impl HostState {
     /// opened here shows what the agent itself has, including turns made in a
     /// terminal. An empty replay is ignored rather than taken as an empty
     /// conversation.
+    ///
+    /// The turn under way is kept: an agent stopped for being idle is started
+    /// again by the next prompt, whose turn has begun before the agent
+    /// replays. Truncating ends it, and what the agent says back to it would
+    /// be dropped.
     fn rebuild_chat(&mut self, chat_uri: &str, turns: Vec<HistoryTurn>) {
         if turns.is_empty() {
             return;
@@ -2643,6 +2648,10 @@ impl HostState {
         if let Some(session_uri) = self.chat_sessions.get(chat_uri).cloned() {
             self.mark_written(&session_uri);
         }
+        let under_way = self
+            .chats
+            .get(chat_uri)
+            .and_then(|chat| chat.active_turn.clone());
         let loaded: Vec<Turn> = turns.into_iter().map(history_turn).collect();
         tracing::info!(
             chat_uri,
@@ -2662,6 +2671,19 @@ impl HostState {
             }),
             None,
         );
+        if let Some(turn) = under_way {
+            self.apply(
+                chat_uri,
+                StateAction::ChatTurnStarted(ChatTurnStartedAction {
+                    turn_id: turn.id,
+                    started_at: turn.started_at,
+                    message: turn.message,
+                    queued_message_id: None,
+                    meta: None,
+                }),
+                None,
+            );
+        }
     }
 
     fn end_turn(
