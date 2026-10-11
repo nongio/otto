@@ -41,6 +41,10 @@ pub struct SceneElement {
     /// the root's scene position (workspace scroll) is re-applied, minus
     /// the output's static origin. See `SceneDmabufElement` for the model.
     pub subtree_origin: Option<(f32, f32)>,
+    /// Asked once per frame whether to cull occluded layers, so a config
+    /// reload takes effect on the next frame. The compositor hands in its
+    /// `occlusion_culling` setting; the renderer does not read configuration.
+    occlusion_culling: fn() -> bool,
     #[cfg(feature = "perf-counters")]
     perf_stats: Rc<RefCell<ScenePerfStats>>,
 }
@@ -50,7 +54,7 @@ pub struct SceneElement {
 const MAX_ENGINE_STEP_SECS: f32 = 1.0 / 30.0;
 
 impl SceneElement {
-    pub fn with_engine(engine: Arc<Engine>) -> Self {
+    pub fn with_engine(engine: Arc<Engine>, occlusion_culling: fn() -> bool) -> Self {
         Self {
             id: Id::new(),
             commit_counter: CommitCounter::default(),
@@ -61,6 +65,7 @@ impl SceneElement {
             damage: Rc::new(RefCell::new(DamageBag::new(5))),
             output_root: None,
             subtree_origin: None,
+            occlusion_culling,
             #[cfg(feature = "perf-counters")]
             perf_stats: Rc::new(RefCell::new(ScenePerfStats::new())),
         }
@@ -417,9 +422,7 @@ impl SceneElement {
         // Compute occlusion for this output's root and retrieve the occluded set.
         // Skipped for plane subtrees — they mirror the KMS plane path, which
         // renders without occlusion culling (`SceneDmabufElement` passes None).
-        let occluded_set = if self.subtree_origin.is_none()
-            && crate::config::Config::with(|c| c.occlusion_culling)
-        {
+        let occluded_set = if self.subtree_origin.is_none() && (self.occlusion_culling)() {
             if let Some(root_id) = root_id {
                 self.engine.compute_occlusion(root_id);
                 scene.occlusion_map().and_then(|m| m.get(&root_id).cloned())
