@@ -1,6 +1,6 @@
 use layers::prelude::*;
 
-use crate::{config::Config, theme::theme_colors, workspaces::utils::FONT_CACHE};
+use crate::{config::Config, theme::theme_colors, utils::FONT_CACHE};
 
 use super::model::AppSwitcherModel;
 

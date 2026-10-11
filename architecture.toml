@@ -223,9 +223,3 @@ reason = "Night light and output ids downcast the backend data to reach udev's D
 module = "skia_renderer"
 uses = "workspaces"
 reason = "The GPU-memory log (target otto::gpumem) counts workspaces::zombie_windows(); the count belongs in stats the renderer is handed."
-
-
-[[allow]]
-module = "utils"
-uses = "workspaces"
-reason = "utils shares workspaces::utils::FONT_CACHE; the cache belongs in utils."

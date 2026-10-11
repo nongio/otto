@@ -3,8 +3,11 @@ use layers::{
     skia::{self},
 };
 
-use crate::{config::Config, workspaces::utils::FONT_CACHE};
+use crate::config::Config;
+mod font_cache;
 pub mod natural_layout;
+
+pub use font_cache::FONT_CACHE;
 
 /// Parse a hex colour (`#1a1a2e`, `1a1a2e`, `#RGB`, `#RRGGBBAA`) into a Skia
 /// `Color4f`, falling back to a dark blue for anything unreadable.

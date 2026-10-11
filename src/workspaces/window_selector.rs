@@ -16,10 +16,13 @@ use std::{
 use crate::{
     config::Config,
     interactive_view::ViewInteractions,
-    utils::natural_layout::{natural_layout, LayoutRect},
+    utils::{
+        natural_layout::{natural_layout, LayoutRect},
+        FONT_CACHE,
+    },
 };
 
-use super::{utils::FONT_CACHE, WORKSPACE_SELECTOR_PREVIEW_WIDTH};
+use super::WORKSPACE_SELECTOR_PREVIEW_WIDTH;
 
 // Logical (unscaled) values - will be multiplied by screen scale when used
 const WINDOW_SELECTOR_DRAG_THRESHOLD_LOGICAL: f32 = 1.5;
