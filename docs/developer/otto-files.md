@@ -12,19 +12,7 @@ This page covers the app's own design: processes, windows, how a folder is read 
 
 **The UI thread never touches the disk.** Reading a directory, copying, moving, trashing, thumbnailing and searching all run on worker threads or in other processes. The UI thread starts the work, keeps going, and picks up finished results on its next pass. A stalled network mount costs a spinner, not a frozen window.
 
-```
-              one session
-  +----------------------------------------+
-  | otto-files            (browser process) |
-  |   window A: [~] [~/src] [~/src/otto]    |   columns = path stack
-  |   window B: [~/Pictures]                |   each column: listing,
-  |   Trash window                          |   selection, watch
-  +----------------------------------------+
-  | otto-files --desk     (desk process)    |   one layer surface
-  +----------------------------------------+
-  | otto-files --picker   (picker process)  |   started by the bus,
-  +----------------------------------------+   gone when idle
-```
+![Files: the browser process with windows of columns, the desk and the picker](diagrams/files-processes.svg)
 
 ## Start to finish: a folder opened and kept current
 

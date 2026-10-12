@@ -31,21 +31,7 @@ session table, and it is in memory. What has to survive (a share the user
 already approved) travels in the portal's own `restore_data` round trip or
 sits in xdg-permission-store, both owned by others.
 
-```
-   app
-    |  org.freedesktop.portal.*
-    v
- xdg-desktop-portal  (frontend: app identity, tokens, permission checks)
-    |  org.freedesktop.impl.portal.*
-    v
- xdg-desktop-portal-otto
-    |-- org.otto.ScreenCast ----> compositor   (capture sessions, PipeWire)
-    |-- org.otto.Settings ------> compositor   (settings, Changed signal)
-    |-- org.otto.Dialog1 -------> otto-islands (Access-style dialogs)
-    |-- org.otto.FilePicker1 ---> otto-files   (file chooser, bus-activated)
-    |-- PermissionStore --------> remembered screen shares
-    '-- grim -------------------> compositor   (wlr-screencopy, one PNG)
-```
+![The portal backend between xdg-desktop-portal and Otto's services](diagrams/portal.svg)
 
 ## Start to finish: sharing a window
 

@@ -33,22 +33,7 @@ next: the agent to send to, the session to open, the answer to a permission or
 input question. The connection to the service is the one piece that is not a
 source, because it talks back.
 
-```
-           key binding / otto-canvas / otto-stash / agent service
-                                   |
-                                   v
-  +------------------ otto-launcher (one process per run) -----------------+
-  |                                                                        |
-  |   Apps --------+                                                       |
-  |   Calculator --+--> items --> rank(query) --> rows --> card (lay-rs)   |
-  |   Windows -----+                               ^                       |
-  |                                                |                       |
-  |   Ask (thread) --- agents, sessions, questions-+                       |
-  +------------------------------------------------------------------------+
-        |                |                    |                  |
-  desktop entries   foreign-toplevel     agent service      otto-stash
-  (XDG dirs)        (2nd Wayland conn)   (socket, AHP)      (D-Bus)
-```
+![The launcher: sources, ranking, rows and the card, with Ask beside them](diagrams/launcher.svg)
 
 ## Start to finish: a key press to a running app
 

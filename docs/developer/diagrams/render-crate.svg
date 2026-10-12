@@ -1,0 +1,70 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 300" width="760" height="300" role="img" aria-label="otto-render below the compositor: the compositor edits and imports, the render crate reads and draws">
+  <style>
+    text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
+    .box  { fill: #f6f8fa; stroke: #8b949e; stroke-width: 1.4; }
+    .acc  { fill: #ddf4ff; stroke: #218bff; stroke-width: 1.4; }
+    .grp  { fill: none; stroke: #8b949e; stroke-width: 1.2; stroke-dasharray: 5 4; }
+    .t    { fill: #1f2328; font-size: 13px; }
+    .tb   { fill: #1f2328; font-size: 13px; font-weight: 600; }
+    .tm   { fill: #656d76; font-size: 11px; }
+    .ln   { stroke: #8b949e; stroke-width: 1.4; fill: none; marker-end: url(#ah); }
+    @media (prefers-color-scheme: dark) {
+      .box { fill: #161b22; stroke: #6e7681; }
+      .acc { fill: #10243b; stroke: #388bfd; }
+      .grp { stroke: #6e7681; }
+      .t, .tb { fill: #e6edf3; }
+      .tm  { fill: #9198a1; }
+      .ln  { stroke: #8b949e; }
+    }
+  </style>
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#8b949e"/>
+    </marker>
+  </defs>
+
+  <text class="tb" x="20" y="30">compositor (otto)</text>
+  <text class="tm" x="290" y="30">shared engines</text>
+  <text class="tb" x="540" y="30">otto-render</text>
+  <rect class="grp" x="10" y="42" width="220" height="186" rx="10"/>
+  <rect class="grp" x="530" y="42" width="220" height="186" rx="10"/>
+
+  <rect class="box" x="20" y="60" width="200" height="36" rx="6"/>
+  <text class="t" x="34" y="83">window management</text>
+  <rect class="acc" x="290" y="60" width="180" height="36" rx="6"/>
+  <text class="t" x="304" y="83">lay-rs engine</text>
+  <rect class="box" x="540" y="60" width="200" height="36" rx="6"/>
+  <text class="t" x="554" y="83">SceneElement</text>
+  <path class="ln" d="M220 78 H288"/>
+  <text class="tm" x="236" y="72">edits</text>
+  <path class="ln" d="M540 78 H472"/>
+  <text class="tm" x="488" y="72">reads</text>
+
+  <rect class="box" x="20" y="116" width="200" height="36" rx="6"/>
+  <text class="t" x="34" y="139">surface commits</text>
+  <rect class="acc" x="290" y="116" width="180" height="36" rx="6"/>
+  <text class="t" x="304" y="139">client textures</text>
+  <rect class="box" x="540" y="116" width="200" height="36" rx="6"/>
+  <text class="t" x="554" y="139">layer draw closures</text>
+  <path class="ln" d="M220 134 H288"/>
+  <text class="tm" x="236" y="128">import</text>
+  <path class="ln" d="M540 134 H472"/>
+  <text class="tm" x="488" y="128">reads</text>
+
+  <rect class="box" x="20" y="172" width="200" height="36" rx="6"/>
+  <text class="t" x="34" y="195">render loop</text>
+  <rect class="acc" x="290" y="172" width="180" height="36" rx="6"/>
+  <text class="t" x="304" y="195">Smithay</text>
+  <rect class="box" x="540" y="172" width="200" height="36" rx="6"/>
+  <text class="t" x="554" y="195">Skia canvas</text>
+  <path class="ln" d="M220 190 H288"/>
+  <text class="tm" x="232" y="184">elements</text>
+  <path class="ln" d="M470 190 H538"/>
+  <text class="tm" x="476" y="184">draw(frame)</text>
+
+  <rect class="box" x="290" y="250" width="180" height="40" rx="6"/>
+  <text class="t" x="304" y="268">fence, then KMS</text>
+  <text class="tm" x="304" y="283">the frame is finished</text>
+  <path class="ln" d="M640 228 V270 H472"/>
+  <text class="tm" x="560" y="262">finish</text>
+</svg>

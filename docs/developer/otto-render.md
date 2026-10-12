@@ -36,15 +36,7 @@ other.
 compositor. Anything the renderer needs from it comes in as data or as a
 function.
 
-```
-  compositor (otto)                         otto-render
-  ─────────────────                         ───────────
-  window management ──edits──> lay-rs engine <──reads── SceneElement
-  surface commits ──import──> client textures <──reads── layer draw closures
-  render loop ──builds element list──> Smithay ──draw(frame)──> Skia canvas
-                                           │
-                                           └─ finish ──> fence ──> KMS
-```
+![What the compositor does and what otto-render reads and draws](diagrams/render-crate.svg)
 
 ## Start to finish: a window repaints
 

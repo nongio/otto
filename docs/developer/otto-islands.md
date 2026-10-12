@@ -34,18 +34,7 @@ blur, shadow, position and size are set through the
 spring the compositor runs. The client redraws a buffer only when what it shows
 changes, and between those moments it sleeps.
 
-```
- D-Bus callers                  otto-islands                        compositor
- -------------                  ------------                        ----------
- notify-send --Notifications--+
- apps ---------Island1--------+--> activity list --> UI thread --> layer surface
- portal, agents --Dialog1-----+    + dialog queue    (one sub-      + one subsurface
-                                                      surface per     per island,
- MPRIS players -----------------> music activity     island)         styled and
- PipeWire streams --------------> equaliser bars                     animated
-                                                    --otto_dock_v1--> dock badges
-                                                                     and progress
-```
+![Callers feed one activity list; the compositor shows and animates the islands](diagrams/islands.svg)
 
 ## Start to finish: a notification
 
