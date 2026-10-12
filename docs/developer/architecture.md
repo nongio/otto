@@ -221,8 +221,9 @@ compiler enforces what the code says:
 
 ## What a change affects
 
-CI checks only the crates a change reaches, and the crate graph decides
-which those are:
+CI checks only the crates a change reaches. The selection is
+[determinator](https://docs.rs/determinator)'s (part of guppy), fed with the
+rules in `architecture.toml`:
 
 ```sh
 cargo run -q -p otto-arch -- affected --base origin/main --explain
@@ -235,37 +236,53 @@ cargo run -q -p otto-arch -- affected --base origin/main --test-args | xargs -r 
    two trees, so a stale base can only add files. On a pull request CI's
    checkout is the merge commit, so the working tree is exactly the change
    under test. Renames list both paths.
-2. **File to crate**: a file belongs to the member whose directory is the
-   longest prefix of its path. The root package's directory is the whole
-   repository, so it owns only where its targets live (`src/`, `tests/`,
-   `examples/`); a file under `components/x/` is `x`'s.
-3. **Files outside every crate** are placed by the `[[affects]]` rules in
-   `architecture.toml`: `paths` (anchored at the root; `dir/`, `*` within a
-   segment, `**/` any directories), optional `except`, the `crates` they
-   reach (`"*"` is every member, `[]` none) and `areas` outside the graph
-   (`packaging`). Rules add up with the owning crate, which is how a file a
-   crate reads from another's directory is mapped (otto-kit's test reads
-   otto-agents' `config.rs`). A changed file no crate and no rule covers
-   selects everything.
-4. **Cargo.lock** is diffed, not mapped: a member is affected when a package
-   in its dependency closure in the lockfile was added, removed or changed
-   (version, source, checksum or its own dependencies). The lockfile records
-   every feature, target and dev-dependency, so this can over-report, never
-   miss.
-5. **Dependents**: every member that depends on an affected one, through
-   normal or build dependencies, is affected too, transitively. A
-   dev-dependency affects the member's own tests but stops there: nothing
-   that depends on the member links it.
+2. **Two graphs**: `cargo metadata` (full, `--locked`) at the head and at
+   the base, which otto-arch checks out in a temporary `git worktree`. Both
+   share the cargo registry and git caches, so with a warm cache the pair
+   takes about a second and a whole run a few; a cold cache first downloads
+   every crate in the lockfile and clones the git dependencies.
+3. **File to crate**: a file belongs to the member whose directory is
+   nearest to it. The root package's directory is the whole repository, so
+   it owns only where its targets live (`src/`, `tests/`, `examples/`); a
+   file under `components/x/` is `x`'s.
+4. **Files outside every crate** are placed by the `[[affects]]` rules:
+   `paths` (anchored at the root; `dir/` is the directory, anything else a
+   globset glob where `*` also crosses `/`, as determinator matches), the
+   `crates` they reach (`"*"` is every member, `[]` none) and `areas` outside
+   the graph (`packaging`). Rules add up with the owning crate, which is how
+   a file a crate reads from another's directory is mapped (otto-kit's test
+   reads otto-agents' `config.rs`). A changed file no crate and no rule
+   covers selects everything; so does a change to `architecture.toml` or to
+   otto-arch's own code, so a pull request cannot shrink the checks it is
+   judged by. otto-arch translates the rules into determinator path rules,
+   in order: every rule that names crates (falling through, so they add
+   up), the members' own paths (matched to their nearest member), every
+   other covered path (nothing more), and a final `**` that selects
+   everything. determinator's default rules are off: the final rule would
+   shadow them, and they would ignore `clippy.toml`.
+5. **Dependencies**: determinator simulates a Cargo build of every member
+   (no features, default features, all features; dev-dependencies on; the
+   host platform) in both graphs. A member whose build resolves a different
+   package, version, source or feature set is affected: that is how a
+   `Cargo.lock` edit is scoped, to the members that actually build what
+   changed, not every member the lockfile's union of features connects it
+   to.
+6. **Dependents**: every member whose build includes an affected member is
+   affected too. A dev-dependency affects the member's own tests but stops
+   there: nothing that depends on the member builds it.
 
-Any failure (no base, a git error, an unreadable lockfile or rules file)
-selects everything. The output is `key=value` lines for `$GITHUB_OUTPUT`:
-`packages`, the `-p` lists the CI steps take (`clippy_args`,
-`test_lib_args`, `test_bins_args`, which leave out crates with steps of
-their own), and the area flags the job gates read, derived from the crates:
-`compositor` (otto or otto-render), `rdp`, `portal`, `files`, `ui` (any other
-crate but otto-arch, which the architecture job checks on every change),
-`packaging` and `rust`. `--explain` prints on stderr why each crate is in,
-as a chain back to the file: `otto-bar <- otto-kit <- components/otto-kit/src/lib.rs`.
+Any failure (no base, a git or cargo error, a graph guppy cannot read, an
+unreadable rules file, even a panic) selects everything, and if otto-arch
+cannot even be built, ci.yml's fallback writes the same all-selecting
+outputs. The output is `key=value` lines for `$GITHUB_OUTPUT`: `packages`,
+the `-p` lists the CI steps take (`clippy_args`, `test_lib_args`,
+`test_bins_args`, which leave out crates with steps of their own; the old
+workspace-wide lists when everything is affected), the area flags the job
+gates read, derived from the crates (`compositor` for otto or otto-render,
+`rdp`, `portal`, `files`, `packaging`, and `rust` for any crate the check
+job builds), and `all`. `--explain` prints on stderr why each crate is in,
+as a chain back to the file (`otto-bar <- otto-kit <-
+components/otto-kit/src/lib.rs`) or to a changed dependency graph.
 
 The checker keeps the rules honest: a pattern that matches no tracked file
 is stale, a tracked file outside every crate and rule fails (a new top-level
@@ -273,13 +290,17 @@ file is a decision, not a silent "test everything"), and so does an
 `include_str!`, `include_bytes!` or protocol XML a crate embeds from outside
 its directory without a rule mapping it to that crate. Files a test reads
 at run time through `CARGO_MANIFEST_DIR` are not detected: keep them inside
-the crate, or add a rule.
+the crate, or add a rule (otto-files reads `resources/locales/` this way).
+Files the packages install from inside a crate's directory (the PAM file,
+the portal and agent units, the file browser's icons) need a
+`areas = ["packaging"]` rule for the packaging jobs to run when they change.
 
 ## Changing the rules
 
 - **New top-level file or directory**: add an `[[affects]]` rule saying
   which crates it reaches; likewise when a crate starts embedding a file
-  from outside its own directory.
+  from outside its own directory, or a package starts installing one from
+  inside a crate's.
 - **New crate**: add it to its layer in `architecture.toml`, run
   `cargo run -p otto-arch -- --bless` to refresh the graph above, and commit
   both.
