@@ -2,11 +2,19 @@
 //!
 //! Provides `named_icon()` to look up and cache icons by name from the
 //! system icon theme, with support for SVG and raster formats.
+//!
+//! The glyphs Otto's own interface draws (toolbar, menu and control icons)
+//! come from the vendored Solar set first, see [`solar`]; the theme answers
+//! for every name the set does not have.
 
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock, RwLock};
 
 use skia_safe as skia;
+
+mod solar;
+
+pub use solar::{solar_icon, solar_icon_path, SolarStyle};
 
 // ---------------------------------------------------------------------------
 // Icon cache
@@ -37,10 +45,20 @@ pub fn clear_cache() {
     THEME_IS_BROKEN.store(false, std::sync::atomic::Ordering::Relaxed);
 }
 
+/// The Solar glyph for `name`, drawn in the ink callers tint with `SrcIn`.
+///
+/// `None` for a name the generic lookups leave to the theme.
+fn solar_glyph(name: &str, size: i32) -> Option<skia::Image> {
+    solar::is_glyph_name(name)
+        .then(|| solar_icon(name, size, SolarStyle::Linear, solar::INK))
+        .flatten()
+}
+
 /// Look up an icon by name from the icon theme, with caching.
 ///
 /// Searches the system icon theme directories for the given icon name,
-/// loads it (SVG or raster), caches the result, and returns the image.
+/// loads it (SVG or raster), caches the result, and returns the image. A name
+/// in the Solar set is its glyph instead, in the ink of a symbolic icon.
 pub fn named_icon(icon_name: &str) -> Option<skia::Image> {
     let ic = icon_cache();
 
@@ -53,7 +71,8 @@ pub fn named_icon(icon_name: &str) -> Option<skia::Image> {
     }
 
     // Cache miss — look up and load
-    let icon = find_icon(icon_name, 512, 1).and_then(|p| image_from_path(&p, (512, 512)));
+    let icon = solar_glyph(icon_name, 512)
+        .or_else(|| find_icon(icon_name, 512, 1).and_then(|p| image_from_path(&p, (512, 512))));
 
     ic.write()
         .unwrap()
@@ -63,7 +82,8 @@ pub fn named_icon(icon_name: &str) -> Option<skia::Image> {
 
 /// Look up an icon by name with a specific size, with caching.
 ///
-/// The cache key includes the size to allow different resolutions.
+/// The cache key includes the size to allow different resolutions. A name in
+/// the Solar set is its glyph, as in [`named_icon`].
 pub fn named_icon_sized(icon_name: &str, size: i32) -> Option<skia::Image> {
     let cache_key = format!("{icon_name}@{size}");
     let ic = icon_cache();
@@ -76,8 +96,9 @@ pub fn named_icon_sized(icon_name: &str, size: i32) -> Option<skia::Image> {
     }
 
     let scale = crate::app_runner::context::AppContext::scale_factor().max(1);
-    let icon =
-        find_icon_any_size(icon_name, size, scale).and_then(|p| image_from_path(&p, (size, size)));
+    let icon = solar_glyph(icon_name, size).or_else(|| {
+        find_icon_any_size(icon_name, size, scale).and_then(|p| image_from_path(&p, (size, size)))
+    });
 
     ic.write().unwrap().insert(cache_key, icon.clone());
     icon
@@ -136,6 +157,9 @@ pub fn cached_file_icon(path: &str, size: i32) -> Option<skia::Image> {
 /// Unlike [`named_icon_sized`] this never reads `AppContext`, so it is callable
 /// from a bare draw closure — which is what lets the compositor draw the same
 /// icons server-side.
+///
+/// A name in the Solar set answers with its glyph, in the ink of a symbolic
+/// icon, ahead of the theme; see [`cached_icon_chain_at`] for when it does not.
 pub fn cached_icon_chain(names: &[&str], size: i32) -> Option<skia::Image> {
     cached_icon_chain_at(names, size, size)
 }
@@ -155,11 +179,45 @@ pub const FULL_COLOUR_SIZE: i32 = 64;
 /// chain up at [`FULL_COLOUR_SIZE`] and renders that file at 16. Passing the
 /// same value for both is the plain [`cached_icon_chain`] behaviour, which is
 /// what a caller wants when it does want the theme's small-size art.
+///
+/// A small-size lookup is a glyph lookup: each name the Solar set has answers
+/// with its glyph before the theme is asked for it, and a later name in the
+/// chain is only tried when neither has the earlier one. A lookup at
+/// [`FULL_COLOUR_SIZE`] or above wants the theme's artwork and skips the set.
 pub fn cached_icon_chain_at(names: &[&str], size: i32, lookup_size: i32) -> Option<skia::Image> {
+    let glyphs = lookup_size < FULL_COLOUR_SIZE;
+    resolve_chain("chain", names, size, lookup_size, |name| {
+        glyphs.then(|| solar_glyph(name, size)).flatten()
+    })
+}
+
+/// [`cached_icon_chain`] for a caller that draws every icon as a glyph.
+///
+/// The Files sidebar and path bar draw a folder as a place, not as a file
+/// type, so here every name the Solar set has, `folder` included, is its
+/// glyph, drawn in `color`. Names the set lacks come from the theme as the
+/// plain chain would have them, for the caller to tint.
+pub fn cached_glyph_chain(names: &[&str], size: i32, color: skia::Color) -> Option<skia::Image> {
+    let kind = format!("glyphs#{}", solar::color_key(color));
+    resolve_chain(&kind, names, size, size, |name| {
+        solar_icon(name, size, SolarStyle::Linear, color)
+    })
+}
+
+/// The first of `names` that `glyph` or the theme has, cached as one entry.
+///
+/// `kind` keeps apart chains that resolve the same names differently.
+fn resolve_chain(
+    kind: &str,
+    names: &[&str],
+    size: i32,
+    lookup_size: i32,
+    glyph: impl Fn(&str) -> Option<skia::Image>,
+) -> Option<skia::Image> {
     if names.is_empty() {
         return None;
     }
-    let cache_key = format!("chain:{}@{size}/{lookup_size}", names.join("|"));
+    let cache_key = format!("{kind}:{}@{size}/{lookup_size}", names.join("|"));
     let ic = icon_cache();
 
     {
@@ -173,10 +231,12 @@ pub fn cached_icon_chain_at(names: &[&str], size: i32, lookup_size: i32) -> Opti
     // icon when a name misses, so the first entry in a chain would always
     // "succeed" and the rest would never be consulted.
     let theme = crate::icon_theme::current_icon_theme();
-    let icon = names
-        .iter()
-        .find_map(|name| exact_icon_in_theme(name, lookup_size, theme.as_deref()))
-        .and_then(|path| image_from_path(&path, (size, size)));
+    let icon = names.iter().find_map(|name| {
+        glyph(name).or_else(|| {
+            exact_icon_in_theme(name, lookup_size, theme.as_deref())
+                .and_then(|path| image_from_path(&path, (size, size)))
+        })
+    });
 
     ic.write().unwrap().insert(cache_key, icon.clone());
     icon

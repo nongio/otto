@@ -227,11 +227,19 @@ impl MenuItemRenderer {
                     icon_x,
                     icon_y
                 );
-                // Use XDG theme lookup (same as tray icons), fall back to SVG set
-                // Load at physical size for HiDPI crispness
+                // Otto's Solar glyph in the item's tint, else the XDG theme
+                // (same as tray icons), else the embedded SVG set. Loaded at
+                // physical size for HiDPI crispness.
                 let scale = crate::app_runner::context::AppContext::scale_factor().max(1);
                 let load_size = (icon_size as i32) * scale;
-                if let Some(img) = crate::icons::named_icon_sized(name, load_size) {
+                let image = crate::icons::solar_icon(
+                    name,
+                    load_size,
+                    crate::icons::SolarStyle::Linear,
+                    tint,
+                )
+                .or_else(|| crate::icons::named_icon_sized(name, load_size));
+                if let Some(img) = image {
                     let dst = Rect::from_xywh(icon_x, icon_y, icon_size, icon_size);
                     let paint = Paint::default();
                     let dst_px = (icon_size * scale as f32, icon_size * scale as f32);

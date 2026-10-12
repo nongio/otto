@@ -129,7 +129,10 @@ impl MenuBarRenderer {
                 width,
                 height,
             } => Self::image_from_pixmap(data, *width, *height),
-            MenuBarIcon::Named(name) => crate::icons::named_icon_sized(name, load_size),
+            MenuBarIcon::Named(name) => {
+                crate::icons::solar_icon(name, load_size, crate::icons::SolarStyle::Linear, tint)
+                    .or_else(|| crate::icons::named_icon_sized(name, load_size))
+            }
             MenuBarIcon::File(path) => crate::icons::cached_file_icon(path, load_size),
         };
 
