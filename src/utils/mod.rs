@@ -42,7 +42,17 @@ pub fn find_icon_with_theme(icon_name: &str, size: i32, scale: i32) -> Option<St
 ///
 /// The lookup is strict — a generic `application-default-icon` substituted for
 /// a missing UI icon is rejected, so the caller can try the next candidate name.
+///
+/// Otto's own Solar glyph comes first, so chrome looks the same in any theme.
 fn themed_chrome_icon(icon_name: &str) -> Option<layers::skia::Image> {
+    if let Some(glyph) = otto_kit::icons::solar_icon(
+        icon_name,
+        512,
+        otto_kit::icons::SolarStyle::Linear,
+        skia::Color::BLACK,
+    ) {
+        return Some(glyph);
+    }
     let path = find_icon_with_theme(icon_name, 512, 1)?;
     let matches = std::path::Path::new(&path)
         .file_stem()
