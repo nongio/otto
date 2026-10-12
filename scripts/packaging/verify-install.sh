@@ -139,6 +139,15 @@ if [[ "$flavour" != rpm ]]; then
     done
 fi
 
+echo "== interface glyphs (Solar) =="
+# The glyphs the apps' toolbars and menus draw, and the attribution CC BY
+# asks for. Without them the apps fall back to the theme's icons.
+s=/usr/share/otto/icons/solar
+check "$s/LICENSE"
+check "$s/linear/zoom-in-symbolic.svg"
+check "$s/linear/otto-pen-symbolic.svg"
+check "$s/bold/otto-pen-symbolic.svg"
+
 echo "== wallpaper =="
 # The shipped config names it as background_image.
 check /usr/share/otto/wallpaper.jpg

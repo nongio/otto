@@ -23,7 +23,9 @@ Otto's own toolbars, menus and controls draw their glyphs from the Solar
 icon set (480 Design, CC BY 4.0) rather than the person's icon theme; app,
 file-type and tray icons still come from the theme. The icons used are
 listed in `resources/icons/solar/icons.list` and committed under
-`resources/icons/solar/`, with the attribution in its `LICENSE`.
+`resources/icons/solar/`, with the attribution in its `LICENSE`. Packages
+install the set to `/usr/share/otto/icons/solar/`; a development build reads
+it from the repository.
 
 Run it by hand after editing the list or bumping the pinned release; it
 downloads the release once, checks its checksum and rewrites the set. With
