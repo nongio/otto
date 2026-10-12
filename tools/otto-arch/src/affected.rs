@@ -72,7 +72,7 @@ pub fn members(root: &Path, packages: &[Package]) -> Vec<Member> {
                 name: p.name.clone(),
                 owns,
                 dir,
-                lib: p.has_target("lib"),
+                lib: p.has_library(),
             }
         })
         .collect()
@@ -661,13 +661,22 @@ pub fn tracked_files(root: &Path) -> Result<Vec<String>, String> {
 pub struct Checkout {
     repo: PathBuf,
     pub dir: PathBuf,
+    // A fresh private directory per run (created, never reused), so two runs
+    // sharing a temp directory never read each other's checkout. Declared
+    // after `dir` so it is removed after the worktree in `drop`.
+    _parent: tempfile::TempDir,
 }
 
 impl Checkout {
     pub fn new(repo: &Path, rev: &str, label: &str) -> Result<Self, String> {
-        let dir = std::env::temp_dir().join(format!("otto-arch-{label}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+        let parent = tempfile::Builder::new()
+            .prefix(&format!("otto-arch-{label}-"))
+            .tempdir()
+            .map_err(|e| format!("temporary directory for the {label} checkout: {e}"))?;
+        let dir = parent.path().join("tree");
         let path = dir.to_string_lossy().into_owned();
+        // A killed earlier run can leave a stale registration behind.
+        let _ = git(repo, &["worktree", "prune"]);
         git(
             repo,
             &["worktree", "add", "--detach", "--quiet", &path, rev],
@@ -675,6 +684,7 @@ impl Checkout {
         Ok(Checkout {
             repo: repo.to_path_buf(),
             dir,
+            _parent: parent,
         })
     }
 }

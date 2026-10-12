@@ -95,12 +95,15 @@ jobs:
         run: |
           set -uo pipefail
           out="$RUNNER_TEMP/affected.txt"
+          # A time limit inside the condition, not timeout-minutes: a hung
+          # fetch (the base's cargo metadata can clone git dependencies)
+          # falls through to checking everything instead of failing the job.
           if [ "$BUILT" = success ] \
-             && target/debug/otto-arch affected --base "${BASE_SHA:-}" --explain > "$out" \
+             && timeout 600 target/debug/otto-arch affected --base "${BASE_SHA:-}" --explain > "$out" \
              && grep -q '^packages=' "$out"; then
               cat "$out" | tee -a "$GITHUB_OUTPUT"
           else
-              echo "otto-arch affected did not run (build: $BUILT): checking everything"
+              echo "otto-arch affected failed or did not run (build: $BUILT): checking everything"
               tee -a "$GITHUB_OUTPUT" <<'EVERYTHING'
           all=true
           packages=

@@ -54,10 +54,13 @@ impl Package {
             .map(|t| t.src_path.as_path())
     }
 
-    pub fn has_target(&self, kind: &str) -> bool {
+    /// Whether the package builds a library, of any kind (`lib`, `rlib`,
+    /// `cdylib`, `proc-macro`, …): `cargo test --lib` tests each of them.
+    pub fn has_library(&self) -> bool {
+        const LIBRARY: [&str; 6] = ["lib", "rlib", "dylib", "cdylib", "staticlib", "proc-macro"];
         self.targets
             .iter()
-            .any(|t| t.kind.iter().any(|k| k == kind))
+            .any(|t| t.kind.iter().any(|k| LIBRARY.contains(&k.as_str())))
     }
 
     /// The directory holding the manifest.
