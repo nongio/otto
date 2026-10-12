@@ -20,6 +20,7 @@ mod commands;
 mod confirm;
 mod content;
 mod cursors;
+mod edit_queue;
 mod editing;
 mod instance;
 mod marks;

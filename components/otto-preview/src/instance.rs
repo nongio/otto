@@ -148,13 +148,16 @@ impl Service {
         })
     }
 
-    /// Read the file again and show it, as a change on disk would.
-    /// Read the file again, and keep it as a version named by `note`.
+    /// Read the file again, as a change on disk would, and keep it as a
+    /// version named by `note`. Refused while the window holds changes not
+    /// yet saved, which reading the file again would lose.
     fn reload(&self, path: String, note: String) -> fdo::Result<()> {
         self.change(&path, |viewer| {
+            refuse_unsaved(viewer, "read the file again")?;
             viewer.reload();
             viewer.keep_version(Some(&note));
-        })
+            Ok(())
+        })?
     }
 
     /// The file's versions, as JSON.
@@ -170,8 +173,10 @@ impl Service {
     }
 
     /// Put version `version` back in place of the file. The window follows.
+    /// Refused while the window holds changes not yet saved.
     fn revert(&self, path: String, version: u32) -> fdo::Result<()> {
         self.change(&path, |viewer| {
+            refuse_unsaved(viewer, "put a version back")?;
             let versions = viewer
                 .versions
                 .as_mut()
@@ -199,28 +204,34 @@ impl Service {
     }
 
     /// Fill the PDF's form and change its annotations as `request` (JSON)
-    /// says, save it as a version, and show it. Returns the fields and
-    /// annotations as they are after.
+    /// says, and show it; the changes stay in memory until the person saves.
+    /// They wait their turn behind the person's own edits. Returns the
+    /// fields and annotations as they are after.
     fn edit(&self, path: String, request: String) -> fdo::Result<String> {
         let request: serde_json::Value = serde_json::from_str(&request)
             .map_err(|err| fdo::Error::InvalidArgs(format!("not JSON: {err}")))?;
         let viewer = self.viewer(&path)?;
-        let batches = {
+        let (reply, answer) = std::sync::mpsc::sync_channel(1);
+        {
             let mut viewer = viewer.lock().unwrap();
             let editing = editing_of(&viewer)?;
-            let edits = crate::pdf_tools::edits_from_json(&editing.snapshot, &request)
+            let base = editing.base();
+            let edits = crate::pdf_tools::edits_from_json(&base.snapshot, &request)
                 .map_err(fdo::Error::InvalidArgs)?;
-            viewer.submit(edits);
-            viewer.take_batches()
-        };
-        let mut last = None;
-        for batch in &batches {
-            last = Some(
-                crate::editing::run_batch(&viewer, batch)
-                    .map_err(|err| fdo::Error::Failed(err.to_string()))?,
-            );
+            if !viewer.submit_on(edits, base, Some(reply)) {
+                return Err(fdo::Error::Failed(
+                    "the document's queue has stopped".into(),
+                ));
+            }
         }
-        let snapshot = last.ok_or_else(|| fdo::Error::Failed("nothing was changed".into()))?;
+        AppContext::request_wakeup();
+        let outcome = answer
+            .recv()
+            .map_err(|_| fdo::Error::Failed("the window closed before the edit was made".into()))?;
+        outcome
+            .result
+            .map_err(|err| fdo::Error::Failed(err.to_string()))?;
+        let snapshot = outcome.snapshot;
         Ok(serde_json::json!({
             "saved": false,
             "note": "Shown in the window, not yet saved: the person saves the file.",
@@ -242,6 +253,18 @@ impl Service {
         .ok_or_else(|| fdo::Error::NotSupported("only a picture can be rendered so far".into()))?;
         write_render(&png).map_err(|err| fdo::Error::IOError(err.to_string()))
     }
+}
+
+/// Refuse to `what` while `viewer` holds changes not yet saved: the agent
+/// asks the person to save (or undo) them first.
+fn refuse_unsaved(viewer: &Viewer, what: &str) -> fdo::Result<()> {
+    if viewer.edits_pending() {
+        return Err(fdo::Error::Failed(format!(
+            "can't {what}: the window holds changes not yet saved, which this would \
+             throw away; ask the person to save them (or undo them) first"
+        )));
+    }
+    Ok(())
 }
 
 /// The window's document opened for editing, or why it isn't.

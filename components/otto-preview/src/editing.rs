@@ -1,4 +1,4 @@
-//! Filling a PDF's form and marking it up, written into the file.
+//! Filling a PDF's form and marking it up, saved into the file.
 //!
 //! Where marks (see [`crate::marks`]) point things out to the agent and stay
 //! out of the document, this is the person changing the document itself:
@@ -12,14 +12,18 @@
 //! ticks it. The markup strip under the toolbar holds the tools that add to
 //! the page, and the selection tool that moves and deletes what is there.
 //!
-//! Every change is saved over the file as soon as it is made, kept as one
-//! of the file's versions (see [`crate::versions`]) so Undo steps it back,
-//! and the page it touched is drawn again from the saved file, the old
-//! drawing staying up until the new one lands.
+//! Every change is made in memory, through the document's queue (see
+//! [`crate::edit_queue`]), which runs them one at a time in the order they
+//! were made; the pages it touched are drawn again by PDFium from memory,
+//! the old drawing staying up until the new one lands. Undo and Redo step
+//! through the changes not yet saved. Save writes them over the file, kept
+//! as one of the file's versions (see [`crate::versions`]); a file changed
+//! on disk since, or a save that fails, is asked about before anything is
+//! lost.
 
 // Rust guideline compliant 2026-02-21
 
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 
 use otto_kit::components::text_input::{
     key_for, KeyMods, TextInput, TextInputKey, TextInputResponse, TextInputStyle,
@@ -33,6 +37,8 @@ use otto_pdf::{
 };
 use smithay_client_toolkit::seat::keyboard::{KeyEvent, Keysym};
 
+use crate::confirm::{Answer, Question};
+use crate::edit_queue::{Base, Failure, Job, Kind, Ledger, Outcome, Queue};
 use crate::marks::Frame;
 use crate::viewer::{Stamp, Viewer};
 
@@ -196,6 +202,9 @@ pub struct Editor {
     /// The text's size in the page's points.
     pub size: f32,
     pub input: TextInput,
+    /// The document as it was when the editor opened, which its target is
+    /// named against.
+    pub base: Base,
 }
 
 /// Text just committed, drawn over its place until the page is drawn again
@@ -225,6 +234,7 @@ enum Gesture {
         from: (f32, f32),
         to: (f32, f32),
         moved: bool,
+        base: Base,
     },
 }
 
@@ -232,7 +242,13 @@ enum Gesture {
 /// to them.
 pub struct Editing {
     pub doc: Arc<Mutex<Document>>,
-    pub snapshot: Snapshot,
+    /// The document as the last job done left it.
+    pub snapshot: Arc<Snapshot>,
+    /// How many times the document had been renumbered then (see
+    /// [`Outcome::numbering`]).
+    pub numbering: u64,
+    /// Where the document's jobs wait their turn.
+    queue: Queue,
     /// The decode it was opened for.
     pub generation: u64,
     pub selected: Option<AnnotId>,
@@ -241,21 +257,25 @@ pub struct Editing {
     pub editor: Option<Editor>,
     pub settling: Vec<Settling>,
     gesture: Option<Gesture>,
+    /// A field's list of choices showing, and the document it was read
+    /// from.
+    choosing: Option<Base>,
     /// Jobs sent and not yet finished.
     pub busy: usize,
-    /// The edits made since the file was last saved, oldest first: what
-    /// Undo takes back, by opening the saved file again and making all but
-    /// the last.
-    pub undo: Vec<Vec<Edit>>,
-    /// Edits taken back, most recent last, for Redo.
-    pub redo: Vec<Vec<Edit>>,
-    /// Whether the document holds changes the file doesn't.
+    /// Of those, the ones that change the document: edits, undos, redos.
+    changing: usize,
+    /// How many edits Undo and Redo have to step through, as of the last
+    /// job done.
+    undo: usize,
+    redo: usize,
+    /// Whether the document holds changes the file doesn't, or will once
+    /// the jobs in the queue are done.
     pub unsaved: bool,
     /// Close the window once the save in flight is done: Save picked when
     /// closing with changes.
     pub close_after_save: bool,
-    /// The file as this window last saved it, so the change it sees on disk
-    /// afterwards is known to be its own.
+    /// The file as this window last opened or saved it, so the change it
+    /// sees on disk afterwards is known to be its own.
     pub saved: Option<Stamp>,
 }
 
@@ -272,72 +292,54 @@ impl std::fmt::Debug for Editing {
 }
 
 impl Editing {
-    pub fn new(doc: Document, generation: u64) -> Self {
-        let snapshot = doc.snapshot();
-        Self {
-            doc: Arc::new(Mutex::new(doc)),
+    /// Edit `doc`, opened from `bytes`, the file at its path as stamped
+    /// `stamp`, for the decode `generation`, in the window whose viewer is
+    /// `viewer`: its queue's thread starts here.
+    ///
+    /// # Errors
+    ///
+    /// When the queue's thread can't be started.
+    pub fn new(
+        doc: Document,
+        bytes: Vec<u8>,
+        stamp: Option<Stamp>,
+        generation: u64,
+        viewer: Weak<Mutex<Viewer>>,
+    ) -> std::io::Result<Self> {
+        let snapshot = Arc::new(doc.snapshot());
+        let ledger = Ledger::new(doc.path().to_path_buf(), bytes, stamp);
+        let doc = Arc::new(Mutex::new(doc));
+        let queue = Queue::start(Arc::clone(&doc), ledger, viewer)?;
+        Ok(Self {
+            doc,
             snapshot,
+            numbering: 0,
+            queue,
             generation,
             selected: None,
             hovered: None,
             editor: None,
             settling: Vec::new(),
             gesture: None,
+            choosing: None,
             busy: 0,
-            saved: None,
-            undo: Vec::new(),
-            redo: Vec::new(),
+            changing: 0,
+            saved: stamp,
+            undo: 0,
+            redo: 0,
             unsaved: false,
             close_after_save: false,
+        })
+    }
+
+    /// The document as the window knows it now, for an edit to be named
+    /// against.
+    pub fn base(&self) -> Base {
+        Base {
+            numbering: self.numbering,
+            snapshot: Arc::clone(&self.snapshot),
         }
     }
-}
-
-/// What a batch does to the document.
-#[derive(Debug, Clone, PartialEq)]
-pub enum Job {
-    /// Make edits, in memory.
-    Apply(Vec<Edit>),
-    /// Open the saved file again and make these edits, batch by batch: an
-    /// undo, which leaves out the last.
-    Replay(Vec<Vec<Edit>>),
-    /// Write the document over the file.
-    Save,
-    /// Write the document to another file, and carry on with that one.
-    SaveAs(std::path::PathBuf),
-}
-
-/// Work on the document, and the pages it will need drawn again.
-#[derive(Debug, Clone)]
-pub struct Batch {
-    pub doc: Arc<Mutex<Document>>,
-    pub job: Job,
-    pub pages: Vec<usize>,
-}
-
-/// Run a batch, then draw the pages it touched from the document as it is
-/// now, by PDFium from memory, so what the person did shows at once. Edits
-/// stay in memory until a [`Job::Save`]. Blocks: run it off the UI thread.
-///
-/// # Errors
-///
-/// What the engine said when an edit, the reopening or the save failed.
-pub fn run_batch(viewer: &Mutex<Viewer>, batch: &Batch) -> Result<Snapshot, otto_pdf::Error> {
-    let outcome = match &batch.job {
-        Job::Apply(edits) => batch.doc.lock().unwrap().apply(edits),
-        Job::Replay(batches) => replay(&batch.doc, batches),
-        Job::Save => {
-            let mut doc = batch.doc.lock().unwrap();
-            doc.save().map(|()| doc.snapshot())
-        }
-        Job::SaveAs(path) => save_as(&batch.doc, path),
-    };
-    if matches!(batch.job, Job::Apply(_) | Job::Replay(_)) {
-        redraw(viewer, batch);
-    }
-    viewer.lock().unwrap().finish_batch(batch, outcome.clone());
-    AppContext::request_wakeup();
-    outcome
 }
 
 /// Draw page `page` (0-based) of `doc` as it is in memory, unsaved changes
@@ -365,41 +367,23 @@ pub fn draw_page(
     }
 }
 
-/// Write `doc` to `path`, then open that file in its place: the window
-/// carries on with the new file, its changes saved there.
-fn save_as(doc: &Mutex<Document>, path: &std::path::Path) -> Result<Snapshot, otto_pdf::Error> {
-    let mut doc = doc.lock().unwrap();
-    doc.save_to(path)?;
-    let fresh = otto_pdf::open(path, None)?;
-    *doc = fresh;
-    Ok(doc.snapshot())
-}
-
-/// Open the saved file again in place of `doc` and make `batches` on it.
-fn replay(doc: &Mutex<Document>, batches: &[Vec<Edit>]) -> Result<Snapshot, otto_pdf::Error> {
-    let mut doc = doc.lock().unwrap();
-    let fresh = otto_pdf::open(doc.path(), None)?;
-    *doc = fresh;
-    let mut snapshot = doc.snapshot();
-    for edits in batches {
-        snapshot = doc.apply(edits)?;
+/// Draw `touched`, pages of `doc` a job changed, and their thumbnails, from
+/// the document as it is now, in place of what is on screen. Blocks: run it
+/// off the UI thread.
+pub fn redraw(viewer: &Mutex<Viewer>, doc: &Mutex<Document>, touched: &[usize]) {
+    if touched.is_empty() {
+        return;
     }
-    Ok(snapshot)
-}
-
-/// Draw the pages a batch touched, and their thumbnails, from the document
-/// as it is now, in place of what is on screen.
-fn redraw(viewer: &Mutex<Viewer>, batch: &Batch) {
     let (pages, thumbs, generation) = {
         let viewer = viewer.lock().unwrap();
         (
-            viewer.redraw_widths(batch),
-            viewer.thumb_widths(batch),
+            viewer.redraw_widths(touched),
+            viewer.thumb_widths(touched),
             viewer.generation,
         )
     };
-    tracing::debug!(touched = ?batch.pages, ?pages, ?thumbs, "drawing edited pages");
-    let draw = |page: usize, width: u32| draw_page(&batch.doc, page, width);
+    tracing::debug!(?touched, ?pages, ?thumbs, "drawing edited pages");
+    let draw = |page: usize, width: u32| draw_page(doc, page, width);
     for (page, width) in pages {
         let Some(pixels) = draw(page, width) else {
             continue;
@@ -423,39 +407,6 @@ fn redraw(viewer: &Mutex<Viewer>, batch: &Batch) {
             viewer.dirty = true;
         }
     }
-}
-
-/// The pages a set of edits touches, given the document they apply to.
-fn pages_of(snapshot: &Snapshot, edits: &[Edit]) -> Vec<usize> {
-    let mut pages: Vec<usize> = Vec::new();
-    let mut push = |page: usize| {
-        if !pages.contains(&page) {
-            pages.push(page);
-        }
-    };
-    for edit in edits {
-        match edit {
-            Edit::SetText { field, .. }
-            | Edit::SetChecked { field, .. }
-            | Edit::Choose { field, .. } => {
-                // A field shown in several places, or a radio group, changes
-                // on every page it is on.
-                let name = snapshot.field(*field).map(|field| field.name.clone());
-                push(field.page);
-                for other in &snapshot.fields {
-                    if Some(&other.name) == name.as_ref() {
-                        push(other.id.page);
-                    }
-                }
-            }
-            Edit::Add { page, .. } => push(*page),
-            Edit::Move { annotation, .. }
-            | Edit::SetContents { annotation, .. }
-            | Edit::SetColor { annotation, .. }
-            | Edit::Delete { annotation } => push(annotation.page),
-        }
-    }
-    pages
 }
 
 /// Scale from the page's points to the screen's.
@@ -590,51 +541,49 @@ impl Viewer {
         strip.rect.contains(at)
     }
 
-    /// Make edits, in memory: shown at once, written to the file on
-    /// [`Viewer::save`]. They come back through [`Viewer::take_batches`].
+    /// Make edits, in memory, named against the document as the window
+    /// knows it now: shown once made, written to the file on
+    /// [`Viewer::save`].
     pub fn submit(&mut self, edits: Vec<Edit>) {
-        if edits.is_empty() {
-            return;
-        }
-        let Some(editing) = &mut self.editing else {
+        let Some(base) = self.editing.as_ref().map(Editing::base) else {
             return;
         };
-        editing.undo.push(edits.clone());
-        editing.redo.clear();
-        self.queue(Job::Apply(edits));
+        self.submit_on(edits, base, None);
     }
 
-    /// Queue `job` on the open document.
-    fn queue(&mut self, job: Job) {
-        let Some(editing) = &mut self.editing else {
-            return;
-        };
-        let pages = match &job {
-            Job::Apply(edits) => pages_of(&editing.snapshot, edits),
-            // Every page an edit taken back or made again was on.
-            Job::Replay(_) => editing
-                .undo
-                .iter()
-                .chain(editing.redo.iter())
-                .flat_map(|edits| pages_of(&editing.snapshot, edits))
-                .fold(Vec::new(), |mut pages, page| {
-                    if !pages.contains(&page) {
-                        pages.push(page);
-                    }
-                    pages
-                }),
-            Job::Save | Job::SaveAs(_) => Vec::new(),
-        };
-        if matches!(job, Job::Apply(_) | Job::Replay(_)) {
-            editing.unsaved = true;
+    /// Make edits named against `base`; `reply`, when given, hears how it
+    /// went. Returns whether they were queued.
+    pub fn submit_on(
+        &mut self,
+        edits: Vec<Edit>,
+        base: Base,
+        reply: Option<std::sync::mpsc::SyncSender<Outcome>>,
+    ) -> bool {
+        if edits.is_empty() {
+            return false;
         }
+        self.queue(Job::Apply { edits, base }, reply)
+    }
+
+    /// Queue `job` on the open document. Returns whether it was queued.
+    fn queue(&mut self, job: Job, reply: Option<std::sync::mpsc::SyncSender<Outcome>>) -> bool {
+        let Some(editing) = &mut self.editing else {
+            return false;
+        };
+        let changes = job.kind().changes();
+        // Counted before it is sent; the queue's thread waits on the
+        // viewer's lock, held here, to count it done.
         editing.busy += 1;
-        self.batches.push(Batch {
-            doc: Arc::clone(&editing.doc),
-            job,
-            pages,
-        });
+        editing.changing += usize::from(changes);
+        if !editing.queue.send(job, reply) {
+            editing.busy -= 1;
+            editing.changing -= usize::from(changes);
+            tracing::warn!(path = %self.path.display(), "the document's queue has stopped");
+            return false;
+        }
+        editing.unsaved |= changes;
         self.dirty = true;
+        true
     }
 
     /// The document open for editing, which pages are drawn from.
@@ -649,100 +598,91 @@ impl Viewer {
         self.editing.as_ref().is_some_and(|editing| editing.unsaved)
     }
 
+    /// Whether the document holds changes the file doesn't, or has jobs
+    /// still to run: what reading the file again would throw away.
+    pub fn edits_pending(&self) -> bool {
+        self.editing
+            .as_ref()
+            .is_some_and(|editing| editing.unsaved || editing.busy > 0)
+    }
+
     /// Write the document's changes over the file.
     pub fn save(&mut self) {
         self.commit_editor();
         if !self.unsaved() {
             return;
         }
+        self.queue_save(false);
+    }
+
+    /// Write the document over the file, replacing it when `overwrite`
+    /// even if it changed on disk.
+    fn queue_save(&mut self, overwrite: bool) {
         // The file as it is before the first save, so there is always a
         // version to step back to.
         if self.versions.is_none() {
             self.keep_version(None);
         }
-        self.queue(Job::Save);
+        self.queue(Job::Save { overwrite }, None);
     }
 
     /// Write the document to `path` and carry on with that file.
     pub fn save_as(&mut self, path: std::path::PathBuf) {
         self.commit_editor();
-        if self.editing.is_none() {
-            return;
-        }
-        self.queue(Job::SaveAs(path));
+        self.queue(Job::SaveAs(path), None);
     }
 
     /// Whether Undo or Redo have an unsaved edit to take back or make again.
     pub fn can_undo_edit(&self) -> bool {
         self.editing
             .as_ref()
-            .is_some_and(|editing| !editing.undo.is_empty())
+            .is_some_and(|editing| editing.undo > 0 || editing.changing > 0)
     }
 
     pub fn can_redo_edit(&self) -> bool {
         self.editing
             .as_ref()
-            .is_some_and(|editing| !editing.redo.is_empty())
+            .is_some_and(|editing| editing.redo > 0)
     }
 
     /// Take back the last unsaved edit. Returns whether there was one.
     pub fn undo_edit(&mut self) -> bool {
         self.cancel_editor();
-        let Some(editing) = &mut self.editing else {
+        if !self.can_undo_edit() {
             return false;
-        };
-        let Some(last) = editing.undo.pop() else {
-            return false;
-        };
-        editing.redo.push(last);
-        editing.selected = None;
-        let replay = editing.undo.clone();
-        let back_to_saved = replay.is_empty();
-        self.queue(Job::Replay(replay));
-        if back_to_saved {
-            if let Some(editing) = &mut self.editing {
-                editing.unsaved = false;
-            }
         }
-        true
+        if let Some(editing) = &mut self.editing {
+            editing.selected = None;
+        }
+        self.queue(Job::Undo, None)
     }
 
     /// Make the last edit taken back again. Returns whether there was one.
     pub fn redo_edit(&mut self) -> bool {
         self.cancel_editor();
-        let Some(editing) = &mut self.editing else {
+        if !self.can_redo_edit() {
             return false;
-        };
-        let Some(edits) = editing.redo.pop() else {
-            return false;
-        };
-        editing.undo.push(edits.clone());
-        editing.selected = None;
-        self.queue(Job::Apply(edits));
-        true
+        }
+        if let Some(editing) = &mut self.editing {
+            editing.selected = None;
+        }
+        self.queue(Job::Redo, None)
     }
 
-    /// The edits waiting to be applied, for the app to run off the UI thread.
-    pub fn take_batches(&mut self) -> Vec<Batch> {
-        std::mem::take(&mut self.batches)
-    }
-
-    /// The pages a batch touched that are drawn now, 0-based, with the width
+    /// The pages of `touched` that are drawn now, 0-based, with the width
     /// each is drawn at, so it can be drawn again at the same size.
-    pub fn redraw_widths(&self, batch: &Batch) -> Vec<(usize, u32)> {
+    pub fn redraw_widths(&self, touched: &[usize]) -> Vec<(usize, u32)> {
         let pages = self.session.pages();
-        batch
-            .pages
+        touched
             .iter()
             .filter_map(|&page| Some((page, pages.get(page)?.pixels.as_ref()?.width)))
             .collect()
     }
 
-    /// The thumbnails a batch touched that the sidebar holds now, 0-based,
+    /// The thumbnails of `touched` that the sidebar holds now, 0-based,
     /// with the width each was drawn at.
-    pub fn thumb_widths(&self, batch: &Batch) -> Vec<(usize, u32)> {
-        batch
-            .pages
+    pub fn thumb_widths(&self, touched: &[usize]) -> Vec<(usize, u32)> {
+        touched
             .iter()
             .filter_map(|&page| {
                 let image = self.thumbs.get(&(page as u32 + 1))?;
@@ -751,40 +691,60 @@ impl Viewer {
             .collect()
     }
 
-    /// A batch has finished (or failed): take the document as it is now,
-    /// and after a save keep the file as a version.
-    pub fn finish_batch(&mut self, batch: &Batch, outcome: Result<Snapshot, otto_pdf::Error>) {
+    /// A job on `doc` has run: take the document as it really is now,
+    /// whatever the result, and after a save keep the file as a version.
+    /// A save that failed is asked about.
+    pub fn finish_batch(&mut self, doc: &Arc<Mutex<Document>>, outcome: &Outcome) {
         let Some(editing) = &mut self.editing else {
             return;
         };
-        if !Arc::ptr_eq(&editing.doc, &batch.doc) {
+        if !Arc::ptr_eq(&editing.doc, doc) {
             return;
         }
         editing.busy = editing.busy.saturating_sub(1);
-        self.dirty = true;
-        let snapshot = match outcome {
-            Ok(snapshot) => snapshot,
-            Err(err) => {
-                tracing::warn!(path = %self.path.display(), %err, "an edit could not be made");
-                editing.settling.clear();
-                editing.close_after_save = false;
-                return;
-            }
-        };
-        editing.snapshot = snapshot;
-        if editing
-            .selected
-            .is_some_and(|id| editing.snapshot.annotation(id).is_none())
-        {
-            editing.selected = None;
+        if outcome.kind.changes() {
+            editing.changing = editing.changing.saturating_sub(1);
         }
-        let saved_as = match &batch.job {
-            Job::Save => None,
-            Job::SaveAs(path) => Some(path.clone()),
-            Job::Apply(_) | Job::Replay(_) => return,
-        };
-        if let Some(path) = saved_as {
+        self.dirty = true;
+        let old = std::mem::replace(&mut editing.snapshot, Arc::clone(&outcome.snapshot));
+        let renumbered = editing.numbering != outcome.numbering;
+        editing.numbering = outcome.numbering;
+        editing.undo = outcome.undo;
+        editing.redo = outcome.redo;
+        editing.unsaved = outcome.unsaved || editing.changing > 0;
+        // What is selected is followed to where it is now.
+        editing.selected = editing.selected.and_then(|id| {
+            if renumbered {
+                crate::edit_queue::follow_annotation(&old, &editing.snapshot, id)
+            } else {
+                editing.snapshot.annotation(id).map(|_| id)
+            }
+        });
+        if renumbered {
+            editing.hovered = None;
+        }
+        if let Err(err) = &outcome.result {
+            editing.settling.clear();
+            match outcome.kind {
+                Kind::Save | Kind::SaveAs => {
+                    tracing::warn!(path = %self.path.display(), %err, "the document couldn't be saved");
+                    self.question = Some(match err {
+                        Failure::ChangedOnDisk => Question::ChangedOnDisk,
+                        other => Question::SaveFailed(other.to_string()),
+                    });
+                }
+                Kind::Apply | Kind::Undo | Kind::Redo => {
+                    tracing::warn!(path = %self.path.display(), %err, "an edit could not be made");
+                }
+            }
+            return;
+        }
+        if !matches!(outcome.kind, Kind::Save | Kind::SaveAs) {
+            return;
+        }
+        if outcome.kind == Kind::SaveAs {
             // A new file: its own name, folder and versions from now on.
+            let path = outcome.path.clone();
             self.path = path.clone();
             self.name = path
                 .file_name()
@@ -796,15 +756,11 @@ impl Viewer {
         let Some(editing) = &mut self.editing else {
             return;
         };
-        // Saved: the edits are the file's now, and the change on disk is
-        // this window's own, not a reason to read the file again.
-        editing.undo.clear();
-        editing.redo.clear();
-        editing.unsaved = editing.busy > 0;
+        // Saved: the change on disk is this window's own, not a reason to
+        // read the file again.
         let close = std::mem::take(&mut editing.close_after_save);
-        let now = Stamp::of(&self.path);
-        editing.saved = now;
-        self.stamp = now;
+        editing.saved = outcome.stamp;
+        self.stamp = outcome.stamp;
         self.track_version();
         if close {
             self.closing = true;
@@ -816,7 +772,7 @@ impl Viewer {
     pub fn request_close(&mut self) {
         self.commit_editor();
         if self.unsaved() {
-            self.confirm_close = true;
+            self.question = Some(Question::Close);
             self.dirty = true;
         } else {
             self.closing = true;
@@ -824,22 +780,36 @@ impl Viewer {
         }
     }
 
-    /// The answer to "save changes?" when closing.
-    pub fn answer_close(&mut self, answer: crate::confirm::Answer) {
-        self.confirm_close = false;
+    /// The answer to the question up over the window.
+    pub fn answer(&mut self, answer: Answer) {
+        self.question = None;
         self.dirty = true;
         match answer {
-            crate::confirm::Answer::Save => {
+            Answer::Save => {
                 if let Some(editing) = &mut self.editing {
                     editing.close_after_save = true;
                 }
                 self.save();
             }
-            crate::confirm::Answer::Discard => {
+            Answer::Overwrite => self.queue_save(true),
+            Answer::SaveAs => self.wants_save_as = true,
+            Answer::Discard => {
                 self.closing = true;
                 AppContext::request_wakeup();
             }
-            crate::confirm::Answer::Cancel => {}
+            Answer::Cancel => {
+                if let Some(editing) = &mut self.editing {
+                    editing.close_after_save = false;
+                }
+            }
+        }
+    }
+
+    /// Save As was dismissed or couldn't ask: a close waiting on a save
+    /// waits no longer.
+    pub fn save_as_dismissed(&mut self) {
+        if let Some(editing) = &mut self.editing {
+            editing.close_after_save = false;
         }
     }
 
@@ -965,6 +935,7 @@ impl Viewer {
                         from: point,
                         to: point,
                         moved: false,
+                        base: editing.base(),
                     });
                     self.dirty = true;
                     return true;
@@ -998,26 +969,28 @@ impl Viewer {
                 if *editable && options.is_empty() {
                     self.open_field_editor(field, value.clone(), field_size(field));
                 } else {
+                    if let Some(editing) = &mut self.editing {
+                        editing.choosing = Some(editing.base());
+                    }
                     self.choices = Some(Choices {
                         field: field.id,
                         rect: self.field_screen_rect(field),
                         options: options.clone(),
                         selected: *selected,
-                        multiple: false,
                     });
                 }
             }
             FieldKind::List {
-                options,
-                selected,
-                multiple,
+                options, selected, ..
             } => {
+                if let Some(editing) = &mut self.editing {
+                    editing.choosing = Some(editing.base());
+                }
                 self.choices = Some(Choices {
                     field: field.id,
                     rect: self.field_screen_rect(field),
                     options: options.clone(),
                     selected: selected.first().copied(),
-                    multiple: *multiple,
                 });
             }
             FieldKind::Checkbox { checked } => {
@@ -1056,11 +1029,15 @@ impl Viewer {
         let Some(editing) = &mut self.editing else {
             return;
         };
+        let base = editing.base();
         let mut input = TextInput::editing(value, TextInputStyle::default());
-        if let FieldKind::Text {
-            max_len: Some(max), ..
-        } = field.kind
-        {
+        let max = match field.kind {
+            FieldKind::Text { max_len, .. } => max_len,
+            // Typed into PDFium a keystroke at a time.
+            FieldKind::Combo { .. } => Some(otto_pdf::MAX_TYPED),
+            _ => None,
+        };
+        if let Some(max) = max {
             input.state = std::mem::take(&mut input.state).with_max_chars(max);
             input.state.set_focused(true);
             input.state.select_all();
@@ -1071,6 +1048,7 @@ impl Viewer {
             rect: field.rect,
             size,
             input,
+            base,
         });
         editing.selected = None;
         self.dirty = true;
@@ -1090,12 +1068,14 @@ impl Viewer {
         let rect = text_box(at, if text.is_empty() { "M" } else { &text }, size);
         let mut input = TextInput::editing(text, TextInputStyle::default());
         input.state.set_focused(true);
+        let base = editing.base();
         editing.editor = Some(Editor {
             target,
             page,
             rect,
             size,
             input,
+            base,
         });
         self.dirty = true;
     }
@@ -1127,7 +1107,7 @@ impl Viewer {
         let text = editor.input.value().to_owned();
         let edit = match &editor.target {
             EditorTarget::Field(field) => {
-                let unchanged = editing.snapshot.field(*field).is_some_and(|field| {
+                let unchanged = editor.base.snapshot.field(*field).is_some_and(|field| {
                     matches!(&field.kind, FieldKind::Text { value, .. }
                         | FieldKind::Combo { value, .. } if *value == text)
                 });
@@ -1178,7 +1158,7 @@ impl Viewer {
                 }
             }
         };
-        self.submit(vec![edit]);
+        self.submit_on(vec![edit], editor.base, None);
     }
 
     /// Put the editor away without writing it.
@@ -1347,14 +1327,19 @@ impl Viewer {
                 from,
                 to,
                 moved,
+                base,
                 ..
             }) => {
                 if moved {
-                    self.submit(vec![Edit::Move {
-                        annotation: id,
-                        dx: to.0 - from.0,
-                        dy: to.1 - from.1,
-                    }]);
+                    self.submit_on(
+                        vec![Edit::Move {
+                            annotation: id,
+                            dx: to.0 - from.0,
+                            dy: to.1 - from.1,
+                        }],
+                        base,
+                        None,
+                    );
                 }
             }
             None => {
@@ -1469,13 +1454,21 @@ impl Viewer {
         }
     }
 
-    /// A choice made from a field's list.
+    /// A choice made from a field's list, in place of what was chosen.
     pub fn choose(&mut self, field: AnnotId, index: usize) {
-        self.submit(vec![Edit::Choose {
-            field,
-            index,
-            add: false,
-        }]);
+        let Some(editing) = &mut self.editing else {
+            return;
+        };
+        let base = editing.choosing.take().unwrap_or_else(|| editing.base());
+        self.submit_on(
+            vec![Edit::Choose {
+                field,
+                index,
+                add: false,
+            }],
+            base,
+            None,
+        );
     }
 
     /// A key, before the window's own keys. Returns whether editing took it.
@@ -1673,7 +1666,6 @@ pub struct Choices {
     pub rect: Rect,
     pub options: Vec<String>,
     pub selected: Option<usize>,
-    pub multiple: bool,
 }
 
 /// Paint the form's tint, what is selected or being drawn, and the editor,
@@ -1876,7 +1868,8 @@ pub fn draw_strip(canvas: &Canvas, viewer: &Viewer, theme: &Theme, ground: Color
     draw_bin_glyph(canvas, strip.delete, color);
     if let Some(editing) = &viewer.editing {
         if editing.busy > 0 {
-            // Saving: a dot by the bin while the file is being written.
+            // Working: a dot by the bin while an edit is being made or the
+            // file written.
             paint.set_color(theme.text_tertiary);
             canvas.draw_circle(
                 (strip.delete.left - 10.0, strip.delete.center_y()),
@@ -2026,70 +2019,6 @@ fn draw_bin_glyph(canvas: &Canvas, rect: Rect, color: Color) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn snapshot() -> Snapshot {
-        let field = |page, index, name: &str| Field {
-            id: AnnotId { page, index },
-            name: name.to_owned(),
-            tooltip: None,
-            rect: otto_pdf::Rect::new(10.0, 10.0, 60.0, 22.0),
-            kind: FieldKind::Radio {
-                checked: false,
-                export: "a".into(),
-            },
-            read_only: false,
-            required: false,
-            font_size: 0.0,
-        };
-        Snapshot {
-            pages: vec![
-                otto_pdf::Page {
-                    width: 600.0,
-                    height: 800.0,
-                };
-                3
-            ],
-            fields: vec![
-                field(0, 0, "group"),
-                field(2, 1, "group"),
-                field(1, 0, "other"),
-            ],
-            annotations: Vec::new(),
-            signed: false,
-        }
-    }
-
-    #[test]
-    fn a_field_edit_redraws_every_page_its_name_is_on() {
-        let pages = pages_of(
-            &snapshot(),
-            &[Edit::SetChecked {
-                field: AnnotId { page: 0, index: 0 },
-                checked: true,
-            }],
-        );
-        assert_eq!(pages, vec![0, 2]);
-    }
-
-    #[test]
-    fn an_annotation_edit_redraws_its_page_once() {
-        let id = AnnotId { page: 1, index: 3 };
-        let pages = pages_of(
-            &snapshot(),
-            &[
-                Edit::Move {
-                    annotation: id,
-                    dx: 1.0,
-                    dy: 0.0,
-                },
-                Edit::SetColor {
-                    annotation: id,
-                    color: COLORS[0],
-                },
-            ],
-        );
-        assert_eq!(pages, vec![1]);
-    }
 
     #[test]
     fn the_strip_hits_tools_colours_and_the_bin() {

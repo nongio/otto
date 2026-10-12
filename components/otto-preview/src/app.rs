@@ -473,25 +473,45 @@ impl Doc {
 
 /// Open the PDF the window shows for editing, once its decode has landed:
 /// its form and annotations, through PDFium. The document opened before is
-/// kept when the file on disk is the one this window saved last.
-fn open_for_editing(viewer: &Mutex<Viewer>, path: &Path, generation: u64) {
+/// kept when the file on disk is the one this window saved last, and while
+/// it holds changes not yet saved, which reading the file again would lose.
+fn open_for_editing(viewer: &Arc<Mutex<Viewer>>, path: &Path, generation: u64) {
     if !is_pdf(path) || !otto_pdf::available() {
         return;
     }
     {
         let mut viewer = viewer.lock().unwrap();
+        let keep = viewer.edits_pending();
         if let Some(editing) = &mut viewer.editing {
-            if editing.saved.is_some() && editing.saved == Stamp::of(path) {
+            if keep || (editing.saved.is_some() && editing.saved == Stamp::of(path)) {
                 editing.generation = generation;
                 return;
             }
         }
     }
-    let doc = match otto_pdf::open(path, None) {
-        Ok(doc) => doc,
+    // Stamped before it is read: a change in between shows as one when it
+    // is saved over.
+    let stamp = Stamp::of(path);
+    let opened = std::fs::read(path)
+        .map_err(|err| otto_pdf::Error::Unreadable(err.to_string()))
+        .and_then(|bytes| {
+            let doc = otto_pdf::Document::open_bytes(path.to_path_buf(), bytes.clone(), None)?;
+            Ok((doc, bytes))
+        });
+    let (doc, bytes) = match opened {
+        Ok(opened) => opened,
         Err(err) => {
             tracing::info!(path = %path.display(), %err, "the PDF can't be edited here");
             viewer.lock().unwrap().editing = None;
+            return;
+        }
+    };
+    let editing =
+        crate::editing::Editing::new(doc, bytes, stamp, generation, Arc::downgrade(viewer));
+    let editing = match editing {
+        Ok(editing) => editing,
+        Err(err) => {
+            tracing::warn!(path = %path.display(), %err, "no thread for the PDF's edits");
             return;
         }
     };
@@ -499,7 +519,7 @@ fn open_for_editing(viewer: &Mutex<Viewer>, path: &Path, generation: u64) {
     if viewer.generation != generation {
         return;
     }
-    viewer.editing = Some(crate::editing::Editing::new(doc, generation));
+    viewer.editing = Some(editing);
     viewer.dirty = true;
     drop(viewer);
     AppContext::request_wakeup();
@@ -515,9 +535,10 @@ fn ask_save_as(viewer: Arc<Mutex<Viewer>>, file: PathBuf) {
                 viewer.lock().unwrap().save_as(path);
                 AppContext::request_wakeup();
             }
-            crate::save_as::Outcome::Dismissed => {}
+            crate::save_as::Outcome::Dismissed => viewer.lock().unwrap().save_as_dismissed(),
             crate::save_as::Outcome::Failed(why) => {
                 tracing::warn!(%why, "no save dialog");
+                viewer.lock().unwrap().save_as_dismissed();
             }
         }
     });
@@ -700,10 +721,10 @@ fn handle_pointer(
                 if *button != BTN_LEFT {
                     continue;
                 }
-                // A press in the window while "save changes?" is up, outside
-                // its card, is a cancel.
-                if v.confirm_close {
-                    v.answer_close(crate::confirm::Answer::Cancel);
+                // A press in the window while a question is up, outside its
+                // card, is a cancel.
+                if v.question.is_some() {
+                    v.answer(crate::confirm::Answer::Cancel);
                     redraw = true;
                     continue;
                 }
@@ -1037,23 +1058,22 @@ impl Doc {
 }
 
 impl Doc {
-    /// Apply and save the edits made since the last turn, off the UI thread,
-    /// and draw again the pages they touched; show a field's choices when
-    /// one was pressed, and take the one picked.
+    /// Follow the edits: show a field's choices when one was pressed, and
+    /// take the one picked; ask what a question over the window asks, and
+    /// where to save a copy when its answer says to. The edits themselves
+    /// run on the document's own queue.
     fn follow_edits(&self) {
         if let Some((field, index)) = self.chosen.take() {
             self.viewer.lock().unwrap().choose(field, index);
         }
         self.follow_confirm();
-        let (batches, choices) = {
+        let (choices, save_as) = {
             let mut viewer = self.viewer.lock().unwrap();
-            (viewer.take_batches(), viewer.choices.take())
+            let save_as = std::mem::take(&mut viewer.wants_save_as).then(|| viewer.path.clone());
+            (viewer.choices.take(), save_as)
         };
-        for batch in batches {
-            let viewer = Arc::clone(&self.viewer);
-            tokio::task::spawn_blocking(move || {
-                let _ = crate::editing::run_batch(&viewer, &batch);
-            });
+        if let Some(file) = save_as {
+            ask_save_as(Arc::clone(&self.viewer), file);
         }
         let Some(choices) = choices else {
             return;
@@ -1098,25 +1118,27 @@ impl Doc {
         self.redraw();
     }
 
-    /// Show "save changes?" while the viewer asks it, and hand its answer
-    /// back.
+    /// Show the question the viewer asks while it asks it, and hand its
+    /// answer back.
     fn follow_confirm(&self) {
         if let Some(answer) = self.answered.take() {
-            self.viewer.lock().unwrap().answer_close(answer);
+            self.viewer.lock().unwrap().answer(answer);
             self.redraw();
         }
-        let (asking, size, name) = {
+        let (question, size, name) = {
             let viewer = self.viewer.lock().unwrap();
-            (viewer.confirm_close, viewer.size, viewer.name.clone())
+            (viewer.question.clone(), viewer.size, viewer.name.clone())
         };
-        if !asking {
+        let Some(question) = question else {
             if self.confirm.is_open() {
                 self.confirm.close();
             }
             return;
-        }
-        if self.confirm.is_open() {
-            return;
+        };
+        match self.confirm.question() {
+            Some(open) if open == question => return,
+            Some(_) => self.confirm.close(),
+            None => {}
         }
         let Some(parent) = self
             .window
@@ -1129,6 +1151,7 @@ impl Doc {
         self.confirm.open(
             &parent,
             size,
+            question,
             &name,
             AppContext::current_theme(),
             move |answer| {
@@ -1166,13 +1189,10 @@ impl Doc {
             return;
         }
         let mut viewer = self.viewer.lock().unwrap();
-        // The window's own save, seen before it has finished saying so: the
-        // edit redraws its own pages.
-        if viewer
-            .editing
-            .as_ref()
-            .is_some_and(|editing| editing.busy > 0 || editing.unsaved)
-        {
+        // The window's own save, seen before it has finished saying so, or
+        // changes not yet saved, which reading the file again would lose: a
+        // save asks first before it replaces a file changed on disk.
+        if viewer.edits_pending() {
             return;
         }
         let now = Stamp::of(&viewer.path);
@@ -1237,13 +1257,12 @@ impl App for PreviewApp {
         {
             let mut viewer = doc.viewer.lock().unwrap();
             let modifiers = viewer.modifiers;
-            // "Save changes?" keeps every key: Return saves, Escape stays.
-            if viewer.confirm_close {
+            // A question keeps every key: Return gives its default answer,
+            // Escape cancels.
+            if let Some(question) = viewer.question.clone() {
                 match event.keysym {
-                    Keysym::Return | Keysym::KP_Enter => {
-                        viewer.answer_close(crate::confirm::Answer::Save)
-                    }
-                    Keysym::Escape => viewer.answer_close(crate::confirm::Answer::Cancel),
+                    Keysym::Return | Keysym::KP_Enter => viewer.answer(question.default_answer()),
+                    Keysym::Escape => viewer.answer(crate::confirm::Answer::Cancel),
                     _ => {}
                 }
                 drop(viewer);

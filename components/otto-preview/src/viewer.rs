@@ -141,14 +141,16 @@ pub struct Viewer {
     /// The colour markup is made in, an index into
     /// [`crate::editing::COLORS`].
     pub ink: usize,
-    /// Edits waiting for the app to apply and save them.
-    pub batches: Vec<crate::editing::Batch>,
     /// The pad the person's signature is being drawn on.
     pub signature_pad: Option<crate::signature::Pad>,
     /// A field's list of choices, waiting for the app to show as a menu.
     pub choices: Option<crate::editing::Choices>,
-    /// Whether "save changes?" is up, asked by a close with unsaved changes.
-    pub confirm_close: bool,
+    /// The question over the window, waiting for an answer: "save
+    /// changes?" on a close, or what to do about a save that couldn't be
+    /// made.
+    pub question: Option<crate::confirm::Question>,
+    /// Save As was picked from a question: the app asks where.
+    pub wants_save_as: bool,
     /// The file the window was just saved as, for the app to follow: its
     /// folder watched, its name on the window.
     pub renamed: Option<PathBuf>,
@@ -257,11 +259,11 @@ impl Viewer {
             editing: None,
             markup: None,
             ink: 0,
-            batches: Vec::new(),
             signature_pad: None,
             choices: None,
             last_press: None,
-            confirm_close: false,
+            question: None,
+            wants_save_as: false,
             renamed: None,
         }
     }

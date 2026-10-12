@@ -1,5 +1,7 @@
-//! The question a window with unsaved changes asks before it closes: save
-//! them, close without them, or stay open.
+//! The questions a window with unsaved changes asks before anything is
+//! lost: on a close, save them, close without them, or stay open; on a save
+//! over a file changed on disk since, or a save that failed, save a copy
+//! elsewhere instead (or, for the change on disk, save over it anyway).
 //!
 //! A popup of its own over the middle of the window, rounded, blurred and
 //! casting the compositor's shadow, as menus and the colour picker do. Built
@@ -43,6 +45,56 @@ pub enum Answer {
     Save,
     Discard,
     Cancel,
+    SaveAs,
+    Overwrite,
+}
+
+/// What the window asks.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Question {
+    /// It is closing with changes not saved.
+    Close,
+    /// A save would replace a change made to the file on disk since it was
+    /// opened or last saved.
+    ChangedOnDisk,
+    /// The save failed, for the reason given.
+    SaveFailed(String),
+}
+
+impl Question {
+    /// The answer Return gives, on the accent button.
+    pub fn default_answer(&self) -> Answer {
+        match self {
+            Self::Close => Answer::Save,
+            Self::ChangedOnDisk | Self::SaveFailed(_) => Answer::SaveAs,
+        }
+    }
+
+    /// The button on the card's leading edge, away from the other two.
+    fn leading(&self) -> Option<Answer> {
+        match self {
+            Self::Close => Some(Answer::Discard),
+            Self::ChangedOnDisk => Some(Answer::Overwrite),
+            Self::SaveFailed(_) => None,
+        }
+    }
+
+    fn title(&self, name: &str) -> String {
+        let name = name.to_owned();
+        match self {
+            Self::Close => otto_kit::t_owned!("studio-close-title", name = name),
+            Self::ChangedOnDisk => otto_kit::t_owned!("studio-changed-title", name = name),
+            Self::SaveFailed(_) => otto_kit::t_owned!("studio-save-failed-title", name = name),
+        }
+    }
+
+    fn body(&self) -> String {
+        match self {
+            Self::Close => otto_kit::t_owned!("studio-close-body"),
+            Self::ChangedOnDisk => otto_kit::t_owned!("studio-changed-body"),
+            Self::SaveFailed(_) => otto_kit::t_owned!("studio-save-failed-body"),
+        }
+    }
 }
 
 /// The card's size, `CARD_W` wide unless the window is narrower.
@@ -53,31 +105,22 @@ fn card_size(window_w: f32) -> (f32, f32) {
     )
 }
 
-/// Where the buttons are on a card `size` big, from its top-left corner.
-struct Buttons {
-    save: Rect,
-    cancel: Rect,
-    discard: Rect,
-}
-
-fn buttons((width, height): (f32, f32)) -> Buttons {
+/// Where the buttons are on a card `size` big asking `question`, from its
+/// top-left corner: the default on the trailing edge, Cancel before it,
+/// and any other on the leading edge.
+fn buttons(question: &Question, (width, height): (f32, f32)) -> Vec<(Answer, Rect)> {
     let h = push_button::HEIGHT;
     let y = height - MARGIN - h;
     let wide = |answer: Answer| push_button::width(&label(answer));
-    let save = Rect::from_xywh(
-        width - MARGIN - wide(Answer::Save),
-        y,
-        wide(Answer::Save),
-        h,
-    );
+    let default = question.default_answer();
+    let main = Rect::from_xywh(width - MARGIN - wide(default), y, wide(default), h);
     let cancel_w = wide(Answer::Cancel);
-    let cancel = Rect::from_xywh(save.left - 8.0 - cancel_w, y, cancel_w, h);
-    let discard = Rect::from_xywh(MARGIN, y, wide(Answer::Discard), h);
-    Buttons {
-        save,
-        cancel,
-        discard,
+    let cancel = Rect::from_xywh(main.left - 8.0 - cancel_w, y, cancel_w, h);
+    let mut buttons = vec![(default, main), (Answer::Cancel, cancel)];
+    if let Some(leading) = question.leading() {
+        buttons.push((leading, Rect::from_xywh(MARGIN, y, wide(leading), h)));
     }
+    buttons
 }
 
 /// A button's label.
@@ -85,27 +128,30 @@ fn label(answer: Answer) -> String {
     match answer {
         Answer::Save => otto_kit::t_owned!("studio-save"),
         Answer::Discard => otto_kit::t_owned!("studio-close-discard"),
-        Answer::Cancel => otto_kit::t_owned!("studio-signature-cancel"),
+        Answer::Cancel => otto_kit::t_owned!("studio-close-cancel"),
+        Answer::SaveAs => otto_kit::t_owned!("studio-save-as"),
+        Answer::Overwrite => otto_kit::t_owned!("studio-changed-overwrite"),
     }
 }
 
 /// What a press at `at` on a card `size` big answers, if anything.
-fn press(size: (f32, f32), at: Point) -> Option<Answer> {
-    let buttons = buttons(size);
-    if buttons.save.contains(at) {
-        Some(Answer::Save)
-    } else if buttons.discard.contains(at) {
-        Some(Answer::Discard)
-    } else if buttons.cancel.contains(at) {
-        Some(Answer::Cancel)
-    } else {
-        None
-    }
+fn press(question: &Question, size: (f32, f32), at: Point) -> Option<Answer> {
+    buttons(question, size)
+        .into_iter()
+        .find(|(_, rect)| rect.contains(at))
+        .map(|(answer, _)| answer)
 }
 
-/// Paint the card, `size` big, asking about the file `name`; `pressed` is
-/// the button held down with the pointer over it.
-fn draw(canvas: &Canvas, size: (f32, f32), name: &str, pressed: Option<Answer>, theme: &Theme) {
+/// Paint the card, `size` big, asking `question` about the file `name`;
+/// `pressed` is the button held down with the pointer over it.
+fn draw(
+    canvas: &Canvas,
+    size: (f32, f32),
+    question: &Question,
+    name: &str,
+    pressed: Option<Answer>,
+    theme: &Theme,
+) {
     let card = Rect::from_wh(size.0, size.1);
     let mut paint = Paint::default();
     paint.set_anti_alias(true);
@@ -119,29 +165,43 @@ fn draw(canvas: &Canvas, size: (f32, f32), name: &str, pressed: Option<Answer>, 
     canvas.draw_rrect(RRect::new_rect_xy(card, CORNER, CORNER), &paint);
 
     let text_w = card.width() - 2.0 * MARGIN;
-    Label::new(otto_kit::t_owned!(
-        "studio-close-title",
-        name = name.to_owned()
-    ))
-    .with_style(styles::HEADLINE)
-    .with_color(theme.text_primary)
-    .with_width(text_w)
-    .centered_on(MARGIN, MARGIN + TITLE_H / 2.0)
-    .render(canvas);
-    Label::new(otto_kit::t_owned!("studio-close-body"))
-        .with_style(styles::BODY)
-        .with_color(theme.text_secondary)
+    Label::new(question.title(name))
+        .with_style(styles::HEADLINE)
+        .with_color(theme.text_primary)
         .with_width(text_w)
-        .centered_on(MARGIN, MARGIN + TITLE_H + BODY_H / 2.0)
+        .centered_on(MARGIN, MARGIN + TITLE_H / 2.0)
         .render(canvas);
+    let body_top = MARGIN + TITLE_H;
+    match question {
+        Question::SaveFailed(why) => {
+            // What to do, then why, on a line of its own.
+            Label::new(question.body())
+                .with_style(styles::BODY)
+                .with_color(theme.text_secondary)
+                .with_width(text_w)
+                .centered_on(MARGIN, body_top + BODY_H * 0.28)
+                .render(canvas);
+            let why = otto_kit::typography::ellipsize(&styles::BODY.font(), why, text_w);
+            Label::new(why)
+                .with_style(styles::BODY)
+                .with_color(theme.text_tertiary)
+                .with_width(text_w)
+                .centered_on(MARGIN, body_top + BODY_H * 0.78)
+                .render(canvas);
+        }
+        Question::Close | Question::ChangedOnDisk => {
+            Label::new(question.body())
+                .with_style(styles::BODY)
+                .with_color(theme.text_secondary)
+                .with_width(text_w)
+                .centered_on(MARGIN, body_top + BODY_H / 2.0)
+                .render(canvas);
+        }
+    }
 
-    let buttons = buttons(size);
-    for (answer, rect) in [
-        (Answer::Discard, buttons.discard),
-        (Answer::Cancel, buttons.cancel),
-        (Answer::Save, buttons.save),
-    ] {
-        let role = if answer == Answer::Save {
+    let default = question.default_answer();
+    for (answer, rect) in buttons(question, size) {
+        let role = if answer == default {
             Role::Default
         } else {
             Role::Normal
@@ -159,6 +219,7 @@ fn draw(canvas: &Canvas, size: (f32, f32), name: &str, pressed: Option<Answer>, 
 struct Inner {
     popup: Option<PopupSurface>,
     surface_id: Option<ObjectId>,
+    question: Question,
     name: String,
     theme: Theme,
     /// The button a press began on, and whether the pointer is still on it.
@@ -166,7 +227,7 @@ struct Inner {
     on_answer: Option<Rc<dyn Fn(Answer)>>,
 }
 
-/// The "save changes?" popup of one window.
+/// The question popup of one window.
 pub struct ConfirmPopup {
     inner: Rc<RefCell<Inner>>,
 }
@@ -178,6 +239,7 @@ impl ConfirmPopup {
         let inner = Rc::new(RefCell::new(Inner {
             popup: None,
             surface_id: None,
+            question: Question::Close,
             name: String::new(),
             theme: Theme::light(),
             held: None,
@@ -191,13 +253,13 @@ impl ConfirmPopup {
                     continue;
                 }
                 let at = Point::new(event.position.0 as f32, event.position.1 as f32);
-                let size = {
+                let (size, question) = {
                     let state = pointed.borrow();
                     let Some(popup) = state.popup.as_ref() else {
                         continue;
                     };
                     let (w, h) = popup.dimensions();
-                    (w as f32, h as f32)
+                    ((w as f32, h as f32), state.question.clone())
                 };
                 // A button acts when released over the one the press began
                 // on; sliding off before letting go takes it back.
@@ -207,7 +269,7 @@ impl ConfirmPopup {
                             let mut state = pointed.borrow_mut();
                             match &mut state.held {
                                 Some((answer, over)) => {
-                                    let now = press(size, at) == Some(*answer);
+                                    let now = press(&question, size, at) == Some(*answer);
                                     std::mem::replace(over, now) != now
                                 }
                                 None => false,
@@ -220,7 +282,7 @@ impl ConfirmPopup {
                     PointerEventKind::Press {
                         button: BTN_LEFT, ..
                     } => {
-                        let held = press(size, at).map(|answer| (answer, true));
+                        let held = press(&question, size, at).map(|answer| (answer, true));
                         pointed.borrow_mut().held = held;
                         Self::render(&pointed);
                     }
@@ -229,7 +291,7 @@ impl ConfirmPopup {
                     } => {
                         let held = pointed.borrow_mut().held.take();
                         match held {
-                            Some((answer, true)) if press(size, at) == Some(answer) => {
+                            Some((answer, true)) if press(&question, size, at) == Some(answer) => {
                                 Self::answer(&pointed, answer);
                             }
                             _ => Self::render(&pointed),
@@ -246,7 +308,15 @@ impl ConfirmPopup {
         self.inner.borrow().popup.is_some()
     }
 
-    /// The popup's surface, which has the keyboard while it is up.
+    /// What the popup asks while it is up.
+    pub fn question(&self) -> Option<Question> {
+        let state = self.inner.borrow();
+        state.popup.as_ref().map(|_| state.question.clone())
+    }
+
+    /// The popup's surface, so the window is still found should the
+    /// compositor give the popup the keyboard. Keys go to the window while
+    /// the popup is up; it asks for no grab.
     pub fn surface_id(&self) -> Option<ObjectId> {
         self.inner.borrow().surface_id.clone()
     }
@@ -262,12 +332,14 @@ impl ConfirmPopup {
         state.held = None;
     }
 
-    /// Ask about the file `name` over the middle of a window `window_size`
-    /// big, parented to `parent`. `on_answer` gets what was picked.
+    /// Ask `question` about the file `name` over the middle of a window
+    /// `window_size` big, parented to `parent`. `on_answer` gets what was
+    /// picked.
     pub fn open(
         &self,
         parent: &xdg_surface::XdgSurface,
         window_size: (f32, f32),
+        question: Question,
         name: &str,
         theme: Theme,
         on_answer: impl Fn(Answer) + 'static,
@@ -301,13 +373,14 @@ impl ConfirmPopup {
         {
             Ok(popup) => popup,
             Err(err) => {
-                tracing::warn!(%err, "could not open the save question");
+                tracing::warn!(%err, "could not open the question");
                 return;
             }
         };
         let surface_id = popup.wl_surface().id();
         {
             let mut state = self.inner.borrow_mut();
+            state.question = question;
             state.name = name.to_owned();
             state.theme = theme;
             state.held = None;
@@ -359,6 +432,7 @@ impl ConfirmPopup {
             draw(
                 canvas,
                 (w as f32, h as f32),
+                &state.question,
                 &state.name,
                 state.held.and_then(|(answer, over)| over.then_some(answer)),
                 &state.theme,
@@ -400,14 +474,34 @@ mod tests {
     #[test]
     fn each_button_answers_and_the_rest_of_the_card_doesnt() {
         let size = card_size(800.0);
-        let wide = buttons(size);
         let middle = |rect: Rect| Point::new(rect.center_x(), rect.center_y());
-        assert_eq!(press(size, middle(wide.save)), Some(Answer::Save));
-        assert_eq!(press(size, middle(wide.discard)), Some(Answer::Discard));
-        assert_eq!(press(size, middle(wide.cancel)), Some(Answer::Cancel));
-        assert_eq!(press(size, Point::new(size.0 / 2.0, 30.0)), None);
-        // The buttons fit a narrow window's card without overlapping.
-        let narrow = buttons(card_size(300.0));
-        assert!(narrow.discard.right < narrow.cancel.left);
+        let questions = [
+            Question::Close,
+            Question::ChangedOnDisk,
+            Question::SaveFailed("no room".into()),
+        ];
+        for question in &questions {
+            let placed = buttons(question, size);
+            assert_eq!(placed[0].0, question.default_answer());
+            for (answer, rect) in &placed {
+                assert_eq!(press(question, size, middle(*rect)), Some(*answer));
+            }
+            assert_eq!(press(question, size, Point::new(size.0 / 2.0, 30.0)), None);
+            // The buttons fit a narrow window's card without overlapping.
+            let narrow = buttons(question, card_size(300.0));
+            for (index, (_, a)) in narrow.iter().enumerate() {
+                for (_, b) in &narrow[index + 1..] {
+                    assert!(a.right <= b.left || b.right <= a.left, "{question:?}");
+                }
+            }
+        }
+        assert_eq!(
+            buttons(&Question::Close, size)
+                .iter()
+                .map(|(answer, _)| *answer)
+                .collect::<Vec<_>>(),
+            vec![Answer::Save, Answer::Cancel, Answer::Discard]
+        );
+        assert_eq!(buttons(&Question::SaveFailed(String::new()), size).len(), 2);
     }
 }

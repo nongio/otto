@@ -205,8 +205,8 @@ Underneath it is still `otto-preview` (the program, its app id and the
 
 ### Form and markup
 
-A PDF's form is filled in, and the PDF marked up, in the window itself:
-written into the file, so any PDF reader shows the result. The engine is
+A PDF's form is filled in, and the PDF marked up, in the window itself,
+and saved into the file, so any PDF reader shows the result. The engine is
 PDFium, through the `otto-pdf` crate, loaded from `libpdfium.so` (see
 *Constraints*). Without it, or for a file PDFium can't open (one with a user
 password included), Preview shows the PDF as before, with no form tint and
@@ -251,17 +251,41 @@ no markup button.
   A double-click on a text box edits its text; emptying it deletes it.
   Annotations the agent added are selected, moved and deleted the same way;
   locked or read-only ones are not.
+- **One at a time, in order.** Every change, undo, redo and save of a
+  document waits its turn in one queue of its own and runs on its thread, in
+  the order it was asked for, the person's and the agent's alike: typing
+  into a field then pressing Ctrl+S saves the text typed, and a quick undo
+  then redo leaves the change made. A change names fields and annotations by
+  their place on the page as the window saw them; when a delete or an undo
+  has renumbered the page since, each is found again by what it is, and a
+  change to something no longer there is refused, never made on what took
+  its place. A change that fails is not kept: whatever part of it was made
+  is taken out again, and the window shows the document as it really is.
+  A dot by the bin shows while the queue is working.
 - **Saving.** Changes are made in memory and shown at once; the file is
   written only when the person saves: the Save button (in the toolbar while
   there are unsaved changes), File › Save, or Ctrl+S. Until then the title
-  reads "NAME (edited)". A save goes through a temporary file renamed into
-  place, keeping the file's permissions and encryption; a signed PDF is saved
-  as an incremental update, so its signature stays valid for what it covers.
-  Each save is kept as a version (see *Versions*), the file as it was before
-  the first save included.
+  reads "NAME (edited)". A save goes through a new temporary file beside the
+  original, with an unguessable name, never opened through a link or over a
+  file already there, given the file's permissions from the start, then
+  renamed into place; encryption is kept, and a signed PDF is saved as an
+  incremental update, so its signature stays valid for what it covers. Each
+  save is kept as a version (see *Versions*), the file as it was before the
+  first save included.
+- **A file changed on disk.** Preview remembers the file's stamp (inode,
+  size, modification time) when it opens it and each time it saves it. A
+  save that finds the stamp changed (another app saved the file meanwhile)
+  writes nothing and asks "NAME changed on disk" in the question popup, with
+  Save Anyway, Cancel and Save As… (the default): Save Anyway writes over it,
+  Save As… asks where to save a copy.
+- **A save that fails** (no room, no permission, a folder gone) is asked
+  about the same way: "NAME couldn't be saved", the reason on a line of its
+  own, with Cancel and Save As…. The changes stay in the window, unsaved.
 - **Undo and Redo** take back and make again the changes not yet saved, by
-  opening the saved file again and making all but the last; once there are
-  none they step through the file's versions as before. A save clears them.
+  opening the file as it was last opened or saved, kept in memory, and
+  making all but the last; so they work whatever the file on disk has become
+  since. Once there are none they step through the file's versions as
+  before. A save clears them.
 - **Save As** (File › Save As…, Ctrl+Shift+S) asks for a name and a folder
   in the desktop's save dialog (the file-chooser portal's `SaveFile`,
   starting on the file's own name and folder, PDFs only; a name without an
@@ -270,22 +294,31 @@ no markup button.
   own versions. The file it was opened from is left as it was saved last.
 - **Closing with unsaved changes** asks "Save changes to NAME?" with Don't
   Save, Cancel and Save, in a popup of its own over the middle of the window,
-  rounded, blurred and casting the same shadow as a menu (Return saves,
-  Escape or a click outside cancels). Save closes the window once the file is written. Ctrl+W, the
-  close light and the compositor's close all ask.
+  rounded, blurred and casting the same shadow as a menu (Return gives the
+  accent button's answer, Escape or a click outside cancels). Save closes the
+  window once the file is written; if the save asks about a change on disk
+  or fails, the window closes once the answer's save (or Save As) is done,
+  and stays open on Cancel. Ctrl+W, the close light and the compositor's
+  close all ask.
 - **Redrawing.** The pages a change touched (every page a field's name is
   on, for a field) and their thumbnails are drawn again by PDFium from the
   document in memory and put in place of the old drawing, so a change shows
   in a few tens of milliseconds and nothing blinks. Text just written is
   drawn over its field until then. The file changing because of this
   window's own save is not taken for someone else's change, and a change on
-  disk from anywhere else is ignored while there are unsaved changes;
-  otherwise it reopens the document.
+  disk from anywhere else is ignored while there are unsaved changes (or
+  changes still in the queue), until a save asks about it; otherwise it
+  reopens the document.
 - **The agent** reads and changes the same form and annotations with
   `preview_fields`, `preview_annotations` and `preview_edit` (see *Document
   tools*), so what it fills in is an ordinary field value the person can
   change, and what it adds is markup the person can select, move and delete.
-  Its changes are unsaved like the person's: the person saves them.
+  Its changes are unsaved like the person's, and wait in the same queue: the
+  person saves them. Numbers no page holds (not finite, beyond ±100 000
+  points, a width or text size out of bounds) and text past 100 000
+  characters are refused before anything is made. `preview_reload` and
+  `preview_revert` are refused while the window holds unsaved changes, which
+  they would throw away; the agent asks the person to save (or undo) them.
 
 ### Versions
 
@@ -309,12 +342,14 @@ no markup button.
   one of the agent's named layers of marks), `Clear` (a layer, every agent
   mark, or the person's marks), `Reload` (read the file again, keeping the
   view, and keep it as a version with the agent's note), `Versions` (the
-  versions, as JSON), `Revert` (put one back), `Render` (the picture as shown, with or without marks, as a PNG
+  versions, as JSON), `Revert` (put one back; it and `Reload` fail while a
+  PDF has unsaved changes), `Render` (the picture as shown, with or without marks, as a PNG
   path), and for a PDF that can be edited `Fields` (its form, as JSON, one
   entry per field name with every place it shows), `Annotations` (its
   annotations, each with an id `page:index`) and `Edit` (fill fields by name,
   add, change and delete annotations, from JSON, shown and left unsaved for
-  the person to save; returns the fields and annotations after). A path no window shows is an error.
+  the person to save; it waits its turn behind the person's changes and
+  returns the fields and annotations after, or why the change was refused). A path no window shows is an error.
 - `otto-preview --mcp` is a stdio MCP server over those methods, for the
   file in `OTTO_PREVIEW_DOC`: `preview_info`, `preview_marks`,
   `preview_draw`, `preview_clear`, `preview_reload` (with a note),

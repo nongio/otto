@@ -1833,6 +1833,17 @@ studio-title-edited = { $name } (edited)
 studio-close-title = Save changes to { $name }?
 studio-close-body = Your changes are lost if you don't save them.
 studio-close-discard = Don't Save
+studio-close-cancel = Cancel
+# Asked when saving would replace changes made to the file by another app
+# since it was opened. $name is the file's name.
+studio-changed-title = { $name } changed on disk
+studio-changed-body = Saving replaces the changes made to it elsewhere.
+# Saves over the file anyway, replacing the changes made elsewhere.
+studio-changed-overwrite = Save Anyway
+# Shown when a PDF's changes couldn't be written; the reason follows on its
+# own line. $name is the file's name.
+studio-save-failed-title = { $name } couldn't be saved
+studio-save-failed-body = Save a copy somewhere else to keep your changes.
 # Deletes the highlight, drawing, text or signature selected on the page.
 studio-delete-selection = Delete Selection
 studio-sheet-next-field = Next form field

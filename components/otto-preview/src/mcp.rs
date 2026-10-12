@@ -118,7 +118,7 @@ fn tools() -> Value {
         },
         {
             "name": "preview_reload",
-            "description": "Show the file again after changing it on disk, and keep it as a version the person can step back from. Call after every edit with a short note of what changed; the window keeps its zoom and place.",
+            "description": "Show the file again after changing it on disk, and keep it as a version the person can step back from. Call after every edit with a short note of what changed; the window keeps its zoom and place. Refused while a PDF in the window has changes not yet saved, which it would throw away: ask the person to save first.",
             "inputSchema": {
                 "type": "object",
                 "properties": { "note": { "type": "string", "description": "What this change did, in a few words: \"background removed\"." } }
@@ -132,7 +132,7 @@ fn tools() -> Value {
         },
         {
             "name": "preview_revert",
-            "description": "Put an earlier (or later) version back in place of the file; the window shows it. Versions after it stay until the file changes again.",
+            "description": "Put an earlier (or later) version back in place of the file; the window shows it. Versions after it stay until the file changes again. Refused while a PDF in the window has changes not yet saved.",
             "inputSchema": {
                 "type": "object",
                 "properties": { "version": { "type": "integer", "description": "The version's number, from preview_versions." } },
