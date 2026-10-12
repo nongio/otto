@@ -18,12 +18,14 @@
 
 // Rust guideline compliant 2026-02-21
 
+use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{self, Sender, SyncSender};
+use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex, Weak};
 
 use otto_kit::prelude::AppContext;
 use otto_pdf::{AnnotId, Document, Edit, Snapshot};
+use tokio::sync::oneshot;
 
 use crate::viewer::{Stamp, Viewer};
 
@@ -34,6 +36,39 @@ pub struct Base {
     /// How many times the document had been renumbered (see [`Outcome`]).
     pub numbering: u64,
     pub snapshot: Arc<Snapshot>,
+}
+
+/// How many of the numberings before the current one [`Past`] remembers.
+const PAST: usize = 16;
+
+/// The document as the window last knew it under each of its recent
+/// numberings: what an id read a while ago, by an agent, was named against.
+///
+/// Under one numbering every id names the same field or annotation, so the
+/// last snapshot the window had under it serves for any id read under it.
+#[derive(Debug, Default)]
+pub struct Past {
+    bases: VecDeque<Base>,
+}
+
+impl Past {
+    /// Remember `base`, the last the window knew under its numbering, now
+    /// that a later numbering has replaced it.
+    pub fn keep(&mut self, base: Base) {
+        if self.bases.len() == PAST {
+            self.bases.pop_front();
+        }
+        self.bases.push_back(base);
+    }
+
+    /// The document as it was under `numbering`, if it is remembered.
+    pub fn at(&self, numbering: u64) -> Option<Base> {
+        self.bases
+            .iter()
+            .rev()
+            .find(|base| base.numbering == numbering)
+            .cloned()
+    }
 }
 
 /// Work on the document.
@@ -482,7 +517,7 @@ impl Target for Pdf<'_> {
 /// A job, and who waits for how it went.
 struct Request {
     job: Job,
-    reply: Option<SyncSender<Outcome>>,
+    reply: Option<oneshot::Sender<Outcome>>,
 }
 
 /// The queue of one open document: the sending end of its thread.
@@ -536,7 +571,7 @@ impl Queue {
     /// Put `job` at the end of the line; `reply`, when given, hears how it
     /// went once it has run. Returns whether the thread is still there to
     /// take it.
-    pub fn send(&self, job: Job, reply: Option<SyncSender<Outcome>>) -> bool {
+    pub fn send(&self, job: Job, reply: Option<oneshot::Sender<Outcome>>) -> bool {
         self.sender.send(Request { job, reply }).is_ok()
     }
 }
@@ -823,6 +858,49 @@ mod tests {
         let outcome = ledger.run(&mut target, gone);
         assert_eq!(outcome.result, Err(Failure::Stale));
         assert!(!colors(&target).iter().any(|(_, color)| *color == RED));
+    }
+
+    #[test]
+    fn ids_read_at_an_earlier_revision_land_on_what_was_read() {
+        let (_dir, stamp, _) = stamps();
+        let (mut target, mut ledger) = three_notes(stamp);
+        let mut past = Past::default();
+        // The agent reads the notes; then the person deletes the first.
+        let read = base(&ledger, &target);
+        let deleted = apply(
+            &mut ledger,
+            &mut target,
+            vec![Edit::Delete {
+                annotation: AnnotId { page: 0, index: 0 },
+            }],
+        );
+        assert_ne!(deleted.numbering, read.numbering);
+        past.keep(read.clone());
+        // The agent deletes the third note it read, now at index 1.
+        let job = Job::Apply {
+            edits: vec![Edit::Delete {
+                annotation: AnnotId { page: 0, index: 2 },
+            }],
+            base: past.at(read.numbering).unwrap(),
+        };
+        assert_eq!(ledger.run(&mut target, job).result, Ok(()));
+        let gray = Rgb(0.5, 0.5, 0.5);
+        assert_eq!(colors(&target), vec![(10.0, gray)]);
+    }
+
+    #[test]
+    fn a_revision_long_gone_is_not_remembered() {
+        let mut past = Past::default();
+        for numbering in 0..=PAST as u64 {
+            past.keep(Base {
+                numbering,
+                snapshot: Arc::new(Snapshot::default()),
+            });
+        }
+        assert_eq!(past.at(0), None, "too old: the agent reads again");
+        assert!(past.at(1).is_some());
+        assert!(past.at(PAST as u64).is_some());
+        assert_eq!(past.at(PAST as u64 + 1), None, "never seen");
     }
 
     #[test]

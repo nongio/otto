@@ -38,7 +38,7 @@ use otto_pdf::{
 use smithay_client_toolkit::seat::keyboard::{KeyEvent, Keysym};
 
 use crate::confirm::{Answer, Question};
-use crate::edit_queue::{Base, Failure, Job, Kind, Ledger, Outcome, Queue};
+use crate::edit_queue::{Base, Failure, Job, Kind, Ledger, Outcome, Past, Queue};
 use crate::marks::Frame;
 use crate::viewer::{Stamp, Viewer};
 
@@ -247,6 +247,8 @@ pub struct Editing {
     /// How many times the document had been renumbered then (see
     /// [`Outcome::numbering`]).
     pub numbering: u64,
+    /// The document as it was under the numberings before this one.
+    past: Past,
     /// Where the document's jobs wait their turn.
     queue: Queue,
     /// The decode it was opened for.
@@ -314,6 +316,7 @@ impl Editing {
             doc,
             snapshot,
             numbering: 0,
+            past: Past::default(),
             queue,
             generation,
             selected: None,
@@ -339,6 +342,16 @@ impl Editing {
             numbering: self.numbering,
             snapshot: Arc::clone(&self.snapshot),
         }
+    }
+
+    /// The document as the window knew it under `numbering`, for an edit
+    /// whose ids were read then, or `None` when that is too long ago to be
+    /// remembered.
+    pub fn base_at(&self, numbering: u64) -> Option<Base> {
+        if numbering == self.numbering {
+            return Some(self.base());
+        }
+        self.past.at(numbering)
     }
 }
 
@@ -557,7 +570,7 @@ impl Viewer {
         &mut self,
         edits: Vec<Edit>,
         base: Base,
-        reply: Option<std::sync::mpsc::SyncSender<Outcome>>,
+        reply: Option<tokio::sync::oneshot::Sender<Outcome>>,
     ) -> bool {
         if edits.is_empty() {
             return false;
@@ -566,7 +579,7 @@ impl Viewer {
     }
 
     /// Queue `job` on the open document. Returns whether it was queued.
-    fn queue(&mut self, job: Job, reply: Option<std::sync::mpsc::SyncSender<Outcome>>) -> bool {
+    fn queue(&mut self, job: Job, reply: Option<tokio::sync::oneshot::Sender<Outcome>>) -> bool {
         let Some(editing) = &mut self.editing else {
             return false;
         };
@@ -723,6 +736,12 @@ impl Viewer {
         self.dirty = true;
         let old = std::mem::replace(&mut editing.snapshot, Arc::clone(&outcome.snapshot));
         let renumbered = editing.numbering != outcome.numbering;
+        if renumbered {
+            editing.past.keep(Base {
+                numbering: editing.numbering,
+                snapshot: Arc::clone(&old),
+            });
+        }
         editing.numbering = outcome.numbering;
         editing.undo = outcome.undo;
         editing.redo = outcome.redo;

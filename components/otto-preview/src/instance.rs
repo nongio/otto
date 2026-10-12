@@ -22,6 +22,7 @@ use std::sync::{Arc, Mutex};
 use otto_kit::prelude::AppContext;
 use zbus::fdo;
 
+use crate::edit_queue::Failure;
 use crate::viewer::Viewer;
 
 pub const DBUS_NAME: &str = "org.otto.Preview1";
@@ -187,35 +188,61 @@ impl Service {
         })?
     }
 
-    /// The PDF's form fields, as JSON.
+    /// The PDF's form fields, as JSON, with the `revision` their ids were
+    /// read at.
     fn fields(&self, path: String) -> fdo::Result<String> {
         let viewer = self.viewer(&path)?;
         let viewer = viewer.lock().unwrap();
         let editing = editing_of(&viewer)?;
-        Ok(crate::pdf_tools::fields_json(&editing.snapshot).to_string())
+        let mut json = crate::pdf_tools::fields_json(&editing.snapshot);
+        json["revision"] = editing.numbering.into();
+        Ok(json.to_string())
     }
 
-    /// The PDF's annotations, form widgets aside, as JSON.
+    /// The PDF's annotations, form widgets aside, as JSON, with the
+    /// `revision` their ids were read at.
     fn annotations(&self, path: String) -> fdo::Result<String> {
         let viewer = self.viewer(&path)?;
         let viewer = viewer.lock().unwrap();
         let editing = editing_of(&viewer)?;
-        Ok(crate::pdf_tools::annotations_json(&editing.snapshot).to_string())
+        let mut json = crate::pdf_tools::annotations_json(&editing.snapshot);
+        json["revision"] = editing.numbering.into();
+        Ok(json.to_string())
     }
 
     /// Fill the PDF's form and change its annotations as `request` (JSON)
     /// says, and show it; the changes stay in memory until the person saves.
     /// They wait their turn behind the person's own edits. Returns the
-    /// fields and annotations as they are after.
-    fn edit(&self, path: String, request: String) -> fdo::Result<String> {
+    /// fields and annotations as they are after, with their revision.
+    ///
+    /// The request's `revision`, from `Fields`, `Annotations` or an earlier
+    /// `Edit`, says which document its ids were read from, so each is
+    /// followed to the same field or annotation if the person has deleted
+    /// or undone something since; ids that can't be followed, or a revision
+    /// too old to be remembered, are refused as stale. Without one, the ids
+    /// are taken as naming the document as it is when the call arrives.
+    async fn edit(&self, path: String, request: String) -> fdo::Result<String> {
         let request: serde_json::Value = serde_json::from_str(&request)
             .map_err(|err| fdo::Error::InvalidArgs(format!("not JSON: {err}")))?;
+        let revision = match request.get("revision") {
+            None | Some(serde_json::Value::Null) => None,
+            Some(revision) => Some(revision.as_u64().ok_or_else(|| {
+                fdo::Error::InvalidArgs(
+                    "revision is the number preview_fields or preview_annotations gave".into(),
+                )
+            })?),
+        };
         let viewer = self.viewer(&path)?;
-        let (reply, answer) = std::sync::mpsc::sync_channel(1);
+        let (reply, answer) = tokio::sync::oneshot::channel();
         {
             let mut viewer = viewer.lock().unwrap();
             let editing = editing_of(&viewer)?;
-            let base = editing.base();
+            let base = match revision {
+                None => editing.base(),
+                Some(revision) => editing
+                    .base_at(revision)
+                    .ok_or_else(|| fdo::Error::Failed(Failure::Stale.to_string()))?,
+            };
             let edits = crate::pdf_tools::edits_from_json(&base.snapshot, &request)
                 .map_err(fdo::Error::InvalidArgs)?;
             if !viewer.submit_on(edits, base, Some(reply)) {
@@ -226,7 +253,7 @@ impl Service {
         }
         AppContext::request_wakeup();
         let outcome = answer
-            .recv()
+            .await
             .map_err(|_| fdo::Error::Failed("the window closed before the edit was made".into()))?;
         outcome
             .result
@@ -235,6 +262,7 @@ impl Service {
         Ok(serde_json::json!({
             "saved": false,
             "note": "Shown in the window, not yet saved: the person saves the file.",
+            "revision": outcome.numbering,
             "fields": crate::pdf_tools::fields_json(&snapshot)["fields"],
             "annotations": crate::pdf_tools::annotations_json(&snapshot)["annotations"],
         })

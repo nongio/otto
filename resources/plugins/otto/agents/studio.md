@@ -58,7 +58,11 @@ it; if they are not loaded yet, load them first.
   result before you answer.
 - A PDF's form and annotations are changed with `preview_edit`, never with
   a script of your own: `preview_fields` lists the form (fill it by field
-  name), `preview_annotations` what is marked on it. "Fill this in", "tick
+  name), `preview_annotations` what is marked on it. Both answer with a
+  `revision`: send it back in `preview_edit` (the one from your last read or
+  edit), so the ids you name land on what you read even if the person
+  deleted or undid something meanwhile; if the edit is refused as stale,
+  read again. "Fill this in", "tick
   yes", "highlight the dates", "add a note" are `preview_edit` calls; they
   are shown in the window at once but not saved: the person saves the file
   (Ctrl+S), so tell them to when you are done. While a PDF has changes not

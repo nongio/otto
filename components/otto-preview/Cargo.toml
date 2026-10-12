@@ -27,7 +27,7 @@ otto-media-kit = { path = "../otto-media-kit", default-features = false }
 otto-pdf = { path = "../otto-pdf" }
 smithay-client-toolkit = { workspace = true, features = ["calloop", "xkbcommon"] }
 wayland-client.workspace = true
-tokio = { workspace = true, features = ["rt-multi-thread"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "sync"] }
 tracing.workspace = true
 # Marks and the MCP tools speak JSON; a rendered view goes back as base64.
 serde_json.workspace = true

@@ -179,22 +179,23 @@ fn tools() -> Value {
         },
         {
             "name": "preview_fields",
-            "description": "A PDF's form: every field by name, with its type (text, checkbox, radio, choice, list, signature), value, options, and where it is (page and rect in PDF points from the page's top-left).",
+            "description": "A PDF's form: every field by name, with its type (text, checkbox, radio, choice, list, signature), value, options, and where it is (page and rect in PDF points from the page's top-left), and the revision to send back with preview_edit.",
             "inputSchema": nothing,
             "annotations": { "readOnlyHint": true }
         },
         {
             "name": "preview_annotations",
-            "description": "A PDF's annotations (highlights, drawings, text boxes, notes, stamps...), each with an id \"page:index\", type, rect in PDF points from the page's top-left, colour and text.",
+            "description": "A PDF's annotations (highlights, drawings, text boxes, notes, stamps...), each with an id \"page:index\", type, rect in PDF points from the page's top-left, colour and text, and the revision to send back with preview_edit.",
             "inputSchema": nothing,
             "annotations": { "readOnlyHint": true }
         },
         {
             "name": "preview_edit",
-            "description": "Fill a PDF's form and add, change or delete annotations, shown in the window at once and written into the file (any PDF reader shows them) when the person saves. Use this rather than editing a PDF with your own tools. Returns the fields and annotations after.",
+            "description": "Fill a PDF's form and add, change or delete annotations, shown in the window at once and written into the file (any PDF reader shows them) when the person saves. Use this rather than editing a PDF with your own tools. Send the revision from your last preview_fields, preview_annotations or preview_edit, so the ids land on what you read; refused as stale when that can't be done, then read again. Returns the fields and annotations after, with the new revision.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
+                    "revision": { "type": "integer", "description": "The revision the ids and names were read at, from preview_fields, preview_annotations or the last preview_edit. Always send it." },
                     "fill": { "type": "object", "description": "Field name to value: text for a text field, true/false for a checkbox, an option for a radio group, choice or list." },
                     "add": {
                         "type": "array",

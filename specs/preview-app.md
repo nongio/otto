@@ -350,8 +350,18 @@ no markup button.
   entry per field name with every place it shows), `Annotations` (its
   annotations, each with an id `page:index`) and `Edit` (fill fields by name,
   add, change and delete annotations, from JSON, shown and left unsaved for
-  the person to save; it waits its turn behind the person's changes and
-  returns the fields and annotations after, or why the change was refused). A path no window shows is an error.
+  the person to save; it waits its turn behind the person's changes, without
+  holding up the service, and returns the fields and annotations after, or
+  why the change was refused). A path no window shows is an error.
+- `Fields`, `Annotations` and `Edit` answer with a `revision`: how many
+  times the document had been renumbered (by a delete, an undo, a change
+  taken out again) when its ids were read. An `Edit` that sends the
+  `revision` its ids were read at has them followed to the same field or
+  annotation when the person has renumbered the page since, as the window's
+  own changes are; a change to something gone, or a revision older than the
+  last 16 renumberings, is refused as stale, telling the agent to read
+  again. Without a `revision` the ids name the document as it is when the
+  call arrives, so agents always send it.
 - `otto-preview --mcp` is a stdio MCP server over those methods, for the
   file in `OTTO_PREVIEW_DOC`: `preview_info`, `preview_marks`,
   `preview_draw`, `preview_clear`, `preview_reload` (with a note),
