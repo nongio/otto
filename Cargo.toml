@@ -141,12 +141,15 @@ wayland-protocols-wlr = { workspace = true, features = ["client"] }
 wayland-protocols-misc = { workspace = true, features = ["client"] }
 xkbcommon.workspace = true
 
-# [profile.release]
-# opt-level = 3
-# lto = "thin"
-# codegen-units = 1
-# strip = true
-# panic = "abort"
+# Release binaries: one optimisation unit per crate, with ThinLTO across
+# crates. Debug info is already stripped by Cargo's default for a release
+# without `debug` (the symbol table stays, so a panic backtrace still names
+# its functions); a packager wanting symbols sets only
+# CARGO_PROFILE_RELEASE_DEBUG. Panics keep unwinding: otto-kit and otto-arch
+# catch them (`catch_unwind`), which `panic = "abort"` would turn into crashes.
+[profile.release]
+lto = "thin"
+codegen-units = 1
 
 [workspace]
 members = [
