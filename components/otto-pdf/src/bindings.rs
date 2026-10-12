@@ -11,7 +11,11 @@
 
 // Rust guideline compliant 2026-02-21
 
-#![allow(non_snake_case, non_camel_case_types)]
+#![expect(
+    non_snake_case,
+    non_camel_case_types,
+    reason = "the names follow the PDFium C headers"
+)]
 
 use std::ffi::{c_char, c_double, c_float, c_int, c_uint, c_ulong, c_void};
 
