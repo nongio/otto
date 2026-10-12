@@ -205,8 +205,6 @@ impl Browser {
         }
         let rect = view::photos_group_rect(self.size.0);
         if rect.contains(skia_safe::Point::new(x, y)) {
-            self.photos_group_open = true;
-            self.dirty = true;
             return Some(listing_pointer::After::GroupMenu { rect, serial });
         }
         None

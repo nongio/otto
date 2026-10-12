@@ -49,6 +49,19 @@
 //!   dispatch — sidesteps this entirely. A caller of this module never needs
 //!   to know the rule; `DropdownMenu`'s shape enforces it.
 //!
+//! **A press on a field is a pop-up button's press.** [`open`](DropdownMenu::open)
+//! is what a press on the field calls, so it carries the two rules a pop-up
+//! button keeps:
+//!
+//! - Pressed while its menu is up, the field closes the menu and nothing
+//!   opens. The press outside the popup that ends its grab also reaches the
+//!   window, and the menu is still up then (fading out), so without this the
+//!   same press would open it again.
+//! - Any other dropdown's menu still up goes at once, before this one's
+//!   popup is made: a grabbing popup made while another is up is a protocol
+//!   error, and with only one up at a time hovering can never put a second
+//!   menu's rows under the first one's anchor.
+//!
 //! The field's "open" interaction state does not need a push notification:
 //! `ContextMenu::is_visible` ([`is_open`](DropdownMenu::is_open)) is polled
 //! at draw time. But the window still needs telling *when* to redraw after a
@@ -58,6 +71,8 @@
 //! `ContextMenu::on_close` hook (see `context_menu.rs`), which fires exactly
 //! when the menu closes without a selection.
 
+use std::rc::Rc;
+
 use skia_safe::Rect;
 
 use smithay_client_toolkit::reexports::client::protocol::wl_keyboard;
@@ -65,6 +80,13 @@ use smithay_client_toolkit::shell::xdg::XdgPositioner;
 use wayland_protocols::xdg::shell::client::{xdg_positioner, xdg_surface};
 
 use crate::app_runner::AppContext;
+
+thread_local! {
+    /// The menu of the dropdown opened last, so the next one opened can take
+    /// it down first. Only one is ever up: each takes the pointer grab.
+    static LAST_OPENED: std::cell::RefCell<Option<ContextMenu>> =
+        const { std::cell::RefCell::new(None) };
+}
 use crate::components::context_menu::{ContextMenu, ContextMenuStyle};
 use crate::components::menu_item::{MenuItem, MenuItemIcon};
 
@@ -373,7 +395,13 @@ impl DropdownMenu {
 
     /// Open the menu, anchored to `field_rect` — the same rect passed to
     /// [`super::field::draw`], in the window's local coordinate space —
-    /// parented to `parent_xdg`.
+    /// parented to `parent_xdg`. Call it from the press on the field.
+    ///
+    /// A menu that is already up closes instead, the press on its field
+    /// taking back the one that opened it; any other dropdown's menu still up
+    /// closes first. See the module docs. `true` when the press opened the
+    /// menu, `false` when it closed it (or there was nothing to show), so a
+    /// caller that draws its field open knows which.
     ///
     /// `options[selected]`, if `selected` is `Some`, is marked with a
     /// leading checkmark; `MenuItem` has no dedicated "checked" flag, so
@@ -394,7 +422,8 @@ impl DropdownMenu {
         selected: Option<usize>,
         on_select: S,
         on_dismiss: D,
-    ) where
+    ) -> bool
+    where
         S: Fn(usize) + 'static,
         D: Fn() + 'static,
     {
@@ -407,7 +436,7 @@ impl DropdownMenu {
             selected,
             on_select,
             on_dismiss,
-        );
+        )
     }
 
     /// [`open`](Self::open), with an icon before each value: `icons[i]` is
@@ -425,12 +454,25 @@ impl DropdownMenu {
         selected: Option<usize>,
         on_select: S,
         on_dismiss: D,
-    ) where
+    ) -> bool
+    where
         S: Fn(usize) + 'static,
         D: Fn() + 'static,
     {
         if options.is_empty() {
-            return;
+            return false;
+        }
+        if self.is_open() {
+            self.close();
+            return false;
+        }
+        // Taken out before it is hidden: its `on_close` is the caller's, and
+        // may open another dropdown.
+        let previous = LAST_OPENED.with(|last| last.borrow_mut().replace(self.menu.clone()));
+        if let Some(other) = previous {
+            if !Rc::ptr_eq(other.state(), self.menu.state()) && other.is_visible() {
+                other.hide();
+            }
         }
 
         *self.options.borrow_mut() = options.to_vec();
@@ -511,7 +553,7 @@ impl DropdownMenu {
         menu.clone().on_close(on_dismiss);
 
         let Ok(positioner) = XdgPositioner::new(AppContext::xdg_shell_state()) else {
-            return;
+            return false;
         };
         let (menu_w, menu_h) = menu.get_size_at_depth(0);
         positioner.set_size(menu_w as i32, menu_h as i32);
@@ -538,6 +580,7 @@ impl DropdownMenu {
         );
 
         menu.show(parent_xdg, &positioner, serial);
+        true
     }
 }
 

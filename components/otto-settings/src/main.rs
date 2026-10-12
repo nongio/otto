@@ -587,28 +587,12 @@ fn open_menu(
     // is over a row, which is what a highlight means to someone using one.
     from_keyboard: bool,
 ) {
+    // A press on a field whose menu is up closes it, and any other menu
+    // still up goes before this one opens: both are the kit dropdown's
+    // rules, kept by `DropdownMenu::open`.
     let Some(menu) = dropdowns.get(select.id) else {
         return;
     };
-    // Clicking the field again closes the menu, the way clicking a colour
-    // well again closes its picker — without this the press is swallowed by
-    // the menu already being up, and a pop-up button becomes the one control
-    // in the pane that cannot undo its own click.
-    if menu.is_open() {
-        menu.close();
-        *open_dropdown.lock().unwrap() = None;
-        mark_pane_dirty(pane_dirty);
-        window.request_frame();
-        return;
-    }
-    // Any other menu goes now, even mid fade-out: a press outside a menu both
-    // dismisses it and lands here, and a pop-up made while another is still
-    // up is a protocol error that ends the app.
-    for (_, other) in dropdowns.iter().filter(|(other, _)| **other != select.id) {
-        if other.is_open() {
-            other.close_now();
-        }
-    }
     let Some(parent) = window
         .surface()
         .map(|s| s.xdg_window().xdg_surface().clone())
@@ -698,13 +682,7 @@ fn open_menu(
     let dismissed_dirty = pane_dirty.clone();
     let dismissed_window = window.clone();
 
-    *open_dropdown.lock().unwrap() = Some(id);
-
-    if from_keyboard {
-        menu.highlight(selected);
-    }
-
-    menu.open(
+    let opened = menu.open(
         &parent,
         select.rect,
         serial,
@@ -749,6 +727,16 @@ fn open_menu(
             dismissed_window.request_frame();
         },
     );
+    if opened {
+        *open_dropdown.lock().unwrap() = Some(id);
+        if from_keyboard {
+            menu.highlight(selected);
+        }
+    } else {
+        *open_dropdown.lock().unwrap() = None;
+    }
+    mark_pane_dirty(pane_dirty);
+    window.request_frame();
 }
 
 /// Whether the pointer is still on the button it went down on.
