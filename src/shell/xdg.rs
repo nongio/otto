@@ -248,8 +248,22 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
     /// A parent can arrive after the window is mapped — the portal's file
     /// picker is adopted through xdg-foreign once it is up — and a dialog
     /// is left out of the dock and the switcher, so they are rebuilt.
-    fn parent_changed(&mut self, _toplevel: ToplevelSurface) {
+    ///
+    /// Taskbars and the top bar learn of it through foreign-toplevel's
+    /// `parent`, so a dialog is named after the application it belongs to.
+    fn parent_changed(&mut self, toplevel: ToplevelSurface) {
         self.workspaces.update_workspace_model();
+        let child = self
+            .foreign_toplevels
+            .get(&toplevel.wl_surface().id())
+            .and_then(|handles| handles.wlr.as_ref());
+        let parent = toplevel
+            .parent()
+            .and_then(|surface| self.foreign_toplevels.get(&surface.id()))
+            .and_then(|handles| handles.wlr.as_ref());
+        if let Some(child) = child {
+            child.send_parent(parent);
+        }
     }
 
     fn toplevel_destroyed(&mut self, toplevel: ToplevelSurface) {

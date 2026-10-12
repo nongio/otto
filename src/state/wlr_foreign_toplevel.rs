@@ -197,6 +197,27 @@ impl WlrForeignToplevelHandle {
         self.data.lock().unwrap().window_id.clone()
     }
 
+    /// Tell every watcher which toplevel this one is a dialog of, or that it
+    /// has none. Each watcher is named the parent's handle it holds itself.
+    pub fn send_parent(&self, parent: Option<&WlrForeignToplevelHandle>) {
+        let parents: Vec<ZwlrForeignToplevelHandleV1> = parent
+            .map(|parent| parent.data.lock().unwrap().resources.clone())
+            .unwrap_or_default();
+        let data = self.data.lock().unwrap();
+        for resource in &data.resources {
+            // `parent` arrived in version 3.
+            if resource.version() < 3 {
+                continue;
+            }
+            let client = resource.client().map(|client| client.id());
+            let theirs = parents
+                .iter()
+                .find(|candidate| candidate.client().map(|c| c.id()) == client);
+            resource.parent(theirs);
+            resource.done();
+        }
+    }
+
     pub fn title(&self) -> String {
         self.data.lock().unwrap().title.clone()
     }
