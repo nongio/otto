@@ -346,7 +346,9 @@ dock is not, and `DockView` drives its layers directly.
   the closure when a recorded picture has zero ops, because a picture recorded
   while a layer had nothing to give would otherwise lock it blank forever.
 - **Layer positions are physical pixels.** `output_geometry()` is logical; see
-  the conventions in the [developer guide index](README.md).
+  the conventions in the [developer guide index](README.md). Typed
+  `PhysicalPoint`/`PhysicalSize` values reach lay-rs through
+  `utils::geometry::layer_point` / `layer_size`.
 
 ## Where to look
 

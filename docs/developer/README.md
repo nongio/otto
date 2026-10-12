@@ -97,5 +97,23 @@ Always take the scale from the output itself —
 `output.current_scale().fractional_scale() as f32`. `WorkspacesModel.scale` is
 a global fallback and does not belong in geometry code.
 
-Suffix physical-pixel variables with `_px` (`width_px`, `offset_px`) so the
-space is visible at the call site.
+Prefer typed geometry: Smithay's `Point`, `Size` and `Rectangle` carry the
+space in their type (`Physical` or `Logical`), so mixing the two fails to
+compile. Convert between them only at the edges — `to_physical(scale)` /
+`to_logical(scale)` with the output's own scale — and hand lay-rs its plain
+floats through the helpers in `src/utils/geometry.rs`:
+
+| Helper | From | To |
+| --- | --- | --- |
+| `PhysicalPoint`, `PhysicalSize` | — | `Point`/`Size<f32, Physical>`, the scene's precision |
+| `layer_point` | `PhysicalPoint` | `layers::types::Point` (`set_position`, `hover_layer`) |
+| `layer_size` | `PhysicalSize` | fixed taffy `layers::types::Size` |
+| `layer_origin`, `layer_center` | a `Layer`'s render bounds | `PhysicalPoint` |
+| `layer_contains` | `Layer` + `PhysicalPoint` | inclusive hit test |
+| `output_local_physical` | global `Point<f64, Logical>` + output origin + scale | output-local `PhysicalPoint` |
+
+The workspace selector (`src/workspaces/workspace_selector.rs`) is converted;
+the rest of the compositor is being moved over in slices. Where a value is
+still a bare `f32`/`i32`, suffix physical-pixel variables with `_px`
+(`width_px`, `offset_px`) so the space is visible at the call site. A
+genuinely one-dimensional length (a gap, a label height) may stay a scalar.

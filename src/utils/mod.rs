@@ -5,6 +5,7 @@ use layers::{
 
 use crate::config::Config;
 mod font_cache;
+pub mod geometry;
 pub mod natural_layout;
 
 pub use font_cache::FONT_CACHE;
