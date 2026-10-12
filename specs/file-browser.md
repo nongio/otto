@@ -88,6 +88,9 @@ A client-decorated toplevel. Layout:
   control, a new-folder action, an action menu, and a search field.
 - **Path bar** — a breadcrumb strip along the **bottom** edge, spelling out
   where the selection is. See [The path bar](#the-path-bar).
+  Its icons, like the sidebar's, are Otto's own glyphs (the Solar set) in
+  the text tone, falling back to the theme's for a place the set lacks.
+  Entries in the listing keep the theme's type icons, folders included.
 - **Sidebar** — places: Recent, home, the XDG user directories that exist,
   and whatever the user has added (see [The sidebar's
   places](#the-sidebars-places)). A place takes a drop, which files into that

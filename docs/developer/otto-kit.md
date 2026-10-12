@@ -198,6 +198,22 @@ their client proxies in the UI-free `otto-dbus` crate, re-exported here as
 `typography::styles` holds the named text styles (`SUBHEADLINE` and friends);
 `icons` and `icon_theme` resolve icon names against the user's icon theme.
 
+The glyphs Otto's own interface draws come from the vendored Solar set
+before the theme (see `scripts/README.md` for how the set is kept). The set
+is found at `$OTTO_SOLAR_ICONS`, then `<exe>/../share/otto/icons/solar`, then
+`/usr/share/otto/icons/solar`, then the repository's
+`resources/icons/solar`, so a development build needs no install.
+`icons::solar_icon(name, size, SolarStyle, color)` rasterises one glyph with
+its `currentColor` set to `color` (the colour on the root `<svg>`, the alpha
+as its group opacity), cached by name, size, style and colour; a bold request
+for a glyph kept only in linear gets the linear file. `named_icon`,
+`named_icon_sized` and the small-size `cached_icon_chain` lookups answer a
+Solar name with its glyph in black ink, which callers tint with `SrcIn` as
+they do a theme's symbolic art. `folder` is left to the theme there, since a
+listing asks for it as a file type; `cached_glyph_chain` is the variant for a
+caller that draws every icon as a glyph (Files' sidebar and path bar).
+`exact_icon_in_theme` and `find_icon` stay theme-only.
+
 ## Otto's own protocols
 
 `src/protocols/` generates client bindings from the XML in the repository's

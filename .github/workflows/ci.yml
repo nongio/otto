@@ -199,6 +199,8 @@ jobs:
         run: python3 scripts/check-locales.py
       - name: The otto-help skill ships the current user guides
         run: scripts/sync-skill-docs.sh --check
+      - name: The Solar icon set matches its list
+        run: scripts/update-solar-icons.sh --check
 
   # A check of its own, never gated: Otto claims to implement the Agent Host
   # Protocol, and this is the evidence for that claim. It runs the corpora

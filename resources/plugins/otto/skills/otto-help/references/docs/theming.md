@@ -168,6 +168,12 @@ clashing with a MacTahoe you install yourself, which you can select by its
 own name, `MacTahoe`.
 Any other theme under `/usr/share/icons` works the same way.
 
+The theme draws apps, files and tray icons. The glyphs on the controls of
+Otto's own apps (toolbar buttons, menu ticks, the sidebars of Files and
+Settings) are Otto's own, from the
+[Solar icon set](https://github.com/saoudi-h/solar-icons) by 480 Design, and
+look the same whatever theme you choose.
+
 Popular choices: `Otto-MacTahoe`, `MacTahoe`, `WhiteSur`, `Adwaita`, `Papirus`, `Fluent`. Otto's own
 screenshots use the
 [Fluent icon theme](https://github.com/vinceliuice/Fluent-icon-theme).

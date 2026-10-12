@@ -1876,7 +1876,14 @@ pub fn draw_strip(canvas: &Canvas, viewer: &Viewer, theme: &Theme, ground: Color
         } else {
             theme.text_secondary
         };
-        draw_tool_glyph(canvas, *tool, *rect, color, color_of(COLORS[viewer.ink]));
+        draw_tool_glyph(
+            canvas,
+            *tool,
+            *rect,
+            color,
+            color_of(COLORS[viewer.ink]),
+            on,
+        );
     }
     for (index, rect) in &strip.colors {
         let center = (rect.center_x(), rect.center_y());
@@ -1906,7 +1913,9 @@ pub fn draw_strip(canvas: &Canvas, viewer: &Viewer, theme: &Theme, ground: Color
     } else {
         theme.text_secondary
     };
-    draw_bin_glyph(canvas, strip.delete, color);
+    if !draw_solar_glyph(canvas, "otto-delete-symbolic", strip.delete, color, false) {
+        draw_bin_glyph(canvas, strip.delete, color);
+    }
     if let Some(editing) = &viewer.editing {
         if editing.busy > 0 {
             // Working: a dot by the bin while an edit is being made or the
@@ -1932,9 +1941,53 @@ fn stroke_paint(color: Color) -> Paint {
     paint
 }
 
-/// A tool's glyph, drawn: few icon themes have markup tools, and fewer
-/// agree on them.
-fn draw_tool_glyph(canvas: &Canvas, tool: MarkupTool, rect: Rect, color: Color, ink: Color) {
+/// Otto's own glyph `name`, 16 points square in the middle of `rect`, bold
+/// when `bold`. Whether Otto's set had it.
+fn draw_solar_glyph(canvas: &Canvas, name: &str, rect: Rect, color: Color, bold: bool) -> bool {
+    let style = if bold {
+        otto_kit::icons::SolarStyle::Bold
+    } else {
+        otto_kit::icons::SolarStyle::Linear
+    };
+    // Rasterised in the canvas's device pixels, so it stays sharp on a
+    // scaled output.
+    let scale = canvas.local_to_device_as_3x3().scale_x().abs().max(1.0);
+    let Some(image) =
+        otto_kit::icons::solar_icon(name, (16.0 * scale).round() as i32, style, color)
+    else {
+        return false;
+    };
+    let dst = Rect::from_xywh(rect.center_x() - 8.0, rect.center_y() - 8.0, 16.0, 16.0);
+    canvas.draw_image_rect(&image, None, dst, &Paint::default());
+    true
+}
+
+/// Otto's own glyph for a markup tool.
+fn tool_glyph_name(tool: MarkupTool) -> &'static str {
+    match tool {
+        MarkupTool::Select => "otto-mark-symbolic",
+        MarkupTool::Highlight => "otto-highlight-symbolic",
+        MarkupTool::Underline => "otto-underline-symbolic",
+        MarkupTool::StrikeOut => "otto-strikeout-symbolic",
+        MarkupTool::Draw => "otto-pen-symbolic",
+        MarkupTool::Text => "otto-text-symbolic",
+        MarkupTool::Signature => "otto-signature-symbolic",
+    }
+}
+
+/// A tool's glyph: Otto's own, bold while the tool is chosen, or drawn when
+/// the set is missing.
+fn draw_tool_glyph(
+    canvas: &Canvas,
+    tool: MarkupTool,
+    rect: Rect,
+    color: Color,
+    ink: Color,
+    on: bool,
+) {
+    if draw_solar_glyph(canvas, tool_glyph_name(tool), rect, color, on) {
+        return;
+    }
     let r = Rect::from_xywh(rect.center_x() - 8.0, rect.center_y() - 8.0, 16.0, 16.0);
     let stroke = stroke_paint(color);
     let mut fill = Paint::default();

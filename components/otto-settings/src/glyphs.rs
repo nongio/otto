@@ -1,14 +1,17 @@
 //! Sidebar glyphs.
 //!
-//! otto-kit bundles only a handful of icons and none of the ones the panes
-//! need, so they are drawn here: one stroke weight, one 16pt box, rounded
-//! caps. Placeholders — replace with real icon assets once the set exists.
+//! Each pane's glyph is Otto's own, from the Solar set
+//! (`otto-pane-<name>-symbolic`). The drawings here stand in when the set
+//! isn't installed: one stroke weight, one 16pt box, rounded caps.
 
 use otto_kit::prelude::*;
 use skia_safe::{paint::Cap, paint::Join, PaintStyle, PathBuilder, Point, RRect};
 
 /// Draw `name` centred on (`cx`, `cy`) at `size` points.
 pub fn draw(canvas: &Canvas, name: &str, cx: f32, cy: f32, size: f32, color: Color) {
+    if draw_solar(canvas, name, cx, cy, size, color) {
+        return;
+    }
     let mut paint = Paint::default();
     paint.set_anti_alias(true);
     paint.set_style(PaintStyle::Stroke);
@@ -236,4 +239,22 @@ fn hand(canvas: &Canvas, paint: &Paint) {
     canvas.draw_path(&palm.detach(), paint);
     // Thumb, out to the left.
     canvas.draw_line(Point::new(-3.6, 3.5), Point::new(-6.2, 0.8), paint);
+}
+
+/// Otto's own glyph for pane `name`, if the set has it.
+fn draw_solar(canvas: &Canvas, name: &str, cx: f32, cy: f32, size: f32, color: Color) -> bool {
+    let glyph = format!("otto-pane-{}-symbolic", name.replace('_', "-"));
+    // Rasterised in the canvas's device pixels, so it stays sharp on a
+    // scaled output.
+    let scale = canvas.local_to_device_as_3x3().scale_x().abs().max(1.0);
+    let px = (size * scale).round() as i32;
+    let Some(image) =
+        otto_kit::icons::solar_icon(&glyph, px, otto_kit::icons::SolarStyle::Linear, color)
+    else {
+        return false;
+    };
+    let half = size / 2.0;
+    let dst = skia_safe::Rect::from_ltrb(cx - half, cy - half, cx + half, cy + half);
+    canvas.draw_image_rect(&image, None, dst, &Paint::default());
+    true
 }

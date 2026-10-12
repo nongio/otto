@@ -406,6 +406,10 @@ assets = [
     ["components/otto-lock/otto-lock.pam", "usr/share/doc/otto/otto-lock.pam.example", "644"],
     # The default wallpaper, which the shipped config names.
     ["resources/wallpaper.jpg", "usr/share/otto/wallpaper.jpg", "644"],
+    # The Solar glyphs Otto's own interface draws (CC BY 4.0), with their attribution.
+    ["resources/icons/solar/linear/*.svg", "usr/share/otto/icons/solar/linear/", "644"],
+    ["resources/icons/solar/bold/*.svg", "usr/share/otto/icons/solar/bold/", "644"],
+    ["resources/icons/solar/LICENSE", "usr/share/otto/icons/solar/LICENSE", "644"],
     # Otto-MacTahoe, the default icon theme (MacTahoe, GPL-3.0), staged by
     # scripts/packaging/fetch-icon-theme.sh: its regular files here, its
     # symlinks as a list postinst extracts (see that script for why).
@@ -485,6 +489,10 @@ assets = [
     { source = "LICENSE", dest = "/usr/share/doc/otto/LICENSE", mode = "644", doc = true },
     # The default wallpaper, which the shipped config names.
     { source = "resources/wallpaper.jpg", dest = "/usr/share/otto/wallpaper.jpg", mode = "644" },
+    # The Solar glyphs Otto's own interface draws (CC BY 4.0), with their attribution.
+    { source = "resources/icons/solar/linear/*.svg", dest = "/usr/share/otto/icons/solar/linear/", mode = "644" },
+    { source = "resources/icons/solar/bold/*.svg", dest = "/usr/share/otto/icons/solar/bold/", mode = "644" },
+    { source = "resources/icons/solar/LICENSE", dest = "/usr/share/otto/icons/solar/LICENSE", mode = "644" },
     # Otto-MacTahoe, the default icon theme (MacTahoe, GPL-3.0): regular files
     # here, the symlinks as a list post_trans_script extracts.
     { source = "target/icon-theme/Otto-MacTahoe/**/*", dest = "/usr/share/icons/Otto-MacTahoe/", mode = "644" },

@@ -63,6 +63,11 @@ install -m644 otto_config.example.toml "$tmpdir/$PKGDIR/otto_config.example.toml
 install -Dm755 resources/bin/otto-look "$tmpdir/$PKGDIR/resources/bin/otto-look"
 install -Dm644 resources/wallpaper.jpg  "$tmpdir/$PKGDIR/resources/wallpaper.jpg"
 
+# The Solar glyphs and their attribution, which PKGBUILD-nightly-bin installs.
+for f in resources/icons/solar/LICENSE resources/icons/solar/*/*.svg; do
+    install -Dm644 "$f" "$tmpdir/$PKGDIR/$f"
+done
+
 # Desktop entries. otto-trash.desktop is the Trash window — otto-files behind
 # its own entry, so it gets its own icon in the dock and the applications
 # list. All three PKGBUILDs install it; leaving it out of the tarball fails

@@ -98,6 +98,15 @@ package() {
         install -Dm644 resources/wallpaper.jpg "$pkgdir/usr/share/otto/wallpaper.jpg"
     fi
 
+    # The Solar glyphs Otto's own interface draws (CC BY 4.0), with their
+    # attribution. Release tarballs from before they were added do not carry
+    # them; the apps then draw the theme's icons.
+    if [ -d resources/icons/solar ]; then
+        install -Dm644 -t "$pkgdir/usr/share/otto/icons/solar/linear" resources/icons/solar/linear/*.svg
+        install -Dm644 -t "$pkgdir/usr/share/otto/icons/solar/bold" resources/icons/solar/bold/*.svg
+        install -Dm644 resources/icons/solar/LICENSE "$pkgdir/usr/share/otto/icons/solar/LICENSE"
+    fi
+
     # Otto-MacTahoe, the default icon theme (MacTahoe, GPL-3.0). Its symlinks
     # come as a list (see scripts/packaging/fetch-icon-theme.sh); extracting
     # it here makes pacman own them like any other file. Release

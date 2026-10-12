@@ -3694,17 +3694,20 @@ fn draw_path_bar(canvas: &Canvas, f: &Frame) {
         }
 
         let names: Vec<&str> = crumb.icon.iter().map(String::as_str).collect();
-        if let Some(image) = icons::cached_icon_chain(&names, PATH_BAR_ICON as i32) {
+        if let Some(image) =
+            icons::cached_glyph_chain(&names, device_px(canvas, PATH_BAR_ICON), Color::BLACK)
+        {
             let dst = Rect::from_xywh(
                 rect.left,
                 rect.center_y() - PATH_BAR_ICON / 2.0,
                 PATH_BAR_ICON,
                 PATH_BAR_ICON,
             );
-            // Recoloured the way the sidebar's places are, and for the same
-            // reason: at this size the theme's art is a monochrome outline
-            // baked at whatever tone its author chose, which is rarely one
-            // that survives both colour schemes.
+            // Otto's own glyph where it has one. Recoloured the way the
+            // sidebar's places are, and for the same reason: at this size the
+            // theme's art is a monochrome outline baked at whatever tone its
+            // author chose, which is rarely one that survives both colour
+            // schemes.
             let mut icon_paint = Paint::default();
             icon_paint.set_color_filter(skia_safe::color_filters::blend(
                 tone,
@@ -5620,6 +5623,13 @@ fn draw_preview_icon(canvas: &Canvas, stage: Rect, icon_chain: &[String]) {
     canvas.draw_image_rect(&image, None, dst, &Paint::default());
 }
 
+/// `size` points in the canvas's device pixels, so a glyph rasterised at
+/// it stays sharp on a scaled output.
+fn device_px(canvas: &Canvas, size: f32) -> i32 {
+    let scale = canvas.local_to_device_as_3x3().scale_x().abs().max(1.0);
+    (size * scale).round() as i32
+}
+
 fn draw_sidebar(canvas: &Canvas, f: &Frame) {
     let theme = f.theme;
 
@@ -5640,16 +5650,25 @@ fn draw_sidebar(canvas: &Canvas, f: &Frame) {
             canvas.draw_rrect(RRect::new_rect_xy(rect, 6.0, 6.0), &paint);
         }
 
-        if let Some(image) = icons::cached_icon_chain(&[place.icon.as_str(), "folder"], 16) {
+        // A selected place reads white on the selection, like its label.
+        let tone = if selected {
+            Color::WHITE
+        } else {
+            theme.text_secondary
+        };
+        if let Some(image) = icons::cached_glyph_chain(
+            &[place.icon.as_str(), "folder"],
+            device_px(canvas, 16.0),
+            Color::BLACK,
+        ) {
             let dst = Rect::from_xywh(rect.left + 8.0, rect.center_y() - 8.0, 16.0, 16.0);
-            // The theme's small-size art is a monochrome outline glyph baked
-            // at whatever colour the theme authored it in — usually a dark
-            // grey that all but vanishes on a dark sidebar. SrcIn recolours
-            // it to the theme's own text tone while keeping its alpha, the
-            // way a template/symbolic icon is meant to be drawn.
+            // Otto's own glyph where it has one, otherwise the theme's
+            // small-size art: a monochrome outline baked at whatever colour
+            // the theme authored it in. Either way SrcIn gives it the tone
+            // once, keeping its alpha, the way a symbolic icon is drawn.
             let mut paint = Paint::default();
             paint.set_color_filter(skia_safe::color_filters::blend(
-                theme.text_secondary,
+                tone,
                 skia_safe::BlendMode::SrcIn,
             ));
             canvas.draw_image_rect(&image, None, dst, &paint);
