@@ -279,8 +279,9 @@ unreadable rules file, even a panic) selects everything, and if otto-arch
 cannot even be built, ci.yml's fallback writes the same all-selecting
 outputs. The output is `key=value` lines for `$GITHUB_OUTPUT`: `packages`,
 the `-p` lists the CI steps take (`clippy_args`, `test_lib_args`,
-`test_bins_args`, which leave out crates with steps of their own; the old
-workspace-wide lists when everything is affected), the area flags the job
+`test_bins_args`, which leave out crates with steps of their own;
+`--workspace` lists less those crates when everything is affected), the
+area flags the job
 gates read, derived from the crates (`compositor` for otto or otto-render,
 `rdp`, `portal`, `files`, `packaging`), and `all`. Each area has a CI job
 of its own (compositor, components, rdp, portal), run only when the area is
