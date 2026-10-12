@@ -9,6 +9,8 @@ anything you don't have to.
 > yet. Anything missing is still editable by hand. See
 > [Configuration](configuration.md).
 
+![Otto Settings on its Appearance pane: colour scheme, a blue accent swatch, rounded corners, frosting and where the window controls sit, with the sidebar of panes on the left](images/settings-appearance.jpg)
+
 ## Opening it
 
 Launch **Settings** from the Dock or the launcher, or run `otto-settings`.

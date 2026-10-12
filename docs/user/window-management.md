@@ -7,6 +7,8 @@ layout, where windows share the screen in a tree of splits, and switched back
 to stacking again. This works one workspace at a time, so the others are
 unaffected. See [Tiling](tiling.md).
 
+![Three overlapping windows: a terminal in front with coloured window controls, and a browser and a Files window behind it with their controls greyed out](images/window-management.jpg)
+
 ## Focus and raising
 
 Otto uses click-to-focus. Clicking anywhere in a window raises it to the top of

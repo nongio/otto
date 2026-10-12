@@ -8,7 +8,7 @@ The top bar runs along the top edge, with the dynamic island in the middle of
 it. Your windows sit on the workspace below. The dock floats over the bottom
 edge, or whichever edge you moved it to.
 
-![The Otto desktop: the top bar with the focused application's name and the clock, two windows over the wallpaper, and the dock along the bottom](images/desktop-tour.jpg)
+![The Otto desktop: the top bar with the focused application's menus and the clock, a browser and a Files window over the wallpaper, and the dock along the bottom](images/desktop-tour.jpg)
 
 ## The Dock
 

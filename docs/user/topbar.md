@@ -4,6 +4,8 @@
 primary monitor, with frosted-glass blur, rounded bottom corners and a soft
 shadow.
 
+![The top bar with Files focused: its View menu open from the bar, listing the view modes with their shortcuts, and the battery and clock on the right](images/topbar.jpg)
+
 ## Starting it
 
 It is a separate program, not part of the compositor. Start it from your
