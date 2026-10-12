@@ -31,13 +31,6 @@ that do not link the toolkit depend on otto-foundations directly:
   (`xdg::state_home`, for its TLS identity) and the compositor's
   `otto-render` (`xdg::runtime_dir`, for its debug hooks) use `xdg`.
 
-## Develop
-
-- `cargo test -p otto-foundations`.
-- `cargo run -p otto-arch` checks that XDG lookups stay here: the
-  `xdg-dirs-through-foundations` source rule in `architecture.toml` flags an
-  `env::var("HOME")` or `XDG_*_HOME` lookup anywhere else.
-
 Before this crate existed otto-kit depended on otto-search, a crate with
 zbus and tokio, only for name matching. The portal and the agents crates
 each carried their own copies of these helpers, and the copies did not
