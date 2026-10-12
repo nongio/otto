@@ -4,35 +4,35 @@
 // Rust guideline compliant 2026-02-21
 
 /// Collects objects and writes them out as a PDF file.
-pub struct Writer {
+pub(super) struct Writer {
     objects: Vec<Option<String>>,
 }
 
 impl Writer {
-    pub fn new() -> Self {
+    pub(super) fn new() -> Self {
         Self {
             objects: Vec::new(),
         }
     }
 
     /// A number for an object written later with [`set`](Self::set).
-    pub fn reserve(&mut self) -> usize {
+    pub(super) fn reserve(&mut self) -> usize {
         self.objects.push(None);
         self.objects.len()
     }
 
-    pub fn set(&mut self, id: usize, body: impl Into<String>) {
+    pub(super) fn set(&mut self, id: usize, body: impl Into<String>) {
         self.objects[id - 1] = Some(body.into());
     }
 
-    pub fn add(&mut self, body: impl Into<String>) -> usize {
+    pub(super) fn add(&mut self, body: impl Into<String>) -> usize {
         let id = self.reserve();
         self.set(id, body);
         id
     }
 
     /// A stream object: `dict` holds the entries besides `/Length`.
-    pub fn add_stream(&mut self, dict: &str, data: &str) -> usize {
+    pub(super) fn add_stream(&mut self, dict: &str, data: &str) -> usize {
         self.add(format!(
             "<< {dict} /Length {} >>\nstream\n{data}\nendstream",
             data.len() + 1
@@ -40,7 +40,7 @@ impl Writer {
     }
 
     /// The file, with object `root` as its catalog.
-    pub fn finish(self, root: usize) -> Vec<u8> {
+    pub(super) fn finish(self, root: usize) -> Vec<u8> {
         let mut out = b"%PDF-1.7\n%\xE2\xE3\xCF\xD3\n".to_vec();
         let mut offsets = Vec::new();
         for (index, body) in self.objects.iter().enumerate() {

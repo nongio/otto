@@ -74,13 +74,7 @@ impl Signature {
 
 /// Where the signature is kept.
 fn path() -> Option<PathBuf> {
-    let data = std::env::var_os("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .filter(|dir| dir.is_absolute())
-        .or_else(|| {
-            std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/share"))
-        })?;
-    Some(data.join("otto/signature.json"))
+    Some(otto_kit::xdg::data_home()?.join("otto/signature.json"))
 }
 
 /// The person's signature, if they have drawn one.

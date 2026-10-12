@@ -13,6 +13,7 @@ description = "Editing PDFs in place: form fields and annotations, through PDFiu
 libloading = "0.8"
 # O_NOFOLLOW and O_CLOEXEC for the file a save writes before it replaces the old.
 libc.workspace = true
+otto-foundations = { path = "../otto-foundations" }
 tracing.workspace = true
 
 [dev-dependencies]

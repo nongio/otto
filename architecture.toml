@@ -52,8 +52,8 @@ forbid_deps = [
 
 [[layer]]
 name = "service"
-description = "Clients of system services with no toolkit: search, the agents protocol"
-crates = ["otto-search", "otto-agents-client"]
+description = "Clients of system services with no toolkit: search, the agents protocol, PDFium"
+crates = ["otto-search", "otto-agents-client", "otto-pdf"]
 may_use = ["foundation"]
 lib_lints = ["unreachable_pub"]
 forbid_deps = [

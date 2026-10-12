@@ -79,7 +79,11 @@ impl Drop for Doc {
 
 impl Doc {
     /// Opens a document from its bytes and reads every page.
-    pub fn open(ffi: &'static Bindings, bytes: Vec<u8>, password: Option<String>) -> Result<Self> {
+    pub(crate) fn open(
+        ffi: &'static Bindings,
+        bytes: Vec<u8>,
+        password: Option<String>,
+    ) -> Result<Self> {
         let password = password
             .map(CString::new)
             .transpose()
@@ -127,7 +131,7 @@ impl Doc {
     /// Draws page `index` as it is now, form fields and annotations
     /// included, `width` pixels wide on white: RGBA, four bytes a pixel,
     /// opaque. Returns the height with the pixels.
-    pub fn render(&self, index: usize, width: u32) -> Result<(u32, Vec<u8>)> {
+    pub(crate) fn render(&self, index: usize, width: u32) -> Result<(u32, Vec<u8>)> {
         let shown = self
             .pages
             .get(index)
@@ -202,7 +206,7 @@ impl Doc {
     }
 
     /// What the document is now.
-    pub fn snapshot(&self) -> Snapshot {
+    pub(crate) fn snapshot(&self) -> Snapshot {
         Snapshot {
             pages: self.pages.iter().map(|page| page.geometry.page()).collect(),
             fields: self
@@ -221,7 +225,7 @@ impl Doc {
 
     /// The whole file as it would be saved now: appended to the original
     /// when `incremental`, written afresh otherwise. Encryption is kept.
-    pub fn save(&self, incremental: bool) -> Result<Vec<u8>> {
+    pub(crate) fn save(&self, incremental: bool) -> Result<Vec<u8>> {
         let flags = if incremental {
             ffi::FPDF_INCREMENTAL
         } else {
@@ -254,7 +258,7 @@ impl Doc {
     /// first, so no edit renumbers what a later one names. On an error the
     /// edits before the failing one stay made. Answers whether anything
     /// changed, with the first error.
-    pub fn apply(&mut self, edits: &[Edit]) -> (bool, Result<()>) {
+    pub(crate) fn apply(&mut self, edits: &[Edit]) -> (bool, Result<()>) {
         let mut touched = BTreeSet::new();
         let mut deletions: BTreeMap<usize, BTreeSet<usize>> = BTreeMap::new();
         let mut changed = false;

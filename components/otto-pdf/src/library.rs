@@ -55,8 +55,8 @@ fn candidates() -> Vec<PathBuf> {
     }
     paths.push(PathBuf::from("/usr/lib/otto").join(FILE_NAME));
     paths.push(PathBuf::from("/usr/local/lib/otto").join(FILE_NAME));
-    if let Some(home) = std::env::var_os("HOME").filter(|home| !home.is_empty()) {
-        paths.push(PathBuf::from(home).join(".local/lib/otto").join(FILE_NAME));
+    if let Some(home) = otto_foundations::xdg::home() {
+        paths.push(home.join(".local/lib/otto").join(FILE_NAME));
     }
     paths
 }

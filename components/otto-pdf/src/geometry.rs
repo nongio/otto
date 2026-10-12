@@ -23,7 +23,7 @@ pub(crate) struct PageGeometry {
 impl PageGeometry {
     /// A geometry from the visible box's corners (in any order) and `/Rotate`
     /// in degrees; a rotation that isn't a multiple of 90 counts as none.
-    pub fn new(box_corners: (f32, f32, f32, f32), rotate_degrees: i32) -> Self {
+    pub(crate) fn new(box_corners: (f32, f32, f32, f32), rotate_degrees: i32) -> Self {
         let (x0, y0, x1, y1) = box_corners;
         let quarter_turns = if rotate_degrees % 90 == 0 {
             (rotate_degrees / 90).rem_euclid(4) as u8
@@ -48,7 +48,7 @@ impl PageGeometry {
     }
 
     /// The page's size as shown.
-    pub fn page(self) -> Page {
+    pub(crate) fn page(self) -> Page {
         if self.quarter_turns % 2 == 1 {
             Page {
                 width: self.box_height(),
@@ -63,7 +63,7 @@ impl PageGeometry {
     }
 
     /// A user-space point on the shown page.
-    pub fn to_shown(self, (x, y): (f32, f32)) -> (f32, f32) {
+    pub(crate) fn to_shown(self, (x, y): (f32, f32)) -> (f32, f32) {
         // Unturned, from the box's top-left corner, y down.
         let (ux, uy) = (x - self.left, self.top - y);
         let (w, h) = (self.box_width(), self.box_height());
@@ -76,7 +76,7 @@ impl PageGeometry {
     }
 
     /// A shown point in user space.
-    pub fn to_user(self, (sx, sy): (f32, f32)) -> (f32, f32) {
+    pub(crate) fn to_user(self, (sx, sy): (f32, f32)) -> (f32, f32) {
         let (w, h) = (self.box_width(), self.box_height());
         let (ux, uy) = match self.quarter_turns {
             1 => (sy, h - sx),
@@ -89,14 +89,14 @@ impl PageGeometry {
 
     /// A user-space rect, as `(left, bottom, right, top)` in any order, on
     /// the shown page.
-    pub fn rect_to_shown(self, (x0, y0, x1, y1): (f32, f32, f32, f32)) -> Rect {
+    pub(crate) fn rect_to_shown(self, (x0, y0, x1, y1): (f32, f32, f32, f32)) -> Rect {
         let a = self.to_shown((x0, y0));
         let b = self.to_shown((x1, y1));
         Rect::new(a.0, a.1, b.0, b.1)
     }
 
     /// A shown rect in user space, as `(left, bottom, right, top)`.
-    pub fn rect_to_user(self, rect: Rect) -> (f32, f32, f32, f32) {
+    pub(crate) fn rect_to_user(self, rect: Rect) -> (f32, f32, f32, f32) {
         let a = self.to_user((rect.left, rect.top));
         let b = self.to_user((rect.right, rect.bottom));
         (a.0.min(b.0), a.1.min(b.1), a.0.max(b.0), a.1.max(b.1))
@@ -117,13 +117,13 @@ impl PageGeometry {
 
     /// A user-space quad (top-left, top-right, bottom-left, bottom-right in
     /// user space) on the shown page, in the same corner order as shown.
-    pub fn quad_to_shown(self, quad: [(f32, f32); 4]) -> [(f32, f32); 4] {
+    pub(crate) fn quad_to_shown(self, quad: [(f32, f32); 4]) -> [(f32, f32); 4] {
         self.quad_order().map(|from| self.to_shown(quad[from]))
     }
 
     /// A shown quad in user space, corners reordered so they are top-left,
     /// top-right, bottom-left, bottom-right in user space.
-    pub fn quad_to_user(self, quad: [(f32, f32); 4]) -> [(f32, f32); 4] {
+    pub(crate) fn quad_to_user(self, quad: [(f32, f32); 4]) -> [(f32, f32); 4] {
         let mut user = [(0.0, 0.0); 4];
         for (shown, from) in self.quad_order().into_iter().enumerate() {
             user[from] = self.to_user(quad[shown]);
@@ -134,7 +134,7 @@ impl PageGeometry {
     /// The affine matrix `(a, b, c, d, e, f)` that maps the unit square onto
     /// a shown rect so that what is up in the unit square is up as shown:
     /// how an image is placed upright on a turned page.
-    pub fn upright_matrix(self, rect: Rect) -> [f32; 6] {
+    pub(crate) fn upright_matrix(self, rect: Rect) -> [f32; 6] {
         let bottom_left = self.to_user((rect.left, rect.bottom));
         let bottom_right = self.to_user((rect.right, rect.bottom));
         let top_left = self.to_user((rect.left, rect.top));

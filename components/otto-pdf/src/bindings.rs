@@ -42,70 +42,70 @@ opaque!(
     FpdfPathSegment
 );
 
-pub type FPDF_DOCUMENT = *mut FpdfDocument;
-pub type FPDF_PAGE = *mut FpdfPage;
-pub type FPDF_ANNOTATION = *mut FpdfAnnotation;
-pub type FPDF_FORMHANDLE = *mut FpdfForm;
-pub type FPDF_PAGEOBJECT = *mut FpdfPageObject;
-pub type FPDF_BITMAP = *mut FpdfBitmap;
-pub type FPDF_SIGNATURE = *mut FpdfSignature;
-pub type FPDF_FONT = *mut FpdfFont;
-pub type FPDF_GLYPHPATH = *const FpdfGlyphPath;
-pub type FPDF_PATHSEGMENT = *const FpdfPathSegment;
+pub(crate) type FPDF_DOCUMENT = *mut FpdfDocument;
+pub(crate) type FPDF_PAGE = *mut FpdfPage;
+pub(crate) type FPDF_ANNOTATION = *mut FpdfAnnotation;
+pub(crate) type FPDF_FORMHANDLE = *mut FpdfForm;
+pub(crate) type FPDF_PAGEOBJECT = *mut FpdfPageObject;
+pub(crate) type FPDF_BITMAP = *mut FpdfBitmap;
+pub(crate) type FPDF_SIGNATURE = *mut FpdfSignature;
+pub(crate) type FPDF_FONT = *mut FpdfFont;
+pub(crate) type FPDF_GLYPHPATH = *const FpdfGlyphPath;
+pub(crate) type FPDF_PATHSEGMENT = *const FpdfPathSegment;
 
-pub const FPDF_SEGMENT_LINETO: c_int = 0;
-pub const FPDF_SEGMENT_BEZIERTO: c_int = 1;
-pub const FPDF_SEGMENT_MOVETO: c_int = 2;
-pub type FPDF_BOOL = c_int;
-pub type FPDF_DWORD = c_ulong;
-pub type FPDF_WCHAR = u16;
-pub type FPDF_WIDESTRING = *const FPDF_WCHAR;
-pub type FPDF_BYTESTRING = *const c_char;
+pub(crate) const FPDF_SEGMENT_LINETO: c_int = 0;
+pub(crate) const FPDF_SEGMENT_BEZIERTO: c_int = 1;
+pub(crate) const FPDF_SEGMENT_MOVETO: c_int = 2;
+pub(crate) type FPDF_BOOL = c_int;
+pub(crate) type FPDF_DWORD = c_ulong;
+pub(crate) type FPDF_WCHAR = u16;
+pub(crate) type FPDF_WIDESTRING = *const FPDF_WCHAR;
+pub(crate) type FPDF_BYTESTRING = *const c_char;
 
 /// `FPDF_ERR_PASSWORD`: a password is needed, or the one given is wrong.
-pub const FPDF_ERR_PASSWORD: c_ulong = 4;
+pub(crate) const FPDF_ERR_PASSWORD: c_ulong = 4;
 
 /// `FPDFBitmap_BGRA` (`fpdfview.h`): four bytes a pixel.
-pub const FPDF_BITMAP_BGRA: c_int = 4;
+pub(crate) const FPDF_BITMAP_BGRA: c_int = 4;
 /// `FPDF_ANNOT` (`fpdfview.h`): draw the page's annotations.
-pub const FPDF_RENDER_ANNOT: c_int = 0x01;
+pub(crate) const FPDF_RENDER_ANNOT: c_int = 0x01;
 /// `FPDF_REVERSE_BYTE_ORDER` (`fpdfview.h`): write RGBA rather than BGRA.
-pub const FPDF_RENDER_REVERSE_BYTE_ORDER: c_int = 0x10;
+pub(crate) const FPDF_RENDER_REVERSE_BYTE_ORDER: c_int = 0x10;
 
 /// `FPDF_INCREMENTAL`: append the changes after the original bytes.
-pub const FPDF_INCREMENTAL: FPDF_DWORD = 1 << 0;
+pub(crate) const FPDF_INCREMENTAL: FPDF_DWORD = 1 << 0;
 /// `FPDF_NO_INCREMENTAL`: write the whole file afresh. With neither this
 /// nor `FPDF_REMOVE_SECURITY`, a locked file stays locked.
-pub const FPDF_NO_INCREMENTAL: FPDF_DWORD = 1 << 1;
+pub(crate) const FPDF_NO_INCREMENTAL: FPDF_DWORD = 1 << 1;
 
-pub const FPDF_ANNOT_TEXT: c_int = 1;
-pub const FPDF_ANNOT_FREETEXT: c_int = 3;
-pub const FPDF_ANNOT_HIGHLIGHT: c_int = 9;
-pub const FPDF_ANNOT_UNDERLINE: c_int = 10;
-pub const FPDF_ANNOT_SQUIGGLY: c_int = 11;
-pub const FPDF_ANNOT_STRIKEOUT: c_int = 12;
-pub const FPDF_ANNOT_STAMP: c_int = 13;
-pub const FPDF_ANNOT_INK: c_int = 15;
-pub const FPDF_ANNOT_POPUP: c_int = 16;
-pub const FPDF_ANNOT_WIDGET: c_int = 20;
+pub(crate) const FPDF_ANNOT_TEXT: c_int = 1;
+pub(crate) const FPDF_ANNOT_FREETEXT: c_int = 3;
+pub(crate) const FPDF_ANNOT_HIGHLIGHT: c_int = 9;
+pub(crate) const FPDF_ANNOT_UNDERLINE: c_int = 10;
+pub(crate) const FPDF_ANNOT_SQUIGGLY: c_int = 11;
+pub(crate) const FPDF_ANNOT_STRIKEOUT: c_int = 12;
+pub(crate) const FPDF_ANNOT_STAMP: c_int = 13;
+pub(crate) const FPDF_ANNOT_INK: c_int = 15;
+pub(crate) const FPDF_ANNOT_POPUP: c_int = 16;
+pub(crate) const FPDF_ANNOT_WIDGET: c_int = 20;
 
-pub const FPDF_ANNOT_FLAG_PRINT: c_int = 1 << 2;
-pub const FPDF_ANNOT_FLAG_READONLY: c_int = 1 << 6;
-pub const FPDF_ANNOT_FLAG_LOCKED: c_int = 1 << 7;
+pub(crate) const FPDF_ANNOT_FLAG_PRINT: c_int = 1 << 2;
+pub(crate) const FPDF_ANNOT_FLAG_READONLY: c_int = 1 << 6;
+pub(crate) const FPDF_ANNOT_FLAG_LOCKED: c_int = 1 << 7;
 
-pub const FPDF_ANNOT_APPEARANCEMODE_NORMAL: c_int = 0;
-pub const FPDFANNOT_COLORTYPE_COLOR: c_int = 0;
+pub(crate) const FPDF_ANNOT_APPEARANCEMODE_NORMAL: c_int = 0;
+pub(crate) const FPDFANNOT_COLORTYPE_COLOR: c_int = 0;
 
 /// `FWL_VKEY_Delete`, from `fpdf_fwlevent.h`.
-pub const FWL_VKEY_DELETE: c_int = 0x2E;
+pub(crate) const FWL_VKEY_DELETE: c_int = 0x2E;
 
-pub const FPDF_FORMFIELD_PUSHBUTTON: c_int = 1;
-pub const FPDF_FORMFIELD_CHECKBOX: c_int = 2;
-pub const FPDF_FORMFIELD_RADIOBUTTON: c_int = 3;
-pub const FPDF_FORMFIELD_COMBOBOX: c_int = 4;
-pub const FPDF_FORMFIELD_LISTBOX: c_int = 5;
-pub const FPDF_FORMFIELD_TEXTFIELD: c_int = 6;
-pub const FPDF_FORMFIELD_SIGNATURE: c_int = 7;
+pub(crate) const FPDF_FORMFIELD_PUSHBUTTON: c_int = 1;
+pub(crate) const FPDF_FORMFIELD_CHECKBOX: c_int = 2;
+pub(crate) const FPDF_FORMFIELD_RADIOBUTTON: c_int = 3;
+pub(crate) const FPDF_FORMFIELD_COMBOBOX: c_int = 4;
+pub(crate) const FPDF_FORMFIELD_LISTBOX: c_int = 5;
+pub(crate) const FPDF_FORMFIELD_TEXTFIELD: c_int = 6;
+pub(crate) const FPDF_FORMFIELD_SIGNATURE: c_int = 7;
 
 /// `FS_RECTF`: in page space `top` is the larger y.
 #[repr(C)]
@@ -178,7 +178,7 @@ pub struct FPDF_FILEWRITE {
 /// A form-fill callback the engine never provides. Every one in
 /// [`FPDF_FORMFILLINFO`] is left null, which PDFium checks before calling;
 /// they are all pointer-sized, so one type stands for every signature.
-pub type Unused = Option<unsafe extern "C" fn()>;
+pub(crate) type Unused = Option<unsafe extern "C" fn()>;
 
 /// `FPDF_FORMFILLINFO`, version 2, field for field. The engine zeroes it and
 /// sets only `version`: no callbacks, no JavaScript platform, XFA off.

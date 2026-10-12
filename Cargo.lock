@@ -5428,6 +5428,7 @@ version = "1.6.0"
 dependencies = [
  "libc",
  "libloading 0.8.9",
+ "otto-foundations",
  "tempfile",
  "tracing",
 ]
