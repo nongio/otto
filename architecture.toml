@@ -271,6 +271,12 @@ areas = ["packaging"]
 reason = "The compositor embeds the icons and fallback cursor and its tests read the widgets; the rest is installed with it. A new file directly in resources/ matches none of these, so it checks everything until it is placed."
 
 [[affects]]
+paths = ["resources/icons/solar/"]
+crates = ["otto-kit"]
+areas = ["packaging"]
+reason = "Otto's interface glyphs: otto-kit finds and draws them for every app and the compositor, and its tests read them from the checkout; the packages install them."
+
+[[affects]]
 paths = ["resources/locales/"]
 crates = ["otto-kit", "otto-agents", "otto-files"]
 areas = ["packaging"]
