@@ -53,6 +53,8 @@ impl WlrForeignToplevelManagerState {
             window_id,
             current_state: Vec::new(),
             resources: Vec::new(),
+            closed: false,
+            children: Vec::new(),
         }));
 
         // Send toplevel to all manager instances
@@ -106,6 +108,12 @@ struct WlrToplevelData {
     /// Cached state bytes (array of u32 state enum values) for late-joining clients
     current_state: Vec<u8>,
     resources: Vec<ZwlrForeignToplevelHandleV1>,
+    /// Whether `closed` has gone out: a watcher destroys its handle on it,
+    /// so the handle may not be named in an event after that.
+    closed: bool,
+    /// The toplevels this one is the parent of, told they have none when
+    /// it closes.
+    children: Vec<Arc<Mutex<WlrToplevelData>>>,
 }
 
 /// Handle for a wlr foreign toplevel
@@ -162,7 +170,14 @@ impl WlrForeignToplevelHandle {
     }
 
     pub fn send_closed(&self) {
-        let data = self.data.lock().unwrap();
+        // Its dialogs lose their parent first, while the handle still names
+        // a live object on every watcher.
+        let children = std::mem::take(&mut self.data.lock().unwrap().children);
+        for child in children {
+            WlrForeignToplevelHandle { data: child }.send_parent(None);
+        }
+        let mut data = self.data.lock().unwrap();
+        data.closed = true;
         for resource in &data.resources {
             resource.closed();
         }
@@ -199,12 +214,37 @@ impl WlrForeignToplevelHandle {
 
     /// Tell every watcher which toplevel this one is a dialog of, or that it
     /// has none. Each watcher is named the parent's handle it holds itself.
+    ///
+    /// A parent that has closed is no parent: its handles are gone on the
+    /// watchers' side, and naming one is a protocol error that disconnects
+    /// them.
     pub fn send_parent(&self, parent: Option<&WlrForeignToplevelHandle>) {
-        let parents: Vec<ZwlrForeignToplevelHandleV1> = parent
-            .map(|parent| parent.data.lock().unwrap().resources.clone())
-            .unwrap_or_default();
+        let parent = parent.filter(|parent| !Arc::ptr_eq(&parent.data, &self.data));
+        let parents: Vec<ZwlrForeignToplevelHandleV1> = match parent {
+            Some(parent) => {
+                let mut parent_data = parent.data.lock().unwrap();
+                if parent_data.closed {
+                    Vec::new()
+                } else {
+                    parent_data
+                        .children
+                        .retain(|child| !Arc::ptr_eq(child, &self.data));
+                    parent_data.children.push(Arc::clone(&self.data));
+                    parent_data
+                        .resources
+                        .iter()
+                        .filter(|resource| resource.is_alive())
+                        .cloned()
+                        .collect()
+                }
+            }
+            None => Vec::new(),
+        };
         let data = self.data.lock().unwrap();
-        for resource in &data.resources {
+        if data.closed {
+            return;
+        }
+        for resource in data.resources.iter().filter(|resource| resource.is_alive()) {
             // `parent` arrived in version 3.
             if resource.version() < 3 {
                 continue;

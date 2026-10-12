@@ -239,6 +239,12 @@ impl Dispatch<ZwlrForeignToplevelHandleV1, ()> for FocusState {
                 // compositor free the object.
                 proxy.destroy();
                 if state.toplevels.remove(&id).is_some() {
+                    // The id is free for reuse: no one is its dialog any more.
+                    for info in state.toplevels.values_mut() {
+                        if info.parent == Some(id) {
+                            info.parent = None;
+                        }
+                    }
                     state.update_focused();
                 }
             }
