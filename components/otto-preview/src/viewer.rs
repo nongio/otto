@@ -1085,7 +1085,9 @@ impl Viewer {
                     self.step_version(false);
                 }
             }
-            Tool::Save => self.save(),
+            Tool::Save => {
+                self.save();
+            }
             Tool::ShowMarks => {
                 self.marks_hidden = !self.marks_hidden;
                 if self.marks_hidden {

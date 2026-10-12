@@ -296,7 +296,9 @@ no markup button.
   Save, Cancel and Save, in a popup of its own over the middle of the window,
   rounded, blurred and casting the same shadow as a menu (Return gives the
   accent button's answer, Escape or a click outside cancels). Save closes the
-  window once the file is written; if the save asks about a change on disk
+  window once the file is written, or at once when nothing is left to write
+  and no save is in flight; a close waits only on that save, never on a
+  later one. If the save asks about a change on disk
   or fails, the window closes once the answer's save (or Save As) is done,
   and stays open on Cancel. Ctrl+W, the close light and the compositor's
   close all ask.

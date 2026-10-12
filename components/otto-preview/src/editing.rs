@@ -606,24 +606,39 @@ impl Viewer {
             .is_some_and(|editing| editing.unsaved || editing.busy > 0)
     }
 
-    /// Write the document's changes over the file.
-    pub fn save(&mut self) {
+    /// Write the document's changes over the file. Returns whether a save
+    /// was queued.
+    ///
+    /// A close waiting on a save waits only while one is queued: with
+    /// nothing queued here and no save in flight, it waits no longer.
+    pub fn save(&mut self) -> bool {
         self.commit_editor();
-        if !self.unsaved() {
-            return;
+        let queued = self.unsaved() && self.queue_save(false);
+        if !queued && !self.saving() {
+            if let Some(editing) = &mut self.editing {
+                editing.close_after_save = false;
+            }
         }
-        self.queue_save(false);
+        queued
+    }
+
+    /// Whether a save or a save-as is queued and not yet done: the jobs in
+    /// flight that don't change the document.
+    fn saving(&self) -> bool {
+        self.editing
+            .as_ref()
+            .is_some_and(|editing| editing.busy > editing.changing)
     }
 
     /// Write the document over the file, replacing it when `overwrite`
-    /// even if it changed on disk.
-    fn queue_save(&mut self, overwrite: bool) {
+    /// even if it changed on disk. Returns whether it was queued.
+    fn queue_save(&mut self, overwrite: bool) -> bool {
         // The file as it is before the first save, so there is always a
         // version to step back to.
         if self.versions.is_none() {
             self.keep_version(None);
         }
-        self.queue(Job::Save { overwrite }, None);
+        self.queue(Job::Save { overwrite }, None)
     }
 
     /// Write the document to `path` and carry on with that file.
@@ -790,8 +805,15 @@ impl Viewer {
                     editing.close_after_save = true;
                 }
                 self.save();
+                // Nothing was left to write: close as asked.
+                if !self.unsaved() && !self.saving() {
+                    self.closing = true;
+                    AppContext::request_wakeup();
+                }
             }
-            Answer::Overwrite => self.queue_save(true),
+            Answer::Overwrite => {
+                self.queue_save(true);
+            }
             Answer::SaveAs => self.wants_save_as = true,
             Answer::Discard => {
                 self.closing = true;
