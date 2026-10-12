@@ -4,6 +4,7 @@
 //! Geometry lives in the `*_rect` / `*_at` helpers so drawing and hit-testing
 //! read the same numbers — the otto-kit convention. Nothing here holds state.
 
+use otto_kit::components::dropdown::field;
 use otto_kit::components::icon::Icon;
 use otto_kit::components::scroll::{ScrollRenderer, ScrollState};
 use otto_kit::components::selectable_text::{TextRun, TextSelection};
@@ -2710,7 +2711,7 @@ pub fn zoom_slider_rect(width: f32, grouped: bool) -> Option<Rect> {
 /// The slider and the grouping button, with the glyphs either side of the
 /// slider: a small picture at the small end, a large one at the large end.
 fn draw_photos_controls(canvas: &Canvas, f: &Frame, controls: PhotosControls) {
-    use otto_kit::components::dropdown::{field, DropdownInteraction};
+    use otto_kit::components::dropdown::DropdownInteraction;
     use otto_kit::components::slider::{self, SliderInteraction};
 
     let theme = f.theme;
@@ -2750,7 +2751,7 @@ fn draw_photos_controls(canvas: &Canvas, f: &Frame, controls: PhotosControls) {
         }
     }
     if let Some(group) = controls.group {
-        field::draw(
+        field::draw_placed(
             canvas,
             photos_group_rect(f.width),
             group.label(),
@@ -2759,10 +2760,19 @@ fn draw_photos_controls(canvas: &Canvas, f: &Frame, controls: PhotosControls) {
             } else {
                 DropdownInteraction::Normal
             },
+            GROUP_PLACEMENT,
             theme,
         );
     }
 }
+
+/// Where the picker's location menu opens: under its capsule, a list of
+/// places rather than a value.
+pub const LOCATION_PLACEMENT: field::Placement = field::Placement::Below;
+/// Where the picker's filter menu opens: on the current filter.
+pub const FILTER_PLACEMENT: field::Placement = field::Placement::OnValue;
+/// Where the Photos view's grouping menu opens: on the current grouping.
+pub const GROUP_PLACEMENT: field::Placement = field::Placement::OnValue;
 
 pub const SWITCHER_MODES: [ViewMode; 4] = [
     ViewMode::List,
@@ -4057,20 +4067,14 @@ fn draw_filter_control(canvas: &Canvas, f: &Frame, footer: &FooterData<'_>, wind
         .centered_on(rect.left + 12.0, rect.center_y())
         .render(canvas);
 
-    // The disclosure chevron, pointing the way the menu opens.
-    let mut chevron = Paint::default();
-    chevron.set_anti_alias(true);
-    chevron.set_color(theme.text_secondary);
-    chevron.set_style(skia_safe::paint::Style::Stroke);
-    chevron.set_stroke_width(1.6);
-    chevron.set_stroke_cap(skia_safe::paint::Cap::Round);
-    let cx = rect.right - 14.0;
-    let cy = rect.center_y();
-    let mut path = skia_safe::PathBuilder::new();
-    path.move_to((cx - 4.0, cy + 2.0));
-    path.line_to((cx, cy - 2.5));
-    path.line_to((cx + 4.0, cy + 2.0));
-    canvas.draw_path(&path.detach(), &chevron);
+    // The kit's indicator, saying where the menu opens: on the current
+    // filter, as a pop-up button's does.
+    field::draw_indicator(
+        canvas,
+        Point::new(rect.right - 14.0, rect.center_y()),
+        FILTER_PLACEMENT,
+        theme.text_secondary,
+    );
 }
 
 /// Whether the current colour scheme is the dark one — what the materials
@@ -5900,8 +5904,16 @@ fn draw_location_button(canvas: &Canvas, f: &Frame) {
     });
     canvas.draw_rrect(RRect::new_rect_xy(rect, NAV_RADIUS, NAV_RADIUS), &paint);
 
-    // Glyphs drawn rather than themed, like the switcher's: the bundled icon
-    // set has neither a downward chevron nor a new-folder sign.
+    // The kit's indicator, saying where the menu opens: below the capsule.
+    field::draw_indicator(
+        canvas,
+        Point::new(rect.right - 14.0, cy),
+        LOCATION_PLACEMENT,
+        theme.text_secondary,
+    );
+
+    // The New Folder glyph is drawn rather than themed, like the switcher's:
+    // the bundled icon set has no new-folder sign.
     let mut glyph = Paint::default();
     glyph.set_anti_alias(true);
     glyph.set_color(theme.text_secondary);
@@ -5909,13 +5921,6 @@ fn draw_location_button(canvas: &Canvas, f: &Frame) {
     glyph.set_stroke_width(1.6);
     glyph.set_stroke_cap(skia_safe::paint::Cap::Round);
     glyph.set_stroke_join(skia_safe::paint::Join::Round);
-
-    let cx = rect.right - 14.0;
-    let mut chevron = skia_safe::PathBuilder::new();
-    chevron.move_to((cx - 4.0, cy - 2.0));
-    chevron.line_to((cx, cy + 2.5));
-    chevron.line_to((cx + 4.0, cy - 2.0));
-    canvas.draw_path(&chevron.detach(), &glyph);
 
     // New Folder, beside it: a plain capsule, the same family as the nav pair.
     let button = new_folder_rect(f.width);

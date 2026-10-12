@@ -451,7 +451,6 @@ pub(super) fn start_drag(window: &Window, drag: DragStart) {
 /// The window's pop-up buttons' menus: one each, so a choice always goes
 /// back to the button that opened its menu, and opening one takes down
 /// whichever other is up (see `DropdownMenu::open`).
-#[derive(Default)]
 pub(super) struct Dropdowns {
     /// The Photos view's grouping button.
     pub(super) group: otto_kit::components::dropdown::DropdownMenu,
@@ -459,6 +458,17 @@ pub(super) struct Dropdowns {
     pub(super) location: otto_kit::components::dropdown::DropdownMenu,
     /// The picker's file-type filter.
     pub(super) filter: otto_kit::components::dropdown::DropdownMenu,
+}
+
+impl Default for Dropdowns {
+    fn default() -> Self {
+        use otto_kit::components::dropdown::DropdownMenu;
+        Self {
+            group: DropdownMenu::new().with_placement(view::GROUP_PLACEMENT),
+            location: DropdownMenu::new().with_placement(view::LOCATION_PLACEMENT),
+            filter: DropdownMenu::new().with_placement(view::FILTER_PLACEMENT),
+        }
+    }
 }
 
 impl Dropdowns {
