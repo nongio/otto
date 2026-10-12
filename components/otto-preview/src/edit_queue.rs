@@ -205,7 +205,7 @@ impl Ledger {
                 }
                 None => (Err(Failure::Stale), Vec::new()),
             },
-            Job::Undo => self.undo(target, &before),
+            Job::Undo => self.undo(target),
             Job::Redo => match self.redo.pop() {
                 Some(edits) => {
                     let made = self.make(target, &before, edits.clone());
@@ -343,19 +343,17 @@ impl Ledger {
         }
     }
 
-    fn undo(
-        &mut self,
-        target: &mut impl Target,
-        before: &Snapshot,
-    ) -> (Result<(), Failure>, Vec<usize>) {
+    fn undo(&mut self, target: &mut impl Target) -> (Result<(), Failure>, Vec<usize>) {
         let Some(last) = self.history.pop() else {
             return (Ok(()), Vec::new());
         };
         match target.rebuild(&self.path, &self.base, &self.history) {
-            Ok(_) => {
+            // The edit taken back was named against the document the edits
+            // before it leave, which is what the rebuild made.
+            Ok(made) => {
                 self.numbering += 1;
                 self.diverged = false;
-                let pages = pages_of(before, &last);
+                let pages = pages_of(&made, &last);
                 self.redo.push(last);
                 (Ok(()), pages)
             }
