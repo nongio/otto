@@ -2088,6 +2088,9 @@ studio-save = Salvar
 studio-save-as = Salvar como…
 # The save dialog's title.
 studio-save-as-title = Salvar uma cópia
+studio-open-title = Abrir no Studio
+studio-open-filter-all = Imagens e documentos
+studio-open-filter-pictures = Imagens
 # The window's title while a PDF has changes not yet saved. $name is the file's name.
 studio-title-edited = { $name } (editado)
 # Asked when a window with unsaved changes is closed. $name is the file's name.

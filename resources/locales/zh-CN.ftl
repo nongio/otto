@@ -2059,6 +2059,9 @@ studio-save = 存储
 studio-save-as = 存储为…
 # The save dialog's title.
 studio-save-as-title = 存储副本
+studio-open-title = 在 Studio 中打开
+studio-open-filter-all = 图片和文档
+studio-open-filter-pictures = 图片
 # The window's title while a PDF has changes not yet saved. $name is the file's name.
 studio-title-edited = { $name }（已编辑）
 # Asked when a window with unsaved changes is closed. $name is the file's name.

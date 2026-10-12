@@ -18,6 +18,8 @@ Underneath it is still `otto-preview` (the program, its app id and the
 ## Goals
 
 - `otto-preview PATH` opens one window on `PATH`, titled with the file's name.
+  With no path (the dock, a launcher, a bare `otto-preview`) it asks which
+  file to open in the desktop's open dialog, and opens that.
 - One Preview runs per session. The first start owns the session-bus name
   `org.otto.Preview1`; a later start calls its `Open(path, token)` and exits.
   The running Preview opens the file in a new window, or, when a window
@@ -70,7 +72,13 @@ Underneath it is still `otto-preview` (the program, its app id and the
 - A path that does not exist or cannot be read still opens a window, showing
   the reason in place of the content, as Peek does.
 - `--version` and `--help` print and exit without connecting to the display.
-  With no path the usage is printed and the exit status is 2.
+- With no path the desktop's open dialog (the file-chooser portal's
+  `OpenFile`, titled "Open in Studio") comes up before any window, filtered
+  to the types the desktop entry installs Studio for: everything first, then
+  pictures, PDF and Markdown each on their own. Choosing a file opens it as
+  if named on the command line, so a running Studio shows it; cancelling
+  exits quietly with status 0. When no dialog can be shown (no session bus,
+  no portal) the usage is printed and the exit status is 2.
 - The window's app id is `otto-preview`, matching its desktop entry.
 
 ### Following the file

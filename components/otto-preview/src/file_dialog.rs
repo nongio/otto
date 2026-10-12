@@ -1,8 +1,10 @@
-//! Asking where to save a copy of the file, through the desktop portal's
-//! `SaveFile`: Otto's own save dialog, the same door any application uses.
+//! The file dialogs, through the desktop portal's `FileChooser`: Otto's own
+//! picker, the same door any application uses. One asks which file to open
+//! when Studio starts with none named; the other where to save a copy.
 //!
-//! The call blocks for as long as the dialog is up, so it runs on a thread
-//! of its own, as Settings' file picker does.
+//! A call blocks for as long as the dialog is up. Opening happens before
+//! there is a window, so it may hold the main thread; saving runs on a
+//! thread of its own, as Settings' file picker does.
 
 // Rust guideline compliant 2026-02-21
 
@@ -17,10 +19,28 @@ const PORTAL_PATH: &str = "/org/freedesktop/portal/desktop";
 const FILE_CHOOSER: &str = "org.freedesktop.portal.FileChooser";
 const REQUEST: &str = "org.freedesktop.portal.Request";
 
+/// The pictures Studio is installed for, as the desktop entry lists them.
+const PICTURE_TYPES: &[&str] = &[
+    "image/png",
+    "image/jpeg",
+    "image/gif",
+    "image/webp",
+    "image/bmp",
+    "image/svg+xml",
+    "image/avif",
+    "image/heif",
+];
+/// The documents Studio is installed for.
+const DOCUMENT_TYPES: &[&str] = &["application/pdf", "text/markdown"];
+
+/// A filter as the portal takes it: `(label, [(kind, pattern)])`, `kind`
+/// `0` a glob and `1` a MIME type.
+type Filter = (String, Vec<(u32, String)>);
+
 /// What the dialog came back with.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Outcome {
-    /// Where to save, an absolute local path.
+    /// The file chosen, an absolute local path.
     Chosen(PathBuf),
     /// The person cancelled.
     Dismissed,
@@ -43,16 +63,81 @@ fn folder_bytes(folder: &Path) -> Vec<u8> {
     bytes
 }
 
+/// A filter matching every MIME type in `kinds`.
+fn mime_filter(label: String, kinds: &[&str]) -> Filter {
+    (
+        label,
+        kinds.iter().map(|kind| (1, (*kind).to_owned())).collect(),
+    )
+}
+
+/// What the open dialog offers: everything Studio shows first, then
+/// pictures, PDFs and Markdown on their own.
+fn open_filters() -> Vec<Filter> {
+    let all: Vec<&str> = PICTURE_TYPES
+        .iter()
+        .chain(DOCUMENT_TYPES)
+        .copied()
+        .collect();
+    vec![
+        mime_filter(otto_kit::t_owned!("studio-open-filter-all"), &all),
+        mime_filter(
+            otto_kit::t_owned!("studio-open-filter-pictures"),
+            PICTURE_TYPES,
+        ),
+        (
+            "PDF".into(),
+            vec![(0, "*.pdf".into()), (1, "application/pdf".into())],
+        ),
+        (
+            "Markdown".into(),
+            vec![(0, "*.md".into()), (1, "text/markdown".into())],
+        ),
+    ]
+}
+
+/// Ask which file to open, titled `title`, and block until the dialog is
+/// answered.
+pub fn open(title: &str) -> Outcome {
+    let mut options: HashMap<&str, Value<'static>> = HashMap::new();
+    options.insert("filters", Value::from(open_filters()));
+    ask("OpenFile", title, options)
+}
+
 /// Ask where to save a copy of `file`, titled `title`, and block until the
 /// dialog is answered.
-pub fn ask(file: &Path, title: &str) -> Outcome {
+pub fn save_as(file: &Path, title: &str) -> Outcome {
+    let name = suggested_name(file);
+    let filters: Vec<Filter> = vec![(
+        "PDF".into(),
+        vec![(0, "*.pdf".into()), (1, "application/pdf".into())],
+    )];
+    let mut options: HashMap<&str, Value<'static>> = HashMap::new();
+    options.insert("current_name", Value::from(name));
+    if let Some(folder) = file.parent() {
+        options.insert("current_folder", Value::from(folder_bytes(folder)));
+    }
+    options.insert("filters", Value::from(filters));
+    match ask("SaveFile", title, options) {
+        Outcome::Chosen(path) => Outcome::Chosen(with_pdf_extension(path)),
+        other => other,
+    }
+}
+
+/// Call the portal's `method` (`OpenFile` or `SaveFile`) titled `title` with
+/// `options`, and block for the first local file in its answer.
+fn ask(method: &str, title: &str, mut options: HashMap<&str, Value<'static>>) -> Outcome {
     let connection = match Connection::session() {
         Ok(connection) => connection,
         Err(err) => return Outcome::Failed(format!("no session bus: {err}")),
     };
     // The request's path is derived from our unique name and the token, so
     // the answer is listened for before the call and can't be missed.
-    let token = format!("otto_preview_save_{}", std::process::id());
+    let token = format!(
+        "otto_preview_{}_{}",
+        method.to_ascii_lowercase(),
+        std::process::id()
+    );
     let Some(unique) = connection.unique_name().map(|name| name.to_string()) else {
         return Outcome::Failed("no unique bus name".into());
     };
@@ -77,23 +162,12 @@ pub fn ask(file: &Path, title: &str) -> Outcome {
             Err(err) => return Outcome::Failed(format!("no portal: {err}")),
         };
 
-    let name = suggested_name(file);
-    let filters: Vec<(String, Vec<(u32, String)>)> = vec![(
-        "PDF".into(),
-        vec![(0, "*.pdf".into()), (1, "application/pdf".into())],
-    )];
-    let mut options: HashMap<&str, Value> = HashMap::new();
-    options.insert("handle_token", Value::from(token.as_str()));
+    options.insert("handle_token", Value::from(token.clone()));
     options.insert("modal", Value::from(true));
-    options.insert("current_name", Value::from(name.as_str()));
-    if let Some(folder) = file.parent() {
-        options.insert("current_folder", Value::from(folder_bytes(folder)));
-    }
-    options.insert("filters", Value::from(filters));
 
-    let handle: zbus::Result<OwnedObjectPath> = portal.call("SaveFile", &("", title, options));
+    let handle: zbus::Result<OwnedObjectPath> = portal.call(method, &("", title, options));
     if let Err(err) = handle {
-        return Outcome::Failed(format!("SaveFile failed: {err}"));
+        return Outcome::Failed(format!("{method} failed: {err}"));
     }
     let Some(message) = responses.next() else {
         return Outcome::Failed("the portal closed without answering".into());
@@ -112,7 +186,7 @@ pub fn ask(file: &Path, title: &str) -> Outcome {
         .and_then(|value| Vec::<String>::try_from(value).ok())
         .and_then(|uris| uris.into_iter().next());
     match uri.as_deref().and_then(otto_kit::uri::uri_to_path) {
-        Some(path) => Outcome::Chosen(with_pdf_extension(path)),
+        Some(path) => Outcome::Chosen(path),
         None => Outcome::Failed(format!("no local file in the answer ({uri:?})")),
     }
 }
@@ -142,5 +216,19 @@ mod tests {
             with_pdf_extension(PathBuf::from("/home/me/filled.PDF")),
             PathBuf::from("/home/me/filled.PDF")
         );
+    }
+
+    #[test]
+    fn the_open_dialog_offers_every_type_studio_is_installed_for() {
+        let filters = open_filters();
+        let all = &filters[0].1;
+        for kind in PICTURE_TYPES.iter().chain(DOCUMENT_TYPES) {
+            assert!(
+                all.iter()
+                    .any(|(mime, pattern)| *mime == 1 && pattern == kind),
+                "{kind} missing from the first filter"
+            );
+        }
+        assert_eq!(filters.len(), 4);
     }
 }

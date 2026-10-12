@@ -530,13 +530,13 @@ fn open_for_editing(viewer: &Arc<Mutex<Viewer>>, path: &Path, generation: u64) {
 fn ask_save_as(viewer: Arc<Mutex<Viewer>>, file: PathBuf) {
     std::thread::spawn(move || {
         let title = otto_kit::t_owned!("studio-save-as-title");
-        match crate::save_as::ask(&file, &title) {
-            crate::save_as::Outcome::Chosen(path) => {
+        match crate::file_dialog::save_as(&file, &title) {
+            crate::file_dialog::Outcome::Chosen(path) => {
                 viewer.lock().unwrap().save_as(path);
                 AppContext::request_wakeup();
             }
-            crate::save_as::Outcome::Dismissed => viewer.lock().unwrap().save_as_dismissed(),
-            crate::save_as::Outcome::Failed(why) => {
+            crate::file_dialog::Outcome::Dismissed => viewer.lock().unwrap().save_as_dismissed(),
+            crate::file_dialog::Outcome::Failed(why) => {
                 tracing::warn!(%why, "no save dialog");
                 viewer.lock().unwrap().save_as_dismissed();
             }

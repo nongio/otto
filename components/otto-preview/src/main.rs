@@ -22,11 +22,11 @@ mod content;
 mod cursors;
 mod edit_queue;
 mod editing;
+mod file_dialog;
 mod instance;
 mod marks;
 mod mcp;
 mod pdf_tools;
-mod save_as;
 mod shortcuts;
 mod sidebar;
 mod signature;
@@ -53,7 +53,7 @@ const DEFAULT_SIZE: (f32, f32) = (960.0, 720.0);
 /// dimensions can sit behind a large EXIF block.
 const HEADER_BYTES: u64 = 256 * 1024;
 
-const USAGE: &str = "usage: otto-preview [--chat] [--session URI] PATH";
+const USAGE: &str = "usage: otto-preview [--chat] [--session URI] [PATH]";
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // First, before the runtime starts a thread: the sandboxed decode worker
@@ -68,13 +68,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let Some((path, chat, session)) = path_from_args() else {
         return Ok(());
     };
+    // Started with no file, from the dock or a launcher: ask for one. The
+    // dialog is Otto's own picker through the portal, up before any window
+    // of ours, so the main thread may wait on it.
+    let path = match path {
+        Some(path) => path,
+        None => match file_dialog::open(&otto_kit::t_owned!("studio-open-title")) {
+            file_dialog::Outcome::Chosen(path) => path,
+            file_dialog::Outcome::Dismissed => return Ok(()),
+            file_dialog::Outcome::Failed(why) => {
+                eprintln!("otto-preview: no file picker ({why})");
+                eprintln!("{USAGE}");
+                std::process::exit(2);
+            }
+        },
+    };
     tokio::runtime::Runtime::new()?.block_on(run(path, chat, session))
 }
 
-/// The file named on the command line, as an absolute path, and whether
-/// `--chat` asks for the chat beside it. `None` after answering `--help` or
-/// `--version`; exits when no file is named.
-fn path_from_args() -> Option<(PathBuf, bool, Option<String>)> {
+/// The file named on the command line, as an absolute path, or `None` when
+/// none is, and whether `--chat` asks for the chat beside it. `None`
+/// altogether after answering `--help` or `--version`.
+#[allow(clippy::type_complexity)]
+fn path_from_args() -> Option<(Option<PathBuf>, bool, Option<String>)> {
     let mut path = None;
     let mut chat = false;
     let mut session = None;
@@ -104,11 +120,8 @@ fn path_from_args() -> Option<(PathBuf, bool, Option<String>)> {
             _ => {}
         }
     }
-    let Some(path) = path else {
-        eprintln!("{USAGE}");
-        std::process::exit(2);
-    };
-    Some((std::path::absolute(&path).unwrap_or(path), chat, session))
+    let path = path.map(|path| std::path::absolute(&path).unwrap_or(path));
+    Some((path, chat, session))
 }
 
 async fn run(
