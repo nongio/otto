@@ -247,7 +247,11 @@ One window per request. Layout:
 - **Titlebar** — the request's `title`, or "Open" / "Save As" / "Save Files".
   Client-decorated, per Otto's convention.
 - **Toolbar** — back/forward, a parent-directory control, the view switcher
-  (list / icon), a sort control, and a search field.
+  (list / icon), a sort control, and a search field. The location control
+  and the action row's file-type filter are the kit's pop-up buttons, drawn
+  the way Settings draws its own: the location shows the folder's icon
+  before its name and opens its menu below; the filter opens its menu on
+  the current filter.
 - **Path bar** — the current directory as clickable ancestor segments; clicking
   a segment navigates to it.
 - **Sidebar** — the same places list as the browser: the XDG user directories
