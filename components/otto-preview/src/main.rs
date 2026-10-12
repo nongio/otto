@@ -27,6 +27,7 @@ mod instance;
 mod marks;
 mod mcp;
 mod pdf_tools;
+mod picking;
 mod shortcuts;
 mod sidebar;
 mod signature;
@@ -46,7 +47,7 @@ const FIT_H: f32 = 800.0;
 /// fills the screen reads as a takeover rather than a document.
 const BOUNDS_SHARE: (f32, f32) = (0.75, 0.8);
 /// The window for a file read from the top down: a PDF or a Markdown document.
-const DOCUMENT_SIZE: (f32, f32) = (760.0, 860.0);
+pub(crate) const DOCUMENT_SIZE: (f32, f32) = (760.0, 860.0);
 /// The window for everything else.
 const DEFAULT_SIZE: (f32, f32) = (960.0, 720.0);
 /// How much of a picture is read to find its size in the header. A JPEG's
@@ -68,22 +69,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let Some((path, chat, session)) = path_from_args() else {
         return Ok(());
     };
-    // Started with no file, from the dock or a launcher: ask for one. The
-    // dialog is Otto's own picker through the portal, up before any window
-    // of ours, so the main thread may wait on it.
-    let path = match path {
-        Some(path) => path,
-        None => match file_dialog::open(&otto_kit::t_owned!("studio-open-title")) {
-            file_dialog::Outcome::Chosen(path) => path,
-            file_dialog::Outcome::Dismissed => return Ok(()),
-            file_dialog::Outcome::Failed(why) => {
-                eprintln!("otto-preview: no file picker ({why})");
-                eprintln!("{USAGE}");
-                std::process::exit(2);
-            }
-        },
-    };
-    tokio::runtime::Runtime::new()?.block_on(run(path, chat, session))
+    let runtime = tokio::runtime::Runtime::new()?;
+    match path {
+        Some(path) => runtime.block_on(run(path, chat, session)),
+        // Started with no file, from the dock or a launcher: an empty
+        // window asks for one. See `picking`.
+        None => runtime.block_on(pick(chat, session)),
+    }
 }
 
 /// The file named on the command line, as an absolute path, or `None` when
@@ -122,6 +114,21 @@ fn path_from_args() -> Option<(Option<PathBuf>, bool, Option<String>)> {
     }
     let path = path.map(|path| std::path::absolute(&path).unwrap_or(path));
     Some((path, chat, session))
+}
+
+/// Open an empty window and the desktop's open dialog over it. The bus
+/// name is claimed, or the file handed to the Studio holding it, once a
+/// file is chosen.
+async fn pick(chat: bool, session: Option<String>) -> Result<(), Box<dyn std::error::Error>> {
+    otto_kit::logging::init("info");
+    otto_kit::icon_theme::spawn_icon_theme_watcher();
+    let app = app::PreviewApp::picking(
+        chat,
+        session,
+        instance::Inbox::default(),
+        instance::Documents::default(),
+    );
+    otto_kit::AppRunner::new(app).run()
 }
 
 async fn run(

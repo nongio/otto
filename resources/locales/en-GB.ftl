@@ -1832,6 +1832,8 @@ studio-open-title = Open in Studio
 # The open dialog's filters: everything Studio shows, and pictures alone.
 studio-open-filter-all = Pictures and documents
 studio-open-filter-pictures = Pictures
+# The empty window under the open dialog, when Studio starts with no file.
+studio-pick-hint = Choose a file to open
 # The window's title while a PDF has changes not yet saved. $name is the file's name.
 studio-title-edited = { $name } (edited)
 # Asked when a window with unsaved changes is closed. $name is the file's name.

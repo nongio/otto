@@ -96,12 +96,13 @@ fn open_filters() -> Vec<Filter> {
     ]
 }
 
-/// Ask which file to open, titled `title`, and block until the dialog is
-/// answered.
-pub fn open(title: &str) -> Outcome {
+/// Ask which file to open, titled `title`, as a dialog of the window
+/// `parent` names (`wayland:<handle>`, or empty for none), and block until
+/// the dialog is answered.
+pub fn open(title: &str, parent: &str) -> Outcome {
     let mut options: HashMap<&str, Value<'static>> = HashMap::new();
     options.insert("filters", Value::from(open_filters()));
-    ask("OpenFile", title, options)
+    ask("OpenFile", parent, title, options)
 }
 
 /// Ask where to save a copy of `file`, titled `title`, and block until the
@@ -118,15 +119,21 @@ pub fn save_as(file: &Path, title: &str) -> Outcome {
         options.insert("current_folder", Value::from(folder_bytes(folder)));
     }
     options.insert("filters", Value::from(filters));
-    match ask("SaveFile", title, options) {
+    match ask("SaveFile", "", title, options) {
         Outcome::Chosen(path) => Outcome::Chosen(with_pdf_extension(path)),
         other => other,
     }
 }
 
-/// Call the portal's `method` (`OpenFile` or `SaveFile`) titled `title` with
-/// `options`, and block for the first local file in its answer.
-fn ask(method: &str, title: &str, mut options: HashMap<&str, Value<'static>>) -> Outcome {
+/// Call the portal's `method` (`OpenFile` or `SaveFile`) titled `title`,
+/// under the window `parent` names, with `options`, and block for the first
+/// local file in its answer.
+fn ask(
+    method: &str,
+    parent: &str,
+    title: &str,
+    mut options: HashMap<&str, Value<'static>>,
+) -> Outcome {
     let connection = match Connection::session() {
         Ok(connection) => connection,
         Err(err) => return Outcome::Failed(format!("no session bus: {err}")),
@@ -165,7 +172,7 @@ fn ask(method: &str, title: &str, mut options: HashMap<&str, Value<'static>>) ->
     options.insert("handle_token", Value::from(token.clone()));
     options.insert("modal", Value::from(true));
 
-    let handle: zbus::Result<OwnedObjectPath> = portal.call(method, &("", title, options));
+    let handle: zbus::Result<OwnedObjectPath> = portal.call(method, &(parent, title, options));
     if let Err(err) = handle {
         return Outcome::Failed(format!("{method} failed: {err}"));
     }
