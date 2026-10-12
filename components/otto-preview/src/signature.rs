@@ -93,11 +93,55 @@ pub fn load() -> Option<Signature> {
 /// Keep `signature` as the person's.
 pub fn save(signature: &Signature) -> std::io::Result<()> {
     let path = path().ok_or_else(|| std::io::Error::other("no data folder"))?;
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
     let text = serde_json::to_string(signature).map_err(std::io::Error::other)?;
-    std::fs::write(path, text)
+    write_private(&path, text.as_bytes())
+}
+
+/// Write `bytes` to `path` for the person alone to read: into a new file
+/// beside it, readable by its owner only from the moment it exists, synced,
+/// then renamed over `path`, so nobody else ever reads it and nobody reads
+/// half of it.
+fn write_private(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::hash::{BuildHasher, Hasher};
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let dir = path
+        .parent()
+        .ok_or_else(|| std::io::Error::other("no folder to keep it in"))?;
+    std::fs::create_dir_all(dir)?;
+    // A name nobody can guess ahead of time: the standard library's random
+    // hash keys over the clock and the process.
+    let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
+    hasher.write_u128(now.as_nanos());
+    hasher.write_u32(std::process::id());
+    let name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let temp = dir.join(format!(".{name}.{:016x}", hasher.finish()));
+    // `create_new` never opens a file, or a link, already there.
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&temp)?;
+    let written = file
+        .write_all(bytes)
+        .and_then(|()| file.sync_all())
+        .and_then(|()| std::fs::rename(&temp, path));
+    drop(file);
+    if let Err(err) = written {
+        let _ = std::fs::remove_file(&temp);
+        return Err(err);
+    }
+    if let Ok(dir) = std::fs::File::open(dir) {
+        let _ = dir.sync_all();
+    }
+    Ok(())
 }
 
 /// What a press on the pad asks for.
@@ -370,6 +414,23 @@ impl Pad {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_signature_is_written_for_its_owner_alone_and_whole() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("otto/signature.json");
+        write_private(&path, b"first").unwrap();
+        write_private(&path, b"second").unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"second");
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+        let names: Vec<_> = std::fs::read_dir(path.parent().unwrap())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert_eq!(names, vec![std::ffi::OsString::from("signature.json")]);
+    }
 
     fn signature() -> Signature {
         Signature {
