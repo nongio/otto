@@ -2046,3 +2046,38 @@ studio-sheet-dictate = 音声入力
 studio-sheet-stop-agent = エージェントを停止
 studio-sheet-to-document = 書類に戻る
 studio-sheet-cmd = Cmd は Ctrl と同じように使えます
+# Toggle: the strip of tools that fill in and mark up a PDF, written into
+# the file itself.
+studio-markup = マークアップツール
+# Writes a PDF's form and markup changes over the file.
+studio-save = 保存
+# Saves the PDF under another name or in another folder, and carries on with that file.
+studio-save-as = 別名で保存…
+# The save dialog's title.
+studio-save-as-title = コピーを保存
+# The window's title while a PDF has changes not yet saved. $name is the file's name.
+studio-title-edited = { $name }（編集済み）
+# Asked when a window with unsaved changes is closed. $name is the file's name.
+studio-close-title = 「{ $name }」の変更を保存しますか?
+studio-close-body = 保存しないと、変更内容は失われます。
+studio-close-discard = 保存しない
+studio-close-cancel = キャンセル
+# Asked when saving would replace changes made to the file by another app
+# since it was opened. $name is the file's name.
+studio-changed-title = 「{ $name }」はディスク上で変更されました
+studio-changed-body = 保存すると、ほかの場所で加えられた変更が置き換えられます。
+# Saves over the file anyway, replacing the changes made elsewhere.
+studio-changed-overwrite = それでも保存
+# Shown when a PDF's changes couldn't be written; the reason follows on its
+# own line. $name is the file's name.
+studio-save-failed-title = 「{ $name }」を保存できませんでした
+studio-save-failed-body = 変更を残すには、別の場所にコピーを保存します。
+# Deletes the highlight, drawing, text or signature selected on the page.
+studio-delete-selection = 選択部分を削除
+studio-sheet-next-field = 次のフォームフィールド
+# The card a signature is drawn on, once, before it is placed on a PDF.
+studio-signature-title = 署名を描く
+studio-signature-hint = 線の上に署名
+studio-signature-clear = 消去
+studio-signature-cancel = キャンセル
+studio-signature-done = 完了

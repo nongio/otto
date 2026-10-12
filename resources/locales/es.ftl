@@ -2069,3 +2069,38 @@ studio-sheet-dictate = Dictar
 studio-sheet-stop-agent = Detener el agente
 studio-sheet-to-document = Volver al documento
 studio-sheet-cmd = Cmd funciona donde funciona Ctrl
+# Toggle: the strip of tools that fill in and mark up a PDF, written into
+# the file itself.
+studio-markup = Herramientas de marcación
+# Writes a PDF's form and markup changes over the file.
+studio-save = Guardar
+# Saves the PDF under another name or in another folder, and carries on with that file.
+studio-save-as = Guardar como…
+# The save dialog's title.
+studio-save-as-title = Guardar una copia
+# The window's title while a PDF has changes not yet saved. $name is the file's name.
+studio-title-edited = { $name } (editado)
+# Asked when a window with unsaved changes is closed. $name is the file's name.
+studio-close-title = ¿Guardar los cambios en «{ $name }»?
+studio-close-body = Si no los guardas, los cambios se pierden.
+studio-close-discard = No guardar
+studio-close-cancel = Cancelar
+# Asked when saving would replace changes made to the file by another app
+# since it was opened. $name is the file's name.
+studio-changed-title = «{ $name }» ha cambiado en el disco
+studio-changed-body = Al guardar se reemplazan los cambios hechos en otro lugar.
+# Saves over the file anyway, replacing the changes made elsewhere.
+studio-changed-overwrite = Guardar igualmente
+# Shown when a PDF's changes couldn't be written; the reason follows on its
+# own line. $name is the file's name.
+studio-save-failed-title = No se ha podido guardar «{ $name }»
+studio-save-failed-body = Guarda una copia en otro lugar para conservar los cambios.
+# Deletes the highlight, drawing, text or signature selected on the page.
+studio-delete-selection = Eliminar selección
+studio-sheet-next-field = Siguiente campo del formulario
+# The card a signature is drawn on, once, before it is placed on a PDF.
+studio-signature-title = Dibujar la firma
+studio-signature-hint = Firma sobre la línea
+studio-signature-clear = Borrar
+studio-signature-cancel = Cancelar
+studio-signature-done = Listo

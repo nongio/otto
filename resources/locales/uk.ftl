@@ -2139,3 +2139,38 @@ studio-sheet-dictate = Диктувати
 studio-sheet-stop-agent = Зупинити агента
 studio-sheet-to-document = Повернутися до документа
 studio-sheet-cmd = Cmd працює всюди, де Ctrl
+# Toggle: the strip of tools that fill in and mark up a PDF, written into
+# the file itself.
+studio-markup = Інструменти розмітки
+# Writes a PDF's form and markup changes over the file.
+studio-save = Зберегти
+# Saves the PDF under another name or in another folder, and carries on with that file.
+studio-save-as = Зберегти як…
+# The save dialog's title.
+studio-save-as-title = Зберегти копію
+# The window's title while a PDF has changes not yet saved. $name is the file's name.
+studio-title-edited = { $name } (змінено)
+# Asked when a window with unsaved changes is closed. $name is the file's name.
+studio-close-title = Зберегти зміни в «{ $name }»?
+studio-close-body = Якщо не зберегти зміни, їх буде втрачено.
+studio-close-discard = Не зберігати
+studio-close-cancel = Скасувати
+# Asked when saving would replace changes made to the file by another app
+# since it was opened. $name is the file's name.
+studio-changed-title = Файл «{ $name }» змінено на диску
+studio-changed-body = Збереження замінить зміни, зроблені в іншому місці.
+# Saves over the file anyway, replacing the changes made elsewhere.
+studio-changed-overwrite = Усе одно зберегти
+# Shown when a PDF's changes couldn't be written; the reason follows on its
+# own line. $name is the file's name.
+studio-save-failed-title = Не вдалося зберегти «{ $name }»
+studio-save-failed-body = Щоб не втратити зміни, збережи копію в іншому місці.
+# Deletes the highlight, drawing, text or signature selected on the page.
+studio-delete-selection = Видалити вибране
+studio-sheet-next-field = Наступне поле форми
+# The card a signature is drawn on, once, before it is placed on a PDF.
+studio-signature-title = Намалюй підпис
+studio-signature-hint = Розпишися над лінією
+studio-signature-clear = Очистити
+studio-signature-cancel = Скасувати
+studio-signature-done = Готово

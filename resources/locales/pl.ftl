@@ -2151,3 +2151,38 @@ studio-sheet-dictate = Dyktuj
 studio-sheet-stop-agent = Zatrzymaj agenta
 studio-sheet-to-document = Wróć do dokumentu
 studio-sheet-cmd = Cmd działa wszędzie tam, gdzie Ctrl
+# Toggle: the strip of tools that fill in and mark up a PDF, written into
+# the file itself.
+studio-markup = Narzędzia oznaczeń
+# Writes a PDF's form and markup changes over the file.
+studio-save = Zapisz
+# Saves the PDF under another name or in another folder, and carries on with that file.
+studio-save-as = Zapisz jako…
+# The save dialog's title.
+studio-save-as-title = Zapisz kopię
+# The window's title while a PDF has changes not yet saved. $name is the file's name.
+studio-title-edited = { $name } (edytowano)
+# Asked when a window with unsaved changes is closed. $name is the file's name.
+studio-close-title = Zapisać zmiany w „{ $name }”?
+studio-close-body = Jeśli ich nie zapiszesz, zmiany zostaną utracone.
+studio-close-discard = Nie zapisuj
+studio-close-cancel = Anuluj
+# Asked when saving would replace changes made to the file by another app
+# since it was opened. $name is the file's name.
+studio-changed-title = Plik „{ $name }” zmienił się na dysku
+studio-changed-body = Zapisanie zastąpi zmiany wprowadzone gdzie indziej.
+# Saves over the file anyway, replacing the changes made elsewhere.
+studio-changed-overwrite = Zapisz mimo to
+# Shown when a PDF's changes couldn't be written; the reason follows on its
+# own line. $name is the file's name.
+studio-save-failed-title = Nie można zapisać pliku „{ $name }”
+studio-save-failed-body = Zapisz kopię w innym miejscu, aby zachować zmiany.
+# Deletes the highlight, drawing, text or signature selected on the page.
+studio-delete-selection = Usuń zaznaczone
+studio-sheet-next-field = Następne pole formularza
+# The card a signature is drawn on, once, before it is placed on a PDF.
+studio-signature-title = Narysuj podpis
+studio-signature-hint = Podpisz nad linią
+studio-signature-clear = Wyczyść
+studio-signature-cancel = Anuluj
+studio-signature-done = Gotowe
