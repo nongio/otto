@@ -9,6 +9,12 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Every job gets a read-only token; publish-nightly and release raise it to
+# `contents: write` themselves, which is all they need to push a tag and a
+# release.
+permissions:
+  contents: read
+
 # A PR that gets pushed to twice in a minute used to run every job three times
 # over. Superseded runs on the same ref are cancelled; runs on main and on tags
 # publish artifacts, so those are never cancelled.
