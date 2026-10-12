@@ -10,7 +10,9 @@
 //! value clipped to the field, chevron pair. This just adds interaction
 //! states and a hit-test helper that reads the same `rect`.
 
-use skia_safe::{Canvas, ClipOp, Color, Paint, PaintStyle, Path, PathBuilder, Point, RRect, Rect};
+use skia_safe::{
+    Canvas, ClipOp, Color, Image, Paint, PaintStyle, Path, PathBuilder, Point, RRect, Rect,
+};
 
 use crate::common::Renderable;
 use crate::components::label::Label;
@@ -102,6 +104,30 @@ pub fn draw_placed(
     placement: Placement,
     theme: &Theme,
 ) {
+    draw_with_icon(canvas, rect, None, label, interaction, placement, theme);
+}
+
+/// Side of the icon a field may show before its value, in points.
+pub const ICON_SIZE: f32 = 16.0;
+
+/// Where the value starts, from the field's left edge.
+const TEXT_INSET: f32 = 9.0;
+/// The gap between an icon and the value after it.
+const ICON_GAP: f32 = 6.0;
+
+/// [`draw_placed`], with `icon` drawn [`ICON_SIZE`] square before the value
+/// when there is one: a field whose values are places reads faster by their
+/// icons, the way its menu's rows do. The image is drawn as it is, in its
+/// own colours.
+pub fn draw_with_icon(
+    canvas: &Canvas,
+    rect: Rect,
+    icon: Option<&Image>,
+    label: &str,
+    interaction: DropdownInteraction,
+    placement: Placement,
+    theme: &Theme,
+) {
     let disabled = interaction == DropdownInteraction::Disabled;
     let open = interaction == DropdownInteraction::Open;
 
@@ -144,13 +170,28 @@ pub fn draw_placed(
     } else {
         theme.text_primary
     };
+    let mut text_x = rect.left + TEXT_INSET;
+    if let Some(image) = icon {
+        let dst = Rect::from_xywh(
+            text_x,
+            rect.center_y() - ICON_SIZE / 2.0,
+            ICON_SIZE,
+            ICON_SIZE,
+        );
+        let mut paint = Paint::default();
+        if disabled {
+            paint.set_alpha_f(0.5);
+        }
+        canvas.draw_image_rect(image, None, dst, &paint);
+        text_x += ICON_SIZE + ICON_GAP;
+    }
     Label::new(label)
         // A size under the row label beside it: the value is what the
         // button holds, and set as large as the label the two read as one
         // run of text with a box drawn round half of it.
         .with_style(styles::CALLOUT)
         .with_color(text_color)
-        .centered_on(rect.left + 9.0, rect.center_y())
+        .centered_on(text_x, rect.center_y())
         .render(canvas);
     canvas.restore();
 
@@ -290,6 +331,11 @@ mod tests {
         let mut surface = skia_safe::surfaces::raster_n32_premul((200, 60)).expect("surface");
         let canvas = surface.canvas();
         let r = rect();
+        let icon = {
+            let mut icon = skia_safe::surfaces::raster_n32_premul((16, 16)).expect("icon");
+            icon.canvas().clear(Color::RED);
+            icon.image_snapshot()
+        };
         for theme in [Theme::light(), Theme::dark()] {
             for state in [
                 DropdownInteraction::Normal,
@@ -300,6 +346,15 @@ mod tests {
             ] {
                 for placement in [Placement::Below, Placement::Above, Placement::OnValue] {
                     draw_placed(canvas, r, "Documents", state, placement, &theme);
+                    draw_with_icon(
+                        canvas,
+                        r,
+                        Some(&icon),
+                        "Documents",
+                        state,
+                        placement,
+                        &theme,
+                    );
                 }
             }
         }

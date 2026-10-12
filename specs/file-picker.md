@@ -248,8 +248,10 @@ One window per request. Layout:
   Client-decorated, per Otto's convention.
 - **Toolbar** — back/forward, a parent-directory control, the view switcher
   (list / icon), a sort control, and a search field. It is the browser's
-  toolbar, Solar glyphs included; the location capsule's and the filter's
-  chevrons are Solar too.
+  toolbar, Solar glyphs included. The location control and the action row's
+  file-type filter are the kit's pop-up buttons, drawn the way Settings draws
+  its own: the location shows the folder's icon before its name and opens its
+  menu below; the filter opens its menu on the current filter.
 - **Path bar** — the current directory as clickable ancestor segments; clicking
   a segment navigates to it.
 - **Sidebar** — the same places list as the browser: the XDG user directories
