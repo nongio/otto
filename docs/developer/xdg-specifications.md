@@ -149,7 +149,7 @@ rather than a change Otto can make alone. It also needs an answer to which
 output's geometry a cached picture composited to two panels should use. See
 the pixel-geometry note below.
 
-**The `BGRH` hardcode.** `src/renderer/skia_surface.rs` builds both main
+**The `BGRH` hardcode.** `crates/otto-render/src/renderer/skia_surface.rs` builds both main
 surfaces with `PixelGeometry::BGRH` and the comment "for font rendering
 optimisations", while `src/udev/device.rs` reads the connector's real subpixel
 layout into the `Output` and nothing ever reads it back. Given the paragraph

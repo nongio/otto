@@ -42,7 +42,7 @@ pub(crate) struct TextureBacking {
 
 impl TextureBacking {
     /// Backs `image` with `memory`.
-    pub fn new(
+    pub(crate) fn new(
         memory: TextureMemory,
         image: skia::Image,
         flipped: bool,
@@ -57,7 +57,9 @@ impl TextureBacking {
     }
 
     /// The surface that writes a memory texture, or `None` for a dmabuf.
-    pub fn memory_surface(&self) -> Option<std::sync::MutexGuard<'_, Option<TextureMemory>>> {
+    pub(crate) fn memory_surface(
+        &self,
+    ) -> Option<std::sync::MutexGuard<'_, Option<TextureMemory>>> {
         let guard = self.memory.lock().unwrap_or_else(|e| e.into_inner());
         matches!(*guard, Some(TextureMemory::Memory(_))).then_some(guard)
     }

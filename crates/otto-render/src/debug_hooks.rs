@@ -46,7 +46,11 @@ pub fn take_file(_path: &str) -> Option<String> {
 /// override nor a runtime directory the hook is off (`None`). Resolved once
 /// per process by the callers: it is polled per frame.
 pub fn command_file_path(env: &str, name: &str) -> Option<String> {
-    resolve_command_file(std::env::var(env).ok(), otto_kit::xdg::runtime_dir(), name)
+    resolve_command_file(
+        std::env::var(env).ok(),
+        otto_foundations::xdg::runtime_dir(),
+        name,
+    )
 }
 
 fn resolve_command_file(

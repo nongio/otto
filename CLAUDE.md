@@ -41,6 +41,7 @@ RUST_LOG=debug cargo run -- --winit 2> winit.log
 The workspace includes standalone components built with `-p`:
 ```sh
 cargo build -p otto-kit
+cargo build -p otto-render   # the compositor's render stack (crates/otto-render)
 cargo build -p topbar
 cargo build -p apps-manager
 cargo build -p xdg-desktop-portal-otto
@@ -83,11 +84,11 @@ The state module also contains protocol handler implementations (`*_handler.rs` 
 
 1. **Scene Graph**: `lay-rs` engine manages the scene tree and Taffy-based layout
 2. **Element Building**: `src/render.rs` produces `OutputRenderElements` per output
-3. **Skia Renderer**: `src/skia_renderer.rs` with sub-components:
-   - `src/renderer/skia_surface.rs` — Skia surface creation and management
-   - `src/renderer/textures.rs` — Texture types combining OpenGL and Skia
-   - `src/renderer/sync.rs` — GPU synchronization using EGL fences
-   - `src/renderer/egl_context.rs` — EGL surface wrappers
+3. **Skia Renderer**: the `otto-render` crate (`crates/otto-render/`), re-exported by `src/lib.rs` under its old paths (`crate::renderer`, `crate::skia_renderer`, `crate::render_elements`, …). `crates/otto-render/src/skia_renderer.rs` with sub-components:
+   - `crates/otto-render/src/renderer/skia_surface.rs` — Skia surface creation and management
+   - `crates/otto-render/src/renderer/textures.rs` — Texture types combining OpenGL and Skia
+   - `crates/otto-render/src/renderer/sync.rs` — GPU synchronization using EGL fences
+   - `crates/otto-render/src/renderer/egl_context.rs` — EGL surface wrappers
 4. **Damage Tracking**: `OutputDamageTracker` from Smithay renders only damaged regions
 5. **Frame Submission**: Backend submits the composed buffer (dmabuf on DRM, presented on winit/x11)
 
@@ -96,6 +97,10 @@ The state module also contains protocol handler implementations (`*_handler.rs` 
 - `src/shell/` — Protocol implementations for XDG shell, layer shell, XWayland
 - `src/workspaces/` — Workspace logic, window views, dock, app switcher, expose mode
 - `src/workspaces/window_view/` — Individual window rendering and effects (genie minimize)
+
+### Compositor crates
+
+- `crates/otto-render/` — The render stack split out of the compositor: `SkiaRenderer`, `renderer/` (EGL, textures, sync, Skia on Vulkan), `render_elements/` (scene and plane elements), `drawing`, `textures_storage`, `render_phase_stats`, `debug_hooks`. It cannot name the compositor, so window management, input and configuration stay out of it; features mirror `otto`'s (`egl`, `udev`, `vulkan`, `ticker`, `debug-hooks`, `perf-counters`, `profile-with-puffin`), which `otto` forwards.
 
 ### Components
 
@@ -113,7 +118,7 @@ Located in `src/screenshare/`. See [docs/developer/screenshare.md](./docs/develo
 
 ### Architecture Rules
 
-The crate layers (foundation → service → toolkit → kit → app; the compositor may use foundation and toolkit), the compositor's module boundaries and single-home code (XDG lookups only in `otto_foundations::xdg`) are rules in `architecture.toml`, checked by `cargo run -p otto-arch` (CI's `architecture` job). Third-party policy (who may link Smithay, GStreamer, PipeWire) is in `deny.toml`: `cargo deny --workspace check bans -D unused-wrapper` (without `--workspace` it only checks the compositor). A new crate goes in its layer, then `cargo run -p otto-arch -- --bless` refreshes the graph in `docs/developer/architecture.md`. Existing violations are `[[allow]]` entries with a reason; fix code rather than add entries. See [docs/developer/architecture.md](./docs/developer/architecture.md).
+The crate layers (foundation → service → toolkit → kit → app; compositor-core, the compositor's own crates like `otto-render`, may use foundation; the compositor may use foundation, toolkit and compositor-core), the compositor's module boundaries and single-home code (XDG lookups only in `otto_foundations::xdg`) are rules in `architecture.toml`, checked by `cargo run -p otto-arch` (CI's `architecture` job). Third-party policy (who may link Smithay, GStreamer, PipeWire) is in `deny.toml`: `cargo deny --workspace check bans -D unused-wrapper` (without `--workspace` it only checks the compositor). A new crate goes in its layer, then `cargo run -p otto-arch -- --bless` refreshes the graph in `docs/developer/architecture.md`. Existing violations are `[[allow]]` entries with a reason; fix code rather than add entries. See [docs/developer/architecture.md](./docs/developer/architecture.md).
 
 ## Coordinate Systems & Naming Conventions
 

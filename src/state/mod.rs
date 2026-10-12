@@ -1073,7 +1073,9 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             ..Default::default()
         });
         let _ = layers_engine.add_layer(&root_layer);
-        let scene_element = SceneElement::with_engine(layers_engine.clone());
+        let scene_element = SceneElement::with_engine(layers_engine.clone(), || {
+            Config::with(|c| c.occlusion_culling)
+        });
         let (workspaces, remove_workspace_receiver, rename_workspace_receiver) =
             Workspaces::new(layers_engine.clone(), dh.clone());
         handle

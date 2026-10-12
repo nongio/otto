@@ -119,17 +119,17 @@ pub(crate) struct SyncPool {
 
 impl SyncPool {
     /// Serial of the last frame signal submitted.
-    pub fn submitted(&self) -> u64 {
+    pub(super) fn submitted(&self) -> u64 {
         self.submitted
     }
 
     /// Serial of the last frame signal the GPU has reached.
-    pub fn completed(&self) -> u64 {
+    pub(super) fn completed(&self) -> u64 {
         self.completed
     }
 
     /// Moves pairs whose batch has executed back to the free list.
-    pub fn reclaim(&mut self, device: &Device) {
+    pub(super) fn reclaim(&mut self, device: &Device) {
         let vk = device.vk();
         let mut i = 0;
         while i < self.pending.len() {
@@ -190,7 +190,7 @@ impl SyncPool {
     /// # Errors
     ///
     /// Returns an error when the submit itself fails.
-    pub fn signal(
+    pub(super) fn signal(
         &mut self,
         device: &Device,
         support: SyncFdSupport,
@@ -312,7 +312,7 @@ impl SyncPool {
     ///
     /// Returns an error when the import or the submit fails; the caller then
     /// waits on the CPU.
-    pub fn wait(&mut self, device: &Device, sync_file: OwnedFd) -> Result<(), SkiaVkError> {
+    pub(super) fn wait(&mut self, device: &Device, sync_file: OwnedFd) -> Result<(), SkiaVkError> {
         let ext = device
             .vk_khr_external_semaphore_fd()
             .ok_or(SkiaVkError::MissingExtension(
@@ -368,7 +368,7 @@ impl SyncPool {
     /// Destroys every semaphore, fence and the barrier command buffer.
     ///
     /// The caller has waited for the device to go idle.
-    pub fn destroy(&mut self, device: &Device) {
+    pub(super) fn destroy(&mut self, device: &Device) {
         let vk = device.vk();
         if let Some((pool, _)) = self.barrier.take() {
             // SAFETY: the device is idle; destroying the pool frees its buffer.

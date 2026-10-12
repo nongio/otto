@@ -1,9 +1,10 @@
 # Project Structure
 
-Otto is a Cargo workspace. The root crate is the compositor itself.
-`components/` holds the applications and the libraries they share; each
-application is a separate binary that talks to the compositor over Wayland and
-D-Bus like any other client.
+Otto is a Cargo workspace. The root crate is the compositor itself, and
+`crates/` holds libraries split out of it (today the render stack,
+`otto-render`). `components/` holds the applications and the libraries they
+share; each application is a separate binary that talks to the compositor over
+Wayland and D-Bus like any other client.
 
 That split is deliberate and worth internalising early: **the top bar, the
 launcher, the lock screen and the greeter are not part of the compositor.**
@@ -29,9 +30,6 @@ src/
 ├── config/              TOML parsing, layered config, shortcuts
 ├── theme/               Colour palettes and text styles
 ├── render.rs            Builds the per-output render element list
-├── render_elements/     Render element types handed to the damage tracker
-├── skia_renderer.rs     Skia wrapper over Smithay's GlesRenderer
-├── renderer/            EGL surfaces, textures, GPU sync
 ├── udev/                Production backend: DRM/GBM/libinput (see below)
 ├── winit.rs             Development backend: run inside another compositor
 ├── x11.rs               X11 client backend (basic, not actively maintained)
@@ -48,6 +46,23 @@ src/
 ├── login.rs             greetd session handoff
 └── utils/               Shared helpers (natural layout, geometry, …)
 ```
+
+The render stack is the `otto-render` crate, which `lib.rs` re-exports under
+its old paths (`crate::renderer`, `crate::skia_renderer`, …):
+
+```
+crates/otto-render/src/
+├── skia_renderer.rs     Skia wrapper over Smithay's GlesRenderer
+├── renderer/            EGL surfaces, textures, GPU sync; vulkan/ is Skia on Vulkan
+├── render_elements/     Render element types handed to the damage tracker
+├── drawing.rs           Pointer element, fps counter
+├── textures_storage.rs  Texture cache
+├── render_phase_stats.rs Per-phase frame timings
+└── debug_hooks.rs       File-driven debug toggles
+```
+
+Being its own crate, it cannot reach into windows, workspaces, input or the
+configuration: the compositor hands it elements and settings.
 
 `src/udev/` is a directory. The interesting parts are `render.rs` (the frame
 path, by far the largest), `planes.rs` and `backdrop.rs` (hardware plane
@@ -175,7 +190,7 @@ cargo run --features dev -- --winit
 |---------|--------|
 | `dev` | Convenience: `debug` + `profile` + `debugger` + `debug-hooks` |
 | `debug` | Debug-only functionality, including RenderDoc capture |
-| `debug-hooks` | File-driven live toggles and command files under `/tmp` (see `src/debug_hooks.rs`) |
+| `debug-hooks` | File-driven live toggles and command files under `/tmp` (see `crates/otto-render/src/debug_hooks.rs`) |
 | `debugger` | lay-rs scene debugger on `localhost:8000`, needed to inspect the live scene graph |
 | `debug-kms` | Extra KMS/plane logging; opt in explicitly |
 | `profile` | Puffin profiling (compositor + lay-rs) |

@@ -87,7 +87,8 @@ jobs:
           # crate reads; they only reach the packaging jobs. resources/locales
           # counts as UI below: the catalogues are strings, which the locales
           # job and the workspace unit tests cover, not the headless suites.
-          COMPOSITOR='^(src|tests|protocols)/|^resources/(?!bin/|plugins/|locales/)|^otto_config.*\.toml$'
+          # crates/ holds the compositor's own libraries (otto-render).
+          COMPOSITOR='^(src|crates|tests|protocols)/|^resources/(?!bin/|plugins/|locales/)|^otto_config.*\.toml$'
           RDP='^components/(otto-rdp|otto-dbus)/'
           PORTAL='^components/(xdg-desktop-portal-otto|otto-dbus|otto-foundations)/'
           # Every component except the two with their own filters above.
@@ -288,6 +289,13 @@ jobs:
         # `ticker` is opt-in like `x11`, and stopped compiling the same way.
         if: needs.changes.outputs.compositor == 'true'
         run: cargo clippy --locked -p otto --features "default,x11,ticker" -- -D warnings
+      - name: Clippy (render stack)
+        # otto-render's own tests and default features (udev and Vulkan): the
+        # compositor steps above lint only the library, built with their
+        # feature sets. The components step lints it too, but only on a UI
+        # change.
+        if: needs.changes.outputs.compositor == 'true'
+        run: cargo clippy --locked -p otto-render --all-targets -- -D warnings
       - name: Clippy (components)
         # Everything with no filter of its own, sample clients included.
         # submenu-gtk is the one exception: it needs GTK development libraries

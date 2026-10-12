@@ -28,7 +28,7 @@ multiple-versions = "allow"
 deny = [
     # The server side of Wayland. Only the compositor speaks it; a client
     # that needs a compositor-side type wants a protocol instead.
-    { crate = "smithay", wrappers = ["otto"], reason = "only the compositor links the Wayland server" },
+    { crate = "smithay", wrappers = ["otto", "otto-render"], reason = "only the compositor and its render stack link the Wayland server" },
     { crate = "smithay-drm-extras", wrappers = ["otto"], reason = "only the compositor drives DRM" },
     # The server library itself, so a client cannot go around Smithay. The
     # third-party wrappers are protocol crates whose `server` feature the

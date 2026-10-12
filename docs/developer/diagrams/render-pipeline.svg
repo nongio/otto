@@ -52,7 +52,7 @@
   <text class="tm" x="392" y="274">nothing damaged → skip the whole frame</text>
 
   <rect class="acc" x="180" y="284" width="400" height="50" rx="7"/>
-  <text class="t"  x="196" y="306">3. SkiaRenderer draws  —  src/skia_renderer.rs</text>
+  <text class="t"  x="196" y="306">3. SkiaRenderer draws  —  crates/otto-render/src/skia_renderer.rs</text>
   <text class="tm" x="196" y="324">EGL framebuffer wrapped as a Skia surface; scene painted into its canvas</text>
 
   <path class="ln" d="M380 334 L380 358"/>

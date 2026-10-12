@@ -19,7 +19,7 @@ wayland-protocols-wlr = { workspace = true, features = ["server"] }
 image = { version = "0.25", optional = true, default-features = false, features = ["png"] }
 xcursor = { workspace = true, optional = true }
 xkbcommon.workspace = true
-thiserror = "2"
+thiserror.workspace = true
 anyhow.workspace = true
 tokio = { workspace = true, features = ["full"] }
 # Accessibility: the AT-SPI object model for Otto's own chrome. The adapter
@@ -36,7 +36,7 @@ shell-words = "1.1"
 tracing = { workspace = true, features = ["max_level_trace", "release_max_level_trace"] }
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 puffin_http = { version = "0.16", optional = true }
-profiling = { version = "1.0" }
+profiling.workspace = true
 renderdoc = { version = "0.11.0", optional = true }
 serde.workspace = true
 serde_json.workspace = true
@@ -50,6 +50,7 @@ pipewire.workspace = true
 brightness = "0.8.0"
 mpris = "2.0"
 otto-kit = { path = "components/otto-kit" }
+otto-render = { path = "crates/otto-render", default-features = false }
 
 laye-rs.workspace = true
 
@@ -60,12 +61,10 @@ branch = "feat/vulkan-device"
 # local development: path = "../smithay-latest/smithay-drm-extras"
 optional = true
 
+# The fork and its branch are declared once in [workspace.dependencies]:
+# otto-render links the same one.
 [dependencies.smithay]
-# fork: upstream master + dmabuf-scanout + xwm focus + the Vulkan device layer
-git = "https://github.com/nongio/smithay"
-branch = "feat/vulkan-device"
-# local development: path = "../smithay-latest"
-default-features = false
+workspace = true
 features = [
     "backend_winit",
     "wayland_frontend",
@@ -76,18 +75,18 @@ features = [
 ]
 
 [features]
-perf-counters = []
+perf-counters = ["otto-render/perf-counters"]
 default = ["egl", "winit", "udev", "renderer_sync", "xwayland", "vulkan"]
 dev = ["debug", "profile", "debugger", "debug-hooks"]
-# File-driven live toggles and command files under /tmp (see src/debug_hooks.rs).
-debug-hooks = []
+# File-driven live toggles and command files under /tmp (see crates/otto-render/src/debug_hooks.rs).
+debug-hooks = ["otto-render/debug-hooks"]
 debug = ["image/png", "renderdoc"] # "ticker" — add debug-kms explicitly when needed
 debug-kms = []
 debugger = ["laye-rs/debugger"]
 profile = ["profile-with-puffin", "laye-rs/profile-with-puffin"]
-ticker = ["dep:fps_ticker", "image"]
+ticker = ["dep:fps_ticker", "image", "otto-render/ticker"]
 metrics = []
-egl = ["smithay/use_system_lib", "smithay/backend_egl"]
+egl = ["smithay/use_system_lib", "smithay/backend_egl", "otto-render/egl"]
 udev = [
     "smithay-drm-extras",
     "smithay/backend_libinput",
@@ -101,6 +100,7 @@ udev = [
     "smithay/renderer_gl",
     "smithay/renderer_multi",
     "xcursor",
+    "otto-render/udev",
 ]
 winit = ["smithay/backend_winit", "smithay/backend_drm"]
 x11 = [
@@ -113,12 +113,16 @@ xwayland = [
     "smithay/x11rb_event_source",
     "xcursor",
 ]
-profile-with-puffin = ["profiling/profile-with-puffin", "puffin_http"]
+profile-with-puffin = [
+    "profiling/profile-with-puffin",
+    "puffin_http",
+    "otto-render/profile-with-puffin",
+]
 profile-with-tracy = ["profiling/profile-with-tracy"]
 profile-with-tracy-mem = ["profile-with-tracy"]
 headless = []
 # Skia on Vulkan for the udev backend; winit and x11 stay on GL.
-vulkan = ["udev"]
+vulkan = ["udev", "otto-render/vulkan"]
 renderer_sync = []
 
 [dev-dependencies]
@@ -175,6 +179,7 @@ members = [
     "components/otto-search",
     "components/otto-foundations",
     "components/otto-dictate",
+    "crates/otto-render",
     "tools/otto-arch",
     "sample-clients/client-rainbow",
     "sample-clients/submenu",
@@ -240,14 +245,22 @@ khronos-egl = "6"
 libc = "0.2"
 memfd = "0.6"
 pipewire = "0.9"
+profiling = "1.0"
 serde = "1.0.213"
 serde_json = "1"
 # Pinned to the release laye-rs builds against: skia-safe links the native Skia
 # library, so a build can only ever hold one copy of it.
 skia-safe = "=0.93"
 smithay-client-toolkit = { version = "0.19", default-features = false }
+# The Wayland server library. The compositor and its render stack
+# (otto-render) link the same fork, so it is declared once; lean here, each
+# member turns on the backends it uses.
+# Fork: upstream master + dmabuf-scanout + xwm focus + the Vulkan device layer.
+# Local development: smithay = { path = "../smithay-latest", default-features = false }
+smithay = { git = "https://github.com/nongio/smithay", branch = "feat/vulkan-device", default-features = false }
 taffy = "0.5"
 tempfile = "3.13"
+thiserror = "2"
 tokio = "1"
 toml = { version = "1.1", default-features = false }
 toml_edit = "0.25"

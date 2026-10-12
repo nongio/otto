@@ -19,15 +19,15 @@ import sys
 import tomllib
 
 # The crates whose closure decides each area. `ui` is every workspace member
-# not claimed by the compositor or the two leaf crates, matching the UI path
-# filter in ci.yml.
+# not claimed by the compositor (with its crates/) or the two leaf crates,
+# matching the UI path filter in ci.yml.
 ROOTS = {
-    "compositor": {"otto"},
+    "compositor": {"otto", "otto-render"},
     "rdp": {"otto-rdp"},
     "portal": {"xdg-desktop-portal-otto"},
     "files": {"otto-files", "otto-peek", "otto-media-kit"},
 }
-NOT_UI = {"otto", "otto-rdp", "xdg-desktop-portal-otto"}
+NOT_UI = {"otto", "otto-render", "otto-rdp", "xdg-desktop-portal-otto"}
 
 
 def load(sha: str) -> list[dict]:

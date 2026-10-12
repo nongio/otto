@@ -205,7 +205,7 @@ Getting these wrong is usually why something is slow or stale, and
 ## From tree to pixels
 
 The scene reaches Smithay through **`SceneElement`**
-(`src/render_elements/scene_element.rs`), a render element that draws a node
+(`crates/otto-render/src/render_elements/scene_element.rs`), a render element that draws a node
 and its descendants. It has three modes:
 
 - **Whole scene**: the default, and the fallback for an output with no
@@ -228,7 +228,7 @@ path does, or it diverges from what is on screen.
 
 ### And onto KMS planes
 
-`SceneDmabufElement` (`src/render_elements/scene_dmabuf_element.rs`) is the
+`SceneDmabufElement` (`crates/otto-render/src/render_elements/scene_dmabuf_element.rs`) is the
 same idea with a buffer attached: it renders a subtree, identified by a
 `NodeRef`, into a GBM swapchain (2–3 slots, to avoid KMS scanning out a buffer
 the GPU is still writing). Each slot is exported as a `Dmabuf` and handed to
@@ -301,8 +301,8 @@ Design background and what was deliberately left out:
 | Per-output tree construction | `src/workspaces/mod.rs` (`map_output`) |
 | Per-window layers | `src/workspaces/window_view/view.rs` |
 | Surface layer configuration and the draw closure | `src/workspaces/utils/mod.rs` |
-| Scene → Smithay render element | `src/render_elements/scene_element.rs` |
-| Scene subtree → dmabuf → KMS plane | `src/render_elements/scene_dmabuf_element.rs`, `src/udev/planes.rs` |
+| Scene → Smithay render element | `crates/otto-render/src/render_elements/scene_element.rs` |
+| Scene subtree → dmabuf → KMS plane | `crates/otto-render/src/render_elements/scene_dmabuf_element.rs`, `src/udev/planes.rs` |
 | Client-facing protocol | `src/surface_style/` |
 
 ## Debugging

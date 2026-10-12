@@ -5038,6 +5038,7 @@ dependencies = [
  "mpris",
  "otto-emoji",
  "otto-kit",
+ "otto-render",
  "pipewire",
  "profiling",
  "puffin_http 0.16.1",
@@ -5492,6 +5493,19 @@ dependencies = [
  "wayland-protocols-wlr",
  "xkbcommon 0.9.0",
  "zbus",
+]
+
+[[package]]
+name = "otto-render"
+version = "1.6.0"
+dependencies = [
+ "laye-rs",
+ "libc",
+ "otto-foundations",
+ "profiling",
+ "smithay",
+ "thiserror 2.0.17",
+ "tracing",
 ]
 
 [[package]]
