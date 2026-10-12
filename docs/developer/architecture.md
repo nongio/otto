@@ -159,8 +159,11 @@ flowchart BT
 
 Inside one crate the compiler draws no boundary, so `otto-arch` parses `src/`
 with `syn` and collects each top-level module's `crate::` paths: in code, in
-`use` trees and inside macro calls. A name the crate root re-exports
-(`crate::Otto`) counts as the module it comes from. Test code counts too: a
+`use` trees and inside macro calls. A name the crate root re-exports from
+one of its own modules (`crate::Otto`) counts as that module. A module it
+re-exports from another crate keeps its own name, whether reached as
+`crate::renderer::…` or `otto_render::renderer::…`, so a rule's `to` can
+still name it. Test code counts too: a
 test that reaches into a backend couples the same way. A `[[module_rule]]`
 forbids one group of modules from naming another:
 
@@ -168,7 +171,7 @@ forbids one group of modules from naming another:
   `headless`, another backend included. A backend drives the shared
   compositor through the `Backend` trait.
 - **config-is-a-leaf**: `config`, `theme` and `utils` depend on nothing that
-  reads them.
+  reads them, the renderer included.
 
 `lib.rs` and `main.rs` wire the modules together and are exempt.
 
@@ -178,7 +181,7 @@ and no rule needs. The render stack went first: `drawing`, `renderer`,
 and `debug_hooks` are the `otto-render` crate (compositor-core), which cannot
 name the compositor at all, so the old render-stack-below-window-management
 rule is gone. `lib.rs` re-exports the moved modules under their old paths,
-and the scan counts `crate::renderer::…` as a use of `otto_render`. Settings
+which config-is-a-leaf still names. Settings
 the renderer needs are handed in by the compositor (the occlusion-culling
 switch is a function `SceneElement::with_engine` takes), not read from
 `config`.

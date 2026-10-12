@@ -208,12 +208,19 @@ fn list(items: &[String]) -> String {
 // ---------------------------------------------------------------------------
 
 /// For each top-level module of `src/`, the top-level modules it names
-/// through `crate::`, with one place each is named from. A name re-exported
-/// from the crate root (`crate::Otto`) counts as the module it comes from.
-/// Test code counts too: a test reaching into a backend couples the same way.
-pub fn module_graph(src: &Path) -> Result<BTreeMap<String, BTreeMap<String, String>>, String> {
-    let reexports = root_reexports(&src.join("lib.rs"))?;
-    let mut graph: BTreeMap<String, BTreeMap<String, String>> = BTreeMap::new();
+/// through `crate::`, with one place each is named from. A name the crate root
+/// re-exports from one of its own modules (`crate::Otto`) counts as that
+/// module; a module re-exported from another crate (`crate::renderer`, from
+/// otto-render) keeps its own name, so a rule can still forbid it, and so does
+/// an item re-exported from inside one (`crate::SkiaRenderer` counts as
+/// `renderer`). A path through that crate (`otto_render::renderer`) counts the
+/// same, for the modules the root re-exports. Test code counts too: a test
+/// reaching into a backend couples the same way. Also returns the root's
+/// re-exports, which say what a rule may name.
+fn module_graph(src: &Path) -> Result<(ModuleGraph, Reexports), String> {
+    let reexports = root_reexports(src)?;
+    let roots: BTreeSet<String> = reexports.crates.keys().cloned().collect();
+    let mut graph = ModuleGraph::new();
     for file in rust_files(src)? {
         let rel = file.strip_prefix(src).unwrap();
         let top = rel
@@ -227,11 +234,22 @@ pub fn module_graph(src: &Path) -> Result<BTreeMap<String, BTreeMap<String, Stri
             continue;
         }
         let ast = parse(&file)?;
-        let mut v = CratePaths::default();
+        let mut v = CratePaths::rooted_at(&roots);
         v.visit_file(&ast);
         let entry = graph.entry(top.clone()).or_default();
-        for (name, line) in v.found {
-            let target = reexports.get(&name).cloned().unwrap_or(name);
+        for (root, name, line) in v.found {
+            let target = if root == "crate" {
+                reexports
+                    .local
+                    .get(&name)
+                    .or_else(|| reexports.external.get(&name))
+                    .cloned()
+                    .unwrap_or(name)
+            } else if reexports.crates[&root].contains(&name) {
+                name
+            } else {
+                continue;
+            };
             if target != top {
                 entry
                     .entry(target)
@@ -239,68 +257,142 @@ pub fn module_graph(src: &Path) -> Result<BTreeMap<String, BTreeMap<String, Stri
             }
         }
     }
-    Ok(graph)
+    Ok((graph, reexports))
 }
 
-/// `pub use module::{Name, ..}` in the crate root, as name -> module.
-fn root_reexports(lib: &Path) -> Result<BTreeMap<String, String>, String> {
-    fn leaves(tree: &syn::UseTree, module: &str, out: &mut BTreeMap<String, String>) {
+type ModuleGraph = BTreeMap<String, BTreeMap<String, String>>;
+
+/// What the crate root re-exports.
+#[derive(Default)]
+struct Reexports {
+    /// Names from the crate's own modules, as name -> module.
+    local: BTreeMap<String, String>,
+    /// Names from other crates, as name -> the other crate's module they are
+    /// or come from (`renderer` -> `renderer`, `SkiaRenderer` -> `renderer`).
+    external: BTreeMap<String, String>,
+    /// Each of those crates (`otto_render`), with the modules re-exported
+    /// from it: a path through the crate to one of them counts as that
+    /// module.
+    crates: BTreeMap<String, BTreeSet<String>>,
+}
+
+impl Reexports {
+    /// The other crates' modules a rule may name.
+    fn external_modules(&self) -> BTreeSet<&String> {
+        self.crates.values().flatten().collect()
+    }
+}
+
+/// The `pub use` items in the crate root. A use is the crate's own when its
+/// path starts at `crate`, `self` or a `mod` the root declares, and another
+/// crate's otherwise.
+fn root_reexports(src: &Path) -> Result<Reexports, String> {
+    /// Each name a use tree brings in, with the first segment of its path
+    /// (`first` once a segment is behind).
+    fn leaves(tree: &syn::UseTree, first: Option<&str>, out: &mut Vec<(String, String)>) {
+        let module = |ident: &syn::Ident| match first {
+            Some(f) => f.to_owned(),
+            None => ident.to_string(),
+        };
         match tree {
-            syn::UseTree::Path(p) => leaves(&p.tree, module, out),
-            syn::UseTree::Name(n) => {
-                out.insert(n.ident.to_string(), module.to_owned());
+            syn::UseTree::Path(p) => leaves(&p.tree, Some(&module(&p.ident)), out),
+            syn::UseTree::Name(n) if n.ident == "self" => {
+                if let Some(f) = first {
+                    out.push((f.to_owned(), f.to_owned()));
+                }
             }
-            syn::UseTree::Rename(r) => {
-                out.insert(r.rename.to_string(), module.to_owned());
+            syn::UseTree::Name(n) => out.push((n.ident.to_string(), module(&n.ident))),
+            syn::UseTree::Rename(r) if r.ident == "self" => {
+                if let Some(f) = first {
+                    out.push((r.rename.to_string(), f.to_owned()));
+                }
             }
-            syn::UseTree::Group(g) => g.items.iter().for_each(|t| leaves(t, module, out)),
+            syn::UseTree::Rename(r) => out.push((r.rename.to_string(), module(&r.ident))),
+            syn::UseTree::Group(g) => g.items.iter().for_each(|t| leaves(t, first, out)),
             syn::UseTree::Glob(_) => {}
         }
     }
-    let mut out = BTreeMap::new();
+    let mut out = Reexports::default();
+    let lib = src.join("lib.rs");
     if !lib.is_file() {
         return Ok(out);
     }
-    for item in parse(lib)?.items {
+    let items = parse(&lib)?.items;
+    let own: BTreeSet<String> = items
+        .iter()
+        .filter_map(|item| match item {
+            syn::Item::Mod(m) => Some(m.ident.to_string()),
+            _ => None,
+        })
+        .collect();
+    for item in &items {
         let syn::Item::Use(u) = item else { continue };
         if !matches!(u.vis, syn::Visibility::Public(_)) {
             continue;
         }
-        let syn::UseTree::Path(mut p) = u.tree else {
+        let syn::UseTree::Path(p) = &u.tree else {
             continue;
         };
-        if p.ident == "crate" {
-            let syn::UseTree::Path(inner) = *p.tree else {
-                continue;
-            };
-            p = inner;
+        let (tree, local) = match p.ident.to_string().as_str() {
+            "crate" | "self" => (&*p.tree, true),
+            "super" => continue,
+            first => (&u.tree, own.contains(first)),
+        };
+        let mut names = Vec::new();
+        if local {
+            leaves(tree, None, &mut names);
+            out.local.extend(names);
+        } else {
+            leaves(&p.tree, None, &mut names);
+            let modules = out.crates.entry(p.ident.to_string()).or_default();
+            for (name, module) in names {
+                modules.insert(module.clone());
+                out.external.insert(name, module);
+            }
         }
-        leaves(&p.tree, &p.ident.to_string(), &mut out);
     }
     Ok(out)
 }
 
-/// Collects the first segment after `crate::` in paths, `use` trees and the
-/// tokens of macro calls, which syn leaves unparsed.
+/// Collects the first segment after `crate::` (or after a crate the root
+/// re-exports from, such as `otto_render::`), with that root, in paths, `use`
+/// trees and the tokens of macro calls, which syn leaves unparsed.
 #[derive(Default)]
 struct CratePaths {
-    found: Vec<(String, usize)>,
+    roots: BTreeSet<String>,
+    found: Vec<(String, String, usize)>,
 }
 
 impl CratePaths {
-    fn use_tree(&mut self, tree: &syn::UseTree) {
+    fn rooted_at(crates: &BTreeSet<String>) -> Self {
+        CratePaths {
+            roots: crates.clone(),
+            found: Vec::new(),
+        }
+    }
+
+    /// `crate`, or one of the crates the root re-exports from.
+    fn root(&self, ident: &impl std::fmt::Display) -> Option<String> {
+        let ident = ident.to_string();
+        (ident == "crate" || self.roots.contains(&ident)).then_some(ident)
+    }
+
+    fn use_tree(&mut self, root: &str, tree: &syn::UseTree) {
         match tree {
-            syn::UseTree::Path(p) => self.push(&p.ident),
-            syn::UseTree::Name(n) => self.push(&n.ident),
-            syn::UseTree::Rename(r) => self.push(&r.ident),
-            syn::UseTree::Group(g) => g.items.iter().for_each(|t| self.use_tree(t)),
+            syn::UseTree::Path(p) => self.push(root, &p.ident),
+            syn::UseTree::Name(n) => self.push(root, &n.ident),
+            syn::UseTree::Rename(r) => self.push(root, &r.ident),
+            syn::UseTree::Group(g) => g.items.iter().for_each(|t| self.use_tree(root, t)),
             syn::UseTree::Glob(_) => {}
         }
     }
 
-    fn push(&mut self, ident: &syn::Ident) {
-        self.found
-            .push((ident.to_string(), ident.span().start().line));
+    fn push(&mut self, root: &str, ident: &syn::Ident) {
+        self.found.push((
+            root.to_owned(),
+            ident.to_string(),
+            ident.span().start().line,
+        ));
     }
 
     /// `crate :: name` anywhere in a token stream, nested groups included.
@@ -309,12 +401,13 @@ impl CratePaths {
         for (i, tt) in tts.iter().enumerate() {
             match tt {
                 TokenTree::Group(g) => self.tokens(g.stream()),
-                TokenTree::Ident(id) if id == "crate" => {
+                TokenTree::Ident(id) => {
+                    let Some(root) = self.root(id) else { continue };
                     if let [TokenTree::Punct(a), TokenTree::Punct(b), TokenTree::Ident(name), ..] =
                         &tts[i + 1..]
                     {
                         if a.as_char() == ':' && b.as_char() == ':' {
-                            self.push(name);
+                            self.push(&root, name);
                         }
                     }
                 }
@@ -327,8 +420,8 @@ impl CratePaths {
 impl<'ast> Visit<'ast> for CratePaths {
     fn visit_item_use(&mut self, item: &'ast syn::ItemUse) {
         if let syn::UseTree::Path(p) = &item.tree {
-            if p.ident == "crate" {
-                self.use_tree(&p.tree);
+            if let Some(root) = self.root(&p.ident) {
+                self.use_tree(&root, &p.tree);
             }
         }
     }
@@ -336,8 +429,8 @@ impl<'ast> Visit<'ast> for CratePaths {
     fn visit_path(&mut self, path: &'ast syn::Path) {
         let mut segs = path.segments.iter();
         if let (Some(first), Some(second)) = (segs.next(), segs.next()) {
-            if first.ident == "crate" {
-                self.push(&second.ident);
+            if let Some(root) = self.root(&first.ident) {
+                self.push(&root, &second.ident);
             }
         }
         syn::visit::visit_path(self, path);
@@ -356,12 +449,22 @@ fn modules(
     used: &mut BTreeSet<Exception>,
     problems: &mut Vec<String>,
 ) -> Result<(), String> {
-    let graph = module_graph(&root.join("src"))?;
+    let (graph, reexports) = module_graph(&root.join("src"))?;
+    let external = reexports.external_modules();
     for rule in &rules.module_rules {
-        for name in rule.from.iter().chain(&rule.to) {
+        for name in &rule.from {
             if name != "*" && !graph.contains_key(name) {
                 problems.push(format!(
-                    "module rule {} names {name}, which is not a top-level module of src/",
+                    "module rule {} names {name} in `from`, which is not a top-level module of src/",
+                    rule.name
+                ));
+            }
+        }
+        for name in &rule.to {
+            if !graph.contains_key(name) && !external.contains(name) {
+                problems.push(format!(
+                    "module rule {} names {name} in `to`, which is neither a top-level module of \
+                     src/ nor a module the crate root re-exports",
                     rule.name
                 ));
             }
@@ -561,7 +664,7 @@ mod tests {
     fn paths(src: &str) -> Vec<String> {
         let mut v = CratePaths::default();
         v.visit_file(&syn::parse_file(src).unwrap());
-        v.found.into_iter().map(|(m, _)| m).collect()
+        v.found.into_iter().map(|(_, m, _)| m).collect()
     }
 
     #[test]
@@ -626,7 +729,10 @@ mod tests {
     #[test]
     fn reports_each_kind_of_violation() {
         let ws = Scratch::new();
-        ws.write("src/lib.rs", "pub use state::Otto;\nuse crate::udev::X;");
+        ws.write(
+            "src/lib.rs",
+            "mod state;\nmod render;\nmod udev;\nmod winit;\npub use state::Otto;\nuse crate::udev::X;",
+        );
         ws.write("src/state.rs", "pub struct Otto;");
         ws.write("src/udev.rs", "pub struct X;");
         ws.write("src/winit.rs", "use crate::udev::X;");
@@ -743,6 +849,53 @@ mod tests {
             ]
         );
         assert!(problems[2].contains("Through: base -> zbus -> tokio"));
+    }
+
+    /// A module re-exported from another crate keeps its name, through
+    /// `crate::` and through the other crate's own path, and an item from
+    /// inside one counts as its module; a name from a local module counts as
+    /// that module. Paths through a crate the root does not re-export
+    /// modules from, or through a re-exporting crate to something the root
+    /// did not re-export, are not the compositor's modules.
+    #[test]
+    fn graph_follows_root_reexports() {
+        let ws = Scratch::new();
+        ws.write(
+            "src/lib.rs",
+            "mod state;\nmod input;\npub use state::Otto;\n\
+             pub use self::input::Seat;\n\
+             pub use otto_render::{renderer, drawing};\n\
+             pub use otto_render::skia_renderer::SkiaRenderer;\n\
+             pub use smithay::reexports::calloop;",
+        );
+        ws.write("src/state.rs", "pub struct Otto;");
+        ws.write("src/input.rs", "pub struct Seat;");
+        ws.write(
+            "src/config.rs",
+            "use crate::renderer::X;\n\
+             fn f(_: crate::Otto, _: crate::SkiaRenderer) { otto_render::drawing::y(); }\n\
+             fn g() { smithay::input::Seat::new(); otto_render::Otto::new(); }\n\
+             fn h(_: crate::Seat) {}",
+        );
+        ws.write(
+            "src/theme.rs",
+            "fn t() { tracing::info!(\"{:?}\", otto_render::drawing::Z); }",
+        );
+        let (graph, reexports) = module_graph(&ws.0.join("src")).unwrap();
+        let uses = |m: &str| graph[m].keys().map(String::as_str).collect::<Vec<_>>();
+        assert_eq!(
+            uses("config"),
+            ["drawing", "input", "renderer", "skia_renderer", "state"]
+        );
+        assert_eq!(uses("theme"), ["drawing"]);
+        assert_eq!(
+            reexports
+                .external_modules()
+                .into_iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            ["drawing", "reexports", "renderer", "skia_renderer"]
+        );
     }
 
     #[test]

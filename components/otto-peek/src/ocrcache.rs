@@ -115,12 +115,6 @@ pub fn lookup(path: &Path, page: u32, modified: SystemTime) -> Option<Entry> {
     (entry.mtime == seconds(modified)).then_some(entry)
 }
 
-/// Whether an entry exists for `path` at `page` for the file as it is now.
-/// Cheaper than [`lookup`] only in what it returns; it still reads the file.
-pub fn has(path: &Path, page: u32, modified: SystemTime) -> bool {
-    lookup(path, page, modified).is_some()
-}
-
 /// Whether what is remembered for `path` was made by the recogniser and the
 /// languages in use now.
 ///
@@ -480,7 +474,7 @@ mod tests {
         assert!(!is_current(&picture, 1, modified, "ita+eng", "tesseract"));
         assert!(!is_current(&picture, 1, modified, "eng", "ocrmypdf"));
         // Still good to select and to search in the meantime.
-        assert!(has(&picture, 1, modified));
+        assert!(lookup(&picture, 1, modified).is_some());
         assert_eq!(matches("hello"), vec![picture]);
 
         let _ = fs::remove_dir_all(&dir);
@@ -509,7 +503,10 @@ mod tests {
         fs::write(&temp, b"half an entry").unwrap();
 
         prune(KEEP_FOR);
-        assert!(!has(&picture, 1, ancient), "the entry was pruned");
+        assert!(
+            lookup(&picture, 1, ancient).is_none(),
+            "the entry was pruned"
+        );
         assert!(temp.exists(), "another process is still writing this");
 
         let _ = fs::remove_dir_all(&dir);

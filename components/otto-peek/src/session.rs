@@ -177,11 +177,6 @@ impl Video {
             ^ scrub.rotate_left(41)
     }
 
-    /// The newest frame's sequence number; 0 before any has arrived.
-    pub fn frame_seq(&self) -> u64 {
-        self.player.state().frame_seq
-    }
-
     /// What to draw, detached from the player.
     pub fn snapshot(&self) -> VideoSnapshot {
         let frame = self.player.frame();
@@ -456,12 +451,6 @@ impl Session {
     /// The playback's contribution to the panel's repaint key.
     pub fn video_key(&self) -> u64 {
         self.video.as_ref().map(Video::key).unwrap_or(0)
-    }
-
-    /// The newest frame's sequence number, for a host that paints the panel
-    /// into its own window and has no content key to notice a frame for it.
-    pub fn video_frame_seq(&self) -> u64 {
-        self.video.as_ref().map(Video::frame_seq).unwrap_or(0)
     }
 
     /// The pointer over a playing video. `None` when there is no video and

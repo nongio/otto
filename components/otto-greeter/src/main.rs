@@ -151,6 +151,38 @@ struct Greeter {
 }
 
 impl Greeter {
+    /// [`App::idle_timeout`] with the time left until the clock next changes
+    /// given, so tests do not depend on where in the minute they run.
+    fn idle_timeout_with(&self, until_clock: std::time::Duration) -> Option<std::time::Duration> {
+        // A frame is in flight: the compositor's callback is what wakes the
+        // loop for the next one. The timer is only the way out of a callback
+        // that never comes — see `frame_in_flight`.
+        if self.frame_in_flight() {
+            return Some(otto_auth_ui::FRAME_TIMEOUT);
+        }
+
+        // The Touch ID mark paces itself; sleep exactly up to its next frame.
+        let mark = self.panel.as_ref().and_then(Panel::next_frame_in);
+        // A transition needs frames until it settles, and unlike the mark it is
+        // the engine that advances it, so ask at the rate we can present.
+        let transition = self
+            .animating_until
+            .map(|_| std::time::Duration::from_millis(16));
+        // greetd replaces this process on a successful login; if that never
+        // happens, `tick` has to be reached to say so.
+        let session = matches!(self.stage, Stage::Starting { .. })
+            .then(|| std::time::Duration::from_millis(250));
+
+        // The clock only changes on the minute, and nothing else needs the
+        // loop awake in between.
+        let clock = Some(until_clock);
+
+        [mark, transition, session, clock]
+            .into_iter()
+            .flatten()
+            .min()
+    }
+
     fn new(client: Client) -> Self {
         let sessions = session::discover();
         let session_index = session::default_index(&sessions);
@@ -848,33 +880,7 @@ impl App for Greeter {
     /// Tick while the panel is animating, and while waiting for the session to
     /// take over. Otherwise the loop can sleep until the next key press.
     fn idle_timeout(&self) -> Option<std::time::Duration> {
-        // A frame is in flight: the compositor's callback is what wakes the
-        // loop for the next one. The timer is only the way out of a callback
-        // that never comes — see `frame_in_flight`.
-        if self.frame_in_flight() {
-            return Some(otto_auth_ui::FRAME_TIMEOUT);
-        }
-
-        // The Touch ID mark paces itself; sleep exactly up to its next frame.
-        let mark = self.panel.as_ref().and_then(Panel::next_frame_in);
-        // A transition needs frames until it settles, and unlike the mark it is
-        // the engine that advances it, so ask at the rate we can present.
-        let transition = self
-            .animating_until
-            .map(|_| std::time::Duration::from_millis(16));
-        // greetd replaces this process on a successful login; if that never
-        // happens, `tick` has to be reached to say so.
-        let session = matches!(self.stage, Stage::Starting { .. })
-            .then(|| std::time::Duration::from_millis(250));
-
-        // The clock only changes on the minute, and nothing else needs the
-        // loop awake in between.
-        let clock = Some(Clock::until_next_minute());
-
-        [mark, transition, session, clock]
-            .into_iter()
-            .flatten()
-            .min()
+        self.idle_timeout_with(Clock::until_next_minute())
     }
 
     /// Wake the loop when greetd speaks. Without this the conversation would
@@ -1506,6 +1512,12 @@ mod tests {
         );
     }
 
+    /// Half a minute until the clock changes: the tests below are about
+    /// which other timers are running, not about where in the minute they
+    /// happen to run (in the last second, the clock's own wake-up is under a
+    /// second).
+    const MID_MINUTE: Duration = Duration::from_secs(30);
+
     /// At rest the loop sleeps until the next key press, give or take the
     /// clock: the panel shows the time, so it wakes on the minute and not a
     /// moment sooner. While waiting to be replaced it polls far more often,
@@ -1514,7 +1526,9 @@ mod tests {
     #[test]
     fn only_polls_while_starting() {
         let mut greeter = greeter();
-        let at_rest = greeter.idle_timeout().expect("the clock needs a wake-up");
+        let at_rest = greeter
+            .idle_timeout_with(MID_MINUTE)
+            .expect("the clock needs a wake-up");
         assert!(
             at_rest > Duration::from_secs(1),
             "nothing but the clock should be waking an idle login screen"
@@ -1523,7 +1537,12 @@ mod tests {
         greeter.stage = Stage::Starting {
             since: Instant::now(),
         };
-        assert!(greeter.idle_timeout().expect("waiting to be replaced") < at_rest);
+        assert!(
+            greeter
+                .idle_timeout_with(MID_MINUTE)
+                .expect("waiting to be replaced")
+                < at_rest
+        );
     }
 
     /// An outstanding request used to be waited on with a 16ms timer, because
@@ -1545,7 +1564,7 @@ mod tests {
 
         assert!(
             greeter
-                .idle_timeout()
+                .idle_timeout_with(MID_MINUTE)
                 .is_none_or(|timeout| timeout > Duration::from_secs(1)),
             "the socket is polled, so nothing but the clock needs a timer"
         );
