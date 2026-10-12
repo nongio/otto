@@ -23,13 +23,11 @@ const KEPT: usize = 64;
 
 /// Where the drafts live: `$XDG_STATE_HOME/otto/ask-drafts.json`.
 fn path() -> Option<PathBuf> {
-    let dir = std::env::var_os("XDG_STATE_HOME")
-        .map(PathBuf::from)
-        .filter(|dir| dir.is_absolute())
-        .or_else(|| {
-            std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/state"))
-        })?;
-    Some(dir.join("otto").join("ask-drafts.json"))
+    Some(
+        otto_kit::xdg::state_home()?
+            .join("otto")
+            .join("ask-drafts.json"),
+    )
 }
 
 /// The draft kept for `key`, a session URI or [`NEW`].

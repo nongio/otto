@@ -111,18 +111,9 @@ pub async fn session_program(
 /// What a program is called, for the picker's checkbox: the `Name=` of the
 /// desktop entry whose `Exec=` runs it, or the program itself.
 pub fn program_display_name(program: &str) -> String {
-    let home = std::env::var_os("XDG_DATA_HOME")
-        .map(std::path::PathBuf::from)
-        .or_else(|| {
-            std::env::var_os("HOME").map(|home| std::path::Path::new(&home).join(".local/share"))
-        });
-    let system = std::env::var("XDG_DATA_DIRS")
-        .ok()
-        .filter(|dirs| !dirs.is_empty())
-        .unwrap_or_else(|| "/usr/local/share:/usr/share".to_string());
-    let dirs = home
+    let dirs = otto_foundations::xdg::data_home()
         .into_iter()
-        .chain(system.split(':').map(std::path::PathBuf::from));
+        .chain(otto_foundations::xdg::data_dirs());
     for dir in dirs {
         let Ok(files) = std::fs::read_dir(dir.join("applications")) else {
             continue;

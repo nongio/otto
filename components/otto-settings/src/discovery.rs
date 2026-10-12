@@ -144,33 +144,25 @@ fn is_sound_theme_dir(dir: &Path) -> bool {
 }
 
 fn icon_search_dirs() -> Vec<PathBuf> {
-    let mut dirs = vec![
-        PathBuf::from("/usr/share/icons"),
-        PathBuf::from("/usr/local/share/icons"),
-    ];
-    if let Some(home) = std::env::var_os("HOME") {
-        let home = PathBuf::from(home);
-        dirs.push(home.join(".local/share/icons"));
-        dirs.push(home.join(".icons"));
-    }
-    if let Some(xdg_data_home) = std::env::var_os("XDG_DATA_HOME") {
-        dirs.push(PathBuf::from(xdg_data_home).join("icons"));
-    }
+    let mut dirs: Vec<PathBuf> = otto_kit::xdg::home()
+        .map(|home| home.join(".icons"))
+        .into_iter()
+        .collect();
+    dirs.extend(data_search_dirs("icons"));
     dirs
 }
 
 fn sound_search_dirs() -> Vec<PathBuf> {
-    let mut dirs = vec![
-        PathBuf::from("/usr/share/sounds"),
-        PathBuf::from("/usr/local/share/sounds"),
-    ];
-    if let Some(home) = std::env::var_os("HOME") {
-        dirs.push(PathBuf::from(home).join(".local/share/sounds"));
-    }
-    if let Some(xdg_data_home) = std::env::var_os("XDG_DATA_HOME") {
-        dirs.push(PathBuf::from(xdg_data_home).join("sounds"));
-    }
-    dirs
+    data_search_dirs("sounds")
+}
+
+/// `sub` under the user's data directory and then each of the system's.
+fn data_search_dirs(sub: &str) -> Vec<PathBuf> {
+    otto_kit::xdg::data_home()
+        .into_iter()
+        .chain(otto_kit::xdg::data_dirs())
+        .map(|dir| dir.join(sub))
+        .collect()
 }
 
 /// Every subdirectory of `dirs` that `is_theme` accepts, named for its

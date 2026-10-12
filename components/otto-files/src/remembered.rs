@@ -136,17 +136,7 @@ fn state_path() -> Option<PathBuf> {
     if let Some(path) = std::env::var_os("OTTO_FILES_STATE") {
         return Some(PathBuf::from(path));
     }
-    let base = std::env::var("XDG_STATE_HOME")
-        .ok()
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-        .or_else(|| {
-            std::env::var("HOME")
-                .ok()
-                .filter(|value| !value.is_empty())
-                .map(|home| PathBuf::from(home).join(".local").join("state"))
-        })?;
-    Some(base.join("otto").join("files.toml"))
+    Some(otto_kit::xdg::state_home()?.join("otto").join("files.toml"))
 }
 
 #[cfg(test)]

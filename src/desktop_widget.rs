@@ -242,30 +242,11 @@ fn on_path(program: &str) -> bool {
 /// The theme to prepare: the user's own copy if there is one, otherwise the
 /// first one installed in the data directories.
 fn theme_source() -> Option<PathBuf> {
-    xdg_config_home()
+    otto_kit::xdg::config_home()
         .into_iter()
-        .chain(xdg_data_dirs())
+        .chain(otto_kit::xdg::data_dirs())
         .map(|dir| dir.join(THEME_DIR))
         .find(|dir| dir.join("ewwii.nbcl").is_file())
-}
-
-/// `$XDG_CONFIG_HOME`, or `~/.config`.
-fn xdg_config_home() -> Option<PathBuf> {
-    std::env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|home| Path::new(&home).join(".config")))
-}
-
-/// `$XDG_DATA_DIRS`, or the specification's default.
-fn xdg_data_dirs() -> Vec<PathBuf> {
-    std::env::var("XDG_DATA_DIRS")
-        .map(|dirs| dirs.split(':').map(PathBuf::from).collect())
-        .unwrap_or_else(|_| {
-            vec![
-                PathBuf::from("/usr/local/share"),
-                PathBuf::from("/usr/share"),
-            ]
-        })
 }
 
 /// Where the prepared theme goes: `$XDG_CACHE_HOME/otto/widgets/ewwii`.

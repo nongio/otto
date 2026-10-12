@@ -884,10 +884,7 @@ pub struct InstanceLock {
 /// Fails when the lock file cannot be opened or locked for a reason other
 /// than another desk holding it.
 pub fn claim_instance() -> std::io::Result<Option<InstanceLock>> {
-    let dir = std::env::var_os("XDG_RUNTIME_DIR")
-        .filter(|dir| !dir.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(std::env::temp_dir);
+    let dir = otto_kit::xdg::runtime_dir().unwrap_or_else(std::env::temp_dir);
     claim_instance_at(&dir.join("otto-desk.lock"))
 }
 

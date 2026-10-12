@@ -30,6 +30,7 @@ pipewire.workspace = true
 zbus.workspace = true
 futures-util.workspace = true
 otto-dbus = { path = "../otto-dbus" }
+otto-foundations = { path = "../otto-foundations" }
 libc.workspace = true
 # Reading back tiled dmabufs the CPU cannot map (gpu_import).
 khronos-egl = { workspace = true, features = ["dynamic"] }

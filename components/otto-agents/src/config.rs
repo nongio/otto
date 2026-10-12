@@ -372,8 +372,8 @@ where
 
 fn expand_tilde(path: &str) -> PathBuf {
     match path.strip_prefix("~/") {
-        Some(rest) => match std::env::var_os("HOME") {
-            Some(home) => PathBuf::from(home).join(rest),
+        Some(rest) => match crate::xdg::home() {
+            Some(home) => home.join(rest),
             None => PathBuf::from(path),
         },
         None => PathBuf::from(path),

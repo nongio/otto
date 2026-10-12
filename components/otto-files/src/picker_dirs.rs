@@ -125,17 +125,11 @@ fn state_path() -> Option<PathBuf> {
     if cfg!(test) {
         return None;
     }
-    let base = std::env::var("XDG_STATE_HOME")
-        .ok()
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-        .or_else(|| {
-            std::env::var("HOME")
-                .ok()
-                .filter(|value| !value.is_empty())
-                .map(|home| PathBuf::from(home).join(".local").join("state"))
-        })?;
-    Some(base.join("otto").join("file-picker-dirs"))
+    Some(
+        otto_kit::xdg::state_home()?
+            .join("otto")
+            .join("file-picker-dirs"),
+    )
 }
 
 #[cfg(test)]

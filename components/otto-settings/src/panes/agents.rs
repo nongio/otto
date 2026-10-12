@@ -188,12 +188,10 @@ fn system_path() -> PathBuf {
 
 /// The user's `agents.toml`, the file Apply writes.
 fn user_path() -> PathBuf {
-    let config = std::env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .filter(|dir| dir.is_absolute())
-        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))
-        .unwrap_or_default();
-    config.join("otto").join("agents.toml")
+    otto_kit::xdg::config_home()
+        .unwrap_or_default()
+        .join("otto")
+        .join("agents.toml")
 }
 
 /// The user's file as the pane names it, with the home folder as `~`.
@@ -418,7 +416,9 @@ fn apply() {
             .map(std::fs::read_to_string)
             .transpose()
             .map_err(|err| err.to_string())?;
-        let home = std::env::var("HOME").unwrap_or_default();
+        let home = otto_kit::xdg::home()
+            .map(|home| home.display().to_string())
+            .unwrap_or_default();
         let text = render(&user, source.as_deref(), &state.saved, &state.draft, &home)?;
         write_atomically(&path, &text).map_err(|err| err.to_string())
     })();
@@ -1245,18 +1245,14 @@ fn open(path: &Path) {
 /// Where Ask starts a session whose agent names no folder: a scratch folder
 /// of its own (`ask.rs` in otto-launcher).
 fn ask_scratch_folder() -> PathBuf {
-    std::env::var_os("XDG_STATE_HOME")
-        .map(PathBuf::from)
-        .filter(|dir| dir.is_absolute())
-        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/state")))
+    otto_kit::xdg::state_home()
         .unwrap_or_default()
         .join("otto/ask")
 }
 
 /// The Hermes profile an agent running as `persona` starts in.
 fn hermes_profile(persona: &str) -> PathBuf {
-    std::env::var_os("HOME")
-        .map(PathBuf::from)
+    otto_kit::xdg::home()
         .unwrap_or_default()
         .join(".hermes/profiles")
         .join(persona)
@@ -1264,12 +1260,7 @@ fn hermes_profile(persona: &str) -> PathBuf {
 
 /// A path as the pane shows it, with the home folder as `~`.
 fn shown(path: &Path) -> String {
-    match std::env::var_os("HOME")
-        .and_then(|home| path.strip_prefix(home).ok().map(Path::to_path_buf))
-    {
-        Some(rest) => format!("~/{}", rest.display()),
-        None => path.display().to_string(),
-    }
+    otto_kit::xdg::tilde(path)
 }
 
 fn changes() -> &'static str {

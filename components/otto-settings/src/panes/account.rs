@@ -1333,14 +1333,13 @@ fn uid() -> u32 {
 }
 
 fn face_path() -> Option<PathBuf> {
-    std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".face"))
+    otto_kit::xdg::home().map(|home| home.join(".face"))
 }
 
 /// Where another account's picture is cut to before AccountsService copies
 /// it in: the session's runtime directory, which only you can read.
 fn scratch_face(user: &str) -> Option<PathBuf> {
-    std::env::var_os("XDG_RUNTIME_DIR")
-        .map(|dir| PathBuf::from(dir).join(format!("otto-face-{user}.png")))
+    otto_kit::xdg::runtime_dir().map(|dir| dir.join(format!("otto-face-{user}.png")))
 }
 
 /// Cut `source` to a centered square, scale it to [`PICTURE_PX`] and write it

@@ -13,7 +13,7 @@
 // Rust guideline compliant 2026-02-21
 
 use std::os::fd::RawFd;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::Duration;
 
 use ahp::{Client, ClientConfig, SubscriptionEvent};
@@ -77,7 +77,7 @@ pub fn session_items(
     query: &str,
 ) -> Vec<Item> {
     let query = query.trim().to_lowercase();
-    let home = std::env::var_os("HOME").map(PathBuf::from);
+    let home = otto_kit::xdg::home();
     let agent_name = |provider: &str| {
         agents
             .iter()

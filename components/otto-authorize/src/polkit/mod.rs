@@ -464,16 +464,11 @@ fn describe_path(path: &str) -> Option<String> {
 }
 
 /// `dir` with the user's home folder written as `~`, which is how people
-/// read it and keeps the reason line short.
+/// read it and keeps the reason line short. A home folder of `/` would turn
+/// every path into `~/…`, so it is ignored.
 fn home_as_tilde(dir: &str) -> String {
-    match std::env::var("HOME") {
-        Ok(home) if !home.is_empty() && home != "/" => match dir.strip_prefix(home.as_str()) {
-            Some("") => "~".to_string(),
-            Some(rest) if rest.starts_with('/') => format!("~{rest}"),
-            _ => dir.to_string(),
-        },
-        _ => dir.to_string(),
-    }
+    let home = otto_kit::xdg::home().filter(|home| home.as_os_str() != "/");
+    otto_kit::xdg::tilde_in(std::path::Path::new(dir), home.as_deref())
 }
 
 /// What polkit says the request is for, on one line and no longer than the

@@ -161,9 +161,7 @@ fn in_background(name: &str, work: impl FnOnce() + Send + 'static) {
 }
 
 fn home() -> PathBuf {
-    std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_default()
+    otto_kit::xdg::home().unwrap_or_default()
 }
 
 /// The configured folders, as `search.folders` holds them. `None` while the

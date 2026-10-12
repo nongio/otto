@@ -55,8 +55,8 @@ pub fn sync(changed: Option<&'static str>) {
             let _guard = PUSHING.lock().unwrap_or_else(|p| p.into_inner());
             let config = Config::with(|c| c.search.clone());
             let explicit = |key: &str| changed == Some(key) || crate::config::set_in_any_layer(key);
-            let home = std::env::var_os("HOME").unwrap_or_default();
-            push(&config, explicit, Path::new(&home));
+            let home = otto_kit::xdg::home().unwrap_or_default();
+            push(&config, explicit, &home);
         });
     if let Err(err) = spawned {
         tracing::warn!("Could not start the search index sync: {err}");
