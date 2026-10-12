@@ -21,7 +21,9 @@ pub mod document;
 pub mod selection;
 
 pub use document::{Block, Span, SpanStyle};
-pub use selection::{draw_selection, selection_text, word_at, word_near, WordSelection};
+pub use selection::{
+    draw_selection, selection_lines, selection_text, word_at, word_near, WordSelection,
+};
 
 use skia_safe::{Canvas, Color, Contains, Image, Paint, Rect};
 

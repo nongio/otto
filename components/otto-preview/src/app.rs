@@ -26,6 +26,7 @@ use otto_peek::session::{self as peek, Session, VideoPointer};
 use smithay_client_toolkit::seat::keyboard::{KeyEvent, Keysym};
 use smithay_client_toolkit::seat::pointer::{PointerEvent, PointerEventKind};
 use smithay_client_toolkit::shell::xdg::window::WindowConfigure;
+use smithay_client_toolkit::shell::xdg::XdgSurface;
 use smithay_client_toolkit::shell::WaylandSurface;
 use wayland_client::protocol::wl_keyboard;
 
@@ -79,6 +80,15 @@ struct Doc {
     key: PathBuf,
     /// What the opening size is fitted to.
     shape: Shape,
+    /// The menu a form field's choices drop down in; built with the window,
+    /// as a menu must be (see `DropdownMenu`).
+    choices: otto_kit::components::dropdown::DropdownMenu,
+    /// The choice made from that menu, waiting for the loop.
+    chosen: Rc<std::cell::Cell<Option<(otto_pdf::AnnotId, usize)>>>,
+    /// "Save changes?", built with the window for the same reason.
+    confirm: crate::confirm::ConfirmPopup,
+    /// The answer to it, waiting for the loop.
+    answered: Rc<std::cell::Cell<Option<crate::confirm::Answer>>>,
     /// Whether the first configure has been answered, which is when the
     /// window takes its opening size.
     sized: bool,
@@ -140,9 +150,10 @@ impl PreviewApp {
     /// The window holding the keyboard.
     fn focused(&self) -> Option<&Doc> {
         let focus = AppContext::keyboard_focus()?;
-        self.docs
-            .iter()
-            .find(|doc| doc.window.surface_id().as_ref() == Some(&focus))
+        self.docs.iter().find(|doc| {
+            doc.window.surface_id().as_ref() == Some(&focus)
+                || doc.confirm.surface_id().as_ref() == Some(&focus)
+        })
     }
 
     /// The window under the pointer.
@@ -190,6 +201,9 @@ impl Doc {
             }
             chrome::draw(canvas, &viewer, &theme);
             crate::shortcuts::draw(canvas, &viewer, &theme);
+            if let Some(pad) = &viewer.signature_pad {
+                pad.draw(canvas, viewer.size, &theme);
+            }
         });
 
         let pointed = Arc::clone(&viewer);
@@ -203,7 +217,7 @@ impl Doc {
         // window, not the application with every other file in it.
         let closed = Arc::clone(&viewer);
         window.on_close_request(move || {
-            closed.lock().unwrap().closing = true;
+            closed.lock().unwrap().request_close();
             AppContext::request_wakeup();
         });
 
@@ -219,6 +233,10 @@ impl Doc {
             window,
             key,
             shape,
+            choices: otto_kit::components::dropdown::DropdownMenu::new(),
+            chosen: Rc::new(std::cell::Cell::new(None)),
+            confirm: crate::confirm::ConfirmPopup::new(),
+            answered: Rc::new(std::cell::Cell::new(None)),
             sized: false,
             chat_on_configure: false,
             menu,
@@ -236,9 +254,12 @@ impl Doc {
                 chat_toggled(&viewer, &self.chat, &self.window, resized);
             }
             commands::Command::Shortcuts => viewer.shortcuts_open = !viewer.shortcuts_open,
-            commands::Command::Close => {
-                viewer.closing = true;
-                AppContext::request_wakeup();
+            commands::Command::Close => viewer.request_close(),
+            commands::Command::SaveAs => {
+                viewer.commit_editor();
+                if viewer.editable() {
+                    ask_save_as(Arc::clone(&self.viewer), viewer.path.clone());
+                }
             }
             commands::Command::Copy => {
                 if let Some(text) = viewer.selected_text() {
@@ -247,6 +268,7 @@ impl Doc {
             }
             commands::Command::SelectAll => viewer.select_all(),
             commands::Command::DeleteMark => viewer.dirty |= viewer.marks.undo(),
+            commands::Command::DeleteSelection => viewer.delete_selected(),
             command => {
                 if let Some(tool) = command.tool() {
                     viewer.run_tool(tool);
@@ -340,6 +362,7 @@ impl Doc {
                 }
             }
             AppContext::request_wakeup();
+            open_for_editing(&viewer, &path, generation);
 
             let Some(command) = recogniser.filter(|_| needs_recognising) else {
                 return;
@@ -372,19 +395,32 @@ impl Doc {
     fn follow_document(&self) {
         let scale = AppContext::scale_factor().max(1) as f32;
         // The sidebar's thumbnails, small decodes of their own pages.
-        let (thumbs, generation) = {
+        // A PDF open for editing is drawn from the document in memory, so
+        // its unsaved changes show on every page drawn, not only the ones
+        // an edit touched; anything else is rasterised from the file.
+        let (thumbs, generation, editing) = {
             let mut viewer = self.viewer.lock().unwrap();
-            (viewer.thumb_work(scale), viewer.generation)
+            (
+                viewer.thumb_work(scale),
+                viewer.generation,
+                viewer.editing_doc(),
+            )
+        };
+        let draw = move |path: &Path, page: u32, width: u32| match &editing {
+            Some(doc) => crate::editing::draw_page(doc, page as usize - 1, width),
+            None => match peek::decode_page(path, page, width) {
+                Preview::Pixels { pixels, .. } => Some(pixels),
+                _ => None,
+            },
         };
         if let Some((requests, path)) = thumbs {
             for request in requests {
                 let viewer = Arc::clone(&self.viewer);
                 let path = path.clone();
+                let draw = draw.clone();
                 tokio::task::spawn_blocking(move || {
-                    let image = match peek::decode_page(&path, request.page, request.width) {
-                        Preview::Pixels { pixels, .. } => pixels.to_image(),
-                        _ => None,
-                    };
+                    let image = draw(&path, request.page, request.width)
+                        .and_then(|pixels| pixels.to_image());
                     viewer
                         .lock()
                         .unwrap()
@@ -405,11 +441,9 @@ impl Doc {
         for request in pages {
             let viewer = Arc::clone(&self.viewer);
             let path = path.clone();
+            let draw = draw.clone();
             tokio::task::spawn_blocking(move || {
-                let pixels = match peek::decode_page(&path, request.page, request.width) {
-                    Preview::Pixels { pixels, .. } => Some(pixels),
-                    _ => None,
-                };
+                let pixels = draw(&path, request.page, request.width);
                 viewer
                     .lock()
                     .unwrap()
@@ -435,6 +469,90 @@ impl Doc {
             });
         }
     }
+}
+
+/// Open the PDF the window shows for editing, once its decode has landed:
+/// its form and annotations, through PDFium. The document opened before is
+/// kept when the file on disk is the one this window saved last, and while
+/// it holds changes not yet saved, which reading the file again would lose.
+fn open_for_editing(viewer: &Arc<Mutex<Viewer>>, path: &Path, generation: u64) {
+    if !is_pdf(path) || !otto_pdf::available() {
+        return;
+    }
+    {
+        let mut viewer = viewer.lock().unwrap();
+        let keep = viewer.edits_pending();
+        if let Some(editing) = &mut viewer.editing {
+            if keep || (editing.saved.is_some() && editing.saved == Stamp::of(path)) {
+                editing.generation = generation;
+                return;
+            }
+        }
+    }
+    // Stamped before it is read: a change in between shows as one when it
+    // is saved over.
+    let stamp = Stamp::of(path);
+    let opened = std::fs::read(path)
+        .map_err(|err| otto_pdf::Error::Unreadable(err.to_string()))
+        .and_then(|bytes| {
+            let doc = otto_pdf::Document::open_bytes(path.to_path_buf(), bytes.clone(), None)?;
+            Ok((doc, bytes))
+        });
+    let (doc, bytes) = match opened {
+        Ok(opened) => opened,
+        Err(err) => {
+            tracing::info!(path = %path.display(), %err, "the PDF can't be edited here");
+            viewer.lock().unwrap().editing = None;
+            return;
+        }
+    };
+    let editing =
+        crate::editing::Editing::new(doc, bytes, stamp, generation, Arc::downgrade(viewer));
+    let editing = match editing {
+        Ok(editing) => editing,
+        Err(err) => {
+            tracing::warn!(path = %path.display(), %err, "no thread for the PDF's edits");
+            return;
+        }
+    };
+    let mut viewer = viewer.lock().unwrap();
+    if viewer.generation != generation {
+        return;
+    }
+    viewer.editing = Some(editing);
+    viewer.dirty = true;
+    drop(viewer);
+    AppContext::request_wakeup();
+}
+
+/// Ask where to save a copy of `file` on a thread of its own (the dialog
+/// blocks), then save there and carry on with that file.
+fn ask_save_as(viewer: Arc<Mutex<Viewer>>, file: PathBuf) {
+    std::thread::spawn(move || {
+        let title = otto_kit::t_owned!("studio-save-as-title");
+        match crate::save_as::ask(&file, &title) {
+            crate::save_as::Outcome::Chosen(path) => {
+                viewer.lock().unwrap().save_as(path);
+                AppContext::request_wakeup();
+            }
+            crate::save_as::Outcome::Dismissed => viewer.lock().unwrap().save_as_dismissed(),
+            crate::save_as::Outcome::Failed(why) => {
+                tracing::warn!(%why, "no save dialog");
+                viewer.lock().unwrap().save_as_dismissed();
+            }
+        }
+    });
+}
+
+/// Whether the file at `path` is a PDF, by its first bytes.
+fn is_pdf(path: &Path) -> bool {
+    use std::io::Read;
+    let mut head = [0u8; 1024];
+    let Ok(mut file) = std::fs::File::open(path) else {
+        return false;
+    };
+    let read = file.read(&mut head).unwrap_or(0);
+    head[..read].windows(5).any(|window| window == b"%PDF-")
 }
 
 /// The recogniser's command line, when recognition is on: the one configured
@@ -526,6 +644,21 @@ fn handle_pointer(
         match &event.kind {
             PointerEventKind::Enter { .. } | PointerEventKind::Motion { .. } => {
                 v.pointer = Some(at);
+                let size = v.size;
+                if let Some(pad) = &mut v.signature_pad {
+                    v.dirty |= pad.motion(size, at);
+                    redraw |= std::mem::take(&mut v.dirty);
+                    continue;
+                }
+                if v.strip().is_some() {
+                    // The strip's hover is drawn from the pointer.
+                    v.dirty = true;
+                }
+                if v.edit_busy() {
+                    v.edit_motion(at);
+                    redraw |= std::mem::take(&mut v.dirty);
+                    continue;
+                }
                 if v.chat_resizing {
                     v.resize_chat_to(at.x);
                     redraw |= std::mem::take(&mut v.dirty);
@@ -547,6 +680,7 @@ fn handle_pointer(
                     v.mark_motion(at);
                 } else {
                     v.mark_hover(content.contains(at).then_some(at));
+                    v.edit_hover(content.contains(at).then_some(at));
                 }
                 v.content_pointer(VideoPointer::Motion, at);
                 v.sidebar_motion(at);
@@ -559,6 +693,12 @@ fn handle_pointer(
                 let shape = match edge {
                     Some(edge) if v.drag.is_none() => edge.cursor(),
                     _ if v.drag.is_none() && v.on_chat_edge(at) => CursorShape::ColResize,
+                    _ if content.contains(at)
+                        && v.drag.is_none()
+                        && v.edit_cursor(at).is_some() =>
+                    {
+                        v.edit_cursor(at).unwrap_or(CursorShape::Default)
+                    }
                     _ if content.contains(at) || v.drag.is_some() => v.content_cursor(at),
                     _ => chat_cursor.unwrap_or(CursorShape::Default),
                 };
@@ -581,6 +721,21 @@ fn handle_pointer(
                 if *button != BTN_LEFT {
                     continue;
                 }
+                // A press in the window while a question is up, outside its
+                // card, is a cancel.
+                if v.question.is_some() {
+                    v.answer(crate::confirm::Answer::Cancel);
+                    redraw = true;
+                    continue;
+                }
+                let size = v.size;
+                if let Some(pad) = &mut v.signature_pad {
+                    let action = pad.press(size, at);
+                    pad_action(&mut v, action);
+                    redraw = true;
+                    continue;
+                }
+                let clicks = v.count_click(*time, at);
                 if let Some(edge) = edge {
                     if let Some(seat) = seat() {
                         window.start_resize(&seat, *serial, edge);
@@ -594,6 +749,9 @@ fn handle_pointer(
                 let control = chrome::control_at(&v, at.x, at.y);
                 if v.controls.on_press(control) {
                     v.dirty = true;
+                    continue;
+                }
+                if v.strip_press(at) {
                     continue;
                 }
                 if at.y < content.top {
@@ -631,6 +789,10 @@ fn handle_pointer(
                 {
                     continue;
                 }
+                // The form, and the markup tools.
+                if content.contains(at) && v.edit_press(at, clicks) {
+                    continue;
+                }
                 v.content_pointer(VideoPointer::Press, at);
                 if v.drag.is_some() && v.cursor != CursorShape::Grabbing {
                     v.cursor = CursorShape::Grabbing;
@@ -651,10 +813,7 @@ fn handle_pointer(
                 let fired = v.controls.on_release(control);
                 v.dirty |= armed;
                 match fired {
-                    Some(WindowControl::Close) => {
-                        v.closing = true;
-                        AppContext::request_wakeup();
-                    }
+                    Some(WindowControl::Close) => v.request_close(),
                     Some(WindowControl::Minimize) => window.minimize(),
                     Some(WindowControl::Zoom) => window.toggle_maximized(),
                     None => {}
@@ -674,10 +833,18 @@ fn handle_pointer(
                     v.dirty |= chat.borrow_mut().release(panel, at);
                 }
                 v.sidebar_release();
+                let size = v.size;
+                if let Some(pad) = &mut v.signature_pad {
+                    let action = pad.release(size, at);
+                    pad_action(&mut v, action);
+                    redraw = true;
+                    continue;
+                }
                 if v.mark_busy() {
                     v.mark_release();
                 }
                 let link = v.content_pointer(VideoPointer::Release, at);
+                v.edit_release();
                 if v.cursor == CursorShape::Grabbing {
                     v.cursor = v.content_cursor(at);
                     crate::cursors::show(v.cursor);
@@ -732,6 +899,32 @@ fn handle_pointer(
         paint_chat(&mut viewer.lock().unwrap(), &mut chat.borrow_mut());
         window.request_frame();
     }
+}
+
+/// Do what the signature pad asked: keep the signature, or put the pad away.
+fn pad_action(viewer: &mut Viewer, action: crate::signature::PadAction) {
+    match action {
+        crate::signature::PadAction::None => {}
+        crate::signature::PadAction::Cancel => {
+            viewer.signature_pad = None;
+            if crate::signature::load().is_none() {
+                viewer.markup = viewer.markup.map(|_| crate::editing::MarkupTool::Select);
+            }
+        }
+        crate::signature::PadAction::Done => {
+            let signature = viewer
+                .signature_pad
+                .as_ref()
+                .and_then(|pad| pad.signature());
+            if let Some(signature) = signature {
+                if let Err(err) = crate::signature::save(&signature) {
+                    tracing::warn!(%err, "could not keep the signature");
+                }
+            }
+            viewer.signature_pad = None;
+        }
+    }
+    viewer.dirty = true;
 }
 
 /// Attach the marks not yet sent to the message about to go, as files the
@@ -857,6 +1050,7 @@ impl Doc {
             self.start_decode(path, panel, scale);
         }
         self.follow_document();
+        self.follow_edits();
         if self.viewer.lock().unwrap().tick() {
             self.window.request_frame();
         }
@@ -864,6 +1058,109 @@ impl Doc {
 }
 
 impl Doc {
+    /// Follow the edits: show a field's choices when one was pressed, and
+    /// take the one picked; ask what a question over the window asks, and
+    /// where to save a copy when its answer says to. The edits themselves
+    /// run on the document's own queue.
+    fn follow_edits(&self) {
+        if let Some((field, index)) = self.chosen.take() {
+            self.viewer.lock().unwrap().choose(field, index);
+        }
+        self.follow_confirm();
+        let (choices, save_as) = {
+            let mut viewer = self.viewer.lock().unwrap();
+            let save_as = std::mem::take(&mut viewer.wants_save_as).then(|| viewer.path.clone());
+            (viewer.choices.take(), save_as)
+        };
+        if let Some(file) = save_as {
+            ask_save_as(Arc::clone(&self.viewer), file);
+        }
+        let Some(choices) = choices else {
+            return;
+        };
+        let Some(parent) = self
+            .window
+            .surface()
+            .map(|surface| surface.xdg_window().xdg_surface().clone())
+        else {
+            return;
+        };
+        let chosen = Rc::clone(&self.chosen);
+        let field = choices.field;
+        self.choices.close_now();
+        self.choices.open(
+            &parent,
+            choices.rect,
+            AppContext::last_input_serial(),
+            &choices.options,
+            choices.selected,
+            move |index| {
+                chosen.set(Some((field, index)));
+                AppContext::request_wakeup();
+            },
+            AppContext::request_wakeup,
+        );
+    }
+
+    /// Follow the file the window was saved as: listed under its new path,
+    /// its folder watched, its name on the window.
+    fn follow_rename(&mut self, documents: &Documents) {
+        let Some(path) = self.viewer.lock().unwrap().renamed.take() else {
+            return;
+        };
+        let mut documents = documents.lock().unwrap();
+        documents.remove(&self.key);
+        self.key = resolved(&path);
+        documents.insert(self.key.clone(), Arc::clone(&self.viewer));
+        self.watch = path.parent().map(DirWatch::new);
+        let name = self.viewer.lock().unwrap().name.clone();
+        self.window.set_title(&name);
+        self.redraw();
+    }
+
+    /// Show the question the viewer asks while it asks it, and hand its
+    /// answer back.
+    fn follow_confirm(&self) {
+        if let Some(answer) = self.answered.take() {
+            self.viewer.lock().unwrap().answer(answer);
+            self.redraw();
+        }
+        let (question, size, name) = {
+            let viewer = self.viewer.lock().unwrap();
+            (viewer.question.clone(), viewer.size, viewer.name.clone())
+        };
+        let Some(question) = question else {
+            if self.confirm.is_open() {
+                self.confirm.close();
+            }
+            return;
+        };
+        match self.confirm.question() {
+            Some(open) if open == question => return,
+            Some(_) => self.confirm.close(),
+            None => {}
+        }
+        let Some(parent) = self
+            .window
+            .surface()
+            .map(|surface| surface.xdg_window().xdg_surface().clone())
+        else {
+            return;
+        };
+        let answered = Rc::clone(&self.answered);
+        self.confirm.open(
+            &parent,
+            size,
+            question,
+            &name,
+            AppContext::current_theme(),
+            move |answer| {
+                answered.set(Some(answer));
+                AppContext::request_wakeup();
+            },
+        );
+    }
+
     /// The marks and the agent session agree: a session carried on here
     /// brings back the marks it kept, and marks changed since are kept with
     /// it, once a stroke or a drag is over.
@@ -892,6 +1189,12 @@ impl Doc {
             return;
         }
         let mut viewer = self.viewer.lock().unwrap();
+        // The window's own save, seen before it has finished saying so, or
+        // changes not yet saved, which reading the file again would lose: a
+        // save asks first before it replaces a file changed on disk.
+        if viewer.edits_pending() {
+            return;
+        }
         let now = Stamp::of(&viewer.path);
         if now.is_none() || now == viewer.stamp {
             return;
@@ -954,6 +1257,34 @@ impl App for PreviewApp {
         {
             let mut viewer = doc.viewer.lock().unwrap();
             let modifiers = viewer.modifiers;
+            // A question keeps every key: Return gives its default answer,
+            // Escape cancels.
+            if let Some(question) = viewer.question.clone() {
+                match event.keysym {
+                    Keysym::Return | Keysym::KP_Enter => viewer.answer(question.default_answer()),
+                    Keysym::Escape => viewer.answer(crate::confirm::Answer::Cancel),
+                    _ => {}
+                }
+                drop(viewer);
+                doc.redraw();
+                return;
+            }
+            // The signature pad keeps every key; Escape puts it away.
+            if viewer.signature_pad.is_some() {
+                if event.keysym == Keysym::Escape {
+                    viewer.signature_pad = None;
+                }
+                drop(viewer);
+                doc.redraw();
+                return;
+            }
+            // Text typed into the document, and the keys for what is
+            // selected on it, before any of the window's own.
+            if !in_chat && !viewer.shortcuts_open && viewer.edit_key(event, serial) {
+                drop(viewer);
+                doc.redraw();
+                return;
+            }
             // The shortcuts sheet goes with Escape, and keeps every other key
             // but the window's own from what is under it.
             if viewer.shortcuts_open && event.keysym == Keysym::Escape {
@@ -996,6 +1327,13 @@ impl App for PreviewApp {
             }
         }
         let modifiers = doc.viewer.lock().unwrap().modifiers;
+        if (modifiers.ctrl || modifiers.logo)
+            && modifiers.shift
+            && matches!(event.keysym, Keysym::s | Keysym::S)
+        {
+            doc.run(commands::Command::SaveAs, serial);
+            return;
+        }
         if let Some(command) = commands::document_key(event.keysym, modifiers) {
             if !in_chat {
                 doc.run(command, serial);
@@ -1004,10 +1342,7 @@ impl App for PreviewApp {
         }
         let outcome = doc.viewer.lock().unwrap().key(event.keysym);
         match outcome {
-            KeyOutcome::Close => {
-                doc.viewer.lock().unwrap().closing = true;
-                AppContext::request_wakeup();
-            }
+            KeyOutcome::Close => doc.viewer.lock().unwrap().request_close(),
             KeyOutcome::Copy(text) => {
                 otto_kit::clipboard::set_text(&text, serial);
             }
@@ -1087,6 +1422,9 @@ impl App for PreviewApp {
             }
             !closing
         });
+        for doc in &mut self.docs {
+            doc.follow_rename(documents);
+        }
         // The last window closed is the application closed; the bus name
         // goes with the process, and the next start owns it.
         if self.docs.is_empty() {
@@ -1098,6 +1436,13 @@ impl App for PreviewApp {
         for doc in &self.docs {
             doc.update();
             doc.follow_menu();
+            {
+                let mut viewer = doc.viewer.lock().unwrap();
+                if viewer.edit_tick(delta) && std::mem::take(&mut viewer.dirty) {
+                    drop(viewer);
+                    doc.window.request_frame();
+                }
+            }
             let mut chat = doc.chat.borrow_mut();
             doc.sync_marks(&mut chat);
             let dictated = chat.follow_dictation();
@@ -1121,7 +1466,10 @@ impl App for PreviewApp {
         }
         self.docs
             .iter()
-            .any(|doc| doc.viewer.lock().unwrap().chat_open && doc.chat.borrow().focused)
+            .any(|doc| {
+                let viewer = doc.viewer.lock().unwrap();
+                (viewer.chat_open && doc.chat.borrow().focused) || viewer.edit_animating()
+            })
             .then_some(BLINK)
     }
 

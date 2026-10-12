@@ -133,6 +133,30 @@ pub struct Viewer {
     /// Where the view was when the file changed, put back once the new
     /// decode lands. Set from the reload until then.
     pub reloading: Option<Place>,
+    /// The PDF opened for editing: its form and annotations; see
+    /// [`crate::editing`]. `None` for anything else, and without PDFium.
+    pub editing: Option<crate::editing::Editing>,
+    /// The markup strip's tool in hand, `None` while the strip is hidden.
+    pub markup: Option<crate::editing::MarkupTool>,
+    /// The colour markup is made in, an index into
+    /// [`crate::editing::COLORS`].
+    pub ink: usize,
+    /// The pad the person's signature is being drawn on.
+    pub signature_pad: Option<crate::signature::Pad>,
+    /// A field's list of choices, waiting for the app to show as a menu.
+    pub choices: Option<crate::editing::Choices>,
+    /// The question over the window, waiting for an answer: "save
+    /// changes?" on a close, or what to do about a save that couldn't be
+    /// made.
+    pub question: Option<crate::confirm::Question>,
+    /// Save As was picked from a question: the app asks where.
+    pub wants_save_as: bool,
+    /// The file the window was just saved as, for the app to follow: its
+    /// folder watched, its name on the window.
+    pub renamed: Option<PathBuf>,
+    /// The last press: when, where, and how many came quickly before it in
+    /// the same place, to tell a double click.
+    pub last_press: Option<(u32, Point, u32)>,
 }
 
 /// What tells one version of a file from the next without reading it.
@@ -232,7 +256,35 @@ impl Viewer {
             generation: 0,
             stamp: None,
             reloading: None,
+            editing: None,
+            markup: None,
+            ink: 0,
+            signature_pad: None,
+            choices: None,
+            last_press: None,
+            question: None,
+            wants_save_as: false,
+            renamed: None,
         }
+    }
+
+    /// Count a press at `time` (milliseconds) and `at`: 1 for a single
+    /// click, 2 for the second of a double click, and so on.
+    pub fn count_click(&mut self, time: u32, at: Point) -> u32 {
+        /// How soon, and how near, a press follows the last to count with it.
+        const DOUBLE_MS: u32 = 400;
+        const DOUBLE_SLOP: f32 = 4.0;
+        let count = match self.last_press {
+            Some((last, place, count))
+                if time.wrapping_sub(last) <= DOUBLE_MS
+                    && (at.x - place.x).hypot(at.y - place.y) <= DOUBLE_SLOP =>
+            {
+                count + 1
+            }
+            _ => 1,
+        };
+        self.last_press = Some((time, at, count));
+        count
     }
 
     /// Decode the file again because it changed on disk. The old content
@@ -285,6 +337,9 @@ impl Viewer {
     /// The box the preview is drawn in.
     pub fn content(&self) -> Rect {
         let mut content = chrome::content_rect(self.size.0, self.size.1, self.variant);
+        if self.markup.is_some() {
+            content.top = (content.top + crate::editing::STRIP_H).min(content.bottom - 1.0);
+        }
         if self.chat_open {
             content.right = (content.right - self.chat_w).max(content.left + 1.0);
         }
@@ -741,8 +796,17 @@ impl Viewer {
             Tool::Chat => true,
             Tool::Mark => self.marking || !self.frames().is_empty(),
             Tool::ShowMarks => self.marks_hidden || !self.marks.list.is_empty(),
-            Tool::Undo => self.versions.as_ref().is_some_and(Versions::can_undo),
-            Tool::Redo => self.versions.as_ref().is_some_and(Versions::can_redo),
+            // Unsaved edits first, then the file's versions.
+            Tool::Undo => {
+                self.can_undo_edit()
+                    || (!self.unsaved() && self.versions.as_ref().is_some_and(Versions::can_undo))
+            }
+            Tool::Redo => {
+                self.can_redo_edit()
+                    || (!self.unsaved() && self.versions.as_ref().is_some_and(Versions::can_redo))
+            }
+            Tool::Save => self.unsaved(),
+            Tool::Markup => self.editable(),
         }
     }
 
@@ -755,7 +819,11 @@ impl Viewer {
             self.has_pages(),
             self.versions
                 .as_ref()
-                .is_some_and(|versions| versions.len() > 1),
+                .is_some_and(|versions| versions.len() > 1)
+                || self.can_undo_edit()
+                || self.can_redo_edit(),
+            self.editable(),
+            self.unsaved(),
         )
     }
 
@@ -1000,11 +1068,26 @@ impl Viewer {
                 self.marking = !self.marking;
                 if self.marking {
                     self.marks_hidden = false;
+                    // The pen and the markup tools both want the press.
+                    self.commit_editor();
+                    self.markup = None;
                 }
                 self.dirty = true;
             }
-            Tool::Undo => self.step_version(true),
-            Tool::Redo => self.step_version(false),
+            Tool::Markup => self.toggle_markup(),
+            Tool::Undo => {
+                if !self.undo_edit() {
+                    self.step_version(true);
+                }
+            }
+            Tool::Redo => {
+                if !self.redo_edit() {
+                    self.step_version(false);
+                }
+            }
+            Tool::Save => {
+                self.save();
+            }
             Tool::ShowMarks => {
                 self.marks_hidden = !self.marks_hidden;
                 if self.marks_hidden {
@@ -1049,6 +1132,10 @@ impl Viewer {
                 KeyOutcome::Handled
             }
             Keysym::w | Keysym::W | Keysym::q | Keysym::Q if ctrl => KeyOutcome::Close,
+            Keysym::s | Keysym::S if ctrl => {
+                self.save();
+                KeyOutcome::Handled
+            }
             Keysym::c | Keysym::C if ctrl => match self.session.selected_text() {
                 Some(text) => KeyOutcome::Copy(text),
                 None => KeyOutcome::Ignored,

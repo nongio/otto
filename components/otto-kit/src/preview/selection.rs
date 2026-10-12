@@ -241,6 +241,29 @@ pub(crate) fn selection_rects(
     preview: &Preview,
     selection: WordSelection,
 ) -> Vec<Rect> {
+    // The pad is in content units, as the words are.
+    let pad = picture(layout, preview)
+        .map(|found| HIGHLIGHT_PAD * scale_of(found.width, found.content))
+        .unwrap_or(HIGHLIGHT_PAD);
+    selection_lines(layout, preview, selection)
+        .into_iter()
+        .map(|rect| rect.with_outset((pad, pad)))
+        .filter_map(|rect| {
+            let mut clipped = rect;
+            clipped.intersect(layout.inner).then_some(clipped)
+        })
+        .collect()
+}
+
+/// Where each line of a selection is in panel coordinates: the union of
+/// that line's selected words, tight to them and not clipped to the panel,
+/// so a host can turn the lines into marks on the content itself (a
+/// highlight written into a document).
+pub fn selection_lines(
+    layout: &PreviewLayout,
+    preview: &Preview,
+    selection: WordSelection,
+) -> Vec<Rect> {
     let Some(found) = picture(layout, preview) else {
         return Vec::new();
     };
@@ -267,12 +290,7 @@ pub(crate) fn selection_rects(
     }
     rects
         .into_iter()
-        .map(|rect| rect.with_outset((HIGHLIGHT_PAD, HIGHLIGHT_PAD)))
         .map(|rect| to_panel(found.width, found.content, rect))
-        .filter_map(|rect| {
-            let mut clipped = rect;
-            clipped.intersect(layout.inner).then_some(clipped)
-        })
         .collect()
 }
 

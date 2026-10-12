@@ -13,6 +13,8 @@ use crate::viewer::Viewer;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Command {
     Close,
+    Save,
+    SaveAs,
     Undo,
     Redo,
     Copy,
@@ -20,6 +22,8 @@ pub enum Command {
     Pen,
     ShowMarks,
     DeleteMark,
+    Markup,
+    DeleteSelection,
     ZoomIn,
     ZoomOut,
     ZoomFit,
@@ -30,8 +34,10 @@ pub enum Command {
     Shortcuts,
 }
 
-const ALL: [Command; 16] = [
+const ALL: [Command; 20] = [
     Command::Close,
+    Command::Save,
+    Command::SaveAs,
     Command::Undo,
     Command::Redo,
     Command::Copy,
@@ -39,6 +45,8 @@ const ALL: [Command; 16] = [
     Command::Pen,
     Command::ShowMarks,
     Command::DeleteMark,
+    Command::Markup,
+    Command::DeleteSelection,
     Command::ZoomIn,
     Command::ZoomOut,
     Command::ZoomFit,
@@ -54,6 +62,8 @@ impl Command {
     pub fn id(self) -> &'static str {
         match self {
             Self::Close => "close",
+            Self::Save => "save",
+            Self::SaveAs => "save_as",
             Self::Undo => "undo",
             Self::Redo => "redo",
             Self::Copy => "copy",
@@ -61,6 +71,8 @@ impl Command {
             Self::Pen => "pen",
             Self::ShowMarks => "show_marks",
             Self::DeleteMark => "delete_mark",
+            Self::Markup => "markup",
+            Self::DeleteSelection => "delete_selection",
             Self::ZoomIn => "zoom_in",
             Self::ZoomOut => "zoom_out",
             Self::ZoomFit => "zoom_fit",
@@ -79,6 +91,8 @@ impl Command {
     pub fn label(self) -> String {
         match self {
             Self::Close => otto_kit::t_owned!("studio-close"),
+            Self::Save => otto_kit::t_owned!("studio-save"),
+            Self::SaveAs => otto_kit::t_owned!("studio-save-as"),
             Self::Undo => otto_kit::t_owned!("studio-undo"),
             Self::Redo => otto_kit::t_owned!("studio-redo"),
             Self::Copy => otto_kit::t_owned!("studio-copy"),
@@ -86,6 +100,8 @@ impl Command {
             Self::Pen => otto_kit::t_owned!("studio-pen"),
             Self::ShowMarks => otto_kit::t_owned!("studio-show-marks"),
             Self::DeleteMark => otto_kit::t_owned!("studio-delete-mark"),
+            Self::Markup => otto_kit::t_owned!("studio-markup"),
+            Self::DeleteSelection => otto_kit::t_owned!("studio-delete-selection"),
             Self::ZoomIn => otto_kit::t_owned!("studio-zoom-in"),
             Self::ZoomOut => otto_kit::t_owned!("studio-zoom-out"),
             Self::ZoomFit => otto_kit::t_owned!("studio-zoom-fit"),
@@ -102,6 +118,8 @@ impl Command {
     pub fn shortcut(self) -> Option<&'static str> {
         Some(match self {
             Self::Close => "Ctrl+W",
+            Self::Save => "Ctrl+S",
+            Self::SaveAs => "Ctrl+Shift+S",
             Self::Undo => "Ctrl+Z",
             Self::Redo => "Ctrl+Y",
             Self::Copy => "Ctrl+C",
@@ -109,6 +127,8 @@ impl Command {
             Self::Pen => "Ctrl+Shift+A",
             Self::ShowMarks => "Ctrl+Shift+H",
             Self::DeleteMark => "Backspace",
+            Self::Markup => "Ctrl+Shift+E",
+            Self::DeleteSelection => "Delete",
             Self::ZoomIn => "Ctrl++",
             Self::ZoomOut => "Ctrl+-",
             Self::ZoomFit => "Ctrl+0",
@@ -125,9 +145,11 @@ impl Command {
     pub fn tool(self) -> Option<Tool> {
         Some(match self {
             Self::Undo => Tool::Undo,
+            Self::Save => Tool::Save,
             Self::Redo => Tool::Redo,
             Self::Pen => Tool::Mark,
             Self::ShowMarks => Tool::ShowMarks,
+            Self::Markup => Tool::Markup,
             Self::ZoomIn => Tool::ZoomIn,
             Self::ZoomOut => Tool::ZoomOut,
             Self::ZoomFit => Tool::ZoomFit,
@@ -144,7 +166,12 @@ impl Command {
         match self {
             Self::Copy => viewer.has_selection(),
             Self::DeleteMark => !viewer.marks.pending().is_empty(),
+            Self::DeleteSelection => viewer
+                .editing
+                .as_ref()
+                .is_some_and(|editing| editing.selected.is_some()),
             Self::Close | Self::SelectAll | Self::Shortcuts => true,
+            Self::SaveAs => viewer.editable(),
             command => command.tool().is_none_or(|tool| viewer.tool_enabled(tool)),
         }
     }
@@ -154,6 +181,7 @@ impl Command {
         match self {
             Self::Pen => Some(viewer.marking),
             Self::ShowMarks => Some(!viewer.marks_hidden),
+            Self::Markup => Some(viewer.markup.is_some()),
             Self::Sidebar => Some(viewer.sidebar_open()),
             Self::Chat => Some(viewer.chat_open),
             _ => None,
@@ -193,10 +221,17 @@ pub fn menus(viewer: &Viewer) -> Vec<Menu> {
 fn sections() -> Vec<(String, Vec<Vec<Command>>)> {
     use Command::*;
     vec![
-        (otto_kit::t_owned!("studio-menu-file"), vec![vec![Close]]),
+        (
+            otto_kit::t_owned!("studio-menu-file"),
+            vec![vec![Save, SaveAs], vec![Close]],
+        ),
         (
             otto_kit::t_owned!("studio-menu-edit"),
-            vec![vec![Undo, Redo], vec![Copy, SelectAll]],
+            vec![
+                vec![Undo, Redo],
+                vec![Copy, SelectAll],
+                vec![Markup, DeleteSelection],
+            ],
         ),
         (
             otto_kit::t_owned!("studio-menu-marks"),
@@ -228,6 +263,7 @@ pub fn global_key(keysym: Keysym, modifiers: Modifiers) -> Option<Command> {
         (Keysym::k | Keysym::K, false) => Some(Command::Chat),
         (Keysym::a | Keysym::A, true) => Some(Command::Pen),
         (Keysym::h | Keysym::H, true) => Some(Command::ShowMarks),
+        (Keysym::e | Keysym::E, true) => Some(Command::Markup),
         (Keysym::slash | Keysym::question, _) => Some(Command::Shortcuts),
         _ => None,
     }
@@ -287,6 +323,10 @@ pub fn sheet() -> Vec<(String, Vec<(String, String)>)> {
                 "Ctrl+Scroll".to_owned(),
             ),
             (otto_kit::t_owned!("studio-sheet-stop"), "Esc".to_owned()),
+            (
+                otto_kit::t_owned!("studio-sheet-next-field"),
+                "Tab".to_owned(),
+            ),
         ],
     ));
     sheet.push((

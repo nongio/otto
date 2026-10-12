@@ -2144,3 +2144,38 @@ studio-sheet-dictate = Диктовать
 studio-sheet-stop-agent = Остановить агента
 studio-sheet-to-document = Вернуться к документу
 studio-sheet-cmd = Cmd работает везде, где Ctrl
+# Toggle: the strip of tools that fill in and mark up a PDF, written into
+# the file itself.
+studio-markup = Инструменты разметки
+# Writes a PDF's form and markup changes over the file.
+studio-save = Сохранить
+# Saves the PDF under another name or in another folder, and carries on with that file.
+studio-save-as = Сохранить как…
+# The save dialog's title.
+studio-save-as-title = Сохранить копию
+# The window's title while a PDF has changes not yet saved. $name is the file's name.
+studio-title-edited = { $name } (изменено)
+# Asked when a window with unsaved changes is closed. $name is the file's name.
+studio-close-title = Сохранить изменения в «{ $name }»?
+studio-close-body = Если не сохранить изменения, они будут потеряны.
+studio-close-discard = Не сохранять
+studio-close-cancel = Отмена
+# Asked when saving would replace changes made to the file by another app
+# since it was opened. $name is the file's name.
+studio-changed-title = Файл «{ $name }» изменён на диске
+studio-changed-body = Сохранение заменит изменения, сделанные в другом месте.
+# Saves over the file anyway, replacing the changes made elsewhere.
+studio-changed-overwrite = Всё равно сохранить
+# Shown when a PDF's changes couldn't be written; the reason follows on its
+# own line. $name is the file's name.
+studio-save-failed-title = Не удалось сохранить «{ $name }»
+studio-save-failed-body = Чтобы не потерять изменения, сохрани копию в другом месте.
+# Deletes the highlight, drawing, text or signature selected on the page.
+studio-delete-selection = Удалить выбранное
+studio-sheet-next-field = Следующее поле формы
+# The card a signature is drawn on, once, before it is placed on a PDF.
+studio-signature-title = Нарисуй подпись
+studio-signature-hint = Распишись над линией
+studio-signature-clear = Очистить
+studio-signature-cancel = Отмена
+studio-signature-done = Готово

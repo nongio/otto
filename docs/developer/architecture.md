@@ -62,6 +62,7 @@ flowchart BT
   subgraph service["service"]
     otto_search[otto-search]
     otto_agents_client[otto-agents-client]
+    otto_pdf[otto-pdf]
   end
   subgraph toolkit["toolkit"]
     otto_kit[otto-kit]
@@ -135,6 +136,7 @@ flowchart BT
   otto_md_kit --> otto_kit
   otto_media_kit --> otto_kit
   otto_msg --> otto_dbus
+  otto_pdf --> otto_foundations
   otto_peek --> otto_kit
   otto_peek --> otto_md_kit
   otto_peek --> otto_media_kit
@@ -142,6 +144,7 @@ flowchart BT
   otto_preview --> otto_agents_kit
   otto_preview --> otto_kit
   otto_preview --> otto_media_kit
+  otto_preview --> otto_pdf
   otto_preview --> otto_peek
   otto_rdp --> otto_dbus
   otto_rdp --> otto_foundations

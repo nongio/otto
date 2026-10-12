@@ -2079,3 +2079,38 @@ studio-sheet-dictate = Ditar
 studio-sheet-stop-agent = Parar o agente
 studio-sheet-to-document = Voltar ao documento
 studio-sheet-cmd = Cmd funciona onde o Ctrl funciona
+# Toggle: the strip of tools that fill in and mark up a PDF, written into
+# the file itself.
+studio-markup = Ferramentas de marcação
+# Writes a PDF's form and markup changes over the file.
+studio-save = Salvar
+# Saves the PDF under another name or in another folder, and carries on with that file.
+studio-save-as = Salvar como…
+# The save dialog's title.
+studio-save-as-title = Salvar uma cópia
+# The window's title while a PDF has changes not yet saved. $name is the file's name.
+studio-title-edited = { $name } (editado)
+# Asked when a window with unsaved changes is closed. $name is the file's name.
+studio-close-title = Salvar as alterações em “{ $name }”?
+studio-close-body = Suas alterações se perdem se você não salvá-las.
+studio-close-discard = Não salvar
+studio-close-cancel = Cancelar
+# Asked when saving would replace changes made to the file by another app
+# since it was opened. $name is the file's name.
+studio-changed-title = “{ $name }” foi alterado no disco
+studio-changed-body = Salvar substitui as alterações feitas em outro lugar.
+# Saves over the file anyway, replacing the changes made elsewhere.
+studio-changed-overwrite = Salvar mesmo assim
+# Shown when a PDF's changes couldn't be written; the reason follows on its
+# own line. $name is the file's name.
+studio-save-failed-title = Não foi possível salvar “{ $name }”
+studio-save-failed-body = Salve uma cópia em outro lugar para manter suas alterações.
+# Deletes the highlight, drawing, text or signature selected on the page.
+studio-delete-selection = Excluir seleção
+studio-sheet-next-field = Próximo campo do formulário
+# The card a signature is drawn on, once, before it is placed on a PDF.
+studio-signature-title = Desenhar a assinatura
+studio-signature-hint = Assine acima da linha
+studio-signature-clear = Limpar
+studio-signature-cancel = Cancelar
+studio-signature-done = Concluído

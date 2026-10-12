@@ -2075,3 +2075,38 @@ studio-sheet-dictate = Detta
 studio-sheet-stop-agent = Ferma l’agente
 studio-sheet-to-document = Torna al documento
 studio-sheet-cmd = Cmd funziona ovunque come Ctrl
+# Toggle: the strip of tools that fill in and mark up a PDF, written into
+# the file itself.
+studio-markup = Strumenti di markup
+# Writes a PDF's form and markup changes over the file.
+studio-save = Salva
+# Saves the PDF under another name or in another folder, and carries on with that file.
+studio-save-as = Salva con nome…
+# The save dialog's title.
+studio-save-as-title = Salva una copia
+# The window's title while a PDF has changes not yet saved. $name is the file's name.
+studio-title-edited = { $name } (modificato)
+# Asked when a window with unsaved changes is closed. $name is the file's name.
+studio-close-title = Salvare le modifiche a “{ $name }”?
+studio-close-body = Se non le salvi, le modifiche vanno perse.
+studio-close-discard = Non salvare
+studio-close-cancel = Annulla
+# Asked when saving would replace changes made to the file by another app
+# since it was opened. $name is the file's name.
+studio-changed-title = “{ $name }” è cambiato sul disco
+studio-changed-body = Salvando, le modifiche fatte altrove vengono sostituite.
+# Saves over the file anyway, replacing the changes made elsewhere.
+studio-changed-overwrite = Salva comunque
+# Shown when a PDF's changes couldn't be written; the reason follows on its
+# own line. $name is the file's name.
+studio-save-failed-title = Impossibile salvare “{ $name }”
+studio-save-failed-body = Salva una copia altrove per tenere le modifiche.
+# Deletes the highlight, drawing, text or signature selected on the page.
+studio-delete-selection = Elimina selezione
+studio-sheet-next-field = Campo successivo del modulo
+# The card a signature is drawn on, once, before it is placed on a PDF.
+studio-signature-title = Disegna la firma
+studio-signature-hint = Firma sopra la linea
+studio-signature-clear = Cancella
+studio-signature-cancel = Annulla
+studio-signature-done = Fine

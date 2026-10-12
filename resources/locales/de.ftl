@@ -2056,3 +2056,38 @@ studio-sheet-dictate = Diktieren
 studio-sheet-stop-agent = Agent anhalten
 studio-sheet-to-document = Zurück zum Dokument
 studio-sheet-cmd = Cmd wirkt überall wie Strg
+# Toggle: the strip of tools that fill in and mark up a PDF, written into
+# the file itself.
+studio-markup = Markup-Werkzeuge
+# Writes a PDF's form and markup changes over the file.
+studio-save = Sichern
+# Saves the PDF under another name or in another folder, and carries on with that file.
+studio-save-as = Sichern unter …
+# The save dialog's title.
+studio-save-as-title = Kopie sichern
+# The window's title while a PDF has changes not yet saved. $name is the file's name.
+studio-title-edited = { $name } (bearbeitet)
+# Asked when a window with unsaved changes is closed. $name is the file's name.
+studio-close-title = Änderungen an „{ $name }“ sichern?
+studio-close-body = Deine Änderungen gehen verloren, wenn du sie nicht sicherst.
+studio-close-discard = Nicht sichern
+studio-close-cancel = Abbrechen
+# Asked when saving would replace changes made to the file by another app
+# since it was opened. $name is the file's name.
+studio-changed-title = „{ $name }“ wurde auf dem Datenträger geändert
+studio-changed-body = Beim Sichern werden die anderswo vorgenommenen Änderungen ersetzt.
+# Saves over the file anyway, replacing the changes made elsewhere.
+studio-changed-overwrite = Trotzdem sichern
+# Shown when a PDF's changes couldn't be written; the reason follows on its
+# own line. $name is the file's name.
+studio-save-failed-title = „{ $name }“ konnte nicht gesichert werden
+studio-save-failed-body = Sichere eine Kopie an einem anderen Ort, um deine Änderungen zu behalten.
+# Deletes the highlight, drawing, text or signature selected on the page.
+studio-delete-selection = Auswahl löschen
+studio-sheet-next-field = Nächstes Formularfeld
+# The card a signature is drawn on, once, before it is placed on a PDF.
+studio-signature-title = Unterschrift zeichnen
+studio-signature-hint = Über der Linie unterschreiben
+studio-signature-clear = Löschen
+studio-signature-cancel = Abbrechen
+studio-signature-done = Fertig

@@ -2050,3 +2050,38 @@ studio-sheet-dictate = 听写
 studio-sheet-stop-agent = 停止代理
 studio-sheet-to-document = 返回文档
 studio-sheet-cmd = Cmd 在任何 Ctrl 可用的地方都可用
+# Toggle: the strip of tools that fill in and mark up a PDF, written into
+# the file itself.
+studio-markup = 标记工具
+# Writes a PDF's form and markup changes over the file.
+studio-save = 存储
+# Saves the PDF under another name or in another folder, and carries on with that file.
+studio-save-as = 存储为…
+# The save dialog's title.
+studio-save-as-title = 存储副本
+# The window's title while a PDF has changes not yet saved. $name is the file's name.
+studio-title-edited = { $name }（已编辑）
+# Asked when a window with unsaved changes is closed. $name is the file's name.
+studio-close-title = 要存储对“{ $name }”的更改吗？
+studio-close-body = 如果不存储，你的更改将会丢失。
+studio-close-discard = 不存储
+studio-close-cancel = 取消
+# Asked when saving would replace changes made to the file by another app
+# since it was opened. $name is the file's name.
+studio-changed-title = “{ $name }”已在磁盘上更改
+studio-changed-body = 存储会替换在别处所做的更改。
+# Saves over the file anyway, replacing the changes made elsewhere.
+studio-changed-overwrite = 仍然存储
+# Shown when a PDF's changes couldn't be written; the reason follows on its
+# own line. $name is the file's name.
+studio-save-failed-title = 无法存储“{ $name }”
+studio-save-failed-body = 将副本存储到别处以保留你的更改。
+# Deletes the highlight, drawing, text or signature selected on the page.
+studio-delete-selection = 删除所选内容
+studio-sheet-next-field = 下一个表单字段
+# The card a signature is drawn on, once, before it is placed on a PDF.
+studio-signature-title = 绘制签名
+studio-signature-hint = 在线上方签名
+studio-signature-clear = 清除
+studio-signature-cancel = 取消
+studio-signature-done = 完成

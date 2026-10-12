@@ -1818,6 +1818,41 @@ studio-sheet-stop-agent = Stop the agent
 studio-sheet-to-document = Back to the document
 # Over the sheet: the Cmd key does what Ctrl does in every shortcut.
 studio-sheet-cmd = Cmd works wherever Ctrl does
+# Toggle: the strip of tools that fill in and mark up a PDF, written into
+# the file itself.
+studio-markup = Markup Tools
+# Writes a PDF's form and markup changes over the file.
+studio-save = Save
+# Saves the PDF under another name or in another folder, and carries on with that file.
+studio-save-as = Save As…
+# The save dialog's title.
+studio-save-as-title = Save a Copy
+# The window's title while a PDF has changes not yet saved. $name is the file's name.
+studio-title-edited = { $name } (edited)
+# Asked when a window with unsaved changes is closed. $name is the file's name.
+studio-close-title = Save changes to { $name }?
+studio-close-body = Your changes are lost if you don't save them.
+studio-close-discard = Don't Save
+studio-close-cancel = Cancel
+# Asked when saving would replace changes made to the file by another app
+# since it was opened. $name is the file's name.
+studio-changed-title = { $name } changed on disk
+studio-changed-body = Saving replaces the changes made to it elsewhere.
+# Saves over the file anyway, replacing the changes made elsewhere.
+studio-changed-overwrite = Save Anyway
+# Shown when a PDF's changes couldn't be written; the reason follows on its
+# own line. $name is the file's name.
+studio-save-failed-title = { $name } couldn't be saved
+studio-save-failed-body = Save a copy somewhere else to keep your changes.
+# Deletes the highlight, drawing, text or signature selected on the page.
+studio-delete-selection = Delete Selection
+studio-sheet-next-field = Next form field
+# The card a signature is drawn on, once, before it is placed on a PDF.
+studio-signature-title = Draw your signature
+studio-signature-hint = Sign above the line
+studio-signature-clear = Clear
+studio-signature-cancel = Cancel
+studio-signature-done = Done
 
 ## Preview — chat
 

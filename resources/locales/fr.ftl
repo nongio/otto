@@ -2080,3 +2080,38 @@ studio-sheet-dictate = Dicter
 studio-sheet-stop-agent = Arrêter l’agent
 studio-sheet-to-document = Retour au document
 studio-sheet-cmd = Cmd fonctionne partout comme Ctrl
+# Toggle: the strip of tools that fill in and mark up a PDF, written into
+# the file itself.
+studio-markup = Outils d’annotation
+# Writes a PDF's form and markup changes over the file.
+studio-save = Enregistrer
+# Saves the PDF under another name or in another folder, and carries on with that file.
+studio-save-as = Enregistrer sous…
+# The save dialog's title.
+studio-save-as-title = Enregistrer une copie
+# The window's title while a PDF has changes not yet saved. $name is the file's name.
+studio-title-edited = { $name } (modifié)
+# Asked when a window with unsaved changes is closed. $name is the file's name.
+studio-close-title = Enregistrer les modifications de « { $name } » ?
+studio-close-body = Tes modifications sont perdues si tu ne les enregistres pas.
+studio-close-discard = Ne pas enregistrer
+studio-close-cancel = Annuler
+# Asked when saving would replace changes made to the file by another app
+# since it was opened. $name is the file's name.
+studio-changed-title = « { $name } » a été modifié sur le disque
+studio-changed-body = L’enregistrement remplace les modifications faites ailleurs.
+# Saves over the file anyway, replacing the changes made elsewhere.
+studio-changed-overwrite = Enregistrer quand même
+# Shown when a PDF's changes couldn't be written; the reason follows on its
+# own line. $name is the file's name.
+studio-save-failed-title = Impossible d’enregistrer « { $name } »
+studio-save-failed-body = Enregistre une copie ailleurs pour garder tes modifications.
+# Deletes the highlight, drawing, text or signature selected on the page.
+studio-delete-selection = Supprimer la sélection
+studio-sheet-next-field = Champ de formulaire suivant
+# The card a signature is drawn on, once, before it is placed on a PDF.
+studio-signature-title = Dessiner une signature
+studio-signature-hint = Signer au-dessus de la ligne
+studio-signature-clear = Effacer
+studio-signature-cancel = Annuler
+studio-signature-done = Terminé
