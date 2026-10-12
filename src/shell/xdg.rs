@@ -2444,6 +2444,24 @@ impl<BackendData: Backend> Otto<BackendData> {
         self.surface_layer_parents.remove(surface_id);
         crate::surface_config_cache::invalidate(surface_id);
     }
+
+    /// Hide the layer of a surface that has left its window's surface tree.
+    ///
+    /// Destroying a `wl_subsurface` unmaps its surface at once, but the
+    /// `wl_surface` lives on and a client may make it a subsurface again
+    /// (Chrome reuses one for its omnibox dropdown). So the layer is hidden,
+    /// not destroyed: the window sync un-hides it when the surface is back
+    /// in a tree with a buffer. Dropping the recorded parent makes that sync
+    /// append the layer to whichever parent it has then.
+    pub(crate) fn hide_detached_surface_layer(
+        &mut self,
+        surface_id: &smithay::reexports::wayland_server::backend::ObjectId,
+    ) {
+        if let Some(layer) = self.surface_layers.get(surface_id) {
+            layer.set_hidden(true);
+        }
+        self.surface_layer_parents.remove(surface_id);
+    }
 }
 
 /// Slide popup geometry so it stays within the target rectangle.

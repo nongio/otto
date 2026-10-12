@@ -20,9 +20,10 @@ use smithay::{
     wayland::{
         buffer::BufferHandler,
         compositor::{
-            add_blocker, add_pre_commit_hook, get_parent, is_sync_subsurface, with_states,
-            with_surface_tree_upward, BufferAssignment, CompositorClientState, CompositorHandler,
-            CompositorState, SurfaceAttributes, TraversalAction,
+            add_blocker, add_pre_commit_hook, get_parent, get_role, is_sync_subsurface,
+            with_states, with_surface_tree_upward, BufferAssignment, CompositorClientState,
+            CompositorHandler, CompositorState, SurfaceAttributes, TraversalAction,
+            SUBSURFACE_ROLE,
         },
         dmabuf::get_dmabuf,
         shell::{
@@ -222,8 +223,18 @@ impl<BackendData: Backend> CompositorHandler for Otto<BackendData> {
 
         let sync = is_sync_subsurface(surface);
         let surface_id = surface.id();
+        // A subsurface whose `wl_subsurface` is gone. It belongs to no window
+        // any more, yet its layer is still under the one it was last appended
+        // to. A commit held behind a buffer fence lands here after the
+        // destroy request that followed it, when no window can be found for
+        // it and the window itself may not commit again for a while. smithay
+        // marks a detached subsurface sync, so this is decided before `sync`.
+        let detached_subsurface =
+            get_parent(surface).is_none() && get_role(surface) == Some(SUBSURFACE_ROLE);
 
-        if !sync {
+        if detached_subsurface {
+            self.hide_detached_surface_layer(&surface_id);
+        } else if !sync {
             // A lock surface is not in any workspace, space or layer map: it
             // belongs to the output's lock plane and is mirrored straight into
             // the scene. Its subsurfaces reach here too, and are handled by the

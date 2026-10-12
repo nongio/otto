@@ -2271,6 +2271,9 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             > = std::collections::HashMap::new();
             let mut children_order: std::collections::HashMap<ObjectId, Vec<ObjectId>> =
                 std::collections::HashMap::new();
+            // Surfaces in the tree without a buffer: still children of the
+            // window, so their recorded parent stays.
+            let mut unmapped: Vec<ObjectId> = Vec::new();
 
             smithay::wayland::compositor::with_surface_tree_downward(
                 &window_surface,
@@ -2331,10 +2334,32 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                         if let Some(layer) = self.surface_layers.get(&surface.id()) {
                             layer.set_hidden(true);
                         }
+                        unmapped.push(surface.id());
                     }
                 },
                 |_, _, _| true,
             );
+
+            // Layers last appended under a surface of this tree whose own
+            // surface is no longer in it: the client destroyed the
+            // `wl_subsurface`, which unmaps the surface at once whether or not
+            // a NULL buffer was committed. Every child of a mapped surface was
+            // visited above, so anything else recorded under one has left.
+            if !self.surface_layer_parents.is_empty() {
+                let detached: Vec<ObjectId> = self
+                    .surface_layer_parents
+                    .iter()
+                    .filter(|(child, parent)| {
+                        surface_info.contains_key(*parent)
+                            && !surface_info.contains_key(*child)
+                            && !unmapped.contains(child)
+                    })
+                    .map(|(child, _)| child.clone())
+                    .collect();
+                for surface_id in &detached {
+                    self.hide_detached_surface_layer(surface_id);
+                }
+            }
 
             // Now sync the layer hierarchy to match the surface tree
             for (surface_id, (surface, _pos, parent_id)) in surface_info.iter() {
