@@ -24,6 +24,9 @@ plus any wire tuple types the interface uses (`WireChoice`, `WireRequest`, …).
 zbus generates an async proxy (`SettingsProxy`) and a blocking one
 (`SettingsProxyBlocking`) for every interface.
 
+It sits in the **foundation** layer (see [Architecture Rules](architecture.md))
+and depends on no other workspace crate. Its one dependency is `zbus`.
+
 ## Who links it
 
 The crate has no UI and no async runtime of its own, so the portal backend,
@@ -32,6 +35,12 @@ otto-kit re-exports it as `otto_kit::dbus`, and toolkit apps use that path.
 
 It takes zbus from `[workspace.dependencies]`, like every other member, so
 it runs on the same tokio executor as the rest of the workspace.
+
+## Develop
+
+- `cargo build -p otto-dbus`. The crate has no tests.
+- A proxy module's doc comment names the file that serves it. Change the two
+  together.
 
 ## Adding an interface
 
@@ -53,3 +62,8 @@ not Otto's. Inside otto-kit, the Settings portal
 `portal_settings.rs`. One connection and one `SettingChanged` subscription
 serve the colour scheme, accent, icon theme, sound theme, appearance keys and
 locale watchers.
+
+## See also
+
+[Settings D-Bus API](settings-dbus-api.md), [Shell D-Bus API](shell-dbus-api.md),
+[otto-foundations](otto-foundations.md), [otto-kit](otto-kit.md).

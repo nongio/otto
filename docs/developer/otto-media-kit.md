@@ -8,6 +8,17 @@ The user-facing behaviour is specified in
 [specs/peek.md](../../specs/peek.md#video-playback); this page is
 about the pieces.
 
+It sits in the **kit** layer (see [Architecture Rules](architecture.md)) and
+is used by `otto-files`, `otto-preview` and `otto-peek`.
+
+## Dependencies
+
+- **Internal:** [otto-kit](otto-kit.md), for the theme and the draw/hit-test
+  conventions the view and transport bar follow.
+- **External:** GStreamer and its decoder plugins, in the worker only (feature
+  `worker`). `deny.toml` lets only this crate and `otto-rdp` wrap GStreamer.
+  The library draws with `skia-safe`.
+
 ## Two halves
 
 ```
@@ -68,8 +79,10 @@ There is no `PR_SET_PDEATHSIG`. A worker whose host dies exits when stdin
 reaches EOF or a write to stdout fails. Dropping a `Player` sends `quit` and
 then kills the worker at once, so the worker's own teardown rarely runs.
 
-## Debugging
+## Develop
 
+- `cargo test -p otto-media-kit` covers the protocol parsers, the transport
+  layout and the view.
 - `OTTO_MEDIA_TRACE=1` lets the worker's stderr through and adds GStreamer's
   debug string to error events.
 - `cargo run -p otto-media-kit --example probe -- FILE` plays four seconds
@@ -112,3 +125,8 @@ picture, whose key drops the video term when the video is on a surface. Input
 still belongs to the toplevel (empty input region), and the browser hit-tests
 the same box, so play and scrub work through the existing routing. The Peek
 panel is unaffected: it is already its own surface.
+
+## See also
+
+[File previews](file-previews.md), [Peek spec](../../specs/peek.md),
+[otto-kit](otto-kit.md).

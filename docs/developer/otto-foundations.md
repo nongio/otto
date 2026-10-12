@@ -6,6 +6,9 @@ a `file://` URI and back, and how typed text is scored against a name. It has
 no UI, no async runtime and no D-Bus. Its one dependency is
 `percent-encoding`.
 
+It sits in the **foundation** layer (see [Architecture Rules](architecture.md))
+and depends on no other workspace crate.
+
 | Module | What it does |
 |--------|--------------|
 | `xdg` | The XDG base directories (`config_home`, `data_home`, `state_home`, `cache_home`, `runtime_dir`, `data_dirs`, `config_dirs`), `home`, Otto's config paths, the user's folders from `user-dirs.dirs` (`user_dirs`, `user_dir`, `parse_user_dirs`), and the `~/…` spelling of a path (`tilde`, `tilde_in`) |
@@ -24,6 +27,16 @@ that do not link the toolkit depend on otto-foundations directly:
   base directories and `tilde` from `xdg`, and file URIs from `uri`.
 - `xdg-desktop-portal-otto` finds the Pictures folder with
   `xdg::user_dir` and hands out screenshot URIs with `uri::path_to_uri`.
+- `otto-pdf` (`xdg::home`, for `~/.local/lib/otto/libpdfium.so`), `otto-rdp`
+  (`xdg::state_home`, for its TLS identity) and the compositor's
+  `otto-render` (`xdg::runtime_dir`, for its debug hooks) use `xdg`.
+
+## Develop
+
+- `cargo test -p otto-foundations`.
+- `cargo run -p otto-arch` checks that XDG lookups stay here: the
+  `xdg-dirs-through-foundations` source rule in `architecture.toml` flags an
+  `env::var("HOME")` or `XDG_*_HOME` lookup anywhere else.
 
 Before this crate existed otto-kit depended on otto-search, a crate with
 zbus and tokio, only for name matching. The portal and the agents crates
@@ -50,3 +63,8 @@ A helper belongs here when a program that does not link otto-kit needs it,
 and it needs only the standard library. A helper that draws, talks D-Bus or
 needs a runtime belongs somewhere else: otto-kit, otto-dbus or the crate
 that uses it.
+
+## See also
+
+[XDG specifications](xdg-specifications.md), [otto-kit](otto-kit.md),
+[otto-dbus](otto-dbus.md).
