@@ -260,9 +260,12 @@ fn near_color(a: Option<Rgb>, b: Rgb) -> bool {
 fn round_trip(path: &Path, edits: &[Edit]) -> Snapshot {
     let mut doc = Document::open(path.to_path_buf(), None).unwrap();
     doc.apply(edits).unwrap();
-    assert!(doc.dirty());
-    doc.save().unwrap();
-    assert!(!doc.dirty());
+    let written = doc.save().unwrap();
+    assert_eq!(
+        std::fs::read(path).unwrap(),
+        written,
+        "save answers what it wrote"
+    );
     drop(doc);
     Document::open(path.to_path_buf(), None).unwrap().snapshot()
 }
@@ -544,7 +547,11 @@ fn checkboxes_and_radios_tick_and_survive_a_save() {
         matches!(&error, Error::Invalid(why) if why.starts_with("edit 1:")),
         "{error:?}"
     );
-    assert!(!doc.dirty());
+    assert_eq!(
+        doc.snapshot(),
+        Document::open(path.clone(), None).unwrap().snapshot(),
+        "a refused edit changes nothing"
+    );
 
     let agree = field(&doc.snapshot(), "agree").id;
     doc.apply(&[Edit::SetChecked {
@@ -650,7 +657,7 @@ fn read_only_fields_and_wrong_kinds_are_refused() {
             "{edit:?}"
         );
     }
-    assert!(!doc.dirty());
+    assert_eq!(doc.snapshot(), snap, "a refused edit changes nothing");
 }
 
 #[test]
@@ -677,7 +684,6 @@ fn a_failing_edit_is_named_and_the_ones_before_it_stay() {
         matches!(&error, Error::Invalid(why) if why.starts_with("edit 2:")),
         "{error:?}"
     );
-    assert!(doc.dirty());
     assert_eq!(text_value(field(&doc.snapshot(), "name")), "kept");
 }
 
@@ -1146,7 +1152,6 @@ fn saving_replaces_the_file_whole_and_keeps_its_permissions() {
     }])
     .unwrap();
     doc.save_to(&copy).unwrap();
-    assert!(doc.dirty());
     assert_eq!(doc.path(), path);
     let reopened = Document::open(copy, None).unwrap().snapshot();
     assert_eq!(text_value(field(&reopened, "name")), "y");
@@ -1524,4 +1529,143 @@ fn added_annotations_show_in_the_page_drawn_before_a_save() {
         }
     }
     assert!(missing.is_empty(), "not drawn: {missing:?}");
+}
+
+/// One page `width` × `height` points, with nothing on it.
+fn blank_pdf(width: f32, height: f32) -> Vec<u8> {
+    let mut w = Writer::new();
+    let catalog = w.reserve();
+    let pages = w.reserve();
+    let page = w.reserve();
+    w.set(
+        page,
+        format!("<< /Type /Page /Parent {pages} 0 R /MediaBox [0 0 {width} {height}] >>"),
+    );
+    w.set(
+        pages,
+        format!("<< /Type /Pages /Kids [{page} 0 R] /Count 1 >>"),
+    );
+    w.set(catalog, format!("<< /Type /Catalog /Pages {pages} 0 R >>"));
+    w.finish(catalog)
+}
+
+#[test]
+fn a_page_too_tall_to_draw_is_refused_not_allocated() {
+    if !pdfium() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("tall.pdf");
+    std::fs::write(&path, blank_pdf(3.0, 14_400.0)).unwrap();
+    let doc = Document::open(path, None).unwrap();
+    // 400 pixels wide would be 1.9 million tall.
+    assert!(matches!(doc.render(0, 400), Err(Error::Invalid(_))));
+    // Narrow enough, it draws.
+    let (height, pixels) = doc.render(0, 2).unwrap();
+    assert_eq!(height, 9_600);
+    assert_eq!(pixels.len(), 2 * 9_600 * 4);
+}
+
+#[test]
+fn a_document_opened_from_memory_saves_over_its_path() {
+    if !pdfium() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let path = write_fixture(dir.path(), "memory.pdf");
+    let bytes = std::fs::read(&path).unwrap();
+    // Whatever is on disk now, the document is the bytes it was given.
+    std::fs::write(&path, b"not a pdf").unwrap();
+    let mut doc = Document::open_bytes(path.clone(), bytes, None).unwrap();
+    let name = field(&doc.snapshot(), "name").id;
+    doc.apply(&[Edit::SetText {
+        field: name,
+        text: "from memory".into(),
+    }])
+    .unwrap();
+    let written = doc.save().unwrap();
+    assert_eq!(std::fs::read(&path).unwrap(), written);
+    let reopened = Document::open(path, None).unwrap().snapshot();
+    assert_eq!(text_value(field(&reopened, "name")), "from memory");
+}
+
+#[test]
+fn numbers_a_page_cant_hold_are_refused() {
+    let id = AnnotId { page: 0, index: 0 };
+    let color = Rgb(0.0, 0.0, 0.0);
+    let refused = [
+        Edit::Move {
+            annotation: id,
+            dx: f32::NAN,
+            dy: 0.0,
+        },
+        Edit::Move {
+            annotation: id,
+            dx: 0.0,
+            dy: 1e9,
+        },
+        Edit::SetColor {
+            annotation: id,
+            color: Rgb(f32::INFINITY, 0.0, 0.0),
+        },
+        Edit::Add {
+            page: 0,
+            annotation: NewAnnotation::Ink {
+                strokes: vec![vec![(0.0, 0.0), (1.0, 1.0)]],
+                width: 0.0,
+                color,
+            },
+        },
+        Edit::Add {
+            page: 0,
+            annotation: NewAnnotation::Ink {
+                strokes: vec![vec![(0.0, f32::NEG_INFINITY)]],
+                width: 1.0,
+                color,
+            },
+        },
+        Edit::Add {
+            page: 0,
+            annotation: NewAnnotation::Text {
+                at: (10.0, 10.0),
+                text: "big".into(),
+                size: 5_000.0,
+                color,
+            },
+        },
+        Edit::SetText {
+            field: id,
+            text: "x".repeat(crate::MAX_TEXT_LEN + 1),
+        },
+    ];
+    for edit in refused {
+        assert!(matches!(edit.check(), Err(Error::Invalid(_))), "{edit:?}");
+    }
+    let fine = Edit::Add {
+        page: 0,
+        annotation: NewAnnotation::Text {
+            at: (10.0, 10.0),
+            text: "fine".into(),
+            size: 12.0,
+            color,
+        },
+    };
+    assert_eq!(fine.check(), Ok(()));
+}
+
+#[test]
+fn a_typed_choice_has_a_length_limit() {
+    if !pdfium() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let mut doc = Document::open(write_fixture(dir.path(), "typed.pdf"), None).unwrap();
+    let city = field(&doc.snapshot(), "city").id;
+    let error = doc
+        .apply(&[Edit::SetText {
+            field: city,
+            text: "a".repeat(5_000),
+        }])
+        .unwrap_err();
+    assert!(matches!(error, Error::Invalid(_)), "{error:?}");
 }

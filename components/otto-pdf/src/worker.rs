@@ -11,7 +11,9 @@
 use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Sender};
 use std::sync::OnceLock;
 
@@ -91,7 +93,6 @@ pub struct Document {
     id: u64,
     path: PathBuf,
     snapshot: Snapshot,
-    dirty: bool,
     worker: Sender<Job>,
 }
 
@@ -104,9 +105,21 @@ impl Document {
     /// file needs a password and `password` is missing or wrong, and
     /// [`Error::Unreadable`] when the file can't be read or isn't a PDF.
     pub fn open(path: PathBuf, password: Option<String>) -> Result<Self> {
-        let ffi = library::load()?;
+        library::load()?;
         let bytes = fs::read(&path)
             .map_err(|error| Error::Unreadable(format!("{}: {error}", path.display())))?;
+        Self::open_bytes(path, bytes, password)
+    }
+
+    /// Opens the PDF in `bytes` as the file at `path`: what it is saved
+    /// over, though nothing is read from there. For a document read once and
+    /// opened again from memory, whatever the file has become since.
+    ///
+    /// # Errors
+    ///
+    /// As for [`open`](Self::open).
+    pub fn open_bytes(path: PathBuf, bytes: Vec<u8>, password: Option<String>) -> Result<Self> {
+        let ffi = library::load()?;
         let worker = worker()?;
         let (id, snapshot) = call(&worker, move |engine| {
             let doc = Doc::open(ffi, bytes, password)?;
@@ -120,7 +133,6 @@ impl Document {
             id,
             path,
             snapshot,
-            dirty: false,
             worker,
         })
     }
@@ -134,12 +146,6 @@ impl Document {
     /// [`apply`](Self::apply).
     pub fn snapshot(&self) -> Snapshot {
         self.snapshot.clone()
-    }
-
-    /// Whether edits have been applied since it opened or was last saved
-    /// over its file.
-    pub fn dirty(&self) -> bool {
-        self.dirty
     }
 
     /// Makes `edits` in memory and answers what the document is then.
@@ -158,13 +164,12 @@ impl Document {
     pub fn apply(&mut self, edits: &[Edit]) -> Result<Snapshot> {
         let id = self.id;
         let edits = edits.to_vec();
-        let (changed, outcome, snapshot) = call(&self.worker, move |engine| {
+        let (outcome, snapshot) = call(&self.worker, move |engine| {
             let doc = engine.doc(id)?;
-            let (changed, outcome) = doc.apply(&edits);
-            Ok::<_, Error>((changed, outcome, doc.snapshot()))
+            let (_, outcome) = doc.apply(&edits);
+            Ok::<_, Error>((outcome, doc.snapshot()))
         })??;
         self.snapshot = snapshot;
-        self.dirty |= changed;
         outcome.map(|()| self.snapshot.clone())
     }
 
@@ -189,36 +194,36 @@ impl Document {
     /// signatures still cover the bytes they signed; any other is written
     /// afresh. A locked document stays locked. The new file goes beside the
     /// old one first and replaces it whole, with the old one's permissions.
+    /// Returns the bytes written: the file as it is now.
     ///
     /// # Errors
     ///
     /// [`Error::Failed`] when PDFium can't write the document, and
     /// [`Error::Io`] when the file can't be.
-    pub fn save(&mut self) -> Result<()> {
+    pub fn save(&mut self) -> Result<Vec<u8>> {
         let path = self.path.clone();
-        self.save_with(&path, self.snapshot.signed)?;
-        self.dirty = false;
-        Ok(())
+        self.save_with(&path, self.snapshot.signed)
     }
 
-    /// Writes a copy to `path`, saved the way [`save`](Self::save) saves.
-    /// The document stays the one at [`path`](Self::path), and stays
-    /// [`dirty`](Self::dirty) if it was.
+    /// Writes a copy to `path`, saved the way [`save`](Self::save) saves,
+    /// and returns the bytes written. The document stays the one at
+    /// [`path`](Self::path).
     ///
     /// # Errors
     ///
     /// As for [`save`](Self::save).
-    pub fn save_to(&mut self, path: &Path) -> Result<()> {
+    pub fn save_to(&mut self, path: &Path) -> Result<Vec<u8>> {
         self.save_with(path, self.snapshot.signed)
     }
 
     /// Writes to `path`, appending the changes when `incremental`.
-    pub(crate) fn save_with(&mut self, path: &Path, incremental: bool) -> Result<()> {
+    pub(crate) fn save_with(&mut self, path: &Path, incremental: bool) -> Result<Vec<u8>> {
         let id = self.id;
         let bytes = call(&self.worker, move |engine| {
             engine.doc(id)?.save(incremental)
         })??;
-        write_replacing(path, &bytes)
+        write_replacing(path, &bytes)?;
+        Ok(bytes)
     }
 }
 
@@ -232,9 +237,38 @@ impl Drop for Document {
     }
 }
 
-/// Writes `bytes` to a file beside `path`, then renames it over `path`, so
-/// a reader sees the old file or the new one and never half of one. The
-/// new file takes the old one's permissions, and its owner where allowed.
+/// How many times a temporary name is drawn before giving up, should each
+/// one already be taken.
+const TEMP_TRIES: u32 = 16;
+
+/// A name for the file written beside `name` before it replaces it: hidden,
+/// and with a suffix nobody can guess ahead of time, drawn from the clock,
+/// the process, a counter and the standard library's per-process random
+/// hash keys.
+fn temp_name(name: &std::ffi::OsStr) -> String {
+    use std::hash::{BuildHasher, Hasher};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
+    hasher.write_u128(now.as_nanos());
+    hasher.write_u32(std::process::id());
+    hasher.write_u64(COUNTER.fetch_add(1, Ordering::Relaxed));
+    format!(
+        ".{}.otto-pdf-{:016x}",
+        name.to_string_lossy(),
+        hasher.finish()
+    )
+}
+
+/// Writes `bytes` to a new file beside `path`, then renames it over `path`,
+/// so a reader sees the old file or the new one and never half of one.
+///
+/// The new file is made fresh, never opened through a link or over a file
+/// already there, with the old one's permissions from the start (or the
+/// usual ones, under the umask, for a file that isn't there yet), and takes
+/// the old one's owner where allowed.
 fn write_replacing(path: &Path, bytes: &[u8]) -> Result<()> {
     let io = |error: std::io::Error| Error::Io(format!("{}: {error}", path.display()));
     // Saving through a link replaces what it points at, not the link.
@@ -249,29 +283,46 @@ fn write_replacing(path: &Path, bytes: &[u8]) -> Result<()> {
         Some(dir) if !dir.as_os_str().is_empty() => dir.to_path_buf(),
         _ => PathBuf::from("."),
     };
-    let temp = dir.join(format!(
-        ".{}.otto-pdf-{}",
-        name.to_string_lossy(),
-        std::process::id()
-    ));
     let old = fs::metadata(&target).ok();
+    let mode = old
+        .as_ref()
+        .map_or(0o666, |old| old.permissions().mode() & 0o7777);
+    let (temp, mut file) = (|| {
+        let mut tries = 0;
+        loop {
+            let temp = dir.join(temp_name(name));
+            let opened = fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+                .mode(mode)
+                .open(&temp);
+            match opened {
+                Ok(file) => return Ok((temp, file)),
+                Err(error)
+                    if error.kind() == std::io::ErrorKind::AlreadyExists
+                        && tries + 1 < TEMP_TRIES =>
+                {
+                    tries += 1;
+                }
+                Err(error) => return Err(error),
+            }
+        }
+    })()
+    .map_err(io)?;
     let written = (|| {
-        let mut file = fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(&temp)?;
-        file.write_all(bytes)?;
         if let Some(old) = &old {
             use std::os::unix::fs::MetadataExt;
-            file.set_permissions(old.permissions())?;
+            // The umask may have narrowed the mode it was made with.
+            file.set_permissions(fs::Permissions::from_mode(mode))?;
             // Best effort: only root may give a file away.
             let _ = std::os::unix::fs::fchown(&file, Some(old.uid()), Some(old.gid()));
         }
+        file.write_all(bytes)?;
         file.sync_all()?;
-        drop(file);
         fs::rename(&temp, &target)
     })();
+    drop(file);
     if let Err(error) = written {
         let _ = fs::remove_file(&temp);
         return Err(io(error));

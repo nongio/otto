@@ -16,7 +16,7 @@
 
 // Rust guideline compliant 2026-02-21
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 use crate::bindings::{Bindings, FPDF_LIBRARY_CONFIG};
@@ -24,12 +24,7 @@ use crate::Error;
 
 const FILE_NAME: &str = "libpdfium.so";
 
-struct Loaded {
-    bindings: Bindings,
-    location: PathBuf,
-}
-
-static LOADED: OnceLock<Result<Loaded, String>> = OnceLock::new();
+static LOADED: OnceLock<Result<Bindings, String>> = OnceLock::new();
 
 /// PDFium's functions, loading the library and initialising it the first
 /// time.
@@ -40,17 +35,8 @@ static LOADED: OnceLock<Result<Loaded, String>> = OnceLock::new();
 /// why each failed. The same answer comes back on every later call.
 pub fn load() -> Result<&'static Bindings, Error> {
     match LOADED.get_or_init(open) {
-        Ok(loaded) => Ok(&loaded.bindings),
+        Ok(bindings) => Ok(bindings),
         Err(why) => Err(Error::Unavailable(why.clone())),
-    }
-}
-
-/// Where PDFium was loaded from, once [`load`] has succeeded: a file path,
-/// or the bare `libpdfium.so` when the system loader found it.
-pub fn location() -> Option<PathBuf> {
-    match LOADED.get() {
-        Some(Ok(loaded)) => Some(loaded.location.clone()),
-        _ => None,
     }
 }
 
@@ -75,19 +61,19 @@ fn candidates() -> Vec<PathBuf> {
     paths
 }
 
-fn open() -> Result<Loaded, String> {
+fn open() -> Result<Bindings, String> {
     let mut tried = Vec::new();
     for path in candidates() {
         if !path.is_file() {
             continue;
         }
         match bind(path.as_os_str()) {
-            Ok(bindings) => return Ok(init(bindings, path)),
+            Ok(bindings) => return Ok(init(bindings, &path)),
             Err(why) => tried.push(format!("{}: {why}", path.display())),
         }
     }
     match bind(FILE_NAME.as_ref()) {
-        Ok(bindings) => return Ok(init(bindings, PathBuf::from(FILE_NAME))),
+        Ok(bindings) => return Ok(init(bindings, Path::new(FILE_NAME))),
         Err(why) => tried.push(format!("{FILE_NAME}: {why}")),
     }
     let why = tried.join("; ");
@@ -105,7 +91,7 @@ fn bind(name: &std::ffi::OsStr) -> Result<Bindings, String> {
     unsafe { Bindings::resolve(library) }
 }
 
-fn init(bindings: Bindings, location: PathBuf) -> Loaded {
+fn init(bindings: Bindings, location: &Path) -> Bindings {
     let config = FPDF_LIBRARY_CONFIG {
         version: 2,
         m_pUserFontPaths: std::ptr::null(),
@@ -117,5 +103,5 @@ fn init(bindings: Bindings, location: PathBuf) -> Loaded {
     // that outlives the call.
     unsafe { (bindings.FPDF_InitLibraryWithConfig)(&config) };
     tracing::debug!("PDFium loaded from {}", location.display());
-    Loaded { bindings, location }
+    bindings
 }

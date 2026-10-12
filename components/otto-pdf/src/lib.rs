@@ -327,6 +327,146 @@ pub enum Edit {
     },
 }
 
+/// The farthest from a page's corner a point may be, and the farthest an
+/// annotation may move, in points: well past any real page (the largest a
+/// PDF page may be is 200 inches, 14 400 points), short of where `f32`
+/// loses whole points.
+pub const MAX_COORD: f32 = 100_000.0;
+/// The widest a stroke may be, in points.
+pub const MAX_LINE_WIDTH: f32 = 100.0;
+/// The largest text may be, in points.
+pub const MAX_TEXT_SIZE: f32 = 1_000.0;
+/// The most characters a text, a note or a field's value may hold.
+pub const MAX_TEXT_LEN: usize = 100_000;
+/// The most UTF-16 units typed into a choice field that takes typing,
+/// which PDFium is handed one keystroke at a time.
+pub const MAX_TYPED: usize = 4_096;
+/// The most pixels a placed picture may be on either side.
+pub const MAX_IMAGE_SIDE: u32 = 8_192;
+
+impl Edit {
+    /// Whether every number in the edit is one a page can hold: finite, and
+    /// within [`MAX_COORD`] and the other bounds above. Says what isn't.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Invalid`], saying which number is out of bounds.
+    pub fn check(&self) -> Result<()> {
+        match self {
+            Self::SetText { text, .. } | Self::SetContents { text, .. } => check_text(text),
+            Self::SetChecked { .. } | Self::Choose { .. } | Self::Delete { .. } => Ok(()),
+            Self::Move { dx, dy, .. } => {
+                check_coord("a move", *dx)?;
+                check_coord("a move", *dy)
+            }
+            Self::SetColor { color, .. } => check_color(*color),
+            Self::Add { annotation, .. } => annotation.check(),
+        }
+    }
+}
+
+impl NewAnnotation {
+    fn check(&self) -> Result<()> {
+        match self {
+            Self::Markup { quads, color, .. } => {
+                check_color(*color)?;
+                quads
+                    .iter()
+                    .flatten()
+                    .try_for_each(|point| check_point("marked text", *point))
+            }
+            Self::Ink {
+                strokes,
+                width,
+                color,
+            } => {
+                check_color(*color)?;
+                if !(width.is_finite() && *width > 0.0 && *width <= MAX_LINE_WIDTH) {
+                    return Err(Error::Invalid(format!(
+                        "ink takes a width above 0 and up to {MAX_LINE_WIDTH}, not {width}"
+                    )));
+                }
+                strokes
+                    .iter()
+                    .flatten()
+                    .try_for_each(|point| check_point("ink", *point))
+            }
+            Self::Text {
+                at,
+                text,
+                size,
+                color,
+            } => {
+                check_color(*color)?;
+                check_point("text", *at)?;
+                check_text(text)?;
+                if !(size.is_finite() && *size > 0.0 && *size <= MAX_TEXT_SIZE) {
+                    return Err(Error::Invalid(format!(
+                        "text takes a size above 0 and up to {MAX_TEXT_SIZE}, not {size}"
+                    )));
+                }
+                Ok(())
+            }
+            Self::Note { at, text, color } => {
+                check_color(*color)?;
+                check_point("a note", *at)?;
+                check_text(text)
+            }
+            Self::Image {
+                rect,
+                width,
+                height,
+                ..
+            } => {
+                check_point("a picture", (rect.left, rect.top))?;
+                check_point("a picture", (rect.right, rect.bottom))?;
+                if *width > MAX_IMAGE_SIDE || *height > MAX_IMAGE_SIDE {
+                    return Err(Error::Invalid(format!(
+                        "a picture is at most {MAX_IMAGE_SIDE} pixels a side, not {width}×{height}"
+                    )));
+                }
+                Ok(())
+            }
+        }
+    }
+}
+
+fn check_coord(what: &str, value: f32) -> Result<()> {
+    if value.is_finite() && value.abs() <= MAX_COORD {
+        Ok(())
+    } else {
+        Err(Error::Invalid(format!(
+            "{what} takes numbers within ±{MAX_COORD} points, not {value}"
+        )))
+    }
+}
+
+fn check_point(what: &str, (x, y): (f32, f32)) -> Result<()> {
+    check_coord(what, x)?;
+    check_coord(what, y)
+}
+
+fn check_color(Rgb(r, g, b): Rgb) -> Result<()> {
+    if [r, g, b].iter().all(|channel| channel.is_finite()) {
+        Ok(())
+    } else {
+        Err(Error::Invalid(format!(
+            "a colour takes channels from 0 to 1, not ({r}, {g}, {b})"
+        )))
+    }
+}
+
+fn check_text(text: &str) -> Result<()> {
+    let len = text.chars().count();
+    if len <= MAX_TEXT_LEN {
+        Ok(())
+    } else {
+        Err(Error::Invalid(format!(
+            "text is at most {MAX_TEXT_LEN} characters, not {len}"
+        )))
+    }
+}
+
 /// Why something couldn't be done.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Error {

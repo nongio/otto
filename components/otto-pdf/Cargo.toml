@@ -11,6 +11,8 @@ description = "Editing PDFs in place: form fields and annotations, through PDFiu
 # still runs everything else, and only the editing is missing.
 [dependencies]
 libloading = "0.8"
+# O_NOFOLLOW and O_CLOEXEC for the file a save writes before it replaces the old.
+libc.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]

@@ -5426,6 +5426,7 @@ dependencies = [
 name = "otto-pdf"
 version = "1.6.0"
 dependencies = [
+ "libc",
  "libloading 0.8.9",
  "tempfile",
  "tracing",

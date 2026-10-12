@@ -16,7 +16,7 @@ use crate::bindings::{self as ffi, Bindings};
 use crate::geometry::{bounds, PageGeometry};
 use crate::{
     AnnotId, AnnotKind, Annotation, Edit, Error, Field, FieldKind, Markup, NewAnnotation, Rect,
-    Result, Rgb, Snapshot,
+    Result, Rgb, Snapshot, MAX_TYPED,
 };
 
 /// A rect in a page's user space: `(left, bottom, right, top)`.
@@ -28,6 +28,10 @@ const TEXT_PADDING: f32 = 2.0;
 const LINE_HEIGHT: f32 = 1.2;
 /// The side of a sticky note's icon, in points.
 const NOTE_SIZE: f32 = 20.0;
+/// The widest and tallest a page is drawn, in pixels, and the most pixels
+/// one drawing holds (256 MiB of RGBA).
+const MAX_RENDER_SIDE: u32 = 16_384;
+const MAX_RENDER_PIXELS: u64 = 64 * 1024 * 1024;
 
 const FIELD_READ_ONLY: c_int = 1 << 0;
 const FIELD_REQUIRED: c_int = 1 << 1;
@@ -130,12 +134,30 @@ impl Doc {
             .ok_or_else(|| Error::Invalid(format!("there is no page {}", index + 1)))?
             .geometry
             .page();
-        let width = width.clamp(1, 8192);
+        let width = width.clamp(1, MAX_RENDER_SIDE);
+        // A float out of range saturates, and NaN becomes 0.
         let height = ((width as f32 * shown.height / shown.width.max(1.0)).round() as u32).max(1);
+        let too_large = || {
+            Error::Invalid(format!(
+                "page {} is too large to draw {width} pixels wide",
+                index + 1
+            ))
+        };
+        if height > MAX_RENDER_SIDE || u64::from(width) * u64::from(height) > MAX_RENDER_PIXELS {
+            return Err(too_large());
+        }
+        let stride = (width as usize).checked_mul(4).ok_or_else(too_large)?;
+        let size = stride.checked_mul(height as usize).ok_or_else(too_large)?;
+        let (w, h, stride_c) = match (
+            c_int::try_from(width),
+            c_int::try_from(height),
+            c_int::try_from(stride),
+        ) {
+            (Ok(w), Ok(h), Ok(stride)) => (w, h, stride),
+            _ => return Err(too_large()),
+        };
         let page = self.page(index)?;
-        let stride = width as usize * 4;
-        let mut pixels = vec![0u8; stride * height as usize];
-        let (w, h) = (width as c_int, height as c_int);
+        let mut pixels = vec![0u8; size];
         // SAFETY: the bitmap wraps `pixels`, which is `stride * height`
         // bytes and outlives it (destroyed below, before `pixels` moves);
         // the page and the form are live.
@@ -145,7 +167,7 @@ impl Doc {
                 h,
                 ffi::FPDF_BITMAP_BGRA,
                 pixels.as_mut_ptr().cast::<c_void>(),
-                stride as c_int,
+                stride_c,
             );
             if bitmap.is_null() {
                 return Err(Error::Failed("couldn't make a bitmap to draw into".into()));
@@ -212,10 +234,13 @@ impl Doc {
             },
             bytes: Vec::new(),
         };
-        // SAFETY: `raw` is live; `sink` outlives the call, and its first
-        // field is the `FPDF_FILEWRITE` whose address `write_block` casts
-        // back to the `Sink`.
-        let ok = unsafe { (self.ffi.FPDF_SaveAsCopy)(self.raw, &mut sink.write, flags) };
+        // A pointer to the whole `Sink`, so the one `write_block` gets back
+        // may reach all of it, not only the `FPDF_FILEWRITE` it starts with.
+        let writer = std::ptr::addr_of_mut!(sink).cast::<ffi::FPDF_FILEWRITE>();
+        // SAFETY: `raw` is live; `sink` outlives the call and is touched
+        // only through `writer` during it, and its first field is the
+        // `FPDF_FILEWRITE` that `write_block` casts back to the `Sink`.
+        let ok = unsafe { (self.ffi.FPDF_SaveAsCopy)(self.raw, writer, flags) };
         if ok == 0 || sink.bytes.is_empty() {
             return Err(Error::Failed("PDFium couldn't write the document".into()));
         }
@@ -269,6 +294,7 @@ impl Doc {
         touched: &mut BTreeSet<usize>,
         deletions: &mut BTreeMap<usize, BTreeSet<usize>>,
     ) -> Result<bool> {
+        edit.check()?;
         match edit {
             Edit::SetText { field, text } => {
                 let field = self.field(*field)?;
@@ -604,6 +630,13 @@ impl Doc {
         };
         refuse_read_only(field)?;
         let text = one_line_break(text.to_owned());
+        if matches!(field.kind, FieldKind::Combo { .. }) && text.encode_utf16().count() > MAX_TYPED
+        {
+            return Err(Error::Invalid(format!(
+                "“{}” takes at most {MAX_TYPED} characters typed",
+                field.name
+            )));
+        }
         let wanted: String = match max_len {
             Some(max) => text.chars().take(max).collect(),
             None => text.clone(),
@@ -1309,7 +1342,7 @@ impl PageHandle<'_> {
             let bitmap = (ffi.FPDFBitmap_CreateEx)(
                 w,
                 h,
-                ffi::FPDFBITMAP_BGRA,
+                ffi::FPDF_BITMAP_BGRA,
                 bgra.as_mut_ptr().cast::<c_void>(),
                 stride,
             );
@@ -1937,8 +1970,13 @@ fn color_operands(before: &[&str], operator: &str) -> Option<Rgb> {
     }
 }
 
-/// A number as PDF content writes it: no exponent, no trailing zeros.
+/// A number as PDF content writes it: no exponent, no trailing zeros. One
+/// that isn't finite, which edits are checked against before they get
+/// here, is written as 0 rather than as a word no reader parses.
 fn number(value: f32) -> String {
+    if !value.is_finite() {
+        return "0".into();
+    }
     let text = format!("{value:.3}");
     let text = text.trim_end_matches('0').trim_end_matches('.');
     if text == "-0" {

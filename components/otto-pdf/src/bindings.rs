@@ -65,7 +65,6 @@ pub type FPDF_BYTESTRING = *const c_char;
 /// `FPDF_ERR_PASSWORD`: a password is needed, or the one given is wrong.
 pub const FPDF_ERR_PASSWORD: c_ulong = 4;
 
-/// `FPDF_INCREMENTAL`: append the changes after the original bytes.
 /// `FPDFBitmap_BGRA` (`fpdfview.h`): four bytes a pixel.
 pub const FPDF_BITMAP_BGRA: c_int = 4;
 /// `FPDF_ANNOT` (`fpdfview.h`): draw the page's annotations.
@@ -73,18 +72,11 @@ pub const FPDF_RENDER_ANNOT: c_int = 0x01;
 /// `FPDF_REVERSE_BYTE_ORDER` (`fpdfview.h`): write RGBA rather than BGRA.
 pub const FPDF_RENDER_REVERSE_BYTE_ORDER: c_int = 0x10;
 
+/// `FPDF_INCREMENTAL`: append the changes after the original bytes.
 pub const FPDF_INCREMENTAL: FPDF_DWORD = 1 << 0;
-/// `FPDF_NO_INCREMENTAL`: write the whole file afresh.
+/// `FPDF_NO_INCREMENTAL`: write the whole file afresh. With neither this
+/// nor `FPDF_REMOVE_SECURITY`, a locked file stays locked.
 pub const FPDF_NO_INCREMENTAL: FPDF_DWORD = 1 << 1;
-/// `FPDF_REMOVE_SECURITY`: drop the encryption. Never passed: a locked file
-/// stays locked.
-#[allow(
-    dead_code,
-    reason = "documents the flag the engine deliberately leaves out"
-)]
-pub const FPDF_REMOVE_SECURITY: FPDF_DWORD = 1 << 2;
-
-pub const FPDFBITMAP_BGRA: c_int = 4;
 
 pub const FPDF_ANNOT_TEXT: c_int = 1;
 pub const FPDF_ANNOT_FREETEXT: c_int = 3;
