@@ -10,7 +10,7 @@
 use otto_kit::common::Renderable;
 use otto_kit::components::titlebar::{DecorationVariant, WindowControl, WindowDecoration};
 use otto_kit::components::toolbar::Toolbar;
-use otto_kit::icons;
+use otto_kit::icons::{self, SolarStyle};
 use otto_kit::prelude::*;
 use otto_kit::skia::{BlendMode, Contains, PaintStyle, PathBuilder, Point, RRect};
 use otto_kit::typography::ellipsize;
@@ -293,28 +293,22 @@ fn draw_icon_button(
         GLYPH,
         GLYPH,
     );
-    if tool == Tool::Sidebar {
-        // Drawn rather than looked up: themes disagree on what the sidebar
-        // icon is, and some put an arrow in it.
-        draw_sidebar_glyph(canvas, dst, color);
-        return;
-    }
-    if tool == Tool::Chat {
-        // Drawn too: few themes have a chat bubble, and fewer agree on one.
-        draw_chat_glyph(canvas, dst, color);
-        return;
-    }
-    if tool == Tool::Mark {
-        draw_pen_glyph(canvas, dst, color);
-        return;
-    }
-    if tool == Tool::Markup {
-        draw_markup_glyph(canvas, dst, color);
-        return;
-    }
-    if tool == Tool::ShowMarks {
-        // Crossed out while the marks are hidden, which is when it is down.
-        draw_eye_glyph(canvas, dst, color, pressed);
+    if let Some(name) = solar_name(tool) {
+        // Otto's own glyph, never the theme's: themes disagree on what these
+        // icons are, and few have them at all. Bold while the tool is down.
+        let style = if pressed {
+            SolarStyle::Bold
+        } else {
+            SolarStyle::Linear
+        };
+        match icons::solar_icon(name, GLYPH as i32, style, color) {
+            Some(image) => {
+                canvas.draw_image_rect(&image, None, dst, &Paint::default());
+            }
+            // Crossed out while the marks are hidden, which is when it is down.
+            None if tool == Tool::ShowMarks => draw_eye_glyph(canvas, dst, color, pressed),
+            None => draw_fallback_glyph(canvas, dst, tool, color),
+        };
         return;
     }
     match icons::cached_icon_chain(icon_names(tool), GLYPH as i32) {
@@ -343,12 +337,32 @@ fn icon_names(tool: Tool) -> &'static [&'static str] {
         Tool::Undo => &["edit-undo-symbolic"],
         Tool::Redo => &["edit-redo-symbolic"],
         Tool::Save => &["document-save-symbolic"],
-        // Never looked up; see `draw_sidebar_glyph` and `draw_chat_glyph`.
+        // Never looked up in the theme; see `solar_name`.
         Tool::Sidebar | Tool::Chat | Tool::Mark | Tool::ShowMarks | Tool::Markup => &[],
     }
 }
 
-/// A plain drawn glyph for a theme with no symbolic art for the tool.
+/// Otto's own Solar glyph for a tool the theme is never asked about.
+fn solar_name(tool: Tool) -> Option<&'static str> {
+    match tool {
+        Tool::Sidebar => Some("otto-sidebar-symbolic"),
+        Tool::Chat => Some("otto-chat-symbolic"),
+        Tool::Mark => Some("otto-pen-symbolic"),
+        Tool::ShowMarks => Some("otto-show-marks-symbolic"),
+        Tool::Markup => Some("otto-highlight-symbolic"),
+        Tool::ZoomOut
+        | Tool::ZoomFit
+        | Tool::ZoomIn
+        | Tool::PreviousPage
+        | Tool::NextPage
+        | Tool::Undo
+        | Tool::Redo
+        | Tool::Save => None,
+    }
+}
+
+/// A plain drawn glyph for when neither Otto's set nor the theme has the
+/// tool's art.
 fn draw_fallback_glyph(canvas: &Canvas, dst: Rect, tool: Tool, color: Color) {
     let mut stroke = Paint::default();
     stroke.set_anti_alias(true);

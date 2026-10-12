@@ -112,11 +112,16 @@ Underneath it is still `otto-preview` (the program, its app id and the
   undo and redo, once the file has more than one version (see *Versions*)
   or there are unsaved changes to take back; the markup button, for a PDF that can be edited (see *Form
   and markup*), a toggle that stays down while the markup strip shows; the
-  eye, a toggle that stays down (struck through) while the
+  eye, a toggle that stays down (drawn bold) while the
   marks are hidden; the pen, a toggle that stays down while it is on (see
   *Marks*); and the chat button, a toggle that stays down while the chat
   shows.
 - A button fires when the press and the release both land on it.
+- The glyphs are Otto's own (the Solar set, see `otto_kit::icons::solar`),
+  whatever icon theme is in force. The sidebar, chat, eye and pen are drawn
+  bold while their button is down, linear otherwise. Without the set
+  installed they fall back to the theme's symbolic icons, then to glyphs
+  drawn in code.
 - There is no button to open the file in another application: Preview is
   the viewer for the types it handles.
 
