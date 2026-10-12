@@ -24,6 +24,11 @@ use crate::typography::styles;
 /// reference, matching the settings prototype's `CONTROL_H`.
 pub const HEIGHT: f32 = 24.0;
 
+/// The value the button holds, and its menu's rows: one style, so the open
+/// menu's row reads as the same text as the field it sits on. Medium, so the
+/// value holds its own beside a row label of the same size.
+pub const LABEL_STYLE: crate::typography::TextStyle = styles::BODY_MEDIUM;
+
 const CORNER_RADIUS: f32 = 6.0;
 /// Reserved width on the right for the chevron pair; the label clips before it.
 const CHEVRON_GUTTER: f32 = 26.0;
@@ -186,10 +191,7 @@ pub fn draw_with_icon(
         text_x += ICON_SIZE + ICON_GAP;
     }
     Label::new(label)
-        // A size under the row label beside it: the value is what the
-        // button holds, and set as large as the label the two read as one
-        // run of text with a box drawn round half of it.
-        .with_style(styles::CALLOUT)
+        .with_style(LABEL_STYLE)
         .with_color(text_color)
         .centered_on(text_x, rect.center_y())
         .render(canvas);
