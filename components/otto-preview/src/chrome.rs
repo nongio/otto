@@ -293,6 +293,10 @@ fn draw_icon_button(
         GLYPH,
         GLYPH,
     );
+    // Rasterised in the canvas's device pixels, so it stays sharp on a
+    // scaled output.
+    let scale = canvas.local_to_device_as_3x3().scale_x().abs().max(1.0);
+    let glyph_px = (GLYPH * scale).round() as i32;
     if let Some(name) = solar_name(tool) {
         // Otto's own glyph, never the theme's: themes disagree on what these
         // icons are, and few have them at all. Bold while the tool is down.
@@ -301,7 +305,7 @@ fn draw_icon_button(
         } else {
             SolarStyle::Linear
         };
-        match icons::solar_icon(name, GLYPH as i32, style, color) {
+        match icons::solar_icon(name, glyph_px, style, color) {
             Some(image) => {
                 canvas.draw_image_rect(&image, None, dst, &Paint::default());
             }
@@ -311,7 +315,7 @@ fn draw_icon_button(
         };
         return;
     }
-    match icons::cached_icon_chain(icon_names(tool), GLYPH as i32) {
+    match icons::cached_icon_chain(icon_names(tool), glyph_px) {
         Some(image) => {
             // Symbolic art recoloured to the text tone, as the rest of the
             // chrome does with its glyphs.
