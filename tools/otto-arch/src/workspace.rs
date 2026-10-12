@@ -11,7 +11,8 @@ use serde::Deserialize;
 struct Metadata {
     packages: Vec<Package>,
     workspace_members: Vec<String>,
-    resolve: Resolve,
+    /// Absent with `--no-deps`.
+    resolve: Option<Resolve>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -31,6 +32,9 @@ pub struct Dependency {
     pub name: String,
     /// `None` for a normal dependency, `"dev"` or `"build"` otherwise.
     pub kind: Option<String>,
+    /// Set for a path dependency, which is how members depend on each other.
+    #[serde(default)]
+    pub path: Option<PathBuf>,
 }
 
 impl Dependency {
@@ -52,6 +56,17 @@ impl Package {
             .iter()
             .find(|t| t.kind.iter().any(|k| k == "lib"))
             .map(|t| t.src_path.as_path())
+    }
+
+    pub fn has_target(&self, kind: &str) -> bool {
+        self.targets
+            .iter()
+            .any(|t| t.kind.iter().any(|k| k == kind))
+    }
+
+    /// The directory holding the manifest.
+    pub fn dir(&self) -> &Path {
+        self.manifest_path.parent().unwrap_or(Path::new(""))
     }
 }
 
@@ -117,34 +132,18 @@ impl Graph {
 /// reads Cargo.lock (`--locked`), so a stale lockfile fails here as it would
 /// in any CI build.
 pub fn load(root: &Path) -> Result<(Vec<Package>, Graph), String> {
-    let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
-    let out = Command::new(cargo)
-        .args([
-            "metadata",
-            "--locked",
-            "--format-version",
-            "1",
-            "--manifest-path",
-        ])
-        .arg(root.join("Cargo.toml"))
-        .output()
-        .map_err(|e| format!("running cargo metadata: {e}"))?;
-    if !out.status.success() {
-        return Err(format!(
-            "cargo metadata failed:\n{}",
-            String::from_utf8_lossy(&out.stderr)
-        ));
-    }
-    let md: Metadata =
-        serde_json::from_slice(&out.stdout).map_err(|e| format!("parsing cargo metadata: {e}"))?;
-
+    let md = metadata(root, &[])?;
+    let resolve = md
+        .resolve
+        .as_ref()
+        .ok_or("cargo metadata returned no resolve graph")?;
     let names: BTreeMap<&str, &str> = md
         .packages
         .iter()
         .map(|p| (p.id.as_str(), p.name.as_str()))
         .collect();
     let mut graph = Graph::default();
-    for node in &md.resolve.nodes {
+    for node in &resolve.nodes {
         let edges = graph
             .edges
             .entry(names[node.id.as_str()].to_owned())
@@ -155,7 +154,16 @@ pub fn load(root: &Path) -> Result<(Vec<Package>, Graph), String> {
             }
         }
     }
+    Ok((members_of(md), graph))
+}
 
+/// Every workspace member, sorted by name, from the manifests alone: no
+/// resolve, so nothing is downloaded and the lockfile is not consulted.
+pub fn members(root: &Path) -> Result<Vec<Package>, String> {
+    metadata(root, &["--no-deps"]).map(members_of)
+}
+
+fn members_of(md: Metadata) -> Vec<Package> {
     let members: BTreeSet<&str> = md.workspace_members.iter().map(String::as_str).collect();
     let mut packages: Vec<Package> = md
         .packages
@@ -163,5 +171,28 @@ pub fn load(root: &Path) -> Result<(Vec<Package>, Graph), String> {
         .filter(|p| members.contains(p.id.as_str()))
         .collect();
     packages.sort_by(|a, b| a.name.cmp(&b.name));
-    Ok((packages, graph))
+    packages
+}
+
+fn metadata(root: &Path, extra: &[&str]) -> Result<Metadata, String> {
+    let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
+    let out = Command::new(cargo)
+        .args([
+            "metadata",
+            "--locked",
+            "--format-version",
+            "1",
+            "--manifest-path",
+        ])
+        .arg(root.join("Cargo.toml"))
+        .args(extra)
+        .output()
+        .map_err(|e| format!("running cargo metadata: {e}"))?;
+    if !out.status.success() {
+        return Err(format!(
+            "cargo metadata failed:\n{}",
+            String::from_utf8_lossy(&out.stderr)
+        ));
+    }
+    serde_json::from_slice(&out.stdout).map_err(|e| format!("parsing cargo metadata: {e}"))
 }
