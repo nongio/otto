@@ -106,11 +106,12 @@ Bug reports, testing on your hardware, features and ideas are all welcome: the [
 
 ## License
 
-MIT. See [LICENSE](LICENSE). The packages also ship the [MacTahoe icon theme](https://github.com/vinceliuice/MacTahoe-icon-theme), installed as `Otto-MacTahoe`, which keeps its own licence, GPL-3.0.
+MIT. See [LICENSE](LICENSE). The packages also ship the [MacTahoe icon theme](https://github.com/vinceliuice/MacTahoe-icon-theme), installed as `Otto-MacTahoe`, which keeps its own licence, GPL-3.0, and a set of [Solar](https://github.com/saoudi-h/solar-icons) glyphs for Otto's own controls, under CC BY 4.0.
 
 ### Credits
 
 - Icons and cursors: [MacTahoe](https://github.com/vinceliuice/MacTahoe-icon-theme) by Vince Liuice (GPL-3.0)
+- Interface glyphs: the [Solar icon set](https://www.figma.com/community/file/1166831539721848736) by 480 Design (CC BY 4.0), packaged by [solar-icons](https://github.com/saoudi-h/solar-icons)
 - Font: [Inter](https://rsms.me/inter/) by Rasmus Andersson (SIL Open Font License 1.1)
 - Wallpaper: Otto's own, under Otto's licence
 - Screenshots use the [Fluent icon theme](https://github.com/vinceliuice/Fluent-icon-theme); see [Credits](https://nongio.github.io/otto/credits/) for everything else in them
