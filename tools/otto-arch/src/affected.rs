@@ -433,10 +433,13 @@ const OWN_CLIPPY: &[&str] = &[
     "submenu-gtk",
 ];
 
-/// Members whose tests run in steps of their own: target-wide runs for the
-/// file browser, the agent service and the portal; otto-rdp has no library;
-/// otto-arch is the `architecture` job's.
+/// Members whose tests run in steps of their own: the compositor and its
+/// render stack in the `compositor` job (they need its system libraries);
+/// target-wide runs for the file browser, the agent service and the portal;
+/// otto-rdp has no library; otto-arch is the `architecture` job's.
 const OWN_TESTS: &[&str] = &[
+    "otto",
+    "otto-render",
     "otto-files",
     "otto-agents",
     "xdg-desktop-portal-otto",
@@ -460,22 +463,13 @@ const BIN_TESTS: &[&str] = &[
     "otto-search",
 ];
 
-/// Members that do not make the `check` job run on their own: the areas
-/// with flags of their own, and the tool the `architecture` job checks.
-const NOT_UI: &[&str] = &[
-    "otto",
-    "otto-render",
-    "otto-rdp",
-    "xdg-desktop-portal-otto",
-    "otto-arch",
-];
-
-/// The components clippy run when everything is affected: what the step ran
-/// before the selection existed. ci.yml's fallback writes the same lines.
-const EVERYTHING_CLIPPY: &str =
-    "--workspace --exclude otto --exclude otto-rdp --exclude xdg-desktop-portal-otto --exclude submenu-gtk";
-/// The library tests when everything is affected, as above.
-const EVERYTHING_TEST_LIB: &str = "--workspace --exclude otto-files";
+/// The components clippy run when everything is affected: every member with
+/// no clippy step of its own. ci.yml's fallback writes the same lines.
+const EVERYTHING_CLIPPY: &str = "--workspace --exclude otto --exclude otto-render --exclude otto-rdp --exclude xdg-desktop-portal-otto --exclude submenu-gtk";
+/// The components' library tests when everything is affected, as above: the
+/// compositor and the render stack run theirs in the `compositor` job.
+const EVERYTHING_TEST_LIB: &str =
+    "--workspace --exclude otto-files --exclude otto --exclude otto-render";
 
 /// `key=value` lines for `$GITHUB_OUTPUT`. `all` is read by the steps and
 /// jobs gated on one crate being in `packages` (the toolkit doctests, the
@@ -502,7 +496,6 @@ pub fn outputs(sel: &Selection, members: &[Member]) -> Vec<(&'static str, String
     let rdp = affected("otto-rdp");
     let portal = affected("xdg-desktop-portal-otto");
     let files = affected("otto-files");
-    let ui = sel.packages.keys().any(|n| !NOT_UI.contains(&n.as_str()));
     vec![
         ("all", flag(false)),
         ("packages", packages),
@@ -511,7 +504,6 @@ pub fn outputs(sel: &Selection, members: &[Member]) -> Vec<(&'static str, String
         ("portal", flag(portal)),
         ("files", flag(files)),
         ("packaging", flag(sel.packaging.is_some())),
-        ("rust", flag(compositor || rdp || portal || files || ui)),
         (
             "clippy_args",
             args(&|m| !OWN_CLIPPY.contains(&m.name.as_str())),
@@ -540,7 +532,6 @@ fn everything_outputs(packages: String) -> Vec<(&'static str, String)> {
         ("portal", t()),
         ("files", t()),
         ("packaging", t()),
-        ("rust", t()),
         ("clippy_args", EVERYTHING_CLIPPY.to_owned()),
         ("test_lib_args", EVERYTHING_TEST_LIB.to_owned()),
         (
@@ -878,22 +869,24 @@ mod tests {
         assert_eq!(
             run(&["otto-bar"], false),
             "all=false\npackages=otto-bar\ncompositor=false\nrdp=false\nportal=false\n\
-             files=false\npackaging=false\nrust=true\nclippy_args=-p otto-bar\n\
+             files=false\npackaging=false\nclippy_args=-p otto-bar\n\
              test_lib_args=\ntest_bins_args=-p otto-bar\n"
         );
         let kit = run(&["otto", "otto-bar", "otto-files", "otto-kit"], false);
         assert!(kit.contains("compositor=true\n") && kit.contains("files=true\n"));
         assert!(kit.contains("clippy_args=-p otto-bar -p otto-files -p otto-kit\n"));
         // otto-files' tests run in a step of their own.
-        assert!(kit.contains("test_lib_args=-p otto -p otto-kit\n"), "{kit}");
+        // The compositor's own tests run in its own job.
+        assert!(kit.contains("test_lib_args=-p otto-kit\n"), "{kit}");
 
-        // The tool alone: the architecture job checks it, the check job
-        // has nothing to do.
+        // The tool alone: the architecture job checks it, no area job has
+        // anything to do.
         let tool = run(&["otto-arch"], false);
-        assert!(tool.contains("rust=false\n") && tool.contains("clippy_args=\n"));
+        assert!(tool.contains("compositor=false\n") && tool.contains("clippy_args=\n"));
+        assert!(tool.contains("test_lib_args=\n") && tool.contains("test_bins_args=\n"));
 
         let none = run(&[], true);
-        assert!(none.contains("packages=\n") && none.contains("rust=false\n"));
+        assert!(none.contains("packages=\n") && none.contains("compositor=false\n"));
         assert!(none.contains("packaging=true\n"));
     }
 

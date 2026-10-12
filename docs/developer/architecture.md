@@ -282,8 +282,9 @@ the `-p` lists the CI steps take (`clippy_args`, `test_lib_args`,
 `test_bins_args`, which leave out crates with steps of their own; the old
 workspace-wide lists when everything is affected), the area flags the job
 gates read, derived from the crates (`compositor` for otto or otto-render,
-`rdp`, `portal`, `files`, `packaging`, and `rust` for any crate the check
-job builds), and `all`. `--explain` prints on stderr why each crate is in,
+`rdp`, `portal`, `files`, `packaging`), and `all`. Each area has a CI job
+of its own (compositor, components, rdp, portal), run only when the area is
+affected. `--explain` prints on stderr why each crate is in,
 as a chain back to the file (`otto-bar <- otto-kit <-
 components/otto-kit/src/lib.rs`) or to a changed dependency graph.
 
