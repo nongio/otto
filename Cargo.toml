@@ -154,7 +154,6 @@ codegen-units = 1
 [workspace]
 members = [
     "components/xdg-desktop-portal-otto",
-    "components/apps-manager",
     "components/otto-rdp",
     "components/otto-kit",
     "components/otto-dbus",

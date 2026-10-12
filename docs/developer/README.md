@@ -107,7 +107,6 @@ works, where one exists.
 | [otto-msg](../../components/otto-msg/) | The command-line tool that drives Otto from scripts over `org.otto.Shell1` | [Shell D-Bus API](shell-dbus-api.md) |
 | [otto-input-overlay](../../components/otto-input-overlay/) | On-screen touchpad and key-press overlays for screen recordings |  |
 | [otto-dictate](../../components/otto-dictate/) | A proof of concept: dictation as a Wayland input method, with live text and an equaliser at the caret |  |
-| [apps-manager](../../components/apps-manager/) | A command-line probe that prints the windows Otto lists through `ext_foreign_toplevel_list_v1` | [Foreign Toplevel](foreign-toplevel.md) |
 
 ## Design docs and plans
 

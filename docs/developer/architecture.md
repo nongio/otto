@@ -93,7 +93,6 @@ flowchart BT
     otto_agents[otto-agents]
     otto_rdp[otto-rdp]
     xdg_desktop_portal_otto[xdg-desktop-portal-otto]
-    apps_manager[apps-manager]
   end
   subgraph compositor-core["compositor-core"]
     otto_render[otto-render]
