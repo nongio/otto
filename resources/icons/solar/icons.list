@@ -52,3 +52,22 @@ folder-pictures             gallery
 folder-videos               video-library
 drive-harddisk              ssd-round
 folder                      folder
+
+# Settings sidebar panes
+otto-pane-person-symbolic       user-rounded
+otto-pane-settings-symbolic     settings
+otto-pane-appearance-symbolic   palette
+otto-pane-monitor-symbolic      monitor
+otto-pane-dock-symbolic         panel-bottom
+otto-pane-top-bar-symbolic      panel-top
+otto-pane-tiling-symbolic       grid-2x2
+otto-pane-keyboard-symbolic     keyboard
+otto-pane-pointer-symbolic      cursor
+otto-pane-sound-symbolic        volume-loud
+otto-pane-microphone-symbolic   microphone
+otto-pane-battery-symbolic      battery-full
+otto-pane-lock-symbolic         lock
+otto-pane-search-symbolic       magnifier
+otto-pane-agent-symbolic        chat-round-dots
+otto-pane-hand-symbolic         shield-keyhole
+otto-pane-about-symbolic        info-circle
