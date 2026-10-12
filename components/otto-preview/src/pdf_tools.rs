@@ -251,6 +251,11 @@ pub fn edits_from_json(snapshot: &Snapshot, request: &Value) -> Result<Vec<Edit>
     if edits.is_empty() {
         return Err("nothing to do: give fill, add, change or delete".into());
     }
+    // Numbers that are no point on a page, sizes out of reason, text too
+    // long, refused before anything is made.
+    for edit in &edits {
+        edit.check().map_err(|err| err.to_string())?;
+    }
     Ok(edits)
 }
 
@@ -594,6 +599,25 @@ mod tests {
         assert!(err.contains("no field"), "{err}");
         let err = edits_from_json(&snapshot(), &json!({ "delete": ["0:9"] })).unwrap_err();
         assert!(err.contains("no annotation"), "{err}");
+        // Numbers no page holds, which as f32 are infinite or absurd.
+        let err = edits_from_json(
+            &snapshot(),
+            &json!({ "change": [{ "id": "1:2", "dx": 1e300, "dy": 0 }] }),
+        )
+        .unwrap_err();
+        assert!(err.contains("a move"), "{err}");
+        let err = edits_from_json(
+            &snapshot(),
+            &json!({ "add": [{ "type": "ink", "page": 0, "strokes": [[[0, 0], [1, 1]]], "width": -2 }] }),
+        )
+        .unwrap_err();
+        assert!(err.contains("width"), "{err}");
+        let err = edits_from_json(
+            &snapshot(),
+            &json!({ "add": [{ "type": "text", "page": 0, "at": [10, 1e7], "text": "x" }] }),
+        )
+        .unwrap_err();
+        assert!(err.contains("text"), "{err}");
     }
 
     #[test]
