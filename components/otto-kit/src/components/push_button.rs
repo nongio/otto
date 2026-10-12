@@ -74,11 +74,6 @@ pub fn width(label: &str) -> f32 {
     (TEXT.font().measure_str(label, None).0 + 2.0 * PAD).max(MIN_WIDTH)
 }
 
-/// Whether `(x, y)` is on a button drawn in `rect`.
-pub fn hit_test(rect: Rect, x: f32, y: f32) -> bool {
-    x >= rect.left && x < rect.right && y >= rect.top && y < rect.bottom
-}
-
 /// A colour taken toward black by `amount` (0–1), its alpha kept: the
 /// accent held down.
 fn darker(color: Color, amount: f32) -> Color {
@@ -135,13 +130,5 @@ mod tests {
         let held = darker(accent, 0.18);
         assert_eq!(held.a(), 200);
         assert!(held.b() < accent.b() && held.g() < accent.g());
-    }
-
-    #[test]
-    fn the_hit_test_covers_the_box_and_nothing_past_it() {
-        let rect = Rect::from_xywh(10.0, 10.0, 80.0, HEIGHT);
-        assert!(hit_test(rect, 10.0, 10.0));
-        assert!(!hit_test(rect, 90.0, 20.0));
-        assert!(!hit_test(rect, 50.0, 9.0));
     }
 }
