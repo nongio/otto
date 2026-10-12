@@ -1,6 +1,9 @@
 //! The shape of `architecture.toml`.
 
 use std::path::Path;
+use std::sync::OnceLock;
+
+use globset::{Glob, GlobSet, GlobSetBuilder};
 
 use serde::Deserialize;
 
@@ -20,18 +23,17 @@ pub struct Rules {
 }
 
 /// Files a crate's directory does not hold, and the crates (or CI areas)
-/// they reach. `otto-arch affected` reads these to decide what a change
-/// needs checked.
+/// they reach. `otto-arch affected` translates these into determinator path
+/// rules (see `affected::determinator_rules`) to decide what a change needs
+/// checked.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Affects {
     /// Repository paths, anchored at the root: `dir/` is everything under a
-    /// directory, anything else a file. `*` matches within one path segment
-    /// and `**/` any number of directories.
+    /// directory, anything else a globset glob, matched as determinator
+    /// matches it: `*` matches any run of characters, `/` included, so
+    /// `docs/*.md` also matches `docs/a/b.md`.
     pub paths: Vec<String>,
-    /// Paths the rule leaves out, in the same syntax.
-    #[serde(default)]
-    pub except: Vec<String>,
     /// Workspace members a change to one of these files affects, before the
     /// closure over their dependents; `"*"` is every member, `[]` none.
     pub crates: Vec<String>,
@@ -39,40 +41,54 @@ pub struct Affects {
     #[serde(default)]
     pub areas: Vec<String>,
     pub reason: String,
+    #[serde(skip)]
+    set: OnceLock<GlobSet>,
 }
 
 /// The CI areas an `[[affects]]` rule may name.
 pub const AREAS: &[&str] = &["packaging"];
 
 impl Affects {
+    /// The rule's paths as globset globs: `dir/` becomes `dir/**`.
+    pub fn globs(&self) -> Vec<String> {
+        self.paths.iter().map(|p| glob(p)).collect()
+    }
+
     pub fn matches(&self, path: &str) -> bool {
-        self.paths.iter().any(|p| path_matches(p, path))
-            && !self.except.iter().any(|p| path_matches(p, path))
+        self.set
+            .get_or_init(|| glob_set(&self.globs()).unwrap_or_else(|_| GlobSet::empty()))
+            .is_match(path)
+    }
+
+    pub fn names_every_crate(&self) -> bool {
+        self.crates.iter().any(|c| c == "*")
     }
 }
 
-/// `pattern` against a repository-relative `path`; see [`Affects::paths`].
+/// An `[[affects]]` path as a globset glob.
+pub fn glob(path: &str) -> String {
+    if path.ends_with('/') {
+        format!("{path}**")
+    } else {
+        path.to_owned()
+    }
+}
+
+/// `globs` as one set, built the way determinator builds a path rule's
+/// (`Glob::new`, default options), so a pattern matches the same files here
+/// as in the selection.
+pub fn glob_set(globs: &[String]) -> Result<GlobSet, String> {
+    let mut b = GlobSetBuilder::new();
+    for g in globs {
+        b.add(Glob::new(g).map_err(|e| format!("glob {g:?}: {e}"))?);
+    }
+    b.build().map_err(|e| e.to_string())
+}
+
+/// One `[[affects]]` path pattern against a repository-relative `path`.
+#[cfg(test)]
 pub fn path_matches(pattern: &str, path: &str) -> bool {
-    let mut re = String::from("^");
-    let mut rest = pattern;
-    while !rest.is_empty() {
-        if let Some(r) = rest.strip_prefix("**/") {
-            re.push_str("(?:[^/]+/)*");
-            rest = r;
-        } else if let Some(r) = rest.strip_prefix('*') {
-            re.push_str("[^/]*");
-            rest = r;
-        } else {
-            let c = rest.chars().next().unwrap();
-            re.push_str(&regex::escape(c.encode_utf8(&mut [0; 4])));
-            rest = &rest[c.len_utf8()..];
-        }
-    }
-    if pattern.ends_with('/') {
-        re.push_str(".*");
-    }
-    re.push('$');
-    regex::Regex::new(&re).is_ok_and(|r| r.is_match(path))
+    Glob::new(&glob(pattern)).is_ok_and(|g| g.compile_matcher().is_match(path))
 }
 
 #[derive(Debug, Deserialize)]
@@ -239,9 +255,11 @@ pub fn load(path: &Path) -> Result<Rules, String> {
     for a in &rules.affects {
         if a.reason.trim().is_empty() || a.paths.is_empty() {
             return Err(format!(
-                "an [[affects]] entry needs paths and a reason: {a:?}"
+                "an [[affects]] entry needs paths and a reason: {:?}",
+                a.paths
             ));
         }
+        glob_set(&a.globs()).map_err(|e| format!("[[affects]] {:?}: {e}", a.paths))?;
         if let Some(area) = a.areas.iter().find(|x| !AREAS.contains(&x.as_str())) {
             return Err(format!(
                 "[[affects]] {:?} names unknown area {area:?}; known: {AREAS:?}",

@@ -11,8 +11,7 @@ use serde::Deserialize;
 struct Metadata {
     packages: Vec<Package>,
     workspace_members: Vec<String>,
-    /// Absent with `--no-deps`.
-    resolve: Option<Resolve>,
+    resolve: Resolve,
 }
 
 #[derive(Debug, Deserialize)]
@@ -32,9 +31,6 @@ pub struct Dependency {
     pub name: String,
     /// `None` for a normal dependency, `"dev"` or `"build"` otherwise.
     pub kind: Option<String>,
-    /// Set for a path dependency, which is how members depend on each other.
-    #[serde(default)]
-    pub path: Option<PathBuf>,
 }
 
 impl Dependency {
@@ -132,38 +128,34 @@ impl Graph {
 /// reads Cargo.lock (`--locked`), so a stale lockfile fails here as it would
 /// in any CI build.
 pub fn load(root: &Path) -> Result<(Vec<Package>, Graph), String> {
-    let md = metadata(root, &[])?;
-    let resolve = md
-        .resolve
-        .as_ref()
-        .ok_or("cargo metadata returned no resolve graph")?;
+    parse(&metadata_json(root)?)
+}
+
+/// [`load`] from `cargo metadata` output already in hand.
+pub fn parse(json: &str) -> Result<(Vec<Package>, Graph), String> {
+    let md: Metadata =
+        serde_json::from_str(json).map_err(|e| format!("parsing cargo metadata: {e}"))?;
     let names: BTreeMap<&str, &str> = md
         .packages
         .iter()
         .map(|p| (p.id.as_str(), p.name.as_str()))
         .collect();
     let mut graph = Graph::default();
-    for node in &resolve.nodes {
+    for node in &md.resolve.nodes {
         let edges = graph
             .edges
             .entry(names[node.id.as_str()].to_owned())
             .or_default();
-        for d in &node.deps {
-            if d.dep_kinds.iter().any(|k| k.kind.as_deref() != Some("dev")) {
-                edges.insert(names[d.pkg.as_str()].to_owned());
+        for dep in &node.deps {
+            if dep
+                .dep_kinds
+                .iter()
+                .any(|k| k.kind.as_deref() != Some("dev"))
+            {
+                edges.insert(names[dep.pkg.as_str()].to_owned());
             }
         }
     }
-    Ok((members_of(md), graph))
-}
-
-/// Every workspace member, sorted by name, from the manifests alone: no
-/// resolve, so nothing is downloaded and the lockfile is not consulted.
-pub fn members(root: &Path) -> Result<Vec<Package>, String> {
-    metadata(root, &["--no-deps"]).map(members_of)
-}
-
-fn members_of(md: Metadata) -> Vec<Package> {
     let members: BTreeSet<&str> = md.workspace_members.iter().map(String::as_str).collect();
     let mut packages: Vec<Package> = md
         .packages
@@ -171,10 +163,12 @@ fn members_of(md: Metadata) -> Vec<Package> {
         .filter(|p| members.contains(p.id.as_str()))
         .collect();
     packages.sort_by(|a, b| a.name.cmp(&b.name));
-    packages
+    Ok((packages, graph))
 }
 
-fn metadata(root: &Path, extra: &[&str]) -> Result<Metadata, String> {
+/// The full `cargo metadata` of the workspace at `root`, resolve graph
+/// included. `--locked`: a lockfile out of step with the manifests fails.
+pub fn metadata_json(root: &Path) -> Result<String, String> {
     let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
     let out = Command::new(cargo)
         .args([
@@ -185,7 +179,6 @@ fn metadata(root: &Path, extra: &[&str]) -> Result<Metadata, String> {
             "--manifest-path",
         ])
         .arg(root.join("Cargo.toml"))
-        .args(extra)
         .output()
         .map_err(|e| format!("running cargo metadata: {e}"))?;
     if !out.status.success() {
@@ -194,5 +187,5 @@ fn metadata(root: &Path, extra: &[&str]) -> Result<Metadata, String> {
             String::from_utf8_lossy(&out.stderr)
         ));
     }
-    serde_json::from_slice(&out.stdout).map_err(|e| format!("parsing cargo metadata: {e}"))
+    String::from_utf8(out.stdout).map_err(|e| format!("cargo metadata output: {e}"))
 }

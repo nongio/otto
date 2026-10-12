@@ -208,28 +208,32 @@ reason = "The XDG base directories, with their fallbacks, are otto_foundations::
 # ---------------------------------------------------------------------------
 #
 # `cargo run -q -p otto-arch -- affected --base <rev>` tells CI which crates a
-# change needs checked: a file belongs to the member whose directory holds it
-# (the root package owns only its target directories, src/, tests/ and
-# examples/), and every member that depends on an affected one is affected
-# too. Cargo.lock is diffed, not mapped: a member is affected when a package
-# in its dependency closure changed.
+# change needs checked. The selection is determinator's (guppy): it compares
+# the package graphs `cargo metadata` resolves at the base and the head, maps
+# each changed file to the member whose directory holds it (the root package
+# owns only its target directories, src/, tests/ and examples/), and closes
+# the result over dependents through simulated builds. Cargo.lock needs no
+# mapping: a member whose simulated build resolves a different package or
+# feature set is affected.
 #
 # The rules below place the files no member's directory holds, and the files
 # a crate reads from outside its own directory (an `include_str!` of
-# ../../resources, a protocol XML). Rules add up: a file reaches its own
-# crate plus every rule that matches it. `crates = ["*"]` is every member,
-# `[]` none; `areas = ["packaging"]` also runs the packaging jobs. A tracked
-# file no rule covers fails the check, and a change to a file no rule covers
-# (a new one) makes CI check everything. See docs/developer/architecture.md.
+# ../../resources, a protocol XML). otto-arch translates them into
+# determinator path rules. Rules add up: a file reaches its own crate plus
+# every rule that matches it. `crates = ["*"]` is every member, `[]` none;
+# `areas = ["packaging"]` also runs the packaging jobs. A tracked file no rule
+# covers fails the check, and a change to a file no rule covers (a new one)
+# makes CI check everything. See docs/developer/architecture.md.
 #
-# Paths are anchored at the repository root: `dir/` is everything under it,
-# `*` matches within one path segment, `**/` any number of directories.
+# Paths are anchored at the repository root: `dir/` is everything under it;
+# anything else is a globset glob, where `*` matches any characters, `/`
+# included (determinator's matching), and `**/` any number of directories.
 
 [[affects]]
 paths = ["Cargo.toml", ".github/workflows/ci.yml"]
 crates = ["*"]
 areas = ["packaging"]
-reason = "The workspace manifest sets every member's dependencies, profiles and lints, and the workflow decides what runs."
+reason = "The workspace manifest sets every member's dependencies, profiles, lints and package assets, and the workflow decides what runs."
 
 [[affects]]
 paths = ["rust-toolchain.toml", "clippy.toml"]
@@ -237,16 +241,29 @@ crates = ["*"]
 reason = "The compiler and the lint configuration every member is checked with."
 
 [[affects]]
+paths = ["Cargo.lock"]
+crates = []
+reason = "determinator diffs the resolved graphs: a member is affected when its build resolves a different package or feature set."
+
+[[affects]]
 paths = ["protocols/"]
 crates = ["otto", "otto-kit"]
 reason = "Wayland protocol XML: the compositor generates the server side, otto-kit the client side every app uses."
 
 [[affects]]
-paths = ["resources/"]
-except = ["resources/bin/", "resources/plugins/", "resources/locales/"]
+paths = [
+    "resources/*.svg",
+    "resources/cursor.rgba",
+    "resources/wallpaper.jpg",
+    "resources/widgets/",
+    "resources/polkit/",
+    "resources/*.desktop",
+    "resources/deb-copyright",
+    "resources/icon-theme-links",
+]
 crates = ["otto"]
 areas = ["packaging"]
-reason = "The compositor embeds the icons and fallback cursor and its tests read the widgets; the rest is installed with it."
+reason = "The compositor embeds the icons and fallback cursor and its tests read the widgets; the rest is installed with it. A new file directly in resources/ matches none of these, so it checks everything until it is placed."
 
 [[affects]]
 paths = ["resources/locales/"]
@@ -297,6 +314,20 @@ crates = []
 reason = "Prose, specs, the website and media no crate embeds. A crate's own README still reaches that crate, by its directory; the locales job checks the user guides the plugin ships on every change."
 
 [[affects]]
-paths = [".github/workflows/pages.yml", ".gitignore", ".rustfmt", "cliff.toml", "wlcs", "*.sh", "otto_topbar.toml"]
+paths = [
+    ".github/workflows/pages.yml",
+    ".gitignore",
+    ".rustfmt",
+    "cliff.toml",
+    "wlcs",
+    "capture-virtual.sh",
+    "claude.sh",
+    "prerequisites.sh",
+    "run-rdp.sh",
+    "run-scanout.sh",
+    "start.sh",
+    "test-notifications.sh",
+    "otto_topbar.toml",
+]
 crates = []
 reason = "Repository tooling and helper scripts no build or test reads: the website workflow, formatting (the format job runs on every change), the changelog, the WLCS submodule, launch scripts, a stale top-bar config."

@@ -1,28 +1,36 @@
 //! `otto-arch affected`: the workspace members a change reaches, so CI
 //! checks those and skips the rest.
 //!
-//! A changed file belongs to the member whose directory holds it (the root
-//! package owns only its target directories: `src/`, `tests/`, …). Files no
-//! member holds reach the crates the `[[affects]]` rules in
-//! `architecture.toml` name; a file neither covers reaches everything. A
-//! `Cargo.lock` edit reaches every member whose dependency closure in the
-//! lockfile changed. The result is then closed over dependents: a member is
-//! affected when anything it depends on is. A dev-dependency affects the
-//! member's own tests but not the members that depend on it, since its
-//! library does not link the dev-dependency.
+//! The selection is [determinator]'s: it compares the package graphs
+//! `cargo metadata` resolves at the base and at the head, matches every
+//! changed file to a member, and closes the result over dependents through
+//! simulated Cargo builds (dev-dependencies included for the member's own
+//! tests, not for the members that depend on it). A changed third-party
+//! version, source or feature set reaches exactly the members whose builds
+//! include it, which is how a `Cargo.lock` edit is scoped.
 //!
-//! Any failure (no base to diff against, a git error, an unreadable
-//! lockfile) selects everything: the answer may be too large, never too
-//! small.
+//! What determinator cannot know, which crates a file outside every member
+//! reaches, comes from the `[[affects]]` rules in `architecture.toml`,
+//! translated into determinator path rules by [`determinator_rules`]. A file
+//! neither a member nor a rule covers reaches everything.
+//!
+//! Any failure (no base to diff against, a git or cargo error, a graph
+//! guppy cannot build) selects everything: the answer may be too large,
+//! never too small.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt::Write as _;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use serde::Deserialize;
+use determinator::rules::{
+    DeterminatorMarkChanged, DeterminatorPostRule, DeterminatorRules, PathMatch, PathRule,
+};
+use determinator::Determinator;
+use guppy::graph::{DependencyDirection, PackageGraph, PackageMetadata};
+use guppy::CargoMetadata;
 
-use crate::rules::Rules;
+use crate::rules::{self, Rules};
 use crate::workspace::Package;
 
 /// A workspace member as the selection sees it.
@@ -34,16 +42,12 @@ pub struct Member {
     /// Repository paths it owns: `dir/` prefixes or exact files.
     pub owns: Vec<String>,
     pub lib: bool,
-    /// Workspace members it depends on, and whether only as a
-    /// dev-dependency.
-    pub deps: BTreeMap<String, bool>,
 }
 
 /// Members from `cargo metadata`. A component owns its whole directory;
 /// the root package's directory is the repository, so it owns only where
 /// its targets live (`src/`, `tests/`, `examples/`, `build.rs`, …).
 pub fn members(root: &Path, packages: &[Package]) -> Vec<Member> {
-    let names: BTreeSet<&str> = packages.iter().map(|p| p.name.as_str()).collect();
     packages
         .iter()
         .map(|p| {
@@ -64,19 +68,11 @@ pub fn members(root: &Path, packages: &[Package]) -> Vec<Member> {
             } else {
                 vec![format!("{dir}/")]
             };
-            let mut deps: BTreeMap<String, bool> = BTreeMap::new();
-            for d in &p.dependencies {
-                if d.path.is_some() && names.contains(d.name.as_str()) {
-                    let dev_only = deps.get(&d.name).copied().unwrap_or(true) && d.is_dev();
-                    deps.insert(d.name.clone(), dev_only);
-                }
-            }
             Member {
                 name: p.name.clone(),
                 owns,
                 dir,
                 lib: p.has_target("lib"),
-                deps,
             }
         })
         .collect()
@@ -121,16 +117,10 @@ pub fn members_from_manifests(root: &Path) -> Result<Vec<Member>, String> {
             },
             dir: dir.clone(),
             lib: m.contains_key("lib") || path.join("src/lib.rs").is_file(),
-            deps: BTreeMap::new(),
         });
     }
     out.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(out)
-}
-
-/// Every member, for a change nothing can be diffed for.
-pub fn everything(members: &[Member], reason: String) -> Selection {
-    Selection::all(members, reason)
 }
 
 fn rel(root: &Path, path: &Path) -> String {
@@ -142,7 +132,8 @@ fn rel(root: &Path, path: &Path) -> String {
 
 /// The member owning `path`: the longest owned prefix wins, so a file under
 /// `components/x/` is `x`'s even though the root package's directory holds
-/// it too.
+/// it too. This is determinator's nearest-ancestor match, limited for the
+/// root package to its target directories.
 pub fn owner<'a>(members: &'a [Member], path: &str) -> Option<&'a str> {
     members
         .iter()
@@ -158,6 +149,66 @@ pub fn owner<'a>(members: &'a [Member], path: &str) -> Option<&'a str> {
         .map(|(_, m)| m.name.as_str())
 }
 
+// ---------------------------------------------------------------------------
+// [[affects]] -> determinator rules
+// ---------------------------------------------------------------------------
+
+/// The `[[affects]]` rules as determinator path rules, applied in order to
+/// each changed file:
+///
+/// 1. every `[[affects]]` rule that names crates, marking them and falling
+///    through, so the rules add up whatever their order (`"*"` marks
+///    everything and stops);
+/// 2. the members' own paths: no more rules, match the file to its nearest
+///    member (the root package owns only its target directories, so a
+///    top-level file does not land on the compositor);
+/// 3. any other file an `[[affects]]` rule covers: done, nothing more;
+/// 4. anything else, a file no member and no rule covers: everything.
+///
+/// determinator's default rules are off: step 4 matches every path before
+/// they would apply, and `architecture.toml` says what each file reaches
+/// (they would ignore `clippy.toml`, which CI lints with, and do not know
+/// `rust-toolchain.toml`).
+pub fn determinator_rules(rules: &Rules, members: &[Member]) -> Result<DeterminatorRules, String> {
+    let mut out = DeterminatorRules::parse("use-default-rules = false")
+        .map_err(|e| format!("determinator rules: {e}"))?;
+    for a in rules.affects.iter().filter(|a| !a.crates.is_empty()) {
+        out.path_rules.push(PathRule {
+            globs: a.globs(),
+            mark_changed: if a.names_every_crate() {
+                DeterminatorMarkChanged::All
+            } else {
+                DeterminatorMarkChanged::Packages(a.crates.clone())
+            },
+            post_rule: DeterminatorPostRule::Fallthrough,
+        });
+    }
+    out.path_rules.push(PathRule {
+        globs: members
+            .iter()
+            .flat_map(|m| &m.owns)
+            .map(|o| rules::glob(o))
+            .collect(),
+        mark_changed: DeterminatorMarkChanged::Packages(Vec::new()),
+        post_rule: DeterminatorPostRule::SkipRules,
+    });
+    out.path_rules.push(PathRule {
+        globs: rules.affects.iter().flat_map(|a| a.globs()).collect(),
+        mark_changed: DeterminatorMarkChanged::Packages(Vec::new()),
+        post_rule: DeterminatorPostRule::Skip,
+    });
+    out.path_rules.push(PathRule {
+        globs: vec!["**".into()],
+        mark_changed: DeterminatorMarkChanged::All,
+        post_rule: DeterminatorPostRule::Skip,
+    });
+    Ok(out)
+}
+
+// ---------------------------------------------------------------------------
+// Selection
+// ---------------------------------------------------------------------------
+
 /// Why a member is affected.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Why {
@@ -165,12 +216,12 @@ pub enum Why {
     File(String),
     /// A changed file an `[[affects]]` rule maps to the member.
     Rule { file: String, reason: String },
-    /// A package in the member's lockfile closure changed.
-    Lock(String),
-    /// It depends on an affected member.
-    Dep(String),
-    /// Its tests depend on an affected member.
-    DevDep(String),
+    /// A simulated build of the member resolves different packages or
+    /// features: a `Cargo.lock` or manifest change.
+    Deps,
+    /// It depends on an affected member through these members, nearest
+    /// first; `dev` when the first edge is a dev-dependency.
+    Via { path: Vec<String>, dev: bool },
 }
 
 #[derive(Debug, Default, PartialEq)]
@@ -184,7 +235,8 @@ pub struct Selection {
 }
 
 impl Selection {
-    fn all(members: &[Member], reason: String) -> Self {
+    /// Every member, for a change nothing can be worked out for.
+    pub fn everything(members: &[Member], reason: String) -> Self {
         Selection {
             packages: members
                 .iter()
@@ -202,22 +254,28 @@ impl Selection {
     /// `name`'s chain back to the change: `otto-bar <- otto-kit <- file`.
     pub fn chain(&self, name: &str) -> String {
         let mut out = name.to_owned();
-        let mut at = name;
+        let mut at = name.to_owned();
         for _ in 0..self.packages.len() + 1 {
-            match self.packages.get(at) {
-                Some(Why::Dep(d)) => {
-                    let _ = write!(out, " <- {d}");
-                    at = d;
-                }
-                Some(Why::DevDep(d)) => {
-                    let _ = write!(out, " <- (dev) {d}");
-                    at = d;
+            match self.packages.get(&at) {
+                Some(Why::Via { path, dev }) => {
+                    for (i, p) in path.iter().enumerate() {
+                        let tag = if i == 0 && *dev { "(dev) " } else { "" };
+                        let _ = write!(out, " <- {tag}{p}");
+                    }
+                    match path.last() {
+                        Some(last) => at = last.clone(),
+                        None => break,
+                    }
                 }
                 Some(Why::File(f)) => return format!("{out} <- {f}"),
                 Some(Why::Rule { file, reason }) => {
                     return format!("{out} <- {file} ([[affects]]: {reason})")
                 }
-                Some(Why::Lock(p)) => return format!("{out} <- Cargo.lock ({p})"),
+                Some(Why::Deps) => {
+                    return format!(
+                        "{out} <- its resolved dependencies changed (Cargo.lock or a manifest)"
+                    )
+                }
                 None => break,
             }
         }
@@ -225,204 +283,137 @@ impl Selection {
     }
 }
 
-/// The lockfile, which is diffed rather than mapped to a crate.
-pub const LOCKFILE: &str = "Cargo.lock";
+/// `cargo metadata` JSON as a guppy graph.
+pub fn graph(json: &str) -> Result<PackageGraph, String> {
+    CargoMetadata::parse_json(json)
+        .and_then(|m| m.build_graph())
+        .map_err(|e| format!("building the package graph: {e}"))
+}
 
-/// What `files` reach. `lock` is asked for the members whose lockfile
-/// closure changed, only when `Cargo.lock` is among the files.
+/// What `files` reach, from the graphs at the base (`old`) and the head
+/// (`new`). `members` and `rules` are the head's.
 pub fn select(
+    old: &PackageGraph,
+    new: &PackageGraph,
     members: &[Member],
     rules: &Rules,
     files: &[String],
-    lock: impl FnOnce() -> Result<BTreeMap<String, String>, String>,
-) -> Selection {
-    let names: BTreeSet<&str> = members.iter().map(|m| m.name.as_str()).collect();
-    let mut sel = Selection::default();
-    let mut seeds: BTreeMap<String, Why> = BTreeMap::new();
-    let mut everything = None;
-    let mut lock_changed = false;
+) -> Result<Selection, String> {
+    let mut det = Determinator::new(old, new);
+    det.set_rules(&determinator_rules(rules, members)?)
+        .map_err(|e| format!("determinator rules: {e}"))?;
+    det.add_changed_paths(files);
 
-    for f in files {
-        if f == LOCKFILE {
-            lock_changed = true;
-            continue;
-        }
-        let mut known = false;
-        if let Some(m) = owner(members, f) {
-            known = true;
-            seeds
-                .entry(m.to_owned())
-                .or_insert_with(|| Why::File(f.clone()));
-        }
-        for rule in rules.affects.iter().filter(|r| r.matches(f)) {
-            known = true;
-            if !rule.areas.is_empty() && sel.packaging.is_none() {
-                sel.packaging = Some(f.clone());
-            }
-            for c in &rule.crates {
-                if c == "*" {
-                    everything.get_or_insert_with(|| format!("{f}: {}", rule.reason));
-                } else if !names.contains(c.as_str()) {
-                    everything.get_or_insert_with(|| {
-                        format!("{f}: [[affects]] names {c}, which is not a workspace member")
-                    });
-                } else {
-                    seeds.entry(c.clone()).or_insert_with(|| Why::Rule {
-                        file: f.clone(),
-                        reason: rule.reason.clone(),
-                    });
-                }
-            }
-        }
-        if !known {
-            everything.get_or_insert_with(|| {
-                format!("{f} is in no crate and no [[affects]] rule in architecture.toml")
-            });
-        }
-    }
-    if let Some(reason) = everything {
-        return Selection::all(members, reason);
-    }
-    if lock_changed {
-        match lock() {
-            Ok(changed) => {
-                for (m, pkg) in changed {
-                    if names.contains(m.as_str()) {
-                        seeds.entry(m).or_insert(Why::Lock(pkg));
-                    }
-                }
-            }
-            Err(e) => return Selection::all(members, format!("{LOCKFILE}: {e}")),
-        }
-    }
-
-    // Reverse edges: who depends on whom.
-    let mut dependents: BTreeMap<&str, Vec<(&str, bool)>> = BTreeMap::new();
-    for m in members {
-        for (d, dev) in &m.deps {
-            dependents
-                .entry(d.as_str())
-                .or_default()
-                .push((m.name.as_str(), *dev));
-        }
-    }
-    let mut queue: VecDeque<String> = seeds.keys().cloned().collect();
-    let mut propagated: BTreeSet<String> = seeds.keys().cloned().collect();
-    sel.packages = seeds;
-    while let Some(at) = queue.pop_front() {
-        for &(dep, dev) in dependents.get(at.as_str()).into_iter().flatten() {
-            let why = if dev {
-                Why::DevDep(at.clone())
-            } else {
-                Why::Dep(at.clone())
-            };
-            match sel.packages.get(dep) {
-                None => {
-                    sel.packages.insert(dep.to_owned(), why);
-                }
-                // A normal edge explains more than a dev edge found first.
-                Some(Why::DevDep(_)) if !dev => {
-                    sel.packages.insert(dep.to_owned(), why);
-                }
-                _ => {}
-            }
-            if !dev && propagated.insert(dep.to_owned()) {
-                queue.push_back(dep.to_owned());
-            }
-        }
-    }
-    sel
-}
-
-// ---------------------------------------------------------------------------
-// Cargo.lock
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, Deserialize)]
-struct Lock {
-    #[serde(default)]
-    package: Vec<LockPackage>,
-}
-
-#[derive(Debug, Deserialize)]
-struct LockPackage {
-    name: String,
-    version: String,
-    source: Option<String>,
-    checksum: Option<String>,
-    #[serde(default)]
-    dependencies: Vec<String>,
-}
-
-/// A package with everything that can change about it.
-type Entry<'a> = (
-    &'a str,
-    &'a str,
-    Option<&'a str>,
-    Option<&'a str>,
-    Vec<&'a str>,
-);
-
-/// The members whose dependency closure differs between two lockfiles,
-/// each with one package that changed in it. The lockfile records
-/// dependencies across every feature, target and kind (dev included), so a
-/// closure is a superset of what any one build links: it can report a
-/// member whose build would not change, never miss one whose build would.
-pub fn lock_changes(
-    base: &str,
-    head: &str,
-    members: &[String],
-) -> Result<BTreeMap<String, String>, String> {
-    let base: Lock = toml::from_str(base).map_err(|e| format!("base lockfile: {e}"))?;
-    let head: Lock = toml::from_str(head).map_err(|e| format!("head lockfile: {e}"))?;
-    let mut out = BTreeMap::new();
-    for m in members {
-        let (b, h) = (closure(&base, m), closure(&head, m));
-        if b != h {
-            let differs = b
-                .symmetric_difference(&h)
-                .next()
-                .map(|e| format!("{} {}", e.0, e.1))
-                .unwrap_or_default();
-            out.insert(m.clone(), differs);
-        }
-    }
-    Ok(out)
-}
-
-fn closure<'a>(lock: &'a Lock, root: &str) -> BTreeSet<Entry<'a>> {
-    let mut by_name: BTreeMap<&str, Vec<&LockPackage>> = BTreeMap::new();
-    for p in &lock.package {
-        by_name.entry(p.name.as_str()).or_default().push(p);
-    }
-    // A dependency is "name", "name version" or "name version (source)".
-    let resolve = |dep: &str| -> Vec<&'a LockPackage> {
-        let mut parts = dep.split(' ');
-        let name = parts.next().unwrap_or_default();
-        let version = parts.next();
-        by_name
-            .get(name)
-            .into_iter()
-            .flatten()
-            .filter(|p| version.is_none_or(|v| p.version == v))
-            .copied()
-            .collect()
+    let mut sel = Selection {
+        packaging: files
+            .iter()
+            .find(|f| {
+                rules
+                    .affects
+                    .iter()
+                    .any(|r| !r.areas.is_empty() && r.matches(f))
+            })
+            .cloned(),
+        ..Selection::default()
     };
-    let mut seen: BTreeMap<(&str, &str, Option<&str>), Entry<'a>> = BTreeMap::new();
-    let mut stack: Vec<&LockPackage> = by_name.get(root).cloned().unwrap_or_default();
-    while let Some(p) = stack.pop() {
-        let key = (p.name.as_str(), p.version.as_str(), p.source.as_deref());
-        if seen.contains_key(&key) {
-            continue;
+
+    // Why each path-changed member is affected, and whether a file reaches
+    // everything. match_path runs the same rules compute() does.
+    for f in files {
+        let mut hit = Vec::new();
+        match det.match_path(f, |id| hit.push(id)) {
+            PathMatch::RuleMatchedAll | PathMatch::NoMatches => {
+                let reason = rules
+                    .affects
+                    .iter()
+                    .find(|r| r.names_every_crate() && r.matches(f))
+                    .map(|r| format!("{f}: {}", r.reason))
+                    .unwrap_or_else(|| {
+                        format!("{f} is in no crate and no [[affects]] rule in architecture.toml")
+                    });
+                return Ok(Selection::everything(members, reason));
+            }
+            PathMatch::RuleMatched(_) | PathMatch::AncestorMatched => {}
         }
-        let mut deps: Vec<&str> = p.dependencies.iter().map(String::as_str).collect();
-        deps.sort_unstable();
-        for d in &deps {
-            stack.extend(resolve(d));
+        for id in hit {
+            let name = new
+                .metadata(id)
+                .map_err(|e| format!("package graph: {e}"))?
+                .name();
+            let why = if owner(members, f) == Some(name) {
+                Why::File(f.clone())
+            } else {
+                rules
+                    .affects
+                    .iter()
+                    .find(|r| r.matches(f) && r.crates.iter().any(|c| c == name))
+                    .map(|r| Why::Rule {
+                        file: f.clone(),
+                        reason: r.reason.clone(),
+                    })
+                    .unwrap_or_else(|| Why::File(f.clone()))
+            };
+            sel.packages.entry(name.to_owned()).or_insert(why);
         }
-        seen.insert(key, (key.0, key.1, key.2, p.checksum.as_deref(), deps));
     }
-    seen.into_values().collect()
+
+    let set = det.compute();
+    for p in set
+        .summary_changed_set
+        .packages(DependencyDirection::Forward)
+    {
+        sel.packages.entry(p.name().to_owned()).or_insert(Why::Deps);
+    }
+    let seeds: BTreeSet<String> = sel.packages.keys().cloned().collect();
+    for p in set.affected_set.packages(DependencyDirection::Forward) {
+        if !sel.packages.contains_key(p.name()) {
+            let why = via(p, &seeds).unwrap_or(Why::Via {
+                path: Vec::new(),
+                dev: false,
+            });
+            sel.packages.insert(p.name().to_owned(), why);
+        }
+    }
+    Ok(sel)
+}
+
+/// The shortest chain of workspace dependencies from `from` to a member in
+/// `seeds`, for `--explain`. Only the first edge may be a dev-dependency,
+/// as in the builds determinator simulates.
+fn via(from: PackageMetadata<'_>, seeds: &BTreeSet<String>) -> Option<Why> {
+    let mut parent: BTreeMap<&str, (&str, bool)> = BTreeMap::new();
+    let mut queue = VecDeque::from([from]);
+    while let Some(at) = queue.pop_front() {
+        let first = at.id() == from.id();
+        for link in at.direct_links() {
+            let to = link.to();
+            if !to.in_workspace()
+                || (!first && link.dev_only())
+                || to.id() == from.id()
+                || parent.contains_key(to.name())
+            {
+                continue;
+            }
+            parent.insert(to.name(), (at.name(), first && link.dev_only()));
+            if seeds.contains(to.name()) {
+                let mut path = vec![to.name().to_owned()];
+                let mut cur = to.name();
+                let mut dev = false;
+                while let Some(&(p, d)) = parent.get(cur) {
+                    if p == from.name() {
+                        dev = d;
+                        break;
+                    }
+                    path.push(p.to_owned());
+                    cur = p;
+                }
+                path.reverse();
+                return Some(Why::Via { path, dev });
+            }
+            queue.push_back(to);
+        }
+    }
+    None
 }
 
 // ---------------------------------------------------------------------------
@@ -621,71 +612,69 @@ pub fn changed_files(root: &Path, base: &str, head: Option<&str>) -> Result<Vec<
     Ok(files)
 }
 
-/// `Cargo.lock` at `rev`, or in the working tree.
-pub fn lockfile(root: &Path, rev: Option<&str>) -> Result<String, String> {
-    match rev {
-        Some(rev) => git(root, &["show", &format!("{rev}:{LOCKFILE}")])
-            .map(|b| String::from_utf8_lossy(&b).into_owned()),
-        None => std::fs::read_to_string(root.join(LOCKFILE))
-            .map_err(|e| format!("reading {LOCKFILE}: {e}")),
-    }
-}
-
 /// Tracked files, for validating the `[[affects]]` rules.
 pub fn tracked_files(root: &Path) -> Result<Vec<String>, String> {
     git(root, &["ls-files", "-z"]).map(nul_separated)
+}
+
+/// A detached worktree of `rev` in a temporary directory, removed on drop:
+/// the base (or an explicit head) needs its own `cargo metadata`. It shares
+/// the cargo registry and git caches, so it downloads only what the other
+/// revision does not already have.
+pub struct Checkout {
+    repo: PathBuf,
+    pub dir: PathBuf,
+}
+
+impl Checkout {
+    pub fn new(repo: &Path, rev: &str, label: &str) -> Result<Self, String> {
+        let dir = std::env::temp_dir().join(format!("otto-arch-{label}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let path = dir.to_string_lossy().into_owned();
+        git(
+            repo,
+            &["worktree", "add", "--detach", "--quiet", &path, rev],
+        )?;
+        Ok(Checkout {
+            repo: repo.to_path_buf(),
+            dir,
+        })
+    }
+}
+
+impl Drop for Checkout {
+    fn drop(&mut self) {
+        let path = self.dir.to_string_lossy().into_owned();
+        if git(&self.repo, &["worktree", "remove", "--force", &path]).is_err() {
+            let _ = std::fs::remove_dir_all(&self.dir);
+            let _ = git(&self.repo, &["worktree", "prune"]);
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn member(name: &str, owns: &[&str], lib: bool, deps: &[(&str, bool)]) -> Member {
+    fn member(name: &str, owns: &[&str], lib: bool) -> Member {
         Member {
             name: name.into(),
             dir: owns[0].trim_end_matches('/').into(),
             owns: owns.iter().map(|s| s.to_string()).collect(),
             lib,
-            deps: deps.iter().map(|(n, d)| (n.to_string(), *d)).collect(),
         }
-    }
-
-    /// otto (root) -> kit -> base; app -> kit; emoji -> kit; leaf -> base;
-    /// otto's tests use emoji (a dev edge).
-    fn ws() -> Vec<Member> {
-        vec![
-            member("app", &["components/app/"], false, &[("kit", false)]),
-            member("base", &["components/base/"], true, &[]),
-            member("emoji", &["components/emoji/"], true, &[("kit", false)]),
-            member("kit", &["components/kit/"], true, &[("base", false)]),
-            member("leaf", &["components/leaf/"], false, &[("base", false)]),
-            member(
-                "otto",
-                &["src/", "tests/", "build.rs"],
-                true,
-                &[("kit", false), ("emoji", true)],
-            ),
-        ]
     }
 
     fn rules(text: &str) -> Rules {
         toml::from_str(&format!("layer = []\n{text}")).unwrap()
     }
 
-    fn sel(files: &[&str], rules_text: &str) -> Selection {
-        let files: Vec<String> = files.iter().map(|s| s.to_string()).collect();
-        select(&ws(), &rules(rules_text), &files, || {
-            Err("lockfile not expected".into())
-        })
-    }
-
-    fn names(s: &Selection) -> Vec<&str> {
-        s.packages.keys().map(String::as_str).collect()
-    }
-
     #[test]
     fn files_map_to_the_longest_owning_prefix() {
-        let ws = ws();
+        let ws = vec![
+            member("kit", &["components/kit/"], true),
+            member("otto", &["src/", "tests/", "build.rs"], true),
+        ];
         assert_eq!(owner(&ws, "src/main.rs"), Some("otto"));
         assert_eq!(owner(&ws, "tests/x.rs"), Some("otto"));
         assert_eq!(owner(&ws, "build.rs"), Some("otto"));
@@ -697,223 +686,154 @@ mod tests {
     }
 
     #[test]
-    fn dependents_close_over_normal_edges_and_stop_after_dev_edges() {
-        let s = sel(&["components/base/src/lib.rs"], "");
-        assert_eq!(names(&s), ["app", "base", "emoji", "kit", "leaf", "otto"]);
-        assert_eq!(
-            s.chain("app"),
-            "app <- kit <- base <- components/base/src/lib.rs"
+    fn affects_rules_translate_into_ordered_path_rules() {
+        let r = rules(
+            r#"
+            [[affects]]
+            paths = ["resources/", "otto_config*.toml"]
+            crates = ["otto"]
+            areas = ["packaging"]
+            reason = "r"
+            [[affects]]
+            paths = ["Cargo.toml"]
+            crates = ["*"]
+            reason = "shared"
+            [[affects]]
+            paths = ["docs/"]
+            crates = []
+            reason = "prose"
+            "#,
         );
-
-        // otto's tests use emoji, so otto is affected; a dev edge goes no
-        // further.
-        let s = sel(&["components/emoji/src/lib.rs"], "");
-        assert_eq!(names(&s), ["emoji", "otto"]);
-        assert_eq!(s.packages["otto"], Why::DevDep("emoji".into()));
-
-        let s = sel(&["components/leaf/src/main.rs", "src/lib.rs"], "");
-        assert_eq!(names(&s), ["leaf", "otto"]);
-        assert!(s.everything.is_none());
-    }
-
-    const RULES: &str = r#"
-        [[affects]]
-        paths = ["resources/"]
-        except = ["resources/bin/"]
-        crates = ["otto"]
-        areas = ["packaging"]
-        reason = "r"
-        [[affects]]
-        paths = ["resources/bin/", "**/*.md"]
-        crates = []
-        areas = ["packaging"]
-        reason = "installed"
-        [[affects]]
-        paths = ["components/base/src/shared.rs"]
-        crates = ["leaf"]
-        reason = "embedded"
-        [[affects]]
-        paths = ["Cargo.toml"]
-        crates = ["*"]
-        reason = "shared"
-    "#;
-
-    #[test]
-    fn affects_rules_add_crates_areas_and_everything() {
-        let s = sel(&["resources/a.svg"], RULES);
-        assert_eq!(names(&s), ["otto"]);
-        assert_eq!(s.packaging.as_deref(), Some("resources/a.svg"));
-
-        let s = sel(&["resources/bin/tool", "docs/x/y.md"], RULES);
-        assert!(s.packages.is_empty() && s.everything.is_none());
-        assert!(s.packaging.is_some());
-
-        // A crate's own README still reaches the crate.
-        let s = sel(&["components/leaf/README.md"], RULES);
-        assert_eq!(names(&s), ["leaf"]);
-
-        // Rules add up: the owner, and the crate the rule names.
-        let s = sel(&["components/base/src/shared.rs"], RULES);
+        let ws = vec![
+            member("kit", &["components/kit/"], true),
+            member("otto", &["src/", "build.rs"], true),
+        ];
+        let d = determinator_rules(&r, &ws).unwrap();
+        let shape: Vec<(Vec<String>, DeterminatorMarkChanged, DeterminatorPostRule)> = d
+            .path_rules
+            .iter()
+            .map(|p| (p.globs.clone(), p.mark_changed.clone(), p.post_rule))
+            .collect();
+        let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        let pkgs = |v: &[&str]| DeterminatorMarkChanged::Packages(s(v));
+        use DeterminatorPostRule::*;
         assert_eq!(
-            s.packages["leaf"],
-            Why::Rule {
-                file: "components/base/src/shared.rs".into(),
-                reason: "embedded".into()
-            }
+            shape,
+            vec![
+                (
+                    s(&["resources/**", "otto_config*.toml"]),
+                    pkgs(&["otto"]),
+                    Fallthrough
+                ),
+                (
+                    s(&["Cargo.toml"]),
+                    DeterminatorMarkChanged::All,
+                    Fallthrough
+                ),
+                (
+                    s(&["components/kit/**", "src/**", "build.rs"]),
+                    pkgs(&[]),
+                    SkipRules
+                ),
+                (
+                    s(&["resources/**", "otto_config*.toml", "Cargo.toml", "docs/**"]),
+                    pkgs(&[]),
+                    Skip
+                ),
+                (s(&["**"]), DeterminatorMarkChanged::All, Skip),
+            ]
         );
-        assert!(s.packages.contains_key("base"));
-
-        let s = sel(&["Cargo.toml"], RULES);
-        assert!(s.everything.is_some());
-        assert_eq!(s.packages.len(), ws().len());
+        // The rules round-trip through determinator's own TOML schema, with
+        // its defaults off.
+        let text = toml::to_string(&d).unwrap();
+        assert!(text.contains("use-default-rules = false"), "{text}");
     }
 
     #[test]
-    fn a_file_nothing_covers_affects_everything() {
-        let s = sel(&["src/lib.rs", "new-top-level-file"], "");
-        assert!(s
-            .everything
-            .as_deref()
-            .unwrap()
-            .contains("new-top-level-file"));
-        assert_eq!(s.packages.len(), ws().len());
-        assert!(s.packaging.is_some());
-    }
-
-    #[test]
-    fn globs() {
+    fn globs_match_as_determinator_matches() {
         use crate::rules::path_matches as m;
         assert!(m("otto_config*.toml", "otto_config.example.toml"));
-        assert!(!m("otto_config*.toml", "sub/otto_config.toml"));
         assert!(m("**/*.md", "README.md"));
         assert!(m("**/*.md", "components/x/docs/a.md"));
-        assert!(!m("*.md", "docs/a.md"));
+        // globset's default: `*` crosses directories.
+        assert!(m("*.md", "docs/a.md"));
         assert!(m("docs/", "docs/a/b.png"));
         assert!(!m("docs/", "docsx/a"));
+        assert!(!m("docs/", "docs"));
         assert!(m("PKGBUILD*", "PKGBUILD-git"));
         assert!(!m("Cargo.toml", "components/x/Cargo.toml"));
         assert!(m("a.b", "a.b") && !m("a.b", "axb"));
     }
 
-    const BASE_LOCK: &str = r#"
-version = 4
-[[package]]
-name = "app"
-version = "1.0.0"
-dependencies = ["kit", "serde"]
-[[package]]
-name = "kit"
-version = "1.0.0"
-dependencies = ["log 0.4.1"]
-[[package]]
-name = "leaf"
-version = "1.0.0"
-dependencies = ["log 0.4.2 (registry+https://github.com/rust-lang/crates.io-index)"]
-[[package]]
-name = "log"
-version = "0.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aaa"
-[[package]]
-name = "log"
-version = "0.4.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bbb"
-[[package]]
-name = "serde"
-version = "1.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ccc"
-"#;
-
-    fn lock_diff(head: &str) -> Vec<String> {
-        let members = ["app", "kit", "leaf"].map(String::from);
-        lock_changes(BASE_LOCK, head, &members)
-            .unwrap()
-            .into_keys()
-            .collect()
-    }
-
     #[test]
-    fn lockfile_changes_reach_the_members_whose_closure_holds_them() {
-        assert!(lock_diff(BASE_LOCK).is_empty());
-
-        // log 0.4.1 is kit's, and so app's; leaf uses 0.4.2.
-        let checksum = BASE_LOCK.replace("\"aaa\"", "\"zzz\"");
-        assert_eq!(lock_diff(&checksum), ["app", "kit"]);
-        let members = ["kit".to_owned()];
-        let why = lock_changes(BASE_LOCK, &checksum, &members).unwrap();
-        assert_eq!(why["kit"], "log 0.4.1");
-
-        // serde is app's alone.
-        let bump = BASE_LOCK.replace(
-            "name = \"serde\"\nversion = \"1.0.0\"",
-            "name = \"serde\"\nversion = \"1.0.1\"",
+    fn chains_explain_each_member() {
+        let mut sel = Selection::default();
+        sel.packages.insert(
+            "kit".into(),
+            Why::Rule {
+                file: "protocols/p.xml".into(),
+                reason: "generated".into(),
+            },
         );
-        assert_eq!(lock_diff(&bump), ["app"]);
-
-        // A new edge counts too.
-        let edge = BASE_LOCK.replace("[\"log 0.4.2", "[\"serde\", \"log 0.4.2");
-        assert_eq!(lock_diff(&edge), ["leaf"]);
-
-        assert!(lock_changes("not toml [", BASE_LOCK, &[]).is_err());
+        sel.packages.insert(
+            "bar".into(),
+            Why::Via {
+                path: vec!["auth".into(), "kit".into()],
+                dev: false,
+            },
+        );
+        sel.packages.insert(
+            "otto".into(),
+            Why::Via {
+                path: vec!["bar".into()],
+                dev: true,
+            },
+        );
+        sel.packages.insert("rdp".into(), Why::Deps);
+        assert_eq!(
+            sel.chain("otto"),
+            "otto <- (dev) bar <- auth <- kit <- protocols/p.xml ([[affects]]: generated)"
+        );
+        assert!(sel.chain("rdp").contains("resolved dependencies changed"));
+        let text = explain(&sel);
+        assert!(
+            text.contains("  bar <- auth <- kit <- protocols/p.xml"),
+            "{text}"
+        );
     }
 
-    #[test]
-    fn lockfile_is_diffed_and_its_failure_selects_everything() {
-        let files = vec![LOCKFILE.to_owned()];
-        let s = select(&ws(), &rules(""), &files, || {
-            Ok(BTreeMap::from([(
-                "base".to_owned(),
-                "log 0.4.1".to_owned(),
-            )]))
-        });
-        assert_eq!(names(&s), ["app", "base", "emoji", "kit", "leaf", "otto"]);
-        assert_eq!(s.chain("leaf"), "leaf <- base <- Cargo.lock (log 0.4.1)");
-
-        let s = select(&ws(), &rules(""), &files, || Err("no base lockfile".into()));
-        assert!(s.everything.unwrap().contains("no base lockfile"));
+    fn render(out: Vec<(&'static str, String)>) -> String {
+        out.into_iter().map(|(k, v)| format!("{k}={v}\n")).collect()
     }
 
     #[test]
     fn outputs_derive_areas_and_package_lists() {
         let ws = vec![
-            member("otto", &["src/"], true, &[("otto-kit", false)]),
-            member("otto-kit", &["components/otto-kit/"], true, &[]),
-            member(
-                "otto-bar",
-                &["components/otto-bar/"],
-                false,
-                &[("otto-kit", false)],
-            ),
-            member(
-                "otto-files",
-                &["components/otto-files/"],
-                true,
-                &[("otto-kit", false)],
-            ),
-            member("otto-rdp", &["components/otto-rdp/"], false, &[]),
-            member("otto-arch", &["tools/otto-arch/"], false, &[]),
+            member("otto", &["src/"], true),
+            member("otto-kit", &["components/otto-kit/"], true),
+            member("otto-bar", &["components/otto-bar/"], false),
+            member("otto-files", &["components/otto-files/"], true),
+            member("otto-rdp", &["components/otto-rdp/"], false),
+            member("otto-arch", &["tools/otto-arch/"], false),
         ];
-        let run = |files: &[&str]| {
-            let files: Vec<String> = files.iter().map(|s| s.to_string()).collect();
-            let s = select(&ws, &rules(""), &files, || Ok(BTreeMap::new()));
-            outputs(&s, &ws)
-                .into_iter()
-                .map(|(k, v)| format!("{k}={v}\n"))
-                .collect::<String>()
+        let run = |names: &[&str], packaging: bool| {
+            let sel = Selection {
+                everything: None,
+                packages: names
+                    .iter()
+                    .map(|n| (n.to_string(), Why::File("f".into())))
+                    .collect(),
+                packaging: packaging.then(|| "PKGBUILD".to_owned()),
+            };
+            render(outputs(&sel, &ws))
         };
         assert_eq!(
-            run(&["components/otto-bar/src/main.rs"]),
+            run(&["otto-bar"], false),
             "all=false\npackages=otto-bar\ncompositor=false\nrdp=false\nportal=false\n\
              files=false\nui=true\npackaging=false\nrust=true\nclippy_args=-p otto-bar\n\
              test_lib_args=\ntest_bins_args=-p otto-bar\n"
         );
-        let kit = run(&["components/otto-kit/src/lib.rs"]);
-        assert!(
-            kit.contains("packages=otto otto-bar otto-files otto-kit\n"),
-            "{kit}"
-        );
+        let kit = run(&["otto", "otto-bar", "otto-files", "otto-kit"], false);
         assert!(kit.contains("compositor=true\n") && kit.contains("files=true\n"));
         assert!(kit.contains("clippy_args=-p otto-bar -p otto-files -p otto-kit\n"));
         // otto-files' tests run in a step of their own.
@@ -921,12 +841,11 @@ checksum = "ccc"
 
         // The tool alone: the architecture job checks it, the check job
         // has nothing to do.
-        let tool = run(&["tools/otto-arch/src/main.rs"]);
-        assert!(tool.contains("ui=false\n") && tool.contains("rust=false\n"));
-        assert!(tool.contains("clippy_args=\n"));
+        let tool = run(&["otto-arch"], false);
+        assert!(tool.contains("rust=false\n") && tool.contains("clippy_args=\n"));
 
-        let none = run(&[]);
+        let none = run(&[], true);
         assert!(none.contains("packages=\n") && none.contains("rust=false\n"));
-        assert_eq!(test_args(&sel(&["components/leaf/x"], "")), "-p leaf");
+        assert!(none.contains("packaging=true\n"));
     }
 }

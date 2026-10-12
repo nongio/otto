@@ -11,7 +11,7 @@ use syn::spanned::Spanned;
 use syn::visit::Visit;
 
 use crate::affected::{self, Member};
-use crate::rules::{path_matches, Exception, Rules};
+use crate::rules::{glob_set, Exception, Rules};
 use crate::workspace::{Graph, Package};
 
 pub fn all(
@@ -609,8 +609,9 @@ pub fn affects(
 ) -> Result<Vec<String>, String> {
     let mut problems = Vec::new();
     for rule in &rules.affects {
-        for p in rule.paths.iter().chain(&rule.except) {
-            if !tracked.iter().any(|f| path_matches(p, f)) {
+        for (p, g) in rule.paths.iter().zip(rule.globs()) {
+            let set = glob_set(&[g])?;
+            if !tracked.iter().any(|f| set.is_match(f)) {
                 problems.push(format!(
                     "stale [[affects]] path {p:?}\n  No tracked file matches it: delete or fix it."
                 ));
@@ -629,9 +630,7 @@ pub fn affects(
     let uncovered: Vec<&String> = tracked
         .iter()
         .filter(|f| {
-            f.as_str() != affected::LOCKFILE
-                && affected::owner(members, f).is_none()
-                && !rules.affects.iter().any(|r| r.matches(f))
+            affected::owner(members, f).is_none() && !rules.affects.iter().any(|r| r.matches(f))
         })
         .collect();
     if !uncovered.is_empty() {
@@ -1044,14 +1043,12 @@ mod tests {
                 dir: String::new(),
                 owns: vec!["src/".into()],
                 lib: true,
-                deps: Default::default(),
             },
             Member {
                 name: "app".into(),
                 dir: "components/app".into(),
                 owns: vec!["components/app/".into()],
                 lib: false,
-                deps: Default::default(),
             },
         ];
         let rules: Rules = toml::from_str(
@@ -1084,10 +1081,13 @@ mod tests {
         assert!(text.contains("stale [[affects]] path \"gone/\""), "{text}");
         assert!(text.contains("names nobody"), "{text}");
         assert!(
-            text.contains("1 tracked file(s) belong to no crate"),
+            text.contains("2 tracked file(s) belong to no crate"),
             "{text}"
         );
-        assert!(text.contains("stray.txt"), "{text}");
+        assert!(
+            text.contains("stray.txt") && text.contains("Cargo.lock"),
+            "{text}"
+        );
         assert!(
             text.contains("components/app/src/main.rs embeds resources/b.bin"),
             "{text}"

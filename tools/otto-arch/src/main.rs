@@ -17,10 +17,11 @@ mod docs;
 mod rules;
 mod workspace;
 
+use std::panic::AssertUnwindSafe;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use affected::{Member, Selection};
+use affected::{Checkout, Member, Selection};
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -81,7 +82,8 @@ const AFFECTED_USAGE: &str =
 
 Prints which workspace members the change from REV reaches, as key=value
 lines for $GITHUB_OUTPUT. --head defaults to the working tree, untracked
-files included. Without a usable --base, everything is affected.
+files included. Without a usable --base, or on any error, everything is
+affected.
   --explain    also print, on stderr, why each member is affected
   --test-args  print only `-p <member>` for each affected member";
 
@@ -100,13 +102,17 @@ fn affected_main(root: &Path, args: &[String]) -> ExitCode {
             }
         }
     }
-    let (members, files, sel) = match affected(root, base.as_deref(), head.as_deref()) {
-        Ok(found) => found,
-        Err(e) => {
-            eprintln!("affected: {e}");
-            return ExitCode::FAILURE;
-        }
-    };
+    // A panic in the selection (guppy and determinator `expect` on graphs
+    // they do not understand) selects everything like any other failure.
+    let found = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        affected(root, base.as_deref(), head.as_deref())
+    }));
+    let (members, files, sel) = found.unwrap_or_else(|_| {
+        everything(
+            affected::members_from_manifests(root).unwrap_or_default(),
+            "otto-arch panicked working out the selection".into(),
+        )
+    });
     if explain {
         if sel.everything.is_none() {
             eprintln!("changed files:");
@@ -127,55 +133,138 @@ fn affected_main(root: &Path, args: &[String]) -> ExitCode {
     ExitCode::SUCCESS
 }
 
+type Found = (Vec<Member>, Vec<String>, Selection);
+
+fn everything(members: Vec<Member>, reason: String) -> Found {
+    let sel = Selection::everything(&members, reason);
+    (members, Vec::new(), sel)
+}
+
 /// The members, the changed files and what they reach. Anything that keeps
-/// the change from being worked out selects everything instead; only not
-/// knowing the members at all is an error.
-fn affected(
-    root: &Path,
-    base: Option<&str>,
-    head: Option<&str>,
-) -> Result<(Vec<Member>, Vec<String>, Selection), String> {
-    let members = match workspace::members(root) {
-        Ok(packages) => affected::members(root, &packages),
-        Err(e) => {
-            let members = affected::members_from_manifests(root)?;
-            let sel = affected::everything(&members, format!("cargo metadata: {e}"));
-            return Ok((members, Vec::new(), sel));
-        }
-    };
-    let everything = |reason: String| {
-        let sel = affected::everything(&members, reason);
-        Ok((members.clone(), Vec::new(), sel))
-    };
-    let rules = match rules::load(&root.join("architecture.toml")) {
-        Ok(r) => r,
-        Err(e) => return everything(e),
-    };
+/// the change from being worked out selects everything instead; not even
+/// knowing the members still selects everything, with the workspace-wide
+/// argument lists.
+fn affected(root: &Path, base: Option<&str>, head: Option<&str>) -> Found {
+    let from_manifests = |dir: &Path| affected::members_from_manifests(dir).unwrap_or_default();
     let Some(base) = base else {
-        return everything("no diff base".into());
+        return everything(from_manifests(root), "no diff base".into());
     };
     if let Err(e) = affected::check_base(root, base) {
-        return everything(e);
+        return everything(from_manifests(root), e);
     }
+    // The head's tree: the working tree, or a checkout of --head.
+    let head_checkout = match head.map(|h| Checkout::new(root, h, "head")).transpose() {
+        Ok(c) => c,
+        Err(e) => return everything(from_manifests(root), e),
+    };
+    let new_root = head_checkout.as_ref().map_or(root, |c| c.dir.as_path());
+    let new_json = match workspace::metadata_json(new_root) {
+        Ok(j) => j,
+        Err(e) => return everything(from_manifests(new_root), e),
+    };
+    let members = match workspace::parse(&new_json) {
+        Ok((packages, _)) => affected::members(new_root, &packages),
+        Err(e) => return everything(from_manifests(new_root), e),
+    };
+    let fail = |e: String| everything(members.clone(), e);
+    let rules = match rules::load(&new_root.join("architecture.toml")) {
+        Ok(r) => r,
+        Err(e) => return fail(e),
+    };
     let files = match affected::changed_files(root, base, head) {
         Ok(f) => f,
-        Err(e) => return everything(e),
+        Err(e) => return fail(e),
     };
-    let names: Vec<String> = members.iter().map(|m| m.name.clone()).collect();
-    let sel = affected::select(&members, &rules, &files, || {
-        let old = affected::lockfile(root, Some(base))?;
-        let new = affected::lockfile(root, head)?;
-        affected::lock_changes(&old, &new, &names)
-    });
-    Ok((members, files, sel))
+    let old_json = match Checkout::new(root, base, "base").and_then(|c| {
+        workspace::metadata_json(&c.dir).map_err(|e| format!("at the base {base}: {e}"))
+    }) {
+        Ok(j) => j,
+        Err(e) => return fail(e),
+    };
+    let sel = affected::graph(&old_json)
+        .and_then(|old| Ok((old, affected::graph(&new_json)?)))
+        .and_then(|(old, new)| affected::select(&old, &new, &members, &rules, &files));
+    match sel {
+        Ok(sel) => (members, files, sel),
+        Err(e) => fail(e),
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     /// The real workspace passes, so `cargo test` catches a violation too.
     #[test]
     fn workspace_follows_architecture_toml() {
-        let problems = super::run(&super::repo_root(), false).unwrap();
+        let problems = run(&repo_root(), false).unwrap();
         assert!(problems.is_empty(), "\n{}", problems.join("\n\n"));
+    }
+
+    /// The translated rules on the real workspace: where representative
+    /// files land.
+    #[test]
+    fn translated_rules_place_real_files() {
+        use determinator::rules::PathMatch;
+        let root = repo_root();
+        let json = workspace::metadata_json(&root).unwrap();
+        let (packages, _) = workspace::parse(&json).unwrap();
+        let members = affected::members(&root, &packages);
+        let rules = rules::load(&root.join("architecture.toml")).unwrap();
+        let graph = affected::graph(&json).unwrap();
+        let mut det = determinator::Determinator::new(&graph, &graph);
+        det.set_rules(&affected::determinator_rules(&rules, &members).unwrap())
+            .unwrap();
+        let place = |path: &str| {
+            let mut names = Vec::new();
+            let m = det.match_path(path, |id| {
+                names.push(graph.metadata(id).unwrap().name().to_owned())
+            });
+            names.sort();
+            names.dedup();
+            match m {
+                PathMatch::RuleMatchedAll | PathMatch::NoMatches => vec!["*".to_owned()],
+                _ => names,
+            }
+        };
+        assert_eq!(place("src/main.rs"), ["otto"]);
+        assert_eq!(place("crates/otto-render/src/lib.rs"), ["otto-render"]);
+        assert_eq!(
+            place("components/otto-launcher/src/main.rs"),
+            ["otto-launcher"]
+        );
+        // Rules add up with the file's own crate.
+        assert_eq!(
+            place("components/otto-agents/src/config.rs"),
+            ["otto-agents", "otto-kit"]
+        );
+        assert_eq!(place("components/otto-lock/otto-lock.pam"), ["otto-lock"]);
+        // A top-level file does not land on the root package.
+        assert!(place("README.md").is_empty());
+        assert!(place("docs/developer/rendering.md").is_empty());
+        assert!(place("Cargo.lock").is_empty());
+        assert_eq!(place("resources/locales/en.ftl").len(), 2);
+        // Shared files reach everything; so does a file nothing covers.
+        for f in [
+            "Cargo.toml",
+            ".github/workflows/ci.yml",
+            "a-new-top-level-file",
+            "components/no-such-crate/src/lib.rs",
+        ] {
+            assert_eq!(place(f), ["*"], "{f}");
+        }
+    }
+
+    /// No base, or one that is not a commit: everything, not an error.
+    #[test]
+    fn a_missing_base_selects_everything() {
+        let root = repo_root();
+        for base in [None, Some(""), Some("0000000000"), Some("no-such-rev")] {
+            let (members, _, sel) = affected(&root, base, None);
+            assert!(sel.everything.is_some(), "{base:?}");
+            assert!(members.iter().any(|m| m.name == "otto"));
+            let out = affected::outputs(&sel, &members);
+            assert!(out.contains(&("all", "true".to_owned())));
+        }
     }
 }
