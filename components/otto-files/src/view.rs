@@ -595,6 +595,12 @@ const NAV_BTN_H: f32 = 26.0;
 const NAV_GROUP_W: f32 = NAV_BTN_W * 2.0;
 const NAV_RADIUS: f32 = 7.0;
 const NAV_ICON_SIZE: f32 = 13.0;
+/// The side of a toolbar button's Solar glyph: the nav arrows, New Folder
+/// and the view switcher's segments.
+const TOOLBAR_GLYPH: f32 = 16.0;
+/// The side of the Solar chevron that ends a menu control: the picker's
+/// location capsule and its filter.
+const DISCLOSURE_GLYPH: f32 = 14.0;
 /// How far the title's own text starts right of the sidebar, once the nav
 /// pair and its trailing gap are accounted for. The Trash window has no nav
 /// pair, so its title starts hard against the content padding instead.
@@ -4058,14 +4064,23 @@ fn draw_filter_control(canvas: &Canvas, f: &Frame, footer: &FooterData<'_>, wind
         .render(canvas);
 
     // The disclosure chevron, pointing the way the menu opens.
+    let cx = rect.right - 14.0;
+    let cy = rect.center_y();
+    if draw_solar_glyph(
+        canvas,
+        "go-up-symbolic",
+        Point::new(cx, cy),
+        DISCLOSURE_GLYPH,
+        theme.text_secondary,
+    ) {
+        return;
+    }
     let mut chevron = Paint::default();
     chevron.set_anti_alias(true);
     chevron.set_color(theme.text_secondary);
     chevron.set_style(skia_safe::paint::Style::Stroke);
     chevron.set_stroke_width(1.6);
     chevron.set_stroke_cap(skia_safe::paint::Cap::Round);
-    let cx = rect.right - 14.0;
-    let cy = rect.center_y();
     let mut path = skia_safe::PathBuilder::new();
     path.move_to((cx - 4.0, cy + 2.0));
     path.line_to((cx, cy - 2.5));
@@ -5630,6 +5645,31 @@ fn device_px(canvas: &Canvas, size: f32) -> i32 {
     (size * scale).round() as i32
 }
 
+/// Draw Otto's Solar glyph `name`, `size` points square, centred on
+/// `center` and already tinted `color`.
+///
+/// `false` when the set isn't installed or lacks the glyph, so the caller
+/// draws its own stand-in.
+fn draw_solar_glyph(canvas: &Canvas, name: &str, center: Point, size: f32, color: Color) -> bool {
+    let Some(image) = icons::solar_icon(
+        name,
+        device_px(canvas, size),
+        icons::SolarStyle::Linear,
+        color,
+    ) else {
+        return false;
+    };
+    let half = size / 2.0;
+    let dst = Rect::from_ltrb(
+        center.x - half,
+        center.y - half,
+        center.x + half,
+        center.y + half,
+    );
+    canvas.draw_image_rect(&image, None, dst, &Paint::default());
+    true
+}
+
 fn draw_sidebar(canvas: &Canvas, f: &Frame) {
     let theme = f.theme;
 
@@ -5900,8 +5940,8 @@ fn draw_location_button(canvas: &Canvas, f: &Frame) {
     });
     canvas.draw_rrect(RRect::new_rect_xy(rect, NAV_RADIUS, NAV_RADIUS), &paint);
 
-    // Glyphs drawn rather than themed, like the switcher's: the bundled icon
-    // set has neither a downward chevron nor a new-folder sign.
+    // Otto's own glyphs, like the switcher's; the strokes below stand in when
+    // the Solar set isn't installed.
     let mut glyph = Paint::default();
     glyph.set_anti_alias(true);
     glyph.set_color(theme.text_secondary);
@@ -5911,33 +5951,49 @@ fn draw_location_button(canvas: &Canvas, f: &Frame) {
     glyph.set_stroke_join(skia_safe::paint::Join::Round);
 
     let cx = rect.right - 14.0;
-    let mut chevron = skia_safe::PathBuilder::new();
-    chevron.move_to((cx - 4.0, cy - 2.0));
-    chevron.line_to((cx, cy + 2.5));
-    chevron.line_to((cx + 4.0, cy - 2.0));
-    canvas.draw_path(&chevron.detach(), &glyph);
+    if !draw_solar_glyph(
+        canvas,
+        "go-down-symbolic",
+        Point::new(cx, cy),
+        DISCLOSURE_GLYPH,
+        theme.text_secondary,
+    ) {
+        let mut chevron = skia_safe::PathBuilder::new();
+        chevron.move_to((cx - 4.0, cy - 2.0));
+        chevron.line_to((cx, cy + 2.5));
+        chevron.line_to((cx + 4.0, cy - 2.0));
+        canvas.draw_path(&chevron.detach(), &glyph);
+    }
 
     // New Folder, beside it: a plain capsule, the same family as the nav pair.
     let button = new_folder_rect(f.width);
     paint.set_color(theme.fill_tertiary);
     canvas.draw_rrect(RRect::new_rect_xy(button, NAV_RADIUS, NAV_RADIUS), &paint);
     let (bx, by) = (button.center_x(), button.center_y());
-    // A folder: tab on the top left, body below it.
-    let mut folder = skia_safe::PathBuilder::new();
-    folder.move_to((bx - 8.0, by + 5.5));
-    folder.line_to((bx - 8.0, by - 5.5));
-    folder.line_to((bx - 3.5, by - 5.5));
-    folder.line_to((bx - 1.5, by - 3.5));
-    folder.line_to((bx + 8.0, by - 3.5));
-    folder.line_to((bx + 8.0, by + 5.5));
-    folder.close();
-    canvas.draw_path(&folder.detach(), &glyph);
-    let mut plus = skia_safe::PathBuilder::new();
-    plus.move_to((bx, by - 1.0));
-    plus.line_to((bx, by + 4.0));
-    plus.move_to((bx - 2.5, by + 1.5));
-    plus.line_to((bx + 2.5, by + 1.5));
-    canvas.draw_path(&plus.detach(), &glyph);
+    if !draw_solar_glyph(
+        canvas,
+        "folder-new-symbolic",
+        Point::new(bx, by),
+        TOOLBAR_GLYPH,
+        theme.text_secondary,
+    ) {
+        // A folder: tab on the top left, body below it, a plus inside.
+        let mut folder = skia_safe::PathBuilder::new();
+        folder.move_to((bx - 8.0, by + 5.5));
+        folder.line_to((bx - 8.0, by - 5.5));
+        folder.line_to((bx - 3.5, by - 5.5));
+        folder.line_to((bx - 1.5, by - 3.5));
+        folder.line_to((bx + 8.0, by - 3.5));
+        folder.line_to((bx + 8.0, by + 5.5));
+        folder.close();
+        canvas.draw_path(&folder.detach(), &glyph);
+        let mut plus = skia_safe::PathBuilder::new();
+        plus.move_to((bx, by - 1.0));
+        plus.line_to((bx, by + 4.0));
+        plus.move_to((bx - 2.5, by + 1.5));
+        plus.line_to((bx + 2.5, by + 1.5));
+        canvas.draw_path(&plus.detach(), &glyph);
+    }
 
     let mut text_x = rect.left + 10.0;
     // The theme's full-colour art, like the listing's rows: the 16px tier of
@@ -6003,7 +6059,7 @@ fn draw_nav_buttons(canvas: &Canvas, f: &Frame) {
         canvas,
         theme,
         nav_back_rect(),
-        "chevron-left",
+        NavButton::Back,
         f.can_go_back,
         f.nav_pressed == Some(NavButton::Back),
     );
@@ -6011,7 +6067,7 @@ fn draw_nav_buttons(canvas: &Canvas, f: &Frame) {
         canvas,
         theme,
         nav_forward_rect(),
-        "chevron-right",
+        NavButton::Forward,
         f.can_go_forward,
         f.nav_pressed == Some(NavButton::Forward),
     );
@@ -6036,7 +6092,7 @@ fn draw_nav_button(
     canvas: &Canvas,
     theme: &Theme,
     rect: Rect,
-    icon_name: &str,
+    button: NavButton,
     enabled: bool,
     pressed: bool,
 ) {
@@ -6047,7 +6103,16 @@ fn draw_nav_button(
         (true, false) => theme.text_secondary,
         (false, _) => theme.text_tertiary,
     };
-    Icon::new(icon_name)
+    // Otto's own arrow; the kit's drawn chevron stands in without the set.
+    let (glyph, chevron) = match button {
+        NavButton::Back => ("go-previous-symbolic", "chevron-left"),
+        NavButton::Forward => ("go-next-symbolic", "chevron-right"),
+    };
+    let center = Point::new(rect.center_x(), rect.center_y());
+    if draw_solar_glyph(canvas, glyph, center, TOOLBAR_GLYPH, color) {
+        return;
+    }
+    Icon::new(chevron)
         .with_size(NAV_ICON_SIZE)
         .with_color(color)
         .at(
@@ -6057,8 +6122,10 @@ fn draw_nav_button(
         .render(canvas);
 }
 
-/// A three-segment control: list, icon grid, Miller columns. Glyphs are drawn
-/// rather than themed so it stays legible with no icon-theme entry.
+/// The view switcher: list, icon grid, Miller columns, photo wall. Its
+/// glyphs are Otto's own from the Solar set, never the theme's, so it reads
+/// the same whatever theme is in force; the shapes drawn here stand in when
+/// the set isn't installed.
 fn draw_switcher(canvas: &Canvas, f: &Frame) {
     let theme = f.theme;
     let rect = switcher_rect(f.width);
@@ -6092,6 +6159,15 @@ fn draw_switcher(canvas: &Canvas, f: &Frame) {
             (false, true) => theme.text_tertiary,
             (false, false) => theme.text_secondary,
         });
+        if draw_solar_glyph(
+            canvas,
+            switcher_glyph(*mode),
+            Point::new(cx, cy),
+            TOOLBAR_GLYPH,
+            paint.color(),
+        ) {
+            continue;
+        }
         match mode {
             // Three stacked lines.
             ViewMode::List => {
@@ -6148,6 +6224,16 @@ fn draw_switcher(canvas: &Canvas, f: &Frame) {
                 }
             }
         }
+    }
+}
+
+/// The Solar glyph for a view switcher segment.
+fn switcher_glyph(mode: ViewMode) -> &'static str {
+    match mode {
+        ViewMode::List => "otto-view-list-symbolic",
+        ViewMode::Grid => "otto-view-grid-symbolic",
+        ViewMode::Columns => "otto-view-columns-symbolic",
+        ViewMode::Photos => "otto-view-photos-symbolic",
     }
 }
 
@@ -10689,5 +10775,36 @@ mod geometry_tests {
             label_gutter(FOOTER_NAME_LABEL_W + 30.0),
             FOOTER_NAME_LABEL_W + 30.0 + FOOTER_NAME_LABEL_GAP
         );
+    }
+}
+
+#[cfg(test)]
+mod toolbar_glyph_tests {
+    use super::{switcher_glyph, SWITCHER_MODES};
+
+    /// Every glyph the toolbar asks for is in the repository's Solar set: a
+    /// name that drifts from `icons.list` would otherwise fall back to the
+    /// drawn stand-ins without a word. The repository's copy, not the lookup,
+    /// which prefers an installed set that may predate this checkout.
+    #[test]
+    fn the_toolbar_glyphs_are_in_the_solar_set() {
+        let set = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../resources/icons/solar/linear");
+        let names = SWITCHER_MODES
+            .iter()
+            .map(|mode| switcher_glyph(*mode))
+            .chain([
+                "go-previous-symbolic",
+                "go-next-symbolic",
+                "folder-new-symbolic",
+                "go-down-symbolic",
+                "go-up-symbolic",
+            ]);
+        for name in names {
+            assert!(
+                set.join(format!("{name}.svg")).is_file(),
+                "{name} is not in the Solar set"
+            );
+        }
     }
 }

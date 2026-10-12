@@ -53,6 +53,16 @@ folder-videos               video-library
 drive-harddisk              ssd-round
 folder                      folder
 
+# Files toolbar (the browser and the file picker share it); the location
+# and filter chevrons reuse go-down and go-up from Studio's list
+go-previous-symbolic        alt-arrow-left
+go-next-symbolic            alt-arrow-right
+folder-new-symbolic         add-folder
+otto-view-list-symbolic     list
+otto-view-grid-symbolic     widget
+otto-view-columns-symbolic  columns-3
+otto-view-photos-symbolic   gallery-wide
+
 # Settings sidebar panes
 otto-pane-person-symbolic       user-rounded
 otto-pane-settings-symbolic     settings

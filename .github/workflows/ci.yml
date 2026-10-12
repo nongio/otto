@@ -9,6 +9,12 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Every job gets a read-only token; publish-nightly and release raise it to
+# `contents: write` themselves, which is all they need to push a tag and a
+# release.
+permissions:
+  contents: read
+
 # A PR that gets pushed to twice in a minute used to run every job three times
 # over. Superseded runs on the same ref are cancelled; runs on main and on tags
 # publish artifacts, so those are never cancelled.
@@ -317,7 +323,6 @@ jobs:
         timeout-minutes: 10
         if: needs.changes.outputs.compositor == 'true'
         run: cargo test --locked --lib -p otto -- workspaces::utils::tests --ignored
-  
 
   # Every other affected crate: the toolkit, the kits and the apps.
   components:
@@ -344,7 +349,7 @@ jobs:
           shared-key: components
           cache-on-failure: true
       - name: System dependencies
-        run: sudo apt-get update; sudo apt-get install -y libdrm-dev libgbm-dev libxkbcommon-dev libegl1-mesa-dev libwayland-dev libdbus-1-dev libsystemd-dev libpipewire-0.3-dev libfreetype-dev libfontconfig-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libpam0g-dev libpolkit-agent-1-dev hicolor-icon-theme fonts-dejavu-core
+        run: sudo apt-get update; sudo apt-get install -y libdrm-dev libgbm-dev libxkbcommon-dev libegl1-mesa-dev libwayland-dev libpipewire-0.3-dev libfreetype-dev libfontconfig-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libpam0g-dev libpolkit-agent-1-dev hicolor-icon-theme fonts-dejavu-core
       - name: Clippy (components)
         # Every affected crate with no clippy step of its own, sample clients
         # included. submenu-gtk is never linted: it needs GTK development
@@ -411,7 +416,7 @@ jobs:
           shared-key: rdp
           cache-on-failure: true
       - name: System dependencies
-        run: sudo apt-get update; sudo apt-get install -y libwayland-dev libxkbcommon-dev libdbus-1-dev libpipewire-0.3-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev
+        run: sudo apt-get update; sudo apt-get install -y libwayland-dev libxkbcommon-dev libgbm-dev libpipewire-0.3-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev
       - name: Clippy (RDP bridge)
         run: cargo clippy --locked -p otto-rdp --all-targets -- -D warnings
       - name: Run RDP bridge unit tests

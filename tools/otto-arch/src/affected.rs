@@ -473,7 +473,8 @@ const EVERYTHING_TEST_LIB: &str =
 
 /// `key=value` lines for `$GITHUB_OUTPUT`. `all` is read by the steps and
 /// jobs gated on one crate being in `packages` (the toolkit doctests, the
-/// render-stack lint, the agent service tests and the AHP conformance job),
+/// render stack's lint and unit tests, the agent service tests and the AHP
+/// conformance job),
 /// so a selection of everything that could not list the members still runs
 /// them.
 pub fn outputs(sel: &Selection, members: &[Member]) -> Vec<(&'static str, String)> {
