@@ -8,6 +8,8 @@ whichever window had the keyboard.
 > remembers what you picked and which skin tone you use. Keywords in other
 > languages and custom shortcodes are not there yet.
 
+![The emoji picker open over a text editor at the cursor, its Travel category showing a grid of places, buildings and vehicles, with the skin-tone choices along the bottom](images/emoji-picker.jpg)
+
 ## Opening it
 
 The default binding is `Ctrl+.` — an ordinary shortcut in `otto_config.toml`
