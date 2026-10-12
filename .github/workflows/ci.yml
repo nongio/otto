@@ -17,132 +17,107 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  # Which areas of the repo the diff touches. Every other job reads these
+  # Which workspace crates the diff reaches. Every other job reads these
   # outputs to decide what is worth running: a change under
-  # components/otto-rdp does not need the compositor's headless suite, and a
-  # change under src/ does not need otto-rdp's GStreamer bin rebuilt.
+  # components/otto-launcher lints and tests the launcher, not all 35 crates,
+  # and a change under src/ does not rebuild otto-rdp's GStreamer bin.
   #
-  # Anything shared (the workspace manifest, the toolchain, the UI toolkit
-  # every component links, this file) sets *every* flag. A lockfile change
-  # sets the flags whose crates' dependency closures it touched — the safe
-  # default is to run more, never less.
+  # `otto-arch affected` decides with determinator (guppy), which compares
+  # the package graphs `cargo metadata` resolves at the base and the head: a
+  # changed file belongs to the crate whose directory holds it, files outside
+  # every crate are placed by the [[affects]] rules in architecture.toml, a
+  # Cargo.lock edit reaches the crates whose simulated build it changes, and
+  # every crate whose build includes an affected one is affected too. A file
+  # no rule covers, a missing diff base or any error selects everything: the
+  # safe default is to run more, never less. Its log (--explain) says why
+  # each crate was picked. See docs/developer/architecture.md.
+  #
+  # Outputs: `packages` (the affected crates), ready-made `-p` lists for the
+  # steps that take one (empty: skip the step), the area flags the gates
+  # below read, derived from the crates (compositor = otto or otto-render,
+  # rdp = otto-rdp, portal = xdg-desktop-portal-otto, files = otto-files,
+  # rust = any crate the check job builds, packaging from the rules), and
+  # `all`, which the gates on one crate in `packages` also accept, so a
+  # selection of everything that could not list the crates still runs them.
+  #
+  # Nothing here may skip a check by failing: the toolchain, the cache, the
+  # build and the tool itself are allowed to fail, and the last step then
+  # writes the outputs of a selection of everything (the argument lists the
+  # steps ran before the selection existed; otto-arch's tests keep them equal
+  # to what the tool prints for everything).
   changes:
     runs-on: ubuntu-24.04
     outputs:
-      compositor: ${{ steps.filter.outputs.compositor }}
-      ui: ${{ steps.filter.outputs.ui }}
-      rdp: ${{ steps.filter.outputs.rdp }}
-      portal: ${{ steps.filter.outputs.portal }}
-      packaging: ${{ steps.filter.outputs.packaging }}
-      rust: ${{ steps.filter.outputs.rust }}
-      files: ${{ steps.filter.outputs.files }}
+      all: ${{ steps.affected.outputs.all }}
+      packages: ${{ steps.affected.outputs.packages }}
+      compositor: ${{ steps.affected.outputs.compositor }}
+      rdp: ${{ steps.affected.outputs.rdp }}
+      portal: ${{ steps.affected.outputs.portal }}
+      packaging: ${{ steps.affected.outputs.packaging }}
+      rust: ${{ steps.affected.outputs.rust }}
+      files: ${{ steps.affected.outputs.files }}
+      clippy_args: ${{ steps.affected.outputs.clippy_args }}
+      test_lib_args: ${{ steps.affected.outputs.test_lib_args }}
+      test_bins_args: ${{ steps.affected.outputs.test_bins_args }}
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Classify changed paths
-        id: filter
+      # otto-arch is pure Rust with no system libraries. The cache is the
+      # architecture job's, which builds the same crate and resolves the
+      # same full metadata (its registry download included); this job only
+      # reads it, so the two never race to save it.
+      - name: Rust toolchain
+        continue-on-error: true
+        uses: dtolnay/rust-toolchain@1.97.0
+      - name: Cargo cache (registry + target)
+        continue-on-error: true
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: architecture
+          save-if: false
+      - name: Build otto-arch
+        id: build
+        continue-on-error: true
+        run: cargo build --locked -q -p otto-arch
+      - name: Affected crates
+        id: affected
         env:
+          # workflow_dispatch, a tag build or a first push to a new branch
+          # has no usable base (empty, or all zeros): the tool then selects
+          # everything. On a pull request the checkout is the merge commit,
+          # so diffing the base against the working tree is exactly the
+          # change under test. The tool checks the base out in a temporary
+          # worktree for its own cargo metadata.
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          BUILT: ${{ steps.build.outcome }}
         run: |
-          set -euo pipefail
-          all=false
-
-          # workflow_dispatch, a tag build, or a first push to a new branch has
-          # no usable base to diff against: treat everything as changed.
-          if [ -z "${BASE_SHA:-}" ] \
-             || [ "$BASE_SHA" = "0000000000000000000000000000000000000000" ] \
-             || ! git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null; then
-              echo "no diff base ($BASE_SHA); running everything"
-              FILES='__all__'
-              all=true
+          set -uo pipefail
+          out="$RUNNER_TEMP/affected.txt"
+          # A time limit inside the condition, not timeout-minutes: a hung
+          # fetch (the base's cargo metadata can clone git dependencies)
+          # falls through to checking everything instead of failing the job.
+          if [ "$BUILT" = success ] \
+             && timeout 600 target/debug/otto-arch affected --base "${BASE_SHA:-}" --explain > "$out" \
+             && grep -q '^packages=' "$out"; then
+              cat "$out" | tee -a "$GITHUB_OUTPUT"
           else
-              FILES=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")
-              echo "changed files:"
-              echo "$FILES" | sed 's/^/  /'
+              echo "otto-arch affected failed or did not run (build: $BUILT): checking everything"
+              tee -a "$GITHUB_OUTPUT" <<'EVERYTHING'
+          all=true
+          packages=
+          compositor=true
+          rdp=true
+          portal=true
+          files=true
+          packaging=true
+          rust=true
+          clippy_args=--workspace --exclude otto --exclude otto-rdp --exclude xdg-desktop-portal-otto --exclude submenu-gtk
+          test_lib_args=--workspace --exclude otto-files
+          test_bins_args=-p otto-bar -p otto-greeter -p otto-input-overlay -p otto-islands -p otto-lock -p otto-msg -p otto-preview -p otto-settings -p otto-stash -p otto-launcher -p otto-search
+          EVERYTHING
           fi
-
-          # Matches any path, so a missing base turns every filter on.
-          if [ "$FILES" = '__all__' ]; then FILES=$(git ls-files); fi
-
-          # A here-string, not `echo | grep -q`: grep -q exits on the first
-          # match, and under pipefail the SIGPIPE echo gets reads as no match.
-          matches() { grep -qE "$1" <<< "$FILES"; }
-
-          # Nothing in the tree is unaffected by these.
-          SHARED='^(Cargo\.toml|rust-toolchain\.toml)$|^\.github/workflows/ci\.yml$'
-          # The lockfile is scoped per area by the dependency closures it
-          # records (scripts/ci-lock-scope.py), not treated as shared: adding
-          # a crate to the launcher should not rebuild the RDP bridge.
-          LOCK='^Cargo\.lock$'
-          # The UI toolkit: linked by otto and by every component except the
-          # RDP bridge and the portal backend, which are leaf crates (verified
-          # with `cargo tree -p <crate> | grep otto-kit`). otto-dbus and
-          # otto-foundations, which otto-kit re-exports, count as the toolkit;
-          # the portal links both as well, and the RDP bridge otto-dbus.
-          KIT='^components/(otto-kit|otto-dbus|otto-foundations)/'
-          # resources/bin and resources/plugins are installed files that no
-          # crate reads; they only reach the packaging jobs. resources/locales
-          # counts as UI below: the catalogues are strings, which the locales
-          # job and the workspace unit tests cover, not the headless suites.
-          # crates/ holds the compositor's own libraries (otto-render).
-          COMPOSITOR='^(src|crates|tests|protocols)/|^resources/(?!bin/|plugins/|locales/)|^otto_config.*\.toml$'
-          RDP='^components/(otto-rdp|otto-dbus)/'
-          PORTAL='^components/(xdg-desktop-portal-otto|otto-dbus|otto-foundations)/'
-          # Every component except the two with their own filters above.
-          UI='^components/(?!otto-rdp/|xdg-desktop-portal-otto/)|^sample-clients/|^resources/locales/'
-          # The file browser and the two crates only it links (verified with
-          # `cargo tree -p otto-files --depth 1`). Its unit tests are the
-          # largest suite in the workspace, so they run only when it changed.
-          BROWSER='^components/(otto-files|otto-peek|otto-media-kit)/'
-          PACKAGING='^PKGBUILD|^(Cargo\.toml)$|^(resources|scripts)/|^\.github/workflows/ci\.yml$'
-
-          matchesP() { grep -qP "$1" <<< "$FILES"; }
-
-          shared=false; matches "$SHARED" && shared=true
-          kit=false; matches "$KIT" && kit=true
-
-          lock_compositor=false; lock_rdp=false; lock_portal=false
-          lock_files=false; lock_ui=false
-          if matches "$LOCK" && ! $all && ! $shared \
-             && scope=$(python3 scripts/ci-lock-scope.py "$BASE_SHA" "$HEAD_SHA"); then
-              eval "$(echo "$scope" | sed 's/^/lock_/')"
-              echo "lockfile reaches: compositor=$lock_compositor rdp=$lock_rdp portal=$lock_portal files=$lock_files ui=$lock_ui"
-          elif matches "$LOCK"; then
-              # No base to diff, or the scope script failed: run everything.
-              shared=true
-          fi
-
-          for name in compositor rdp portal; do
-              case $name in
-                  # otto-kit reaches the compositor and the UI components, but
-                  # not the two leaf crates below.
-                  compositor) pat=$COMPOSITOR; extra=$kit ;;
-                  rdp)        pat=$RDP;        extra=false ;;
-                  portal)     pat=$PORTAL;     extra=false ;;
-              esac
-              lock=lock_$name
-              if $shared || $extra || ${!lock} || matchesP "$pat"; then v=true; else v=false; fi
-              echo "$name=$v" >> "$GITHUB_OUTPUT"
-              eval "$name=$v"
-          done
-
-          # -P for the negative lookahead; plain -E cannot express it.
-          if $shared || $kit || $lock_ui || matchesP "$UI"; then ui=true; else ui=false; fi
-          echo "ui=$ui" >> "$GITHUB_OUTPUT"
-
-          if $shared || $kit || $lock_files || matches "$BROWSER"; then files=true; else files=false; fi
-          echo "files=$files" >> "$GITHUB_OUTPUT"
-
-          if matches "$PACKAGING"; then packaging=true; else packaging=false; fi
-          echo "packaging=$packaging" >> "$GITHUB_OUTPUT"
-
-          if $compositor || $ui || $rdp || $portal; then rust=true; else rust=false; fi
-          echo "rust=$rust" >> "$GITHUB_OUTPUT"
-
-          echo "--- compositor=$compositor ui=$ui files=$files rdp=$rdp portal=$portal packaging=$packaging rust=$rust"
 
   format:
     runs-on: ubuntu-24.04
@@ -204,6 +179,10 @@ jobs:
       # violation prints the same report `cargo run -p otto-arch` does.
       - name: Layers and module boundaries
         run: cargo test --locked -p otto-arch
+      # otto-arch is linted here, on every change, rather than in the check
+      # job's components step: it needs no system libraries.
+      - name: Clippy (otto-arch)
+        run: cargo clippy --locked -p otto-arch --all-targets -- -D warnings
       # --workspace: the root manifest is also the compositor's package, and
       # without it cargo-deny would only judge the compositor's graph.
       - name: Third-party dependency policy
@@ -292,18 +271,18 @@ jobs:
       - name: Clippy (render stack)
         # otto-render's own tests and default features (udev and Vulkan): the
         # compositor steps above lint only the library, built with their
-        # feature sets. The components step lints it too, but only on a UI
-        # change.
+        # feature sets.
         if: needs.changes.outputs.compositor == 'true'
         run: cargo clippy --locked -p otto-render --all-targets -- -D warnings
       - name: Clippy (components)
-        # Everything with no filter of its own, sample clients included.
-        # submenu-gtk is the one exception: it needs GTK development libraries
-        # that no job here installs, and nothing in CI compiles it — the
-        # release build names its packages explicitly, and `--lib --workspace`
-        # skips it because it has no lib target.
-        if: needs.changes.outputs.ui == 'true'
-        run: cargo clippy --locked --workspace --exclude otto --exclude otto-rdp --exclude xdg-desktop-portal-otto --exclude submenu-gtk --all-targets -- -D warnings
+        # Every affected crate with no clippy step of its own, sample clients
+        # included. submenu-gtk is never linted: it needs GTK development
+        # libraries that no job here installs, and nothing in CI compiles it.
+        # otto-arch is linted in the architecture job.
+        if: needs.changes.outputs.clippy_args != ''
+        env:
+          ARGS: ${{ needs.changes.outputs.clippy_args }}
+        run: cargo clippy --locked $ARGS --all-targets -- -D warnings
       - name: Clippy (RDP bridge)
         if: needs.changes.outputs.rdp == 'true'
         run: cargo clippy --locked -p otto-rdp --all-targets -- -D warnings
@@ -312,27 +291,30 @@ jobs:
         run: cargo clippy --locked -p xdg-desktop-portal-otto --all-targets -- -D warnings
       - name: Run tests
         timeout-minutes: 20
-        # otto-rdp is bin-only, so this never covers it — see the RDP step.
-        # otto-files has its own step below, gated on its own paths.
-        if: needs.changes.outputs.compositor == 'true' || needs.changes.outputs.ui == 'true'
-        run: cargo test --locked --lib --workspace --exclude otto-files
+        # The library tests of every affected crate with a lib target, the
+        # compositor's included. otto-rdp is bin-only — see the RDP step;
+        # otto-files, otto-agents and the portal have target-wide steps of
+        # their own below.
+        if: needs.changes.outputs.test_lib_args != ''
+        env:
+          ARGS: ${{ needs.changes.outputs.test_lib_args }}
+        run: cargo test --locked --lib $ARGS
       - name: Run toolkit doctests
         timeout-minutes: 15
         # `--lib` skips doctests, and otto-kit's examples are its API docs:
         # without this run they stop compiling unseen.
-        if: needs.changes.outputs.ui == 'true'
+        if: needs.changes.outputs.all == 'true' || contains(format(' {0} ', needs.changes.outputs.packages), ' otto-kit ')
         run: cargo test --locked -p otto-kit --doc
       - name: Run app unit tests
         timeout-minutes: 20
         # `--lib` above skips binary targets, so the apps with no lib target —
         # lock screen and greeter auth included — and the main.rs tests of
-        # the launcher and search need a --bins run of their own.
-        if: needs.changes.outputs.ui == 'true'
-        run: >-
-          cargo test --locked --bins
-          -p otto-bar -p otto-greeter -p otto-input-overlay -p otto-islands
-          -p otto-lock -p otto-msg -p otto-preview -p otto-settings
-          -p otto-stash -p otto-launcher -p otto-search
+        # the launcher and search need a --bins run of their own. The
+        # candidates are otto-arch's BIN_TESTS; the affected ones run.
+        if: needs.changes.outputs.test_bins_args != ''
+        env:
+          ARGS: ${{ needs.changes.outputs.test_bins_args }}
+        run: cargo test --locked --bins $ARGS
       - name: Run file browser tests
         timeout-minutes: 15
         if: needs.changes.outputs.files == 'true'
@@ -342,7 +324,7 @@ jobs:
         # The workspace step above is --lib, so the agent service's integration
         # tests — the protocol handshake, the spec pin, permissions and
         # escalation — need a target-wide run of their own.
-        if: needs.changes.outputs.ui == 'true'
+        if: needs.changes.outputs.all == 'true' || contains(format(' {0} ', needs.changes.outputs.packages), ' otto-agents ')
         run: cargo test --locked -p otto-agents
       - name: Run headless integration tests
         timeout-minutes: 15
@@ -363,8 +345,9 @@ jobs:
         run: cargo test --locked --features headless --test rdp_bridge
       - name: Run RDP bridge unit tests
         timeout-minutes: 20
-        # The bridge half. Expensive (GStreamer), and nothing outside
-        # components/otto-rdp can affect it, so it is gated tightly.
+        # The bridge half. Expensive (GStreamer), and only otto-rdp and the
+        # two foundation crates it links can affect it, so it is gated
+        # tightly.
         if: needs.changes.outputs.rdp == 'true'
         run: cargo test --locked -p otto-rdp
       - name: Run portal backend tests

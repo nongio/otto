@@ -11,9 +11,16 @@ publish = false
 # Pure Rust and no system libraries, so CI runs it in a cheap job before the
 # compositor is built.
 [dependencies]
+# The affected-crate selection: determinator diffs the package graphs guppy
+# builds from `cargo metadata` at the base and head.
+determinator = "0.12"
+globset = "0.4"
+guppy = "0.17"
 regex = "1"
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
+# A private, unique directory for the base revision's checkout.
+tempfile.workspace = true
 # Line numbers in reports.
 proc-macro2 = { version = "1", features = ["span-locations"] }
 syn = { version = "2", features = ["full", "visit"] }

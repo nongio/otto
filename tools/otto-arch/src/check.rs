@@ -10,7 +10,8 @@ use proc_macro2::{TokenStream, TokenTree};
 use syn::spanned::Spanned;
 use syn::visit::Visit;
 
-use crate::rules::{Exception, Rules};
+use crate::affected::{self, Member};
+use crate::rules::{glob_set, Exception, Rules};
 use crate::workspace::{Graph, Package};
 
 pub fn all(
@@ -590,6 +591,120 @@ fn sources(
     Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// [[affects]]
+// ---------------------------------------------------------------------------
+
+/// The `[[affects]]` rules against the tree: every pattern matches a tracked
+/// file, every crate exists, every tracked file outside the members is
+/// covered (so a new top-level file is a decision, not a silent "test
+/// everything"), and every file a crate embeds from outside its own
+/// directory (`include_str!`, `include_bytes!`, a Wayland protocol XML) is
+/// mapped to that crate.
+pub fn affects(
+    root: &Path,
+    rules: &Rules,
+    members: &[Member],
+    tracked: &[String],
+) -> Result<Vec<String>, String> {
+    let mut problems = Vec::new();
+    for rule in &rules.affects {
+        for (p, g) in rule.paths.iter().zip(rule.globs()) {
+            let set = glob_set(&[g])?;
+            if !tracked.iter().any(|f| set.is_match(f)) {
+                problems.push(format!(
+                    "stale [[affects]] path {p:?}\n  No tracked file matches it: delete or fix it."
+                ));
+            }
+        }
+        for c in &rule.crates {
+            if c != "*" && !members.iter().any(|m| &m.name == c) {
+                problems.push(format!(
+                    "[[affects]] {:?} names {c}, which is not a workspace member",
+                    rule.paths
+                ));
+            }
+        }
+    }
+
+    let uncovered: Vec<&String> = tracked
+        .iter()
+        .filter(|f| {
+            affected::owner(members, f).is_none() && !rules.affects.iter().any(|r| r.matches(f))
+        })
+        .collect();
+    if !uncovered.is_empty() {
+        problems.push(format!(
+            "{} tracked file(s) belong to no crate and no [[affects]] rule: {}\n  Say in \
+             architecture.toml which crates they reach (`crates = []` for none); until then \
+             a change to one makes CI check everything.",
+            uncovered.len(),
+            list(&uncovered.iter().map(|s| s.to_string()).collect::<Vec<_>>())
+        ));
+    }
+
+    let include = regex::Regex::new(r#"include_(?:str|bytes)!\s*\(\s*"([^"]+)""#).unwrap();
+    let protocol =
+        regex::Regex::new(r#"generate_(?:interfaces|client_code|server_code)!\s*\(\s*"([^"]+)""#)
+            .unwrap();
+    for m in members {
+        let manifest_dir = root.join(&m.dir);
+        for owned in m.owns.iter().filter(|o| o.ends_with('/')) {
+            for file in rust_files(&root.join(owned))? {
+                let text = std::fs::read_to_string(&file)
+                    .map_err(|e| format!("reading {}: {e}", file.display()))?;
+                let from_file = include
+                    .captures_iter(&text)
+                    .map(|c| file.parent().unwrap().join(&c[1]));
+                let from_manifest = protocol
+                    .captures_iter(&text)
+                    .map(|c| manifest_dir.join(&c[1]));
+                for target in from_file.chain(from_manifest) {
+                    let target = affected_rel(root, &normalize(&target));
+                    if affected::owner(members, &target) == Some(m.name.as_str()) {
+                        continue;
+                    }
+                    let mapped = rules.affects.iter().any(|r| {
+                        r.matches(&target) && r.crates.iter().any(|c| c == "*" || c == &m.name)
+                    });
+                    if !mapped {
+                        problems.push(format!(
+                            "{} embeds {target}, which is outside {}\n  Add an [[affects]] rule \
+                             mapping it to {} in architecture.toml, so a change to it tests the crate.",
+                            affected_rel(root, &file),
+                            m.name,
+                            m.name
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    Ok(problems)
+}
+
+fn affected_rel(root: &Path, path: &Path) -> String {
+    path.strip_prefix(root)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .replace('\\', "/")
+}
+
+/// `a/b/../c` as `a/c`, without touching the file system.
+fn normalize(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for c in path.components() {
+        match c {
+            std::path::Component::ParentDir => {
+                out.pop();
+            }
+            std::path::Component::CurDir => {}
+            c => out.push(c),
+        }
+    }
+    out
+}
+
 /// Line ranges of `#[test]` functions and `#[cfg(test)]` items.
 fn test_lines(file: &syn::File) -> Vec<RangeInclusive<usize>> {
     #[derive(Default)]
@@ -906,5 +1021,77 @@ mod tests {
         assert!(turns_on(&attrs, "unreachable_pub"));
         assert!(turns_on(&attrs, "clippy::pedantic"));
         assert!(!turns_on(&attrs, "missing_docs"));
+    }
+
+    /// Stale patterns, unknown crates, uncovered files and unmapped embeds.
+    #[test]
+    fn affects_rules_are_checked_against_the_tree() {
+        let ws = Scratch::new();
+        ws.write(
+            "src/lib.rs",
+            "const C: &str = include_str!(\"../resources/a.txt\");",
+        );
+        ws.write(
+            "components/app/src/main.rs",
+            "const P: &[u8] = include_bytes!(\"../../../resources/b.bin\");\n\
+             const Q: &str = include_str!(\"own.txt\");\n\
+             wayland_scanner::generate_client_code!(\"../../protocols/p.xml\");",
+        );
+        let members = vec![
+            Member {
+                name: "otto".into(),
+                dir: String::new(),
+                owns: vec!["src/".into()],
+                lib: true,
+            },
+            Member {
+                name: "app".into(),
+                dir: "components/app".into(),
+                owns: vec!["components/app/".into()],
+                lib: false,
+            },
+        ];
+        let rules: Rules = toml::from_str(
+            r#"
+            layer = []
+            [[affects]]
+            paths = ["resources/"]
+            crates = ["otto"]
+            reason = "embedded"
+            [[affects]]
+            paths = ["protocols/", "gone/"]
+            crates = ["app", "nobody"]
+            reason = "generated"
+            "#,
+        )
+        .unwrap();
+        let tracked: Vec<String> = [
+            "src/lib.rs",
+            "components/app/src/main.rs",
+            "resources/a.txt",
+            "resources/b.bin",
+            "protocols/p.xml",
+            "stray.txt",
+            "Cargo.lock",
+        ]
+        .map(String::from)
+        .to_vec();
+        let problems = affects(&ws.0, &rules, &members, &tracked).unwrap();
+        let text = problems.join("\n");
+        assert!(text.contains("stale [[affects]] path \"gone/\""), "{text}");
+        assert!(text.contains("names nobody"), "{text}");
+        assert!(
+            text.contains("2 tracked file(s) belong to no crate"),
+            "{text}"
+        );
+        assert!(
+            text.contains("stray.txt") && text.contains("Cargo.lock"),
+            "{text}"
+        );
+        assert!(
+            text.contains("components/app/src/main.rs embeds resources/b.bin"),
+            "{text}"
+        );
+        assert_eq!(problems.len(), 4, "{text}");
     }
 }
