@@ -42,8 +42,7 @@ past that. If the agent service is not running, the panel says so.
 
 ## Stash
 
-When you stash something with `otto-stash` (see the stash shortcuts in
-[Keyboard shortcuts](keyboard-shortcuts.md)), its "Ask about…" card sits at
+When you stash something for Ask (see [the stash](agents.md#asking-about-something-the-stash)), its "Ask about…" card sits at
 the top of the canvas, and the canvas slides in to show what you added. Your
 app keeps the keyboard, so your selection and caret stay where they were,
 and clicking the card doesn't take the keyboard either. Drop files on the

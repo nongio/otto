@@ -481,6 +481,6 @@ overflow = "scroll"       # scroll | stack
   the sidebar either. It lists Recent, your home directory, the XDG user
   folders and whatever you have added yourself, and you reach anything else by
   typing the path with `Ctrl+L`.
-- Batch rename, archive browsing, tags and labels.
+- Archive browsing, tags and labels.
 - `Shift+Delete` (delete permanently) is deliberately inert for now.
 - Writing to the shared thumbnail cache.

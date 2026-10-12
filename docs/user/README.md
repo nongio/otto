@@ -39,10 +39,13 @@ versions: useful day to day, still filling in.
 | [Files Command Palette](files-command-palette.md) | `Ctrl+P`: running commands by name, selecting and renaming by pattern |
 | [Custom Commands in Files](files-custom-commands.md) | Writing scripts that add commands to Files, with a tutorial |
 | [PDF from Pictures](files-pdf-command.md) | A longer script tutorial: progress, choices, two commands in one |
+| [Studio](studio.md) | Viewing pictures, PDFs and Markdown; filling in and marking up a PDF; marks, chat and versions |
 | [Settings](settings.md) | Editing the configuration live, display arrangement, shortcuts |
 | [Launcher](launcher.md) | Starting applications and switching windows from the keyboard |
 | [Emoji Picker](emoji.md) | Finding an emoji and typing it into the focused window |
-| [Ask and Agents](agents.md) | Running a coding agent from the desktop: setup, what each agent can do, modes |
+| [Ask and Agents](agents.md) | Running a coding agent from the desktop: setup, what each agent can do, modes, the stash |
+| [Peek](files.md#peek) | Space on a file in Files: pictures, PDFs, text, video, recognised text |
+| [Trash](files.md#trash) | The Trash window: putting back, deleting, emptying |
 
 ## Configuring Otto
 

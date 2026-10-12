@@ -139,6 +139,53 @@ screenshot and it reads the file, and the picture it read appears in the answer.
 Nothing needs turning on, and no agent has to be told. PNG, JPEG, GIF, WebP, BMP, AVIF and HEIF are drawn; an SVG
 is not, and shows as its name instead.
 
+## Asking about something: the stash
+
+Often the question is about something already on screen: a paragraph in a
+page, three files in a folder, a corner of a window. The stash collects
+those from any application before you ask, so you do not copy and paste
+them into the field.
+
+The default shortcuts, all rebindable in [Keyboard Shortcuts](keyboard-shortcuts.md):
+
+| Keys | What it does |
+|------|--------------|
+| `Ctrl+Alt+G` | Add what is selected in the application in front |
+| `Ctrl+Alt+Shift+R` | Drag out a rectangle on screen and add it as a picture |
+| `Ctrl+Alt+Shift+G` | Open Ask with everything stashed |
+| `Ctrl+Alt+Shift+C` | Throw the stash away |
+
+**Add** takes the selected text in a text field, the selected files in a
+Files window, or failing those whatever the primary selection holds. Inside
+Files, **Add to Stash** (`Ctrl+G`) does the same from the selection, and
+dragging files to the right edge of the screen and holding them there opens
+the [side canvas](side-canvas.md) with a place to drop them.
+
+The first add opens Ask with the item attached. Close Ask without sending and
+the stash is set aside on an "Ask about…" card, at the top of the side
+canvas, which slides in to show what you added and keeps the keyboard with
+your application. Adds from then on go to the card; each one brings the
+canvas back. Click an item on the card to strike it out and leave it behind,
+or its cross to remove it. **Clear** throws the lot away.
+
+When you open Ask, however you open it, the stash shows with your request and
+follows what you do on the card. Sending the request takes the items that
+are not struck out and ends the stash. The same item is never added twice.
+
+`otto-launcher --selection` does the whole thing in one step: it adds what
+is selected in the application in front and opens Ask with it, without the
+card ever showing. The stash runs as `otto-stash`, started with the session
+by the default configuration.
+
+## Asking about a file: Studio
+
+A picture, PDF or Markdown document opened in [Studio](studio.md) has Ask
+built into its window (`Ctrl+K`). The agent works on that one file: it sees
+the window as you do, reads the marks you draw on the page, edits the file in
+place while the window follows, and fills in a PDF's form for you to save.
+Sessions started there list with the file as their subject, and opening one
+again opens the file beside the conversation.
+
 ## Choosing one
 
 - **Claude Code** is the most complete here: it asks real questions, has the
