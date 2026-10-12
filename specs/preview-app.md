@@ -72,13 +72,19 @@ Underneath it is still `otto-preview` (the program, its app id and the
 - A path that does not exist or cannot be read still opens a window, showing
   the reason in place of the content, as Peek does.
 - `--version` and `--help` print and exit without connecting to the display.
-- With no path the desktop's open dialog (the file-chooser portal's
-  `OpenFile`, titled "Open in Studio") comes up before any window, filtered
-  to the types the desktop entry installs Studio for: everything first, then
-  pictures, PDF and Markdown each on their own. Choosing a file opens it as
-  if named on the command line, so a running Studio shows it; cancelling
-  exits quietly with status 0. When no dialog can be shown (no session bus,
-  no portal) the usage is printed and the exit status is 2.
+- With no path Studio opens an empty window, titled "Studio" with "Choose a
+  file to open" in its middle, and the desktop's open dialog over it (the
+  file-chooser portal's `OpenFile`, titled "Open in Studio"). The window is
+  exported through xdg-foreign and its handle goes out as the request's
+  `parent_window`, so the picker is Studio's dialog: the top bar names
+  Studio while it has the focus, and it stays out of the dock. The dialog is
+  filtered to the types the desktop entry installs Studio for: everything
+  first, then pictures, PDF and Markdown each on their own.
+- The bus name is claimed only once a file is chosen. The file then opens as
+  if named on the command line, so a Studio already running shows it and
+  this one leaves. Cancelling the dialog, or closing the empty window, exits
+  quietly with status 0. When no dialog can be shown (no session bus, no
+  portal) the empty window closes and Studio exits.
 - The window's app id is `otto-preview`, matching its desktop entry.
 
 ### Following the file
