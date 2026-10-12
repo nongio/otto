@@ -95,8 +95,7 @@ impl Picking {
             Label::new(otto_kit::t_owned!("studio-pick-hint"))
                 .with_style(styles::BODY)
                 .with_color(theme.text_tertiary)
-                .with_width(width)
-                .centered_on(0.0, height / 2.0)
+                .centered_at(width / 2.0, height / 2.0)
                 .render(canvas);
         });
         let closed = Arc::new(std::sync::atomic::AtomicBool::new(false));
