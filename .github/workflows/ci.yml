@@ -36,7 +36,7 @@ jobs:
   # steps that take one (empty: skip the step), the area flags the gates
   # below read, derived from the crates (compositor = otto or otto-render,
   # rdp = otto-rdp, portal = xdg-desktop-portal-otto, files = otto-files,
-  # rust = any crate the check job builds, packaging from the rules), and
+  # packaging from the rules), and
   # `all`, which the gates on one crate in `packages` also accept, so a
   # selection of everything that could not list the crates still runs them.
   #
@@ -54,7 +54,6 @@ jobs:
       rdp: ${{ steps.affected.outputs.rdp }}
       portal: ${{ steps.affected.outputs.portal }}
       packaging: ${{ steps.affected.outputs.packaging }}
-      rust: ${{ steps.affected.outputs.rust }}
       files: ${{ steps.affected.outputs.files }}
       clippy_args: ${{ steps.affected.outputs.clippy_args }}
       test_lib_args: ${{ steps.affected.outputs.test_lib_args }}
@@ -112,9 +111,8 @@ jobs:
           portal=true
           files=true
           packaging=true
-          rust=true
-          clippy_args=--workspace --exclude otto --exclude otto-rdp --exclude xdg-desktop-portal-otto --exclude submenu-gtk
-          test_lib_args=--workspace --exclude otto-files
+          clippy_args=--workspace --exclude otto --exclude otto-render --exclude otto-rdp --exclude xdg-desktop-portal-otto --exclude submenu-gtk
+          test_lib_args=--workspace --exclude otto-files --exclude otto --exclude otto-render
           test_bins_args=-p otto-bar -p otto-greeter -p otto-input-overlay -p otto-islands -p otto-lock -p otto-msg -p otto-preview -p otto-settings -p otto-stash -p otto-launcher -p otto-search
           EVERYTHING
           fi
@@ -179,8 +177,8 @@ jobs:
       # violation prints the same report `cargo run -p otto-arch` does.
       - name: Layers and module boundaries
         run: cargo test --locked -p otto-arch
-      # otto-arch is linted here, on every change, rather than in the check
-      # job's components step: it needs no system libraries.
+      # otto-arch is linted here, on every change, rather than in the
+      # components job: it needs no system libraries.
       - name: Clippy (otto-arch)
         run: cargo clippy --locked -p otto-arch --all-targets -- -D warnings
       # --workspace: the root manifest is also the compositor's package, and
@@ -230,12 +228,23 @@ jobs:
       - name: The AHP conformance corpora pass
         run: cargo test --locked -p otto-agents --test conformance
   
-  # One job rather than several: every step shares a single target directory,
-  # so splitting them apart would pay for the compositor's dependency graph
-  # once per job. Individual steps are gated instead.
-  check:
+  # One job per area, each run only when its area is affected, so a PR shows
+  # the areas it skipped and the affected ones run side by side. Each job
+  # installs only the system libraries its crates link (the portal links
+  # none) and keeps its own cache, so an app change does not restore the
+  # compositor's build. The price is a toolchain setup and dependency build
+  # per job when several areas are affected at once.
+
+  # The compositor and its render stack: their lints in every feature set CI
+  # keeps compiling, their unit tests, and the headless suites. The
+  # screencast and RDP-bridge suites are the compositor's side of the portal
+  # and the bridge, so a change to either runs this job for them alone.
+  compositor:
     needs: changes
-    if: needs.changes.outputs.rust == 'true'
+    if: >-
+      needs.changes.outputs.compositor == 'true'
+      || needs.changes.outputs.portal == 'true'
+      || needs.changes.outputs.rdp == 'true'
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout sources
@@ -253,8 +262,6 @@ jobs:
           cache-on-failure: true
       - name: System dependencies
         run: sudo apt-get update; sudo apt-get install -y libdrm-dev libudev-dev libgbm-dev libxkbcommon-dev libegl1-mesa-dev libwayland-dev libinput-dev libdbus-1-dev libsystemd-dev libseat-dev libpipewire-0.3-dev libfreetype-dev libfontconfig-dev libdisplay-info-dev libpixman-1-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libpam0g-dev libpolkit-agent-1-dev hicolor-icon-theme fonts-dejavu-core
-      # Clippy mirrors the test steps below: every crate CI compiles is
-      # linted, and each area is linted only when that area changed.
       # `--all-targets` reaches tests, examples and benches, and the headless
       # feature is what makes tests/*.rs more than an empty file.
       - name: Clippy (compositor)
@@ -281,6 +288,63 @@ jobs:
         # the compositor alone cannot change how it lints.
         if: needs.changes.outputs.all == 'true' || contains(format(' {0} ', needs.changes.outputs.packages), ' otto-render ')
         run: cargo clippy --locked -p otto-render --all-targets -- -D warnings
+      - name: Run compositor unit tests
+        timeout-minutes: 20
+        if: needs.changes.outputs.compositor == 'true'
+        run: cargo test --locked --lib -p otto
+      - name: Run render stack unit tests
+        timeout-minutes: 15
+        if: needs.changes.outputs.all == 'true' || contains(format(' {0} ', needs.changes.outputs.packages), ' otto-render ')
+        run: cargo test --locked --lib -p otto-render
+      - name: Run headless integration tests
+        timeout-minutes: 15
+        if: needs.changes.outputs.compositor == 'true'
+        run: cargo test --locked --features headless --test headless_basic
+      - name: Run shell interaction tests
+        timeout-minutes: 15
+        if: needs.changes.outputs.compositor == 'true'
+        run: cargo test --locked --features headless --test workspace_selector --test app_switcher --test tiling --test dnd_icons
+      - name: Run screencast integration tests
+        timeout-minutes: 15
+        if: needs.changes.outputs.compositor == 'true' || needs.changes.outputs.portal == 'true'
+        run: cargo test --locked --features headless --test screenshare
+      - name: Run RDP bridge integration tests
+        timeout-minutes: 15
+        # The compositor half of the bridge: the protocols otto-rdp drives.
+        if: needs.changes.outputs.compositor == 'true' || needs.changes.outputs.rdp == 'true'
+        run: cargo test --locked --features headless --test rdp_bridge
+      - name: Run font matching tests
+        timeout-minutes: 10
+        if: needs.changes.outputs.compositor == 'true'
+        run: cargo test --locked --lib -p otto -- workspaces::utils::tests --ignored
+  
+
+  # Every other affected crate: the toolkit, the kits and the apps.
+  components:
+    needs: changes
+    if: >-
+      needs.changes.outputs.clippy_args != ''
+      || needs.changes.outputs.test_lib_args != ''
+      || needs.changes.outputs.test_bins_args != ''
+      || needs.changes.outputs.files == 'true'
+      || needs.changes.outputs.all == 'true'
+      || contains(format(' {0} ', needs.changes.outputs.packages), ' otto-kit ')
+      || contains(format(' {0} ', needs.changes.outputs.packages), ' otto-agents ')
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@1.97.0
+        with:
+          components: clippy
+      - name: Cargo cache (registry + target)
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: components
+          cache-on-failure: true
+      - name: System dependencies
+        run: sudo apt-get update; sudo apt-get install -y libdrm-dev libgbm-dev libxkbcommon-dev libegl1-mesa-dev libwayland-dev libdbus-1-dev libsystemd-dev libpipewire-0.3-dev libfreetype-dev libfontconfig-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libpam0g-dev libpolkit-agent-1-dev hicolor-icon-theme fonts-dejavu-core
       - name: Clippy (components)
         # Every affected crate with no clippy step of its own, sample clients
         # included. submenu-gtk is never linted: it needs GTK development
@@ -290,18 +354,12 @@ jobs:
         env:
           ARGS: ${{ needs.changes.outputs.clippy_args }}
         run: cargo clippy --locked $ARGS --all-targets -- -D warnings
-      - name: Clippy (RDP bridge)
-        if: needs.changes.outputs.rdp == 'true'
-        run: cargo clippy --locked -p otto-rdp --all-targets -- -D warnings
-      - name: Clippy (portal backend)
-        if: needs.changes.outputs.portal == 'true'
-        run: cargo clippy --locked -p xdg-desktop-portal-otto --all-targets -- -D warnings
       - name: Run tests
         timeout-minutes: 20
-        # The library tests of every affected crate with a lib target, the
-        # compositor's included. otto-rdp is bin-only — see the RDP step;
-        # otto-files, otto-agents and the portal have target-wide steps of
-        # their own below.
+        # The library tests of every affected component with a lib target. The
+        # compositor and the render stack run theirs in their own job,
+        # otto-rdp is bin-only, and otto-files, otto-agents and the portal
+        # have target-wide steps of their own.
         if: needs.changes.outputs.test_lib_args != ''
         env:
           ARGS: ${{ needs.changes.outputs.test_lib_args }}
@@ -333,38 +391,55 @@ jobs:
         # escalation — need a target-wide run of their own.
         if: needs.changes.outputs.all == 'true' || contains(format(' {0} ', needs.changes.outputs.packages), ' otto-agents ')
         run: cargo test --locked -p otto-agents
-      - name: Run headless integration tests
-        timeout-minutes: 15
-        if: needs.changes.outputs.compositor == 'true'
-        run: cargo test --locked --features headless --test headless_basic
-      - name: Run shell interaction tests
-        timeout-minutes: 15
-        if: needs.changes.outputs.compositor == 'true'
-        run: cargo test --locked --features headless --test workspace_selector --test app_switcher --test tiling --test dnd_icons
-      - name: Run screencast integration tests
-        timeout-minutes: 15
-        if: needs.changes.outputs.compositor == 'true' || needs.changes.outputs.portal == 'true'
-        run: cargo test --locked --features headless --test screenshare
-      - name: Run RDP bridge integration tests
-        timeout-minutes: 15
-        # The compositor half of the bridge: the protocols otto-rdp drives.
-        if: needs.changes.outputs.compositor == 'true' || needs.changes.outputs.rdp == 'true'
-        run: cargo test --locked --features headless --test rdp_bridge
+
+  # The RDP bridge: expensive (GStreamer), and only otto-rdp and the two
+  # foundation crates it links can affect it.
+  rdp:
+    needs: changes
+    if: needs.changes.outputs.rdp == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@1.97.0
+        with:
+          components: clippy
+      - name: Cargo cache (registry + target)
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: rdp
+          cache-on-failure: true
+      - name: System dependencies
+        run: sudo apt-get update; sudo apt-get install -y libwayland-dev libxkbcommon-dev libdbus-1-dev libpipewire-0.3-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev
+      - name: Clippy (RDP bridge)
+        run: cargo clippy --locked -p otto-rdp --all-targets -- -D warnings
       - name: Run RDP bridge unit tests
         timeout-minutes: 20
-        # The bridge half. Expensive (GStreamer), and only otto-rdp and the
-        # two foundation crates it links can affect it, so it is gated
-        # tightly.
-        if: needs.changes.outputs.rdp == 'true'
         run: cargo test --locked -p otto-rdp
+
+  # The portal backend: pure Rust, so no system libraries to install.
+  portal:
+    needs: changes
+    if: needs.changes.outputs.portal == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@1.97.0
+        with:
+          components: clippy
+      - name: Cargo cache (registry + target)
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: portal
+          cache-on-failure: true
+      - name: Clippy (portal backend)
+        run: cargo clippy --locked -p xdg-desktop-portal-otto --all-targets -- -D warnings
       - name: Run portal backend tests
         timeout-minutes: 15
-        if: needs.changes.outputs.portal == 'true'
         run: cargo test --locked -p xdg-desktop-portal-otto
-      - name: Run font matching tests
-        timeout-minutes: 10
-        if: needs.changes.outputs.compositor == 'true'
-        run: cargo test --locked --lib -p otto -- workspaces::utils::tests --ignored
   
   # Every packaged binary is compiled exactly once here. build-deb, build-rpm
   # and build-arch consume this artifact; each used to run an identical
@@ -566,17 +641,20 @@ jobs:
 
   publish-nightly:
     # Only main that passed its tests is worth a nightly: a commit that
-    # fails `check` is not published, rather than handed to everyone on the
-    # nightly channel. `check` is skipped when nothing Rust changed, and
-    # `ahp-conformance` when otto-agents is not affected; both count as
-    # passing — but only when `changes` itself succeeded, since a failed
-    # classifier skips them too. The others never skip.
-    needs: [changes, check, locales, architecture, ahp-conformance, build-arch, build-deb, build-rpm]
+    # fails its checks is not published, rather than handed to everyone on the
+    # nightly channel. The area jobs (compositor, components, rdp, portal)
+    # and `ahp-conformance` are skipped when their area is not affected,
+    # which counts as passing — but only when `changes` itself succeeded,
+    # since a failed classifier skips them too. The others never skip.
+    needs: [changes, compositor, components, rdp, portal, locales, architecture, ahp-conformance, build-arch, build-deb, build-rpm]
     if: >-
       ${{ !cancelled()
           && github.event_name == 'push' && github.ref == 'refs/heads/main'
           && needs.changes.result == 'success'
-          && (needs.check.result == 'success' || needs.check.result == 'skipped')
+          && (needs.compositor.result == 'success' || needs.compositor.result == 'skipped')
+          && (needs.components.result == 'success' || needs.components.result == 'skipped')
+          && (needs.rdp.result == 'success' || needs.rdp.result == 'skipped')
+          && (needs.portal.result == 'success' || needs.portal.result == 'skipped')
           && needs.locales.result == 'success'
           && needs.architecture.result == 'success'
           && (needs.ahp-conformance.result == 'success' || needs.ahp-conformance.result == 'skipped')
@@ -730,12 +808,15 @@ jobs:
   
   release:
     # The same gate as the nightly: a tag whose tests fail gets no draft.
-    needs: [changes, check, locales, architecture, ahp-conformance, build-deb, build-rpm, build-arch, validate-pkgbuild]
+    needs: [changes, compositor, components, rdp, portal, locales, architecture, ahp-conformance, build-deb, build-rpm, build-arch, validate-pkgbuild]
     if: >-
       ${{ !cancelled()
           && startsWith(github.ref, 'refs/tags/v')
           && needs.changes.result == 'success'
-          && (needs.check.result == 'success' || needs.check.result == 'skipped')
+          && (needs.compositor.result == 'success' || needs.compositor.result == 'skipped')
+          && (needs.components.result == 'success' || needs.components.result == 'skipped')
+          && (needs.rdp.result == 'success' || needs.rdp.result == 'skipped')
+          && (needs.portal.result == 'success' || needs.portal.result == 'skipped')
           && needs.locales.result == 'success'
           && needs.architecture.result == 'success'
           && (needs.ahp-conformance.result == 'success' || needs.ahp-conformance.result == 'skipped')
