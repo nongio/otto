@@ -244,10 +244,14 @@ mod tests {
         assert!(place("docs/developer/rendering.md").is_empty());
         assert!(place("Cargo.lock").is_empty());
         assert_eq!(place("resources/locales/en.ftl").len(), 2);
-        // Shared files reach everything; so does a file nothing covers.
+        // Shared files, the rules and the tool reach everything; so does a
+        // file nothing covers.
         for f in [
             "Cargo.toml",
             ".github/workflows/ci.yml",
+            "architecture.toml",
+            "tools/otto-arch/src/affected.rs",
+            "tools/otto-arch/Cargo.toml",
             "a-new-top-level-file",
             "components/no-such-crate/src/lib.rs",
         ] {

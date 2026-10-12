@@ -236,6 +236,11 @@ areas = ["packaging"]
 reason = "The workspace manifest sets every member's dependencies, profiles, lints and package assets, and the workflow decides what runs."
 
 [[affects]]
+paths = ["architecture.toml", "tools/otto-arch/src/", "tools/otto-arch/Cargo.toml"]
+crates = ["*"]
+reason = "The selection's own rules and code: a change to them must not be able to shrink the checks it is judged by, so it runs everything."
+
+[[affects]]
 paths = ["rust-toolchain.toml", "clippy.toml"]
 crates = ["*"]
 reason = "The compiler and the lint configuration every member is checked with."
@@ -299,9 +304,9 @@ areas = ["packaging"]
 reason = "Packaging recipes and the scripts that build and check packages; no crate reads them."
 
 [[affects]]
-paths = ["architecture.toml", "docs/developer/architecture.md"]
+paths = ["docs/developer/architecture.md"]
 crates = ["otto-arch"]
-reason = "otto-arch checks the tree against the rules, and the generated graph in the doc against the manifests."
+reason = "otto-arch checks the generated graph in the doc against the manifests."
 
 [[affects]]
 paths = ["deny.toml"]
