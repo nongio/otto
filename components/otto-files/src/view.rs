@@ -6,6 +6,7 @@
 
 use otto_kit::components::icon::Icon;
 use otto_kit::components::scroll::{ScrollRenderer, ScrollState};
+use otto_kit::components::segmented;
 use otto_kit::components::selectable_text::{TextRun, TextSelection};
 use otto_kit::components::titlebar::{
     DecorationVariant, WindowControl, WindowControls, WindowControlsState, WindowDecoration,
@@ -2776,13 +2777,8 @@ pub fn switcher_at(x: f32, y: f32, width: f32) -> Option<ViewMode> {
     if is_desk() {
         return None;
     }
-    let rect = switcher_rect(width);
-    if !rect.contains(Point::new(x, y)) {
-        return None;
-    }
-    let count = SWITCHER_MODES.len();
-    let segment = ((x - rect.left) / (rect.width() / count as f32)) as usize;
-    SWITCHER_MODES.get(segment.min(count - 1)).copied()
+    segmented::segment_at(switcher_rect(width), SWITCHER_MODES.len(), x, y)
+        .and_then(|index| SWITCHER_MODES.get(index).copied())
 }
 
 pub(crate) fn column_edges(width: f32, widths: ListColumnWidths) -> (f32, f32, f32) {
@@ -6057,97 +6053,112 @@ fn draw_nav_button(
         .render(canvas);
 }
 
-/// A three-segment control: list, icon grid, Miller columns. Glyphs are drawn
-/// rather than themed so it stays legible with no icon-theme entry.
+/// The view switcher: list, icon grid, Miller columns, photo wall, as the
+/// kit's segmented control. Its glyphs are Otto's own from the Solar set,
+/// never the theme's, so it reads the same whatever theme is in force; the
+/// shapes below stand in when the set isn't installed.
 fn draw_switcher(canvas: &Canvas, f: &Frame) {
-    let theme = f.theme;
-    let rect = switcher_rect(f.width);
-    let seg = rect.width() / SWITCHER_MODES.len() as f32;
-    let mut paint = Paint::default();
-    paint.set_anti_alias(true);
-
-    paint.set_color(theme.fill_tertiary);
-    canvas.draw_rrect(RRect::new_rect_xy(rect, 7.0, 7.0), &paint);
-
-    let index = SWITCHER_MODES
-        .iter()
-        .position(|m| *m == f.mode)
-        .unwrap_or(0);
-    let active = Rect::from_xywh(
-        rect.left + index as f32 * seg + 2.0,
-        rect.top + 2.0,
-        seg - 4.0,
-        rect.height() - 4.0,
-    );
-    paint.set_color(theme.material_popup);
-    canvas.draw_rrect(RRect::new_rect_xy(active, 5.0, 5.0), &paint);
-
-    let cy = rect.center_y();
-    for (i, mode) in SWITCHER_MODES.iter().enumerate() {
-        let cx = rect.left + seg * i as f32 + seg / 2.0;
-        paint.set_color(match (*mode == f.mode, f.mode_locked) {
-            (true, _) => theme.text_primary,
+    let segments = SWITCHER_MODES.map(|mode| segmented::Segment::Glyph {
+        name: switcher_glyph(mode),
+        fallback: Some(switcher_fallback(mode)),
+    });
+    let selected = SWITCHER_MODES.iter().position(|m| *m == f.mode);
+    segmented::draw(
+        canvas,
+        switcher_rect(f.width),
+        &segments,
+        selected,
+        if f.mode_locked {
             // A locked switcher's other segments are not merely unselected,
             // they are unavailable, and the quieter ink says so.
-            (false, true) => theme.text_tertiary,
-            (false, false) => theme.text_secondary,
-        });
-        match mode {
-            // Three stacked lines.
-            ViewMode::List => {
-                for r in 0..3 {
-                    let y = cy - 4.0 + r as f32 * 4.0;
-                    canvas.draw_rrect(
-                        RRect::new_rect_xy(Rect::from_xywh(cx - 7.0, y - 1.0, 14.0, 2.0), 1.0, 1.0),
-                        &paint,
-                    );
-                }
-            }
-            // A 2x2 block of squares.
-            ViewMode::Grid => {
-                for r in 0..2 {
-                    for c in 0..2 {
-                        canvas.draw_rrect(
-                            RRect::new_rect_xy(
-                                Rect::from_xywh(
-                                    cx - 6.0 + c as f32 * 7.0,
-                                    cy - 6.0 + r as f32 * 7.0,
-                                    5.0,
-                                    5.0,
-                                ),
-                                1.2,
-                                1.2,
-                            ),
-                            &paint,
-                        );
-                    }
-                }
-            }
-            // Three vertical bars.
-            ViewMode::Columns => {
-                for c in 0..3 {
-                    let x = cx - 7.5 + c as f32 * 5.5;
-                    canvas.draw_rrect(
-                        RRect::new_rect_xy(Rect::from_xywh(x, cy - 5.0, 4.0, 10.0), 1.0, 1.0),
-                        &paint,
-                    );
-                }
-            }
-            // Two rows of tiles of different widths: the justified wall.
-            ViewMode::Photos => {
-                for (x, y, w) in [
-                    (-7.0, -6.0, 8.0),
-                    (2.0, -6.0, 5.0),
-                    (-7.0, 1.0, 5.0),
-                    (-1.0, 1.0, 8.0),
-                ] {
-                    canvas.draw_rrect(
-                        RRect::new_rect_xy(Rect::from_xywh(cx + x, cy + y, w, 5.0), 1.2, 1.2),
-                        &paint,
-                    );
-                }
-            }
+            segmented::SegmentedInteraction::Locked
+        } else {
+            segmented::SegmentedInteraction::Normal
+        },
+        f.theme,
+    );
+}
+
+/// The Solar glyph for a view switcher segment.
+fn switcher_glyph(mode: ViewMode) -> &'static str {
+    match mode {
+        ViewMode::List => "otto-view-list-symbolic",
+        ViewMode::Grid => "otto-view-grid-symbolic",
+        ViewMode::Columns => "otto-view-columns-symbolic",
+        ViewMode::Photos => "otto-view-photos-symbolic",
+    }
+}
+
+/// The drawn stand-in for a segment's glyph, centred on a point.
+fn switcher_fallback(mode: ViewMode) -> fn(&Canvas, Point, Color) {
+    match mode {
+        ViewMode::List => draw_list_glyph,
+        ViewMode::Grid => draw_grid_glyph,
+        ViewMode::Columns => draw_columns_glyph,
+        ViewMode::Photos => draw_photos_glyph,
+    }
+}
+
+fn glyph_paint(color: Color) -> Paint {
+    let mut paint = Paint::default();
+    paint.set_anti_alias(true);
+    paint.set_color(color);
+    paint
+}
+
+/// Three stacked lines.
+fn draw_list_glyph(canvas: &Canvas, c: Point, color: Color) {
+    let paint = glyph_paint(color);
+    for r in 0..3 {
+        let y = c.y - 4.0 + r as f32 * 4.0;
+        canvas.draw_rrect(
+            RRect::new_rect_xy(Rect::from_xywh(c.x - 7.0, y - 1.0, 14.0, 2.0), 1.0, 1.0),
+            &paint,
+        );
+    }
+}
+
+/// A 2x2 block of squares.
+fn draw_grid_glyph(canvas: &Canvas, c: Point, color: Color) {
+    let paint = glyph_paint(color);
+    for r in 0..2 {
+        for col in 0..2 {
+            let tile = Rect::from_xywh(
+                c.x - 6.0 + col as f32 * 7.0,
+                c.y - 6.0 + r as f32 * 7.0,
+                5.0,
+                5.0,
+            );
+            canvas.draw_rrect(RRect::new_rect_xy(tile, 1.2, 1.2), &paint);
         }
+    }
+}
+
+/// Three vertical bars.
+fn draw_columns_glyph(canvas: &Canvas, c: Point, color: Color) {
+    let paint = glyph_paint(color);
+    for col in 0..3 {
+        let x = c.x - 7.5 + col as f32 * 5.5;
+        canvas.draw_rrect(
+            RRect::new_rect_xy(Rect::from_xywh(x, c.y - 5.0, 4.0, 10.0), 1.0, 1.0),
+            &paint,
+        );
+    }
+}
+
+/// Two rows of tiles of different widths: the justified wall.
+fn draw_photos_glyph(canvas: &Canvas, c: Point, color: Color) {
+    let paint = glyph_paint(color);
+    for (x, y, w) in [
+        (-7.0, -6.0, 8.0),
+        (2.0, -6.0, 5.0),
+        (-7.0, 1.0, 5.0),
+        (-1.0, 1.0, 8.0),
+    ] {
+        canvas.draw_rrect(
+            RRect::new_rect_xy(Rect::from_xywh(c.x + x, c.y + y, w, 5.0), 1.2, 1.2),
+            &paint,
+        );
     }
 }
 
@@ -10689,5 +10700,38 @@ mod geometry_tests {
             label_gutter(FOOTER_NAME_LABEL_W + 30.0),
             FOOTER_NAME_LABEL_W + 30.0 + FOOTER_NAME_LABEL_GAP
         );
+    }
+}
+
+#[cfg(test)]
+mod switcher_tests {
+    use super::{switcher_at, switcher_glyph, switcher_rect, SWITCHER_MODES};
+
+    /// Every glyph the switcher asks for is in the repository's Solar set: a
+    /// name that drifts from `icons.list` would otherwise fall back to the
+    /// drawn stand-ins without a word.
+    #[test]
+    fn the_switcher_glyphs_are_in_the_solar_set() {
+        let set = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../resources/icons/solar/linear");
+        for mode in SWITCHER_MODES {
+            let name = switcher_glyph(mode);
+            assert!(
+                set.join(format!("{name}.svg")).is_file(),
+                "{name} is not in the Solar set"
+            );
+        }
+    }
+
+    /// Each segment's press selects the mode drawn in it.
+    #[test]
+    fn each_segment_selects_its_own_view() {
+        let rect = switcher_rect(1100.0);
+        let seg = rect.width() / SWITCHER_MODES.len() as f32;
+        for (index, mode) in SWITCHER_MODES.iter().enumerate() {
+            let x = rect.left + seg * (index as f32 + 0.5);
+            assert_eq!(switcher_at(x, rect.center_y(), 1100.0), Some(*mode));
+        }
+        assert_eq!(switcher_at(rect.left - 1.0, rect.center_y(), 1100.0), None);
     }
 }

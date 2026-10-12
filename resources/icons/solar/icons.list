@@ -53,6 +53,12 @@ folder-videos               video-library
 drive-harddisk              ssd-round
 folder                      folder
 
+# Files view switcher
+otto-view-list-symbolic     list
+otto-view-grid-symbolic     widget
+otto-view-columns-symbolic  columns-3
+otto-view-photos-symbolic   gallery-wide
+
 # Settings sidebar panes
 otto-pane-person-symbolic       user-rounded
 otto-pane-settings-symbolic     settings
