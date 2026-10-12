@@ -148,7 +148,6 @@ fn the_slider_and_the_zoom_chords_size_the_rows() {
         after,
         Some(listing_pointer::After::GroupMenu { serial: 7, .. })
     ));
-    assert!(browser.photos_group_open);
 }
 
 #[test]

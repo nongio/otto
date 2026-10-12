@@ -370,7 +370,7 @@ impl FilesWindow {
         &self,
         window: &Window,
         context_menu: ContextMenu,
-        group_menu: Rc<otto_kit::components::dropdown::DropdownMenu>,
+        dropdowns: Rc<Dropdowns>,
     ) {
         // Weak: otto-kit keeps the handler for the life of the process, and
         // it must not keep a closed window's browser alive.
@@ -393,14 +393,22 @@ impl FilesWindow {
                         show_context_menu(&window_for_events, &context_menu, &state, menu)
                     }
                     After::GroupMenu { rect, serial } => {
-                        show_group_menu(&window_for_events, &group_menu, &state, rect, serial)
+                        show_group_menu(&window_for_events, &dropdowns.group, &state, rect, serial)
                     }
-                    After::LocationMenu { rect, serial } => {
-                        show_location_menu(&window_for_events, &group_menu, &state, rect, serial)
-                    }
-                    After::FilterMenu { rect, serial } => {
-                        show_filter_menu(&window_for_events, &group_menu, &state, rect, serial)
-                    }
+                    After::LocationMenu { rect, serial } => show_location_menu(
+                        &window_for_events,
+                        &dropdowns.location,
+                        &state,
+                        rect,
+                        serial,
+                    ),
+                    After::FilterMenu { rect, serial } => show_filter_menu(
+                        &window_for_events,
+                        &dropdowns.filter,
+                        &state,
+                        rect,
+                        serial,
+                    ),
                 }
             }
             // Nothing is presented from here. What the batch changed is on
@@ -440,6 +448,38 @@ pub(super) fn start_drag(window: &Window, drag: DragStart) {
     }
 }
 
+/// The window's pop-up buttons' menus: one each, so a choice always goes
+/// back to the button that opened its menu, and opening one takes down
+/// whichever other is up (see `DropdownMenu::open`).
+pub(super) struct Dropdowns {
+    /// The Photos view's grouping button.
+    pub(super) group: otto_kit::components::dropdown::DropdownMenu,
+    /// The picker's location capsule.
+    pub(super) location: otto_kit::components::dropdown::DropdownMenu,
+    /// The picker's file-type filter.
+    pub(super) filter: otto_kit::components::dropdown::DropdownMenu,
+}
+
+impl Default for Dropdowns {
+    fn default() -> Self {
+        use otto_kit::components::dropdown::DropdownMenu;
+        Self {
+            group: DropdownMenu::new().with_placement(view::GROUP_PLACEMENT),
+            location: DropdownMenu::new().with_placement(view::LOCATION_PLACEMENT),
+            filter: DropdownMenu::new().with_placement(view::FILTER_PLACEMENT),
+        }
+    }
+}
+
+impl Dropdowns {
+    /// The menu that is up, if one is.
+    pub(super) fn open(&self) -> Option<&otto_kit::components::dropdown::DropdownMenu> {
+        [&self.group, &self.location, &self.filter]
+            .into_iter()
+            .find(|menu| menu.is_open())
+    }
+}
+
 /// Open the Photos view's grouping menu under its button.
 fn show_group_menu(
     window: &Window,
@@ -467,7 +507,7 @@ fn show_group_menu(
     // Weak: the menu outlives the window, in a callback never taken off.
     let chosen = Arc::downgrade(state);
     let dismissed = Arc::downgrade(state);
-    menu.open(
+    let opened = menu.open(
         &parent_xdg,
         rect,
         serial,
@@ -492,11 +532,15 @@ fn show_group_menu(
             AppContext::request_wakeup();
         },
     );
+    if opened {
+        let mut browser = state.browse();
+        browser.photos_group_open = true;
+        browser.dirty = true;
+    }
 }
 
 /// Open the picker's location menu under its capsule: the directory being
-/// viewed, then each one above it. Shares the grouping menu's popup — the two
-/// live in different windows and are never up together.
+/// viewed, then each one above it.
 fn show_location_menu(
     window: &Window,
     menu: &otto_kit::components::dropdown::DropdownMenu,
@@ -530,7 +574,7 @@ fn show_location_menu(
     // Weak: the menu outlives the window, in a callback never taken off.
     let chosen = Arc::downgrade(state);
     let dismissed = Arc::downgrade(state);
-    menu.open_with_icons(
+    let opened = menu.open_with_icons(
         &parent_xdg,
         rect,
         serial,
@@ -554,10 +598,15 @@ fn show_location_menu(
             AppContext::request_wakeup();
         },
     );
+    if opened {
+        let mut browser = state.browse();
+        browser.location_open = true;
+        browser.dirty = true;
+    }
 }
 
 /// Open the picker's filter menu over its control, the current filter
-/// ticked. Shares the grouping menu's popup, like the location menu.
+/// ticked.
 fn show_filter_menu(
     window: &Window,
     menu: &otto_kit::components::dropdown::DropdownMenu,
@@ -582,7 +631,7 @@ fn show_filter_menu(
     // Weak: the menu outlives the window, in a callback never taken off.
     let chosen = Arc::downgrade(state);
     let dismissed = Arc::downgrade(state);
-    menu.open(
+    let opened = menu.open(
         &parent_xdg,
         rect,
         serial,
@@ -607,6 +656,13 @@ fn show_filter_menu(
             AppContext::request_wakeup();
         },
     );
+    if opened {
+        let mut browser = state.browse();
+        if let Some(session) = browser.picker.as_mut() {
+            session.filter_open = true;
+        }
+        browser.dirty = true;
+    }
 }
 
 /// Open the context menu at the press, acting on the browser when an item is

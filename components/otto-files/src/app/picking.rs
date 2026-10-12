@@ -351,14 +351,11 @@ impl Browser {
         }
     }
 
-    /// Open the filter menu over its control: a popup, so it sits above the
-    /// window and everything painted into it — the save field is painted
+    /// A press on the filter control: its menu, a popup so it sits above
+    /// the window and everything painted into it — the save field is painted
     /// after the action row, and an in-window menu ended up underneath it.
+    /// Whether the press opens or closes it is the kit's dropdown's call.
     pub(super) fn filter_press(&mut self, serial: u32) -> listing_pointer::After {
-        if let Some(session) = self.picker.as_mut() {
-            session.filter_open = true;
-        }
-        self.dirty = true;
         listing_pointer::After::FilterMenu {
             rect: view::footer_filter_rect(self.size.1),
             serial,
@@ -405,10 +402,9 @@ impl Browser {
             .collect()
     }
 
-    /// Open the location menu under the toolbar's capsule.
+    /// A press on the toolbar's capsule: its menu, under it. Whether the
+    /// press opens or closes it is the kit's dropdown's call.
     pub(super) fn location_press(&mut self, serial: u32) -> listing_pointer::After {
-        self.location_open = true;
-        self.dirty = true;
         listing_pointer::After::LocationMenu {
             rect: view::location_rect(self.size.0),
             serial,

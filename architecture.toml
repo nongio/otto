@@ -105,7 +105,6 @@ crates = [
     "otto-agents",
     "otto-rdp",
     "xdg-desktop-portal-otto",
-    "apps-manager",
 ]
 may_use = ["foundation", "service", "toolkit", "kit"]
 

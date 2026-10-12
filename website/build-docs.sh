@@ -375,6 +375,15 @@ DEVELOPER_FILES=(
     "developer/screenshot-plan.md"
     "developer/tiling-plan.md"
     "developer/airplay-screenshare.md"
+    "developer/permissions.md"
+    "developer/vulkan-renderer-plan.md"
+    "developer/otto-render.md"
+    "developer/otto-foundations.md"
+    "developer/otto-dbus.md"
+    "developer/otto-files.md"
+    "developer/otto-launcher.md"
+    "developer/otto-islands.md"
+    "developer/xdg-desktop-portal-otto.md"
 )
 
 echo "Building Developer Guide..."

@@ -28,5 +28,5 @@
 pub mod field;
 pub mod menu;
 
-pub use field::DropdownInteraction;
+pub use field::{DropdownInteraction, Placement};
 pub use menu::DropdownMenu;

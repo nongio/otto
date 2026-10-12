@@ -12,15 +12,18 @@ impl FilesWindow {
     ) {
         use smithay_client_toolkit::seat::keyboard::Keysym;
 
-        // The grouping menu has the keyboard while it is up: the arrows move
-        // through it, a letter jumps, Return picks and Escape closes. Its
-        // choice lands through the same callback a click does.
-        if let Some(menu) = self.group_menu.as_ref().filter(|menu| menu.is_open()) {
+        // A pop-up button's menu has the keyboard while it is up: the arrows
+        // move through it, a letter jumps, Return picks and Escape closes.
+        // Its choice lands through the same callback a click does.
+        if let Some(menu) = self.dropdowns.as_ref().and_then(|menus| menus.open()) {
             menu.handle_key_event(event, key_state);
             if !menu.is_open() {
                 let mut browser = self.state.browse();
                 browser.photos_group_open = false;
                 browser.location_open = false;
+                if let Some(session) = browser.picker.as_mut() {
+                    session.filter_open = false;
+                }
                 browser.dirty = true;
             }
             return;
