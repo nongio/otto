@@ -247,7 +247,9 @@ One window per request. Layout:
 - **Titlebar** — the request's `title`, or "Open" / "Save As" / "Save Files".
   Client-decorated, per Otto's convention.
 - **Toolbar** — back/forward, a parent-directory control, the view switcher
-  (list / icon), a sort control, and a search field.
+  (list / icon), a sort control, and a search field. It is the browser's
+  toolbar, Solar glyphs included; the location capsule's and the filter's
+  chevrons are Solar too.
 - **Path bar** — the current directory as clickable ancestor segments; clicking
   a segment navigates to it.
 - **Sidebar** — the same places list as the browser: the XDG user directories
