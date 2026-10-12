@@ -206,8 +206,10 @@ jobs:
   # round-trip in spec/upstream/types/test-cases — against the types and
   # reducers the service is built on. otto-agents is pure Rust with no system
   # libraries, so it needs none of the compositor's build dependencies and
-  # does not wait behind them.
+  # does not wait behind them. It runs only when otto-agents is affected.
   ahp-conformance:
+    needs: changes
+    if: needs.changes.outputs.all == 'true' || contains(format(' {0} ', needs.changes.outputs.packages), ' otto-agents ')
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout sources
@@ -271,8 +273,9 @@ jobs:
       - name: Clippy (render stack)
         # otto-render's own tests and default features (udev and Vulkan): the
         # compositor steps above lint only the library, built with their
-        # feature sets.
-        if: needs.changes.outputs.compositor == 'true'
+        # feature sets. Only when otto-render itself is affected: a change to
+        # the compositor alone cannot change how it lints.
+        if: needs.changes.outputs.all == 'true' || contains(format(' {0} ', needs.changes.outputs.packages), ' otto-render ')
         run: cargo clippy --locked -p otto-render --all-targets -- -D warnings
       - name: Clippy (components)
         # Every affected crate with no clippy step of its own, sample clients
@@ -560,9 +563,10 @@ jobs:
   publish-nightly:
     # Only main that passed its tests is worth a nightly: a commit that
     # fails `check` is not published, rather than handed to everyone on the
-    # nightly channel. `check` is skipped when nothing Rust changed, which
-    # counts as passing — but only when `changes` itself succeeded, since a
-    # failed classifier skips `check` too. The other two never skip.
+    # nightly channel. `check` is skipped when nothing Rust changed, and
+    # `ahp-conformance` when otto-agents is not affected; both count as
+    # passing — but only when `changes` itself succeeded, since a failed
+    # classifier skips them too. The others never skip.
     needs: [changes, check, locales, architecture, ahp-conformance, build-arch, build-deb, build-rpm]
     if: >-
       ${{ !cancelled()
@@ -571,7 +575,7 @@ jobs:
           && (needs.check.result == 'success' || needs.check.result == 'skipped')
           && needs.locales.result == 'success'
           && needs.architecture.result == 'success'
-          && needs.ahp-conformance.result == 'success'
+          && (needs.ahp-conformance.result == 'success' || needs.ahp-conformance.result == 'skipped')
           && needs.build-arch.result == 'success'
           && needs.build-deb.result == 'success'
           && needs.build-rpm.result == 'success' }}
@@ -730,7 +734,7 @@ jobs:
           && (needs.check.result == 'success' || needs.check.result == 'skipped')
           && needs.locales.result == 'success'
           && needs.architecture.result == 'success'
-          && needs.ahp-conformance.result == 'success'
+          && (needs.ahp-conformance.result == 'success' || needs.ahp-conformance.result == 'skipped')
           && needs.build-deb.result == 'success'
           && needs.build-rpm.result == 'success'
           && needs.build-arch.result == 'success'

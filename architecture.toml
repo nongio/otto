@@ -230,10 +230,16 @@ reason = "The XDG base directories, with their fallbacks, are otto_foundations::
 # included (determinator's matching), and `**/` any number of directories.
 
 [[affects]]
-paths = ["Cargo.toml", ".github/workflows/ci.yml"]
+paths = ["Cargo.toml"]
 crates = ["*"]
 areas = ["packaging"]
-reason = "The workspace manifest sets every member's dependencies, profiles, lints and package assets, and the workflow decides what runs."
+reason = "The workspace manifest sets every member's dependencies, profiles, lints and package assets."
+
+[[affects]]
+paths = [".github/workflows/ci.yml"]
+crates = ["*"]
+areas = ["packaging"]
+reason = "The workflow decides what runs, so a change to it runs everything."
 
 [[affects]]
 paths = ["architecture.toml", "tools/otto-arch/src/", "tools/otto-arch/Cargo.toml"]
