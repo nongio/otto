@@ -272,9 +272,9 @@ reason = "The compositor embeds the icons and fallback cursor and its tests read
 
 [[affects]]
 paths = ["resources/locales/"]
-crates = ["otto-kit", "otto-agents"]
+crates = ["otto-kit", "otto-agents", "otto-files"]
 areas = ["packaging"]
-reason = "The Fluent catalogues are compiled into otto-kit (and so every app and the compositor) and into otto-agents."
+reason = "The Fluent catalogues are compiled into otto-kit (and so every app and the compositor) and into otto-agents; otto-files reads them at run time from ../../resources/locales."
 
 [[affects]]
 paths = ["resources/bin/", "resources/plugins/"]
@@ -302,6 +302,23 @@ paths = ["PKGBUILD*", "LICENSE", "scripts/"]
 crates = []
 areas = ["packaging"]
 reason = "Packaging recipes and the scripts that build and check packages; no crate reads them."
+
+[[affects]]
+paths = [
+    "README.md",
+    "otto_config.example.toml",
+    "components/otto-lock/otto-lock.pam",
+    "components/xdg-desktop-portal-otto/otto.portal",
+    "components/xdg-desktop-portal-otto/org.freedesktop.impl.portal.desktop.otto.service",
+    "components/xdg-desktop-portal-otto/xdg-desktop-portal-otto.service",
+    "components/xdg-desktop-portal-otto/portals.conf.example",
+    "components/otto-agents/otto-agents.service",
+    "components/otto-agents/otto-agents-bridge.service",
+    "components/otto-files/resources/icons/",
+]
+crates = []
+areas = ["packaging"]
+reason = "Installed by the packages (PKGBUILD*, the deb assets in Cargo.toml, scripts/packaging): the PAM file, the portal and agent units, the file browser's icons. The crates they sit in are still affected through their directories."
 
 [[affects]]
 paths = ["docs/developer/architecture.md"]

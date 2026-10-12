@@ -239,11 +239,20 @@ mod tests {
             ["otto-agents", "otto-kit"]
         );
         assert_eq!(place("components/otto-lock/otto-lock.pam"), ["otto-lock"]);
+        // Installed files inside a crate also reach the packaging jobs.
+        for f in [
+            "components/otto-lock/otto-lock.pam",
+            "components/otto-agents/otto-agents.service",
+            "components/otto-files/resources/icons/hicolor/scalable/apps/otto-files.svg",
+        ] {
+            let packaged = |r: &rules::Affects| !r.areas.is_empty() && r.matches(f);
+            assert!(rules.affects.iter().any(packaged), "{f}");
+        }
         // A top-level file does not land on the root package.
         assert!(place("README.md").is_empty());
         assert!(place("docs/developer/rendering.md").is_empty());
         assert!(place("Cargo.lock").is_empty());
-        assert_eq!(place("resources/locales/en.ftl").len(), 2);
+        assert_eq!(place("resources/locales/en.ftl").len(), 3);
         // Shared files, the rules and the tool reach everything; so does a
         // file nothing covers.
         for f in [
