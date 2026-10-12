@@ -1,0 +1,54 @@
+# The Solar icons Otto's own interface draws its glyphs with.
+# Edit this, then run scripts/update-solar-icons.sh.
+#
+# <otto name>  <solar name>  [style ...]     (styles default to linear)
+#
+# Names Otto asks the icon theme for come first, under the freedesktop name
+# so a lookup finds them unchanged; glyphs Otto draws itself use otto-*.
+# Bold is kept where a control shows a pressed or active state.
+
+# Studio toolbar
+zoom-out-symbolic           magnifier-zoom-out
+zoom-in-symbolic            magnifier-zoom-in
+zoom-fit-best-symbolic      maximize-square-minimalistic
+go-up-symbolic              alt-arrow-up
+go-down-symbolic            alt-arrow-down
+edit-undo-symbolic          undo-left
+edit-redo-symbolic          undo-right
+document-save-symbolic      diskette
+
+# Studio's own tools (drawn in code today)
+otto-sidebar-symbolic       sidebar-minimalistic    linear bold
+otto-chat-symbolic          chat-round-dots         linear bold
+otto-mark-symbolic          cursor                  linear bold
+otto-show-marks-symbolic    eye                     linear bold
+otto-pen-symbolic           pen                     linear bold
+otto-highlight-symbolic     paint-brush             linear bold
+otto-underline-symbolic     text-underline          linear bold
+otto-strikeout-symbolic     text-cross              linear bold
+otto-text-symbolic          text-square             linear bold
+otto-signature-symbolic     pen-new-round           linear bold
+otto-delete-symbolic        trash-bin-minimalistic
+
+# Peek and Studio badges on a picture
+content-loading-symbolic    refresh
+font-x-generic-symbolic     text-selection
+
+# Workspace selector
+close-symbolic              close-circle
+plus-symbolic               add-circle
+
+# Menus: the tick on the chosen item
+object-select-symbolic      check
+
+# Files sidebar and path bar
+document-open-recent        history
+user-home                   home
+user-desktop                monitor
+folder-documents            document
+folder-download             download-minimalistic
+folder-music                music-note
+folder-pictures             gallery
+folder-videos               video-library
+drive-harddisk              ssd-round
+folder                      folder
