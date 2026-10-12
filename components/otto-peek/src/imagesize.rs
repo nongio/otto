@@ -1,15 +1,16 @@
 //! An image's pixel size from its header, without decoding it.
 //!
-//! Header arithmetic only, so the Photos view can lay a folder out without
-//! handing every file's bytes to a codec in this process. Most formats (PNG,
-//! GIF, WebP, HEIF/AVIF, TIFF, …) are read by the `imagesize` crate. Two are
-//! read here, because the crate gets them wrong for a photo folder: JPEG,
-//! whose EXIF orientation it ignores (a portrait from a phone would be laid
-//! out wide), and BMP, where it reads a top-down bitmap's negative height as
-//! four billion and an OS/2 header's 16-bit sides as 32-bit ones. Untrusted
-//! bytes are only ever indexed with bounds checks here: a malformed header is
-//! an unknown size, never a panic. Anything else is [`Header::Unknown`], and
-//! the caller lays it out square.
+//! Header arithmetic only, so Files' Photos view can lay a folder out, and
+//! Preview size its window, without handing every file's bytes to a codec in
+//! the host's own process. Most formats (PNG, GIF, WebP, HEIF/AVIF, TIFF, …)
+//! are read by the `imagesize` crate. Two are read here, because the crate
+//! gets them wrong for a photo folder: JPEG, whose EXIF orientation it
+//! ignores (a portrait from a phone would be laid out wide), and BMP, where it
+//! reads a top-down bitmap's negative height as four billion and an OS/2
+//! header's 16-bit sides as 32-bit ones. Untrusted bytes are only ever indexed
+//! with bounds checks here: a malformed header is an unknown size, never a
+//! panic. Anything else is [`Header::Unknown`], and the caller lays it out
+//! square.
 
 /// What a prefix of a file says about its size.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

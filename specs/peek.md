@@ -99,9 +99,10 @@ and destroyed when the preview closes. Nothing changes about who owns what: the
 overlay is the host's surface, so the keys that reach it reach the host, and
 the host decides what they mean.
 
-Three hosts embed it: the file browser, the save/open file dialog, and the
-desktop's file view. The `otto-peek` binary remains for previewing a path
-named on a command line, and for being the sandboxed decode worker.
+Four hosts embed it: the file browser, the save/open file dialog, the
+desktop's file view, and Preview. The `otto-peek` binary remains for
+previewing a path named on a command line, and for being the sandboxed decode
+worker.
 
 The layers, and the split is load-bearing:
 
@@ -110,10 +111,12 @@ The layers, and the split is load-bearing:
    `AppContext`, no `wayland-client`. A host draws it into its own surface, and
    the compositor can draw the same thing server-side for a dock thumbnail.
 2. `otto_kit::filetype` and `otto_kit::thumbnails` — type detection and the
-   shared on-disk thumbnail cache, used identically by all three hosts.
+   shared on-disk thumbnail cache, used identically by every host.
 3. `otto-peek` — the library: the sandboxed decode worker, the payload
-   wire format, and the entrance geometry. Hosts call it; they do not
-   re-implement it.
+   wire format, the entrance geometry, and the embedded session itself
+   (zoom, pan, pages, selection, playback) with its decode cache, the
+   recognised-text cache, the working and text badges, image-header sizing
+   and the `[peek]` settings. Hosts call it; they do not re-implement it.
 
 **Embedding obligation.** The worker is this binary re-executed, and the binary
 *is* the host once the library is embedded — so every host must call

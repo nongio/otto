@@ -90,19 +90,20 @@ one path serves both. SVG is never recognised.
 
 ## Selecting and copying
 
-`peek::Session` holds the selection, whether a drag is in progress, a
+`otto_peek::session::Session` holds the selection, whether a drag is in progress, a
 `words_epoch` and `recognising_since`. `app/peek_session.rs` wires it to the
 window: `Ctrl+C` copies (and falls through to the listing's own copy when
 nothing is selected), `Ctrl+A` selects everything, `Escape` clears the
 selection before it closes the panel. The pointer becomes a beam over a word.
 
-A badge sits bottom-right of the panel, in the close button's idiom: it
-breathes while a recogniser is reading, becomes a serif **T** once there are
-words, and is absent when there are none.
+A badge (`otto_peek::badge`) sits bottom-right of the panel, in the close
+button's idiom: it breathes while a recogniser is reading, becomes a serif
+**T** once there are words, and is absent when there are none. Preview draws
+the same badge on its window.
 
 ## When recognition runs
 
-Four ways in, all through `peek::recognise`:
+Four ways in, all through `otto_peek::session::recognise`:
 
 1. **On preview** (`app/present.rs`). Once the picture is on screen, the cache
    is asked first, with the words scaled to this decode. On a miss, and with a
@@ -130,7 +131,7 @@ all for a non-picture or when no recogniser is installed.
 
 ## The cache
 
-`components/otto-files/src/ocrcache.rs`, one TSV file per picture under
+`components/otto-peek/src/ocrcache.rs`, one TSV file per picture under
 `$XDG_CACHE_HOME/otto/ocr/` (`OTTO_OCR_CACHE` moves it).
 
 The file is named by `thumbcache::key_for`, the MD5 of the percent-encoded
@@ -176,7 +177,9 @@ on the first Find is the next step; a database is not.
 
 ## Configuration
 
-`~/.config/otto/files.toml`, read once per process:
+`~/.config/otto/files.toml`, read by `otto_peek::config::load()` so Files
+and Preview agree. Files reads it once per process; Preview reads it each time
+it looks up the recogniser:
 
 ```toml
 [peek]
@@ -196,7 +199,7 @@ missing dependency. Installing one is picked up at the next preview.
 ```sh
 cargo test -p otto-peek  --lib ocr          # hOCR parsing, language mapping
 cargo test -p otto-kit   --lib selection    # hit-testing, text, rectangles
-cargo test -p otto-files --lib ocrcache     # round trip, currency, pruning, scaling
+cargo test -p otto-peek  --lib ocrcache     # round trip, currency, pruning, scaling
 cargo test -p otto-files --lib ocr          # status, queueing, the panel's own file
 cargo run  -p otto-peek --example ocr_probe -- PICTURE [recogniser command]
 ```

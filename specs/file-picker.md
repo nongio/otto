@@ -524,6 +524,8 @@ thread blocked in `poll(2)` until an event lands or a debounce comes due; the UI
 thread never blocks on it. A watch belongs to the column showing that directory
 and is dropped with it, so the watch set stays equal to what is on screen. Two
 panes on the same directory share one watch. Nothing is watched recursively.
+The watcher is `otto_kit::watch`, which Preview also uses for the folder of
+the file it shows.
 
 `IN_CREATE`, `IN_DELETE`, `IN_MOVED_FROM`, `IN_MOVED_TO`, `IN_CLOSE_WRITE` and
 `IN_ATTRIB` mark the directory dirty. A dirty directory is re-read after a

@@ -303,7 +303,8 @@ Underneath it is still `otto-preview` (the program, its app id and the
   window back rather than stacking copies, and each further file costs a
   window, not another renderer, font set and runtime.
 - The preview state and drawing are Peek's, reused rather than copied, so the
-  two can never show the same file differently.
+  two can never show the same file differently. Both apps embed the same
+  session from `otto-peek`; neither depends on the other.
 - The window is opaque because it is a document window: a translucent
   material behind a photograph or a page only muddies what is being looked at.
 - Preview offers no "open in" button because it is the default viewer for

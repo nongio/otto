@@ -41,6 +41,7 @@ components/otto-kit/src/
 ├── protocols/        Otto's own Wayland protocols, generated
 ├── desktop_entry.rs  .desktop parsing
 ├── filetype/         MIME lookup by glob and content
+├── watch.rs          Directory watching (inotify), waking the event loop
 ├── preview/          File thumbnails
 ├── clipboard.rs      Selection ownership and paste
 ├── dnd.rs            Drag and drop

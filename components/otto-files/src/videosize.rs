@@ -1,7 +1,7 @@
 //! A video's size and the day it was recorded, read from an MP4 or QuickTime
 //! header: what the Photos view lays a video out by, next to the pictures.
 //!
-//! Header arithmetic only, like [`crate::imagesize`] and [`crate::camera`]:
+//! Header arithmetic only, like [`otto_peek::imagesize`] and [`crate::camera`]:
 //! these are a file's bytes, read in the file manager's own process, so every
 //! read is bounds-checked and anything malformed is simply nothing known.
 //!

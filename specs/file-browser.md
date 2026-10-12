@@ -1430,6 +1430,9 @@ Pressing space with a selection previews it. Peek
 ([peek.md](./peek.md)) is a **library the browser embeds**, not a
 service it calls: the panel is drawn on an overlay surface the browser owns,
 above every window, and the decoding happens in a sandboxed worker process.
+The session behind the panel (zoom, pan, pages, selection, playback) lives in
+`otto-peek` with the decoder, and Preview ([preview-app.md](./preview-app.md))
+embeds the same one; the browser owns the panel's chrome, keys and place.
 
 **This replaces an earlier `org.otto.Peek1` D-Bus contract**, which is
 deleted. It is recorded here so nobody reconstructs it: a separate process

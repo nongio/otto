@@ -190,12 +190,7 @@ reason = "The XDG base directories, with their fallbacks, are otto_foundations::
 # Known debt
 # ---------------------------------------------------------------------------
 
-# Crates.
-
-[[allow]]
-crate = "otto-preview"
-dep = "otto-files"
-reason = "Preview reuses otto-files' peek session, directory watch and badge painters. They belong in a kit (otto-peek or a new files kit) both apps share."
+# Crates: none.
 
 # Compositor modules.
 

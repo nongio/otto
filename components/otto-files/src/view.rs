@@ -2058,7 +2058,7 @@ pub enum PhotosInfoData<'a> {
         tool_hover: Option<usize>,
         /// A video's player, which the stage plays in place of a picture —
         /// the same one the preview column plays.
-        video: Option<&'a crate::peek::Video>,
+        video: Option<&'a otto_peek::session::Video>,
     },
     /// Several things selected: how many, and how much they weigh.
     Many { count: usize, bytes: u64 },
@@ -4535,7 +4535,7 @@ pub struct PreviewData<'a> {
     pub decoded: Option<&'a otto_kit::preview::Preview>,
     /// A player, when the decode said video and one could be started. The
     /// column then shows its frame and transport in the stage.
-    pub video: Option<&'a crate::peek::Video>,
+    pub video: Option<&'a otto_peek::session::Video>,
     /// Whether that video is presented on its own subsurface, so the scene
     /// layer leaves the stage to the column ground rather than drawing frames.
     pub video_on_surface: bool,
@@ -5238,7 +5238,7 @@ pub fn preview_content(
     let name = data.name.to_string();
     let icon_chain = data.icon_chain.clone();
     let decoded = data.decoded.cloned();
-    let video = data.video.map(crate::peek::Video::snapshot);
+    let video = data.video.map(otto_peek::session::Video::snapshot);
     let video_on_surface = data.video_on_surface;
     let first_row = data.first_row;
     let info = data.info.clone();
@@ -5340,7 +5340,7 @@ fn draw_preview_stage(
     theme: &Theme,
     stage: Rect,
     decoded: Option<&otto_kit::preview::Preview>,
-    video: Option<&crate::peek::VideoSnapshot>,
+    video: Option<&otto_peek::session::VideoSnapshot>,
     // Whether a video is drawn on its own subsurface over this stage, in
     // which case the stage is left to the column ground here.
     on_surface: bool,
@@ -7820,7 +7820,7 @@ pub fn peek_titlebar_rect(panel: Rect) -> Rect {
         panel.left,
         panel.top,
         panel.right,
-        panel.top + crate::peek::TITLEBAR_H,
+        panel.top + otto_peek::session::TITLEBAR_H,
     )
 }
 
@@ -7839,26 +7839,6 @@ pub fn peek_grip_rect(panel: Rect) -> Rect {
         strip.top,
         (peek_expand_rect(panel).left - CLEARANCE).max(strip.left),
         strip.bottom,
-    )
-}
-
-/// What is left of the panel for the preview itself.
-///
-/// Inset on every side, not just below the title strip: the card reads as a
-/// mount around the content rather than a window whose content is jammed
-/// against the glass, and an image that reaches the edge no longer collides
-/// with the panel's own rounded corners.
-///
-/// Narrow, because it is not the only inset the content gets: the preview
-/// pads itself as well ([`otto_kit::preview::PADDING`], and less than that
-/// for a picture). This one only has to clear the corners and the border.
-pub fn peek_content_rect(panel: Rect) -> Rect {
-    const INSET: f32 = 4.0;
-    Rect::from_ltrb(
-        panel.left + INSET,
-        panel.top + crate::peek::TITLEBAR_H + INSET,
-        panel.right - INSET,
-        panel.bottom - INSET,
     )
 }
 
@@ -7990,8 +7970,8 @@ mod peek_buttons {
 /// at rest, however small the window, always has its titlebar.
 fn peek_chrome_opacity(panel: Rect) -> f32 {
     // Two strips tall before any of it shows, four before all of it does.
-    const HEIGHT_FROM: f32 = crate::peek::TITLEBAR_H * 2.0;
-    const HEIGHT_TO: f32 = crate::peek::TITLEBAR_H * 4.0;
+    const HEIGHT_FROM: f32 = otto_peek::session::TITLEBAR_H * 2.0;
+    const HEIGHT_TO: f32 = otto_peek::session::TITLEBAR_H * 4.0;
     // Width matters too: a card wide enough for the dot but not for a name
     // is a card the strip has nothing to say in.
     const WIDTH_FROM: f32 = 140.0;
@@ -8016,7 +7996,7 @@ fn fade(color: Color, opacity: f32) -> Color {
     )
 }
 
-pub fn draw_peek(canvas: &Canvas, f: &Frame, session: &crate::peek::Session, resting: Rect) {
+pub fn draw_peek(canvas: &Canvas, f: &Frame, session: &otto_peek::session::Session, resting: Rect) {
     let panel = session.panel(resting);
 
     let mut paint = Paint::default();
@@ -8081,7 +8061,10 @@ pub fn draw_peek(canvas: &Canvas, f: &Frame, session: &crate::peek::Session, res
             // on the left when there is one: the name is centred, so it grows
             // towards both and has to be kept off both.
             let room = strip.width()
-                - if session.paged(peek_content_rect(panel)).is_some() {
+                - if session
+                    .paged(otto_peek::session::content_rect(panel))
+                    .is_some()
+                {
                     140.0
                 } else {
                     80.0
@@ -8098,7 +8081,7 @@ pub fn draw_peek(canvas: &Canvas, f: &Frame, session: &crate::peek::Session, res
         // only evidence that Page Down did anything is that the content
         // looks different — and on a document of similar-looking pages that
         // is no evidence at all.
-        if let Some((page, pages)) = session.paged(peek_content_rect(panel)) {
+        if let Some((page, pages)) = session.paged(otto_peek::session::content_rect(panel)) {
             Label::new(otto_kit::t_owned!(
                 "peek-page-of",
                 page = page.to_string(),
@@ -8121,7 +8104,7 @@ pub fn draw_peek(canvas: &Canvas, f: &Frame, session: &crate::peek::Session, res
         );
     }
 
-    let content = peek_content_rect(panel);
+    let content = otto_peek::session::content_rect(panel);
     canvas.save();
     canvas.clip_rrect(RRect::new_rect_xy(panel, 12.0, 12.0), None, true);
     canvas.clip_rect(content, None, true);
@@ -8187,140 +8170,11 @@ pub fn draw_peek(canvas: &Canvas, f: &Frame, session: &crate::peek::Session, res
     // One badge, two things to say: the recogniser is working, or it has
     // finished and there is something to select.
     match session.recognising_phase() {
-        Some(phase) => draw_peek_working_badge(canvas, f.theme, panel, chrome, phase),
-        None if !session.words().is_empty() => draw_peek_text_badge(canvas, f.theme, panel, chrome),
+        Some(phase) => otto_peek::badge::draw_working(canvas, f.theme, panel, chrome, phase),
+        None if !session.words().is_empty() => {
+            otto_peek::badge::draw_text(canvas, f.theme, panel, chrome)
+        }
         None => {}
-    }
-}
-
-/// The badge that says the picture's text has been recognised and can be
-/// selected, in the panel's bottom-right corner.
-pub fn peek_text_badge_rect(panel: Rect) -> Rect {
-    const D: f32 = 22.0;
-    const INSET: f32 = 10.0;
-    Rect::from_xywh(panel.right - INSET - D, panel.bottom - INSET - D, D, D)
-}
-
-/// The badge while the recogniser is still reading the picture, in the same
-/// dot as the finished one so the two read as one thing changing rather than
-/// two appearing. It breathes: recognition takes seconds on a big screenshot,
-/// and a still glyph for that long looks like a result rather than a wait.
-pub fn draw_peek_working_badge(
-    canvas: &Canvas,
-    theme: &Theme,
-    panel: Rect,
-    opacity: f32,
-    phase: f32,
-) {
-    // A slow breath, never all the way out: the badge stays legible at the
-    // bottom of it, so what pulses is attention rather than presence.
-    let breath = 0.65 + 0.35 * (phase * std::f32::consts::TAU / WORKING_BADGE_PERIOD).sin();
-    draw_peek_badge(
-        canvas,
-        theme,
-        panel,
-        opacity,
-        breath,
-        &[
-            "content-loading-symbolic",
-            "process-working-symbolic",
-            "view-refresh-symbolic",
-        ],
-        draw_working_fallback,
-    );
-}
-
-/// How long one breath of the working badge takes, in seconds.
-const WORKING_BADGE_PERIOD: f32 = 1.6;
-
-/// A dot in the same idiom as the close button, carrying a text-selection
-/// glyph. Its presence is the message: the picture has words in it, and they
-/// can be selected.
-pub fn draw_peek_text_badge(canvas: &Canvas, theme: &Theme, panel: Rect, opacity: f32) {
-    draw_peek_badge(
-        canvas,
-        theme,
-        panel,
-        opacity,
-        1.0,
-        &[
-            "font-x-generic-symbolic",
-            "insert-text-symbolic",
-            "text-x-generic-symbolic",
-        ],
-        draw_text_fallback,
-    );
-}
-
-/// The badge both states share: a dot in the same idiom as the close button,
-/// carrying whichever symbolic glyph the caller asked for. `weight` scales it
-/// against the panel's own chrome opacity, which is what the working badge
-/// breathes on.
-fn draw_peek_badge(
-    canvas: &Canvas,
-    theme: &Theme,
-    panel: Rect,
-    opacity: f32,
-    weight: f32,
-    names: &[&str],
-    fallback: fn(&Canvas, &Theme, Rect, Point, f32),
-) {
-    let opacity = opacity * weight;
-    let badge = peek_text_badge_rect(panel);
-    let centre = Point::new(badge.center_x(), badge.center_y());
-
-    let mut paint = Paint::default();
-    paint.set_anti_alias(true);
-    paint.set_color(fade(theme.fill_secondary, opacity));
-    canvas.draw_circle(centre, badge.width() / 2.0, &paint);
-
-    let glyph = 12.0;
-    let dst = Rect::from_xywh(centre.x - glyph / 2.0, centre.y - glyph / 2.0, glyph, glyph);
-    if let Some(image) = icons::cached_icon_chain(names, glyph as i32) {
-        // Symbolic art recoloured to the theme's text tone, as the sidebar
-        // does for its own glyphs.
-        let mut tint = Paint::default();
-        tint.set_color_filter(skia_safe::color_filters::blend(
-            fade(theme.text_secondary, opacity),
-            skia_safe::BlendMode::SrcIn,
-        ));
-        canvas.draw_image_rect(&image, None, dst, &tint);
-    } else {
-        fallback(canvas, theme, dst, centre, opacity);
-    }
-}
-
-/// No theme art for the finished badge: a serif "T", the plainest sign for
-/// text.
-fn draw_text_fallback(canvas: &Canvas, theme: &Theme, dst: Rect, centre: Point, opacity: f32) {
-    let mut stroke = Paint::default();
-    stroke.set_anti_alias(true);
-    stroke.set_style(skia_safe::paint::Style::Stroke);
-    stroke.set_stroke_width(1.5);
-    stroke.set_stroke_cap(skia_safe::PaintCap::Round);
-    stroke.set_color(fade(theme.text_secondary, opacity));
-    canvas.draw_line(
-        (dst.left + 2.0, dst.top + 2.0),
-        (dst.right - 2.0, dst.top + 2.0),
-        &stroke,
-    );
-    canvas.draw_line(
-        (centre.x, dst.top + 2.0),
-        (centre.x, dst.bottom - 2.0),
-        &stroke,
-    );
-}
-
-/// No theme art for the working badge: three dots in a row, which is what
-/// the themes draw for this anyway.
-fn draw_working_fallback(canvas: &Canvas, theme: &Theme, dst: Rect, centre: Point, opacity: f32) {
-    let mut dot = Paint::default();
-    dot.set_anti_alias(true);
-    dot.set_color(fade(theme.text_secondary, opacity));
-    let r = 1.3;
-    let gap = (dst.width() - 2.0 * r) / 2.0;
-    for i in -1..=1 {
-        canvas.draw_circle((centre.x + i as f32 * gap, centre.y), r, &dot);
     }
 }
 
@@ -8343,7 +8197,7 @@ pub fn draw_info(
     theme: &Theme,
     sheet: Rect,
     info: &model::FileInfo,
-    text: Option<crate::ocrcache::Status>,
+    text: Option<otto_peek::ocrcache::Status>,
     error: Option<&str>,
     close_hovered: bool,
     shadow: bool,
@@ -8408,7 +8262,7 @@ const INFO_SHEET_ROW: f32 = 23.0;
 /// left out.
 fn info_rows(
     info: &model::FileInfo,
-    text: Option<crate::ocrcache::Status>,
+    text: Option<otto_peek::ocrcache::Status>,
 ) -> Vec<(&'static str, String)> {
     let mut rows = vec![
         (
@@ -8454,7 +8308,7 @@ fn info_rows(
     rows
 }
 
-fn info_row_count(info: &model::FileInfo, text: Option<crate::ocrcache::Status>) -> usize {
+fn info_row_count(info: &model::FileInfo, text: Option<otto_peek::ocrcache::Status>) -> usize {
     info_rows(info, text).len()
 }
 
@@ -8464,7 +8318,7 @@ fn info_row_count(info: &model::FileInfo, text: Option<crate::ocrcache::Status>)
 pub fn info_runs(
     sheet: Rect,
     info: &model::FileInfo,
-    text: Option<crate::ocrcache::Status>,
+    text: Option<otto_peek::ocrcache::Status>,
     theme: &Theme,
 ) -> Vec<TextRun> {
     let mut runs = vec![TextRun::centered(
@@ -8531,8 +8385,8 @@ pub fn info_runs(
 
 /// What a panel says about the words in a picture: what was found, or that
 /// nothing has looked yet.
-pub fn describe_text_status(status: crate::ocrcache::Status) -> String {
-    use crate::ocrcache::Status;
+pub fn describe_text_status(status: otto_peek::ocrcache::Status) -> String {
+    use otto_peek::ocrcache::Status;
     match status {
         Status::Reading => otto_kit::t_owned!("files-info-text-reading"),
         Status::Words(count) => {
@@ -10135,7 +9989,7 @@ mod geometry_tests {
     #[test]
     fn a_resting_panel_always_has_its_titlebar() {
         for (w, h) in [(1100.0, 700.0), (320.0, 240.0), (480.0, 360.0)] {
-            let panel = crate::peek::panel_rect(w, h);
+            let panel = otto_peek::session::panel_rect(w, h);
             assert_eq!(
                 peek_chrome_opacity(panel),
                 1.0,
@@ -10148,12 +10002,12 @@ mod geometry_tests {
     /// card instead of appearing on top of one already in motion.
     #[test]
     fn the_chrome_fades_in_as_the_card_grows() {
-        let resting = crate::peek::panel_rect(1100.0, 700.0);
+        let resting = otto_peek::session::panel_rect(1100.0, 700.0);
         let row = Rect::from_xywh(240.0, 180.0, 260.0, 24.0);
         let mut last = 0.0;
         for step in 0..=20 {
             let t = step as f32 / 20.0;
-            let opacity = peek_chrome_opacity(crate::peek::entrance_at(row, resting, t));
+            let opacity = peek_chrome_opacity(otto_peek::session::entrance_at(row, resting, t));
             assert!(opacity >= last - 0.001, "went backwards at t={t}");
             last = opacity;
         }
@@ -10816,78 +10670,5 @@ mod geometry_tests {
             label_gutter(FOOTER_NAME_LABEL_W + 30.0),
             FOOTER_NAME_LABEL_W + 30.0 + FOOTER_NAME_LABEL_GAP
         );
-    }
-}
-
-#[cfg(test)]
-mod badge_tests {
-    use super::*;
-
-    /// Draw one badge state into its own bitmap and hand back the pixels of
-    /// the badge's own square, which is all either state touches.
-    fn badge_pixels(draw: impl FnOnce(&Canvas, &Theme, Rect)) -> Vec<u8> {
-        let panel = Rect::from_wh(200.0, 200.0);
-        let mut surface =
-            skia_safe::surfaces::raster_n32_premul((panel.width() as i32, panel.height() as i32))
-                .unwrap();
-        surface.canvas().clear(skia_safe::Color::TRANSPARENT);
-        let theme = Theme::light();
-        draw(surface.canvas(), &theme, panel);
-
-        let badge = peek_text_badge_rect(panel);
-        let image = surface.image_snapshot();
-        let info = skia_safe::ImageInfo::new_n32_premul(
-            (badge.width() as i32, badge.height() as i32),
-            None,
-        );
-        let mut out = vec![0u8; (badge.width() * badge.height() * 4.0) as usize];
-        let row = badge.width() as usize * 4;
-        assert!(image.read_pixels(
-            &info,
-            &mut out,
-            row,
-            (badge.left as i32, badge.top as i32),
-            skia_safe::image::CachingHint::Allow,
-        ));
-        out
-    }
-
-    fn drawn(pixels: &[u8]) -> usize {
-        pixels.chunks(4).filter(|p| p[3] != 0).count()
-    }
-
-    /// The working state puts something in the corner as soon as the
-    /// recogniser starts — the wait is the thing it exists to show.
-    #[test]
-    fn the_working_badge_draws_in_the_corner() {
-        let pixels = badge_pixels(|canvas, theme, panel| {
-            draw_peek_working_badge(canvas, theme, panel, 1.0, 0.0)
-        });
-        assert!(drawn(&pixels) > 100, "nothing drawn in the badge's square");
-    }
-
-    /// And it breathes: half a period apart the same badge is not the same
-    /// pixels, which is what makes it read as a wait rather than a result.
-    #[test]
-    fn the_working_badge_breathes() {
-        let early = badge_pixels(|canvas, theme, panel| {
-            draw_peek_working_badge(canvas, theme, panel, 1.0, WORKING_BADGE_PERIOD / 4.0)
-        });
-        let later = badge_pixels(|canvas, theme, panel| {
-            draw_peek_working_badge(canvas, theme, panel, 1.0, WORKING_BADGE_PERIOD * 3.0 / 4.0)
-        });
-        assert_ne!(early, later, "the badge looks the same across a breath");
-    }
-
-    /// The two states are told apart by their glyph, not only by being there.
-    #[test]
-    fn the_finished_badge_is_not_the_working_one() {
-        let working = badge_pixels(|canvas, theme, panel| {
-            draw_peek_working_badge(canvas, theme, panel, 1.0, 0.0)
-        });
-        let finished =
-            badge_pixels(|canvas, theme, panel| draw_peek_text_badge(canvas, theme, panel, 1.0));
-        assert!(drawn(&finished) > 100);
-        assert_ne!(working, finished, "both states draw the same badge");
     }
 }

@@ -42,9 +42,9 @@ use skia_safe::{Color, Rect};
 use wayland_client::backend::ObjectId;
 use wayland_client::protocol::wl_surface::WlSurface;
 
-use crate::peek;
 use crate::scene;
 use crate::view::{self, Frame, PaneData, ViewMode};
+use otto_peek::session as peek;
 
 /// Height of the box a column's status line is painted into.
 const STATUS_H: f32 = 40.0;
@@ -940,7 +940,7 @@ impl PaneSurfaces {
             // A video painted here re-records on every frame of it; on its own
             // surface it is none of this one's business.
             if !data.video_on_surface {
-                data.video.map(crate::peek::Video::key).hash(&mut hasher);
+                data.video.map(peek::Video::key).hash(&mut hasher);
             }
             view::is_dark().hash(&mut hasher);
             hash_rect(Rect::from_wh(rect.width(), rect.height())).hash(&mut hasher);

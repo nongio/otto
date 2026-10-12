@@ -5246,7 +5246,6 @@ version = "1.6.0"
 dependencies = [
  "enumflags2",
  "futures-util",
- "imagesize",
  "khronos-egl",
  "laye-rs",
  "libc",
@@ -5426,13 +5425,17 @@ dependencies = [
 name = "otto-peek"
 version = "1.6.0"
 dependencies = [
+ "imagesize",
  "libc",
  "md-5 0.10.6",
  "otto-kit",
  "otto-md-kit",
+ "otto-media-kit",
  "png 0.17.16",
+ "serde",
  "skia-safe",
  "tokio",
+ "toml 1.1.2+spec-1.1.0",
  "tracing",
 ]
 
@@ -5443,7 +5446,6 @@ dependencies = [
  "base64 0.22.1",
  "otto-agents-client",
  "otto-agents-kit",
- "otto-files",
  "otto-kit",
  "otto-media-kit",
  "otto-peek",

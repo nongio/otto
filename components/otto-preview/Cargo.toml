@@ -12,15 +12,15 @@ name = "otto-preview"
 path = "src/main.rs"
 
 # The preview itself is Peek's: the session that zooms, pans, pages and
-# selects lives in otto-files, the decoder in otto-peek and playback in
-# otto-media-kit. This crate is only the window around them.
+# selects, and the decoder under it, live in otto-peek, which otto-files
+# embeds too; playback is otto-media-kit's. This crate is only the window
+# around them.
 [dependencies]
 otto-kit = { path = "../otto-kit" }
 # The chat beside the document: the same conversation and log the launcher hosts.
 otto-agents-kit = { path = "../otto-agents-kit", features = ["dictation"] }
 otto-agents-client = { path = "../otto-agents-client" }
 otto-peek = { path = "../otto-peek" }
-otto-files = { path = "../otto-files" }
 # Library only: the GStreamer worker is its own binary, installed beside this one.
 otto-media-kit = { path = "../otto-media-kit", default-features = false }
 smithay-client-toolkit = { workspace = true, features = ["calloop", "xkbcommon"] }

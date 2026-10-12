@@ -1,7 +1,8 @@
 use crate::{
-    command, model, ocrcache, palette, pane_surfaces, peek, perf, picker, remembered, rename,
-    scene, scripts, thumbcache, thumbnails, view,
+    command, model, palette, pane_surfaces, perf, picker, remembered, rename, scene, scripts,
+    thumbcache, thumbnails, view,
 };
+use otto_peek::{ocrcache, session as peek};
 
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
@@ -1225,7 +1226,7 @@ struct FilesWindow {
     desk_input_region: Option<Rect>,
     /// A watch on the folder `files.toml` lives in, so the desk follows an
     /// edit to its config. `None` outside the desk.
-    desk_config_watch: Option<crate::watch::DirWatch>,
+    desk_config_watch: Option<otto_kit::watch::DirWatch>,
     /// The desk's overflow panel on screen, while it is. Shared with the
     /// pointer callback, registered once, for the reason
     /// [`Self::info_window`] is.

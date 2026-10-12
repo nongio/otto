@@ -3,9 +3,9 @@
 //! or the header of a TIFF-based file (TIFF itself, and the raw formats
 //! built on it: DNG, NEF, CR2, ARW, ORF, RW2 …).
 //!
-//! Header arithmetic only, like [`crate::imagesize`]: the bytes are a file's,
-//! so every read is bounds-checked and a malformed block is simply nothing
-//! known, never a panic. Only the first [`READ_LIMIT`] bytes are looked at;
+//! Header arithmetic only, like [`otto_peek::imagesize`]: the bytes are a
+//! file's, so every read is bounds-checked and a malformed block is simply
+//! nothing known, never a panic. Only the first [`READ_LIMIT`] bytes are looked at;
 //! EXIF sits at the head of the file in every format read here.
 
 use std::io::Read;

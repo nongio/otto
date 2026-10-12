@@ -245,12 +245,12 @@ pub struct Column {
     pub sorted: std::cell::RefCell<SortCache>,
     /// This directory's inotify watch. Dropped with the column, which is what
     /// keeps the watch set equal to what is on screen.
-    watch: crate::watch::DirWatch,
+    watch: otto_kit::watch::DirWatch,
     /// For the Trash, which lists every can rather than one directory: a
     /// watch on each other can's `files/`, so an item trashed on a stick
     /// shows up as one trashed at home does. Set from each snapshot's
     /// [`Snapshot::can_dirs`]; empty for any other column.
-    can_watches: Vec<(PathBuf, crate::watch::DirWatch)>,
+    can_watches: Vec<(PathBuf, otto_kit::watch::DirWatch)>,
     /// Set when a snapshot landed because the *directory* changed rather than
     /// because the user navigated. The cursor is an index, so it has to be
     /// re-derived after one of these; the selection is by key and does not.
@@ -267,7 +267,7 @@ impl Column {
     pub fn new(path: PathBuf) -> Self {
         let mut loader = Directory::new();
         loader.load(&path);
-        let watch = crate::watch::DirWatch::new(&path);
+        let watch = otto_kit::watch::DirWatch::new(&path);
         Self {
             path,
             snapshot: Snapshot::default(),
@@ -320,7 +320,7 @@ impl Column {
             search_available: true,
             // Dead: the sentinel is not a directory, so inotify declines it and
             // the watch reports nothing for the pane's whole life.
-            watch: crate::watch::DirWatch::new(&path),
+            watch: otto_kit::watch::DirWatch::new(&path),
             can_watches: Vec::new(),
             path,
             selection: std::collections::BTreeSet::new(),
@@ -393,10 +393,10 @@ impl Column {
         match self.watch.take() {
             // A re-read in place: `snapshot` is replaced, and nothing the user
             // positioned — selection, scroll offset — is touched.
-            Some(crate::watch::Change::Modified) => {
+            Some(otto_kit::watch::Change::Modified) => {
                 self.reload();
             }
-            Some(crate::watch::Change::Gone) => self.gone = true,
+            Some(otto_kit::watch::Change::Gone) => self.gone = true,
             None if cans_changed => self.reload(),
             None => {}
         }
@@ -440,7 +440,7 @@ impl Column {
         for dir in wanted {
             let watch = match old.iter().position(|(kept, _)| kept == dir) {
                 Some(at) => old.swap_remove(at).1,
-                None => crate::watch::DirWatch::new(dir),
+                None => otto_kit::watch::DirWatch::new(dir),
             };
             self.can_watches.push((dir.clone(), watch));
         }

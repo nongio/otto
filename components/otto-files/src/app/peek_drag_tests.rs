@@ -54,7 +54,7 @@ fn the_title_strip_takes_hold_of_the_panel() {
 #[test]
 fn the_content_does_not() {
     let (mut browser, _dir) = with_panel(panel(), display());
-    let content = view::peek_content_rect(panel());
+    let content = peek::content_rect(panel());
 
     assert!(!browser.peek_grip(Point::new(content.center_x(), content.center_y()), panel()));
     assert!(!browser.peek_dragging());

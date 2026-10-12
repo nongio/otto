@@ -1,9 +1,9 @@
 //! Preview: one file in a window of its own.
 //!
 //! The window draws the file exactly as Peek does over the file list, through
-//! the same [`otto_files::peek::Session`] and the same toolkit renderer, with a
-//! titlebar and a toolbar around it instead of the panel's title strip. One
-//! file per window, and one process for all of them: a later start hands its
+//! the same [`otto_peek::session::Session`] and the same toolkit renderer,
+//! with a titlebar and a toolbar around it instead of the panel's title strip.
+//! One file per window, and one process for all of them: a later start hands its
 //! file to the running Preview over the session bus (see [`instance`]) and
 //! leaves. See `specs/preview-app.md`.
 //!
@@ -30,7 +30,7 @@ mod viewer;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
-use otto_files::imagesize::{self, Header};
+use otto_peek::imagesize::{self, Header};
 
 /// The largest window a picture is fitted into when it opens, in points.
 const FIT_W: f32 = 1100.0;
