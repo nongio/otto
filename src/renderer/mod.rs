@@ -25,6 +25,8 @@ pub mod sync;
 pub mod textures;
 #[cfg(feature = "vulkan")]
 pub mod vulkan;
+#[cfg(feature = "vulkan")]
+pub mod vulkan_api;
 
 // Re-export commonly used types
 pub use egl_context::EGLSurfaceWrapper;
@@ -276,7 +278,4 @@ udev_multi_renderer!(
 );
 
 #[cfg(feature = "vulkan")]
-udev_multi_renderer!(
-    crate::udev::vulkan_api::GbmVulkanBackend,
-    vulkan::SkiaVkError
-);
+udev_multi_renderer!(vulkan_api::GbmVulkanBackend, vulkan::SkiaVkError);

@@ -2773,17 +2773,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
     pub fn get_gamma_size(&self, output: &Output) -> Option<u32> {
         #[cfg(feature = "udev")]
         {
-            if let Some(backends) =
-                crate::udev::drm_backends(&self.backend_data as &dyn std::any::Any)
-            {
-                use crate::udev::UdevOutputId;
-                let output_id = output.user_data().get::<UdevOutputId>()?;
-                let backend = backends.get(&output_id.device_id)?;
-                let drm_fd = backend.drm.device_fd();
-                crate::udev::gamma::get_gamma_size(drm_fd, output_id.crtc).ok()
-            } else {
-                None
-            }
+            self.backend_data.gamma_size(output)
         }
         #[cfg(not(feature = "udev"))]
         {
@@ -2803,60 +2793,47 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
     ) -> Result<(), String> {
         #[cfg(feature = "udev")]
         {
-            if let Some(backends) =
-                crate::udev::drm_backends(&self.backend_data as &dyn std::any::Any)
+            self.backend_data.check_gamma_output(output)?;
+
+            // Get current gamma as starting point
+            let gamma_size = red.len();
+            let current = if let Some((current_r, current_g, current_b)) =
+                self.current_gamma.get(&output.name())
             {
-                use crate::udev::UdevOutputId;
-                let output_id = output
-                    .user_data()
-                    .get::<UdevOutputId>()
-                    .ok_or_else(|| "Output has no UdevOutputId".to_string())?;
-                let _ = backends
-                    .get(&output_id.device_id)
-                    .ok_or_else(|| "Backend not found".to_string())?;
-
-                // Get current gamma as starting point
-                let gamma_size = red.len();
-                let current = if let Some((current_r, current_g, current_b)) =
-                    self.current_gamma.get(&output.name())
-                {
-                    // Use actual current gamma from last apply
-                    (current_r.clone(), current_g.clone(), current_b.clone())
-                } else if let Some((from_r, from_g, from_b, _, _, _, _, _)) =
-                    self.gamma_transitions.get(&output.name())
-                {
-                    // Use the start of ongoing transition as new start
-                    (from_r.clone(), from_g.clone(), from_b.clone())
-                } else {
-                    // Generate linear gamma as default start (first time only)
-                    let linear: Vec<u16> = (0..gamma_size)
-                        .map(|i| ((i as f64 / (gamma_size - 1) as f64) * 65535.0) as u16)
-                        .collect();
-                    (linear.clone(), linear.clone(), linear)
-                };
-
-                // Store transition
-                self.gamma_transitions.insert(
-                    output.name(),
-                    (
-                        current.0,
-                        current.1,
-                        current.2,
-                        red.to_vec(),
-                        green.to_vec(),
-                        blue.to_vec(),
-                        std::time::Instant::now(),
-                        std::time::Duration::from_millis(500),
-                    ),
-                );
-
-                // Trigger render loop to start animation
-                self.schedule_event_loop_dispatch();
-
-                Ok(())
+                // Use actual current gamma from last apply
+                (current_r.clone(), current_g.clone(), current_b.clone())
+            } else if let Some((from_r, from_g, from_b, _, _, _, _, _)) =
+                self.gamma_transitions.get(&output.name())
+            {
+                // Use the start of ongoing transition as new start
+                (from_r.clone(), from_g.clone(), from_b.clone())
             } else {
-                Err("Not a udev backend".to_string())
-            }
+                // Generate linear gamma as default start (first time only)
+                let linear: Vec<u16> = (0..gamma_size)
+                    .map(|i| ((i as f64 / (gamma_size - 1) as f64) * 65535.0) as u16)
+                    .collect();
+                (linear.clone(), linear.clone(), linear)
+            };
+
+            // Store transition
+            self.gamma_transitions.insert(
+                output.name(),
+                (
+                    current.0,
+                    current.1,
+                    current.2,
+                    red.to_vec(),
+                    green.to_vec(),
+                    blue.to_vec(),
+                    std::time::Instant::now(),
+                    std::time::Duration::from_millis(500),
+                ),
+            );
+
+            // Trigger render loop to start animation
+            self.schedule_event_loop_dispatch();
+
+            Ok(())
         }
         #[cfg(not(feature = "udev"))]
         {
@@ -2875,22 +2852,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
     ) -> Result<(), String> {
         #[cfg(feature = "udev")]
         {
-            if let Some(backends) =
-                crate::udev::drm_backends(&self.backend_data as &dyn std::any::Any)
-            {
-                use crate::udev::UdevOutputId;
-                let output_id = output
-                    .user_data()
-                    .get::<UdevOutputId>()
-                    .ok_or_else(|| "Output has no UdevOutputId".to_string())?;
-                let backend = backends
-                    .get(&output_id.device_id)
-                    .ok_or_else(|| "Backend not found".to_string())?;
-                let drm_fd = backend.drm.device_fd();
-                crate::udev::gamma::apply_gamma_lut(drm_fd, output_id.crtc, red, green, blue)
-            } else {
-                Err("Not a udev backend".to_string())
-            }
+            self.backend_data.set_gamma(output, red, green, blue)
         }
         #[cfg(not(feature = "udev"))]
         {
@@ -2907,7 +2869,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             let size = self
                 .get_gamma_size(output)
                 .ok_or("Failed to get gamma size")? as usize;
-            let neutral = crate::udev::gamma::generate_gamma_lut(6500, size);
+            let neutral = gamma_control::generate_gamma_lut(6500, size);
             // Use animated apply_gamma for smooth transition back to neutral
             self.apply_gamma(output, &neutral.0, &neutral.1, &neutral.2)
         }
@@ -3035,5 +2997,29 @@ pub trait Backend {
             backend = self.backend_name(),
             "Input settings stored; this backend has no libinput devices to reconfigure"
         );
+    }
+
+    /// Check that this backend can program `output`'s gamma ramp, before a
+    /// transition toward a new ramp starts. Only the udev backend drives the
+    /// CRTCs; under a host compositor the host owns gamma.
+    fn check_gamma_output(&self, _output: &Output) -> Result<(), String> {
+        Err("Not a udev backend".to_string())
+    }
+
+    /// The number of entries in `output`'s gamma ramp, if this backend can
+    /// program it.
+    fn gamma_size(&self, _output: &Output) -> Option<u32> {
+        None
+    }
+
+    /// Program `output`'s gamma ramp now, without a transition.
+    fn set_gamma(
+        &self,
+        _output: &Output,
+        _red: &[u16],
+        _green: &[u16],
+        _blue: &[u16],
+    ) -> Result<(), String> {
+        Err("Not a udev backend".to_string())
     }
 }

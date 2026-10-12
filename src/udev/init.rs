@@ -3,11 +3,7 @@
 // Handles session setup, GPU initialization, libinput configuration,
 // and the main event loop for the udev backend.
 
-use std::{
-    collections::HashMap,
-    sync::{atomic::Ordering, OnceLock},
-    time::Duration,
-};
+use std::{collections::HashMap, sync::atomic::Ordering, time::Duration};
 
 use smithay::{
     backend::{
@@ -24,15 +20,13 @@ use tracing::{error, info, warn};
 
 use crate::{
     config::Config,
-    input::edge_swipe::{
-        dispatch::Filtered,
-        evdev::{EvdevFds, TrackingInterface},
-    },
+    input::edge_swipe::evdev::{EvdevFds, TrackingInterface},
     renderer::active::RendererApi,
     state::{Backend, Otto},
 };
 
 use super::{
+    edge_swipe::Filtered,
     feedback::get_surface_dmabuf_feedback,
     types::{DeviceAddError, UdevData},
 };
@@ -81,18 +75,6 @@ fn configure_libinput_devices(
     }
 }
 
-/// Why the session draws with OpenGL although Vulkan was asked for; unset
-/// when Vulkan was not requested or came up.
-static VULKAN_FALLBACK: OnceLock<String> = OnceLock::new();
-
-/// Why this session fell back from Vulkan to OpenGL, if it did.
-///
-/// Settings reads it to report Vulkan as unavailable on this machine instead
-/// of offering a choice the next start would silently replace.
-pub fn vulkan_fallback() -> Option<&'static str> {
-    VULKAN_FALLBACK.get().map(String::as_str)
-}
-
 /// Why `requested` cannot be the session's renderer: `Some` when it is Vulkan
 /// and the probe of the primary GPU failed, so the session runs on OpenGL.
 ///
@@ -121,14 +103,15 @@ fn seat_name() -> String {
 #[cfg(feature = "vulkan")]
 fn probe_vulkan(seat: &str) -> Result<(), String> {
     let node = primary_gpu_node(seat);
-    super::vulkan_api::probe(node).map_err(|err| err.to_string())
+    crate::renderer::vulkan_api::probe(node).map_err(|err| err.to_string())
 }
 
 /// Runs the udev backend on the renderer named `cli`, or else on the one the
 /// config's `[rendering] renderer` names.
 ///
 /// Vulkan is probed on the primary GPU first; when it cannot come up there the
-/// session runs on OpenGL instead and logs why (see [`vulkan_fallback`]).
+/// session runs on OpenGL instead and logs why (see
+/// [`crate::renderer::vulkan_api::vulkan_fallback`]).
 ///
 /// # Errors
 ///
@@ -151,7 +134,7 @@ pub fn run_selected(cli: Option<&str>) -> Result<(), String> {
                     "Vulkan renderer requested but unavailable on the primary GPU ({reason}); \
                      using OpenGL"
                 );
-                let _ = VULKAN_FALLBACK.set(reason);
+                crate::renderer::vulkan_api::set_vulkan_fallback(reason);
                 RendererKind::Gl
             }
             None => kind,
@@ -241,7 +224,7 @@ pub fn run_udev<A: RendererApi>() {
         gpus,
         backends: HashMap::new(),
         input_devices: Vec::new(),
-        edge_swipe: crate::input::edge_swipe::dispatch::EdgeSwipeInput::new(evdev_fds.clone()),
+        edge_swipe: super::edge_swipe::EdgeSwipeInput::new(evdev_fds.clone()),
         #[cfg(feature = "ticker")]
         fps_texture: None,
 

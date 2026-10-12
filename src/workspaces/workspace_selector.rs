@@ -1771,7 +1771,7 @@ fn draw_carried_label(text: &str, ui_scale: f32) -> Option<ContentDrawFunction> 
     let radius_px = otto_kit::corners::radius(8.0 * ui_scale);
 
     let draw = move |canvas: &layers::skia::Canvas, w: f32, h: f32| -> layers::skia::Rect {
-        let mut builder = crate::workspaces::utils::FONT_CACHE.with(|font_cache| {
+        let mut builder = crate::utils::FONT_CACHE.with(|font_cache| {
             layers::skia::textlayout::ParagraphBuilder::new(
                 &paragraph_style,
                 font_cache.font_collection.clone(),

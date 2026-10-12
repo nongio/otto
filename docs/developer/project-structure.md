@@ -52,7 +52,7 @@ src/
 `src/udev/` is a directory. The interesting parts are `render.rs` (the frame
 path, by far the largest), `planes.rs` and `backdrop.rs` (hardware plane
 scanout and cross-plane blur), `init.rs` and `device.rs` (DRM setup and
-hotplug).
+hotplug), and `input.rs` and `edge_swipe.rs` (the libinput event dispatch).
 
 ## Components
 

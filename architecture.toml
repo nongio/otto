@@ -192,44 +192,4 @@ reason = "The XDG base directories, with their fallbacks, are otto_foundations::
 
 # Crates: none.
 
-# Compositor modules.
-
-[[allow]]
-module = "input"
-uses = "udev"
-reason = "Edge swipe, tablet, pointer and gesture handling have udev-only impls on Otto<UdevData> (evdev fds, the renderer API)."
-
-[[allow]]
-module = "input_handler"
-uses = "udev"
-reason = "udev-only input handling (VT switching, the renderer API) is an impl on Otto<UdevData>."
-
-[[allow]]
-module = "renderer"
-uses = "udev"
-reason = "Switching the active renderer builds the Vulkan backend from udev::vulkan_api, which belongs in renderer."
-
-[[allow]]
-module = "settings"
-uses = "udev"
-reason = "The renderer setting offers Vulkan only when udev's Vulkan probe succeeded (udev::vulkan_fallback)."
-
-[[allow]]
-module = "state"
-uses = "udev"
-reason = "Night light and output ids downcast the backend data to reach udev's DRM backends and gamma tables, and screencopy names udev::UdevRenderer. Belongs behind the Backend trait."
-
-[[allow]]
-module = "skia_renderer"
-uses = "workspaces"
-reason = "The GPU-memory log (target otto::gpumem) counts workspaces::zombie_windows(); the count belongs in stats the renderer is handed."
-
-[[allow]]
-module = "config"
-uses = "workspaces"
-reason = "Config::gaps returns workspaces::tiling::Gaps; the conversion belongs in workspaces."
-
-[[allow]]
-module = "utils"
-uses = "workspaces"
-reason = "utils shares workspaces::utils::FONT_CACHE; the cache belongs in utils."
+# Compositor modules: none.

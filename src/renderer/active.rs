@@ -305,12 +305,10 @@ mod vulkan {
     };
 
     use super::{RendererApi, SkiaDeviceRenderer, UdevRendererError};
-    use crate::{
-        renderer::{
-            vulkan::{SkiaVkError, SkiaVkRenderer, SkiaVkTexture},
-            SkiaSurface,
-        },
-        udev::vulkan_api::{GbmVulkanBackend, GbmVulkanError},
+    use crate::renderer::{
+        vulkan::{SkiaVkError, SkiaVkRenderer, SkiaVkTexture},
+        vulkan_api::{GbmVulkanBackend, GbmVulkanError},
+        SkiaSurface,
     };
 
     /// Skia on Vulkan, through [`GbmVulkanBackend`].

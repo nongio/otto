@@ -59,6 +59,24 @@ fn resolve_command_file(
         .or_else(|| Some(runtime_dir?.join(name).to_str()?.to_string()))
 }
 
+/// Every window unmapped so far, weakly — see [`zombie_windows`].
+static UNMAPPED_WINDOWS: std::sync::Mutex<Vec<std::sync::Weak<dyn std::any::Any + Send + Sync>>> =
+    std::sync::Mutex::new(Vec::new());
+
+/// Remember a window workspaces just unmapped, for [`zombie_windows`].
+pub fn note_unmapped_window<T: std::any::Any + Send + Sync>(window: std::sync::Weak<T>) {
+    UNMAPPED_WINDOWS.lock().unwrap().push(window);
+}
+
+/// How many unmapped windows something still holds on to. A closed window
+/// that stays referenced keeps its surface, and with it every buffer the
+/// client ever attached; `debug-hooks` only.
+pub fn zombie_windows() -> usize {
+    let mut list = UNMAPPED_WINDOWS.lock().unwrap();
+    list.retain(|w| w.strong_count() > 0);
+    list.len()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

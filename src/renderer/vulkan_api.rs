@@ -12,6 +12,7 @@ use std::{
     cell::{Cell, RefCell},
     collections::HashSet,
     fmt,
+    sync::OnceLock,
 };
 
 use smithay::backend::{
@@ -167,6 +168,24 @@ fn physical_device_of(
 pub fn probe(node: DrmNode) -> Result<(), GbmVulkanError> {
     let instance = Instance::new(Version::VERSION_1_3, None)?;
     physical_device_of(&instance, node).map(drop)
+}
+
+/// Why the session draws with OpenGL although Vulkan was asked for; unset
+/// when Vulkan was not requested or came up.
+static VULKAN_FALLBACK: OnceLock<String> = OnceLock::new();
+
+/// Why this session fell back from Vulkan to OpenGL, if it did.
+///
+/// Settings reads it to report Vulkan as unavailable on this machine instead
+/// of offering a choice the next start would silently replace.
+pub fn vulkan_fallback() -> Option<&'static str> {
+    VULKAN_FALLBACK.get().map(String::as_str)
+}
+
+/// Records why the backend fell back from Vulkan to OpenGL, after [`probe`]
+/// failed. Only the first reason is kept.
+pub fn set_vulkan_fallback(reason: String) {
+    let _ = VULKAN_FALLBACK.set(reason);
 }
 
 impl GraphicsApi for GbmVulkanBackend {

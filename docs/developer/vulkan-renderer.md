@@ -50,10 +50,12 @@ an error naming the feature.
 ![Choosing the renderer](diagrams/vulkan-selection.svg)
 
 Before committing to Vulkan, `udev::run_selected` (`src/udev/init.rs`) probes
-the primary GPU with `udev::vulkan_api::probe`: it needs a Vulkan 1.3 instance
-and a physical device whose render or primary node is that GPU. When the probe
-fails (no loader, no ICD, an old driver, a VM GPU) the session logs why on
-`otto::udev` and runs on GL instead, and Settings shows Vulkan as unavailable.
+the primary GPU with `renderer::vulkan_api::probe`: it needs a Vulkan 1.3
+instance and a physical device whose render or primary node is that GPU. When
+the probe fails (no loader, no ICD, an old driver, a VM GPU) the session logs
+why on `otto::udev` and runs on GL instead, recording the reason with
+`renderer::vulkan_api::set_vulkan_fallback`, and Settings shows Vulkan as
+unavailable.
 This matters because a stored `renderer = "vulkan"` that simply exited would
 leave the user stuck at the greeter.
 
@@ -73,7 +75,7 @@ render loop and no mixed mode: one session, one renderer.
 
 | | `GlApi` | `VulkanApi` |
 |---|---|---|
-| Smithay multi-GPU api | `GbmGlesBackend` | `GbmVulkanBackend` (`src/udev/vulkan_api.rs`) |
+| Smithay multi-GPU api | `GbmGlesBackend` | `GbmVulkanBackend` (`src/renderer/vulkan_api.rs`) |
 | Device renderer | `SkiaRenderer` | `SkiaVkRenderer` |
 | `PLANES_SUPPORTED` | `true` | `false` (see [What is missing](#what-is-missing)) |
 | `wl_drm` | offered | not offered; clients use `linux-dmabuf` |
@@ -287,7 +289,7 @@ requested but unavailable, the probe failed and the session is on GL.
 |---|---|
 | How is the renderer picked, and when does it fall back? | `src/udev/init.rs` (`run_selected`), `src/main.rs` |
 | What does the backend require of a renderer? | `src/renderer/active.rs` |
-| How are renderers created per GPU? | `src/udev/vulkan_api.rs` |
+| How are renderers created per GPU? | `src/renderer/vulkan_api.rs` |
 | Why is my buffer refused? | `src/renderer/vulkan/format.rs`, then the `cannot render into dmabuf` warning in `mod.rs` |
 | Why is a frame not fenced? | `src/renderer/vulkan/sync.rs` |
 | Why is a texture still alive? | `src/renderer/vulkan/retire.rs` |

@@ -12,11 +12,10 @@
 //! - [`EdgeZone`] says whether those origins count as "at the right edge".
 //! - [`EdgeSwipe`] turns the scroll stream into pass, hold or claim verdicts.
 //!
-//! The udev glue lives in [`dispatch`].
+//! The udev glue lives in [`crate::udev::edge_swipe`].
 
 // Rust guideline compliant 2026-02-21
 
-pub mod dispatch;
 pub mod evdev;
 
 /// Width of the right-edge zone the rightmost finger must land in.

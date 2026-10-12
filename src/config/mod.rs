@@ -1366,15 +1366,6 @@ impl TilingConfig {
         ))
     }
 
-    /// The gaps a workspace lays out with.
-    pub fn gaps(&self) -> crate::workspaces::tiling::Gaps {
-        crate::workspaces::tiling::Gaps {
-            inner: self.inner_gap.max(0),
-            outer: self.outer_gap.max(0),
-            smart: self.smart_gaps,
-        }
-    }
-
     /// One keyboard resize step, as a share of the container.
     pub fn step(&self) -> f32 {
         self.resize_step.clamp(0.01, 0.5)

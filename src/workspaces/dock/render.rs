@@ -5,9 +5,9 @@ use taffy::LengthPercentageAuto;
 use crate::{
     config::{Config, DockPosition},
     theme::theme_colors,
-    utils::parse_hex_color,
+    utils::{parse_hex_color, FONT_CACHE},
     workspaces::{
-        utils::{draw_balloon_rect, BalloonArrow, FONT_CACHE},
+        utils::{draw_balloon_rect, BalloonArrow},
         Application,
     },
 };

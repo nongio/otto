@@ -6,19 +6,19 @@
 pub mod backdrop;
 pub mod debug;
 pub mod device;
+pub mod edge_swipe;
 pub mod feedback;
 pub mod gamma;
 pub mod init;
+pub mod input;
 pub mod input_config;
 pub mod planes;
 pub mod render;
 pub mod schedule;
 pub mod types;
-#[cfg(feature = "vulkan")]
-pub mod vulkan_api;
 
 // Re-export public API
-pub use init::{run_selected, run_udev, vulkan_fallback};
+pub use init::{run_selected, run_udev};
 
 // Re-export public types
 pub use types::{
@@ -56,24 +56,6 @@ use smithay::{
         },
     },
 };
-
-/// The DRM devices of `backend_data`, when it is the udev backend's.
-///
-/// For code that holds the backend data type-erased, whichever renderer the
-/// backend runs on.
-pub fn drm_backends(
-    backend_data: &dyn std::any::Any,
-) -> Option<&std::collections::HashMap<DrmNode, types::BackendData>> {
-    if let Some(data) = backend_data.downcast_ref::<UdevData<crate::renderer::active::GlApi>>() {
-        return Some(&data.backends);
-    }
-    #[cfg(feature = "vulkan")]
-    if let Some(data) = backend_data.downcast_ref::<UdevData<crate::renderer::active::VulkanApi>>()
-    {
-        return Some(&data.backends);
-    }
-    None
-}
 
 impl<A: RendererApi> DmabufHandler for Otto<UdevData<A>> {
     fn dmabuf_state(&mut self) -> &mut DmabufState {
@@ -259,6 +241,44 @@ impl<A: RendererApi> Backend for UdevData<A> {
     fn prefers_dmabuf_screenshare(&self) -> bool {
         // Udev backend supports DMA-BUF for zero-copy screenshare
         true
+    }
+
+    fn check_gamma_output(&self, output: &Output) -> Result<(), String> {
+        let output_id = output
+            .user_data()
+            .get::<UdevOutputId>()
+            .ok_or_else(|| "Output has no UdevOutputId".to_string())?;
+        let _ = self
+            .backends
+            .get(&output_id.device_id)
+            .ok_or_else(|| "Backend not found".to_string())?;
+        Ok(())
+    }
+
+    fn gamma_size(&self, output: &Output) -> Option<u32> {
+        let output_id = output.user_data().get::<UdevOutputId>()?;
+        let backend = self.backends.get(&output_id.device_id)?;
+        let drm_fd = backend.drm.device_fd();
+        gamma::get_gamma_size(drm_fd, output_id.crtc).ok()
+    }
+
+    fn set_gamma(
+        &self,
+        output: &Output,
+        red: &[u16],
+        green: &[u16],
+        blue: &[u16],
+    ) -> Result<(), String> {
+        let output_id = output
+            .user_data()
+            .get::<UdevOutputId>()
+            .ok_or_else(|| "Output has no UdevOutputId".to_string())?;
+        let backend = self
+            .backends
+            .get(&output_id.device_id)
+            .ok_or_else(|| "Backend not found".to_string())?;
+        let drm_fd = backend.drm.device_fd();
+        gamma::apply_gamma_lut(drm_fd, output_id.crtc, red, green, blue)
     }
 }
 

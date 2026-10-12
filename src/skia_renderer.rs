@@ -429,7 +429,7 @@ impl SkiaRenderer {
                     node_surface_bytes >> 20,
                     stored_bytes >> 20,
                     self.dmabuf_cache.len(),
-                    crate::workspaces::zombie_windows(),
+                    crate::debug_hooks::zombie_windows(),
                 );
             }
         }

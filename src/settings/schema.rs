@@ -92,13 +92,13 @@ impl SettingSpec {
     /// The entries of `choices` this session cannot take: the ones this build
     /// left out, plus a renderer that was asked for but could not come up on
     /// this machine, so the session fell back (see
-    /// [`crate::udev::vulkan_fallback`]).
+    /// [`crate::renderer::vulkan_api::vulkan_fallback`]).
     pub fn unavailable_now(&self) -> Vec<&'static str> {
         #[cfg_attr(not(feature = "vulkan"), allow(unused_mut))]
         let mut out = self.unavailable_choices.to_vec();
         #[cfg(feature = "vulkan")]
         if self.id == "rendering.renderer"
-            && crate::udev::vulkan_fallback().is_some()
+            && crate::renderer::vulkan_api::vulkan_fallback().is_some()
             && !out.contains(&"vulkan")
         {
             out.push("vulkan");

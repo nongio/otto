@@ -11,7 +11,8 @@ built.
 On the udev backend a two-finger scroll that starts at the right edge of the
 touchpad and moves left opens the canvas, following the fingers. While the
 canvas is shown, a two-finger scroll to the right that starts away from that
-edge closes it. The code lives in `src/input/edge_swipe/`; it is compiled
+edge closes it. The code lives in `src/input/edge_swipe/`, with the glue
+into the libinput event stream in `src/udev/edge_swipe.rs`; it is compiled
 only with the `udev` feature, since winit, X11 and headless have no evdev
 devices.
 

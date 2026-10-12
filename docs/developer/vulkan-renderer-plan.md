@@ -215,7 +215,7 @@ key); the command line wins. A build without the feature defaults to GL and
 refuses an explicit `vulkan` with an error naming the feature.
 
 Before committing to Vulkan, `run_selected` probes the primary GPU
-(`udev::vulkan_api::probe`: a 1.3 instance plus a physical device whose
+(`renderer::vulkan_api::probe`: a 1.3 instance plus a physical device whose
 render or primary node is the GPU, the same lookup `GbmVulkanBackend::
 add_node` makes). When that fails (no loader, no ICD, a driver below 1.3, a
 VM GPU) the session warns on `otto::udev` with the reason and runs on GL
@@ -239,7 +239,7 @@ call it.
 What works, covered by the ignored GPU tests
 (`cargo test --features vulkan --lib -- --ignored vulkan`):
 
-- `GbmVulkanBackend` (`src/udev/vulkan_api.rs`) is the Smithay
+- `GbmVulkanBackend` (`src/renderer/vulkan_api.rs`) is the Smithay
   `GraphicsApi`: one renderer per DRM node, on the physical device whose
   render or primary node matches, created when the node is added so a
   device Vulkan cannot drive fails `device_added` with a named error. Startup
