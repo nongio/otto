@@ -477,10 +477,11 @@ const EVERYTHING_CLIPPY: &str =
 /// The library tests when everything is affected, as above.
 const EVERYTHING_TEST_LIB: &str = "--workspace --exclude otto-files";
 
-/// `key=value` lines for `$GITHUB_OUTPUT`. `all` is read by the steps gated
-/// on one crate being in `packages` (the toolkit doctests, the agent
-/// service), so a selection of everything that could not list the members
-/// still runs them.
+/// `key=value` lines for `$GITHUB_OUTPUT`. `all` is read by the steps and
+/// jobs gated on one crate being in `packages` (the toolkit doctests, the
+/// render-stack lint, the agent service tests and the AHP conformance job),
+/// so a selection of everything that could not list the members still runs
+/// them.
 pub fn outputs(sel: &Selection, members: &[Member]) -> Vec<(&'static str, String)> {
     let flag = |b: bool| if b { "true" } else { "false" }.to_owned();
     let packages = sel.packages.keys().cloned().collect::<Vec<_>>().join(" ");

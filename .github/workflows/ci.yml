@@ -200,13 +200,15 @@ jobs:
       - name: The otto-help skill ships the current user guides
         run: scripts/sync-skill-docs.sh --check
 
-  # A check of its own, never gated: Otto claims to implement the Agent Host
-  # Protocol, and this is the evidence for that claim. It runs the corpora
-  # upstream ships for the purpose — every reducer case and every wire
-  # round-trip in spec/upstream/types/test-cases — against the types and
-  # reducers the service is built on. otto-agents is pure Rust with no system
-  # libraries, so it needs none of the compositor's build dependencies and
-  # does not wait behind them. It runs only when otto-agents is affected.
+  # A check of its own: Otto claims to implement the Agent Host Protocol, and
+  # this is the evidence for that claim. It runs the corpora upstream ships
+  # for the purpose — every reducer case and every wire round-trip in
+  # spec/upstream/types/test-cases — against the types and reducers the
+  # service is built on. otto-agents is pure Rust with no system libraries,
+  # so it needs none of the compositor's build dependencies and does not wait
+  # behind them. It runs only when otto-agents is affected, which is safe:
+  # the corpora live in components/otto-agents/spec, so a change to them
+  # marks otto-agents as affected too.
   ahp-conformance:
     needs: changes
     if: needs.changes.outputs.all == 'true' || contains(format(' {0} ', needs.changes.outputs.packages), ' otto-agents ')
