@@ -460,8 +460,8 @@ const BIN_TESTS: &[&str] = &[
     "otto-search",
 ];
 
-/// Members outside `ui`: the areas with filters of their own, and the tool
-/// the `architecture` job checks.
+/// Members that do not make the `check` job run on their own: the areas
+/// with flags of their own, and the tool the `architecture` job checks.
 const NOT_UI: &[&str] = &[
     "otto",
     "otto-render",
@@ -470,10 +470,24 @@ const NOT_UI: &[&str] = &[
     "otto-arch",
 ];
 
-/// `key=value` lines for `$GITHUB_OUTPUT`.
+/// The components clippy run when everything is affected: what the step ran
+/// before the selection existed. ci.yml's fallback writes the same lines.
+const EVERYTHING_CLIPPY: &str =
+    "--workspace --exclude otto --exclude otto-rdp --exclude xdg-desktop-portal-otto --exclude submenu-gtk";
+/// The library tests when everything is affected, as above.
+const EVERYTHING_TEST_LIB: &str = "--workspace --exclude otto-files";
+
+/// `key=value` lines for `$GITHUB_OUTPUT`. `all` is read by the steps gated
+/// on one crate being in `packages` (the toolkit doctests, the agent
+/// service), so a selection of everything that could not list the members
+/// still runs them.
 pub fn outputs(sel: &Selection, members: &[Member]) -> Vec<(&'static str, String)> {
-    let affected = |n: &str| sel.has(n);
     let flag = |b: bool| if b { "true" } else { "false" }.to_owned();
+    let packages = sel.packages.keys().cloned().collect::<Vec<_>>().join(" ");
+    if sel.everything.is_some() {
+        return everything_outputs(packages);
+    }
+    let affected = |n: &str| sel.has(n);
     let args = |keep: &dyn Fn(&Member) -> bool| {
         sel.packages
             .keys()
@@ -489,16 +503,12 @@ pub fn outputs(sel: &Selection, members: &[Member]) -> Vec<(&'static str, String
     let files = affected("otto-files");
     let ui = sel.packages.keys().any(|n| !NOT_UI.contains(&n.as_str()));
     vec![
-        ("all", flag(sel.everything.is_some())),
-        (
-            "packages",
-            sel.packages.keys().cloned().collect::<Vec<_>>().join(" "),
-        ),
+        ("all", flag(false)),
+        ("packages", packages),
         ("compositor", flag(compositor)),
         ("rdp", flag(rdp)),
         ("portal", flag(portal)),
         ("files", flag(files)),
-        ("ui", flag(ui)),
         ("packaging", flag(sel.packaging.is_some())),
         ("rust", flag(compositor || rdp || portal || files || ui)),
         (
@@ -512,6 +522,33 @@ pub fn outputs(sel: &Selection, members: &[Member]) -> Vec<(&'static str, String
         (
             "test_bins_args",
             args(&|m| BIN_TESTS.contains(&m.name.as_str())),
+        ),
+    ]
+}
+
+/// Every flag on and the workspace-wide argument lists: the same lines
+/// ci.yml's fallback writes when this tool cannot run (a test keeps the two
+/// in step).
+fn everything_outputs(packages: String) -> Vec<(&'static str, String)> {
+    let t = || "true".to_owned();
+    vec![
+        ("all", t()),
+        ("packages", packages),
+        ("compositor", t()),
+        ("rdp", t()),
+        ("portal", t()),
+        ("files", t()),
+        ("packaging", t()),
+        ("rust", t()),
+        ("clippy_args", EVERYTHING_CLIPPY.to_owned()),
+        ("test_lib_args", EVERYTHING_TEST_LIB.to_owned()),
+        (
+            "test_bins_args",
+            BIN_TESTS
+                .iter()
+                .map(|n| format!("-p {n}"))
+                .collect::<Vec<_>>()
+                .join(" "),
         ),
     ]
 }
@@ -830,7 +867,7 @@ mod tests {
         assert_eq!(
             run(&["otto-bar"], false),
             "all=false\npackages=otto-bar\ncompositor=false\nrdp=false\nportal=false\n\
-             files=false\nui=true\npackaging=false\nrust=true\nclippy_args=-p otto-bar\n\
+             files=false\npackaging=false\nrust=true\nclippy_args=-p otto-bar\n\
              test_lib_args=\ntest_bins_args=-p otto-bar\n"
         );
         let kit = run(&["otto", "otto-bar", "otto-files", "otto-kit"], false);
@@ -847,5 +884,29 @@ mod tests {
         let none = run(&[], true);
         assert!(none.contains("packages=\n") && none.contains("rust=false\n"));
         assert!(none.contains("packaging=true\n"));
+    }
+
+    /// The tool's "everything" and ci.yml's fallback for when the tool
+    /// cannot run write the same lines.
+    #[test]
+    fn everything_matches_the_ci_fallback() {
+        let ws = vec![member("otto", &["src/"], true)];
+        let sel = Selection::everything(&ws, "test".into());
+        assert_eq!(test_args(&sel), "-p otto");
+        let tool = render(outputs(&sel, &ws)).replace("packages=otto\n", "packages=\n");
+
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let ci = std::fs::read_to_string(root.join(".github/workflows/ci.yml")).unwrap();
+        let start = ci
+            .find("<<'EVERYTHING'\n")
+            .expect("ci.yml writes the fallback outputs with <<'EVERYTHING'")
+            + "<<'EVERYTHING'\n".len();
+        let block: String = ci[start..]
+            .lines()
+            .map(str::trim)
+            .take_while(|l| *l != "EVERYTHING")
+            .map(|l| format!("{l}\n"))
+            .collect();
+        assert_eq!(block, tool);
     }
 }

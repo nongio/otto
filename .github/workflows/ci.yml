@@ -22,28 +22,35 @@ jobs:
   # components/otto-launcher lints and tests the launcher, not all 35 crates,
   # and a change under src/ does not rebuild otto-rdp's GStreamer bin.
   #
-  # `otto-arch affected` decides from the crate graph (cargo metadata): a
+  # `otto-arch affected` decides with determinator (guppy), which compares
+  # the package graphs `cargo metadata` resolves at the base and the head: a
   # changed file belongs to the crate whose directory holds it, files outside
   # every crate are placed by the [[affects]] rules in architecture.toml, a
-  # Cargo.lock edit reaches the crates whose dependency closure it changed,
-  # and every crate that depends on an affected one is affected too. A file
+  # Cargo.lock edit reaches the crates whose simulated build it changes, and
+  # every crate whose build includes an affected one is affected too. A file
   # no rule covers, a missing diff base or any error selects everything: the
   # safe default is to run more, never less. Its log (--explain) says why
   # each crate was picked. See docs/developer/architecture.md.
   #
   # Outputs: `packages` (the affected crates), ready-made `-p` lists for the
-  # steps that take one (empty: skip the step), and the area flags the gates
-  # below read, derived from the crates: compositor = otto or otto-render,
+  # steps that take one (empty: skip the step), the area flags the gates
+  # below read, derived from the crates (compositor = otto or otto-render,
   # rdp = otto-rdp, portal = xdg-desktop-portal-otto, files = otto-files,
-  # ui = any other crate but otto-arch (the architecture job's), packaging
-  # from the rules.
+  # rust = any crate the check job builds, packaging from the rules), and
+  # `all`, which the gates on one crate in `packages` also accept, so a
+  # selection of everything that could not list the crates still runs them.
+  #
+  # Nothing here may skip a check by failing: the toolchain, the cache, the
+  # build and the tool itself are allowed to fail, and the last step then
+  # writes the outputs of a selection of everything (the argument lists the
+  # steps ran before the selection existed; otto-arch's tests keep them equal
+  # to what the tool prints for everything).
   changes:
     runs-on: ubuntu-24.04
     outputs:
       all: ${{ steps.affected.outputs.all }}
       packages: ${{ steps.affected.outputs.packages }}
       compositor: ${{ steps.affected.outputs.compositor }}
-      ui: ${{ steps.affected.outputs.ui }}
       rdp: ${{ steps.affected.outputs.rdp }}
       portal: ${{ steps.affected.outputs.portal }}
       packaging: ${{ steps.affected.outputs.packaging }}
@@ -58,16 +65,21 @@ jobs:
         with:
           fetch-depth: 0
       # otto-arch is pure Rust with no system libraries. The cache is the
-      # architecture job's, which builds the same crate; this job only reads
-      # it, so the two never race to save it.
+      # architecture job's, which builds the same crate and resolves the
+      # same full metadata (its registry download included); this job only
+      # reads it, so the two never race to save it.
       - name: Rust toolchain
+        continue-on-error: true
         uses: dtolnay/rust-toolchain@1.97.0
       - name: Cargo cache (registry + target)
+        continue-on-error: true
         uses: Swatinem/rust-cache@v2
         with:
           shared-key: architecture
           save-if: false
       - name: Build otto-arch
+        id: build
+        continue-on-error: true
         run: cargo build --locked -q -p otto-arch
       - name: Affected crates
         id: affected
@@ -76,11 +88,33 @@ jobs:
           # has no usable base (empty, or all zeros): the tool then selects
           # everything. On a pull request the checkout is the merge commit,
           # so diffing the base against the working tree is exactly the
-          # change under test.
+          # change under test. The tool checks the base out in a temporary
+          # worktree for its own cargo metadata.
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          BUILT: ${{ steps.build.outcome }}
         run: |
-          set -euo pipefail
-          target/debug/otto-arch affected --base "${BASE_SHA:-}" --explain | tee -a "$GITHUB_OUTPUT"
+          set -uo pipefail
+          out="$RUNNER_TEMP/affected.txt"
+          if [ "$BUILT" = success ] \
+             && target/debug/otto-arch affected --base "${BASE_SHA:-}" --explain > "$out" \
+             && grep -q '^packages=' "$out"; then
+              cat "$out" | tee -a "$GITHUB_OUTPUT"
+          else
+              echo "otto-arch affected did not run (build: $BUILT): checking everything"
+              tee -a "$GITHUB_OUTPUT" <<'EVERYTHING'
+          all=true
+          packages=
+          compositor=true
+          rdp=true
+          portal=true
+          files=true
+          packaging=true
+          rust=true
+          clippy_args=--workspace --exclude otto --exclude otto-rdp --exclude xdg-desktop-portal-otto --exclude submenu-gtk
+          test_lib_args=--workspace --exclude otto-files
+          test_bins_args=-p otto-bar -p otto-greeter -p otto-input-overlay -p otto-islands -p otto-lock -p otto-msg -p otto-preview -p otto-settings -p otto-stash -p otto-launcher -p otto-search
+          EVERYTHING
+          fi
 
   format:
     runs-on: ubuntu-24.04
@@ -266,7 +300,7 @@ jobs:
         timeout-minutes: 15
         # `--lib` skips doctests, and otto-kit's examples are its API docs:
         # without this run they stop compiling unseen.
-        if: contains(format(' {0} ', needs.changes.outputs.packages), ' otto-kit ')
+        if: needs.changes.outputs.all == 'true' || contains(format(' {0} ', needs.changes.outputs.packages), ' otto-kit ')
         run: cargo test --locked -p otto-kit --doc
       - name: Run app unit tests
         timeout-minutes: 20
@@ -287,7 +321,7 @@ jobs:
         # The workspace step above is --lib, so the agent service's integration
         # tests — the protocol handshake, the spec pin, permissions and
         # escalation — need a target-wide run of their own.
-        if: contains(format(' {0} ', needs.changes.outputs.packages), ' otto-agents ')
+        if: needs.changes.outputs.all == 'true' || contains(format(' {0} ', needs.changes.outputs.packages), ' otto-agents ')
         run: cargo test --locked -p otto-agents
       - name: Run headless integration tests
         timeout-minutes: 15
