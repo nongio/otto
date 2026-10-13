@@ -44,7 +44,7 @@ pub const APP_ID: &str = "otto-preview";
 pub const MIN_W: f32 = 480.0;
 pub const MIN_H: f32 = 360.0;
 /// The frame's corner radius while it floats, as other Otto windows.
-const CORNER: f32 = 12.0;
+pub const CORNER: f32 = 12.0;
 /// The evdev code of the primary button.
 const BTN_LEFT: u32 = 0x110;
 /// How often the loop turns while something moves on its own.
@@ -57,6 +57,15 @@ pub struct PreviewApp {
     docs: Vec<Doc>,
     /// The file this start was asked for, opened once the app is ready.
     first: Option<Request>,
+    /// Started with no file: the empty window under the open dialog, until
+    /// it is answered. See [`crate::picking`].
+    picking: Option<crate::picking::Picking>,
+    /// Whether to ask for a file once the app is ready, and what the start
+    /// asked for besides.
+    pick_first: Option<(bool, Option<String>)>,
+    /// The bus connection the pick claimed; held for the life of the
+    /// process, as the name goes with it.
+    service: Option<zbus::Connection>,
     /// Files asked for by later starts, handed over the bus.
     inbox: Inbox,
     /// The windows' viewers, for the document tools on the bus.
@@ -111,9 +120,53 @@ impl PreviewApp {
         Self {
             docs: Vec::new(),
             first: Some(first),
+            picking: None,
+            pick_first: None,
+            service: None,
             inbox,
             documents,
             last_update: Instant::now(),
+        }
+    }
+
+    /// An application that asks which file to open when it is ready, with
+    /// the chat beside it when `chat`, carrying on `session`.
+    pub fn picking(
+        chat: bool,
+        session: Option<String>,
+        inbox: Inbox,
+        documents: Documents,
+    ) -> Self {
+        Self {
+            docs: Vec::new(),
+            first: None,
+            picking: None,
+            pick_first: Some((chat, session)),
+            service: None,
+            inbox,
+            documents,
+            last_update: Instant::now(),
+        }
+    }
+
+    /// Move the pick along: open what it chose, or leave when there is
+    /// nothing to show.
+    fn follow_pick(&mut self) {
+        let Some(picking) = self.picking.as_mut() else {
+            return;
+        };
+        let Some(picked) = picking.poll() else {
+            return;
+        };
+        self.picking = None;
+        match picked {
+            crate::picking::Picked::Open(request, service) => {
+                self.service = service;
+                if let Err(err) = self.open(request) {
+                    tracing::warn!(%err, "could not open the chosen file");
+                }
+            }
+            crate::picking::Picked::Forwarded | crate::picking::Picked::Nothing => {}
         }
     }
 
@@ -530,13 +583,13 @@ fn open_for_editing(viewer: &Arc<Mutex<Viewer>>, path: &Path, generation: u64) {
 fn ask_save_as(viewer: Arc<Mutex<Viewer>>, file: PathBuf) {
     std::thread::spawn(move || {
         let title = otto_kit::t_owned!("studio-save-as-title");
-        match crate::save_as::ask(&file, &title) {
-            crate::save_as::Outcome::Chosen(path) => {
+        match crate::file_dialog::save_as(&file, &title) {
+            crate::file_dialog::Outcome::Chosen(path) => {
                 viewer.lock().unwrap().save_as(path);
                 AppContext::request_wakeup();
             }
-            crate::save_as::Outcome::Dismissed => viewer.lock().unwrap().save_as_dismissed(),
-            crate::save_as::Outcome::Failed(why) => {
+            crate::file_dialog::Outcome::Dismissed => viewer.lock().unwrap().save_as_dismissed(),
+            crate::file_dialog::Outcome::Failed(why) => {
                 tracing::warn!(%why, "no save dialog");
                 viewer.lock().unwrap().save_as_dismissed();
             }
@@ -596,7 +649,7 @@ fn xdg_open(target: &OsStr) {
 /// floats over a blurred window and wants that; this window is opaque, and a
 /// translucent ground lets whatever is behind it show through the margins
 /// around a picture.
-fn ground(theme: &Theme) -> Color {
+pub fn ground(theme: &Theme) -> Color {
     let mut solid = theme.clone();
     solid.with_solid_materials(theme.is_dark());
     let color = otto_kit::preview::background(&solid);
@@ -1209,6 +1262,14 @@ impl Doc {
 
 impl App for PreviewApp {
     fn on_app_ready(&mut self, _ctx: &AppContext) -> Result<(), Box<dyn std::error::Error>> {
+        if let Some((chat, session)) = self.pick_first.take() {
+            self.picking = Some(crate::picking::Picking::open(
+                chat,
+                session,
+                self.inbox.clone(),
+                self.documents.clone(),
+            )?);
+        }
         match self.first.take() {
             Some(first) => self.open(first),
             None => Ok(()),
@@ -1219,6 +1280,14 @@ impl App for PreviewApp {
         let Some((id, ..)) = AppContext::current_surface_configure() else {
             return;
         };
+        if let Some(picking) = self
+            .picking
+            .as_ref()
+            .filter(|p| p.surface_id() == Some(id.clone()))
+        {
+            picking.configure(configure);
+            return;
+        }
         if let Some(doc) = self
             .docs
             .iter_mut()
@@ -1407,6 +1476,7 @@ impl App for PreviewApp {
     }
 
     fn on_update(&mut self, _ctx: &AppContext) {
+        self.follow_pick();
         let requests = std::mem::take(&mut *self.inbox.lock().unwrap());
         for request in requests {
             if let Err(err) = self.open(request) {
@@ -1427,7 +1497,7 @@ impl App for PreviewApp {
         }
         // The last window closed is the application closed; the bus name
         // goes with the process, and the next start owns it.
-        if self.docs.is_empty() {
+        if self.docs.is_empty() && self.picking.is_none() {
             std::process::exit(0);
         }
         let now = Instant::now();

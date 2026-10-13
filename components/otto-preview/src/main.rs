@@ -22,11 +22,12 @@ mod content;
 mod cursors;
 mod edit_queue;
 mod editing;
+mod file_dialog;
 mod instance;
 mod marks;
 mod mcp;
 mod pdf_tools;
-mod save_as;
+mod picking;
 mod shortcuts;
 mod sidebar;
 mod signature;
@@ -46,14 +47,14 @@ const FIT_H: f32 = 800.0;
 /// fills the screen reads as a takeover rather than a document.
 const BOUNDS_SHARE: (f32, f32) = (0.75, 0.8);
 /// The window for a file read from the top down: a PDF or a Markdown document.
-const DOCUMENT_SIZE: (f32, f32) = (760.0, 860.0);
+pub(crate) const DOCUMENT_SIZE: (f32, f32) = (760.0, 860.0);
 /// The window for everything else.
 const DEFAULT_SIZE: (f32, f32) = (960.0, 720.0);
 /// How much of a picture is read to find its size in the header. A JPEG's
 /// dimensions can sit behind a large EXIF block.
 const HEADER_BYTES: u64 = 256 * 1024;
 
-const USAGE: &str = "usage: otto-preview [--chat] [--session URI] PATH";
+const USAGE: &str = "usage: otto-preview [--chat] [--session URI] [PATH]";
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // First, before the runtime starts a thread: the sandboxed decode worker
@@ -68,13 +69,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let Some((path, chat, session)) = path_from_args() else {
         return Ok(());
     };
-    tokio::runtime::Runtime::new()?.block_on(run(path, chat, session))
+    let runtime = tokio::runtime::Runtime::new()?;
+    match path {
+        Some(path) => runtime.block_on(run(path, chat, session)),
+        // Started with no file, from the dock or a launcher: an empty
+        // window asks for one. See `picking`.
+        None => runtime.block_on(pick(chat, session)),
+    }
 }
 
-/// The file named on the command line, as an absolute path, and whether
-/// `--chat` asks for the chat beside it. `None` after answering `--help` or
-/// `--version`; exits when no file is named.
-fn path_from_args() -> Option<(PathBuf, bool, Option<String>)> {
+/// The file named on the command line, as an absolute path, or `None` when
+/// none is, and whether `--chat` asks for the chat beside it. `None`
+/// altogether after answering `--help` or `--version`.
+#[allow(clippy::type_complexity)]
+fn path_from_args() -> Option<(Option<PathBuf>, bool, Option<String>)> {
     let mut path = None;
     let mut chat = false;
     let mut session = None;
@@ -104,11 +112,23 @@ fn path_from_args() -> Option<(PathBuf, bool, Option<String>)> {
             _ => {}
         }
     }
-    let Some(path) = path else {
-        eprintln!("{USAGE}");
-        std::process::exit(2);
-    };
-    Some((std::path::absolute(&path).unwrap_or(path), chat, session))
+    let path = path.map(|path| std::path::absolute(&path).unwrap_or(path));
+    Some((path, chat, session))
+}
+
+/// Open an empty window and the desktop's open dialog over it. The bus
+/// name is claimed, or the file handed to the Studio holding it, once a
+/// file is chosen.
+async fn pick(chat: bool, session: Option<String>) -> Result<(), Box<dyn std::error::Error>> {
+    otto_kit::logging::init("info");
+    otto_kit::icon_theme::spawn_icon_theme_watcher();
+    let app = app::PreviewApp::picking(
+        chat,
+        session,
+        instance::Inbox::default(),
+        instance::Documents::default(),
+    );
+    otto_kit::AppRunner::new(app).run()
 }
 
 async fn run(

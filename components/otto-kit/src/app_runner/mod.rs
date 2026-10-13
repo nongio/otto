@@ -589,6 +589,9 @@ impl<A: App + 'static> AppRunnerWithType<A> {
         let xdg_importer: Option<
             wayland_protocols::xdg::foreign::zv2::client::zxdg_importer_v2::ZxdgImporterV2,
         > = globals.bind(&qh, 1..=1, ()).ok();
+        let xdg_exporter: Option<
+            wayland_protocols::xdg::foreign::zv2::client::zxdg_exporter_v2::ZxdgExporterV2,
+        > = globals.bind(&qh, 1..=1, ()).ok();
         let xdg_wm_dialog: Option<
             wayland_protocols::xdg::dialog::v1::client::xdg_wm_dialog_v1::XdgWmDialogV1,
         > = globals.bind(&qh, 1..=1, ()).ok();
@@ -649,6 +652,7 @@ impl<A: App + 'static> AppRunnerWithType<A> {
             text_input: None,
             wlr_layer_shell,
             xdg_importer,
+            xdg_exporter,
             xdg_wm_dialog,
             subcompositor,
             otto_dock_manager,
@@ -1864,6 +1868,44 @@ impl<A: App + 'static>
         use wayland_protocols::xdg::foreign::zv2::client::zxdg_imported_v2::Event;
         if matches!(event, Event::Destroyed) {
             crate::foreign::forget_imported(proxy);
+        }
+    }
+}
+
+impl<A: App + 'static>
+    Dispatch<wayland_protocols::xdg::foreign::zv2::client::zxdg_exporter_v2::ZxdgExporterV2, ()>
+    for AppData<A>
+{
+    fn event(
+        _state: &mut Self,
+        _proxy: &wayland_protocols::xdg::foreign::zv2::client::zxdg_exporter_v2::ZxdgExporterV2,
+        _event: wayland_protocols::xdg::foreign::zv2::client::zxdg_exporter_v2::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+    }
+}
+
+// An exported window's handle arrives once, after the export; it is kept
+// where the application reads it — see [`crate::foreign::Exported`].
+impl<A: App + 'static>
+    Dispatch<
+        wayland_protocols::xdg::foreign::zv2::client::zxdg_exported_v2::ZxdgExportedV2,
+        crate::foreign::HandleSlot,
+    > for AppData<A>
+{
+    fn event(
+        _state: &mut Self,
+        _proxy: &wayland_protocols::xdg::foreign::zv2::client::zxdg_exported_v2::ZxdgExportedV2,
+        event: wayland_protocols::xdg::foreign::zv2::client::zxdg_exported_v2::Event,
+        slot: &crate::foreign::HandleSlot,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        use wayland_protocols::xdg::foreign::zv2::client::zxdg_exported_v2::Event;
+        if let Event::Handle { handle } = event {
+            *slot.lock().unwrap() = Some(handle);
         }
     }
 }

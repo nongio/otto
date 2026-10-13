@@ -345,19 +345,13 @@ impl Scene {
             (f.width - sidebar_w).max(0.0),
             header_h,
         );
-        // The path bar is drawn *inside* this panel rather than on one of
-        // its own: it is the bottom edge of the file area, sharing the paper
-        // the rows sit on, and a panel of its own would put a seam between
-        // them that says they are different surfaces. Always its full height —
-        // the bar's content comes and goes with the selection, the band does
-        // not, or every row would move whenever it did.
-        let path_bar_h = view::PATH_BAR_H;
+        let content = content_rect(f);
         place(
             &self.content,
-            sidebar_w,
-            header_h,
-            (f.width - sidebar_w).max(0.0),
-            (f.height + path_bar_h - header_h).max(0.0),
+            content.left,
+            content.top,
+            content.width(),
+            content.height(),
         );
         // Anchored to the window's bottom edge, which is below the path bar
         // as well as below the content: `f.height` is the file area's bottom
@@ -568,6 +562,26 @@ fn build_rows(pane: &PaneData<'_>, range: (usize, usize), f: &Frame, depth: usiz
 // Placement
 // ---------------------------------------------------------------------------
 
+/// The content panel: the file area's paper, from under the header down to
+/// the bottom of the path bar.
+///
+/// The path bar is drawn *inside* this panel rather than on one of its own:
+/// it is the bottom edge of the file area, sharing the paper the rows sit on,
+/// and a panel of its own would put a seam between them that says they are
+/// different surfaces. The band is the window's path bar height, which the
+/// selection never changes, so no row moves when the bar's content does. A
+/// window without a bar (the picker, the Trash) ends the paper at the file
+/// area's bottom; in the picker the action row below it is window material.
+fn content_rect(f: &Frame) -> Rect {
+    let top = view::header_h();
+    Rect::from_ltrb(
+        view::sidebar_w(),
+        top,
+        f.width.max(view::sidebar_w()),
+        (f.height + f.path_bar_h).max(top),
+    )
+}
+
 fn place(layer: &Layer, x: f32, y: f32, width: f32, height: f32) {
     layer.set_position(LayerPoint::new(x, y), None);
     layer.set_size(LayerSize::points(width, height), None);
@@ -614,6 +628,68 @@ mod tests {
         }
     }
 
+    /// A browser frame over `panes`, 1100 by 700 points, with nothing else up.
+    fn test_frame<'a>(theme: &'a Theme, panes: Vec<PaneData<'a>>) -> Frame<'a> {
+        Frame {
+            desk_overflow: None,
+            search: None,
+            index_available: true,
+            search_focused: false,
+            search_placeholder: "",
+            search_scope: crate::model::SearchScope::Folder,
+            grid_sections: view::GridSections::FLAT,
+            photos: view::PhotosLayout::EMPTY,
+            photo_hover: None,
+            photo_folders: None,
+            photos_controls: None,
+            photos_info: None,
+            photos_info_selection: None,
+            show_folders: false,
+            mode_locked: false,
+            trash: None,
+            width: 1100.0,
+            height: 700.0,
+            theme,
+            title: "Home",
+            subtitle: String::new(),
+            places: &[],
+            selected_place: None,
+            mode: ViewMode::Columns,
+            panes,
+            active: 0,
+            pan: 0.0,
+            pan_bar: None,
+            miller: view::MillerWidths::default(),
+            sort: crate::model::SortKey::Name,
+            ascending: true,
+            list_columns: view::ListColumnWidths::default(),
+            opening: None,
+            opening_stage: None,
+            renaming: None,
+            cut: Vec::new(),
+            controls: otto_kit::components::titlebar::WindowControlsState::new(),
+            focused: true,
+            blurred: true,
+            can_go_back: false,
+            can_go_forward: false,
+            nav_pressed: None,
+            preview: None,
+            action_row: None,
+            footer: 0.0,
+            peek_close_hovered: false,
+            peek_expand_hovered: false,
+            peek_expanded: false,
+            drop_target: None,
+            marquee: None,
+            path_bar: Vec::new(),
+            path_bar_note: None,
+            path_bar_h: view::PATH_BAR_H,
+            path_crumb_hover: None,
+            path_entry: false,
+            thumbs: None,
+        }
+    }
+
     /// The Miller columns build their rows here rather than going through
     /// `view::draw_entry_icon`, so a thumbnail reaching the list and the grid
     /// says nothing about whether it reaches the *default* view. It did not,
@@ -650,64 +726,8 @@ mod tests {
             error: None,
         };
         let theme = Theme::light();
-        let frame = Frame {
-            desk_overflow: None,
-            search: None,
-            index_available: true,
-            search_focused: false,
-            search_placeholder: "",
-            search_scope: crate::model::SearchScope::Folder,
-            grid_sections: view::GridSections::FLAT,
-            photos: view::PhotosLayout::EMPTY,
-            photo_hover: None,
-            photo_folders: None,
-            photos_controls: None,
-            photos_info: None,
-            photos_info_selection: None,
-            show_folders: false,
-            mode_locked: false,
-            trash: None,
-            width: 1100.0,
-            height: 700.0,
-            theme: &theme,
-            title: "Home",
-            subtitle: String::new(),
-            places: &[],
-            selected_place: None,
-            mode: ViewMode::Columns,
-            panes: vec![pane],
-            active: 0,
-            pan: 0.0,
-            pan_bar: None,
-            miller: view::MillerWidths::default(),
-            sort: crate::model::SortKey::Name,
-            ascending: true,
-            list_columns: view::ListColumnWidths::default(),
-            opening: None,
-            opening_stage: None,
-            renaming: None,
-            cut: Vec::new(),
-            controls: otto_kit::components::titlebar::WindowControlsState::new(),
-            focused: true,
-            blurred: true,
-            can_go_back: false,
-            can_go_forward: false,
-            nav_pressed: None,
-            preview: None,
-            action_row: None,
-            footer: 0.0,
-            peek_close_hovered: false,
-            peek_expand_hovered: false,
-            peek_expanded: false,
-            drop_target: None,
-            marquee: None,
-            path_bar: Vec::new(),
-            path_bar_note: None,
-            path_bar_h: view::PATH_BAR_H,
-            path_crumb_hover: None,
-            path_entry: false,
-            thumbs: Some(&store),
-        };
+        let mut frame = test_frame(&theme, vec![pane]);
+        frame.thumbs = Some(&store);
 
         let rows = build_rows(&frame.panes[0], (0, 1), &frame, 0);
         assert!(
@@ -741,5 +761,27 @@ mod tests {
             px[0] > 200 && px[1] < 60 && px[2] < 60,
             "expected the thumbnail in the row's icon box, got {px:?}"
         );
+    }
+
+    /// The content panel is the file area's opaque paper. It ends where the
+    /// path bar does, and in the picker, which has no bar, at the file area's
+    /// bottom, so the action row under it is window material all the way up
+    /// to its hairline.
+    #[test]
+    fn the_paper_stops_above_the_action_row() {
+        let theme = Theme::light();
+
+        let browser = test_frame(&theme, Vec::new());
+        assert_eq!(
+            content_rect(&browser).bottom,
+            browser.height + view::PATH_BAR_H
+        );
+
+        let mut picker = test_frame(&theme, Vec::new());
+        picker.path_bar_h = 0.0;
+        picker.footer = view::FOOTER_H;
+        let paper = content_rect(&picker);
+        assert_eq!(paper.bottom, picker.height);
+        assert_eq!(paper.bottom, picker.window_h() - view::FOOTER_H);
     }
 }

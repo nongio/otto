@@ -909,6 +909,28 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         }
     }
 
+    /// The window `window` is a dialog of, through however many parents:
+    /// `window` itself when it has none, or when its parent is not a window
+    /// of ours.
+    fn dialog_owner<'a>(&'a self, window: &'a WindowElement) -> &'a WindowElement {
+        let mut owner = window;
+        // Bounded: a client could parent windows in a cycle.
+        for _ in 0..8 {
+            let Some(parent) = owner
+                .toplevel()
+                .and_then(|t| t.parent())
+                .and_then(|surface| {
+                    use smithay::reexports::wayland_server::Resource as _;
+                    self.workspaces.get_window_for_surface(&surface.id())
+                })
+            else {
+                break;
+            };
+            owner = parent;
+        }
+        owner
+    }
+
     fn window_node(
         &self,
         id: &ObjectId,
@@ -918,8 +940,13 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
     ) -> Value {
         let window = self.workspaces.windows_map.get(id);
         let title = window.map(|w| w.xdg_title()).unwrap_or_default();
-        let app_id = window.map(|w| w.xdg_app_id()).unwrap_or_default();
-        let pid = window.and_then(|w| w.client_pid(&self.display_handle));
+        // A dialog belongs to the application that opened it, not to the
+        // process drawing it: the portal's file picker is a Files window
+        // parented to the asking app, and the bar should name and menu that
+        // app while the picker has the focus.
+        let owner = window.map(|w| self.dialog_owner(w));
+        let app_id = owner.map(|w| w.xdg_app_id()).unwrap_or_default();
+        let pid = owner.and_then(|w| w.client_pid(&self.display_handle));
         let mut node = json!({
             "id": window_con_id(id),
             "type": "con",
@@ -938,7 +965,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         });
         // Where the window's global menu lives, when it said so over
         // org_kde_kwin_appmenu: otto-bar reads it to draw the menu.
-        if let Some(address) = window
+        if let Some(address) = owner
             .and_then(|w| w.wl_surface())
             .and_then(|surface| crate::state::kde_appmenu::appmenu_address(&surface))
         {

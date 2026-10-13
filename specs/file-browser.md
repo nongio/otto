@@ -86,6 +86,11 @@ A client-decorated toplevel. Layout:
 - **Titlebar** — the current directory's name.
 - **Toolbar** — back/forward, parent, the view switcher (list / icon), a sort
   control, a new-folder action, an action menu, and a search field.
+  Its glyphs (the back/forward arrows, the view switcher's segments, New
+  Folder) are Otto's own from the Solar set, never the theme's; the browser
+  and the file picker draw the same toolbar. The view switcher is the kit's
+  segmented control: the current view raised on a light pill with a soft
+  shadow under it.
 - **Path bar** — a breadcrumb strip along the **bottom** edge, spelling out
   where the selection is. See [The path bar](#the-path-bar).
   Its icons, like the sidebar's, are Otto's own glyphs (the Solar set) in

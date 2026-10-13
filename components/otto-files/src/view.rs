@@ -4,8 +4,10 @@
 //! Geometry lives in the `*_rect` / `*_at` helpers so drawing and hit-testing
 //! read the same numbers — the otto-kit convention. Nothing here holds state.
 
+use otto_kit::components::dropdown::{field, DropdownInteraction};
 use otto_kit::components::icon::Icon;
 use otto_kit::components::scroll::{ScrollRenderer, ScrollState};
+use otto_kit::components::segmented;
 use otto_kit::components::selectable_text::{TextRun, TextSelection};
 use otto_kit::components::titlebar::{
     DecorationVariant, WindowControl, WindowControls, WindowControlsState, WindowDecoration,
@@ -595,6 +597,9 @@ const NAV_BTN_H: f32 = 26.0;
 const NAV_GROUP_W: f32 = NAV_BTN_W * 2.0;
 const NAV_RADIUS: f32 = 7.0;
 const NAV_ICON_SIZE: f32 = 13.0;
+/// The side of a toolbar button's Solar glyph: the nav arrows, New Folder
+/// and the view switcher's segments.
+const TOOLBAR_GLYPH: f32 = 16.0;
 /// How far the title's own text starts right of the sidebar, once the nav
 /// pair and its trailing gap are accounted for. The Trash window has no nav
 /// pair, so its title starts hard against the content padding instead.
@@ -646,9 +651,9 @@ pub fn location_rect(width: f32) -> Rect {
         .max(sidebar_w() + CONTENT_PAD + NAV_GROUP_W + 16.0);
     Rect::from_ltrb(
         left,
-        toolbar_cy() - 15.0,
+        toolbar_cy() - field::HEIGHT / 2.0,
         left + LOCATION_W,
-        toolbar_cy() + 15.0,
+        toolbar_cy() + field::HEIGHT / 2.0,
     )
 }
 
@@ -658,9 +663,9 @@ pub fn new_folder_rect(width: f32) -> Rect {
     let location = location_rect(width);
     Rect::from_xywh(
         location.right + 8.0,
-        location.top,
+        toolbar_cy() - NAV_BTN_H / 2.0,
         NEW_FOLDER_W,
-        location.height(),
+        NAV_BTN_H,
     )
 }
 const NEW_FOLDER_W: f32 = 36.0;
@@ -2710,7 +2715,6 @@ pub fn zoom_slider_rect(width: f32, grouped: bool) -> Option<Rect> {
 /// The slider and the grouping button, with the glyphs either side of the
 /// slider: a small picture at the small end, a large one at the large end.
 fn draw_photos_controls(canvas: &Canvas, f: &Frame, controls: PhotosControls) {
-    use otto_kit::components::dropdown::{field, DropdownInteraction};
     use otto_kit::components::slider::{self, SliderInteraction};
 
     let theme = f.theme;
@@ -2750,7 +2754,7 @@ fn draw_photos_controls(canvas: &Canvas, f: &Frame, controls: PhotosControls) {
         }
     }
     if let Some(group) = controls.group {
-        field::draw(
+        field::draw_placed(
             canvas,
             photos_group_rect(f.width),
             group.label(),
@@ -2759,10 +2763,19 @@ fn draw_photos_controls(canvas: &Canvas, f: &Frame, controls: PhotosControls) {
             } else {
                 DropdownInteraction::Normal
             },
+            GROUP_PLACEMENT,
             theme,
         );
     }
 }
+
+/// Where the picker's location menu opens: under its capsule, a list of
+/// places rather than a value.
+pub const LOCATION_PLACEMENT: field::Placement = field::Placement::Below;
+/// Where the picker's filter menu opens: on the current filter.
+pub const FILTER_PLACEMENT: field::Placement = field::Placement::OnValue;
+/// Where the Photos view's grouping menu opens: on the current grouping.
+pub const GROUP_PLACEMENT: field::Placement = field::Placement::OnValue;
 
 pub const SWITCHER_MODES: [ViewMode; 4] = [
     ViewMode::List,
@@ -2776,13 +2789,8 @@ pub fn switcher_at(x: f32, y: f32, width: f32) -> Option<ViewMode> {
     if is_desk() {
         return None;
     }
-    let rect = switcher_rect(width);
-    if !rect.contains(Point::new(x, y)) {
-        return None;
-    }
-    let count = SWITCHER_MODES.len();
-    let segment = ((x - rect.left) / (rect.width() / count as f32)) as usize;
-    SWITCHER_MODES.get(segment.min(count - 1)).copied()
+    segmented::segment_at(switcher_rect(width), SWITCHER_MODES.len(), x, y)
+        .and_then(|index| SWITCHER_MODES.get(index).copied())
 }
 
 pub(crate) fn column_edges(width: f32, widths: ListColumnWidths) -> (f32, f32, f32) {
@@ -3797,14 +3805,15 @@ pub fn footer_cancel_rect(width: f32, window_height: f32) -> Rect {
     )
 }
 
-/// The filter control, on the left where the sidebar ends.
+/// The filter control, on the left where the sidebar ends: the kit's
+/// pop-up button at its own height, centred on the row like the buttons.
 pub fn footer_filter_rect(window_height: f32) -> Rect {
     let cy = window_height - FOOTER_H / 2.0;
     Rect::from_ltrb(
         sidebar_w() + FOOTER_PAD,
-        cy - FOOTER_BTN_H / 2.0,
+        cy - field::HEIGHT / 2.0,
         sidebar_w() + FOOTER_PAD + FOOTER_FILTER_W,
-        cy + FOOTER_BTN_H / 2.0,
+        cy + field::HEIGHT / 2.0,
     )
 }
 
@@ -4035,42 +4044,30 @@ fn draw_footer_button(
 }
 
 fn draw_filter_control(canvas: &Canvas, f: &Frame, footer: &FooterData<'_>, window_h: f32) {
-    let theme = f.theme;
-    let rect = footer_filter_rect(window_h);
-
-    let mut paint = Paint::default();
-    paint.set_anti_alias(true);
-    paint.set_color(theme.fill_secondary);
-    canvas.draw_rrect(
-        RRect::new_rect_xy(rect, FOOTER_BTN_RADIUS, FOOTER_BTN_RADIUS),
-        &paint,
-    );
-
     let label = footer
         .filters
         .get(footer.current_filter)
         .map(String::as_str)
         .unwrap_or_else(|| otto_kit::t!("files-picker-all-files"));
-    Label::new(label)
-        .with_style(styles::BODY)
-        .with_color(theme.text_primary)
-        .centered_on(rect.left + 12.0, rect.center_y())
-        .render(canvas);
-
-    // The disclosure chevron, pointing the way the menu opens.
-    let mut chevron = Paint::default();
-    chevron.set_anti_alias(true);
-    chevron.set_color(theme.text_secondary);
-    chevron.set_style(skia_safe::paint::Style::Stroke);
-    chevron.set_stroke_width(1.6);
-    chevron.set_stroke_cap(skia_safe::paint::Cap::Round);
-    let cx = rect.right - 14.0;
-    let cy = rect.center_y();
-    let mut path = skia_safe::PathBuilder::new();
-    path.move_to((cx - 4.0, cy + 2.0));
-    path.line_to((cx, cy - 2.5));
-    path.line_to((cx + 4.0, cy + 2.0));
-    canvas.draw_path(&path.detach(), &chevron);
+    // The kit's pop-up button, as Settings draws it: its menu opens on the
+    // current filter, in the same text as the field.
+    let interaction = if footer.filter_open {
+        DropdownInteraction::Open
+    } else if footer.pressed == Some(FooterButton::Filter) {
+        DropdownInteraction::Pressed
+    } else if footer.hovered == Some(FooterButton::Filter) {
+        DropdownInteraction::Hovered
+    } else {
+        DropdownInteraction::Normal
+    };
+    field::draw_placed(
+        canvas,
+        footer_filter_rect(window_h),
+        label,
+        interaction,
+        FILTER_PLACEMENT,
+        f.theme,
+    );
 }
 
 /// Whether the current colour scheme is the dark one — what the materials
@@ -5630,6 +5627,31 @@ fn device_px(canvas: &Canvas, size: f32) -> i32 {
     (size * scale).round() as i32
 }
 
+/// Draw Otto's Solar glyph `name`, `size` points square, centred on
+/// `center` and already tinted `color`.
+///
+/// `false` when the set isn't installed or lacks the glyph, so the caller
+/// draws its own stand-in.
+fn draw_solar_glyph(canvas: &Canvas, name: &str, center: Point, size: f32, color: Color) -> bool {
+    let Some(image) = icons::solar_icon(
+        name,
+        device_px(canvas, size),
+        icons::SolarStyle::Linear,
+        color,
+    ) else {
+        return false;
+    };
+    let half = size / 2.0;
+    let dst = Rect::from_ltrb(
+        center.x - half,
+        center.y - half,
+        center.x + half,
+        center.y + half,
+    );
+    canvas.draw_image_rect(&image, None, dst, &Paint::default());
+    true
+}
+
 fn draw_sidebar(canvas: &Canvas, f: &Frame) {
     let theme = f.theme;
 
@@ -5879,67 +5901,15 @@ pub fn draw_search_band(canvas: &Canvas, f: &Frame) {
     );
 }
 
-/// The picker's location control: a folder icon and the current directory's
-/// name in a soft capsule, centred on the toolbar row between the navigation
-/// arrows and the view switcher.
-///
-/// A press opens the menu of the directories above this one; the chevron at
-/// its end says so.
+/// The picker's location control: the kit's pop-up button, as Settings draws
+/// it, with the current directory's folder icon before its name. Centred on
+/// the toolbar row between the navigation arrows and the view switcher; its
+/// menu lists the directories above this one, below it.
 fn draw_location_button(canvas: &Canvas, f: &Frame) {
     let theme = f.theme;
-    let cy = toolbar_cy();
     let rect = location_rect(f.width);
     let open = f.action_row.as_ref().is_some_and(|row| row.location_open);
 
-    let mut paint = Paint::default();
-    paint.set_anti_alias(true);
-    paint.set_color(if open {
-        theme.fill_secondary
-    } else {
-        theme.fill_tertiary
-    });
-    canvas.draw_rrect(RRect::new_rect_xy(rect, NAV_RADIUS, NAV_RADIUS), &paint);
-
-    // Glyphs drawn rather than themed, like the switcher's: the bundled icon
-    // set has neither a downward chevron nor a new-folder sign.
-    let mut glyph = Paint::default();
-    glyph.set_anti_alias(true);
-    glyph.set_color(theme.text_secondary);
-    glyph.set_style(skia_safe::paint::Style::Stroke);
-    glyph.set_stroke_width(1.6);
-    glyph.set_stroke_cap(skia_safe::paint::Cap::Round);
-    glyph.set_stroke_join(skia_safe::paint::Join::Round);
-
-    let cx = rect.right - 14.0;
-    let mut chevron = skia_safe::PathBuilder::new();
-    chevron.move_to((cx - 4.0, cy - 2.0));
-    chevron.line_to((cx, cy + 2.5));
-    chevron.line_to((cx + 4.0, cy - 2.0));
-    canvas.draw_path(&chevron.detach(), &glyph);
-
-    // New Folder, beside it: a plain capsule, the same family as the nav pair.
-    let button = new_folder_rect(f.width);
-    paint.set_color(theme.fill_tertiary);
-    canvas.draw_rrect(RRect::new_rect_xy(button, NAV_RADIUS, NAV_RADIUS), &paint);
-    let (bx, by) = (button.center_x(), button.center_y());
-    // A folder: tab on the top left, body below it.
-    let mut folder = skia_safe::PathBuilder::new();
-    folder.move_to((bx - 8.0, by + 5.5));
-    folder.line_to((bx - 8.0, by - 5.5));
-    folder.line_to((bx - 3.5, by - 5.5));
-    folder.line_to((bx - 1.5, by - 3.5));
-    folder.line_to((bx + 8.0, by - 3.5));
-    folder.line_to((bx + 8.0, by + 5.5));
-    folder.close();
-    canvas.draw_path(&folder.detach(), &glyph);
-    let mut plus = skia_safe::PathBuilder::new();
-    plus.move_to((bx, by - 1.0));
-    plus.line_to((bx, by + 4.0));
-    plus.move_to((bx - 2.5, by + 1.5));
-    plus.line_to((bx + 2.5, by + 1.5));
-    canvas.draw_path(&plus.detach(), &glyph);
-
-    let mut text_x = rect.left + 10.0;
     // The theme's full-colour art, like the listing's rows: the 16px tier of
     // many themes is a grey outline, which is not the folder the menu shows.
     let names: Vec<&str> = f
@@ -5948,21 +5918,65 @@ fn draw_location_button(canvas: &Canvas, f: &Frame) {
         .map(|row| row.location_icon.iter().map(String::as_str).collect())
         .filter(|names: &Vec<&str>| !names.is_empty())
         .unwrap_or_else(|| vec!["folder"]);
-    if let Some(image) = icons::cached_icon_chain_at(&names, 16, icons::FULL_COLOUR_SIZE) {
-        let dst = Rect::from_xywh(text_x, cy - 8.0, 16.0, 16.0);
-        canvas.draw_image_rect(&image, None, dst, &Paint::default());
-        text_x += 22.0;
-    }
-
-    Label::new(f.title)
-        .with_style(styles::BODY_EMPHASIZED)
-        .with_color(if f.focused {
-            theme.text_primary
+    let icon = icons::cached_icon_chain_at(
+        &names,
+        device_px(canvas, field::ICON_SIZE),
+        icons::FULL_COLOUR_SIZE,
+    );
+    field::draw_with_icon(
+        canvas,
+        rect,
+        icon.as_ref(),
+        f.title,
+        if open {
+            DropdownInteraction::Open
         } else {
-            theme.text_secondary
-        })
-        .centered_on(text_x, cy)
-        .render(canvas);
+            DropdownInteraction::Normal
+        },
+        LOCATION_PLACEMENT,
+        theme,
+    );
+
+    // New Folder, beside it: a plain capsule, the same family as the nav pair.
+    // Otto's own glyph, like the switcher's; the strokes below stand in when
+    // the Solar set isn't installed.
+    let mut paint = Paint::default();
+    paint.set_anti_alias(true);
+    let mut glyph = Paint::default();
+    glyph.set_anti_alias(true);
+    glyph.set_color(theme.text_secondary);
+    glyph.set_style(skia_safe::paint::Style::Stroke);
+    glyph.set_stroke_width(1.6);
+    glyph.set_stroke_cap(skia_safe::paint::Cap::Round);
+    glyph.set_stroke_join(skia_safe::paint::Join::Round);
+    let button = new_folder_rect(f.width);
+    paint.set_color(theme.fill_tertiary);
+    canvas.draw_rrect(RRect::new_rect_xy(button, NAV_RADIUS, NAV_RADIUS), &paint);
+    let (bx, by) = (button.center_x(), button.center_y());
+    if !draw_solar_glyph(
+        canvas,
+        "folder-new-symbolic",
+        Point::new(bx, by),
+        TOOLBAR_GLYPH,
+        theme.text_secondary,
+    ) {
+        // A folder: tab on the top left, body below it, a plus inside.
+        let mut folder = skia_safe::PathBuilder::new();
+        folder.move_to((bx - 8.0, by + 5.5));
+        folder.line_to((bx - 8.0, by - 5.5));
+        folder.line_to((bx - 3.5, by - 5.5));
+        folder.line_to((bx - 1.5, by - 3.5));
+        folder.line_to((bx + 8.0, by - 3.5));
+        folder.line_to((bx + 8.0, by + 5.5));
+        folder.close();
+        canvas.draw_path(&folder.detach(), &glyph);
+        let mut plus = skia_safe::PathBuilder::new();
+        plus.move_to((bx, by - 1.0));
+        plus.line_to((bx, by + 4.0));
+        plus.move_to((bx - 2.5, by + 1.5));
+        plus.line_to((bx + 2.5, by + 1.5));
+        canvas.draw_path(&plus.detach(), &glyph);
+    }
 }
 
 /// The Back/Forward split button: one capsule, a hairline down the middle,
@@ -6003,7 +6017,7 @@ fn draw_nav_buttons(canvas: &Canvas, f: &Frame) {
         canvas,
         theme,
         nav_back_rect(),
-        "chevron-left",
+        NavButton::Back,
         f.can_go_back,
         f.nav_pressed == Some(NavButton::Back),
     );
@@ -6011,7 +6025,7 @@ fn draw_nav_buttons(canvas: &Canvas, f: &Frame) {
         canvas,
         theme,
         nav_forward_rect(),
-        "chevron-right",
+        NavButton::Forward,
         f.can_go_forward,
         f.nav_pressed == Some(NavButton::Forward),
     );
@@ -6036,7 +6050,7 @@ fn draw_nav_button(
     canvas: &Canvas,
     theme: &Theme,
     rect: Rect,
-    icon_name: &str,
+    button: NavButton,
     enabled: bool,
     pressed: bool,
 ) {
@@ -6047,7 +6061,16 @@ fn draw_nav_button(
         (true, false) => theme.text_secondary,
         (false, _) => theme.text_tertiary,
     };
-    Icon::new(icon_name)
+    // Otto's own arrow; the kit's drawn chevron stands in without the set.
+    let (glyph, chevron) = match button {
+        NavButton::Back => ("go-previous-symbolic", "chevron-left"),
+        NavButton::Forward => ("go-next-symbolic", "chevron-right"),
+    };
+    let center = Point::new(rect.center_x(), rect.center_y());
+    if draw_solar_glyph(canvas, glyph, center, TOOLBAR_GLYPH, color) {
+        return;
+    }
+    Icon::new(chevron)
         .with_size(NAV_ICON_SIZE)
         .with_color(color)
         .at(
@@ -6057,97 +6080,112 @@ fn draw_nav_button(
         .render(canvas);
 }
 
-/// A three-segment control: list, icon grid, Miller columns. Glyphs are drawn
-/// rather than themed so it stays legible with no icon-theme entry.
+/// The view switcher: list, icon grid, Miller columns, photo wall, as the
+/// kit's segmented control. Its glyphs are Otto's own from the Solar set,
+/// never the theme's, so it reads the same whatever theme is in force; the
+/// shapes below stand in when the set isn't installed.
 fn draw_switcher(canvas: &Canvas, f: &Frame) {
-    let theme = f.theme;
-    let rect = switcher_rect(f.width);
-    let seg = rect.width() / SWITCHER_MODES.len() as f32;
-    let mut paint = Paint::default();
-    paint.set_anti_alias(true);
-
-    paint.set_color(theme.fill_tertiary);
-    canvas.draw_rrect(RRect::new_rect_xy(rect, 7.0, 7.0), &paint);
-
-    let index = SWITCHER_MODES
-        .iter()
-        .position(|m| *m == f.mode)
-        .unwrap_or(0);
-    let active = Rect::from_xywh(
-        rect.left + index as f32 * seg + 2.0,
-        rect.top + 2.0,
-        seg - 4.0,
-        rect.height() - 4.0,
-    );
-    paint.set_color(theme.material_popup);
-    canvas.draw_rrect(RRect::new_rect_xy(active, 5.0, 5.0), &paint);
-
-    let cy = rect.center_y();
-    for (i, mode) in SWITCHER_MODES.iter().enumerate() {
-        let cx = rect.left + seg * i as f32 + seg / 2.0;
-        paint.set_color(match (*mode == f.mode, f.mode_locked) {
-            (true, _) => theme.text_primary,
+    let segments = SWITCHER_MODES.map(|mode| segmented::Segment::Glyph {
+        name: switcher_glyph(mode),
+        fallback: Some(switcher_fallback(mode)),
+    });
+    let selected = SWITCHER_MODES.iter().position(|m| *m == f.mode);
+    segmented::draw(
+        canvas,
+        switcher_rect(f.width),
+        &segments,
+        selected,
+        if f.mode_locked {
             // A locked switcher's other segments are not merely unselected,
             // they are unavailable, and the quieter ink says so.
-            (false, true) => theme.text_tertiary,
-            (false, false) => theme.text_secondary,
-        });
-        match mode {
-            // Three stacked lines.
-            ViewMode::List => {
-                for r in 0..3 {
-                    let y = cy - 4.0 + r as f32 * 4.0;
-                    canvas.draw_rrect(
-                        RRect::new_rect_xy(Rect::from_xywh(cx - 7.0, y - 1.0, 14.0, 2.0), 1.0, 1.0),
-                        &paint,
-                    );
-                }
-            }
-            // A 2x2 block of squares.
-            ViewMode::Grid => {
-                for r in 0..2 {
-                    for c in 0..2 {
-                        canvas.draw_rrect(
-                            RRect::new_rect_xy(
-                                Rect::from_xywh(
-                                    cx - 6.0 + c as f32 * 7.0,
-                                    cy - 6.0 + r as f32 * 7.0,
-                                    5.0,
-                                    5.0,
-                                ),
-                                1.2,
-                                1.2,
-                            ),
-                            &paint,
-                        );
-                    }
-                }
-            }
-            // Three vertical bars.
-            ViewMode::Columns => {
-                for c in 0..3 {
-                    let x = cx - 7.5 + c as f32 * 5.5;
-                    canvas.draw_rrect(
-                        RRect::new_rect_xy(Rect::from_xywh(x, cy - 5.0, 4.0, 10.0), 1.0, 1.0),
-                        &paint,
-                    );
-                }
-            }
-            // Two rows of tiles of different widths: the justified wall.
-            ViewMode::Photos => {
-                for (x, y, w) in [
-                    (-7.0, -6.0, 8.0),
-                    (2.0, -6.0, 5.0),
-                    (-7.0, 1.0, 5.0),
-                    (-1.0, 1.0, 8.0),
-                ] {
-                    canvas.draw_rrect(
-                        RRect::new_rect_xy(Rect::from_xywh(cx + x, cy + y, w, 5.0), 1.2, 1.2),
-                        &paint,
-                    );
-                }
-            }
+            segmented::SegmentedInteraction::Locked
+        } else {
+            segmented::SegmentedInteraction::Normal
+        },
+        f.theme,
+    );
+}
+
+/// The Solar glyph for a view switcher segment.
+fn switcher_glyph(mode: ViewMode) -> &'static str {
+    match mode {
+        ViewMode::List => "otto-view-list-symbolic",
+        ViewMode::Grid => "otto-view-grid-symbolic",
+        ViewMode::Columns => "otto-view-columns-symbolic",
+        ViewMode::Photos => "otto-view-photos-symbolic",
+    }
+}
+
+/// The drawn stand-in for a segment's glyph, centred on a point.
+fn switcher_fallback(mode: ViewMode) -> fn(&Canvas, Point, Color) {
+    match mode {
+        ViewMode::List => draw_list_glyph,
+        ViewMode::Grid => draw_grid_glyph,
+        ViewMode::Columns => draw_columns_glyph,
+        ViewMode::Photos => draw_photos_glyph,
+    }
+}
+
+fn glyph_paint(color: Color) -> Paint {
+    let mut paint = Paint::default();
+    paint.set_anti_alias(true);
+    paint.set_color(color);
+    paint
+}
+
+/// Three stacked lines.
+fn draw_list_glyph(canvas: &Canvas, c: Point, color: Color) {
+    let paint = glyph_paint(color);
+    for r in 0..3 {
+        let y = c.y - 4.0 + r as f32 * 4.0;
+        canvas.draw_rrect(
+            RRect::new_rect_xy(Rect::from_xywh(c.x - 7.0, y - 1.0, 14.0, 2.0), 1.0, 1.0),
+            &paint,
+        );
+    }
+}
+
+/// A 2x2 block of squares.
+fn draw_grid_glyph(canvas: &Canvas, c: Point, color: Color) {
+    let paint = glyph_paint(color);
+    for r in 0..2 {
+        for col in 0..2 {
+            let tile = Rect::from_xywh(
+                c.x - 6.0 + col as f32 * 7.0,
+                c.y - 6.0 + r as f32 * 7.0,
+                5.0,
+                5.0,
+            );
+            canvas.draw_rrect(RRect::new_rect_xy(tile, 1.2, 1.2), &paint);
         }
+    }
+}
+
+/// Three vertical bars.
+fn draw_columns_glyph(canvas: &Canvas, c: Point, color: Color) {
+    let paint = glyph_paint(color);
+    for col in 0..3 {
+        let x = c.x - 7.5 + col as f32 * 5.5;
+        canvas.draw_rrect(
+            RRect::new_rect_xy(Rect::from_xywh(x, c.y - 5.0, 4.0, 10.0), 1.0, 1.0),
+            &paint,
+        );
+    }
+}
+
+/// Two rows of tiles of different widths: the justified wall.
+fn draw_photos_glyph(canvas: &Canvas, c: Point, color: Color) {
+    let paint = glyph_paint(color);
+    for (x, y, w) in [
+        (-7.0, -6.0, 8.0),
+        (2.0, -6.0, 5.0),
+        (-7.0, 1.0, 5.0),
+        (-1.0, 1.0, 8.0),
+    ] {
+        canvas.draw_rrect(
+            RRect::new_rect_xy(Rect::from_xywh(c.x + x, c.y + y, w, 5.0), 1.2, 1.2),
+            &paint,
+        );
     }
 }
 
@@ -10689,5 +10727,48 @@ mod geometry_tests {
             label_gutter(FOOTER_NAME_LABEL_W + 30.0),
             FOOTER_NAME_LABEL_W + 30.0 + FOOTER_NAME_LABEL_GAP
         );
+    }
+}
+
+#[cfg(test)]
+mod switcher_tests {
+    use super::{switcher_at, switcher_glyph, switcher_rect, SWITCHER_MODES};
+
+    /// Every glyph the toolbar asks for is in the repository's Solar set: a
+    /// name that drifts from `icons.list` would otherwise fall back to the
+    /// drawn stand-ins without a word. The repository's copy, not the lookup,
+    /// which prefers an installed set that may predate this checkout.
+    #[test]
+    fn the_toolbar_glyphs_are_in_the_solar_set() {
+        let set = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../resources/icons/solar/linear");
+        let names = SWITCHER_MODES
+            .iter()
+            .map(|mode| switcher_glyph(*mode))
+            .chain([
+                "go-previous-symbolic",
+                "go-next-symbolic",
+                "folder-new-symbolic",
+                "go-down-symbolic",
+                "go-up-symbolic",
+            ]);
+        for name in names {
+            assert!(
+                set.join(format!("{name}.svg")).is_file(),
+                "{name} is not in the Solar set"
+            );
+        }
+    }
+
+    /// Each segment's press selects the mode drawn in it.
+    #[test]
+    fn each_segment_selects_its_own_view() {
+        let rect = switcher_rect(1100.0);
+        let seg = rect.width() / SWITCHER_MODES.len() as f32;
+        for (index, mode) in SWITCHER_MODES.iter().enumerate() {
+            let x = rect.left + seg * (index as f32 + 0.5);
+            assert_eq!(switcher_at(x, rect.center_y(), 1100.0), Some(*mode));
+        }
+        assert_eq!(switcher_at(rect.left - 1.0, rect.center_y(), 1100.0), None);
     }
 }

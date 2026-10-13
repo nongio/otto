@@ -1232,6 +1232,15 @@ impl Window {
         crate::foreign::set_parent_from_handle(handle, surface.wl_surface())
     }
 
+    /// Name this window for other processes, so a dialog one of them serves
+    /// can be its child — see [`crate::foreign::export`]. `None` on a
+    /// compositor without xdg-foreign, or once the window is closed.
+    pub fn export(&self) -> Option<crate::foreign::Exported> {
+        let surface_guard = self.surface.read().ok()?;
+        let surface = surface_guard.as_ref()?;
+        crate::foreign::export(surface.wl_surface())
+    }
+
     /// Say this window is a dialog, and whether it is modal
     /// (`xdg-dialog-v1`).
     ///

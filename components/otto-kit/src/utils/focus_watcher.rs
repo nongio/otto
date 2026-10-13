@@ -67,6 +67,8 @@ struct ToplevelInfo {
     app_id: Option<String>,
     title: Option<String>,
     activated: bool,
+    /// The toplevel this one is a dialog of, by protocol id.
+    parent: Option<u32>,
 }
 
 struct FocusState {
@@ -78,6 +80,19 @@ impl FocusState {
         Self {
             toplevels: std::collections::HashMap::new(),
         }
+    }
+
+    /// The toplevel `info` is a dialog of, through however many parents, or
+    /// `info` itself. Bounded: a cycle must not hang the watcher.
+    fn owner<'a>(&'a self, info: &'a ToplevelInfo) -> &'a ToplevelInfo {
+        let mut owner = info;
+        for _ in 0..8 {
+            match owner.parent.and_then(|id| self.toplevels.get(&id)) {
+                Some(parent) => owner = parent,
+                None => break,
+            }
+        }
+        owner
     }
 
     /// Called after a `done` event — check if activated state changed globally.
@@ -93,9 +108,12 @@ impl FocusState {
 
         let focused = self.toplevels.values().find(|t| t.activated);
 
+        // A dialog belongs to the application that opened it, even when
+        // another process draws it (the portal's file picker is a Files
+        // window): the focused app is the one at the top of its parents.
         let app = match focused {
             Some(t) => FocusedApp {
-                app_id: t.app_id.clone().unwrap_or_default(),
+                app_id: self.owner(t).app_id.clone().unwrap_or_default(),
                 title: t.title.clone().unwrap_or_default(),
             },
             None => FocusedApp::default(),
@@ -154,6 +172,7 @@ impl Dispatch<ZwlrForeignToplevelManagerV1, ()> for FocusState {
                         app_id: None,
                         title: None,
                         activated: false,
+                        parent: None,
                     },
                 );
             }
@@ -207,6 +226,11 @@ impl Dispatch<ZwlrForeignToplevelHandleV1, ()> for FocusState {
                     }
                 }
             }
+            zwlr_foreign_toplevel_handle_v1::Event::Parent { parent } => {
+                if let Some(info) = state.toplevels.get_mut(&id) {
+                    info.parent = parent.map(|parent| parent.id().protocol_id());
+                }
+            }
             zwlr_foreign_toplevel_handle_v1::Event::Done => {
                 state.update_focused();
             }
@@ -215,6 +239,12 @@ impl Dispatch<ZwlrForeignToplevelHandleV1, ()> for FocusState {
                 // compositor free the object.
                 proxy.destroy();
                 if state.toplevels.remove(&id).is_some() {
+                    // The id is free for reuse: no one is its dialog any more.
+                    for info in state.toplevels.values_mut() {
+                        if info.parent == Some(id) {
+                            info.parent = None;
+                        }
+                    }
                     state.update_focused();
                 }
             }

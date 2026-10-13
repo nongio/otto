@@ -349,6 +349,12 @@ pub struct AppContextData {
     pub xdg_importer: Option<
         wayland_protocols::xdg::foreign::zv2::client::zxdg_importer_v2::ZxdgImporterV2,
     >,
+    /// `zxdg_exporter_v2`: names one of this process's windows with a handle
+    /// another process can import as its dialog's parent. `None` on a
+    /// compositor without xdg-foreign — see [`crate::foreign`].
+    pub xdg_exporter: Option<
+        wayland_protocols::xdg::foreign::zv2::client::zxdg_exporter_v2::ZxdgExporterV2,
+    >,
     /// `xdg_wm_dialog_v1`: how a window says it is a dialog, and modal. The
     /// compositor uses the hint to float it rather than tile it.
     pub xdg_wm_dialog: Option<
@@ -540,6 +546,19 @@ impl<'a> AppContext<'a> {
                 .xdg_importer
                 .as_ref()
                 .map(|r| &*(r as *const ZxdgImporterV2))
+        })
+    }
+
+    /// The xdg-foreign exporter, when the compositor offers one.
+    pub fn xdg_exporter() -> Option<
+        &'static wayland_protocols::xdg::foreign::zv2::client::zxdg_exporter_v2::ZxdgExporterV2,
+    > {
+        use wayland_protocols::xdg::foreign::zv2::client::zxdg_exporter_v2::ZxdgExporterV2;
+        Self::with_global(|ctx| unsafe {
+            ctx.data
+                .xdg_exporter
+                .as_ref()
+                .map(|r| &*(r as *const ZxdgExporterV2))
         })
     }
 

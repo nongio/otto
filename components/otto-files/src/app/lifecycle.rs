@@ -1004,9 +1004,9 @@ impl FilesWindow {
         self.install_open_with_window_pointer();
         // Built here rather than on first use, for the reason the context
         // menu is: see `DropdownMenu`'s docs.
-        let group_menu = Rc::new(otto_kit::components::dropdown::DropdownMenu::new());
-        self.group_menu = Some(Rc::clone(&group_menu));
-        self.install_pointer(&window, self.context_menu.clone().unwrap(), group_menu);
+        let dropdowns = Rc::new(pointer::Dropdowns::default());
+        self.dropdowns = Some(Rc::clone(&dropdowns));
+        self.install_pointer(&window, self.context_menu.clone().unwrap(), dropdowns);
         if view::is_desk() {
             self.install_overflow_pointer(&window, self.context_menu.clone().unwrap());
         }

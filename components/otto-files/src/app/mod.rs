@@ -1188,10 +1188,10 @@ struct FilesWindow {
     /// until `on_app_ready` constructs it, which is the earliest point
     /// `AppContext` is set up.
     context_menu: Option<ContextMenu>,
-    /// The Photos view's grouping menu, built with the context menu and for
-    /// the same reason. Held here as well as by the pointer handler so the
-    /// keyboard can drive it while it is open.
-    group_menu: Option<Rc<otto_kit::components::dropdown::DropdownMenu>>,
+    /// The window's pop-up buttons' menus, built with the context menu and
+    /// for the same reason. Held here as well as by the pointer handler so
+    /// the keyboard can drive the one that is open.
+    dropdowns: Option<Rc<pointer::Dropdowns>>,
     /// Peek's surfaces and its card's rect within its own, published by the
     /// render path for the pointer callback below. See
     /// [`pane_surfaces::PaneSurfaces::peek_target`].
@@ -1500,7 +1500,7 @@ impl FilesWindow {
             opaque_region: None,
             modifiers: Arc::new(Mutex::new(Modifiers::default())),
             context_menu: None,
-            group_menu: None,
+            dropdowns: None,
             peek_target: Arc::new(Mutex::new(None)),
             palette_target: Arc::new(Mutex::new(None)),
             picker_queue,
