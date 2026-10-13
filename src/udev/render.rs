@@ -1898,21 +1898,6 @@ impl<A: RendererApi> Otto<UdevData<A>> {
         crtc: crtc::Handle,
         evt_handle: LoopHandle<'static, Otto<UdevData<A>>>,
     ) {
-        self.try_initial_render(node, crtc, evt_handle, 0);
-    }
-
-    /// `node` is the primary device node keying `backends`, not the
-    /// surface's render node. Temporary failures are retried on idle up to
-    /// `INITIAL_RENDER_MAX_RETRIES` times.
-    fn try_initial_render(
-        &mut self,
-        node: DrmNode,
-        crtc: crtc::Handle,
-        evt_handle: LoopHandle<'static, Otto<UdevData<A>>>,
-        attempt: u32,
-    ) {
-        const INITIAL_RENDER_MAX_RETRIES: u32 = 3;
-
         let device = if let Some(device) = self.backend_data.backends.get_mut(&node) {
             device
         } else {
@@ -1925,15 +1910,9 @@ impl<A: RendererApi> Otto<UdevData<A>> {
             return;
         };
 
-        let render_node = surface.render_node;
+        let node = surface.render_node;
         let result = {
-            let mut renderer = match A::single_renderer(&mut self.backend_data.gpus, &render_node) {
-                Ok(r) => r,
-                Err(err) => {
-                    warn!("initial render: failed to get renderer: {err}");
-                    return;
-                }
-            };
+            let mut renderer = A::single_renderer(&mut self.backend_data.gpus, &node).unwrap();
             initial_render::<A>(surface, &mut renderer)
         };
 
@@ -1941,21 +1920,13 @@ impl<A: RendererApi> Otto<UdevData<A>> {
             match err {
                 SwapBuffersError::AlreadySwapped => {}
                 SwapBuffersError::TemporaryFailure(err) => {
-                    if attempt >= INITIAL_RENDER_MAX_RETRIES {
-                        warn!("Failed to submit initial page_flip, giving up: {}", err);
-                        return;
-                    }
+                    // TODO dont reschedule after 3(?) retries
                     warn!("Failed to submit page_flip: {}", err);
                     let handle = evt_handle.clone();
-                    evt_handle.insert_idle(move |data| {
-                        data.try_initial_render(node, crtc, handle, attempt + 1)
-                    });
+                    evt_handle
+                        .insert_idle(move |data| data.schedule_initial_render(node, crtc, handle));
                 }
-                // Same policy as the main render path: log instead of
-                // taking the whole session down.
-                SwapBuffersError::ContextLost(err) => {
-                    tracing::error!("Rendering context lost during initial render: {}", err);
-                }
+                SwapBuffersError::ContextLost(err) => panic!("Rendering loop lost: {}", err),
             }
         }
     }
