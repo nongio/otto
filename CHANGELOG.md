@@ -2,11 +2,106 @@
 
 All notable changes to this project will be documented in this file.
 
-## [unreleased]
+## [1.7.0] - 2026-10-13
+
+### 🚀 Features
+
+- *(settings)* Users pane with account list, add and remove users (#263)
+- *(picker)* Location menu, New Folder, dialogs out of the dock (#276)
+- *(settings)* A pavucontrol-style mixer in the Sound pane (#277)
+- *(settings)* Search the settings from the sidebar (#279)
+- *(canvas)* The Agents panel's field is a prompt; Enter sends it (#281)
+- *(otto-preview)* One process, a window per file (#312)
+- *(preview)* Pages sidebar and zoom level (#311)
+- *(dictate)* Dictation in otto-kit and the launcher (#219)
+- *(agents)* Chat bridges, reach the agents from a phone (#237)
+- *(preview)* Studio, chat and app menus (#316)
+- *(files)* Photos media and info panel (#318)
+- *(canvas)* Drop shadow on the Agents panel (#319)
+- *(files)* One process, a window per folder (#334)
+- Enforce architecture rules in CI (#335)
+- *(studio)* Fill PDF forms and mark them up (#345)
+- Solar glyphs for Otto's interface (#346)
+- Studio opens on the picker; kit dropdowns and segmented control (#354)
+
+### 🐛 Bug Fixes
+
+- Compositor findings from the 1.6.0 review (#259)
+- *(auth)* Wipe secrets, async logind power, shared auth glue (#260)
+- Apps review findings after 1.6.0 (#258)
+- Apps follow-ups after 1.6.0 (wave 2) (#267)
+- Screencast buffer pool and renderer follow-ups (wave 3) (#270)
+- Trash spec and review leftovers (post-1.6.0 wave 3) (#272)
+- Follow-ups from the post-merge review of #264-#270 (#273)
+- *(trash)* Validate topdir trash cans (#274)
+- *(otto-bar)* Global menus on Wayland, Top bar settings, app name menu (#275)
+- *(lock)* Keep the lock above fullscreen windows, exposé and gestures (#280)
+- *(otto-bar)* Disable SNI proxy property cache (#296)
+- *(shell)* Exact, cached app id lookup by exe (#297)
+- *(udev)* Retry initial render on the device node (#298)
+- *(screenshare)* Don't queue a failed blit (#299)
+- *(files)* Refuse to rename over an existing item (#300)
+- *(portal)* Encode screenshot URI, await grim (#301)
+- *(auth-ui)* Share avatar initials and colour with kit (#302)
+- *(settings)* Keep stereo balance on volume set (#303)
+- *(otto-bar)* Update re-registered tray items in place (#304)
+- *(settings)* Give up on a stuck passwd (#305)
+- *(dock)* Re-arm trash watches on every burst (#306)
+- *(audio)* Apply wpctl changes in order (#309)
+- *(greeter)* Parse session Exec per the spec (#307)
+- *(settings)* Hash before creating a user (#308)
+- *(settings)* Retry passwd spawn on ETXTBSY (#310)
+- *(bar)* App menus show disabled items and shortcuts; roomier menu spacing (#315)
+- *(files)* Photos fits a maximised window, shows when photos were taken (#320)
+- *(files)* One no-replace move for every path (#330)
+- *(otto-bar)* Menu, tray and logout lifecycles (#327)
+- *(shell)* Refuse grabs on minimised windows (#331)
+- *(agents)* Close no-prompt exec and remote permission holes (#329)
+- Harden portal and local IPC (#323) (#328)
+- *(agents)* Keep the turn on history replay (#333)
+- *(arch)* Follow modules re-exported from crates (#341)
+- Hide a subsurface whose wl_subsurface is gone (#347)
 
 ### 🚜 Refactor
 
+- *(kit)* Share small helpers across crates (#261)
 - [**breaking**] Unify hex colours and the colour palette (#264). otto-bar's `[battery] color_*` eight-digit colours are now `#RRGGBBAA` (alpha last), not `#AARRGGBB`; an old value still parses, as another colour (`"#FF34C759"`, opaque green, now reads as translucent magenta). Move the alpha pair to the end: `"#34C759FF"`.
+- One client proxy per D-Bus interface (otto-dbus) (#266)
+- Compositor dedupe (post-1.6.0 wave 2) (#268)
+- *(agents-kit)* Move the Ask chat out of the launcher (#314)
+- Add otto-foundations, a UI-free base crate (#332)
+- Read XDG dirs through otto-foundations (#336)
+- Otto-preview stops depending on otto-files (#337)
+- Pay down compositor module debt (#338)
+- *(workspaces)* Type selector geometry (#339)
+- Split the render stack into otto-render (#340)
+
+### 📚 Documentation
+
+- Track what the 1.6.0 review fixes landed (#262)
+- Track the review's second wave (#269)
+- Explain running a source build with the build dir on PATH (#317)
+- AGENTS.md per crate, how-it-works pages (#352)
+- Refresh app screenshots in the default look, add the missing ones (#353)
+
+### ⚡ Performance
+
+- Tune the release profile (#344)
+
+### ⚙️ Miscellaneous Tasks
+
+- Drop unused deps, check them in CI, record the 1.6.0 review (#257)
+- Migrate the workspace to zbus 5 (#271)
+- Trim README, refresh screenshots
+- Run only the crates a change affects (#342)
+- Gate render-stack lint and AHP on their crates (#348)
+- One job per area instead of one check job (#349)
+- Install what the area jobs actually link (#350)
+- Give every job a read-only GITHUB_TOKEN (#351)
+
+### Build
+
+- *(deps)* Bump rustls from 0.23.43 to 0.23.45 (#278)
 
 ## [1.6.0] - 2026-10-04
 
@@ -44,6 +139,7 @@ All notable changes to this project will be documented in this file.
 
 - Remove unused dependencies, dead code and low-value tests (#240)
 - Widget install check and dependency alerts (#251)
+- *(release)* 1.6.0 (#256)
 
 ## [1.5.0] - 2026-09-25
 
@@ -56,8 +152,7 @@ All notable changes to this project will be documented in this file.
 - *(islands)* Follow the player's audio stream (#217)
 - *(stash)* Collect things to send to Ask (#218)
 - *(settings)* Agents pane (#224)
-- *(render)* Vulkan renderer, experimental (#225)
-- *(settings)* Renderer in the General pane
+- *(settings)* Renderer in General; release 1.5.0 (#227)
 
 ### 🐛 Bug Fixes
 
@@ -67,6 +162,8 @@ All notable changes to this project will be documented in this file.
 - *(pkg)* Make nightly packages install and update (#222)
 - *(islands)* Only the player's stream moves the bars (#221)
 - *(planes)* Fence plane buffers instead of blocking (#223)
+- *(input)* Keep the keyboard on a clicked window
+- *(popups)* Redraw menus drawn into a subsurface
 
 ## [1.4.1] - 2026-09-23
 
