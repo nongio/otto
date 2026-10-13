@@ -3,7 +3,7 @@
 `otto-files` is Otto's file manager. Browse the filesystem, open things, move
 them around, and preview a file without opening it at all.
 
-![The Files window in icon view, showing a folder of pictures as thumbnails with the sidebar of places on the left](images/files-icon-view.jpg)
+![The Files window in icon view, showing a folder of pictures as large thumbnails with the sidebar of places on the left and the path along the bottom](images/files-icon-view.jpg)
 
 > **First version.** Files is new and aims to be genuinely useful for everyday
 > browsing, but it is not finished. What is missing is listed at the bottom of
@@ -292,7 +292,7 @@ as the panel is open.
 Arrow keys move to the next file and the preview follows, `Space` closes it,
 and `Escape` closes it before it clears your selection.
 
-![Peek open on a picture: the file fills the panel, with its name, dimensions and size listed underneath](images/peek.jpg)
+![Peek open on a picture: the image fills a panel over the Files window, with the file name above it and buttons to expand or close](images/peek.jpg)
 
 While the panel is up it owns the pointer: the wheel scrolls a text preview, a
 pinch zooms a picture, and a two-finger scroll pans a zoomed one with momentum

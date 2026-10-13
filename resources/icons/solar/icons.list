@@ -62,6 +62,8 @@ folder                      folder
 go-previous-symbolic        alt-arrow-left
 go-next-symbolic            alt-arrow-right
 folder-new-symbolic         add-folder
+
+# Files view switcher
 otto-view-list-symbolic     list
 otto-view-grid-symbolic     widget
 otto-view-columns-symbolic  columns-3

@@ -7,6 +7,8 @@ to know which menu a command lives in or what shortcut it has.
 It finds *commands*, not files. To find a file, use type-ahead, `Ctrl+L` or
 `Ctrl+F` — see [Files](files.md).
 
+![The command palette over a Files window with "mo" typed, listing Move to Folder, Move to Trash and other matches, each with its menu and shortcut on the right](images/files-command-palette.jpg)
+
 ## Opening and closing
 
 - `Ctrl+P` opens it, over the top right of the window. `Ctrl+P` again closes

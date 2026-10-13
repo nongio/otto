@@ -18,6 +18,15 @@ Downloaded from [Wikimedia Commons](https://commons.wikimedia.org). A public
 domain or CC0 file needs no permission; a CC BY-SA file is credited above, and
 the same licence applies to the screenshot that shows it.
 
+## Video
+
+| Name | File | Author | Licence |
+|------|------|--------|---------|
+| `earth-at-night` | [NASA - Earth at Night Q3YYwIsMHzw.webm](https://commons.wikimedia.org/wiki/File:NASA_-_Earth_at_Night_Q3YYwIsMHzw.webm) | NASA Goddard Space Flight Center | Public domain |
+
+The clip playing in mpv on the demo's fourth workspace, downloaded from
+Wikimedia Commons into `~/Videos` by hand.
+
 ## Icons and cursors
 
 | Name | Author | Licence |
