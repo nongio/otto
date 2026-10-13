@@ -2092,6 +2092,7 @@ studio-save-as-title = Enregistrer une copie
 studio-open-title = Ouvrir dans Studio
 studio-open-filter-all = Images et documents
 studio-open-filter-pictures = Images
+studio-pick-hint = Choisissez un fichier à ouvrir
 # The window's title while a PDF has changes not yet saved. $name is the file's name.
 studio-title-edited = { $name } (modifié)
 # Asked when a window with unsaved changes is closed. $name is the file's name.
