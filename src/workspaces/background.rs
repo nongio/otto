@@ -104,6 +104,25 @@ fn downscale_to_cover(image: skia::Image, target_w: i32, target_h: i32) -> skia:
     surface.image_snapshot()
 }
 
+/// How the wallpaper shader samples its image at draw `scale`.
+///
+/// Drawn 1:1 the texels and the pixels coincide and nearest sampling is
+/// exact, as it is for a window surface at its own size (see
+/// `workspaces::utils::surface_filter`). At any other scale a pixel centre
+/// falls between texels, and which texel nearest sampling picks then hangs
+/// on the last bit of the interpolated coordinate — which differs between
+/// the two triangles a rect is rasterised as, and between a whole-screen
+/// paint and the cropped rect a partial repaint draws. Linear sampling
+/// blends the two candidates instead, so that bit is worth a fraction of a
+/// shade rather than a whole texel (nongio/otto#361).
+fn wallpaper_sampling(scale: f32) -> skia::SamplingOptions {
+    if (scale - 1.0).abs() < f32::EPSILON {
+        skia::SamplingOptions::default()
+    } else {
+        skia::SamplingOptions::new(skia::FilterMode::Linear, skia::MipmapMode::None)
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct BackgroundViewState {
     pub image: Option<skia::Image>,
@@ -222,7 +241,7 @@ pub fn view_background(
 
     // let debug_text = state.debug_string.clone();
 
-    let draw_container = move |canvas: &skia::Canvas, w, h| {
+    let draw_container = move |canvas: &skia::Canvas, w: f32, h: f32| {
         let mut paint = skia::Paint::new(skia::Color4f::new(1.0, 1.0, 1.0, 1.0), None);
 
         if let Some(image) = image.as_ref() {
@@ -233,15 +252,16 @@ pub fn view_background(
             let scale_y: f32 = h / image_height;
             let scale = scale_x.max(scale_y); // Choose the smaller scale to maintain aspect ratio
 
-            // Calculate the offsets for centering the image
-            let offset_x = (w - image_width * scale) / 2.0;
-            let offset_y = (h - image_height * scale) / 2.0;
+            // Centre the image, on whole pixels: a half-pixel offset puts every
+            // pixel centre on a texel boundary, the worst case for sampling.
+            let offset_x = ((w - image_width * scale) / 2.0).round();
+            let offset_y = ((h - image_height * scale) / 2.0).round();
 
             matrix.set_scale_translate((scale, scale), (offset_x, offset_y)); // canvas.concat(&matrix);
                                                                               // canvas.draw_image_rect(image, None, rect, &paint);
             paint.set_shader(image.to_shader(
                 (skia::TileMode::Repeat, skia::TileMode::Repeat),
-                skia::SamplingOptions::default(),
+                wallpaper_sampling(scale),
                 &matrix,
             ));
         } else {
@@ -334,6 +354,19 @@ pub fn view_background(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// At exactly 1:1 the wallpaper is sampled nearest, which is exact there;
+    /// at any other scale it is sampled linearly, so a partial repaint's
+    /// rasterisation cannot flip texels along its triangle seam (#361).
+    #[test]
+    fn wallpaper_is_sampled_linearly_unless_drawn_one_to_one() {
+        let nearest = skia::SamplingOptions::default();
+        let linear = skia::SamplingOptions::new(skia::FilterMode::Linear, skia::MipmapMode::None);
+        assert_eq!(wallpaper_sampling(1.0).filter, nearest.filter);
+        assert_eq!(wallpaper_sampling(1.28).filter, linear.filter);
+        assert_eq!(wallpaper_sampling(0.9997).filter, linear.filter);
+        assert_eq!(wallpaper_sampling(2.0).filter, linear.filter);
+    }
 
     fn solid(w: i32, h: i32) -> skia::Image {
         let mut surface = skia::surfaces::raster_n32_premul((w, h)).unwrap();
