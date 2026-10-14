@@ -1156,3 +1156,458 @@ fn vulkan_nv12_dmabuf_samples_as_rgb() {
         );
     }
 }
+
+/// nongio/otto#361: the wallpaper is painted as an image shader scaled to
+/// cover the output. While a window is dragged only the damage rect around it
+/// is repainted, and Skia crops the wallpaper's fill to that rect, so the GPU
+/// rasterises a different pair of triangles than it did for the whole screen.
+/// Along their shared diagonal the interpolated texture coordinates differ by
+/// rounding; with nearest sampling at a fractional scale that lands on the
+/// other side of a texel boundary, and the repainted band tears along a
+/// diagonal starting at the rect's corner.
+///
+/// Paints the same wallpaper whole and then inside a window-sized clip, and
+/// returns `(mismatches inside the clip, of which near a diagonal, mismatches
+/// outside the clip)` between the two framebuffers.
+fn wallpaper_partial_repaint_mismatches(
+    sampling: layers::skia::SamplingOptions,
+) -> (usize, usize, usize) {
+    use layers::skia;
+
+    const W: i32 = 1280;
+    const H: i32 = 800;
+    // Neither dimension divides the output: a fractional cover scale and a
+    // fractional centring offset, the common case for a photo wallpaper.
+    const IW: i32 = 999;
+    const IH: i32 = 701;
+
+    let mut renderer = SkiaVkRenderer::new(&first_physical_device()).expect("renderer");
+    let mut target = renderer
+        .create_buffer(Fourcc::Abgr8888, (W, H).into())
+        .expect("offscreen target");
+
+    // Every texel differs from its neighbours, so picking the wrong one
+    // changes the pixel.
+    let mut pixels = Vec::with_capacity((IW * IH * 4) as usize);
+    let mut seed: u32 = 0x9E37_79B9;
+    for _ in 0..IW * IH {
+        seed ^= seed << 13;
+        seed ^= seed >> 17;
+        seed ^= seed << 5;
+        pixels.extend_from_slice(&[
+            (seed & 0xff) as u8,
+            ((seed >> 8) & 0xff) as u8,
+            ((seed >> 16) & 0xff) as u8,
+            255,
+        ]);
+    }
+    let info = skia::ImageInfo::new(
+        (IW, IH),
+        skia::ColorType::RGBA8888,
+        skia::AlphaType::Premul,
+        None,
+    );
+    let image =
+        skia::images::raster_from_data(&info, skia::Data::new_copy(&pixels), (IW * 4) as usize)
+            .expect("raster image");
+
+    // The cover transform exactly as `view_background` computes it.
+    let paint_wallpaper = |canvas: &skia::Canvas| {
+        let (w, h) = (W as f32, H as f32);
+        let scale = (w / IW as f32).max(h / IH as f32);
+        let offset_x = (w - IW as f32 * scale) / 2.0;
+        let offset_y = (h - IH as f32 * scale) / 2.0;
+        let mut matrix = skia::Matrix::new_identity();
+        matrix.set_scale_translate((scale, scale), (offset_x, offset_y));
+        let mut paint = skia::Paint::new(skia::Color4f::new(1.0, 1.0, 1.0, 1.0), None);
+        paint.set_shader(image.to_shader(
+            (skia::TileMode::Repeat, skia::TileMode::Repeat),
+            sampling,
+            &matrix,
+        ));
+        canvas.draw_rect(skia::Rect::from_wh(w, h), &paint);
+    };
+    let read = |renderer: &mut SkiaVkRenderer, target: &_| -> Vec<u8> {
+        let mapping = renderer
+            .copy_framebuffer(
+                target,
+                Rectangle::from_size((W, H).into()),
+                Fourcc::Abgr8888,
+            )
+            .expect("copy framebuffer");
+        renderer.map_texture(&mapping).expect("map").to_vec()
+    };
+
+    // Frame 1: the whole wallpaper, as the first frame after a wallpaper
+    // change paints it.
+    let sync = {
+        let mut frame = renderer
+            .render(&mut target, (W, H).into(), Transform::Normal)
+            .expect("frame");
+        frame
+            .clear(
+                Color32F::new(0.0, 0.0, 0.0, 1.0),
+                &[Rectangle::from_size((W, H).into())],
+            )
+            .expect("clear");
+        paint_wallpaper(frame.skia_surface.canvas());
+        frame.finish().expect("finish")
+    };
+    sync.wait().expect("sync point signals");
+    let whole = read(&mut renderer, &target);
+
+    // Frame 2: a drag frame. A 300x260 window at (511, 333) plus the 100px
+    // shadow safe area on every side is the damage rect, and only it is
+    // repainted — `SceneElement::draw` clips to each damage rect and runs
+    // the tree again under it.
+    let clip = skia::IRect::from_xywh(411, 233, 500, 460);
+    let sync = {
+        let mut frame = renderer
+            .render(&mut target, (W, H).into(), Transform::Normal)
+            .expect("frame");
+        let canvas = frame.skia_surface.canvas();
+        let save = canvas.save();
+        canvas.clip_irect(clip, Some(skia::ClipOp::Intersect));
+        paint_wallpaper(canvas);
+        canvas.restore_to_count(save);
+        frame.finish().expect("finish")
+    };
+    sync.wait().expect("sync point signals");
+    let partial = read(&mut renderer, &target);
+
+    let (mut inside, mut near_diagonal, mut outside) = (0usize, 0usize, 0usize);
+    for y in 0..H {
+        for x in 0..W {
+            let i = ((y * W + x) * 4) as usize;
+            if whole[i..i + 4] == partial[i..i + 4] {
+                continue;
+            }
+            let in_clip = x >= clip.left && x < clip.right && y >= clip.top && y < clip.bottom;
+            if !in_clip {
+                outside += 1;
+                continue;
+            }
+            inside += 1;
+            let fx = (x - clip.left) as f32 / clip.width() as f32;
+            let fy = (y - clip.top) as f32 / clip.height() as f32;
+            if (fx - fy).abs() < 0.03 || (fx + fy - 1.0).abs() < 0.03 {
+                near_diagonal += 1;
+            }
+        }
+    }
+    (inside, near_diagonal, outside)
+}
+
+/// Diagnostic for nongio/otto#361, meant to be run on the affected GPU with
+/// `--nocapture`: prints how the band repainted with the production sampling
+/// (`SamplingOptions::default()` is nearest, no mipmaps) differs from the
+/// whole-screen paint. On Intel (anv) it is identical; the report from an AMD
+/// iGPU decides whether radv rasterises the two passes differently.
+#[test]
+#[ignore = "needs a Vulkan GPU"]
+fn vulkan_wallpaper_nearest_partial_repaint_report() {
+    let (inside, near_diagonal, outside) =
+        wallpaper_partial_repaint_mismatches(layers::skia::SamplingOptions::default());
+    eprintln!(
+        "nearest: {inside} pixels differ inside the damage rect, {near_diagonal} of them within 3% of a diagonal; {outside} outside"
+    );
+    assert_eq!(outside, 0, "pixels outside the damage rect are untouched");
+}
+
+/// The same diagnostic with linear sampling, the candidate fix. Bilinear
+/// weights round differently between the two passes, so a handful of pixels
+/// one shade apart is expected; the number to compare is the nearest one.
+#[test]
+#[ignore = "needs a Vulkan GPU"]
+fn vulkan_wallpaper_linear_partial_repaint_report() {
+    let (inside, near_diagonal, outside) =
+        wallpaper_partial_repaint_mismatches(layers::skia::SamplingOptions::new(
+            layers::skia::FilterMode::Linear,
+            layers::skia::MipmapMode::None,
+        ));
+    eprintln!(
+        "linear: {inside} pixels differ inside the damage rect, {near_diagonal} of them within 3% of a diagonal; {outside} outside"
+    );
+    assert_eq!(outside, 0, "pixels outside the damage rect are untouched");
+}
+
+/// nongio/otto#361 at scene level: the wallpaper layer as `BackgroundView`
+/// builds it (picture-cached content, 24px rounded corners, black backing,
+/// opaque hint) under an image-cached window with a blurred shadow child, as
+/// `WindowView` builds one. The window is dragged and each frame repaints
+/// only the engine's damage rects, as `SceneElement::draw` does; the result
+/// has to equal a whole-screen repaint of the same scene.
+///
+/// Returns, per drag frame, `(pixels differing, of which inside a damage
+/// rect, max channel delta)`.
+fn wallpaper_scene_drag_mismatches(
+    sampling: layers::skia::SamplingOptions,
+) -> Vec<(usize, usize, u8)> {
+    use layers::{
+        drawing::render_node_tree,
+        engine::Engine,
+        prelude::taffy,
+        skia,
+        types::{BorderRadius, Color, Size},
+    };
+
+    const W: i32 = 1280;
+    const H: i32 = 800;
+    const IW: i32 = 999;
+    const IH: i32 = 701;
+    const SAFE_AREA: f32 = 100.0;
+
+    let mut renderer = SkiaVkRenderer::new(&first_physical_device()).expect("renderer");
+    let mut target = renderer
+        .create_buffer(Fourcc::Abgr8888, (W, H).into())
+        .expect("offscreen target");
+
+    let mut pixels = Vec::with_capacity((IW * IH * 4) as usize);
+    let mut seed: u32 = 0x9E37_79B9;
+    for _ in 0..IW * IH {
+        seed ^= seed << 13;
+        seed ^= seed >> 17;
+        seed ^= seed << 5;
+        pixels.extend_from_slice(&[
+            (seed & 0xff) as u8,
+            ((seed >> 8) & 0xff) as u8,
+            ((seed >> 16) & 0xff) as u8,
+            255,
+        ]);
+    }
+    let info = skia::ImageInfo::new(
+        (IW, IH),
+        skia::ColorType::RGBA8888,
+        skia::AlphaType::Premul,
+        None,
+    );
+    let image =
+        skia::images::raster_from_data(&info, skia::Data::new_copy(&pixels), (IW * 4) as usize)
+            .expect("raster image");
+
+    let absolute = || taffy::Style {
+        position: taffy::Position::Absolute,
+        ..Default::default()
+    };
+
+    let engine = Engine::create(W as f32, H as f32);
+    let root = engine.new_layer();
+    root.set_layout_style(absolute());
+    root.set_size(Size::points(W as f32, H as f32), None);
+    engine.add_layer(&root).unwrap();
+
+    // `view_background` + `BackgroundView::new`.
+    let background = engine.new_layer();
+    background.set_key("background_view");
+    background.set_layout_style(absolute());
+    background.set_size(Size::points(W as f32, H as f32), None);
+    background.set_border_corner_radius(BorderRadius::new_single(24.0), None);
+    background.set_background_color(Color::new_rgba(0.0, 0.0, 0.0, 1.0), None);
+    background.set_content_opaque(true);
+    let wallpaper = image.clone();
+    background.set_draw_content(move |canvas: &skia::Canvas, w: f32, h: f32| {
+        let iw = wallpaper.width() as f32;
+        let ih = wallpaper.height() as f32;
+        let scale = (w / iw).max(h / ih);
+        let offset_x = (w - iw * scale) / 2.0;
+        let offset_y = (h - ih * scale) / 2.0;
+        let mut matrix = skia::Matrix::new_identity();
+        matrix.set_scale_translate((scale, scale), (offset_x, offset_y));
+        let mut paint = skia::Paint::new(skia::Color4f::new(1.0, 1.0, 1.0, 1.0), None);
+        paint.set_shader(wallpaper.to_shader(
+            (skia::TileMode::Repeat, skia::TileMode::Repeat),
+            sampling,
+            &matrix,
+        ));
+        canvas.draw_rect(skia::Rect::from_xywh(0.0, 0.0, w, h), &paint);
+        skia::Rect::from_xywh(0.0, 0.0, w, h)
+    });
+    engine.append_layer(&background, root.id).unwrap();
+
+    // `WindowView`: an image-cached window layer holding the shadow (itself
+    // image-cached, drawn `SAFE_AREA` larger on every side) and the content.
+    let (win_w, win_h) = (300.0f32, 260.0f32);
+    let window = engine.new_layer();
+    window.set_key("window");
+    window.set_layout_style(absolute());
+    window.set_size(Size::points(win_w, win_h), None);
+    window.set_position((511.0, 333.0), None);
+    window.set_image_cached(true);
+    engine.append_layer(&window, root.id).unwrap();
+
+    let shadow = engine.new_layer();
+    shadow.set_key("window_shadow");
+    shadow.set_layout_style(absolute());
+    shadow.set_position((-SAFE_AREA, -SAFE_AREA), None);
+    shadow.set_size(
+        Size::points(win_w + SAFE_AREA * 2.0, win_h + SAFE_AREA * 2.0),
+        None,
+    );
+    shadow.set_image_cached(true);
+    shadow.set_draw_content(move |canvas: &skia::Canvas, w: f32, h: f32| {
+        let rrect = skia::RRect::new_rect_xy(
+            skia::Rect::from_xywh(
+                SAFE_AREA,
+                SAFE_AREA,
+                w - SAFE_AREA * 2.0,
+                h - SAFE_AREA * 2.0,
+            ),
+            12.0,
+            12.0,
+        );
+        let mut paint = skia::Paint::new(skia::Color4f::new(0.0, 0.0, 0.0, 0.35), None);
+        paint.set_mask_filter(skia::MaskFilter::blur(skia::BlurStyle::Normal, 24.0, false));
+        canvas.draw_rrect(rrect, &paint);
+        skia::Rect::from_xywh(0.0, 0.0, w, h)
+    });
+    engine.append_layer(&shadow, window.id).unwrap();
+
+    let content = engine.new_layer();
+    content.set_key("window_content");
+    content.set_layout_style(absolute());
+    content.set_size(Size::points(win_w, win_h), None);
+    content.set_background_color(Color::new_rgba(0.2, 0.2, 0.25, 1.0), None);
+    content.set_border_corner_radius(BorderRadius::new_single(12.0), None);
+    engine.append_layer(&content, window.id).unwrap();
+
+    let read = |renderer: &mut SkiaVkRenderer, target: &_| -> Vec<u8> {
+        let mapping = renderer
+            .copy_framebuffer(
+                target,
+                Rectangle::from_size((W, H).into()),
+                Fourcc::Abgr8888,
+            )
+            .expect("copy framebuffer");
+        renderer.map_texture(&mapping).expect("map").to_vec()
+    };
+    // `SceneElement::draw`: one pass per damage rect under a rect clip, the
+    // rect forwarded as the region so untouched subtrees are culled.
+    let render =
+        |renderer: &mut SkiaVkRenderer, target: &mut _, rects: &[skia::IRect], clear: bool| {
+            let sync = {
+                let mut frame = renderer
+                    .render(target, (W, H).into(), Transform::Normal)
+                    .expect("frame");
+                if clear {
+                    frame
+                        .clear(
+                            Color32F::new(0.0, 0.0, 0.0, 1.0),
+                            &[Rectangle::from_size((W, H).into())],
+                        )
+                        .expect("clear");
+                }
+                let canvas = frame.skia_surface.canvas();
+                let scene = engine.scene();
+                scene.with_arena(|arena| {
+                    scene.with_renderable_arena(|renderables| {
+                        for rect in rects {
+                            let save = canvas.save();
+                            canvas.clip_irect(*rect, Some(skia::ClipOp::Intersect));
+                            let mut region = skia::Region::new();
+                            region.set_rect(*rect);
+                            render_node_tree(
+                                root.id,
+                                arena,
+                                renderables,
+                                canvas,
+                                1.0,
+                                None,
+                                Some(&region),
+                                None,
+                            );
+                            canvas.restore_to_count(save);
+                        }
+                    })
+                });
+                frame.finish().expect("finish")
+            };
+            sync.wait().expect("sync point signals");
+        };
+    let full = [skia::IRect::from_wh(W, H)];
+
+    // Frame 0: the scene settles and paints whole.
+    engine.update(0.016);
+    render(&mut renderer, &mut target, &full, true);
+    engine.clear_damage();
+
+    let mut report = Vec::new();
+    for step in 1..=6 {
+        // A drag: `snap_position_px` keeps the endpoints on whole pixels.
+        window.set_position((511.0 + 9.0 * step as f32, 333.0 - 6.0 * step as f32), None);
+        engine.update(0.016);
+        let rects: Vec<skia::IRect> = engine
+            .damage_rects()
+            .into_iter()
+            .filter(|r| !r.is_empty())
+            .map(|r| {
+                let ir: skia::IRect = skia::RoundOut::round_out(&r);
+                skia::IRect::intersect(&ir, &full[0]).unwrap_or(skia::IRect::new_empty())
+            })
+            .filter(|r| !r.is_empty())
+            .collect();
+        assert!(!rects.is_empty(), "step {step}: the move damaged something");
+        render(&mut renderer, &mut target, &rects, false);
+        engine.clear_damage();
+        let partial = read(&mut renderer, &target);
+
+        // The reference: the same scene painted whole.
+        render(&mut renderer, &mut target, &full, true);
+        let whole = read(&mut renderer, &target);
+
+        let (mut differing, mut inside, mut max_delta) = (0usize, 0usize, 0u8);
+        for y in 0..H {
+            for x in 0..W {
+                let i = ((y * W + x) * 4) as usize;
+                let delta = (0..3)
+                    .map(|c| whole[i + c].abs_diff(partial[i + c]))
+                    .max()
+                    .unwrap();
+                if delta == 0 {
+                    continue;
+                }
+                differing += 1;
+                max_delta = max_delta.max(delta);
+                if rects
+                    .iter()
+                    .any(|r| x >= r.left && x < r.right && y >= r.top && y < r.bottom)
+                {
+                    inside += 1;
+                }
+            }
+        }
+        eprintln!(
+            "step {step}: damage {rects:?}: {differing} pixels differ ({inside} inside the damage), max channel delta {max_delta}"
+        );
+        report.push((differing, inside, max_delta));
+    }
+    report
+}
+
+/// The production wallpaper sampling: nearest, no mipmaps. A drag frame
+/// repainted per damage rect has to equal the whole repaint exactly.
+#[test]
+#[ignore = "needs a Vulkan GPU"]
+fn vulkan_wallpaper_scene_drag_nearest() {
+    let report = wallpaper_scene_drag_mismatches(layers::skia::SamplingOptions::default());
+    let worst = report.iter().map(|(d, _, _)| *d).max().unwrap_or(0);
+    assert_eq!(
+        worst, 0,
+        "a drag frame repainted per damage rect equals the whole repaint"
+    );
+}
+
+/// Linear sampling, the candidate fix: the two passes may differ by one
+/// shade of bilinear rounding, never more.
+#[test]
+#[ignore = "needs a Vulkan GPU"]
+fn vulkan_wallpaper_scene_drag_linear() {
+    let report = wallpaper_scene_drag_mismatches(layers::skia::SamplingOptions::new(
+        layers::skia::FilterMode::Linear,
+        layers::skia::MipmapMode::None,
+    ));
+    let worst_delta = report.iter().map(|(_, _, d)| *d).max().unwrap_or(0);
+    assert!(
+        worst_delta <= 1,
+        "linear repaints differ by at most one shade, got {worst_delta}"
+    );
+}
