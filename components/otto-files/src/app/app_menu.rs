@@ -13,6 +13,9 @@ use super::*;
 /// Between a command's id and the choice it is given, in a menu item's id.
 const CHOICE: char = '\u{1f}';
 
+/// The View menu's last item, which opens the palette itself.
+const PALETTE: &str = "command_palette";
+
 /// The views, with the keys that switch to them.
 const VIEWS: [(&str, &str); 4] = [
     (command::id::VIEW_LIST, "Ctrl+1"),
@@ -57,6 +60,13 @@ impl Browser {
                 if items.last() == Some(&MenuEntry::Separator) {
                     items.pop();
                 }
+                if group == command::Group::View {
+                    items.push(MenuEntry::Separator);
+                    items.push(
+                        MenuEntry::item(PALETTE, otto_kit::t_owned!("files-palette-menu-item"))
+                            .with_shortcut("Ctrl+P"),
+                    );
+                }
                 Menu::new(group.label(), items)
             })
             .filter(|menu| !menu.items.is_empty())
@@ -70,6 +80,10 @@ impl Browser {
                 .run_request(&command::Request::new(id, Some(value.to_owned())), serial)
                 .map(Some),
             None if id == command::id::QUICK_LOOK => Ok(Some(Followup::Peek)),
+            None if id == PALETTE => {
+                self.open_palette();
+                Ok(None)
+            }
             None => {
                 self.run_menu_command(id, serial);
                 Ok(None)
@@ -191,5 +205,15 @@ mod tests {
             .unwrap();
         browser.run_app_menu_pick(&by_size, 0);
         assert_eq!(browser.situation().sort, "size");
+    }
+
+    #[test]
+    fn the_view_menu_ends_with_the_palette_which_its_pick_opens() {
+        let (mut browser, _dir) = browser_over(&["a.txt", "b"]);
+        let menus = browser.app_menus();
+        let view = menus.last().unwrap();
+        assert_eq!(titles(view).last().map(String::as_str), Some(PALETTE));
+        browser.run_app_menu_pick(PALETTE, 0);
+        assert!(browser.palette.is_some());
     }
 }

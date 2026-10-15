@@ -894,6 +894,7 @@ files-new-folder-with-count =
 # The panel opened with Ctrl+P: type a few letters of a command's name to run it.
 files-palette-placeholder = Uruchom polecenie
 files-palette-no-matches = Brak pasujących poleceń
+files-palette-menu-item = Paleta poleceń…
 # $count is how many commands the palette is offering; announced when it opens.
 files-palette-opened =
     { $count ->

@@ -625,6 +625,8 @@ files-delete-count-immediately =
 # The panel opened with Ctrl+P: type a few letters of a command's name to run it.
 files-palette-placeholder = Run a command
 files-palette-no-matches = No command matches
+# The View menu item that opens the palette.
+files-palette-menu-item = Command Palette…
 # $count is how many commands the palette is offering; announced when it opens.
 files-palette-opened =
     { $count ->

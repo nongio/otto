@@ -109,7 +109,8 @@ for where the window is now, with their keys. The View menu leads with the
 views as checks, the one on ticked, and their Ctrl+1–4. A command whose
 argument is one of a few choices (Sort By, Go to Place) is a submenu of them,
 the sort in force ticked; one that needs something typed reads "…" and opens
-the palette on itself, as the context menu does. The desk and a file dialog
+the palette on itself, as the context menu does. The View menu ends with
+Command Palette…, Ctrl+P, which opens the palette. The desk and a file dialog
 have no menus of their own.
 
 ### Argument mode
