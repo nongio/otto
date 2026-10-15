@@ -873,6 +873,7 @@ files-new-folder-with-count =
 # The panel opened with Ctrl+P: type a few letters of a command's name to run it.
 files-palette-placeholder = Esegui un comando
 files-palette-no-matches = Nessun comando corrisponde
+files-palette-menu-item = Palette dei comandi…
 # $count is how many commands the palette is offering; announced when it opens.
 files-palette-opened =
     { $count ->

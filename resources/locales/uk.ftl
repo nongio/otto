@@ -884,6 +884,7 @@ files-new-folder-with-count = Нова папка з { $count } елемента
 # виконується.
 files-palette-placeholder = Виконати команду
 files-palette-no-matches = Немає відповідних команд
+files-palette-menu-item = Палітра команд…
 # $count — скільки команд пропонує палітра; оголошується під час відкриття.
 files-palette-opened =
     { $count ->
