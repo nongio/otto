@@ -307,8 +307,11 @@ impl PaneSurfaces {
         }
         let band = stack.band_surface().clone();
 
-        // What of the stack the file area shows, along it.
+        // What of the stack the file area shows, along it — and as a rect in
+        // the stack's coordinates, which everything in it is cropped to: no
+        // compositor clips a subsurface to its parent.
         let (shown_from, shown_to) = (f.pan, f.pan + viewport.width());
+        let shown = Rect::from_ltrb(shown_from, 0.0, shown_to, viewport.height());
         for depth in 0..f.panes.len() {
             // Placed once, in the stack's own coordinates: the pan moves the
             // stack, never a column.
@@ -343,6 +346,7 @@ impl PaneSurfaces {
             }
             painted |= column.surfaces.set_hidden(false);
             column.surfaces.set_viewport(rect);
+            painted |= column.surfaces.set_clip_rect(Some(shown));
             // The active column is a shade off the ground: the colour of its
             // clip, one pixel stretched, so which column has the keyboard
             // repaints neither the rows nor the window.
@@ -355,6 +359,7 @@ impl PaneSurfaces {
                 &mut column.divider,
                 &band,
                 rect,
+                shown,
                 f.theme,
                 &mut self.stack_children_dirty,
             );
@@ -362,6 +367,7 @@ impl PaneSurfaces {
                 &mut column.status,
                 &band,
                 rect,
+                shown,
                 &f.panes[depth],
                 f.theme,
                 &mut self.pending,
@@ -913,10 +919,12 @@ impl PaneSurfaces {
             self.preview_pane = PlacedSurface::new(stack, rect).ok();
             self.stack_children_dirty = true;
         }
+        let window = Rect::from_ltrb(shown_from, 0.0, shown_to, viewport.height());
         let mut painted = sync_divider(
             &mut self.preview_divider,
             stack,
             rect,
+            window,
             f.theme,
             &mut self.stack_children_dirty,
         );
@@ -925,6 +933,7 @@ impl PaneSurfaces {
         };
         painted |= pane.set_hidden(false);
         pane.set_rect(rect);
+        painted |= pane.set_window(Some(window));
 
         let key = {
             use std::collections::hash_map::DefaultHasher;
@@ -1026,6 +1035,8 @@ impl PaneSurfaces {
         };
         let mut painted = pane.set_hidden(false);
         pane.set_rect(rect);
+        let shown = Rect::from_xywh(f.pan, 0.0, viewport.width(), viewport.height());
+        painted |= pane.set_window(Some(shown));
 
         let key = hash_rect(rect) ^ video.key().rotate_left(19);
         let theme = f.theme.clone();
@@ -1303,6 +1314,7 @@ fn sync_divider(
     divider: &mut Option<Fill>,
     stack: &WlSurface,
     column: Rect,
+    shown: Rect,
     theme: &Theme,
     created: &mut bool,
 ) -> bool {
@@ -1314,7 +1326,10 @@ fn sync_divider(
         return false;
     };
     let line = Rect::from_xywh(column.right - 0.5, column.top, 1.0, column.height());
-    fill.set_style(theme.fill_tertiary, 0.0) | fill.set_rect(line) | fill.set_hidden(false)
+    fill.set_style(theme.fill_tertiary, 0.0)
+        | fill.set_window(Some(shown))
+        | fill.set_rect(line)
+        | fill.set_hidden(false)
 }
 
 /// The line a column shows in place of rows — loading, empty, or why it could
@@ -1323,6 +1338,7 @@ fn sync_status(
     slot: &mut Option<PlacedSurface>,
     stack: &WlSurface,
     column: Rect,
+    shown: Rect,
     pane: &PaneData<'_>,
     theme: &Theme,
     pending: &mut bool,
@@ -1359,6 +1375,7 @@ fn sync_status(
     };
     let mut painted = surface.set_hidden(false);
     surface.set_rect(rect);
+    painted |= surface.set_window(Some(shown));
 
     let key = {
         use std::collections::hash_map::DefaultHasher;

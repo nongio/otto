@@ -258,6 +258,7 @@ impl App for Probe {
 
         let mut stepped = false;
         let mut visible = 0.0..f32::MAX;
+        let mut outer_shown = None;
         if let Some(outer) = self.outer.as_mut() {
             let max = outer.state.max_offset();
             outer.state.set_offset(sweep(t, speed, max));
@@ -276,6 +277,7 @@ impl App for Probe {
                 });
             let offset = outer.state.offset();
             visible = offset..offset + outer.state.viewport_length();
+            outer_shown = outer.surfaces.shown_content();
         }
         for (index, pane) in self.inner.iter_mut().enumerate() {
             // A column panned out of the container's view is left where it is,
@@ -286,6 +288,9 @@ impl App for Probe {
             if !shown {
                 continue;
             }
+            // Cropped to what the container shows: no compositor clips a
+            // subsurface to its parent.
+            pane.surfaces.set_clip_rect(outer_shown);
             let max = pane.state.max_offset();
             pane.state
                 .set_offset(sweep(t + pane.phase, speed * 0.6, max));

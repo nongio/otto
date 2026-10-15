@@ -11,6 +11,7 @@
 
 mod backing;
 mod band;
+mod crop;
 mod fill;
 mod layout;
 mod pane;

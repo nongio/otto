@@ -461,6 +461,8 @@ impl Picker {
         // rather than scrolling on its own.
         let pan = self.pan.offset();
         busy |= stack.update_container_at(self.layout.content_width(), pan, &theme);
+        // What of the stack the card shows, which each pane crops itself to.
+        let stack_shown = stack.visible();
 
         let selected = self
             .selected
@@ -473,6 +475,7 @@ impl Picker {
             if !shown {
                 continue;
             }
+            busy |= pane.set_clip_rect(Some(stack_shown));
             let highlight = selected
                 .filter(|(in_pane, _)| *in_pane == index)
                 .map(|(_, rect)| Palette::highlight_rect(rect));
