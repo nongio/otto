@@ -1343,6 +1343,22 @@ fn vulkan_wallpaper_linear_partial_repaint_report() {
 fn wallpaper_scene_drag_mismatches(
     sampling: layers::skia::SamplingOptions,
 ) -> Vec<(usize, usize, u8)> {
+    wallpaper_scene_drag_mismatches_at(sampling, 1280, 800, 999, 701, 1.0)
+}
+
+/// [`wallpaper_scene_drag_mismatches`] on a `W`x`H` physical output at
+/// output `scale`, with an `IW`x`IH` wallpaper. Window geometry is logical
+/// and reaches the layers multiplied by `scale`, as Otto does: positions
+/// through `snap_position_px` (rounded), sizes left fractional.
+#[allow(non_snake_case)]
+fn wallpaper_scene_drag_mismatches_at(
+    sampling: layers::skia::SamplingOptions,
+    W: i32,
+    H: i32,
+    IW: i32,
+    IH: i32,
+    scale: f32,
+) -> Vec<(usize, usize, u8)> {
     use layers::{
         drawing::render_node_tree,
         engine::Engine,
@@ -1351,11 +1367,8 @@ fn wallpaper_scene_drag_mismatches(
         types::{BorderRadius, Color, Size},
     };
 
-    const W: i32 = 1280;
-    const H: i32 = 800;
-    const IW: i32 = 999;
-    const IH: i32 = 701;
-    const SAFE_AREA: f32 = 100.0;
+    let snap = |x: f32, y: f32| (x.round(), y.round());
+    let safe_area = 100.0 * scale;
 
     let mut renderer = SkiaVkRenderer::new(&first_physical_device()).expect("renderer");
     let mut target = renderer
@@ -1401,7 +1414,7 @@ fn wallpaper_scene_drag_mismatches(
     background.set_key("background_view");
     background.set_layout_style(absolute());
     background.set_size(Size::points(W as f32, H as f32), None);
-    background.set_border_corner_radius(BorderRadius::new_single(24.0), None);
+    background.set_border_corner_radius(BorderRadius::new_single(24.0 * scale), None);
     background.set_background_color(Color::new_rgba(0.0, 0.0, 0.0, 1.0), None);
     background.set_content_opaque(true);
     let wallpaper = image.clone();
@@ -1426,37 +1439,41 @@ fn wallpaper_scene_drag_mismatches(
 
     // `WindowView`: an image-cached window layer holding the shadow (itself
     // image-cached, drawn `SAFE_AREA` larger on every side) and the content.
-    let (win_w, win_h) = (300.0f32, 260.0f32);
+    let (win_w, win_h) = (300.0 * scale, 260.0 * scale);
     let window = engine.new_layer();
     window.set_key("window");
     window.set_layout_style(absolute());
     window.set_size(Size::points(win_w, win_h), None);
-    window.set_position((511.0, 333.0), None);
+    window.set_position(snap(383.0 * scale, 250.0 * scale), None);
     window.set_image_cached(true);
     engine.append_layer(&window, root.id).unwrap();
 
     let shadow = engine.new_layer();
     shadow.set_key("window_shadow");
     shadow.set_layout_style(absolute());
-    shadow.set_position((-SAFE_AREA, -SAFE_AREA), None);
+    shadow.set_position((-safe_area, -safe_area), None);
     shadow.set_size(
-        Size::points(win_w + SAFE_AREA * 2.0, win_h + SAFE_AREA * 2.0),
+        Size::points(win_w + safe_area * 2.0, win_h + safe_area * 2.0),
         None,
     );
     shadow.set_image_cached(true);
     shadow.set_draw_content(move |canvas: &skia::Canvas, w: f32, h: f32| {
         let rrect = skia::RRect::new_rect_xy(
             skia::Rect::from_xywh(
-                SAFE_AREA,
-                SAFE_AREA,
-                w - SAFE_AREA * 2.0,
-                h - SAFE_AREA * 2.0,
+                safe_area,
+                safe_area,
+                w - safe_area * 2.0,
+                h - safe_area * 2.0,
             ),
-            12.0,
-            12.0,
+            12.0 * scale,
+            12.0 * scale,
         );
         let mut paint = skia::Paint::new(skia::Color4f::new(0.0, 0.0, 0.0, 0.35), None);
-        paint.set_mask_filter(skia::MaskFilter::blur(skia::BlurStyle::Normal, 24.0, false));
+        paint.set_mask_filter(skia::MaskFilter::blur(
+            skia::BlurStyle::Normal,
+            24.0 * scale,
+            false,
+        ));
         canvas.draw_rrect(rrect, &paint);
         skia::Rect::from_xywh(0.0, 0.0, w, h)
     });
@@ -1467,7 +1484,7 @@ fn wallpaper_scene_drag_mismatches(
     content.set_layout_style(absolute());
     content.set_size(Size::points(win_w, win_h), None);
     content.set_background_color(Color::new_rgba(0.2, 0.2, 0.25, 1.0), None);
-    content.set_border_corner_radius(BorderRadius::new_single(12.0), None);
+    content.set_border_corner_radius(BorderRadius::new_single(12.0 * scale), None);
     engine.append_layer(&content, window.id).unwrap();
 
     let read = |renderer: &mut SkiaVkRenderer, target: &_| -> Vec<u8> {
@@ -1532,8 +1549,10 @@ fn wallpaper_scene_drag_mismatches(
 
     let mut report = Vec::new();
     for step in 1..=6 {
-        // A drag: `snap_position_px` keeps the endpoints on whole pixels.
-        window.set_position((511.0 + 9.0 * step as f32, 333.0 - 6.0 * step as f32), None);
+        // A drag in logical points; `snap_position_px` rounds the physical
+        // origin to whole pixels.
+        let (lx, ly) = (383.0 + 7.0 * step as f32, 250.0 - 5.0 * step as f32);
+        window.set_position(snap(lx * scale, ly * scale), None);
         engine.update(0.016);
         let rects: Vec<skia::IRect> = engine
             .damage_rects()
@@ -1610,4 +1629,49 @@ fn vulkan_wallpaper_scene_drag_linear() {
         worst_delta <= 1,
         "linear repaints differ by at most one shade, got {worst_delta}"
     );
+}
+
+/// The scene drag at a fractional output scale, as the #361 reporter may
+/// run: a 2560x1600 panel, a 1920x1080 wallpaper (cover scale 1.48) and
+/// window sizes that land between pixels. Prints per-step mismatches and
+/// asserts nothing, so it reports on any GPU. A second renderer in the same
+/// process crashes, so each case is its own test; run them one at a time.
+fn fractional_scale_report(scale: f32, linear: bool) {
+    let sampling = if linear {
+        layers::skia::SamplingOptions::new(
+            layers::skia::FilterMode::Linear,
+            layers::skia::MipmapMode::None,
+        )
+    } else {
+        layers::skia::SamplingOptions::default()
+    };
+    let report = wallpaper_scene_drag_mismatches_at(sampling, 2560, 1600, 1920, 1080, scale);
+    let worst = report.iter().map(|(d, _, _)| *d).max().unwrap_or(0);
+    let delta = report.iter().map(|(_, _, d)| *d).max().unwrap_or(0);
+    let name = if linear { "linear" } else { "nearest" };
+    eprintln!("scale {scale} {name}: worst frame {worst} pixels differ, max channel delta {delta}");
+}
+
+#[test]
+#[ignore = "needs a Vulkan GPU"]
+fn vulkan_wallpaper_scale_1_25_nearest() {
+    fractional_scale_report(1.25, false);
+}
+
+#[test]
+#[ignore = "needs a Vulkan GPU"]
+fn vulkan_wallpaper_scale_1_33_nearest() {
+    fractional_scale_report(1.33, false);
+}
+
+#[test]
+#[ignore = "needs a Vulkan GPU"]
+fn vulkan_wallpaper_scale_1_33_linear() {
+    fractional_scale_report(1.33, true);
+}
+
+#[test]
+#[ignore = "needs a Vulkan GPU"]
+fn vulkan_wallpaper_scale_1_5_nearest() {
+    fractional_scale_report(1.5, false);
 }
