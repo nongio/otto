@@ -12,7 +12,7 @@ It finds *commands*, not files. To find a file, use type-ahead, `Ctrl+L` or
 ## Opening and closing
 
 - `Ctrl+P` opens it, over the top right of the window. `Ctrl+P` again closes
-  it.
+  it. View → Command Palette… in the top bar opens it too.
 - `Escape` closes it without running anything. So does clicking outside the
   card, or switching to another window. A click outside only closes the
   command palette; it does not also select the file under the pointer.
