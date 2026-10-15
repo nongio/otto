@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.7.1] - 2026-10-15
+
+### 🐛 Bug Fixes
+
+- *(otto-kit)* Clip and place panes without surface style (#365)
+- *(vulkan)* Pick up the NVIDIA dmabuf import fix (#363)
+- *(files)* Command Palette item in the View menu (#364)
+- *(deps)* Bump lay-rs to v1.18.2 (#366)
+
 ## [1.7.0] - 2026-10-13
 
 ### 🚀 Features
