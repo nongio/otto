@@ -5167,7 +5167,7 @@ dependencies = [
 
 [[package]]
 name = "otto"
-version = "1.7.0"
+version = "1.7.1"
 dependencies = [
  "accesskit",
  "accesskit_unix",
@@ -5216,7 +5216,7 @@ dependencies = [
 
 [[package]]
 name = "otto-agents"
-version = "1.7.0"
+version = "1.7.1"
 dependencies = [
  "agent-client-protocol",
  "ahp",
@@ -5246,7 +5246,7 @@ dependencies = [
 
 [[package]]
 name = "otto-agents-client"
-version = "1.7.0"
+version = "1.7.1"
 dependencies = [
  "ahp",
  "ahp-types",
@@ -5260,7 +5260,7 @@ dependencies = [
 
 [[package]]
 name = "otto-agents-kit"
-version = "1.7.0"
+version = "1.7.1"
 dependencies = [
  "ahp",
  "ahp-types",
@@ -5278,7 +5278,7 @@ dependencies = [
 
 [[package]]
 name = "otto-arch"
-version = "1.7.0"
+version = "1.7.1"
 dependencies = [
  "determinator",
  "globset",
@@ -5294,7 +5294,7 @@ dependencies = [
 
 [[package]]
 name = "otto-auth-ui"
-version = "1.7.0"
+version = "1.7.1"
 dependencies = [
  "chrono",
  "laye-rs",
@@ -5311,7 +5311,7 @@ dependencies = [
 
 [[package]]
 name = "otto-authorize"
-version = "1.7.0"
+version = "1.7.1"
 dependencies = [
  "libc",
  "otto-auth-ui",
@@ -5326,7 +5326,7 @@ dependencies = [
 
 [[package]]
 name = "otto-bar"
-version = "1.7.0"
+version = "1.7.1"
 dependencies = [
  "chrono",
  "futures-util",
@@ -5345,7 +5345,7 @@ dependencies = [
 
 [[package]]
 name = "otto-canvas"
-version = "1.7.0"
+version = "1.7.1"
 dependencies = [
  "otto-agents-kit",
  "otto-kit",
@@ -5356,14 +5356,14 @@ dependencies = [
 
 [[package]]
 name = "otto-dbus"
-version = "1.7.0"
+version = "1.7.1"
 dependencies = [
  "zbus",
 ]
 
 [[package]]
 name = "otto-dictate"
-version = "1.7.0"
+version = "1.7.1"
 dependencies = [
  "otto-kit",
  "smithay-client-toolkit 0.19.2",
@@ -5375,7 +5375,7 @@ dependencies = [
 
 [[package]]
 name = "otto-emoji"
-version = "1.7.0"
+version = "1.7.1"
 dependencies = [
  "laye-rs",
  "memfd",
@@ -5392,7 +5392,7 @@ dependencies = [
 
 [[package]]
 name = "otto-files"
-version = "1.7.0"
+version = "1.7.1"
 dependencies = [
  "enumflags2",
  "futures-util",
@@ -5418,14 +5418,14 @@ dependencies = [
 
 [[package]]
 name = "otto-foundations"
-version = "1.7.0"
+version = "1.7.1"
 dependencies = [
  "percent-encoding",
 ]
 
 [[package]]
 name = "otto-greeter"
-version = "1.7.0"
+version = "1.7.1"
 dependencies = [
  "otto-auth-ui",
  "otto-kit",
@@ -5440,7 +5440,7 @@ dependencies = [
 
 [[package]]
 name = "otto-input-overlay"
-version = "1.7.0"
+version = "1.7.1"
 dependencies = [
  "futures-util",
  "libc",
@@ -5454,7 +5454,7 @@ dependencies = [
 
 [[package]]
 name = "otto-islands"
-version = "1.7.0"
+version = "1.7.1"
 dependencies = [
  "otto-kit",
  "pipewire",
@@ -5471,7 +5471,7 @@ dependencies = [
 
 [[package]]
 name = "otto-kit"
-version = "1.7.0"
+version = "1.7.1"
 dependencies = [
  "accesskit",
  "accesskit_unix",
@@ -5511,7 +5511,7 @@ dependencies = [
 
 [[package]]
 name = "otto-launcher"
-version = "1.7.0"
+version = "1.7.1"
 dependencies = [
  "freedesktop-desktop-entry",
  "laye-rs",
@@ -5530,7 +5530,7 @@ dependencies = [
 
 [[package]]
 name = "otto-lock"
-version = "1.7.0"
+version = "1.7.1"
 dependencies = [
  "otto-auth-ui",
  "otto-kit",
@@ -5542,7 +5542,7 @@ dependencies = [
 
 [[package]]
 name = "otto-md-kit"
-version = "1.7.0"
+version = "1.7.1"
 dependencies = [
  "otto-kit",
  "smithay-client-toolkit 0.19.2",
@@ -5552,7 +5552,7 @@ dependencies = [
 
 [[package]]
 name = "otto-media-kit"
-version = "1.7.0"
+version = "1.7.1"
 dependencies = [
  "gstreamer",
  "gstreamer-app",
@@ -5564,7 +5564,7 @@ dependencies = [
 
 [[package]]
 name = "otto-msg"
-version = "1.7.0"
+version = "1.7.1"
 dependencies = [
  "otto-dbus",
  "serde_json",
@@ -5573,7 +5573,7 @@ dependencies = [
 
 [[package]]
 name = "otto-pdf"
-version = "1.7.0"
+version = "1.7.1"
 dependencies = [
  "libc",
  "libloading 0.8.9",
@@ -5584,7 +5584,7 @@ dependencies = [
 
 [[package]]
 name = "otto-peek"
-version = "1.7.0"
+version = "1.7.1"
 dependencies = [
  "imagesize",
  "libc",
@@ -5602,7 +5602,7 @@ dependencies = [
 
 [[package]]
 name = "otto-preview"
-version = "1.7.0"
+version = "1.7.1"
 dependencies = [
  "base64 0.22.1",
  "otto-agents-client",
@@ -5623,7 +5623,7 @@ dependencies = [
 
 [[package]]
 name = "otto-rdp"
-version = "1.7.0"
+version = "1.7.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5658,7 +5658,7 @@ dependencies = [
 
 [[package]]
 name = "otto-render"
-version = "1.7.0"
+version = "1.7.1"
 dependencies = [
  "laye-rs",
  "libc",
@@ -5671,7 +5671,7 @@ dependencies = [
 
 [[package]]
 name = "otto-search"
-version = "1.7.0"
+version = "1.7.1"
 dependencies = [
  "libc",
  "otto-foundations",
@@ -5682,7 +5682,7 @@ dependencies = [
 
 [[package]]
 name = "otto-settings"
-version = "1.7.0"
+version = "1.7.1"
 dependencies = [
  "chrono",
  "otto-kit",
@@ -5700,7 +5700,7 @@ dependencies = [
 
 [[package]]
 name = "otto-stash"
-version = "1.7.0"
+version = "1.7.1"
 dependencies = [
  "anyhow",
  "futures-util",
@@ -10212,7 +10212,7 @@ checksum = "2fb433233f2df9344722454bc7e96465c9d03bff9d77c248f9e7523fe79585b5"
 
 [[package]]
 name = "xdg-desktop-portal-otto"
-version = "1.7.0"
+version = "1.7.1"
 dependencies = [
  "anyhow",
  "futures-util",
