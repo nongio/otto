@@ -139,6 +139,17 @@ impl ScrollPane {
         self.surfaces.set_hidden(hidden)
     }
 
+    /// Show only the part of the pane inside `rect`, in the parent's
+    /// coordinates, or all of it with `None`.
+    ///
+    /// A pane nested in a [`Self::container`] crops itself to what the
+    /// container shows: no compositor clips a subsurface to its parent. Hand
+    /// it the container's [`Self::visible`] after each update. Returns
+    /// whether that changed anything.
+    pub fn set_clip_rect(&mut self, rect: Option<Rect>) -> bool {
+        self.surfaces.set_clip_rect(rect)
+    }
+
     /// Repaint the band on the next update even if the revision did not move.
     pub fn invalidate(&mut self) {
         self.revision = None;

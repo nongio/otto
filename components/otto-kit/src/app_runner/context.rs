@@ -367,6 +367,10 @@ pub struct AppContextData {
     pub xdg_activation:
         Option<wayland_protocols::xdg::activation::v1::client::xdg_activation_v1::XdgActivationV1>,
     pub fractional_scale_manager: Option<wayland_protocols::wp::fractional_scale::v1::client::wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1>,
+    /// `wp_viewporter`: crops and scales a surface's buffer. How scroll panes
+    /// clip their content and flat fills take their size, on every
+    /// compositor.
+    pub viewporter: Option<wayland_protocols::wp::viewporter::client::wp_viewporter::WpViewporter>,
     /// `None` on a compositor without pointer gestures at version 3, where a
     /// touchpad hold is simply not reported.
     pub pointer_gestures: Option<wayland_protocols::wp::pointer_gestures::zv1::client::zwp_pointer_gestures_v1::ZwpPointerGesturesV1>,
@@ -582,6 +586,18 @@ impl<'a> AppContext<'a> {
                 .fractional_scale_manager
                 .as_ref()
                 .map(|r| &*(r as *const WpFractionalScaleManagerV1))
+        })
+    }
+
+    pub fn viewporter(
+    ) -> Option<&'static wayland_protocols::wp::viewporter::client::wp_viewporter::WpViewporter>
+    {
+        use wayland_protocols::wp::viewporter::client::wp_viewporter::WpViewporter;
+        Self::with_global(|ctx| unsafe {
+            ctx.data
+                .viewporter
+                .as_ref()
+                .map(|r| &*(r as *const WpViewporter))
         })
     }
 

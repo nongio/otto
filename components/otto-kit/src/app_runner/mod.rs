@@ -605,6 +605,11 @@ impl<A: App + 'static> AppRunnerWithType<A> {
         let xdg_activation: Option<XdgActivationV1> = globals.bind(&qh, 1..=1, ()).ok();
         let fractional_scale_manager: Option<wayland_protocols::wp::fractional_scale::v1::client::wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1> =
             globals.bind(&qh, 1..=1, ()).ok();
+        // The crop a scroll pane clips its content with, and the stretch a
+        // flat fill takes its size from.
+        let viewporter: Option<
+            wayland_protocols::wp::viewporter::client::wp_viewporter::WpViewporter,
+        > = globals.bind(&qh, 1..=1, ()).ok();
         // Hold gestures arrived in version 3; pinch has been there since 1.
         // Binding at 3 is what the hold hooks need, and a compositor offering
         // less simply leaves both unbound rather than half-working.
@@ -661,6 +666,7 @@ impl<A: App + 'static> AppRunnerWithType<A> {
             cursor_shape_manager,
             xdg_activation,
             fractional_scale_manager,
+            viewporter,
             pointer_gestures,
             data_device_manager,
             data_device: None,
@@ -2266,6 +2272,8 @@ impl<A: App + 'static> Dispatch<XdgActivationTokenV1, wl_surface::WlSurface> for
 }
 wayland_client::delegate_noop!(@<A: App + 'static> AppData<A>: ignore wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_device_v1::WpCursorShapeDeviceV1);
 wayland_client::delegate_noop!(@<A: App + 'static> AppData<A>: ignore wayland_protocols::wp::fractional_scale::v1::client::wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1);
+wayland_client::delegate_noop!(@<A: App + 'static> AppData<A>: ignore wayland_protocols::wp::viewporter::client::wp_viewporter::WpViewporter);
+wayland_client::delegate_noop!(@<A: App + 'static> AppData<A>: ignore wayland_protocols::wp::viewporter::client::wp_viewport::WpViewport);
 wayland_client::delegate_noop!(@<A: App + 'static> AppData<A>: ignore ZwpPointerGesturesV1);
 wayland_client::delegate_noop!(@<A: App + 'static> AppData<A>: ignore wayland_protocols::ext::background_effect::v1::client::ext_background_effect_surface_v1::ExtBackgroundEffectSurfaceV1);
 
