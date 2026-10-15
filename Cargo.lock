@@ -1898,7 +1898,7 @@ version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ab8ecd87370524b461f8557c119c405552c396ed91fc0a8eec68679eab26f94a"
 dependencies = [
- "libloading 0.8.9",
+ "libloading 0.7.4",
 ]
 
 [[package]]
@@ -2112,7 +2112,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2626,8 +2626,8 @@ dependencies = [
  "libc",
  "log",
  "rustversion",
- "windows-link 0.2.1",
- "windows-result 0.4.1",
+ "windows-link 0.1.3",
+ "windows-result 0.3.4",
 ]
 
 [[package]]
@@ -2783,7 +2783,7 @@ dependencies = [
  "gobject-sys 0.22.9",
  "libc",
  "system-deps 9.0.0",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3802,15 +3802,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "36eee07d8e02bd95bf52b2e642cf13d33701b94c6e4b04fbf1d1fb07e9cb19e7"
 
 [[package]]
-name = "instant"
-version = "0.1.13"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e0242819d153cba4b4b05a5a8f2a7e9bbf97b6055b2a002b395c96b5ff3c0222"
-dependencies = [
- "cfg-if",
-]
-
-[[package]]
 name = "intl-memoizer"
 version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4313,8 +4304,8 @@ dependencies = [
 
 [[package]]
 name = "laye-rs"
-version = "1.18.1"
-source = "git+https://github.com/nongio/layers?tag=v1.18.1#70d236e35515d654265269a793e3878d574f9d05"
+version = "1.18.2"
+source = "git+https://github.com/nongio/layers?tag=v1.18.2#744fb23948cce807cfe13e41583b68d056b7d387"
 dependencies = [
  "bezier_easing",
  "bitflags 1.3.2",
@@ -4332,7 +4323,6 @@ dependencies = [
  "parking_lot",
  "paste",
  "profiling",
- "puffin_http 0.13.0",
  "rand 0.8.8",
  "rayon",
  "resvg",
@@ -4349,7 +4339,7 @@ dependencies = [
 [[package]]
 name = "layers-debug-server"
 version = "0.3.0"
-source = "git+https://github.com/nongio/layers?tag=v1.18.1#70d236e35515d654265269a793e3878d574f9d05"
+source = "git+https://github.com/nongio/layers?tag=v1.18.2#744fb23948cce807cfe13e41583b68d056b7d387"
 dependencies = [
  "futures",
  "serde",
@@ -4587,12 +4577,6 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
 ]
-
-[[package]]
-name = "lz4_flex"
-version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8b8c72594ac26bfd34f2d99dfced2edfaddfe8a476e3ff2ca0eb293d925c4f83"
 
 [[package]]
 name = "lz4_flex"
@@ -4861,7 +4845,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5202,7 +5186,7 @@ dependencies = [
  "otto-render",
  "pipewire",
  "profiling",
- "puffin_http 0.16.1",
+ "puffin_http",
  "renderdoc",
  "sd-notify",
  "serde",
@@ -6430,7 +6414,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3eb8486b569e12e2c32ad3e204dbaba5e4b5b216e9367044f25f1dba42341773"
 dependencies = [
  "profiling-procmacros",
- "puffin 0.19.1",
+ "puffin",
  "tracy-client",
 ]
 
@@ -6446,23 +6430,6 @@ dependencies = [
 
 [[package]]
 name = "puffin"
-version = "0.16.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "76425abd4e1a0ad4bd6995dd974b52f414fca9974171df8e3708b3e660d05a21"
-dependencies = [
- "anyhow",
- "bincode",
- "byteorder",
- "cfg-if",
- "instant",
- "lz4_flex 0.10.0",
- "once_cell",
- "parking_lot",
- "serde",
-]
-
-[[package]]
-name = "puffin"
 version = "0.19.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fa9dae7b05c02ec1a6bc9bcf20d8bc64a7dcbf57934107902a872014899b741f"
@@ -6472,22 +6439,10 @@ dependencies = [
  "byteorder",
  "cfg-if",
  "itertools 0.10.5",
- "lz4_flex 0.11.6",
+ "lz4_flex",
  "once_cell",
  "parking_lot",
  "serde",
-]
-
-[[package]]
-name = "puffin_http"
-version = "0.13.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "13bffc600c35913d282ae1e96a6ffcdf36dc7a7cdb9310e0ba15914d258c8193"
-dependencies = [
- "anyhow",
- "crossbeam-channel",
- "log",
- "puffin 0.16.0",
 ]
 
 [[package]]
@@ -6500,7 +6455,7 @@ dependencies = [
  "crossbeam-channel",
  "log",
  "parking_lot",
- "puffin 0.19.1",
+ "puffin",
 ]
 
 [[package]]
@@ -7026,7 +6981,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -8168,7 +8123,7 @@ dependencies = [
  "getrandom 0.3.4",
  "once_cell",
  "rustix 1.1.5",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -8647,7 +8602,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c5f7c95348f20c1c913d72157b3c6dee6ea3e30b3d19502c5a7f6d3f160dacbf"
 dependencies = [
  "cc",
- "windows-targets 0.52.6",
+ "windows-targets 0.48.5",
 ]
 
 [[package]]
@@ -9352,7 +9307,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]
