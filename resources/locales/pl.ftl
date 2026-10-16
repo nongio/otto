@@ -540,6 +540,12 @@ settings-choice-widget-calendar = Kalendarz
 # The next two name pages whose text is in English, so they stay as written.
 settings-choice-widget-cross-pad = Cross pad
 settings-choice-widget-grid-pad = Grid pad
+# How a background image fills the screen.
+settings-choice-background-fill = Wypełnij ekran
+settings-choice-background-fit = Dopasuj do ekranu
+settings-choice-background-stretch = Rozciągnij
+settings-choice-background-center = Wyśrodkuj
+settings-choice-background-tile = Sąsiadująco
 # The automatic option for a theme that follows the system.
 settings-choice-auto = Automatycznie
 
@@ -1109,9 +1115,17 @@ schema-topbar-clock-format-description = Jak górny pasek zapisuje datę i godzi
 schema-topbar-show-app-menu-label = Pokazuj menu aplikacji
 schema-topbar-show-app-menu-description = Menu aktywnej aplikacji obok jej nazwy na górnym pasku.
 schema-background-color-label = Kolor tła
-schema-background-color-description = Kolor tła pulpitu, jako ciąg szesnastkowy.
+schema-background-color-description = Kolor tła pulpitu, jako ciąg szesnastkowy: gradient widoczny bez obrazu i to, co widać wokół obrazu dopasowanego lub wyśrodkowanego.
 schema-background-image-label = Obraz tła
 schema-background-image-description = Ścieżka do obrazu tła pulpitu. Puste oznacza brak.
+schema-background-mode-label = Dopasowanie tła
+schema-background-mode-description = Jak obraz tła wypełnia ekran.
+schema-background-position-x-label = Pozycja tła w poziomie
+schema-background-position-x-description = Która część przyciętego obrazu tła jest widoczna i gdzie leży mniejszy obraz, od 0 (z lewej) do 1 (z prawej).
+schema-background-position-y-label = Pozycja tła w pionie
+schema-background-position-y-description = Która część przyciętego obrazu tła jest widoczna i gdzie leży mniejszy obraz, od 0 (u góry) do 1 (u dołu).
+schema-background-zoom-label = Powiększenie tła
+schema-background-zoom-description = Powiększenie obrazu tła wypełniającego ekran lub rozciągniętego na wszystkie ekrany, od 1 (dokładnie pokrywa ekran).
 schema-cursor-theme-label = Motyw kursora
 schema-cursor-theme-description = Nazwa motywu XCursor.
 schema-cursor-size-label = Rozmiar kursora

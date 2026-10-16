@@ -5,10 +5,12 @@
 //! app's preview uses the same arithmetic, so what the preview shows is what
 //! the desktop gets.
 
+mod layout;
 mod paint;
 mod placement;
 mod source;
 
+pub use layout::{arrange, Arrangement, Layout, Mode, MAX_ZOOM};
 pub use paint::{paint, sampling};
 pub use placement::{cover, cover_size, Placement};
-pub use source::{open, render_frame, OpenError, Source};
+pub use source::{open, render_frame, FrameStyle, OpenError, Source};

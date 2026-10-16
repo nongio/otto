@@ -533,6 +533,12 @@ settings-choice-widget-calendar = Kalender
 # The next two name pages whose text is in English, so they stay as written.
 settings-choice-widget-cross-pad = Cross pad
 settings-choice-widget-grid-pad = Grid pad
+# How a background image fills the screen.
+settings-choice-background-fill = Bildschirm füllen
+settings-choice-background-fit = An Bildschirm anpassen
+settings-choice-background-stretch = Strecken
+settings-choice-background-center = Zentriert
+settings-choice-background-tile = Nebeneinander
 # The automatic option for a theme that follows the system.
 settings-choice-auto = Auto
 
@@ -1057,9 +1063,17 @@ schema-topbar-clock-format-description = Wie die obere Leiste Datum und Uhrzeit 
 schema-topbar-show-app-menu-label = Programmmenüs anzeigen
 schema-topbar-show-app-menu-description = Die Menüs des aktiven Programms neben seinem Namen in der oberen Leiste.
 schema-background-color-label = Hintergrundfarbe
-schema-background-color-description = Hintergrundfarbe des Schreibtischs, als Hex-Zeichenfolge.
+schema-background-color-description = Hintergrundfarbe des Schreibtischs, als Hex-Zeichenfolge: der Verlauf ohne Bild und was um ein angepasstes oder zentriertes Bild herum zu sehen ist.
 schema-background-image-label = Hintergrundbild
 schema-background-image-description = Pfad zum Hintergrundbild des Schreibtischs. Leer für keins.
+schema-background-mode-label = Hintergrundanpassung
+schema-background-mode-description = Wie das Hintergrundbild den Bildschirm füllt.
+schema-background-position-x-label = Horizontale Hintergrundposition
+schema-background-position-x-description = Welcher Teil eines beschnittenen Hintergrundbilds zu sehen ist und wo ein kleineres sitzt, von 0 (links) bis 1 (rechts).
+schema-background-position-y-label = Vertikale Hintergrundposition
+schema-background-position-y-description = Welcher Teil eines beschnittenen Hintergrundbilds zu sehen ist und wo ein kleineres sitzt, von 0 (oben) bis 1 (unten).
+schema-background-zoom-label = Hintergrundzoom
+schema-background-zoom-description = Vergrößerung eines füllenden oder monitorübergreifenden Hintergrundbilds, ab 1 (deckt den Bildschirm gerade ab).
 schema-cursor-theme-label = Zeigerdesign
 schema-cursor-theme-description = Name des XCursor-Designs.
 schema-cursor-size-label = Zeigergröße

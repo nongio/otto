@@ -534,6 +534,12 @@ settings-choice-widget-calendar = Calendario
 # The next two name pages whose text is in English, so they stay as written.
 settings-choice-widget-cross-pad = Cross pad
 settings-choice-widget-grid-pad = Grid pad
+# How a background image fills the screen.
+settings-choice-background-fill = Llenar la pantalla
+settings-choice-background-fit = Ajustar a la pantalla
+settings-choice-background-stretch = Estirar para llenar
+settings-choice-background-center = Centrar
+settings-choice-background-tile = Mosaico
 # The automatic option for a theme that follows the system.
 settings-choice-auto = Auto
 
@@ -1069,9 +1075,17 @@ schema-topbar-clock-format-description = Cómo escribe la barra superior la fech
 schema-topbar-show-app-menu-label = Mostrar los menús de las aplicaciones
 schema-topbar-show-app-menu-description = Los menús de la aplicación activa, junto a su nombre en la barra superior.
 schema-background-color-label = Color de fondo
-schema-background-color-description = Color de fondo del escritorio, en formato hexadecimal.
+schema-background-color-description = Color de fondo del escritorio, en formato hexadecimal: el degradado que se muestra sin imagen y lo que se ve alrededor de una imagen ajustada o centrada.
 schema-background-image-label = Imagen de fondo
 schema-background-image-description = Ruta de la imagen de fondo del escritorio. Vacío para ninguna.
+schema-background-mode-label = Ajuste del fondo
+schema-background-mode-description = Cómo llena la pantalla la imagen de fondo.
+schema-background-position-x-label = Posición horizontal del fondo
+schema-background-position-x-description = Qué parte de una imagen de fondo recortada se ve y dónde se sitúa una más pequeña, de 0 (izquierda) a 1 (derecha).
+schema-background-position-y-label = Posición vertical del fondo
+schema-background-position-y-description = Qué parte de una imagen de fondo recortada se ve y dónde se sitúa una más pequeña, de 0 (arriba) a 1 (abajo).
+schema-background-zoom-label = Zoom del fondo
+schema-background-zoom-description = Ampliación de una imagen de fondo que llena la pantalla o se extiende por varias, desde 1 (cubre justo la pantalla).
 schema-cursor-theme-label = Tema del cursor
 schema-cursor-theme-description = Nombre del tema XCursor.
 schema-cursor-size-label = Tamaño del cursor

@@ -540,6 +540,12 @@ settings-choice-widget-calendar = Calendar
 # The next two name pages whose text is in English, so they stay as written.
 settings-choice-widget-cross-pad = Cross pad
 settings-choice-widget-grid-pad = Grid pad
+# How a background image fills the screen.
+settings-choice-background-fill = Fill screen
+settings-choice-background-fit = Fit to screen
+settings-choice-background-stretch = Stretch to fill
+settings-choice-background-center = Centre
+settings-choice-background-tile = Tile
 # The automatic option for a theme that follows the system.
 settings-choice-auto = Auto
 
@@ -1160,9 +1166,17 @@ schema-topbar-clock-format-description = How the top bar writes the date and tim
 schema-topbar-show-app-menu-label = Show application menus
 schema-topbar-show-app-menu-description = The menus of the application in use, beside its name in the top bar.
 schema-background-color-label = Background colour
-schema-background-color-description = Desktop background colour, as a hex string.
+schema-background-color-description = Desktop background colour, as a hex string: the gradient shown without an image, and what shows around a fitted or centred one.
 schema-background-image-label = Background image
 schema-background-image-description = Path to the desktop background image. Empty for none.
+schema-background-mode-label = Background layout
+schema-background-mode-description = How the background image fills the screen.
+schema-background-position-x-label = Background position across
+schema-background-position-x-description = Which part of a cropped background image shows, and where a smaller one sits, from 0 (left) to 1 (right).
+schema-background-position-y-label = Background position down
+schema-background-position-y-description = Which part of a cropped background image shows, and where a smaller one sits, from 0 (top) to 1 (bottom).
+schema-background-zoom-label = Background zoom
+schema-background-zoom-description = Magnification of a filled background image, from 1 (just covering the screen).
 schema-cursor-theme-label = Cursor theme
 schema-cursor-theme-description = Name of the XCursor theme.
 schema-cursor-size-label = Cursor size

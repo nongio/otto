@@ -43,7 +43,20 @@ pub struct Config {
     pub theme_scheme: ThemeScheme,
     pub gtk_theme: Option<String>,
     pub background_image: String,
+    /// The colour of the gradient shown when there is no wallpaper, and of
+    /// what shows around a fitted or centred one.
     pub background_color: String,
+    /// How the wallpaper fills the screen: `fill`, `fit`, `stretch`, `center`
+    /// or `tile`. Anything else is read as `fill`. See
+    /// [`Config::wallpaper_layout`].
+    pub background_mode: String,
+    /// Which part of a cropped wallpaper shows, and where a smaller one sits,
+    /// as fractions across and down: CSS's `object-position`. `0.5`
+    /// centres.
+    pub background_position_x: f64,
+    pub background_position_y: f64,
+    /// Extra magnification in `fill` mode, from 1.0, panned by the position.
+    pub background_zoom: f64,
     pub locales: Vec<String>,
     pub use_10bit_color: bool,
     /// The accent colour Otto's own interface paints with: a palette name,
@@ -171,6 +184,10 @@ impl Default for Config {
             gtk_theme: None,
             background_image: "".to_string(),
             background_color: "#1a1a2e".to_string(),
+            background_mode: otto_kit::wallpaper::Mode::default().token().to_string(),
+            background_position_x: 0.5,
+            background_position_y: 0.5,
+            background_zoom: 1.0,
             locales: Vec::new(),
             use_10bit_color: false,
             accent_color: default_accent_color(),
@@ -204,6 +221,36 @@ impl Default for Config {
 pub const WINIT_DISPLAY_ID: &str = "winit";
 
 impl Config {
+    /// How the wallpaper is laid out, from the `background_*` settings. An
+    /// unknown mode is `fill` and out-of-range numbers are pulled into range,
+    /// rather than leaving the desktop blank over a typo.
+    pub fn wallpaper_layout(&self) -> otto_kit::wallpaper::Layout {
+        let mode = otto_kit::wallpaper::Mode::parse(&self.background_mode).unwrap_or_else(|| {
+            // Read on every layout pass: say so once per bad value, not per
+            // frame.
+            static WARNED: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+            if let Ok(mut warned) = WARNED.lock() {
+                if warned.as_deref() != Some(self.background_mode.as_str()) {
+                    warn!(
+                        "unknown background_mode `{}`, using fill",
+                        self.background_mode
+                    );
+                    *warned = Some(self.background_mode.clone());
+                }
+            }
+            otto_kit::wallpaper::Mode::Fill
+        });
+        otto_kit::wallpaper::Layout {
+            mode,
+            position: (
+                self.background_position_x as f32,
+                self.background_position_y as f32,
+            ),
+            zoom: self.background_zoom as f32,
+        }
+        .sanitised()
+    }
+
     /// Run `f` against the current configuration snapshot.
     ///
     /// The snapshot is immutable, so a value read here cannot change underneath
@@ -3220,6 +3267,36 @@ bookmarks = []
     /// The example config is what the packages install as
     /// `/etc/otto/config.toml`, so it is the default a fresh install runs
     /// with. It has to parse, and it has to bring up the desktop the user
+    /// The wallpaper layout keys read into a layout; a typo in the mode is
+    /// `fill`, and numbers out of range are pulled back in, rather than the
+    /// whole file being rejected.
+    #[test]
+    fn wallpaper_layout_reads_and_sanitises() {
+        use otto_kit::wallpaper::{Layout, Mode};
+        let config: Config = toml::from_str(
+            "background_mode = \"fit\"\nbackground_position_x = 0.25\nbackground_position_y = 0.0\nbackground_zoom = 2.0\n",
+        )
+        .unwrap();
+        assert_eq!(
+            config.wallpaper_layout(),
+            Layout {
+                mode: Mode::Fit,
+                position: (0.25, 0.0),
+                zoom: 2.0,
+            }
+        );
+        let config: Config = toml::from_str(
+            "background_mode = \"zoomed\"\nbackground_position_x = 4.0\nbackground_zoom = 0.1\n",
+        )
+        .unwrap();
+        let layout = config.wallpaper_layout();
+        assert_eq!(layout.mode, Mode::Fill);
+        assert_eq!(layout.position, (1.0, 0.5));
+        assert_eq!(layout.zoom, 1.0);
+        // Unset, it is today's behaviour: filled and centred.
+        assert_eq!(Config::default().wallpaper_layout(), Layout::default());
+    }
+
     /// guide describes — every binding in it resolves, the bar and the
     /// island start, and the dock is not empty.
     #[test]

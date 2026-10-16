@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 use skia_safe as skia;
 
-use super::cover;
-use crate::utils::resample::resample;
+use super::layout::{arrange, Layout};
+use crate::utils::resample::{resample, resample_to};
 
 /// A wallpaper file, opened but not yet decoded.
 ///
@@ -70,44 +70,155 @@ pub fn open(path: &str) -> Result<Source, OpenError> {
         .ok_or(OpenError::NotAnImage)
 }
 
-/// Render `source` into a frame of exactly `target` pixels, scaled to cover
-/// it and centred, so the frame is drawn 1:1 with nothing filtered per frame.
+/// Everything about a frame besides the image and the screen size.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FrameStyle {
+    pub layout: Layout,
+    /// What shows where the image does not: around a fitted or centred one,
+    /// and through a transparent one. Always painted opaque.
+    pub fill: skia::Color4f,
+    /// Physical pixels per logical point, for the modes that draw the image
+    /// at its own size.
+    pub output_scale: f32,
+}
+
+impl Default for FrameStyle {
+    fn default() -> Self {
+        Self {
+            layout: Layout::default(),
+            fill: skia::Color4f::new(0.0, 0.0, 0.0, 1.0),
+            output_scale: 1.0,
+        }
+    }
+}
+
+/// Render `source` into an opaque frame of exactly `target` pixels, laid out
+/// by `style`, so that it is drawn 1:1 with nothing filtered per frame.
 ///
-/// The visible region is resampled straight into the frame: the centring
-/// keeps its sub-pixel precision, and only the part of the image that shows
-/// is ever held at screen resolution.
-pub fn render_frame(source: &Source, target: (i32, i32)) -> Option<skia::Image> {
+/// The visible part of the image is resampled straight into place: its edges
+/// are snapped to whole pixels, while the region read from the image keeps
+/// its sub-pixel position. Where the image lands 1:1 on whole pixels its
+/// pixels are copied rather than resampled — a resampling kernel would
+/// soften them for nothing.
+pub fn render_frame(
+    source: &Source,
+    style: &FrameStyle,
+    target: (i32, i32),
+) -> Option<skia::Image> {
     let (tw, th) = target;
     if tw <= 0 || th <= 0 {
         return None;
     }
-    let image = match source {
-        Source::Raster(image) => image.clone(),
-        // Vector art is drawn straight at the frame's size: there is nothing
-        // to resample.
-        Source::Svg(bytes) => return render_svg_frame(bytes, target),
-    };
+    let mut surface = skia::surfaces::raster_n32_premul((tw, th))?;
+    let canvas = surface.canvas();
+    let mut fill = style.fill;
+    fill.a = 1.0;
+    canvas.clear(fill);
+    match source {
+        Source::Raster(image) => draw_raster(canvas, image, style, target)?,
+        Source::Svg(bytes) => draw_svg(canvas, bytes, style, target)?,
+    }
+    Some(surface.image_snapshot())
+}
+
+fn draw_raster(
+    canvas: &skia::Canvas,
+    image: &skia::Image,
+    style: &FrameStyle,
+    target: (i32, i32),
+) -> Option<()> {
     let (iw, ih) = (image.width(), image.height());
     if iw <= 0 || ih <= 0 {
         return None;
     }
-    // The cover scale, unrounded: the frame is resampled, not drawn, so the
-    // crop can sit on fractional source pixels.
-    let scale = cover((iw, ih), target).scale_x as f64;
-    let (src_w, src_h) = (tw as f64 / scale, th as f64 / scale);
-    let src = skia::Rect::from_xywh(
-        ((iw as f64 - src_w) / 2.0) as f32,
-        ((ih as f64 - src_h) / 2.0) as f32,
-        src_w as f32,
-        src_h as f32,
+    let arrangement = arrange(
+        style.layout,
+        (iw as f32, ih as f32),
+        target,
+        style.output_scale,
     );
-    resample(&image, src, target)
+    let dest = arrangement.dest;
+
+    if arrangement.tiled {
+        let tile = (
+            dest.width().round().max(1.0) as i32,
+            dest.height().round().max(1.0) as i32,
+        );
+        let tile_image = if tile == (iw, ih) {
+            image.clone()
+        } else {
+            resample_to(image, tile)?
+        };
+        // Whole-pixel tiles from the origin, sampled 1:1: an exact copy of
+        // the tile everywhere.
+        let mut paint = skia::Paint::default();
+        paint.set_shader(tile_image.to_shader(
+            (skia::TileMode::Repeat, skia::TileMode::Repeat),
+            skia::SamplingOptions::default(),
+            None,
+        ));
+        canvas.draw_rect(skia::Rect::from_iwh(target.0, target.1), &paint);
+        return Some(());
+    }
+
+    // The part of the screen the image covers, snapped to whole pixels.
+    let left = dest.left.max(0.0).round();
+    let top = dest.top.max(0.0).round();
+    let right = dest.right.min(target.0 as f32).round();
+    let bottom = dest.bottom.min(target.1 as f32).round();
+    if right <= left || bottom <= top {
+        return Some(());
+    }
+    let out = ((right - left) as i32, (bottom - top) as i32);
+    // The image region that lands there, unrounded.
+    let (per_x, per_y) = (iw as f32 / dest.width(), ih as f32 / dest.height());
+    let src = skia::Rect::from_xywh(
+        (left - dest.left) * per_x,
+        (top - dest.top) * per_y,
+        out.0 as f32 * per_x,
+        out.1 as f32 * per_y,
+    );
+
+    if let Some(exact) = whole_pixel_copy(src, out) {
+        canvas.draw_image_rect_with_sampling_options(
+            image,
+            Some((&exact, skia::canvas::SrcRectConstraint::Strict)),
+            skia::Rect::from_xywh(left, top, out.0 as f32, out.1 as f32),
+            skia::SamplingOptions::default(),
+            &skia::Paint::default(),
+        );
+    } else {
+        let piece = resample(image, src, out)?;
+        canvas.draw_image(&piece, (left, top), None);
+    }
+    Some(())
 }
 
-/// Render an SVG document scaled to cover `target` and centred, at its own
-/// aspect ratio.
-fn render_svg_frame(bytes: &[u8], target: (i32, i32)) -> Option<skia::Image> {
-    let (tw, th) = target;
+/// `src` as a whole-pixel rect, when it is a 1:1 copy of `out` pixels at a
+/// whole-pixel origin.
+fn whole_pixel_copy(src: skia::Rect, out: (i32, i32)) -> Option<skia::Rect> {
+    const EPSILON: f32 = 1e-3;
+    let whole = |v: f32| (v - v.round()).abs() < EPSILON;
+    let same_size = (src.width() - out.0 as f32).abs() < EPSILON
+        && (src.height() - out.1 as f32).abs() < EPSILON;
+    (same_size && whole(src.left) && whole(src.top)).then(|| {
+        skia::Rect::from_xywh(
+            src.left.round(),
+            src.top.round(),
+            out.0 as f32,
+            out.1 as f32,
+        )
+    })
+}
+
+/// Draw an SVG document as laid out by `style`, as vectors: there is nothing
+/// to resample.
+fn draw_svg(
+    canvas: &skia::Canvas,
+    bytes: &[u8],
+    style: &FrameStyle,
+    target: (i32, i32),
+) -> Option<()> {
     let options = usvg::Options {
         languages: vec!["en".to_string()],
         ..Default::default()
@@ -117,29 +228,69 @@ fn render_svg_frame(bytes: &[u8], target: (i32, i32)) -> Option<skia::Image> {
     if !(sw > 0.0 && sh > 0.0) {
         return None;
     }
-    let scale = (tw as f32 / sw).max(th as f32 / sh);
-    let transform = resvg::tiny_skia::Transform::from_row(
-        scale,
-        0.0,
-        0.0,
-        scale,
-        (tw as f32 - sw * scale) / 2.0,
-        (th as f32 - sh * scale) / 2.0,
-    );
-    let mut pixmap = resvg::tiny_skia::Pixmap::new(tw as u32, th as u32)?;
-    resvg::render(&tree, transform, &mut pixmap.as_mut());
+    let arrangement = arrange(style.layout, (sw, sh), target, style.output_scale);
+    let dest = arrangement.dest;
+
+    if arrangement.tiled {
+        let tile = (
+            dest.width().round().max(1.0) as i32,
+            dest.height().round().max(1.0) as i32,
+        );
+        let tile_image = rasterise_svg(
+            &tree,
+            tile,
+            (tile.0 as f32 / sw, tile.1 as f32 / sh),
+            (0.0, 0.0),
+        )?;
+        let mut paint = skia::Paint::default();
+        paint.set_shader(tile_image.to_shader(
+            (skia::TileMode::Repeat, skia::TileMode::Repeat),
+            skia::SamplingOptions::default(),
+            None,
+        ));
+        canvas.draw_rect(skia::Rect::from_iwh(target.0, target.1), &paint);
+        return Some(());
+    }
+
+    let image = rasterise_svg(
+        &tree,
+        target,
+        (dest.width() / sw, dest.height() / sh),
+        (dest.left, dest.top),
+    )?;
+    canvas.draw_image(&image, (0, 0), None);
+    Some(())
+}
+
+/// Rasterise `tree` into a transparent `size` image, scaled by `scale` and
+/// moved by `offset`.
+fn rasterise_svg(
+    tree: &usvg::Tree,
+    size: (i32, i32),
+    scale: (f32, f32),
+    offset: (f32, f32),
+) -> Option<skia::Image> {
+    let transform =
+        resvg::tiny_skia::Transform::from_row(scale.0, 0.0, 0.0, scale.1, offset.0, offset.1);
+    let mut pixmap = resvg::tiny_skia::Pixmap::new(size.0 as u32, size.1 as u32)?;
+    resvg::render(tree, transform, &mut pixmap.as_mut());
     let info = skia::ImageInfo::new(
-        (tw, th),
+        size,
         skia::ColorType::RGBA8888,
         skia::AlphaType::Premul,
         Some(skia::ColorSpace::new_srgb()),
     );
-    skia::images::raster_from_data(&info, skia::Data::new_copy(pixmap.data()), tw as usize * 4)
+    skia::images::raster_from_data(
+        &info,
+        skia::Data::new_copy(pixmap.data()),
+        size.0 as usize * 4,
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::wallpaper::Mode;
 
     fn write_png(name: &str, w: i32, h: i32, f: impl Fn(i32, i32) -> [u8; 3]) -> String {
         let mut data = Vec::with_capacity((w * h * 4) as usize);
@@ -192,7 +343,7 @@ mod tests {
         let path = write_png("size.png", 160, 90, |_, _| [10, 20, 30]);
         let source = open(&path).unwrap();
         for target in [(344, 144), (100, 100), (90, 160), (1, 1)] {
-            let frame = render_frame(&source, target).unwrap();
+            let frame = render_frame(&source, &FrameStyle::default(), target).unwrap();
             assert_eq!((frame.width(), frame.height()), target);
         }
     }
@@ -212,7 +363,8 @@ mod tests {
                 [0, 0, 255]
             }
         });
-        let frame = render_frame(&open(&path).unwrap(), (344, 144)).unwrap();
+        let frame =
+            render_frame(&open(&path).unwrap(), &FrameStyle::default(), (344, 144)).unwrap();
         assert_eq!(pixel(&frame, 172, 0), [255, 0, 0, 255]);
         assert_eq!(pixel(&frame, 172, 143), [0, 0, 255, 255]);
         let middle_up = pixel(&frame, 172, 70);
@@ -239,7 +391,7 @@ mod tests {
         .unwrap();
         let source = open(path.to_str().unwrap()).unwrap();
         for target in [(344, 144), (300, 300), (144, 344)] {
-            let frame = render_frame(&source, target).unwrap();
+            let frame = render_frame(&source, &FrameStyle::default(), target).unwrap();
             assert_eq!((frame.width(), frame.height()), target);
             // The circle's bounding box, from its bright pixels.
             let (mut left, mut right, mut top, mut bottom) =
@@ -260,6 +412,184 @@ mod tests {
             assert!(((left + right) / 2 - target.0 / 2).abs() <= 1, "{target:?}");
             assert!(((top + bottom) / 2 - target.1 / 2).abs() <= 1, "{target:?}");
         }
+    }
+
+    fn style(mode: Mode) -> FrameStyle {
+        FrameStyle {
+            layout: Layout {
+                mode,
+                ..Layout::default()
+            },
+            fill: skia::Color4f::new(0.0, 0.0, 1.0, 1.0),
+            output_scale: 1.0,
+        }
+    }
+
+    fn noise_png(name: &str, w: i32, h: i32) -> String {
+        write_png(name, w, h, |x, y| {
+            let mut s = (x as u32).wrapping_mul(0x9E37_79B9) ^ (y as u32).wrapping_mul(0x85EB_CA6B);
+            s ^= s >> 15;
+            s = s.wrapping_mul(0x2C1B_3C6D);
+            s ^= s >> 12;
+            [
+                (s & 0xff) as u8,
+                ((s >> 8) & 0xff) as u8,
+                ((s >> 16) & 0xff) as u8,
+            ]
+        })
+    }
+
+    const BLUE: [u8; 4] = [0, 0, 255, 255];
+    const RED: [u8; 4] = [255, 0, 0, 255];
+
+    /// Fit shows the whole image with the fill colour around it, its edges
+    /// on whole pixels.
+    #[test]
+    fn fit_letterboxes_with_the_fill_colour() {
+        let path = write_png("fit.png", 200, 100, |_, _| [255, 0, 0]);
+        let frame = render_frame(&open(&path).unwrap(), &style(Mode::Fit), (300, 300)).unwrap();
+        // 1.5x to 300x150, centred: rows 75 to 224.
+        assert_eq!(pixel(&frame, 150, 74), BLUE);
+        assert_eq!(pixel(&frame, 150, 75), RED);
+        assert_eq!(pixel(&frame, 150, 224), RED);
+        assert_eq!(pixel(&frame, 150, 225), BLUE);
+        assert_eq!(pixel(&frame, 0, 150), RED);
+        assert_eq!(pixel(&frame, 299, 150), RED);
+    }
+
+    /// The position picks the crop: `(0.5, 0.0)` keeps the image's top edge,
+    /// which centring cuts away.
+    #[test]
+    fn fill_position_keeps_the_chosen_edge() {
+        let path = write_png("top.png", 384, 216, |_, y| {
+            if y < 10 {
+                [0, 255, 0]
+            } else {
+                [255, 0, 0]
+            }
+        });
+        let source = open(&path).unwrap();
+        let centred = render_frame(&source, &style(Mode::Fill), (344, 144)).unwrap();
+        assert_eq!(pixel(&centred, 172, 0), RED);
+        let mut top = style(Mode::Fill);
+        top.layout.position = (0.5, 0.0);
+        let top = render_frame(&source, &top, (344, 144)).unwrap();
+        assert_eq!(pixel(&top, 172, 0), [0, 255, 0, 255]);
+    }
+
+    /// Zoom magnifies around the position: at 2x a centred frame shows only
+    /// the middle half of the image, so a border a quarter deep is gone.
+    #[test]
+    fn zoom_crops_into_the_image() {
+        let path = write_png("zoom.png", 200, 200, |x, y| {
+            if (50..150).contains(&x) && (50..150).contains(&y) {
+                [255, 0, 0]
+            } else {
+                [0, 255, 0]
+            }
+        });
+        let mut zoomed = style(Mode::Fill);
+        zoomed.layout.zoom = 2.0;
+        let frame = render_frame(&open(&path).unwrap(), &zoomed, (100, 100)).unwrap();
+        for (x, y) in [(1, 1), (98, 1), (1, 98), (98, 98), (50, 50)] {
+            assert_eq!(pixel(&frame, x, y), RED, "({x},{y})");
+        }
+    }
+
+    /// Centre at scale 1 copies the image's pixels exactly, no resampling.
+    #[test]
+    fn center_copies_pixels_exactly() {
+        let path = noise_png("center.png", 50, 40);
+        let source = open(&path).unwrap();
+        let Source::Raster(image) = &source else {
+            unreachable!()
+        };
+        let frame = render_frame(&source, &style(Mode::Center), (100, 100)).unwrap();
+        assert_eq!(pixel(&frame, 24, 50), BLUE);
+        for y in 0..40 {
+            for x in 0..50 {
+                assert_eq!(
+                    pixel(&frame, x + 25, y + 30),
+                    pixel(image, x, y),
+                    "({x},{y})"
+                );
+            }
+        }
+        // Larger than the screen, it is cropped, still exactly.
+        let frame = render_frame(&source, &style(Mode::Center), (20, 10)).unwrap();
+        assert_eq!(pixel(&frame, 0, 0), pixel(image, 15, 15));
+    }
+
+    /// Centre follows the output's scale: the image's pixels are points.
+    #[test]
+    fn center_scales_with_the_output() {
+        let path = write_png("center2.png", 20, 10, |_, _| [255, 0, 0]);
+        let mut hidpi = style(Mode::Center);
+        hidpi.output_scale = 2.0;
+        let frame = render_frame(&open(&path).unwrap(), &hidpi, (100, 100)).unwrap();
+        assert_eq!(pixel(&frame, 30, 40), RED);
+        assert_eq!(pixel(&frame, 69, 59), RED);
+        assert_eq!(pixel(&frame, 29, 40), BLUE);
+        assert_eq!(pixel(&frame, 70, 59), BLUE);
+    }
+
+    /// Tiles repeat exactly, from the top-left corner.
+    #[test]
+    fn tile_repeats_exactly() {
+        let path = noise_png("tile.png", 30, 20);
+        let source = open(&path).unwrap();
+        let Source::Raster(image) = &source else {
+            unreachable!()
+        };
+        let frame = render_frame(&source, &style(Mode::Tile), (100, 70)).unwrap();
+        for y in 0..70 {
+            for x in 0..100 {
+                assert_eq!(
+                    pixel(&frame, x, y),
+                    pixel(image, x % 30, y % 20),
+                    "({x},{y})"
+                );
+            }
+        }
+    }
+
+    /// Stretch maps the image's corners onto the screen's.
+    #[test]
+    fn stretch_fills_the_screen_exactly() {
+        let path = write_png("stretch.png", 40, 40, |x, y| match (x < 20, y < 20) {
+            (true, true) => [255, 0, 0],
+            (false, true) => [0, 255, 0],
+            (true, false) => [0, 0, 255],
+            (false, false) => [255, 255, 255],
+        });
+        let frame = render_frame(&open(&path).unwrap(), &style(Mode::Stretch), (200, 50)).unwrap();
+        assert_eq!(pixel(&frame, 2, 2), RED);
+        assert_eq!(pixel(&frame, 197, 2), [0, 255, 0, 255]);
+        assert_eq!(pixel(&frame, 2, 47), BLUE);
+        assert_eq!(pixel(&frame, 197, 47), [255, 255, 255, 255]);
+    }
+
+    /// A transparent image shows the fill colour through it, and every frame
+    /// is opaque.
+    #[test]
+    fn transparency_shows_the_fill_colour() {
+        let mut surface = skia::surfaces::raster_n32_premul((10, 10)).unwrap();
+        surface.canvas().clear(skia::Color::TRANSPARENT);
+        let png = surface
+            .image_snapshot()
+            .encode(None, skia::EncodedImageFormat::PNG, 100)
+            .unwrap();
+        let dir = std::env::temp_dir().join(format!("otto-kit-wallpaper-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("clear.png");
+        std::fs::write(&path, png.as_bytes()).unwrap();
+        let frame = render_frame(
+            &open(path.to_str().unwrap()).unwrap(),
+            &style(Mode::Fill),
+            (20, 20),
+        )
+        .unwrap();
+        assert_eq!(pixel(&frame, 10, 10), BLUE);
     }
 
     #[test]

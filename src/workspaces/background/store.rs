@@ -17,7 +17,7 @@ use std::sync::{mpsc, Arc, RwLock};
 use std::time::SystemTime;
 
 use layers::skia;
-use otto_kit::wallpaper::{self, Source};
+use otto_kit::wallpaper::{self, FrameStyle, Source};
 
 /// A wallpaper file as it is on disk now. A file rewritten in place gets a
 /// new key, so it is decoded again rather than served from the old pixels.
@@ -39,11 +39,59 @@ impl SourceKey {
     }
 }
 
-/// One frame: a source rendered for one screen size.
+/// One frame: a source rendered for one screen size and style.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct FrameKey {
     source: SourceKey,
     target: (i32, i32),
+    style: StyleKey,
+}
+
+/// A [`FrameStyle`], by value, as something that hashes: its floats by bit
+/// pattern. Two styles that would render the same frame differently never
+/// share a key; two that only differ by the sign of a zero merely render it
+/// twice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct StyleKey {
+    mode: wallpaper::Mode,
+    numbers: [u32; 8],
+}
+
+impl From<&FrameStyle> for StyleKey {
+    fn from(style: &FrameStyle) -> Self {
+        let layout = style.layout.sanitised();
+        // Settings a mode ignores are left out, so changing them does not
+        // render the same frame again.
+        let position = if layout.mode.uses_position() {
+            layout.position
+        } else {
+            (0.5, 0.5)
+        };
+        let zoom = if layout.mode.uses_zoom() {
+            layout.zoom
+        } else {
+            1.0
+        };
+        let scale = if layout.mode.is_natural_size() {
+            style.output_scale
+        } else {
+            1.0
+        };
+        Self {
+            mode: layout.mode,
+            numbers: [
+                position.0.to_bits(),
+                position.1.to_bits(),
+                zoom.to_bits(),
+                scale.to_bits(),
+                style.fill.r.to_bits(),
+                style.fill.g.to_bits(),
+                style.fill.b.to_bits(),
+                // Frames are opaque whatever the fill's alpha.
+                0,
+            ],
+        }
+    }
 }
 
 /// A finished frame, on its way back from the worker.
@@ -66,6 +114,7 @@ pub(crate) enum Lookup {
 
 struct Job {
     key: FrameKey,
+    style: FrameStyle,
     source: Source,
 }
 
@@ -114,8 +163,8 @@ impl WallpaperStore {
         }
     }
 
-    /// The frame showing `path` on a `target`-sized screen.
-    pub(crate) fn lookup(&mut self, path: &str, target: (i32, i32)) -> Lookup {
+    /// The frame showing `path` in `style` on a `target`-sized screen.
+    pub(crate) fn lookup(&mut self, path: &str, style: &FrameStyle, target: (i32, i32)) -> Lookup {
         let source_key = match self
             .stat_cache
             .entry(path.to_string())
@@ -130,6 +179,7 @@ impl WallpaperStore {
         let key = FrameKey {
             source: source_key.clone(),
             target,
+            style: StyleKey::from(style),
         };
         if let Ok(mut wanted) = self.wanted.write() {
             wanted.insert(key.clone());
@@ -160,6 +210,7 @@ impl WallpaperStore {
         };
         self.submit(Job {
             key: key.clone(),
+            style: *style,
             source,
         });
         self.in_flight.insert(key);
@@ -301,7 +352,7 @@ fn render(job: &Job, decoded: &mut Option<(SourceKey, skia::Image)>) -> Option<s
         }
         svg => svg.clone(),
     };
-    wallpaper::render_frame(&source, job.key.target)
+    wallpaper::render_frame(&source, &job.style, job.key.target)
 }
 
 #[cfg(test)]
@@ -348,15 +399,22 @@ mod tests {
         let (mut store, rx) = store();
         let path = write_png("shared.png", 64, 36, skia::Color::RED);
         store.begin_pass();
-        assert!(matches!(store.lookup(&path, (32, 32)), Lookup::Pending));
-        assert!(matches!(store.lookup(&path, (32, 32)), Lookup::Pending));
+        assert!(matches!(
+            store.lookup(&path, &FrameStyle::default(), (32, 32)),
+            Lookup::Pending
+        ));
+        assert!(matches!(
+            store.lookup(&path, &FrameStyle::default(), (32, 32)),
+            Lookup::Pending
+        ));
         store.end_pass();
         drain(&mut store, &rx);
 
         store.begin_pass();
-        let (Lookup::Ready(a), Lookup::Ready(b)) =
-            (store.lookup(&path, (32, 32)), store.lookup(&path, (32, 32)))
-        else {
+        let (Lookup::Ready(a), Lookup::Ready(b)) = (
+            store.lookup(&path, &FrameStyle::default(), (32, 32)),
+            store.lookup(&path, &FrameStyle::default(), (32, 32)),
+        ) else {
             panic!("the frame is ready");
         };
         store.end_pass();
@@ -372,13 +430,13 @@ mod tests {
         let first = write_png("first.png", 16, 16, skia::Color::RED);
         let second = write_png("second.png", 16, 16, skia::Color::BLUE);
         store.begin_pass();
-        store.lookup(&first, (8, 8));
+        store.lookup(&first, &FrameStyle::default(), (8, 8));
         store.end_pass();
         drain(&mut store, &rx);
         assert_eq!(store.frames.len(), 1);
 
         store.begin_pass();
-        store.lookup(&second, (8, 8));
+        store.lookup(&second, &FrameStyle::default(), (8, 8));
         store.end_pass();
         assert!(store.frames.is_empty());
         assert_eq!(store.sources.len(), 1);
@@ -390,7 +448,7 @@ mod tests {
         let (mut store, rx) = store();
         store.begin_pass();
         assert!(matches!(
-            store.lookup("/nonexistent/otto.png", (8, 8)),
+            store.lookup("/nonexistent/otto.png", &FrameStyle::default(), (8, 8)),
             Lookup::Failed(_)
         ));
         store.end_pass();
@@ -404,7 +462,7 @@ mod tests {
         let (mut store, rx) = store();
         let path = write_png("rewritten.png", 16, 16, skia::Color::RED);
         store.begin_pass();
-        store.lookup(&path, (8, 8));
+        store.lookup(&path, &FrameStyle::default(), (8, 8));
         store.end_pass();
         drain(&mut store, &rx);
 
@@ -413,7 +471,10 @@ mod tests {
         let rewritten = write_png("rewritten.png", 20, 20, skia::Color::BLUE);
         assert_eq!(rewritten, path);
         store.begin_pass();
-        assert!(matches!(store.lookup(&path, (8, 8)), Lookup::Pending));
+        assert!(matches!(
+            store.lookup(&path, &FrameStyle::default(), (8, 8)),
+            Lookup::Pending
+        ));
         store.end_pass();
     }
 
@@ -424,10 +485,10 @@ mod tests {
         let old = write_png("old.png", 16, 16, skia::Color::RED);
         let new = write_png("new.png", 16, 16, skia::Color::BLUE);
         store.begin_pass();
-        store.lookup(&old, (8, 8));
+        store.lookup(&old, &FrameStyle::default(), (8, 8));
         store.end_pass();
         store.begin_pass();
-        store.lookup(&new, (8, 8));
+        store.lookup(&new, &FrameStyle::default(), (8, 8));
         store.end_pass();
         drain(&mut store, &rx);
         // Whatever the worker did with the old job, only the new frame is

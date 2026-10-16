@@ -580,8 +580,13 @@ impl Workspaces {
     /// Run on every layout pass, since an output's size is part of what a
     /// frame is. Returns the first reason a wallpaper could not be shown.
     pub(crate) fn refresh_wallpapers(&self) -> Option<String> {
-        let path = Config::with(|c| c.background_image.clone());
-        let color = crate::utils::parse_hex_color(&Config::with(|c| c.background_color.clone()));
+        let (path, color, layout) = Config::with(|c| {
+            (
+                c.background_image.clone(),
+                crate::utils::parse_hex_color(&c.background_color),
+                c.wallpaper_layout(),
+            )
+        });
         let fallback_size = self.with_model(|m| (m.width, m.height));
 
         let Ok(mut store) = self.wallpapers.lock() else {
@@ -590,20 +595,25 @@ impl Workspaces {
         let mut error = None;
         store.begin_pass();
         for (output_name, ows) in self.output_workspaces.iter() {
-            let target = self
-                .outputs
-                .iter()
-                .find(|o| o.name() == *output_name)
+            let output = self.outputs.iter().find(|o| o.name() == *output_name);
+            let target = output
                 .and_then(|o| o.current_mode())
                 .map(|mode| (mode.size.w, mode.size.h))
                 .unwrap_or(fallback_size);
+            let style = otto_kit::wallpaper::FrameStyle {
+                layout,
+                fill: color,
+                output_scale: output
+                    .map(|o| o.current_scale().fractional_scale() as f32)
+                    .unwrap_or(1.0),
+            };
             for workspace in ows.workspace_views.iter() {
                 let view = &workspace.background_view;
                 if path.is_empty() || target.0 <= 0 || target.1 <= 0 {
                     view.show(BackgroundContent::Gradient, color);
                     continue;
                 }
-                match store.lookup(&path, target) {
+                match store.lookup(&path, &style, target) {
                     Lookup::Ready(frame) => view.show(BackgroundContent::Frame(frame), color),
                     Lookup::Pending => {
                         // Keep a frame that is up while the new one renders;

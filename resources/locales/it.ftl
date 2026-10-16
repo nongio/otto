@@ -534,6 +534,12 @@ settings-choice-widget-calendar = Calendario
 # The next two name pages whose text is in English, so they stay as written.
 settings-choice-widget-cross-pad = Cross pad
 settings-choice-widget-grid-pad = Grid pad
+# How a background image fills the screen.
+settings-choice-background-fill = Riempi lo schermo
+settings-choice-background-fit = Adatta allo schermo
+settings-choice-background-stretch = Allarga per riempire
+settings-choice-background-center = Centra
+settings-choice-background-tile = Affianca
 # The automatic option for a theme that follows the system.
 settings-choice-auto = Auto
 
@@ -1075,9 +1081,17 @@ schema-topbar-clock-format-description = Come la barra superiore scrive data e o
 schema-topbar-show-app-menu-label = Mostra i menu delle applicazioni
 schema-topbar-show-app-menu-description = I menu dell’applicazione attiva, accanto al suo nome nella barra superiore.
 schema-background-color-label = Colore di sfondo
-schema-background-color-description = Colore di sfondo della scrivania, come stringa esadecimale.
+schema-background-color-description = Colore di sfondo della scrivania, come stringa esadecimale: il gradiente mostrato senza immagine e ciò che appare intorno a un'immagine adattata o centrata.
 schema-background-image-label = Immagine di sfondo
 schema-background-image-description = Percorso dell'immagine di sfondo della scrivania. Vuoto per nessuna.
+schema-background-mode-label = Adattamento dello sfondo
+schema-background-mode-description = Come l'immagine di sfondo riempie lo schermo.
+schema-background-position-x-label = Posizione orizzontale dello sfondo
+schema-background-position-x-description = Quale parte di un'immagine di sfondo ritagliata è visibile, e dove si trova una più piccola, da 0 (sinistra) a 1 (destra).
+schema-background-position-y-label = Posizione verticale dello sfondo
+schema-background-position-y-description = Quale parte di un'immagine di sfondo ritagliata è visibile, e dove si trova una più piccola, da 0 (alto) a 1 (basso).
+schema-background-zoom-label = Zoom dello sfondo
+schema-background-zoom-description = Ingrandimento di un'immagine di sfondo che riempie lo schermo o si estende su più monitor, da 1 (copre appena lo schermo).
 schema-cursor-theme-label = Tema del cursore
 schema-cursor-theme-description = Nome del tema XCursor.
 schema-cursor-size-label = Dimensione del cursore
