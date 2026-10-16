@@ -132,10 +132,49 @@ impl Config {
             }
         }
         WallpaperSettings {
-            image,
-            color: crate::utils::parse_hex_color(&color),
+            image: expand_home(&image),
+            color: colour_from(&color),
             layout: layout_from(&mode, position, zoom),
         }
+    }
+
+    /// The global image, as [`Self::wallpaper_for`] resolves it before any
+    /// override.
+    pub fn global_wallpaper_image(&self) -> String {
+        expand_home(&self.background_image)
+    }
+
+    /// What is wrong with the wallpaper settings as written: an unknown mode
+    /// or an unreadable colour, globally or in an output's override. Each
+    /// still works — `fill`, and Otto's default colour — so these are
+    /// warnings, said once when the configuration is read.
+    pub fn wallpaper_problems(&self) -> Vec<String> {
+        let mut problems = Vec::new();
+        let mut check = |place: &str, mode: Option<&str>, color: Option<&str>| {
+            if let Some(mode) = mode.filter(|m| otto_kit::wallpaper::Mode::parse(m).is_none()) {
+                problems.push(format!(
+                    "{place}: unknown background mode `{mode}`, using fill"
+                ));
+            }
+            if let Some(color) = color.filter(|c| otto_kit::color::parse_hex_lenient(c).is_none()) {
+                problems.push(format!(
+                    "{place}: `{color}` is not a colour, using the default"
+                ));
+            }
+        };
+        check(
+            "background_mode/background_color",
+            Some(&self.background_mode),
+            Some(&self.background_color),
+        );
+        for (output, record) in &self.background_outputs {
+            check(
+                &format!("[background_outputs.\"{output}\"]"),
+                record.mode.as_deref(),
+                record.color.as_deref(),
+            );
+        }
+        problems
     }
 
     /// How the global wallpaper is laid out, from the `background_*`
@@ -150,25 +189,35 @@ impl Config {
     }
 }
 
+/// The layout the settings describe. An unknown mode is `fill`; it is
+/// reported once, when the configuration is read
+/// ([`Config::wallpaper_problems`]), not on every layout pass.
 fn layout_from(mode: &str, position: (f64, f64), zoom: f64) -> otto_kit::wallpaper::Layout {
-    let mode = otto_kit::wallpaper::Mode::parse(mode).unwrap_or_else(|| {
-        // Read on every layout pass: say so once per bad value, not per
-        // frame.
-        static WARNED: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
-        if let Ok(mut warned) = WARNED.lock() {
-            if warned.as_deref() != Some(mode) {
-                warn!("unknown background mode `{mode}`, using fill");
-                *warned = Some(mode.to_string());
-            }
-        }
-        otto_kit::wallpaper::Mode::Fill
-    });
     otto_kit::wallpaper::Layout {
-        mode,
+        mode: otto_kit::wallpaper::Mode::parse(mode).unwrap_or_default(),
         position: (position.0 as f32, position.1 as f32),
         zoom: zoom as f32,
     }
     .sanitised()
+}
+
+/// The colour a `background_color` names, or Otto's default for one that
+/// names none — reported, like a bad mode, when the configuration is read.
+fn colour_from(text: &str) -> layers::skia::Color4f {
+    otto_kit::color::parse_hex_lenient(text)
+        .map(layers::skia::Color4f::from)
+        .unwrap_or(layers::skia::Color4f::new(0.1, 0.1, 0.18, 1.0))
+}
+
+/// `path` with a leading `~/` made the home folder, as a hand-written
+/// configuration may spell it.
+fn expand_home(path: &str) -> String {
+    match path.strip_prefix("~/") {
+        Some(rest) => otto_kit::xdg::home()
+            .map(|home| home.join(rest).to_string_lossy().into_owned())
+            .unwrap_or_else(|| path.to_string()),
+        None => path.to_string(),
+    }
 }
 
 /// Change output `output`'s wallpaper override, in the running configuration
@@ -282,6 +331,34 @@ mod tests {
         assert_eq!(mine.image, "/mine.jpg");
         assert_eq!(mine.layout.mode, Mode::Fit, "the output's mode is kept");
         assert_eq!(mine.layout.position, (0.5, 0.0));
+    }
+
+    /// A typo in a mode or a colour is reported once, at load, and still
+    /// works: fill, and the default colour.
+    #[test]
+    fn bad_values_are_reported_and_fall_back() {
+        let config = config(
+            r##"
+            background_mode = "zoomed"
+            background_color = "blue-ish"
+            [background_outputs."DP-1"]
+            mode = "fit"
+            color = "#12"
+            "##,
+        );
+        let problems = config.wallpaper_problems();
+        assert_eq!(problems.len(), 3, "{problems:?}");
+        assert_eq!(config.wallpaper_for("eDP-1", None).layout.mode, Mode::Fill);
+        assert!(Config::default().wallpaper_problems().is_empty());
+    }
+
+    /// A hand-written `~/` is the home folder.
+    #[test]
+    fn a_home_relative_image_is_expanded() {
+        let config = config("background_image = \"~/Pictures/a.png\"\n");
+        let image = config.wallpaper_for("eDP-1", None).image;
+        assert!(!image.starts_with('~'), "{image}");
+        assert!(image.ends_with("/Pictures/a.png"), "{image}");
     }
 
     /// An empty image is an explicit "none", not "inherit".

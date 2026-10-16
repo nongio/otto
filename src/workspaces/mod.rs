@@ -571,18 +571,34 @@ impl Workspaces {
     /// Re-read the desktop background from the live configuration and push it
     /// to every workspace on every output.
     ///
-    /// Returns whether the image can be shown — an unreadable path is
+    /// Returns whether the global image can be shown — an unreadable path is
     /// reported rather than leaving the old wallpaper up and claiming
-    /// success. Opening is synchronous for exactly that reason; the decode
-    /// itself finishes later, on the wallpaper thread.
+    /// success. Only that image: an output's or a workspace's own that has
+    /// gone missing (an unplugged drive) shows the gradient and is logged,
+    /// but must not refuse a change to the global settings. The check is a
+    /// stat and a look at the file's first bytes; the decode itself finishes
+    /// later, on the wallpaper thread.
     pub fn reload_background(&self) -> Result<(), String> {
-        if let Ok(mut store) = self.wallpapers.lock() {
-            store.forget_failures();
+        self.wallpaper_store().forget_failures();
+        let global = Config::with(|c| c.global_wallpaper_image());
+        let mut result = Ok(());
+        for (image, err) in self.refresh_wallpapers() {
+            if image == global {
+                result = Err(format!("cannot show the background image `{image}`: {err}"));
+            } else {
+                tracing::warn!("cannot show the background image `{image}`: {err}");
+            }
         }
-        match self.refresh_wallpapers() {
-            Some(err) => Err(format!("cannot show the background image {err}")),
-            None => Ok(()),
-        }
+        result
+    }
+
+    /// The wallpaper store. A panic while it was held leaves nothing in it
+    /// half-done that matters, so a poisoned lock is taken over rather than
+    /// silently skipping every refresh after it.
+    fn wallpaper_store(&self) -> std::sync::MutexGuard<'_, background::store::WallpaperStore> {
+        self.wallpapers
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     /// Point every workspace's background at the frame it should show now,
@@ -590,8 +606,9 @@ impl Workspaces {
     /// every lookup is a hit, and an unchanged state does not re-render.
     ///
     /// Run on every layout pass, since an output's size is part of what a
-    /// frame is. Returns the first reason a wallpaper could not be shown.
-    pub(crate) fn refresh_wallpapers(&self) -> Option<String> {
+    /// frame is. Returns every image that could not be shown, once each,
+    /// with the reason.
+    pub(crate) fn refresh_wallpapers(&self) -> Vec<(String, String)> {
         let config = Config::current();
         let fallback_size = self.with_model(|m| (m.width, m.height));
 
@@ -603,10 +620,8 @@ impl Workspaces {
             .collect();
         let desktop = background::desktop_bounds(screens.iter().map(|(_, rect)| *rect));
 
-        let Ok(mut store) = self.wallpapers.lock() else {
-            return None;
-        };
-        let mut error = None;
+        let mut store = self.wallpaper_store();
+        let mut errors: Vec<(String, String)> = Vec::new();
         store.begin_pass();
         for (output_name, ows) in self.output_workspaces.iter() {
             let output = self.outputs.iter().find(|o| o.name() == *output_name);
@@ -652,23 +667,21 @@ impl Workspaces {
                     }
                     Lookup::Failed(err) => {
                         view.show(BackgroundContent::Gradient, color);
-                        error.get_or_insert(format!("`{}`: {err}", settings.image));
+                        if !errors.iter().any(|(image, _)| *image == settings.image) {
+                            errors.push((settings.image.clone(), err));
+                        }
                     }
                 }
             }
         }
         store.end_pass();
-        error
+        errors
     }
 
     /// A frame finished rendering on the wallpaper thread. Returns whether
     /// anything on screen changed, so the caller can ask for a redraw.
     pub fn wallpaper_frame_ready(&self, done: background::store::FrameDone) -> bool {
-        let refresh = self
-            .wallpapers
-            .lock()
-            .map(|mut store| store.finish(done))
-            .unwrap_or(false);
+        let refresh = self.wallpaper_store().finish(done);
         if refresh {
             self.refresh_wallpapers();
         }
@@ -677,10 +690,7 @@ impl Workspaces {
 
     /// Whether a wallpaper some workspace is waiting for is still rendering.
     pub fn wallpapers_pending(&self) -> bool {
-        self.wallpapers
-            .lock()
-            .map(|store| store.pending())
-            .unwrap_or(false)
+        self.wallpaper_store().pending()
     }
 
     /// Repaint every piece of chrome the compositor draws itself.

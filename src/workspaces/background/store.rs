@@ -5,12 +5,13 @@
 //! workspace on outputs of that size shares the frame, so ten workspaces cost
 //! one decode and one frame rather than ten of each.
 //!
-//! Opening is synchronous and cheap — the file's bytes and header — so an
-//! unreadable path is reported to whoever set it straight away. Decoding and
-//! resampling are not: an 8K photo takes a few hundred milliseconds, which
-//! the compositor cannot spend on its own thread. Frames are rendered on a
-//! worker thread and handed back through the event loop; until one arrives
-//! a workspace keeps whatever it was showing.
+//! On the compositor's thread a file is only stat'ed and its first few
+//! kilobytes checked ([`wallpaper::probe`]), so an unreadable path or a file
+//! that is not an image is reported to whoever set it straight away. Reading
+//! the whole file, decoding and resampling are not cheap — an 8K photo takes
+//! a few hundred milliseconds — so they happen on a worker thread, and the
+//! frame comes back through the event loop; until it arrives a workspace
+//! keeps whatever it was showing.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{mpsc, Arc, RwLock};
@@ -136,25 +137,32 @@ pub(crate) enum Lookup {
 struct Job {
     key: FrameKey,
     style: FrameStyle,
-    source: Source,
 }
 
 /// Where finished frames go: the event loop in the compositor, a plain
 /// channel in tests.
 pub(crate) type FrameSink = Box<dyn Fn(FrameDone) + Send>;
 
+/// How long the worker keeps a decoded image once it has nothing to do: long
+/// enough for the frames of every output after a change, short enough that a
+/// full-size decode is not held for the rest of the session.
+const KEEP_DECODED: std::time::Duration = std::time::Duration::from_secs(10);
+
 pub(crate) struct WallpaperStore {
-    sources: HashMap<SourceKey, Source>,
     frames: HashMap<FrameKey, skia::Image>,
     failed_sources: HashMap<SourceKey, String>,
     failed_frames: HashSet<FrameKey>,
     in_flight: HashSet<FrameKey>,
-    /// The frames asked for in the current pass. Shared with the worker so
+    /// The frames the last finished pass asked for. Shared with the worker so
     /// it can skip a job nobody wants any more — a wallpaper picked and then
     /// replaced before it finished decoding.
     wanted: Arc<RwLock<HashSet<FrameKey>>>,
-    /// Path to key, within one pass, so a path is stat'ed once per pass
-    /// however many workspaces show it.
+    /// The frames the pass in progress has asked for so far. Swapped into
+    /// `wanted` at [`Self::end_pass`], so the worker never sees a half-built
+    /// set and cancels a job that is still wanted.
+    next_wanted: HashSet<FrameKey>,
+    /// Path to key, within one pass, so a path is stat'ed and probed once per
+    /// pass however many workspaces show it.
     stat_cache: HashMap<String, Result<SourceKey, String>>,
     sink: Option<FrameSink>,
     jobs: Option<mpsc::Sender<Job>>,
@@ -163,12 +171,12 @@ pub(crate) struct WallpaperStore {
 impl WallpaperStore {
     pub(crate) fn new(sink: FrameSink) -> Self {
         Self {
-            sources: HashMap::new(),
             frames: HashMap::new(),
             failed_sources: HashMap::new(),
             failed_frames: HashSet::new(),
             in_flight: HashSet::new(),
             wanted: Arc::new(RwLock::new(HashSet::new())),
+            next_wanted: HashSet::new(),
             stat_cache: HashMap::new(),
             sink: Some(sink),
             jobs: None,
@@ -179,74 +187,54 @@ impl WallpaperStore {
     /// is dropped at [`Self::end_pass`].
     pub(crate) fn begin_pass(&mut self) {
         self.stat_cache.clear();
-        if let Ok(mut wanted) = self.wanted.write() {
-            wanted.clear();
-        }
+        self.next_wanted.clear();
     }
 
     /// The frame showing `path` in `style` on a `target`-sized screen.
     pub(crate) fn lookup(&mut self, path: &str, style: &FrameStyle, target: (i32, i32)) -> Lookup {
-        let source_key = match self
-            .stat_cache
-            .entry(path.to_string())
-            .or_insert_with(|| SourceKey::stat(path))
-        {
+        let failed_sources = &self.failed_sources;
+        let source_key = match self.stat_cache.entry(path.to_string()).or_insert_with(|| {
+            let key = SourceKey::stat(path)?;
+            // A file that already failed is not probed again until the
+            // failures are forgotten.
+            if let Some(err) = failed_sources.get(&key) {
+                return Err(err.clone());
+            }
+            wallpaper::probe(path).map_err(|err| err.to_string())?;
+            Ok(key)
+        }) {
             Ok(key) => key.clone(),
             Err(err) => return Lookup::Failed(err.clone()),
         };
-        if let Some(err) = self.failed_sources.get(&source_key) {
-            return Lookup::Failed(err.clone());
-        }
         let key = FrameKey {
-            source: source_key.clone(),
+            source: source_key,
             target,
             style: StyleKey::from(style),
         };
-        if let Ok(mut wanted) = self.wanted.write() {
-            wanted.insert(key.clone());
-        }
+        self.next_wanted.insert(key.clone());
         if let Some(frame) = self.frames.get(&key) {
             return Lookup::Ready(frame.clone());
         }
         if self.failed_frames.contains(&key) {
             return Lookup::Failed("the image could not be decoded".to_string());
         }
-        if self.in_flight.contains(&key) {
-            return Lookup::Pending;
+        if !self.in_flight.contains(&key) {
+            self.in_flight.insert(key.clone());
+            self.submit(Job { key, style: *style });
         }
-
-        let source = match self.sources.get(&source_key) {
-            Some(source) => source.clone(),
-            None => match wallpaper::open(path) {
-                Ok(source) => {
-                    self.sources.insert(source_key.clone(), source.clone());
-                    source
-                }
-                Err(err) => {
-                    let err = err.to_string();
-                    self.failed_sources.insert(source_key, err.clone());
-                    return Lookup::Failed(err);
-                }
-            },
-        };
-        self.submit(Job {
-            key: key.clone(),
-            style: *style,
-            source,
-        });
-        self.in_flight.insert(key);
         Lookup::Pending
     }
 
-    /// Drop every frame and source the pass did not ask for.
+    /// Drop every frame the pass did not ask for, and let the worker know
+    /// what is wanted now.
     pub(crate) fn end_pass(&mut self) {
-        let Ok(wanted) = self.wanted.read() else {
-            return;
-        };
+        let wanted = std::mem::take(&mut self.next_wanted);
         self.frames.retain(|key, _| wanted.contains(key));
         self.failed_frames.retain(|key| wanted.contains(key));
-        let sources: HashSet<&SourceKey> = wanted.iter().map(|key| &key.source).collect();
-        self.sources.retain(|key, _| sources.contains(key));
+        *self
+            .wanted
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = wanted;
     }
 
     /// Take a finished frame. Returns whether the workspaces need another
@@ -256,8 +244,8 @@ impl WallpaperStore {
         let wanted = self
             .wanted
             .read()
-            .map(|wanted| wanted.contains(&done.key))
-            .unwrap_or(false);
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .contains(&done.key);
         if done.cancelled {
             // Still wanted after all — asked for again since the worker
             // skipped it: the next pass submits it afresh.
@@ -272,6 +260,10 @@ impl WallpaperStore {
             }
             None => {
                 tracing::warn!("wallpaper: cannot decode {}", done.key.source.path);
+                self.failed_sources.insert(
+                    done.key.source.clone(),
+                    "the image could not be decoded".into(),
+                );
                 self.failed_frames.insert(done.key);
             }
         }
@@ -285,12 +277,13 @@ impl WallpaperStore {
         self.failed_frames.clear();
     }
 
-    /// Whether a frame this pass asked for is still being rendered.
+    /// Whether a frame the last pass asked for is still being rendered.
     pub(crate) fn pending(&self) -> bool {
-        self.wanted
+        let wanted = self
+            .wanted
             .read()
-            .map(|wanted| self.in_flight.iter().any(|key| wanted.contains(key)))
-            .unwrap_or(false)
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        self.in_flight.iter().any(|key| wanted.contains(key))
     }
 
     fn submit(&mut self, job: Job) {
@@ -304,13 +297,9 @@ impl WallpaperStore {
         if let Some(job) = failed {
             // No worker: render here rather than not at all.
             tracing::warn!("wallpaper: no worker thread, rendering on the compositor thread");
-            let frame = render(&job, &mut None);
+            let done = run(job, &mut Decoded::default());
             if let Some(sink) = &self.sink {
-                sink(FrameDone {
-                    key: job.key,
-                    frame,
-                    cancelled: false,
-                });
+                sink(done);
             }
         }
     }
@@ -322,10 +311,23 @@ impl WallpaperStore {
         let spawned = std::thread::Builder::new()
             .name("otto-wallpaper".into())
             .spawn(move || {
-                // The last raster decoded, so the frames of one file for
-                // several screen sizes share one decode.
-                let mut decoded: Option<(SourceKey, skia::Image)> = None;
-                while let Ok(job) = queue.recv() {
+                // Below the compositor: a wallpaper can wait a frame, the
+                // desktop cannot. The resample's own threads inherit it.
+                // SAFETY: `setpriority` on the calling thread (`0` is this
+                // thread under Linux's per-thread nice), no pointers.
+                unsafe {
+                    libc::setpriority(libc::PRIO_PROCESS, 0, 10);
+                }
+                let mut decoded = Decoded::default();
+                loop {
+                    let job = match queue.recv_timeout(KEEP_DECODED) {
+                        Ok(job) => job,
+                        Err(mpsc::RecvTimeoutError::Timeout) => {
+                            decoded = Decoded::default();
+                            continue;
+                        }
+                        Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                    };
                     let still_wanted = wanted
                         .read()
                         .map(|wanted| wanted.contains(&job.key))
@@ -338,12 +340,7 @@ impl WallpaperStore {
                         });
                         continue;
                     }
-                    let frame = render(&job, &mut decoded);
-                    sink(FrameDone {
-                        key: job.key,
-                        frame,
-                        cancelled: false,
-                    });
+                    sink(run(job, &mut decoded));
                 }
             });
         match spawned {
@@ -356,24 +353,44 @@ impl WallpaperStore {
     }
 }
 
-/// Render one job, reusing `decoded` when it holds the same file.
-fn render(job: &Job, decoded: &mut Option<(SourceKey, skia::Image)>) -> Option<skia::Image> {
-    let source = match &job.source {
-        Source::Raster(lazy) => {
-            let raster = match decoded {
-                Some((key, raster)) if *key == job.key.source => raster.clone(),
-                _ => {
-                    let raster =
-                        lazy.make_raster_image(None, skia::image::CachingHint::Disallow)?;
-                    *decoded = Some((job.key.source.clone(), raster.clone()));
-                    raster
-                }
-            };
-            Source::Raster(raster)
-        }
-        svg => svg.clone(),
-    };
-    wallpaper::render_frame(&source, &job.style, job.key.target)
+/// The last file the worker opened and decoded, so the frames of one file
+/// for several screens share one read and one decode.
+#[derive(Default)]
+struct Decoded {
+    key: Option<SourceKey>,
+    source: Option<Source>,
+}
+
+/// Render one job. A panic in a decoder or the resampler comes back as a
+/// failed frame rather than taking the worker down with the job still in
+/// flight.
+fn run(job: Job, decoded: &mut Decoded) -> FrameDone {
+    let frame = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| render(&job, decoded)))
+        .unwrap_or_else(|_| {
+            tracing::warn!("wallpaper: rendering {} panicked", job.key.source.path);
+            *decoded = Decoded::default();
+            None
+        });
+    FrameDone {
+        key: job.key,
+        frame,
+        cancelled: false,
+    }
+}
+
+fn render(job: &Job, decoded: &mut Decoded) -> Option<skia::Image> {
+    if decoded.key.as_ref() != Some(&job.key.source) {
+        *decoded = Decoded::default();
+        let source = match wallpaper::open(&job.key.source.path).ok()? {
+            Source::Raster(lazy) => {
+                Source::Raster(lazy.make_raster_image(None, skia::image::CachingHint::Disallow)?)
+            }
+            svg => svg,
+        };
+        decoded.key = Some(job.key.source.clone());
+        decoded.source = Some(source);
+    }
+    wallpaper::render_frame(decoded.source.as_ref()?, &job.style, job.key.target)
 }
 
 #[cfg(test)]
@@ -460,7 +477,6 @@ mod tests {
         store.lookup(&second, &FrameStyle::default(), (8, 8));
         store.end_pass();
         assert!(store.frames.is_empty());
-        assert_eq!(store.sources.len(), 1);
     }
 
     /// An unreadable path fails at once, without a trip to the worker.

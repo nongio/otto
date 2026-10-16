@@ -528,7 +528,7 @@ pub static SETTINGS: &[SettingSpec] = &[
          (just covering the screen).",
         Live,
         1.0,
-        8.0,
+        otto_kit::wallpaper::MAX_ZOOM as f64,
         0.05,
     ),
     spec(

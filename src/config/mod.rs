@@ -398,6 +398,7 @@ impl Config {
             Self::default()
         });
 
+        errors.extend(config.wallpaper_problems());
         config.rebuild_shortcut_bindings();
         (config, errors)
     }
@@ -3258,9 +3259,6 @@ bookmarks = []
         );
     }
 
-    /// The example config is what the packages install as
-    /// `/etc/otto/config.toml`, so it is the default a fresh install runs
-    /// with. It has to parse, and it has to bring up the desktop the user
     /// The wallpaper layout keys read into a layout; a typo in the mode is
     /// `fill`, and numbers out of range are pulled back in, rather than the
     /// whole file being rejected.
@@ -3291,6 +3289,9 @@ bookmarks = []
         assert_eq!(Config::default().wallpaper_layout(), Layout::default());
     }
 
+    /// The example config is what the packages install as
+    /// `/etc/otto/config.toml`, so it is the default a fresh install runs
+    /// with. It has to parse, and it has to bring up the desktop the user
     /// guide describes — every binding in it resolves, the bar and the
     /// island start, and the dock is not empty.
     #[test]

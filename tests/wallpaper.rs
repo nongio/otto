@@ -15,6 +15,20 @@ mod wallpaper_tests {
     /// reach.
     const CORNER: i32 = 24;
 
+    /// Removes the test's images when it ends, pass or fail: a photo-sized
+    /// noise PNG is tens of megabytes.
+    struct Images;
+
+    impl Drop for Images {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(images_dir());
+        }
+    }
+
+    fn images_dir() -> std::path::PathBuf {
+        std::env::temp_dir().join(format!("otto-wallpaper-test-{}", std::process::id()))
+    }
+
     fn start() -> HeadlessHandle {
         let handle = HeadlessHandle::start(HeadlessConfig {
             width: SCREEN.0,
@@ -39,7 +53,7 @@ mod wallpaper_tests {
     }
 
     fn temp_path(name: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("otto-wallpaper-test-{}", std::process::id()));
+        let dir = images_dir();
         std::fs::create_dir_all(&dir).unwrap();
         dir.join(name)
     }
@@ -187,6 +201,7 @@ mod wallpaper_tests {
     #[test]
     #[serial]
     fn the_wallpaper_is_drawn_pixel_for_pixel() {
+        let _images = Images;
         let handle = start();
         handle.set_background(&noise_png("photo.png", 3840, 2160));
         handle.settle(400);
@@ -210,6 +225,7 @@ mod wallpaper_tests {
     #[test]
     #[serial]
     fn a_repaint_cropped_to_damage_matches_the_full_paint() {
+        let _images = Images;
         let handle = start();
         handle.set_background(&noise_png("drag.png", 3840, 2160));
         handle.settle(400);
@@ -239,6 +255,7 @@ mod wallpaper_tests {
     #[test]
     #[serial]
     fn fit_shows_the_background_colour_around_the_image() {
+        let _images = Images;
         use otto::settings::value::SettingValue;
         let handle = start();
         handle.set_background(&solid_png("square.png", 400, 400, [255, 0, 0]));
@@ -266,6 +283,7 @@ mod wallpaper_tests {
     #[test]
     #[serial]
     fn output_bg_overrides_one_output() {
+        let _images = Images;
         let handle = start();
         let global = solid_png("global.png", 64, 64, [0, 255, 0]);
         let own = solid_png("own.png", 64, 64, [255, 0, 0]);
@@ -294,10 +312,42 @@ mod wallpaper_tests {
         handle.stop();
     }
 
+    /// An output's own image that has gone missing (an unplugged drive)
+    /// shows the gradient there, and does not refuse a change to the global
+    /// settings, which have nothing wrong with them.
+    #[test]
+    #[serial]
+    fn a_missing_override_does_not_block_global_changes() {
+        use otto::settings::value::SettingValue;
+        let _images = Images;
+        let handle = start();
+        handle.set_background(&solid_png("fine.png", 64, 64, [0, 255, 0]));
+        let gone = solid_png("gone.png", 64, 64, [255, 0, 0]);
+        let name = output_name(&handle);
+        for result in handle.run_command(&format!("output {name} bg {gone}")) {
+            result.expect("the command runs");
+        }
+        std::fs::remove_file(&gone).unwrap();
+
+        // `set` panics if the change is refused.
+        set(&handle, "background_mode", SettingValue::Str("fit".into()));
+        set(
+            &handle,
+            "background_color",
+            SettingValue::Str("#000000".into()),
+        );
+        assert!(
+            handle.background_frame(0).is_none(),
+            "the missing image shows the gradient"
+        );
+        handle.stop();
+    }
+
     /// An image that cannot be shown is refused, and nothing is written.
     #[test]
     #[serial]
     fn an_unshowable_image_is_refused() {
+        let _images = Images;
         let handle = start();
         let global = solid_png("kept.png", 64, 64, [0, 255, 0]);
         handle.set_background(&global);
@@ -317,6 +367,7 @@ mod wallpaper_tests {
     #[test]
     #[serial]
     fn a_workspace_wallpaper_travels_with_its_workspace() {
+        let _images = Images;
         let handle = start();
         let global = solid_png("everyone.png", 64, 64, [0, 255, 0]);
         let mine = solid_png("mine.png", 64, 64, [255, 0, 255]);
