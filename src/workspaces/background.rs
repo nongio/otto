@@ -2,6 +2,7 @@ use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicI32, Ordering};
 
 use layers::{prelude::*, skia};
+use otto_kit::wallpaper::{cover, cover_size};
 
 /// Fallback wallpaper decode size, used until an output has reported its mode.
 ///
@@ -77,19 +78,18 @@ pub fn decode_wallpaper(path: &str) -> Option<skia::Image> {
 
 /// Shrink `image` to the smallest size that still covers `target_w x target_h`,
 /// or return it untouched when it is already that small.
+///
+/// The size comes from [`cover_size`], so the draw that follows maps the
+/// result 1:1 onto the screen at a whole-pixel offset.
 fn downscale_to_cover(image: skia::Image, target_w: i32, target_h: i32) -> skia::Image {
-    let (iw, ih) = (image.width() as f32, image.height() as f32);
-    if iw <= 0.0 || ih <= 0.0 {
+    let (iw, ih) = (image.width(), image.height());
+    if iw <= 0 || ih <= 0 {
         return image;
     }
-    let cover = (target_w as f32 / iw).max(target_h as f32 / ih);
-    if cover >= 1.0 {
+    let (w, h) = cover_size((iw, ih), (target_w, target_h));
+    if w >= iw || h >= ih {
         return image;
     }
-    let (w, h) = (
-        (iw * cover).ceil().max(1.0) as i32,
-        (ih * cover).ceil().max(1.0) as i32,
-    );
     let Some(mut surface) = skia::surfaces::raster_n32_premul((w, h)) else {
         return image;
     };
@@ -222,27 +222,18 @@ pub fn view_background(
 
     // let debug_text = state.debug_string.clone();
 
-    let draw_container = move |canvas: &skia::Canvas, w, h| {
+    let draw_container = move |canvas: &skia::Canvas, w: f32, h: f32| {
         let mut paint = skia::Paint::new(skia::Color4f::new(1.0, 1.0, 1.0, 1.0), None);
 
         if let Some(image) = image.as_ref() {
-            let mut matrix = skia::Matrix::new_identity();
-            let image_width = image.width() as f32;
-            let image_height = image.height() as f32;
-            let scale_x: f32 = w / image_width;
-            let scale_y: f32 = h / image_height;
-            let scale = scale_x.max(scale_y); // Choose the smaller scale to maintain aspect ratio
-
-            // Calculate the offsets for centering the image
-            let offset_x = (w - image_width * scale) / 2.0;
-            let offset_y = (h - image_height * scale) / 2.0;
-
-            matrix.set_scale_translate((scale, scale), (offset_x, offset_y)); // canvas.concat(&matrix);
-                                                                              // canvas.draw_image_rect(image, None, rect, &paint);
+            // Scaled to cover the layer, at a whole-pixel offset: see
+            // `otto_kit::wallpaper` for why a half pixel is the worst case.
+            let target = (w.round() as i32, h.round() as i32);
+            let placement = cover((image.width(), image.height()), target);
             paint.set_shader(image.to_shader(
                 (skia::TileMode::Repeat, skia::TileMode::Repeat),
                 skia::SamplingOptions::default(),
-                &matrix,
+                &placement.matrix(),
             ));
         } else {
             // Create a gradient from bottom (fallback_color) to top (lighter version)
@@ -349,6 +340,18 @@ mod tests {
         assert!(scaled.width() >= 2880 && scaled.height() >= 1920);
         // Cover is driven by the taller ratio here, so height lands on target.
         assert_eq!(scaled.height(), 1920);
+    }
+
+    /// The #361 case: a 16:9 photo on a 21:9 screen. Reduced to the cover
+    /// size, it is drawn 1:1 at a whole-pixel offset, so nearest sampling
+    /// reads exactly one image pixel per screen pixel however the repaint is
+    /// cropped.
+    #[test]
+    fn a_16_9_wallpaper_on_an_ultrawide_is_drawn_pixel_exact() {
+        let scaled = downscale_to_cover(solid(3840, 2160), 3440, 1440);
+        assert_eq!((scaled.width(), scaled.height()), (3440, 1935));
+        let placement = cover((scaled.width(), scaled.height()), (3440, 1440));
+        assert!(placement.is_pixel_exact(), "{placement:?}");
     }
 
     /// Anything already at or below the cover size is left alone: enlarging it
