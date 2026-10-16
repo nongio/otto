@@ -6979,7 +6979,10 @@ fn draw_grid_caption(
     // heading. In a listing sorted by date the folder is the more useful of
     // the two anyway — the tail of a long file name is what can go.
     let (first, second) = match subline {
-        Some(_) => (one_line_label(name, grid_label_chars(cell)), String::new()),
+        Some(_) => (
+            otto_kit::typography::ellipsize_chars(name, grid_label_chars(cell)),
+            String::new(),
+        ),
         None => split_label(name, grid_label_chars(cell)),
     };
     // The desk's ground is the wallpaper, which follows no colour scheme, so
@@ -7073,19 +7076,6 @@ fn draw_grid_caption(
             .centered_at(cell.center_x(), label_center_y + used + GRID_LABEL_LINE)
             .render(canvas);
     }
-}
-
-/// A name on one line of `per_line` characters, eliding the tail.
-///
-/// The counterpart of [`split_label`] for a cell whose second line is spoken
-/// for — the Recent grid, where it is the folder.
-fn one_line_label(name: &str, per_line: usize) -> String {
-    let chars: Vec<char> = name.chars().collect();
-    if chars.len() <= per_line {
-        return name.to_string();
-    }
-    let head: String = chars[..per_line.saturating_sub(1)].iter().collect();
-    format!("{head}…")
 }
 
 /// Split a name across at most two lines of `per_line` characters, eliding the

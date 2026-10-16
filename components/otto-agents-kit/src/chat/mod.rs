@@ -2040,14 +2040,13 @@ fn activity(last: Option<&ResponsePart>) -> Status {
 fn status_tool(tool: &str) -> String {
     let mut lines = tool.lines().map(str::trim).filter(|line| !line.is_empty());
     let line = lines.next().unwrap_or_default();
-    let more = lines.next().is_some();
-    if !more && line.chars().count() <= STATUS_TOOL_CHARS {
-        return line.to_string();
+    if lines.next().is_some() {
+        // Lines left out are something left out too, so the ellipsis goes on
+        // even when the first line fits: it is part of the text being cut.
+        otto_kit::typography::ellipsize_chars(&format!("{line}…"), STATUS_TOOL_CHARS)
+    } else {
+        otto_kit::typography::ellipsize_chars(line, STATUS_TOOL_CHARS)
     }
-    let mut cut: String = line.chars().take(STATUS_TOOL_CHARS - 1).collect();
-    cut.truncate(cut.trim_end().len());
-    cut.push('…');
-    cut
 }
 
 fn tool_calls(turn_id: &str, parts: &[ResponsePart]) -> (Vec<Step>, Option<Question>) {
@@ -3011,6 +3010,12 @@ mod tests {
         let chat = with_active(empty_chat(), "test", vec![running("call-0", "one\ntwo")]);
         let status = of(Some(&chat), &prompts).status;
         assert_eq!(status, Some(Status::Running("one…".into())));
+
+        // A first line that fills the room exactly still makes room for the
+        // ellipsis when lines follow it.
+        let full = "x".repeat(STATUS_TOOL_CHARS);
+        let cut = status_tool(&format!("{full}\nmore"));
+        assert_eq!(cut, format!("{}…", &full[1..]));
     }
 
     #[test]

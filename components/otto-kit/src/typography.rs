@@ -717,11 +717,14 @@ pub fn ellipsize_head(font: &Font, text: &str, max_width: f32) -> String {
 ///
 /// By count rather than by width: for a short message in a fixed-width sheet,
 /// where a few characters either way do not matter and no font is at hand.
+/// Counts `char`s, not graphemes. A cut that ends in whitespace loses it, so
+/// the ellipsis sits against the last word rather than after a gap.
 pub fn ellipsize_chars(text: &str, max: usize) -> String {
     if text.chars().count() <= max {
         return text.to_string();
     }
     let mut out: String = text.chars().take(max.saturating_sub(1)).collect();
+    out.truncate(out.trim_end().len());
     out.push_str(ELLIPSIS);
     out
 }
@@ -855,6 +858,7 @@ mod text_fit_tests {
         assert_eq!(ellipsize_by("abc", 0.0, chars), "\u{2026}");
         assert_eq!(ellipsize_chars("abcdef", 4), "abc\u{2026}");
         assert_eq!(ellipsize_chars("abcd", 4), "abcd");
+        assert_eq!(ellipsize_chars("ab cdef", 4), "ab\u{2026}");
     }
 
     #[test]
