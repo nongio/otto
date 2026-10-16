@@ -62,6 +62,7 @@ pub mod badge;
 pub mod config;
 pub mod decode;
 mod decode_cache;
+pub mod draw;
 pub mod imagesize;
 pub mod ocr;
 pub mod ocrcache;

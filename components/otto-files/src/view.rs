@@ -8164,75 +8164,9 @@ pub fn draw_peek(canvas: &Canvas, f: &Frame, session: &otto_peek::session::Sessi
     let content = otto_peek::session::content_rect(panel);
     canvas.save();
     canvas.clip_rrect(RRect::new_rect_xy(panel, 12.0, 12.0), None, true);
-    canvas.clip_rect(content, None, true);
-    if let Some(video) = &session.video {
-        // A playing video takes the card's place. The card's artwork is the
-        // poster until the first frame lands; with none, the stage is dark.
-        let poster = video
-            .poster
-            .as_ref()
-            .and_then(otto_kit::preview::Pixels::to_image);
-        otto_media_kit::view::draw(
-            canvas,
-            content,
-            &video.player,
-            poster.as_ref(),
-            otto_media_kit::view::Interaction {
-                scrubbing: video.scrubbing,
-                transport_opacity: 1.0,
-            },
-            f.theme,
-        );
-    } else {
-        otto_kit::preview::draw(
-            canvas,
-            content,
-            &session.preview,
-            f.theme,
-            session.first_row,
-            session.zoom,
-            &|name: &str, size: i32| {
-                icons::cached_icon_chain_at(&[name], size, icons::FULL_COLOUR_SIZE)
-            },
-        );
-        // The same hairline every picture in the browser wears, on the
-        // picture's own edges — or each page's.
-        otto_kit::preview::draw_picture_edges(
-            canvas,
-            content,
-            &session.preview,
-            session.first_row,
-            session.zoom,
-        );
-        if let Some(selection) = session.selection {
-            otto_kit::preview::draw_selection(
-                canvas,
-                content,
-                &session.preview,
-                f.theme,
-                session.zoom,
-                selection,
-            );
-        }
-    }
-
-    // The pan's bars, inside the same clip as the picture they belong to.
-    // Nothing is drawn unless there is a zoomed picture with something under
-    // the fold: a state with no content past its viewport has no thumb.
-    let (horizontal, vertical) = session.pan_bars();
-    ScrollRenderer::draw(canvas, horizontal, f.theme, |_, _| {});
-    ScrollRenderer::draw(canvas, vertical, f.theme, |_, _| {});
+    otto_peek::draw::content(canvas, session, content, f.theme, |_| {});
     canvas.restore();
-
-    // One badge, two things to say: the recogniser is working, or it has
-    // finished and there is something to select.
-    match session.recognising_phase() {
-        Some(phase) => otto_peek::badge::draw_working(canvas, f.theme, panel, chrome, phase),
-        None if !session.words().is_empty() => {
-            otto_peek::badge::draw_text(canvas, f.theme, panel, chrome)
-        }
-        None => {}
-    }
+    otto_peek::draw::badge(canvas, session, f.theme, panel, chrome);
 }
 
 /// Draw the Get Info panel.
