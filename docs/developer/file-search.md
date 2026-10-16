@@ -12,6 +12,8 @@ second source of matches and has its own page,
 
 ## Two layers
 
+![File search: Files and the otto-search command share one pipeline to LocalSearch; Files also merges words read from pictures](diagrams/file-search.svg)
+
 | Crate | Owns |
 |---|---|
 | `components/otto-search` | The query language, SPARQL, the wire to LocalSearch, name scoring, and `find`: paging past rows that are gone, statting, rechecking, ranking and capping. Also the `otto-search` command. No toolkit, no Wayland: the agents daemon and command-line tools can link it. |
