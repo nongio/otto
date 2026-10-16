@@ -279,6 +279,7 @@ pub fn parse(text: &str) -> Result<Vec<Command>, ParseError> {
             continue;
         }
         out.push(parse_one(&mut Cursor::new(
+            text,
             &tokens,
             rest_offset + rest.len(),
         ))?);
@@ -369,11 +370,16 @@ fn criteria_pairs(inner: &str) -> Vec<(&str, String)> {
 }
 
 /// Split on `;`, keeping each segment's byte offset in the original string.
+/// A `;` inside double quotes — a path, a window title — does not split.
+/// Single quotes do not protect one: they are apostrophes as often as not.
 fn split_commands(text: &str) -> Vec<(usize, &str)> {
     let mut out = Vec::new();
     let mut start = 0;
+    let mut quoted = false;
     for (i, ch) in text.char_indices() {
-        if ch == ';' {
+        if ch == '"' {
+            quoted = !quoted;
+        } else if ch == ';' && !quoted {
             out.push((start, &text[start..i]));
             start = i + ch.len_utf8();
         }
@@ -405,6 +411,8 @@ fn tokenize(segment: &str, base: usize) -> Vec<Token<'_>> {
 
 /// A read cursor over one command's tokens.
 struct Cursor<'a> {
+    /// The whole command string the token offsets are into.
+    text: &'a str,
     tokens: &'a [Token<'a>],
     at: usize,
     /// Offset just past the command, used when an argument is missing.
@@ -412,8 +420,13 @@ struct Cursor<'a> {
 }
 
 impl<'a> Cursor<'a> {
-    fn new(tokens: &'a [Token<'a>], end: usize) -> Self {
-        Cursor { tokens, at: 0, end }
+    fn new(text: &'a str, tokens: &'a [Token<'a>], end: usize) -> Self {
+        Cursor {
+            text,
+            tokens,
+            at: 0,
+            end,
+        }
     }
 
     /// The next word, without consuming it.
@@ -449,14 +462,25 @@ impl<'a> Cursor<'a> {
     /// may hold spaces without quoting; a quoted name loses its quotes.
     fn take_rest(&mut self) -> String {
         let words: Vec<&str> = std::iter::from_fn(|| self.next().map(|(_, word)| word)).collect();
-        let joined = words.join(" ");
-        for quote in ['"', '\''] {
-            if joined.len() >= 2 && joined.starts_with(quote) && joined.ends_with(quote) {
-                return joined[1..joined.len() - 1].to_string();
-            }
-        }
-        joined
+        unquote(&words.join(" ")).to_string()
     }
+
+    /// The command's own text from `first` to the end of `last`, both
+    /// tokens of this cursor: the words with the spacing between them as
+    /// written, which a path needs and a joined list of words loses.
+    fn span(&self, first: Token<'a>, last: Token<'a>) -> &'a str {
+        &self.text[first.0..last.0 + last.1.len()]
+    }
+}
+
+/// `text` without one pair of surrounding quotes, double or single.
+fn unquote(text: &str) -> &str {
+    for quote in ['"', '\''] {
+        if text.len() >= 2 && text.starts_with(quote) && text.ends_with(quote) {
+            return &text[1..text.len() - 1];
+        }
+    }
+    text
 }
 
 /// `Unknown/invalid command 'x'` — the shape `swaymsg` prints.
@@ -688,11 +712,9 @@ fn parse_output(cursor: &mut Cursor<'_>) -> Result<Command, ParseError> {
     })
 }
 
-/// A colour as the config writes one: `#RGB` or `#RRGGBB`.
+/// A colour as the config writes one: `#` and hex digits.
 fn is_hex_colour(word: &str) -> bool {
-    word.strip_prefix('#').is_some_and(|hex| {
-        (hex.len() == 3 || hex.len() == 6) && hex.chars().all(|c| c.is_ascii_hexdigit())
-    })
+    word.starts_with('#') && otto_kit::color::parse_hex(word).is_some()
 }
 
 /// `<file> [<mode>] [<#colour>]`, `<#colour> solid_color` or `reset`.
@@ -735,18 +757,10 @@ fn parse_background(cursor: &mut Cursor<'_>, command: &str) -> Result<Background
         },
         None => None,
     };
-    let joined = words
-        .iter()
-        .map(|(_, word)| *word)
-        .collect::<Vec<_>>()
-        .join(" ");
-    let path = ['"', '\'']
-        .into_iter()
-        .find_map(|quote| {
-            (joined.len() >= 2 && joined.starts_with(quote) && joined.ends_with(quote))
-                .then(|| joined[1..joined.len() - 1].to_string())
-        })
-        .unwrap_or(joined);
+    let (Some(&first), Some(&last)) = (words.first(), words.last()) else {
+        return Err(invalid(start, command, EXPECTED));
+    };
+    let path = unquote(cursor.span(first, last)).to_string();
     if path.is_empty() {
         return Err(invalid(start, command, EXPECTED));
     }
@@ -1128,6 +1142,16 @@ mod tests {
         assert_eq!(
             one("background /a.png #fff"),
             Command::WorkspaceBackground(image("/a.png", None, Some("#fff")))
+        );
+        // The path keeps its spacing, and a quoted `;` does not end the
+        // command.
+        assert_eq!(
+            one("background /My  Pictures/a\tb.png fit"),
+            Command::WorkspaceBackground(image("/My  Pictures/a\tb.png", Some(Mode::Fit), None))
+        );
+        assert_eq!(
+            one("background \"/odd;name.png\""),
+            Command::WorkspaceBackground(image("/odd;name.png", None, None))
         );
         // A path that happens to be a mode's name is a path.
         assert_eq!(

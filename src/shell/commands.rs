@@ -167,7 +167,8 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         apply_background(&mut record, background);
         workspace.set_background_override(Some(record));
         self.workspaces.persist_workspace_entry(&name, position);
-        self.workspaces.reload_background()
+        self.workspaces.refresh_wallpapers();
+        Ok(())
     }
 
     fn set_global_background(&mut self, background: BackgroundArg) -> CommandResult {
@@ -1185,7 +1186,14 @@ fn checked_background(background: BackgroundArg) -> Result<BackgroundArg, String
             .unwrap_or(path),
         None => path,
     };
-    otto_kit::wallpaper::open(&path)
+    // Stored and read back next login, when the working directory is
+    // whatever the session's is: a relative path would mean another file.
+    if !std::path::Path::new(&path).is_absolute() {
+        return Err(format!(
+            "give the background as an absolute path, or one starting with ~/ (not `{path}`)"
+        ));
+    }
+    otto_kit::wallpaper::probe(&path)
         .map_err(|err| format!("cannot use `{path}` as a background: {err}"))?;
     Ok(BackgroundArg::Image { path, mode, color })
 }
