@@ -1,0 +1,91 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 780 370" width="780" height="370" role="img" aria-label="File search: the Files strip and the otto-search command go through query::parse, Plan::new and find, which asks LocalSearch; Files also merges words read from pictures">
+  <style>
+    text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
+    .box  { fill: #f6f8fa; stroke: #8b949e; stroke-width: 1.4; }
+    .acc  { fill: #ddf4ff; stroke: #218bff; stroke-width: 1.4; }
+    .grp  { fill: none; stroke: #8b949e; stroke-width: 1.2; stroke-dasharray: 5 4; }
+    .t    { fill: #1f2328; font-size: 13px; }
+    .tb   { fill: #1f2328; font-size: 13px; font-weight: 600; }
+    .tm   { fill: #656d76; font-size: 11px; }
+    .ln   { stroke: #8b949e; stroke-width: 1.4; fill: none; marker-end: url(#ah); }
+    .ln2  { stroke: #8b949e; stroke-width: 1.4; fill: none; marker-start: url(#ah); marker-end: url(#ah); }
+    @media (prefers-color-scheme: dark) {
+      .box { fill: #161b22; stroke: #6e7681; }
+      .acc { fill: #10243b; stroke: #388bfd; }
+      .grp { stroke: #6e7681; }
+      .t, .tb { fill: #e6edf3; }
+      .tm  { fill: #9198a1; }
+      .ln, .ln2 { stroke: #8b949e; }
+    }
+  </style>
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#8b949e"/>
+    </marker>
+  </defs>
+
+  <!-- otto-files -->
+  <rect class="grp" x="20" y="16" width="240" height="236" rx="10"/>
+  <text class="tb" x="36" y="38">otto-files</text>
+
+  <rect class="box" x="36" y="52" width="208" height="44" rx="8"/>
+  <text class="tb" x="52" y="72">search strip</text>
+  <text class="tm" x="52" y="88">Ctrl+F · Recent · --search</text>
+
+  <rect class="acc" x="36" y="112" width="208" height="124" rx="8"/>
+  <text class="tb" x="52" y="134">search.rs worker</text>
+  <text class="tm" x="52" y="154">one thread per request</text>
+  <text class="tm" x="52" y="170">stale generations dropped</text>
+  <text class="tm" x="52" y="186">merges picture words</text>
+  <text class="tm" x="52" y="202">checked by Plan::admits</text>
+  <text class="tm" x="52" y="218">Results::best: one row per path</text>
+
+  <rect class="box" x="20" y="290" width="240" height="64" rx="8"/>
+  <text class="tb" x="36" y="312">picture words</text>
+  <text class="tm" x="36" y="330">$XDG_CACHE_HOME/otto/ocr/*.tsv</text>
+  <text class="tm" x="36" y="346">written by Peek</text>
+  <path class="ln" d="M140 290 L140 238"/>
+
+  <!-- otto-search -->
+  <rect class="grp" x="300" y="16" width="220" height="338" rx="10"/>
+  <text class="tb" x="316" y="38">otto-search</text>
+
+  <rect class="box" x="316" y="52" width="188" height="44" rx="8"/>
+  <text class="tb" x="332" y="72">query::parse</text>
+  <text class="tm" x="332" y="88">words and key:value, never fails</text>
+
+  <rect class="box" x="316" y="120" width="188" height="52" rx="8"/>
+  <text class="tb" x="332" y="141">Plan::new</text>
+  <text class="tm" x="332" y="159">in: and modified: resolved</text>
+
+  <rect class="acc" x="316" y="196" width="188" height="72" rx="8"/>
+  <text class="tb" x="332" y="217">find</text>
+  <text class="tm" x="332" y="235">pages past ghost rows</text>
+  <text class="tm" x="332" y="251">stats, rechecks, ranks</text>
+
+  <rect class="box" x="316" y="292" width="188" height="58" rx="8"/>
+  <text class="tb" x="332" y="313">otto-search command</text>
+  <text class="tm" x="332" y="329">paths or --json</text>
+  <text class="tm" x="332" y="344">no picture words</text>
+
+  <path class="ln" d="M410 96 L410 118"/>
+  <path class="ln" d="M410 172 L410 194"/>
+  <path class="ln" d="M410 292 L410 270"/>
+
+  <path class="ln" d="M140 96 L140 110"/>
+  <path class="ln" d="M244 144 L280 144 L280 74 L314 74"/>
+  <text class="tm" x="250" y="136">query</text>
+  <path class="ln" d="M316 224 L246 224"/>
+  <text class="tm" x="264" y="218">Found</text>
+
+  <!-- LocalSearch -->
+  <rect class="box" x="560" y="196" width="200" height="72" rx="8"/>
+  <text class="tb" x="576" y="217">LocalSearch</text>
+  <text class="tm" x="576" y="235">SPARQL over D-Bus</text>
+  <text class="tm" x="576" y="251">rows come back down a pipe</text>
+  <path class="ln2" d="M506 232 L558 232"/>
+
+  <text class="tm" x="576" y="296">optional: when it cannot answer,</text>
+  <text class="tm" x="576" y="312">available is false and the</text>
+  <text class="tm" x="576" y="328">picture words still answer</text>
+</svg>
