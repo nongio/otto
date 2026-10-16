@@ -547,6 +547,7 @@ settings-choice-background-fit = За розміром екрана
 settings-choice-background-stretch = Розтягнути
 settings-choice-background-center = По центру
 settings-choice-background-tile = Плиткою
+settings-choice-background-span = На всі дисплеї
 # The automatic option for a theme that follows the system.
 settings-choice-auto = Авто
 

@@ -488,13 +488,14 @@ pub static SETTINGS: &[SettingSpec] = &[
         "Background layout",
         "How the background image fills the screen.",
         Live,
-        &["fill", "fit", "stretch", "center", "tile"],
+        &["fill", "fit", "stretch", "center", "tile", "span"],
         &[
             "settings-choice-background-fill",
             "settings-choice-background-fit",
             "settings-choice-background-stretch",
             "settings-choice-background-center",
             "settings-choice-background-tile",
+            "settings-choice-background-span",
         ],
     ),
     ranged(
@@ -523,8 +524,8 @@ pub static SETTINGS: &[SettingSpec] = &[
         "background_zoom",
         Double,
         "Background zoom",
-        "Magnification of a filled background image, from 1 (just covering \
-         the screen).",
+        "Magnification of a filled or spanned background image, from 1 \
+         (just covering the screen).",
         Live,
         1.0,
         8.0,

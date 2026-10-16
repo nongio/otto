@@ -54,7 +54,7 @@ pub(crate) struct FrameKey {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct StyleKey {
     mode: wallpaper::Mode,
-    numbers: [u32; 8],
+    numbers: [u32; 16],
 }
 
 impl From<&FrameStyle> for StyleKey {
@@ -77,6 +77,19 @@ impl From<&FrameStyle> for StyleKey {
         } else {
             1.0
         };
+        let span = match (layout.mode, style.span) {
+            (wallpaper::Mode::Span, Some(span)) => [
+                span.desktop.left,
+                span.desktop.top,
+                span.desktop.right,
+                span.desktop.bottom,
+                span.screen.left,
+                span.screen.top,
+                span.screen.right,
+                span.screen.bottom,
+            ],
+            _ => [0.0; 8],
+        };
         Self {
             mode: layout.mode,
             numbers: [
@@ -89,6 +102,14 @@ impl From<&FrameStyle> for StyleKey {
                 style.fill.b.to_bits(),
                 // Frames are opaque whatever the fill's alpha.
                 0,
+                span[0].to_bits(),
+                span[1].to_bits(),
+                span[2].to_bits(),
+                span[3].to_bits(),
+                span[4].to_bits(),
+                span[5].to_bits(),
+                span[6].to_bits(),
+                span[7].to_bits(),
             ],
         }
     }

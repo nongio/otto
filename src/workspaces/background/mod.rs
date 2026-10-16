@@ -11,6 +11,18 @@ use std::hash::{Hash, Hasher};
 use layers::{prelude::*, skia};
 use otto_kit::wallpaper::cover;
 
+/// The bounding box of every screen, in the global logical space: the
+/// desktop a spanned wallpaper is laid out on. `None` without screens.
+pub(crate) fn desktop_bounds(screens: impl IntoIterator<Item = skia::Rect>) -> Option<skia::Rect> {
+    screens
+        .into_iter()
+        .filter(|rect| !rect.is_empty())
+        .reduce(|mut all, rect| {
+            all.join(rect);
+            all
+        })
+}
+
 /// What a background shows.
 #[derive(Clone, Debug)]
 pub enum BackgroundContent {
@@ -162,6 +174,22 @@ mod tests {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         state.hash(&mut hasher);
         hasher.finish()
+    }
+
+    /// The desktop is the box around every screen, gaps and offsets
+    /// included.
+    #[test]
+    fn the_desktop_bounds_every_screen() {
+        let screens = [
+            skia::Rect::from_xywh(0.0, 120.0, 1920.0, 1080.0),
+            skia::Rect::from_xywh(1920.0, 0.0, 1280.0, 800.0),
+            skia::Rect::new_empty(),
+        ];
+        assert_eq!(
+            desktop_bounds(screens),
+            Some(skia::Rect::from_ltrb(0.0, 0.0, 3200.0, 1200.0))
+        );
+        assert_eq!(desktop_bounds(std::iter::empty()), None);
     }
 
     /// A new frame, a different content kind or a new colour each re-render

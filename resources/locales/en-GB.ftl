@@ -546,6 +546,7 @@ settings-choice-background-fit = Fit to screen
 settings-choice-background-stretch = Stretch to fill
 settings-choice-background-center = Centre
 settings-choice-background-tile = Tile
+settings-choice-background-span = Span across displays
 # The automatic option for a theme that follows the system.
 settings-choice-auto = Auto
 
@@ -1176,7 +1177,7 @@ schema-background-position-x-description = Which part of a cropped background im
 schema-background-position-y-label = Background position down
 schema-background-position-y-description = Which part of a cropped background image shows, and where a smaller one sits, from 0 (top) to 1 (bottom).
 schema-background-zoom-label = Background zoom
-schema-background-zoom-description = Magnification of a filled background image, from 1 (just covering the screen).
+schema-background-zoom-description = Magnification of a filled or spanned background image, from 1 (just covering the screen).
 schema-cursor-theme-label = Cursor theme
 schema-cursor-theme-description = Name of the XCursor theme.
 schema-cursor-size-label = Cursor size

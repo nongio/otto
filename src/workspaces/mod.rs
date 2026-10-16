@@ -474,6 +474,20 @@ fn restore_workspace_settings(workspace: &WorkspaceView, output: &str, position:
     }
 }
 
+/// `output`'s rect in the global logical space: where it is, and its mode
+/// in points. `None` before it has a mode.
+fn output_logical_rect(output: &Output) -> Option<layers::skia::Rect> {
+    let mode = output.current_mode()?;
+    let scale = output.current_scale().fractional_scale() as f32;
+    let location = output.current_location();
+    Some(layers::skia::Rect::from_xywh(
+        location.x as f32,
+        location.y as f32,
+        mode.size.w as f32 / scale,
+        mode.size.h as f32 / scale,
+    ))
+}
+
 /// Where the item at old position `i` ends up once the item at `from` is moved
 /// to `to`. The moved item lands on `to`; everything the move stepped over
 /// shifts one place the other way.
@@ -581,6 +595,14 @@ impl Workspaces {
         let config = Config::current();
         let fallback_size = self.with_model(|m| (m.width, m.height));
 
+        // Span lays one image over every output at once.
+        let screens: Vec<(String, layers::skia::Rect)> = self
+            .outputs
+            .iter()
+            .filter_map(|o| Some((o.name(), output_logical_rect(o)?)))
+            .collect();
+        let desktop = background::desktop_bounds(screens.iter().map(|(_, rect)| *rect));
+
         let Ok(mut store) = self.wallpapers.lock() else {
             return None;
         };
@@ -595,6 +617,14 @@ impl Workspaces {
             let output_scale = output
                 .map(|o| o.current_scale().fractional_scale() as f32)
                 .unwrap_or(1.0);
+            let span = screens
+                .iter()
+                .find(|(name, _)| name == output_name)
+                .zip(desktop)
+                .map(|((_, screen), desktop)| otto_kit::wallpaper::SpanView {
+                    desktop,
+                    screen: *screen,
+                });
             for workspace in ows.workspace_views.iter() {
                 let settings =
                     config.wallpaper_for(output_name, workspace.background_override().as_ref());
@@ -608,6 +638,7 @@ impl Workspaces {
                     layout: settings.layout,
                     fill: color,
                     output_scale,
+                    span,
                 };
                 match store.lookup(&settings.image, &style, target) {
                     Lookup::Ready(frame) => view.show(BackgroundContent::Frame(frame), color),

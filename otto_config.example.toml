@@ -22,13 +22,16 @@ background_color = "#102E95"  # Fallback gradient color (bottom) when background
 #   "center"  at its own size (a pixel per point, so the same size on every
 #             screen), background_color around it or cropped
 #   "tile"    repeated at its own size from the top-left corner
+#   "span"    one image across every display, filled over the box around
+#             them all; each display shows its own part
 background_mode = "fill"
 # Which part of a cropped image shows, and where a smaller one sits, as
 # fractions across and down (CSS's object-position): 0.5 centres, 0.0 keeps
 # the left or top edge, 1.0 the right or bottom one.
 background_position_x = 0.5
 background_position_y = 0.5
-# Extra magnification in "fill" mode, 1.0 to 8.0, panned by the position.
+# Extra magnification in "fill" and "span" modes, 1.0 to 8.0, panned by the
+# position.
 background_zoom = 1.0
 
 # Rounded corners on Otto's own chrome: the dock's background, the top bar,

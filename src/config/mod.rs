@@ -49,8 +49,8 @@ pub struct Config {
     /// The colour of the gradient shown when there is no wallpaper, and of
     /// what shows around a fitted or centred one.
     pub background_color: String,
-    /// How the wallpaper fills the screen: `fill`, `fit`, `stretch`, `center`
-    /// or `tile`. Anything else is read as `fill`. See
+    /// How the wallpaper fills the screen: `fill`, `fit`, `stretch`, `center`,
+    /// `tile` or `span`. Anything else is read as `fill`. See
     /// [`Config::wallpaper_layout`].
     pub background_mode: String,
     /// Which part of a cropped wallpaper shows, and where a smaller one sits,
@@ -58,7 +58,8 @@ pub struct Config {
     /// centres.
     pub background_position_x: f64,
     pub background_position_y: f64,
-    /// Extra magnification in `fill` mode, from 1.0, panned by the position.
+    /// Extra magnification in `fill` and `span` modes, from 1.0, panned by
+    /// the position.
     pub background_zoom: f64,
     /// Per-output wallpaper overrides, keyed by output name:
     /// `[background_outputs."DP-1"]`. See [`wallpaper::WallpaperOverride`].

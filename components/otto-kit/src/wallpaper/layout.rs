@@ -18,16 +18,21 @@ pub enum Mode {
     Center,
     /// Repeated across the screen at its own size.
     Tile,
+    /// One image across every screen, filling the desktop's bounding box
+    /// as [`Mode::Fill`] fills one screen. Each screen shows its own part,
+    /// at its own resolution.
+    Span,
 }
 
 impl Mode {
     /// Every mode, in the order a picker lists them.
-    pub const ALL: [Mode; 5] = [
+    pub const ALL: [Mode; 6] = [
         Mode::Fill,
         Mode::Fit,
         Mode::Stretch,
         Mode::Center,
         Mode::Tile,
+        Mode::Span,
     ];
 
     /// The configuration token: what the setting stores.
@@ -38,6 +43,7 @@ impl Mode {
             Mode::Stretch => "stretch",
             Mode::Center => "center",
             Mode::Tile => "tile",
+            Mode::Span => "span",
         }
     }
 
@@ -56,12 +62,12 @@ impl Mode {
 
     /// Whether the position setting moves the image in this mode.
     pub fn uses_position(self) -> bool {
-        matches!(self, Mode::Fill | Mode::Fit | Mode::Center)
+        matches!(self, Mode::Fill | Mode::Fit | Mode::Center | Mode::Span)
     }
 
     /// Whether the zoom setting applies in this mode.
     pub fn uses_zoom(self) -> bool {
-        matches!(self, Mode::Fill)
+        matches!(self, Mode::Fill | Mode::Span)
     }
 
     /// Whether the image is drawn at its own size, scaled only by the
@@ -133,15 +139,60 @@ pub struct Arrangement {
     pub tiled: bool,
 }
 
+/// Where one screen sits on the desktop, for [`Mode::Span`]: the desktop's
+/// bounding box and the screen's own rect, both in logical points in the
+/// same global space.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SpanView {
+    pub desktop: skia::Rect,
+    pub screen: skia::Rect,
+}
+
 /// Lay out an `image`-sized picture on a `target`-sized screen whose scale is
 /// `output_scale` (physical pixels per logical point).
 ///
 /// Nothing is rounded here: the frame renderer snaps the visible edges to
 /// whole pixels and resamples the exact region inside them.
+///
+/// [`Mode::Span`] lays the image out on the desktop described by `span`
+/// and returns where that puts it on this screen; without a `span` it fills
+/// the screen alone.
 pub fn arrange(
     layout: Layout,
     image: (f32, f32),
     target: (i32, i32),
+    output_scale: f32,
+    span: Option<SpanView>,
+) -> Arrangement {
+    let target_f = (target.0.max(0) as f32, target.1.max(0) as f32);
+    match span {
+        Some(span) if layout.mode == Mode::Span && !span.screen.is_empty() => {
+            let desktop = span.desktop;
+            let on_desktop = arrange_in(layout, image, (desktop.width(), desktop.height()), 1.0);
+            // Desktop points to this screen's pixels.
+            let sx = target_f.0 / span.screen.width();
+            let sy = target_f.1 / span.screen.height();
+            let dx = desktop.left - span.screen.left;
+            let dy = desktop.top - span.screen.top;
+            let d = on_desktop.dest;
+            Arrangement {
+                dest: skia::Rect::from_ltrb(
+                    (d.left + dx) * sx,
+                    (d.top + dy) * sy,
+                    (d.right + dx) * sx,
+                    (d.bottom + dy) * sy,
+                ),
+                tiled: false,
+            }
+        }
+        _ => arrange_in(layout, image, target_f, output_scale),
+    }
+}
+
+fn arrange_in(
+    layout: Layout,
+    image: (f32, f32),
+    target: (f32, f32),
     output_scale: f32,
 ) -> Arrangement {
     let layout = layout.sanitised();
@@ -149,7 +200,7 @@ pub fn arrange(
         image.0.max(f32::MIN_POSITIVE),
         image.1.max(f32::MIN_POSITIVE),
     );
-    let (tw, th) = (target.0.max(0) as f32, target.1.max(0) as f32);
+    let (tw, th) = (target.0.max(0.0), target.1.max(0.0));
     let output_scale = if output_scale.is_finite() && output_scale > 0.0 {
         output_scale
     } else {
@@ -157,7 +208,7 @@ pub fn arrange(
     };
 
     let (sx, sy) = match layout.mode {
-        Mode::Fill => {
+        Mode::Fill | Mode::Span => {
             let s = (tw / iw).max(th / ih) * layout.zoom;
             (s, s)
         }
@@ -234,6 +285,7 @@ mod tests {
                     PHOTO,
                     SCREEN,
                     1.0,
+                    None,
                 );
                 assert!(covers(a.dest, SCREEN), "{zoom} {position:?}: {:?}", a.dest);
             }
@@ -246,6 +298,7 @@ mod tests {
             PHOTO,
             SCREEN,
             1.0,
+            None,
         );
         assert_eq!(top.dest.top, 0.0, "the top edge is kept");
         let bottom = arrange(
@@ -256,6 +309,7 @@ mod tests {
             PHOTO,
             SCREEN,
             1.0,
+            None,
         );
         assert!(
             (bottom.dest.bottom - SCREEN.1 as f32).abs() < 1e-3,
@@ -267,7 +321,7 @@ mod tests {
     /// covering image fills the screen.
     #[test]
     fn zoom_magnifies() {
-        let one = arrange(layout(Mode::Fill), PHOTO, SCREEN, 1.0);
+        let one = arrange(layout(Mode::Fill), PHOTO, SCREEN, 1.0, None);
         let two = arrange(
             Layout {
                 zoom: 2.0,
@@ -276,6 +330,7 @@ mod tests {
             PHOTO,
             SCREEN,
             1.0,
+            None,
         );
         assert!((two.dest.width() - one.dest.width() * 2.0).abs() < 1e-2);
         assert!((two.dest.center_x() - SCREEN.0 as f32 / 2.0).abs() < 1e-2);
@@ -288,15 +343,16 @@ mod tests {
             PHOTO,
             SCREEN,
             1.0,
+            None,
         );
-        assert_eq!(fit, arrange(layout(Mode::Fit), PHOTO, SCREEN, 1.0));
+        assert_eq!(fit, arrange(layout(Mode::Fit), PHOTO, SCREEN, 1.0, None));
     }
 
     /// Fit shows the whole image, inside the screen, touching two edges, and
     /// the position slides it along the free axis.
     #[test]
     fn fit_shows_everything() {
-        let a = arrange(layout(Mode::Fit), PHOTO, SCREEN, 1.0);
+        let a = arrange(layout(Mode::Fit), PHOTO, SCREEN, 1.0, None);
         assert!(inside(a.dest, SCREEN), "{:?}", a.dest);
         assert!((a.dest.height() - SCREEN.1 as f32).abs() < 1e-3);
         assert!((a.dest.center_x() - SCREEN.0 as f32 / 2.0).abs() < 1e-3);
@@ -308,13 +364,14 @@ mod tests {
             PHOTO,
             SCREEN,
             1.0,
+            None,
         );
         assert_eq!(left.dest.left, 0.0);
     }
 
     #[test]
     fn stretch_is_the_screen() {
-        let a = arrange(layout(Mode::Stretch), PHOTO, SCREEN, 1.0);
+        let a = arrange(layout(Mode::Stretch), PHOTO, SCREEN, 1.0, None);
         assert_eq!(a.dest, skia::Rect::from_iwh(SCREEN.0, SCREEN.1));
     }
 
@@ -322,14 +379,51 @@ mod tests {
     /// scale 2 it covers twice the pixels.
     #[test]
     fn natural_size_follows_the_output_scale() {
-        let a = arrange(layout(Mode::Center), (800.0, 600.0), SCREEN, 1.0);
+        let a = arrange(layout(Mode::Center), (800.0, 600.0), SCREEN, 1.0, None);
         assert_eq!((a.dest.width(), a.dest.height()), (800.0, 600.0));
         assert_eq!((a.dest.left, a.dest.top), (1320.0, 420.0));
-        let b = arrange(layout(Mode::Center), (800.0, 600.0), SCREEN, 2.0);
+        let b = arrange(layout(Mode::Center), (800.0, 600.0), SCREEN, 2.0, None);
         assert_eq!((b.dest.width(), b.dest.height()), (1600.0, 1200.0));
-        let t = arrange(layout(Mode::Tile), (64.0, 48.0), SCREEN, 1.5);
+        let t = arrange(layout(Mode::Tile), (64.0, 48.0), SCREEN, 1.5, None);
         assert!(t.tiled);
         assert_eq!(t.dest, skia::Rect::from_xywh(0.0, 0.0, 96.0, 72.0));
+    }
+
+    /// Span lays the image over the desktop and gives each screen its part:
+    /// two side-by-side screens split a 2:1 image down the middle, even when
+    /// the right one has twice the pixel density.
+    #[test]
+    fn span_gives_each_screen_its_part_of_the_desktop() {
+        let desktop = skia::Rect::from_xywh(0.0, 0.0, 200.0, 50.0);
+        let left = SpanView {
+            desktop,
+            screen: skia::Rect::from_xywh(0.0, 0.0, 100.0, 50.0),
+        };
+        let right = SpanView {
+            desktop,
+            screen: skia::Rect::from_xywh(100.0, 0.0, 100.0, 50.0),
+        };
+        let a = arrange(
+            layout(Mode::Span),
+            (400.0, 100.0),
+            (100, 50),
+            1.0,
+            Some(left),
+        );
+        assert_eq!(a.dest, skia::Rect::from_xywh(0.0, 0.0, 200.0, 50.0));
+        let b = arrange(
+            layout(Mode::Span),
+            (400.0, 100.0),
+            (200, 100),
+            2.0,
+            Some(right),
+        );
+        assert_eq!(b.dest, skia::Rect::from_xywh(-200.0, 0.0, 400.0, 100.0));
+        // Without the desktop, span fills its own screen.
+        assert_eq!(
+            arrange(layout(Mode::Span), PHOTO, SCREEN, 1.0, None),
+            arrange(layout(Mode::Fill), PHOTO, SCREEN, 1.0, None)
+        );
     }
 
     /// Out-of-range settings are pulled back rather than producing a layout
@@ -344,7 +438,10 @@ mod tests {
         let sane = wild.sanitised();
         assert_eq!(sane.position, (0.5, 1.0));
         assert_eq!(sane.zoom, 1.0);
-        assert!(covers(arrange(wild, PHOTO, SCREEN, f32::NAN).dest, SCREEN));
+        assert!(covers(
+            arrange(wild, PHOTO, SCREEN, f32::NAN, None).dest,
+            SCREEN
+        ));
         assert_eq!(
             Layout {
                 zoom: 100.0,

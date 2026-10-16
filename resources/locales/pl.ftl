@@ -546,6 +546,7 @@ settings-choice-background-fit = Dopasuj do ekranu
 settings-choice-background-stretch = Rozciągnij
 settings-choice-background-center = Wyśrodkuj
 settings-choice-background-tile = Sąsiadująco
+settings-choice-background-span = Na wszystkie ekrany
 # The automatic option for a theme that follows the system.
 settings-choice-auto = Automatycznie
 

@@ -10,7 +10,7 @@ mod paint;
 mod placement;
 mod source;
 
-pub use layout::{arrange, Arrangement, Layout, Mode, MAX_ZOOM};
+pub use layout::{arrange, Arrangement, Layout, Mode, SpanView, MAX_ZOOM};
 pub use paint::{paint, sampling};
 pub use placement::{cover, cover_size, Placement};
 pub use source::{open, render_frame, FrameStyle, OpenError, Source};

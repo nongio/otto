@@ -539,6 +539,7 @@ settings-choice-background-fit = An Bildschirm anpassen
 settings-choice-background-stretch = Strecken
 settings-choice-background-center = Zentriert
 settings-choice-background-tile = Nebeneinander
+settings-choice-background-span = Über alle Monitore
 # The automatic option for a theme that follows the system.
 settings-choice-auto = Auto
 

@@ -533,6 +533,7 @@ settings-choice-background-fit = 画面に合わせる
 settings-choice-background-stretch = 引き伸ばして表示
 settings-choice-background-center = 中央に表示
 settings-choice-background-tile = 並べて表示
+settings-choice-background-span = 複数のディスプレイにまたがる
 # The automatic option for a theme that follows the system.
 settings-choice-auto = 自動
 

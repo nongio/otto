@@ -534,6 +534,7 @@ settings-choice-background-fit = 适合屏幕
 settings-choice-background-stretch = 拉伸以填充
 settings-choice-background-center = 居中
 settings-choice-background-tile = 拼贴
+settings-choice-background-span = 跨越所有显示器
 # The automatic option for a theme that follows the system.
 settings-choice-auto = 自动
 

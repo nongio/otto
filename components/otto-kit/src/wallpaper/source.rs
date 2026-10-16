@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use skia_safe as skia;
 
-use super::layout::{arrange, Layout};
+use super::layout::{arrange, Layout, SpanView};
 use crate::utils::resample::{resample, resample_to};
 
 /// A wallpaper file, opened but not yet decoded.
@@ -80,6 +80,11 @@ pub struct FrameStyle {
     /// Physical pixels per logical point, for the modes that draw the image
     /// at its own size.
     pub output_scale: f32,
+    /// Where the screen sits on the desktop, for [`Mode::Span`]. Without it
+    /// span fills the screen alone.
+    ///
+    /// [`Mode::Span`]: super::Mode::Span
+    pub span: Option<SpanView>,
 }
 
 impl Default for FrameStyle {
@@ -88,6 +93,7 @@ impl Default for FrameStyle {
             layout: Layout::default(),
             fill: skia::Color4f::new(0.0, 0.0, 0.0, 1.0),
             output_scale: 1.0,
+            span: None,
         }
     }
 }
@@ -136,6 +142,7 @@ fn draw_raster(
         (iw as f32, ih as f32),
         target,
         style.output_scale,
+        style.span,
     );
     let dest = arrangement.dest;
 
@@ -228,7 +235,13 @@ fn draw_svg(
     if !(sw > 0.0 && sh > 0.0) {
         return None;
     }
-    let arrangement = arrange(style.layout, (sw, sh), target, style.output_scale);
+    let arrangement = arrange(
+        style.layout,
+        (sw, sh),
+        target,
+        style.output_scale,
+        style.span,
+    );
     let dest = arrangement.dest;
 
     if arrangement.tiled {
@@ -422,6 +435,7 @@ mod tests {
             },
             fill: skia::Color4f::new(0.0, 0.0, 1.0, 1.0),
             output_scale: 1.0,
+            span: None,
         }
     }
 
@@ -567,6 +581,34 @@ mod tests {
         assert_eq!(pixel(&frame, 197, 2), [0, 255, 0, 255]);
         assert_eq!(pixel(&frame, 2, 47), BLUE);
         assert_eq!(pixel(&frame, 197, 47), [255, 255, 255, 255]);
+    }
+
+    /// Spanned across two screens of different density, a horizontal
+    /// gradient carries on across the seam: the last column of the left
+    /// screen and the first of the right are neighbouring shades.
+    #[test]
+    fn span_is_continuous_across_screens() {
+        let path = write_png("span.png", 256, 64, |x, _| [x as u8, 0, 0]);
+        let source = open(&path).unwrap();
+        let desktop = skia::Rect::from_xywh(0.0, 0.0, 256.0, 64.0);
+        let mut left = style(Mode::Span);
+        left.span = Some(SpanView {
+            desktop,
+            screen: skia::Rect::from_xywh(0.0, 0.0, 128.0, 64.0),
+        });
+        let mut right = left;
+        right.output_scale = 2.0;
+        right.span = Some(SpanView {
+            desktop,
+            screen: skia::Rect::from_xywh(128.0, 0.0, 128.0, 64.0),
+        });
+        let a = render_frame(&source, &left, (128, 64)).unwrap();
+        let b = render_frame(&source, &right, (256, 128)).unwrap();
+        let seam_left = pixel(&a, 127, 32)[0] as i32;
+        let seam_right = pixel(&b, 0, 64)[0] as i32;
+        assert!((seam_left - 127).abs() <= 2, "left edge {seam_left}");
+        assert!((seam_right - 128).abs() <= 2, "right edge {seam_right}");
+        assert!(pixel(&b, 255, 64)[0] >= 253);
     }
 
     /// A transparent image shows the fill colour through it, and every frame
