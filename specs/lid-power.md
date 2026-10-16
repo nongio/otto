@@ -56,8 +56,7 @@ On lid close (`manage_lid_switch = true`):
    the lock screen. Otherwise the system keeps running, and does not lock: a
    clamshell or remote session is still in use.
 3. In `"disable_internal_screen"` mode the system never suspends and never
-   locks (kiosk / display-manager use); the panel is kept off even with the
-   lid open.
+   locks; the panel only turns off, and comes back when the lid opens.
 
 "Remote client actively consuming frames" means: at least one portal
 screenshare session exists, or at least one virtual output's PipeWire stream
