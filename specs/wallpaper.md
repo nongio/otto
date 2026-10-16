@@ -79,10 +79,12 @@ and identical however a frame is repainted.
   settings).
 - `background <file> [<mode>] [<#colour>]`, `background <#colour>
   solid_color` and `background reset` do the same for the focused workspace.
-- A mode or colour left out keeps what is set. The path may contain spaces;
-  `~/` is the home folder.
-- An image that cannot be opened is refused with the reason, and nothing is
-  written.
+- A mode or colour left out keeps what is set. The path is taken as written,
+  spaces included; a `;` in it needs the path in double quotes. `~/` is the
+  home folder; any other relative path is refused, since it would mean a
+  different file at the next login.
+- An image that cannot be opened, or is not an image, is refused with the
+  reason, and nothing is written.
 - Every change is written to the configuration file, leaving the rest of the
   file as it was.
 
@@ -92,7 +94,8 @@ and identical however a frame is repainted.
   once with a kernel that widens with the ratio (so shrinking averages every
   source pixel, and fine detail does not alias), filtering linear light, with
   the colour behind. Edges of a fitted or centred image are on whole pixels;
-  where an image lands 1:1 its pixels are copied, not resampled.
+  where an image lands 1:1 along an axis it is moved onto a whole pixel and
+  its pixels are copied, not resampled.
 - The frame is drawn 1:1, so every screen pixel is one frame pixel and no
   filtering happens per frame. A repaint cropped to any rect gives exactly the
   pixels of a whole-screen paint.
@@ -107,6 +110,11 @@ and identical however a frame is repainted.
 - One frame serves every workspace that shows the same image, layout and
   colour on a screen of the same size.
 
+### The lock screen and the greeter
+
+- They show the global wallpaper in the global layout, as the desktop does.
+  An output's or a workspace's own wallpaper does not reach them.
+
 ### Settings app
 
 - The background image row's preview is the primary screen, in its shape,
@@ -119,8 +127,12 @@ and identical however a frame is repainted.
 
 ## Constraints & Edge Cases
 
-- An unreadable or undecodable image shows the gradient and is reported, to
-  the settings app or the command that set it.
+- An unreadable image, or a file that is not an image, shows the gradient and
+  is reported to the settings app or the command that set it. A file that
+  looks like an image but cannot be decoded shows the gradient and is logged.
+- Only a failure of the image a change sets refuses that change: an output's
+  or a workspace's own image that has gone missing does not block a change to
+  the global settings.
 - A file rewritten in place is decoded again on the next reload.
 - A mode or scale change re-renders the frames for that screen.
 - A span is laid out on the box around every screen in logical points, so
@@ -150,3 +162,4 @@ and identical however a frame is repainted.
 
 - Per-output and per-workspace wallpapers have no control in the settings app
   yet; they are set through the configuration file or the commands.
+- The lock screen could follow an output's own wallpaper on that output.

@@ -24,12 +24,21 @@ const SIZE: i32 = 64;
 
 fn first_physical_device() -> PhysicalDevice {
     let instance = Instance::new(Version::VERSION_1_3, None).expect("vulkan instance");
+    let phd = PhysicalDevice::enumerate(&instance)
+        .expect("enumerate physical devices")
+        .find(|phd| matches!(phd.render_node(), Ok(Some(_))))
+        .expect("a physical device with a render node");
+    phd
+}
+
+/// [`first_physical_device`], or any device when none has a render node: the
+/// wallpaper tests only draw offscreen, so a software Vulkan with the DRM
+/// format modifier extension (`VK_DRIVER_FILES=.../lvp_icd.json`) will do.
+fn drawing_physical_device() -> PhysicalDevice {
+    let instance = Instance::new(Version::VERSION_1_3, None).expect("vulkan instance");
     let devices: Vec<_> = PhysicalDevice::enumerate(&instance)
         .expect("enumerate physical devices")
         .collect();
-    // A GPU with a render node first; otherwise any device, so the drawing
-    // tests also run on a lavapipe that has the DRM format modifier
-    // extension (`VK_DRIVER_FILES=.../lvp_icd.json`).
     let pick = devices
         .iter()
         .position(|phd| matches!(phd.render_node(), Ok(Some(_))))
@@ -1221,7 +1230,7 @@ fn wallpaper_whole_against_cropped(
 ) -> Vec<(usize, u8)> {
     use layers::skia;
 
-    let mut renderer = SkiaVkRenderer::new(&first_physical_device()).expect("renderer");
+    let mut renderer = SkiaVkRenderer::new(&drawing_physical_device()).expect("renderer");
     let mut target = renderer
         .create_buffer(Fourcc::Abgr8888, (w, h).into())
         .expect("offscreen target");

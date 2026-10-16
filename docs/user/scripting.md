@@ -73,9 +73,11 @@ the global settings back to their defaults).
 `background ~/Pictures/focus.png tile`, `background #202020 solid_color`,
 `background reset`. The workspace keeps its wallpaper when you move it.
 
-The path is the rest of the command, spaces and all; `~/` is your home folder.
-An image Otto cannot open is refused with the reason, and nothing changes.
-Every change is saved to your config.
+The path is the rest of the command as written, spaces and all; put it in
+double quotes if it contains a `;`. It must be absolute or start with `~/`
+(your home folder): it is saved, and a relative path would mean another file
+next time. An image Otto cannot open is refused with the reason, and nothing
+changes. Every change is saved to your config.
 
 ## Focusing a window by name
 

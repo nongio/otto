@@ -179,24 +179,35 @@ into a *frame* exactly the output's size, and `BackgroundView` draws that frame
   edges to whole pixels, and resamples exactly the image region inside them
   with `otto_kit::utils::resample`: a separable kernel that widens with the
   ratio (Lanczos-3 shrinking, Mitchell growing), on linear premultiplied
-  light. A region that lands 1:1 on whole pixels is copied. SVGs are drawn as
-  vectors. It is opaque, the fill colour behind the image.
+  light. An axis drawn 1:1 is moved onto a whole pixel and copied, not
+  resampled at a half-pixel phase: Mitchell does not interpolate, so that
+  would blur every pixel into its neighbour. A tile is resampled only as far
+  as the screen shows it. SVGs are drawn as vectors. The frame is opaque, the
+  fill colour behind the image.
 - **The draw.** `otto_kit::wallpaper::paint` samples bilinear with mipmaps
   and clamps. At the 1:1 whole-pixel placement bilinear reads exactly one
   texel per pixel; the mipmaps are for the same recorded picture replayed
   small, as the exposé backdrop and the workspace previews. `Placement` keeps
   every offset whole, so a frame drawn on a layer of another size (between a
   mode change and its new frame) still never sits on a half pixel.
-- **The store.** `workspaces::background::store` opens each file once,
-  synchronously so a bad path is reported straight away, and renders frames
-  on a worker thread, keyed by file version, output size and style; one frame
-  serves every workspace of that key. Results come back through a calloop
-  channel and ask for a redraw.
+- **The store.** `workspaces::background::store` keys frames by file version,
+  output size and style; one frame serves every workspace of that key. On the
+  compositor's thread a file is only stat'ed and its first bytes checked
+  (`wallpaper::probe`), so a bad path is reported straight away; reading,
+  decoding and resampling happen on a worker thread below the compositor's
+  priority, and the frame comes back through a calloop channel, which asks
+  for a redraw. Only a failure of the global image refuses a setting; an
+  output's or a workspace's own failing image is logged and shows the
+  gradient.
+- **Other clients.** The lock screen and the greeter draw the wallpaper
+  themselves, through `paint_layout`: the same layout, sampled at draw time.
 
-The tests that hold this: `otto_kit::wallpaper`'s placement tests check that
-every pixel centre maps to a texel centre for common image and screen sizes,
+The tests that hold this: `otto_kit::wallpaper`'s tests check that a frame is
+the screen's size in every mode, that 1:1 placements (an odd size difference
+in centre, the #361 sizes in fill) copy pixels exactly, that `cover` never
+leaves a half-pixel offset, and that a cropped paint equals a whole one;
 `utils::resample`'s check aliasing, linear light and sharpness against Skia's
-single-pass cubic, and `tests/wallpaper.rs` checks the screen against the frame
+single-pass cubic; `tests/wallpaper.rs` checks the screen against the frame
 pixel for pixel and a cropped repaint against a whole one. The Vulkan tests in
 `crates/otto-render` (`vulkan_wallpaper_*`, ignored) do the cropped-repaint
 check on a GPU, and report what the old half-pixel nearest path did there.
