@@ -4,8 +4,52 @@ window.addEventListener('DOMContentLoaded', () => {
     addParentHeadingAttribute();
     startNavObservation();
     initThemeToggle();
+    initComments();
 
 });
+
+function currentTheme() {
+    var stored = localStorage.getItem('otto-theme');
+    if (stored === 'dark' || stored === 'light') return stored;
+    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+}
+
+// giscus reads its settings from the attributes of the script that loads it,
+// and puts its iframe into the .giscus element.
+function initComments() {
+    var host = document.querySelector('.giscus');
+    if (!host) return;
+
+    var script = document.createElement('script');
+    script.src = 'https://giscus.app/client.js';
+    script.async = true;
+    script.crossOrigin = 'anonymous';
+    var config = {
+        'data-repo': host.dataset.repo,
+        'data-repo-id': host.dataset.repoId,
+        'data-category': host.dataset.category,
+        'data-category-id': host.dataset.categoryId,
+        'data-mapping': 'pathname',
+        'data-strict': '1',
+        'data-reactions-enabled': '1',
+        'data-emit-metadata': '0',
+        'data-input-position': 'top',
+        'data-theme': currentTheme(),
+        'data-lang': 'en',
+        'data-loading': 'lazy',
+    };
+    Object.keys(config).forEach(key => script.setAttribute(key, config[key]));
+    host.after(script);
+}
+
+function syncCommentsTheme() {
+    var frame = document.querySelector('iframe.giscus-frame');
+    if (!frame) return;
+    frame.contentWindow.postMessage(
+        { giscus: { setConfig: { theme: currentTheme() } } },
+        'https://giscus.app'
+    );
+}
 
 // The stored override (if any) is already applied to <html> by the
 // inline script in <head>, before first paint. This just wires up the
@@ -14,15 +58,10 @@ function initThemeToggle() {
     var button = document.querySelector('#theme-toggle');
     var systemDark = window.matchMedia('(prefers-color-scheme: dark)');
 
-    function currentTheme() {
-        var stored = localStorage.getItem('otto-theme');
-        if (stored === 'dark' || stored === 'light') return stored;
-        return systemDark.matches ? 'dark' : 'light';
-    }
-
     function render() {
         // Label is the theme a click will switch TO.
         button.textContent = currentTheme() === 'dark' ? 'Light' : 'Dark';
+        syncCommentsTheme();
     }
 
     button.addEventListener('click', () => {

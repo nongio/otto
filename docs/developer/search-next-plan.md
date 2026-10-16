@@ -1,16 +1,24 @@
-# Search Next
+# Search Next Plan
 
-**Status:** draft  
-**Related specs:** [search-language.md](./search-language.md), [file-browser.md](./file-browser.md), [peek-ocr.md](./peek-ocr.md), [launcher.md](./launcher.md)
+> **Status: draft, not built.** Requirements for reworking file search into
+> one local service that understands contents by meaning. Comments are open
+> at the bottom of the page.
+
+Related: [File Search](file-search.md), [Search plan](search-plan.md),
+[Text in Pictures](peek-ocr.md), and the specs
+[search-language.md](../../specs/search-language.md),
+[file-browser.md](../../specs/file-browser.md),
+[peek-ocr.md](../../specs/peek-ocr.md),
+[launcher.md](../../specs/launcher.md).
 
 ## Status Quo
 
 How search works today:
-[File Search](../docs/developer/file-search.md),
-[Search plan](../docs/developer/search-plan.md),
-[search-language.md](./search-language.md),
-[otto-search AGENTS.md](../components/otto-search/AGENTS.md),
-[peek-ocr.md](./peek-ocr.md).
+[File Search](file-search.md),
+[Search plan](search-plan.md),
+[search-language.md](../../specs/search-language.md),
+[otto-search AGENTS.md](../../components/otto-search/AGENTS.md),
+[Text in Pictures](peek-ocr.md).
 
 `otto-search` is a library plus a command, not a service. Each program that
 links it asks LocalSearch over D-Bus on its own; Otto keeps no index except
@@ -54,7 +62,7 @@ understands contents by meaning, transcribes speech or points into media.
 - **Moments in media:** a hit in a video or audio file names the time ranges
   where it was found, not just the file.
 - **Words and filters:** full-text search and filters on date, place, kind,
-  size and metadata, as in [search-language.md](./search-language.md).
+  size and metadata, as in [search-language.md](../../specs/search-language.md).
   Everything that language finds today it still finds, the same way.
 - **One ranking:** meaning, words and filters combine in one query and return
   one list. Filters narrow what meaning finds; they never widen it.

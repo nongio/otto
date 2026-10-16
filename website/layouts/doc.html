@@ -23,5 +23,17 @@
     <main data-pagefind-body>
         <h1><a class="back-home" data-pagefind-ignore href="{{ $up.RelPermalink }}">&larr; {{ $up.Title }}</a><span class="page-title">{{ .Title }}</span></h1>
         {{ .Content }}
+        {{/* Pages with `comments: true` (plans open for discussion) get a
+             giscus thread, one GitHub Discussion per page. main.js loads it
+             after the page is split into sections, so the iframe is not
+             moved (and reloaded) by that split. */}}
+        {{ with .Params.comments }}
+        <h2 id="comments">Comments</h2>
+        <div class="giscus" data-pagefind-ignore
+             data-repo="nongio/otto"
+             data-repo-id="R_kgDOLOwKsw"
+             data-category="Ideas"
+             data-category-id="DIC_kwDOLOwKs84CkHb4"></div>
+        {{ end }}
     </main>
 {{ end }}
