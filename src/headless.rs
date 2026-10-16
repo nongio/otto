@@ -507,7 +507,8 @@ impl HeadlessHandle {
     /// that wakes on a wall-clock timer, so a window mapped just before this
     /// call reaches their scene up to half a second later. The scene is not
     /// at rest while either still owes a redraw; those frames wait a little
-    /// real time for the task to run.
+    /// real time for the task to run. A wallpaper still rendering on its
+    /// thread holds the scene off rest the same way.
     pub fn settle(&self, max_frames: usize) -> usize {
         const DT: f32 = 1.0 / 60.0;
         let mut frames_with_damage = 0;
@@ -520,7 +521,8 @@ impl HeadlessHandle {
                     has_damage,
                     state.layers_engine.pending_transactions_count() > 0,
                     workspaces.dock.model_feed.is_behind()
-                        || workspaces.app_switcher.model_feed.is_behind(),
+                        || workspaces.app_switcher.model_feed.is_behind()
+                        || workspaces.wallpapers_pending(),
                 )
             });
             if has_damage {

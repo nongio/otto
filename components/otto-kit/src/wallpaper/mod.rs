@@ -7,6 +7,8 @@
 
 mod paint;
 mod placement;
+mod source;
 
 pub use paint::{paint, sampling};
 pub use placement::{cover, cover_size, Placement};
+pub use source::{open, render_frame, OpenError, Source};

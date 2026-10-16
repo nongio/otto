@@ -194,7 +194,6 @@ impl WorkspaceView {
         let background_color = Config::with(|c| parse_hex_color(&c.background_color));
         let background_view =
             BackgroundView::new(index, background_layer.clone(), background_color);
-        let background_path = Config::with(|c| c.background_image.clone());
         let background_view = Arc::new(background_view);
 
         let window_selector_view = WindowSelectorView::new(
@@ -208,14 +207,6 @@ impl WorkspaceView {
 
         let window_selector_view = Arc::new(window_selector_view);
 
-        if let Some(background_image) = super::background::decode_wallpaper(&background_path) {
-            background_view.set_image(background_image);
-        } else if !background_path.is_empty() {
-            tracing::warn!(
-                "Failed to load background image from path: {}",
-                background_path
-            );
-        }
         Self {
             index,
             windows_list: Arc::new(RwLock::new(Vec::new())),
