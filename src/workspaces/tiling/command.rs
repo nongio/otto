@@ -149,6 +149,34 @@ pub enum Command {
     /// switch. Otto has one keyboard, so `type:keyboard`, `otto:keyboard` and
     /// `*` all name it.
     SwitchLayout(LayoutTarget),
+    /// `output <name>|* bg|background <file> [<mode>] [<#colour>]`, and
+    /// `output <name>|* bg <#colour> solid_color` — sway's wallpaper
+    /// command. `None` is `*`, the global setting. Otto keeps it: the
+    /// override is written to the config, as the settings app's choice is.
+    OutputBackground {
+        output: Option<String>,
+        background: BackgroundArg,
+    },
+    /// `background <file> [<mode>] [<#colour>]`, `background <#colour>
+    /// solid_color` and `background reset` — Otto's own: the focused
+    /// workspace's wallpaper, over its output's.
+    WorkspaceBackground(BackgroundArg),
+}
+
+/// What a wallpaper command sets.
+#[derive(Debug, Clone, PartialEq)]
+pub enum BackgroundArg {
+    /// An image, optionally with how it fills the screen and the colour
+    /// around it. A mode or colour left out keeps what is set.
+    Image {
+        path: String,
+        mode: Option<otto_kit::wallpaper::Mode>,
+        color: Option<String>,
+    },
+    /// No image, just the colour's gradient.
+    Solid(String),
+    /// Drop the override, back to what is set below it.
+    Reset,
 }
 
 /// i3's `[app_id="…" title="…"]`, the window matcher that prefixes a command.
@@ -478,6 +506,8 @@ fn parse_one(cursor: &mut Cursor<'_>) -> Result<Command, ParseError> {
         "gaps" => parse_gaps(cursor)?,
         "rename" => parse_rename(cursor)?,
         "input" => parse_input(cursor)?,
+        "output" => parse_output(cursor)?,
+        "background" => Command::WorkspaceBackground(parse_background(cursor, "background")?),
         other => return Err(unknown(offset, other)),
     };
     if !cursor.is_done() {
@@ -634,6 +664,93 @@ fn parse_input(cursor: &mut Cursor<'_>) -> Result<Command, ParseError> {
         None => return Err(invalid(offset, "xkb_switch_layout", "<n>|next|prev")),
     };
     Ok(Command::SwitchLayout(target))
+}
+
+/// `output <name>|* bg|background …`. sway's other output subcommands —
+/// mode, scale, position — are the displays configuration's in Otto.
+fn parse_output(cursor: &mut Cursor<'_>) -> Result<Command, ParseError> {
+    const EXPECTED: &str = "'<name>|* bg <file> [<mode>] [<#colour>]'";
+    let offset = cursor.offset();
+    let output = match cursor.next() {
+        Some((_, "*")) => None,
+        Some((_, name)) => Some(name.to_string()),
+        None => return Err(invalid(offset, "output", EXPECTED)),
+    };
+    let offset = cursor.offset();
+    match cursor.next() {
+        Some((_, "bg" | "background")) => {}
+        Some((offset, other)) => return Err(unsupported(offset, &join("output", other))),
+        None => return Err(invalid(offset, "output", EXPECTED)),
+    }
+    Ok(Command::OutputBackground {
+        output,
+        background: parse_background(cursor, "output bg")?,
+    })
+}
+
+/// A colour as the config writes one: `#RGB` or `#RRGGBB`.
+fn is_hex_colour(word: &str) -> bool {
+    word.strip_prefix('#').is_some_and(|hex| {
+        (hex.len() == 3 || hex.len() == 6) && hex.chars().all(|c| c.is_ascii_hexdigit())
+    })
+}
+
+/// `<file> [<mode>] [<#colour>]`, `<#colour> solid_color` or `reset`.
+///
+/// Read from the end, so a path may hold spaces without quoting, as a
+/// workspace name may: the colour is the last word if it is one, the mode
+/// the word before it if it is one, and the path everything else.
+fn parse_background(cursor: &mut Cursor<'_>, command: &str) -> Result<BackgroundArg, ParseError> {
+    const EXPECTED: &str =
+        "'<file> [fill|fit|stretch|center|tile] [<#colour>]', '<#colour> solid_color' or 'reset'";
+    let start = cursor.offset();
+    let mut words: Vec<Token<'_>> = std::iter::from_fn(|| cursor.next()).collect();
+    match words.as_slice() {
+        [] => return Err(invalid(start, command, EXPECTED)),
+        [(_, "reset")] => return Ok(BackgroundArg::Reset),
+        [(offset, colour), (_, "solid_color")] => {
+            return if is_hex_colour(colour) {
+                Ok(BackgroundArg::Solid(colour.to_string()))
+            } else {
+                Err(invalid(
+                    *offset,
+                    command,
+                    "a '#RRGGBB' colour before solid_color",
+                ))
+            };
+        }
+        _ => {}
+    }
+    let color = match words.last() {
+        Some((_, word)) if is_hex_colour(word) => words.pop().map(|(_, word)| word.to_string()),
+        _ => None,
+    };
+    let mode = match words.last() {
+        Some((_, word)) => match otto_kit::wallpaper::Mode::parse(word) {
+            Some(mode) if words.len() > 1 => {
+                words.pop();
+                Some(mode)
+            }
+            _ => None,
+        },
+        None => None,
+    };
+    let joined = words
+        .iter()
+        .map(|(_, word)| *word)
+        .collect::<Vec<_>>()
+        .join(" ");
+    let path = ['"', '\'']
+        .into_iter()
+        .find_map(|quote| {
+            (joined.len() >= 2 && joined.starts_with(quote) && joined.ends_with(quote))
+                .then(|| joined[1..joined.len() - 1].to_string())
+        })
+        .unwrap_or(joined);
+    if path.is_empty() {
+        return Err(invalid(start, command, EXPECTED));
+    }
+    Ok(BackgroundArg::Image { path, mode, color })
 }
 
 /// `rename workspace to <name>`, and `rename workspace <n> to <name>` for a
@@ -940,6 +1057,87 @@ mod tests {
         assert!(error("input type:keyboard repeat_rate 30")
             .message
             .contains("does not support"));
+    }
+
+    fn image(
+        path: &str,
+        mode: Option<otto_kit::wallpaper::Mode>,
+        color: Option<&str>,
+    ) -> BackgroundArg {
+        BackgroundArg::Image {
+            path: path.to_string(),
+            mode,
+            color: color.map(str::to_string),
+        }
+    }
+
+    /// sway's wallpaper command ports unchanged.
+    #[test]
+    fn output_bg_reads_like_sway() {
+        use otto_kit::wallpaper::Mode;
+        assert_eq!(
+            one("output HDMI-A-1 bg /home/me/wall.png fill"),
+            Command::OutputBackground {
+                output: Some("HDMI-A-1".into()),
+                background: image("/home/me/wall.png", Some(Mode::Fill), None),
+            }
+        );
+        assert_eq!(
+            one("output * background ~/a b.jpg center #102E95"),
+            Command::OutputBackground {
+                output: None,
+                background: image("~/a b.jpg", Some(Mode::Center), Some("#102E95")),
+            }
+        );
+        assert_eq!(
+            one("output DP-1 bg #000 solid_color"),
+            Command::OutputBackground {
+                output: Some("DP-1".into()),
+                background: BackgroundArg::Solid("#000".into()),
+            }
+        );
+        assert_eq!(
+            one("output DP-1 bg reset"),
+            Command::OutputBackground {
+                output: Some("DP-1".into()),
+                background: BackgroundArg::Reset,
+            }
+        );
+        assert!(error("output DP-1 scale 2")
+            .message
+            .contains("does not support"));
+        assert!(error("output DP-1 bg").message.contains("expected"));
+        assert!(error("output DP-1 bg red solid_color")
+            .message
+            .contains("colour"));
+    }
+
+    /// The workspace's own wallpaper: a mode and a colour are optional, and
+    /// a quoted path loses its quotes.
+    #[test]
+    fn background_sets_the_focused_workspace() {
+        use otto_kit::wallpaper::Mode;
+        assert_eq!(
+            one("background /a.png"),
+            Command::WorkspaceBackground(image("/a.png", None, None))
+        );
+        assert_eq!(
+            one("background \"/My Pictures/x.png\" tile"),
+            Command::WorkspaceBackground(image("/My Pictures/x.png", Some(Mode::Tile), None))
+        );
+        assert_eq!(
+            one("background /a.png #fff"),
+            Command::WorkspaceBackground(image("/a.png", None, Some("#fff")))
+        );
+        // A path that happens to be a mode's name is a path.
+        assert_eq!(
+            one("background fit"),
+            Command::WorkspaceBackground(image("fit", None, None))
+        );
+        assert_eq!(
+            one("background reset"),
+            Command::WorkspaceBackground(BackgroundArg::Reset)
+        );
     }
 
     fn rename(number: Option<usize>, name: &str) -> Command {

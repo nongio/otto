@@ -457,6 +457,7 @@ fn restore_workspace_settings(workspace: &WorkspaceView, output: &str, position:
     if let Some(name) = entry.name {
         workspace.set_custom_name(Some(name));
     }
+    workspace.set_background_override(entry.background);
     let gaps = match (entry.inner_gap, entry.outer_gap) {
         (None, None) => None,
         (inner, outer) => Config::with(|c| {
@@ -565,10 +566,7 @@ impl Workspaces {
             store.forget_failures();
         }
         match self.refresh_wallpapers() {
-            Some(err) => {
-                let path = Config::with(|c| c.background_image.clone());
-                Err(format!("cannot read a background image at `{path}`: {err}"))
-            }
+            Some(err) => Err(format!("cannot show the background image {err}")),
             None => Ok(()),
         }
     }
@@ -580,13 +578,7 @@ impl Workspaces {
     /// Run on every layout pass, since an output's size is part of what a
     /// frame is. Returns the first reason a wallpaper could not be shown.
     pub(crate) fn refresh_wallpapers(&self) -> Option<String> {
-        let (path, color, layout) = Config::with(|c| {
-            (
-                c.background_image.clone(),
-                crate::utils::parse_hex_color(&c.background_color),
-                c.wallpaper_layout(),
-            )
-        });
+        let config = Config::current();
         let fallback_size = self.with_model(|m| (m.width, m.height));
 
         let Ok(mut store) = self.wallpapers.lock() else {
@@ -600,20 +592,24 @@ impl Workspaces {
                 .and_then(|o| o.current_mode())
                 .map(|mode| (mode.size.w, mode.size.h))
                 .unwrap_or(fallback_size);
-            let style = otto_kit::wallpaper::FrameStyle {
-                layout,
-                fill: color,
-                output_scale: output
-                    .map(|o| o.current_scale().fractional_scale() as f32)
-                    .unwrap_or(1.0),
-            };
+            let output_scale = output
+                .map(|o| o.current_scale().fractional_scale() as f32)
+                .unwrap_or(1.0);
             for workspace in ows.workspace_views.iter() {
+                let settings =
+                    config.wallpaper_for(output_name, workspace.background_override().as_ref());
                 let view = &workspace.background_view;
-                if path.is_empty() || target.0 <= 0 || target.1 <= 0 {
+                let color = settings.color;
+                if settings.image.is_empty() || target.0 <= 0 || target.1 <= 0 {
                     view.show(BackgroundContent::Gradient, color);
                     continue;
                 }
-                match store.lookup(&path, &style, target) {
+                let style = otto_kit::wallpaper::FrameStyle {
+                    layout: settings.layout,
+                    fill: color,
+                    output_scale,
+                };
+                match store.lookup(&settings.image, &style, target) {
                     Lookup::Ready(frame) => view.show(BackgroundContent::Frame(frame), color),
                     Lookup::Pending => {
                         // Keep a frame that is up while the new one renders;
@@ -625,7 +621,7 @@ impl Workspaces {
                     }
                     Lookup::Failed(err) => {
                         view.show(BackgroundContent::Gradient, color);
-                        error.get_or_insert(err);
+                        error.get_or_insert(format!("`{}`: {err}", settings.image));
                     }
                 }
             }
@@ -1024,6 +1020,7 @@ impl Workspaces {
             return;
         };
         let name = workspace.get_custom_name();
+        let background = workspace.background_override();
         let (tiling, gaps) = workspace
             .tiling
             .read()
@@ -1036,6 +1033,7 @@ impl Workspaces {
                 entry.tiling = tiling;
                 entry.inner_gap = gaps.map(|gaps| gaps.inner);
                 entry.outer_gap = gaps.map(|gaps| gaps.outer);
+                entry.background = background;
             },
         );
     }

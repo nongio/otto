@@ -21,8 +21,8 @@ use crate::config::Config;
 use crate::shell::WindowElement;
 use crate::state::{Backend, Otto};
 use crate::workspaces::tiling::command::{
-    self, Amount, AxisArg, Command, Criteria, GapScope, GapTarget, Toggle, WindowFacts,
-    WorkspaceTarget,
+    self, Amount, AxisArg, BackgroundArg, Command, Criteria, GapScope, GapTarget, Toggle,
+    WindowFacts, WorkspaceTarget,
 };
 use crate::workspaces::tiling::tree::{Axis, NodeId};
 use crate::workspaces::tiling::{layout, Gaps, Rect};
@@ -114,7 +114,98 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                 self.command_rename_workspace(number, name)
             }
             Command::SwitchLayout(target) => self.switch_layout(target),
+            Command::OutputBackground { output, background } => {
+                self.command_output_background(output.as_deref(), background)
+            }
+            Command::WorkspaceBackground(background) => {
+                self.command_workspace_background(background)
+            }
         }
+    }
+
+    /// `output <name>|* bg …`: an output's wallpaper, or with `*` the global
+    /// one, which the per-output overrides still win over.
+    ///
+    /// The global settings go through `org.otto.Settings`' own path, so a
+    /// settings app that is open hears about the change; an output's
+    /// override is written to `[background_outputs]`. An image that cannot
+    /// be shown is refused before anything is written.
+    fn command_output_background(
+        &mut self,
+        output: Option<&str>,
+        background: BackgroundArg,
+    ) -> CommandResult {
+        let background = checked_background(background)?;
+        let Some(output) = output else {
+            return self.set_global_background(background);
+        };
+        crate::config::save_output_wallpaper(output, |record| apply_background(record, background));
+        self.workspaces.reload_background()
+    }
+
+    /// `background …`: the focused workspace's own wallpaper, kept with the
+    /// workspace's other settings and travelling with it when it moves.
+    fn command_workspace_background(&mut self, background: BackgroundArg) -> CommandResult {
+        let background = checked_background(background)?;
+        let Some(output) = self.workspaces.focused_output().cloned() else {
+            return Err("no output has focus".to_string());
+        };
+        let name = output.name();
+        let Some((position, workspace)) =
+            self.workspaces
+                .output_workspaces
+                .get(&name)
+                .and_then(|ows| {
+                    ows.workspace_views
+                        .get(ows.current_workspace)
+                        .map(|w| (ows.current_workspace, w.clone()))
+                })
+        else {
+            return Err(format!("{name} has no workspaces"));
+        };
+        let mut record = workspace.background_override().unwrap_or_default();
+        apply_background(&mut record, background);
+        workspace.set_background_override(Some(record));
+        self.workspaces.persist_workspace_entry(&name, position);
+        self.workspaces.reload_background()
+    }
+
+    fn set_global_background(&mut self, background: BackgroundArg) -> CommandResult {
+        use crate::settings::value::SettingValue;
+        let ids = [
+            "background_image",
+            "background_color",
+            "background_mode",
+            "background_position_x",
+            "background_position_y",
+            "background_zoom",
+        ];
+        let mut values: Vec<(&str, SettingValue)> = Vec::new();
+        match background {
+            BackgroundArg::Reset => {
+                for id in ids {
+                    crate::settings::reset(self, id).map_err(|err| err.to_string())?;
+                }
+                return Ok(());
+            }
+            BackgroundArg::Solid(color) => {
+                values.push(("background_color", SettingValue::Str(color)));
+                values.push(("background_image", SettingValue::Str(String::new())));
+            }
+            BackgroundArg::Image { path, mode, color } => {
+                if let Some(mode) = mode {
+                    values.push(("background_mode", SettingValue::Str(mode.token().into())));
+                }
+                if let Some(color) = color {
+                    values.push(("background_color", SettingValue::Str(color)));
+                }
+                values.push(("background_image", SettingValue::Str(path)));
+            }
+        }
+        for (id, value) in values {
+            crate::settings::set(self, id, value).map_err(|err| err.to_string())?;
+        }
+        Ok(())
     }
 
     /// `expose [show|hide|toggle]`: the window overview, the same state
@@ -1073,4 +1164,41 @@ fn container_id(node: NodeId) -> u64 {
 
 fn workspace_id(output: &str, index: usize) -> u64 {
     hash_id("workspace", &format!("{output}:{index}"))
+}
+
+/// `background`'s image with `~` expanded, refused if it cannot be shown.
+fn checked_background(background: BackgroundArg) -> Result<BackgroundArg, String> {
+    let BackgroundArg::Image { path, mode, color } = background else {
+        return Ok(background);
+    };
+    let path = match path.strip_prefix("~/") {
+        Some(rest) => otto_kit::xdg::home()
+            .map(|home| home.join(rest).to_string_lossy().into_owned())
+            .unwrap_or(path),
+        None => path,
+    };
+    otto_kit::wallpaper::open(&path)
+        .map_err(|err| format!("cannot use `{path}` as a background: {err}"))?;
+    Ok(BackgroundArg::Image { path, mode, color })
+}
+
+/// Write `background` into an override: a reset clears it, anything else
+/// sets what it names and keeps the rest.
+fn apply_background(record: &mut crate::config::WallpaperOverride, background: BackgroundArg) {
+    match background {
+        BackgroundArg::Reset => *record = Default::default(),
+        BackgroundArg::Solid(color) => {
+            record.image = Some(String::new());
+            record.color = Some(color);
+        }
+        BackgroundArg::Image { path, mode, color } => {
+            record.image = Some(path);
+            if let Some(mode) = mode {
+                record.mode = Some(mode.token().to_string());
+            }
+            if let Some(color) = color {
+                record.color = Some(color);
+            }
+        }
+    }
 }

@@ -7,6 +7,9 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 pub mod default_apps;
 pub mod file;
 pub mod shortcuts;
+pub mod wallpaper;
+
+pub use wallpaper::{save_output_wallpaper, WallpaperOverride};
 
 use shortcuts::{build_bindings, RunCommandConfig, ShortcutBinding, ShortcutMap};
 use toml::map::Entry;
@@ -57,6 +60,10 @@ pub struct Config {
     pub background_position_y: f64,
     /// Extra magnification in `fill` mode, from 1.0, panned by the position.
     pub background_zoom: f64,
+    /// Per-output wallpaper overrides, keyed by output name:
+    /// `[background_outputs."DP-1"]`. See [`wallpaper::WallpaperOverride`].
+    #[serde(default)]
+    pub background_outputs: BTreeMap<String, WallpaperOverride>,
     pub locales: Vec<String>,
     pub use_10bit_color: bool,
     /// The accent colour Otto's own interface paints with: a palette name,
@@ -188,6 +195,7 @@ impl Default for Config {
             background_position_x: 0.5,
             background_position_y: 0.5,
             background_zoom: 1.0,
+            background_outputs: BTreeMap::new(),
             locales: Vec::new(),
             use_10bit_color: false,
             accent_color: default_accent_color(),
@@ -221,36 +229,6 @@ impl Default for Config {
 pub const WINIT_DISPLAY_ID: &str = "winit";
 
 impl Config {
-    /// How the wallpaper is laid out, from the `background_*` settings. An
-    /// unknown mode is `fill` and out-of-range numbers are pulled into range,
-    /// rather than leaving the desktop blank over a typo.
-    pub fn wallpaper_layout(&self) -> otto_kit::wallpaper::Layout {
-        let mode = otto_kit::wallpaper::Mode::parse(&self.background_mode).unwrap_or_else(|| {
-            // Read on every layout pass: say so once per bad value, not per
-            // frame.
-            static WARNED: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
-            if let Ok(mut warned) = WARNED.lock() {
-                if warned.as_deref() != Some(self.background_mode.as_str()) {
-                    warn!(
-                        "unknown background_mode `{}`, using fill",
-                        self.background_mode
-                    );
-                    *warned = Some(self.background_mode.clone());
-                }
-            }
-            otto_kit::wallpaper::Mode::Fill
-        });
-        otto_kit::wallpaper::Layout {
-            mode,
-            position: (
-                self.background_position_x as f32,
-                self.background_position_y as f32,
-            ),
-            zoom: self.background_zoom as f32,
-        }
-        .sanitised()
-    }
-
     /// Run `f` against the current configuration snapshot.
     ///
     /// The snapshot is immutable, so a value read here cannot change underneath
@@ -1130,7 +1108,7 @@ impl Default for WorkspacesConfig {
 /// One record rather than a table per field, so a workspace reads as a
 /// workspace in the file and a new per-workspace setting is a field here
 /// instead of another parallel map.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct WorkspaceEntry {
     /// The name the user typed in the workspace selector. Absent means the
@@ -1146,6 +1124,10 @@ pub struct WorkspaceEntry {
     pub inner_gap: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub outer_gap: Option<i32>,
+    /// The workspace's own wallpaper settings, over its output's:
+    /// `[workspaces.entries."eDP-1:0".background]`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub background: Option<WallpaperOverride>,
 }
 
 fn is_false(value: &bool) -> bool {
@@ -1549,6 +1531,11 @@ fn read_workspace_entries(workspaces: &toml_edit::Table) -> BTreeMap<String, Wor
                         .get("outer_gap")
                         .and_then(|v| v.as_integer())
                         .map(|n| n as i32),
+                    background: fields
+                        .get("background")
+                        .and_then(|v| v.as_table_like())
+                        .map(WallpaperOverride::from_table)
+                        .filter(|record| !record.is_empty()),
                 },
             );
         }
@@ -1604,6 +1591,9 @@ fn workspace_entry_table(entry: &WorkspaceEntry) -> toml_edit::Table {
     }
     if let Some(outer) = entry.outer_gap {
         table.insert("outer_gap", toml_edit::value(outer as i64));
+    }
+    if let Some(background) = entry.background.as_ref().filter(|b| !b.is_empty()) {
+        table.insert("background", toml_edit::Item::Table(background.to_table()));
     }
     table
 }
@@ -2838,6 +2828,7 @@ mod tests {
                 tiling: false,
                 inner_gap: Some(0),
                 outer_gap: Some(0),
+                background: None,
             }
         );
         assert_eq!(
@@ -2884,6 +2875,7 @@ outer = 4
                 tiling: false,
                 inner_gap: Some(0),
                 outer_gap: Some(4),
+                background: None,
             }
         );
         assert_eq!(
@@ -2940,6 +2932,7 @@ tiling = true
                 tiling: true,
                 inner_gap: Some(0),
                 outer_gap: Some(4),
+                background: None,
             }
         );
         assert_eq!(config.workspaces.switch_duration, 0.5);
