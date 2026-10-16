@@ -8,7 +8,7 @@ How it works: [otto-kit](../../docs/developer/otto-kit.md).
 
 ## Dependencies
 - **Internal:** `otto-foundations` (re-exported as `otto_kit::xdg`, `otto_kit::uri`, `otto_kit::matching`) and `otto-dbus` (the `org.otto.*` proxies, re-exported as `otto_kit::dbus`).
-- **External:** `smithay-client-toolkit` and `wayland-client`; `skia-safe` (gl, textlayout, svg, skottie), re-exported as `otto_kit::skia`; `laye-rs` for the retained scene graph; EGL, loaded at run time. From the compositor it needs `zwlr_layer_shell_v1`, `ext_session_lock_v1`, fractional scale, `zwp_text_input_v3`, pointer gestures and Otto's own protocols. It follows the `org.freedesktop.portal.Settings` portal for colour scheme, accent and locale, and serves accessibility through AccessKit over AT-SPI. The `dictation` feature adds PipeWire capture and an HTTP speech-to-text client.
+- **External:** `smithay-client-toolkit` and `wayland-client`; `skia-safe` (gl, textlayout, svg, skottie), re-exported as `otto_kit::skia`; `laye-rs` for the retained scene graph; EGL, loaded at run time. From the compositor it needs `zwlr_layer_shell_v1`, `ext_session_lock_v1`, fractional scale, `zwp_text_input_v3`, pointer gestures and Otto's own protocols. It follows the `org.freedesktop.portal.Settings` portal for colour scheme, accent and locale, puts up file dialogs through the portal's `FileChooser`, and serves accessibility through AccessKit over AT-SPI. The `dictation` feature adds PipeWire capture and an HTTP speech-to-text client.
 
 ## Develop
 - `cargo build -p otto-kit`; `cargo run -p otto-kit --example simple_app`. `examples/` (one per component or surface pattern) is the practical reference.
@@ -21,6 +21,7 @@ How it works: [otto-kit](../../docs/developer/otto-kit.md).
 - The runtime: `src/app_runner/` (the `App` trait, `AppRunner`, `AppContext`) and `src/surfaces/` (one type per Wayland role).
 - Drawing: `src/rendering/` (EGL, Skia, the lay-rs renderer) and `src/components/` (the widget set).
 - The design system: `theme.rs`, `typography.rs`, `icons.rs`, with the portal watchers sharing `portal_settings.rs`.
+- `portal_file_chooser.rs` is the one `org.freedesktop.portal.FileChooser` client: apps build a `Request` and `spawn` it rather than calling the portal themselves.
 - Otto's own protocols are generated in `src/protocols/`; desktop entries, file types, previews, clipboard, drag and drop, sound and Lottie have their own modules.
 
 ## Rules

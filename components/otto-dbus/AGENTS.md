@@ -21,7 +21,7 @@ How it works: [otto-dbus](../../docs/developer/otto-dbus.md).
 - A proxy module's doc comment names the interface and the file that serves it. Change the two together.
 - A new `#[interface]` server gets its proxy here in the same change: a module named after the interface, exporting `SERVICE` and `PATH`, with the method signatures copied from the server's impl. A server method returning `zbus::fdo::Result<T>` or `Result<T, SomeFault>` becomes `zbus::Result<T>` on the client side. Signals become `#[zbus(signal)]` methods on the proxy.
 - Add a new module to the interface table on the [otto-dbus](../../docs/developer/otto-dbus.md) page.
-- The freedesktop interfaces Otto calls are not declared here, because they are not Otto's. Inside otto-kit the Settings portal has one shared client, `portal_settings.rs`.
+- The freedesktop interfaces Otto calls are not declared here, because they are not Otto's. Inside otto-kit the Settings portal has one shared client, `portal_settings.rs`, and the FileChooser portal another, `portal_file_chooser.rs`.
 
 ## See also
 - [Settings D-Bus API](../../docs/developer/settings-dbus-api.md), [Shell D-Bus API](../../docs/developer/shell-dbus-api.md).

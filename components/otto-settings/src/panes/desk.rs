@@ -24,8 +24,9 @@ use std::time::SystemTime;
 
 use toml_edit::DocumentMut;
 
+use otto_kit::portal_file_chooser::{Outcome, Request};
+
 use crate::discovery::Choice;
-use crate::file_picker;
 use crate::model::{group, Control, Group, Row};
 use crate::settings_client::{self, Value};
 
@@ -403,12 +404,12 @@ fn in_background(name: &str, work: impl FnOnce() + Send + 'static) {
 
 /// Ask for a folder through the desktop portal and make it the desk's.
 fn choose_folder() {
-    in_background("desk-folder", || {
-        let title = otto_kit::t!("settings-desk-choose-folder-title");
-        let path = match file_picker::open_folder(title) {
-            file_picker::Outcome::Chosen(paths) => paths.into_iter().next(),
-            file_picker::Outcome::Dismissed => None,
-            file_picker::Outcome::Failed(why) => {
+    let title = otto_kit::t!("settings-desk-choose-folder-title");
+    let spawned = Request::open_folder(title).spawn(|outcome| {
+        let path = match outcome {
+            Outcome::Chosen(paths) => paths.into_iter().next(),
+            Outcome::Dismissed => None,
+            Outcome::Failed(why) => {
                 eprintln!("desk: {why}");
                 None
             }
@@ -419,6 +420,9 @@ fn choose_folder() {
         let folder = otto_kit::xdg::tilde(&path);
         write(|text| with_folder(text, &folder));
     });
+    if let Err(err) = spawned {
+        eprintln!("desk: could not open the folder picker: {err}");
+    }
 }
 
 /// Call `EditLayout` on the running desk. It returns at once; the desk shows

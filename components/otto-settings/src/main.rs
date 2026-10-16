@@ -16,7 +16,6 @@
 //! ```
 
 mod discovery;
-mod file_picker;
 mod glyphs;
 mod model;
 mod panes;
@@ -939,41 +938,37 @@ fn report(id: &str, outcome: settings_client::SetOutcome) {
 /// arrangement `settings_client::spawn_change_listener` uses and is
 /// documented as safe from any thread.
 fn open_file_picker(id: &'static str) {
-    let spawned = std::thread::Builder::new()
-        .name("file-picker".into())
-        .spawn(move || {
-            // Both file rows — the wallpaper and the account picture — take an
-            // image, so the filter is written here rather than on the row.
-            let filters: &[(&str, &[&str])] = &[
-                (
-                    "Images",
-                    &["*.png", "*.jpg", "*.jpeg", "*.webp", "*.bmp", "*.gif"],
-                ),
-                ("All Files", &["*"]),
-            ];
+    use otto_kit::portal_file_chooser::{Outcome, Request, Rule};
 
-            let title = if id == panes::account::PICTURE_ID {
-                otto_kit::t!("settings-account-choose-picture")
-            } else {
-                otto_kit::t!("settings-choose-background-image")
-            };
-            match file_picker::open_file(title, filters) {
-                file_picker::Outcome::Chosen(paths) => {
-                    if let Some(path) = paths.first() {
-                        apply(
-                            id,
-                            settings_client::Value::Text(path.to_string_lossy().into_owned()),
-                        );
-                    }
-                }
-                file_picker::Outcome::Dismissed => {}
-                file_picker::Outcome::Failed(why) => {
-                    eprintln!("{id}: the file picker failed ({why})");
+    // Both file rows — the wallpaper and the account picture — take an
+    // image, so the filter is written here rather than on the row.
+    let images: Vec<Rule> = ["*.png", "*.jpg", "*.jpeg", "*.webp", "*.bmp", "*.gif"]
+        .into_iter()
+        .map(|glob| Rule::Glob(glob.into()))
+        .collect();
+    let title = if id == panes::account::PICTURE_ID {
+        otto_kit::t!("settings-account-choose-picture")
+    } else {
+        otto_kit::t!("settings-choose-background-image")
+    };
+    // The kit wakes the main loop once the answer is in, whatever it is:
+    // the row may need redrawing either way.
+    let spawned = Request::open_file(title)
+        .filter("Images", &images)
+        .filter("All Files", &[Rule::Glob("*".into())])
+        .spawn(move |outcome| match outcome {
+            Outcome::Chosen(paths) => {
+                if let Some(path) = paths.first() {
+                    apply(
+                        id,
+                        settings_client::Value::Text(path.to_string_lossy().into_owned()),
+                    );
                 }
             }
-            // Either way the row may need redrawing, and the main thread is
-            // asleep in `poll` until something says otherwise.
-            AppContext::request_wakeup();
+            Outcome::Dismissed => {}
+            Outcome::Failed(why) => {
+                eprintln!("{id}: the file picker failed ({why})");
+            }
         });
 
     if let Err(err) = spawned {

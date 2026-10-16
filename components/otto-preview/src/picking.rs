@@ -17,12 +17,13 @@ use std::sync::{Arc, Mutex};
 
 use otto_kit::components::label::Label;
 use otto_kit::components::titlebar::{DecorationVariant, WindowControl, WindowDecoration};
+use otto_kit::portal_file_chooser::Outcome;
 use otto_kit::prelude::*;
 use otto_kit::typography::styles;
 use smithay_client_toolkit::seat::pointer::{PointerEvent, PointerEventKind};
 use smithay_client_toolkit::shell::xdg::window::WindowConfigure;
 
-use crate::file_dialog::{self, Outcome};
+use crate::file_dialog;
 use crate::instance::{self, Documents, Inbox, Request, Role};
 
 /// The empty window's size, in points: a document's, which is what most
@@ -187,10 +188,20 @@ impl Picking {
         let (chat, session) = (self.chat, self.session.clone());
         let (inbox, documents) = (self.inbox.clone(), self.documents.clone());
         let runtime = tokio::runtime::Handle::current();
-        std::thread::spawn(move || {
-            let title = otto_kit::t_owned!("studio-open-title");
-            let picked = match file_dialog::open(&title, &parent) {
-                Outcome::Chosen(path) => {
+        let title = otto_kit::t_owned!("studio-open-title");
+        let fallback = Arc::clone(&answer);
+        // The kit wakes the run loop once the answer is in, whatever it is.
+        let spawned = file_dialog::open(&title, &parent).spawn(move |outcome| {
+            let path = match outcome {
+                Outcome::Chosen(paths) => paths.into_iter().next(),
+                Outcome::Dismissed => None,
+                Outcome::Failed(why) => {
+                    tracing::warn!(%why, "no open dialog");
+                    None
+                }
+            };
+            let picked = match path {
+                Some(path) => {
                     let request = Request {
                         path,
                         token: None,
@@ -206,15 +217,14 @@ impl Picking {
                         }
                     }
                 }
-                Outcome::Dismissed => Picked::Nothing,
-                Outcome::Failed(why) => {
-                    tracing::warn!(%why, "no open dialog");
-                    Picked::Nothing
-                }
+                None => Picked::Nothing,
             };
             *answer.lock().unwrap() = Some(picked);
-            AppContext::request_wakeup();
         });
+        if let Err(err) = spawned {
+            tracing::warn!(%err, "no thread for the open dialog");
+            *fallback.lock().unwrap() = Some(Picked::Nothing);
+        }
     }
 
     /// Move the pick along, and take its answer once there is one. The
