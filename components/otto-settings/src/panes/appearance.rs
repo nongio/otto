@@ -10,6 +10,8 @@
 
 use std::sync::OnceLock;
 
+use otto_kit::wallpaper::Mode;
+
 use crate::model::{group, Control, Pane, Row};
 
 /// The setting the desktop widget pop-up edits.
@@ -82,6 +84,30 @@ pub fn build() -> Pane {
                     )
                     .detail(otto_kit::t!("settings-background-image-detail"))
                     .id("background_image"),
+                    Row::new(
+                        otto_kit::t!("settings-background-layout"),
+                        Control::Select("fill".into()),
+                    )
+                    .id("background_mode"),
+                    background_row(
+                        otto_kit::t!("settings-background-zoom"),
+                        "background_zoom",
+                        (1.0, 1.0, otto_kit::wallpaper::MAX_ZOOM),
+                        Mode::uses_zoom,
+                    ),
+                    background_row(
+                        otto_kit::t!("settings-background-position-x"),
+                        "background_position_x",
+                        (0.5, 0.0, 1.0),
+                        Mode::uses_position,
+                    )
+                    .detail(otto_kit::t!("settings-background-position-detail")),
+                    background_row(
+                        otto_kit::t!("settings-background-position-y"),
+                        "background_position_y",
+                        (0.5, 0.0, 1.0),
+                        Mode::uses_position,
+                    ),
                     desktop_widget_row(),
                 ],
             ),
@@ -113,6 +139,28 @@ pub fn build() -> Pane {
             ),
         ],
     }
+}
+
+/// A background slider, greyed out where the layout chosen has no use for
+/// it — a stretched wallpaper has no position, only a filled one zooms.
+fn background_row(
+    label: &'static str,
+    id: &'static str,
+    (value, min, max): (f32, f32, f32),
+    applies: fn(Mode) -> bool,
+) -> Row {
+    let (layout, _) = crate::wallpaper_preview::current_style();
+    Row::new(
+        label,
+        Control::Slider {
+            value,
+            min,
+            max,
+            readout: format!("{:.0}%", value * 100.0),
+        },
+    )
+    .id(id)
+    .inactive(!applies(layout.mode))
 }
 
 /// The desktop widget pop-up. ewwii draws the widgets and is not a

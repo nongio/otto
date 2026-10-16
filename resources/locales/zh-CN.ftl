@@ -105,6 +105,11 @@ settings-group-desktop = 桌面
 settings-background-colour = 背景颜色
 settings-background-image = 背景图片
 settings-background-image-detail = 通过桌面门户的文件选择器选取
+settings-background-layout = 显示方式
+settings-background-zoom = 缩放
+settings-background-position-x = 水平位置
+settings-background-position-y = 垂直位置
+settings-background-position-detail = 也可以点按图片中要保持可见的部分
 settings-desktop-widget = 背景小组件
 settings-desktop-widget-needs-ewwii = 需要 ewwii，但尚未安装
 # { $folder } is a path such as ~/.config/otto/widgets/ewwii.
@@ -528,6 +533,13 @@ settings-choice-widget-calendar = 日历
 # The next two name pages whose text is in English, so they stay as written.
 settings-choice-widget-cross-pad = Cross pad
 settings-choice-widget-grid-pad = Grid pad
+# How a background image fills the screen.
+settings-choice-background-fill = 填充屏幕
+settings-choice-background-fit = 适合屏幕
+settings-choice-background-stretch = 拉伸以填充
+settings-choice-background-center = 居中
+settings-choice-background-tile = 拼贴
+settings-choice-background-span = 跨越所有显示器
 # The automatic option for a theme that follows the system.
 settings-choice-auto = 自动
 
@@ -1035,9 +1047,17 @@ schema-topbar-clock-format-description = 顶部栏显示日期和时间所用的
 schema-topbar-show-app-menu-label = 显示应用程序菜单
 schema-topbar-show-app-menu-description = 当前应用的菜单，显示在顶部栏中其名称旁边。
 schema-background-color-label = 背景颜色
-schema-background-color-description = 桌面背景颜色，以十六进制字符串表示。
+schema-background-color-description = 桌面背景颜色，以十六进制字符串表示：没有图片时显示的渐变，以及适合屏幕或居中的图片周围显示的颜色。
 schema-background-image-label = 背景图片
 schema-background-image-description = 桌面背景图片的路径。留空表示不使用。
+schema-background-mode-label = 背景显示方式
+schema-background-mode-description = 背景图片如何填满屏幕。
+schema-background-position-x-label = 背景水平位置
+schema-background-position-x-description = 裁切后的背景图片显示哪一部分，以及较小的图片放在哪里，从 0（左）到 1（右）。
+schema-background-position-y-label = 背景垂直位置
+schema-background-position-y-description = 裁切后的背景图片显示哪一部分，以及较小的图片放在哪里，从 0（上）到 1（下）。
+schema-background-zoom-label = 背景缩放
+schema-background-zoom-description = 填充屏幕或跨越显示器的背景图片的放大倍数，从 1（刚好覆盖屏幕）起。
 schema-cursor-theme-label = 光标主题
 schema-cursor-theme-description = XCursor 主题的名称。
 schema-cursor-size-label = 光标大小

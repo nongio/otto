@@ -106,6 +106,11 @@ settings-group-desktop = Робочий стіл
 settings-background-colour = Колір тла
 settings-background-image = Зображення тла
 settings-background-image-detail = Обирається через засіб вибору файлів робочого стола
+settings-background-layout = Розміщення
+settings-background-zoom = Масштаб
+settings-background-position-x = По горизонталі
+settings-background-position-y = По вертикалі
+settings-background-position-detail = Або натисни на ту частину зображення, яка має лишатися видимою
 settings-desktop-widget = Фоновий віджет
 settings-desktop-widget-needs-ewwii = Потрібен ewwii, а його не встановлено
 # { $folder } is a path such as ~/.config/otto/widgets/ewwii.
@@ -541,6 +546,13 @@ settings-choice-widget-calendar = Календар
 # The next two name pages whose text is in English, so they stay as written.
 settings-choice-widget-cross-pad = Cross pad
 settings-choice-widget-grid-pad = Grid pad
+# How a background image fills the screen.
+settings-choice-background-fill = Заповнити екран
+settings-choice-background-fit = За розміром екрана
+settings-choice-background-stretch = Розтягнути
+settings-choice-background-center = По центру
+settings-choice-background-tile = Плиткою
+settings-choice-background-span = На всі дисплеї
 # The automatic option for a theme that follows the system.
 settings-choice-auto = Авто
 
@@ -1097,9 +1109,17 @@ schema-topbar-clock-format-description = Як верхня панель пише
 schema-topbar-show-app-menu-label = Показувати меню програм
 schema-topbar-show-app-menu-description = Меню активної програми поруч із її назвою на верхній панелі.
 schema-background-color-label = Колір тла
-schema-background-color-description = Колір тла стільниці у вигляді шістнадцяткового рядка.
+schema-background-color-description = Колір тла стільниці у вигляді шістнадцяткового рядка: градієнт, який видно без зображення, і те, що видно навколо зображення, вписаного в екран чи розміщеного по центру.
 schema-background-image-label = Зображення тла
 schema-background-image-description = Шлях до зображення тла стільниці. Порожньо, якщо тло не задано.
+schema-background-mode-label = Розміщення тла
+schema-background-mode-description = Як зображення тла заповнює екран.
+schema-background-position-x-label = Положення тла по горизонталі
+schema-background-position-x-description = Яку частину обрізаного зображення тла видно і де розташоване менше зображення, від 0 (ліворуч) до 1 (праворуч).
+schema-background-position-y-label = Положення тла по вертикалі
+schema-background-position-y-description = Яку частину обрізаного зображення тла видно і де розташоване менше зображення, від 0 (угорі) до 1 (унизу).
+schema-background-zoom-label = Масштаб тла
+schema-background-zoom-description = Збільшення зображення тла, що заповнює екран або розтягнуте на всі дисплеї, від 1 (рівно вкриває екран).
 schema-cursor-theme-label = Тема курсора
 schema-cursor-theme-description = Назва теми XCursor.
 schema-cursor-size-label = Розмір курсора

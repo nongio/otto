@@ -18,6 +18,10 @@ profiling.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 
+[dev-dependencies]
+# The Vulkan wallpaper tests paint with the compositor's own wallpaper code.
+otto-kit = { path = "../../components/otto-kit" }
+
 [dependencies.smithay]
 workspace = true
 features = ["wayland_frontend", "renderer_gl", "backend_egl"]

@@ -310,6 +310,12 @@ jobs:
         timeout-minutes: 15
         if: needs.changes.outputs.compositor == 'true'
         run: cargo test --locked --features headless --test workspace_selector --test app_switcher --test tiling --test dnd_icons
+      - name: Run wallpaper tests
+        timeout-minutes: 15
+        if: needs.changes.outputs.compositor == 'true'
+        # What reaches the screen, in the layout set, and the same pixels
+        # however a frame is repainted (nongio/otto#361).
+        run: cargo test --locked --features headless --test wallpaper --test expose_wallpaper
       - name: Run screencast integration tests
         timeout-minutes: 15
         if: needs.changes.outputs.compositor == 'true' || needs.changes.outputs.portal == 'true'

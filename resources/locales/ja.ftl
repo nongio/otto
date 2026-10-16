@@ -106,6 +106,11 @@ settings-group-desktop = デスクトップ
 settings-background-colour = 背景色
 settings-background-image = 背景画像
 settings-background-image-detail = デスクトップポータルのファイル選択画面から選びます
+settings-background-layout = 表示方法
+settings-background-zoom = ズーム
+settings-background-position-x = 横位置
+settings-background-position-y = 縦位置
+settings-background-position-detail = または、表示しておきたい部分を画像上でクリックします
 settings-desktop-widget = 背景ウィジェット
 settings-desktop-widget-needs-ewwii = ewwii が必要ですが、インストールされていません
 # { $folder } is a path such as ~/.config/otto/widgets/ewwii.
@@ -527,6 +532,13 @@ settings-choice-widget-calendar = カレンダー
 # The next two name pages whose text is in English, so they stay as written.
 settings-choice-widget-cross-pad = Cross pad
 settings-choice-widget-grid-pad = Grid pad
+# How a background image fills the screen.
+settings-choice-background-fill = 画面全体に表示
+settings-choice-background-fit = 画面に合わせる
+settings-choice-background-stretch = 引き伸ばして表示
+settings-choice-background-center = 中央に表示
+settings-choice-background-tile = 並べて表示
+settings-choice-background-span = 複数のディスプレイにまたがる
 # The automatic option for a theme that follows the system.
 settings-choice-auto = 自動
 
@@ -1032,9 +1044,17 @@ schema-topbar-clock-format-description = 上部バーに表示する日付と時
 schema-topbar-show-app-menu-label = アプリケーションメニューを表示
 schema-topbar-show-app-menu-description = 使用中のアプリのメニューを、上部バーのアプリ名の横に表示します。
 schema-background-color-label = 背景色
-schema-background-color-description = デスクトップの背景色。16進文字列で指定します。
+schema-background-color-description = デスクトップの背景色。16進文字列で指定します。画像がないときのグラデーションと、画面に合わせた画像や中央に表示した画像の周囲に使われます。
 schema-background-image-label = 背景画像
 schema-background-image-description = デスクトップの背景画像のパス。空なら画像なし。
+schema-background-mode-label = 背景の表示方法
+schema-background-mode-description = 背景画像を画面にどう表示するか。
+schema-background-position-x-label = 背景の横位置
+schema-background-position-x-description = 切り取られた背景画像のどの部分を表示するか、小さい画像をどこに置くか。0（左）から1（右）まで。
+schema-background-position-y-label = 背景の縦位置
+schema-background-position-y-description = 切り取られた背景画像のどの部分を表示するか、小さい画像をどこに置くか。0（上）から1（下）まで。
+schema-background-zoom-label = 背景のズーム
+schema-background-zoom-description = 画面全体に表示する、または複数のディスプレイにまたがる背景画像の拡大率。1（画面をちょうど覆う）から。
 schema-cursor-theme-label = カーソルテーマ
 schema-cursor-theme-description = XCursorテーマの名前。
 schema-cursor-size-label = カーソルサイズ

@@ -48,6 +48,10 @@ pub struct WorkspaceView {
     /// `name` (which the fullscreen path sets to the app's name) and over the
     /// positional fallback.
     custom_name: Arc<RwLock<Option<String>>>,
+    /// The workspace's own wallpaper settings, over its output's. Held here
+    /// rather than read from the config by position, so it travels with the
+    /// workspace when the workspaces are reordered, as the name does.
+    background: Arc<RwLock<Option<crate::config::WallpaperOverride>>>,
     /// The number this workspace answers to when nobody has named it — the
     /// `N` in `Workspace N`. It belongs to the workspace, not to the slot the
     /// workspace is sitting in, so dragging a workspace along the strip takes
@@ -194,7 +198,6 @@ impl WorkspaceView {
         let background_color = Config::with(|c| parse_hex_color(&c.background_color));
         let background_view =
             BackgroundView::new(index, background_layer.clone(), background_color);
-        let background_path = Config::with(|c| c.background_image.clone());
         let background_view = Arc::new(background_view);
 
         let window_selector_view = WindowSelectorView::new(
@@ -208,14 +211,6 @@ impl WorkspaceView {
 
         let window_selector_view = Arc::new(window_selector_view);
 
-        if let Some(background_image) = super::background::decode_wallpaper(&background_path) {
-            background_view.set_image(background_image);
-        } else if !background_path.is_empty() {
-            tracing::warn!(
-                "Failed to load background image from path: {}",
-                background_path
-            );
-        }
         Self {
             index,
             windows_list: Arc::new(RwLock::new(Vec::new())),
@@ -230,6 +225,7 @@ impl WorkspaceView {
             is_fullscreen_animating: Arc::new(AtomicBool::new(false)),
             name: Arc::new(RwLock::new(None)),
             custom_name: Arc::new(RwLock::new(None)),
+            background: Arc::new(RwLock::new(None)),
             display_number: Arc::new(RwLock::new(index)),
             window_base_layers: Arc::new(RwLock::new(HashMap::new())),
             pre_expose_order: Arc::new(RwLock::new(Vec::new())),
@@ -424,6 +420,19 @@ impl WorkspaceView {
 
     pub fn get_custom_name(&self) -> Option<String> {
         self.custom_name.read().unwrap().clone()
+    }
+
+    /// Set the workspace's own wallpaper override. An empty one clears it.
+    pub fn set_background_override(&self, background: Option<crate::config::WallpaperOverride>) {
+        let background = background.filter(|b| !b.is_empty());
+        if let Ok(mut slot) = self.background.write() {
+            *slot = background;
+        }
+    }
+
+    /// The workspace's own wallpaper override, if it has one.
+    pub fn background_override(&self) -> Option<crate::config::WallpaperOverride> {
+        self.background.read().ok().and_then(|b| b.clone())
     }
 
     /// The number in this workspace's default label.

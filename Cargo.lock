@@ -5663,6 +5663,7 @@ dependencies = [
  "laye-rs",
  "libc",
  "otto-foundations",
+ "otto-kit",
  "profiling",
  "smithay",
  "thiserror 2.0.17",

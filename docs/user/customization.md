@@ -104,7 +104,7 @@ so what a light tint has to work with is the source icon's luminance.
 
 | Setting | Where | Effect |
 |---------|-------|--------|
-| `background_image`, `background_color` | [Theming](theming.md#wallpaper) | The wallpaper, and what shows if it fails to load |
+| `background_image`, `background_color`, `background_mode`, `background_position_x`, `background_position_y`, `background_zoom`, `[background_outputs]` | [Theming](theming.md#wallpaper) | The wallpaper, how it fills each display, and what shows around it or if it fails to load |
 | `theme_scheme` | [Theming](theming.md#light-and-dark) | Light or dark, for Otto's chrome *and* for GTK/Qt apps through the portal |
 | `accent_color` | [Theming](theming.md#accent-colour) | Selection, highlights and controls. A palette name or a hex literal |
 | `font_family` | [Theming](theming.md#fonts) | Otto's own interface type. Needs a restart |

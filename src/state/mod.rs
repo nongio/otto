@@ -1076,8 +1076,17 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         let scene_element = SceneElement::with_engine(layers_engine.clone(), || {
             Config::with(|c| c.occlusion_culling)
         });
-        let (workspaces, remove_workspace_receiver, rename_workspace_receiver) =
+        let (workspaces, remove_workspace_receiver, rename_workspace_receiver, wallpaper_receiver) =
             Workspaces::new(layers_engine.clone(), dh.clone());
+        handle
+            .insert_source(wallpaper_receiver, |event, _, otto| {
+                if let ChannelEvent::Msg(done) = event {
+                    if otto.workspaces.wallpaper_frame_ready(done) {
+                        otto.backend_data.request_redraw();
+                    }
+                }
+            })
+            .expect("Failed to register the wallpaper channel");
         handle
             .insert_source(remove_workspace_receiver, |event, _, otto| {
                 // Channel carries (Option<output_name>, position). Some(name)
