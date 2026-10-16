@@ -160,6 +160,47 @@ It is applied wherever a physical box is handed to a layer:
 As with positions, an integer scale never leaves the grid and every one of
 these is a no-op there.
 
+## The wallpaper
+
+The wallpaper follows the same rule as a client's buffer, more strictly: it is
+never resampled per frame. `otto_kit::wallpaper` renders it once per output
+into a *frame* exactly the output's size, and `BackgroundView` draws that frame
+1:1. The contract is [specs/wallpaper.md](../../specs/wallpaper.md).
+
+- **Why 1:1.** A wallpaper scaled in the shader puts pixel centres between
+  texels. Where one lands exactly on a texel boundary — a 16:9 photo centred
+  on a 21:9 screen sits at y = -247.5, which is every row — nearest sampling
+  picks a side by the last bit of the interpolated coordinate. A repaint
+  cropped to a damage rect rasterises different triangles from the whole
+  paint and rounds the other way: the shimmer along a diagonal from a dragged
+  window in nongio/otto#361.
+- **The frame.** `render_frame` lays the image out (`arrange`: the mode,
+  `object-position`, zoom, the span's place on the desktop), snaps the visible
+  edges to whole pixels, and resamples exactly the image region inside them
+  with `otto_kit::utils::resample`: a separable kernel that widens with the
+  ratio (Lanczos-3 shrinking, Mitchell growing), on linear premultiplied
+  light. A region that lands 1:1 on whole pixels is copied. SVGs are drawn as
+  vectors. It is opaque, the fill colour behind the image.
+- **The draw.** `otto_kit::wallpaper::paint` samples bilinear with mipmaps
+  and clamps. At the 1:1 whole-pixel placement bilinear reads exactly one
+  texel per pixel; the mipmaps are for the same recorded picture replayed
+  small, as the exposé backdrop and the workspace previews. `Placement` keeps
+  every offset whole, so a frame drawn on a layer of another size (between a
+  mode change and its new frame) still never sits on a half pixel.
+- **The store.** `workspaces::background::store` opens each file once,
+  synchronously so a bad path is reported straight away, and renders frames
+  on a worker thread, keyed by file version, output size and style; one frame
+  serves every workspace of that key. Results come back through a calloop
+  channel and ask for a redraw.
+
+The tests that hold this: `otto_kit::wallpaper`'s placement tests check that
+every pixel centre maps to a texel centre for common image and screen sizes,
+`utils::resample`'s check aliasing, linear light and sharpness against Skia's
+single-pass cubic, and `tests/wallpaper.rs` checks the screen against the frame
+pixel for pixel and a cropped repaint against a whole one. The Vulkan tests in
+`crates/otto-render` (`vulkan_wallpaper_*`, ignored) do the cropped-repaint
+check on a GPU, and report what the old half-pixel nearest path did there.
+
 ## Getting frames out
 
 Two independent capture paths exist, and they share one GPU blit:
