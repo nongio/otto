@@ -119,7 +119,7 @@ at the top — check that before trusting the details.
 | [Tiling Plan](tiling-plan.md) | Mostly built: the tree, the commands and the settings; tabbed/stacked and XWayland are not |
 | [Screenshot Portal Plan](screenshot-plan.md) | Partly built: the portal exists and shells out to `grim`; capture inside the compositor is still the plan |
 | [AirPlay Screenshare](airplay-screenshare.md) | Exploration only |
-| [Search Next Plan](search-next-plan.md) | Draft requirements, not built; open for comments |
+| [Search Next Plan](search-next-plan.md) | Draft requirements, not built |
 | [Vulkan Renderer Plan](vulkan-renderer-plan.md) | Phases 1–3 built; plane scanout on Vulkan is next |
 
 ## Specs

@@ -20,16 +20,7 @@
          result is a piece of the page rather than its table of contents. The
          back link is inside the h1, which Pagefind reads as the result's
          title, so it is ignored rather than prefixed to every result. */}}
-    {{/* Pages with `comments: true` (the plans) get a Comment button on
-         each section; main.js opens a giscus thread there, one GitHub
-         Discussion per section. */}}
-    <main data-pagefind-body
-          {{- with .Params.comments }}
-          data-comments-repo="nongio/otto"
-          data-comments-repo-id="R_kgDOLOwKsw"
-          data-comments-category="Ideas"
-          data-comments-category-id="DIC_kwDOLOwKs84CkHb4"
-          {{- end }}>
+    <main data-pagefind-body>
         <h1><a class="back-home" data-pagefind-ignore href="{{ $up.RelPermalink }}">&larr; {{ $up.Title }}</a><span class="page-title">{{ .Title }}</span></h1>
         {{ .Content }}
     </main>

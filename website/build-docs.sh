@@ -164,7 +164,7 @@ declare -A PAGE_DESC=(
     [dev/tiling-plan]="Otto's tiling window management: the tree, the command language, decorations and drag behaviour — what is built, and what is still planned."
     [dev/otto-kit-roadmap]="What Otto's UI toolkit provides today, what is still missing, and the planned direction. Partially built - read it as a plan."
     [dev/surface-style-protocol]="otto-surface-style-unstable-v1: how a client styles and animates its own surface through the compositor's scene graph, and why the protocol looks the way it does."
-    [dev/search-next-plan]="Requirements for reworking Otto's file search into one local service that finds files by meaning, words and filters. A draft open for comments."
+    [dev/search-next-plan]="Requirements for reworking Otto's file search into one local service that finds files by meaning, words and filters.. A draft."
     [dev/screenshot-plan]="A design for screenshot support through the desktop portal. Not implemented - a proposal rather than documentation."
     [dev/airplay-screenshare]="Notes from validating AirPlay as a screencast target for Otto. An exploration, not a shipped feature."
     [tiling]="Switch any Otto workspace between stacking and tiling: build a layout from the keyboard or the pointer, set gaps and tile decorations, and drive it from scripts."
@@ -202,17 +202,6 @@ declare -A PAGE_IMAGE=(
     [login-greeter]="images/login-greeter.jpg"
 )
 
-# The plans (the "Design docs and plans" table in docs/developer/README.md)
-# are open for discussion: each of their sections gets a giscus thread.
-declare -A PAGE_COMMENTS=(
-    [dev/otto-kit-roadmap]=1
-    [dev/tiling-plan]=1
-    [dev/screenshot-plan]=1
-    [dev/airplay-screenshare]=1
-    [dev/search-next-plan]=1
-    [dev/vulkan-renderer-plan]=1
-)
-
 # Old URLs for pages that have since been renamed, so existing links and search
 # results keep working. Hugo serves each alias as a redirect to the new page.
 declare -A PAGE_ALIAS=(
@@ -225,7 +214,6 @@ emit_meta() {
     [ -n "${PAGE_TITLE[$key]:-}" ] && echo "page_title: \"${PAGE_TITLE[$key]}\""
     [ -n "${PAGE_DESC[$key]:-}" ]  && echo "description: \"${PAGE_DESC[$key]}\""
     [ -n "${PAGE_IMAGE[$key]:-}" ] && echo "image: \"${PAGE_IMAGE[$key]}\""
-    [ -n "${PAGE_COMMENTS[$key]:-}" ] && echo "comments: true"
     [ -n "${PAGE_ALIAS[$key]:-}" ] && printf 'aliases:\n  - "%s"\n' "${PAGE_ALIAS[$key]}"
     return 0
 }
