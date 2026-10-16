@@ -5,6 +5,8 @@
 //! app's preview uses the same arithmetic, so what the preview shows is what
 //! the desktop gets.
 
+mod paint;
 mod placement;
 
+pub use paint::{paint, sampling};
 pub use placement::{cover, cover_size, Placement};

@@ -204,7 +204,6 @@ impl BackgroundView {
     }
 }
 
-// static mut COUNTER: f32 = 1.0;
 pub fn view_background(
     state: &BackgroundViewState,
     _view: &View<BackgroundViewState>,
@@ -212,88 +211,19 @@ pub fn view_background(
     let image = state.image.clone();
     let fallback_color = state.fallback_color;
 
-    // let debug_text = state.debug_string.clone();
-
     let draw_container = move |canvas: &skia::Canvas, w: f32, h: f32| {
-        let mut paint = skia::Paint::new(skia::Color4f::new(1.0, 1.0, 1.0, 1.0), None);
-
-        if let Some(image) = image.as_ref() {
-            // Scaled to cover the layer, at a whole-pixel offset: see
-            // `otto_kit::wallpaper` for why a half pixel is the worst case.
-            let target = (w.round() as i32, h.round() as i32);
-            let placement = cover((image.width(), image.height()), target);
-            paint.set_shader(image.to_shader(
-                (skia::TileMode::Repeat, skia::TileMode::Repeat),
-                skia::SamplingOptions::default(),
-                &placement.matrix(),
-            ));
-        } else {
-            // Create a gradient from bottom (fallback_color) to top (lighter version)
-            // Make the top color lighter by interpolating towards white
-            let lighter_factor = 0.3; // 30% lighter
-            let top_color = skia::Color4f::new(
-                fallback_color.r + (1.0 - fallback_color.r) * lighter_factor,
-                fallback_color.g + (1.0 - fallback_color.g) * lighter_factor,
-                fallback_color.b + (1.0 - fallback_color.b) * lighter_factor,
-                fallback_color.a,
-            );
-
-            // Convert Color4f to Color for gradient shader
-            let colors = [
-                skia::Color::from_argb(
-                    (fallback_color.a * 255.0) as u8,
-                    (fallback_color.r * 255.0) as u8,
-                    (fallback_color.g * 255.0) as u8,
-                    (fallback_color.b * 255.0) as u8,
-                ),
-                skia::Color::from_argb(
-                    (top_color.a * 255.0) as u8,
-                    (top_color.r * 255.0) as u8,
-                    (top_color.g * 255.0) as u8,
-                    (top_color.b * 255.0) as u8,
-                ),
-            ];
-            let positions: &[f32] = &[0.0, 1.0];
-
-            let start_point = skia::Point::new(0.0, h); // Bottom
-            let end_point = skia::Point::new(0.0, 0.0); // Top
-
-            if let Some(shader) = skia::gradient_shader::linear(
-                (start_point, end_point),
-                skia::gradient_shader::GradientShaderColors::Colors(&colors),
-                Some(positions),
-                skia::TileMode::Clamp,
-                None,
-                None,
-            ) {
-                paint.set_shader(shader);
+        let bounds = skia::Rect::from_wh(w, h);
+        match image.as_ref() {
+            Some(image) => {
+                // Scaled to cover the layer, at a whole-pixel offset: see
+                // `otto_kit::wallpaper` for why a half pixel is the worst case.
+                let target = (w.round() as i32, h.round() as i32);
+                let placement = cover((image.width(), image.height()), target);
+                otto_kit::wallpaper::paint(canvas, image, placement, bounds);
             }
+            None => paint_fallback_gradient(canvas, fallback_color, bounds),
         }
-
-        let split = 1;
-        let rect_size_w = w / split as f32;
-        let rect_size_h = h / split as f32;
-
-        for i in 0..split {
-            for j in 0..split {
-                let rect = skia::Rect::from_xywh(
-                    i as f32 * rect_size_w,
-                    j as f32 * rect_size_h,
-                    rect_size_w,
-                    rect_size_h,
-                );
-                canvas.draw_rect(rect, &paint);
-            }
-        }
-
-        // let color = skia::Color4f::new(0.0, 0.0, 0.0, 1.0);
-        // let paint = skia::Paint::new(color, None);
-        // let mut font = skia::Font::default();
-        // let font_size = 26.0;
-        // font.set_size(font_size);
-        // canvas.draw_str("test string string", (80.0, 100.0), &font, &paint);
-        // canvas.draw_rect(skia::Rect::from_xywh(80.0, 100.0, 200.0, 100.0), &paint);
-        skia::Rect::from_xywh(0.0, 0.0, w, h)
+        bounds
     };
 
     LayerTreeBuilder::default()
@@ -312,6 +242,31 @@ pub fn view_background(
         .pointer_events(false)
         .build()
         .unwrap()
+}
+
+/// The gradient shown when no wallpaper is set: `color` at the bottom, 30%
+/// of the way to white at the top.
+fn paint_fallback_gradient(canvas: &skia::Canvas, color: skia::Color4f, bounds: skia::Rect) {
+    const LIGHTER: f32 = 0.3;
+    let top = skia::Color4f::new(
+        color.r + (1.0 - color.r) * LIGHTER,
+        color.g + (1.0 - color.g) * LIGHTER,
+        color.b + (1.0 - color.b) * LIGHTER,
+        color.a,
+    );
+    let colors = [color.to_color(), top.to_color()];
+    let mut paint = skia::Paint::default();
+    if let Some(shader) = skia::gradient_shader::linear(
+        ((0.0, bounds.bottom), (0.0, bounds.top)),
+        skia::gradient_shader::GradientShaderColors::Colors(&colors),
+        Some(&[0.0, 1.0][..]),
+        skia::TileMode::Clamp,
+        None,
+        None,
+    ) {
+        paint.set_shader(shader);
+    }
+    canvas.draw_rect(bounds, &paint);
 }
 
 #[cfg(test)]
