@@ -105,6 +105,11 @@ settings-group-desktop = 桌面
 settings-background-colour = 背景颜色
 settings-background-image = 背景图片
 settings-background-image-detail = 通过桌面门户的文件选择器选取
+settings-background-layout = 显示方式
+settings-background-zoom = 缩放
+settings-background-position-x = 水平位置
+settings-background-position-y = 垂直位置
+settings-background-position-detail = 也可以点按图片中要保持可见的部分
 settings-desktop-widget = 背景小组件
 settings-desktop-widget-needs-ewwii = 需要 ewwii，但尚未安装
 # { $folder } is a path such as ~/.config/otto/widgets/ewwii.

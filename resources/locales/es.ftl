@@ -106,6 +106,11 @@ settings-group-desktop = Escritorio
 settings-background-colour = Color de fondo
 settings-background-image = Imagen de fondo
 settings-background-image-detail = Elegida a través del selector de archivos del portal de escritorio
+settings-background-layout = Ajuste
+settings-background-zoom = Zoom
+settings-background-position-x = Posición horizontal
+settings-background-position-y = Posición vertical
+settings-background-position-detail = O haz clic en la parte de la imagen que debe quedar a la vista
 settings-desktop-widget = Widget de fondo
 settings-desktop-widget-needs-ewwii = Necesita ewwii, que no está instalado
 # { $folder } is a path such as ~/.config/otto/widgets/ewwii.

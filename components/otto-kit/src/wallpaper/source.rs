@@ -31,6 +31,20 @@ impl std::fmt::Debug for Source {
     }
 }
 
+impl Source {
+    /// The picture's own size: pixels for a raster image, the document's
+    /// size for an SVG.
+    pub fn size(&self) -> Option<(f32, f32)> {
+        match self {
+            Source::Raster(image) => Some((image.width() as f32, image.height() as f32)),
+            Source::Svg(bytes) => {
+                let tree = usvg::Tree::from_data(bytes, &usvg::Options::default()).ok()?;
+                Some((tree.size().width(), tree.size().height()))
+            }
+        }
+    }
+}
+
 /// Why a wallpaper file could not be opened.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OpenError {

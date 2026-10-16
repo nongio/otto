@@ -105,6 +105,11 @@ settings-group-desktop = Pulpit
 settings-background-colour = Kolor tła
 settings-background-image = Obraz tła
 settings-background-image-detail = Wybierany w oknie wyboru plików portalu pulpitu
+settings-background-layout = Dopasowanie
+settings-background-zoom = Powiększenie
+settings-background-position-x = Pozycja w poziomie
+settings-background-position-y = Pozycja w pionie
+settings-background-position-detail = Albo kliknij część obrazu, która ma pozostać widoczna
 settings-desktop-widget = Widżet tła
 settings-desktop-widget-needs-ewwii = Wymaga ewwii, który nie jest zainstalowany
 # { $folder } is a path such as ~/.config/otto/widgets/ewwii.

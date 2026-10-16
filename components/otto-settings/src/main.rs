@@ -27,6 +27,7 @@ mod sheet;
 mod sidebar_search;
 mod theme_preview;
 mod view;
+mod wallpaper_preview;
 mod widgets;
 mod xkb_registry;
 
@@ -2754,6 +2755,21 @@ impl App for SettingsApp {
                             // `view::Pressed`.
                             *pressed_hit.lock().unwrap() =
                                 Some(view::Pressed::RemoveFile(preview.id));
+                            mark_pane_dirty(&pane_dirty);
+                        } else if let Some(position) = settings
+                            .preview_hit(x, y, offset)
+                            .filter(|preview| preview.id == wallpaper_preview::IMAGE_ID)
+                            .and_then(|preview| {
+                                let path = match settings_client::value(preview.id) {
+                                    Some(settings_client::Value::Text(path)) => path,
+                                    _ => return None,
+                                };
+                                wallpaper_preview::position_at(&path, preview.at)
+                            })
+                        {
+                            // The point clicked on the wallpaper is the one
+                            // to keep in view.
+                            wallpaper_preview::set_position(position);
                             mark_pane_dirty(&pane_dirty);
                         } else if let Some(id) = settings.file_hit(x, y, offset) {
                             *pressed_hit.lock().unwrap() = Some(view::Pressed::Choose(id));

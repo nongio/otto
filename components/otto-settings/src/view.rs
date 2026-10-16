@@ -695,6 +695,8 @@ pub struct PreviewHit {
     /// Whether it is over the button that clears the setting, rather than
     /// just over the picture that reveals it.
     pub remove: bool,
+    /// Where on the picture, as fractions across and down.
+    pub at: (f32, f32),
 }
 
 /// A click that landed on a control bound to a setting.
@@ -817,7 +819,18 @@ fn decode_preview(path: &str) -> Option<skia_safe::Image> {
 /// Drawing and hit-testing both come through here: the box's width follows the
 /// image, so a rect measured any other way would put the remove button
 /// somewhere the picture is not.
-fn preview_box(path: &str, cx: f32, y: f32) -> Rect {
+fn preview_box(row: &Row, path: &str, cx: f32, y: f32) -> Rect {
+    // The wallpaper is shown on a picture of the screen it goes on, in that
+    // screen's shape, rather than in its own.
+    if row.id == Some(crate::wallpaper_preview::IMAGE_ID) {
+        let (w, h) = crate::wallpaper_preview::box_size(PREVIEW_W, PREVIEW_H);
+        return Rect::from_xywh(cx - w / 2.0, y, w, h);
+    }
+    image_preview_box(path, cx, y)
+}
+
+/// [`preview_box`] for an image shown in its own shape.
+fn image_preview_box(path: &str, cx: f32, y: f32) -> Rect {
     let (w, h) = match preview_image(path) {
         Some(image) => {
             let (iw, ih) = (image.width() as f32, image.height() as f32);
@@ -1490,6 +1503,7 @@ impl Settings {
         }
 
         let box_rect = preview_box(
+            row,
             path,
             rect.center_x(),
             rect.top + Self::control_height(row) + PREVIEW_GAP,
@@ -1497,6 +1511,10 @@ impl Settings {
         box_rect.contains(local).then(|| PreviewHit {
             id,
             remove: preview_remove_rect(box_rect).contains(local),
+            at: (
+                (local.x - box_rect.left) / box_rect.width(),
+                (local.y - box_rect.top) / box_rect.height(),
+            ),
         })
     }
 
@@ -2261,8 +2279,21 @@ impl Settings {
     /// draws the empty frame with a line saying so rather than nothing at all,
     /// which would read as a preview still loading.
     fn render_preview(&self, canvas: &Canvas, row: &Row, path: &str, cx: f32, y: f32) {
-        let image = preview_image(path);
-        let box_rect = preview_box(path, cx, y);
+        let box_rect = preview_box(row, path, cx, y);
+        let wallpaper = row.id == Some(crate::wallpaper_preview::IMAGE_ID);
+        // The wallpaper is rendered as the desktop will lay it out, at the
+        // buffer's own resolution so it is drawn 1:1.
+        let image = if wallpaper {
+            crate::wallpaper_preview::frame(
+                path,
+                (
+                    (box_rect.width() * BUFFER_SCALE).round() as i32,
+                    (box_rect.height() * BUFFER_SCALE).round() as i32,
+                ),
+            )
+        } else {
+            preview_image(path)
+        };
         // A person's picture is shown the way the greeter and the lock screen
         // show it: round.
         let radius = if row.id == Some(crate::panes::account::PICTURE_ID) {
@@ -3187,6 +3218,7 @@ mod tests {
             .find(|(row, _)| row.id == Some("background_image"))
             .expect("the wallpaper row");
         let box_rect = preview_box(
+            row,
             path,
             rect.center_x(),
             rect.top + Settings::control_height(row) + PREVIEW_GAP,

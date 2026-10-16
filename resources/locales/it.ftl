@@ -106,6 +106,11 @@ settings-group-desktop = Scrivania
 settings-background-colour = Colore di sfondo
 settings-background-image = Immagine di sfondo
 settings-background-image-detail = Scelta tramite il selettore file del portale del desktop
+settings-background-layout = Adattamento
+settings-background-zoom = Zoom
+settings-background-position-x = Posizione orizzontale
+settings-background-position-y = Posizione verticale
+settings-background-position-detail = Oppure fai clic sulla parte dell'immagine da tenere in vista
 settings-desktop-widget = Widget dello sfondo
 settings-desktop-widget-needs-ewwii = Serve ewwii, che non è installato
 # { $folder } is a path such as ~/.config/otto/widgets/ewwii.

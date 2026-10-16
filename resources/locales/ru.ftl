@@ -105,6 +105,11 @@ settings-group-desktop = Рабочий стол
 settings-background-colour = Цвет фона
 settings-background-image = Изображение фона
 settings-background-image-detail = Выбирается через диалог выбора файлов портала рабочего стола
+settings-background-layout = Размещение
+settings-background-zoom = Масштаб
+settings-background-position-x = По горизонтали
+settings-background-position-y = По вертикали
+settings-background-position-detail = Или нажми на ту часть изображения, которая должна остаться видна
 settings-desktop-widget = Фоновый виджет
 settings-desktop-widget-needs-ewwii = Нужен ewwii, а он не установлен
 # { $folder } is a path such as ~/.config/otto/widgets/ewwii.

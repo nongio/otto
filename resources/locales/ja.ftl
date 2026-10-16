@@ -106,6 +106,11 @@ settings-group-desktop = デスクトップ
 settings-background-colour = 背景色
 settings-background-image = 背景画像
 settings-background-image-detail = デスクトップポータルのファイル選択画面から選びます
+settings-background-layout = 表示方法
+settings-background-zoom = ズーム
+settings-background-position-x = 横位置
+settings-background-position-y = 縦位置
+settings-background-position-detail = または、表示しておきたい部分を画像上でクリックします
 settings-desktop-widget = 背景ウィジェット
 settings-desktop-widget-needs-ewwii = ewwii が必要ですが、インストールされていません
 # { $folder } is a path such as ~/.config/otto/widgets/ewwii.

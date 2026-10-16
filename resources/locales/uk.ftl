@@ -106,6 +106,11 @@ settings-group-desktop = Робочий стіл
 settings-background-colour = Колір тла
 settings-background-image = Зображення тла
 settings-background-image-detail = Обирається через засіб вибору файлів робочого стола
+settings-background-layout = Розміщення
+settings-background-zoom = Масштаб
+settings-background-position-x = По горизонталі
+settings-background-position-y = По вертикалі
+settings-background-position-detail = Або натисни на ту частину зображення, яка має лишатися видимою
 settings-desktop-widget = Фоновий віджет
 settings-desktop-widget-needs-ewwii = Потрібен ewwii, а його не встановлено
 # { $folder } is a path such as ~/.config/otto/widgets/ewwii.

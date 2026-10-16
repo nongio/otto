@@ -732,6 +732,14 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                     "focused": focused_output.as_deref() == Some(name.as_str()),
                     "current_workspace": current,
                     "rect": self.output_rect(output),
+                    // sway's: what the output's pixels are, and how many of
+                    // them make a point.
+                    "scale": output.current_scale().fractional_scale(),
+                    "current_mode": output.current_mode().map(|mode| json!({
+                        "width": mode.size.w,
+                        "height": mode.size.h,
+                        "refresh": mode.refresh,
+                    })),
                 }))
             })
             .collect();

@@ -106,6 +106,11 @@ settings-group-desktop = Área de trabalho
 settings-background-colour = Cor do plano de fundo
 settings-background-image = Imagem do plano de fundo
 settings-background-image-detail = Escolhida através do seletor de arquivos do portal da área de trabalho
+settings-background-layout = Ajuste
+settings-background-zoom = Zoom
+settings-background-position-x = Posição horizontal
+settings-background-position-y = Posição vertical
+settings-background-position-detail = Ou clique na parte da imagem que deve ficar à vista
 settings-desktop-widget = Widget do plano de fundo
 settings-desktop-widget-needs-ewwii = Precisa do ewwii, que não está instalado
 # { $folder } is a path such as ~/.config/otto/widgets/ewwii.
