@@ -5192,7 +5192,6 @@ dependencies = [
  "serde",
  "serde_json",
  "serial_test",
- "shell-words",
  "smithay",
  "smithay-drm-extras",
  "tempfile",
