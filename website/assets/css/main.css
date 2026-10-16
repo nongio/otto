@@ -472,6 +472,34 @@ main table {
    font-weight: 400;
 }
 
+/* Comment threads on plan pages: a quiet button under each heading, and the
+   giscus thread below it when open. Colours come from the text colour, so
+   both themes need nothing of their own. */
+.section-comments {
+   margin-top: calc(1.7em * 0.25);
+}
+
+.comment-button {
+   border: none;
+   background: none;
+   color: inherit;
+   font-size: 0.85rem;
+   font-weight: 400;
+   text-decoration: underline;
+   opacity: 0.5;
+   cursor: pointer;
+}
+
+.comment-button:hover,
+.comment-button:focus,
+.section-comments.open .comment-button {
+   opacity: 1;
+}
+
+.section-comments .giscus {
+   margin: 1.7em 0;
+}
+
 /* A reference table with six columns cannot fit a phone, and left to itself it
    widens the page instead — every paragraph then scrolls sideways along with
    it. The table scrolls on its own. */

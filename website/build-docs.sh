@@ -202,9 +202,15 @@ declare -A PAGE_IMAGE=(
     [login-greeter]="images/login-greeter.jpg"
 )
 
-# Pages open for discussion: they get a giscus comment thread at the bottom.
+# The plans (the "Design docs and plans" table in docs/developer/README.md)
+# are open for discussion: each of their sections gets a giscus thread.
 declare -A PAGE_COMMENTS=(
+    [dev/otto-kit-roadmap]=1
+    [dev/tiling-plan]=1
+    [dev/screenshot-plan]=1
+    [dev/airplay-screenshare]=1
     [dev/search-next-plan]=1
+    [dev/vulkan-renderer-plan]=1
 )
 
 # Old URLs for pages that have since been renamed, so existing links and search

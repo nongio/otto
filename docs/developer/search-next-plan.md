@@ -1,8 +1,8 @@
 # Search Next Plan
 
 > **Status: draft, not built.** Requirements for reworking file search into
-> one local service that understands contents by meaning. Comments are open
-> at the bottom of the page.
+> one local service that understands contents by meaning. Each section on
+> the docs site has a Comment button.
 
 Related: [File Search](file-search.md), [Search plan](search-plan.md),
 [Text in Pictures](peek-ocr.md), and the specs

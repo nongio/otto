@@ -14,22 +14,60 @@ function currentTheme() {
     return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
 }
 
-// giscus reads its settings from the attributes of the script that loads it,
-// and puts its iframe into the .giscus element.
+// Every h2 and h3 section of a page that allows comments gets a Comment
+// button. It opens a giscus thread under the heading, one GitHub Discussion
+// per section, keyed by the page path and the section's anchor. One thread is
+// open at a time: giscus reads its settings from the script that loads it and
+// renders into the first .giscus element, so opening another section replaces
+// both.
 function initComments() {
-    var host = document.querySelector('.giscus');
-    if (!host) return;
+    var main = document.querySelector('main');
+    if (!main || !main.dataset.commentsRepo) return;
+
+    main.querySelectorAll('section > h2, section > h3').forEach(heading => {
+        var section = heading.parentElement;
+        if (!section.id) return;
+
+        var bar = document.createElement('div');
+        bar.className = 'section-comments';
+        bar.setAttribute('data-pagefind-ignore', '');
+        var button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'comment-button';
+        button.textContent = 'Comment';
+        button.addEventListener('click', () => toggleThread(main, bar, section.id));
+        bar.appendChild(button);
+        heading.after(bar);
+    });
+}
+
+function toggleThread(main, bar, sectionId) {
+    var open = document.querySelector('.giscus');
+    var wasHere = open && open.parentElement === bar;
+    if (open) {
+        open.parentElement.classList.remove('open');
+        open.remove();
+        document.querySelectorAll('script[src="https://giscus.app/client.js"]')
+            .forEach(script => script.remove());
+    }
+    if (wasHere) return;
+
+    var host = document.createElement('div');
+    host.className = 'giscus';
+    bar.appendChild(host);
+    bar.classList.add('open');
 
     var script = document.createElement('script');
     script.src = 'https://giscus.app/client.js';
     script.async = true;
     script.crossOrigin = 'anonymous';
     var config = {
-        'data-repo': host.dataset.repo,
-        'data-repo-id': host.dataset.repoId,
-        'data-category': host.dataset.category,
-        'data-category-id': host.dataset.categoryId,
-        'data-mapping': 'pathname',
+        'data-repo': main.dataset.commentsRepo,
+        'data-repo-id': main.dataset.commentsRepoId,
+        'data-category': main.dataset.commentsCategory,
+        'data-category-id': main.dataset.commentsCategoryId,
+        'data-mapping': 'specific',
+        'data-term': location.pathname.replace(/\/$/, '') + '#' + sectionId,
         'data-strict': '1',
         'data-reactions-enabled': '1',
         'data-emit-metadata': '0',
