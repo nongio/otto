@@ -83,12 +83,9 @@ pub fn render_frame(source: &Source, target: (i32, i32)) -> Option<skia::Image> 
     }
     let image = match source {
         Source::Raster(image) => image.clone(),
-        Source::Svg(bytes) => {
-            // The document rasterised to the square the desktop has always
-            // framed an SVG wallpaper in, at the screen's resolution.
-            let edge = tw.max(th);
-            crate::icons::svg_image_from_bytes(bytes, (edge, edge).into())?
-        }
+        // Vector art is drawn straight at the frame's size: there is nothing
+        // to resample.
+        Source::Svg(bytes) => return render_svg_frame(bytes, target),
     };
     let (iw, ih) = (image.width(), image.height());
     if iw <= 0 || ih <= 0 {
@@ -105,6 +102,39 @@ pub fn render_frame(source: &Source, target: (i32, i32)) -> Option<skia::Image> 
         src_h as f32,
     );
     resample(&image, src, target)
+}
+
+/// Render an SVG document scaled to cover `target` and centred, at its own
+/// aspect ratio.
+fn render_svg_frame(bytes: &[u8], target: (i32, i32)) -> Option<skia::Image> {
+    let (tw, th) = target;
+    let options = usvg::Options {
+        languages: vec!["en".to_string()],
+        ..Default::default()
+    };
+    let tree = usvg::Tree::from_data(bytes, &options).ok()?;
+    let (sw, sh) = (tree.size().width(), tree.size().height());
+    if !(sw > 0.0 && sh > 0.0) {
+        return None;
+    }
+    let scale = (tw as f32 / sw).max(th as f32 / sh);
+    let transform = resvg::tiny_skia::Transform::from_row(
+        scale,
+        0.0,
+        0.0,
+        scale,
+        (tw as f32 - sw * scale) / 2.0,
+        (th as f32 - sh * scale) / 2.0,
+    );
+    let mut pixmap = resvg::tiny_skia::Pixmap::new(tw as u32, th as u32)?;
+    resvg::render(&tree, transform, &mut pixmap.as_mut());
+    let info = skia::ImageInfo::new(
+        (tw, th),
+        skia::ColorType::RGBA8888,
+        skia::AlphaType::Premul,
+        Some(skia::ColorSpace::new_srgb()),
+    );
+    skia::images::raster_from_data(&info, skia::Data::new_copy(pixmap.data()), tw as usize * 4)
 }
 
 #[cfg(test)]
@@ -189,6 +219,47 @@ mod tests {
         let middle_down = pixel(&frame, 172, 73);
         assert_eq!(middle_up, [255, 0, 0, 255]);
         assert_eq!(middle_down, [0, 0, 255, 255]);
+    }
+
+    /// An SVG keeps its own shape: a circle in a 16:9 document is still
+    /// round on a 21:9 screen, and a square one, rather than squashed into
+    /// the square an SVG used to be rasterised to first.
+    #[test]
+    fn an_svg_keeps_its_aspect() {
+        let dir = std::env::temp_dir().join(format!("otto-kit-wallpaper-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("circle.svg");
+        std::fs::write(
+            &path,
+            r##"<svg xmlns="http://www.w3.org/2000/svg" width="160" height="90" viewBox="0 0 160 90">
+                <rect width="160" height="90" fill="#000"/>
+                <circle cx="80" cy="45" r="10" fill="#fff"/>
+            </svg>"##,
+        )
+        .unwrap();
+        let source = open(path.to_str().unwrap()).unwrap();
+        for target in [(344, 144), (300, 300), (144, 344)] {
+            let frame = render_frame(&source, target).unwrap();
+            assert_eq!((frame.width(), frame.height()), target);
+            // The circle's bounding box, from its bright pixels.
+            let (mut left, mut right, mut top, mut bottom) =
+                (i32::MAX, i32::MIN, i32::MAX, i32::MIN);
+            for y in 0..target.1 {
+                for x in 0..target.0 {
+                    if pixel(&frame, x, y)[0] > 127 {
+                        left = left.min(x);
+                        right = right.max(x);
+                        top = top.min(y);
+                        bottom = bottom.max(y);
+                    }
+                }
+            }
+            let (w, h) = (right - left + 1, bottom - top + 1);
+            assert!((w - h).abs() <= 2, "{target:?}: the circle is {w}x{h}");
+            // And centred.
+            assert!(((left + right) / 2 - target.0 / 2).abs() <= 1, "{target:?}");
+            assert!(((top + bottom) / 2 - target.1 / 2).abs() <= 1, "{target:?}");
+        }
     }
 
     #[test]
