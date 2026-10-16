@@ -2,6 +2,7 @@ use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicI32, Ordering};
 
 use layers::{prelude::*, skia};
+use otto_kit::utils::resample::resample_to;
 use otto_kit::wallpaper::{cover, cover_size};
 
 /// Fallback wallpaper decode size, used until an output has reported its mode.
@@ -60,12 +61,11 @@ fn wallpaper_target_px() -> (i32, i32) {
 /// that. The target is the largest output's physical mode instead, capped by
 /// [`WALLPAPER_MAX_EDGE_PX`].
 ///
-/// A bigger image than that is resampled down to exactly the cover size, so
-/// the draw scale lands on 1.0. That costs one resample at startup — noticeable
-/// only on a very large photo — and is paid back in texture memory and in
-/// sampling quality, since the GPU would otherwise minify it without mipmaps
-/// on every frame. Images already at or below the cover size are left alone:
-/// enlarging them here would only waste memory, the draw upscales either way.
+/// The image is then resampled to exactly the cover size, so the draw scale
+/// is 1.0 and nothing is filtered per frame. That costs one resample when the
+/// wallpaper is loaded and is paid back in sampling quality: the GPU would
+/// otherwise minify a large photo without mipmaps, or enlarge a small one
+/// nearest-neighbour, on every frame.
 pub fn decode_wallpaper(path: &str) -> Option<skia::Image> {
     let (target_w, target_h) = wallpaper_target_px();
     // SVGs are rasterized at the size passed here; raster formats ignore it and
@@ -73,35 +73,27 @@ pub fn decode_wallpaper(path: &str) -> Option<skia::Image> {
     // wallpaper has always had, at the screen's resolution rather than 2048.
     let edge = target_w.max(target_h);
     let image = crate::utils::image_from_path(path, (edge, edge))?;
-    Some(downscale_to_cover(image, target_w, target_h))
+    Some(resample_to_cover(image, target_w, target_h))
 }
 
-/// Shrink `image` to the smallest size that still covers `target_w x target_h`,
-/// or return it untouched when it is already that small.
+/// Resample `image` to the size that covers `target_w x target_h` at exactly
+/// 1:1, or return it untouched when it already is that size.
 ///
-/// The size comes from [`cover_size`], so the draw that follows maps the
-/// result 1:1 onto the screen at a whole-pixel offset.
-fn downscale_to_cover(image: skia::Image, target_w: i32, target_h: i32) -> skia::Image {
+/// Both ways: a photo bigger than the screen is reduced, a smaller one is
+/// enlarged, so the draw never scales and nearest sampling is exact. The
+/// resample is [`otto_kit::utils::resample`]'s, in linear light with a
+/// kernel that widens with the ratio, so a large photo shrinks without
+/// aliasing and a small one grows without blocks.
+fn resample_to_cover(image: skia::Image, target_w: i32, target_h: i32) -> skia::Image {
     let (iw, ih) = (image.width(), image.height());
-    if iw <= 0 || ih <= 0 {
+    if iw <= 0 || ih <= 0 || target_w <= 0 || target_h <= 0 {
         return image;
     }
-    let (w, h) = cover_size((iw, ih), (target_w, target_h));
-    if w >= iw || h >= ih {
+    let size = cover_size((iw, ih), (target_w, target_h));
+    if size == (iw, ih) {
         return image;
     }
-    let Some(mut surface) = skia::surfaces::raster_n32_premul((w, h)) else {
-        return image;
-    };
-    let sampling = skia::SamplingOptions::from(skia::CubicResampler::mitchell());
-    surface.canvas().draw_image_rect_with_sampling_options(
-        &image,
-        None,
-        skia::Rect::from_iwh(w, h),
-        sampling,
-        &skia::Paint::default(),
-    );
-    surface.image_snapshot()
+    resample_to(&image, size).unwrap_or(image)
 }
 
 #[derive(Clone, Debug)]
@@ -336,7 +328,7 @@ mod tests {
     /// covers it — never below, or the draw would upscale it again.
     #[test]
     fn an_oversized_wallpaper_is_reduced_to_the_cover_size() {
-        let scaled = downscale_to_cover(solid(7680, 4320), 2880, 1920);
+        let scaled = resample_to_cover(solid(7680, 4320), 2880, 1920);
         assert!(scaled.width() >= 2880 && scaled.height() >= 1920);
         // Cover is driven by the taller ratio here, so height lands on target.
         assert_eq!(scaled.height(), 1920);
@@ -348,19 +340,27 @@ mod tests {
     /// cropped.
     #[test]
     fn a_16_9_wallpaper_on_an_ultrawide_is_drawn_pixel_exact() {
-        let scaled = downscale_to_cover(solid(3840, 2160), 3440, 1440);
+        let scaled = resample_to_cover(solid(3840, 2160), 3440, 1440);
         assert_eq!((scaled.width(), scaled.height()), (3440, 1935));
         let placement = cover((scaled.width(), scaled.height()), (3440, 1440));
         assert!(placement.is_pixel_exact(), "{placement:?}");
     }
 
-    /// Anything already at or below the cover size is left alone: enlarging it
-    /// here would only cost memory, the draw scales it either way.
+    /// A wallpaper smaller than the screen is enlarged to the cover size too,
+    /// so the draw does not scale it per frame.
     #[test]
-    fn a_smaller_wallpaper_is_left_alone() {
-        let image = solid(2560, 1600);
-        let kept = downscale_to_cover(image.clone(), 2880, 1920);
-        assert_eq!((kept.width(), kept.height()), (2560, 1600));
+    fn a_smaller_wallpaper_is_enlarged_to_the_cover_size() {
+        let scaled = resample_to_cover(solid(2560, 1600), 2880, 1920);
+        assert_eq!((scaled.width(), scaled.height()), (3072, 1920));
+        assert!(cover((3072, 1920), (2880, 1920)).is_pixel_exact());
+    }
+
+    /// One already at the cover size is not touched.
+    #[test]
+    fn a_wallpaper_at_the_cover_size_is_left_alone() {
+        let image = solid(2880, 1920);
+        let kept = resample_to_cover(image.clone(), 2880, 1920);
+        assert_eq!(kept.unique_id(), image.unique_id());
     }
 
     /// Without an output the decode falls back to the old fixed bound; the
