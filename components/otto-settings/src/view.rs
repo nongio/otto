@@ -2283,14 +2283,22 @@ impl Settings {
         let wallpaper = row.id == Some(crate::wallpaper_preview::IMAGE_ID);
         // The wallpaper is rendered as the desktop will lay it out, at the
         // buffer's own resolution so it is drawn 1:1.
+        let mut loading = false;
         let image = if wallpaper {
-            crate::wallpaper_preview::frame(
+            match crate::wallpaper_preview::frame(
                 path,
                 (
                     (box_rect.width() * BUFFER_SCALE).round() as i32,
                     (box_rect.height() * BUFFER_SCALE).round() as i32,
                 ),
-            )
+            ) {
+                crate::wallpaper_preview::Preview::Ready(image) => Some(image),
+                crate::wallpaper_preview::Preview::Loading => {
+                    loading = true;
+                    None
+                }
+                crate::wallpaper_preview::Preview::Unavailable => None,
+            }
         } else {
             preview_image(path)
         };
@@ -2322,6 +2330,13 @@ impl Settings {
                     ),
                     &paint,
                 );
+            }
+            None if loading => {
+                // Still being prepared: the frame alone, no verdict yet.
+                let mut paint = Paint::default();
+                paint.set_anti_alias(true);
+                paint.set_color(self.theme.fill_quaternary);
+                canvas.draw_rect(box_rect, &paint);
             }
             None => {
                 let mut paint = Paint::default();

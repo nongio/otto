@@ -92,7 +92,7 @@ pub fn build() -> Pane {
                     background_row(
                         otto_kit::t!("settings-background-zoom"),
                         "background_zoom",
-                        (1.0, 1.0, 8.0),
+                        (1.0, 1.0, otto_kit::wallpaper::MAX_ZOOM),
                         Mode::uses_zoom,
                     ),
                     background_row(
