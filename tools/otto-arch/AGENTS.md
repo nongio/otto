@@ -14,7 +14,7 @@ How it works: [Architecture](../../docs/developer/architecture.md).
 - `cargo run -p otto-arch` checks. `cargo run -p otto-arch -- --bless` also rewrites the graph in `docs/developer/architecture.md`.
 - `cargo run -q -p otto-arch -- affected --base origin/main [--head REV] --explain` says which crates a change reaches and why. With `--test-args` it prints arguments for `cargo test`: `cargo run -q -p otto-arch -- affected --base origin/main --test-args | xargs -r cargo test`.
 - Tests: `cargo test -p otto-arch`. They include a check of the real workspace, so a violation fails the tests too. CI lints it with `cargo clippy -p otto-arch --all-targets -- -D warnings`.
-- Third-party policy (who may link Smithay, GStreamer, PipeWire) is not this tool's job. It lives in `deny.toml`: `cargo deny --workspace check bans -D unused-wrapper`. Without `--workspace` cargo-deny judges only the compositor.
+- Third-party policy (who may link Smithay, GStreamer, PipeWire) is not this tool's job. It lives in `deny.toml`: `cargo deny --workspace check bans licenses sources -D unused-wrapper` (and `check advisories`). Without `--workspace` cargo-deny judges only the compositor.
 
 ## Where things are
 - `src/main.rs` parses arguments and picks between the check and `affected`.

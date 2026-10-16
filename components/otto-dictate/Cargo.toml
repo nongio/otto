@@ -9,11 +9,11 @@ description = "Proof of concept: dictation as a Wayland input method, with live 
 
 [dependencies]
 otto-kit = { path = "../otto-kit", features = ["dictation"] }
-smithay-client-toolkit = { version = "0.19", default-features = false, features = ["calloop"] }
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-wayland-client = "0.31"
-wayland-protocols-misc = { version = "0.3", features = ["client"] }
+smithay-client-toolkit = { workspace = true, features = ["calloop"] }
+tracing.workspace = true
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+wayland-client.workspace = true
+wayland-protocols-misc = { workspace = true, features = ["client"] }
 
 [lints]
 workspace = true

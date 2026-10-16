@@ -16,11 +16,11 @@ otto-agents-client = { path = "../otto-agents-client" }
 otto-foundations = { path = "../otto-foundations" }
 otto-dbus = { path = "../otto-dbus" }
 ahp.workspace = true
-ahp-ws = "=0.9.0"
+ahp-ws = { workspace = true, features = ["default"] }
 
 agent-client-protocol = "2.1"
 # Decoding the base64 pictures agents send in ACP messages; see `images`.
-base64 = "0.22"
+base64.workspace = true
 anyhow.workspace = true
 clap = { version = "4", features = ["derive", "env"] }
 # Localisation of the dialog sentences this service composes. The .ftl parser
@@ -31,7 +31,7 @@ jiff = "0.2"
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 tokio = { workspace = true, features = ["io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
-tokio-tungstenite = "0.29"
+tokio-tungstenite = { workspace = true, features = ["default"] }
 toml = { workspace = true, features = ["default"] }
 tracing.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter"] }

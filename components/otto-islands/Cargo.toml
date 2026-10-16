@@ -17,7 +17,7 @@ smithay-client-toolkit.workspace = true
 wayland-client.workspace = true
 wayland-protocols-wlr = { workspace = true, features = ["client"] }
 pipewire.workspace = true
-ureq = "3"
+ureq.workspace = true
 serde_json.workspace = true
 
 [lints]

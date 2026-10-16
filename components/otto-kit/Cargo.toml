@@ -33,7 +33,7 @@ usvg = "0.44.0"
 libc.workspace = true
 freedesktop-desktop-entry.workspace = true
 # Dictation posts audio to a speech-to-text server.
-ureq = { version = "3", optional = true }
+ureq = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
 # Dictation captures the microphone through PipeWire.
 pipewire = { workspace = true, optional = true }
