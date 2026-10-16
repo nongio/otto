@@ -397,6 +397,37 @@ impl HeadlessHandle {
         });
     }
 
+    /// The wallpaper frame the background of workspace `position` on the
+    /// first output shows, or `None` while it shows the gradient or waits
+    /// for one.
+    pub fn background_frame(&self, position: usize) -> Option<layers::skia::Image> {
+        self.query(move |state| {
+            let ows = state.workspaces.output_workspaces.values().next()?;
+            match ows.workspace_views.get(position)?.background_view.content() {
+                crate::workspaces::BackgroundContent::Frame(frame) => Some(frame),
+                _ => None,
+            }
+        })
+    }
+
+    /// The configured `background_image`.
+    pub fn background_image_setting(&self) -> String {
+        crate::config::Config::with(|c| c.background_image.clone())
+    }
+
+    /// Output `name`'s wallpaper override as `(image, mode, color)`, if it
+    /// has one.
+    pub fn output_background_override(
+        &self,
+        name: &str,
+    ) -> Option<(Option<String>, Option<String>, Option<String>)> {
+        crate::config::Config::with(|c| {
+            c.background_outputs
+                .get(name)
+                .map(|o| (o.image.clone(), o.mode.clone(), o.color.clone()))
+        })
+    }
+
     /// Toggle expose mode on/off.
     pub fn toggle_expose(&self) {
         self.with_state(|state| {
