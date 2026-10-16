@@ -3,6 +3,38 @@
 **Status:** draft  
 **Related specs:** [search-language.md](./search-language.md), [file-browser.md](./file-browser.md), [peek-ocr.md](./peek-ocr.md), [launcher.md](./launcher.md)
 
+## Status Quo
+
+How search works today:
+[File Search](../docs/developer/file-search.md),
+[Search plan](../docs/developer/search-plan.md),
+[search-language.md](./search-language.md),
+[otto-search AGENTS.md](../components/otto-search/AGENTS.md),
+[peek-ocr.md](./peek-ocr.md).
+
+`otto-search` is a library plus a command, not a service. Each program that
+links it asks LocalSearch over D-Bus on its own; Otto keeps no index except
+the OCR word cache. Search is by name, full text and filters only; nothing
+understands contents by meaning, transcribes speech or points into media.
+
+| Today | Where | Against these requirements |
+|---|---|---|
+| LocalSearch (crawler, metadata, full text, status) | external, driven by `otto-search` and the compositor's `[search]` config | **Replaced or wrapped.** Either the new service owns crawling, or it builds on LocalSearch for tier 1. Undecided. |
+| Query language: parse, plan, rank | `otto-search` (`query`, `plan`, `dates`) | **Kept.** The syntax stays; plans gain meaning terms and run against the new index instead of SPARQL. |
+| LocalSearch wire, ghost-row paging | `otto-search` (`index`, `find`) | **Replaced** by calls to the new service. |
+| `otto-search` command | `otto-search` (`main`) | **Integrates.** Same arguments and exit codes; talks to the service; gains match reasons and time ranges. Today it misses OCR words. |
+| OCR word cache, path-keyed, scanned file by file | `otto-peek` (`ocr`, `ocrcache`); merged in `otto-files` (`ask_pictures`) | **Replaced** as a search source by the service's own reading of words, keyed by content. Peek keeps recognising for selection. |
+| Thumbnail cache, path-keyed, read-only | `otto-peek` (`thumbcache`) | **Integrates.** Offline previews and keyframes are new and owned by the service; the freedesktop cache stays for live files. |
+| Files: Find, Recent, index notice | `otto-files` (`search`, `app/searching`, `IndexWatch`) | **Integrates.** Asks the service; shows match reasons, offline marks, media moments. |
+| Settings: Search pane (status, start, re-index) | `otto-settings` (`panes/search`) | **Integrates.** Shows the service's state, folders, shares and opt-in outside services. |
+| Index folder config pushed to LocalSearch | compositor (`src/search_index.rs`) | **Replaced** by configuration of the service, unless LocalSearch is kept. |
+| Launcher: apps, windows, calculator only | `otto-launcher` | **Integrates** as a new file source. |
+| Agents: `otto-search --json` through a skill | `resources/plugins/otto` | **Replaced** by the service's agent interface and MCP server. |
+| D-Bus search service, desktop search provider | none | **New.** |
+| Open media at a time range | none; `otto-media-kit` can seek, nothing starts at a time | **New** in media playback and Peek. |
+| AC power and idle signals for another process | UPower in `otto-bar`; idle known only inside the compositor | **New.** The compositor must export idle, or the service reads UPower and logind itself. |
+| Long-running search service | none; daemons belong in the `app` layer | **New** app-layer crate; any model runtime needs a `deny.toml` entry. |
+
 ## Functional Requirements
 
 ### What is searched
