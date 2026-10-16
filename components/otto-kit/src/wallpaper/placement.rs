@@ -24,16 +24,8 @@ pub struct Placement {
 }
 
 impl Placement {
-    /// The image drawn at its own size at the target's origin.
-    pub const IDENTITY: Placement = Placement {
-        scale_x: 1.0,
-        scale_y: 1.0,
-        offset_x: 0.0,
-        offset_y: 0.0,
-    };
-
     /// Whether one image pixel lands on exactly one target pixel.
-    pub fn is_identity_scale(&self) -> bool {
+    fn is_identity_scale(&self) -> bool {
         self.scale_x == 1.0 && self.scale_y == 1.0
     }
 
@@ -50,16 +42,6 @@ impl Placement {
         matrix.set_scale_translate((self.scale_x, self.scale_y), (self.offset_x, self.offset_y));
         matrix
     }
-
-    /// The image's bounds on the target.
-    pub fn dest_rect(&self, image: (i32, i32)) -> skia::Rect {
-        skia::Rect::from_xywh(
-            self.offset_x,
-            self.offset_y,
-            image.0 as f32 * self.scale_x,
-            image.1 as f32 * self.scale_y,
-        )
-    }
 }
 
 /// Scale `image` uniformly to cover `target`, centred, cropping the excess.
@@ -75,24 +57,6 @@ pub fn cover(image: (i32, i32), target: (i32, i32)) -> Placement {
         scale_y: scale,
         offset_x: centred_offset(tw, iw * scale),
         offset_y: centred_offset(th, ih * scale),
-    }
-}
-
-/// The size to resample `image` to so that [`cover`] then draws it 1:1.
-///
-/// One edge matches the target exactly, the other keeps the image's aspect
-/// and is at least the target's, so [`cover`] of an image this size has a
-/// scale of exactly 1.0. Derived from the target rather than by multiplying
-/// the image by a float scale, which can land a pixel over and leave the
-/// draw scale a hair under one.
-pub fn cover_size(image: (i32, i32), target: (i32, i32)) -> (i32, i32) {
-    let (iw, ih) = (image.0.max(1) as f64, image.1.max(1) as f64);
-    let (tw, th) = (target.0.max(1), target.1.max(1));
-    if (tw as f64 / iw) >= (th as f64 / ih) {
-        // Width-bound: the width is the target's, the height follows.
-        (tw, ((tw as f64 * ih / iw).round() as i32).max(th))
-    } else {
-        (((th as f64 * iw / ih).round() as i32).max(tw), th)
     }
 }
 
@@ -122,6 +86,7 @@ mod tests {
         (1920, 1080),
         (2560, 1440),
         (3840, 2160),
+        (3440, 1935),
         (5120, 2880),
         (7680, 4320),
         (6000, 4000),
@@ -146,8 +111,19 @@ mod tests {
         (1280, 800),
     ];
 
+    fn bounds(p: &Placement, image: (i32, i32)) -> skia::Rect {
+        skia::Rect::from_xywh(
+            p.offset_x,
+            p.offset_y,
+            image.0 as f32 * p.scale_x,
+            image.1 as f32 * p.scale_y,
+        )
+    }
+
     /// The cover placement of any image on any screen keeps both offsets on
-    /// whole pixels and covers the screen edge to edge.
+    /// whole pixels and covers the screen edge to edge. This is what draws a
+    /// frame on a layer of another size, between a mode change and the new
+    /// frame: it must never land on a half pixel either.
     #[test]
     fn cover_offsets_are_whole_pixels_and_the_screen_is_covered() {
         for &image in IMAGES {
@@ -155,7 +131,7 @@ mod tests {
                 let p = cover(image, screen);
                 assert_eq!(p.offset_x.fract(), 0.0, "{image:?} on {screen:?}: {p:?}");
                 assert_eq!(p.offset_y.fract(), 0.0, "{image:?} on {screen:?}: {p:?}");
-                let rect = p.dest_rect(image);
+                let rect = bounds(&p, image);
                 assert!(
                     rect.left <= 0.0 && rect.top <= 0.0,
                     "{image:?} on {screen:?}"
@@ -170,49 +146,35 @@ mod tests {
                 assert!(slack_x <= 0.5 + 1e-3 && slack_y <= 0.5 + 1e-3);
             }
         }
-    }
-
-    /// An image resampled to [`cover_size`] is then drawn exactly 1:1 — the
-    /// mapping nearest sampling is exact for. This is the case #361 hit: a
-    /// 16:9 photo on a 21:9 screen came out at 3440x1935, centred at a
-    /// half-pixel offset of -247.5.
-    #[test]
-    fn a_wallpaper_resampled_to_the_cover_size_is_drawn_pixel_exact() {
-        for &image in IMAGES {
-            for &screen in SCREENS {
-                let size = cover_size(image, screen);
-                assert!(size.0 >= screen.0 && size.1 >= screen.1);
-                assert!(size.0 == screen.0 || size.1 == screen.1);
-                let p = cover(size, screen);
-                assert!(
-                    p.is_pixel_exact(),
-                    "{image:?} on {screen:?}: {size:?} → {p:?}"
-                );
-            }
-        }
-        let p = cover(cover_size((3840, 2160), (3440, 1440)), (3440, 1440));
+        // The #361 case: what used to be drawn at -247.5.
+        let p = cover((3440, 1935), (3440, 1440));
         assert_eq!((p.offset_x, p.offset_y), (0.0, -248.0));
+        assert!(p.is_pixel_exact());
     }
 
-    /// The property [`Placement::is_pixel_exact`] stands for, checked pixel
-    /// by pixel: every target pixel centre maps onto an image pixel centre,
-    /// as far as possible from the boundary nearest sampling would have to
-    /// decide on.
+    /// What [`Placement::is_pixel_exact`] stands for, pixel by pixel: every
+    /// target pixel centre maps onto a texel centre, as far as possible from
+    /// the boundary nearest sampling would have to decide on. True of a
+    /// frame on its own screen, and of any image 1:1 at a whole offset.
     #[test]
     fn a_pixel_exact_placement_samples_texel_centres() {
-        for &image in IMAGES {
-            for &screen in SCREENS {
-                let p = cover(cover_size(image, screen), screen);
+        for &screen in SCREENS {
+            for p in [
+                cover(screen, screen),
+                cover((screen.0, screen.1 + 31), screen),
+            ] {
+                assert!(p.is_pixel_exact(), "{screen:?}: {p:?}");
                 for x in 0..screen.0 {
                     let u = (x as f32 + 0.5 - p.offset_x) / p.scale_x;
-                    assert_eq!(u.fract(), 0.5, "{image:?} on {screen:?}, column {x}");
+                    assert_eq!(u.fract(), 0.5, "{screen:?}, column {x}");
                 }
                 for y in 0..screen.1 {
                     let v = (y as f32 + 0.5 - p.offset_y) / p.scale_y;
-                    assert_eq!(v.fract(), 0.5, "{image:?} on {screen:?}, row {y}");
+                    assert_eq!(v.fract(), 0.5, "{screen:?}, row {y}");
                 }
             }
         }
+        assert!(!cover((1920, 1080), (3440, 1440)).is_pixel_exact());
     }
 
     /// An image a fraction of a pixel longer than the screen is not pushed off

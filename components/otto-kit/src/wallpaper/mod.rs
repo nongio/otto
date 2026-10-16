@@ -11,6 +11,6 @@ mod placement;
 mod source;
 
 pub use layout::{arrange, Arrangement, Layout, Mode, SpanView, MAX_ZOOM};
-pub use paint::{paint, sampling};
-pub use placement::{cover, cover_size, Placement};
-pub use source::{open, render_frame, FrameStyle, OpenError, Source};
+pub use paint::{paint, paint_layout};
+pub use placement::{cover, Placement};
+pub use source::{open, probe, render_frame, FrameStyle, OpenError, Source};

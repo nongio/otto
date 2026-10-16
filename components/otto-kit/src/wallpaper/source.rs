@@ -5,7 +5,7 @@ use std::sync::Arc;
 use skia_safe as skia;
 
 use super::layout::{arrange, Layout, SpanView};
-use crate::utils::resample::{resample, resample_to};
+use crate::utils::resample::resample;
 
 /// A wallpaper file, opened but not yet decoded.
 ///
@@ -65,14 +65,69 @@ impl std::fmt::Display for OpenError {
 
 impl std::error::Error for OpenError {}
 
+/// How much of a file [`probe`] reads.
+const PROBE_BYTES: usize = 4096;
+
+/// Check, cheaply, that `path` is a file Otto can show: readable, and with
+/// the signature of an image format Skia decodes, or an SVG. Reads the first
+/// few kilobytes only, so it can run where a full [`open`] cannot — on the
+/// compositor's thread, before a setting is accepted. A file that passes can
+/// still turn out to be corrupt when it is decoded.
+pub fn probe(path: &str) -> Result<(), OpenError> {
+    use std::io::Read;
+    let mut file =
+        std::fs::File::open(path).map_err(|err| OpenError::Unreadable(err.to_string()))?;
+    let mut head = vec![0u8; PROBE_BYTES];
+    let mut read = 0;
+    while read < head.len() {
+        match file.read(&mut head[read..]) {
+            Ok(0) => break,
+            Ok(n) => read += n,
+            Err(err) if err.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(err) => return Err(OpenError::Unreadable(err.to_string())),
+        }
+    }
+    head.truncate(read);
+    if is_svg_path(path) {
+        let text = String::from_utf8_lossy(&head);
+        return text
+            .contains("<svg")
+            .then_some(())
+            .ok_or(OpenError::NotAnImage);
+    }
+    is_image_signature(&head)
+        .then_some(())
+        .ok_or(OpenError::NotAnImage)
+}
+
+/// The signatures of the raster formats Skia's codecs read.
+fn is_image_signature(head: &[u8]) -> bool {
+    let starts = |magic: &[u8]| head.starts_with(magic);
+    starts(&[0xFF, 0xD8, 0xFF]) // JPEG
+        || starts(b"\x89PNG\r\n\x1a\n")
+        || starts(b"GIF87a")
+        || starts(b"GIF89a")
+        || starts(b"BM") // BMP
+        || (starts(b"RIFF") && head.get(8..12) == Some(b"WEBP"))
+        || starts(&[0, 0, 1, 0]) // ICO
+        || (head.get(4..8) == Some(b"ftyp")
+            && matches!(
+                head.get(8..12),
+                Some(b"avif" | b"avis" | b"heic" | b"heix" | b"mif1")
+            ))
+}
+
+fn is_svg_path(path: &str) -> bool {
+    std::path::Path::new(path)
+        .extension()
+        .and_then(std::ffi::OsStr::to_str)
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("svg"))
+}
+
 /// Open the wallpaper at `path`.
 pub fn open(path: &str) -> Result<Source, OpenError> {
     let bytes = std::fs::read(path).map_err(|err| OpenError::Unreadable(err.to_string()))?;
-    let is_svg = std::path::Path::new(path)
-        .extension()
-        .and_then(std::ffi::OsStr::to_str)
-        .is_some_and(|ext| ext.eq_ignore_ascii_case("svg"));
-    if is_svg {
+    if is_svg_path(path) {
         // Parse once here so a broken document is reported now rather than
         // as a blank frame later.
         let options = usvg::Options::default();
@@ -161,26 +216,23 @@ fn draw_raster(
     let dest = arrangement.dest;
 
     if arrangement.tiled {
-        let tile = (
-            dest.width().round().max(1.0) as i32,
-            dest.height().round().max(1.0) as i32,
+        let (tile, visible) = tile_extent(dest, target);
+        // Only the part of a tile the screen shows is resampled: a tile
+        // larger than the screen does not repeat, and a 100-megapixel photo
+        // tiled at scale 2 must not become a gigapixel tile.
+        let src = skia::Rect::from_wh(
+            visible.0 as f32 * iw as f32 / tile.0 as f32,
+            visible.1 as f32 * ih as f32 / tile.1 as f32,
         );
-        let tile_image = if tile == (iw, ih) {
-            image.clone()
-        } else {
-            resample_to(image, tile)?
-        };
-        // Whole-pixel tiles from the origin, sampled 1:1: an exact copy of
-        // the tile everywhere.
-        let mut paint = skia::Paint::default();
-        paint.set_shader(tile_image.to_shader(
-            (skia::TileMode::Repeat, skia::TileMode::Repeat),
-            skia::SamplingOptions::default(),
-            None,
-        ));
-        canvas.draw_rect(skia::Rect::from_iwh(target.0, target.1), &paint);
+        let tile_image = resample(image, src, visible)?;
+        paint_tiles(canvas, &tile_image, target);
         return Some(());
     }
+
+    // An axis drawn 1:1 is moved onto whole pixels, so it is copied rather
+    // than resampled at a half-pixel phase — which would blur every pixel
+    // into its neighbour for the sake of half a pixel of centring.
+    let dest = snap_one_to_one(dest, (iw as f32, ih as f32));
 
     // The part of the screen the image covers, snapped to whole pixels.
     let left = dest.left.max(0.0).round();
@@ -232,6 +284,45 @@ fn whole_pixel_copy(src: skia::Rect, out: (i32, i32)) -> Option<skia::Rect> {
     })
 }
 
+/// A tile's size on the screen, and how much of it the screen shows.
+fn tile_extent(dest: skia::Rect, target: (i32, i32)) -> ((i32, i32), (i32, i32)) {
+    let tile = (
+        dest.width().round().max(1.0) as i32,
+        dest.height().round().max(1.0) as i32,
+    );
+    let visible = (tile.0.min(target.0), tile.1.min(target.1));
+    (tile, visible)
+}
+
+/// Repeat `tile` from the origin across `target`, 1:1: an exact copy of it
+/// everywhere.
+fn paint_tiles(canvas: &skia::Canvas, tile: &skia::Image, target: (i32, i32)) {
+    let mut paint = skia::Paint::default();
+    paint.set_shader(tile.to_shader(
+        (skia::TileMode::Repeat, skia::TileMode::Repeat),
+        skia::SamplingOptions::default(),
+        None,
+    ));
+    canvas.draw_rect(skia::Rect::from_iwh(target.0, target.1), &paint);
+}
+
+/// `dest` with each axis on which `image` is drawn 1:1 moved to a whole
+/// pixel.
+fn snap_one_to_one(dest: skia::Rect, image: (f32, f32)) -> skia::Rect {
+    const EPSILON: f32 = 1e-3;
+    let x = if (dest.width() - image.0).abs() < EPSILON {
+        dest.left.round()
+    } else {
+        dest.left
+    };
+    let y = if (dest.height() - image.1).abs() < EPSILON {
+        dest.top.round()
+    } else {
+        dest.top
+    };
+    skia::Rect::from_xywh(x, y, dest.width(), dest.height())
+}
+
 /// Draw an SVG document as laid out by `style`, as vectors: there is nothing
 /// to resample.
 fn draw_svg(
@@ -259,23 +350,14 @@ fn draw_svg(
     let dest = arrangement.dest;
 
     if arrangement.tiled {
-        let tile = (
-            dest.width().round().max(1.0) as i32,
-            dest.height().round().max(1.0) as i32,
-        );
+        let (tile, visible) = tile_extent(dest, target);
         let tile_image = rasterise_svg(
             &tree,
-            tile,
+            visible,
             (tile.0 as f32 / sw, tile.1 as f32 / sh),
             (0.0, 0.0),
         )?;
-        let mut paint = skia::Paint::default();
-        paint.set_shader(tile_image.to_shader(
-            (skia::TileMode::Repeat, skia::TileMode::Repeat),
-            skia::SamplingOptions::default(),
-            None,
-        ));
-        canvas.draw_rect(skia::Rect::from_iwh(target.0, target.1), &paint);
+        paint_tiles(canvas, &tile_image, target);
         return Some(());
     }
 
@@ -548,6 +630,59 @@ mod tests {
         assert_eq!(pixel(&frame, 0, 0), pixel(image, 15, 15));
     }
 
+    /// An odd difference in size centres on a half pixel; the image is moved
+    /// to a whole one and still copied exactly, not blurred by half a pixel.
+    #[test]
+    fn center_on_an_odd_difference_still_copies_exactly() {
+        let path = noise_png("odd.png", 51, 41);
+        let source = open(&path).unwrap();
+        let Source::Raster(image) = &source else {
+            unreachable!()
+        };
+        let frame = render_frame(&source, &style(Mode::Center), (100, 100)).unwrap();
+        // (100 - 51) / 2 = 24.5 and (100 - 41) / 2 = 29.5, rounded.
+        let (dx, dy) = (25, 30);
+        for y in 0..41 {
+            for x in 0..51 {
+                assert_eq!(
+                    pixel(&frame, x + dx, y + dy),
+                    pixel(image, x, y),
+                    "({x},{y})"
+                );
+            }
+        }
+    }
+
+    /// The #361 sizes: an image already 3440 wide filling a 3440x1440
+    /// screen is cropped 247.5 rows from the top. It is copied row for row,
+    /// not resampled at that half-pixel phase.
+    #[test]
+    fn fill_at_one_to_one_copies_exactly() {
+        let path = noise_png("ultrawide.png", 344, 195);
+        let source = open(&path).unwrap();
+        let Source::Raster(image) = &source else {
+            unreachable!()
+        };
+        let frame = render_frame(&source, &style(Mode::Fill), (344, 144)).unwrap();
+        // (144 - 195) / 2 = -25.5, rounded to -26 (away from zero).
+        for y in 0..144 {
+            for x in (0..344).step_by(7) {
+                assert_eq!(pixel(&frame, x, y), pixel(image, x, y + 26), "({x},{y})");
+            }
+        }
+    }
+
+    /// A tile larger than the screen is cut to the screen before it is
+    /// resampled, however large the image and the scale.
+    #[test]
+    fn a_huge_tile_is_cut_to_the_screen() {
+        let path = noise_png("huge.png", 300, 200);
+        let mut huge = style(Mode::Tile);
+        huge.output_scale = 40.0; // a 12000x8000 tile
+        let frame = render_frame(&open(&path).unwrap(), &huge, (64, 48)).unwrap();
+        assert_eq!((frame.width(), frame.height()), (64, 48));
+    }
+
     /// Centre follows the output's scale: the image's pixels are points.
     #[test]
     fn center_scales_with_the_output() {
@@ -646,6 +781,35 @@ mod tests {
         )
         .unwrap();
         assert_eq!(pixel(&frame, 10, 10), BLUE);
+    }
+
+    /// The probe passes the formats Otto shows and refuses the rest,
+    /// reading only the start of the file.
+    #[test]
+    fn the_probe_knows_an_image_by_its_signature() {
+        let png = write_png("probe.png", 8, 8, |_, _| [1, 2, 3]);
+        assert_eq!(probe(&png), Ok(()));
+        let dir = std::env::temp_dir().join(format!("otto-kit-wallpaper-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let svg = dir.join("probe.svg");
+        std::fs::write(
+            &svg,
+            r#"<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg"/>"#,
+        )
+        .unwrap();
+        assert_eq!(probe(svg.to_str().unwrap()), Ok(()));
+        let text = dir.join("probe.jpg");
+        std::fs::write(&text, b"not a picture at all").unwrap();
+        assert_eq!(probe(text.to_str().unwrap()), Err(OpenError::NotAnImage));
+        assert!(matches!(
+            probe("/nonexistent/otto.png"),
+            Err(OpenError::Unreadable(_))
+        ));
+        // A JPEG, a WebP and an AVIF by their first bytes.
+        assert!(is_image_signature(&[0xFF, 0xD8, 0xFF, 0xE0]));
+        assert!(is_image_signature(b"RIFF\0\0\0\0WEBPVP8 "));
+        assert!(is_image_signature(b"\0\0\0\x1cftypavif"));
+        assert!(!is_image_signature(b"<html>"));
     }
 
     #[test]

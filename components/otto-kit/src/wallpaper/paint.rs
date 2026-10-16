@@ -2,18 +2,18 @@
 
 use skia_safe as skia;
 
-use super::Placement;
+use super::{arrange, Layout, Placement};
 
 /// How the wallpaper image is sampled: bilinear, with mipmaps.
 ///
-/// The image is resampled ahead of time to draw 1:1 at a whole-pixel offset
-/// ([`super::cover_size`]), so on the desktop every pixel centre lands on a
-/// texel centre and bilinear reads exactly that texel — the same pixels as
-/// nearest sampling, but without nearest's coin-toss when rounding nudges a
-/// coordinate. The same recorded picture is also replayed small, as the
+/// On the desktop the image is a frame rendered ahead of time at the
+/// screen's size ([`super::render_frame`]) and drawn 1:1, so every pixel
+/// centre lands on a texel centre and bilinear reads exactly that texel —
+/// the same pixels as nearest sampling, but without nearest's coin-toss when
+/// rounding nudges a coordinate. The same recorded picture is also replayed small, as the
 /// exposé backdrop and the workspace selector's previews, and there the
 /// mipmaps are what keeps a 0.2x copy from aliasing.
-pub fn sampling() -> skia::SamplingOptions {
+fn sampling() -> skia::SamplingOptions {
     skia::SamplingOptions::new(skia::FilterMode::Linear, skia::MipmapMode::Linear)
 }
 
@@ -33,10 +33,58 @@ pub fn paint(canvas: &skia::Canvas, image: &skia::Image, placement: Placement, b
     canvas.draw_rect(bounds, &paint);
 }
 
+/// Fill `bounds` with `image` laid out by `layout` on `fill`, sampled as it
+/// is drawn.
+///
+/// For a surface that shows the wallpaper without the compositor's frames —
+/// the lock screen and the greeter, which are separate clients — so it is
+/// laid out the way the desktop is. `bounds` and the image's natural size
+/// are in the same units: the image's pixels are taken as `bounds` units for
+/// the modes that draw it at its own size, so pass a point-sized `bounds` to
+/// keep an image pixel a point. The desktop itself renders a frame ahead of
+/// time instead, which is sharper and cheaper to draw.
+pub fn paint_layout(
+    canvas: &skia::Canvas,
+    image: &skia::Image,
+    layout: Layout,
+    fill: skia::Color4f,
+    bounds: skia::Rect,
+) {
+    let mut fill = fill;
+    fill.a = 1.0;
+    canvas.draw_rect(bounds, &skia::Paint::new(fill, None));
+    let (iw, ih) = (image.width() as f32, image.height() as f32);
+    if iw <= 0.0 || ih <= 0.0 || bounds.is_empty() {
+        return;
+    }
+    let target = (
+        bounds.width().round() as i32,
+        bounds.height().round() as i32,
+    );
+    let arrangement = arrange(layout, (iw, ih), target, 1.0, None);
+    let dest = arrangement.dest;
+    let placement = Placement {
+        scale_x: dest.width() / iw,
+        scale_y: dest.height() / ih,
+        offset_x: bounds.left + dest.left,
+        offset_y: bounds.top + dest.top,
+    };
+    // Repeated for a tile; elsewhere nothing past the image's edge, so the
+    // fill shows around a fitted or centred one.
+    let tiling = if arrangement.tiled {
+        skia::TileMode::Repeat
+    } else {
+        skia::TileMode::Decal
+    };
+    let mut paint = skia::Paint::default();
+    paint.set_shader(image.to_shader((tiling, tiling), sampling(), &placement.matrix()));
+    canvas.draw_rect(bounds, &paint);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::wallpaper::{cover, cover_size};
+    use crate::wallpaper::{cover, render_frame, FrameStyle, Source};
 
     fn image(w: i32, h: i32, f: impl Fn(i32, i32) -> [u8; 3]) -> skia::Image {
         let mut data = Vec::with_capacity((w * h * 4) as usize);
@@ -98,13 +146,17 @@ mod tests {
         data
     }
 
-    /// Drawn at the cover size, the wallpaper reaches the screen pixel for
-    /// pixel: the crop of the image the placement selects, untouched.
+    /// A frame rendered for the screen reaches it pixel for pixel.
     #[test]
-    fn a_cover_sized_image_is_painted_pixel_for_pixel() {
+    fn a_frame_is_painted_pixel_for_pixel() {
         let (screen_w, screen_h) = (344, 144);
-        let (iw, ih) = cover_size((384, 216), (screen_w, screen_h));
-        let source = noise(iw, ih);
+        let source = render_frame(
+            &Source::Raster(noise(384, 216)),
+            &FrameStyle::default(),
+            (screen_w, screen_h),
+        )
+        .unwrap();
+        let (iw, ih) = (source.width(), source.height());
         let placement = cover((iw, ih), (screen_w, screen_h));
         assert!(placement.is_pixel_exact());
 
@@ -132,9 +184,13 @@ mod tests {
     #[test]
     fn a_cropped_repaint_matches_the_full_paint() {
         let (screen_w, screen_h) = (344, 144);
-        let size = cover_size((999, 701), (screen_w, screen_h));
-        let source = noise(size.0, size.1);
-        let placement = cover(size, (screen_w, screen_h));
+        let source = render_frame(
+            &Source::Raster(noise(999, 701)),
+            &FrameStyle::default(),
+            (screen_w, screen_h),
+        )
+        .unwrap();
+        let placement = cover((source.width(), source.height()), (screen_w, screen_h));
         let bounds = skia::Rect::from_iwh(screen_w, screen_h);
 
         let mut full = skia::surfaces::raster_n32_premul((screen_w, screen_h)).unwrap();
@@ -166,13 +222,46 @@ mod tests {
         paint(
             surface.canvas(),
             &source,
-            Placement::IDENTITY,
+            Placement {
+                scale_x: 1.0,
+                scale_y: 1.0,
+                offset_x: 0.0,
+                offset_y: 0.0,
+            },
             skia::Rect::from_iwh(1000, 200),
         );
         let px = surface_pixels(&mut surface);
         let reds: Vec<i32> = px.chunks(4).map(|p| p[0] as i32).collect();
         let (min, max) = (*reds.iter().min().unwrap(), *reds.iter().max().unwrap());
         assert!(max - min <= 8, "aliased: {min}..{max}");
+    }
+
+    /// Drawn without a frame, the layout still applies: fitted, a wide red
+    /// image sits on the fill colour.
+    #[test]
+    fn paint_layout_lays_the_image_out() {
+        let source = image(40, 20, |_, _| [255, 0, 0]);
+        let mut surface = skia::surfaces::raster_n32_premul((100, 100)).unwrap();
+        let layout = Layout {
+            mode: crate::wallpaper::Mode::Fit,
+            ..Layout::default()
+        };
+        paint_layout(
+            surface.canvas(),
+            &source,
+            layout,
+            skia::Color4f::new(0.0, 0.0, 1.0, 1.0),
+            skia::Rect::from_iwh(100, 100),
+        );
+        let px = surface_pixels(&mut surface);
+        let at = |x: i32, y: i32| {
+            let i = ((y * 100 + x) * 4) as usize;
+            px[i..i + 4].to_vec()
+        };
+        // Red and blue are the two non-zero channels; which byte is which
+        // depends on N32, so compare against each other.
+        assert_ne!(at(50, 50), at(50, 5), "the image is not the bar");
+        assert_eq!(at(50, 5), at(50, 95), "both bars are the fill");
     }
 
     /// Past the image's edge the edge pixels extend: the far side of the

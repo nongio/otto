@@ -27,8 +27,9 @@ use skia_safe as skia;
 
 /// Rows of source read from Skia at a time.
 const STRIP_ROWS: i32 = 32;
-/// The most threads one resample uses.
-const MAX_THREADS: usize = 8;
+/// The most threads one resample uses. Kept below the core count too: the
+/// compositor is drawing while a wallpaper resamples.
+const MAX_THREADS: usize = 4;
 /// The fewest output rows worth a thread of their own.
 const MIN_ROWS_PER_THREAD: i32 = 64;
 
@@ -71,7 +72,7 @@ pub fn resample(image: &skia::Image, src: skia::Rect, size: (i32, i32)) -> Optio
 
     let mut out = vec![0u8; out_w as usize * out_h as usize * 4];
     let threads = std::thread::available_parallelism()
-        .map(|n| n.get())
+        .map(|n| n.get().saturating_sub(1).max(1))
         .unwrap_or(1)
         .min(MAX_THREADS)
         .min(((out_h / MIN_ROWS_PER_THREAD) as usize).max(1));
@@ -116,7 +117,10 @@ pub fn resample_to(image: &skia::Image, size: (i32, i32)) -> Option<skia::Image>
 }
 
 /// One output band: rows `first_row..` of the output, as many as `out` holds.
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one band's whole context, passed rather than bundled for a single private call"
+)]
 fn resample_band(
     image: &skia::Image,
     cols: &Axis,
@@ -318,6 +322,20 @@ impl Axis {
     /// `out` output pixels covering source `start..start + extent`, out of
     /// `len` source pixels.
     fn new(start: f32, extent: f32, out: i32, len: i32) -> Self {
+        // 1:1 on whole pixels is a copy along this axis. Mitchell does not
+        // interpolate — it would blend each pixel with its neighbours for
+        // nothing — so no kernel runs here.
+        let whole = |v: f64| (v - v.round()).abs() < 1e-4;
+        if (out as f64 - extent as f64).abs() < 1e-4 && whole(start as f64) {
+            let first = start.round() as i32;
+            let taps = (0..out)
+                .map(|o| Tap {
+                    first: (first + o).clamp(0, len - 1),
+                    weights: vec![1.0],
+                })
+                .collect();
+            return Self { taps };
+        }
         let ratio = out as f64 / extent as f64;
         let (kernel, support): (fn(f64) -> f64, f64) = if ratio < 1.0 {
             (lanczos3, 3.0)
@@ -657,6 +675,44 @@ mod tests {
         let a = pixels(&resample_to(&source, (123, 77)).unwrap());
         let b = pixels(&resample_to(&lazy, (123, 77)).unwrap());
         assert_eq!(a, b);
+    }
+
+    /// 1:1 on whole pixels copies: a non-interpolating kernel must not blur
+    /// an image that needs no resampling, whole or cropped, nor one axis of
+    /// one that only needs it along the other.
+    #[test]
+    fn one_to_one_on_whole_pixels_is_a_copy() {
+        let source = image(64, 48, |x, y| {
+            [
+                ((x * 37 + y * 11) % 256) as u8,
+                ((x * 5) % 256) as u8,
+                ((y * 13) % 256) as u8,
+            ]
+        });
+        let all = pixels(&source);
+        let copy = pixels(&resample_to(&source, (64, 48)).unwrap());
+        assert_eq!(copy, all);
+        let crop = pixels(
+            &resample(
+                &source,
+                skia::Rect::from_xywh(7.0, 5.0, 30.0, 20.0),
+                (30, 20),
+            )
+            .unwrap(),
+        );
+        for y in 0..20 {
+            for x in 0..30 {
+                assert_eq!(
+                    crop[(y * 30 + x) as usize],
+                    all[((y + 5) * 64 + x + 7) as usize]
+                );
+            }
+        }
+        // Columns 1:1, rows halved: every column keeps its own colour.
+        let half = pixels(&resample_to(&source, (64, 24)).unwrap());
+        for x in 0..64 {
+            assert_eq!(half[x as usize][1], all[x as usize][1], "column {x}");
+        }
     }
 
     /// An empty request is refused rather than producing a zero-sized image.
