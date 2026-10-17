@@ -10,6 +10,7 @@ mod logout;
 mod power;
 mod settings;
 mod tray;
+mod update;
 
 use app::TopBarApp;
 use otto_kit::AppRunner;
@@ -22,6 +23,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // catalogue. Asks the compositor rather than reading LANG, so that
     // "Preferred languages" moves the bar too.
     otto_kit::i18n::init_from_desktop();
+
+    update::start();
 
     let app = TopBarApp::new();
     AppRunner::new(app).run()?;

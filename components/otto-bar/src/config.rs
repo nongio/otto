@@ -148,6 +148,8 @@ impl Default for BatteryConfig {
 pub struct TopbarConfig {
     /// chrono strftime format string for the clock.
     pub clock_format: String,
+    /// Where to ask for the latest release. Empty turns the check off.
+    pub update_check_url: String,
     pub battery: BatteryConfig,
 }
 
@@ -155,6 +157,7 @@ impl Default for TopbarConfig {
     fn default() -> Self {
         Self {
             clock_format: default_clock_format(),
+            update_check_url: DEFAULT_UPDATE_CHECK_URL.to_string(),
             battery: BatteryConfig::default(),
         }
     }
@@ -162,12 +165,19 @@ impl Default for TopbarConfig {
 
 static CONFIG: LazyLock<TopbarConfig> = LazyLock::new(load_config);
 
+const DEFAULT_UPDATE_CHECK_URL: &str = "https://otto-version.nongio.workers.dev/latest";
+
 /// The clock format from `otto-bar.toml`, or the language's own where the
 /// file sets none.
 ///
 /// The format chosen in Settings wins over this; see [`crate::clock`].
 pub fn file_clock_format() -> &'static str {
     &CONFIG.clock_format
+}
+
+/// The version endpoint from `otto-bar.toml`; empty when the check is off.
+pub fn update_check_url() -> &'static str {
+    CONFIG.update_check_url.trim()
 }
 
 /// Settings for the battery indicator.
@@ -332,6 +342,9 @@ fn load_config() -> TopbarConfig {
                 Ok(table) => {
                     if let Some(fmt) = table.get("clock_format").and_then(|v| v.as_str()) {
                         cfg.clock_format = fmt.to_string();
+                    }
+                    if let Some(url) = table.get("update_check_url").and_then(|v| v.as_str()) {
+                        cfg.update_check_url = url.to_string();
                     }
                     parse_battery(&table, &mut cfg.battery);
                     break;
