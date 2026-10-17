@@ -58,6 +58,12 @@ impl<B: Backend> GlobalDispatch<OttoCanvasManagerV1, (), Otto<B>> for CanvasGlob
         let manager = data_init.init(resource, ());
         state.canvas_manager_bound(manager);
     }
+
+    /// The canvas is Otto's own column, drawn above every window and able to
+    /// take the user's keyboard: not for sandboxed or agent clients.
+    fn can_view(client: Client, _global_data: &()) -> bool {
+        !crate::sandbox::is_confined_client(&client)
+    }
 }
 
 impl<B: Backend> Dispatch<OttoCanvasManagerV1, (), Otto<B>> for CanvasGlobal {

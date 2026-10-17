@@ -80,6 +80,12 @@ impl<BackendData: Backend> GlobalDispatch<OrgKdeKwinAppmenuManager, (), Otto<Bac
     ) {
         data_init.init(resource, ());
     }
+
+    /// The address a client gives is shown and clicked by Otto's bar, and
+    /// can name another app's menu: not for sandboxed or agent clients.
+    fn can_view(client: Client, _global_data: &()) -> bool {
+        !crate::sandbox::is_confined_client(&client)
+    }
 }
 
 impl<BackendData: Backend> Dispatch<OrgKdeKwinAppmenuManager, (), Otto<BackendData>>

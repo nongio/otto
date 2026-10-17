@@ -70,7 +70,7 @@ A "—" means the interface is not in the client's registry at all.
 | Window control (wlr-foreign-toplevel) | every window | every window | if listed | — | its workspace's windows | — |
 | Window list (ext-foreign-toplevel-list) | every window | every window | every window | — | its own windows | none |
 | Input method, layer shell, gamma, shortcut inhibition | yes | yes | yes | — | — | — |
-| Otto's dock and text-cursor protocols | yes | yes | yes | — | — | — |
+| Otto's dock, side canvas and text-cursor protocols; KDE app menus | yes | yes | yes | — | — | — |
 | Security contexts | yes | yes | yes | — | yes, for more of its clients | yes, as a plain sandbox |
 | Session lock | Otto's locker only | — | — | — | — | — |
 | `wl_seat` | user's | user's | user's | user's | its own, then the user's | the user's |
