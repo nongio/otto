@@ -165,7 +165,8 @@ impl Default for TopbarConfig {
 
 static CONFIG: LazyLock<TopbarConfig> = LazyLock::new(load_config);
 
-const DEFAULT_UPDATE_CHECK_URL: &str = "https://otto-version.nongio.workers.dev/latest";
+const DEFAULT_UPDATE_CHECK_URL: &str =
+    "https://otto-version.riccardo-canalicchio.workers.dev/latest";
 
 /// The clock format from `otto-bar.toml`, or the language's own where the
 /// file sets none.
