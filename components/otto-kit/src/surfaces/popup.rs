@@ -42,10 +42,20 @@ impl PopupSurface {
     /// * `height` - Height in logical pixels
     ///
     /// # Example
+    /// `no_run`: needs a running app connected to a Wayland compositor.
+    ///
     /// ```no_run
     /// use otto_kit::surfaces::PopupSurface;
+    /// # use smithay_client_toolkit::shell::xdg::XdgPositioner;
+    /// # use wayland_protocols::xdg::shell::client::xdg_surface::XdgSurface;
     ///
-    /// let popup = PopupSurface::new(&parent_surface, &positioner, 200, 100)?;
+    /// # fn demo(
+    /// #     parent_surface: &XdgSurface,
+    /// #     positioner: &XdgPositioner,
+    /// # ) -> Result<(), otto_kit::surfaces::SurfaceError> {
+    /// let popup = PopupSurface::new(parent_surface, positioner, 200, 100)?;
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn new(
         parent_surface: &xdg_surface::XdgSurface,

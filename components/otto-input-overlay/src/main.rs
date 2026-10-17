@@ -248,32 +248,9 @@ fn open_device(path: &str) -> Result<File, String> {
     Ok(device)
 }
 
-/// A hex color: `#rrggbb`, `#rrggbbaa`, or the same without the `#`.
+/// A hex color: `#rrggbb`, `#rrggbbaa`, `#rgb`, or the same without the `#`.
 fn parse_hex_color(spec: &str) -> Option<skia_safe::Color> {
-    let hex = spec.strip_prefix('#').unwrap_or(spec);
-    if hex.is_empty() || !hex.chars().all(|c| c.is_ascii_hexdigit()) {
-        return None;
-    }
-    match hex.len() {
-        6 => {
-            let rgb = u32::from_str_radix(hex, 16).ok()?;
-            Some(skia_safe::Color::from_rgb(
-                (rgb >> 16) as u8,
-                (rgb >> 8) as u8,
-                rgb as u8,
-            ))
-        }
-        8 => {
-            let rgba = u32::from_str_radix(hex, 16).ok()?;
-            Some(skia_safe::Color::from_argb(
-                rgba as u8,
-                (rgba >> 24) as u8,
-                (rgba >> 16) as u8,
-                (rgba >> 8) as u8,
-            ))
-        }
-        _ => None,
-    }
+    otto_kit::color::parse_hex_lenient(spec)
 }
 
 /// An Otto theme token, e.g. `accent` or `material-selection-focused`

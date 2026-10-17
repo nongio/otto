@@ -86,8 +86,6 @@ impl LayoutRect {
         self.y += dy;
     }
 }
-
-#[allow(clippy::mutable_key_type)]
 pub fn natural_layout(
     slots: &mut HashMap<ObjectId, LayoutRect>,
     windows: impl IntoIterator<Item = (ObjectId, LayoutRect)>,

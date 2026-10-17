@@ -9,8 +9,8 @@ use super::*;
 /// Where a pointer event landed, and the modifiers held, in window points.
 #[derive(Clone, Copy)]
 pub(super) struct PointerAt {
-    x: f32,
-    y: f32,
+    pub(super) x: f32,
+    pub(super) y: f32,
     ctrl: bool,
     shift: bool,
     /// The window's width.
@@ -37,6 +37,12 @@ pub(super) enum After {
     Menu(MenuAt),
     /// The Photos view's grouping button was pressed: its menu, under it.
     GroupMenu { rect: Rect, serial: u32 },
+    /// The picker's location control was pressed: the directories above the
+    /// one being viewed, under it.
+    LocationMenu { rect: Rect, serial: u32 },
+    /// The picker's filter control was pressed: the request's filters, over
+    /// it.
+    FilterMenu { rect: Rect, serial: u32 },
 }
 
 pub(super) struct DragStart {
@@ -70,7 +76,9 @@ impl Browser {
         };
         // Whatever is up over the listing takes the event first, in this
         // order; the first that answers for it keeps it.
-        let layers: [Layer; 9] = [
+        let layers: [Layer; 11] = [
+            Self::desk_edit_pointer,
+            Self::desk_overflow_pointer,
             Self::rename_pointer,
             Self::peek_pointer,
             Self::preview_video_press,
@@ -141,7 +149,7 @@ impl Browser {
                         view::miller_rename_rect(
                             height,
                             self.pan.offset(),
-                            self.miller_w,
+                            &self.miller_widths(),
                             depth,
                             count,
                             scroll,
@@ -149,9 +157,16 @@ impl Browser {
                             is_dir,
                         )
                     }
-                    ViewMode::Grid => {
-                        view::grid_rename_rect(width, height, &self.recent_sections, scroll, index)
-                    }
+                    ViewMode::Grid => match self.desk_overflow_entry_rect(index) {
+                        Some(cell) => view::grid_rename_rect_over(cell),
+                        None => view::grid_rename_rect(
+                            width,
+                            height,
+                            &self.recent_sections,
+                            scroll,
+                            index,
+                        ),
+                    },
                     ViewMode::Photos => {
                         view::photos_rename_rect(width, height, &self.photos, scroll, index)
                     }
@@ -273,8 +288,12 @@ impl Browser {
             PointerEventKind::Leave { .. } => Some(peek::VideoPointer::Leave),
             PointerEventKind::Axis { .. } => None,
         };
+        let serial = match event.kind {
+            PointerEventKind::Press { serial, .. } => Some(serial),
+            _ => None,
+        };
         if let Some(kind) = video_pointer {
-            if self.preview_video_pointer(kind, x, y) {
+            if self.preview_video_pointer(kind, x, y, serial) {
                 AppContext::request_wakeup();
                 return Some(After::Next);
             }
@@ -425,20 +444,8 @@ impl Browser {
         // bottom, which is exactly where this strip begins.
         if self.picker.is_some() {
             let window_h = self.size.1;
-            let (filter_count, menu_open) = self
-                .picker
-                .as_ref()
-                .map(|p| (p.filters.len(), p.filter_open))
-                .unwrap_or((0, false));
-            let hit = view::footer_at(x, y, width, window_h, filter_count, menu_open);
-            // A click anywhere outside the open menu closes it, the
-            // way clicking away from any menu does — including a
-            // click on the listing, which is then swallowed.
-            let dismissing_menu = menu_open
-                && !matches!(
-                    hit,
-                    Some(view::FooterButton::FilterOption(_)) | Some(view::FooterButton::Filter)
-                );
+            let filter_count = self.picker.as_ref().map_or(0, |p| p.filters.len());
+            let hit = view::footer_at(x, y, width, window_h, filter_count);
 
             match event.kind {
                 PointerEventKind::Motion { .. } => {
@@ -456,13 +463,9 @@ impl Browser {
                         self.dirty = true;
                     }
                 }
-                PointerEventKind::Press { button, .. } if button != BTN_RIGHT => {
-                    if dismissing_menu {
-                        if let Some(session) = self.picker.as_mut() {
-                            session.filter_open = false;
-                        }
-                        self.dirty = true;
-                        return Some(After::Next);
+                PointerEventKind::Press { button, serial, .. } if button != BTN_RIGHT => {
+                    if hit == Some(view::FooterButton::Filter) {
+                        return Some(self.filter_press(serial));
                     }
                     if let Some(button) = hit {
                         self.footer_press(button);
@@ -558,10 +561,7 @@ impl Browser {
             AppContext::set_cursor_shape(CursorShape::ColResize);
             return After::Next;
         }
-        if let Some((depth, start_x, start_w)) = self.miller_resize {
-            let dx = (x - start_x) / (depth + 1) as f32;
-            self.miller_w = (start_w + dx).clamp(view::MILLER_MIN_W, view::MILLER_MAX_W);
-            self.dirty = true;
+        if self.miller_divider_drag(x) {
             AppContext::set_cursor_shape(CursorShape::ColResize);
             return After::Next;
         }
@@ -613,7 +613,7 @@ impl Browser {
         self.sync_scroll_metrics();
         let hovered = self.pane_under(x, y);
         let mut moved = self.pan.on_pointer_drag(x, y);
-        if self.mode == ViewMode::Columns {
+        if matches!(self.mode, ViewMode::Columns | ViewMode::Photos) {
             moved |= self.pan.on_pointer_move(x, y);
         } else {
             self.pan.on_pointer_leave();
@@ -690,14 +690,14 @@ impl Browser {
         self.dirty |= self.controls.pressed().is_some();
         match self.controls.on_release(control) {
             // In the picker, closing the window *is*
-            // cancelling: exiting here would leave the
+            // cancelling: closing it here would leave the
             // requesting application waiting on a reply that
             // no longer has a sender.
             Some(WindowControl::Close) => {
                 if self.picker.is_some() {
                     self.picker_cancel();
                 } else {
-                    std::process::exit(0)
+                    self.closing = true;
                 }
             }
             Some(WindowControl::Minimize) => window.minimize(),
@@ -705,6 +705,47 @@ impl Browser {
             None => {}
         }
         After::Next
+    }
+
+    /// A press on the divider at the right edge of Miller pane `depth`.
+    ///
+    /// A second press on the same divider within the double-click window
+    /// fits the pane to its longest name; otherwise the press starts a drag.
+    pub(super) fn miller_divider_press(&mut self, depth: usize, x: f32) {
+        let now = std::time::Instant::now();
+        let double_click = self.last_miller_click.is_some_and(|(last, at)| {
+            last == depth && now.duration_since(at) < DOUBLE_CLICK_WINDOW
+        });
+        if double_click {
+            let entries = self.visible(depth);
+            let longest = view::widest_name(entries.iter().map(|e| e.name.as_str()));
+            let has_dirs = entries.iter().any(|e| e.is_dir);
+            let width = view::fit_miller_width(longest, has_dirs);
+            if let Some(column) = self.columns.get_mut(depth) {
+                column.width = width;
+            }
+            self.last_miller_click = None;
+            self.dirty = true;
+        } else if let Some(column) = self.columns.get(depth) {
+            self.miller_resize = Some((depth, x, column.width));
+            self.last_miller_click = Some((depth, now));
+        }
+    }
+
+    /// Follow a Miller divider drag to pointer `x`. Returns whether a drag
+    /// is in progress, in which case it owns the pointer.
+    ///
+    /// Only the pane left of the divider changes width, so the divider stays
+    /// under the pointer and the panes after it shift along unchanged.
+    pub(super) fn miller_divider_drag(&mut self, x: f32) -> bool {
+        let Some((depth, start_x, start_w)) = self.miller_resize else {
+            return false;
+        };
+        if let Some(column) = self.columns.get_mut(depth) {
+            column.width = (start_w + x - start_x).clamp(view::MILLER_MIN_W, view::MILLER_MAX_W);
+            self.dirty = true;
+        }
+        true
     }
 
     /// The pointer left the window.
@@ -783,6 +824,18 @@ impl Browser {
             return after;
         }
 
+        // The picker's toolbar sits in the header band for the same reason.
+        if self.picker.is_some() {
+            match view::picker_toolbar_at(x, y, width) {
+                Some(view::ToolbarButton::Location) => return self.location_press(serial),
+                Some(view::ToolbarButton::NewFolder) => {
+                    self.picker_new_folder();
+                    return After::Stop;
+                }
+                None => {}
+            }
+        }
+
         // Dragging the header moves the window, in every view. The
         // sidebar's first place reaches into the header band, so a
         // click there belongs to the place, not to the drag.
@@ -803,7 +856,7 @@ impl Browser {
         // pane, crossing the foot of each pane's own gutter,
         // so it is asked first where the two overlap.
         let depth = self.pane_under(x, y);
-        let panning = self.mode == ViewMode::Columns;
+        let panning = matches!(self.mode, ViewMode::Columns | ViewMode::Photos);
         if (panning && self.pan.on_pointer_down(x, y))
             || self.columns[depth].scroll.on_pointer_down(x, y)
         {
@@ -821,6 +874,16 @@ impl Browser {
             && (self.entry_at(x, y).is_some() || self.preview_grab_at(x, y).is_some())
         {
             self.drag_armed = Some((x, y, serial));
+        }
+
+        // A second press on the preview's picture opens the file, as a
+        // second click on its row would.
+        if let Some(stage) = self.preview_grab_at(x, y) {
+            if self.note_preview_click() {
+                self.drag_armed = None;
+                self.open_from_preview(stage);
+                return After::Next;
+            }
         }
 
         if let Some(action) = self.trash_action_at(x, y) {
@@ -934,43 +997,21 @@ impl Browser {
                     }
                 }
             }
-        } else if self.mode == ViewMode::Columns
-            && view::miller_boundary_at(
-                x,
-                y,
-                width,
-                height,
-                self.pan.offset(),
-                self.columns.len(),
-                self.miller_w,
-            )
-            .is_some()
+        } else if let Some(depth) = (self.mode == ViewMode::Columns)
+            .then(|| {
+                view::miller_boundary_at(
+                    x,
+                    y,
+                    width,
+                    height,
+                    self.pan.offset(),
+                    self.columns.len(),
+                    &self.miller_widths(),
+                )
+            })
+            .flatten()
         {
-            let depth = view::miller_boundary_at(
-                x,
-                y,
-                width,
-                height,
-                self.pan.offset(),
-                self.columns.len(),
-                self.miller_w,
-            )
-            .unwrap();
-            let now = std::time::Instant::now();
-            let double_click = self.last_miller_click.is_some_and(|(last, at)| {
-                last == depth && now.duration_since(at) < DOUBLE_CLICK_WINDOW
-            });
-            if double_click {
-                let entries = self.visible(depth);
-                let longest = view::widest_name(entries.iter().map(|e| e.name.as_str()));
-                let has_dirs = entries.iter().any(|e| e.is_dir);
-                self.miller_w = view::fit_miller_width(longest, has_dirs);
-                self.last_miller_click = None;
-                self.dirty = true;
-            } else {
-                self.miller_resize = Some((depth, x, self.miller_w));
-                self.last_miller_click = Some((depth, now));
-            }
+            self.miller_divider_press(depth, x);
         } else {
             let counts = self.counts();
             let hit = view::miller_at(
@@ -981,7 +1022,7 @@ impl Browser {
                 &self.columns,
                 &counts,
                 self.pan.offset(),
-                self.miller_w,
+                &self.miller_widths(),
             );
             if let Some((depth, Some(index))) = hit {
                 if ctrl {
@@ -1025,7 +1066,8 @@ impl Browser {
         let discrete = vertical.discrete != 0 || horizontal.discrete != 0;
         // One gesture belongs to one axis, chosen by its first
         // delta and kept until it lifts.
-        let leading = if self.mode == ViewMode::Columns && dx.abs() > dy.abs() {
+        let pans = matches!(self.mode, ViewMode::Columns | ViewMode::Photos);
+        let leading = if pans && dx.abs() > dy.abs() {
             Axis::Horizontal
         } else {
             Axis::Vertical

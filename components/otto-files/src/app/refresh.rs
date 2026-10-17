@@ -93,9 +93,11 @@ impl Browser {
             return false;
         };
         if depth >= self.columns.len() {
+            self.enter_after_rename = false;
             return false;
         }
         let Some(index) = self.visible(depth).iter().position(|e| e.name == name) else {
+            self.enter_after_rename = false;
             return false;
         };
         self.select(depth, index);

@@ -13,9 +13,13 @@ impl Browser {
     pub(super) fn sync_scroll_metrics(&mut self) {
         self.rebuild_recent_sections();
         self.rebuild_photos_layout();
+        self.settle_overflow_panel();
+        // A desk that stacks is exactly as tall as its cells up to the tile,
+        // which all fit, so it never scrolls.
+        let tile = self.desk_overflow().map(|overflow| overflow.tile);
         let (width, height) = (self.size.0, self.content_h());
         let mode = self.mode;
-        let miller_w = self.miller_w;
+        let miller = self.miller_widths();
         let depth_count = self.columns.len();
         let counts = self.counts();
 
@@ -24,21 +28,27 @@ impl Browser {
         // preview pane, when showing, is one more thing the stack must have
         // room to pan to — it is folded into the same content length as the
         // real columns rather than carved out of the viewport.
-        self.pan
-            .set_viewport(view::content_viewport(width, height, mode));
-        self.pan.set_content_length(view::miller_content_width(
-            depth_count,
-            miller_w,
-            self.preview_width(),
-        ));
+        // In the Photos view it pans across the wall and the info panel
+        // trailing it.
+        let viewport = view::content_viewport(width, height, mode);
+        self.pan.set_viewport(viewport);
+        self.pan.set_content_length(match mode {
+            ViewMode::Photos => view::photos_content_width(viewport.width()),
+            _ => view::miller_content_width(depth_count, &miller, self.preview_width()),
+        });
         let pan = self.pan.offset();
+        self.photos.set_pan(pan);
 
         for (depth, &count) in counts.iter().enumerate() {
+            let count = match tile {
+                Some(tile) if depth + 1 == depth_count => tile.first + 1,
+                _ => count,
+            };
             let viewport = match mode {
                 // Beside the info panel, not under it: the bar, the wheel and
                 // the band all stop at the panel's edge.
                 ViewMode::Photos => self.photos.area(width, height),
-                _ => view::pane_viewport(width, height, mode, depth, pan, miller_w),
+                _ => view::pane_viewport(width, height, mode, depth, pan, &miller),
             };
             // The day headings are part of the content: measured without them
             // the grid is short by their height and the last row is unreachable.
@@ -91,7 +101,8 @@ impl Browser {
             return;
         }
         self.sync_scroll_metrics();
-        let target = view::miller_pan_for(depth, self.size.0, self.pan.offset(), self.miller_w);
+        let target =
+            view::miller_pan_for(depth, self.size.0, self.pan.offset(), &self.miller_widths());
         if self.pan.scroll_to(target) {
             self.dirty = true;
         }
@@ -112,7 +123,7 @@ impl Browser {
             &self.columns,
             &counts,
             self.pan.offset(),
-            self.miller_w,
+            &self.miller_widths(),
         )
         .map(|(depth, _)| depth)
         .unwrap_or(self.active)
@@ -134,6 +145,7 @@ impl Browser {
         let mut moved = false;
         if self.pan.is_animating() {
             moved |= self.pan.tick();
+            self.photos.set_pan(self.pan.offset());
         }
         for column in &mut self.columns {
             if column.scroll.is_animating() {

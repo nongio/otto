@@ -22,15 +22,21 @@
 //! - [`index`] asks LocalSearch over D-Bus.
 //! - [`find`](mod@find) runs a plan to a ranked list of files that are
 //!   really on disk, paging past the ones the index remembers wrongly.
-//! - [`matching`] scores names, and is shared with anything else that ranks
-//!   typed text against names.
+//! - [`dates`] is the calendar arithmetic underneath, shared with anything
+//!   else that shows a date without a date crate.
+//!
+//! Names are scored with `otto_foundations::matching`, the same scorer the
+//! launcher and every list in the toolkit rank with.
+
+// A `pub` item nothing outside the crate can reach is an accident: say
+// `pub(crate)` or `pub(super)`, so the public API is what lib.rs exports.
+#![warn(unreachable_pub)]
 
 // Rust guideline compliant 2026-02-21
 
-mod dates;
+pub mod dates;
 pub mod find;
 pub mod index;
-pub mod matching;
 mod plan;
 pub mod query;
 

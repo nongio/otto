@@ -198,7 +198,7 @@ impl FilePickerService {
 pub async fn serve(queue: SharedQueue) -> zbus::Result<()> {
     use zbus::fdo::{DBusProxy, RequestNameFlags, RequestNameReply};
 
-    let connection = zbus::ConnectionBuilder::session()?.build().await?;
+    let connection = zbus::connection::Builder::session()?.build().await?;
     connection
         .object_server()
         .at(DBUS_PATH, FilePickerService::new(queue))

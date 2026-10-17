@@ -328,10 +328,16 @@ impl Window {
     /// The layer and all its children will be rendered when the window draws.
     ///
     /// # Example
+    /// `no_run`: needs a running app connected to a Wayland compositor.
+    ///
     /// ```no_run
+    /// # fn demo(window: &mut otto_kit::Window) {
+    /// use otto_kit::components::layers::LayerFrame;
+    ///
     /// let layer = LayerFrame::new();
     /// layer.set_size(200.0, 100.0);
     /// window.set_layer_node(layer.layer().clone());
+    /// # }
     /// ```
     pub fn set_layer_node(&mut self, layer: layers::prelude::Layer) {
         if let Some(backing) = self.layer_surface() {
@@ -360,11 +366,15 @@ impl Window {
     /// Returns None if surface style was not available when the window was created.
     ///
     /// # Example
+    /// `no_run`: needs a running app connected to a Wayland compositor.
+    ///
     /// ```no_run
+    /// # fn demo(window: &otto_kit::Window) {
     /// if let Some(surface_style) = window.surface_style() {
     ///     surface_style.set_corner_radius(24.0);
     ///     surface_style.set_opacity(0.9);
     /// }
+    /// # }
     /// ```
     pub fn surface_style(&self) -> Option<otto_surface_style_v1::OttoSurfaceStyleV1> {
         if let Some(layer) = self.layer_surface() {
@@ -891,12 +901,19 @@ impl Window {
     pub fn close(&self) {
         if let Some(id) = self.surface_id() {
             AppContext::unregister_close_handler(&id);
+            AppContext::unregister_frame_callback(&id);
             // The window is what an assistive technology was reading; nothing
             // is left to describe once it is unmapped.
             AppContext::disable_accessibility(&id);
         }
         if let Ok(mut guard) = self.surface.write() {
             guard.take();
+        }
+        // The draw closure goes too, with whatever it holds: clones of the
+        // handle live on in callbacks that are never taken off, and would
+        // otherwise keep the window's state alive for the rest of the process.
+        if let Ok(mut draw_fn) = self.on_draw_fn.lock() {
+            draw_fn.take();
         }
         // A layer surface has no role object that goes on drop, so its
         // destruction is asked for explicitly.
@@ -954,7 +971,12 @@ impl Window {
     /// The callback receives all pointer events when they occur
     ///
     /// # Example
+    /// `no_run`: needs a running app connected to a Wayland compositor.
+    ///
     /// ```no_run
+    /// # fn demo(window: &otto_kit::Window) {
+    /// use smithay_client_toolkit::seat::pointer::PointerEventKind;
+    ///
     /// window.on_pointer_event(|events| {
     ///     for event in events {
     ///         match &event.kind {
@@ -965,6 +987,7 @@ impl Window {
     ///         }
     ///     }
     /// });
+    /// # }
     /// ```
     pub fn on_pointer_event<F>(&self, mut callback: F)
     where
@@ -993,24 +1016,6 @@ impl Window {
         });
     }
 
-    /// Start an interactive window move
-    /// Call this in response to a pointer button press to make the window draggable
-    ///
-    /// # Arguments
-    /// * `seat` - The seat that initiated the move
-    /// * `serial` - The serial from the pointer button press event
-    ///
-    /// # Example
-    /// ```no_run
-    /// window.on_pointer_event(|events| {
-    ///     for event in events {
-    ///         if let PointerEventKind::Press { serial, .. } = event.kind {
-    ///             // Start window move when pressed
-    ///             window.start_move(seat, serial);
-    ///         }
-    ///     }
-    /// });
-    /// ```
     /// Begin a compositor-driven resize from `edge`.
     ///
     /// Call it from a pointer press that landed on an edge — see
@@ -1024,6 +1029,32 @@ impl Window {
         }
     }
 
+    /// Start an interactive window move
+    /// Call this in response to a pointer button press to make the window draggable
+    ///
+    /// # Arguments
+    /// * `seat` - The seat that initiated the move
+    /// * `serial` - The serial from the pointer button press event
+    ///
+    /// # Example
+    /// `no_run`: needs a running app connected to a Wayland compositor.
+    ///
+    /// ```no_run
+    /// # use wayland_client::protocol::wl_seat::WlSeat;
+    /// # fn demo(window: &otto_kit::Window, seat: WlSeat) {
+    /// use smithay_client_toolkit::seat::pointer::PointerEventKind;
+    ///
+    /// let target = window.clone();
+    /// window.on_pointer_event(move |events| {
+    ///     for event in events {
+    ///         if let PointerEventKind::Press { serial, .. } = event.kind {
+    ///             // Start window move when pressed
+    ///             target.start_move(&seat, serial);
+    ///         }
+    ///     }
+    /// });
+    /// # }
+    /// ```
     pub fn start_move(&self, seat: &wl_seat::WlSeat, serial: u32) {
         if let Ok(surface_guard) = self.surface.read() {
             if let Some(ref surface) = *surface_guard {
@@ -1199,6 +1230,15 @@ impl Window {
             return false;
         };
         crate::foreign::set_parent_from_handle(handle, surface.wl_surface())
+    }
+
+    /// Name this window for other processes, so a dialog one of them serves
+    /// can be its child — see [`crate::foreign::export`]. `None` on a
+    /// compositor without xdg-foreign, or once the window is closed.
+    pub fn export(&self) -> Option<crate::foreign::Exported> {
+        let surface_guard = self.surface.read().ok()?;
+        let surface = surface_guard.as_ref()?;
+        crate::foreign::export(surface.wl_surface())
     }
 
     /// Say this window is a dialog, and whether it is modal

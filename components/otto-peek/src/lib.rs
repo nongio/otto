@@ -9,9 +9,11 @@
 //! its own surface — and hands stacking, focus and dismissal to the parent
 //! window instead of leaving them to be managed by hand.
 //!
-//! Three hosts embed it: the file browser, the save/open file dialog, and the
-//! desktop's file view. The `otto-peek` binary remains for previewing a
-//! path from a terminal.
+//! Peek decodes and presents. otto-files embeds it in three hosts (the file
+//! browser, the save/open file dialog and the desktop's file view), and
+//! otto-preview gives one file a window of its own around the same
+//! [`session::Session`]: two shells, one Peek. The `otto-peek` binary remains
+//! for previewing a path from a terminal.
 //!
 //! # What lives where
 //!
@@ -23,6 +25,14 @@
 //!   worker, enforce the deadline.
 //! * [`opening`] — the entrance geometry, now usable for real: the host has the
 //!   item's rect, so the card can grow out of the file.
+//! * [`session`] — the embedded preview a host drives: zoom, pan, pages, text
+//!   selection, links and playback, with a cache of recent decodes so opening
+//!   a file again does not run the worker twice.
+//! * [`ocr`], [`ocrcache`] and [`badge`] — text in pictures: the recogniser,
+//!   the words it found remembered between runs, and the corner badge that
+//!   says so. [`config`] is the `[peek]` section that turns it on and off.
+//! * [`imagesize`] — a picture's size from its header, for a layout that
+//!   cannot wait for the decode.
 //!
 //! # Embedding
 //!
@@ -41,15 +51,25 @@
 //! Without it the previewer would re-exec the host as a *host*, which would
 //! start a second file browser instead of decoding anything.
 
+// A `pub` item nothing outside the crate can reach is an accident: say
+// `pub(crate)` or `pub(super)`, so the public API is what lib.rs exports.
+#![warn(unreachable_pub)]
 // The doctest above spells out `fn main` deliberately: where in `main` the
 // call goes is the thing being documented.
 #![allow(clippy::needless_doctest_main)]
 
+pub mod badge;
+pub mod config;
 pub mod decode;
+mod decode_cache;
+pub mod draw;
+pub mod imagesize;
 pub mod ocr;
+pub mod ocrcache;
 pub mod opening;
 pub mod payload;
 pub mod sandbox;
+pub mod session;
 pub mod spawn;
 pub mod thumbcache;
 pub mod thumbnailer;
@@ -104,6 +124,11 @@ pub fn generate_thumbnail(
     };
     match decode_path(path, &request) {
         Preview::Pixels { pixels, .. } => pixels.to_image(),
+        // A card's artwork is a picture of the file: a video's poster frame,
+        // a song's cover.
+        Preview::Card {
+            hero: Some(pixels), ..
+        } => pixels.to_image(),
         // Everything else a previewer can return — a text listing, an
         // archive's contents, an unavailable file — is not a picture, and
         // standing it in for one would put a grey card where the type icon

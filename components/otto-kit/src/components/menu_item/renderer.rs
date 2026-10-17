@@ -3,6 +3,9 @@ use super::{MenuItem, MenuItemIcon, MenuItemStyle, VisualState};
 use crate::{components::icon::Icon, Renderable};
 use skia_safe::{Canvas, Font, Paint, Point, RRect, Rect};
 
+/// Room before a toggle's label for its check.
+pub const CHECK_GUTTER: f32 = 16.0;
+
 /// Pure rendering functions for MenuItem
 pub struct MenuItemRenderer;
 
@@ -68,11 +71,22 @@ impl MenuItemRenderer {
         // Draw label (offset by icon if present)
         let icon_size = 16.0;
         let icon_gap = 6.0;
-        let label_x_offset = if data.icon.is_some() {
-            icon_size + icon_gap
-        } else {
-            0.0
-        };
+        let gutter = if data.check_gutter { CHECK_GUTTER } else { 0.0 };
+        let label_x_offset = gutter
+            + if data.icon.is_some() {
+                icon_size + icon_gap
+            } else {
+                0.0
+            };
+        if data.checked == Some(true) {
+            Self::draw_check(
+                canvas,
+                text_color,
+                x + style.horizontal_padding,
+                y,
+                data.height,
+            );
+        }
         Self::draw_label(
             canvas,
             label,
@@ -91,7 +105,7 @@ impl MenuItemRenderer {
                 canvas,
                 icon,
                 text_color,
-                x,
+                x + gutter,
                 y,
                 data.height,
                 style,
@@ -115,6 +129,23 @@ impl MenuItemRenderer {
                 style,
             );
         }
+    }
+
+    /// A check mark in the gutter at `left`, for a toggle that is on.
+    fn draw_check(canvas: &Canvas, color: skia_safe::Color, left: f32, y: f32, height: f32) {
+        let mut paint = Paint::default();
+        paint.set_color(color);
+        paint.set_anti_alias(true);
+        paint.set_style(skia_safe::PaintStyle::Stroke);
+        paint.set_stroke_width(1.6);
+        paint.set_stroke_cap(skia_safe::paint::Cap::Round);
+        paint.set_stroke_join(skia_safe::paint::Join::Round);
+        let mid = y + height / 2.0;
+        let mut path = skia_safe::PathBuilder::new();
+        path.move_to((left + 1.5, mid));
+        path.line_to((left + 4.5, mid + 3.0));
+        path.line_to((left + 10.0, mid - 3.5));
+        canvas.draw_path(&path.detach(), &paint);
     }
 
     /// Draw hover background
@@ -196,11 +227,19 @@ impl MenuItemRenderer {
                     icon_x,
                     icon_y
                 );
-                // Use XDG theme lookup (same as tray icons), fall back to SVG set
-                // Load at physical size for HiDPI crispness
+                // Otto's Solar glyph in the item's tint, else the XDG theme
+                // (same as tray icons), else the embedded SVG set. Loaded at
+                // physical size for HiDPI crispness.
                 let scale = crate::app_runner::context::AppContext::scale_factor().max(1);
                 let load_size = (icon_size as i32) * scale;
-                if let Some(img) = crate::icons::named_icon_sized(name, load_size) {
+                let image = crate::icons::solar_icon(
+                    name,
+                    load_size,
+                    crate::icons::SolarStyle::Linear,
+                    tint,
+                )
+                .or_else(|| crate::icons::named_icon_sized(name, load_size));
+                if let Some(img) = image {
                     let dst = Rect::from_xywh(icon_x, icon_y, icon_size, icon_size);
                     let paint = Paint::default();
                     let dst_px = (icon_size * scale as f32, icon_size * scale as f32);
@@ -220,6 +259,26 @@ impl MenuItemRenderer {
                         .with_color(tint)
                         .render(canvas);
                     canvas.restore();
+                }
+            }
+            MenuItemIcon::Themed(names) => {
+                let scale = crate::app_runner::context::AppContext::scale_factor().max(1);
+                let load_size = (icon_size as i32) * scale;
+                let names: Vec<&str> = names.iter().map(String::as_str).collect();
+                if let Some(img) = crate::icons::cached_icon_chain_at(
+                    &names,
+                    load_size,
+                    crate::icons::FULL_COLOUR_SIZE,
+                ) {
+                    let dst = Rect::from_xywh(icon_x, icon_y, icon_size, icon_size);
+                    let dst_px = (icon_size * scale as f32, icon_size * scale as f32);
+                    canvas.draw_image_rect_with_sampling_options(
+                        &img,
+                        None,
+                        dst,
+                        crate::utils::icon_sampling((img.width(), img.height()), dst_px),
+                        &Paint::default(),
+                    );
                 }
             }
             MenuItemIcon::Pixmap {

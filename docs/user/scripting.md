@@ -39,6 +39,8 @@ string, separated by `;`.
 | `tiling toggle\|enable\|disable` | turn the current workspace's tiling on or off |
 | `expose [show\|hide\|toggle]` | the window overview, as `Ctrl+Up` opens it |
 | `gaps inner\|outer <n> [current\|all]` | set the gaps |
+| `output <name>\|* bg <file> [<mode>] [<#colour>]` | a display's wallpaper, or with `*` everyone's; see below |
+| `background <file> [<mode>] [<#colour>]` | the focused workspace's own wallpaper |
 
 `rename workspace` is the exception to the numbering: the name is the rest of
 the command, spaces and all, so `rename workspace to Deep Work` needs no
@@ -49,6 +51,33 @@ Most of these need a **tiling workspace**: `tiling enable` first, or bind
 `TilingToggle` to a key. On a floating workspace they say so rather than doing
 something surprising. The exception is `[app_id="…"] focus`, which works
 anywhere.
+
+## Wallpaper
+
+`output … bg` is sway's command, and sway scripts work unchanged:
+
+```sh
+otto-msg 'output DP-1 bg ~/Pictures/wall.jpg fill'
+otto-msg 'output * bg /usr/share/otto/wallpaper.jpg center #102E95'
+otto-msg 'output HDMI-A-1 bg #000000 solid_color'
+otto-msg 'output DP-1 bg reset'
+```
+
+The modes are `fill`, `fit`, `stretch`, `center`, `tile` and `span` (see
+[Theming](theming.md#wallpaper)); a mode or colour left out keeps what is set.
+`*` sets the global wallpaper, which a display's own still overrides. `reset`
+drops a display's own and goes back to the global one (`output * bg reset` puts
+the global settings back to their defaults).
+
+`background` does the same for the focused workspace, over its display's:
+`background ~/Pictures/focus.png tile`, `background #202020 solid_color`,
+`background reset`. The workspace keeps its wallpaper when you move it.
+
+The path is the rest of the command as written, spaces and all; put it in
+double quotes if it contains a `;`. It must be absolute or start with `~/`
+(your home folder): it is saved, and a relative path would mean another file
+next time. An image Otto cannot open is refused with the reason, and nothing
+changes. Every change is saved to your config.
 
 ## Focusing a window by name
 

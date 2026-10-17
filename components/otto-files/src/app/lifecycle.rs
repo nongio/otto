@@ -6,13 +6,12 @@ use super::*;
 /// person writes for it, knows the desk's surface by.
 const DESK_NAMESPACE: &str = "otto-desk";
 
-impl App for FilesApp {
-    fn on_app_ready(&mut self, _ctx: &AppContext) -> Result<(), Box<dyn std::error::Error>> {
+/// What [`FilesApp`](super::windows::FilesApp) hands each window: the same
+/// questions the toolkit asks an app, about this window alone.
+impl FilesWindow {
+    /// Put the window on screen. The layer engine is already up.
+    pub(super) fn show(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         self.context_menu = Some(ContextMenu::new(Vec::new()));
-
-        // Before the window: a surface builds its own root layer node at
-        // construction, and that node is what the scene hangs off.
-        AppContext::enable_layer_engine(view::WINDOW_W, view::WINDOW_H);
 
         if view::is_desk() {
             return self.desk_ready();
@@ -47,7 +46,7 @@ impl App for FilesApp {
 
         // Serving a portal request, this window is that application's file
         // dialog rather than a document window of ours.
-        Self::adopt_picker_parent(&window, &self.state.lock().unwrap());
+        Self::adopt_picker_parent(&window, &self.state.browse());
 
         // otto-kit's materials are translucent by design — they expect a
         // blurred backdrop behind them. Without one the desktop shows through
@@ -63,7 +62,7 @@ impl App for FilesApp {
         // translucent.
         let blur = otto_kit::backdrop::blur_available();
         window.set_background_blur(blur);
-        self.state.lock().unwrap().blur_available = blur;
+        self.state.browse().blur_available = blur;
 
         // The panels' scene. `None` only where the engine could not be brought
         // up, which is the case the immediate-mode chrome still covers: the
@@ -79,6 +78,27 @@ impl App for FilesApp {
             window.set_fades_own_material(true);
             self.frost = Some(scene.frost_state());
         }
+
+        // The menus in the top bar, for a browser window; a file dialog
+        // belongs to the app that opened it, whose menus stay.
+        let menus = {
+            let browser = self.state.browse();
+            browser.picker.is_none().then(|| browser.app_menus())
+        };
+        if let Some(menus) = menus {
+            self.app_menu = otto_kit::app_menu::AppMenu::serve(menus);
+            if let (Some(menu), Some(surface)) = (self.app_menu.as_ref(), window.wl_surface()) {
+                menu.attach(&surface);
+            }
+        }
+
+        // The compositor's close (the dock's, a shortcut's) closes this
+        // window, not the application with every other window in it.
+        let state = Arc::clone(&self.state);
+        window.on_close_request(move || {
+            state.browse().closing = true;
+            AppContext::request_wakeup();
+        });
 
         self.install_window(window, scene);
         Ok(())
@@ -98,12 +118,12 @@ impl App for FilesApp {
     /// The browser moves its own cursor with the arrows, so there is no
     /// traversal ring here — the cursor row *is* the focus, which is what makes
     /// each file read out as the user moves through the directory.
-    fn accessibility(
+    pub(super) fn accessibility(
         &mut self,
         _ctx: &AppContext,
         _surface: &wayland_client::backend::ObjectId,
     ) -> Option<A11yTree> {
-        let browser = self.state.lock().ok()?;
+        let browser = self.state.browse();
         let depth = browser.active.min(browser.columns.len().saturating_sub(1));
         let column = browser.columns.get(depth)?;
 
@@ -158,12 +178,32 @@ impl App for FilesApp {
                     depth,
                     browser.content_h(),
                     browser.pan.offset(),
-                    browser.miller_w,
+                    &browser.miller_widths(),
                 );
                 let strip = view::RowStrip::miller(pane, count, scroll);
                 (
                     Box::new(move |index| strip.rect(index)),
                     strip.visible(pane),
+                )
+            }
+            ViewMode::Grid if browser.desk_overflow().is_some() => {
+                // The desk's overflow tile: the cells up to it, and the
+                // panel's items while it is open. Closed, the tile is one
+                // node.
+                let cells =
+                    view::content_viewport(browser.size.0, browser.content_h(), ViewMode::Grid);
+                let overflow = browser.desk_overflow().expect("checked by the guard");
+                let end = match overflow.panel {
+                    Some(_) => browser.desk_overflow_shown().unwrap_or_default().end,
+                    None => overflow.tile.first + 1,
+                };
+                (
+                    Box::new(move |index| {
+                        overflow.entry_rect(cells, index).unwrap_or_else(|| {
+                            view::grid_cell_rect_in(cells, view::GridSections::FLAT, index, 0.0)
+                        })
+                    }),
+                    0..end.min(count),
                 )
             }
             ViewMode::Grid => {
@@ -202,6 +242,10 @@ impl App for FilesApp {
         // The keyboard's row is described wherever it is: it is what the focus
         // names, and a focus pointing at an undescribed node reads as nothing.
         let off_screen_cursor = cursor.filter(|c| *c < count && !shown.contains(c));
+        let closed_tile = browser
+            .desk_overflow()
+            .filter(|overflow| overflow.panel.is_none())
+            .map(|overflow| overflow.tile);
 
         tree.region(
             FILES_LIST,
@@ -215,6 +259,19 @@ impl App for FilesApp {
                     tree.control(row_focus(index), bounds, Role::ListItem, true, |node| {
                         node.set_size_of_set(count);
                         node.set_position_in_set(index + 1);
+                        if let Some(tile) = closed_tile.filter(|tile| tile.first == index) {
+                            node.set_label(otto_kit::t_owned!(
+                                "files-desk-overflow",
+                                count = tile.count as i64
+                            ));
+                            node.set_selected(
+                                tile.range()
+                                    .filter_map(|i| entries.get(i))
+                                    .any(|e| selection.contains(&e.selection_key())),
+                            );
+                            node.add_action(Action::Click);
+                            return;
+                        }
                         node.set_label(entry.name.clone());
                         // What the Kind column says, plus the size for a file: the
                         // two things that tell one listing row from another when
@@ -251,7 +308,7 @@ impl App for FilesApp {
                 browser.columns.len(),
                 browser.content_h(),
                 browser.pan.offset(),
-                browser.miller_w,
+                &browser.miller_widths(),
             );
             tree.preview(PREVIEW_PANE, pane, &name, decoded);
         }
@@ -271,7 +328,7 @@ impl App for FilesApp {
     }
 
     /// A screen reader picked a row: select it, exactly as a click does.
-    fn on_accessibility_action(
+    pub(super) fn on_accessibility_action(
         &mut self,
         _ctx: &AppContext,
         _surface: &wayland_client::backend::ObjectId,
@@ -281,9 +338,7 @@ impl App for FilesApp {
             return;
         }
 
-        let Ok(mut browser) = self.state.lock() else {
-            return;
-        };
+        let mut browser = self.state.browse();
         let depth = browser.active.min(browser.columns.len().saturating_sub(1));
         let count = browser.visible_len(depth);
         let target = (0..count).find(|index| {
@@ -291,12 +346,18 @@ impl App for FilesApp {
         });
         let Some(index) = target else { return };
 
-        browser.press_entry(depth, index);
+        if browser.closed_tile_at(index).is_some() {
+            browser.open_overflow_panel();
+        } else {
+            browser.press_entry(depth, index);
+        }
         drop(browser);
         self.render();
     }
 
-    fn on_update(&mut self, _ctx: &AppContext) {
+    pub(super) fn on_update(&mut self, _ctx: &AppContext) {
+        self.follow_app_menu();
+
         // The scene decides when the compositor's backdrop blur may be
         // switched — it owns the fade the switch has to hide under — but the
         // window is what carries the request, so it is applied here.
@@ -322,9 +383,11 @@ impl App for FilesApp {
         // surface has no activated state — and it is read here.
         if view::is_desk() {
             self.follow_desk_focus();
+            self.follow_overflow_focus();
+            self.follow_desk_edit();
         } else if let Some(window) = self.window.as_ref() {
             let area = {
-                let browser = self.state.lock().unwrap();
+                let browser = self.state.browse();
                 let top = view::header_h();
                 let bottom = (browser.content_h() + browser.path_bar_h() - view::corner()).max(top);
                 Rect::from_ltrb(view::sidebar_w(), top, browser.size.0, bottom)
@@ -346,7 +409,7 @@ impl App for FilesApp {
             dims_jobs,
             folder_jobs,
         ) = {
-            let mut browser = self.state.lock().unwrap();
+            let mut browser = self.state.browse();
             let changed = browser.poll();
             // Momentum, the overscroll bounce and the scrollbar's fade all
             // advance here rather than on input, since they keep running after
@@ -357,6 +420,9 @@ impl App for FilesApp {
             browser.tick_palette_scroll();
             // The Open With chooser's list, likewise: its own window.
             browser.tick_open_with_scroll();
+            // And the desk's overflow panel, on its own surface: its scroll,
+            // and its exit, which ends by taking the surface down.
+            browser.tick_overflow_panel();
             let elapsed = browser.caret_elapsed();
             let blinking = browser.tick_caret(elapsed);
             let animating = blinking
@@ -364,7 +430,8 @@ impl App for FilesApp {
                 | browser.tick_peek_animation()
                 | browser.tick_peek_exit()
                 | browser.tick_open_pulse()
-                | browser.tick_photos_copied();
+                | browser.tick_photos_copied()
+                | browser.tick_photos_video();
             // The docked preview column follows the selection wherever it
             // moves — a click, an arrow key, a directory finishing a load
             // that changes what "the selection" resolves to — so this is
@@ -425,12 +492,18 @@ impl App for FilesApp {
         if !folder_jobs.is_empty() {
             self.start_folder_previews(folder_jobs);
         }
+        // A photo turn asked for, one at a time. The guard is dropped at the
+        // end of the `let`, before the worker is started.
+        let turn = self.state.browse().take_photo_turn();
+        if let Some(job) = turn {
+            self.start_photo_turn(job);
+        }
 
         // One lock, taken once. A `self.state.lock()` in an `if` condition
         // holds its guard for the whole `if`, so locking again inside the body
         // deadlocks the update loop — which is exactly what it did.
         let open_now = {
-            let mut browser = self.state.lock().unwrap();
+            let mut browser = self.state.browse();
             let depth = browser.active;
             let ready = browser.peek_auto && !browser.visible(depth).is_empty();
             if ready {
@@ -440,7 +513,7 @@ impl App for FilesApp {
             ready
         };
         if open_now {
-            let mut browser = self.state.lock().unwrap();
+            let mut browser = self.state.browse();
             self.start_peek(&mut browser);
         }
         self.follow_peek();
@@ -469,23 +542,26 @@ impl App for FilesApp {
                 None => self.render(),
             }
         }
+        if view::is_desk() {
+            self.sync_overflow_surface(repaint);
+        }
 
         self.sync_info_window();
         self.sync_open_with_window();
         self.advance_picker();
-        self.answer_selection_asks();
     }
 
     /// A hand laid on the touchpad stops whatever is gliding, the way a
     /// finger on a spinning wheel does. Nothing else in the pointer stream
     /// says so: a hold carries no motion and no button.
-    fn on_pointer_hold_begin(&mut self, _ctx: &AppContext, _fingers: u32) {
-        let mut browser = self.state.lock().unwrap();
+    pub(super) fn on_pointer_hold_begin(&mut self, _ctx: &AppContext, _fingers: u32) {
+        let mut browser = self.state.browse();
         browser.pan.stop();
         browser.gesture_axis = None;
         for column in &mut browser.columns {
             column.scroll.stop();
         }
+        browser.stop_overflow_scroll();
         drop(browser);
         self.render();
     }
@@ -495,8 +571,8 @@ impl App for FilesApp {
     /// the way their slider does. The other views have no zoom, and a pinch
     /// there is left alone rather than repurposed into something the gesture
     /// does not mean.
-    fn on_pointer_pinch_begin(&mut self, _ctx: &AppContext, fingers: u32) {
-        let mut browser = self.state.lock().unwrap();
+    pub(super) fn on_pointer_pinch_begin(&mut self, _ctx: &AppContext, fingers: u32) {
+        let mut browser = self.state.browse();
         browser.zoom_pinch = (fingers == 2 && browser.peek.is_none())
             .then(|| browser.zoom_range().map(|_| browser.zoom_value()))
             .flatten();
@@ -507,7 +583,7 @@ impl App for FilesApp {
             .flatten();
     }
 
-    fn on_pointer_pinch_update(
+    pub(super) fn on_pointer_pinch_update(
         &mut self,
         _ctx: &AppContext,
         dx: f64,
@@ -515,7 +591,7 @@ impl App for FilesApp {
         scale: f64,
         _rotation: f64,
     ) {
-        let mut browser = self.state.lock().unwrap();
+        let mut browser = self.state.browse();
         if let Some(base) = browser.zoom_pinch {
             browser.set_zoom(base * scale as f32);
             let moved = browser.dirty;
@@ -535,10 +611,10 @@ impl App for FilesApp {
         }
     }
 
-    fn on_pointer_pinch_end(&mut self, _ctx: &AppContext, _cancelled: bool) {
+    pub(super) fn on_pointer_pinch_end(&mut self, _ctx: &AppContext, _cancelled: bool) {
         // Nothing to settle: every update already left the zoom clamped and
         // snapped, so the fingers lifting only ends the gesture.
-        let mut browser = self.state.lock().unwrap();
+        let mut browser = self.state.browse();
         browser.peek_pinch = None;
         if browser.zoom_pinch.take().is_some() {
             browser.finish_zoom_pinch();
@@ -547,10 +623,12 @@ impl App for FilesApp {
 
     /// While something is gliding the app needs a steady clock, not just the
     /// next input event.
-    fn idle_timeout(&self) -> Option<std::time::Duration> {
-        let browser = self.state.lock().unwrap();
+    pub(super) fn idle_timeout(&self) -> Option<std::time::Duration> {
+        let browser = self.state.browse();
         let animating = browser.scroll_animating()
             || browser.peek_animating()
+            // The desk's overflow panel growing, shrinking or gliding.
+            || browser.overflow_animating()
             // An animated preview has a frame due on its own clock, with
             // nothing else on screen moving to ask for one.
             || browser.peek_frames_running()
@@ -572,7 +650,13 @@ impl App for FilesApp {
     /// The desk's size: the usable area of its output, which the compositor
     /// works out around every reserved zone. The surface has already taken
     /// it by the time this runs.
-    fn on_configure_layer(&mut self, _ctx: &AppContext, _width: i32, _height: i32, _serial: u32) {
+    pub(super) fn on_configure_layer(
+        &mut self,
+        _ctx: &AppContext,
+        _width: i32,
+        _height: i32,
+        _serial: u32,
+    ) {
         if !view::is_desk() {
             return;
         }
@@ -583,28 +667,43 @@ impl App for FilesApp {
         let (width, height) = (width as f32, height as f32);
         // Presses land only on the panel. Under `fill` that is the whole
         // surface; a smaller panel leaves the rest of the desktop to the
-        // wallpaper's own clients.
-        window.set_input_region(Some(&[view::desk_panel_rect(width, height)]));
+        // wallpaper's own clients. In edit mode, everywhere: a handle sits
+        // half outside the panel, and a press beside it must not fall through.
+        let region = if self.desk_surface_editing {
+            Rect::from_wh(width, height)
+        } else {
+            view::desk_panel_rect(width, height)
+        };
+        window.set_input_region(Some(&[region]));
+        self.desk_input_region = Some(region);
         {
-            let mut browser = self.state.lock().unwrap();
+            let mut browser = self.state.browse();
             browser.size = (width, height);
             browser.dirty = true;
         }
         self.render();
     }
 
-    fn on_configure(&mut self, _ctx: &AppContext, configure: WindowConfigure, _serial: u32) {
+    pub(super) fn on_configure(
+        &mut self,
+        _ctx: &AppContext,
+        configure: WindowConfigure,
+        _serial: u32,
+    ) {
         // Whether the window is tiled arrives on the configure — otto-kit has
         // already read it by the time this runs — and the chrome follows the
         // decoration a tile wears: the lights' size and row, the header and
         // sidebar under them, and the frame's corners, which the window
         // itself re-sends.
+        let mut browser = self.state.browse();
         if let Some(window) = self.window.as_ref() {
-            if view::set_decoration_variant(window.decoration_variant()) {
-                self.state.lock().unwrap().dirty = true;
+            let variant = window.decoration_variant();
+            if browser.decoration != variant {
+                browser.decoration = variant;
+                browser.dirty = true;
             }
+            view::set_decoration_variant(variant);
         }
-        let mut browser = self.state.lock().unwrap();
         if let (Some(w), Some(h)) = (configure.new_size.0, configure.new_size.1) {
             browser.size = (w.get() as f32, h.get() as f32);
             browser.dirty = true;
@@ -613,9 +712,6 @@ impl App for FilesApp {
         if browser.focused != configure.is_activated() {
             browser.focused = configure.is_activated();
             browser.dirty = true;
-            // A running job is reported on the island only while the user is
-            // somewhere else; in front of this window the status line has it.
-            crate::tasks::set_watched(browser.focused);
         }
         drop(browser);
         self.render();
@@ -623,7 +719,7 @@ impl App for FilesApp {
 
     /// The authoritative modifier state, sent before the key event it
     /// belongs to and again whenever the window takes focus.
-    fn on_modifiers(&mut self, _ctx: &AppContext, modifiers: Modifiers) {
+    pub(super) fn on_modifiers(&mut self, _ctx: &AppContext, modifiers: Modifiers) {
         *self.modifiers.lock().unwrap() = modifiers;
     }
 
@@ -639,7 +735,7 @@ impl App for FilesApp {
     /// The window's own leave closes the palette. Not Peek: opening Peek is
     /// what takes the keyboard from the window. A leave on the Get Info panel
     /// is focus moving between two of our windows, not away from the browser.
-    fn on_keyboard_leave(&mut self, _ctx: &AppContext, surface: &wl_surface::WlSurface) {
+    pub(super) fn on_keyboard_leave(&mut self, _ctx: &AppContext, surface: &wl_surface::WlSurface) {
         use wayland_client::Proxy;
         let on_peek = self
             .pane_surfaces
@@ -656,7 +752,7 @@ impl App for FilesApp {
         }
         // A panel that is nothing but a place to type has no reason to stay up
         // once the typing would land elsewhere.
-        let mut browser = self.state.lock().unwrap();
+        let mut browser = self.state.browse();
         let changed = if on_peek {
             browser.close_peek()
         } else {
@@ -668,7 +764,7 @@ impl App for FilesApp {
         }
     }
 
-    fn on_key_event(
+    pub(super) fn on_key_event(
         &mut self,
         _ctx: &AppContext,
         event: &KeyEvent,
@@ -679,14 +775,40 @@ impl App for FilesApp {
     }
 }
 
-impl FilesApp {
+impl FilesWindow {
+    /// Run what was picked from the menus, and keep them saying what the
+    /// window can do now.
+    fn follow_app_menu(&mut self) {
+        let Some(menu) = &self.app_menu else {
+            return;
+        };
+        let picked = menu.take_picked();
+        let due = self.app_menu_at.elapsed() >= std::time::Duration::from_millis(250);
+        if picked.is_empty() && !due {
+            return;
+        }
+        let mut browser = self.state.browse();
+        for id in &picked {
+            browser.run_app_menu_pick(id, AppContext::last_input_serial());
+        }
+        menu.set(browser.app_menus());
+        drop(browser);
+        self.app_menu_at = std::time::Instant::now();
+        if !picked.is_empty() {
+            if let Some(window) = &self.window {
+                window.request_frame();
+            }
+        }
+    }
+
     /// What every Files window — the browser's toplevel or the desk's layer
     /// surface — does once it exists: the draw, the surfaces beside it, and
     /// the pointer, drag and frame wiring.
     fn install_window(&mut self, mut window: Window, scene: Arc<Mutex<Option<scene::Scene>>>) {
         let state = Arc::clone(&self.state);
+        let surface_id = window.surface_id();
         window.on_draw(move |canvas| {
-            let mut browser = state.lock().unwrap();
+            let mut browser = state.browse();
 
             // Drain finished directory reads. This is the UI thread by
             // construction, which is what the poll needs — see
@@ -735,7 +857,13 @@ impl FilesApp {
             let mut search_caret = None;
             let mut save_caret = None;
 
-            if let Some(session) = browser.rename.as_ref() {
+            // A rename in the desk's overflow panel is drawn on the panel's
+            // own surface; see `overflow_surface`.
+            if let Some(session) = browser
+                .rename
+                .as_ref()
+                .filter(|session| !browser.in_overflow_panel(session.index))
+            {
                 let (depth, index) = (session.depth, session.index);
                 let (width, height) = (browser.size.0, browser.content_h());
                 let count = browser.visible(depth).len();
@@ -749,7 +877,7 @@ impl FilesApp {
                         view::miller_rename_rect(
                             height,
                             browser.pan.offset(),
-                            browser.miller_w,
+                            &browser.miller_widths(),
                             depth,
                             count,
                             scroll,
@@ -757,13 +885,16 @@ impl FilesApp {
                             is_dir,
                         )
                     }
-                    ViewMode::Grid => view::grid_rename_rect(
-                        width,
-                        height,
-                        &browser.recent_sections,
-                        scroll,
-                        index,
-                    ),
+                    ViewMode::Grid => match browser.desk_overflow_entry_rect(index) {
+                        Some(cell) => view::grid_rename_rect_over(cell),
+                        None => view::grid_rename_rect(
+                            width,
+                            height,
+                            &browser.recent_sections,
+                            scroll,
+                            index,
+                        ),
+                    },
                     ViewMode::Photos => {
                         view::photos_rename_rect(width, height, &browser.photos, scroll, index)
                     }
@@ -829,18 +960,22 @@ impl FilesApp {
             //
             // The `or` chain is [`Browser::focused_input`]'s precedence rather
             // than the order the fields are painted in: the caret to report is
-            // the one the keys are going to.
-            otto_kit::AppContext::report_text_cursor(
-                browser
-                    .palette
-                    .is_some()
-                    .then_some(browser.palette_caret)
-                    .flatten()
-                    .or(rename_caret)
-                    .or(path_caret)
-                    .or(save_caret)
-                    .or(search_caret),
-            );
+            // the one the keys are going to. Only from the window holding the
+            // keyboard: the compositor keeps the caret against that surface,
+            // whichever of our windows reports it.
+            if surface_id.is_some() && AppContext::keyboard_focus() == surface_id {
+                otto_kit::AppContext::report_text_cursor(
+                    browser
+                        .palette
+                        .is_some()
+                        .then_some(browser.palette_caret)
+                        .flatten()
+                        .or(rename_caret)
+                        .or(path_caret)
+                        .or(save_caret)
+                        .or(search_caret),
+                );
+            }
 
             // Last of all, because it is modal and dims everything above.
             if let Some(sheet) = browser.confirm.as_ref() {
@@ -869,9 +1004,12 @@ impl FilesApp {
         self.install_open_with_window_pointer();
         // Built here rather than on first use, for the reason the context
         // menu is: see `DropdownMenu`'s docs.
-        let group_menu = Rc::new(otto_kit::components::dropdown::DropdownMenu::new());
-        self.group_menu = Some(Rc::clone(&group_menu));
-        self.install_pointer(&window, self.context_menu.clone().unwrap(), group_menu);
+        let dropdowns = Rc::new(pointer::Dropdowns::default());
+        self.dropdowns = Some(Rc::clone(&dropdowns));
+        self.install_pointer(&window, self.context_menu.clone().unwrap(), dropdowns);
+        if view::is_desk() {
+            self.install_overflow_pointer(&window, self.context_menu.clone().unwrap());
+        }
         self.install_frame_loop(&window);
         AppContext::register_window(window.clone());
         self.window = Some(window);
@@ -915,6 +1053,69 @@ impl FilesApp {
         Ok(())
     }
 
+    /// Keep the desk's surface in step with its config and its edit mode.
+    ///
+    /// A call to `org.otto.Desk1.EditLayout` starts edit mode; a change to
+    /// `files.toml` is re-read; and the surface follows edit mode: above the
+    /// windows and holding the keyboard while it is up, so the outline is not
+    /// hidden under Settings and Escape reaches it, back below them after.
+    fn follow_desk_edit(&mut self) {
+        use otto_kit::surfaces::layer_shell::{KeyboardInteractivity, Layer};
+
+        if self.desk_config_watch.is_none() {
+            let dir = crate::places_config::config_path()
+                .and_then(|path| path.parent().map(Path::to_path_buf));
+            if let Some(dir) = dir {
+                // The folder Otto's own configuration lives in. Made here if
+                // missing, since a folder that does not exist cannot be
+                // watched for the file appearing in it.
+                let _ = std::fs::create_dir_all(&dir);
+                self.desk_config_watch = Some(otto_kit::watch::DirWatch::new(&dir));
+            }
+        }
+        let config_changed = self
+            .desk_config_watch
+            .as_ref()
+            .is_some_and(|watch| watch.take().is_some());
+
+        let (editing, size) = {
+            let mut browser = self.state.browse();
+            if crate::desk_service::take_edit_request() {
+                browser.begin_desk_edit();
+            }
+            if config_changed {
+                browser.reload_desk_config();
+            }
+            (browser.desk_editing.is_some(), browser.size)
+        };
+
+        let Some(window) = self.window.as_ref() else {
+            return;
+        };
+        if editing != self.desk_surface_editing {
+            self.desk_surface_editing = editing;
+            if let Some(surface) = window.layer_surface() {
+                if editing {
+                    surface.set_layer(Layer::Top);
+                    surface.set_keyboard_interactivity(KeyboardInteractivity::Exclusive);
+                } else {
+                    surface.set_layer(Layer::Bottom);
+                    surface.set_keyboard_interactivity(KeyboardInteractivity::OnDemand);
+                }
+            }
+        }
+        let region = if editing {
+            Rect::from_wh(size.0, size.1)
+        } else {
+            view::desk_panel_rect(size.0, size.1)
+        };
+        if self.desk_input_region != Some(region) {
+            self.desk_input_region = Some(region);
+            window.set_input_region(Some(&[region]));
+            window.request_frame();
+        }
+    }
+
     /// Whether the desk holds the keyboard, as the browser's chrome reads
     /// focus: the selection is drawn at full strength only while typing
     /// would land here.
@@ -922,9 +1123,12 @@ impl FilesApp {
         let Some(window) = self.window.as_ref() else {
             return;
         };
-        let focused =
-            window.surface_id().is_some() && AppContext::keyboard_focus() == window.surface_id();
-        let mut browser = self.state.lock().unwrap();
+        // The overflow panel's overlay holding it counts: the keys still
+        // land on the desk's icons.
+        let focused = (window.surface_id().is_some()
+            && AppContext::keyboard_focus() == window.surface_id())
+            || self.overflow_has_keyboard();
+        let mut browser = self.state.browse();
         if browser.focused != focused {
             browser.focused = focused;
             browser.dirty = true;
@@ -934,7 +1138,7 @@ impl FilesApp {
     /// Open the palette on its own, for looking at. See
     /// [`Browser::palette_auto`] — never on in a real session.
     pub(super) fn auto_palette(&self) {
-        let mut browser = self.state.lock().unwrap();
+        let mut browser = self.state.browse();
         let depth = browser.active;
         if browser.palette_auto.is_none() || browser.visible(depth).is_empty() {
             return;
@@ -993,27 +1197,6 @@ impl FilesApp {
         browser.dirty = true;
     }
 
-    /// Answer `org.otto.Files1.FocusedSelection` for every call waiting on
-    /// it.
-    ///
-    /// "Focused" is any surface of this process holding the keyboard: the
-    /// window itself, or its Get Info panel or menus, which are about the
-    /// same selection.
-    fn answer_selection_asks(&mut self) {
-        let Some(queue) = self.selection_queue.as_ref() else {
-            return;
-        };
-        let asks = queue.take();
-        if asks.is_empty() {
-            return;
-        }
-        let focused = AppContext::keyboard_focus().is_some();
-        let answer = self.state.lock().unwrap().focused_selection(focused);
-        for ask in asks {
-            let _ = ask.send(answer.clone());
-        }
-    }
-
     /// Move the picker on when its request is done with, and notice when the
     /// portal withdraws the one on screen.
     ///
@@ -1025,7 +1208,7 @@ impl FilesApp {
         };
 
         {
-            let mut browser = self.state.lock().unwrap();
+            let mut browser = self.state.browse();
             let Some(session) = browser.picker.as_mut() else {
                 return;
             };
@@ -1045,8 +1228,10 @@ impl FilesApp {
         // connection, and the bus starts a fresh one when it is next needed.
         match queue.next_session() {
             Some(session) => {
-                let start = session.request.starting_directory(None);
-                let mut browser = self.state.lock().unwrap();
+                let start = session
+                    .request
+                    .starting_directory(crate::picker_dirs::remembered(&session.request.app_id));
+                let mut browser = self.state.browse();
                 let size = browser.size;
                 *browser = Browser::for_picker(session, start);
                 browser.size = size;

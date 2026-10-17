@@ -22,7 +22,7 @@ with spaces and read as one search, in the language Files uses:
   kind:pdf               document pdf image video audio text archive app folder
   in:~/Documents         under that folder (relative to the current one)
   modified:<7d           today yesterday week month year <7d >1y 2025-03
-  size:>100M             K M G T, powers of 1024
+  size:>100M             K M G T, powers of 1000 (KiB MiB GiB: 1024)
   sort:modified          relevance modified size name
   -draft  -kind:image    leave out
 
@@ -133,7 +133,7 @@ fn main() -> ExitCode {
         return ExitCode::from(USAGE_ERROR);
     }
 
-    let home = std::env::var_os("HOME").map(PathBuf::from);
+    let home = otto_foundations::xdg::home();
     let cwd = std::env::current_dir().ok();
     let roots = if args.roots.is_empty() {
         home.iter().cloned().collect()

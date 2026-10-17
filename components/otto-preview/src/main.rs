@@ -1,10 +1,11 @@
 //! Preview: one file in a window of its own.
 //!
 //! The window draws the file exactly as Peek does over the file list, through
-//! the same [`otto_files::peek::Session`] and the same toolkit renderer, with a
-//! titlebar and a toolbar around it instead of the panel's title strip. One
-//! file per window: opening another starts another process. See
-//! `specs/preview-app.md`.
+//! the same [`otto_peek::session::Session`] and the same toolkit renderer,
+//! with a titlebar and a toolbar around it instead of the panel's title strip.
+//! One file per window, and one process for all of them: a later start hands its
+//! file to the running Preview over the session bus (see [`instance`]) and
+//! leaves. See `specs/preview-app.md`.
 //!
 //! ```sh
 //! cargo run -p otto-preview -- ~/Pictures/photo.jpg
@@ -13,14 +14,30 @@
 // Rust guideline compliant 2026-02-21
 
 mod app;
+mod chat;
 mod chrome;
+mod commands;
+mod confirm;
 mod content;
+mod cursors;
+mod edit_queue;
+mod editing;
+mod file_dialog;
+mod instance;
+mod marks;
+mod mcp;
+mod pdf_tools;
+mod picking;
+mod shortcuts;
+mod sidebar;
+mod signature;
+mod versions;
 mod viewer;
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
-use otto_files::imagesize::{self, Header};
+use otto_peek::imagesize::{self, Header};
 
 /// The largest window a picture is fitted into when it opens, in points.
 const FIT_W: f32 = 1100.0;
@@ -30,32 +47,47 @@ const FIT_H: f32 = 800.0;
 /// fills the screen reads as a takeover rather than a document.
 const BOUNDS_SHARE: (f32, f32) = (0.75, 0.8);
 /// The window for a file read from the top down: a PDF or a Markdown document.
-const DOCUMENT_SIZE: (f32, f32) = (760.0, 860.0);
+pub(crate) const DOCUMENT_SIZE: (f32, f32) = (760.0, 860.0);
 /// The window for everything else.
 const DEFAULT_SIZE: (f32, f32) = (960.0, 720.0);
 /// How much of a picture is read to find its size in the header. A JPEG's
 /// dimensions can sit behind a large EXIF block.
 const HEADER_BYTES: u64 = 256 * 1024;
 
-const USAGE: &str = "usage: otto-preview PATH";
+const USAGE: &str = "usage: otto-preview [--chat] [--session URI] [PATH]";
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // First, before the runtime starts a thread: the sandboxed decode worker
     // is this binary re-executed, and this returns at once on a normal start.
     otto_peek::run_worker_if_requested();
+    // The document tools for an agent: no display, no window, no runtime.
+    if std::env::args().nth(1).as_deref() == Some("--mcp") {
+        return mcp::serve();
+    }
     otto_kit::i18n::init_from_desktop();
 
-    let Some(path) = path_from_args() else {
+    let Some((path, chat, session)) = path_from_args() else {
         return Ok(());
     };
-    tokio::runtime::Runtime::new()?.block_on(run(path))
+    let runtime = tokio::runtime::Runtime::new()?;
+    match path {
+        Some(path) => runtime.block_on(run(path, chat, session)),
+        // Started with no file, from the dock or a launcher: an empty
+        // window asks for one. See `picking`.
+        None => runtime.block_on(pick(chat, session)),
+    }
 }
 
-/// The file named on the command line, as an absolute path. `None` after
-/// answering `--help` or `--version`; exits when no file is named.
-fn path_from_args() -> Option<PathBuf> {
+/// The file named on the command line, as an absolute path, or `None` when
+/// none is, and whether `--chat` asks for the chat beside it. `None`
+/// altogether after answering `--help` or `--version`.
+#[allow(clippy::type_complexity)]
+fn path_from_args() -> Option<(Option<PathBuf>, bool, Option<String>)> {
     let mut path = None;
-    for argument in std::env::args_os().skip(1) {
+    let mut chat = false;
+    let mut session = None;
+    let mut arguments = std::env::args_os().skip(1);
+    while let Some(argument) = arguments.next() {
         match argument.to_str() {
             Some("--help" | "-h") => {
                 println!("{USAGE}");
@@ -64,6 +96,12 @@ fn path_from_args() -> Option<PathBuf> {
             Some("--version" | "-V") => {
                 println!("otto-preview {}", env!("CARGO_PKG_VERSION"));
                 return None;
+            }
+            Some("--chat") => chat = true,
+            // An agent session to carry on beside the file; implies --chat.
+            Some("--session") => {
+                session = arguments.next().and_then(|uri| uri.into_string().ok());
+                chat = true;
             }
             Some(other) if other.starts_with('-') && other.len() > 1 => {
                 eprintln!("otto-preview: unknown option {other}");
@@ -74,26 +112,58 @@ fn path_from_args() -> Option<PathBuf> {
             _ => {}
         }
     }
-    let Some(path) = path else {
-        eprintln!("{USAGE}");
-        std::process::exit(2);
-    };
-    Some(std::path::absolute(&path).unwrap_or(path))
+    let path = path.map(|path| std::path::absolute(&path).unwrap_or(path));
+    Some((path, chat, session))
 }
 
-async fn run(path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-        )
-        .init();
+/// Open an empty window and the desktop's open dialog over it. The bus
+/// name is claimed, or the file handed to the Studio holding it, once a
+/// file is chosen.
+async fn pick(chat: bool, session: Option<String>) -> Result<(), Box<dyn std::error::Error>> {
+    otto_kit::logging::init("info");
+    otto_kit::icon_theme::spawn_icon_theme_watcher();
+    let app = app::PreviewApp::picking(
+        chat,
+        session,
+        instance::Inbox::default(),
+        instance::Documents::default(),
+    );
+    otto_kit::AppRunner::new(app).run()
+}
+
+async fn run(
+    path: PathBuf,
+    chat: bool,
+    session: Option<String>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    otto_kit::logging::init("info");
+
+    // A launcher that brought us up with an activation token passes it on,
+    // so the Preview that ends up showing the file may come forward with it.
+    let request = instance::Request {
+        path,
+        token: std::env::var("XDG_ACTIVATION_TOKEN").ok(),
+        chat,
+        session,
+    };
+    let inbox = instance::Inbox::default();
+    let documents = instance::Documents::default();
+    // Held for the life of the process: the bus name goes with it.
+    let _service =
+        match instance::claim_or_forward(&request, inbox.clone(), documents.clone()).await {
+            Ok(instance::Role::Forwarded) => return Ok(()),
+            Ok(instance::Role::Owner(connection)) => Some(connection),
+            Err(err) => {
+                tracing::warn!(%err, "no session bus; this Preview stands alone");
+                None
+            }
+        };
+
     // Needs the runtime: without the icon theme every lookup searches hicolor
     // alone, and a card or a listing draws with no icons.
     otto_kit::icon_theme::spawn_icon_theme_watcher();
 
-    let shape = Shape::of(&path);
-    otto_kit::AppRunner::new(app::PreviewApp::new(path, shape)).run()
+    otto_kit::AppRunner::new(app::PreviewApp::new(request, inbox, documents)).run()
 }
 
 /// What decides the window's size on opening.
@@ -109,7 +179,7 @@ pub enum Shape {
 
 impl Shape {
     /// The shape of the file at `path`, read from its header or its name.
-    fn of(path: &Path) -> Self {
+    pub fn of(path: &Path) -> Self {
         if let Some((width, height)) = picture_size(path) {
             return Self::Picture(width, height);
         }

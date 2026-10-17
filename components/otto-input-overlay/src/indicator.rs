@@ -201,7 +201,8 @@ fn entry(id: i32, props: HashMap<String, OwnedValue>) -> OwnedValue {
         .add_field(id)
         .add_field(props)
         .add_field(Vec::<OwnedValue>::new())
-        .build();
+        .build()
+        .expect("menu entry has fields");
     OwnedValue::try_from(Value::from(structure)).expect("menu entry is a plain struct")
 }
 
@@ -220,10 +221,11 @@ pub fn spawn(toggles: Arc<Toggles>) {
 }
 
 async fn publish(toggles: Arc<Toggles>) -> zbus::Result<()> {
-    use zbus::export::futures_util::StreamExt;
+    use futures_util::StreamExt;
 
     let name = format!("org.kde.StatusNotifierItem-{}-1", std::process::id());
-    let conn = zbus::ConnectionBuilder::session()?
+    let conn = zbus::connection::Builder::session()?
+        .allow_name_replacements(false)
         .name(name.as_str())?
         .serve_at(ITEM_PATH, Item)?
         .serve_at(MENU_PATH, Menu { toggles })?

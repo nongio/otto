@@ -11,8 +11,9 @@ use std::sync::{Arc, LazyLock, Mutex};
 use otto_kit::AppContext;
 
 use futures_util::StreamExt;
+use zbus::proxy::CacheProperties;
 use zbus::zvariant::{OwnedValue, Value};
-use zbus::{interface, proxy, Connection, SignalContext};
+use zbus::{interface, object_server::SignalEmitter, proxy, Connection};
 
 /// Global shared tray state readable from the draw loop.
 static TRAY_STATE: LazyLock<TrayState> = LazyLock::new(|| Arc::new(Mutex::new(Vec::new())));
@@ -173,18 +174,34 @@ pub fn context_menu_item(index: usize, x: i32, y: i32) {
         }
 
         // No dbusmenu path — activate the app via SNI Activate
-        let proxy = StatusNotifierItemProxy::builder(&conn)
-            .destination(service.as_str())
-            .unwrap()
-            .path(path.as_str())
-            .unwrap()
-            .build()
-            .await;
-
-        if let Ok(p) = proxy {
-            let _ = p.activate(x, y).await;
+        let activated = async {
+            item_proxy(&conn, &service, &path)
+                .await?
+                .activate(x, y)
+                .await
+        };
+        if let Err(e) = activated.await {
+            tracing::debug!("SNI Activate failed: {service}{path}: {e}");
         }
     });
+}
+
+/// A proxy for the SNI item at `service`/`path`. Both come from the app that
+/// registered it, so a malformed one is an error, not a panic.
+///
+/// Properties are not cached: SNI items announce changes with `NewIcon` and
+/// friends rather than `PropertiesChanged`, so a cache would go stale.
+async fn item_proxy<'a>(
+    conn: &Connection,
+    service: &'a str,
+    path: &'a str,
+) -> zbus::Result<StatusNotifierItemProxy<'a>> {
+    StatusNotifierItemProxy::builder(conn)
+        .destination(service)?
+        .path(path)?
+        .cache_properties(CacheProperties::No)
+        .build()
+        .await
 }
 
 /// Left-click: call SNI Activate on the tray item at `index`.
@@ -200,15 +217,14 @@ pub fn activate_item(index: usize, x: i32, y: i32) {
 
     let handle = tokio::runtime::Handle::current();
     handle.spawn(async move {
-        let proxy = StatusNotifierItemProxy::builder(&conn)
-            .destination(service.as_str())
-            .unwrap()
-            .path(path.as_str())
-            .unwrap()
-            .build()
-            .await;
-        if let Ok(p) = proxy {
-            let _ = p.activate(x, y).await;
+        let activated = async {
+            item_proxy(&conn, &service, &path)
+                .await?
+                .activate(x, y)
+                .await
+        };
+        if let Err(e) = activated.await {
+            tracing::debug!("SNI Activate failed: {service}{path}: {e}");
         }
     });
 }
@@ -226,15 +242,14 @@ pub fn secondary_activate_item(index: usize, x: i32, y: i32) {
 
     let handle = tokio::runtime::Handle::current();
     handle.spawn(async move {
-        let proxy = StatusNotifierItemProxy::builder(&conn)
-            .destination(service.as_str())
-            .unwrap()
-            .path(path.as_str())
-            .unwrap()
-            .build()
-            .await;
-        if let Ok(p) = proxy {
-            let _ = p.secondary_activate(x, y).await;
+        let activated = async {
+            item_proxy(&conn, &service, &path)
+                .await?
+                .secondary_activate(x, y)
+                .await
+        };
+        if let Err(e) = activated.await {
+            tracing::debug!("SNI SecondaryActivate failed: {service}{path}: {e}");
         }
     });
 }
@@ -258,9 +273,69 @@ pub fn spawn_tray_watcher() {
 // StatusNotifierWatcher D-Bus service implementation
 // ---------------------------------------------------------------------------
 
+/// Registered items by key (`service` + `path`, see [`item_key`]).
+///
+/// An item is listed in `TRAY_STATE` only while it is here: whatever adds it
+/// there checks this map under its lock, and whatever removes it from here
+/// removes it there under the same lock, so a fetch that finishes after its
+/// item left the bus cannot bring it back.
+type ItemsMap = Arc<Mutex<HashMap<String, Registered>>>;
+
+/// One registered item: who owns it, and the tasks that follow it.
+struct Registered {
+    bus_name: String,
+    tasks: ItemTasks,
+}
+
+/// The tasks following one item's signals. Dropping this (the item leaving
+/// the map) stops them.
+#[derive(Default)]
+struct ItemTasks {
+    /// `NewIcon`/`NewStatus`/`NewToolTip`.
+    signals: Option<tokio::task::AbortHandle>,
+    /// The menu's change signals, and the menu path they are for.
+    menu: Option<(String, tokio::task::AbortHandle)>,
+}
+
+impl ItemTasks {
+    /// Whether the item's signal watcher has to be (re)started.
+    fn needs_signals(&self) -> bool {
+        self.signals.as_ref().is_none_or(|h| h.is_finished())
+    }
+
+    /// Whether a menu watcher for `menu_path` has to be started. One for any
+    /// other path (the item moved its menu, or dropped it) is stopped.
+    fn needs_menu_watch(&mut self, menu_path: Option<&str>) -> bool {
+        if let Some((watched, handle)) = &self.menu {
+            if Some(watched.as_str()) == menu_path && !handle.is_finished() {
+                return false;
+            }
+            handle.abort();
+            self.menu = None;
+        }
+        menu_path.is_some()
+    }
+}
+
+impl Drop for ItemTasks {
+    fn drop(&mut self) {
+        if let Some(handle) = &self.signals {
+            handle.abort();
+        }
+        if let Some((_, handle)) = &self.menu {
+            handle.abort();
+        }
+    }
+}
+
+/// The key an item is registered under.
+fn item_key(service: &str, path: &str) -> String {
+    format!("{service}{path}")
+}
+
 /// State held by the watcher service on the bus.
 struct WatcherService {
-    items: Arc<Mutex<HashMap<String, String>>>,
+    items: ItemsMap,
     hosts: Vec<String>,
 }
 
@@ -270,7 +345,7 @@ impl WatcherService {
         &mut self,
         service: &str,
         #[zbus(header)] header: zbus::message::Header<'_>,
-        #[zbus(signal_context)] ctxt: SignalContext<'_>,
+        #[zbus(signal_emitter)] ctxt: SignalEmitter<'_>,
     ) -> zbus::fdo::Result<()> {
         // service may be a bus name or an object path. Normalise.
         let (bus_name, path) = if service.starts_with('/') {
@@ -284,12 +359,18 @@ impl WatcherService {
             (service.to_string(), "/StatusNotifierItem".to_string())
         };
 
-        let key = format!("{bus_name}{path}");
+        let key = item_key(&bus_name, &path);
 
+        // An item registering again keeps its watchers; fetch_item restarts
+        // whichever no longer fit.
         self.items
             .lock()
             .unwrap()
-            .insert(key.clone(), bus_name.clone());
+            .entry(key.clone())
+            .or_insert_with(|| Registered {
+                bus_name: bus_name.clone(),
+                tasks: ItemTasks::default(),
+            });
 
         // Emit signal
         Self::status_notifier_item_registered(&ctxt, &key).await?;
@@ -310,7 +391,7 @@ impl WatcherService {
     async fn register_status_notifier_host(
         &mut self,
         service: &str,
-        #[zbus(signal_context)] ctxt: SignalContext<'_>,
+        #[zbus(signal_emitter)] ctxt: SignalEmitter<'_>,
     ) -> zbus::fdo::Result<()> {
         self.hosts.push(service.to_string());
         Self::status_notifier_host_registered(&ctxt).await?;
@@ -334,18 +415,18 @@ impl WatcherService {
 
     #[zbus(signal)]
     async fn status_notifier_item_registered(
-        ctxt: &SignalContext<'_>,
+        ctxt: &SignalEmitter<'_>,
         service: &str,
     ) -> zbus::Result<()>;
 
     #[zbus(signal)]
     async fn status_notifier_item_unregistered(
-        ctxt: &SignalContext<'_>,
+        ctxt: &SignalEmitter<'_>,
         service: &str,
     ) -> zbus::Result<()>;
 
     #[zbus(signal)]
-    async fn status_notifier_host_registered(ctxt: &SignalContext<'_>) -> zbus::Result<()>;
+    async fn status_notifier_host_registered(ctxt: &SignalEmitter<'_>) -> zbus::Result<()>;
 }
 
 // ---------------------------------------------------------------------------
@@ -405,7 +486,7 @@ async fn run_watcher() -> Result<(), zbus::Error> {
     // Store connection for later Activate/ContextMenu calls
     *TRAY_CONNECTION.lock().unwrap() = Some(conn.clone());
 
-    let items_map = Arc::new(Mutex::new(HashMap::new()));
+    let items_map: ItemsMap = Arc::new(Mutex::new(HashMap::new()));
     let watcher = WatcherService {
         items: items_map.clone(),
         hosts: Vec::new(),
@@ -417,7 +498,12 @@ async fn run_watcher() -> Result<(), zbus::Error> {
         .await?;
 
     // Request the well-known name
-    conn.request_name("org.kde.StatusNotifierWatcher").await?;
+    // No AllowReplacement: zbus 5's plain request_name would add it.
+    conn.request_name_with_flags(
+        "org.kde.StatusNotifierWatcher",
+        zbus::fdo::RequestNameFlags::ReplaceExisting | zbus::fdo::RequestNameFlags::DoNotQueue,
+    )
+    .await?;
 
     // Also register ourselves as a host
     // (we are both the watcher and the host in this compositor)
@@ -435,11 +521,7 @@ async fn run_watcher() -> Result<(), zbus::Error> {
 }
 
 /// Watch for D-Bus name owner changes to remove items when their owner disconnects.
-async fn monitor_disconnects(
-    conn: Connection,
-    items_map: Arc<Mutex<HashMap<String, String>>>,
-    state: TrayState,
-) {
+async fn monitor_disconnects(conn: Connection, items_map: ItemsMap, state: TrayState) {
     #[proxy(
         interface = "org.freedesktop.DBus",
         default_service = "org.freedesktop.DBus",
@@ -472,29 +554,15 @@ async fn monitor_disconnects(
             continue;
         }
 
-        let vanished = args.name;
-        let mut removed = Vec::new();
-
-        {
-            let mut map = items_map.lock().unwrap();
-            let keys_to_remove: Vec<String> = map
-                .iter()
-                .filter(|(_, bus)| bus.as_str() == vanished)
-                .map(|(k, _)| k.clone())
-                .collect();
-
-            for key in &keys_to_remove {
-                map.remove(key);
-                removed.push(key.clone());
-            }
-        }
-
-        if !removed.is_empty() {
-            let mut items = state.lock().unwrap();
-            items.retain(|item| {
-                let key = format!("{}{}", item.service, item.path);
-                !removed.contains(&key)
-            });
+        // Both locks held together: see `ItemsMap`. Dropping the entries
+        // stops their watchers.
+        let mut map = items_map.lock().unwrap();
+        if remove_owner(&mut map, args.name) {
+            state
+                .lock()
+                .unwrap()
+                .retain(|item| map.contains_key(&item_key(&item.service, &item.path)));
+            drop(map);
             TRAY_GENERATION.fetch_add(1, Ordering::Relaxed);
             AppContext::request_wakeup();
         }
@@ -510,13 +578,9 @@ async fn fetch_item(
     bus_name: &str,
     path: &str,
     state: TrayState,
-    _items_map: Arc<Mutex<HashMap<String, String>>>,
+    items_map: ItemsMap,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let proxy = StatusNotifierItemProxy::builder(conn)
-        .destination(bus_name)?
-        .path(path)?
-        .build()
-        .await?;
+    let proxy = item_proxy(conn, bus_name, path).await?;
 
     let icon_name = proxy.icon_name().await.ok();
     let status = proxy.status().await.unwrap_or_else(|_| "Active".into());
@@ -605,68 +669,131 @@ async fn fetch_item(
         cached_layout: None,
     };
 
-    // Insert at front so newest items appear leftmost (per spec).
-    state.lock().unwrap().insert(0, item);
+    {
+        // Both locks held together: see `ItemsMap`.
+        let mut map = items_map.lock().unwrap();
+        // The item may have left the bus while it was being asked about.
+        let Some(registered) = map.get_mut(&item_key(bus_name, path)) else {
+            tracing::debug!("SNI item {bus_name}{path} went away before it was listed");
+            return Ok(());
+        };
+        upsert_item(&mut state.lock().unwrap(), item);
+
+        // The watchers are kept with the registration, so the item leaving
+        // stops them; a re-registered item keeps the ones that still fit.
+        let tasks = &mut registered.tasks;
+        if tasks.needs_signals() {
+            let (conn, bus, p, state) = (
+                conn.clone(),
+                bus_name.to_string(),
+                path.to_string(),
+                state.clone(),
+            );
+            let handle = tokio::spawn(async move {
+                watch_item_signals(&conn, &bus, &p, state).await;
+            });
+            tasks.signals = Some(handle.abort_handle());
+        }
+        if tasks.needs_menu_watch(menu_path.as_deref()) {
+            if let Some(menu_path) = &menu_path {
+                // Keep the menu current: the prefetch is a snapshot, and a
+                // network list or a toggle is stale the moment the applet
+                // changes it.
+                let (conn, service, item_path, watch_path, state) = (
+                    conn.clone(),
+                    bus_name.to_string(),
+                    path.to_string(),
+                    menu_path.clone(),
+                    state.clone(),
+                );
+                let handle = tokio::spawn(async move {
+                    watch_menu_signals(&conn, &service, &item_path, &watch_path, state).await;
+                });
+                tasks.menu = Some((menu_path.clone(), handle.abort_handle()));
+            }
+        }
+    }
     TRAY_GENERATION.fetch_add(1, Ordering::Relaxed);
     AppContext::request_wakeup();
 
     // Pre-fetch dbusmenu layout so the menu opens instantly on click
-    if let Some(ref mpath) = menu_path {
-        let service = bus_name.to_string();
-        let mpath = mpath.clone();
-        let state_for_prefetch = state.clone();
-        let conn_for_prefetch = conn.clone();
-        tokio::spawn(async move {
-            prefetch_menu_layout(&conn_for_prefetch, &service, &mpath, state_for_prefetch).await;
-        });
-
-        // And keep it current: the prefetch is a snapshot, and a network
-        // list or a toggle is stale the moment the applet changes it.
+    if let Some(mpath) = menu_path {
         let service = bus_name.to_string();
         let item_path = path.to_string();
-        let watch_path = menu_path.clone().unwrap_or_default();
-        let state_for_watch = state.clone();
-        let conn_for_watch = conn.clone();
+        let conn = conn.clone();
         tokio::spawn(async move {
-            watch_menu_signals(
-                &conn_for_watch,
-                &service,
-                &item_path,
-                &watch_path,
-                state_for_watch,
-            )
-            .await;
+            prefetch_menu_layout(&conn, &service, &item_path, &mpath, state).await;
         });
     }
-
-    // Watch for property changes
-    let state_clone = state.clone();
-    let bus = bus_name.to_string();
-    let p = path.to_string();
-    let conn = conn.clone();
-
-    tokio::spawn(async move {
-        watch_item_signals(&conn, &bus, &p, state_clone).await;
-    });
 
     Ok(())
 }
 
+/// Remove every item `name` registered, which stops their watchers. Returns
+/// whether there were any.
+fn remove_owner(map: &mut HashMap<String, Registered>, name: &str) -> bool {
+    let before = map.len();
+    map.retain(|_, registered| registered.bus_name != name);
+    map.len() != before
+}
+
+/// Add `item` to the list, or refresh it in place if the same service and
+/// path is already listed (an app registering again). New items go to the
+/// front so the newest appears leftmost (per spec). Returns whether the item
+/// was new.
+fn upsert_item(items: &mut Vec<TrayItem>, mut item: TrayItem) -> bool {
+    match items
+        .iter_mut()
+        .find(|i| i.service == item.service && i.path == item.path)
+    {
+        Some(existing) => {
+            if existing.menu_path == item.menu_path {
+                item.cached_layout = existing.cached_layout.take();
+            }
+            *existing = item;
+            false
+        }
+        None => {
+            items.insert(0, item);
+            true
+        }
+    }
+}
+
 /// Pre-fetch a dbusmenu layout in the background and cache it on the TrayItem.
 /// Also pre-loads menu item icons so the first open is instant.
-async fn prefetch_menu_layout(conn: &Connection, service: &str, menu_path: &str, state: TrayState) {
+async fn prefetch_menu_layout(
+    conn: &Connection,
+    service: &str,
+    item_path: &str,
+    menu_path: &str,
+    state: TrayState,
+) {
     if let Ok(layout) = crate::dbusmenu::fetch_menu(conn, service, menu_path).await {
         // Pre-cache icons referenced in the menu
         let scale = otto_kit::app_runner::context::AppContext::scale_factor().max(1);
         let load_size = 16 * scale;
         precache_menu_icons(&layout.items, load_size);
 
-        // Store the cached layout on the matching TrayItem
+        // Store the cached layout on the item it was fetched for, if that
+        // still has this menu: one service can serve several items.
         let mut items = state.lock().unwrap();
-        if let Some(item) = items.iter_mut().find(|i| i.service == service) {
+        if let Some(item) = find_menu_owner(&mut items, service, item_path, menu_path) {
             item.cached_layout = Some(layout);
         }
     }
+}
+
+/// The item at `service`/`item_path`, if its menu is still `menu_path`.
+fn find_menu_owner<'a>(
+    items: &'a mut [TrayItem],
+    service: &str,
+    item_path: &str,
+    menu_path: &str,
+) -> Option<&'a mut TrayItem> {
+    items.iter_mut().find(|i| {
+        i.service == service && i.path == item_path && i.menu_path.as_deref() == Some(menu_path)
+    })
 }
 
 /// Refetch an item's menu whenever it announces a change.
@@ -736,11 +863,10 @@ async fn watch_menu_signals(
 
         {
             let mut items = state.lock().unwrap();
-            if let Some(item) = items
-                .iter_mut()
-                .find(|i| i.service == service && i.path == item_path)
-            {
-                item.cached_layout = Some(layout.clone());
+            match find_menu_owner(&mut items, service, item_path, menu_path) {
+                Some(item) => item.cached_layout = Some(layout.clone()),
+                // The item moved its menu; this watcher is being replaced.
+                None => continue,
             }
         }
 
@@ -772,15 +898,14 @@ fn precache_menu_icons(items: &[crate::dbusmenu::MenuItem], load_size: i32) {
 
 /// Watch NewIcon/NewStatus/NewToolTip signals and refresh the item.
 async fn watch_item_signals(conn: &Connection, bus_name: &str, path: &str, state: TrayState) {
-    let Ok(proxy) = StatusNotifierItemProxy::builder(conn)
-        .destination(bus_name)
-        .unwrap()
-        .path(path)
-        .unwrap()
-        .build()
-        .await
-    else {
-        return;
+    // SNI items signal changes with NewIcon/NewStatus/NewToolTip, not
+    // PropertiesChanged, so a cached proxy would return stale values forever.
+    let proxy = match item_proxy(conn, bus_name, path).await {
+        Ok(proxy) => proxy,
+        Err(e) => {
+            tracing::debug!("SNI item signals not watched: {bus_name}{path}: {e}");
+            return;
+        }
     };
 
     let mut icon_stream = match proxy.receive_new_icon().await {
@@ -899,5 +1024,150 @@ fn extract_tooltip_text(val: OwnedValue) -> Option<String> {
         }
         Value::Str(s) => Some(s.to_string()),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn item(service: &str, path: &str, status: &str) -> TrayItem {
+        TrayItem {
+            service: service.into(),
+            path: path.into(),
+            icon_name: None,
+            icon_file: None,
+            icon_data: None,
+            icon_width: 0,
+            icon_height: 0,
+            tooltip: None,
+            status: status.into(),
+            menu_path: None,
+            cached_layout: None,
+        }
+    }
+
+    #[test]
+    fn upsert_inserts_new_items_at_front() {
+        let mut items = Vec::new();
+        assert!(upsert_item(
+            &mut items,
+            item(":1.1", "/StatusNotifierItem", "Active")
+        ));
+        assert!(upsert_item(
+            &mut items,
+            item(":1.2", "/StatusNotifierItem", "Active")
+        ));
+        assert_eq!(items[0].service, ":1.2");
+        assert_eq!(items[1].service, ":1.1");
+    }
+
+    #[test]
+    fn upsert_updates_reregistered_item_in_place() {
+        let mut items = Vec::new();
+        upsert_item(&mut items, item(":1.1", "/StatusNotifierItem", "Active"));
+        upsert_item(&mut items, item(":1.2", "/StatusNotifierItem", "Active"));
+        assert!(!upsert_item(
+            &mut items,
+            item(":1.1", "/StatusNotifierItem", "NeedsAttention")
+        ));
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[1].service, ":1.1");
+        assert_eq!(items[1].status, "NeedsAttention");
+    }
+
+    /// A task that runs until aborted.
+    fn forever() -> tokio::task::JoinHandle<()> {
+        tokio::spawn(std::future::pending())
+    }
+
+    #[tokio::test]
+    async fn removing_an_owner_stops_its_items_watchers() {
+        let signals = forever();
+        let menu = forever();
+        let other = forever();
+        let mut map = HashMap::from([
+            (
+                item_key(":1.1", "/StatusNotifierItem"),
+                Registered {
+                    bus_name: ":1.1".into(),
+                    tasks: ItemTasks {
+                        signals: Some(signals.abort_handle()),
+                        menu: Some(("/MenuBar".into(), menu.abort_handle())),
+                    },
+                },
+            ),
+            (
+                item_key(":1.2", "/StatusNotifierItem"),
+                Registered {
+                    bus_name: ":1.2".into(),
+                    tasks: ItemTasks {
+                        signals: Some(other.abort_handle()),
+                        menu: None,
+                    },
+                },
+            ),
+        ]);
+
+        assert!(!remove_owner(&mut map, ":1.9"));
+        assert!(remove_owner(&mut map, ":1.1"));
+        assert_eq!(map.len(), 1);
+        assert!(signals.await.unwrap_err().is_cancelled());
+        assert!(menu.await.unwrap_err().is_cancelled());
+        assert!(!other.is_finished());
+    }
+
+    #[tokio::test]
+    async fn a_moved_menu_gets_a_new_watcher() {
+        let mut tasks = ItemTasks::default();
+        assert!(tasks.needs_signals());
+        assert!(!tasks.needs_menu_watch(None));
+        assert!(tasks.needs_menu_watch(Some("/MenuBar")));
+
+        let first = forever();
+        tasks.menu = Some(("/MenuBar".into(), first.abort_handle()));
+        // Registering again with the same menu keeps its watcher.
+        assert!(!tasks.needs_menu_watch(Some("/MenuBar")));
+        assert!(!first.is_finished());
+
+        // A new menu path stops the old watcher.
+        assert!(tasks.needs_menu_watch(Some("/MenuBar2")));
+        assert!(first.await.unwrap_err().is_cancelled());
+
+        // So does dropping the menu.
+        let second = forever();
+        tasks.menu = Some(("/MenuBar2".into(), second.abort_handle()));
+        assert!(!tasks.needs_menu_watch(None));
+        assert!(tasks.menu.is_none());
+        assert!(second.await.unwrap_err().is_cancelled());
+    }
+
+    #[test]
+    fn a_menu_layout_lands_on_its_own_item_only() {
+        let with_menu = |service: &str, path: &str, menu: &str| {
+            let mut i = item(service, path, "Active");
+            i.menu_path = Some(menu.into());
+            i
+        };
+        let mut items = vec![
+            with_menu(":1.1", "/item/a", "/menu/a"),
+            with_menu(":1.1", "/item/b", "/menu/b"),
+        ];
+        let found = find_menu_owner(&mut items, ":1.1", "/item/b", "/menu/b").unwrap();
+        assert_eq!(found.path, "/item/b");
+        // Same service, other item; or the item has moved its menu.
+        assert!(find_menu_owner(&mut items, ":1.1", "/item/b", "/menu/a").is_none());
+        assert!(find_menu_owner(&mut items, ":1.2", "/item/a", "/menu/a").is_none());
+    }
+
+    #[test]
+    fn upsert_treats_other_path_as_new_item() {
+        let mut items = Vec::new();
+        upsert_item(&mut items, item(":1.1", "/StatusNotifierItem", "Active"));
+        assert!(upsert_item(
+            &mut items,
+            item(":1.1", "/org/ayatana/1", "Active")
+        ));
+        assert_eq!(items.len(), 2);
     }
 }

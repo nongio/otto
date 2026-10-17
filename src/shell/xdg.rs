@@ -110,6 +110,12 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
 
         tracing::info!("SC::new_toplevel at({}, {})", location.x, location.y);
 
+        // A window opened by a left press (a double click in Files) arrives
+        // while the clicked window's raise still waits for the release. Settle
+        // that raise now, so the new window maps above it instead of being
+        // pushed back under it when the button comes up.
+        self.apply_pending_raise();
+
         // Map window to the output under the pointer, falling back to primary.
         let target_output = self
             .workspaces
@@ -267,6 +273,27 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
 
         // Notify foreign toplevel watchers that the new window is activated
         self.send_foreign_toplevel_state(&surface_id, true);
+    }
+
+    /// A parent can arrive after the window is mapped — the portal's file
+    /// picker is adopted through xdg-foreign once it is up — and a dialog
+    /// is left out of the dock and the switcher, so they are rebuilt.
+    ///
+    /// Taskbars and the top bar learn of it through foreign-toplevel's
+    /// `parent`, so a dialog is named after the application it belongs to.
+    fn parent_changed(&mut self, toplevel: ToplevelSurface) {
+        self.workspaces.update_workspace_model();
+        let child = self
+            .foreign_toplevels
+            .get(&toplevel.wl_surface().id())
+            .and_then(|handles| handles.wlr.as_ref());
+        let parent = toplevel
+            .parent()
+            .and_then(|surface| self.foreign_toplevels.get(&surface.id()))
+            .and_then(|handles| handles.wlr.as_ref());
+        if let Some(child) = child {
+            child.send_parent(parent);
+        }
     }
 
     fn toplevel_destroyed(&mut self, toplevel: ToplevelSurface) {
@@ -483,8 +510,15 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
                     tracing::warn!("SC::resize on different surface");
                     return;
                 }
+                // A minimised window is unmapped from every space: it has no
+                // location to resize from, and nothing on screen to drag.
+                if window.is_minimised() {
+                    return;
+                }
                 let geometry = window.geometry();
-                let loc = self.workspaces.element_location(window).unwrap();
+                let Some(loc) = self.workspaces.element_location(window) else {
+                    return;
+                };
                 let (initial_window_location, initial_window_size) = (loc, geometry.size);
 
                 with_states(top_level.wl_surface(), move |states| {
@@ -524,9 +558,14 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
             return;
         }
 
-        let start_data = pointer.grab_start_data().unwrap();
+        let Some(start_data) = pointer.grab_start_data() else {
+            return;
+        };
 
-        let window = self.workspaces.get_window_for_surface(&sid).unwrap();
+        // The client may have destroyed the toplevel's window already.
+        let Some(window) = self.workspaces.get_window_for_surface(&sid) else {
+            return;
+        };
 
         // If the focus was for a different surface, ignore the request.
         if start_data.focus.is_none()
@@ -540,8 +579,17 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
             return;
         }
 
+        // A minimised window is unmapped from every space: the serial can be
+        // from a click in another of the client's windows, but there is
+        // nothing on screen to resize (#322).
+        if window.is_minimised() {
+            return;
+        }
+
         let geometry = window.geometry();
-        let loc = self.workspaces.element_location(window).unwrap();
+        let Some(loc) = self.workspaces.element_location(window) else {
+            return;
+        };
         let (initial_window_location, initial_window_size) = (loc, geometry.size);
 
         let window = window.clone();
@@ -1327,37 +1375,8 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
                 .contains(xdg_toplevel::WmCapabilities::Minimize)
         }) {
             let id = surface.wl_surface().id();
-            let Some(window) = self.workspaces.get_window_for_surface(&id).cloned() else {
-                surface.send_configure();
-                return;
-            };
-
-            // Ignore duplicate minimize requests (e.g. rapid clicks while the
-            // genie animation is still running).
-            if window.is_minimised() {
-                surface.send_configure();
-                return;
-            }
-
-            let Some(current_element_geometry) = self.workspaces.element_geometry(&window) else {
-                surface.send_configure();
-                return;
-            };
-
-            if let Some(mut view) = self.workspaces.get_window_view(&id) {
-                view.unmaximised_rect = current_element_geometry;
-                self.workspaces.set_window_view(&id, view);
-            }
-
-            // Leave scanout and re-import the current buffer BEFORE the genie
-            // starts: the spawned animation task captures layer bounds and
-            // renders scene content that promotion blanked.
-            self.demote_scanout_window(&window);
-            let next_focus = self.workspaces.minimize_window(&window);
-
-            match next_focus {
-                Some(wid) => self.set_keyboard_focus_on_surface(&wid),
-                None => self.clear_keyboard_focus(),
+            if let Some(window) = self.workspaces.get_window_for_surface(&id).cloned() {
+                self.minimize_window_element(&window);
             }
         }
 
@@ -1532,7 +1551,15 @@ impl<BackendData: Backend> Otto<BackendData> {
                     return;
                 }
 
-                let mut initial_window_location = self.workspaces.element_location(window).unwrap();
+                // A minimised window is unmapped from every space: nothing
+                // on screen to move, and no location to move it from (#322).
+                if window.is_minimised() {
+                    return;
+                }
+                let Some(mut initial_window_location) = self.workspaces.element_location(window)
+                else {
+                    return;
+                };
 
                 // If surface is maximized then unmaximize it
                 let is_maximized = surface.with_pending_state(|state| {
@@ -1540,7 +1567,9 @@ impl<BackendData: Backend> Otto<BackendData> {
                 });
                 if is_maximized {
                     // Get current maximized geometry before unmaximizing
-                    let maximized_geometry = self.workspaces.element_geometry(window).unwrap();
+                    let Some(maximized_geometry) = self.workspaces.element_geometry(window) else {
+                        return;
+                    };
                     let touch_location = start_data.location;
 
                     // Calculate grab point relative to maximized window
@@ -1693,6 +1722,9 @@ impl<BackendData: Backend> Otto<BackendData> {
         let Some(toplevel) = window.toplevel().cloned() else {
             return;
         };
+        if window.is_minimised() {
+            return;
+        }
         // A tile's border drags the split under it, not the window.
         match self.tiling_resize_begin(window, edges) {
             TilingResizeStart::Started => {
@@ -1755,7 +1787,15 @@ impl<BackendData: Backend> Otto<BackendData> {
         let Some(pointer) = seat.get_pointer() else {
             return;
         };
-        let initial_window_location = self.workspaces.element_location(window).unwrap();
+        // A minimised window is unmapped from every space, so it has no
+        // location: a client can still ask to move it, with a serial from a
+        // click in another of its windows (#322).
+        if window.is_minimised() {
+            return;
+        }
+        let Some(initial_window_location) = self.workspaces.element_location(window) else {
+            return;
+        };
 
         // A maximized or tiled window is restored INTO the drag, by the grab
         // itself, once the pointer has actually travelled — see
@@ -2460,6 +2500,24 @@ impl<BackendData: Backend> Otto<BackendData> {
         }
         self.surface_layer_parents.remove(surface_id);
         crate::surface_config_cache::invalidate(surface_id);
+    }
+
+    /// Hide the layer of a surface that has left its window's surface tree.
+    ///
+    /// Destroying a `wl_subsurface` unmaps its surface at once, but the
+    /// `wl_surface` lives on and a client may make it a subsurface again
+    /// (Chrome reuses one for its omnibox dropdown). So the layer is hidden,
+    /// not destroyed: the window sync un-hides it when the surface is back
+    /// in a tree with a buffer. Dropping the recorded parent makes that sync
+    /// append the layer to whichever parent it has then.
+    pub(crate) fn hide_detached_surface_layer(
+        &mut self,
+        surface_id: &smithay::reexports::wayland_server::backend::ObjectId,
+    ) {
+        if let Some(layer) = self.surface_layers.get(surface_id) {
+            layer.set_hidden(true);
+        }
+        self.surface_layer_parents.remove(surface_id);
     }
 }
 

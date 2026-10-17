@@ -19,15 +19,22 @@ and the contract a settings client can build against.
 > `touchpad_middle_emulation_enabled`, `scroll_speed`, `pointer_accel_speed`,
 > `pointer_accel_profile`) reconfigure the connected libinput devices (or, for
 > `scroll_speed`, take effect on the next scroll event, since Otto reads the
-> live config per event rather than caching it). Eleven are appearance:
+> live config per event rather than caching it). Fifteen are appearance:
 > `theme_scheme`, `accent_color`, `rounded_corners`, `frosting`,
 > `window_controls_side`, `show_maximize_button`, `cursor_theme`, `cursor_size`,
-> `icon_theme`, `background_color` and `background_image`. For those the
+> `icon_theme`, and the six wallpaper settings `background_color`,
+> `background_image`, `background_mode`, `background_position_x`,
+> `background_position_y` and `background_zoom`. For those the
 > compositor's own chrome and its window decorations are rebuilt, the cursor
-> and icon caches dropped, and the change relayed to other processes through
-> the Settings portal. The seven that need a restart are `screen_scale`,
+> and icon caches dropped, the wallpaper frames re-rendered, and the change
+> relayed to other processes through the Settings portal. The seven that need a restart are `screen_scale`,
 > `font_family`, `gtk_theme`, `locales`, `login.greeter_command`,
 > `login.greeter_args` and `rendering.renderer`.
+> `topbar.show_app_menu`, `topbar.show_clock` and `topbar.clock_format` are
+> live with nothing for the compositor to do: otto-bar reads them over this interface and follows
+> `Changed` itself. `desktop.widget` is live too: the compositor runs ewwii
+> for it and swaps the window it shows, or stops it for `none`
+> ([desktop-widget.md](../../specs/desktop-widget.md)).
 > No setting is `unsupported`. Keyed collections (dock bookmarks, shortcuts,
 > display profiles) have no single identifier and are not in the schema.
 

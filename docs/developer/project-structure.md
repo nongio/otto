@@ -1,9 +1,10 @@
 # Project Structure
 
-Otto is a Cargo workspace. The root crate is the compositor itself.
-`components/` holds the applications and the libraries they share; each
-application is a separate binary that talks to the compositor over Wayland and
-D-Bus like any other client.
+Otto is a Cargo workspace. The root crate is the compositor itself, and
+`crates/` holds libraries split out of it (today the render stack,
+`otto-render`). `components/` holds the applications and the libraries they
+share; each application is a separate binary that talks to the compositor over
+Wayland and D-Bus like any other client.
 
 That split is deliberate and worth internalising early: **the top bar, the
 launcher, the lock screen and the greeter are not part of the compositor.**
@@ -29,9 +30,6 @@ src/
 ├── config/              TOML parsing, layered config, shortcuts
 ├── theme/               Colour palettes and text styles
 ├── render.rs            Builds the per-output render element list
-├── render_elements/     Render element types handed to the damage tracker
-├── skia_renderer.rs     Skia wrapper over Smithay's GlesRenderer
-├── renderer/            EGL surfaces, textures, GPU sync
 ├── udev/                Production backend: DRM/GBM/libinput (see below)
 ├── winit.rs             Development backend: run inside another compositor
 ├── x11.rs               X11 client backend (basic, not actively maintained)
@@ -49,10 +47,27 @@ src/
 └── utils/               Shared helpers (natural layout, geometry, …)
 ```
 
+The render stack is the `otto-render` crate, which `lib.rs` re-exports under
+its old paths (`crate::renderer`, `crate::skia_renderer`, …):
+
+```
+crates/otto-render/src/
+├── skia_renderer.rs     Skia wrapper over Smithay's GlesRenderer
+├── renderer/            EGL surfaces, textures, GPU sync; vulkan/ is Skia on Vulkan
+├── render_elements/     Render element types handed to the damage tracker
+├── drawing.rs           Pointer element, fps counter
+├── textures_storage.rs  Texture cache
+├── render_phase_stats.rs Per-phase frame timings
+└── debug_hooks.rs       File-driven debug toggles
+```
+
+Being its own crate, it cannot reach into windows, workspaces, input or the
+configuration: the compositor hands it elements and settings.
+
 `src/udev/` is a directory. The interesting parts are `render.rs` (the frame
 path, by far the largest), `planes.rs` and `backdrop.rs` (hardware plane
 scanout and cross-plane blur), `init.rs` and `device.rs` (DRM setup and
-hotplug).
+hotplug), and `input.rs` and `edge_swipe.rs` (the libinput event dispatch).
 
 ## Components
 
@@ -76,6 +91,7 @@ applications share:
 | `otto-msg` | Drives the compositor from a script, the way `i3-msg` and `swaymsg` do |
 | `otto-search` | File search over the desktop's index: the query language, shared by Files, and the `otto-search` command |
 | `otto-agents` | Runs ACP agents and serves them over the Agent Host Protocol |
+| `otto-foundations` | Library: the UI-free base, XDG directories, `file://` URIs and name matching; see [otto-foundations.md](otto-foundations.md) |
 | `otto-agents-client` | Library: talking to `otto-agents`, its socket, session URIs and file URIs |
 | `otto-media-kit` | Library: video playback for Otto apps; a sandboxed GStreamer worker plus the player view that draws its frames |
 | `otto-md-kit` | Library: Markdown parsed into the toolkit's block vocabulary |
@@ -99,6 +115,40 @@ website/         Hugo site generated from docs/
 ```
 
 ## Build & run
+
+### Prerequisites
+
+Package names vary by distribution. The Debian/Ubuntu names are what CI
+installs, so that list is the authoritative one: see the "System dependencies"
+step in [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml).
+
+- Wayland and input: `libwayland`, `libxkbcommon`, `libudev`, `libinput`,
+  [`libseat`](https://git.sr.ht/~kennylevinsen/seatd)
+- Graphics: `libgbm`, `libdrm`, `libEGL`/Mesa, `libpixman`, `libdisplay-info`
+- Text: `freetype`, `fontconfig`
+- Session and IPC: `libdbus`, `libsystemd`
+- Screen sharing and remote desktop: `pipewire`, `gstreamer` and
+  `gstreamer-plugins-base` (`otto-rdp`)
+- Authentication: `libpam` (`otto-lock`, `otto-greeter`)
+
+On Debian and Ubuntu:
+
+```sh
+sudo apt-get install -y libdrm-dev libudev-dev libgbm-dev libxkbcommon-dev \
+  libegl1-mesa-dev libwayland-dev libinput-dev libdbus-1-dev libsystemd-dev \
+  libseat-dev libpipewire-0.3-dev libfreetype-dev libfontconfig-dev \
+  libdisplay-info-dev libpixman-1-dev libgstreamer1.0-dev \
+  libgstreamer-plugins-base1.0-dev libpam0g-dev
+```
+
+Add `xwayland` to run X11 applications inside Otto.
+
+### Running
+
+With no backend flag, Otto picks `--winit` when `WAYLAND_DISPLAY` is set and
+`--tty-udev` otherwise. The check does not look for X11, so on an X11 session
+pass `--winit` explicitly, or Otto tries to take the display from the running
+desktop.
 
 ```sh
 cargo run -- --winit          # windowed, inside an existing session — the dev path
@@ -139,7 +189,7 @@ cargo run --features dev -- --winit
 |---------|--------|
 | `dev` | Convenience: `debug` + `profile` + `debugger` + `debug-hooks` |
 | `debug` | Debug-only functionality, including RenderDoc capture |
-| `debug-hooks` | File-driven live toggles and command files under `/tmp` (see `src/debug_hooks.rs`) |
+| `debug-hooks` | File-driven live toggles and command files under `/tmp` (see `crates/otto-render/src/debug_hooks.rs`) |
 | `debugger` | lay-rs scene debugger on `localhost:8000`, needed to inspect the live scene graph |
 | `debug-kms` | Extra KMS/plane logging; opt in explicitly |
 | `profile` | Puffin profiling (compositor + lay-rs) |

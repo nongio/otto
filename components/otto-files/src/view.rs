@@ -4,8 +4,10 @@
 //! Geometry lives in the `*_rect` / `*_at` helpers so drawing and hit-testing
 //! read the same numbers — the otto-kit convention. Nothing here holds state.
 
+use otto_kit::components::dropdown::{field, DropdownInteraction};
 use otto_kit::components::icon::Icon;
 use otto_kit::components::scroll::{ScrollRenderer, ScrollState};
+use otto_kit::components::segmented;
 use otto_kit::components::selectable_text::{TextRun, TextSelection};
 use otto_kit::components::titlebar::{
     DecorationVariant, WindowControl, WindowControls, WindowControlsState, WindowDecoration,
@@ -34,7 +36,7 @@ pub fn corner() -> f32 {
     WindowDecoration::corner_radius_for(decoration_variant(), CORNER)
 }
 
-/// The decoration this window is currently wearing.
+/// The decoration the window being measured or drawn is wearing.
 ///
 /// A tiled window abuts its neighbours, so it follows `[tiling] decoration`
 /// (`specs/tiling.md`, *Decorations*) — but the browser's chrome is a header
@@ -177,12 +179,14 @@ pub enum Shell {
     Desk,
 }
 
-/// Fixed at startup — a window does not change shell — which is why it is a
-/// process-wide value rather than a parameter on all forty geometry
-/// functions below, each of which starts from where the file area does.
+/// The shell of the window being measured or drawn: a process-wide value
+/// rather than a parameter on all forty geometry functions below, each of
+/// which starts from where the file area does. A process with several
+/// windows puts each one's back before touching it; see
+/// `Browser::enter_view` in the app.
 static SHELL: AtomicU8 = AtomicU8::new(0);
 
-/// Choose the shell, once, before the first frame.
+/// Choose the shell of the window about to be measured or drawn.
 pub fn set_shell(shell: Shell) {
     let code = match shell {
         Shell::Browser => 0,
@@ -222,22 +226,72 @@ fn nav_hidden() -> bool {
 }
 
 /// Where the desk's panel sits inside its surface and how far its icons stay
-/// from the panel's edges. Set once from the `[desk]` config before the first
-/// frame; unused by every other shell.
-#[derive(Debug, Clone, Copy)]
+/// from the panel's edges. Set from the `[desk]` config before the first
+/// frame, and again whenever the config changes; unused by every other shell.
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DeskLayout {
     pub anchor: crate::desk::Anchor,
     pub size: [crate::desk::Extent; 2],
+    pub position: Option<[crate::desk::Extent; 2]>,
     /// Points between the panel's edges and the grid.
     pub padding: f32,
+}
+
+impl DeskLayout {
+    /// The layout `config` asks for.
+    pub fn from_config(config: &crate::desk::DeskConfig) -> Self {
+        Self {
+            anchor: config.anchor,
+            size: config.size,
+            position: config.position,
+            padding: config.padding,
+        }
+    }
 }
 
 /// The whole surface, unpadded: what the desk is until its config is read.
 const UNSET_DESK_LAYOUT: DeskLayout = DeskLayout {
     anchor: crate::desk::Anchor::Fill,
     size: [crate::desk::Extent::Percent(100.0); 2],
+    position: None,
     padding: 0.0,
 };
+
+/// The desk's edit mode, as the view draws it: the panel being dragged, in
+/// surface points, and which of the two buttons is held down.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DeskEdit {
+    pub panel: Rect,
+    pub pressed: Option<DeskEditButton>,
+}
+
+/// The two buttons edit mode shows on the panel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeskEditButton {
+    Cancel,
+    Done,
+}
+
+static DESK_EDIT: std::sync::RwLock<Option<DeskEdit>> = std::sync::RwLock::new(None);
+
+/// Enter, update or (with `None`) leave the desk's edit mode. While it is on,
+/// the panel is the edited rect rather than the configured one, so the grid
+/// reflows under the pointer as it drags.
+pub fn set_desk_edit(edit: Option<DeskEdit>) {
+    if let Ok(mut current) = DESK_EDIT.write() {
+        *current = edit;
+    }
+}
+
+/// The desk's edit mode, while it is on.
+pub fn desk_edit() -> Option<DeskEdit> {
+    DESK_EDIT.read().ok().and_then(|edit| *edit)
+}
+
+/// The desk's layout as last set.
+pub fn desk_layout() -> DeskLayout {
+    DESK_LAYOUT.read().map(|l| *l).unwrap_or(UNSET_DESK_LAYOUT)
+}
 
 static DESK_LAYOUT: std::sync::RwLock<DeskLayout> = std::sync::RwLock::new(UNSET_DESK_LAYOUT);
 
@@ -251,8 +305,165 @@ pub fn set_desk_layout(layout: DeskLayout) {
 /// The desk's panel inside a surface `width` × `height` points: what takes
 /// the pointer, and what the grid is laid out in once padded.
 pub fn desk_panel_rect(width: f32, height: f32) -> Rect {
-    let layout = DESK_LAYOUT.read().map(|l| *l).unwrap_or(UNSET_DESK_LAYOUT);
-    crate::desk::panel_rect(layout.anchor, layout.size, (width, height))
+    if let Some(edit) = desk_edit() {
+        return edit.panel;
+    }
+    let layout = desk_layout();
+    crate::desk::panel_rect(layout.anchor, layout.size, layout.position, (width, height))
+}
+
+/// Edit mode's two buttons: side by side, centred along the bottom of
+/// `panel`, inside it.
+pub fn desk_edit_button_rects(panel: Rect) -> [(DeskEditButton, Rect); 2] {
+    let y = panel.bottom - DESK_EDIT_INSET - DESK_EDIT_BTN_H;
+    let total = DESK_EDIT_BTN_W * 2.0 + DESK_EDIT_GAP;
+    let left = (panel.center_x() - total / 2.0).round();
+    [
+        (
+            DeskEditButton::Cancel,
+            Rect::from_xywh(left, y, DESK_EDIT_BTN_W, DESK_EDIT_BTN_H),
+        ),
+        (
+            DeskEditButton::Done,
+            Rect::from_xywh(
+                left + DESK_EDIT_BTN_W + DESK_EDIT_GAP,
+                y,
+                DESK_EDIT_BTN_W,
+                DESK_EDIT_BTN_H,
+            ),
+        ),
+    ]
+}
+
+/// Which of edit mode's buttons is at (`x`, `y`), if either.
+pub fn desk_edit_button_at(panel: Rect, x: f32, y: f32) -> Option<DeskEditButton> {
+    desk_edit_button_rects(panel)
+        .into_iter()
+        .find(|(_, rect)| rect.contains(Point::new(x, y)))
+        .map(|(button, _)| button)
+}
+
+/// Edit mode's button size and spacing, in points. Two of them and the gap
+/// fit inside [`crate::desk::MIN_PANEL`], so the smallest panel still shows
+/// both.
+const DESK_EDIT_BTN_W: f32 = 76.0;
+const DESK_EDIT_BTN_H: f32 = 28.0;
+const DESK_EDIT_GAP: f32 = 8.0;
+/// How far the buttons sit above the panel's bottom edge.
+const DESK_EDIT_INSET: f32 = 16.0;
+/// The side handles are pills lying along the outline: long enough to find,
+/// thin enough not to hide the icons under them. Sizes in points.
+const DESK_EDIT_PILL_LENGTH: f32 = 36.0;
+const DESK_EDIT_PILL_THICKNESS: f32 = 6.0;
+/// The corner handles are brackets that follow the outline's rounded corner,
+/// drawn as a stroke this thick with arms this long.
+const DESK_EDIT_BRACKET_THICKNESS: f32 = 6.0;
+const DESK_EDIT_BRACKET_ARM: f32 = 22.0;
+/// The outline's corner radius, which the brackets bend round.
+const DESK_EDIT_RADIUS: f32 = 12.0;
+
+/// The desk's edit mode over its grid: the panel's rounded outline in the accent with a bracket at each corner and a
+/// pill on each side, and the Cancel and Done buttons.
+fn draw_desk_edit(canvas: &Canvas, theme: &Theme, surface: Rect, edit: DeskEdit) {
+    let panel = edit.panel;
+    let mut paint = Paint::default();
+    paint.set_anti_alias(true);
+
+    // Inset by half the stroke, so the whole line sits on the panel and none
+    // of it is cut off at the edge of the screen.
+    paint.set_style(skia_safe::PaintStyle::Stroke);
+    paint.set_stroke_width(1.5);
+    paint.set_color(accent(theme));
+    let outline = panel.with_inset((0.75, 0.75));
+    canvas.draw_rrect(
+        RRect::new_rect_xy(outline, DESK_EDIT_RADIUS, DESK_EDIT_RADIUS),
+        &paint,
+    );
+
+    // Each handle is drawn twice: a blurred dark pass for the shadow that
+    // lifts it off any wallpaper, then the white shape itself.
+    let shadow = |paint: &mut Paint| {
+        paint.set_color(Color::from_argb(0x60, 0, 0, 0));
+        paint.set_mask_filter(skia_safe::MaskFilter::blur(
+            skia_safe::BlurStyle::Normal,
+            2.0,
+            None,
+        ));
+    };
+    let face = |paint: &mut Paint| {
+        paint.set_color(Color::WHITE);
+        paint.set_mask_filter(None);
+    };
+
+    let inset = DESK_EDIT_BRACKET_THICKNESS / 2.0;
+    for (i, (x, y)) in crate::desk::Grip::handles(outline).into_iter().enumerate() {
+        if i % 2 == 0 {
+            // A corner: which way the arms run from it.
+            let sx = if x <= outline.center_x() { 1.0 } else { -1.0 };
+            let sy = if y <= outline.center_y() { 1.0 } else { -1.0 };
+            // Pulled in to stay on screen when the panel meets an edge.
+            let x = x.clamp(surface.left + inset, surface.right - inset);
+            let y = y.clamp(surface.top + inset, surface.bottom - inset);
+            let r = DESK_EDIT_RADIUS;
+            let arm = DESK_EDIT_BRACKET_ARM;
+            let mut builder = PathBuilder::new();
+            builder.move_to(Point::new(x + sx * arm, y));
+            builder.line_to(Point::new(x + sx * r, y));
+            builder.quad_to(Point::new(x, y), Point::new(x, y + sy * r));
+            builder.line_to(Point::new(x, y + sy * arm));
+            let path = builder.detach();
+            paint.set_style(skia_safe::PaintStyle::Stroke);
+            paint.set_stroke_width(DESK_EDIT_BRACKET_THICKNESS);
+            paint.set_stroke_cap(skia_safe::paint::Cap::Round);
+            paint.set_stroke_join(skia_safe::paint::Join::Round);
+            for pass in [shadow, face] {
+                pass(&mut paint);
+                canvas.draw_path(&path, &paint);
+            }
+        } else {
+            // A side: the pill lies along it.
+            let along_x = i == 1 || i == 5;
+            let (w, h) = if along_x {
+                (DESK_EDIT_PILL_LENGTH, DESK_EDIT_PILL_THICKNESS)
+            } else {
+                (DESK_EDIT_PILL_THICKNESS, DESK_EDIT_PILL_LENGTH)
+            };
+            let x = x.clamp(surface.left + w / 2.0, surface.right - w / 2.0);
+            let y = y.clamp(surface.top + h / 2.0, surface.bottom - h / 2.0);
+            let pill = Rect::from_xywh(x - w / 2.0, y - h / 2.0, w, h);
+            let rrect = RRect::new_rect_xy(pill, w.min(h) / 2.0, w.min(h) / 2.0);
+            paint.set_style(skia_safe::PaintStyle::Fill);
+            for pass in [shadow, face] {
+                pass(&mut paint);
+                canvas.draw_rrect(rrect, &paint);
+            }
+        }
+    }
+    paint.set_mask_filter(None);
+
+    for (button, rect) in desk_edit_button_rects(panel) {
+        let pressed = edit.pressed == Some(button);
+        match button {
+            DeskEditButton::Cancel => draw_footer_button(
+                canvas,
+                rect,
+                otto_kit::t!("common-cancel"),
+                theme.fill_secondary,
+                theme.text_primary,
+                pressed,
+                true,
+            ),
+            DeskEditButton::Done => draw_footer_button(
+                canvas,
+                rect,
+                otto_kit::t!("files-desk-edit-done"),
+                accent(theme),
+                Color::WHITE,
+                pressed,
+                true,
+            ),
+        }
+    }
 }
 
 fn desk_padding() -> f32 {
@@ -295,7 +506,8 @@ pub const SEARCH_BAND_H: f32 = 46.0;
 /// strip changes where *everything* below the header sits, and the two dozen
 /// geometry functions that answer that question take an area and an index, not
 /// a browser. Threading a flag through all of them to say the same thing at
-/// every call site would be noise; one window per process makes it honest.
+/// every call site would be noise. It holds the strip of the window being
+/// measured or drawn, put back with the rest of that window's settings.
 #[cfg(not(test))]
 static SEARCH_BAND: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
@@ -385,6 +597,9 @@ const NAV_BTN_H: f32 = 26.0;
 const NAV_GROUP_W: f32 = NAV_BTN_W * 2.0;
 const NAV_RADIUS: f32 = 7.0;
 const NAV_ICON_SIZE: f32 = 13.0;
+/// The side of a toolbar button's Solar glyph: the nav arrows, New Folder
+/// and the view switcher's segments.
+const TOOLBAR_GLYPH: f32 = 16.0;
 /// How far the title's own text starts right of the sidebar, once the nav
 /// pair and its trailing gap are accounted for. The Trash window has no nav
 /// pair, so its title starts hard against the content padding instead.
@@ -436,10 +651,41 @@ pub fn location_rect(width: f32) -> Rect {
         .max(sidebar_w() + CONTENT_PAD + NAV_GROUP_W + 16.0);
     Rect::from_ltrb(
         left,
-        toolbar_cy() - 15.0,
+        toolbar_cy() - field::HEIGHT / 2.0,
         left + LOCATION_W,
-        toolbar_cy() + 15.0,
+        toolbar_cy() + field::HEIGHT / 2.0,
     )
+}
+
+/// The picker's New Folder button, just after the location control: the
+/// folder it makes goes where that control says you are.
+pub fn new_folder_rect(width: f32) -> Rect {
+    let location = location_rect(width);
+    Rect::from_xywh(
+        location.right + 8.0,
+        toolbar_cy() - NAV_BTN_H / 2.0,
+        NEW_FOLDER_W,
+        NAV_BTN_H,
+    )
+}
+const NEW_FOLDER_W: f32 = 36.0;
+
+/// What the picker's toolbar row has under `(x, y)`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolbarButton {
+    Location,
+    NewFolder,
+}
+
+pub fn picker_toolbar_at(x: f32, y: f32, width: f32) -> Option<ToolbarButton> {
+    let point = Point::new(x, y);
+    if location_rect(width).contains(point) {
+        Some(ToolbarButton::Location)
+    } else if new_folder_rect(width).contains(point) {
+        Some(ToolbarButton::NewFolder)
+    } else {
+        None
+    }
 }
 /// Half the height of the band a click on the subtitle lands in: its line of
 /// text with a little slack, so a click just above or below still counts.
@@ -551,13 +797,40 @@ const SEARCH_CHIP_GAP: f32 = 6.0;
 const SEARCH_CHIP_FOLDER_W: f32 = 112.0;
 const SEARCH_CHIP_EVERYWHERE_W: f32 = 112.0;
 
-/// One Miller pane's default width. Every pane shares one width — a column
-/// whose width changes as you descend is disorienting, and this is what makes
-/// the view scannable — but that shared width is user-resizable.
+/// The width a Miller pane opens at. Each pane's divider resizes that pane
+/// alone; see [`MillerWidths`].
 pub const MILLER_W: f32 = 260.0;
 /// Miller panes cannot be dragged narrower than this.
 pub const MILLER_MIN_W: f32 = 140.0;
+/// Miller panes cannot be dragged or fitted wider than this.
 pub const MILLER_MAX_W: f32 = 520.0;
+
+/// The width of each pane in the Miller stack, by depth.
+///
+/// Every pane keeps its own width: dragging one divider resizes the pane to
+/// its left and shifts the ones after it without resizing them. A depth past
+/// the end of the list is at [`MILLER_W`], which is also what
+/// [`MillerWidths::default`] gives every pane.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct MillerWidths(Vec<f32>);
+
+impl MillerWidths {
+    /// The widths of the panes from depth 0 on.
+    pub fn new(widths: impl IntoIterator<Item = f32>) -> Self {
+        Self(widths.into_iter().collect())
+    }
+
+    /// Pane `depth`'s width.
+    pub fn width(&self, depth: usize) -> f32 {
+        self.0.get(depth).copied().unwrap_or(MILLER_W)
+    }
+
+    /// How far pane `depth`'s left edge sits from the start of the stack:
+    /// the widths of every pane before it.
+    pub fn left(&self, depth: usize) -> f32 {
+        (0..depth).map(|d| self.width(d)).sum()
+    }
+}
 
 /// How close the pointer must be to a column boundary to grab it.
 const COLUMN_GRAB: f32 = 4.0;
@@ -955,6 +1228,259 @@ pub fn grid_cells_in_rect_in(
     )
 }
 
+/// How many whole cells fit in `area` without scrolling: every column,
+/// times every row whose cells end inside it.
+pub fn grid_capacity(area: Rect) -> usize {
+    let columns = grid_columns(area);
+    let mut rows = 0;
+    // Half a point of slack: a panel sized to exactly a whole number of rows
+    // must not lose its last one to rounding.
+    while grid_cell_rect(area, rows * columns, 0.0).bottom <= area.bottom + 0.5 {
+        rows += 1;
+    }
+    rows * columns
+}
+
+// --- The desk's overflow tile and overflow panel ----------------------------
+
+/// The desk's overflow as a frame draws it: which entries the tile holds
+/// and, while it is open, the overflow panel they are laid out in with the
+/// panel's scroll. See [`crate::desk::overflow_tile`] and `specs/desk.md`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DeskOverflow {
+    pub tile: crate::desk::OverflowTile,
+    pub panel: Option<(crate::desk::OverflowPanel, f32)>,
+}
+
+/// How far the overflow panel keeps from the edges of the desk's surface, in
+/// points.
+const PANEL_MARGIN: f32 = 12.0;
+
+impl DeskOverflow {
+    /// The overflow over `count` entries in the grid at `area`, if they make
+    /// a tile. `panel_scroll` opens its panel, scrolled that far, somewhere
+    /// inside `surface`: the panel is a surface of its own, so it is not
+    /// held inside the grid.
+    pub fn new(area: Rect, surface: Rect, count: usize, panel_scroll: Option<f32>) -> Option<Self> {
+        let tile = crate::desk::overflow_tile(count, grid_capacity(area))?;
+        let panel = panel_scroll.map(|scroll| {
+            let panel = crate::desk::OverflowPanel::new(
+                surface.with_inset((PANEL_MARGIN, PANEL_MARGIN)),
+                grid_cell_rect(area, tile.first, 0.0),
+                tile.count,
+                (cell_w(), cell_h()),
+            );
+            (panel, scroll)
+        });
+        Some(Self { tile, panel })
+    }
+
+    /// Where entry `index` is drawn and hit, when the tile holds it: its cell
+    /// in the panel while the panel is open, the tile's own cell while it is
+    /// not. `None` for an entry in the grid.
+    pub fn entry_rect(&self, area: Rect, index: usize) -> Option<Rect> {
+        if !self.tile.contains(index) {
+            return None;
+        }
+        Some(match self.panel {
+            Some((panel, scroll)) => panel.cell_rect(index - self.tile.first, scroll),
+            None => grid_cell_rect(area, self.tile.first, 0.0),
+        })
+    }
+
+    /// The tile's own cell in the grid at `area`.
+    pub fn cell(&self, area: Rect) -> Rect {
+        grid_cell_rect(area, self.tile.first, 0.0)
+    }
+}
+
+/// How many of the tile's icons are drawn on top of one another. Enough to
+/// read as a stack; more only adds edges.
+pub const OVERFLOW_TILE_LAYERS: usize = 3;
+/// How far each icon under the top one sits up and to the right, in points.
+const TILE_OFFSET: f32 = 5.0;
+/// How far each icon under the top one is turned, in degrees, alternating
+/// sides so the stack looks put down by hand.
+const TILE_TILT: f32 = 3.0;
+/// The count badge's height, and its narrowest width.
+const TILE_BADGE_H: f32 = 20.0;
+
+/// The overflow tile in `cell`: its first few items' icons on top of one
+/// another, the first on top, a badge with how many it holds, and its
+/// caption.
+fn draw_overflow_tile(
+    canvas: &Canvas,
+    f: &Frame,
+    entries: &[&Entry],
+    tile: crate::desk::OverflowTile,
+    cell: Rect,
+    selected: bool,
+) {
+    let icon = grid_icon();
+    let icon_top = cell.top + 8.0;
+    if selected {
+        let mut paint = Paint::default();
+        paint.set_anti_alias(true);
+        paint.set_color(f.theme.material_selection_focused);
+        paint.set_alpha(60);
+        canvas.draw_rrect(
+            RRect::new_rect_xy(grid_icon_highlight_rect(cell, icon_top), 8.0, 8.0),
+            &paint,
+        );
+    }
+    let box_rect = Rect::from_xywh(cell.center_x() - icon / 2.0, icon_top, icon, icon);
+    let layers = tile.count.min(OVERFLOW_TILE_LAYERS);
+    for depth in (0..layers).rev() {
+        let Some(entry) = entries.get(tile.first + depth) else {
+            continue;
+        };
+        let step = depth as f32;
+        let tilt = match depth {
+            0 => 0.0,
+            odd if odd % 2 == 1 => TILE_TILT,
+            _ => -TILE_TILT,
+        };
+        canvas.save();
+        canvas.translate((box_rect.center_x(), box_rect.center_y()));
+        canvas.rotate(tilt, None);
+        canvas.translate((
+            TILE_OFFSET * step - box_rect.width() / 2.0,
+            -TILE_OFFSET * step - box_rect.height() / 2.0,
+        ));
+        draw_grid_icon(
+            canvas,
+            entry,
+            Rect::from_wh(box_rect.width(), box_rect.height()),
+            f.thumbnail(entry),
+        );
+        canvas.restore();
+    }
+    draw_tile_badge(canvas, f.theme, box_rect, tile.count);
+    draw_grid_caption(
+        canvas,
+        f.theme,
+        otto_kit::t!("files-desk-overflow-caption"),
+        cell,
+        selected,
+        false,
+        None,
+    );
+}
+
+/// The badge's text for `count` items: the number, capped at 999+.
+fn tile_badge_text(count: usize) -> String {
+    if count > 999 {
+        "999+".to_string()
+    } else {
+        count.to_string()
+    }
+}
+
+/// Where the badge's text goes so its ink is centred on (`cx`, `cy`): the
+/// left end of its baseline. Centred on the glyphs' own bounds rather than
+/// the line box, since digits have no descender and a line box centres them
+/// visibly high.
+fn tile_badge_origin(font: &skia_safe::Font, text: &str, cx: f32, cy: f32) -> Point {
+    let (_, ink) = font.measure_str(text, None);
+    Point::new(cx - ink.center_x(), cy - ink.center_y())
+}
+
+/// The tile's count, in a pill of the accent colour over the icon's top
+/// trailing corner.
+fn draw_tile_badge(canvas: &Canvas, theme: &Theme, icon: Rect, count: usize) {
+    let text = tile_badge_text(count);
+    let font = styles::FOOTNOTE_EMPHASIZED.font();
+    let text_w = font.measure_str(&text, None).0;
+    let width = (text_w + 12.0).max(TILE_BADGE_H);
+    let badge = Rect::from_xywh(
+        icon.right - width + 6.0,
+        icon.top - 6.0,
+        width,
+        TILE_BADGE_H,
+    );
+    let mut paint = Paint::default();
+    paint.set_anti_alias(true);
+    paint.set_image_filter(skia_safe::image_filters::drop_shadow(
+        (0.0, 1.0),
+        (2.0, 2.0),
+        Color::from_argb(90, 0, 0, 0),
+        None,
+        None,
+        None,
+    ));
+    paint.set_color(theme.accent);
+    let radius = TILE_BADGE_H / 2.0;
+    canvas.draw_rrect(RRect::new_rect_xy(badge, radius, radius), &paint);
+    let mut ink = Paint::default();
+    ink.set_anti_alias(true);
+    ink.set_color(Color::WHITE);
+    let origin = tile_badge_origin(&font, &text, badge.center_x(), badge.center_y());
+    canvas.draw_str(&text, origin, &font, &ink);
+}
+
+/// The overflow panel's ground: dark, so the desk's white captions read on
+/// it the way they do on the wallpaper, in either theme. Translucent over
+/// the compositor's blur; nearly solid when frosting is off.
+pub fn overflow_panel_ground() -> Color {
+    otto_kit::frosting::popup_material(Color::from_argb(150, 24, 24, 28))
+}
+
+/// The overflow panel's corner radius, in points.
+pub const OVERFLOW_PANEL_RADIUS: f32 = 14.0;
+
+/// The open overflow panel: its ground, and the tile's items in their cells,
+/// scrolled by `scroll`, whose viewport is the panel's rect. Drawn in the
+/// desk's coordinates, onto the panel's own surface.
+pub fn draw_overflow_panel(canvas: &Canvas, f: &Frame, scroll: &ScrollState) {
+    let Some(overflow) = f.desk_overflow else {
+        return;
+    };
+    let Some((panel, offset)) = overflow.panel else {
+        return;
+    };
+    let Some(pane) = f.panes.last() else {
+        return;
+    };
+    let rrect = RRect::new_rect_xy(panel.rect, OVERFLOW_PANEL_RADIUS, OVERFLOW_PANEL_RADIUS);
+    let mut ground = Paint::default();
+    ground.set_anti_alias(true);
+    ground.set_color(overflow_panel_ground());
+    canvas.draw_rrect(rrect, &ground);
+    let mut edge = Paint::default();
+    edge.set_anti_alias(true);
+    edge.set_style(skia_safe::paint::Style::Stroke);
+    edge.set_stroke_width(1.0);
+    edge.set_color(Color::from_argb(60, 255, 255, 255));
+    canvas.draw_rrect(rrect.with_inset((0.5, 0.5)), &edge);
+
+    canvas.save();
+    canvas.clip_rrect(rrect, ClipOp::Intersect, true);
+    let first = overflow.tile.first;
+    let origin = (panel.rect.left, panel.rect.top);
+    let depth = f.panes.len() - 1;
+    ScrollRenderer::draw(canvas, scroll, f.theme, |canvas, _band| {
+        for k in panel.visible(overflow.tile.count, offset) {
+            let index = first + k;
+            let Some(entry) = pane.entries.get(index).copied() else {
+                continue;
+            };
+            // Content space: the panel's top-left corner, unscrolled.
+            let cell = panel.cell_rect(k, 0.0).with_offset((-origin.0, -origin.1));
+            draw_grid_cell_with(
+                canvas,
+                f.theme,
+                entry,
+                cell,
+                pane.is_selected(index),
+                f.renaming == Some((depth, index)),
+                f.thumbnail(entry),
+                None,
+            );
+        }
+    });
+    canvas.restore();
+}
+
 /// Total height `count` cells need in `area`.
 pub fn grid_content_height(area: Rect, count: usize) -> f32 {
     grid_content_height_in(area, GridSections::FLAT, count)
@@ -1022,9 +1548,10 @@ pub struct PhotosSection {
 pub struct PhotosLayout {
     pub sections: Vec<PhotosSection>,
     layout: JustifiedLayout,
-    /// How much of the file area's right the info panel takes, which the
-    /// wall was packed to leave clear. Zero while no panel is up.
-    panel_w: f32,
+    /// How far the file area is panned toward the info panel, which trails
+    /// the wall the way the preview column trails the Miller stack. Stays
+    /// zero while the window is wide enough for both.
+    pan: f32,
 }
 
 impl PhotosLayout {
@@ -1032,7 +1559,7 @@ impl PhotosLayout {
     pub const EMPTY: &'static PhotosLayout = &PhotosLayout {
         sections: Vec::new(),
         layout: JustifiedLayout::empty(),
-        panel_w: 0.0,
+        pan: 0.0,
     };
 
     /// Lay `sections` out across `width` — the file area's — with `aspects`
@@ -1067,32 +1594,48 @@ impl PhotosLayout {
         Self {
             sections,
             layout,
-            panel_w: 0.0,
+            pan: 0.0,
         }
     }
 
-    /// The same layout, packed for a file area whose right `panel_w` points
-    /// the info panel covers. `width` given to [`Self::new`] is what is left.
-    pub fn with_panel(mut self, panel_w: f32) -> Self {
-        self.panel_w = panel_w;
-        self
+    /// Pan the file area `pan` points toward the info panel.
+    pub fn set_pan(&mut self, pan: f32) {
+        self.pan = pan.clamp(0.0, PHOTOS_INFO_W);
     }
 
-    /// The part of the file area the wall occupies, in window coordinates:
-    /// all of it, less the info panel when one is up.
+    /// The wall in window coordinates: [`photos_wall_width`] wide, slid left
+    /// by the pan. Its left may lie under the sidebar; what can be seen of
+    /// it is [`Self::shown`].
     pub fn area(&self, width: f32, height: f32) -> Rect {
         let full = content_viewport(width, height, ViewMode::Photos);
+        let left = full.left - self.pan;
         Rect::from_ltrb(
-            full.left,
+            left,
             full.top,
-            (full.right - self.panel_w).max(full.left),
+            left + photos_wall_width(full.width()),
             full.bottom,
         )
     }
 
-    /// Whether the info panel is up beside the wall.
-    pub fn has_panel(&self) -> bool {
-        self.panel_w > 0.0
+    /// The part of the wall that can be seen: the file area, less what the
+    /// pan has slid behind the sidebar or given over to the panel.
+    pub fn shown(&self, width: f32, height: f32) -> Rect {
+        let full = content_viewport(width, height, ViewMode::Photos);
+        let area = self.area(width, height);
+        Rect::from_ltrb(full.left, full.top, area.right.max(full.left), full.bottom)
+    }
+
+    /// The info panel, just past the wall's right edge: off the window until
+    /// the file area is panned toward it.
+    pub fn panel_rect(&self, width: f32, height: f32) -> Rect {
+        let left = self.area(width, height).right;
+        Rect::from_ltrb(left, header_h(), left + PHOTOS_INFO_W, height)
+    }
+
+    /// Whether any of the info panel is in view.
+    pub fn has_panel(&self, width: f32, height: f32) -> bool {
+        let full = content_viewport(width, height, ViewMode::Photos);
+        self.panel_rect(width, height).left < full.right - 1.0
     }
 
     /// Which kind of section tile `index` is in.
@@ -1430,14 +1973,37 @@ pub struct PhotosControls {
 
 // --- The Photos info panel -------------------------------------------------
 //
-// A column docked along the right of the file area in the Photos view, the
-// way the preview column trails the Miller stack: it takes the same decode
-// and draws it with the same stage. It is there whenever something is
-// selected and gone when nothing is: what is under it is the one file, the
-// one folder, or how many.
+// A column trailing the Photos wall, the way the preview column trails the
+// Miller stack: its edge shows in the file area's last fifteen percent, and
+// the rest of it is panned to. It takes the same decode as the preview column and
+// draws it with the same stage, and describes the one file, the one folder,
+// how many are selected, or with nothing selected, the folder itself.
 
 /// The info panel's width.
 pub const PHOTOS_INFO_W: f32 = 320.0;
+/// The share of the file area the wall keeps. The info panel starts in what
+/// is left, showing its edge, and the rest of it is panned to.
+pub const PHOTOS_WALL_SHARE: f32 = 0.85;
+
+/// The narrowest wall the info panel sits beside in full. A file area with
+/// room for this and the whole panel shows both and does not pan.
+pub const PHOTOS_WALL_MIN: f32 = 800.0;
+
+/// How wide the wall is in a file area `viewport` wide: all the info panel
+/// leaves when that is at least [`PHOTOS_WALL_MIN`], else its share of it.
+pub fn photos_wall_width(viewport: f32) -> f32 {
+    let beside = viewport - PHOTOS_INFO_W;
+    if beside >= PHOTOS_WALL_MIN {
+        beside
+    } else {
+        viewport * PHOTOS_WALL_SHARE
+    }
+}
+
+/// How far the Photos view reaches across: the wall, then the info panel.
+pub fn photos_content_width(viewport: f32) -> f32 {
+    photos_wall_width(viewport) + PHOTOS_INFO_W
+}
 const INFO_PAD: f32 = 16.0;
 const INFO_STAGE_H: f32 = 220.0;
 const INFO_SWATCH: f32 = 28.0;
@@ -1445,10 +2011,32 @@ const INFO_SWATCH_GAP: f32 = 12.0;
 /// How much a swatch grows on each side under the pointer.
 const INFO_SWATCH_GROW: f32 = 2.0;
 const INFO_ROW_H: f32 = 24.0;
+/// A turn or flip button under the picture, and the room between two.
+const INFO_TOOL: f32 = 32.0;
+const INFO_TOOL_GAP: f32 = 8.0;
 
-/// The panel itself, from under the header to the foot of the file area.
-pub fn photos_info_rect(width: f32, height: f32) -> Rect {
-    Rect::from_ltrb(width - PHOTOS_INFO_W, header_h(), width, height)
+/// The buttons under the Photos info panel's picture, left to right.
+pub const PHOTOS_TOOLS: [crate::orient::Turn; 4] = [
+    crate::orient::Turn::Left,
+    crate::orient::Turn::Right,
+    crate::orient::Turn::FlipHorizontal,
+    crate::orient::Turn::FlipVertical,
+];
+
+/// The turn or flip button under `(x, y)`, when one picture is in the panel.
+pub fn photos_info_tool_at(
+    panel: Rect,
+    data: &PhotosInfoData<'_>,
+    x: f32,
+    y: f32,
+) -> Option<usize> {
+    let PhotosInfoData::One { swatches, .. } = data else {
+        return None;
+    };
+    photos_info_layout(panel, swatches.len())
+        .tools
+        .iter()
+        .position(|rect| rect.contains(Point::new(x, y)))
 }
 
 /// What the info panel is showing.
@@ -1466,6 +2054,16 @@ pub enum PhotosInfoData<'a> {
         copied: Option<usize>,
         /// The swatch under the pointer, which grows and names its colour.
         hovered: Option<usize>,
+        /// What the camera wrote down about it, once the decode lands.
+        camera: Option<&'a crate::camera::Shot>,
+        /// Whether its turn and flip buttons work: a JPEG. They are drawn
+        /// either way, so the panel keeps its shape from file to file.
+        turnable: bool,
+        /// The turn or flip button under the pointer.
+        tool_hover: Option<usize>,
+        /// A video's player, which the stage plays in place of a picture —
+        /// the same one the preview column plays.
+        video: Option<&'a otto_peek::session::Video>,
     },
     /// Several things selected: how many, and how much they weigh.
     Many { count: usize, bytes: u64 },
@@ -1483,6 +2081,9 @@ pub enum PhotosInfoData<'a> {
 /// Where the parts of the info panel go, for drawing and hit testing alike.
 pub struct InfoLayout {
     pub stage: Rect,
+    /// The turn and flip buttons, in a row under the picture, in the order
+    /// of [`PHOTOS_TOOLS`].
+    pub tools: [Rect; 4],
     /// The baseline centre of the name, and of the kind line under it.
     pub name_cy: f32,
     pub kind_cy: f32,
@@ -1502,7 +2103,19 @@ pub fn photos_info_layout(panel: Rect, swatches: usize) -> InfoLayout {
         inner.width(),
         INFO_STAGE_H,
     );
-    let name_cy = stage.bottom + 22.0;
+    let row = PHOTOS_TOOLS.len() as f32;
+    let tools_w = row * INFO_TOOL + (row - 1.0) * INFO_TOOL_GAP;
+    let tools_left = stage.center_x() - tools_w / 2.0;
+    let tools_top = stage.bottom + 10.0;
+    let tools = std::array::from_fn(|i| {
+        Rect::from_xywh(
+            tools_left + i as f32 * (INFO_TOOL + INFO_TOOL_GAP),
+            tools_top,
+            INFO_TOOL,
+            INFO_TOOL,
+        )
+    });
+    let name_cy = tools_top + INFO_TOOL + 22.0;
     let kind_cy = name_cy + 20.0;
     let count = swatches.min(5);
     // A fixed gap from the left, so two colours sit together rather than at
@@ -1526,6 +2139,7 @@ pub fn photos_info_layout(panel: Rect, swatches: usize) -> InfoLayout {
     };
     InfoLayout {
         stage,
+        tools,
         name_cy,
         kind_cy,
         swatches: swatch_rects,
@@ -1583,7 +2197,10 @@ fn info_kind_line(entry: &Entry) -> String {
 /// The info panel.
 fn draw_photos_info(canvas: &Canvas, f: &Frame, data: &PhotosInfoData<'_>) {
     let theme = f.theme;
-    let panel = photos_info_rect(f.width, f.height);
+    let panel = f.photos.panel_rect(f.width, f.height);
+    if !f.photos.has_panel(f.width, f.height) {
+        return;
+    }
     let mut paint = Paint::default();
     paint.set_anti_alias(true);
     paint.set_color(content_ground());
@@ -1603,11 +2220,38 @@ fn draw_photos_info(canvas: &Canvas, f: &Frame, data: &PhotosInfoData<'_>) {
         swatches,
         copied,
         hovered,
+        turnable,
+        tool_hover,
+        video,
         ..
     } = data
     {
         let layout = photos_info_layout(panel, swatches.len());
-        draw_info_stage(canvas, theme, layout.stage, entry, *decoded);
+        match video {
+            // Played where the picture would be, transport and all, as the
+            // preview column plays it.
+            Some(video) => draw_preview_stage(
+                canvas,
+                theme,
+                layout.stage,
+                *decoded,
+                Some(&video.snapshot()),
+                false,
+                &entry.icon_chain(),
+                0,
+            ),
+            None => draw_info_stage(canvas, theme, layout.stage, entry, *decoded),
+        }
+        for (i, (rect, turn)) in layout.tools.iter().zip(PHOTOS_TOOLS).enumerate() {
+            draw_photos_tool(
+                canvas,
+                theme,
+                *rect,
+                turn,
+                *turnable,
+                *tool_hover == Some(i),
+            );
+        }
         for (i, (rect, colour)) in layout.swatches.iter().zip(swatches.iter()).enumerate() {
             // The one under the pointer grows a little and wears a ring: it
             // is something to click, not only a colour to look at.
@@ -1724,12 +2368,32 @@ pub fn photos_info_runs(panel: Rect, data: &PhotosInfoData<'_>, theme: &Theme) -
             entry,
             dims,
             swatches,
+            camera,
             ..
         } => {
             let layout = photos_info_layout(panel, swatches.len());
             runs.push(title(&entry.name, layout.name_cy));
             runs.push(line(&info_kind_line(entry), layout.kind_cy));
-            rows(&mut runs, layout.rows_cy, facts(entry, *dims));
+            // How it was taken goes after its size, before what the disk
+            // says about the file.
+            let mut all = facts(entry, *dims);
+            let at = usize::from(dims.is_some());
+            all.splice(at..at, camera.map(shot_rows).unwrap_or_default());
+            // When the camera says when it was taken, that is the date that
+            // means something: a copy, an unzip or a sync resets the file's
+            // own, and a zip stamps 1980.
+            if let Some(taken) = camera.and_then(|shot| shot.taken_at) {
+                let modified = otto_kit::t!("files-photos-info-modified");
+                let row = (
+                    otto_kit::t!("files-photos-info-taken"),
+                    model::format_wall_time(taken),
+                );
+                match all.iter().position(|(key, _)| *key == modified) {
+                    Some(i) => all[i] = row,
+                    None => all.push(row),
+                }
+            }
+            rows(&mut runs, layout.rows_cy, all);
         }
         PhotosInfoData::Many { count, bytes } => {
             let cy = panel.top + INFO_PAD + 24.0;
@@ -1757,6 +2421,25 @@ pub fn photos_info_runs(panel: Rect, data: &PhotosInfoData<'_>, theme: &Theme) -
         }
     }
     runs
+}
+
+/// The info panel's rows for what the camera wrote down: with what, how,
+/// and where.
+fn shot_rows(shot: &crate::camera::Shot) -> Vec<(&'static str, String)> {
+    let mut out = Vec::new();
+    if let Some(camera) = &shot.camera {
+        out.push((otto_kit::t!("files-photos-info-camera"), camera.clone()));
+    }
+    if let Some(lens) = &shot.lens {
+        out.push((otto_kit::t!("files-photos-info-lens"), lens.clone()));
+    }
+    if let Some(exposure) = shot.exposure_line() {
+        out.push((otto_kit::t!("files-photos-info-exposure"), exposure));
+    }
+    if let Some(location) = shot.location_line() {
+        out.push((otto_kit::t!("files-photos-info-location"), location));
+    }
+    out
 }
 
 /// One key/value line: the key on the left in the quieter ink, the value
@@ -1823,7 +2506,7 @@ fn draw_info_stage(
         return;
     };
     // Contained, not cropped: this is the one place the whole picture is
-    // shown, so its own edges are the rounded ones.
+    // shown, square-cornered like a print, lifted off the panel by a shadow.
     let (w, h) = (image.width() as f32, image.height() as f32);
     let scale = (stage.width() / w).min(stage.height() / h);
     let fitted = Rect::from_xywh(
@@ -1832,12 +2515,9 @@ fn draw_info_stage(
         w * scale,
         h * scale,
     );
+    draw_picture_shadow(canvas, fitted);
     canvas.save();
-    canvas.clip_rrect(
-        RRect::new_rect_xy(fitted, 10.0, 10.0),
-        ClipOp::Intersect,
-        true,
-    );
+    canvas.clip_rect(fitted, ClipOp::Intersect, true);
     canvas.draw_image_rect_with_sampling_options(
         &image,
         None,
@@ -1848,8 +2528,141 @@ fn draw_info_stage(
         &Paint::default(),
     );
     canvas.restore();
-    draw_picture_edge(canvas, fitted, 10.0, false);
+    draw_picture_edge(canvas, fitted, 0.0, false);
 }
+
+/// One turn or flip button: its glyph, on a rounded ground while the pointer
+/// is over it. Dimmed, and with no ground, for a file it cannot turn.
+fn draw_photos_tool(
+    canvas: &Canvas,
+    theme: &Theme,
+    rect: Rect,
+    turn: crate::orient::Turn,
+    enabled: bool,
+    hovered: bool,
+) {
+    if enabled && hovered {
+        let mut ground = Paint::default();
+        ground.set_anti_alias(true);
+        ground.set_color(theme.fill_tertiary);
+        canvas.draw_rrect(RRect::new_rect_xy(rect, 8.0, 8.0), &ground);
+    }
+    let ink = if enabled {
+        theme.text_secondary
+    } else {
+        fade(theme.text_tertiary, 0.5)
+    };
+    draw_turn_glyph(
+        canvas,
+        Point::new(
+            rect.center_x() - TURN_GLYPH / 2.0,
+            rect.center_y() - TURN_GLYPH / 2.0,
+        ),
+        turn,
+        ink,
+    );
+}
+
+/// The edge of the square a turn or flip glyph is drawn in.
+const TURN_GLYPH: f32 = 16.0;
+
+/// A turn or flip glyph, drawn rather than taken from the icon theme: few
+/// themes have `object-rotate-*` and `object-flip-*` at all, so the four
+/// buttons came from whichever inherited theme did and did not match each
+/// other or anything else in the window. Stroked like the breadcrumb chevron.
+///
+/// Two shapes make all four: the picture with an arrow over its corner,
+/// mirrored for the other way round, and two triangles either side of an
+/// axis — the original filled, its mirror image outlined — turned on its side
+/// for the other flip.
+fn draw_turn_glyph(canvas: &Canvas, origin: Point, turn: crate::orient::Turn, ink: Color) {
+    use crate::orient::Turn;
+
+    let mut stroke = Paint::default();
+    stroke.set_anti_alias(true);
+    stroke.set_style(skia_safe::paint::Style::Stroke);
+    stroke.set_stroke_width(1.3);
+    stroke.set_stroke_cap(skia_safe::paint::Cap::Round);
+    stroke.set_stroke_join(skia_safe::paint::Join::Round);
+    stroke.set_color(ink);
+
+    canvas.save();
+    canvas.translate(origin);
+    match turn {
+        Turn::Left | Turn::FlipHorizontal => {}
+        Turn::Right => {
+            canvas.translate((TURN_GLYPH, 0.0));
+            canvas.scale((-1.0, 1.0));
+        }
+        // x and y exchanged: the horizontal flip, on its side.
+        Turn::FlipVertical => {
+            canvas.concat(&skia_safe::Matrix::new_all(
+                0.0, 1.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
+            ));
+        }
+    }
+
+    match turn {
+        Turn::Left | Turn::Right => {
+            // The picture.
+            canvas.draw_rrect(
+                RRect::new_rect_xy(Rect::from_ltrb(6.0, 7.0, 14.5, 14.5), 1.8, 1.8),
+                &stroke,
+            );
+            // The arrow, sweeping back over its top-left corner.
+            let mut arc = PathBuilder::new();
+            arc.move_to(Point::new(11.5, 3.0));
+            arc.quad_to(Point::new(3.0, 2.5), Point::new(3.0, 9.5));
+            arc.move_to(Point::new(1.0, 7.5));
+            arc.line_to(Point::new(3.0, 9.5));
+            arc.line_to(Point::new(5.0, 7.5));
+            canvas.draw_path(&arc.detach(), &stroke);
+        }
+        Turn::FlipHorizontal | Turn::FlipVertical => {
+            let triangle = |tip: f32, base: f32| {
+                let mut path = PathBuilder::new();
+                path.move_to(Point::new(tip, 3.5));
+                path.line_to(Point::new(tip, 12.5));
+                path.line_to(Point::new(base, 12.5));
+                path.close();
+                path.detach()
+            };
+            let original = triangle(6.5, 1.5);
+            let mut fill = stroke.clone();
+            fill.set_style(skia_safe::paint::Style::StrokeAndFill);
+            canvas.draw_path(&original, &fill);
+            canvas.draw_path(&triangle(9.5, 14.5), &stroke);
+
+            let mut axis = stroke.clone();
+            axis.set_stroke_width(1.0);
+            axis.set_path_effect(skia_safe::PathEffect::dash(&[1.5, 2.0], 0.0));
+            canvas.draw_line((8.0, 1.5), (8.0, 14.5), &axis);
+        }
+    }
+    canvas.restore();
+}
+
+/// The soft shadow a picture casts on the panel it is shown in: a blurred
+/// dark copy of its rect, dropped a little, drawn before the picture so the
+/// picture covers all but what falls outside its edges.
+fn draw_picture_shadow(canvas: &Canvas, picture: Rect) {
+    if picture.width() < 1.0 || picture.height() < 1.0 {
+        return;
+    }
+    let mut paint = Paint::default();
+    paint.set_anti_alias(true);
+    paint.set_color(Color::from_argb(0x55, 0, 0, 0));
+    paint.set_mask_filter(skia_safe::MaskFilter::blur(
+        skia_safe::BlurStyle::Normal,
+        PICTURE_SHADOW_BLUR,
+        None,
+    ));
+    canvas.draw_rect(picture.with_offset((0.0, PICTURE_SHADOW_DROP)), &paint);
+}
+
+/// How soft a picture's shadow is, as a blur sigma, and how far it falls.
+const PICTURE_SHADOW_BLUR: f32 = 6.0;
+const PICTURE_SHADOW_DROP: f32 = 3.0;
 
 const PHOTOS_GROUP_W: f32 = 150.0;
 const PHOTOS_SLIDER_W: f32 = 100.0;
@@ -1902,7 +2715,6 @@ pub fn zoom_slider_rect(width: f32, grouped: bool) -> Option<Rect> {
 /// The slider and the grouping button, with the glyphs either side of the
 /// slider: a small picture at the small end, a large one at the large end.
 fn draw_photos_controls(canvas: &Canvas, f: &Frame, controls: PhotosControls) {
-    use otto_kit::components::dropdown::{field, DropdownInteraction};
     use otto_kit::components::slider::{self, SliderInteraction};
 
     let theme = f.theme;
@@ -1942,7 +2754,7 @@ fn draw_photos_controls(canvas: &Canvas, f: &Frame, controls: PhotosControls) {
         }
     }
     if let Some(group) = controls.group {
-        field::draw(
+        field::draw_placed(
             canvas,
             photos_group_rect(f.width),
             group.label(),
@@ -1951,10 +2763,19 @@ fn draw_photos_controls(canvas: &Canvas, f: &Frame, controls: PhotosControls) {
             } else {
                 DropdownInteraction::Normal
             },
+            GROUP_PLACEMENT,
             theme,
         );
     }
 }
+
+/// Where the picker's location menu opens: under its capsule, a list of
+/// places rather than a value.
+pub const LOCATION_PLACEMENT: field::Placement = field::Placement::Below;
+/// Where the picker's filter menu opens: on the current filter.
+pub const FILTER_PLACEMENT: field::Placement = field::Placement::OnValue;
+/// Where the Photos view's grouping menu opens: on the current grouping.
+pub const GROUP_PLACEMENT: field::Placement = field::Placement::OnValue;
 
 pub const SWITCHER_MODES: [ViewMode; 4] = [
     ViewMode::List,
@@ -1968,13 +2789,8 @@ pub fn switcher_at(x: f32, y: f32, width: f32) -> Option<ViewMode> {
     if is_desk() {
         return None;
     }
-    let rect = switcher_rect(width);
-    if !rect.contains(Point::new(x, y)) {
-        return None;
-    }
-    let count = SWITCHER_MODES.len();
-    let segment = ((x - rect.left) / (rect.width() / count as f32)) as usize;
-    SWITCHER_MODES.get(segment.min(count - 1)).copied()
+    segmented::segment_at(switcher_rect(width), SWITCHER_MODES.len(), x, y)
+        .and_then(|index| SWITCHER_MODES.get(index).copied())
 }
 
 pub(crate) fn column_edges(width: f32, widths: ListColumnWidths) -> (f32, f32, f32) {
@@ -2059,14 +2875,14 @@ pub fn list_rename_rect(
 pub fn miller_rename_rect(
     height: f32,
     pan: f32,
-    miller_w: f32,
+    miller: &MillerWidths,
     depth: usize,
     count: usize,
     scroll: f32,
     index: usize,
     is_dir: bool,
 ) -> Rect {
-    let pane = miller_pane_rect(depth, height, pan, miller_w);
+    let pane = miller_pane_rect(depth, height, pan, miller);
     let row = RowStrip::miller(pane, count, scroll).rect(index);
     let name_x = row.left + 14.0 + ICON_SIZE + 8.0;
     let trailing = if is_dir { 24.0 } else { 8.0 };
@@ -2089,7 +2905,11 @@ pub fn grid_rename_rect(
     index: usize,
 ) -> Rect {
     let area = content_viewport(width, height, ViewMode::Grid);
-    let cell = grid_cell_rect_in(area, sections, index, scroll);
+    grid_rename_rect_over(grid_cell_rect_in(area, sections, index, scroll))
+}
+
+/// [`grid_rename_rect`] over a cell already placed: the caption of `cell`.
+pub fn grid_rename_rect_over(cell: Rect) -> Rect {
     let center_y = cell.top + 8.0 + grid_icon() + GRID_LABEL_GAP;
     Rect::from_ltrb(
         cell.left + 2.0,
@@ -2181,16 +3001,15 @@ pub fn row_at(x: f32, y: f32, width: f32, height: f32, count: usize, scroll: f32
 
 /// The untruncated pane rect, for laying rows out — drawing clips it, but a row
 /// must not shift because its pane is half off-screen.
-pub fn miller_pane_rect(depth: usize, height: f32, pan: f32, miller_w: f32) -> Rect {
-    let left = sidebar_w() + depth as f32 * miller_w - pan;
-    Rect::from_ltrb(left, header_h(), left + miller_w, height)
+pub fn miller_pane_rect(depth: usize, height: f32, pan: f32, miller: &MillerWidths) -> Rect {
+    let left = sidebar_w() + miller.left(depth) - pan;
+    Rect::from_ltrb(left, header_h(), left + miller.width(depth), height)
 }
 
-/// The preview pane's untruncated rect — a trailing member of the stack, one
-/// `miller_w`-wide slot past the last real column, but its own [`PREVIEW_W`]
-/// wide rather than sharing the columns' width.
-pub fn preview_pane_rect(columns_len: usize, height: f32, pan: f32, miller_w: f32) -> Rect {
-    let left = sidebar_w() + columns_len as f32 * miller_w - pan;
+/// The preview pane's untruncated rect — a trailing member of the stack, just
+/// past the last real column, and its own [`PREVIEW_W`] wide.
+pub fn preview_pane_rect(columns_len: usize, height: f32, pan: f32, miller: &MillerWidths) -> Rect {
+    let left = sidebar_w() + miller.left(columns_len) - pan;
     Rect::from_ltrb(left, header_h(), left + PREVIEW_W, height)
 }
 
@@ -2224,7 +3043,7 @@ pub fn drop_highlight_rect(f: &Frame, target: DropHighlight) -> Option<Rect> {
         DropHighlight::Pane { depth } => {
             let viewport = content_viewport(f.width, f.height, f.mode);
             let pane = match f.mode {
-                ViewMode::Columns => miller_pane_rect(depth, f.height, f.pan, f.miller_w),
+                ViewMode::Columns => miller_pane_rect(depth, f.height, f.pan, &f.miller),
                 // One pane fills the content area in the flat views.
                 _ => viewport,
             };
@@ -2237,13 +3056,14 @@ pub fn drop_highlight_rect(f: &Frame, target: DropHighlight) -> Option<Rect> {
         }
         DropHighlight::Row { depth, index } => {
             let pane = f.panes.get(depth)?;
+            let grid = content_viewport(f.width, f.height, ViewMode::Grid);
             let rect = match f.mode {
-                ViewMode::Grid => grid_cell_rect_in(
-                    content_viewport(f.width, f.height, ViewMode::Grid),
-                    f.grid_sections,
-                    index,
-                    pane.scroll,
-                ),
+                ViewMode::Grid => f
+                    .desk_overflow
+                    .and_then(|overflow| overflow.entry_rect(grid, index))
+                    .unwrap_or_else(|| {
+                        grid_cell_rect_in(grid, f.grid_sections, index, pane.scroll)
+                    }),
                 ViewMode::Photos => {
                     f.photos
                         .tile_rect(f.photos.area(f.width, f.height), index, pane.scroll)
@@ -2252,7 +3072,7 @@ pub fn drop_highlight_rect(f: &Frame, target: DropHighlight) -> Option<Rect> {
                     RowStrip::list(f.width, pane.entries.len(), pane.scroll).rect(index)
                 }
                 ViewMode::Columns => {
-                    let full = miller_pane_rect(depth, f.height, f.pan, f.miller_w);
+                    let full = miller_pane_rect(depth, f.height, f.pan, &f.miller);
                     RowStrip::miller(full, pane.entries.len(), pane.scroll).rect(index)
                 }
             };
@@ -2332,12 +3152,12 @@ pub fn miller_row_rect(
     depth: usize,
     height: f32,
     pan: f32,
-    miller_w: f32,
+    miller: &MillerWidths,
     count: usize,
     index: usize,
     scroll: f32,
 ) -> Rect {
-    let pane = miller_pane_rect(depth, height, pan, miller_w);
+    let pane = miller_pane_rect(depth, height, pan, miller);
     RowStrip::miller(pane, count, scroll).rect(index)
 }
 
@@ -2589,13 +3409,13 @@ pub fn miller_at(
     columns: &[Column],
     counts: &[usize],
     pan: f32,
-    miller_w: f32,
+    miller: &MillerWidths,
 ) -> Option<(usize, Option<usize>)> {
     if !content_viewport(width, height, ViewMode::Columns).contains(Point::new(x, y)) {
         return None;
     }
     for depth in 0..columns.len() {
-        let pane = miller_pane_rect(depth, height, pan, miller_w);
+        let pane = miller_pane_rect(depth, height, pan, miller);
         if x < pane.left || x >= pane.right {
             continue;
         }
@@ -2620,29 +3440,26 @@ fn pan_for(left: f32, pane_w: f32, width: f32, current: f32) -> f32 {
 }
 
 /// How far the Miller stack must be panned to keep pane `depth` in view.
-pub fn miller_pan_for(depth: usize, width: f32, current: f32, miller_w: f32) -> f32 {
-    pan_for(depth as f32 * miller_w, miller_w, width, current)
+pub fn miller_pan_for(depth: usize, width: f32, current: f32, miller: &MillerWidths) -> f32 {
+    pan_for(miller.left(depth), miller.width(depth), width, current)
 }
 
 /// How far the stack must be panned to bring the preview pane — sitting
 /// right after the last of `columns_len` real columns — fully into view.
 /// The same gesture [`miller_pan_for`] performs for a freshly opened column.
-pub fn preview_pan_for(columns_len: usize, width: f32, current: f32, miller_w: f32) -> f32 {
-    pan_for(columns_len as f32 * miller_w, PREVIEW_W, width, current)
+pub fn preview_pan_for(columns_len: usize, width: f32, current: f32, miller: &MillerWidths) -> f32 {
+    pan_for(miller.left(columns_len), PREVIEW_W, width, current)
 }
 
 /// Total width the whole stack wants: every real column, plus the preview
 /// pane's own width when one is showing.
-pub fn miller_content_width(depth: usize, miller_w: f32, preview_w: f32) -> f32 {
-    depth as f32 * miller_w + preview_w
+pub fn miller_content_width(depth: usize, miller: &MillerWidths, preview_w: f32) -> f32 {
+    miller.left(depth) + preview_w
 }
 
-/// Is the pointer on the draggable edge between two Miller panes? All panes
-/// share one width, so any divider found resizes them all — dragging one
-/// divider is dragging the width. Returns the depth of the pane whose right
-/// edge was grabbed: since that edge sits `(depth + 1) * miller_w` from the
-/// sidebar, the caller needs it to turn pointer travel back into a width
-/// delta that tracks the mouse exactly, however deep the divider is.
+/// Is the pointer on the draggable edge between two Miller panes? Returns the
+/// depth of the pane whose right edge was grabbed, the one pane a drag of
+/// that divider resizes.
 pub fn miller_boundary_at(
     x: f32,
     y: f32,
@@ -2650,14 +3467,14 @@ pub fn miller_boundary_at(
     height: f32,
     pan: f32,
     pane_count: usize,
-    miller_w: f32,
+    miller: &MillerWidths,
 ) -> Option<usize> {
     if !(header_h()..=height).contains(&y) || x < sidebar_w() {
         return None;
     }
     let viewport_right = width;
     (0..pane_count).find(|&depth| {
-        let pane = miller_pane_rect(depth, height, pan, miller_w);
+        let pane = miller_pane_rect(depth, height, pan, miller);
         pane.right >= sidebar_w()
             && pane.right <= viewport_right
             && (x - pane.right).abs() <= COLUMN_GRAB
@@ -2697,12 +3514,12 @@ pub fn pane_viewport(
     mode: ViewMode,
     depth: usize,
     pan: f32,
-    miller_w: f32,
+    miller: &MillerWidths,
 ) -> Rect {
     match mode {
         ViewMode::List | ViewMode::Grid | ViewMode::Photos => content_viewport(width, height, mode),
         ViewMode::Columns => {
-            let mut pane = miller_pane_rect(depth, height, pan, miller_w);
+            let mut pane = miller_pane_rect(depth, height, pan, miller);
             // Clipped to what is actually on screen: a pane panned half out of
             // the window must not put its scrollbar under the sidebar.
             if !pane.intersect(content_viewport(width, height, mode)) {
@@ -2885,17 +3702,20 @@ fn draw_path_bar(canvas: &Canvas, f: &Frame) {
         }
 
         let names: Vec<&str> = crumb.icon.iter().map(String::as_str).collect();
-        if let Some(image) = icons::cached_icon_chain(&names, PATH_BAR_ICON as i32) {
+        if let Some(image) =
+            icons::cached_glyph_chain(&names, device_px(canvas, PATH_BAR_ICON), Color::BLACK)
+        {
             let dst = Rect::from_xywh(
                 rect.left,
                 rect.center_y() - PATH_BAR_ICON / 2.0,
                 PATH_BAR_ICON,
                 PATH_BAR_ICON,
             );
-            // Recoloured the way the sidebar's places are, and for the same
-            // reason: at this size the theme's art is a monochrome outline
-            // baked at whatever tone its author chose, which is rarely one
-            // that survives both colour schemes.
+            // Otto's own glyph where it has one. Recoloured the way the
+            // sidebar's places are, and for the same reason: at this size the
+            // theme's art is a monochrome outline baked at whatever tone its
+            // author chose, which is rarely one that survives both colour
+            // schemes.
             let mut icon_paint = Paint::default();
             icon_paint.set_color_filter(skia_safe::color_filters::blend(
                 tone,
@@ -2957,8 +3777,6 @@ const FOOTER_BTN_H: f32 = 30.0;
 const FOOTER_BTN_MIN_W: f32 = 92.0;
 const FOOTER_BTN_RADIUS: f32 = 8.0;
 const FOOTER_FILTER_W: f32 = 220.0;
-/// One row of the open filter menu.
-const FOOTER_MENU_ROW_H: f32 = 26.0;
 
 /// The action row's own strip, below the file area.
 pub fn footer_rect(width: f32, window_height: f32) -> Rect {
@@ -2987,50 +3805,32 @@ pub fn footer_cancel_rect(width: f32, window_height: f32) -> Rect {
     )
 }
 
-/// The filter control, on the left where the sidebar ends.
+/// The filter control, on the left where the sidebar ends: the kit's
+/// pop-up button at its own height, centred on the row like the buttons.
 pub fn footer_filter_rect(window_height: f32) -> Rect {
     let cy = window_height - FOOTER_H / 2.0;
     Rect::from_ltrb(
         sidebar_w() + FOOTER_PAD,
-        cy - FOOTER_BTN_H / 2.0,
+        cy - field::HEIGHT / 2.0,
         sidebar_w() + FOOTER_PAD + FOOTER_FILTER_W,
-        cy + FOOTER_BTN_H / 2.0,
+        cy + field::HEIGHT / 2.0,
     )
-}
-
-/// One row of the filter menu, which opens *upwards* out of the control —
-/// there is nothing below the action row to open into.
-pub fn footer_filter_option_rect(window_height: f32, index: usize, count: usize) -> Rect {
-    let control = footer_filter_rect(window_height);
-    let height = count as f32 * FOOTER_MENU_ROW_H + 8.0;
-    let top = control.top - 6.0 - height + 4.0 + index as f32 * FOOTER_MENU_ROW_H;
-    Rect::from_ltrb(control.left, top, control.right, top + FOOTER_MENU_ROW_H)
 }
 
 /// What the action row has under `(x, y)`, if anything.
 ///
-/// `window_height` is the whole window, not the file area. Takes the two
-/// facts it needs rather than a [`FooterData`], so a caller can hit-test
-/// without holding a borrow of the state it is about to mutate.
+/// `window_height` is the whole window, not the file area. Takes the facts
+/// it needs rather than a [`FooterData`], so a caller can hit-test without
+/// holding a borrow of the state it is about to mutate.
 pub fn footer_at(
     x: f32,
     y: f32,
     width: f32,
     window_height: f32,
     filter_count: usize,
-    filter_open: bool,
 ) -> Option<FooterButton> {
     let point = Point::new(x, y);
 
-    // The open menu floats above the row and takes the pointer first,
-    // exactly as a context menu would.
-    if filter_open {
-        for index in 0..filter_count {
-            if footer_filter_option_rect(window_height, index, filter_count).contains(point) {
-                return Some(FooterButton::FilterOption(index));
-            }
-        }
-    }
     if footer_accept_rect(width, window_height).contains(point) {
         return Some(FooterButton::Accept);
     }
@@ -3244,99 +4044,30 @@ fn draw_footer_button(
 }
 
 fn draw_filter_control(canvas: &Canvas, f: &Frame, footer: &FooterData<'_>, window_h: f32) {
-    let theme = f.theme;
-    let rect = footer_filter_rect(window_h);
-
-    let mut paint = Paint::default();
-    paint.set_anti_alias(true);
-    paint.set_color(theme.fill_secondary);
-    canvas.draw_rrect(
-        RRect::new_rect_xy(rect, FOOTER_BTN_RADIUS, FOOTER_BTN_RADIUS),
-        &paint,
-    );
-
     let label = footer
         .filters
         .get(footer.current_filter)
         .map(String::as_str)
         .unwrap_or_else(|| otto_kit::t!("files-picker-all-files"));
-    Label::new(label)
-        .with_style(styles::BODY)
-        .with_color(theme.text_primary)
-        .centered_on(rect.left + 12.0, rect.center_y())
-        .render(canvas);
-
-    // The disclosure chevron, pointing the way the menu opens.
-    let mut chevron = Paint::default();
-    chevron.set_anti_alias(true);
-    chevron.set_color(theme.text_secondary);
-    chevron.set_style(skia_safe::paint::Style::Stroke);
-    chevron.set_stroke_width(1.6);
-    chevron.set_stroke_cap(skia_safe::paint::Cap::Round);
-    let cx = rect.right - 14.0;
-    let cy = rect.center_y();
-    let mut path = skia_safe::PathBuilder::new();
-    path.move_to((cx - 4.0, cy + 2.0));
-    path.line_to((cx, cy - 2.5));
-    path.line_to((cx + 4.0, cy + 2.0));
-    canvas.draw_path(&path.detach(), &chevron);
-
-    if !footer.filter_open {
-        return;
-    }
-
-    let count = footer.filters.len();
-    let first = footer_filter_option_rect(window_h, 0, count);
-    let last = footer_filter_option_rect(window_h, count - 1, count);
-    let panel = Rect::from_ltrb(rect.left, first.top - 4.0, rect.right, last.bottom + 4.0);
-
-    let mut menu = Paint::default();
-    menu.set_anti_alias(true);
-    menu.set_color(theme.material_popup);
-    canvas.draw_rrect(RRect::new_rect_xy(panel, 8.0, 8.0), &menu);
-
-    for (index, name) in footer.filters.iter().enumerate() {
-        let row = footer_filter_option_rect(window_h, index, count);
-        let hovered = footer.hovered == Some(FooterButton::FilterOption(index));
-        if hovered {
-            let mut hl = Paint::default();
-            hl.set_anti_alias(true);
-            hl.set_color(accent(theme));
-            canvas.draw_rrect(
-                RRect::new_rect_xy(row.with_inset((4.0, 0.0)), 5.0, 5.0),
-                &hl,
-            );
-        }
-        Label::new(name.as_str())
-            .with_style(styles::BODY)
-            .with_color(if hovered {
-                Color::WHITE
-            } else {
-                theme.text_primary
-            })
-            .centered_on(row.left + 24.0, row.center_y())
-            .render(canvas);
-
-        if index == footer.current_filter {
-            let mut tick = Paint::default();
-            tick.set_anti_alias(true);
-            tick.set_color(if hovered {
-                Color::WHITE
-            } else {
-                theme.text_primary
-            });
-            tick.set_style(skia_safe::paint::Style::Stroke);
-            tick.set_stroke_width(1.8);
-            tick.set_stroke_cap(skia_safe::paint::Cap::Round);
-            let mx = row.left + 13.0;
-            let my = row.center_y();
-            let mut p = skia_safe::PathBuilder::new();
-            p.move_to((mx - 4.0, my));
-            p.line_to((mx - 1.0, my + 3.5));
-            p.line_to((mx + 4.5, my - 4.0));
-            canvas.draw_path(&p.detach(), &tick);
-        }
-    }
+    // The kit's pop-up button, as Settings draws it: its menu opens on the
+    // current filter, in the same text as the field.
+    let interaction = if footer.filter_open {
+        DropdownInteraction::Open
+    } else if footer.pressed == Some(FooterButton::Filter) {
+        DropdownInteraction::Pressed
+    } else if footer.hovered == Some(FooterButton::Filter) {
+        DropdownInteraction::Hovered
+    } else {
+        DropdownInteraction::Normal
+    };
+    field::draw_placed(
+        canvas,
+        footer_filter_rect(window_h),
+        label,
+        interaction,
+        FILTER_PLACEMENT,
+        f.theme,
+    );
 }
 
 /// Whether the current colour scheme is the dark one — what the materials
@@ -3527,6 +4258,9 @@ impl PaneData<'_> {
 
 /// Everything the view needs for one frame. Rebuilt each frame; owns nothing.
 pub struct Frame<'a> {
+    /// The desk's overflow tile, and its panel while open, when it stacks
+    /// and has more icons than cells.
+    pub desk_overflow: Option<DeskOverflow>,
     pub width: f32,
     pub height: f32,
     pub theme: &'a Theme,
@@ -3545,8 +4279,8 @@ pub struct Frame<'a> {
     /// along the bottom of the stack. `None` outside Miller view, and in
     /// tests with no live view to read.
     pub pan_bar: Option<&'a ScrollState>,
-    /// The Miller view's draggable pane width, shared by every pane.
-    pub miller_w: f32,
+    /// Each Miller pane's draggable width.
+    pub miller: MillerWidths,
     pub sort: SortKey,
     pub ascending: bool,
     /// The list view's draggable Size/Kind/Modified column widths.
@@ -3556,6 +4290,9 @@ pub struct Frame<'a> {
     /// that pane's cursor — opening acts on the selection — so only the pane
     /// and the progress are needed here.
     pub opening: Option<(usize, f32)>,
+    /// The picture an open pulse rises from when the file was opened from
+    /// its preview, in place of its row or tile.
+    pub opening_stage: Option<Rect>,
     /// Depth and row index of an in-place rename in progress. That row's
     /// name label is skipped so the host's text field shows through instead.
     pub renaming: Option<(usize, usize)>,
@@ -3580,10 +4317,10 @@ pub struct Frame<'a> {
     /// The preview pane — a trailing member of the Miller stack, panned into
     /// and out of view the same as any real column — when one is showing.
     /// `None` outside Miller view or with no single file selected; drawn at
-    /// [`PREVIEW_W`] on its own surface in the stack, the same way [`miller_w`] sizes
-    /// every other pane rather than being carried on `Frame` itself.
+    /// [`PREVIEW_W`] on its own surface in the stack, the same way [`miller`]
+    /// sizes every other pane rather than being carried on `Frame` itself.
     ///
-    /// [`miller_w`]: Frame::miller_w
+    /// [`miller`]: Frame::miller
     pub preview: Option<PreviewData<'a>>,
     /// The picker's action row, when this is a picker window. `None` in the
     /// browser.
@@ -3760,9 +4497,15 @@ pub struct FooterData<'a> {
     /// The filter control's labels. Empty hides the control entirely.
     pub filters: &'a [String],
     pub current_filter: usize,
-    /// The filter menu is open, so the control draws as pressed and its
-    /// options are listed above it.
+    /// The filter menu is open, so the control draws as pressed. The menu
+    /// itself is a popup — see `show_filter_menu` — above the window and
+    /// everything painted into it, the save field included.
     pub filter_open: bool,
+    /// The toolbar's location menu is up, so its capsule draws held.
+    pub location_open: bool,
+    /// The capsule's icon, most specific first: the same one the location
+    /// menu gives the directory being viewed.
+    pub location_icon: Vec<String>,
     pub hovered: Option<FooterButton>,
     pub pressed: Option<FooterButton>,
     /// Save mode: draw the name row above the buttons. The field's own text
@@ -3781,8 +4524,6 @@ pub enum FooterButton {
     Accept,
     Cancel,
     Filter,
-    /// One option of the open filter menu.
-    FilterOption(usize),
 }
 
 /// What the preview pane shows for the current selection.
@@ -3794,7 +4535,7 @@ pub struct PreviewData<'a> {
     pub decoded: Option<&'a otto_kit::preview::Preview>,
     /// A player, when the decode said video and one could be started. The
     /// column then shows its frame and transport in the stage.
-    pub video: Option<&'a crate::peek::Video>,
+    pub video: Option<&'a otto_peek::session::Video>,
     /// Whether that video is presented on its own subsurface, so the scene
     /// layer leaves the stage to the column ground rather than drawing frames.
     pub video_on_surface: bool,
@@ -3823,6 +4564,9 @@ pub fn draw(canvas: &Canvas, f: &Frame) {
         draw_grid(canvas, f);
         draw_drop_highlight(canvas, f);
         draw_open_pulse(canvas, f);
+        if let Some(edit) = desk_edit() {
+            draw_desk_edit(canvas, f.theme, Rect::from_wh(f.width, f.height), edit);
+        }
         return;
     }
 
@@ -3870,6 +4614,9 @@ pub fn draw(canvas: &Canvas, f: &Frame) {
             draw_photos(canvas, f);
             if let Some(data) = f.photos_info.as_ref() {
                 draw_photos_info(canvas, f, data);
+            }
+            if let Some(pan) = f.pan_bar {
+                ScrollRenderer::draw(canvas, pan, f.theme, |_, _| {});
             }
         }
     }
@@ -4491,7 +5238,7 @@ pub fn preview_content(
     let name = data.name.to_string();
     let icon_chain = data.icon_chain.clone();
     let decoded = data.decoded.cloned();
-    let video = data.video.map(crate::peek::Video::snapshot);
+    let video = data.video.map(otto_peek::session::Video::snapshot);
     let video_on_surface = data.video_on_surface;
     let first_row = data.first_row;
     let info = data.info.clone();
@@ -4593,7 +5340,7 @@ fn draw_preview_stage(
     theme: &Theme,
     stage: Rect,
     decoded: Option<&otto_kit::preview::Preview>,
-    video: Option<&crate::peek::VideoSnapshot>,
+    video: Option<&otto_peek::session::VideoSnapshot>,
     // Whether a video is drawn on its own subsurface over this stage, in
     // which case the stage is left to the column ground here.
     on_surface: bool,
@@ -4637,6 +5384,12 @@ fn draw_preview_stage(
     // long entry names, a text file with no line breaks — and the one
     // place that must not depend on the file being reasonable is the one
     // where overflow would draw over the caption below it.
+    //
+    // A picture's shadow is the exception: it falls just outside the
+    // picture, and is drawn first so the picture sits on it.
+    if let Some(picture) = preview_picture_rect(stage, decoded, first_row) {
+        draw_picture_shadow(canvas, picture);
+    }
     canvas.save();
     canvas.clip_rect(stage, None, false);
     match decoded {
@@ -4694,6 +5447,39 @@ fn draw_preview_stage(
         }
     }
     canvas.restore();
+}
+
+/// Where the preview column draws a picture in `stage`: the decode's own,
+/// or a card's artwork. `None` for anything that is not a picture.
+fn preview_picture_rect(
+    stage: Rect,
+    decoded: Option<&otto_kit::preview::Preview>,
+    first_row: usize,
+) -> Option<Rect> {
+    let pixels = match decoded? {
+        otto_kit::preview::Preview::Pixels { pixels, .. } => pixels,
+        otto_kit::preview::Preview::Card {
+            hero: Some(pixels), ..
+        } => pixels,
+        _ => return None,
+    };
+    // Laid out from its size alone: the frames are not copied for it.
+    let picture = otto_kit::preview::Preview::Pixels {
+        pixels: otto_kit::preview::Pixels {
+            width: pixels.width,
+            height: pixels.height,
+            intrinsic_width: pixels.intrinsic_width,
+            intrinsic_height: pixels.intrinsic_height,
+            data: Vec::new(),
+            frame_delays: Vec::new(),
+            words: Vec::new(),
+        },
+        pages: 1,
+        page: 1,
+    };
+    let content =
+        otto_kit::preview::layout(stage, &picture, first_row, otto_kit::preview::Zoom::FIT).content;
+    (content.width() >= 1.0 && content.height() >= 1.0).then_some(content)
 }
 
 /// A hairline around the picture's own edges — the fitted rect, not the
@@ -4834,6 +5620,38 @@ fn draw_preview_icon(canvas: &Canvas, stage: Rect, icon_chain: &[String]) {
     canvas.draw_image_rect(&image, None, dst, &Paint::default());
 }
 
+/// `size` points in the canvas's device pixels, so a glyph rasterised at
+/// it stays sharp on a scaled output.
+fn device_px(canvas: &Canvas, size: f32) -> i32 {
+    let scale = canvas.local_to_device_as_3x3().scale_x().abs().max(1.0);
+    (size * scale).round() as i32
+}
+
+/// Draw Otto's Solar glyph `name`, `size` points square, centred on
+/// `center` and already tinted `color`.
+///
+/// `false` when the set isn't installed or lacks the glyph, so the caller
+/// draws its own stand-in.
+fn draw_solar_glyph(canvas: &Canvas, name: &str, center: Point, size: f32, color: Color) -> bool {
+    let Some(image) = icons::solar_icon(
+        name,
+        device_px(canvas, size),
+        icons::SolarStyle::Linear,
+        color,
+    ) else {
+        return false;
+    };
+    let half = size / 2.0;
+    let dst = Rect::from_ltrb(
+        center.x - half,
+        center.y - half,
+        center.x + half,
+        center.y + half,
+    );
+    canvas.draw_image_rect(&image, None, dst, &Paint::default());
+    true
+}
+
 fn draw_sidebar(canvas: &Canvas, f: &Frame) {
     let theme = f.theme;
 
@@ -4854,16 +5672,25 @@ fn draw_sidebar(canvas: &Canvas, f: &Frame) {
             canvas.draw_rrect(RRect::new_rect_xy(rect, 6.0, 6.0), &paint);
         }
 
-        if let Some(image) = icons::cached_icon_chain(&[place.icon.as_str(), "folder"], 16) {
+        // A selected place reads white on the selection, like its label.
+        let tone = if selected {
+            Color::WHITE
+        } else {
+            theme.text_secondary
+        };
+        if let Some(image) = icons::cached_glyph_chain(
+            &[place.icon.as_str(), "folder"],
+            device_px(canvas, 16.0),
+            Color::BLACK,
+        ) {
             let dst = Rect::from_xywh(rect.left + 8.0, rect.center_y() - 8.0, 16.0, 16.0);
-            // The theme's small-size art is a monochrome outline glyph baked
-            // at whatever colour the theme authored it in — usually a dark
-            // grey that all but vanishes on a dark sidebar. SrcIn recolours
-            // it to the theme's own text tone while keeping its alpha, the
-            // way a template/symbolic icon is meant to be drawn.
+            // Otto's own glyph where it has one, otherwise the theme's
+            // small-size art: a monochrome outline baked at whatever colour
+            // the theme authored it in. Either way SrcIn gives it the tone
+            // once, keeping its alpha, the way a symbolic icon is drawn.
             let mut paint = Paint::default();
             paint.set_color_filter(skia_safe::color_filters::blend(
-                theme.text_secondary,
+                tone,
                 skia_safe::BlendMode::SrcIn,
             ));
             canvas.draw_image_rect(&image, None, dst, &paint);
@@ -5074,38 +5901,82 @@ pub fn draw_search_band(canvas: &Canvas, f: &Frame) {
     );
 }
 
-/// The picker's location control: a folder icon and the current directory's
-/// name in a soft capsule, centred on the toolbar row between the navigation
-/// arrows and the view switcher.
-///
-/// It does not open a menu yet — it says where you are. The popup of ancestor
-/// directories the reference layout has is the next thing it grows.
+/// The picker's location control: the kit's pop-up button, as Settings draws
+/// it, with the current directory's folder icon before its name. Centred on
+/// the toolbar row between the navigation arrows and the view switcher; its
+/// menu lists the directories above this one, below it.
 fn draw_location_button(canvas: &Canvas, f: &Frame) {
     let theme = f.theme;
-    let cy = toolbar_cy();
     let rect = location_rect(f.width);
+    let open = f.action_row.as_ref().is_some_and(|row| row.location_open);
 
+    // The theme's full-colour art, like the listing's rows: the 16px tier of
+    // many themes is a grey outline, which is not the folder the menu shows.
+    let names: Vec<&str> = f
+        .action_row
+        .as_ref()
+        .map(|row| row.location_icon.iter().map(String::as_str).collect())
+        .filter(|names: &Vec<&str>| !names.is_empty())
+        .unwrap_or_else(|| vec!["folder"]);
+    let icon = icons::cached_icon_chain_at(
+        &names,
+        device_px(canvas, field::ICON_SIZE),
+        icons::FULL_COLOUR_SIZE,
+    );
+    field::draw_with_icon(
+        canvas,
+        rect,
+        icon.as_ref(),
+        f.title,
+        if open {
+            DropdownInteraction::Open
+        } else {
+            DropdownInteraction::Normal
+        },
+        LOCATION_PLACEMENT,
+        theme,
+    );
+
+    // New Folder, beside it: a plain capsule, the same family as the nav pair.
+    // Otto's own glyph, like the switcher's; the strokes below stand in when
+    // the Solar set isn't installed.
     let mut paint = Paint::default();
     paint.set_anti_alias(true);
+    let mut glyph = Paint::default();
+    glyph.set_anti_alias(true);
+    glyph.set_color(theme.text_secondary);
+    glyph.set_style(skia_safe::paint::Style::Stroke);
+    glyph.set_stroke_width(1.6);
+    glyph.set_stroke_cap(skia_safe::paint::Cap::Round);
+    glyph.set_stroke_join(skia_safe::paint::Join::Round);
+    let button = new_folder_rect(f.width);
     paint.set_color(theme.fill_tertiary);
-    canvas.draw_rrect(RRect::new_rect_xy(rect, NAV_RADIUS, NAV_RADIUS), &paint);
-
-    let mut text_x = rect.left + 10.0;
-    if let Some(image) = icons::cached_icon_chain(&["folder"], 16) {
-        let dst = Rect::from_xywh(text_x, cy - 8.0, 16.0, 16.0);
-        canvas.draw_image_rect(&image, None, dst, &Paint::default());
-        text_x += 22.0;
+    canvas.draw_rrect(RRect::new_rect_xy(button, NAV_RADIUS, NAV_RADIUS), &paint);
+    let (bx, by) = (button.center_x(), button.center_y());
+    if !draw_solar_glyph(
+        canvas,
+        "folder-new-symbolic",
+        Point::new(bx, by),
+        TOOLBAR_GLYPH,
+        theme.text_secondary,
+    ) {
+        // A folder: tab on the top left, body below it, a plus inside.
+        let mut folder = skia_safe::PathBuilder::new();
+        folder.move_to((bx - 8.0, by + 5.5));
+        folder.line_to((bx - 8.0, by - 5.5));
+        folder.line_to((bx - 3.5, by - 5.5));
+        folder.line_to((bx - 1.5, by - 3.5));
+        folder.line_to((bx + 8.0, by - 3.5));
+        folder.line_to((bx + 8.0, by + 5.5));
+        folder.close();
+        canvas.draw_path(&folder.detach(), &glyph);
+        let mut plus = skia_safe::PathBuilder::new();
+        plus.move_to((bx, by - 1.0));
+        plus.line_to((bx, by + 4.0));
+        plus.move_to((bx - 2.5, by + 1.5));
+        plus.line_to((bx + 2.5, by + 1.5));
+        canvas.draw_path(&plus.detach(), &glyph);
     }
-
-    Label::new(f.title)
-        .with_style(styles::BODY_EMPHASIZED)
-        .with_color(if f.focused {
-            theme.text_primary
-        } else {
-            theme.text_secondary
-        })
-        .centered_on(text_x, cy)
-        .render(canvas);
 }
 
 /// The Back/Forward split button: one capsule, a hairline down the middle,
@@ -5146,7 +6017,7 @@ fn draw_nav_buttons(canvas: &Canvas, f: &Frame) {
         canvas,
         theme,
         nav_back_rect(),
-        "chevron-left",
+        NavButton::Back,
         f.can_go_back,
         f.nav_pressed == Some(NavButton::Back),
     );
@@ -5154,7 +6025,7 @@ fn draw_nav_buttons(canvas: &Canvas, f: &Frame) {
         canvas,
         theme,
         nav_forward_rect(),
-        "chevron-right",
+        NavButton::Forward,
         f.can_go_forward,
         f.nav_pressed == Some(NavButton::Forward),
     );
@@ -5179,7 +6050,7 @@ fn draw_nav_button(
     canvas: &Canvas,
     theme: &Theme,
     rect: Rect,
-    icon_name: &str,
+    button: NavButton,
     enabled: bool,
     pressed: bool,
 ) {
@@ -5190,7 +6061,16 @@ fn draw_nav_button(
         (true, false) => theme.text_secondary,
         (false, _) => theme.text_tertiary,
     };
-    Icon::new(icon_name)
+    // Otto's own arrow; the kit's drawn chevron stands in without the set.
+    let (glyph, chevron) = match button {
+        NavButton::Back => ("go-previous-symbolic", "chevron-left"),
+        NavButton::Forward => ("go-next-symbolic", "chevron-right"),
+    };
+    let center = Point::new(rect.center_x(), rect.center_y());
+    if draw_solar_glyph(canvas, glyph, center, TOOLBAR_GLYPH, color) {
+        return;
+    }
+    Icon::new(chevron)
         .with_size(NAV_ICON_SIZE)
         .with_color(color)
         .at(
@@ -5200,97 +6080,112 @@ fn draw_nav_button(
         .render(canvas);
 }
 
-/// A three-segment control: list, icon grid, Miller columns. Glyphs are drawn
-/// rather than themed so it stays legible with no icon-theme entry.
+/// The view switcher: list, icon grid, Miller columns, photo wall, as the
+/// kit's segmented control. Its glyphs are Otto's own from the Solar set,
+/// never the theme's, so it reads the same whatever theme is in force; the
+/// shapes below stand in when the set isn't installed.
 fn draw_switcher(canvas: &Canvas, f: &Frame) {
-    let theme = f.theme;
-    let rect = switcher_rect(f.width);
-    let seg = rect.width() / SWITCHER_MODES.len() as f32;
-    let mut paint = Paint::default();
-    paint.set_anti_alias(true);
-
-    paint.set_color(theme.fill_tertiary);
-    canvas.draw_rrect(RRect::new_rect_xy(rect, 7.0, 7.0), &paint);
-
-    let index = SWITCHER_MODES
-        .iter()
-        .position(|m| *m == f.mode)
-        .unwrap_or(0);
-    let active = Rect::from_xywh(
-        rect.left + index as f32 * seg + 2.0,
-        rect.top + 2.0,
-        seg - 4.0,
-        rect.height() - 4.0,
-    );
-    paint.set_color(theme.material_popup);
-    canvas.draw_rrect(RRect::new_rect_xy(active, 5.0, 5.0), &paint);
-
-    let cy = rect.center_y();
-    for (i, mode) in SWITCHER_MODES.iter().enumerate() {
-        let cx = rect.left + seg * i as f32 + seg / 2.0;
-        paint.set_color(match (*mode == f.mode, f.mode_locked) {
-            (true, _) => theme.text_primary,
+    let segments = SWITCHER_MODES.map(|mode| segmented::Segment::Glyph {
+        name: switcher_glyph(mode),
+        fallback: Some(switcher_fallback(mode)),
+    });
+    let selected = SWITCHER_MODES.iter().position(|m| *m == f.mode);
+    segmented::draw(
+        canvas,
+        switcher_rect(f.width),
+        &segments,
+        selected,
+        if f.mode_locked {
             // A locked switcher's other segments are not merely unselected,
             // they are unavailable, and the quieter ink says so.
-            (false, true) => theme.text_tertiary,
-            (false, false) => theme.text_secondary,
-        });
-        match mode {
-            // Three stacked lines.
-            ViewMode::List => {
-                for r in 0..3 {
-                    let y = cy - 4.0 + r as f32 * 4.0;
-                    canvas.draw_rrect(
-                        RRect::new_rect_xy(Rect::from_xywh(cx - 7.0, y - 1.0, 14.0, 2.0), 1.0, 1.0),
-                        &paint,
-                    );
-                }
-            }
-            // A 2x2 block of squares.
-            ViewMode::Grid => {
-                for r in 0..2 {
-                    for c in 0..2 {
-                        canvas.draw_rrect(
-                            RRect::new_rect_xy(
-                                Rect::from_xywh(
-                                    cx - 6.0 + c as f32 * 7.0,
-                                    cy - 6.0 + r as f32 * 7.0,
-                                    5.0,
-                                    5.0,
-                                ),
-                                1.2,
-                                1.2,
-                            ),
-                            &paint,
-                        );
-                    }
-                }
-            }
-            // Three vertical bars.
-            ViewMode::Columns => {
-                for c in 0..3 {
-                    let x = cx - 7.5 + c as f32 * 5.5;
-                    canvas.draw_rrect(
-                        RRect::new_rect_xy(Rect::from_xywh(x, cy - 5.0, 4.0, 10.0), 1.0, 1.0),
-                        &paint,
-                    );
-                }
-            }
-            // Two rows of tiles of different widths: the justified wall.
-            ViewMode::Photos => {
-                for (x, y, w) in [
-                    (-7.0, -6.0, 8.0),
-                    (2.0, -6.0, 5.0),
-                    (-7.0, 1.0, 5.0),
-                    (-1.0, 1.0, 8.0),
-                ] {
-                    canvas.draw_rrect(
-                        RRect::new_rect_xy(Rect::from_xywh(cx + x, cy + y, w, 5.0), 1.2, 1.2),
-                        &paint,
-                    );
-                }
-            }
+            segmented::SegmentedInteraction::Locked
+        } else {
+            segmented::SegmentedInteraction::Normal
+        },
+        f.theme,
+    );
+}
+
+/// The Solar glyph for a view switcher segment.
+fn switcher_glyph(mode: ViewMode) -> &'static str {
+    match mode {
+        ViewMode::List => "otto-view-list-symbolic",
+        ViewMode::Grid => "otto-view-grid-symbolic",
+        ViewMode::Columns => "otto-view-columns-symbolic",
+        ViewMode::Photos => "otto-view-photos-symbolic",
+    }
+}
+
+/// The drawn stand-in for a segment's glyph, centred on a point.
+fn switcher_fallback(mode: ViewMode) -> fn(&Canvas, Point, Color) {
+    match mode {
+        ViewMode::List => draw_list_glyph,
+        ViewMode::Grid => draw_grid_glyph,
+        ViewMode::Columns => draw_columns_glyph,
+        ViewMode::Photos => draw_photos_glyph,
+    }
+}
+
+fn glyph_paint(color: Color) -> Paint {
+    let mut paint = Paint::default();
+    paint.set_anti_alias(true);
+    paint.set_color(color);
+    paint
+}
+
+/// Three stacked lines.
+fn draw_list_glyph(canvas: &Canvas, c: Point, color: Color) {
+    let paint = glyph_paint(color);
+    for r in 0..3 {
+        let y = c.y - 4.0 + r as f32 * 4.0;
+        canvas.draw_rrect(
+            RRect::new_rect_xy(Rect::from_xywh(c.x - 7.0, y - 1.0, 14.0, 2.0), 1.0, 1.0),
+            &paint,
+        );
+    }
+}
+
+/// A 2x2 block of squares.
+fn draw_grid_glyph(canvas: &Canvas, c: Point, color: Color) {
+    let paint = glyph_paint(color);
+    for r in 0..2 {
+        for col in 0..2 {
+            let tile = Rect::from_xywh(
+                c.x - 6.0 + col as f32 * 7.0,
+                c.y - 6.0 + r as f32 * 7.0,
+                5.0,
+                5.0,
+            );
+            canvas.draw_rrect(RRect::new_rect_xy(tile, 1.2, 1.2), &paint);
         }
+    }
+}
+
+/// Three vertical bars.
+fn draw_columns_glyph(canvas: &Canvas, c: Point, color: Color) {
+    let paint = glyph_paint(color);
+    for col in 0..3 {
+        let x = c.x - 7.5 + col as f32 * 5.5;
+        canvas.draw_rrect(
+            RRect::new_rect_xy(Rect::from_xywh(x, c.y - 5.0, 4.0, 10.0), 1.0, 1.0),
+            &paint,
+        );
+    }
+}
+
+/// Two rows of tiles of different widths: the justified wall.
+fn draw_photos_glyph(canvas: &Canvas, c: Point, color: Color) {
+    let paint = glyph_paint(color);
+    for (x, y, w) in [
+        (-7.0, -6.0, 8.0),
+        (2.0, -6.0, 5.0),
+        (-7.0, 1.0, 5.0),
+        (-1.0, 1.0, 8.0),
+    ] {
+        canvas.draw_rrect(
+            RRect::new_rect_xy(Rect::from_xywh(c.x + x, c.y + y, w, 5.0), 1.2, 1.2),
+            &paint,
+        );
     }
 }
 
@@ -5323,10 +6218,14 @@ fn draw_grid(canvas: &Canvas, f: &Frame) {
     } else if pane.entries.is_empty() {
         draw_centered(canvas, area, empty_message(f), theme.text_tertiary);
     } else {
-        // Only the rows of cells the viewport is asking for are drawn.
+        // Only the rows of cells the viewport is asking for are drawn. On a
+        // desk that stacks, the grid stops at the overflow tile.
         let band = pane.band(area);
         let sections = f.grid_sections;
-        for index in grid_visible_range_in(area, sections, pane.entries.len(), pane.scroll, band) {
+        let in_grid = f
+            .desk_overflow
+            .map_or(pane.entries.len(), |overflow| overflow.tile.first);
+        for index in grid_visible_range_in(area, sections, in_grid, pane.scroll, band) {
             let cell = grid_cell_rect_in(area, sections, index, pane.scroll);
             let entry = pane.entries[index];
             draw_grid_cell_with(
@@ -5341,6 +6240,20 @@ fn draw_grid(canvas: &Canvas, f: &Frame) {
             );
         }
         draw_grid_headers(canvas, theme, area, sections, pane.scroll, band);
+        if let Some(overflow) = f.desk_overflow.as_ref() {
+            // The open panel's tile stays lit: it is where the panel came
+            // from and where it goes back to.
+            let selected = overflow.panel.is_some()
+                || overflow.tile.range().any(|index| pane.is_selected(index));
+            draw_overflow_tile(
+                canvas,
+                f,
+                &pane.entries,
+                overflow.tile,
+                overflow.cell(area),
+                selected,
+            );
+        }
     }
 
     if let Some(band) = f.marquee {
@@ -5360,7 +6273,7 @@ fn draw_photos(canvas: &Canvas, f: &Frame) {
     let depth = f.panes.len() - 1;
 
     canvas.save();
-    canvas.clip_rect(area, ClipOp::Intersect, true);
+    canvas.clip_rect(f.photos.shown(f.width, f.height), ClipOp::Intersect, true);
 
     if let Some(error) = pane.error {
         draw_centered(canvas, area, error, theme.text_secondary);
@@ -5482,8 +6395,9 @@ pub struct PhotoTileState {
     pub cut: bool,
 }
 
-/// One Photos tile: the picture cropped to fill the tile, or, for anything
-/// that is not a picture, its icon and name on a quiet card.
+/// One Photos tile: the picture — or a video's poster frame, with a play
+/// badge over it — cropped to fill the tile, or, for anything else, its icon
+/// and name on a quiet card.
 ///
 /// Filled rather than fitted, unlike the grid's thumbnails: the tile already
 /// has the picture's proportions, so the crop only trims what the clamp on
@@ -5501,7 +6415,9 @@ pub fn draw_photo_tile(
         return;
     }
     let shape = RRect::new_rect_xy(tile, PHOTOS_RADIUS, PHOTOS_RADIUS);
-    let photo = crate::photos::is_photo(entry);
+    // A video is laid out and drawn as its poster frame, like a picture.
+    let photo = crate::photos::is_media(entry);
+    let video = crate::photos::is_video(entry);
     let mut paint = Paint::default();
     paint.set_anti_alias(true);
     if state.cut {
@@ -5535,6 +6451,9 @@ pub fn draw_photo_tile(
         None => draw_photo_card(canvas, theme, entry, tile, thumb, state.cut),
     }
 
+    if video {
+        draw_play_badge(canvas, tile, state.cut);
+    }
     if state.hovered && photo {
         draw_photo_caption(canvas, entry, tile);
     }
@@ -5547,6 +6466,43 @@ pub fn draw_photo_tile(
     if state.selected {
         draw_photo_selection(canvas, theme, tile, PHOTOS_RADIUS);
     }
+}
+
+/// The badge that says a tile is a video: a play triangle on a dark disc,
+/// centred, sized to the tile within limits so it reads on a small tile and
+/// does not shout on a large one. Drawn whether or not the poster has landed,
+/// so a video is a video from the first frame.
+fn draw_play_badge(canvas: &Canvas, tile: Rect, cut: bool) {
+    let radius = (tile.width().min(tile.height()) * 0.14).clamp(12.0, 26.0);
+    let (cx, cy) = (tile.center_x(), tile.center_y());
+    let fade = if cut { 0.45 } else { 1.0 };
+
+    let mut disc = Paint::default();
+    disc.set_anti_alias(true);
+    disc.set_color(Color::from_argb((110.0 * fade) as u8, 0, 0, 0));
+    canvas.draw_circle((cx, cy), radius, &disc);
+
+    let mut ring = Paint::default();
+    ring.set_anti_alias(true);
+    ring.set_style(skia_safe::paint::Style::Stroke);
+    ring.set_stroke_width(1.5);
+    ring.set_color(Color::from_argb((200.0 * fade) as u8, 255, 255, 255));
+    canvas.draw_circle((cx, cy), radius, &ring);
+
+    // The triangle's centroid sits a third of the way in from its flat side,
+    // so it is nudged right to look centred in the disc.
+    let side = radius * 0.95;
+    let half = side * 0.5;
+    let left = cx - side * 0.36;
+    let mut triangle = PathBuilder::new();
+    triangle.move_to(Point::new(left, cy - half));
+    triangle.line_to(Point::new(left + side * 0.87, cy));
+    triangle.line_to(Point::new(left, cy + half));
+    triangle.close();
+    let mut ink = Paint::default();
+    ink.set_anti_alias(true);
+    ink.set_color(Color::from_argb((240.0 * fade) as u8, 255, 255, 255));
+    canvas.draw_path(&triangle.detach(), &ink);
 }
 
 /// A folder in the Photos view: a card of the newest pictures inside it —
@@ -5952,9 +6908,6 @@ pub fn draw_grid_cell_with(
 
     let icon_top = cell.top + 8.0;
     let icon = grid_icon();
-    // The optical centre of the caption's first line, not its top: that is what
-    // `Label::centered_at` wants, and the pill is measured off the same point.
-    let label_center_y = icon_top + icon + GRID_LABEL_GAP;
 
     if selected {
         // The highlight hugs the icon, not the cell — a cell-wide wash reads as
@@ -5968,17 +6921,55 @@ pub fn draw_grid_cell_with(
     }
 
     let box_rect = Rect::from_xywh(cell.center_x() - icon / 2.0, icon_top, icon, icon);
+    draw_grid_icon(canvas, entry, box_rect, thumb);
+    draw_grid_caption(
+        canvas,
+        theme,
+        &entry.name,
+        cell,
+        selected,
+        renaming,
+        subline,
+    );
+}
+
+/// A grid cell's picture in `box_rect`: the thumbnail when there is one, the
+/// file's icon otherwise.
+fn draw_grid_icon(
+    canvas: &Canvas,
+    entry: &Entry,
+    box_rect: Rect,
+    thumb: Option<&skia_safe::Image>,
+) {
     if let Some(image) = thumb {
         draw_thumbnail(canvas, image, box_rect, false);
     } else {
         let chain = entry.icon_chain();
         let refs: Vec<&str> = chain.iter().map(String::as_str).collect();
         if let Some(image) =
-            icons::cached_icon_chain_at(&refs, icon as i32, icons::FULL_COLOUR_SIZE)
+            icons::cached_icon_chain_at(&refs, box_rect.width() as i32, icons::FULL_COLOUR_SIZE)
         {
             canvas.draw_image_rect(&image, None, box_rect, &Paint::default());
         }
     }
+}
+
+/// A grid cell's caption, `name` on up to two lines under the icon, with
+/// its pill behind it when `selected`, and `subline` under it.
+fn draw_grid_caption(
+    canvas: &Canvas,
+    theme: &Theme,
+    name: &str,
+    cell: Rect,
+    selected: bool,
+    renaming: bool,
+    subline: Option<&str>,
+) {
+    let mut paint = Paint::default();
+    paint.set_anti_alias(true);
+    // The optical centre of the caption's first line, not its top: that is what
+    // `Label::centered_at` wants, and the pill is measured off the same point.
+    let label_center_y = cell.top + 8.0 + grid_icon() + GRID_LABEL_GAP;
 
     // Two lines at most, the second elided — a long name must not push the
     // grid out of alignment.
@@ -5989,10 +6980,10 @@ pub fn draw_grid_cell_with(
     // the two anyway — the tail of a long file name is what can go.
     let (first, second) = match subline {
         Some(_) => (
-            one_line_label(&entry.name, grid_label_chars(cell)),
+            otto_kit::typography::ellipsize_chars(name, grid_label_chars(cell)),
             String::new(),
         ),
-        None => split_label(&entry.name, grid_label_chars(cell)),
+        None => split_label(name, grid_label_chars(cell)),
     };
     // The desk's ground is the wallpaper, which follows no colour scheme, so
     // its captions are white over a soft shadow whatever the theme: legible
@@ -6085,19 +7076,6 @@ pub fn draw_grid_cell_with(
             .centered_at(cell.center_x(), label_center_y + used + GRID_LABEL_LINE)
             .render(canvas);
     }
-}
-
-/// A name on one line of `per_line` characters, eliding the tail.
-///
-/// The counterpart of [`split_label`] for a cell whose second line is spoken
-/// for — the Recent grid, where it is the folder.
-fn one_line_label(name: &str, per_line: usize) -> String {
-    let chars: Vec<char> = name.chars().collect();
-    if chars.len() <= per_line {
-        return name.to_string();
-    }
-    let head: String = chars[..per_line.saturating_sub(1)].iter().collect();
-    format!("{head}…")
 }
 
 /// Split a name across at most two lines of `per_line` characters, eliding the
@@ -6462,7 +7440,7 @@ pub fn search_field_style(theme: Theme) -> TextInputStyle {
 ///
 /// The panel materials are translucent because they are meant to sit over the
 /// compositor's blur. An unfocused window has no blur behind it — see
-/// `FilesApp::on_app_ready` — and a translucent material over the bare desktop
+/// `FilesWindow::on_app_ready` — and a translucent material over the bare desktop
 /// is not a softer version of itself: it is the wallpaper showing through,
 /// which drags the contrast of everything drawn on top down with it. Without
 /// the blur the materials are filled in instead.
@@ -6889,7 +7867,7 @@ pub fn peek_titlebar_rect(panel: Rect) -> Rect {
         panel.left,
         panel.top,
         panel.right,
-        panel.top + crate::peek::TITLEBAR_H,
+        panel.top + otto_peek::session::TITLEBAR_H,
     )
 }
 
@@ -6908,26 +7886,6 @@ pub fn peek_grip_rect(panel: Rect) -> Rect {
         strip.top,
         (peek_expand_rect(panel).left - CLEARANCE).max(strip.left),
         strip.bottom,
-    )
-}
-
-/// What is left of the panel for the preview itself.
-///
-/// Inset on every side, not just below the title strip: the card reads as a
-/// mount around the content rather than a window whose content is jammed
-/// against the glass, and an image that reaches the edge no longer collides
-/// with the panel's own rounded corners.
-///
-/// Narrow, because it is not the only inset the content gets: the preview
-/// pads itself as well ([`otto_kit::preview::PADDING`], and less than that
-/// for a picture). This one only has to clear the corners and the border.
-pub fn peek_content_rect(panel: Rect) -> Rect {
-    const INSET: f32 = 4.0;
-    Rect::from_ltrb(
-        panel.left + INSET,
-        panel.top + crate::peek::TITLEBAR_H + INSET,
-        panel.right - INSET,
-        panel.bottom - INSET,
     )
 }
 
@@ -7059,8 +8017,8 @@ mod peek_buttons {
 /// at rest, however small the window, always has its titlebar.
 fn peek_chrome_opacity(panel: Rect) -> f32 {
     // Two strips tall before any of it shows, four before all of it does.
-    const HEIGHT_FROM: f32 = crate::peek::TITLEBAR_H * 2.0;
-    const HEIGHT_TO: f32 = crate::peek::TITLEBAR_H * 4.0;
+    const HEIGHT_FROM: f32 = otto_peek::session::TITLEBAR_H * 2.0;
+    const HEIGHT_TO: f32 = otto_peek::session::TITLEBAR_H * 4.0;
     // Width matters too: a card wide enough for the dot but not for a name
     // is a card the strip has nothing to say in.
     const WIDTH_FROM: f32 = 140.0;
@@ -7085,7 +8043,7 @@ fn fade(color: Color, opacity: f32) -> Color {
     )
 }
 
-pub fn draw_peek(canvas: &Canvas, f: &Frame, session: &crate::peek::Session, resting: Rect) {
+pub fn draw_peek(canvas: &Canvas, f: &Frame, session: &otto_peek::session::Session, resting: Rect) {
     let panel = session.panel(resting);
 
     let mut paint = Paint::default();
@@ -7150,7 +8108,10 @@ pub fn draw_peek(canvas: &Canvas, f: &Frame, session: &crate::peek::Session, res
             // on the left when there is one: the name is centred, so it grows
             // towards both and has to be kept off both.
             let room = strip.width()
-                - if session.paged(peek_content_rect(panel)).is_some() {
+                - if session
+                    .paged(otto_peek::session::content_rect(panel))
+                    .is_some()
+                {
                     140.0
                 } else {
                     80.0
@@ -7167,7 +8128,7 @@ pub fn draw_peek(canvas: &Canvas, f: &Frame, session: &crate::peek::Session, res
         // only evidence that Page Down did anything is that the content
         // looks different — and on a document of similar-looking pages that
         // is no evidence at all.
-        if let Some((page, pages)) = session.paged(peek_content_rect(panel)) {
+        if let Some((page, pages)) = session.paged(otto_peek::session::content_rect(panel)) {
             Label::new(otto_kit::t_owned!(
                 "peek-page-of",
                 page = page.to_string(),
@@ -7190,207 +8151,12 @@ pub fn draw_peek(canvas: &Canvas, f: &Frame, session: &crate::peek::Session, res
         );
     }
 
-    let content = peek_content_rect(panel);
+    let content = otto_peek::session::content_rect(panel);
     canvas.save();
     canvas.clip_rrect(RRect::new_rect_xy(panel, 12.0, 12.0), None, true);
-    canvas.clip_rect(content, None, true);
-    if let Some(video) = &session.video {
-        // A playing video takes the card's place. The card's artwork is the
-        // poster until the first frame lands; with none, the stage is dark.
-        let poster = video
-            .poster
-            .as_ref()
-            .and_then(otto_kit::preview::Pixels::to_image);
-        otto_media_kit::view::draw(
-            canvas,
-            content,
-            &video.player,
-            poster.as_ref(),
-            otto_media_kit::view::Interaction {
-                scrubbing: video.scrubbing,
-                transport_opacity: 1.0,
-            },
-            f.theme,
-        );
-    } else {
-        otto_kit::preview::draw(
-            canvas,
-            content,
-            &session.preview,
-            f.theme,
-            session.first_row,
-            session.zoom,
-            &|name: &str, size: i32| {
-                icons::cached_icon_chain_at(&[name], size, icons::FULL_COLOUR_SIZE)
-            },
-        );
-        // The same hairline every picture in the browser wears, on the
-        // picture's own edges — or each page's.
-        otto_kit::preview::draw_picture_edges(
-            canvas,
-            content,
-            &session.preview,
-            session.first_row,
-            session.zoom,
-        );
-        if let Some(selection) = session.selection {
-            otto_kit::preview::draw_selection(
-                canvas,
-                content,
-                &session.preview,
-                f.theme,
-                session.zoom,
-                selection,
-            );
-        }
-    }
-
-    // The pan's bars, inside the same clip as the picture they belong to.
-    // Nothing is drawn unless there is a zoomed picture with something under
-    // the fold: a state with no content past its viewport has no thumb.
-    let (horizontal, vertical) = session.pan_bars();
-    ScrollRenderer::draw(canvas, horizontal, f.theme, |_, _| {});
-    ScrollRenderer::draw(canvas, vertical, f.theme, |_, _| {});
+    otto_peek::draw::content(canvas, session, content, f.theme, |_| {});
     canvas.restore();
-
-    // One badge, two things to say: the recogniser is working, or it has
-    // finished and there is something to select.
-    match session.recognising_phase() {
-        Some(phase) => draw_peek_working_badge(canvas, f.theme, panel, chrome, phase),
-        None if !session.words().is_empty() => draw_peek_text_badge(canvas, f.theme, panel, chrome),
-        None => {}
-    }
-}
-
-/// The badge that says the picture's text has been recognised and can be
-/// selected, in the panel's bottom-right corner.
-pub fn peek_text_badge_rect(panel: Rect) -> Rect {
-    const D: f32 = 22.0;
-    const INSET: f32 = 10.0;
-    Rect::from_xywh(panel.right - INSET - D, panel.bottom - INSET - D, D, D)
-}
-
-/// The badge while the recogniser is still reading the picture, in the same
-/// dot as the finished one so the two read as one thing changing rather than
-/// two appearing. It breathes: recognition takes seconds on a big screenshot,
-/// and a still glyph for that long looks like a result rather than a wait.
-pub fn draw_peek_working_badge(
-    canvas: &Canvas,
-    theme: &Theme,
-    panel: Rect,
-    opacity: f32,
-    phase: f32,
-) {
-    // A slow breath, never all the way out: the badge stays legible at the
-    // bottom of it, so what pulses is attention rather than presence.
-    let breath = 0.65 + 0.35 * (phase * std::f32::consts::TAU / WORKING_BADGE_PERIOD).sin();
-    draw_peek_badge(
-        canvas,
-        theme,
-        panel,
-        opacity,
-        breath,
-        &[
-            "content-loading-symbolic",
-            "process-working-symbolic",
-            "view-refresh-symbolic",
-        ],
-        draw_working_fallback,
-    );
-}
-
-/// How long one breath of the working badge takes, in seconds.
-const WORKING_BADGE_PERIOD: f32 = 1.6;
-
-/// A dot in the same idiom as the close button, carrying a text-selection
-/// glyph. Its presence is the message: the picture has words in it, and they
-/// can be selected.
-pub fn draw_peek_text_badge(canvas: &Canvas, theme: &Theme, panel: Rect, opacity: f32) {
-    draw_peek_badge(
-        canvas,
-        theme,
-        panel,
-        opacity,
-        1.0,
-        &[
-            "font-x-generic-symbolic",
-            "insert-text-symbolic",
-            "text-x-generic-symbolic",
-        ],
-        draw_text_fallback,
-    );
-}
-
-/// The badge both states share: a dot in the same idiom as the close button,
-/// carrying whichever symbolic glyph the caller asked for. `weight` scales it
-/// against the panel's own chrome opacity, which is what the working badge
-/// breathes on.
-fn draw_peek_badge(
-    canvas: &Canvas,
-    theme: &Theme,
-    panel: Rect,
-    opacity: f32,
-    weight: f32,
-    names: &[&str],
-    fallback: fn(&Canvas, &Theme, Rect, Point, f32),
-) {
-    let opacity = opacity * weight;
-    let badge = peek_text_badge_rect(panel);
-    let centre = Point::new(badge.center_x(), badge.center_y());
-
-    let mut paint = Paint::default();
-    paint.set_anti_alias(true);
-    paint.set_color(fade(theme.fill_secondary, opacity));
-    canvas.draw_circle(centre, badge.width() / 2.0, &paint);
-
-    let glyph = 12.0;
-    let dst = Rect::from_xywh(centre.x - glyph / 2.0, centre.y - glyph / 2.0, glyph, glyph);
-    if let Some(image) = icons::cached_icon_chain(names, glyph as i32) {
-        // Symbolic art recoloured to the theme's text tone, as the sidebar
-        // does for its own glyphs.
-        let mut tint = Paint::default();
-        tint.set_color_filter(skia_safe::color_filters::blend(
-            fade(theme.text_secondary, opacity),
-            skia_safe::BlendMode::SrcIn,
-        ));
-        canvas.draw_image_rect(&image, None, dst, &tint);
-    } else {
-        fallback(canvas, theme, dst, centre, opacity);
-    }
-}
-
-/// No theme art for the finished badge: a serif "T", the plainest sign for
-/// text.
-fn draw_text_fallback(canvas: &Canvas, theme: &Theme, dst: Rect, centre: Point, opacity: f32) {
-    let mut stroke = Paint::default();
-    stroke.set_anti_alias(true);
-    stroke.set_style(skia_safe::paint::Style::Stroke);
-    stroke.set_stroke_width(1.5);
-    stroke.set_stroke_cap(skia_safe::PaintCap::Round);
-    stroke.set_color(fade(theme.text_secondary, opacity));
-    canvas.draw_line(
-        (dst.left + 2.0, dst.top + 2.0),
-        (dst.right - 2.0, dst.top + 2.0),
-        &stroke,
-    );
-    canvas.draw_line(
-        (centre.x, dst.top + 2.0),
-        (centre.x, dst.bottom - 2.0),
-        &stroke,
-    );
-}
-
-/// No theme art for the working badge: three dots in a row, which is what
-/// the themes draw for this anyway.
-fn draw_working_fallback(canvas: &Canvas, theme: &Theme, dst: Rect, centre: Point, opacity: f32) {
-    let mut dot = Paint::default();
-    dot.set_anti_alias(true);
-    dot.set_color(fade(theme.text_secondary, opacity));
-    let r = 1.3;
-    let gap = (dst.width() - 2.0 * r) / 2.0;
-    for i in -1..=1 {
-        canvas.draw_circle((centre.x + i as f32 * gap, centre.y), r, &dot);
-    }
+    otto_peek::draw::badge(canvas, session, f.theme, panel, chrome);
 }
 
 /// Draw the Get Info panel.
@@ -7412,7 +8178,7 @@ pub fn draw_info(
     theme: &Theme,
     sheet: Rect,
     info: &model::FileInfo,
-    text: Option<crate::ocrcache::Status>,
+    text: Option<otto_peek::ocrcache::Status>,
     error: Option<&str>,
     close_hovered: bool,
     shadow: bool,
@@ -7459,7 +8225,7 @@ pub fn draw_info(
     // A file that could not be read at all says so instead of showing a
     // permissions grid for a mode it never managed to load.
     if let Some(reason) = &info.error {
-        Label::new(elide(reason, 40))
+        Label::new(otto_kit::typography::ellipsize_chars(reason, 40))
             .with_style(styles::CALLOUT)
             .with_color(Color::from_argb(0xFF, 0xD7, 0x3A, 0x2E))
             .centered_on(sheet.left + 24.0, y + 8.0)
@@ -7477,7 +8243,7 @@ const INFO_SHEET_ROW: f32 = 23.0;
 /// left out.
 fn info_rows(
     info: &model::FileInfo,
-    text: Option<crate::ocrcache::Status>,
+    text: Option<otto_peek::ocrcache::Status>,
 ) -> Vec<(&'static str, String)> {
     let mut rows = vec![
         (
@@ -7523,7 +8289,7 @@ fn info_rows(
     rows
 }
 
-fn info_row_count(info: &model::FileInfo, text: Option<crate::ocrcache::Status>) -> usize {
+fn info_row_count(info: &model::FileInfo, text: Option<otto_peek::ocrcache::Status>) -> usize {
     info_rows(info, text).len()
 }
 
@@ -7533,11 +8299,11 @@ fn info_row_count(info: &model::FileInfo, text: Option<crate::ocrcache::Status>)
 pub fn info_runs(
     sheet: Rect,
     info: &model::FileInfo,
-    text: Option<crate::ocrcache::Status>,
+    text: Option<otto_peek::ocrcache::Status>,
     theme: &Theme,
 ) -> Vec<TextRun> {
     let mut runs = vec![TextRun::centered(
-        elide(&info.name, 30),
+        otto_kit::typography::ellipsize_chars(&info.name, 30),
         styles::TITLE_2_EMPHASIZED,
         theme.text_primary,
         sheet.center_x(),
@@ -7600,8 +8366,8 @@ pub fn info_runs(
 
 /// What a panel says about the words in a picture: what was found, or that
 /// nothing has looked yet.
-pub fn describe_text_status(status: crate::ocrcache::Status) -> String {
-    use crate::ocrcache::Status;
+pub fn describe_text_status(status: otto_peek::ocrcache::Status) -> String {
+    use otto_peek::ocrcache::Status;
     match status {
         Status::Reading => otto_kit::t_owned!("files-info-text-reading"),
         Status::Words(count) => {
@@ -7689,23 +8455,12 @@ fn draw_permissions(
 
     // A refused chmod says why, in place, rather than silently reverting.
     if let Some(error) = error {
-        Label::new(elide(error, 42))
+        Label::new(otto_kit::typography::ellipsize_chars(error, 42))
             .with_style(styles::CALLOUT)
             .with_color(Color::from_argb(0xFF, 0xD7, 0x3A, 0x2E))
             .centered_on(ox, oy + PERM_ROWS_TOP + 3.0 * PERM_ROW_H + 12.0)
             .render(canvas);
     }
-}
-
-/// Truncate to `max` characters with an ellipsis. Character-count based, which
-/// is good enough for a fixed-width sheet and needs no font.
-fn elide(text: &str, max: usize) -> String {
-    let chars: Vec<char> = text.chars().collect();
-    if chars.len() <= max {
-        return text.to_string();
-    }
-    let head: String = chars[..max.saturating_sub(1)].iter().collect();
-    format!("{head}…")
 }
 
 // ---------------------------------------------------------------------------
@@ -7750,6 +8505,58 @@ pub fn open_pulse(t: f32) -> (f32, u8) {
 /// rather than the icon alone is what makes it read as *that file* opening: in
 /// the grid the caption pill goes with it, and in the row views the highlight
 /// band does.
+/// The open pulse for a file opened from its preview: its picture swelling
+/// out of the preview and fading, as a tile's does out of the wall. The
+/// thumbnail is drawn at the picture's own proportions, centred in the
+/// preview where the picture sits; a file with none swells as a plain card.
+fn draw_preview_open_pulse(canvas: &Canvas, f: &Frame, entry: &Entry, stage: Rect, t: f32) {
+    let thumb = f.thumbnail(entry);
+    let rect = match thumb {
+        Some(image) => {
+            let (w, h) = (image.width() as f32, image.height() as f32);
+            let scale = (stage.width() / w).min(stage.height() / h);
+            Rect::from_xywh(
+                stage.center_x() - w * scale / 2.0,
+                stage.center_y() - h * scale / 2.0,
+                w * scale,
+                h * scale,
+            )
+        }
+        None => stage,
+    };
+    if rect.is_empty() {
+        return;
+    }
+    let (scale, alpha) = open_pulse(t);
+    let grown = Rect::from_xywh(
+        rect.center_x() - rect.width() * scale / 2.0,
+        rect.center_y() - rect.height() * scale / 2.0,
+        rect.width() * scale,
+        rect.height() * scale,
+    );
+    canvas.save_layer_alpha(Some(grown), alpha as u32);
+    match thumb {
+        Some(image) => {
+            canvas.draw_image_rect_with_sampling_options(
+                image,
+                None,
+                grown,
+                skia_safe::sampling_options::SamplingOptions::from(
+                    skia_safe::sampling_options::CubicResampler::mitchell(),
+                ),
+                &Paint::default(),
+            );
+        }
+        None => {
+            let mut card = Paint::default();
+            card.set_anti_alias(true);
+            card.set_color(f.theme.fill_tertiary);
+            canvas.draw_rrect(RRect::new_rect_xy(grown, 10.0, 10.0), &card);
+        }
+    }
+    canvas.restore();
+}
+
 pub fn draw_open_pulse(canvas: &Canvas, f: &Frame) {
     let Some((depth, t)) = f.opening else { return };
     let Some(pane) = f.panes.get(depth) else {
@@ -7760,17 +8567,26 @@ pub fn draw_open_pulse(canvas: &Canvas, f: &Frame) {
         return;
     };
 
-    let rect = cursor_entry_rect_in(
-        f.width,
-        f.height,
-        f.mode,
-        f.grid_sections,
-        f.photos,
-        pane,
-        depth,
-        f.pan,
-        f.miller_w,
-    );
+    if let Some(stage) = f.opening_stage {
+        draw_preview_open_pulse(canvas, f, entry, stage, t);
+        return;
+    }
+    let in_overflow = f.desk_overflow.and_then(|overflow| {
+        overflow.entry_rect(content_viewport(f.width, f.height, ViewMode::Grid), index)
+    });
+    let rect = in_overflow.unwrap_or_else(|| {
+        cursor_entry_rect_in(
+            f.width,
+            f.height,
+            f.mode,
+            f.grid_sections,
+            f.photos,
+            pane,
+            depth,
+            f.pan,
+            &f.miller,
+        )
+    });
     if rect.is_empty() {
         return;
     }
@@ -7846,7 +8662,7 @@ pub fn peek_anchor(
     pane: &PaneData,
     depth: usize,
     pan: f32,
-    miller_w: f32,
+    miller: &MillerWidths,
 ) -> Rect {
     peek_anchor_in(
         width,
@@ -7857,7 +8673,7 @@ pub fn peek_anchor(
         pane,
         depth,
         pan,
-        miller_w,
+        miller,
     )
 }
 
@@ -7871,7 +8687,7 @@ pub fn peek_anchor_in(
     pane: &PaneData,
     depth: usize,
     pan: f32,
-    miller_w: f32,
+    miller: &MillerWidths,
 ) -> Rect {
     let Some(index) = pane.cursor else {
         return Rect::new_empty();
@@ -7880,9 +8696,7 @@ pub fn peek_anchor_in(
         return Rect::new_empty();
     }
 
-    let rect = cursor_entry_rect_in(
-        width, height, mode, grid, photos, pane, depth, pan, miller_w,
-    );
+    let rect = cursor_entry_rect_in(width, height, mode, grid, photos, pane, depth, pan, miller);
     if rect.is_empty() {
         return rect;
     }
@@ -7907,7 +8721,7 @@ pub fn cursor_entry_rect(
     pane: &PaneData,
     depth: usize,
     pan: f32,
-    miller_w: f32,
+    miller: &MillerWidths,
 ) -> Rect {
     cursor_entry_rect_in(
         width,
@@ -7918,7 +8732,7 @@ pub fn cursor_entry_rect(
         pane,
         depth,
         pan,
-        miller_w,
+        miller,
     )
 }
 
@@ -7932,7 +8746,7 @@ pub fn cursor_entry_rect_in(
     pane: &PaneData,
     depth: usize,
     pan: f32,
-    miller_w: f32,
+    miller: &MillerWidths,
 ) -> Rect {
     let Some(index) = pane.cursor else {
         return Rect::new_empty();
@@ -7948,7 +8762,7 @@ pub fn cursor_entry_rect_in(
         ViewMode::Grid => grid_cell_rect_in(viewport, grid, index, pane.scroll),
         ViewMode::Photos => photos.tile_rect(viewport, index, pane.scroll),
         ViewMode::Columns => RowStrip::miller(
-            miller_pane_rect(depth, height, pan, miller_w),
+            miller_pane_rect(depth, height, pan, miller),
             count,
             pane.scroll,
         )
@@ -8188,7 +9002,7 @@ pub fn draw_open_with(canvas: &Canvas, theme: &Theme, sheet: Rect, data: &OpenWi
         canvas.draw_image_rect(&image, None, dst, &Paint::default());
     }
     let text_x = sheet.left + 84.0;
-    Label::new(elide(&chooser.title, 34))
+    Label::new(otto_kit::typography::ellipsize_chars(&chooser.title, 34))
         .with_style(styles::BODY_EMPHASIZED)
         .with_color(theme.text_primary)
         .centered_on(text_x, sheet.top + 60.0)
@@ -8362,7 +9176,7 @@ pub fn draw_open_with(canvas: &Canvas, theme: &Theme, sheet: Rect, data: &OpenWi
 
     // Why the last try did not work, in place, above the buttons.
     if let Some(error) = chooser.error.as_deref() {
-        Label::new(elide(error, 48))
+        Label::new(otto_kit::typography::ellipsize_chars(error, 48))
             .with_style(styles::CALLOUT)
             .with_color(Color::from_argb(0xFF, 0xD7, 0x3A, 0x2E))
             .centered_on(sheet.left + OPEN_WITH_PAD, sheet.bottom - 60.0)
@@ -8731,7 +9545,7 @@ mod geometry_tests {
             &pane(&owned, Some(1), 0.0),
             0,
             0.0,
-            MILLER_W,
+            &MillerWidths::default(),
         );
         assert_eq!(anchor, photos.tile_rect(area, 1, 0.0));
         assert!(!anchor.is_empty());
@@ -9156,7 +9970,7 @@ mod geometry_tests {
     #[test]
     fn a_resting_panel_always_has_its_titlebar() {
         for (w, h) in [(1100.0, 700.0), (320.0, 240.0), (480.0, 360.0)] {
-            let panel = crate::peek::panel_rect(w, h);
+            let panel = otto_peek::session::panel_rect(w, h);
             assert_eq!(
                 peek_chrome_opacity(panel),
                 1.0,
@@ -9169,12 +9983,12 @@ mod geometry_tests {
     /// card instead of appearing on top of one already in motion.
     #[test]
     fn the_chrome_fades_in_as_the_card_grows() {
-        let resting = crate::peek::panel_rect(1100.0, 700.0);
+        let resting = otto_peek::session::panel_rect(1100.0, 700.0);
         let row = Rect::from_xywh(240.0, 180.0, 260.0, 24.0);
         let mut last = 0.0;
         for step in 0..=20 {
             let t = step as f32 / 20.0;
-            let opacity = peek_chrome_opacity(crate::peek::entrance_at(row, resting, t));
+            let opacity = peek_chrome_opacity(otto_peek::session::entrance_at(row, resting, t));
             assert!(opacity >= last - 0.001, "went backwards at t={t}");
             last = opacity;
         }
@@ -9388,7 +10202,7 @@ mod geometry_tests {
             &pane(&owned, None, 0.0),
             0,
             0.0,
-            MILLER_W,
+            &MillerWidths::default(),
         );
         assert!(anchor.is_empty(), "expected an empty rect, got {anchor:?}");
     }
@@ -9403,7 +10217,7 @@ mod geometry_tests {
             &pane(&owned, Some(0), 0.0),
             0,
             0.0,
-            MILLER_W,
+            &MillerWidths::default(),
         );
         assert!(!anchor.is_empty());
         // Inside the window, and below the header — a real place on screen.
@@ -9429,7 +10243,7 @@ mod geometry_tests {
                 &pane(&owned, Some(0), 0.0),
                 0,
                 0.0,
-                MILLER_W,
+                &MillerWidths::default(),
             );
             assert!(!anchor.is_empty(), "{mode:?}: {anchor:?}");
             assert!(
@@ -9454,7 +10268,7 @@ mod geometry_tests {
             &pane(&owned, Some(0), 5_000.0),
             0,
             0.0,
-            MILLER_W,
+            &MillerWidths::default(),
         );
         assert!(anchor.is_empty(), "expected an empty rect, got {anchor:?}");
     }
@@ -9469,7 +10283,7 @@ mod geometry_tests {
             &pane(&owned, Some(9), 0.0),
             0,
             0.0,
-            MILLER_W,
+            &MillerWidths::default(),
         );
         assert!(anchor.is_empty());
     }
@@ -9569,14 +10383,16 @@ mod geometry_tests {
         }
     }
 
-    /// Draw ops `draw_list` emits for one window height, scrolled to `offset`.
-    fn list_ops(owned: &[Entry], height: f32, offset: f32) -> usize {
-        let state = scrolled(owned.len(), height, offset);
-        let mut data = pane(owned, None, state.offset());
-        data.bar = Some(&state);
-
-        let theme = Theme::light();
-        let frame = Frame {
+    /// A frame over `panes`, `height` points tall and 1100 wide, with
+    /// nothing else up.
+    fn test_frame<'a>(
+        theme: &'a Theme,
+        mode: ViewMode,
+        panes: Vec<PaneData<'a>>,
+        height: f32,
+    ) -> Frame<'a> {
+        Frame {
+            desk_overflow: None,
             search: None,
             index_available: true,
             search_focused: false,
@@ -9606,21 +10422,22 @@ mod geometry_tests {
             path_entry: false,
             width: 1100.0,
             height,
-            theme: &theme,
+            theme,
             title: "Home",
             subtitle: String::new(),
             places: &[],
             selected_place: None,
-            mode: ViewMode::List,
-            panes: vec![data],
+            mode,
+            panes,
             active: 0,
             pan: 0.0,
             pan_bar: None,
-            miller_w: MILLER_W,
+            miller: MillerWidths::default(),
             sort: SortKey::Name,
             ascending: true,
             list_columns: ListColumnWidths::default(),
             opening: None,
+            opening_stage: None,
             renaming: None,
             cut: Vec::new(),
             controls: WindowControlsState::new(),
@@ -9633,7 +10450,153 @@ mod geometry_tests {
             // No store: this measures the cost of drawing rows, and every
             // entry falling back to its icon is the case being counted.
             thumbs: None,
+        }
+    }
+
+    /// The grid drawn with a desk overflow tile over `count` entries into a
+    /// transparent surface 1100 by 700 points.
+    fn draw_stacked_grid(count: usize) -> (skia_safe::Surface, DeskOverflow, Rect) {
+        let owned = entries(count);
+        let theme = Theme::light();
+        let area = content_viewport(1100.0, 700.0, ViewMode::Grid);
+        let overflow =
+            DeskOverflow::new(area, Rect::from_wh(1100.0, 700.0), count, None).expect("a tile");
+        let mut frame = test_frame(&theme, ViewMode::Grid, vec![pane(&owned, None, 0.0)], 700.0);
+        frame.desk_overflow = Some(overflow);
+        let mut surface = skia_safe::surfaces::raster_n32_premul((1100, 700)).unwrap();
+        surface.canvas().clear(Color::TRANSPARENT);
+        draw_grid(surface.canvas(), &frame);
+        (surface, overflow, area)
+    }
+
+    fn pixel(surface: &mut skia_safe::Surface, x: f32, y: f32) -> Color {
+        let image = surface.image_snapshot();
+        let info = skia_safe::ImageInfo::new(
+            (1, 1),
+            skia_safe::ColorType::RGBA8888,
+            skia_safe::AlphaType::Unpremul,
+            None,
+        );
+        let mut bytes = [0u8; 4];
+        assert!(image.read_pixels(
+            &info,
+            &mut bytes,
+            4,
+            (x as i32, y as i32),
+            skia_safe::image::CachingHint::Allow,
+        ));
+        Color::from_argb(bytes[3], bytes[0], bytes[1], bytes[2])
+    }
+
+    /// The tile carries its count on an accent badge over its icon, and the
+    /// grid draws nothing past it.
+    #[test]
+    fn the_tile_shows_its_count_and_the_grid_stops_there() {
+        let capacity = grid_capacity(content_viewport(1100.0, 700.0, ViewMode::Grid));
+        // Six in the tile: one digit, so the badge is a round dot.
+        let (mut surface, overflow, area) = draw_stacked_grid(capacity + 5);
+        assert_eq!(overflow.tile.count, 6);
+        let cell = overflow.cell(area);
+        let icon = grid_icon();
+        let right = cell.center_x() + icon / 2.0;
+        let top = cell.top + 8.0;
+        // The top of the dot, clear of the digit in its middle.
+        let badge = pixel(
+            &mut surface,
+            right + 6.0 - TILE_BADGE_H / 2.0,
+            top - 6.0 + 3.0,
+        );
+        assert_eq!(badge, Theme::light().accent, "{badge:?}");
+        // The tile ends the last row that fits whole.
+        assert_eq!((overflow.tile.first + 1) % grid_columns(area), 0);
+        let below = grid_cell_rect(area, overflow.tile.first + 1, 0.0);
+        assert!(below.bottom > area.bottom + 0.5);
+    }
+
+    /// The badge's digits are centred on their own ink, one digit or two,
+    /// not on the line box or from their left edge.
+    #[test]
+    fn the_badge_count_is_centred_on_its_ink() {
+        let font = styles::FOOTNOTE_EMPHASIZED.font();
+        for count in [6, 42, 1234] {
+            let text = tile_badge_text(count);
+            let origin = tile_badge_origin(&font, &text, 100.0, 50.0);
+            let (_, ink) = font.measure_str(&text, None);
+            let placed = ink.with_offset((origin.x, origin.y));
+            assert!(
+                (placed.center_x() - 100.0).abs() < 0.01,
+                "{text}: {placed:?}"
+            );
+            assert!(
+                (placed.center_y() - 50.0).abs() < 0.01,
+                "{text}: {placed:?}"
+            );
+        }
+    }
+
+    /// The open overflow panel is no longer drawn into the desk's own
+    /// surface: the grid under where it opens stays the grid.
+    #[test]
+    fn the_desk_draws_no_overflow_panel_of_its_own() {
+        let capacity = grid_capacity(content_viewport(1100.0, 700.0, ViewMode::Grid));
+        let owned = entries(capacity + 20);
+        let theme = Theme::light();
+        let area = content_viewport(1100.0, 700.0, ViewMode::Grid);
+        let surface_rect = Rect::from_wh(1100.0, 700.0);
+        let open = DeskOverflow::new(area, surface_rect, owned.len(), Some(0.0)).unwrap();
+        let closed = DeskOverflow::new(area, surface_rect, owned.len(), None).unwrap();
+        let draw = |overflow: DeskOverflow| {
+            let mut frame =
+                test_frame(&theme, ViewMode::Grid, vec![pane(&owned, None, 0.0)], 700.0);
+            frame.desk_overflow = Some(overflow);
+            let mut surface = skia_safe::surfaces::raster_n32_premul((1100, 700)).unwrap();
+            surface.canvas().clear(Color::TRANSPARENT);
+            draw_grid(surface.canvas(), &frame);
+            surface
         };
+        let (panel, _) = open.panel.unwrap();
+        let (x, y) = (panel.rect.left + 4.0, panel.rect.center_y());
+        assert_eq!(pixel(&mut draw(open), x, y), pixel(&mut draw(closed), x, y));
+    }
+
+    /// Drawn on its own surface, the panel lays its dark ground and shows
+    /// two whole rows.
+    #[test]
+    fn the_overflow_panel_draws_its_ground() {
+        let capacity = grid_capacity(content_viewport(1100.0, 700.0, ViewMode::Grid));
+        let owned = entries(capacity + 20);
+        let theme = Theme::light();
+        let area = content_viewport(1100.0, 700.0, ViewMode::Grid);
+        let overflow =
+            DeskOverflow::new(area, Rect::from_wh(1100.0, 700.0), owned.len(), Some(0.0)).unwrap();
+        let (panel, _) = overflow.panel.unwrap();
+        assert_eq!(
+            panel.rect.height(),
+            2.0 * cell_h() + crate::desk::PANEL_PAD * 2.0
+        );
+        let mut frame = test_frame(&theme, ViewMode::Grid, vec![pane(&owned, None, 0.0)], 700.0);
+        frame.desk_overflow = Some(overflow);
+        let mut scroll = ScrollState::new(panel.rect);
+        scroll.set_content_length(panel.content_h);
+        let mut surface = skia_safe::surfaces::raster_n32_premul((1100, 700)).unwrap();
+        surface.canvas().clear(Color::TRANSPARENT);
+        draw_overflow_panel(surface.canvas(), &frame, &scroll);
+        let ground = pixel(&mut surface, panel.rect.left + 4.0, panel.rect.center_y());
+        assert!(ground.a() >= 140, "{ground:?}");
+        assert!(
+            ground.r() < 60 && ground.g() < 60 && ground.b() < 60,
+            "{ground:?}"
+        );
+    }
+
+    /// Draw ops `draw_list` emits for one window height, scrolled to `offset`.
+    fn list_ops(owned: &[Entry], height: f32, offset: f32) -> usize {
+        let state = scrolled(owned.len(), height, offset);
+        let mut data = pane(owned, None, state.offset());
+        data.bar = Some(&state);
+
+        let theme = Theme::light();
+        let frame = test_frame(&theme, ViewMode::List, vec![data], height);
 
         let mut recorder = skia_safe::PictureRecorder::new();
         let canvas = recorder.begin_recording(Rect::from_wh(1100.0, height), false);
@@ -9670,7 +10633,7 @@ mod geometry_tests {
             &pane(&owned, Some(0), 0.0),
             0,
             5_000.0,
-            MILLER_W,
+            &MillerWidths::default(),
         );
         assert!(anchor.is_empty(), "expected an empty rect, got {anchor:?}");
     }
@@ -9692,74 +10655,44 @@ mod geometry_tests {
 }
 
 #[cfg(test)]
-mod badge_tests {
-    use super::*;
+mod switcher_tests {
+    use super::{switcher_at, switcher_glyph, switcher_rect, SWITCHER_MODES};
 
-    /// Draw one badge state into its own bitmap and hand back the pixels of
-    /// the badge's own square, which is all either state touches.
-    fn badge_pixels(draw: impl FnOnce(&Canvas, &Theme, Rect)) -> Vec<u8> {
-        let panel = Rect::from_wh(200.0, 200.0);
-        let mut surface =
-            skia_safe::surfaces::raster_n32_premul((panel.width() as i32, panel.height() as i32))
-                .unwrap();
-        surface.canvas().clear(skia_safe::Color::TRANSPARENT);
-        let theme = Theme::light();
-        draw(surface.canvas(), &theme, panel);
-
-        let badge = peek_text_badge_rect(panel);
-        let image = surface.image_snapshot();
-        let info = skia_safe::ImageInfo::new_n32_premul(
-            (badge.width() as i32, badge.height() as i32),
-            None,
-        );
-        let mut out = vec![0u8; (badge.width() * badge.height() * 4.0) as usize];
-        let row = badge.width() as usize * 4;
-        assert!(image.read_pixels(
-            &info,
-            &mut out,
-            row,
-            (badge.left as i32, badge.top as i32),
-            skia_safe::image::CachingHint::Allow,
-        ));
-        out
-    }
-
-    fn drawn(pixels: &[u8]) -> usize {
-        pixels.chunks(4).filter(|p| p[3] != 0).count()
-    }
-
-    /// The working state puts something in the corner as soon as the
-    /// recogniser starts — the wait is the thing it exists to show.
+    /// Every glyph the toolbar asks for is in the repository's Solar set: a
+    /// name that drifts from `icons.list` would otherwise fall back to the
+    /// drawn stand-ins without a word. The repository's copy, not the lookup,
+    /// which prefers an installed set that may predate this checkout.
     #[test]
-    fn the_working_badge_draws_in_the_corner() {
-        let pixels = badge_pixels(|canvas, theme, panel| {
-            draw_peek_working_badge(canvas, theme, panel, 1.0, 0.0)
-        });
-        assert!(drawn(&pixels) > 100, "nothing drawn in the badge's square");
+    fn the_toolbar_glyphs_are_in_the_solar_set() {
+        let set = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../resources/icons/solar/linear");
+        let names = SWITCHER_MODES
+            .iter()
+            .map(|mode| switcher_glyph(*mode))
+            .chain([
+                "go-previous-symbolic",
+                "go-next-symbolic",
+                "folder-new-symbolic",
+                "go-down-symbolic",
+                "go-up-symbolic",
+            ]);
+        for name in names {
+            assert!(
+                set.join(format!("{name}.svg")).is_file(),
+                "{name} is not in the Solar set"
+            );
+        }
     }
 
-    /// And it breathes: half a period apart the same badge is not the same
-    /// pixels, which is what makes it read as a wait rather than a result.
+    /// Each segment's press selects the mode drawn in it.
     #[test]
-    fn the_working_badge_breathes() {
-        let early = badge_pixels(|canvas, theme, panel| {
-            draw_peek_working_badge(canvas, theme, panel, 1.0, WORKING_BADGE_PERIOD / 4.0)
-        });
-        let later = badge_pixels(|canvas, theme, panel| {
-            draw_peek_working_badge(canvas, theme, panel, 1.0, WORKING_BADGE_PERIOD * 3.0 / 4.0)
-        });
-        assert_ne!(early, later, "the badge looks the same across a breath");
-    }
-
-    /// The two states are told apart by their glyph, not only by being there.
-    #[test]
-    fn the_finished_badge_is_not_the_working_one() {
-        let working = badge_pixels(|canvas, theme, panel| {
-            draw_peek_working_badge(canvas, theme, panel, 1.0, 0.0)
-        });
-        let finished =
-            badge_pixels(|canvas, theme, panel| draw_peek_text_badge(canvas, theme, panel, 1.0));
-        assert!(drawn(&finished) > 100);
-        assert_ne!(working, finished, "both states draw the same badge");
+    fn each_segment_selects_its_own_view() {
+        let rect = switcher_rect(1100.0);
+        let seg = rect.width() / SWITCHER_MODES.len() as f32;
+        for (index, mode) in SWITCHER_MODES.iter().enumerate() {
+            let x = rect.left + seg * (index as f32 + 0.5);
+            assert_eq!(switcher_at(x, rect.center_y(), 1100.0), Some(*mode));
+        }
+        assert_eq!(switcher_at(rect.left - 1.0, rect.center_y(), 1100.0), None);
     }
 }

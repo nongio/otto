@@ -25,6 +25,124 @@ use crate::{
     state::{Backend, Otto},
 };
 
+/// The `PointerGrab` methods a window move/resize grab passes straight
+/// through to the client under the pointer, plus `start_data` from a
+/// `start_data` field. Expands inside an `impl PointerGrab<$data> for ...`.
+macro_rules! forward_pointer_grab_events {
+    ($data:ty) => {
+        fn relative_motion(
+            &mut self,
+            data: &mut $data,
+            handle: &mut PointerInnerHandle<'_, $data>,
+            focus: Option<(
+                <$data as smithay::input::SeatHandler>::PointerFocus,
+                Point<f64, Logical>,
+            )>,
+            event: &RelativeMotionEvent,
+        ) {
+            handle.relative_motion(data, focus, event);
+        }
+
+        fn axis(
+            &mut self,
+            data: &mut $data,
+            handle: &mut PointerInnerHandle<'_, $data>,
+            details: AxisFrame,
+        ) {
+            handle.axis(data, details)
+        }
+
+        fn frame(&mut self, data: &mut $data, handle: &mut PointerInnerHandle<'_, $data>) {
+            handle.frame(data);
+        }
+
+        forward_pointer_grab_events!(@gesture $data,
+            gesture_swipe_begin: GestureSwipeBeginEvent,
+            gesture_swipe_update: GestureSwipeUpdateEvent,
+            gesture_swipe_end: GestureSwipeEndEvent,
+            gesture_pinch_begin: GesturePinchBeginEvent,
+            gesture_pinch_update: GesturePinchUpdateEvent,
+            gesture_pinch_end: GesturePinchEndEvent,
+            gesture_hold_begin: GestureHoldBeginEvent,
+            gesture_hold_end: GestureHoldEndEvent,
+        );
+
+        fn start_data(&self) -> &PointerGrabStartData<$data> {
+            &self.start_data
+        }
+    };
+    (@gesture $data:ty, $($name:ident: $event:ty,)*) => {
+        $(
+            fn $name(
+                &mut self,
+                data: &mut $data,
+                handle: &mut PointerInnerHandle<'_, $data>,
+                event: &$event,
+            ) {
+                handle.$name(data, event);
+            }
+        )*
+    };
+}
+
+/// The `TouchGrab` methods a window move/resize grab passes straight
+/// through, or ignores (a second finger going down, `frame`), plus
+/// `start_data` from a `start_data` field. Expands inside an
+/// `impl TouchGrab<$data> for ...`.
+macro_rules! forward_touch_grab_events {
+    ($data:ty) => {
+        fn down(
+            &mut self,
+            _data: &mut $data,
+            _handle: &mut smithay::input::touch::TouchInnerHandle<'_, $data>,
+            _focus: Option<(
+                <$data as smithay::input::SeatHandler>::TouchFocus,
+                Point<f64, Logical>,
+            )>,
+            _event: &smithay::input::touch::DownEvent,
+        ) {
+        }
+
+        fn frame(
+            &mut self,
+            _data: &mut $data,
+            _handle: &mut smithay::input::touch::TouchInnerHandle<'_, $data>,
+        ) {
+        }
+
+        fn cancel(
+            &mut self,
+            data: &mut $data,
+            handle: &mut smithay::input::touch::TouchInnerHandle<'_, $data>,
+        ) {
+            handle.cancel(data);
+            handle.unset_grab(self, data);
+        }
+
+        fn shape(
+            &mut self,
+            data: &mut $data,
+            handle: &mut smithay::input::touch::TouchInnerHandle<'_, $data>,
+            event: &smithay::input::touch::ShapeEvent,
+        ) {
+            handle.shape(data, event);
+        }
+
+        fn orientation(
+            &mut self,
+            data: &mut $data,
+            handle: &mut smithay::input::touch::TouchInnerHandle<'_, $data>,
+            event: &smithay::input::touch::OrientationEvent,
+        ) {
+            handle.orientation(data, event);
+        }
+
+        fn start_data(&self) -> &smithay::input::touch::GrabStartData<$data> {
+            &self.start_data
+        }
+    };
+}
+
 pub struct PointerResizeSurfaceGrab<B: Backend + 'static> {
     pub start_data: PointerGrabStartData<Otto<B>>,
     pub window: WindowElement,
@@ -91,6 +209,13 @@ impl<B: Backend> PointerGrab<Otto<B>> for PointerMoveSurfaceGrab<B> {
         // callbacks for it, and full-rate blur rebuilds while it moves under
         // a frosted surface (the renderer reads this stamp's recency).
         state.pointer_interaction = Some((self.window.id(), std::time::Instant::now()));
+
+        // Minimised mid-drag: the window was unmapped from every space, and
+        // following the pointer would map it back. The release still ends
+        // the grab as usual.
+        if self.window.is_minimised() {
+            return;
+        }
 
         // The layer lives under the OWNING output's subtree — use that
         // output for both the scale and the global→output-local rebase.
@@ -207,15 +332,7 @@ impl<B: Backend> PointerGrab<Otto<B>> for PointerMoveSurfaceGrab<B> {
         }
     }
 
-    fn relative_motion(
-        &mut self,
-        data: &mut Otto<B>,
-        handle: &mut PointerInnerHandle<'_, Otto<B>>,
-        focus: Option<(PointerFocusTarget<B>, Point<f64, Logical>)>,
-        event: &RelativeMotionEvent,
-    ) {
-        handle.relative_motion(data, focus, event);
-    }
+    forward_pointer_grab_events!(Otto<B>);
 
     fn button(
         &mut self,
@@ -248,7 +365,7 @@ impl<B: Backend> PointerGrab<Otto<B>> for PointerMoveSurfaceGrab<B> {
             // refreshed on motion, so letting go of Ctrl and then of the
             // button without moving would otherwise still tile the window.
             let zone = self.active_zone.take();
-            if let Some(zone) = zone.filter(|_| ctrl_held(data)) {
+            if let Some(zone) = zone.filter(|_| ctrl_held(data) && !self.window.is_minimised()) {
                 data.apply_tile(&self.window, zone);
             } else {
                 // The window moved out from under any popup it has open. Its
@@ -267,95 +384,6 @@ impl<B: Backend> PointerGrab<Otto<B>> for PointerMoveSurfaceGrab<B> {
             #[cfg(feature = "xwayland")]
             data.sync_x11_window_position(&self.window);
         }
-    }
-
-    fn axis(
-        &mut self,
-        data: &mut Otto<B>,
-        handle: &mut PointerInnerHandle<'_, Otto<B>>,
-        details: AxisFrame,
-    ) {
-        handle.axis(data, details)
-    }
-
-    fn frame(&mut self, data: &mut Otto<B>, handle: &mut PointerInnerHandle<'_, Otto<B>>) {
-        handle.frame(data);
-    }
-
-    fn gesture_swipe_begin(
-        &mut self,
-        data: &mut Otto<B>,
-        handle: &mut PointerInnerHandle<'_, Otto<B>>,
-        event: &GestureSwipeBeginEvent,
-    ) {
-        handle.gesture_swipe_begin(data, event);
-    }
-
-    fn gesture_swipe_update(
-        &mut self,
-        data: &mut Otto<B>,
-        handle: &mut PointerInnerHandle<'_, Otto<B>>,
-        event: &GestureSwipeUpdateEvent,
-    ) {
-        handle.gesture_swipe_update(data, event);
-    }
-
-    fn gesture_swipe_end(
-        &mut self,
-        data: &mut Otto<B>,
-        handle: &mut PointerInnerHandle<'_, Otto<B>>,
-        event: &GestureSwipeEndEvent,
-    ) {
-        handle.gesture_swipe_end(data, event);
-    }
-
-    fn gesture_pinch_begin(
-        &mut self,
-        data: &mut Otto<B>,
-        handle: &mut PointerInnerHandle<'_, Otto<B>>,
-        event: &GesturePinchBeginEvent,
-    ) {
-        handle.gesture_pinch_begin(data, event);
-    }
-
-    fn gesture_pinch_update(
-        &mut self,
-        data: &mut Otto<B>,
-        handle: &mut PointerInnerHandle<'_, Otto<B>>,
-        event: &GesturePinchUpdateEvent,
-    ) {
-        handle.gesture_pinch_update(data, event);
-    }
-
-    fn gesture_pinch_end(
-        &mut self,
-        data: &mut Otto<B>,
-        handle: &mut PointerInnerHandle<'_, Otto<B>>,
-        event: &GesturePinchEndEvent,
-    ) {
-        handle.gesture_pinch_end(data, event);
-    }
-
-    fn gesture_hold_begin(
-        &mut self,
-        data: &mut Otto<B>,
-        handle: &mut PointerInnerHandle<'_, Otto<B>>,
-        event: &GestureHoldBeginEvent,
-    ) {
-        handle.gesture_hold_begin(data, event);
-    }
-
-    fn gesture_hold_end(
-        &mut self,
-        data: &mut Otto<B>,
-        handle: &mut PointerInnerHandle<'_, Otto<B>>,
-        event: &GestureHoldEndEvent,
-    ) {
-        handle.gesture_hold_end(data, event);
-    }
-
-    fn start_data(&self) -> &PointerGrabStartData<Otto<B>> {
-        &self.start_data
     }
 
     /// The grab going away with a detach still open — a client dying, a
@@ -384,17 +412,7 @@ pub struct TouchMoveSurfaceGrab<BackendData: Backend + 'static> {
 }
 
 impl<BackendData: Backend> TouchGrab<Otto<BackendData>> for TouchMoveSurfaceGrab<BackendData> {
-    fn down(
-        &mut self,
-        _data: &mut Otto<BackendData>,
-        _handle: &mut smithay::input::touch::TouchInnerHandle<'_, Otto<BackendData>>,
-        _focus: Option<(
-            <Otto<BackendData> as smithay::input::SeatHandler>::TouchFocus,
-            Point<f64, Logical>,
-        )>,
-        _event: &smithay::input::touch::DownEvent,
-    ) {
-    }
+    forward_touch_grab_events!(Otto<BackendData>);
 
     fn up(
         &mut self,
@@ -435,6 +453,10 @@ impl<BackendData: Backend> TouchGrab<Otto<BackendData>> for TouchMoveSurfaceGrab
         }
 
         self.last_location = event.location;
+        // Minimised mid-drag: moving it would map it back into the space.
+        if self.window.is_minimised() {
+            return;
+        }
         if self.pending_tiling_detach {
             let travel = event.location - self.start_data.location;
             if travel.x.abs() < DRAG_THRESHOLD && travel.y.abs() < DRAG_THRESHOLD {
@@ -460,44 +482,6 @@ impl<BackendData: Backend> TouchGrab<Otto<BackendData>> for TouchMoveSurfaceGrab
         if self.tiling_detached {
             data.tiling_drag_motion(event.location.x, event.location.y);
         }
-    }
-
-    fn frame(
-        &mut self,
-        _data: &mut Otto<BackendData>,
-        _handle: &mut smithay::input::touch::TouchInnerHandle<'_, Otto<BackendData>>,
-    ) {
-    }
-
-    fn cancel(
-        &mut self,
-        data: &mut Otto<BackendData>,
-        handle: &mut smithay::input::touch::TouchInnerHandle<'_, Otto<BackendData>>,
-    ) {
-        handle.cancel(data);
-        handle.unset_grab(self, data);
-    }
-
-    fn shape(
-        &mut self,
-        data: &mut Otto<BackendData>,
-        handle: &mut smithay::input::touch::TouchInnerHandle<'_, Otto<BackendData>>,
-        event: &smithay::input::touch::ShapeEvent,
-    ) {
-        handle.shape(data, event);
-    }
-
-    fn orientation(
-        &mut self,
-        data: &mut Otto<BackendData>,
-        handle: &mut smithay::input::touch::TouchInnerHandle<'_, Otto<BackendData>>,
-        event: &smithay::input::touch::OrientationEvent,
-    ) {
-        handle.orientation(data, event);
-    }
-
-    fn start_data(&self) -> &smithay::input::touch::GrabStartData<Otto<BackendData>> {
-        &self.start_data
     }
 
     /// A cancelled touch drag puts the leaf back where it was.
@@ -533,15 +517,7 @@ impl<B: Backend> PointerGrab<Otto<B>> for PointerTilingResizeGrab<B> {
         data.tiling_resize_to(event.location.x, event.location.y);
     }
 
-    fn relative_motion(
-        &mut self,
-        data: &mut Otto<B>,
-        handle: &mut PointerInnerHandle<'_, Otto<B>>,
-        focus: Option<(PointerFocusTarget<B>, Point<f64, Logical>)>,
-        event: &RelativeMotionEvent,
-    ) {
-        handle.relative_motion(data, focus, event);
-    }
+    forward_pointer_grab_events!(Otto<B>);
 
     fn button(
         &mut self,
@@ -555,95 +531,6 @@ impl<B: Backend> PointerGrab<Otto<B>> for PointerTilingResizeGrab<B> {
             handle.unset_grab(self, data, event.serial, event.time, true);
             data.tiling_resize_end();
         }
-    }
-
-    fn axis(
-        &mut self,
-        data: &mut Otto<B>,
-        handle: &mut PointerInnerHandle<'_, Otto<B>>,
-        details: AxisFrame,
-    ) {
-        handle.axis(data, details)
-    }
-
-    fn frame(&mut self, data: &mut Otto<B>, handle: &mut PointerInnerHandle<'_, Otto<B>>) {
-        handle.frame(data);
-    }
-
-    fn gesture_swipe_begin(
-        &mut self,
-        data: &mut Otto<B>,
-        handle: &mut PointerInnerHandle<'_, Otto<B>>,
-        event: &GestureSwipeBeginEvent,
-    ) {
-        handle.gesture_swipe_begin(data, event);
-    }
-
-    fn gesture_swipe_update(
-        &mut self,
-        data: &mut Otto<B>,
-        handle: &mut PointerInnerHandle<'_, Otto<B>>,
-        event: &GestureSwipeUpdateEvent,
-    ) {
-        handle.gesture_swipe_update(data, event);
-    }
-
-    fn gesture_swipe_end(
-        &mut self,
-        data: &mut Otto<B>,
-        handle: &mut PointerInnerHandle<'_, Otto<B>>,
-        event: &GestureSwipeEndEvent,
-    ) {
-        handle.gesture_swipe_end(data, event);
-    }
-
-    fn gesture_pinch_begin(
-        &mut self,
-        data: &mut Otto<B>,
-        handle: &mut PointerInnerHandle<'_, Otto<B>>,
-        event: &GesturePinchBeginEvent,
-    ) {
-        handle.gesture_pinch_begin(data, event);
-    }
-
-    fn gesture_pinch_update(
-        &mut self,
-        data: &mut Otto<B>,
-        handle: &mut PointerInnerHandle<'_, Otto<B>>,
-        event: &GesturePinchUpdateEvent,
-    ) {
-        handle.gesture_pinch_update(data, event);
-    }
-
-    fn gesture_pinch_end(
-        &mut self,
-        data: &mut Otto<B>,
-        handle: &mut PointerInnerHandle<'_, Otto<B>>,
-        event: &GesturePinchEndEvent,
-    ) {
-        handle.gesture_pinch_end(data, event);
-    }
-
-    fn gesture_hold_begin(
-        &mut self,
-        data: &mut Otto<B>,
-        handle: &mut PointerInnerHandle<'_, Otto<B>>,
-        event: &GestureHoldBeginEvent,
-    ) {
-        handle.gesture_hold_begin(data, event);
-    }
-
-    fn gesture_hold_end(
-        &mut self,
-        data: &mut Otto<B>,
-        handle: &mut PointerInnerHandle<'_, Otto<B>>,
-        event: &GestureHoldEndEvent,
-    ) {
-        handle.gesture_hold_end(data, event);
-    }
-
-    fn start_data(&self) -> &PointerGrabStartData<Otto<B>> {
-        &self.start_data
     }
 
     /// A grab taken away mid-drag leaves the shares where the pointer left
@@ -746,6 +633,12 @@ impl<B: Backend> PointerGrab<Otto<B>> for PointerResizeSurfaceGrab<B> {
             return;
         }
 
+        // Minimised mid-drag: the window is unmapped and has no location to
+        // resize from. The release still ends the grab as usual.
+        if self.window.is_minimised() {
+            return;
+        }
+
         let (mut dx, mut dy) = (event.location - self.start_data.location).into();
 
         let mut new_window_width = self.initial_window_size.w;
@@ -814,7 +707,9 @@ impl<B: Backend> PointerGrab<Otto<B>> for PointerResizeSurfaceGrab<B> {
                 // Reposition window during resize if resizing from top or left edges
                 if self.edges.intersects(ResizeEdge::TOP_LEFT) {
                     let geometry = self.window.geometry();
-                    let mut location = data.workspaces.element_location(&self.window).unwrap();
+                    let Some(mut location) = data.workspaces.element_location(&self.window) else {
+                        return;
+                    };
 
                     if self.edges.intersects(ResizeEdge::LEFT) {
                         location.x = self.initial_window_location.x
@@ -831,7 +726,9 @@ impl<B: Backend> PointerGrab<Otto<B>> for PointerResizeSurfaceGrab<B> {
             }
             #[cfg(feature = "xwayland")]
             WindowSurface::X11(x11) => {
-                let mut location = data.workspaces.element_location(&self.window).unwrap();
+                let Some(mut location) = data.workspaces.element_location(&self.window) else {
+                    return;
+                };
 
                 // Reposition window during resize if resizing from top or left edges
                 if self.edges.intersects(ResizeEdge::TOP_LEFT) {
@@ -857,15 +754,7 @@ impl<B: Backend> PointerGrab<Otto<B>> for PointerResizeSurfaceGrab<B> {
         }
     }
 
-    fn relative_motion(
-        &mut self,
-        data: &mut Otto<B>,
-        handle: &mut PointerInnerHandle<'_, Otto<B>>,
-        focus: Option<(PointerFocusTarget<B>, Point<f64, Logical>)>,
-        event: &RelativeMotionEvent,
-    ) {
-        handle.relative_motion(data, focus, event);
-    }
+    forward_pointer_grab_events!(Otto<B>);
 
     fn button(
         &mut self,
@@ -908,9 +797,11 @@ impl<B: Backend> PointerGrab<Otto<B>> for PointerResizeSurfaceGrab<B> {
                 }
                 #[cfg(feature = "xwayland")]
                 WindowSurface::X11(x11) => {
-                    let location = state.workspaces.element_location(&self.window).unwrap();
-                    x11.configure(Rectangle::new(location, self.last_window_size))
-                        .unwrap();
+                    // Unmapped (minimised) windows keep the X11 geometry they had.
+                    if let Some(location) = state.workspaces.element_location(&self.window) {
+                        x11.configure(Rectangle::new(location, self.last_window_size))
+                            .unwrap();
+                    }
 
                     let Some(surface) = self.window.wl_surface() else {
                         // X11 Window got unmapped, abort
@@ -939,95 +830,6 @@ impl<B: Backend> PointerGrab<Otto<B>> for PointerResizeSurfaceGrab<B> {
         }
     }
 
-    fn axis(
-        &mut self,
-        data: &mut Otto<B>,
-        handle: &mut PointerInnerHandle<'_, Otto<B>>,
-        details: AxisFrame,
-    ) {
-        handle.axis(data, details)
-    }
-
-    fn frame(&mut self, data: &mut Otto<B>, handle: &mut PointerInnerHandle<'_, Otto<B>>) {
-        handle.frame(data);
-    }
-
-    fn gesture_swipe_begin(
-        &mut self,
-        data: &mut Otto<B>,
-        handle: &mut PointerInnerHandle<'_, Otto<B>>,
-        event: &GestureSwipeBeginEvent,
-    ) {
-        handle.gesture_swipe_begin(data, event);
-    }
-
-    fn gesture_swipe_update(
-        &mut self,
-        data: &mut Otto<B>,
-        handle: &mut PointerInnerHandle<'_, Otto<B>>,
-        event: &GestureSwipeUpdateEvent,
-    ) {
-        handle.gesture_swipe_update(data, event);
-    }
-
-    fn gesture_swipe_end(
-        &mut self,
-        data: &mut Otto<B>,
-        handle: &mut PointerInnerHandle<'_, Otto<B>>,
-        event: &GestureSwipeEndEvent,
-    ) {
-        handle.gesture_swipe_end(data, event);
-    }
-
-    fn gesture_pinch_begin(
-        &mut self,
-        data: &mut Otto<B>,
-        handle: &mut PointerInnerHandle<'_, Otto<B>>,
-        event: &GesturePinchBeginEvent,
-    ) {
-        handle.gesture_pinch_begin(data, event);
-    }
-
-    fn gesture_pinch_update(
-        &mut self,
-        data: &mut Otto<B>,
-        handle: &mut PointerInnerHandle<'_, Otto<B>>,
-        event: &GesturePinchUpdateEvent,
-    ) {
-        handle.gesture_pinch_update(data, event);
-    }
-
-    fn gesture_pinch_end(
-        &mut self,
-        data: &mut Otto<B>,
-        handle: &mut PointerInnerHandle<'_, Otto<B>>,
-        event: &GesturePinchEndEvent,
-    ) {
-        handle.gesture_pinch_end(data, event);
-    }
-
-    fn gesture_hold_begin(
-        &mut self,
-        data: &mut Otto<B>,
-        handle: &mut PointerInnerHandle<'_, Otto<B>>,
-        event: &GestureHoldBeginEvent,
-    ) {
-        handle.gesture_hold_begin(data, event);
-    }
-
-    fn gesture_hold_end(
-        &mut self,
-        data: &mut Otto<B>,
-        handle: &mut PointerInnerHandle<'_, Otto<B>>,
-        event: &GestureHoldEndEvent,
-    ) {
-        handle.gesture_hold_end(data, event);
-    }
-
-    fn start_data(&self) -> &PointerGrabStartData<Otto<B>> {
-        &self.start_data
-    }
-
     fn unset(&mut self, _data: &mut Otto<B>) {}
 }
 
@@ -1041,17 +843,7 @@ pub struct TouchResizeSurfaceGrab<BackendData: Backend + 'static> {
 }
 
 impl<BackendData: Backend> TouchGrab<Otto<BackendData>> for TouchResizeSurfaceGrab<BackendData> {
-    fn down(
-        &mut self,
-        _data: &mut Otto<BackendData>,
-        _handle: &mut smithay::input::touch::TouchInnerHandle<'_, Otto<BackendData>>,
-        _focus: Option<(
-            <Otto<BackendData> as smithay::input::SeatHandler>::TouchFocus,
-            Point<f64, Logical>,
-        )>,
-        _event: &smithay::input::touch::DownEvent,
-    ) {
-    }
+    forward_touch_grab_events!(Otto<BackendData>);
 
     fn up(
         &mut self,
@@ -1093,9 +885,11 @@ impl<BackendData: Backend> TouchGrab<Otto<BackendData>> for TouchResizeSurfaceGr
             }
             #[cfg(feature = "xwayland")]
             WindowSurface::X11(x11) => {
-                let location = state.workspaces.element_location(&self.window).unwrap();
-                x11.configure(Rectangle::new(location, self.last_window_size))
-                    .unwrap();
+                // Unmapped (minimised) windows keep the X11 geometry they had.
+                if let Some(location) = state.workspaces.element_location(&self.window) {
+                    x11.configure(Rectangle::new(location, self.last_window_size))
+                        .unwrap();
+                }
 
                 let Some(surface) = self.window.wl_surface() else {
                     // X11 Window got unmapped, abort
@@ -1134,6 +928,12 @@ impl<BackendData: Backend> TouchGrab<Otto<BackendData>> for TouchResizeSurfaceGr
         // It is impossible to get `min_size` and `max_size` of dead toplevel, so we return early.
         if !self.window.alive() {
             handle.unset_grab(self, data);
+            return;
+        }
+
+        // Minimised mid-drag: the window is unmapped and has no location to
+        // resize from. The touch-up still ends the grab as usual.
+        if self.window.is_minimised() {
             return;
         }
 
@@ -1205,7 +1005,9 @@ impl<BackendData: Backend> TouchGrab<Otto<BackendData>> for TouchResizeSurfaceGr
 
                 // Reposition window during resize if resizing from top or left edges
                 if self.edges.intersects(ResizeEdge::TOP_LEFT) {
-                    let mut location = data.workspaces.element_location(&self.window).unwrap();
+                    let Some(mut location) = data.workspaces.element_location(&self.window) else {
+                        return;
+                    };
 
                     if self.edges.intersects(ResizeEdge::LEFT) {
                         location.x = self.initial_window_location.x
@@ -1222,7 +1024,9 @@ impl<BackendData: Backend> TouchGrab<Otto<BackendData>> for TouchResizeSurfaceGr
             }
             #[cfg(feature = "xwayland")]
             WindowSurface::X11(x11) => {
-                let mut location = data.workspaces.element_location(&self.window).unwrap();
+                let Some(mut location) = data.workspaces.element_location(&self.window) else {
+                    return;
+                };
 
                 // Reposition window during resize if resizing from top or left edges
                 if self.edges.intersects(ResizeEdge::TOP_LEFT) {
@@ -1246,44 +1050,6 @@ impl<BackendData: Backend> TouchGrab<Otto<BackendData>> for TouchResizeSurfaceGr
                     .unwrap();
             }
         }
-    }
-
-    fn frame(
-        &mut self,
-        _data: &mut Otto<BackendData>,
-        _handle: &mut smithay::input::touch::TouchInnerHandle<'_, Otto<BackendData>>,
-    ) {
-    }
-
-    fn cancel(
-        &mut self,
-        data: &mut Otto<BackendData>,
-        handle: &mut smithay::input::touch::TouchInnerHandle<'_, Otto<BackendData>>,
-    ) {
-        handle.cancel(data);
-        handle.unset_grab(self, data);
-    }
-
-    fn shape(
-        &mut self,
-        data: &mut Otto<BackendData>,
-        handle: &mut smithay::input::touch::TouchInnerHandle<'_, Otto<BackendData>>,
-        event: &smithay::input::touch::ShapeEvent,
-    ) {
-        handle.shape(data, event);
-    }
-
-    fn orientation(
-        &mut self,
-        data: &mut Otto<BackendData>,
-        handle: &mut smithay::input::touch::TouchInnerHandle<'_, Otto<BackendData>>,
-        event: &smithay::input::touch::OrientationEvent,
-    ) {
-        handle.orientation(data, event);
-    }
-
-    fn start_data(&self) -> &smithay::input::touch::GrabStartData<Otto<BackendData>> {
-        &self.start_data
     }
 
     fn unset(&mut self, _data: &mut Otto<BackendData>) {}

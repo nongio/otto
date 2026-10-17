@@ -17,7 +17,7 @@ use agent_client_protocol::schema::v1::{
     ToolKind,
 };
 use agent_client_protocol::{Agent, Channel, Client, ConnectionTo, Responder};
-use otto_agents::acp::{AcpBackend, Permissions, run_session};
+use otto_agents::acp::{AcpBackend, Permissions, ShownBeside, run_session};
 use otto_agents::agent::{
     Attachment, Backend, Decision, Question, SessionCommand, SessionEvent, SessionSpec, TurnOutcome,
 };
@@ -403,6 +403,9 @@ impl Session {
             std::env::temp_dir(),
             Vec::new(),
             None,
+            Vec::new(),
+            None,
+            ShownBeside::default(),
             images,
             command_rx,
             event_tx,
@@ -445,6 +448,7 @@ impl Session {
             turn_id: turn_id.into(),
             text: text.into(),
             attachments,
+            remote: None,
         };
         self.commands.send(command).expect("session is running");
     }
@@ -941,6 +945,10 @@ async fn a_missing_agent_binary_fails_session_creation() {
         cwd: std::env::temp_dir(),
         resume: None,
         attached: Vec::new(),
+        mcp_servers: Vec::new(),
+        instructions: None,
+        runs_as: None,
+        subject: Vec::new(),
     };
     backend.start(spec, command_rx, event_tx);
 

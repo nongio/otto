@@ -3,7 +3,7 @@
 A workspace is a full-screen page of windows. Otto arranges them in a
 horizontal row and slides between them.
 
-![The workspace selector above the window grid, with four named workspaces: Terminals, Documents, Internet, Music](images/workspaces.jpg)
+![The workspace selector above the window grid, with four named workspaces: Desk, Making, Code and Playing](images/workspaces.jpg)
 
 ## Per-monitor workspaces
 

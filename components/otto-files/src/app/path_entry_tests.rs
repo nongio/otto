@@ -296,7 +296,7 @@ fn a_typed_file_is_scrolled_into_view() {
         browser.mode,
         depth,
         browser.pan.offset(),
-        browser.miller_w,
+        &browser.miller_widths(),
     );
     assert!(
         top >= offset && top + item_h <= offset + viewport.height(),
@@ -313,4 +313,42 @@ fn the_shared_prefix_of_nothing_is_nothing() {
     assert_eq!(common_prefix(&["ab".into(), "zz".into()]), "");
     // Whole characters, never half of one.
     assert_eq!(common_prefix(&["éa".into(), "éb".into()]), "é");
+}
+
+/// A symlink to a folder completes like the folder: it gains its
+/// separator, so Tab carries on down through it.
+#[test]
+fn a_symlinked_folder_gains_its_separator() {
+    let (mut browser, dir) = browser_over(&[], &["real"]);
+    std::os::unix::fs::symlink(dir.0.join("real"), dir.0.join("linked")).unwrap();
+    browser.open_path_entry();
+    browser
+        .path_entry
+        .as_mut()
+        .unwrap()
+        .set_value(format!("{}/li", dir.0.display()));
+    browser.complete_path_entry();
+
+    assert_eq!(
+        browser.path_entry.as_ref().unwrap().value(),
+        format!("{}/linked/", dir.0.display())
+    );
+}
+
+/// A name that is not UTF-8 is never a candidate: completing to it would
+/// write U+FFFD into the field, which names nothing on disk.
+#[test]
+fn a_name_that_is_not_utf8_is_not_completed() {
+    use std::os::unix::ffi::OsStrExt;
+
+    let (browser, dir) = browser_over(&["bad-good.txt"], &[]);
+    let raw = std::ffi::OsStr::from_bytes(b"bad-\xff.txt");
+    if std::fs::write(dir.0.join(raw), b"").is_err() {
+        // A filesystem that insists on UTF-8 names has nothing to test.
+        return;
+    }
+    let matches = browser
+        .typed_path_matches("bad")
+        .expect("the open directory resolves");
+    assert_eq!(matches.names, vec!["bad-good.txt".to_string()]);
 }

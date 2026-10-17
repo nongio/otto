@@ -2,7 +2,7 @@
 
 **Status:** draft
 **Related specs:** [context-menus.md](./context-menus.md), [topbar.md](./topbar.md),
-[stash.md](./stash.md)
+[stash.md](./stash.md), [dictation.md](./dictation.md)
 
 ## Summary
 
@@ -76,14 +76,34 @@ is idle or stopped (a failed session included — the subtitle says it failed).
 The colours come from the theme, so the dot follows the user's accent and the
 colour scheme.
 
+**Sessions from the phone, and from Studio.** A session written to through a
+chat bridge carries a pill at the end of its row naming the chat app,
+"Telegram", from the session's `otto.remote`, shaped and filled as the mode's
+pill in the log. A session Preview started about a file (one that opens in
+Preview, below) carries "Studio" instead, even after it was written to from
+the phone. A local session carries none. Typing the pill's word narrows the
+list to those sessions.
+
 **In and out of a session.** With nothing typed, Left leaves a conversation
 for the list of sessions, and Right opens the highlighted session again; Enter
-opens it too. The two arrows walk the same step in both directions, so the
+opens it too. A session open in a terminal brings its terminal forward
+instead, and a session Preview started about a file (`_meta.otto.app` is
+`otto-preview`) opens in Preview, beside the file; the card closes either
+way. The two arrows walk the same step in both directions, so the
 list is never a dead end. Ctrl+L or Cmd+L is the same step without the empty
 field: from a request being written or a conversation it shows the list, and
 from the list it starts a fresh request, whatever is typed. Neither key is
 taken while a request is still on its way to the service, which leaving would
 lose.
+
+**Drafts.** What is typed and not sent is kept when the launcher closes or
+leaves a session, under the session it was for, and is back in the field the
+next time that session is opened — from the list, with `--session`, or by
+Ctrl+L between the two. A request that has no session yet is kept as the one
+draft of a new request, and comes back the next time Ask opens fresh. Sending
+forgets the draft, as does closing with the field empty. The drafts live in
+`$XDG_STATE_HOME/otto/ask-drafts.json`, the 64 most recently written; the
+field of the list of sessions is a search, and is not kept.
 
 **Choosing the agent.** The empty field names the agent the request would go
 to — "Ask @Otto…" — from the start: the default agent is the first the service
@@ -162,6 +182,11 @@ first, read before the launcher takes the keyboard, alone or added to what is
 already stashed. While Ask or agents mode is up, the stash card steps
 aside; closed without sending, the card comes back. Sending a request while
 anything is stashed ends the stash, struck items included.
+
+`--send` opens Ask and sends the query given on the command line as the first
+request as soon as the card is up, so the card opens on the running
+conversation rather than on the text waiting in the field. It does nothing
+with `--session`, which opens an existing conversation instead.
 
 **A request of attachments alone.** Enter with nothing typed sends a request
 when at least one attachment is not struck out: the attachments can be the
@@ -302,6 +327,15 @@ motion with Ctrl, select-all with Ctrl+A, deleting the previous word with
 Ctrl+W, and clearing the query with Ctrl+U. Ctrl+C, Ctrl+X and Ctrl+V copy, cut
 and paste against the system clipboard; a paste keeps only what fits on one
 line, and refilters as typing does.
+
+**Dictation.** Ctrl+D starts dictating into the field: an equaliser stands in
+for the caret, words heard but not settled show dimmed at it, and settled words
+are typed in and refilter the list. While dictating, Escape or Backspace
+cancels and removes what was dictated, Return stops and acts once the last
+words are in, modifier keys are ignored, and any other key, Ctrl+D included,
+stops. When picking from a list, the listed titles are the vocabulary that
+heard names are corrected to; ask mode has none. See
+[dictation.md](./dictation.md).
 
 **Pointer.** Over the log's words the pointer is a text cursor, because
 nothing else about painted text says it can be picked up. Moving the pointer

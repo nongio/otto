@@ -1,0 +1,89 @@
+# The Solar icons Otto's own interface draws its glyphs with.
+# Edit this, then run scripts/update-solar-icons.sh.
+#
+# <otto name>  <solar name>  [style ...]     (styles default to linear)
+#
+# Names Otto asks the icon theme for come first, under the freedesktop name
+# so a lookup finds them unchanged; glyphs Otto draws itself use otto-*.
+# Bold is kept where a control shows a pressed or active state.
+
+# Studio toolbar
+zoom-out-symbolic           magnifier-zoom-out
+zoom-in-symbolic            magnifier-zoom-in
+zoom-fit-best-symbolic      maximize-square-minimalistic
+go-up-symbolic              alt-arrow-up
+go-down-symbolic            alt-arrow-down
+edit-undo-symbolic          undo-left
+edit-redo-symbolic          undo-right
+document-save-symbolic      diskette
+
+# Studio's own tools (drawn in code today)
+otto-sidebar-symbolic       sidebar-minimalistic    linear bold
+otto-chat-symbolic          chat-round-dots         linear bold
+otto-mark-symbolic          cursor                  linear bold
+otto-show-marks-symbolic    eye                     linear bold
+otto-pen-symbolic           pen                     linear bold
+otto-highlight-symbolic     paint-brush             linear bold
+otto-underline-symbolic     text-underline          linear bold
+otto-strikeout-symbolic     text-cross              linear bold
+otto-text-symbolic          text-square             linear bold
+otto-signature-symbolic     pen-new-round           linear bold
+otto-delete-symbolic        trash-bin-minimalistic
+
+# Peek and Studio badges on a picture
+content-loading-symbolic    refresh
+font-x-generic-symbolic     text-selection
+
+# Workspace selector
+close-symbolic              close-circle
+plus-symbolic               add-circle
+
+# Pop-up buttons: the arrow for a menu that opens on its value; one opening
+# below or above its field uses go-down or go-up
+otto-chevrons-up-down-symbolic  chevrons-up-down
+
+# Menus: the tick on the chosen item
+object-select-symbolic      check
+
+# Files sidebar and path bar
+document-open-recent        history
+user-home                   home
+user-desktop                monitor
+folder-documents            document
+folder-download             download-minimalistic
+folder-music                music-note
+folder-pictures             gallery
+folder-videos               video-library
+drive-harddisk              ssd-round
+folder                      folder
+
+# Files toolbar (the browser and the file picker share it); the location
+# and filter chevrons reuse go-down and go-up from Studio's list
+go-previous-symbolic        alt-arrow-left
+go-next-symbolic            alt-arrow-right
+folder-new-symbolic         add-folder
+
+# Files view switcher
+otto-view-list-symbolic     list
+otto-view-grid-symbolic     widget
+otto-view-columns-symbolic  columns-3
+otto-view-photos-symbolic   gallery-wide
+
+# Settings sidebar panes
+otto-pane-person-symbolic       user-rounded
+otto-pane-settings-symbolic     settings
+otto-pane-appearance-symbolic   palette
+otto-pane-monitor-symbolic      monitor
+otto-pane-dock-symbolic         panel-bottom
+otto-pane-top-bar-symbolic      panel-top
+otto-pane-tiling-symbolic       grid-2x2
+otto-pane-keyboard-symbolic     keyboard
+otto-pane-pointer-symbolic      cursor
+otto-pane-sound-symbolic        volume-loud
+otto-pane-microphone-symbolic   microphone
+otto-pane-battery-symbolic      battery-full
+otto-pane-lock-symbolic         lock
+otto-pane-search-symbolic       magnifier
+otto-pane-agent-symbolic        chat-round-dots
+otto-pane-hand-symbolic         shield-keyhole
+otto-pane-about-symbolic        info-circle

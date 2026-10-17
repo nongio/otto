@@ -274,7 +274,6 @@ impl<BackendData: Backend> Otto<BackendData> {
     /// rectangle and an arbitrary set of tiled edges. It is duplicated rather
     /// than shared because `apply_tile` is keyed off `TileZone`;
     /// TODO: unify the two once the half-snap path is folded into the tree.
-    #[allow(clippy::too_many_arguments)]
     fn apply_tiled_rect(
         &mut self,
         window: &WindowElement,

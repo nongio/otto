@@ -6,10 +6,14 @@ display", and where you would hook into that.
 Files to follow along with:
 
 - `src/render.rs` builds the element list for each output
-- `src/skia_renderer.rs` is the Skia wrapper over Smithay's GL renderer
-- `src/render_elements/scene_element.rs` draws the scene graph
+- `crates/otto-render/src/skia_renderer.rs` is the Skia wrapper over Smithay's GL renderer
+- `crates/otto-render/src/render_elements/scene_element.rs` draws the scene graph
 - `src/udev/render.rs` is the DRM frame path (the real one)
 - `src/winit.rs` is the windowed dev path
+
+The renderer and the render elements are the `otto-render` crate
+(`crates/otto-render/`). The compositor re-exports its modules under their old
+paths, so code in `src/` still says `crate::skia_renderer::SkiaRenderer`.
 
 ## The mental model
 
@@ -155,6 +159,58 @@ It is applied wherever a physical box is handed to a layer:
 
 As with positions, an integer scale never leaves the grid and every one of
 these is a no-op there.
+
+## The wallpaper
+
+The wallpaper follows the same rule as a client's buffer, more strictly: it is
+never resampled per frame. `otto_kit::wallpaper` renders it once per output
+into a *frame* exactly the output's size, and `BackgroundView` draws that frame
+1:1. The contract is [specs/wallpaper.md](../../specs/wallpaper.md).
+
+- **Why 1:1.** A wallpaper scaled in the shader puts pixel centres between
+  texels. Where one lands exactly on a texel boundary — a 16:9 photo centred
+  on a 21:9 screen sits at y = -247.5, which is every row — nearest sampling
+  picks a side by the last bit of the interpolated coordinate. A repaint
+  cropped to a damage rect rasterises different triangles from the whole
+  paint and rounds the other way: the shimmer along a diagonal from a dragged
+  window in nongio/otto#361.
+- **The frame.** `render_frame` lays the image out (`arrange`: the mode,
+  `object-position`, zoom, the span's place on the desktop), snaps the visible
+  edges to whole pixels, and resamples exactly the image region inside them
+  with `otto_kit::utils::resample`: a separable kernel that widens with the
+  ratio (Lanczos-3 shrinking, Mitchell growing), on linear premultiplied
+  light. An axis drawn 1:1 is moved onto a whole pixel and copied, not
+  resampled at a half-pixel phase: Mitchell does not interpolate, so that
+  would blur every pixel into its neighbour. A tile is resampled only as far
+  as the screen shows it. SVGs are drawn as vectors. The frame is opaque, the
+  fill colour behind the image.
+- **The draw.** `otto_kit::wallpaper::paint` samples bilinear with mipmaps
+  and clamps. At the 1:1 whole-pixel placement bilinear reads exactly one
+  texel per pixel; the mipmaps are for the same recorded picture replayed
+  small, as the exposé backdrop and the workspace previews. `Placement` keeps
+  every offset whole, so a frame drawn on a layer of another size (between a
+  mode change and its new frame) still never sits on a half pixel.
+- **The store.** `workspaces::background::store` keys frames by file version,
+  output size and style; one frame serves every workspace of that key. On the
+  compositor's thread a file is only stat'ed and its first bytes checked
+  (`wallpaper::probe`), so a bad path is reported straight away; reading,
+  decoding and resampling happen on a worker thread below the compositor's
+  priority, and the frame comes back through a calloop channel, which asks
+  for a redraw. Only a failure of the global image refuses a setting; an
+  output's or a workspace's own failing image is logged and shows the
+  gradient.
+- **Other clients.** The lock screen and the greeter draw the wallpaper
+  themselves, through `paint_layout`: the same layout, sampled at draw time.
+
+The tests that hold this: `otto_kit::wallpaper`'s tests check that a frame is
+the screen's size in every mode, that 1:1 placements (an odd size difference
+in centre, the #361 sizes in fill) copy pixels exactly, that `cover` never
+leaves a half-pixel offset, and that a cropped paint equals a whole one;
+`utils::resample`'s check aliasing, linear light and sharpness against Skia's
+single-pass cubic; `tests/wallpaper.rs` checks the screen against the frame
+pixel for pixel and a cropped repaint against a whole one. The Vulkan tests in
+`crates/otto-render` (`vulkan_wallpaper_*`, ignored) do the cropped-repaint
+check on a GPU, and report what the old half-pixel nearest path did there.
 
 ## Getting frames out
 

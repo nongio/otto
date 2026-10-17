@@ -232,6 +232,12 @@ impl HeadlessHandle {
         }
     }
 
+    /// Whether the compositor is still running: false once something inside
+    /// it (a logout, the `exit` command) has ended the session.
+    pub fn is_running(&self) -> bool {
+        self.running.load(Ordering::SeqCst)
+    }
+
     /// Stop the compositor and join the background thread.
     pub fn stop(mut self) {
         self.running.store(false, Ordering::SeqCst);
@@ -391,6 +397,37 @@ impl HeadlessHandle {
         });
     }
 
+    /// The wallpaper frame the background of workspace `position` on the
+    /// first output shows, or `None` while it shows the gradient or waits
+    /// for one.
+    pub fn background_frame(&self, position: usize) -> Option<layers::skia::Image> {
+        self.query(move |state| {
+            let ows = state.workspaces.output_workspaces.values().next()?;
+            match ows.workspace_views.get(position)?.background_view.content() {
+                crate::workspaces::BackgroundContent::Frame(frame) => Some(frame),
+                _ => None,
+            }
+        })
+    }
+
+    /// The configured `background_image`.
+    pub fn background_image_setting(&self) -> String {
+        crate::config::Config::with(|c| c.background_image.clone())
+    }
+
+    /// Output `name`'s wallpaper override as `(image, mode, color)`, if it
+    /// has one.
+    pub fn output_background_override(
+        &self,
+        name: &str,
+    ) -> Option<(Option<String>, Option<String>, Option<String>)> {
+        crate::config::Config::with(|c| {
+            c.background_outputs
+                .get(name)
+                .map(|o| (o.image.clone(), o.mode.clone(), o.color.clone()))
+        })
+    }
+
     /// Toggle expose mode on/off.
     pub fn toggle_expose(&self) {
         self.with_state(|state| {
@@ -501,7 +538,8 @@ impl HeadlessHandle {
     /// that wakes on a wall-clock timer, so a window mapped just before this
     /// call reaches their scene up to half a second later. The scene is not
     /// at rest while either still owes a redraw; those frames wait a little
-    /// real time for the task to run.
+    /// real time for the task to run. A wallpaper still rendering on its
+    /// thread holds the scene off rest the same way.
     pub fn settle(&self, max_frames: usize) -> usize {
         const DT: f32 = 1.0 / 60.0;
         let mut frames_with_damage = 0;
@@ -514,7 +552,8 @@ impl HeadlessHandle {
                     has_damage,
                     state.layers_engine.pending_transactions_count() > 0,
                     workspaces.dock.model_feed.is_behind()
-                        || workspaces.app_switcher.model_feed.is_behind(),
+                        || workspaces.app_switcher.model_feed.is_behind()
+                        || workspaces.wallpapers_pending(),
                 )
             });
             if has_damage {
@@ -1876,8 +1915,11 @@ impl HeadlessHandle {
 
     /// Frame-callback throttle state of every mapped window, keyed by title.
     ///
-    /// Classified exactly as the udev render loop does, screencast streams
-    /// included — a captured window is `Captured` no matter what covers it.
+    /// Classified with the same window rules as the udev render loop,
+    /// screencast streams included — a captured window is `Captured` no
+    /// matter what covers it. Unlike `FramePacing::classify`, there is no
+    /// occlusion pass (no window is ever `Occluded` here) and only an open
+    /// expose, not a transition or show-desktop, counts as expose.
     pub fn window_throttle_states(
         &self,
     ) -> std::collections::HashMap<String, crate::state::window_throttle::WindowThrottleState> {
@@ -1895,10 +1937,8 @@ impl HeadlessHandle {
             let windows: Vec<crate::shell::WindowElement> =
                 state.workspaces.spaces_elements().cloned().collect();
             let refs: Vec<&crate::shell::WindowElement> = windows.iter().collect();
-            #[allow(clippy::mutable_key_type)] // ObjectId as key — see window_throttle.rs
             let interacting_ids =
                 crate::state::window_throttle::interacting_ids(&state.pointer_interaction);
-            #[allow(clippy::mutable_key_type)] // ObjectId as key — see window_throttle.rs
             let states = crate::state::window_throttle::classify_windows(
                 &state.workspaces,
                 &refs,
@@ -1981,7 +2021,15 @@ impl Otto<HeadlessData> {
         };
 
         // BTN_LEFT = 0x110
-        if refocus && !self.workspaces.get_show_all() && pressed {
+        let canvas = self.canvas_pointer_button(0x110, pressed);
+        if canvas == crate::otto_canvas::CanvasButton::Consumed {
+            return;
+        }
+        if refocus
+            && canvas != crate::otto_canvas::CanvasButton::Item
+            && !self.workspaces.get_show_all()
+            && pressed
+        {
             self.focus_window_under_cursor(serial, crate::input::pointer::RaiseTiming::Release);
         }
         if !pressed {
@@ -2190,6 +2238,9 @@ fn send_frames(state: &mut Otto<HeadlessData>) {
                 Some(output.clone())
             });
         }
+        // The canvas items, while the canvas is on this output; this also
+        // finishes a slide out that has reached its end.
+        state.canvas_frame_presented(&output);
     }
 }
 

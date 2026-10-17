@@ -1,0 +1,897 @@
+//! The chat beside the document: ask an agent about the file and watch the
+//! answer come in next to it. Plan 0016, milestone 3.
+//!
+//! The conversation and its log are otto-agents-kit's, the same the launcher
+//! hosts: [`Ask`] talks to otto-agents and [`ChatView`] lays out and paints
+//! the log. This is only the panel around them: where the log, the answers
+//! and the field sit, a scroll for the log, and which keys and presses go
+//! where. The file goes with the first message as its subject, unlisted
+//! since it is open beside the chat, so the session that
+//! starts with it is about the file. Opening the panel connects in the
+//! background; nothing reaches an agent until something is sent.
+
+// Rust guideline compliant 2026-02-21
+
+use std::os::fd::RawFd;
+use std::path::PathBuf;
+
+use otto_agents_kit::chat::Ask;
+use otto_agents_kit::dictation::{DictationKey, FieldDictation, Followed};
+use otto_agents_kit::keys::{self, FieldEdit};
+use otto_agents_kit::log::paint::INSET;
+use otto_agents_kit::log::{ChatView, Key as ChatKey, Keyed, Pressed, Released};
+use otto_kit::components::scroll::{ScrollContent, ScrollView};
+use otto_kit::components::text_input::{TextInput, TextInputStyle};
+use otto_kit::prelude::*;
+use otto_kit::skia::{paint::Style as PaintStyle, Contains, Point, RRect};
+use otto_kit::CursorShape;
+use smithay_client_toolkit::seat::keyboard::{KeyEvent, Keysym};
+
+/// The panel's width, in points.
+pub const WIDTH: f32 = 360.0;
+/// The narrowest the panel is dragged to.
+pub const MIN_WIDTH: f32 = 280.0;
+/// The widest, however wide the window.
+pub const MAX_WIDTH: f32 = 720.0;
+/// The least of the document left beside a widened panel.
+pub const MIN_DOCUMENT: f32 = 240.0;
+
+/// The width the panel was last dragged to, for windows opened after.
+static LAST_WIDTH: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// The width a new window's panel opens at: the last one dragged, else the
+/// default.
+pub fn remembered_width() -> f32 {
+    match f32::from_bits(LAST_WIDTH.load(std::sync::atomic::Ordering::Relaxed)) {
+        width if width >= MIN_WIDTH => width,
+        _ => WIDTH,
+    }
+}
+
+pub fn remember_width(width: f32) {
+    LAST_WIDTH.store(width.to_bits(), std::sync::atomic::Ordering::Relaxed);
+}
+/// The field's height.
+const FIELD_H: f32 = 34.0;
+/// Around the field and the answers.
+const PAD: f32 = 10.0;
+/// Above the log, under the toolbar.
+const LOG_TOP: f32 = 16.0;
+/// One answer to a question.
+const ROW_H: f32 = 30.0;
+/// The band over the field saying which marks go with the next message.
+const NOTE_H: f32 = 22.0;
+/// The line saying the agents can't be reached, under the log.
+const UNREACHABLE_H: f32 = 36.0;
+/// The agent sessions started here run, as the footer names it.
+const AGENT_TITLE: &str = "Studio";
+/// The client name otto-agents shows for sessions started here.
+const CLIENT: &str = "otto-preview";
+
+/// The chat panel's state.
+pub struct Chat {
+    /// The file the chat is about, sent with the first message.
+    path: PathBuf,
+    /// Made when the panel first opens, and kept while the window lives, so
+    /// closing the panel keeps the conversation.
+    ask: Option<Ask>,
+    view: ChatView,
+    field: TextInput,
+    /// Speech going into the field, from Ctrl+D until its last words are
+    /// typed.
+    dictation: FieldDictation,
+    /// Whether keys go to the field rather than the document.
+    pub focused: bool,
+    /// The log's scroll: momentum, the rubber band at the ends and the bar,
+    /// as in the launcher and the canvas.
+    scroll: ScrollView,
+    /// Whether the log keeps its last line in view as the answer grows.
+    follow: bool,
+    /// The answer highlighted while a question waits.
+    selected: usize,
+    /// The answer pressed, until the release says whether it was a click.
+    pressed_answer: Option<usize>,
+    /// The log's height when last drawn, for paging and following.
+    log_h: f32,
+    /// The panel's width when last drawn; the log is laid out for it.
+    width: f32,
+    /// The numbers of the marks that go with the next message, shown over
+    /// the field. Set by the window before each paint.
+    pub pending_marks: Vec<u32>,
+    /// The marks as last kept with the session, to tell when they changed.
+    kept_marks: Option<Vec<crate::marks::Mark>>,
+    /// An agent session to carry on when the chat connects, rather than
+    /// starting one: picked from a list, which sent it here.
+    resume: Option<String>,
+}
+
+/// Where the panel's parts sit, for one panel box.
+struct Layout {
+    log: Rect,
+    answers: Rect,
+    field: Rect,
+}
+
+impl Layout {
+    /// `note` is whether the band saying which marks go with the next
+    /// message is shown, over the field and under the log.
+    fn new(panel: Rect, answers: usize, note: bool) -> Self {
+        let field = Rect::from_ltrb(
+            panel.left + PAD,
+            panel.bottom - PAD - FIELD_H,
+            panel.right - PAD,
+            panel.bottom - PAD,
+        );
+        let rows_h = answers as f32 * ROW_H;
+        let gap = if answers > 0 { PAD } else { 0.0 };
+        let above = field.top - PAD - if note { NOTE_H } else { 0.0 };
+        let answers = Rect::from_ltrb(
+            panel.left + PAD,
+            above - rows_h - gap,
+            panel.right - PAD,
+            above,
+        );
+        let log = Rect::from_ltrb(
+            panel.left + 1.0,
+            panel.top + LOG_TOP,
+            panel.right,
+            answers.top,
+        );
+        Self {
+            log,
+            answers,
+            field,
+        }
+    }
+
+    fn answer_at(&self, at: Point, count: usize) -> Option<usize> {
+        if !self.answers.contains(at) {
+            return None;
+        }
+        let index = ((at.y - self.answers.top - PAD) / ROW_H).floor();
+        (index >= 0.0 && (index as usize) < count).then_some(index as usize)
+    }
+}
+
+impl Chat {
+    pub fn new(path: PathBuf, dark: bool) -> Self {
+        let name = path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        // Sized from the start: a field with no box scrolls what is typed out
+        // of its own zero-width clip and draws nothing.
+        let mut field =
+            TextInput::editing("", field_style(dark)).with_size(WIDTH - 2.0 * PAD, FIELD_H);
+        field.state.placeholder = otto_kit::t_owned!("preview-chat-placeholder", name = name);
+        Self {
+            path,
+            ask: None,
+            view: ChatView::new(dark),
+            field,
+            dictation: FieldDictation::default(),
+            focused: false,
+            scroll: ScrollView::new(Rect::from_wh(0.0, 0.0)),
+            follow: true,
+            selected: 0,
+            pressed_answer: None,
+            log_h: 0.0,
+            kept_marks: None,
+            width: WIDTH,
+            pending_marks: Vec::new(),
+            resume: None,
+        }
+    }
+
+    /// The panel is opening: connect, the first time, with the file ready
+    /// to go with the first message.
+    pub fn opened(&mut self) {
+        self.focused = true;
+        // Connect the first time, and again when the service couldn't be
+        // reached before anything was asked: it may be up now.
+        let stale = self
+            .ask
+            .as_ref()
+            .is_some_and(|ask| ask.unreachable().is_some() && !ask.running());
+        if self.ask.is_none() || stale {
+            let mut ask = Ask::open(CLIENT);
+            ask.set_agent_title(AGENT_TITLE);
+            match self.resume.take() {
+                // The session already has its meta, its tools and the file.
+                Some(session) => ask.resume(&session),
+                None => {
+                    ask.set_subject([self.path.clone()]);
+                    ask.set_session_meta(session_meta(&self.path));
+                }
+            }
+            self.ask = Some(ask);
+            self.relayout();
+        }
+    }
+
+    /// Carry on agent session `session` when the chat connects. A chat
+    /// already connected keeps its own conversation.
+    pub fn carry_on(&mut self, session: String) {
+        if self.ask.is_none() {
+            self.resume = Some(session);
+        }
+    }
+
+    pub fn set_dark(&mut self, dark: bool) {
+        let placeholder = std::mem::take(&mut self.field.state.placeholder);
+        self.field.style = field_style(dark);
+        self.field.state.placeholder = placeholder;
+        self.view.set_dark(dark);
+        self.relayout();
+    }
+
+    /// The descriptor that wakes the loop when the service has news.
+    pub fn poll_fd(&self) -> Option<RawFd> {
+        self.ask.as_ref().map(Ask::poll_fd)
+    }
+
+    /// The descriptor that wakes the loop when the dictation has words.
+    pub fn dictation_fd(&self) -> Option<RawFd> {
+        self.dictation.poll_fd()
+    }
+
+    /// Whether a dictation is running, which moves its equaliser every
+    /// frame.
+    pub fn dictating(&self) -> bool {
+        self.dictation.is_running()
+    }
+
+    /// Type in what the dictation heard and move its equaliser; `None` when
+    /// none runs. When [`Followed::send`] says Enter asked for it, the
+    /// window attaches the marks and calls [`Self::send_now`].
+    pub fn follow_dictation(&mut self) -> Option<Followed> {
+        self.dictation.follow(&mut self.field)
+    }
+
+    /// Take in what the service sent. Returns whether to repaint.
+    pub fn pump(&mut self) -> bool {
+        let changed = self.ask.as_mut().is_some_and(Ask::pump);
+        if changed {
+            self.relayout();
+            self.selected = self.selected.min(self.answers().len().saturating_sub(1));
+        }
+        changed
+    }
+
+    /// Keep the caret blinking. Returns whether it flipped.
+    pub fn tick(&mut self, delta: f32) -> bool {
+        let mut repaint = false;
+        if self.scroll.is_animating() && self.scroll.tick() {
+            self.update_follow();
+            repaint = true;
+        }
+        if !self.focused {
+            // The keyboard went back to the document: the last words still
+            // come in, and nothing is sent.
+            self.dictation.stop();
+            return repaint;
+        }
+        let shown = self.field.caret_visible();
+        self.field.tick(delta);
+        repaint | (shown != self.field.caret_visible())
+    }
+
+    fn relayout(&mut self) {
+        if let Some(ask) = &self.ask {
+            self.view.lay_out(ask, self.width - 2.0 * INSET);
+        }
+        self.scroll.set_content_length(self.view.length());
+        self.keep_following();
+    }
+
+    fn max_scroll(&self) -> f32 {
+        (self.view.length() - self.log_h).max(0.0)
+    }
+
+    /// Keep the last line in view while following, unless the log is being
+    /// pulled past its end, which springs back by itself.
+    fn keep_following(&mut self) {
+        let max = self.max_scroll();
+        if self.follow && self.scroll.offset() < max {
+            self.scroll.scroll_to(max);
+        }
+    }
+
+    /// Following resumes when the log is scrolled back to its end.
+    fn update_follow(&mut self) {
+        self.follow = self.scroll.offset() >= self.max_scroll() - 1.0;
+    }
+
+    fn scroll_by(&mut self, dy: f32) -> bool {
+        let moved = self.scroll.scroll_to(self.scroll.offset() + dy);
+        self.update_follow();
+        moved
+    }
+
+    /// Whether the log's scroll is still moving or its bar fading, so the
+    /// window keeps ticking.
+    pub fn scrolling(&self) -> bool {
+        self.scroll.is_animating()
+    }
+
+    /// The answers a waiting question or input request offers, in order.
+    fn answers(&self) -> Vec<String> {
+        let Some(ask) = &self.ask else {
+            return Vec::new();
+        };
+        if let Some(question) = ask.question() {
+            return question.choices.iter().map(|c| c.label.clone()).collect();
+        }
+        if ask.input().is_some() {
+            return ask.input_rows(0).into_iter().map(|row| row.title).collect();
+        }
+        Vec::new()
+    }
+
+    /// Give answer `index` to whatever is waiting.
+    fn answer(&mut self, index: usize) {
+        let Some(ask) = &mut self.ask else {
+            return;
+        };
+        if ask.question().is_some() {
+            ask.answer(index);
+        } else if ask.input().is_some() {
+            let typed = self.field.value().to_string();
+            if ask.choose_input(index, &typed).took_text {
+                self.field.set_value("");
+            }
+        }
+        self.selected = 0;
+        self.follow = true;
+        self.relayout();
+    }
+
+    /// Send what is in the field.
+    pub fn send_now(&mut self) {
+        self.send();
+    }
+
+    /// Send what is in the field.
+    fn send(&mut self) {
+        let prompt = self.field.value().trim().to_string();
+        let Some(ask) = &mut self.ask else {
+            return;
+        };
+        if prompt.is_empty() {
+            return;
+        }
+        if ask.input().is_some() && ask.input_takes_text() {
+            if ask.answer_input(&prompt).took_text {
+                self.field.set_value("");
+            }
+        } else {
+            ask.send(&prompt, None);
+            self.field.set_value("");
+        }
+        self.follow = true;
+        self.relayout();
+    }
+
+    /// Whether `event` sends what is in the field as a new message: Return
+    /// with text, while no question waits.
+    pub fn sends(&self, event: &KeyEvent) -> bool {
+        // Enter during a dictation sends once the last words are in, which
+        // [`Self::follow_dictation`] tells.
+        matches!(event.keysym, Keysym::Return | Keysym::KP_Enter)
+            && !self.dictation.is_running()
+            && !self.field.value().trim().is_empty()
+            && self.answers().is_empty()
+    }
+
+    /// Send `files` with the next message without listing them: the marks
+    /// drawn on the document.
+    pub fn attach_unlisted(&mut self, files: Vec<PathBuf>) {
+        if let Some(ask) = &mut self.ask {
+            ask.attach_unlisted(files);
+        }
+    }
+
+    /// A key while the panel has the keyboard. Returns whether to repaint;
+    /// Escape gives the keyboard back to the document.
+    pub fn key(&mut self, event: &KeyEvent, modifiers: Modifiers, serial: u32) -> bool {
+        let control = keys::control_char(event);
+        // While it runs, the dictation takes every key. A request to an
+        // agent is free speech, so it expects no names.
+        match self
+            .dictation
+            .key(event.keysym, control, &mut self.field, || None)
+        {
+            DictationKey::Ignored => {}
+            DictationKey::Taken | DictationKey::Cancelled => return true,
+        }
+        let answers = self.answers();
+        let field_selected = self.field.state.has_selection();
+        if let Some(ask) = &mut self.ask {
+            if ask.running() {
+                let key = ChatKey {
+                    keysym: event.keysym,
+                    shift: modifiers.shift,
+                    stop: modifiers.ctrl && event.keysym == Keysym::c,
+                    answering: !answers.is_empty(),
+                    field_selected,
+                    page: self.log_h,
+                };
+                match self.view.key(ask, key) {
+                    Some(Keyed::Scroll(dy)) => return self.scroll_by(dy),
+                    Some(Keyed::Done) => {
+                        self.relayout();
+                        return true;
+                    }
+                    None => {}
+                }
+            }
+        }
+        match event.keysym {
+            Keysym::Up if !answers.is_empty() => {
+                self.selected = self.selected.saturating_sub(1);
+                return true;
+            }
+            Keysym::Down if !answers.is_empty() => {
+                self.selected = (self.selected + 1).min(answers.len() - 1);
+                return true;
+            }
+            Keysym::Return | Keysym::KP_Enter
+                if !answers.is_empty()
+                    && !self.ask.as_ref().is_some_and(|ask| {
+                        ask.input_takes_text() && !self.field.value().is_empty()
+                    }) =>
+            {
+                self.answer(self.selected);
+                return true;
+            }
+            _ => {}
+        }
+        match keys::edit_field(&mut self.field, event, control, modifiers.shift, serial) {
+            FieldEdit::Commit => {
+                self.send();
+                true
+            }
+            FieldEdit::Cancel => {
+                self.focused = false;
+                true
+            }
+            FieldEdit::Changed | FieldEdit::Moved => true,
+            FieldEdit::None => false,
+        }
+    }
+
+    /// The pointer moved over the panel, or left it (`None`).
+    pub fn motion(&mut self, panel: Rect, at: Option<Point>) -> (bool, CursorShape) {
+        let layout = Layout::new(panel, self.answers().len(), self.noting());
+        if let Some(at) = at {
+            if self.scroll.on_pointer_drag(at.x, at.y) {
+                self.update_follow();
+                return (true, CursorShape::Default);
+            }
+        }
+        let bar = at.is_some_and(|at| self.scroll.on_pointer_move(at.x, at.y));
+        if self.view.is_selecting() {
+            if let Some(at) = at {
+                let point = self.log_point_clamped(&layout, at);
+                return (self.view.drag_to(point), CursorShape::Text);
+            }
+        }
+        let point = at.and_then(|at| self.log_point(&layout, at));
+        let repaint = self.view.hover(point) | bar;
+        let cursor = match at {
+            Some(at) if layout.field.contains(at) => CursorShape::Text,
+            Some(_) if point.is_some() => self.view.cursor(point),
+            _ => CursorShape::Default,
+        };
+        (repaint, cursor)
+    }
+
+    pub fn leave(&mut self) -> bool {
+        self.scroll.on_pointer_leave();
+        self.view.leave()
+    }
+
+    /// A press on the panel: it takes the keyboard.
+    pub fn press(&mut self, panel: Rect, at: Point, time: u32, serial: u32) -> bool {
+        self.focused = true;
+        let answers = self.answers().len();
+        let layout = Layout::new(panel, answers, self.noting());
+        if let Some(index) = layout.answer_at(at, answers) {
+            self.selected = index;
+            self.pressed_answer = Some(index);
+            return true;
+        }
+        if self.scroll.on_pointer_down(at.x, at.y) {
+            return true;
+        }
+        let point = self.log_point(&layout, at);
+        if (point.is_some() || self.view.has_selection())
+            && self.view.press(point, (at.x, at.y), time, serial) == Pressed::Toggled
+        {
+            self.relayout();
+        }
+        true
+    }
+
+    pub fn release(&mut self, panel: Rect, at: Point) -> bool {
+        self.scroll.on_pointer_up();
+        let answers = self.answers().len();
+        let layout = Layout::new(panel, answers, self.noting());
+        if let Some(index) = self.pressed_answer.take() {
+            if layout.answer_at(at, answers) == Some(index) {
+                self.answer(index);
+            }
+            return true;
+        }
+        let point = self.log_point(&layout, at);
+        match self.view.release(point, (at.x, at.y)) {
+            Released::Attachment(hit) => {
+                if let Some(ask) = &mut self.ask {
+                    if hit.remove {
+                        ask.remove_attachment(hit.item);
+                    } else {
+                        ask.toggle_attachment(hit.item);
+                    }
+                }
+                self.relayout();
+                true
+            }
+            Released::Taken => true,
+            Released::Missed => false,
+        }
+    }
+
+    /// Keep `marks` with the agent session when they changed since they were
+    /// last kept, so opening the session again shows them. Nothing before
+    /// the chat has been opened: there is no session to keep them with.
+    pub fn keep_marks(&mut self, marks: &crate::marks::Marks) {
+        let Some(ask) = &mut self.ask else {
+            return;
+        };
+        if self.kept_marks.as_ref() == Some(&marks.list) {
+            return;
+        }
+        // Nothing drawn and nothing kept yet: nothing to say.
+        if self.kept_marks.is_none() && marks.list.is_empty() {
+            return;
+        }
+        ask.save_marks(marks.kept());
+        self.kept_marks = Some(marks.list.clone());
+    }
+
+    /// The marks a session carried on here had kept, once.
+    pub fn restored_marks(&mut self) -> Option<serde_json::Value> {
+        let marks = self.ask.as_mut()?.restored_marks()?;
+        Some(marks)
+    }
+
+    /// Take the marks just restored as the ones kept already.
+    pub fn marks_restored(&mut self, marks: &crate::marks::Marks) {
+        self.kept_marks = Some(marks.list.clone());
+    }
+
+    /// A wheel or two-finger scroll over the panel; `stop` is the fingers
+    /// lifting, which lets the log coast.
+    pub fn wheel(&mut self, dy: f32, discrete: bool, stop: bool) -> bool {
+        let moved = if stop {
+            self.scroll.on_wheel_end();
+            true
+        } else if discrete {
+            self.scroll.on_wheel_discrete(dy)
+        } else {
+            self.scroll.on_wheel(dy)
+        };
+        self.update_follow();
+        moved
+    }
+
+    /// Copy the log's selection, for Ctrl+C with the document focused.
+    pub fn copy(&self, serial: u32) -> bool {
+        self.view.copy(serial)
+    }
+
+    fn log_point(&self, layout: &Layout, at: Point) -> Option<(f32, f32)> {
+        layout.log.contains(at).then_some((
+            at.x - layout.log.left,
+            at.y - layout.log.top + self.scroll.offset(),
+        ))
+    }
+
+    fn log_point_clamped(&self, layout: &Layout, at: Point) -> (f32, f32) {
+        let x = at.x.clamp(layout.log.left, layout.log.right);
+        let y = at.y.clamp(layout.log.top, layout.log.bottom);
+        (
+            x - layout.log.left,
+            y - layout.log.top + self.scroll.offset(),
+        )
+    }
+
+    /// Whether the band over the field says which marks go with the next
+    /// message.
+    fn noting(&self) -> bool {
+        !self.pending_marks.is_empty()
+    }
+
+    /// Paint the panel into `panel`.
+    pub fn draw(&mut self, canvas: &Canvas, panel: Rect, theme: &Theme) {
+        if panel.width() != self.width {
+            self.width = panel.width();
+            self.relayout();
+        }
+        let answers = self.answers();
+        let layout = Layout::new(panel, answers.len(), self.noting());
+
+        let mut paint = Paint::default();
+        paint.set_anti_alias(true);
+        paint.set_color(theme.fill_tertiary);
+        canvas.draw_rect(
+            Rect::from_ltrb(panel.left, panel.top, panel.left + 1.0, panel.bottom),
+            &paint,
+        );
+
+        // The log, scrolled, inside its box.
+        let unreachable = self.ask.as_ref().and_then(Ask::unreachable);
+        if self.view.is_empty() {
+            self.draw_empty(canvas, layout.log, theme);
+        } else {
+            // Why nothing will be answered, under the log and over the field,
+            // when the attachments waiting for a message already fill the log.
+            if let Some(reason) = unreachable {
+                Label::new(reason.to_string())
+                    .with_style(styles::FOOTNOTE)
+                    .with_color(theme.text_secondary)
+                    .with_width(layout.log.width() - 2.0 * INSET)
+                    .centered_on(
+                        layout.log.left + INSET,
+                        layout.log.bottom - UNREACHABLE_H / 2.0,
+                    )
+                    .render(canvas);
+            }
+            let mut log = layout.log;
+            if unreachable.is_some() {
+                log.bottom -= UNREACHABLE_H;
+            }
+            self.log_h = log.height();
+            self.scroll.set_viewport(log);
+            self.scroll.set_content_length(self.view.length());
+            self.keep_following();
+            let view = &self.view;
+            self.scroll.render(canvas, theme, |canvas, band| {
+                ScrollContent::paint(view, canvas, band)
+            });
+        }
+
+        for (index, label) in answers.iter().enumerate() {
+            let row = Rect::from_xywh(
+                layout.answers.left,
+                layout.answers.top + PAD + index as f32 * ROW_H,
+                layout.answers.width(),
+                ROW_H,
+            );
+            if index == self.selected {
+                paint.set_color(theme.fill_secondary);
+                canvas.draw_rrect(RRect::new_rect_xy(row, 6.0, 6.0), &paint);
+            }
+            Label::new(label.clone())
+                .with_style(styles::BODY)
+                .with_color(theme.text_primary)
+                .with_width(row.width() - 20.0)
+                .centered_on(row.left + 10.0, row.center_y())
+                .render(canvas);
+        }
+
+        if !self.pending_marks.is_empty() {
+            let numbers: Vec<String> = self.pending_marks.iter().map(u32::to_string).collect();
+            Label::new(otto_kit::t_owned!(
+                "preview-chat-marks",
+                count = self.pending_marks.len() as i64,
+                marks = numbers.join(", ")
+            ))
+            .with_style(styles::FOOTNOTE)
+            .with_color(theme.text_secondary)
+            .with_width(panel.width() - 2.0 * INSET)
+            .centered_on(
+                panel.left + INSET,
+                layout.field.top - PAD / 2.0 - NOTE_H / 2.0,
+            )
+            .render(canvas);
+        }
+        let field = RRect::new_rect_xy(layout.field, 8.0, 8.0);
+        paint.set_color(field_fill(theme));
+        canvas.draw_rrect(field, &paint);
+        paint.set_color(theme.hairline);
+        paint.set_style(PaintStyle::Stroke);
+        paint.set_stroke_width(1.0);
+        canvas.draw_rrect(field.with_inset((0.5, 0.5)), &paint);
+        paint.set_style(PaintStyle::Fill);
+        self.field.state.set_focused(self.focused);
+        if (self.field.width, self.field.height) != (layout.field.width(), layout.field.height()) {
+            self.field
+                .set_size(layout.field.width(), layout.field.height());
+        }
+        canvas.save();
+        canvas.translate((layout.field.left, layout.field.top));
+        self.field
+            .render_at(canvas, layout.field.width(), layout.field.height());
+        canvas.restore();
+    }
+
+    /// What the log shows before anything is asked: what the panel is for,
+    /// or why the agents can't be reached.
+    fn draw_empty(&self, canvas: &Canvas, log: Rect, theme: &Theme) {
+        let text = match self.ask.as_ref().and_then(Ask::unreachable) {
+            Some(reason) => reason.to_string(),
+            None => otto_kit::t_owned!("preview-chat-empty"),
+        };
+        Label::new(text)
+            .with_style(styles::SUBHEADLINE)
+            .with_color(theme.text_secondary)
+            .with_width(log.width() - 2.0 * INSET)
+            .with_align(otto_kit::TextAlign::Center)
+            .centered_on(log.left + INSET, log.center_y())
+            .render(canvas);
+    }
+}
+
+/// What a session started here is created with: that it belongs to Preview
+/// and is about the file, so the desktop opens it here again; what the agent
+/// is told about working beside the window; and the document tools, served by
+/// this same program in `--mcp` mode.
+pub fn session_meta(path: &std::path::Path) -> serde_json::Value {
+    let program =
+        std::env::current_exe().unwrap_or_else(|_| PathBuf::from("/usr/bin/otto-preview"));
+    serde_json::json!({
+        "otto": {
+            "app": CLIENT,
+            // The plugin agent for working on one file: Otto's desktop
+            // helper stays out of it.
+            "agent": "studio",
+            "subject": [otto_agents_client::uri::from_path(path)],
+            "instructions": crate::mcp::instructions(path),
+            "mcpServers": [{
+                "name": "preview",
+                "command": program,
+                "args": ["--mcp"],
+                "env": { crate::mcp::DOC_ENV: path },
+            }],
+        }
+    })
+}
+
+/// The field's fill: lighter than the panel it sits on, which is Preview's
+/// ground. White on a light ground, the ground lifted a step on a dark one.
+fn field_fill(theme: &Theme) -> Color {
+    let mut solid = theme.clone();
+    solid.with_solid_materials(theme.is_dark());
+    let ground = otto_kit::preview::background(&solid);
+    let lift = if theme.is_dark() { 0.08 } else { 1.0 };
+    let up = |c: u8| (f32::from(c) + (255.0 - f32::from(c)) * lift).round() as u8;
+    Color::from_rgb(up(ground.r()), up(ground.g()), up(ground.b()))
+}
+
+/// The field: a plain, rounded box, smaller than the launcher's.
+fn field_style(dark: bool) -> TextInputStyle {
+    let mut style = TextInputStyle::with_theme(if dark { Theme::dark() } else { Theme::light() });
+    style.background = Color::TRANSPARENT;
+    style.focus_ring_width = 0.0;
+    // Its text on the log's left edge and at the log's size, so the two read
+    // as one column.
+    style.horizontal_padding = INSET - PAD;
+    style.text_style = otto_agents_kit::log::body();
+    style
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Paint the panel for a live session into PNGs, light and dark, to look
+    /// at its typography: `OTTO_RENDER_SESSION=<session uri>` and optionally
+    /// `OTTO_RENDER_OUT=<dir>` and `OTTO_RENDER_WIDTH=<points>`, against a
+    /// running otto-agents.
+    #[test]
+    #[ignore = "needs a running otto-agents and OTTO_RENDER_SESSION"]
+    fn render_a_session() {
+        let session = std::env::var("OTTO_RENDER_SESSION").expect("OTTO_RENDER_SESSION");
+        let out = PathBuf::from(std::env::var("OTTO_RENDER_OUT").unwrap_or_else(|_| ".".into()));
+        let width: f32 = std::env::var("OTTO_RENDER_WIDTH")
+            .ok()
+            .and_then(|w| w.parse().ok())
+            .unwrap_or(WIDTH);
+        const SCALE: f32 = 2.0;
+        for dark in [false, true] {
+            let mut chat = Chat::new(PathBuf::from("/tmp/x.jpg"), dark);
+            chat.carry_on(session.clone());
+            chat.opened();
+            chat.focused = false;
+            // A mark waiting to go, so the note over the field shows.
+            chat.pending_marks = vec![2];
+            // Until the log stops growing for a while.
+            let mut last = (0.0, std::time::Instant::now());
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(90);
+            while std::time::Instant::now() < deadline {
+                chat.pump();
+                let length = chat.view.length();
+                if length != last.0 {
+                    last = (length, std::time::Instant::now());
+                } else if length > 0.0 && last.1.elapsed().as_millis() > 8000 {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(30));
+            }
+            let theme = if dark { Theme::dark() } else { Theme::light() };
+            let height = chat.view.length() + LOG_TOP + FIELD_H + 3.0 * PAD + 40.0;
+            let panel = Rect::from_wh(width, height);
+            let mut surface = otto_kit::skia::surfaces::raster_n32_premul((
+                (width * SCALE) as i32,
+                (height * SCALE) as i32,
+            ))
+            .expect("a raster surface");
+            let canvas = surface.canvas();
+            canvas.scale((SCALE, SCALE));
+            let mut solid = theme.clone();
+            solid.with_solid_materials(dark);
+            canvas.clear(otto_kit::preview::background(&solid));
+            chat.draw(canvas, panel, &theme);
+            // Laid out at this width now: once more, with the log in place.
+            canvas.clear(otto_kit::preview::background(&solid));
+            chat.draw(canvas, panel, &theme);
+            let png = surface
+                .image_snapshot()
+                .encode(None, otto_kit::skia::EncodedImageFormat::PNG, None)
+                .expect("a png");
+            let name = if dark {
+                "chat-dark.png"
+            } else {
+                "chat-light.png"
+            };
+            std::fs::write(out.join(name), png.as_bytes()).expect("written");
+        }
+    }
+
+    #[test]
+    fn a_session_is_made_for_the_file_with_the_document_tools() {
+        let meta = session_meta(std::path::Path::new("/home/me/photo 1.jpg"));
+        let otto = &meta["otto"];
+        assert_eq!(otto["app"], CLIENT);
+        assert_eq!(otto["subject"][0], "file:///home/me/photo%201.jpg");
+        assert!(otto["instructions"]
+            .as_str()
+            .unwrap()
+            .contains("/home/me/photo 1.jpg"));
+        let server = &otto["mcpServers"][0];
+        assert_eq!(server["args"][0], "--mcp");
+        assert_eq!(server["env"][crate::mcp::DOC_ENV], "/home/me/photo 1.jpg");
+        // otto-agents only runs Otto's own programs, by absolute path.
+        let command = std::path::PathBuf::from(server["command"].as_str().unwrap());
+        assert!(command.is_absolute());
+    }
+
+    const PANEL: Rect = Rect {
+        left: 600.0,
+        top: 80.0,
+        right: 960.0,
+        bottom: 720.0,
+    };
+
+    #[test]
+    fn the_field_sits_at_the_bottom_and_the_log_fills_the_rest() {
+        let layout = Layout::new(PANEL, 0, false);
+        assert_eq!(layout.field.bottom, PANEL.bottom - PAD);
+        assert_eq!(layout.field.height(), FIELD_H);
+        assert_eq!(layout.log.top, PANEL.top + LOG_TOP);
+        assert!(layout.log.bottom <= layout.field.top);
+    }
+
+    #[test]
+    fn answers_take_room_from_the_log_and_are_hit_by_row() {
+        let without = Layout::new(PANEL, 0, false);
+        let with = Layout::new(PANEL, 3, false);
+        assert!(with.log.height() < without.log.height());
+        let first = Point::new(with.answers.center_x(), with.answers.top + PAD + 1.0);
+        let last = Point::new(with.answers.center_x(), with.answers.bottom - 1.0);
+        assert_eq!(with.answer_at(first, 3), Some(0));
+        assert_eq!(with.answer_at(last, 3), Some(2));
+        assert_eq!(with.answer_at(Point::new(0.0, 0.0), 3), None);
+    }
+}

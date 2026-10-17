@@ -124,7 +124,7 @@ fn main() -> Result<()> {
             let motion = EventControllerMotion::new();
             let state = submenu_state.clone();
             motion.connect_enter(move |controller, _, _| {
-                if let Ok(row) = controller.widget().downcast::<ListBoxRow>() {
+                if let Some(Ok(row)) = controller.widget().map(|w| w.downcast::<ListBoxRow>()) {
                     state.borrow_mut().show_for_row(&row, i);
                 }
             });

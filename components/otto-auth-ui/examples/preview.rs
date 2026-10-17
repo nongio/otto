@@ -11,7 +11,7 @@
 //! Pass a wallpaper to see it frosted rather than the fallback gradient:
 //!
 //! ```sh
-//! OTTO_PANEL_WALLPAPER=resources/background.jpg \
+//! OTTO_PANEL_WALLPAPER=resources/wallpaper.jpg \
 //!     cargo run -p otto-auth-ui --example preview
 //! ```
 

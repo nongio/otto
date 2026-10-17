@@ -4,12 +4,11 @@
 //! interface, enabling screen sharing through the standard portal API.
 
 use anyhow::Result;
+use futures_util::StreamExt;
 use tokio::signal;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
-use zbus::export::futures_util::StreamExt;
 use zbus::fdo::{DBusProxy, RequestNameFlags, RequestNameReply};
-use zbus::ConnectionBuilder;
 
 use xdg_desktop_portal_otto::otto_client::OttoClient;
 use xdg_desktop_portal_otto::portal::{
@@ -24,7 +23,7 @@ const DBUS_NAME: &str = "org.freedesktop.impl.portal.desktop.otto";
 async fn main() -> Result<()> {
     init_tracing();
 
-    let connection = ConnectionBuilder::session()?.build().await?;
+    let connection = zbus::connection::Builder::session()?.build().await?;
 
     let sc_client = OttoClient::new(connection.clone()).await?;
     info!("Connected to D-Bus session bus");

@@ -1,4 +1,4 @@
-//! Scripted 3-finger swipe driver for testing (`/tmp/otto-gesture`).
+//! Scripted 3-finger swipe driver for testing (`$XDG_RUNTIME_DIR/otto-gesture`).
 //!
 //! A touchpad gesture cannot be synthesized through uinput the way a key press
 //! can, which leaves the expose and workspace-switch transitions untestable
@@ -19,15 +19,16 @@
 //! distance that opens expose fully; repeat a swipe by repeating the line.
 
 use std::collections::VecDeque;
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 
-/// Default script path. `OTTO_GESTURE_FILE` overrides it, so a nested test
-/// compositor can be driven without the udev session on the same machine
-/// picking the script up and swiping the user's real desktop.
-const DEFAULT_SCRIPT_PATH: &str = "/tmp/otto-gesture";
-
-fn script_path() -> String {
-    std::env::var("OTTO_GESTURE_FILE").unwrap_or_else(|_| DEFAULT_SCRIPT_PATH.to_string())
+/// Script path: `otto-gesture` in the runtime directory. `OTTO_GESTURE_FILE`
+/// overrides it, so a nested test compositor can be driven without the udev
+/// session on the same machine picking the script up and swiping the user's
+/// real desktop.
+fn script_path() -> Option<&'static str> {
+    static PATH: OnceLock<Option<String>> = OnceLock::new();
+    PATH.get_or_init(|| crate::debug_hooks::command_file_path("OTTO_GESTURE_FILE", "otto-gesture"))
+        .as_deref()
 }
 
 enum Step {
@@ -43,7 +44,7 @@ static QUEUE: Mutex<VecDeque<Step>> = Mutex::new(VecDeque::new());
 
 /// Parse the script file into `queue` and delete it, so one write runs once.
 fn load_script(queue: &mut VecDeque<Step>) {
-    let Some(text) = crate::debug_hooks::take_file(&script_path()) else {
+    let Some(text) = script_path().and_then(crate::debug_hooks::take_file) else {
         return;
     };
 

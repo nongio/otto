@@ -18,7 +18,8 @@ use wayland_protocols_wlr::foreign_toplevel::v1::client::{
     zwlr_foreign_toplevel_manager_v1::{self, ZwlrForeignToplevelManagerV1},
 };
 
-use crate::source::{Item, Origin, Source};
+use crate::source::Source;
+use otto_agents_kit::item::{Item, Origin};
 
 /// One window as the compositor describes it.
 ///
@@ -166,6 +167,7 @@ impl Source for Windows {
                     activity: None,
                     checked: None,
                     search_terms: vec![toplevel.app_id.clone()],
+                    pill: None,
                     origin: Origin {
                         source: self.index,
                         index,

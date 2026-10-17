@@ -30,10 +30,11 @@ Everything slower than the last row was one of the mistakes below.
 Each of these cost a measurable frame budget before it was found.
 
 1. **Scroll by moving, not painting.** Content lives in a *band*: a subsurface
-   taller (or wider) than the viewport, inside a *clip* subsurface that crops
-   it. A step of the scroll is `otto_surface_style_v1.set_position` on the
-   band: no paint, no buffer, no upload. The client paints a new band only
-   when the scroll nears its edge or the content changes.
+   taller (or wider) than the viewport, cropped to it with `wp_viewport`. A
+   step of the scroll is a new viewport source rect on the band: no paint, no
+   buffer, no upload. The client paints a new band only when the scroll nears
+   its edge or the content changes. It works the same on any compositor with
+   `wp_viewporter`; nothing in it needs Otto's surface style.
 2. **One step per presented frame.** A band move asks for a frame callback on
    the band and the next step waits for it. Stepping whenever the loop wakes
    produced ~360 commits a second of sub-pixel moves nobody saw.
@@ -41,8 +42,8 @@ Each of these cost a measurable frame budget before it was found.
    wake the loop; the pane moves itself. A single `request_frame()` from an
    input handler turns every scroll step back into a whole-window repaint.
 4. **Nothing on screen may change continuously by reallocating.** The
-   scrollbar thumb squashes during a bounce; it is stretched through its style
-   size, and painted again only when the stretch would show.
+   scrollbar thumb squashes during a bounce; it is stretched through its
+   viewport destination, and painted again only when the stretch would show.
 5. **Paint only what moves; let the window keep what does not.** The band is
    transparent: rows only. The ground under it, an active tint, an empty or
    loading message stay in the window, which does not repaint while scrolling.
@@ -61,8 +62,33 @@ Each of these cost a measurable frame budget before it was found.
 The compositor half of these is in Otto and lay-rs and needs nothing from
 applications: a subsurface that only moved is repositioned without repainting
 its layer; a window update does not re-attach (and repaint) the root surface;
-damage from a child moving inside a clip is cut to the clip; a kept blur is
-replayed rather than redone, and not under the opaque region.
+a kept blur is replayed rather than redone, and not under the opaque region.
+
+## Clipping is the client's
+
+No compositor clips a subsurface to its parent, and Otto's
+`set_clip_children` exists only on Otto, so the kit clips every surface it
+places itself (`components/scroll/crop.rs`). Each surface is cropped to the
+part of it its pane shows: a viewport source rect over its buffer, a
+destination the size of that part, and a `wl_subsurface` position where that
+part sits. A surface the pane does not reach at all is unmapped, since a
+viewport cannot be empty, and painted again when it comes back.
+
+- Positions and destinations are whole points; the fraction a scroll stands
+  at goes into the source rect, snapped to the output's pixel grid.
+- A crop is sent before the paint whose buffer it fits: a source rect
+  committed over a buffer it does not lie inside is a protocol error.
+- A position is the parent's state, so a move commits the parent.
+- Hiding unmaps. Opacity 0 leaves a surface on screen wherever the style
+  protocol is missing.
+- A pane nested in a container is not clipped by it: the host hands each
+  nested pane what the container shows (`ScrollPane::visible()` of the
+  container, or `ScrollSurfaces::shown_content()`) through `set_clip_rect`,
+  and a `Fill` or `PlacedSurface` riding in the container gets the same rect
+  through `set_window`.
+
+The surface style is left for what a crop cannot do: rounded corners,
+shadows, frost, output placement and compositor-run fades.
 
 ## The kit
 
@@ -142,7 +168,9 @@ otto-files' columns and palette list work this way.
 
 ### `Fill`: a flat rect that moves with a pane
 
-One pixel of colour, stretched and rounded by the compositor: what the
+One pixel of colour, stretched by its viewport and rounded by the compositor
+(where the surface style is missing, a rounded fill paints its shape at full
+size instead): what the
 highlight is made of, and what a host uses for anything flat that has to ride
 in a pane rather than be painted into one: the divider down a column's edge.
 Recolouring, moving or resizing it is a request, never a paint.
@@ -151,22 +179,23 @@ Recolouring, moving or resizing it is a request, never a paint.
 let mut divider = Fill::new(stack.band_surface())?;
 divider.set_style(theme.fill_tertiary, 0.0);
 divider.set_rect(Rect::from_xywh(column.right - 0.5, 0.0, 1.0, column.height()));
+divider.set_window(Some(shown));    // what of the stack is on screen
 ```
 
 ### `PlacedSurface`: a painted panel beside a pane
 
 A child surface the client places and sizes itself, painted only when what it
 shows changes: a status line over an empty column, a preview card, a palette
-dragged clear of its window. It keeps three rules so its host does not have
-to: a new size is claimed right behind the buffer that fits it (the style
-applies a size on arrival, so claiming ahead stretches the old pixels);
-geometry uses the output's fractional scale, snapped to whole pixels; and a
-hidden surface withdraws its input region, since an invisible surface still
-answers for the pointer over it.
+dragged clear of its window. It keeps two rules so its host does not have
+to: a move commits the parent, since a subsurface's position is the
+parent's state; and a hidden surface is unmapped, off the screen and out of
+the pointer's way, and painted again when it comes back. Until a resize is
+painted, the old buffer shows at its own size, never stretched.
 
 ```rust
 let mut card = PlacedSurface::new(parent, rect)?;
 card.set_rect(rect);                             // a resize waits for the paint
+card.set_window(Some(shown));                    // cropped to what shows
 match card.paint(key, |canvas| draw(canvas)) {   // in the surface's own points
     Paint::Unchanged | Paint::Painted => {}
     Paint::Held => keep_the_loop_turning(),      // last frame not shown yet
@@ -192,8 +221,9 @@ scroll views are not panes (see above).
 
 **Nesting.** A pane can be the parent of other panes: `ScrollPane::band_surface()`
 is a valid parent. A horizontal pane whose band holds vertical panes is a
-column stack: panning moves one band, and the columns ride inside it with no
-per-column work.
+column stack: panning moves one band, and the columns ride inside it. Each
+column crops itself to the container's `visible()` through `set_clip_rect`,
+which is the one per-column request a pan costs.
 
 ### `RowLayout` and `GridLayout`: closed-form geometry
 
@@ -252,8 +282,12 @@ fling, Otto passes in budget ≥ 80% at 120 Hz with frost on, client CPU under
   host hit-tests in its window's coordinates and converts with
   `parent_to_content`. One coordinate space for every application.
 - **A pane that only holds panes has no painted band.** Its band spans the
-  whole content with a transparent 1×1 buffer stretched through its style
-  size; panning it moves one surface and the panes inside keep fixed positions.
+  whole content with a transparent 1×1 buffer stretched by its viewport
+  destination; panning it moves one surface and the panes inside keep fixed
+  positions. It is never cropped, since a crop would move its origin.
+- **Clipping and placement never depend on the surface style.** The same
+  viewport crop runs on Otto and on every other compositor, so the path other
+  desktops take is the one used every day.
 
 ## Open questions
 

@@ -1,7 +1,8 @@
 # Appearance
 
 How the desktop looks: light or dark, the accent, the material behind Otto's
-own panels, the wallpaper, fonts, cursors, icons and the interface language.
+own panels, the wallpaper, the files and widget on the desktop, fonts,
+cursors, icons and the interface language.
 Everything here applies live except the four marked `restart`.
 
 ## Exact commands
@@ -35,6 +36,12 @@ busctl --user call org.otto.Settings /org/otto/Settings org.otto.Settings Set sv
 busctl --user call org.otto.Settings /org/otto/Settings org.otto.Settings Set sv cursor_size i 32
 busctl --user call org.otto.Settings /org/otto/Settings org.otto.Settings Set sv icon_theme s "Papirus"
 
+# Show the files of the Desktop folder on the desktop
+busctl --user call org.otto.Settings /org/otto/Settings org.otto.Settings Set sv desk.enabled b true
+
+# A full-screen widget over the wallpaper: "none", "calendar", "cross_pad", "grid_pad"
+busctl --user call org.otto.Settings /org/otto/Settings org.otto.Settings Set sv desktop.widget s "calendar"
+
 # Interface font, and language — both need a restart
 busctl --user call org.otto.Settings /org/otto/Settings org.otto.Settings Set sv font_family s "Cantarell"
 busctl --user call org.otto.Settings /org/otto/Settings org.otto.Settings Set sv locales as 1 "en-GB"
@@ -54,8 +61,10 @@ busctl --user call org.otto.Settings /org/otto/Settings org.otto.Settings Set sv
 | `show_maximize_button` | bool | live | `false` | `true`, `false` | `b true` | Show the zoom control in a window's titlebar. Off by default: a double click on the titlebar zooms a window either way. |
 | `background_image` | string | live | `""` (empty) | free text | `s "/home/you/Pictures/wallpaper.jpg"` | Path to the desktop background image. Empty for none. |
 | `background_color` | string | live | `#1a1a2e` | free text | `s "#101014"` | Desktop background colour, as a hex string. |
+| `desk.enabled` | bool | live | `false` | `true`, `false` | `b true` | The files in your Desktop folder, behind the windows. |
+| `desktop.widget` | enum | live | `none` | `none`, `calendar`, `cross_pad`, `grid_pad`, plus the theme's own windows | `s "calendar"` | A full-screen page drawn over the wallpaper, behind the windows. Needs ewwii. |
 | `font_family` | string | restart | `Inter` | free text | `s "Cantarell"` | Font family used by Otto's own interface. |
-| `cursor_theme` | string | live | `Notwaita-Black` | free text | `s "Adwaita"` | Name of the XCursor theme. |
+| `cursor_theme` | string | live | `Otto-MacTahoe` | free text | `s "Adwaita"` | Name of the XCursor theme. |
 | `cursor_size` | int | live | `24` | 16 – 96, step 8 | `i 32` | Cursor size in logical pixels. |
 | `icon_theme` | string | live | `""` (empty) | free text | `s "Papirus"` | Name of the icon theme. Empty auto-detects. |
 | `gtk_theme` | string | restart | `""` (empty) | free text | `s "Adwaita-dark"` | GTK theme name handed to clients. Empty auto-detects. |
@@ -84,6 +93,16 @@ busctl --user call org.otto.Settings /org/otto/Settings org.otto.Settings Set sv
   ~/.local/share/icons` lists what is installed. An empty `icon_theme`
   auto-detects; a name that is not there falls back to hicolor and looks
   broken rather than erroring.
+- **The desk** is `otto-files --desk`, which the compositor starts while
+  `desk.enabled` is on. Its folder, icon size, what happens when icons don't
+  fit, and where it sits are `[desk]` keys in `~/.config/otto/files.toml`
+  (`folder`, `icon_size`, `overflow = "scroll"` or `"stack"`, `anchor`,
+  `size`, `position`, `padding`, `sort`), followed live. Read the file first
+  and change only the keys asked for.
+- **`desktop.widget` needs ewwii** on `PATH`; without it nothing shows. A
+  window of the person's own copy of the widgets
+  (`~/.config/otto/widgets/ewwii`) can only be named in the config file, as
+  `widget` under `[desktop]`, and shows from the next login.
 - **`font_family` is Otto's own interface only** — dock labels, exposé titles,
   the app switcher. Applications keep their own fonts. It needs a restart.
 - **`gtk_theme` is handed to clients**, not used by Otto itself.
@@ -95,3 +114,4 @@ busctl --user call org.otto.Settings /org/otto/Settings org.otto.Settings Set sv
 
 - https://nongio.github.io/otto/theming/
 - https://nongio.github.io/otto/customization/
+- https://nongio.github.io/otto/desktop-widgets/

@@ -10,10 +10,14 @@ use skia_safe::{Canvas, Rect};
 ///
 /// # Examples
 ///
+/// `no_run`: [`Renderable::to_layer`] needs the app's layers engine, which
+/// only exists once an app is running.
+///
 /// ```no_run
 /// use otto_kit::common::Renderable;
 /// use skia_safe::Canvas;
 ///
+/// #[derive(Clone)]
 /// struct MyComponent {
 ///     text: String,
 /// }
@@ -24,13 +28,15 @@ use skia_safe::{Canvas, Rect};
 ///     }
 /// }
 ///
+/// # let mut surface = skia_safe::surfaces::raster_n32_premul((100, 50)).unwrap();
+/// # let canvas = surface.canvas();
 /// // Use it directly
 /// let component = MyComponent { text: "Hello".to_string() };
-/// component.render(&canvas);
+/// component.render(canvas);
 ///
 /// // Or as a trait object
-/// let renderable: Box<dyn Renderable> = Box::new(component);
-/// renderable.render(&canvas);
+/// let renderable: Box<dyn Renderable> = Box::new(component.clone());
+/// renderable.render(canvas);
 ///
 /// // Convert to a layer for scene graph rendering
 /// let layer = component.to_layer(100.0, 50.0);

@@ -9,13 +9,18 @@
 //! parent, and Otto floats it rather than tiling it (`specs/tiling.md`,
 //! *Floating within a tiling workspace*).
 //!
+//! The other way round, [`export`] names one of this process's windows so
+//! a dialog another process serves (the portal's file picker) can be its
+//! child: the handle goes out as the request's `parent_window`.
+//!
 //! The imported object has to outlive the call — destroying it unsets the
 //! parent again — so it is kept here for the life of the process. There is at
 //! most one parent per window, and a portal process opens few windows.
 
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use wayland_client::{protocol::wl_surface::WlSurface, Proxy};
+use wayland_protocols::xdg::foreign::zv2::client::zxdg_exported_v2::ZxdgExportedV2;
 use wayland_protocols::xdg::foreign::zv2::client::zxdg_imported_v2::ZxdgImportedV2;
 
 use crate::app_runner::AppContext;
@@ -56,4 +61,43 @@ pub(crate) fn forget_imported(object: &ZxdgImportedV2) {
     if let Ok(mut list) = imported().lock() {
         list.retain(|held| held.id() != object.id());
     }
+}
+
+/// Where an exported window's handle lands when the compositor sends it.
+pub type HandleSlot = Arc<Mutex<Option<String>>>;
+
+/// One of this process's windows, named for other processes. Dropping it
+/// withdraws the handle, so it is kept for as long as a dialog may use it.
+#[derive(Debug)]
+pub struct Exported {
+    object: ZxdgExportedV2,
+    slot: HandleSlot,
+}
+
+impl Exported {
+    /// The handle as a portal request's `parent_window` takes it,
+    /// `wayland:<handle>`; `None` until the compositor has answered, which
+    /// takes a turn of the event loop after [`export`].
+    pub fn parent_window(&self) -> Option<String> {
+        self.slot
+            .lock()
+            .ok()?
+            .as_ref()
+            .map(|handle| format!("{PREFIX}{handle}"))
+    }
+}
+
+impl Drop for Exported {
+    fn drop(&mut self) {
+        self.object.destroy();
+    }
+}
+
+/// Name `surface`'s toplevel for other processes. `None` when the
+/// compositor offers no `zxdg_exporter_v2`.
+pub fn export(surface: &WlSurface) -> Option<Exported> {
+    let exporter = AppContext::xdg_exporter()?;
+    let slot: HandleSlot = Arc::new(Mutex::new(None));
+    let object = exporter.export_toplevel(surface, AppContext::queue_handle(), Arc::clone(&slot));
+    Some(Exported { object, slot })
 }

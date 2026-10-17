@@ -21,12 +21,9 @@ use std::time::Duration;
 use futures_util::StreamExt;
 use tokio::sync::mpsc as async_mpsc;
 use zbus::fdo::DBusProxy;
-use zbus::message::Type;
 use zbus::names::BusName;
-use zbus::{MatchRule, MessageStream};
 
-pub const NAME: &str = "org.otto.Stash1";
-pub const PATH: &str = "/org/otto/Stash1";
+use crate::dbus::stash::{StashProxy, SERVICE as NAME};
 
 /// Each stashed file, with whether it is struck out: kept, but not sent.
 pub type Items = Vec<(PathBuf, bool)>;
@@ -176,13 +173,8 @@ async fn follow(
     report: impl Fn(Items),
 ) -> zbus::Result<()> {
     let bus = zbus::Connection::session().await?;
-    let rule = MatchRule::builder()
-        .msg_type(Type::Signal)
-        .interface(NAME)?
-        .member("Changed")?
-        .path(PATH)?
-        .build();
-    let mut changes = MessageStream::for_match_rule(rule, &bus, None).await?;
+    let stash = StashProxy::new(&bus).await?;
+    let mut changes = stash.receive_changed().await?;
     let dbus = DBusProxy::new(&bus).await?;
     let mut owners = dbus
         .receive_name_owner_changed_with_args(&[(0, NAME)])
@@ -190,18 +182,15 @@ async fn follow(
 
     if dbus.name_has_owner(BusName::try_from(NAME)?).await? {
         if hold {
-            hold_stash(&bus).await;
+            hold_stash(&stash).await;
         }
         if let Some(added) = added {
-            if let Err(err) = bus
-                .call_method(Some(NAME), PATH, Some(NAME), "Add", &())
-                .await
-            {
+            if let Err(err) = stash.add().await {
                 tracing::debug!(%err, "cannot add the selection to the stash");
             }
             let _ = added.send(());
         }
-        report_items(&bus, &report).await;
+        report_items(&stash, &report).await;
     }
     loop {
         tokio::select! {
@@ -209,31 +198,27 @@ async fn follow(
                 let Some(request) = request else {
                     return Ok(());
                 };
-                let (method, index) = match request {
-                    Request::Toggle(index) => ("Toggle", Some(index)),
-                    Request::Remove(index) => ("Remove", Some(index)),
-                    Request::Sent => ("Sent", None),
-                };
-                let called = match index {
-                    Some(index) => bus.call_method(Some(NAME), PATH, Some(NAME), method, &(index,)).await,
-                    None => bus.call_method(Some(NAME), PATH, Some(NAME), method, &()).await,
+                let (method, called) = match request {
+                    Request::Toggle(index) => ("Toggle", stash.toggle(index).await),
+                    Request::Remove(index) => ("Remove", stash.remove(index).await),
+                    Request::Sent => ("Sent", stash.sent().await),
                 };
                 if let Err(err) = called {
                     tracing::warn!(%err, method, "otto-stash refused");
                 }
             }
-            Some(Ok(message)) = changes.next() => {
-                if let Ok((items,)) = message.body().deserialize::<(Vec<(String, bool)>,)>() {
-                    report(to_paths(items));
+            Some(change) = changes.next() => {
+                if let Ok(args) = change.args() {
+                    report(to_paths(args.items().clone()));
                 }
             }
             Some(change) = owners.next() => {
                 let started = change.args().is_ok_and(|args| args.new_owner().is_some());
                 if started {
                     if hold {
-                        hold_stash(&bus).await;
+                        hold_stash(&stash).await;
                     }
-                    report_items(&bus, &report).await;
+                    report_items(&stash, &report).await;
                 } else {
                     report(Items::new());
                 }
@@ -243,24 +228,15 @@ async fn follow(
 }
 
 /// Hold the stash: its card steps aside while this app is on the bus.
-async fn hold_stash(bus: &zbus::Connection) {
-    if let Err(err) = bus
-        .call_method(Some(NAME), PATH, Some(NAME), "Hold", &())
-        .await
-    {
+async fn hold_stash(stash: &StashProxy<'_>) {
+    if let Err(err) = stash.hold().await {
         tracing::debug!(%err, "cannot hold the stash");
     }
 }
 
 /// Report what is in the stash now.
-async fn report_items(bus: &zbus::Connection, report: &impl Fn(Items)) {
-    let items = async {
-        let reply = bus
-            .call_method(Some(NAME), PATH, Some(NAME), "Items", &())
-            .await?;
-        reply.body().deserialize::<Vec<(String, bool)>>()
-    };
-    match items.await {
+async fn report_items(stash: &StashProxy<'_>, report: &impl Fn(Items)) {
+    match stash.items().await {
         Ok(items) => report(to_paths(items)),
         Err(err) => tracing::debug!(%err, "cannot list the stash"),
     }

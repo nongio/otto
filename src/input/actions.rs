@@ -60,6 +60,8 @@ pub enum KeyAction {
     MediaStop,
     /// Lock the session by launching the configured locker
     LockSession,
+    /// Show the side canvas, or hide it if it is shown
+    CanvasToggle,
     // ── Tiling ───────────────────────────────────────────────────────────
     TilingToggle,
     TilingFocus(crate::workspaces::tiling::Direction),
@@ -193,6 +195,7 @@ impl<BackendData: Backend> Otto<BackendData> {
         }
 
         self.apply_desk_setting();
+        self.apply_desktop_widget_setting();
         crate::search_index::sync(None);
 
         if Config::with(|c| c.xdg_autostart) {
@@ -202,19 +205,15 @@ impl<BackendData: Backend> Otto<BackendData> {
 
     fn launch_xdg_autostart(&mut self) {
         // Collect autostart .desktop files from system then user dirs (user overrides system)
-        let xdg_config_dirs =
-            std::env::var("XDG_CONFIG_DIRS").unwrap_or_else(|_| "/etc/xdg".to_string());
-        let xdg_config_home = std::env::var("XDG_CONFIG_HOME").unwrap_or_else(|_| {
-            let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
-            format!("{}/.config", home)
-        });
+        let xdg_config_home = otto_kit::xdg::config_home()
+            .unwrap_or_else(|| std::path::PathBuf::from("/root/.config"));
 
         // Build ordered list: system dirs first, user dir last (user overrides by basename)
-        let mut search_dirs: Vec<std::path::PathBuf> = xdg_config_dirs
-            .split(':')
-            .map(|d| std::path::PathBuf::from(d).join("autostart"))
+        let mut search_dirs: Vec<std::path::PathBuf> = otto_kit::xdg::config_dirs()
+            .into_iter()
+            .map(|d| d.join("autostart"))
             .collect();
-        search_dirs.push(std::path::PathBuf::from(&xdg_config_home).join("autostart"));
+        search_dirs.push(xdg_config_home.join("autostart"));
 
         // Collect entries: later entries (user) override earlier (system) by filename
         let mut entries: std::collections::HashMap<String, std::path::PathBuf> =
@@ -301,6 +300,8 @@ impl<BackendData: Backend> Otto<BackendData> {
                 }
                 self.lock_session();
             }
+
+            KeyAction::CanvasToggle => self.canvas_toggle(),
 
             KeyAction::PowerButton => {
                 use crate::config::PowerButtonAction;
@@ -433,8 +434,8 @@ impl<BackendData: Backend> Otto<BackendData> {
 
                 if let Some(picture) = recorder.finish_recording_as_picture(None) {
                     let data = picture.serialize();
-                    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
-                    let dir = std::path::PathBuf::from(&home).join("Pictures/Screenshots");
+                    let home = otto_kit::xdg::home().unwrap_or_else(|| "/tmp".into());
+                    let dir = home.join("Pictures/Screenshots");
                     let _ = fs::create_dir_all(&dir);
                     let secs = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
@@ -668,7 +669,8 @@ impl<BackendData: Backend> Otto<BackendData> {
     /// Poll the debug action file and execute whatever builtin action name it
     /// holds, as if that action's shortcut key had been pressed.
     ///
-    /// `echo ExposeShowAll > $OTTO_ACTION_FILE` (default `/tmp/otto-action`).
+    /// `echo ExposeShowAll > $OTTO_ACTION_FILE` (default
+    /// `$XDG_RUNTIME_DIR/otto-action`).
     /// Virtual-keyboard input (`wtype`, the RDP bridge…) is forwarded straight
     /// to the focused client and never runs the shortcut filter, so this is
     /// the only way a harness can drive compositor UI from a script.
@@ -678,7 +680,7 @@ impl<BackendData: Backend> Otto<BackendData> {
     /// and without it the scheduled lay-rs transactions never tick and the
     /// action stays invisible.
     pub(crate) fn poll_debug_action_file(&mut self) -> bool {
-        let Some(name) = crate::debug_hooks::take_file(&debug_action_file_path()) else {
+        let Some(name) = debug_action_file_path().and_then(crate::debug_hooks::take_file) else {
             return false;
         };
         let name = name.trim();
@@ -698,13 +700,14 @@ impl<BackendData: Backend> Otto<BackendData> {
         }
     }
 
-    /// Dispatch one action coming from the debug hook rather than from a key
-    /// press. The window-management actions live in the per-backend *keyboard*
-    /// dispatchers, not in [`Self::process_common_key_action`] — which warns
-    /// and drops anything it does not own — so they need explicit arms here.
-    /// Without them the hook logged "executing debug action" and then did
-    /// nothing for the app switcher, tiling, maximize and close.
-    fn process_debug_key_action(&mut self, action: KeyAction) {
+    /// Run `action` if it means the same on every backend, or hand it back.
+    ///
+    /// Both keyboard dispatchers (`process_input_event_windowed`,
+    /// `process_input_event`) and the debug action hook go through here.
+    /// What comes back is either backend-specific — output scale and
+    /// rotation, VT and screen switching — or `TilingDragCancel`, which only
+    /// means something while a titlebar drag is up.
+    pub(crate) fn dispatch_key_action(&mut self, action: KeyAction) -> Option<KeyAction> {
         match action {
             KeyAction::ExposeShowAll => self.handle_expose_show_all(),
             KeyAction::ExposeShowDesktop => self.handle_expose_show_desktop(),
@@ -729,20 +732,70 @@ impl<BackendData: Backend> Otto<BackendData> {
             KeyAction::TilingFocusModeToggle => {
                 let _ = self.handle_tiling_focus_mode(None);
             }
-            KeyAction::TilingDragCancel => self.handle_tiling_drag_cancel(),
-            other => self.process_common_key_action(other),
+            KeyAction::None
+            | KeyAction::Quit
+            | KeyAction::Run(_)
+            | KeyAction::ToggleDecorations
+            | KeyAction::SceneSnapshot
+            | KeyAction::SkpSnapshot
+            | KeyAction::LockSession
+            | KeyAction::CanvasToggle
+            | KeyAction::PowerButton
+            | KeyAction::BrightnessUp
+            | KeyAction::BrightnessDown
+            | KeyAction::VolumeUp
+            | KeyAction::VolumeDown
+            | KeyAction::VolumeMute
+            | KeyAction::MediaPlayPause
+            | KeyAction::MediaNext
+            | KeyAction::MediaPrev
+            | KeyAction::MediaStop => self.process_common_key_action(action),
+            KeyAction::VtSwitch(_)
+            | KeyAction::Screen(_)
+            | KeyAction::ScaleUp
+            | KeyAction::ScaleDown
+            | KeyAction::RotateOutput
+            | KeyAction::TilingDragCancel => return Some(action),
+        }
+        None
+    }
+
+    /// Dispatch one action coming from the debug hook rather than from a key
+    /// press. A titlebar drag can be cancelled from here; anything
+    /// backend-specific falls through to [`Self::process_common_key_action`],
+    /// which warns and drops it.
+    fn process_debug_key_action(&mut self, action: KeyAction) {
+        match self.dispatch_key_action(action) {
+            None => (),
+            Some(KeyAction::TilingDragCancel) => self.handle_tiling_drag_cancel(),
+            Some(other) => self.process_common_key_action(other),
         }
     }
 }
 
-/// Where the debug action hook looks for an action name. Overridable so that
-/// two sessions on one machine (a harness on a tty and a nested winit, say)
-/// do not fight over a single well-known path.
-fn debug_action_file_path() -> String {
-    std::env::var("OTTO_ACTION_FILE").unwrap_or_else(|_| "/tmp/otto-action".to_string())
+/// Where the debug action hook looks for an action name: `otto-action` in
+/// the runtime directory. Overridable so that two sessions on one machine (a
+/// harness on a tty and a nested winit, say) do not fight over one path.
+fn debug_action_file_path() -> Option<&'static str> {
+    static PATH: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    PATH.get_or_init(|| crate::debug_hooks::command_file_path("OTTO_ACTION_FILE", "otto-action"))
+        .as_deref()
 }
 
+/// Brightness goes through `brightness::blocking`, whose zbus `block_on` starts
+/// its own tokio runtime when the workspace zbus has the `tokio` feature. The
+/// compositor thread is inside `#[tokio::main]`, where that panics, so the call
+/// runs on a short-lived thread outside the runtime and is joined.
 fn adjust_brightness(delta: i32) -> Option<u8> {
+    std::thread::scope(|scope| {
+        scope
+            .spawn(|| adjust_brightness_blocking(delta))
+            .join()
+            .unwrap_or(None)
+    })
+}
+
+fn adjust_brightness_blocking(delta: i32) -> Option<u8> {
     let mut result_level = None;
 
     for device in brightness::blocking::brightness_devices() {
@@ -811,6 +864,7 @@ pub fn resolve_shortcut_action(config: &Config, action: &ShortcutAction) -> Opti
             BuiltinAction::MediaPrev => Some(KeyAction::MediaPrev),
             BuiltinAction::MediaStop => Some(KeyAction::MediaStop),
             BuiltinAction::LockSession => Some(KeyAction::LockSession),
+            BuiltinAction::CanvasToggle => Some(KeyAction::CanvasToggle),
             BuiltinAction::TilingToggle => Some(KeyAction::TilingToggle),
             BuiltinAction::FocusLeft => Some(KeyAction::TilingFocus(Direction::Left)),
             BuiltinAction::FocusRight => Some(KeyAction::TilingFocus(Direction::Right)),

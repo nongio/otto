@@ -17,7 +17,8 @@
 
 use std::process::Command;
 
-use crate::source::{Item, Origin, Source};
+use crate::source::Source;
+use otto_agents_kit::item::{Item, Origin};
 
 pub struct Calculator {
     index: usize,
@@ -51,6 +52,7 @@ impl Source for Calculator {
             activity: None,
             checked: None,
             search_terms: Vec::new(),
+            pill: None,
             origin: Origin {
                 source: self.index,
                 index: 0,

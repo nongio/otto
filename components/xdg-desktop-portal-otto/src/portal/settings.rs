@@ -2,16 +2,16 @@
 
 use std::collections::HashMap;
 
+use futures_util::StreamExt;
 use tracing::{debug, error};
-use zbus::export::futures_util::StreamExt;
 use zbus::fdo;
 use zbus::interface;
 use zbus::zvariant::{OwnedValue, Value};
-use zbus::{Connection, SignalContext};
+use zbus::{object_server::SignalEmitter, Connection};
 
-use crate::otto_client::settings::OttoSettingsProxy;
 use crate::otto_client::OttoClient;
 use crate::portal::desktop_path;
+use otto_dbus::settings::SettingsProxy as OttoSettingsProxy;
 
 /// The settings served under `org.otto.desktop` that are read straight from
 /// the compositor's schema: the portal key, and Otto's identifier for it.
@@ -310,7 +310,7 @@ impl SettingsPortal {
     /// not have to poll. `xdg-desktop-portal` relays it to its own clients.
     #[zbus(signal)]
     async fn setting_changed(
-        context: &SignalContext<'_>,
+        context: &SignalEmitter<'_>,
         namespace: &str,
         key: &str,
         value: Value<'_>,
@@ -380,7 +380,7 @@ pub async fn spawn_change_relay(connection: Connection, client: OttoClient) -> z
                     match iface {
                         Ok(iface) => {
                             if let Err(err) = SettingsPortal::setting_changed(
-                                iface.signal_context(),
+                                iface.signal_emitter(),
                                 namespace,
                                 key,
                                 Value::from(value),

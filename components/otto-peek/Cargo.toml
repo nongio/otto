@@ -20,14 +20,23 @@ path = "src/main.rs"
 [dependencies]
 otto-kit = { path = "../otto-kit" }
 otto-md-kit = { path = "../otto-md-kit" }
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-libc = "0.2"
-tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros"] }
+# Playback inside the embedded session. Library only: the GStreamer worker is
+# a separate binary built from that crate, found at run time.
+otto-media-kit = { path = "../otto-media-kit", default-features = false }
+tracing.workspace = true
+libc.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "sync", "macros"] }
+md5 = { package = "md-5", version = "0.10" }
+png = "0.18"
+# Image sizes from headers, for laying pictures out before they decode.
+imagesize = "0.13"
+# The `[peek]` section of files.toml; see `config`.
+serde = { workspace = true, features = ["derive"] }
+toml = { workspace = true, features = ["default"] }
 
 
 [dependencies.skia-safe]
-version = "=0.93"
+workspace = true
 features = ["gl", "textlayout", "svg", "skottie"]
 
 [lints]

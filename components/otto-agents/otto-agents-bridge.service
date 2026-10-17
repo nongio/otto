@@ -1,0 +1,18 @@
+[Unit]
+Description=Otto chat bridge
+Documentation=https://nongio.github.io/otto/developer/agents/
+# The bridge reaches the agents through the service, so it brings it up.
+Wants=otto-agents.service
+After=graphical-session.target otto-agents.service
+PartOf=graphical-session.target
+
+[Service]
+# Runs the command `[bridge]` in agents.toml names. Settings › Agents turns
+# this unit on and off; off by default.
+ExecStart=/usr/bin/otto-agents bridge
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=graphical-session.target

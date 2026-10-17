@@ -120,7 +120,7 @@ impl Attachment {
 
 /// otto-stash's directory: [`STASH_DIR`] in the runtime directory.
 pub fn stash_dir() -> Option<PathBuf> {
-    std::env::var_os("XDG_RUNTIME_DIR").map(|runtime| PathBuf::from(runtime).join(STASH_DIR))
+    crate::xdg::runtime_dir().map(|runtime| runtime.join(STASH_DIR))
 }
 
 /// How a list is laid out.
@@ -311,25 +311,6 @@ fn strike(mut style: TextStyle, struck: bool) -> TextStyle {
         style.set_decoration_color(style.color());
     }
     style
-}
-
-/// "2.4 MB".
-pub fn human_size(bytes: u64) -> String {
-    const UNITS: [&str; 4] = ["kB", "MB", "GB", "TB"];
-    if bytes < 1000 {
-        return format!("{bytes} B");
-    }
-    let mut value = bytes as f64 / 1000.0;
-    let mut unit = 0;
-    while value >= 1000.0 && unit + 1 < UNITS.len() {
-        value /= 1000.0;
-        unit += 1;
-    }
-    if value < 10.0 {
-        format!("{value:.1} {}", UNITS[unit])
-    } else {
-        format!("{value:.0} {}", UNITS[unit])
-    }
 }
 
 fn file_name(path: &Path) -> String {
@@ -626,7 +607,9 @@ impl AttachmentList {
                 };
                 let icon = preview.icon.clone();
                 let kind = preview.kind;
-                let size = preview.bytes.map_or_else(String::new, human_size);
+                let size = preview
+                    .bytes
+                    .map_or_else(String::new, crate::format::file_size);
                 let name = file_name(path);
                 let icon_size = ICON_SIZE;
                 let slot = Rect::from_xywh(0.0, y, icon_size, icon_size);
@@ -970,13 +953,6 @@ mod tests {
         assert!(!has_thumbnail(&icon));
         assert!(has_thumbnail(&thumbnail));
         std::fs::remove_dir_all(&dir).unwrap();
-    }
-
-    #[test]
-    fn sizes_read_like_files_do() {
-        assert_eq!(human_size(512), "512 B");
-        assert_eq!(human_size(2_400_000), "2.4 MB");
-        assert_eq!(human_size(31_000), "31 kB");
     }
 
     #[test]

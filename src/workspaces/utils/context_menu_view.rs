@@ -333,7 +333,7 @@ fn render_menu(state: &ContextMenuState, _view: &View<ContextMenuState>) -> Laye
             layers::skia::Rect::from_xywh(0.0, 0.0, w, h)
         };
 
-        let shadow_color = theme_colors().shadow_color;
+        let shadow_color = theme_colors().shadow;
         let depth_layer = LayerTreeBuilder::default()
             .key(format!("menu-depth-{}", depth))
             .position(Point::new(x_offset, 0.0))

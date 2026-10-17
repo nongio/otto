@@ -9,17 +9,25 @@ use crate::{
     render_elements::workspace_render_elements::WorkspaceRenderElements,
     shell::WindowElement,
     skia_renderer::{SkiaRenderer, SkiaTextureImage},
-    state::{post_repaint, take_presentation_feedback, Backend, Otto},
+    state::{
+        frame::{frame_done, FramePacing, Presentation},
+        Backend, Otto,
+    },
 };
 #[cfg(feature = "egl")]
 use smithay::backend::renderer::ImportEgl;
+#[cfg(feature = "ticker")]
+use smithay::backend::{allocator::Fourcc, renderer::ImportMem};
+
+#[cfg(feature = "ticker")]
+use crate::drawing::{FpsElement, FPS_NUMBERS_PNG};
 
 use smithay::{
     backend::{
         allocator::{
             dmabuf::{Dmabuf, DmabufAllocator},
             gbm::{GbmAllocator, GbmBufferFlags},
-            vulkan::{ImageUsageFlags, VulkanAllocator},
+            vulkan::VulkanAllocator,
         },
         egl::{EGLContext, EGLDisplay},
         renderer::{damage::OutputDamageTracker, Bind, ImportDma, ImportMemWl},
@@ -29,14 +37,12 @@ use smithay::{
     input::pointer::{CursorImageAttributes, CursorImageStatus},
     output::{Mode, Output, PhysicalProperties, Subpixel},
     reexports::{
-        ash::ext,
+        ash::{ext, vk::ImageUsageFlags},
         calloop::EventLoop,
         gbm,
-        wayland_protocols::wp::presentation_time::server::wp_presentation_feedback,
         wayland_server::{protocol::wl_surface, Display},
     },
     utils::{DeviceFd, IsAlive, Logical, Physical, Point, Rectangle, Scale},
-    wayland::presentation::Refresh,
     wayland::{
         compositor,
         dmabuf::{
@@ -60,12 +66,6 @@ impl OldGeometry {
         self.0.borrow_mut().take()
     }
 }
-#[cfg(feature = "xwayland")]
-impl<BackendData: Backend> XWaylandShellHandler for Otto<BackendData> {
-    fn xwayland_shell_state(&mut self) -> &mut XWaylandShellState {
-        &mut self.xwayland_shell_state
-    }
-}
 
 pub const OUTPUT_NAME: &str = "x11";
 
@@ -80,7 +80,7 @@ pub struct X11Data {
     dmabuf_state: DmabufState,
     _dmabuf_global: DmabufGlobal,
     _dmabuf_default_feedback: DmabufFeedback,
-    #[cfg(feature = "fps_ticker")]
+    #[cfg(feature = "ticker")]
     fps: fps_ticker::Fps,
 }
 
@@ -248,14 +248,14 @@ pub fn run_x11() {
         refresh: 60_000,
     };
 
-    #[cfg(feature = "fps_ticker")]
-    let fps_image = image::io::Reader::with_format(
+    #[cfg(feature = "ticker")]
+    let fps_image = image::ImageReader::with_format(
         std::io::Cursor::new(FPS_NUMBERS_PNG),
         image::ImageFormat::Png,
     )
     .decode()
     .unwrap();
-    #[cfg(feature = "fps_ticker")]
+    #[cfg(feature = "ticker")]
     let fps_texture = renderer
         .import_memory(
             &fps_image.to_rgba8(),
@@ -264,7 +264,7 @@ pub fn run_x11() {
             false,
         )
         .expect("Unable to upload FPS texture");
-    #[cfg(feature = "fps_ticker")]
+    #[cfg(feature = "ticker")]
     let mut fps_element = FpsElement::new(fps_texture);
     let output = Output::new(
         OUTPUT_NAME.to_string(),
@@ -273,7 +273,7 @@ pub fn run_x11() {
             subpixel: Subpixel::Unknown,
             make: "Smithay".into(),
             model: "X11".into(),
-            serial_number: None,
+            serial_number: String::new(),
         },
     );
     let _global = output.create_global::<Otto<X11Data>>(&display.handle());
@@ -291,7 +291,7 @@ pub fn run_x11() {
         dmabuf_state,
         _dmabuf_global: dmabuf_global,
         _dmabuf_default_feedback: dmabuf_default_feedback,
-        #[cfg(feature = "fps_ticker")]
+        #[cfg(feature = "ticker")]
         fps: fps_ticker::Fps::default(),
     };
 
@@ -366,20 +366,23 @@ pub fn run_x11() {
             let backend_data = &mut state.backend_data;
             // We need to borrow everything we want to refer to inside the renderer callback otherwise rustc is unhappy.
             let cursor_status = &state.cursor_status;
-            #[cfg(feature = "fps_ticker")]
+            #[cfg(feature = "ticker")]
             let fps = backend_data.fps.avg().round() as u32;
-            #[cfg(feature = "fps_ticker")]
+            #[cfg(feature = "ticker")]
             fps_element.update_fps(fps);
 
-            let (buffer, age) = backend_data
+            let (mut buffer, age) = backend_data
                 .surface
                 .buffer()
                 .expect("gbm device was destroyed");
-            if let Err(err) = backend_data.renderer.bind(buffer) {
-                error!("Error while binding buffer: {}", err);
-                profiling::finish_frame!();
-                continue;
-            }
+            let mut framebuffer = match backend_data.renderer.bind(&mut buffer) {
+                Ok(framebuffer) => framebuffer,
+                Err(err) => {
+                    error!("Error while binding buffer: {}", err);
+                    profiling::finish_frame!();
+                    continue;
+                }
+            };
 
             #[cfg(feature = "debug")]
             if let Some(renderdoc) = state.renderdoc.as_mut() {
@@ -390,7 +393,8 @@ pub fn run_x11() {
             }
 
             let mut cursor_guard = cursor_status.lock().unwrap();
-            let elements: Vec<WorkspaceRenderElements<'_, SkiaRenderer>> = Vec::new();
+            #[cfg_attr(not(feature = "ticker"), allow(unused_mut))]
+            let mut elements: Vec<WorkspaceRenderElements<'_, SkiaRenderer>> = Vec::new();
 
             // draw the cursor as relevant
             // reset the cursor if the surface is no longer alive
@@ -437,7 +441,7 @@ pub fn run_x11() {
             //     }
             // }
 
-            #[cfg(feature = "fps_ticker")]
+            #[cfg(feature = "ticker")]
             elements.push(WorkspaceRenderElements::Fps(fps_element.clone()));
 
             let all_window_elements: Vec<&WindowElement> =
@@ -448,6 +452,7 @@ pub fn run_x11() {
                 elements,
                 state.dnd_icon.as_ref(),
                 &mut backend_data.renderer,
+                &mut framebuffer,
                 &mut backend_data.damage_tracker,
                 age.into(),
             );
@@ -464,53 +469,29 @@ pub fn run_x11() {
                     };
 
                     // Send frame events so that client start drawing their next frame
-                    let time = state.clock.now();
                     let all_window_elements: Vec<&WindowElement> =
                         state.workspaces.spaces_elements().collect();
-                    #[allow(clippy::mutable_key_type)] // ObjectId as key — see window_throttle.rs
-                    {
-                        let expose_active = state.workspaces.is_expose_transitioning()
-                            || state.workspaces.get_show_all();
-                        let window_throttle_states =
-                            crate::state::window_throttle::classify_windows(
-                                &state.workspaces,
-                                &all_window_elements,
-                                &std::collections::HashSet::new(),
-                                expose_active,
-                            );
-                        post_repaint(
-                            &output,
-                            &render_output_result.states,
-                            &all_window_elements,
-                            None,
-                            time,
-                            &window_throttle_states,
-                            &std::collections::HashSet::new(),
-                        );
-                    }
-
-                    if render_output_result.damage.is_some() {
-                        let all_window_elements: Vec<&WindowElement> =
-                            state.workspaces.spaces_elements().collect();
-                        let mut output_presentation_feedback = take_presentation_feedback(
-                            &output,
-                            &all_window_elements,
-                            &render_output_result.states,
-                        );
-                        output_presentation_feedback.presented(
-                            time,
-                            output
-                                .current_mode()
-                                .map(|mode| {
-                                    Refresh::fixed(Duration::from_nanos(
-                                        1_000_000_000_000 / mode.refresh as u64,
-                                    ))
-                                })
-                                .unwrap_or(Refresh::Unknown),
-                            0,
-                            wp_presentation_feedback::Kind::Vsync,
-                        )
-                    }
+                    let pacing = FramePacing::classify(
+                        &state.workspaces,
+                        &output,
+                        &all_window_elements,
+                        &state.background_effects,
+                        &state.pointer_interaction,
+                        false,
+                        // X11 has no per-frame screenshare tap,
+                        // so nothing is ever capture-pinned here.
+                        &std::collections::HashSet::new(),
+                    );
+                    frame_done(
+                        &output,
+                        &render_output_result.states,
+                        &all_window_elements,
+                        None,
+                        state.clock.now(),
+                        &pacing,
+                        render_output_result.damage.is_some(),
+                        Presentation::Immediate,
+                    );
 
                     #[cfg(feature = "debug")]
                     if render_output_result.damage.is_some() {
@@ -552,7 +533,7 @@ pub fn run_x11() {
                 }
             }
 
-            #[cfg(feature = "fps_ticker")]
+            #[cfg(feature = "ticker")]
             state.backend_data.fps.tick();
             window.set_cursor_visible(cursor_visible);
             profiling::finish_frame!();

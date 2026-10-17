@@ -17,6 +17,7 @@
 //! surface enter/leave/motion plumbing and an action negotiation this does not
 //! attempt.
 
+use crate::uri::{path_to_uri, uri_to_path};
 use std::io::Read;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
@@ -237,59 +238,6 @@ pub fn text() -> Option<String> {
 // URI list encoding
 // ---------------------------------------------------------------------------
 
-/// Percent-encode a path into a `file://` URI.
-///
-/// Everything outside the unreserved set is escaped, `/` excepted — it is the
-/// path separator, not data. Paths are bytes on Linux, so this encodes bytes
-/// rather than characters and a non-UTF-8 name survives the round trip.
-pub fn path_to_uri(path: &std::path::Path) -> String {
-    use std::os::unix::ffi::OsStrExt;
-
-    let mut uri = String::from("file://");
-    for &byte in path.as_os_str().as_bytes() {
-        match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' | b'/' => {
-                uri.push(byte as char)
-            }
-            _ => uri.push_str(&format!("%{byte:02X}")),
-        }
-    }
-    uri
-}
-
-/// The inverse of [`path_to_uri`]. Returns `None` for anything that is not a
-/// `file://` URI — a browser may put `https://` on the clipboard, and that is
-/// not a path.
-pub fn uri_to_path(uri: &str) -> Option<std::path::PathBuf> {
-    use std::os::unix::ffi::OsStringExt;
-
-    let rest = uri.trim().strip_prefix("file://")?;
-    // An authority component (`file://host/path`) is not a local path unless
-    // the host is empty or `localhost`.
-    let path = match rest.find('/') {
-        Some(0) => rest,
-        Some(slash) if &rest[..slash] == "localhost" => &rest[slash..],
-        _ => return None,
-    };
-
-    let bytes = path.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'%' && i + 2 < bytes.len() {
-            let hex = std::str::from_utf8(&bytes[i + 1..i + 3]).ok()?;
-            if let Ok(byte) = u8::from_str_radix(hex, 16) {
-                out.push(byte);
-                i += 3;
-                continue;
-            }
-        }
-        out.push(bytes[i]);
-        i += 1;
-    }
-    Some(std::path::PathBuf::from(std::ffi::OsString::from_vec(out)))
-}
-
 /// Build every payload a file selection should offer, so the copy is legible
 /// to other file managers, to text editors, and to us.
 pub fn file_payloads(paths: &[std::path::PathBuf], cut: bool) -> Vec<(String, Vec<u8>)> {
@@ -365,28 +313,6 @@ mod tests {
     }
 
     #[test]
-    fn uris_round_trip_including_awkward_names() {
-        for name in [
-            "/tmp/plain.txt",
-            "/tmp/with space.txt",
-            "/tmp/a b&c#d.txt",
-            "/tmp/percent%20literal.txt",
-            "/tmp/héllo.txt",
-            "/tmp/quote'and\"quote.txt",
-        ] {
-            let path = PathBuf::from(name);
-            let uri = path_to_uri(&path);
-            assert!(!uri.contains(' '), "space must be encoded: {uri}");
-            assert_eq!(uri_to_path(&uri).as_deref(), Some(path.as_path()), "{uri}");
-        }
-    }
-
-    #[test]
-    fn separators_are_not_escaped() {
-        assert_eq!(path_to_uri(&PathBuf::from("/a/b/c")), "file:///a/b/c");
-    }
-
-    #[test]
     fn a_hash_in_a_name_survives() {
         // The one most likely to break a naive implementation: `#` starts a
         // comment in `text/uri-list`, so it must never appear raw.
@@ -394,26 +320,6 @@ mod tests {
         assert!(!uri.contains('#'), "{uri}");
         let (paths, _) = parse_file_payload(URI_LIST, uri.as_bytes());
         assert_eq!(paths, vec![PathBuf::from("/tmp/a#b.txt")]);
-    }
-
-    #[test]
-    fn non_utf8_names_survive_the_round_trip() {
-        use std::os::unix::ffi::OsStringExt;
-        let raw = std::ffi::OsString::from_vec(vec![b'/', b't', b'm', b'p', b'/', 0xFF, 0xFE]);
-        let path = PathBuf::from(raw);
-        let uri = path_to_uri(&path);
-        assert_eq!(uri_to_path(&uri), Some(path));
-    }
-
-    #[test]
-    fn non_file_uris_are_rejected() {
-        assert_eq!(uri_to_path("https://example.com/x"), None);
-        assert_eq!(uri_to_path("file://otherhost/tmp/x"), None);
-        // An empty authority and `localhost` both mean this machine.
-        assert_eq!(
-            uri_to_path("file://localhost/tmp/x"),
-            Some(PathBuf::from("/tmp/x"))
-        );
     }
 
     #[test]

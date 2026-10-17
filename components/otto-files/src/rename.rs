@@ -364,13 +364,13 @@ mod tests {
 // The command
 // ---------------------------------------------------------------------------
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::command::{
     ArgKind, ArgSpec, Command, CommandProvider, Effect, Group, Preview, PreviewRow, Request,
     Situation,
 };
-use crate::model::Change;
+use crate::model::{rename_no_replace, Change};
 
 /// The provider's namespace, and so the prefix on its one command's id.
 pub const NAMESPACE: &str = "rename";
@@ -518,6 +518,10 @@ impl CommandProvider for RenameProvider {
 /// either order, would overwrite. Everything is first moved aside under a
 /// name nobody has, then to where it is going; a failure in the second pass
 /// puts back what has moved so far, so the directory is never left half way.
+///
+/// Every step refuses to replace. The plan checked the names when it was
+/// shown, but a file can take one of them before Apply: that file is left
+/// alone, the batch fails with the name, and what had moved goes back.
 fn rename_all(moves: &[(PathBuf, PathBuf)]) -> Result<Vec<Change>, String> {
     let tag = std::process::id();
     let aside: Vec<PathBuf> = moves
@@ -525,30 +529,37 @@ fn rename_all(moves: &[(PathBuf, PathBuf)]) -> Result<Vec<Change>, String> {
         .enumerate()
         .map(|(i, (from, _))| from.with_file_name(format!(".otto-rename-{tag}-{i}")))
         .collect();
+    let failed = |err: std::io::Error, name: &Path| {
+        if err.kind() == std::io::ErrorKind::AlreadyExists {
+            otto_kit::t_owned!(
+                "files-name-taken",
+                name = name
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .into_owned()
+            )
+        } else {
+            otto_kit::t_owned!("files-rename-failed", error = err.to_string())
+        }
+    };
 
     let mut done = Vec::new();
     for ((from, _), temp) in moves.iter().zip(&aside) {
-        if let Err(err) = std::fs::rename(from, temp) {
+        if let Err(err) = rename_no_replace(from, temp) {
             undo_moves(&done);
-            return Err(otto_kit::t_owned!(
-                "files-rename-failed",
-                error = err.to_string()
-            ));
+            return Err(failed(err, from));
         }
         done.push((from.clone(), temp.clone()));
     }
     let mut landed = Vec::new();
-    for ((from, to), temp) in moves.iter().zip(&aside) {
-        if let Err(err) = std::fs::rename(temp, to) {
+    for ((_, to), temp) in moves.iter().zip(&aside) {
+        if let Err(err) = rename_no_replace(temp, to) {
             undo_moves(&landed);
             undo_moves(&done);
-            return Err(otto_kit::t_owned!(
-                "files-rename-failed",
-                error = err.to_string()
-            ));
+            return Err(failed(err, to));
         }
         landed.push((temp.clone(), to.clone()));
-        let _ = from;
     }
     Ok(moves
         .iter()
@@ -559,17 +570,17 @@ fn rename_all(moves: &[(PathBuf, PathBuf)]) -> Result<Vec<Change>, String> {
         .collect())
 }
 
-/// Best effort: put a run of `(from, to)` moves back, last first.
+/// Best effort: put a run of `(from, to)` moves back, last first. Never onto
+/// a name something else has taken meanwhile: such a file stays where it got
+/// to, under its temporary name, rather than replace another.
 fn undo_moves(moves: &[(PathBuf, PathBuf)]) {
     for (from, to) in moves.iter().rev() {
-        let _ = std::fs::rename(to, from);
+        let _ = rename_no_replace(to, from);
     }
 }
 
 #[cfg(test)]
 mod provider_tests {
-    use std::path::Path;
-
     use super::*;
 
     /// A directory of our own under the system temp dir, removed on drop.
@@ -687,5 +698,36 @@ mod provider_tests {
         assert!(RenameProvider.run(&request, &s).is_err());
         assert!(dir.path().join("a.txt").exists());
         assert!(dir.path().join("b.txt").exists());
+    }
+
+    /// A target that appears after the preview — the plan saw it free — is
+    /// never overwritten: the batch fails and every file is back where it
+    /// was, the newcomer included.
+    #[test]
+    fn a_target_taken_after_the_preview_is_not_overwritten() {
+        let dir = TempDir::new();
+        for name in ["a.txt", "b.txt"] {
+            std::fs::write(dir.path().join(name), name).unwrap();
+        }
+        // The situation the preview was made from: x2.txt was not there.
+        let s = situation(dir.path(), &["a.txt", "b.txt"], &["a.txt", "b.txt"]);
+        let request = Request::new(RENAME_MANY, Some("x{n}".into()));
+        let preview = RenameProvider.preview(&request, &s).unwrap();
+        assert!(preview.rows.iter().all(|row| !row.conflict));
+        // Then, before Apply, something else writes x2.txt.
+        std::fs::write(dir.path().join("x2.txt"), "precious").unwrap();
+
+        assert!(RenameProvider.run(&request, &s).is_err());
+
+        let read = |name: &str| std::fs::read_to_string(dir.path().join(name)).unwrap();
+        assert_eq!(read("x2.txt"), "precious");
+        assert_eq!(read("a.txt"), "a.txt");
+        assert_eq!(read("b.txt"), "b.txt");
+        assert!(!dir.path().join("x1.txt").exists());
+        assert!(std::fs::read_dir(dir.path()).unwrap().all(|e| !e
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with(".otto-rename")));
     }
 }

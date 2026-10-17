@@ -49,6 +49,19 @@
 //!   dispatch — sidesteps this entirely. A caller of this module never needs
 //!   to know the rule; `DropdownMenu`'s shape enforces it.
 //!
+//! **A press on a field is a pop-up button's press.** [`open`](DropdownMenu::open)
+//! is what a press on the field calls, so it carries the two rules a pop-up
+//! button keeps:
+//!
+//! - Pressed while its menu is up, the field closes the menu and nothing
+//!   opens. The press outside the popup that ends its grab also reaches the
+//!   window, and the menu is still up then (fading out), so without this the
+//!   same press would open it again.
+//! - Any other dropdown's menu still up goes at once, before this one's
+//!   popup is made: a grabbing popup made while another is up is a protocol
+//!   error, and with only one up at a time hovering can never put a second
+//!   menu's rows under the first one's anchor.
+//!
 //! The field's "open" interaction state does not need a push notification:
 //! `ContextMenu::is_visible` ([`is_open`](DropdownMenu::is_open)) is polled
 //! at draw time. But the window still needs telling *when* to redraw after a
@@ -58,6 +71,8 @@
 //! `ContextMenu::on_close` hook (see `context_menu.rs`), which fires exactly
 //! when the menu closes without a selection.
 
+use std::rc::Rc;
+
 use skia_safe::Rect;
 
 use smithay_client_toolkit::reexports::client::protocol::wl_keyboard;
@@ -65,17 +80,25 @@ use smithay_client_toolkit::shell::xdg::XdgPositioner;
 use wayland_protocols::xdg::shell::client::{xdg_positioner, xdg_surface};
 
 use crate::app_runner::AppContext;
+
+thread_local! {
+    /// The menu of the dropdown opened last, so the next one opened can take
+    /// it down first. Only one is ever up: each takes the pointer grab.
+    static LAST_OPENED: std::cell::RefCell<Option<ContextMenu>> =
+        const { std::cell::RefCell::new(None) };
+}
 use crate::components::context_menu::{ContextMenu, ContextMenuStyle};
-use crate::components::menu_item::MenuItem;
+use crate::components::menu_item::{MenuItem, MenuItemIcon};
+
+use super::field::Placement;
 
 /// Label size and row height for a pop-up button's menu.
 ///
-/// The size is the field's own — `super::field` draws its label at
-/// [`crate::typography::styles::BODY`], and a menu that drops out of a control
-/// to list that control's values has to read as the same text, not as a larger
-/// echo of it. The row stays taller than a menu bar's 22pt all the same: a
+/// The size is the field's own, [`super::field::LABEL_STYLE`]: a menu that
+/// drops out of a control to list that control's values has to read as the
+/// same text. The row stays taller than a menu bar's 22pt all the same: a
 /// pop-up button is read one row at a time, not scanned along a crowded strip.
-const ITEM_FONT_SIZE: f32 = crate::typography::styles::BODY.size;
+const ITEM_FONT_SIZE: f32 = super::field::LABEL_STYLE.size;
 const ITEM_HEIGHT: f32 = 26.0;
 
 /// Tallest a pop-up button's menu is drawn before its list starts scrolling.
@@ -99,12 +122,36 @@ const MAX_GROWTH: f32 = 1.6;
 /// column, so the text it is elided to actually fits the row.
 const TEXT_INSET: f32 = 26.0;
 
+/// What a row's icon takes from its label: the icon and the gap after it, as
+/// `MenuItemRenderer` lays them out.
+const ICON_INSET: f32 = 16.0 + 6.0;
+
 /// How long a type-ahead buffer survives without another key.
 ///
 /// Long enough to spell a word at a normal pace, short enough that coming
 /// back to the menu later starts a fresh name rather than extending a stale
 /// one. Matches otto-files, so the gesture feels the same in both.
 const TYPEAHEAD_EXPIRY: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// How far from its field a menu above or below it sits.
+const MENU_GAP: i32 = 4;
+
+/// Where [`DropdownMenu::open_with_icons`] puts the menu, once a placement
+/// has met the selection: a menu on its value with no value drops below.
+enum Placed {
+    Below,
+    Above,
+    /// The menu's top this far below the field's top.
+    OnValue(i32),
+}
+
+/// The offset from a field's top to its menu's top that puts row `index`
+/// over the field, centred on it, with the list scrolled by `scroll` and
+/// `padding` above the first row.
+fn on_value_offset(index: usize, scroll: f32, field_h: f32, padding: f32) -> i32 {
+    let row_top = padding + index as f32 * ITEM_HEIGHT - scroll;
+    ((field_h - ITEM_HEIGHT) / 2.0 - row_top).round() as i32
+}
 
 /// The buffer to search with after `ch` is typed, and whether this is the
 /// same single character again — which cycles through the values beginning
@@ -158,22 +205,13 @@ fn measure(text: &str) -> f32 {
 /// Trim `text` until it fits `width`, marking the cut with a trailing
 /// ellipsis. Returns it unchanged when it already fits.
 fn elide(text: &str, width: f32) -> String {
-    let font = item_font();
-    if width <= 0.0 || crate::typography::measure_runs(&font, text) <= width {
+    if width <= 0.0 {
         return text.to_string();
     }
-    let mut end = text.len();
-    while end > 0 {
-        end -= 1;
-        while end > 0 && !text.is_char_boundary(end) {
-            end -= 1;
-        }
-        let candidate = format!("{}\u{2026}", &text[..end]);
-        if crate::typography::measure_runs(&font, &candidate) <= width {
-            return candidate;
-        }
-    }
-    "\u{2026}".to_string()
+    let font = item_font();
+    crate::typography::ellipsize_by(text, width, |piece| {
+        crate::typography::measure_runs(&font, piece)
+    })
 }
 
 /// Owns the popup lifecycle for one dropdown. The caller keeps one of these
@@ -193,6 +231,8 @@ pub struct DropdownMenu {
     /// The type-ahead buffer and when it was last appended to. Typing keeps
     /// extending one word; a pause of [`TYPEAHEAD_EXPIRY`] starts a new one.
     typeahead: std::cell::RefCell<Option<(String, std::time::Instant)>>,
+    /// Where the menu opens relative to its field.
+    placement: Placement,
 }
 
 impl Default for DropdownMenu {
@@ -203,6 +243,7 @@ impl Default for DropdownMenu {
             ),
             options: std::cell::RefCell::new(Vec::new()),
             typeahead: std::cell::RefCell::new(None),
+            placement: Placement::default(),
         }
     }
 }
@@ -210,6 +251,19 @@ impl Default for DropdownMenu {
 impl DropdownMenu {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Open the menu at `placement` rather than on the field's value. Draw
+    /// the field with the same placement (see
+    /// [`super::field::draw_placed`]) so its arrow says where the menu goes.
+    pub fn with_placement(mut self, placement: Placement) -> Self {
+        self.placement = placement;
+        self
+    }
+
+    /// Where the menu opens, for drawing the field's indicator.
+    pub fn placement(&self) -> Placement {
+        self.placement
     }
 
     /// Whether the menu is currently up. Drive [`super::field::DropdownInteraction::Open`]
@@ -224,6 +278,17 @@ impl DropdownMenu {
     pub fn close(&self) {
         *self.typeahead.borrow_mut() = None;
         self.menu.hide_animated();
+    }
+
+    /// Take the menu down at once, a fade-out in flight included. For before
+    /// opening a sibling: a new pop-up has to go on the topmost one, so the
+    /// old one cannot still be fading out when it is made.
+    /// A menu that is not up is left alone, rather than reporting a close.
+    pub fn close_now(&self) {
+        *self.typeahead.borrow_mut() = None;
+        if self.is_open() {
+            self.menu.hide();
+        }
     }
 
     /// Feed a key to the open menu: the arrows move the highlight (scrolling
@@ -367,7 +432,13 @@ impl DropdownMenu {
 
     /// Open the menu, anchored to `field_rect` — the same rect passed to
     /// [`super::field::draw`], in the window's local coordinate space —
-    /// parented to `parent_xdg`.
+    /// parented to `parent_xdg`. Call it from the press on the field.
+    ///
+    /// A menu that is already up closes instead, the press on its field
+    /// taking back the one that opened it; any other dropdown's menu still up
+    /// closes first. See the module docs. `true` when the press opened the
+    /// menu, `false` when it closed it (or there was nothing to show), so a
+    /// caller that draws its field open knows which.
     ///
     /// `options[selected]`, if `selected` is `Some`, is marked with a
     /// leading checkmark; `MenuItem` has no dedicated "checked" flag, so
@@ -388,12 +459,57 @@ impl DropdownMenu {
         selected: Option<usize>,
         on_select: S,
         on_dismiss: D,
-    ) where
+    ) -> bool
+    where
+        S: Fn(usize) + 'static,
+        D: Fn() + 'static,
+    {
+        self.open_with_icons(
+            parent_xdg,
+            field_rect,
+            serial,
+            options,
+            &[],
+            selected,
+            on_select,
+            on_dismiss,
+        )
+    }
+
+    /// [`open`](Self::open), with an icon before each value: `icons[i]` is
+    /// `options[i]`'s, and a row past the end of `icons` has none. A list of
+    /// places — folders, volumes — reads faster by its icons than by its
+    /// names alone.
+    #[allow(clippy::too_many_arguments)]
+    pub fn open_with_icons<S, D>(
+        &self,
+        parent_xdg: &xdg_surface::XdgSurface,
+        field_rect: Rect,
+        serial: u32,
+        options: &[String],
+        icons: &[MenuItemIcon],
+        selected: Option<usize>,
+        on_select: S,
+        on_dismiss: D,
+    ) -> bool
+    where
         S: Fn(usize) + 'static,
         D: Fn() + 'static,
     {
         if options.is_empty() {
-            return;
+            return false;
+        }
+        if self.is_open() {
+            self.close();
+            return false;
+        }
+        // Taken out before it is hidden: its `on_close` is the caller's, and
+        // may open another dropdown.
+        let previous = LAST_OPENED.with(|last| last.borrow_mut().replace(self.menu.clone()));
+        if let Some(other) = previous {
+            if !Rc::ptr_eq(other.state(), self.menu.state()) && other.is_visible() {
+                other.hide();
+            }
         }
 
         *self.options.borrow_mut() = options.to_vec();
@@ -408,11 +524,13 @@ impl DropdownMenu {
         // wants leaves the two controls' edges disagreeing by however long
         // that label happens to be.
         let field_w = field_rect.width().max(1.0);
+        let icon_inset = if icons.is_empty() { 0.0 } else { ICON_INSET };
         let widest = options
             .iter()
             .map(|label| measure(label))
             .fold(0.0_f32, f32::max)
-            + TEXT_INSET;
+            + TEXT_INSET
+            + icon_inset;
         let width = widest.clamp(field_w, field_w * MAX_GROWTH);
         menu.clone().with_style(
             ContextMenuStyle::default()
@@ -430,8 +548,11 @@ impl DropdownMenu {
                 // front of the label: a leading mark indents the chosen row
                 // out of line with every other one, and the values then no
                 // longer share a left edge to be scanned down.
-                let item = MenuItem::action(elide(label, width - TEXT_INSET))
+                let mut item = MenuItem::action(elide(label, width - TEXT_INSET - icon_inset))
                     .with_action_id(i.to_string());
+                if let Some(icon) = icons.get(i) {
+                    item = item.with_icon(icon.clone());
+                }
                 if Some(i) == selected {
                     item.with_shortcut("\u{2713}")
                 } else {
@@ -469,33 +590,64 @@ impl DropdownMenu {
         menu.clone().on_close(on_dismiss);
 
         let Ok(positioner) = XdgPositioner::new(AppContext::xdg_shell_state()) else {
-            return;
+            return false;
         };
         let (menu_w, menu_h) = menu.get_size_at_depth(0);
         positioner.set_size(menu_w as i32, menu_h as i32);
-        // Anchor rect is the field itself; the menu drops from its
-        // bottom-left, sliding/flipping to stay on screen near an edge.
+        // Anchor rect is the field itself. The menu and the button share a
+        // right edge, so a menu that had to grow does so leftwards into the
+        // form's margin rather than over the row's label.
         positioner.set_anchor_rect(
             field_rect.left as i32,
             field_rect.top as i32,
             field_rect.width().max(1.0) as i32,
             field_rect.height().max(1.0) as i32,
         );
-        // Anchored to the button's bottom-RIGHT corner, growing down and to
-        // the left from it: the menu and the button share a right edge, so a
-        // menu that had to grow does so into the form's margin rather than
-        // over the row's label.
-        positioner.set_anchor(xdg_positioner::Anchor::BottomRight);
-        positioner.set_gravity(xdg_positioner::Gravity::BottomLeft);
-        positioner.set_offset(0, 4);
-        positioner.set_constraint_adjustment(
-            xdg_positioner::ConstraintAdjustment::SlideX
-                | xdg_positioner::ConstraintAdjustment::SlideY
-                | xdg_positioner::ConstraintAdjustment::FlipX
-                | xdg_positioner::ConstraintAdjustment::FlipY,
-        );
+        let scroll = menu.state().borrow().scroll();
+        let placed = match (self.placement, selected) {
+            (Placement::OnValue, Some(index)) => Placed::OnValue(on_value_offset(
+                index,
+                scroll,
+                field_rect.height(),
+                ContextMenuStyle::default().vertical_padding,
+            )),
+            (Placement::Above, _) => Placed::Above,
+            (Placement::Below | Placement::OnValue, _) => Placed::Below,
+        };
+        let slide = xdg_positioner::ConstraintAdjustment::SlideX
+            | xdg_positioner::ConstraintAdjustment::SlideY
+            | xdg_positioner::ConstraintAdjustment::FlipX;
+        match placed {
+            // Down and to the left from the button's bottom-right corner.
+            Placed::Below => {
+                positioner.set_anchor(xdg_positioner::Anchor::BottomRight);
+                positioner.set_gravity(xdg_positioner::Gravity::BottomLeft);
+                positioner.set_offset(0, MENU_GAP);
+                positioner
+                    .set_constraint_adjustment(slide | xdg_positioner::ConstraintAdjustment::FlipY);
+            }
+            // Up and to the left from its top-right corner.
+            Placed::Above => {
+                positioner.set_anchor(xdg_positioner::Anchor::TopRight);
+                positioner.set_gravity(xdg_positioner::Gravity::TopLeft);
+                positioner.set_offset(0, -MENU_GAP);
+                positioner
+                    .set_constraint_adjustment(slide | xdg_positioner::ConstraintAdjustment::FlipY);
+            }
+            // Down from its top-right corner, raised so the value's row sits
+            // over the field. Never flipped: a flipped menu would put that
+            // row a menu's height away. Near an edge it slides instead,
+            // staying whole on screen with its rows off the field's line.
+            Placed::OnValue(dy) => {
+                positioner.set_anchor(xdg_positioner::Anchor::TopRight);
+                positioner.set_gravity(xdg_positioner::Gravity::BottomLeft);
+                positioner.set_offset(0, dy);
+                positioner.set_constraint_adjustment(slide);
+            }
+        }
 
         menu.show(parent_xdg, &positioner, serial);
+        true
     }
 }
 
@@ -552,6 +704,26 @@ mod tests {
         let options = names(&["Adwaita", "Breeze"]);
         assert_eq!(search(&options, "bz", 0), None);
         assert_eq!(search(&[], "b", 0), None);
+    }
+
+    /// The value's row lands centred on the field: the first row just
+    /// above it by the menu's padding, a later one further up by its rows.
+    #[test]
+    fn a_menu_on_its_value_puts_that_row_over_the_field() {
+        // A row as tall as the field: the menu's top is the row's top less
+        // the padding.
+        assert_eq!(on_value_offset(0, 0.0, ITEM_HEIGHT, 5.0), -5);
+        assert_eq!(
+            on_value_offset(3, 0.0, ITEM_HEIGHT, 5.0),
+            -(5 + 3 * ITEM_HEIGHT as i32)
+        );
+        // Scrolled, the row is that much higher in the box already.
+        assert_eq!(
+            on_value_offset(3, ITEM_HEIGHT, ITEM_HEIGHT, 5.0),
+            -(5 + 2 * ITEM_HEIGHT as i32)
+        );
+        // A shorter field centres the taller row on itself.
+        assert_eq!(on_value_offset(0, 0.0, ITEM_HEIGHT - 4.0, 5.0), -7);
     }
 
     #[test]

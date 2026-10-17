@@ -347,6 +347,28 @@ impl Browser {
         Some(expanded)
     }
 
+    /// The entries a half-typed path could be completed to: the names in the
+    /// directory before its last `/` that start with what follows it.
+    ///
+    /// One set of rules for the location bar and the palette's path
+    /// arguments. A bare name resolves against the directory on screen (see
+    /// [`Self::resolve_typed_path`]). The read is synchronous: one directory,
+    /// on a keystroke the user is waiting on.
+    pub(super) fn typed_path_matches<'t>(&self, typed: &'t str) -> Option<TypedPathMatches<'t>> {
+        let (head, prefix) = match typed.rfind('/') {
+            Some(cut) => (&typed[..=cut], &typed[cut + 1..]),
+            None => ("", typed),
+        };
+        let dir = self.resolve_typed_path(if head.is_empty() { "." } else { head })?;
+        let names = matching_names(&dir, prefix);
+        Some(TypedPathMatches {
+            head,
+            prefix,
+            dir,
+            names,
+        })
+    }
+
     /// Go where the field says. A directory is opened; a file opens its
     /// parent with the file selected, which is what a path pasted out of a
     /// terminal usually means. A path that is not there leaves the field up
@@ -397,35 +419,18 @@ impl Browser {
             return;
         };
         let typed = input.value().to_string();
-        let (head, prefix) = match typed.rfind('/') {
-            Some(cut) => (&typed[..=cut], &typed[cut + 1..]),
-            None => ("", typed.as_str()),
-        };
-        let Some(dir) = self.resolve_typed_path(if head.is_empty() { "." } else { head }) else {
+        let Some(matches) = self.typed_path_matches(&typed) else {
             return;
         };
-        let Ok(entries) = std::fs::read_dir(&dir) else {
-            return;
-        };
-        // A dotfile is only a candidate once the user has typed the dot, the
-        // way a shell does it — otherwise every completion in a home
-        // directory offers a hundred configuration folders first.
-        let mut names: Vec<String> = entries
-            .filter_map(|entry| entry.ok())
-            .map(|entry| entry.file_name().to_string_lossy().into_owned())
-            .filter(|name| name.starts_with(prefix))
-            .filter(|name| prefix.starts_with('.') || !name.starts_with('.'))
-            .collect();
-        if names.is_empty() {
+        if matches.names.is_empty() {
             return;
         }
-        names.sort();
-        let completed = common_prefix(&names);
-        if completed.len() < prefix.len() {
+        let completed = common_prefix(&matches.names);
+        if completed.len() < matches.prefix.len() {
             return;
         }
-        let mut value = format!("{head}{completed}");
-        if names.len() == 1 && dir.join(&completed).is_dir() && !value.ends_with('/') {
+        let mut value = format!("{}{completed}", matches.head);
+        if matches.names.len() == 1 && matches.is_dir(&completed) && !value.ends_with('/') {
             value.push('/');
         }
         if value == typed {
@@ -442,4 +447,46 @@ impl Browser {
     // -----------------------------------------------------------------------
     // The command palette — see `specs/file-command-palette.md`
     // -----------------------------------------------------------------------
+}
+
+/// What [`Browser::typed_path_matches`] found.
+pub(super) struct TypedPathMatches<'t> {
+    /// What was typed up to and including the last `/`, kept as typed so a
+    /// completion only ever extends the field.
+    pub(super) head: &'t str,
+    /// What was typed after it.
+    pub(super) prefix: &'t str,
+    /// The directory `head` names.
+    dir: PathBuf,
+    /// The names in `dir` starting with `prefix`, in natural order.
+    pub(super) names: Vec<String>,
+}
+
+impl TypedPathMatches<'_> {
+    /// Whether `name` is a folder, following a symlink to one: a link to a
+    /// folder is somewhere to go and somewhere to move things into. One stat,
+    /// so it is asked only of the names that need it.
+    pub(super) fn is_dir(&self, name: &str) -> bool {
+        std::fs::metadata(self.dir.join(name)).is_ok_and(|meta| meta.is_dir())
+    }
+}
+
+/// The names in `dir` that start with `prefix`, in natural order.
+///
+/// A dotfile is only a candidate once the user has typed the dot, the way a
+/// shell does it — otherwise every completion in a home directory offers a
+/// hundred configuration folders first. A name that is not UTF-8 is left
+/// out: completing it would write U+FFFD into the field, a path that does not
+/// exist.
+pub(super) fn matching_names(dir: &Path, prefix: &str) -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut names: Vec<String> = entries
+        .filter_map(|entry| entry.ok()?.file_name().into_string().ok())
+        .filter(|name| name.starts_with(prefix))
+        .filter(|name| prefix.starts_with('.') || !name.starts_with('.'))
+        .collect();
+    names.sort_by(|a, b| model::natural_cmp(a, b));
+    names
 }

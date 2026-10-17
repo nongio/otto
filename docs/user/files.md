@@ -3,7 +3,7 @@
 `otto-files` is Otto's file manager. Browse the filesystem, open things, move
 them around, and preview a file without opening it at all.
 
-![The Files window in icon view, showing a folder of pictures as thumbnails with the sidebar of places on the left](images/files-icon-view.jpg)
+![The Files window in icon view, showing a folder of pictures as large thumbnails with the sidebar of places on the left and the path along the bottom](images/files-icon-view.jpg)
 
 > **First version.** Files is new and aims to be genuinely useful for everyday
 > browsing, but it is not finished. What is missing is listed at the bottom of
@@ -36,6 +36,9 @@ folders never changes the view; only going somewhere new does, such as a
 sidebar place or Back.
 
 Pictures, PDFs and videos show a thumbnail instead of a generic type icon.
+Video thumbnails need `ffmpegthumbnailer` or `ffmpeg` installed, and HEIC and
+AVIF photos — what a phone takes — need `libvips` or ImageMagick; without them
+those files keep their type icon.
 Files reads the shared thumbnail cache that other file managers write, so
 folders another manager has already been through come up with pictures
 immediately. Files does not write to that cache yet, so thumbnails it makes for
@@ -289,7 +292,7 @@ as the panel is open.
 Arrow keys move to the next file and the preview follows, `Space` closes it,
 and `Escape` closes it before it clears your selection.
 
-![Peek open on a picture: the file fills the panel, with its name, dimensions and size listed underneath](images/peek.jpg)
+![Peek open on a picture: the image fills a panel over the Files window, with the file name above it and buttons to expand or close](images/peek.jpg)
 
 While the panel is up it owns the pointer: the wheel scrolls a text preview, a
 pinch zooms a picture, and a two-finger scroll pans a zoomed one with momentum
@@ -426,6 +429,49 @@ are the same operation reached from two places.
 Items in the Trash cannot be opened, renamed, copied or pasted into. Put one
 back first and it is an ordinary file again. Trashed *folders* can be opened,
 so you can look inside before deciding.
+
+## The desk
+
+The desk shows the files in your Desktop folder on the desktop itself, behind
+the windows. Turn it on in **Settings ▸ Appearance ▸ Desk ▸ Show files on the
+desktop**. The same group picks another folder with **Choose…**.
+
+It fills the screen by default. To make it smaller or move it, click
+**Edit…** beside *Size and position*. The desk comes to the front with an
+outline and handles: drag inside it to move it, drag an edge or a corner to
+resize it. **Done** (or Return, or Escape) keeps the result, **Cancel** puts
+it back. **Reset** makes it fill the screen again.
+
+*Icon size* in the same group makes the desk's icons bigger or smaller, from
+32 to 160 px; the desk follows as you drag.
+
+When there are more files than fit, *When icons don't fit* in the same group
+decides what happens. **Scroll** (the default) lets the grid run on and scroll.
+**Show in overlay** keeps the grid still: the extra icons go into
+the overflow tile in the last cell, with a badge saying how many. Click the
+tile, or press Return or Space with it selected, to open the overflow panel:
+it grows out of the tile above your windows and shows the files two rows at a
+time, scrolling for the rest. There they work like any other icon on the desk:
+select them, open them, rename them, drag them out to the desk or another app.
+Escape, a click anywhere else, or switching to another window closes it.
+Dropping files on the tile puts them on the desk, like dropping them anywhere
+else on it.
+
+All of this is kept in `~/.config/otto/files.toml`, and the desk picks up
+changes to that file as soon as they are saved:
+
+```toml
+[desk]
+folder = "~/Desktop"      # default: your Desktop folder
+sort = "name"             # name | kind | modified
+anchor = "fill"           # fill | top-left | top | top-right | left | center
+                          # | right | bottom-left | bottom | bottom-right
+size = ["40%", "60%"]     # ignored with fill; points or percentages
+position = ["5%", "10%"]  # top-left corner, optional; ignored with fill
+padding = 24              # points between the edge and the icons
+icon_size = 64            # points
+overflow = "scroll"       # scroll | stack
+```
 
 ## Not there yet
 

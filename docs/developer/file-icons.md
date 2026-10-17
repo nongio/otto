@@ -108,6 +108,11 @@ is rasterised at the size actually asked for. Themes commonly ship monochrome
 outline art in their small fixed directories (Fluent's `16/places/folder.svg`
 is a grey glyph) and the real icon only in `scalable`.
 
+A lookup below `FULL_COLOUR_SIZE` that names a glyph in Otto's Solar set
+(see [otto-kit](otto-kit.md#theme-typography-and-icons)) gets the glyph
+instead of the theme's art. `folder` is not one of those names, so a listing's
+directories keep the theme's folder at every size.
+
 Results live in one process-global map, shared by every view and the file
 picker. **Misses are cached too**, which is what keeps a folder full of
 unknown types cheap.

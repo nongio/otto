@@ -1,0 +1,1910 @@
+use std::{
+    borrow::{Borrow, BorrowMut},
+    cell::RefCell,
+    collections::HashMap,
+    ffi::{c_char, CStr},
+    rc::Rc,
+};
+
+use layers::skia;
+
+use smithay::{
+    backend::{
+        allocator::{
+            dmabuf::{Dmabuf, WeakDmabuf},
+            format::{has_alpha, FormatSet},
+            Buffer as DmaBuffer, Fourcc,
+        },
+        egl::{self, display::EGLBufferReader, fence::EGLFence, EGLContext, EGLSurface},
+        renderer::{
+            gles::{
+                ffi::{
+                    self,
+                    types::{GLint, GLuint},
+                },
+                format::{fourcc_to_gl_formats, gl_internal_format_to_fourcc},
+                Capability, GlesError, GlesRenderbuffer, GlesRenderer, GlesTexture,
+            },
+            sync::SyncPoint,
+            Bind, Blit, ContextId, DebugFlags, ExportMem, ImportDma, ImportDmaWl, ImportEgl,
+            ImportMem, ImportMemWl, Offscreen, Renderer, RendererSuper, Texture, TextureFilter,
+        },
+    },
+    reexports::wayland_server::{protocol::wl_buffer::WlBuffer, DisplayHandle},
+    utils::{Buffer, Physical, Rectangle, Size, Transform},
+    wayland::compositor::SurfaceData,
+};
+
+// Import and re-export types from renderer module
+use crate::renderer::EGLSurfaceWrapper;
+
+// Re-export public types from renderer module
+pub use crate::renderer::{
+    SkiaFrame, SkiaGLesFbo, SkiaSurface, SkiaTexture, SkiaTextureImage, SkiaTextureMapping,
+};
+
+pub struct SkiaRenderer {
+    gl_renderer: GlesRenderer,
+    /// GL entry points for `gl_renderer`'s EGL context.
+    ///
+    /// Every raw call through them (the `unsafe` blocks below that cite "the
+    /// GL invariant") assumes that context is current on the calling thread
+    /// and that every pointer argument is valid for the call. The renderer is
+    /// used on the compositor thread only. Its context is made current when
+    /// it is created and by every `GlesRenderer` operation it delegates to,
+    /// and each entry point with GL or Skia work of its own (dmabuf import
+    /// and binding, `render`, blits, offscreen buffers, plane surfaces and
+    /// the per-frame scanout flush) calls [`Self::ensure_current`] first, so
+    /// a second renderer (another GPU) that ran in between cannot leave its
+    /// context current under this one's calls. A `SkiaFrame` relies on the
+    /// `render` that created it: nothing may switch contexts mid-frame.
+    pub(crate) gl: ffi::Gles2,
+
+    target_renderer: HashMap<SkiaTarget, SkiaSurface>,
+    /// Public so the screenshare blit (`renderer/mod.rs`) can snapshot and
+    /// restore it — leaving it pointed at the screencast dmabuf corrupts the
+    /// next DRM fence export.
+    pub current_target: Option<SkiaTarget>,
+    pub buffers: HashMap<SkiaTarget, SkiaGLesFbo>,
+    pub context: Option<skia::gpu::DirectContext>,
+
+    dmabuf_cache: std::collections::HashMap<WeakDmabuf, SkiaTexture>,
+    /// Companion resources for `SkiaTarget::Dmabuf` entries in `buffers`,
+    /// released together with them on eviction.
+    dmabuf_target_aux: HashMap<WeakDmabuf, DmabufTargetAux>,
+    /// Dmabufs refused as render targets, so a buffer the driver cannot draw
+    /// into is not re-imported, and warned about, every frame.
+    refused_dmabuf_targets: std::collections::HashSet<WeakDmabuf>,
+    /// GL textures and EGLImages of plane slot surfaces that have been
+    /// dropped, waiting for a frame with the context current to delete them
+    /// (see [`PlaneTextureRelease`]).
+    plane_texture_releases: PlaneTextureQueue,
+    /// Plane dmabufs written since the last [`Self::flush_planes_for_scanout`],
+    /// which have to carry a fence for their GPU writes before KMS reads them.
+    scanout_writes: Vec<smithay::backend::allocator::dmabuf::Dmabuf>,
+    /// Set once attaching a fence to a plane dmabuf has failed, so a kernel
+    /// or driver without support falls back to the CPU wait for good rather
+    /// than retrying and warning every frame.
+    scanout_fences_unsupported: bool,
+    smithay_context_id: ContextId<SkiaTexture>,
+}
+
+type PlaneTextureQueue = std::sync::Arc<std::sync::Mutex<Vec<(GLuint, usize)>>>;
+
+/// The GL texture and EGLImage a plane slot's [`SkiaSurface`] renders into.
+///
+/// Skia only borrows the texture, so nothing else ever deletes it, and the
+/// EGLImage holds a reference to the dmabuf's GEM object for as long as it
+/// lives: a slot dropped without this leaks the whole buffer. A plane that
+/// follows a resizing window rebuilds its swapchain every frame of the
+/// animation, so the leak ran to gigabytes within minutes of tiling.
+///
+/// The drop can happen where no GL context is current (Smithay releases the
+/// slot after the page flip), so it only queues the handles; the renderer
+/// deletes them on its next frame.
+pub struct PlaneTextureRelease {
+    tex_id: GLuint,
+    image: usize,
+    queue: PlaneTextureQueue,
+}
+
+impl Drop for PlaneTextureRelease {
+    fn drop(&mut self) {
+        if let Ok(mut queue) = self.queue.lock() {
+            queue.push((self.tex_id, self.image));
+        }
+    }
+}
+
+impl From<GlesRenderer> for SkiaRenderer {
+    fn from(gl_renderer: GlesRenderer) -> SkiaRenderer {
+        let egl = gl_renderer.egl_context();
+
+        // SAFETY: `gl_renderer` owns this context and is being moved into the
+        // new renderer on this thread, so it is not current anywhere else;
+        // the entry points are loaded once it is current here.
+        let gl = unsafe {
+            let res = egl.make_current();
+            if res.is_err() {
+                panic!("Failed to make current");
+            }
+            SkiaRenderer::load_gl()
+        };
+
+        let mut options = skia::gpu::ContextOptions::default();
+        options.skip_gl_error_checks = skia::gpu::ganesh::context_options::Enable::Yes;
+        // options.
+        let interface = skia::gpu::gl::Interface::new_native().unwrap();
+        let mut context = skia::gpu::direct_contexts::make_gl(interface, &options);
+
+        let ctx = context.as_mut().unwrap();
+        ctx.reset(None);
+
+        SkiaRenderer {
+            gl,
+            gl_renderer,
+            target_renderer: HashMap::new(),
+            buffers: HashMap::new(),
+            current_target: None,
+            context,
+            dmabuf_cache: std::collections::HashMap::new(),
+            dmabuf_target_aux: HashMap::new(),
+            refused_dmabuf_targets: Default::default(),
+            plane_texture_releases: Default::default(),
+            scanout_writes: Vec::new(),
+            scanout_fences_unsupported: false,
+            smithay_context_id: ContextId::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum SkiaTarget {
+    // EGLSurface(smithay::backend::egl::ffi::egl::types::EGLSurface),
+    #[allow(private_interfaces)]
+    EGLSurface(EGLSurfaceWrapper),
+    Texture(ffi::types::GLuint),
+    Renderbuffer(*const GlesRenderbuffer),
+    // Weak so the cache never keeps a dropped dmabuf alive: a strong key
+    // would retain its fds (and the EGLImage's Mesa-internal dups) forever.
+    // Dead entries are evicted on the next `Bind<Dmabuf>::bind`.
+    Dmabuf(WeakDmabuf),
+    Fbo(SkiaGLesFbo),
+}
+
+/// GL/EGL resources backing a bound dmabuf render target. Tracked separately
+/// from [`SkiaGLesFbo`] so eviction can release them — the EGLImage is what
+/// holds the dmabuf's fds inside Mesa.
+struct DmabufTargetAux {
+    image: smithay::backend::egl::ffi::egl::types::EGLImage,
+    rbo: u32,
+    depth_rbo: u32,
+}
+impl std::fmt::Debug for SkiaRenderer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SkiaRenderer").finish()
+    }
+}
+
+impl SkiaRenderer {
+    /// # Safety
+    ///
+    /// This operation will cause undefined behavior if the given EGLContext is active in another thread.
+    pub unsafe fn supported_capabilities(
+        context: &EGLContext,
+    ) -> Result<Vec<Capability>, GlesError> {
+        GlesRenderer::supported_capabilities(context)
+    }
+
+    /// # Safety
+    ///
+    /// This operation will cause undefined behavior if the given EGLContext is active in another thread.
+    pub unsafe fn load_gl() -> ffi::Gles2 {
+        ffi::Gles2::load_with(|s| smithay::backend::egl::get_proc_address(s) as *const _)
+    }
+    /// # Safety
+    ///
+    /// This operation will cause undefined behavior if the given EGLContext is active in another thread.
+    pub unsafe fn with_capabilities(
+        egl: EGLContext,
+        capabilities: impl IntoIterator<Item = Capability>,
+    ) -> Result<SkiaRenderer, GlesError> {
+        egl.make_current()?;
+        let gl_renderer = GlesRenderer::with_capabilities(egl, capabilities)?;
+        // let egl = gl_renderer.egl_context();
+        let interface = skia::gpu::gl::Interface::new_native().unwrap();
+        let context = skia::gpu::direct_contexts::make_gl(interface, None);
+
+        let (gl, _exts) = {
+            let gl =
+                ffi::Gles2::load_with(|s| smithay::backend::egl::get_proc_address(s) as *const _);
+            let ext_ptr = gl.GetString(ffi::EXTENSIONS) as *const c_char;
+            if ext_ptr.is_null() {
+                return Err(GlesError::GLFunctionLoaderError);
+            }
+
+            let exts = {
+                let p = CStr::from_ptr(ext_ptr);
+                let list =
+                    String::from_utf8(p.to_bytes().to_vec()).unwrap_or_else(|_| String::new());
+                list.split(' ').map(|e| e.to_string()).collect::<Vec<_>>()
+            };
+
+            tracing::info!("Initializing OpenGL ES Renderer");
+            tracing::info!(
+                "GL Version: {:?}",
+                CStr::from_ptr(gl.GetString(ffi::VERSION) as *const c_char)
+            );
+            tracing::info!(
+                "GL Vendor: {:?}",
+                CStr::from_ptr(gl.GetString(ffi::VENDOR) as *const c_char)
+            );
+            tracing::info!(
+                "GL Renderer: {:?}",
+                CStr::from_ptr(gl.GetString(ffi::RENDERER) as *const c_char)
+            );
+            tracing::info!("Supported GL Extensions: {:?}", exts);
+
+            // let gl_version = smithay::backend::renderer::gles::version::GlVersion::try_from(&gl).unwrap_or_else(|_| {
+            //     tracing::warn!("Failed to detect GLES version, defaulting to 2.0");
+            //     version::GLES_2_0
+            // });
+
+            // required for the manditory wl_shm formats
+            if !exts
+                .iter()
+                .any(|ext| ext == "GL_EXT_texture_format_BGRA8888")
+            {
+                return Err(GlesError::GLExtensionNotSupported(&[
+                    "GL_EXT_texture_format_BGRA8888",
+                ]));
+            }
+
+            // required for buffers without linear memory layout
+            // if gl_version < version::GLES_3_0
+            //     && !exts.iter().any(|ext| ext == "GL_EXT_unpack_subimage")
+            // {
+            //     return Err(GlesError::GLExtensionNotSupported(&[
+            //         "GL_EXT_unpack_subimage",
+            //     ]));
+            // }
+
+            // let gl_debug_span = if requested_capabilities.contains(&Capability::Debug) {
+            //     gl.Enable(ffi::DEBUG_OUTPUT);
+            //     gl.Enable(ffi::DEBUG_OUTPUT_SYNCHRONOUS);
+            //     let span = Box::into_raw(Box::new(span.clone()));
+            //     gl.DebugMessageCallback(Some(gl_debug_log), span as *mut _);
+            //     Some(span)
+            // } else {
+            //     None
+            // };
+
+            // (gl, gl_version, exts, requested_capabilities, gl_debug_span)
+            (gl, exts)
+        };
+
+        Ok(SkiaRenderer {
+            gl_renderer,
+            gl,
+            target_renderer: HashMap::new(),
+            buffers: HashMap::new(),
+            current_target: None,
+            context,
+            dmabuf_cache: std::collections::HashMap::new(),
+            dmabuf_target_aux: HashMap::new(),
+            refused_dmabuf_targets: Default::default(),
+            plane_texture_releases: Default::default(),
+            scanout_writes: Vec::new(),
+            scanout_fences_unsupported: false,
+            smithay_context_id: ContextId::new(),
+        })
+    }
+
+    /// # Safety
+    ///
+    /// This operation will cause undefined behavior if the given EGLContext is active in another thread.
+    pub unsafe fn new(context: EGLContext) -> Result<SkiaRenderer, GlesError> {
+        let supported_capabilities = Self::supported_capabilities(&context)?;
+        Self::with_capabilities(context, supported_capabilities)
+    }
+    pub fn egl_context(&self) -> &EGLContext {
+        self.gl_renderer.egl_context()
+    }
+
+    /// Make this renderer's context current if another one is (see
+    /// [`Self::gl`]).
+    ///
+    /// One `eglGetCurrentContext` when it already is, and an already-current
+    /// context is left alone, so an EGL surface bound with it stays bound.
+    /// When it has to switch, it binds the current target's EGL surface, or
+    /// no surface for an offscreen target.
+    fn ensure_current(&self) -> Result<(), GlesError> {
+        if self.egl_context().is_current() {
+            return Ok(());
+        }
+        // SAFETY: this renderer's own context, used on this thread only, and
+        // a target surface was created on its display.
+        unsafe {
+            match &self.current_target {
+                Some(SkiaTarget::EGLSurface(EGLSurfaceWrapper(surface))) => {
+                    self.egl_context().make_current_with_surface(surface)?
+                }
+                _ => self.egl_context().make_current()?,
+            }
+        }
+        Ok(())
+    }
+
+    /// Formats a dmabuf can have to be bound as a render target.
+    pub fn dmabuf_render_formats(&self) -> FormatSet {
+        self.egl_context().dmabuf_render_formats().clone()
+    }
+
+    /// Make the plane buffers rendered this frame safe to scan out.
+    ///
+    /// Plane slot surfaces are offscreen EGLImage render targets, which Mesa
+    /// iris does not attach implicit dma-fences to, so the atomic commit will
+    /// not wait for them — something must, or planes flip with half-drawn
+    /// buffers. Every plane shares this one `DirectContext`, so one fence
+    /// covers all of them; the per-plane renders submit without blocking (see
+    /// `SceneDmabufElement::render_inner`). The fence is attached to each
+    /// plane dmabuf so the kernel waits for it, keeping the event loop free
+    /// while the GPU works. When that is not possible this blocks until the
+    /// GPU is done instead.
+    ///
+    /// Call once per frame, after the last plane render and before handing the
+    /// buffers to the DRM compositor.
+    pub fn flush_planes_for_scanout(&mut self) {
+        // `ensure_current` only fails when the context was not current, so
+        // the fence, the flush and the texture release below would land on
+        // another (or no) context. Skip them; the pending writes and plane
+        // textures stay queued for the next frame.
+        if let Err(err) = self.ensure_current() {
+            tracing::warn!("cannot make the renderer current to flush planes: {err:?}");
+            return;
+        }
+        let writes = std::mem::take(&mut self.scanout_writes);
+        if !self.fence_scanout_writes(&writes) {
+            if let Some(context) = self.context.as_mut() {
+                context.flush_submit_and_sync_cpu();
+            }
+        }
+        self.release_plane_textures();
+        // Textures dropped with their last `GlesTexture` (evicted client
+        // imports among them) wait on the GLES renderer's cleanup queue, which
+        // nothing else drains: this renderer never renders through it.
+        if let Err(err) = self.gl_renderer.cleanup_texture_cache() {
+            tracing::warn!("GLES texture cleanup failed: {err:?}");
+        }
+        // Skia caches texture bindings; a deleted name can come back for a new
+        // texture, so don't let it trust what it thinks is bound.
+        if let Some(context) = self.context.as_mut() {
+            context.reset(None);
+        }
+        self.debug_gpu_memory();
+    }
+
+    /// `echo > /tmp/otto-purge-skia` drops everything Skia's resource cache
+    /// holds but is not using; `touch /tmp/otto-gpumem` logs the cache's
+    /// size once a second. Together they say whether GPU memory that stays
+    /// after a window closes is Skia's budgeted cache or something lost.
+    fn debug_gpu_memory(&mut self) {
+        if !crate::debug_hooks::ENABLED {
+            return;
+        }
+        let Some(context) = self.context.as_mut() else {
+            return;
+        };
+        if crate::debug_hooks::take_file("/tmp/otto-purge-skia").is_some() {
+            context.purge_unlocked_resources(skia::gpu::PurgeResourceOptions::AllResources);
+            tracing::info!(target: "otto::gpumem", "purged Skia's unlocked resources");
+        }
+        if crate::debug_hooks::toggle("/tmp/otto-gpumem") {
+            thread_local! {
+                static LAST: std::cell::Cell<Option<std::time::Instant>> = const { std::cell::Cell::new(None) };
+            }
+            let due = LAST.with(|last| {
+                let due = last
+                    .get()
+                    .is_none_or(|t| t.elapsed() >= std::time::Duration::from_secs(1));
+                if due {
+                    last.set(Some(std::time::Instant::now()));
+                }
+                due
+            });
+            if due {
+                let usage = context.resource_cache_usage();
+                let (node_surfaces, node_surface_bytes) = layers::drawing::node_surfaces_stats();
+                let (stored, stored_bytes) = crate::textures_storage::stats();
+                tracing::info!(
+                    target: "otto::gpumem",
+                    "skia cache: {} resources, {} MiB used, {} MiB purgeable, {} MiB limit; \
+                     lay-rs node surfaces: {node_surfaces}, {} MiB; \
+                     surface textures: {stored}, {} MiB; client imports: {}; \
+                     unmapped windows still referenced: {}",
+                    usage.resource_count,
+                    usage.resource_bytes >> 20,
+                    context.resource_cache_purgeable_bytes() >> 20,
+                    context.resource_cache_limit() >> 20,
+                    node_surface_bytes >> 20,
+                    stored_bytes >> 20,
+                    self.dmabuf_cache.len(),
+                    crate::debug_hooks::zombie_windows(),
+                );
+            }
+        }
+    }
+
+    /// Record that `dmabuf` was rendered into for scanout this frame.
+    ///
+    /// [`Self::flush_planes_for_scanout`] attaches the frame's GPU fence to it,
+    /// so the KMS commit waits for the writes instead of the CPU.
+    pub fn note_scanout_write(&mut self, dmabuf: &smithay::backend::allocator::dmabuf::Dmabuf) {
+        self.scanout_writes.push(dmabuf.clone());
+    }
+
+    /// Submit the pending GPU work and attach its fence to every dmabuf in
+    /// `writes` as an implicit write fence.
+    ///
+    /// The atomic commit then waits for the GPU in the kernel, and the event
+    /// loop stays free to deliver input while the GPU works. Returns `false`
+    /// when the fence cannot be exported or attached, in which case the
+    /// caller has to block on the GPU itself.
+    fn fence_scanout_writes(
+        &mut self,
+        writes: &[smithay::backend::allocator::dmabuf::Dmabuf],
+    ) -> bool {
+        if writes.is_empty() || self.scanout_fences_unsupported {
+            return false;
+        }
+        let Some(context) = self.context.as_mut() else {
+            return false;
+        };
+        context.flush_and_submit();
+        let display = self.egl_context().display().clone();
+        let fence = match smithay::backend::egl::fence::EGLFence::create(&display) {
+            Ok(fence) if fence.is_native() => fence,
+            _ => return false,
+        };
+        // A native fence reaches the GPU only with the next flush.
+        // SAFETY: the renderer's EGL context is current for the whole frame.
+        unsafe { self.gl.Flush() };
+        let Ok(sync_file) = fence.export() else {
+            return false;
+        };
+        let attached = writes
+            .iter()
+            .flat_map(|dmabuf| dmabuf.handles())
+            .all(|handle| import_write_fence(handle, &sync_file));
+        self.scanout_fences_unsupported = !attached;
+        attached
+    }
+
+    /// Delete the textures and EGLImages of plane slots dropped since the
+    /// last call. Needs the context current.
+    fn release_plane_textures(&mut self) {
+        let released = std::mem::take(&mut *self.plane_texture_releases.lock().unwrap());
+        if released.is_empty() {
+            return;
+        }
+        let display = **self.egl_context().display().get_display_handle();
+        for (tex_id, image) in released {
+            // SAFETY: the GL invariant (this runs from the frame, with the
+            // context current). Each pair was created by
+            // `create_surface_from_dmabuf` on this renderer and is queued
+            // exactly once, by its `PlaneTextureRelease`'s drop, so each
+            // texture and EGLImage is deleted once.
+            unsafe {
+                self.gl.DeleteTextures(1, &tex_id);
+                smithay::backend::egl::ffi::egl::DestroyImageKHR(display, image as _);
+            }
+        }
+    }
+
+    /// Create a Skia surface backed by the GL texture we import from
+    /// `dmabuf`. Used by [`SceneDmabufElement`](crate::render_elements::scene_dmabuf_element::SceneDmabufElement)
+    /// to render the lay-rs scene into a dmabuf the DRM compositor can
+    /// hand to a KMS plane via `UnderlyingStorage::Dmabuf`.
+    ///
+    /// The returned `SkiaSurface` shares its GPU context with this
+    /// renderer's other Skia surfaces (passed via `Some(context)` to
+    /// `new_with_texture`), so resources and shader caches are shared.
+    ///
+    /// Caller is responsible for keeping the dmabuf alive while the
+    /// returned surface is in use, and for dropping the returned
+    /// [`PlaneTextureRelease`] after the surface: it frees the GL texture
+    /// and EGLImage the surface renders into.
+    pub fn create_surface_from_dmabuf(
+        &mut self,
+        dmabuf: &smithay::backend::allocator::dmabuf::Dmabuf,
+    ) -> Result<(SkiaSurface, PlaneTextureRelease), GlesError> {
+        use smithay::backend::allocator::Buffer;
+        self.ensure_current()?;
+
+        let is_external = !self
+            .egl_context()
+            .dmabuf_render_formats()
+            .contains(&dmabuf.format());
+        if is_external {
+            // External textures can be sampled but not rendered into via Skia's
+            // standard GPU surface path. The scene-as-dmabuf use case wants a
+            // render target, so reject external formats here.
+            return Err(GlesError::MappingError);
+        }
+
+        let color_type = match dmabuf.format().code {
+            Fourcc::Argb8888 | Fourcc::Abgr8888 => skia::ColorType::RGBA8888,
+            Fourcc::Xrgb8888 | Fourcc::Xbgr8888 => skia::ColorType::RGB888x,
+            Fourcc::Abgr2101010 | Fourcc::Xbgr2101010 => skia::ColorType::RGBA1010102,
+            // A mistyped render target silently corrupts output — reject
+            // unmapped formats instead.
+            code => return Err(GlesError::UnsupportedPixelFormat(code)),
+        };
+
+        let egl_image = self
+            .egl_context()
+            .display()
+            .create_image_from_dmabuf(dmabuf)
+            .map_err(GlesError::BindBufferEGLError)?;
+
+        let tex_id = match self.import_egl_image(egl_image, false, None) {
+            Ok(tex_id) => tex_id,
+            Err(err) => {
+                // SAFETY: `egl_image` was created just above on this display
+                // and nothing holds it: the failed import made no texture
+                // from it.
+                unsafe {
+                    smithay::backend::egl::ffi::egl::DestroyImageKHR(
+                        **self.egl_context().display().get_display_handle(),
+                        egl_image,
+                    );
+                }
+                return Err(err);
+            }
+        };
+        let release = PlaneTextureRelease {
+            tex_id,
+            image: egl_image as usize,
+            queue: self.plane_texture_releases.clone(),
+        };
+
+        let size = dmabuf.size();
+        let context = self.context.as_ref();
+        let surface = SkiaSurface::new_with_texture(
+            size.w,
+            size.h,
+            0_usize,
+            tex_id,
+            color_type,
+            context,
+            skia::gpu::SurfaceOrigin::TopLeft,
+        );
+        Ok((surface, release))
+    }
+
+    pub fn current_skia_renderer(&mut self) -> Option<&SkiaSurface> {
+        let renderer = self
+            .current_target
+            .as_ref()
+            .and_then(|current_target| self.target_renderer.get(current_target));
+        renderer
+    }
+    #[profiling::function]
+    fn create_texture_and_framebuffer(
+        &self,
+        width: i32,
+        height: i32,
+        format: Fourcc,
+    ) -> Result<SkiaGLesFbo, GlesError> {
+        let mut texture: GLuint = 0;
+        let mut framebuffer: GLuint = 0;
+
+        // Client dmabufs arrive with arbitrary fourccs (NV12/P010 from
+        // hw-decode paths) — an unmapped format must be a recoverable error,
+        // not a compositor abort.
+        let (internal_format, read_format, read_type) =
+            fourcc_to_gl_formats(format).ok_or(GlesError::UnsupportedPixelFormat(format))?;
+        // SAFETY: the GL invariant. The out-pointers are locals that outlive
+        // the calls, and `TexImage2D` gets a null data pointer (allocate
+        // only). On an incomplete framebuffer both objects are deleted before
+        // returning.
+        unsafe {
+            // Generate and bind the texture
+            self.gl.GenTextures(1, &mut texture);
+            self.gl.BindTexture(ffi::TEXTURE_2D, texture);
+
+            // Set the texture parameters
+            self.gl.TexParameteri(
+                ffi::TEXTURE_2D,
+                ffi::TEXTURE_MIN_FILTER,
+                ffi::LINEAR as GLint,
+            );
+            self.gl.TexParameteri(
+                ffi::TEXTURE_2D,
+                ffi::TEXTURE_MAG_FILTER,
+                ffi::LINEAR as GLint,
+            );
+            self.gl.TexParameteri(
+                ffi::TEXTURE_2D,
+                ffi::TEXTURE_WRAP_S,
+                ffi::MIRRORED_REPEAT as GLint,
+            );
+            self.gl.TexParameteri(
+                ffi::TEXTURE_2D,
+                ffi::TEXTURE_WRAP_T,
+                ffi::MIRRORED_REPEAT as GLint,
+            );
+
+            // Allocate the texture storage
+            self.gl.TexImage2D(
+                ffi::TEXTURE_2D,
+                0,
+                internal_format as GLint,
+                width,
+                height,
+                0,
+                read_format,
+                read_type,
+                std::ptr::null(),
+            );
+
+            // Generate and bind the framebuffer
+            self.gl.GenFramebuffers(1, &mut framebuffer);
+            self.gl.BindFramebuffer(ffi::FRAMEBUFFER, framebuffer);
+
+            // Attach the texture to the framebuffer
+            self.gl.FramebufferTexture2D(
+                ffi::FRAMEBUFFER,
+                ffi::COLOR_ATTACHMENT0,
+                ffi::TEXTURE_2D,
+                texture,
+                0,
+            );
+
+            // Check that the framebuffer is complete
+            if self.gl.CheckFramebufferStatus(ffi::FRAMEBUFFER) != ffi::FRAMEBUFFER_COMPLETE {
+                self.gl.BindFramebuffer(ffi::FRAMEBUFFER, 0);
+                self.gl.DeleteFramebuffers(1, &framebuffer);
+                self.gl.DeleteTextures(1, &texture);
+                return Err(GlesError::FramebufferBindingError);
+            }
+
+            // Unbind the framebuffer
+            self.gl.BindFramebuffer(ffi::FRAMEBUFFER, 0);
+        }
+
+        Ok(SkiaGLesFbo {
+            fbo: framebuffer,
+            tex_id: texture,
+            format,
+            origin: skia::gpu::SurfaceOrigin::TopLeft,
+            width,
+            height,
+        })
+    }
+
+    fn import_dmabuf_internal(
+        &mut self,
+        dmabuf: &Dmabuf,
+        damage: Option<&[Rectangle<i32, Buffer>]>,
+    ) -> Result<<Self as RendererSuper>::TextureId, <Self as RendererSuper>::Error> {
+        use smithay::backend::allocator::Buffer;
+        let damage = damage.map(|damage| damage.to_vec());
+
+        self.ensure_current()?;
+
+        self.evict_dead_dmabuf_imports();
+        let texture = self
+            .existing_dmabuf_texture(dmabuf)?
+            .map(Ok)
+            .unwrap_or_else(|| {
+                let is_external = !self
+                    .egl_context()
+                    .dmabuf_render_formats()
+                    .contains(&dmabuf.format());
+
+                let egl_image = self
+                    .egl_context()
+                    .display()
+                    .create_image_from_dmabuf(dmabuf)
+                    .map_err(GlesError::BindBufferEGLError)?;
+
+                let format = fourcc_to_gl_formats(dmabuf.format().code)
+                    .map(|(internal, _, _)| internal)
+                    .unwrap_or(ffi::RGBA8);
+                let has_alpha = has_alpha(dmabuf.format().code);
+
+                // If external, resolve/blit into a TEXTURE_2D so Skia can sample it reliably.
+                let tex_id = if is_external {
+                    self.create_texture_and_framebuffer(
+                        dmabuf.size().w,
+                        dmabuf.size().h,
+                        dmabuf.format().code,
+                    )
+                    .map(|dst| {
+                        // Only the texture outlives the import (the
+                        // `GlesTexture` below owns it); the blit, now and on
+                        // every refresh, brings framebuffers of its own.
+                        // SAFETY: the GL invariant; `dst.fbo` was just
+                        // created and nothing else refers to it.
+                        unsafe { self.gl.DeleteFramebuffers(1, &dst.fbo) };
+                        dst.tex_id
+                    })
+                    .and_then(|tex_id| {
+                        self.blit_eglimage_to_2d_texture(egl_image, tex_id, dmabuf.size())?;
+                        Ok(tex_id)
+                    })
+                } else {
+                    self.import_egl_image(egl_image, is_external, None)
+                };
+                let tex_id = match tex_id {
+                    Ok(tex_id) => tex_id,
+                    Err(err) => {
+                        // SAFETY: created above on this display and not
+                        // stored anywhere yet, so destroyed once.
+                        unsafe {
+                            smithay::backend::egl::ffi::egl::DestroyImageKHR(
+                                **self.egl_context().display().get_display_handle(),
+                                egl_image,
+                            );
+                        }
+                        return Err(err);
+                    }
+                };
+                let skia_external_flag = false;
+
+                // SAFETY: `tex_id` was just created in this context (shared
+                // with `gl_renderer`) and nothing else owns it: the
+                // `GlesTexture` takes it over and deletes it when its last
+                // clone drops.
+                let gles_texture = unsafe {
+                    GlesTexture::from_raw(
+                        &self.gl_renderer,
+                        Some(format),
+                        !has_alpha,
+                        tex_id,
+                        dmabuf.size(),
+                    )
+                };
+                let Some(image) =
+                    self.import_skia_image_from_texture(&gles_texture, skia_external_flag)
+                else {
+                    // SAFETY: as above, the image is not stored anywhere yet;
+                    // `gles_texture` deletes `tex_id` as it drops.
+                    unsafe {
+                        smithay::backend::egl::ffi::egl::DestroyImageKHR(
+                            **self.egl_context().display().get_display_handle(),
+                            egl_image,
+                        );
+                    }
+                    return Err(GlesError::MappingError);
+                };
+
+                let texture = SkiaTexture {
+                    texture: gles_texture,
+                    image,
+                    has_alpha,
+                    // GL samples an X format without an alpha channel.
+                    padding_alpha: false,
+                    format: Some(dmabuf.format().code),
+                    egl_images: Some(vec![egl_image]),
+                    // Preserve original is_external to drive update path in reuse
+                    is_external,
+                    damage: damage.clone(),
+                };
+
+                self.dmabuf_cache.insert(dmabuf.weak(), texture.clone());
+                Ok(texture)
+            });
+        texture.and_then(|mut tex| {
+            tex.image = self
+                .import_skia_image_from_texture(&tex.texture, false)
+                .ok_or(GlesError::MappingError)?;
+            tex.damage = damage.clone();
+            Ok(tex)
+        })
+    }
+    /// Forget the imports of client dmabufs that no longer exist.
+    ///
+    /// Every buffer a client attaches is imported once and kept here, keyed
+    /// weakly. A client that resizes allocates new buffers and drops the old
+    /// ones, so without eviction each resize pinned its dead buffers — the
+    /// EGLImage holds the GEM object — for the life of the compositor.
+    ///
+    /// The EGLImage is destroyed right away: a texture still bound to it keeps
+    /// the contents alive for anything drawing a clone of this entry. The
+    /// texture itself is deleted when its last clone drops, through the GLES
+    /// cleanup queue drained in [`Self::flush_planes_for_scanout`].
+    fn evict_dead_dmabuf_imports(&mut self) {
+        let display = **self.egl_context().display().get_display_handle();
+        self.dmabuf_cache.retain(|weak, texture| {
+            if !weak.is_gone() {
+                return true;
+            }
+            for image in texture.egl_images.take().into_iter().flatten() {
+                // SAFETY: the image was created on this display by
+                // `import_dmabuf_internal`, and `take()` removes it from the
+                // only entry that is ever read, so it is destroyed once.
+                // Clones handed out earlier still carry the handle, but
+                // nothing reads `egl_images` outside this cache.
+                unsafe {
+                    smithay::backend::egl::ffi::egl::DestroyImageKHR(display, image);
+                }
+            }
+            false
+        });
+    }
+
+    #[profiling::function]
+    fn existing_dmabuf_texture(&self, buffer: &Dmabuf) -> Result<Option<SkiaTexture>, GlesError> {
+        let existing_texture = self
+            .dmabuf_cache
+            .iter()
+            .find(|(weak, _)| {
+                weak.upgrade()
+                    .map(|entry| &entry == buffer)
+                    .unwrap_or(false)
+            })
+            .map(|(_, tex)| tex.clone());
+
+        if let Some(texture) = existing_texture {
+            if let Some(egl_images) = texture.egl_images.as_ref() {
+                if egl_images[0] == smithay::backend::egl::ffi::egl::NO_IMAGE_KHR {
+                    return Ok(None);
+                }
+                if texture.is_external {
+                    // For external sources, refresh the 2D texture by blitting from the EGLImage.
+                    let size =
+                        Size::<i32, Buffer>::from((texture.image.width(), texture.image.height()));
+                    self.blit_eglimage_to_2d_texture(
+                        egl_images[0],
+                        texture.texture.tex_id(),
+                        size,
+                    )?;
+                } else {
+                    // For non-external, rebind the EGLImage to the existing 2D texture.
+                    let tex = Some(texture.texture.tex_id());
+                    self.import_egl_image(egl_images[0], texture.is_external, tex)?;
+                }
+            }
+            Ok(Some(texture))
+        } else {
+            Ok(None)
+        }
+    }
+
+    #[profiling::function]
+    fn import_egl_image(
+        &self,
+        image: smithay::backend::egl::ffi::egl::types::EGLImage,
+        is_external: bool,
+        tex: Option<u32>,
+    ) -> Result<u32, GlesError> {
+        // SAFETY: the GL invariant; `tex` is a valid out-pointer.
+        let tex = tex.unwrap_or_else(|| unsafe {
+            let mut tex = 0;
+            self.gl.GenTextures(1, &mut tex);
+            tex
+        });
+        let target = if is_external {
+            ffi::TEXTURE_EXTERNAL_OES
+        } else {
+            ffi::TEXTURE_2D
+        };
+        // SAFETY: the GL invariant. `image` is a live EGLImage on this
+        // renderer's display — callers pass one they just created or a cache
+        // entry that has not been evicted — and `tex` names a texture of this
+        // context.
+        unsafe {
+            self.gl.BindTexture(target, tex);
+            // External textures only support a subset of params; ensure valid defaults.
+            // Use linear filtering and clamp-to-edge, and restrict to base level 0.
+            self.gl
+                .TexParameteri(target, ffi::TEXTURE_MIN_FILTER, ffi::LINEAR as GLint);
+            self.gl
+                .TexParameteri(target, ffi::TEXTURE_MAG_FILTER, ffi::LINEAR as GLint);
+            self.gl
+                .TexParameteri(target, ffi::TEXTURE_WRAP_S, ffi::CLAMP_TO_EDGE as GLint);
+            self.gl
+                .TexParameteri(target, ffi::TEXTURE_WRAP_T, ffi::CLAMP_TO_EDGE as GLint);
+            self.gl.TexParameteri(target, ffi::TEXTURE_BASE_LEVEL, 0);
+            self.gl.TexParameteri(target, ffi::TEXTURE_MAX_LEVEL, 0);
+
+            self.gl.EGLImageTargetTexture2DOES(target, image);
+            self.gl.BindTexture(target, 0);
+        }
+
+        Ok(tex)
+    }
+}
+
+impl RendererSuper for SkiaRenderer {
+    type Error = GlesError;
+    type TextureId = SkiaTexture;
+    type Framebuffer<'buffer> = SkiaGLesFbo;
+    type Frame<'frame, 'buffer>
+        = SkiaFrame<'frame>
+    where
+        'buffer: 'frame;
+}
+
+impl Renderer for SkiaRenderer {
+    fn context_id(&self) -> ContextId<Self::TextureId> {
+        self.smithay_context_id.clone()
+    }
+    fn downscale_filter(&mut self, filter: TextureFilter) -> Result<(), Self::Error> {
+        self.gl_renderer.downscale_filter(filter)
+    }
+    fn upscale_filter(&mut self, filter: TextureFilter) -> Result<(), Self::Error> {
+        self.gl_renderer.upscale_filter(filter)
+    }
+    fn set_debug_flags(&mut self, flags: DebugFlags) {
+        self.gl_renderer.set_debug_flags(flags)
+    }
+    fn debug_flags(&self) -> DebugFlags {
+        self.gl_renderer.debug_flags()
+    }
+    #[profiling::function]
+    fn render<'frame, 'buffer>(
+        &'frame mut self,
+        _framebuffer: &'frame mut Self::Framebuffer<'buffer>,
+        output_size: Size<i32, Physical>,
+        _dst_transform: Transform,
+    ) -> Result<Self::Frame<'frame, 'buffer>, Self::Error>
+    where
+        'buffer: 'frame,
+    {
+        self.ensure_current()?;
+        let current_target = self.current_target.as_ref().unwrap();
+        let buffer = self.buffers.get(current_target).unwrap();
+
+        self.target_renderer
+            .entry(current_target.clone())
+            .or_insert_with(|| {
+                {
+                    let ctx = self.context.as_mut().unwrap();
+                    ctx.reset(None);
+                }
+                let context = self.context.as_ref();
+                // Derive gl_internal first, then map it to the matching Skia ColorType.
+                // This is the same mapping used in import_skia_image_from_texture and
+                // ensures the GL format and Skia's logical channel order are consistent.
+                // Deriving ColorType directly from Fourcc is wrong because, e.g.,
+                // Argb8888 maps to GL_BGRA_EXT (not GL_RGBA8), so the Skia surface
+                // must use BGRA8888 to avoid R↔B swaps.
+                let gl_internal = fourcc_to_gl_formats(buffer.format)
+                    .map(|(internal, _, _)| internal)
+                    .unwrap_or(ffi::RGBA8);
+                let color_type = match gl_internal {
+                    ffi::BGRA_EXT => skia::ColorType::BGRA8888,
+                    ffi::RGB10_A2 => skia::ColorType::RGBA1010102,
+                    ffi::RGBA16F => skia::ColorType::RGBAF16,
+                    ffi::RGB8 => skia::ColorType::RGB888x,
+                    _ => skia::ColorType::RGBA8888, // GL_RGBA8, GL_RGBA, and any fallback
+                };
+                // Route through Skia's Format enum to get the sized GL constant Skia
+                // expects in FramebufferInfo.format. GL_BGRA_EXT (0x80E1) is unsized and
+                // not recognised by GrGLFormatFromGLEnum; we need GL_BGRA8_EXT (0x93A1).
+                let skia_gl_format = match gl_internal {
+                    ffi::RGBA | ffi::RGBA8 => skia::gpu::gl::Format::RGBA8,
+                    ffi::BGRA_EXT => skia::gpu::gl::Format::BGRA8,
+                    ffi::RGB8 => skia::gpu::gl::Format::RGB8,
+                    ffi::RGB10_A2 => skia::gpu::gl::Format::RGB10_A2,
+                    ffi::RGBA16F => skia::gpu::gl::Format::RGBA16F,
+                    _ => skia::gpu::gl::Format::RGBA8,
+                };
+                SkiaSurface::new_with_fbo(
+                    output_size.w,
+                    output_size.h,
+                    0_usize,
+                    8_usize,
+                    buffer.fbo,
+                    color_type,
+                    context,
+                    buffer.origin,
+                    skia_gl_format.into(),
+                )
+                // SkiaSurface::new_with_texture(
+                //     output_size.w,
+                //     output_size.h,
+                //     0_usize,
+                //     // 8_usize,
+                //     buffer.tex_id,
+                //     color_type,
+                //     context,
+                //     buffer.origin,
+                // )
+            });
+
+        // SAFETY: the GL invariant; `buffer.fbo` is the bound target's
+        // framebuffer in this context (0, the default one, for a surface).
+        unsafe {
+            self.gl.BindFramebuffer(ffi::FRAMEBUFFER, buffer.fbo);
+            let status = self.gl.CheckFramebufferStatus(ffi::FRAMEBUFFER);
+            self.gl.BindFramebuffer(ffi::FRAMEBUFFER, 0);
+
+            if status != ffi::FRAMEBUFFER_COMPLETE {
+                println!("framebuffer incomplete");
+                return Err(GlesError::FramebufferBindingError);
+            }
+        }
+        let surface = self
+            .target_renderer
+            .get_mut(self.current_target.as_ref().unwrap())
+            .unwrap();
+
+        // Tell Skia that FBO and texture binding state is unknown.  Between
+        // frames, Smithay's GlesRenderer (texture imports, cursor rendering,
+        // etc.) and the FBO check above change these GL states behind Skia's
+        // back.  Without this reset, Skia's cached state from the previous
+        // buffer's flush is stale and it may skip necessary GL calls.
+        {
+            use layers::skia::gpu::gl::BackendState;
+            surface.gr_context.reset(Some(
+                (BackendState::RENDER_TARGET | BackendState::TEXTURE_BINDING).bits(),
+            ));
+        }
+
+        Ok(SkiaFrame {
+            skia_surface: surface.clone(),
+            size: output_size,
+            renderer: self,
+            // id,
+        })
+    }
+
+    fn wait(
+        &mut self,
+        sync: &smithay::backend::renderer::sync::SyncPoint,
+    ) -> Result<(), Self::Error> {
+        self.ensure_current()?;
+        let display = self.egl_context().display();
+
+        // if the sync point holds a EGLFence we can try
+        // to directly insert it in our context
+        if let Some(fence) = sync.get::<EGLFence>() {
+            if fence.wait(display).is_ok() {
+                return Ok(());
+            }
+        }
+
+        // alternative we try to create a temporary fence
+        // out of the native fence if available and try
+        // to insert it in our context
+        if let Some(native) = EGLFence::supports_importing(display)
+            .then(|| sync.export())
+            .flatten()
+        {
+            if let Ok(fence) = EGLFence::import(display, native) {
+                if fence.wait(display).is_ok() {
+                    return Ok(());
+                }
+            }
+        }
+
+        // if everything above failed we can only
+        // block until the sync point has been reached
+        sync.wait().map_err(|_| GlesError::SyncInterrupted)
+    }
+}
+
+impl SkiaRenderer {
+    #[profiling::function]
+    fn import_skia_image_from_texture(
+        &mut self,
+        texture: &GlesTexture,
+        is_external: bool,
+    ) -> Option<skia::Image> {
+        #[cfg(feature = "profile-with-puffin")]
+        profiling::scope!("import_skia_image_from_texture");
+
+        // Check if we have a current renderer before borrowing context
+        let has_current_renderer = self.current_skia_renderer().is_some();
+        let context = self.context.as_mut().unwrap();
+
+        let target = if is_external {
+            ffi::TEXTURE_EXTERNAL_OES
+        } else {
+            ffi::TEXTURE_2D
+        };
+
+        let size = skia::Point {
+            x: texture.width() as f32,
+            y: texture.height() as f32,
+        };
+        // SAFETY: `make_gl` wraps a raw GL texture id Skia cannot validate.
+        // `texture` is a live `GlesTexture` of the context the DirectContext
+        // draws with. The image keeps only the id, so it is valid only while
+        // `texture` lives: `SkiaTexture` stores the two together, and
+        // `Backend::hold_surface_texture` keeps the texture alive for as long
+        // as a closing window still draws its last frame.
+        unsafe {
+            let gl_format = texture.format().map_or(ffi::RGBA8, |fourcc| {
+                fourcc_to_gl_formats(fourcc).map_or(ffi::RGBA8, |(internal, _, _)| internal)
+            });
+            let skia_format = match gl_format {
+                ffi::RGBA | ffi::RGBA8 => Some(skia::gpu::gl::Format::RGBA8),
+                ffi::BGRA_EXT => Some(skia::gpu::gl::Format::BGRA8),
+                ffi::RGB8 => Some(skia::gpu::gl::Format::RGB8),
+                ffi::RGB10_A2 => Some(skia::gpu::gl::Format::RGB10_A2),
+                ffi::RGBA16F => Some(skia::gpu::gl::Format::RGBA16F),
+                _ => None,
+            };
+            let skia_color = match gl_format {
+                ffi::RGBA | ffi::RGBA8 => Some(skia::ColorType::RGBA8888),
+                ffi::BGRA_EXT => Some(skia::ColorType::BGRA8888),
+                ffi::RGB8 => Some(skia::ColorType::RGB888x),
+                ffi::RGB10_A2 => Some(skia::ColorType::RGBA1010102),
+                ffi::RGBA16F => Some(skia::ColorType::RGBAF16),
+                _ => None,
+            };
+            let skia_format = skia_format?;
+            let skia_color = skia_color?;
+
+            let texture_info = skia::gpu::gl::TextureInfo {
+                target,
+                id: texture.tex_id(),
+                format: skia_format.into(),
+                ..Default::default()
+            };
+
+            let texture = skia::gpu::backend_textures::make_gl(
+                (size.x as i32, size.y as i32),
+                skia::gpu::Mipmapped::No,
+                texture_info,
+                "",
+            );
+
+            let image = skia::Image::from_texture(
+                context,
+                &texture,
+                skia::gpu::SurfaceOrigin::TopLeft,
+                skia_color,
+                skia::AlphaType::Premul,
+                None,
+            )?;
+
+            // Flush the image if we have a current rendering surface
+            if has_current_renderer {
+                context.flush_and_submit_image(&image);
+            }
+            Some(image)
+        }
+    }
+}
+
+impl SkiaRenderer {
+    #[profiling::function]
+    fn blit_eglimage_to_2d_texture(
+        &self,
+        image: smithay::backend::egl::ffi::egl::types::EGLImage,
+        dst_tex: u32,
+        size: smithay::utils::Size<i32, Buffer>,
+    ) -> Result<(), GlesError> {
+        // SAFETY: the GL invariant. `image` is a live EGLImage (see
+        // `import_egl_image`) and `dst_tex` a TEXTURE_2D of this context at
+        // least `size` large; out-pointers are locals, and the temporary
+        // framebuffers and renderbuffer are deleted before returning.
+        unsafe {
+            // Create source renderbuffer and FBO from EGLImage
+            let mut src_rbo = 0;
+            self.gl.GenRenderbuffers(1, &mut src_rbo);
+            self.gl.BindRenderbuffer(ffi::RENDERBUFFER, src_rbo);
+            self.gl
+                .EGLImageTargetRenderbufferStorageOES(ffi::RENDERBUFFER, image);
+            let mut src_fbo = 0;
+            self.gl.GenFramebuffers(1, &mut src_fbo);
+            self.gl.BindFramebuffer(ffi::READ_FRAMEBUFFER, src_fbo);
+            self.gl.FramebufferRenderbuffer(
+                ffi::READ_FRAMEBUFFER,
+                ffi::COLOR_ATTACHMENT0,
+                ffi::RENDERBUFFER,
+                src_rbo,
+            );
+
+            // Create destination FBO and attach the 2D destination texture
+            let mut dst_fbo = 0;
+            self.gl.GenFramebuffers(1, &mut dst_fbo);
+            self.gl.BindFramebuffer(ffi::DRAW_FRAMEBUFFER, dst_fbo);
+            self.gl.FramebufferTexture2D(
+                ffi::DRAW_FRAMEBUFFER,
+                ffi::COLOR_ATTACHMENT0,
+                ffi::TEXTURE_2D,
+                dst_tex,
+                0,
+            );
+
+            // Blit from src (READ) to dst (DRAW)
+            self.gl.BlitFramebuffer(
+                0,
+                0,
+                size.w,
+                size.h,
+                0,
+                0,
+                size.w,
+                size.h,
+                ffi::COLOR_BUFFER_BIT,
+                ffi::NEAREST,
+            );
+
+            // Cleanup bindings and temp objects
+            self.gl.BindFramebuffer(ffi::READ_FRAMEBUFFER, 0);
+            self.gl.BindFramebuffer(ffi::DRAW_FRAMEBUFFER, 0);
+            self.gl.DeleteFramebuffers(1, &src_fbo);
+            self.gl.DeleteFramebuffers(1, &dst_fbo);
+            self.gl.BindRenderbuffer(ffi::RENDERBUFFER, 0);
+            self.gl.DeleteRenderbuffers(1, &src_rbo);
+        }
+        Ok(())
+    }
+
+    /// Get the FBO info for the current render target
+    pub fn get_current_fbo(&self) -> Result<&SkiaGLesFbo, GlesError> {
+        self.current_target
+            .as_ref()
+            .and_then(|target| self.buffers.get(target))
+            .ok_or(GlesError::FramebufferBindingError)
+    }
+}
+impl ImportMemWl for SkiaRenderer {
+    #[profiling::function]
+    fn import_shm_buffer(
+        &mut self,
+        buffer: &WlBuffer,
+        surface: Option<&SurfaceData>,
+        damage: &[Rectangle<i32, Buffer>],
+    ) -> Result<<Self as RendererSuper>::TextureId, <Self as RendererSuper>::Error> {
+        let texture = self
+            .gl_renderer
+            .import_shm_buffer(buffer, surface, damage)?;
+        let has_alpha = texture
+            .format()
+            .is_some_and(|fourcc: Fourcc| has_alpha(fourcc));
+        let image = self
+            .import_skia_image_from_texture(&texture, false)
+            .ok_or("")
+            .map_err(|_| GlesError::MappingError)?;
+
+        let format = texture.format();
+        Ok(SkiaTexture {
+            texture,
+            image,
+            has_alpha,
+            // GL samples an X format without an alpha channel.
+            padding_alpha: false,
+            format,
+            egl_images: None,
+            is_external: false,
+            damage: Some(damage.to_vec()),
+        })
+    }
+    fn shm_formats(
+        &self,
+    ) -> Box<dyn Iterator<Item = smithay::reexports::wayland_server::protocol::wl_shm::Format>>
+    {
+        self.gl_renderer.shm_formats()
+    }
+}
+
+impl ImportEgl for SkiaRenderer {
+    fn bind_wl_display(&mut self, display: &DisplayHandle) -> Result<(), egl::Error> {
+        self.gl_renderer.bind_wl_display(display)
+    }
+
+    fn unbind_wl_display(&mut self) {
+        self.gl_renderer.unbind_wl_display()
+    }
+
+    fn egl_reader(&self) -> Option<&EGLBufferReader> {
+        self.gl_renderer.egl_reader()
+    }
+    #[profiling::function]
+    fn import_egl_buffer(
+        &mut self,
+        buffer: &WlBuffer,
+        surface: Option<&SurfaceData>,
+        damage: &[Rectangle<i32, Buffer>],
+    ) -> Result<<Self as RendererSuper>::TextureId, <Self as RendererSuper>::Error> {
+        let texture = self
+            .gl_renderer
+            .import_egl_buffer(buffer, surface, damage)?;
+        let has_alpha = texture
+            .format()
+            .is_some_and(|fourcc: Fourcc| has_alpha(fourcc));
+        let image = self
+            .import_skia_image_from_texture(&texture, false)
+            .ok_or("")
+            .map_err(|_| GlesError::MappingError)?;
+
+        let format = texture.format();
+        if let SkiaTarget::EGLSurface(EGLSurfaceWrapper(surface)) =
+            self.current_target.as_ref().unwrap()
+        {
+            // SAFETY: this renderer's own context, used on this thread only.
+            // The import above may have left it current without a surface;
+            // put the bound EGL surface back (and its default framebuffer).
+            unsafe {
+                self.egl_context().make_current_with_surface(surface)?;
+                self.gl.BindFramebuffer(ffi::FRAMEBUFFER, 0);
+            }
+        }
+
+        Ok(SkiaTexture {
+            texture,
+            image,
+            has_alpha,
+            // GL samples an X format without an alpha channel.
+            padding_alpha: false,
+            format,
+            egl_images: None,
+            is_external: false,
+            damage: Some(damage.to_vec()),
+        })
+    }
+}
+
+impl ImportDma for SkiaRenderer {
+    #[profiling::function]
+    fn import_dmabuf(
+        &mut self,
+        dmabuf: &Dmabuf,
+        damage: Option<&[Rectangle<i32, Buffer>]>,
+    ) -> Result<<Self as RendererSuper>::TextureId, <Self as RendererSuper>::Error> {
+        // self.gl_renderer.import_dmabuf(dmabuf, damage)
+        let texture = self.import_dmabuf_internal(dmabuf, damage)?;
+        Ok(texture)
+    }
+    fn dmabuf_formats(&self) -> FormatSet {
+        self.gl_renderer.dmabuf_formats()
+    }
+}
+
+impl ImportDmaWl for SkiaRenderer {
+    fn import_dma_buffer(
+        &mut self,
+        buffer: &smithay::reexports::wayland_server::protocol::wl_buffer::WlBuffer,
+        _surface: Option<&smithay::wayland::compositor::SurfaceData>,
+        damage: &[Rectangle<i32, Buffer>],
+    ) -> Result<<Self as RendererSuper>::TextureId, <Self as RendererSuper>::Error> {
+        let dmabuf = smithay::wayland::dmabuf::get_dmabuf(buffer)
+            .expect("import_dma_buffer without checking buffer type?");
+        self.import_dmabuf(dmabuf, Some(damage))
+    }
+}
+
+impl ImportMem for SkiaRenderer {
+    #[profiling::function]
+    fn import_memory(
+        &mut self,
+        data: &[u8],
+        format: Fourcc,
+        size: Size<i32, Buffer>,
+        flipped: bool,
+    ) -> Result<<Self as RendererSuper>::TextureId, <Self as RendererSuper>::Error> {
+        let texture = self
+            .gl_renderer
+            .import_memory(data, format, size, flipped)?;
+        let image = self
+            .import_skia_image_from_texture(&texture, false)
+            .ok_or("")
+            .map_err(|_| GlesError::MappingError)?;
+        let has_alpha = has_alpha(format);
+
+        if let Some(SkiaTarget::EGLSurface(EGLSurfaceWrapper(surface))) =
+            self.current_target.as_ref()
+        {
+            // SAFETY: this renderer's own context, used on this thread only.
+            // The import above may have left it current without a surface;
+            // put the bound EGL surface back (and its default framebuffer).
+            unsafe {
+                self.egl_context().make_current_with_surface(surface)?;
+                self.gl.BindFramebuffer(ffi::FRAMEBUFFER, 0);
+            }
+        }
+        let format = texture.format();
+        Ok(SkiaTexture {
+            texture,
+            image,
+            has_alpha,
+            // GL samples an X format without an alpha channel.
+            padding_alpha: false,
+            format,
+            egl_images: None,
+            is_external: false,
+            damage: None,
+        })
+    }
+    fn mem_formats(&self) -> Box<dyn Iterator<Item = Fourcc>> {
+        self.gl_renderer.mem_formats()
+    }
+    fn update_memory(
+        &mut self,
+        texture: &<Self as RendererSuper>::TextureId,
+        data: &[u8],
+        region: Rectangle<i32, Buffer>,
+    ) -> Result<(), <Self as RendererSuper>::Error> {
+        self.gl_renderer
+            .update_memory(&texture.texture, data, region)
+    }
+}
+
+impl Borrow<GlesRenderer> for SkiaRenderer {
+    fn borrow(&self) -> &GlesRenderer {
+        &self.gl_renderer
+    }
+}
+
+impl BorrowMut<GlesRenderer> for SkiaRenderer {
+    fn borrow_mut(&mut self) -> &mut GlesRenderer {
+        &mut self.gl_renderer
+    }
+}
+impl ExportMem for SkiaRenderer {
+    type TextureMapping = SkiaTextureMapping;
+
+    // Copies a region of the framebuffer into a texture and returns a TextureMapping
+    fn copy_framebuffer(
+        &mut self,
+        _target: &Self::Framebuffer<'_>,
+        region: Rectangle<i32, Buffer>,
+        fourcc_format: Fourcc,
+    ) -> Result<Self::TextureMapping, Self::Error> {
+        // Just store the FBO info - don't create image or read pixels yet
+        let fbo_info = self.get_current_fbo()?.clone();
+
+        Ok(Self::TextureMapping {
+            fourcc_format,
+            flipped: false,
+            width: region.size.w as u32,
+            height: region.size.h as u32,
+            fbo_info,
+            region,
+            image: RefCell::new(None),
+            data: RefCell::new(None),
+        })
+    }
+    fn copy_texture(
+        &mut self,
+        _texture: &Self::TextureId,
+        _region: Rectangle<i32, Buffer>,
+        _fourcc: Fourcc,
+    ) -> Result<Self::TextureMapping, Self::Error> {
+        unimplemented!("copy_texture")
+    }
+
+    fn map_texture<'a>(
+        &mut self,
+        texture_mapping: &'a Self::TextureMapping,
+    ) -> Result<&'a [u8], <Self as RendererSuper>::Error> {
+        self.ensure_current()?;
+        // Lazy-load the pixel data if not already loaded
+        let mut data_opt = texture_mapping.data.borrow_mut();
+
+        if data_opt.is_none() {
+            // Need to read pixels from the FBO now
+            let region = texture_mapping.region;
+            let fourcc = texture_mapping.fourcc_format;
+
+            // Get the current surface and read pixels
+            let renderer = self
+                .current_skia_renderer()
+                .ok_or(GlesError::FramebufferBindingError)?;
+            let mut surface = renderer.surface();
+
+            let (_, read_format, _) =
+                fourcc_to_gl_formats(fourcc).ok_or(GlesError::UnknownPixelFormat)?;
+            let color_type = match read_format {
+                ffi::BGRA_EXT => skia::ColorType::BGRA8888,
+                _ => skia::ColorType::RGBA8888,
+            };
+            let info = skia::ImageInfo::new(
+                skia::ISize::new(region.size.w, region.size.h),
+                color_type,
+                skia::AlphaType::Premul,
+                None,
+            );
+
+            let len = region.size.w * region.size.h * 4;
+            let mut data_vec = vec![0; len as usize];
+            let byte_row = info.min_row_bytes();
+
+            if !surface.read_pixels(&info, &mut data_vec, byte_row, (region.loc.x, region.loc.y)) {
+                return Err(GlesError::MappingError);
+            }
+
+            *data_opt = Some(data_vec);
+        }
+
+        let data_ref = data_opt.as_ref().unwrap();
+        let len = data_ref.len();
+        let ptr = data_ref.as_ptr();
+
+        // SAFETY: `ptr`/`len` describe the Vec inside `texture_mapping.data`,
+        // which lives for `'a`. The slice outlives the `RefCell` borrow it was
+        // read under, which is sound only because that Vec is never replaced
+        // or dropped while the mapping lives: it is written once, above, from
+        // `None`. `data` is a `pub` field, so nothing but convention enforces
+        // that.
+        unsafe { Ok(std::slice::from_raw_parts(ptr, len)) }
+    }
+
+    fn can_read_texture(&mut self, texture: &Self::TextureId) -> Result<bool, Self::Error> {
+        self.gl_renderer.can_read_texture(&texture.texture)
+    }
+}
+
+impl Bind<EGLSurface> for SkiaRenderer {
+    fn bind(
+        &mut self,
+        surface: &mut EGLSurface,
+    ) -> Result<SkiaGLesFbo, <Self as RendererSuper>::Error> {
+        // Make the surface current first
+        // SAFETY: this renderer's own context, used on this thread only, and
+        // `surface` was created on its display.
+        unsafe {
+            self.egl_context().make_current_with_surface(surface)?;
+            self.gl.BindFramebuffer(ffi::FRAMEBUFFER, 0);
+        }
+
+        // Delegate to GlesRenderer to get framebuffer info
+        let gles_framebuffer = self.gl_renderer.bind(surface)?;
+
+        // Create the framebuffer descriptor
+        let sfbo = SkiaGLesFbo {
+            fbo: 0,
+            tex_id: 0,
+            format: gles_framebuffer.format().unwrap_or(Fourcc::Argb8888),
+            origin: skia::gpu::SurfaceOrigin::BottomLeft,
+            width: gles_framebuffer.width() as i32,
+            height: gles_framebuffer.height() as i32,
+        };
+
+        // Set this as the current render target using the FBO as the key
+        let render_target = SkiaTarget::Fbo(sfbo.clone());
+        self.current_target = Some(render_target.clone());
+        self.buffers.insert(render_target, sfbo.clone());
+
+        Ok(sfbo)
+    }
+}
+
+impl Bind<Rc<EGLSurface>> for SkiaRenderer {
+    fn bind(
+        &mut self,
+        surface: &mut Rc<EGLSurface>,
+    ) -> Result<SkiaGLesFbo, <Self as RendererSuper>::Error> {
+        // SAFETY: this renderer's own context, used on this thread only, and
+        // `surface` was created on its display.
+        unsafe {
+            self.egl_context().make_current_with_surface(surface)?;
+            self.gl.BindFramebuffer(ffi::FRAMEBUFFER, 0);
+        }
+        let egl_surface = EGLSurfaceWrapper(surface.clone());
+        let render_target = SkiaTarget::EGLSurface(egl_surface);
+
+        if !self.buffers.contains_key(&render_target) {
+            let format = surface.pixel_format();
+            let format = match (format.color_bits, format.alpha_bits) {
+                // Use RGBA formats (not RGB) so alpha-bearing surfaces are represented
+                // correctly and gl_internal_format_to_fourcc can round-trip without panic.
+                (24, 8) => ffi::RGBA8,
+                (30, 2) => ffi::RGB10_A2,
+                (48, 16) => ffi::RGBA16F,
+                _ => ffi::RGBA8,
+            };
+            let sfbo = SkiaGLesFbo {
+                fbo: 0,
+                tex_id: 0,
+                format: gl_internal_format_to_fourcc(format).unwrap(),
+                origin: skia::gpu::SurfaceOrigin::BottomLeft,
+                width: 0,
+                height: 0,
+            };
+            self.buffers.insert(render_target.clone(), sfbo.clone());
+        }
+        self.current_target = Some(render_target.clone());
+
+        Ok(self.buffers.get(&render_target).unwrap().clone())
+    }
+}
+
+impl Bind<SkiaGLesFbo> for SkiaRenderer {
+    fn bind(
+        &mut self,
+        texture: &mut SkiaGLesFbo,
+    ) -> Result<SkiaGLesFbo, <Self as RendererSuper>::Error> {
+        self.current_target = Some(SkiaTarget::Fbo(texture.clone()));
+        self.buffers
+            .insert(SkiaTarget::Fbo(texture.clone()), texture.clone());
+
+        Ok(texture.clone())
+    }
+}
+
+impl Bind<GlesTexture> for SkiaRenderer {
+    fn bind(
+        &mut self,
+        texture: &mut GlesTexture,
+    ) -> Result<SkiaGLesFbo, <Self as RendererSuper>::Error> {
+        self.current_target = Some(SkiaTarget::Texture(texture.tex_id()));
+        // let res = self.gl_renderer.bind(texture);
+        unimplemented!("bind GlesTexture")
+
+        // Ok(())
+    }
+}
+
+impl Bind<GlesRenderbuffer> for SkiaRenderer {
+    fn bind(
+        &mut self,
+        target: &mut GlesRenderbuffer,
+    ) -> Result<SkiaGLesFbo, <Self as RendererSuper>::Error> {
+        self.current_target = Some(SkiaTarget::Renderbuffer(target));
+        // let res = self.gl_renderer.bind(target);
+        unimplemented!("bind GlesRenderbuffer")
+    }
+}
+
+impl Bind<Dmabuf> for SkiaRenderer {
+    fn bind(&mut self, dmabuf: &mut Dmabuf) -> Result<SkiaGLesFbo, <Self as RendererSuper>::Error> {
+        self.ensure_current()?;
+        let egl_display = self.egl_context().display().clone();
+
+        // Evict targets whose dmabuf has been dropped everywhere else. Must
+        // run before the lookup below: a new allocation can reuse a dead
+        // Arc's address, which would otherwise alias a stale cache entry.
+        let dead: Vec<WeakDmabuf> = self
+            .buffers
+            .keys()
+            .filter_map(|k| match k {
+                SkiaTarget::Dmabuf(weak) if weak.upgrade().is_none() => Some(weak.clone()),
+                _ => None,
+            })
+            .collect();
+        for weak in dead {
+            let key = SkiaTarget::Dmabuf(weak.clone());
+            self.target_renderer.remove(&key);
+            if let Some(fbo) = self.buffers.remove(&key) {
+                // SAFETY: the GL invariant. This framebuffer and texture were
+                // created below for a dmabuf that is now gone, and removing
+                // the entry here means they are deleted once.
+                unsafe {
+                    self.gl.DeleteFramebuffers(1, &fbo.fbo);
+                    self.gl.DeleteTextures(1, &fbo.tex_id);
+                }
+            }
+            if let Some(aux) = self.dmabuf_target_aux.remove(&weak) {
+                // SAFETY: as above for the renderbuffers; `aux.image` was
+                // created on `egl_display` when the target was bound and
+                // leaves the map here, so it is destroyed once.
+                unsafe {
+                    self.gl
+                        .DeleteRenderbuffers(2, [aux.rbo, aux.depth_rbo].as_ptr());
+                    smithay::backend::egl::ffi::egl::DestroyImageKHR(
+                        **egl_display.get_display_handle(),
+                        aux.image,
+                    );
+                }
+            }
+        }
+
+        self.refused_dmabuf_targets
+            .retain(|weak| weak.upgrade().is_some());
+        if self.refused_dmabuf_targets.contains(&dmabuf.weak()) {
+            return Err(GlesError::FramebufferBindingError);
+        }
+
+        let target = SkiaTarget::Dmabuf(dmabuf.weak());
+        let mut new_aux = None;
+        if !self.buffers.contains_key(&target) {
+            let fbo = {
+                let image = match egl_display.create_image_from_dmabuf(dmabuf) {
+                    Ok(image) => image,
+                    Err(e) => {
+                        self.refused_dmabuf_targets.insert(dmabuf.weak());
+                        return Err(GlesError::BindBufferEGLError(e));
+                    }
+                };
+                let mut texture = 0;
+                let size = dmabuf.size();
+                let width = size.w;
+                let height = size.h;
+
+                // SAFETY: the GL invariant. `image` was just created from
+                // `dmabuf` on this display, and the out-pointers are locals.
+                // If the framebuffer is incomplete, everything made here is
+                // deleted before returning.
+                unsafe {
+                    self.gl.GenTextures(1, &mut texture);
+                    self.gl.BindTexture(ffi::TEXTURE_2D, texture);
+                    self.gl.EGLImageTargetTexture2DOES(ffi::TEXTURE_2D, image);
+
+                    let mut rbo = 0;
+                    self.gl.GenRenderbuffers(1, &mut rbo as *mut _);
+                    self.gl.BindRenderbuffer(ffi::RENDERBUFFER, rbo);
+                    // self.gl.RenderbufferStorageMultisample(ffi::RENDERBUFFER, 2, ffi::RGBA8, width, height);
+                    self.gl
+                        .EGLImageTargetRenderbufferStorageOES(ffi::RENDERBUFFER, image);
+                    self.gl.BindRenderbuffer(ffi::RENDERBUFFER, 0);
+
+                    let mut fbo = 0;
+                    self.gl.GenFramebuffers(1, &mut fbo as *mut _);
+                    self.gl.BindFramebuffer(ffi::FRAMEBUFFER, fbo);
+
+                    self.gl.FramebufferRenderbuffer(
+                        ffi::FRAMEBUFFER,
+                        ffi::COLOR_ATTACHMENT0,
+                        ffi::RENDERBUFFER,
+                        rbo,
+                    );
+
+                    // Add a depth buffer to make the framebuffer complete
+                    // (required for rendering, even if depth testing is disabled)
+                    let mut depth_rbo = 0;
+                    self.gl.GenRenderbuffers(1, &mut depth_rbo as *mut _);
+                    self.gl.BindRenderbuffer(ffi::RENDERBUFFER, depth_rbo);
+                    self.gl.RenderbufferStorage(
+                        ffi::RENDERBUFFER,
+                        ffi::DEPTH_COMPONENT16,
+                        width,
+                        height,
+                    );
+                    self.gl.FramebufferRenderbuffer(
+                        ffi::FRAMEBUFFER,
+                        ffi::DEPTH_ATTACHMENT,
+                        ffi::RENDERBUFFER,
+                        depth_rbo,
+                    );
+                    self.gl.BindRenderbuffer(ffi::RENDERBUFFER, 0);
+
+                    let status = self.gl.CheckFramebufferStatus(ffi::FRAMEBUFFER);
+
+                    // A driver can import a buffer it cannot draw into (NVIDIA
+                    // and LINEAR). Refuse the target rather than the session.
+                    if status != ffi::FRAMEBUFFER_COMPLETE {
+                        tracing::warn!(
+                            "cannot render into dmabuf {:?} ({:x?}): framebuffer status 0x{:X}",
+                            dmabuf.format().code,
+                            dmabuf.format().modifier,
+                            status
+                        );
+                        self.gl.BindFramebuffer(ffi::FRAMEBUFFER, 0);
+                        self.gl.DeleteFramebuffers(1, &fbo);
+                        self.gl.DeleteRenderbuffers(2, [rbo, depth_rbo].as_ptr());
+                        self.gl.DeleteTextures(1, &texture);
+                        smithay::backend::egl::ffi::egl::DestroyImageKHR(
+                            **egl_display.get_display_handle(),
+                            image,
+                        );
+                        self.refused_dmabuf_targets.insert(dmabuf.weak());
+                        return Err(GlesError::FramebufferBindingError);
+                    }
+
+                    self.gl.BindFramebuffer(ffi::FRAMEBUFFER, 0);
+                    new_aux = Some(DmabufTargetAux {
+                        image,
+                        rbo,
+                        depth_rbo,
+                    });
+                    SkiaGLesFbo {
+                        fbo,
+                        tex_id: texture,
+                        format: dmabuf.format().code,
+                        origin: skia::gpu::SurfaceOrigin::TopLeft,
+                        width,
+                        height,
+                    }
+                }
+            };
+            self.buffers.insert(target.clone(), fbo);
+        }
+        let fbo = self.buffers[&target].clone();
+        if let Some(aux) = new_aux {
+            self.dmabuf_target_aux.insert(dmabuf.weak(), aux);
+        }
+        self.current_target = Some(target);
+        Ok(fbo)
+    }
+}
+
+impl Blit for SkiaRenderer {
+    #[profiling::function]
+    fn blit(
+        &mut self,
+        from: &SkiaGLesFbo,
+        to: &mut SkiaGLesFbo,
+        src: Rectangle<i32, Physical>,
+        dst: Rectangle<i32, Physical>,
+        filter: TextureFilter,
+    ) -> Result<SyncPoint, <Self as RendererSuper>::Error> {
+        self.ensure_current()?;
+        // Direct FBO-to-FBO blit using OpenGL
+        // SAFETY: the GL invariant; both framebuffers come from this
+        // renderer's `create_buffer`/`bind`, so they belong to this context.
+        unsafe {
+            self.gl.BindFramebuffer(ffi::READ_FRAMEBUFFER, from.fbo);
+            self.gl.BindFramebuffer(ffi::DRAW_FRAMEBUFFER, to.fbo);
+
+            let gl_filter = match filter {
+                TextureFilter::Nearest => ffi::NEAREST,
+                TextureFilter::Linear => ffi::LINEAR,
+            };
+
+            self.gl.BlitFramebuffer(
+                src.loc.x,
+                src.loc.y,
+                src.loc.x + src.size.w,
+                src.loc.y + src.size.h,
+                dst.loc.x,
+                dst.loc.y,
+                dst.loc.x + dst.size.w,
+                dst.loc.y + dst.size.h,
+                ffi::COLOR_BUFFER_BIT,
+                gl_filter,
+            );
+
+            self.gl.BindFramebuffer(ffi::READ_FRAMEBUFFER, 0);
+            self.gl.BindFramebuffer(ffi::DRAW_FRAMEBUFFER, 0);
+        }
+
+        // Create a sync point (no actual sync needed for immediate blit)
+        Ok(SyncPoint::signaled())
+    }
+}
+
+impl Offscreen<SkiaGLesFbo> for SkiaRenderer {
+    #[profiling::function]
+    fn create_buffer(
+        &mut self,
+        format: Fourcc,
+        size: Size<i32, Buffer>,
+    ) -> Result<SkiaGLesFbo, GlesError> {
+        self.ensure_current()?;
+        self.create_texture_and_framebuffer(size.w, size.h, format)
+    }
+}
+
+/// Attach `sync_file` to the dmabuf behind `handle` as a write fence, with
+/// `DMA_BUF_IOCTL_IMPORT_SYNC_FILE` (Linux 6.0).
+///
+/// Readers that honor implicit sync, KMS among them, then wait for it.
+fn import_write_fence(
+    handle: std::os::fd::BorrowedFd<'_>,
+    sync_file: &std::os::fd::OwnedFd,
+) -> bool {
+    use std::os::fd::AsRawFd;
+
+    /// `struct dma_buf_import_sync_file` from `linux/dma-buf.h`.
+    #[repr(C)]
+    struct ImportSyncFile {
+        flags: u32,
+        fd: i32,
+    }
+    /// `DMA_BUF_SYNC_WRITE`: the fence is a write, so readers wait for it.
+    const DMA_BUF_SYNC_WRITE: u32 = 2;
+    /// `_IOW('b', 3, struct dma_buf_import_sync_file)`.
+    const DMA_BUF_IOCTL_IMPORT_SYNC_FILE: libc::c_ulong = 0x4008_6203;
+
+    let mut arg = ImportSyncFile {
+        flags: DMA_BUF_SYNC_WRITE,
+        fd: sync_file.as_raw_fd(),
+    };
+    // SAFETY: `handle` is a live dmabuf fd and `arg` matches the kernel's
+    // struct layout for this request.
+    let ret = unsafe {
+        libc::ioctl(
+            handle.as_raw_fd(),
+            DMA_BUF_IOCTL_IMPORT_SYNC_FILE,
+            &mut arg as *mut ImportSyncFile,
+        )
+    };
+    if ret != 0 {
+        tracing::warn!(
+            target: "otto::planes",
+            err = %std::io::Error::last_os_error(),
+            "attaching the GPU fence to a plane dmabuf failed; waiting on the CPU from now on"
+        );
+    }
+    ret == 0
+}

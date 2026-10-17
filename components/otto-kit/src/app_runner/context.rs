@@ -31,6 +31,10 @@ thread_local! {
     static TYPED_QUEUE_HANDLE: RefCell<Option<Box<dyn std::any::Any>>> = const { RefCell::new(None) };
     #[allow(clippy::type_complexity)]
     static FRAME_REQUEST_FN: RefCell<Option<Box<dyn Fn(&wl_surface::WlSurface)>>> = const { RefCell::new(None) };
+    /// Makes a window's `org_kde_kwin_appmenu` on the app's own queue, which
+    /// only the runner knows the type of. See [`AppContext::appmenu_for`].
+    #[allow(clippy::type_complexity)]
+    static APPMENU_FN: RefCell<Option<Box<dyn Fn(&wl_surface::WlSurface) -> Option<crate::protocols::org_kde_kwin_appmenu::OrgKdeKwinAppmenu>>>> = const { RefCell::new(None) };
     static CURRENT_CONFIGURE: RefCell<Option<(ObjectId, WindowConfigure, u32)>> = const { RefCell::new(None) };
     static WINDOWS: RefCell<Vec<crate::components::window::Window>> = const { RefCell::new(Vec::new()) };
     /// Per-window handlers for the compositor's "please close" request, keyed
@@ -180,6 +184,10 @@ thread_local! {
     /// the configure arrives on the lock surface, and the callback acks it.
     #[allow(clippy::type_complexity)]
     static LOCK_SURFACE_CONFIGURE_CALLBACKS: RefCell<HashMap<ObjectId, Box<dyn FnMut(i32, i32, u32)>>> = RefCell::new(HashMap::new());
+    /// Keyed by `otto_canvas_item_v1` object: every event the compositor
+    /// sends a side canvas item.
+    #[allow(clippy::type_complexity)]
+    static CANVAS_ITEM_CALLBACKS: RefCell<HashMap<ObjectId, Box<dyn FnMut(crate::surfaces::CanvasItemEvent)>>> = RefCell::new(HashMap::new());
     static TRANSACTION_COMPLETION_CALLBACKS: RefCell<HashMap<ObjectId, Box<dyn FnOnce()>>> = RefCell::new(HashMap::new());
     /// Called with the `wl_surface` that just lost keyboard focus. Components
     /// that must not outlive the focus (menus, popovers) subscribe here.
@@ -192,6 +200,34 @@ thread_local! {
 thread_local! {
     static CURSOR_SHAPE_DEVICE: RefCell<Option<wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_device_v1::WpCursorShapeDeviceV1>> = const { RefCell::new(None) };
     static LAST_POINTER_ENTER_SERIAL: RefCell<u32> = const { RefCell::new(0) };
+    /// A drawn cursor asked for during the pointer batch, set once it ends.
+    static PENDING_CURSOR_IMAGE: RefCell<Option<CursorImage>> = const { RefCell::new(None) };
+    /// The drawn cursor showing now, its surface, and the memory behind it.
+    static CURSOR_IMAGE: RefCell<Option<CursorImageState>> = const { RefCell::new(None) };
+}
+
+/// A cursor drawn by the app rather than named from the theme: a pen over a
+/// canvas, a bin over something that a click deletes.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CursorImage {
+    /// Tells one picture from another, so the same one is not sent again.
+    pub key: String,
+    /// Premultiplied pixels, B, G, R, A in memory (`wl_shm` ARGB8888 on a
+    /// little-endian machine, Skia's N32), `width * 4` bytes a row.
+    pub pixels: Vec<u8>,
+    pub width: u32,
+    pub height: u32,
+    /// How many pixels make a point: the picture is drawn this much larger.
+    pub scale: u32,
+    /// The point that is the cursor's position, in points from the top left.
+    pub hotspot: (i32, i32),
+}
+
+struct CursorImageState {
+    key: String,
+    surface: wayland_client::protocol::wl_surface::WlSurface,
+    pool: smithay_client_toolkit::shm::slot::SlotPool,
+    _buffer: smithay_client_toolkit::shm::slot::Buffer,
 }
 
 // -- Rendering state --
@@ -216,8 +252,11 @@ static RENDERER_EXIT_FLAG: LazyLock<std::sync::atomic::AtomicBool> =
 /// iteration, after flushing whatever the app asked for last.
 static EXIT_REQUESTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-// -- Display scale factor (updated by compositor, default 1) --
+// -- Display scale factor (updated by compositor, default 2) --
 
+/// Starts at 2, the buffer scale every otto-kit surface renders at, so icons
+/// and images rasterised by it stay crisp in those buffers. SCTK only reports
+/// a scale that differs from 1, so on a 1x output this is never updated.
 static DISPLAY_SCALE_FACTOR: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(2);
 
 /// Whether [`AppContext::set_scale_factor`] has already taken a value. The
@@ -227,10 +266,16 @@ static SCALE_FACTOR_LATCHED: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
 /// Preferred fractional scale in 120ths, as sent by `wp_fractional_scale_v1`.
-/// 0 means the compositor has not sent one yet — callers fall back to the
-/// integer `wl_surface` scale.
+/// 0 means the compositor has not sent one yet — callers fall back to
+/// [`OUTPUT_SCALE_SEED_120`], then to the integer `wl_surface` scale.
 static DISPLAY_FRACTIONAL_SCALE_120: std::sync::atomic::AtomicU32 =
     std::sync::atomic::AtomicU32::new(0);
+
+/// The first output's scale in 120ths, read from `wl_output` and
+/// `xdg_output` during startup, before the app makes a surface. Kept apart
+/// from the preferred scale so it never blocks that one from landing. 0 means
+/// no output reported one.
+static OUTPUT_SCALE_SEED_120: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
 // -- Wakeup pipe (cross-thread) --
 
@@ -276,8 +321,16 @@ pub struct AppContextData {
     pub wlr_layer_shell: Option<ZwlrLayerShellV1>,
     pub subcompositor: Option<wayland_client::protocol::wl_subcompositor::WlSubcompositor>,
     pub otto_dock_manager: Option<crate::protocols::otto_dock_manager_v1::OttoDockManagerV1>,
+    /// `otto_canvas_manager_v1`: places surfaces in the side canvas. `None`
+    /// on any compositor but Otto. See [`crate::surfaces::CanvasItemSurface`].
+    pub otto_canvas_manager:
+        Option<crate::protocols::otto_canvas_manager_v1::OttoCanvasManagerV1>,
     pub otto_text_cursor_manager:
         Option<crate::protocols::otto_text_cursor_manager_v1::OttoTextCursorManagerV1>,
+    /// `org_kde_kwin_appmenu_manager`: tells the compositor where a window's
+    /// menu is served, for the top bar. See [`crate::app_menu`].
+    pub kde_appmenu_manager:
+        Option<crate::protocols::org_kde_kwin_appmenu_manager::OrgKdeKwinAppmenuManager>,
     /// The other side of the caret: `otto_text_cursor_manager_v1` says where
     /// *someone else's* caret is, this says where ours is. `None` on a
     /// compositor without `zwp_text_input_v3`.
@@ -296,6 +349,12 @@ pub struct AppContextData {
     pub xdg_importer: Option<
         wayland_protocols::xdg::foreign::zv2::client::zxdg_importer_v2::ZxdgImporterV2,
     >,
+    /// `zxdg_exporter_v2`: names one of this process's windows with a handle
+    /// another process can import as its dialog's parent. `None` on a
+    /// compositor without xdg-foreign — see [`crate::foreign`].
+    pub xdg_exporter: Option<
+        wayland_protocols::xdg::foreign::zv2::client::zxdg_exporter_v2::ZxdgExporterV2,
+    >,
     /// `xdg_wm_dialog_v1`: how a window says it is a dialog, and modal. The
     /// compositor uses the hint to float it rather than tile it.
     pub xdg_wm_dialog: Option<
@@ -303,7 +362,15 @@ pub struct AppContextData {
     >,
     pub session_lock_manager: Option<wayland_protocols::ext::session_lock::v1::client::ext_session_lock_manager_v1::ExtSessionLockManagerV1>,
     pub cursor_shape_manager: Option<wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_manager_v1::WpCursorShapeManagerV1>,
+    /// `xdg_activation_v1`, how a window asks to be brought forward. `None`
+    /// on a compositor without it — see [`AppContext::activate`].
+    pub xdg_activation:
+        Option<wayland_protocols::xdg::activation::v1::client::xdg_activation_v1::XdgActivationV1>,
     pub fractional_scale_manager: Option<wayland_protocols::wp::fractional_scale::v1::client::wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1>,
+    /// `wp_viewporter`: crops and scales a surface's buffer. How scroll panes
+    /// clip their content and flat fills take their size, on every
+    /// compositor.
+    pub viewporter: Option<wayland_protocols::wp::viewporter::client::wp_viewporter::WpViewporter>,
     /// `None` on a compositor without pointer gestures at version 3, where a
     /// touchpad hold is simply not reported.
     pub pointer_gestures: Option<wayland_protocols::wp::pointer_gestures::zv1::client::zwp_pointer_gestures_v1::ZwpPointerGesturesV1>,
@@ -385,7 +452,11 @@ impl<'a> AppContext<'a> {
     }
 
     /// Returns the current display scale factor (updated by the compositor).
-    /// Defaults to 1 if no scale_factor_changed event has been received yet.
+    ///
+    /// A rasterisation hint, not geometry: it is 2 — the buffer scale otto-kit
+    /// surfaces render at — until a `scale_factor_changed` event arrives, and
+    /// SCTK never sends one on a 1x output. Geometry in physical pixels uses
+    /// [`Self::fractional_scale`].
     pub fn scale_factor() -> i32 {
         DISPLAY_SCALE_FACTOR.load(std::sync::atomic::Ordering::Relaxed)
     }
@@ -413,11 +484,34 @@ impl<'a> AppContext<'a> {
     /// move the geometry out from under a buffer that stayed put — the panel
     /// keeps its old pixels at a new size. A scale change takes effect on the
     /// next restart, which is how the compositor-side chrome treats it too.
+    ///
+    /// The preferred scale only lands after a surface's first frames, so
+    /// until then this is the scale of the first output the compositor
+    /// advertised, read at startup — before the app made anything, so code
+    /// that sizes a surface or rasterises an atlas up front gets the real
+    /// value. Which output a surface will map on is not known that early; on
+    /// a mixed-scale setup it may be another one, and geometry set before the
+    /// preferred scale arrives must be re-applied once this changes. With no
+    /// output scale either, it is the latched integer scale if there is one,
+    /// else 1 — not the integer default of 2, which is a buffer scale and
+    /// would double every panel on a 1x output.
     pub fn fractional_scale() -> f64 {
-        match DISPLAY_FRACTIONAL_SCALE_120.load(std::sync::atomic::Ordering::Relaxed) {
-            0 => Self::scale_factor().max(1) as f64,
+        use std::sync::atomic::Ordering::Relaxed;
+        match DISPLAY_FRACTIONAL_SCALE_120.load(Relaxed) {
+            0 => match OUTPUT_SCALE_SEED_120.load(Relaxed) {
+                0 if SCALE_FACTOR_LATCHED.load(Relaxed) => Self::scale_factor().max(1) as f64,
+                0 => 1.0,
+                n => n as f64 / 120.0,
+            },
             n => n as f64 / 120.0,
         }
+    }
+
+    /// Record the output scale read at startup (in 120ths). A stand-in until
+    /// the surface's own `preferred_scale` arrives, which still replaces it —
+    /// see [`Self::fractional_scale`].
+    pub(crate) fn seed_output_scale_120(scale_120: u32) {
+        OUTPUT_SCALE_SEED_120.store(scale_120, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Store the preferred scale from `wp_fractional_scale_v1` (in 120ths).
@@ -459,6 +553,19 @@ impl<'a> AppContext<'a> {
         })
     }
 
+    /// The xdg-foreign exporter, when the compositor offers one.
+    pub fn xdg_exporter() -> Option<
+        &'static wayland_protocols::xdg::foreign::zv2::client::zxdg_exporter_v2::ZxdgExporterV2,
+    > {
+        use wayland_protocols::xdg::foreign::zv2::client::zxdg_exporter_v2::ZxdgExporterV2;
+        Self::with_global(|ctx| unsafe {
+            ctx.data
+                .xdg_exporter
+                .as_ref()
+                .map(|r| &*(r as *const ZxdgExporterV2))
+        })
+    }
+
     /// The xdg-dialog manager, when the compositor offers one.
     pub fn xdg_wm_dialog(
     ) -> Option<&'static wayland_protocols::xdg::dialog::v1::client::xdg_wm_dialog_v1::XdgWmDialogV1>
@@ -479,6 +586,18 @@ impl<'a> AppContext<'a> {
                 .fractional_scale_manager
                 .as_ref()
                 .map(|r| &*(r as *const WpFractionalScaleManagerV1))
+        })
+    }
+
+    pub fn viewporter(
+    ) -> Option<&'static wayland_protocols::wp::viewporter::client::wp_viewporter::WpViewporter>
+    {
+        use wayland_protocols::wp::viewporter::client::wp_viewporter::WpViewporter;
+        Self::with_global(|ctx| unsafe {
+            ctx.data
+                .viewporter
+                .as_ref()
+                .map(|r| &*(r as *const WpViewporter))
         })
     }
 
@@ -513,6 +632,16 @@ impl<'a> AppContext<'a> {
         Self::with_global(|ctx| unsafe {
             ctx.otto_dock_manager_ref()
                 .map(|r| &*(r as *const crate::protocols::otto_dock_manager_v1::OttoDockManagerV1))
+        })
+    }
+
+    /// The side canvas manager, when the compositor offers one.
+    pub fn otto_canvas_manager(
+    ) -> Option<&'static crate::protocols::otto_canvas_manager_v1::OttoCanvasManagerV1> {
+        Self::with_global(|ctx| unsafe {
+            ctx.data.otto_canvas_manager.as_ref().map(|r| {
+                &*(r as *const crate::protocols::otto_canvas_manager_v1::OttoCanvasManagerV1)
+            })
         })
     }
 
@@ -908,6 +1037,16 @@ impl<'a> AppContext<'a> {
             *qh.borrow_mut() = Some(Box::new(qh_clone));
         });
 
+        let manager = context_data.kde_appmenu_manager.clone();
+        let qh_clone = queue_handle.clone();
+        APPMENU_FN.with(|make| {
+            *make.borrow_mut() = Some(Box::new(move |surface: &wl_surface::WlSurface| {
+                manager
+                    .as_ref()
+                    .map(|manager| manager.create(surface, &qh_clone, ()))
+            }));
+        });
+
         let qh_clone = queue_handle.clone();
         FRAME_REQUEST_FN.with(|frame_fn| {
             *frame_fn.borrow_mut() = Some(Box::new(move |surface: &wl_surface::WlSurface| {
@@ -929,6 +1068,41 @@ impl<'a> AppContext<'a> {
 
     pub fn queue_handle() -> &'static QueueHandle<AppData<super::DefaultApp>> {
         Self::queue_handle_typed::<super::DefaultApp>()
+    }
+
+    /// Ask the compositor to bring `surface` forward and give it the keyboard.
+    ///
+    /// `token` is an activation token handed over by whoever asked for the
+    /// window — a launcher's `XDG_ACTIVATION_TOKEN`. Without one a token is
+    /// requested here, carrying the pointer's last enter serial when there is one; the
+    /// compositor decides whether to honour it (Otto does for a request made
+    /// right after a press). Nothing happens on a compositor without
+    /// xdg-activation.
+    pub fn activate(surface: &wl_surface::WlSurface, token: Option<String>) {
+        Self::with_global(|ctx| {
+            let Some(activation) = &ctx.data.xdg_activation else {
+                tracing::debug!("no xdg_activation_v1; cannot bring a window forward");
+                return;
+            };
+            match token {
+                Some(token) => activation.activate(token, surface),
+                None => {
+                    let request =
+                        activation.get_activation_token(Self::queue_handle(), surface.clone());
+                    request.set_surface(surface);
+                    let serial = LAST_POINTER_ENTER_SERIAL.with(|s| *s.borrow());
+                    if let Some(seat) = ctx.data.seat_state.seats().next() {
+                        if serial != 0 {
+                            request.set_serial(serial, &seat);
+                        }
+                    }
+                    request.commit();
+                }
+            }
+            if let Err(err) = ctx.data.connection.flush() {
+                tracing::warn!(%err, "could not flush an activation request");
+            }
+        });
     }
 
     /// Return the theme matching the current system color scheme.
@@ -964,6 +1138,83 @@ impl<'a> AppContext<'a> {
         });
     }
 
+    /// Set the cursor to a picture the app drew, for a shape the theme has no
+    /// name for. Like [`Self::set_cursor_shape`], call it from pointer
+    /// handling; the picture goes up when the pointer batch ends, and only
+    /// when it differs from the one showing.
+    pub fn set_cursor_image(image: CursorImage) {
+        PENDING_CURSOR_IMAGE.with(|pending| *pending.borrow_mut() = Some(image));
+    }
+
+    /// Put up a drawn cursor asked for during the batch just handled.
+    pub(crate) fn apply_cursor_image<A: super::App + 'static>(
+        context_data: &AppContextData,
+        pointer: &wayland_client::protocol::wl_pointer::WlPointer,
+        qh: &QueueHandle<super::AppData<A>>,
+    ) {
+        use smithay_client_toolkit::shm::slot::SlotPool;
+        use wayland_client::protocol::wl_shm;
+
+        let Some(image) = PENDING_CURSOR_IMAGE.with(|pending| pending.borrow_mut().take()) else {
+            return;
+        };
+        let serial = LAST_POINTER_ENTER_SERIAL.with(|s| *s.borrow());
+        CURSOR_IMAGE.with(|current| {
+            let mut current = current.borrow_mut();
+            if let Some(state) = current.as_ref().filter(|state| state.key == image.key) {
+                // The same picture: only show it again, as a shape set since
+                // may have replaced it.
+                pointer.set_cursor(
+                    serial,
+                    Some(&state.surface),
+                    image.hotspot.0,
+                    image.hotspot.1,
+                );
+                return;
+            }
+            let stride = image.width as i32 * 4;
+            let bytes = (stride * image.height as i32) as usize;
+            if image.pixels.len() < bytes {
+                tracing::warn!(key = image.key, "a cursor image smaller than its size says");
+                return;
+            }
+            let (surface, mut pool) = match current.take() {
+                Some(state) => (state.surface, state.pool),
+                None => {
+                    let surface = context_data.compositor_state.create_surface(qh);
+                    let Ok(pool) = SlotPool::new(bytes.max(4096), &context_data.shm_state) else {
+                        tracing::warn!("no shared memory for a cursor image");
+                        return;
+                    };
+                    (surface, pool)
+                }
+            };
+            let Ok((buffer, canvas)) = pool.create_buffer(
+                image.width as i32,
+                image.height as i32,
+                stride,
+                wl_shm::Format::Argb8888,
+            ) else {
+                tracing::warn!("no buffer for a cursor image");
+                return;
+            };
+            canvas[..bytes].copy_from_slice(&image.pixels[..bytes]);
+            if buffer.attach_to(&surface).is_err() {
+                return;
+            }
+            surface.set_buffer_scale(image.scale.max(1) as i32);
+            surface.damage_buffer(0, 0, image.width as i32, image.height as i32);
+            surface.commit();
+            pointer.set_cursor(serial, Some(&surface), image.hotspot.0, image.hotspot.1);
+            *current = Some(CursorImageState {
+                key: image.key,
+                surface,
+                pool,
+                _buffer: buffer,
+            });
+        });
+    }
+
     /// Set the cursor shape for the current pointer.
     ///
     /// Uses `wp_cursor_shape_v1` — no bitmap loading needed.
@@ -971,6 +1222,8 @@ impl<'a> AppContext<'a> {
     pub fn set_cursor_shape(
         shape: wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_device_v1::Shape,
     ) {
+        // A named shape replaces a drawn cursor asked for in the same batch.
+        PENDING_CURSOR_IMAGE.with(|pending| *pending.borrow_mut() = None);
         let serial = LAST_POINTER_ENTER_SERIAL.with(|s| *s.borrow());
         CURSOR_SHAPE_DEVICE.with(|d| {
             if let Some(ref device) = *d.borrow() {
@@ -1148,6 +1401,43 @@ impl<'a> AppContext<'a> {
         });
     }
 
+    /// Called with every event the compositor sends a side canvas item.
+    /// Keyed by the `otto_canvas_item_v1` object.
+    pub fn register_canvas_item_callback<F>(item_id: ObjectId, callback: F)
+    where
+        F: FnMut(crate::surfaces::CanvasItemEvent) + 'static,
+    {
+        CANVAS_ITEM_CALLBACKS.with(|callbacks| {
+            callbacks.borrow_mut().insert(item_id, Box::new(callback));
+        });
+    }
+
+    /// Drop the callback of a canvas item that is going away.
+    pub fn unregister_canvas_item_callback(item_id: &ObjectId) {
+        let _ = CANVAS_ITEM_CALLBACKS.try_with(|callbacks| {
+            callbacks.borrow_mut().remove(item_id);
+        });
+    }
+
+    /// Hand `event` to the canvas item's callback. The callback is taken out
+    /// of the table while it runs, so it may register or drop callbacks of
+    /// its own.
+    pub(crate) fn dispatch_canvas_item_event(
+        item_id: &ObjectId,
+        event: crate::surfaces::CanvasItemEvent,
+    ) {
+        let taken = CANVAS_ITEM_CALLBACKS.with(|callbacks| callbacks.borrow_mut().remove(item_id));
+        if let Some(mut callback) = taken {
+            callback(event);
+            CANVAS_ITEM_CALLBACKS.with(|callbacks| {
+                callbacks
+                    .borrow_mut()
+                    .entry(item_id.clone())
+                    .or_insert(callback);
+            });
+        }
+    }
+
     pub fn unregister_lock_surface_configure_callback(lock_surface_id: &ObjectId) {
         let _ = LOCK_SURFACE_CONFIGURE_CALLBACKS.try_with(|callbacks| {
             callbacks.borrow_mut().remove(lock_surface_id);
@@ -1162,6 +1452,20 @@ impl<'a> AppContext<'a> {
             callbacks
                 .borrow_mut()
                 .insert(surface_id, Box::new(callback));
+        });
+    }
+
+    /// Forgets `surface_id`'s frame callback, and whatever it holds.
+    ///
+    /// A window does this as it closes; see
+    /// [`Window::close`](crate::components::window::Window::close). Called from
+    /// inside a frame callback, while the table is in use, the callback stays.
+    pub fn unregister_frame_callback(surface_id: &ObjectId) {
+        let _ = FRAME_CALLBACKS.try_with(|callbacks| match callbacks.try_borrow_mut() {
+            Ok(mut callbacks) => {
+                callbacks.remove(surface_id);
+            }
+            Err(_) => tracing::debug!("frame callbacks in use; one stays registered"),
         });
     }
 
@@ -1639,6 +1943,15 @@ impl<'a> AppContext<'a> {
         });
     }
 
+    /// A new `org_kde_kwin_appmenu` for `surface`, to say where its menu is
+    /// served; `None` on a compositor without the protocol, or before the
+    /// app runs. Used by [`crate::app_menu::AppMenu::attach`].
+    pub fn appmenu_for(
+        surface: &wl_surface::WlSurface,
+    ) -> Option<crate::protocols::org_kde_kwin_appmenu::OrgKdeKwinAppmenu> {
+        APPMENU_FN.with(|make| make.borrow().as_ref().and_then(|make| make(surface)))
+    }
+
     /// The surface holding the keyboard, or `None` when no window of this
     /// application does.
     /// Start watching the desktop's text cursor, and return the object doing
@@ -1966,6 +2279,7 @@ impl<'a> AppContext<'a> {
         APP_CONTEXT_PTR.with(|ptr| *ptr.borrow_mut() = None);
         TYPED_QUEUE_HANDLE.with(|qh| *qh.borrow_mut() = None);
         FRAME_REQUEST_FN.with(|f| *f.borrow_mut() = None);
+        APPMENU_FN.with(|f| *f.borrow_mut() = None);
         CURRENT_CONFIGURE.with(|cfg| *cfg.borrow_mut() = None);
         WINDOWS.with(|w| w.borrow_mut().clear());
 
@@ -2024,11 +2338,21 @@ mod frame_in_flight_tests {
 mod scale_latch_tests {
     use super::*;
 
+    /// The scale lives in process-wide statics; tests that set it take turns.
+    static SCALE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn reset() -> std::sync::MutexGuard<'static, ()> {
+        let guard = SCALE.lock().unwrap_or_else(|e| e.into_inner());
+        DISPLAY_FRACTIONAL_SCALE_120.store(0, std::sync::atomic::Ordering::Relaxed);
+        OUTPUT_SCALE_SEED_120.store(0, std::sync::atomic::Ordering::Relaxed);
+        guard
+    }
+
     /// The compositor's opening `preferred_scale` is the one the process keeps:
     /// a later change must not move geometry under buffers that never re-raster.
     #[test]
     fn fractional_scale_ignores_later_changes() {
-        DISPLAY_FRACTIONAL_SCALE_120.store(0, std::sync::atomic::Ordering::Relaxed);
+        let _guard = reset();
 
         AppContext::set_fractional_scale_120(180); // 1.5x
         assert_eq!(AppContext::fractional_scale(), 1.5);
@@ -2039,5 +2363,19 @@ mod scale_latch_tests {
             1.5,
             "scale change should wait for a restart"
         );
+    }
+
+    /// The startup output scale stands in until the surface's preferred scale
+    /// arrives, and does not stop that one landing: on a 1.5x output the
+    /// integer `wl_output` scale is 2, and the preferred 1.5 must win.
+    #[test]
+    fn output_scale_seed_yields_to_preferred_scale() {
+        let _guard = reset();
+
+        AppContext::seed_output_scale_120(240);
+        assert_eq!(AppContext::fractional_scale(), 2.0);
+
+        AppContext::set_fractional_scale_120(180);
+        assert_eq!(AppContext::fractional_scale(), 1.5);
     }
 }

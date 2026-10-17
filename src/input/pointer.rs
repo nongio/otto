@@ -117,7 +117,18 @@ impl<BackendData: Backend> Otto<BackendData> {
             return;
         }
 
-        if !self.workspaces.get_show_all() && wl_pointer::ButtonState::Pressed == state {
+        // A shown side canvas sees the button before any window: a press outside it hides
+        // it and goes no further, and a press on one of its items keeps the
+        // keyboard on that item.
+        let canvas = self.canvas_pointer_button(button, wl_pointer::ButtonState::Pressed == state);
+        if canvas == crate::otto_canvas::CanvasButton::Consumed {
+            return;
+        }
+
+        if canvas != crate::otto_canvas::CanvasButton::Item
+            && !self.workspaces.get_show_all()
+            && wl_pointer::ButtonState::Pressed == state
+        {
             self.focus_window_under_cursor(serial, RaiseTiming::for_button(button));
         }
         if wl_pointer::ButtonState::Released == state {
@@ -663,6 +674,12 @@ impl<BackendData: Backend> Otto<BackendData> {
             }
         }
 
+        // The side canvas sits above the layer-shell chrome, the dock and
+        // every window, and below layer-shell popups.
+        if under.is_none() {
+            under = self.canvas_surface_under(pos);
+        }
+
         // Check Top/Overlay layer shell surfaces using lay-rs hit testing
         // (Smithay's layer_map geometry doesn't reflect Taffy/animated positions)
         // Sort by stacking order: Overlay above Top
@@ -1090,7 +1107,7 @@ impl<Backend: crate::state::Backend> Otto<Backend> {
 }
 
 #[cfg(feature = "udev")]
-impl<A: crate::renderer::active::RendererApi> crate::Otto<crate::udev::UdevData<A>> {
+impl<BackendData: crate::state::Backend + 'static> crate::Otto<BackendData> {
     pub(crate) fn on_pointer_move<B: InputBackend>(
         &mut self,
         _dh: &smithay::reexports::wayland_server::DisplayHandle,

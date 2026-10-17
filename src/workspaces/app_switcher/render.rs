@@ -1,6 +1,6 @@
 use layers::prelude::*;
 
-use crate::{config::Config, theme::theme_colors, workspaces::utils::FONT_CACHE};
+use crate::{config::Config, theme::theme_colors, utils::FONT_CACHE};
 
 use super::model::AppSwitcherModel;
 
@@ -77,7 +77,7 @@ pub fn draw_appswitcher_overlay(state: &AppSwitcherModel) -> ContentDrawFunction
 
         if has_apps {
             // Selection highlight box
-            let selection_bg = theme_colors().fills_primary.c4f();
+            let selection_bg = theme_colors().fill_primary.c4f();
             let mut paint = layers::skia::Paint::new(selection_bg, None);
             paint.set_anti_alias(true);
             let rrect = layers::skia::RRect::new_rect_xy(

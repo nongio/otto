@@ -92,16 +92,26 @@ impl SettingSpec {
     /// The entries of `choices` this session cannot take: the ones this build
     /// left out, plus a renderer that was asked for but could not come up on
     /// this machine, so the session fell back (see
-    /// [`crate::udev::vulkan_fallback`]).
+    /// [`crate::renderer::vulkan_api::vulkan_fallback`]).
     pub fn unavailable_now(&self) -> Vec<&'static str> {
         #[cfg_attr(not(feature = "vulkan"), allow(unused_mut))]
         let mut out = self.unavailable_choices.to_vec();
         #[cfg(feature = "vulkan")]
         if self.id == "rendering.renderer"
-            && crate::udev::vulkan_fallback().is_some()
+            && crate::renderer::vulkan_api::vulkan_fallback().is_some()
             && !out.contains(&"vulkan")
         {
             out.push("vulkan");
+        }
+        out
+    }
+
+    /// The values the setting takes in this session: `choices`, plus the
+    /// widgets a customised desktop widget theme adds.
+    pub fn choices_now(&self) -> Vec<String> {
+        let mut out: Vec<String> = self.choices.iter().map(|c| c.to_string()).collect();
+        if self.id == "desktop.widget" {
+            out.extend(crate::desktop_widget::extra_widgets());
         }
         out
     }
@@ -130,11 +140,12 @@ impl SettingSpec {
 
         if self.ty == SettingType::Enum {
             let text = value.as_str().unwrap_or_default();
-            if !self.choices.contains(&text) {
+            let choices = self.choices_now();
+            if !choices.iter().any(|choice| choice == text) {
                 return Err(Invalid::Range(format!(
                     "`{}` must be one of {}, got `{text}`",
                     self.id,
-                    self.choices.join(", ")
+                    choices.join(", ")
                 )));
             }
             if self.unavailable_now().contains(&text) {
@@ -214,8 +225,6 @@ const fn spec(
         backends: &[],
     }
 }
-
-#[allow(clippy::too_many_arguments)]
 const fn ranged(
     id: &'static str,
     ty: SettingType,
@@ -435,11 +444,36 @@ pub static SETTINGS: &[SettingSpec] = &[
         "The files in your Desktop folder, behind the windows.",
         Live,
     ),
+    ranged(
+        "canvas.width",
+        Int,
+        "Side canvas width",
+        "Width of the side canvas, in logical points. Everything in it is drawn at this width.",
+        Live,
+        200.0,
+        1200.0,
+        10.0,
+    ),
+    labelled_choice(
+        "desktop.widget",
+        "Background widget",
+        "A full-screen page drawn over the wallpaper, behind the windows. \
+         Needs ewwii.",
+        Live,
+        crate::desktop_widget::WIDGET_CHOICES,
+        &[
+            "settings-choice-widget-none",
+            "settings-choice-widget-calendar",
+            "settings-choice-widget-cross-pad",
+            "settings-choice-widget-grid-pad",
+        ],
+    ),
     spec(
         "background_color",
         Str,
         "Background colour",
-        "Desktop background colour, as a hex string.",
+        "Desktop background colour, as a hex string: the gradient shown \
+         without an image, and what shows around a fitted or centred one.",
         Live,
     ),
     spec(
@@ -448,6 +482,54 @@ pub static SETTINGS: &[SettingSpec] = &[
         "Background image",
         "Path to the desktop background image. Empty for none.",
         Live,
+    ),
+    labelled_choice(
+        "background_mode",
+        "Background layout",
+        "How the background image fills the screen.",
+        Live,
+        &["fill", "fit", "stretch", "center", "tile", "span"],
+        &[
+            "settings-choice-background-fill",
+            "settings-choice-background-fit",
+            "settings-choice-background-stretch",
+            "settings-choice-background-center",
+            "settings-choice-background-tile",
+            "settings-choice-background-span",
+        ],
+    ),
+    ranged(
+        "background_position_x",
+        Double,
+        "Background position across",
+        "Which part of a cropped background image shows, and where a smaller \
+         one sits, from 0 (left) to 1 (right).",
+        Live,
+        0.0,
+        1.0,
+        0.01,
+    ),
+    ranged(
+        "background_position_y",
+        Double,
+        "Background position down",
+        "Which part of a cropped background image shows, and where a smaller \
+         one sits, from 0 (top) to 1 (bottom).",
+        Live,
+        0.0,
+        1.0,
+        0.01,
+    ),
+    ranged(
+        "background_zoom",
+        Double,
+        "Background zoom",
+        "Magnification of a filled or spanned background image, from 1 \
+         (just covering the screen).",
+        Live,
+        1.0,
+        otto_kit::wallpaper::MAX_ZOOM as f64,
+        0.05,
     ),
     spec(
         "cursor_theme",
@@ -497,6 +579,29 @@ pub static SETTINGS: &[SettingSpec] = &[
             Restart,
         )
     },
+    // ---- Top bar ---------------------------------------------------------
+    spec(
+        "topbar.show_app_menu",
+        Bool,
+        "Show application menus",
+        "The menus of the application in use, beside its name in the top bar.",
+        Live,
+    ),
+    spec(
+        "topbar.show_clock",
+        Bool,
+        "Show date and time",
+        "The clock at the right end of the top bar.",
+        Live,
+    ),
+    spec(
+        "topbar.clock_format",
+        Str,
+        "Clock format",
+        "How the top bar writes the date and time, as a strftime format. \
+         Empty follows your language.",
+        Live,
+    ),
     // ---- Tiling ----------------------------------------------------------
     choice(
         "tiling.decoration",

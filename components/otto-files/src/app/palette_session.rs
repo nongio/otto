@@ -226,51 +226,36 @@ impl Browser {
 
     /// What `typed` could be completed to, as whole paths.
     ///
-    /// The same rules the location bar completes by: a bare name resolves
-    /// against the directory on screen, and a dotfile is only a candidate once
-    /// the dot has been typed. The read is synchronous — one directory, on a
-    /// keystroke somebody is waiting on.
+    /// The same rules the location bar completes by (see
+    /// [`Self::typed_path_matches`]). A symlink to a folder counts as a
+    /// folder, so "Move to…" offers what it will accept.
     pub(super) fn path_completions(
         &self,
         typed: &str,
         dirs_only: bool,
     ) -> Vec<palette::Completion> {
-        let (head, prefix) = match typed.rfind('/') {
-            Some(cut) => (&typed[..=cut], &typed[cut + 1..]),
-            None => ("", typed),
-        };
-        let Some(dir) = self.resolve_typed_path(if head.is_empty() { "." } else { head }) else {
+        let Some(matches) = self.typed_path_matches(typed) else {
             return Vec::new();
         };
-        let Ok(entries) = std::fs::read_dir(&dir) else {
-            return Vec::new();
-        };
-        let mut found: Vec<(String, bool)> = entries
-            .filter_map(|entry| entry.ok())
-            .map(|entry| {
-                let name = entry.file_name().to_string_lossy().into_owned();
-                let is_dir = entry.file_type().map(|k| k.is_dir()).unwrap_or(false);
-                (name, is_dir)
+        // Lazily, so no more than the shown completions (and the files
+        // skipped on the way to them) are stat'ed.
+        matches
+            .names
+            .iter()
+            .filter_map(|name| {
+                let is_dir = matches.is_dir(name);
+                (!dirs_only || is_dir).then_some((name, is_dir))
             })
-            .filter(|(name, is_dir)| {
-                name.starts_with(prefix)
-                    && (prefix.starts_with('.') || !name.starts_with('.'))
-                    && (!dirs_only || *is_dir)
-            })
-            .collect();
-        found.sort_by(|a, b| model::natural_cmp(&a.0, &b.0));
-        found.truncate(PALETTE_COMPLETION_LIMIT);
-        found
-            .into_iter()
+            .take(PALETTE_COMPLETION_LIMIT)
             .map(|(name, is_dir)| {
                 // A completed directory gains its separator, so Tab walks down
                 // a tree without anyone reaching for `/` between levels.
                 let value = if is_dir {
-                    format!("{head}{name}/")
+                    format!("{}{name}/", matches.head)
                 } else {
-                    format!("{head}{name}")
+                    format!("{}{name}", matches.head)
                 };
-                palette::Completion::new(value, name)
+                palette::Completion::new(value, name.clone())
             })
             .collect()
     }
@@ -780,7 +765,7 @@ impl Browser {
     }
 
     /// Whether a palette command asked for Peek. Drained by the host,
-    /// which owns the decode — see [`FilesApp::follow_peek`].
+    /// which owns the decode — see [`FilesWindow::follow_peek`].
     pub(super) fn take_palette_peek(&mut self) -> bool {
         std::mem::take(&mut self.palette_peek)
     }

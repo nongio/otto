@@ -63,8 +63,10 @@ dock-quit = Завершити
 ## sidebar does not grow to fit them.
 
 settings-pane-general = Загальні
+settings-pane-appearance = Вигляд
 settings-pane-displays = Дисплеї
 settings-pane-dock = Dock
+settings-pane-top-bar = Верхня панель
 settings-pane-tiling = Мозаїка
 settings-pane-keyboard = Клавіатура
 settings-pane-pointing = Трекпад і миша
@@ -73,6 +75,17 @@ settings-pane-power = Живлення
 settings-pane-lock-and-login = Блокування і вхід
 settings-pane-search = Пошук
 settings-pane-agents = Агенти
+settings-pane-about = Про Otto
+settings-sidebar-search = Пошук
+settings-sidebar-search-none = Немає налаштувань, що відповідають «{ $query }»
+settings-group-about-machine = Цей комп’ютер
+settings-about-version-line = Версія { $version }
+settings-about-computer-name = Назва комп’ютера
+settings-about-os = Операційна система
+settings-about-kernel = Ядро
+settings-about-processor = Процесор
+settings-about-memory = Пам’ять
+settings-about-memory-gb = { $size } ГБ
 
 
 ## Settings — General
@@ -93,15 +106,50 @@ settings-group-desktop = Робочий стіл
 settings-background-colour = Колір тла
 settings-background-image = Зображення тла
 settings-background-image-detail = Обирається через засіб вибору файлів робочого стола
+settings-background-layout = Розміщення
+settings-background-zoom = Масштаб
+settings-background-position-x = По горизонталі
+settings-background-position-y = По вертикалі
+settings-background-position-detail = Або натисни на ту частину зображення, яка має лишатися видимою
+settings-desktop-widget = Фоновий віджет
+settings-desktop-widget-needs-ewwii = Потрібен ewwii, а його не встановлено
+# { $folder } is a path such as ~/.config/otto/widgets/ewwii.
+settings-desktop-widget-detail = Малюється ewwii. Додавай власні віджети в { $folder }
 # Stands in for the wallpaper thumbnail when the file cannot be decoded.
 settings-background-image-unavailable = Неможливо показати
 settings-show-desk = Показувати файли на робочому столі
 settings-show-desk-detail = Файли з папки «Стільниця», позаду вікон
 
+settings-group-desk = Стільниця
+settings-desk-folder = Тека
+settings-desk-folder-default = Ваша тека «Стільниця»
+settings-desk-choose-folder-title = Виберіть теку для стільниці
+settings-desk-layout = Розмір і положення
+settings-desk-layout-edit = Змінити…
+settings-desk-layout-reset = Скинути
+settings-desk-layout-fill = На весь екран. «Змінити» показує маркери, щоб перетягнути її на місце
+settings-desk-layout-placed = Розміщено вручну. «Скинути» знову розтягне її на весь екран
+settings-desk-icon-size = Розмір значків
+settings-desk-overflow = Коли значки не вміщаються
+settings-desk-overflow-scroll = Прокручувати
+settings-desk-overflow-stack = Показувати поверх
+settings-desk-overflow-detail = Прокручування зсуває сітку. «Показувати поверх» залишає зайві значки в останній клітинці й відкриває їх над вікнами
+
 settings-group-pointer-and-icons = Вказівник і піктограми
 settings-cursor-theme = Тема курсора
 settings-cursor-size = Розмір курсора
 settings-icon-theme = Тема піктограм
+
+settings-group-app-menu = Меню програм
+settings-show-app-menu = Показувати меню програм
+settings-show-app-menu-detail = Поруч із назвою активної програми. Програми, відкриті, поки це вимкнено, залишають меню у власному вікні
+
+settings-group-clock = Годинник
+settings-show-clock = Показувати дату й час
+settings-show-clock-detail = Біля правого краю верхньої панелі
+settings-clock-format = Формат
+settings-clock-format-detail = Підійде й будь-який формат strftime: clock_format у розділі [topbar] файлу конфігурації
+settings-clock-format-automatic = { $preview } (типово для мови)
 
 settings-group-window-switcher = Перемикач вікон
 settings-follow-cursor = Показувати на дисплеї з вказівником
@@ -239,6 +287,26 @@ settings-scrolling-speed = Швидкість прокручування
 
 settings-interface-sounds = Звуки інтерфейсу
 settings-sound-theme = Тема звуків
+settings-group-sound-output = Пристрої виведення
+settings-group-sound-input = Пристрої введення
+settings-sound-output-device = Пристрій виведення
+settings-sound-input-device = Пристрій введення
+settings-sound-volume = Гучність
+settings-sound-mute = Вимкнути звук
+settings-sound-no-outputs = Немає пристроїв виведення
+settings-sound-no-inputs = Немає пристроїв введення
+settings-sound-unavailable = Звуковий сервер не відповідає. Для звуку потрібен PipeWire з pipewire-pulse або PulseAudio, а також pactl.
+settings-sound-show = Показати
+settings-sound-view-playback = Відтворення
+settings-sound-view-recording = Запис
+settings-sound-view-configuration = Конфігурація
+settings-sound-port = Порт
+settings-sound-unplugged = не під'єднано
+settings-sound-default = Використовувати типово
+settings-sound-profile = Профіль
+settings-sound-no-playback = Жодна програма не відтворює звук
+settings-sound-no-recording = Жодна програма не записує звук
+settings-sound-no-cards = Немає звукових карт
 
 
 ## Settings — Power
@@ -382,6 +450,14 @@ settings-agents-service-missing = Не встановлена
 settings-agents-service-unmanaged = Невідомо: у цій системі немає systemctl
 settings-agents-start = Запустити
 settings-agents-restart = Перезапустити
+settings-agents-bridge-group = Міст для чатів
+settings-agents-bridge = Міст
+settings-agents-bridge-off = Вимкнено. Застосунки чатів не можуть зв'язатися з вашими агентами.
+settings-agents-bridge-unset = Вкажіть команду нижче й застосуйте її, потім увімкніть це.
+settings-agents-bridge-failed = Зупинений після помилки. Причину покаже journalctl --user -u otto-agents-bridge.
+settings-agents-bridge-missing = Не встановлений
+settings-agents-bridge-command = Команда
+settings-agents-bridge-command-detail = Те, що запускає міст, наприклад шлюз, налаштований запускати otto-agents acp як свого агента.
 # The row that opens agents.toml. Its path is shown under it.
 settings-agents-file = Файл конфігурації
 settings-agents-none = Агентів не налаштовано
@@ -465,6 +541,18 @@ settings-choice-power-ignore = Нічого не робити
 settings-choice-power-lock = Блокувати екран
 settings-choice-power-suspend = Присипляти
 settings-choice-power-shutdown = Вимикати комп'ютер
+settings-choice-widget-none = Немає
+settings-choice-widget-calendar = Календар
+# The next two name pages whose text is in English, so they stay as written.
+settings-choice-widget-cross-pad = Cross pad
+settings-choice-widget-grid-pad = Grid pad
+# How a background image fills the screen.
+settings-choice-background-fill = Заповнити екран
+settings-choice-background-fit = За розміром екрана
+settings-choice-background-stretch = Розтягнути
+settings-choice-background-center = По центру
+settings-choice-background-tile = Плиткою
+settings-choice-background-span = На всі дисплеї
 # The automatic option for a theme that follows the system.
 settings-choice-auto = Авто
 
@@ -509,6 +597,17 @@ files-open-with-always = Завжди використовувати для ти
 files-open-with-not-remembered = Відкрито, але вибір не збережено: { $error }
 files-new-folder = Нова папка
 files-desk-open-in-files = Відкрити у Файлах
+files-desk-edit-done = Готово
+# The desk's overflow tile: the caption under it, and what a screen reader
+# says for it. $count is how many items it holds.
+files-desk-overflow-caption = Ще
+files-desk-overflow =
+    { $count ->
+        [one] Ще { $count } об’єкт
+        [few] Ще { $count } об’єкти
+        [many] Ще { $count } об’єктів
+       *[other] Ще { $count } об’єкта
+    }
 files-move-to-trash = Перемістити в кошик
 # $count is always two or more; the single-item case uses files-move-to-trash.
 files-move-count-to-trash =
@@ -640,6 +739,9 @@ files-undo-move = переміщення
 files-undo-copy = копіювання
 files-undo-delete = видалення
 files-undo-rename = перейменування
+files-undo-rotate = Поворот
+files-undo-flip = Віддзеркалення
+files-turn-failed = Не вдалося повернути «{ $name }»: { $error }
 # $name is a file or folder name, already wrapped in quotation marks.
 files-renamed-to = Перейменовано на «{ $name }»
 files-new-folder-created = Нова папка «{ $name }»
@@ -649,6 +751,7 @@ files-rename-failed = Не вдалося перейменувати: { $error }
 files-new-folder-failed = Не вдалося створити папку: { $error }
 files-open-failed = Не вдалося відкрити файл: { $error }
 files-open-app-broken = команда запуску застосунку пошкоджена
+files-open-no-app = немає встановленого застосунку, що відкриває файли цього типу
 files-new-window-failed = Не вдалося відкрити нове вікно: { $error }
 files-settings-open-failed = Не вдалося відкрити Налаштування: { $error }
 
@@ -742,17 +845,17 @@ files-empty-trash-detail =
 ## not KiB. Most languages keep the symbols as they are; translate only the
 ## spelled-out "bytes".
 
-files-size-bytes =
+size-bytes =
     { $count ->
         [one] { $count } байт
         [few] { $count } байти
         [many] { $count } байтів
        *[other] { $count } байта
     }
-files-size-kb = { $value } КБ
-files-size-mb = { $value } МБ
-files-size-gb = { $value } ГБ
-files-size-tb = { $value } ТБ
+size-kb = { $value } КБ
+size-mb = { $value } МБ
+size-gb = { $value } ГБ
+size-tb = { $value } ТБ
 
 
 ## Files — dates
@@ -793,6 +896,7 @@ files-new-folder-with-count = Нова папка з { $count } елемента
 # виконується.
 files-palette-placeholder = Виконати команду
 files-palette-no-matches = Немає відповідних команд
+files-palette-menu-item = Палітра команд…
 # $count — скільки команд пропонує палітра; оголошується під час відкриття.
 files-palette-opened =
     { $count ->
@@ -936,6 +1040,15 @@ bar-power-performance = Продуктивність
 bar-power-settings = Налаштування живлення…
 bar-keyboard-settings = Налаштування клавіатури…
 bar-keyboard-layout-label = Розкладка клавіатури: { $layout }
+bar-otto-menu = Otto
+bar-otto-about = Про Otto
+bar-otto-settings = Налаштування…
+bar-otto-log-out = Вийти
+# The menu under the focused application's name in the top bar.
+bar-app-minimize = Згорнути
+bar-app-quit = Завершити { $app }
+bar-logout-title = Вийти зараз?
+bar-logout-body = Спершу застосунки отримають запит на закриття, щоб незбережене можна було зберегти.
 
 
 ## Settings — widgets
@@ -985,10 +1098,28 @@ schema-font-family-label = Шрифт інтерфейсу
 schema-font-family-description = Гарнітура шрифту, яку використовує власний інтерфейс Otto.
 schema-desk-enabled-label = Показувати файли на робочому столі
 schema-desk-enabled-description = Файли з папки «Стільниця», позаду вікон.
+schema-canvas-width-label = Ширина бічного полотна
+schema-canvas-width-description = Ширина бічного полотна в логічних точках. Усе, що на ньому є, малюється такої ширини.
+schema-desktop-widget-label = Фоновий віджет
+schema-desktop-widget-description = Сторінка на весь екран поверх шпалер, позаду вікон. Потрібен ewwii.
+schema-topbar-show-clock-label = Показувати дату й час
+schema-topbar-show-clock-description = Годинник біля правого краю верхньої панелі.
+schema-topbar-clock-format-label = Формат годинника
+schema-topbar-clock-format-description = Як верхня панель пише дату й час, у форматі strftime. Порожньо — за мовою.
+schema-topbar-show-app-menu-label = Показувати меню програм
+schema-topbar-show-app-menu-description = Меню активної програми поруч із її назвою на верхній панелі.
 schema-background-color-label = Колір тла
-schema-background-color-description = Колір тла стільниці у вигляді шістнадцяткового рядка.
+schema-background-color-description = Колір тла стільниці у вигляді шістнадцяткового рядка: градієнт, який видно без зображення, і те, що видно навколо зображення, вписаного в екран чи розміщеного по центру.
 schema-background-image-label = Зображення тла
 schema-background-image-description = Шлях до зображення тла стільниці. Порожньо, якщо тло не задано.
+schema-background-mode-label = Розміщення тла
+schema-background-mode-description = Як зображення тла заповнює екран.
+schema-background-position-x-label = Положення тла по горизонталі
+schema-background-position-x-description = Яку частину обрізаного зображення тла видно і де розташоване менше зображення, від 0 (ліворуч) до 1 (праворуч).
+schema-background-position-y-label = Положення тла по вертикалі
+schema-background-position-y-description = Яку частину обрізаного зображення тла видно і де розташоване менше зображення, від 0 (угорі) до 1 (унизу).
+schema-background-zoom-label = Масштаб тла
+schema-background-zoom-description = Збільшення зображення тла, що заповнює екран або розтягнуте на всі дисплеї, від 1 (рівно вкриває екран).
 schema-cursor-theme-label = Тема курсора
 schema-cursor-theme-description = Назва теми XCursor.
 schema-cursor-size-label = Розмір курсора
@@ -1186,6 +1317,8 @@ launcher-agents-working = Працює
 launcher-agents-needs-input = Чекає на відповідь
 launcher-agents-error = Помилка
 launcher-agents-none = Сеансів агентів ще немає
+canvas-sessions-heading = Агенти
+stash-drop-invite = Перетягніть файли сюди, щоб додати до добірки
 # Ask mode: the files that go with a request, under it in the log, or above
 # the field before it is sent. { $files } is their names, comma-separated.
 # Ask mode, while an existing session is being opened to continue it.
@@ -1309,6 +1442,9 @@ agents-permission-reject = Відхилити
 agents-permission-reject-always = Ніколи не дозволяти
 # The button that hands the question to the Ask window instead.
 agents-permission-open-in-ask = Відкрити в Ask
+# The same button for a session started in Preview about a file: the
+# question opens there, beside the file. Use the app's name as in its menu entry.
+agents-permission-open-in-preview = Відкрити в Studio
 
 
 ## Emoji picker
@@ -1609,6 +1745,21 @@ peek-pdf-install-rasteriser = Щоб побачити сторінки, вста
 peek-page-of = { $page } / { $pages }
 
 
+## Preview — chat
+
+# The chat field beside a file in Preview, before anything is typed.
+# $name is the file's name.
+preview-chat-placeholder = Запитати про { $name }
+# Shown in the empty chat beside a file, until something is asked.
+preview-chat-empty = Запитайте агента про цей файл або попросіть змінити його.
+# Over the chat field in Preview, when marks drawn on the file will go with
+# the next message. $marks lists their numbers ("1, 2"); $count is how many.
+preview-chat-marks = { $count ->
+    [one] З повідомленням піде позначка { $marks }
+   *[other] З повідомленням підуть позначки: { $marks }
+}
+
+
 ## Peek — listings
 ##
 ## A folder or an archive is previewed as a list of what is inside, with one
@@ -1629,24 +1780,6 @@ peek-item-count =
 # size on disk. $items is peek-item-count, $size is a formatted byte
 # count. The dash is an em dash.
 peek-archive-summary = { $items } — { $size }
-
-
-## Peek — sizes
-##
-## Byte units. Peek counts in powers of 1024, so the symbols are the
-## conventional binary-rounded ones. Translate only the spelled-out "bytes".
-
-peek-size-bytes =
-    { $count ->
-        [one] { $count } байт
-        [few] { $count } байти
-        [many] { $count } байтів
-       *[other] { $count } байта
-    }
-peek-size-kb = { $value } КБ
-peek-size-mb = { $value } МБ
-peek-size-gb = { $value } ГБ
-peek-size-tb = { $value } ТБ
 
 
 ## Peek — nothing to show
@@ -1797,6 +1930,7 @@ a11y-status = Стан
 a11y-tray-item = Елемент { $number }
 a11y-notifications = Сповіщення
 a11y-categories = Категорії
+a11y-search-settings = Пошук налаштувань
 a11y-results = Результати
 a11y-settings = Налаштування
 a11y-preview = Перегляд
@@ -1871,7 +2005,12 @@ files-photos-info-kind = Зображення { $format }
 files-photos-info-copied = Скопійовано
 files-photos-info-dimensions = Розміри
 files-photos-info-modified = Змінено
+files-photos-info-taken = Знято
 files-photos-info-where = Де
+files-photos-info-camera = Камера
+files-photos-info-lens = Обʼєктив
+files-photos-info-exposure = Експозиція
+files-photos-info-location = Місце
 files-photos-info-many =
     { $count ->
         [one] { $count } об’єкт
@@ -1879,7 +2018,6 @@ files-photos-info-many =
         [many] { $count } об’єктів
        *[other] { $count } об’єкта
     }
-files-photos-one-selected = 1 вибрано · Пробіл — перегляд · ↵ — відкрити
 
 
 ## otto-authorize — the panel that asks for the password before a sensitive setting changes.
@@ -1917,3 +2055,147 @@ privacy-store-unavailable-detail = Сховище дозволів (xdg-permissi
 settings-pane-privacy = Конфіденційність
 
 screencast-picker-remember = Запам’ятати для { $app }
+
+## Users pane
+
+settings-pane-account = Користувачі
+settings-account-picture = Зображення
+settings-account-picture-detail = Показується на екранах входу та блокування
+settings-account-choose-picture = Вибрати зображення
+settings-account-picture-unreadable = Otto не може прочитати цей файл як зображення
+settings-account-full-name = Повне ім’я
+settings-account-name = Назва облікового запису
+settings-account-type = Тип облікового запису
+settings-account-type-administrator = Адміністратор
+settings-account-type-standard = Звичайний
+settings-account-no-accountsservice = Тут це змінити не можна: AccountsService не запущено
+settings-account-not-permitted = Система не дозволила цю зміну
+settings-group-password = Пароль
+settings-account-current-password = Поточний пароль
+settings-account-new-password = Новий пароль
+settings-account-confirm-password = Підтвердьте новий пароль
+settings-account-change-password = Змінити пароль
+settings-account-change-password-ellipsis = Змінити пароль…
+settings-account-password-detail = Потрібен для входу, розблокування екрана та підтвердження змін
+settings-account-password-changing = Зміна пароля…
+settings-account-password-changed = Пароль змінено
+settings-account-password-missing = Введіть поточний пароль і новий
+settings-account-password-mismatch = Нові паролі не збігаються
+settings-account-password-same = Новий пароль такий самий, як поточний
+settings-account-password-wrong-current = Поточний пароль неправильний
+settings-account-password-failed = Не вдалося змінити пароль
+settings-account-reset-password-ellipsis = Скинути пароль…
+settings-account-reset-detail = Задати новий пароль для цього облікового запису
+settings-account-working = Очікування системи…
+settings-users-you = { $kind } · Ви
+settings-users-reset-title = Скидання пароля: { $name }
+settings-users-reset-action = Скинути пароль
+settings-users-add-title = Додати користувача
+settings-users-add-action = Додати користувача
+settings-users-delete-title = Видалити { $name }?
+settings-users-delete-body = Цей користувач більше не зможе увійти. Його домашню теку буде збережено.
+settings-users-delete-action = Видалити користувача
+settings-users-invalid-name = Назва облікового запису починається з малої латинської літери й містить лише a–z, 0–9, - та _
+settings-users-name-taken = Обліковий запис із такою назвою вже існує
+settings-users-password-missing = Введіть пароль для облікового запису
+
+## Налаштування › Диктування
+
+settings-pane-dictation = Диктування
+settings-dictation-intro = Мовлення набирається в текстове поле й розпізнається на цьому комп'ютері. Ctrl+D вмикає диктування в лаунчері; в інших застосунках це робить комбінація клавіш, призначена на otto-dictate toggle.
+settings-dictation-engine = Рушій
+settings-dictation-engine-detail = Вибір рушія запускає його мовний сервер і зупиняє решту
+settings-dictation-engine-parakeet = Parakeet
+settings-dictation-engine-whisper = Whisper (лише англійська)
+settings-dictation-engine-crispasr = CrispASR
+settings-dictation-server = Мовний сервер
+settings-dictation-server-checking = Перевірка…
+settings-dictation-server-running = Працює
+settings-dictation-server-stopped = Зупинений. Диктування нічого не чує, доки він не запуститься.
+settings-dictation-server-failed = Зупинений після помилки. Причину покаже journalctl --user -u { $unit }.
+settings-dictation-server-missing = Не встановлений. Встановити його можна командою components/otto-dictate/engines/install.sh { $engine }.
+settings-dictation-server-unmanaged = Невідомо: у цій системі немає systemctl
+settings-dictation-start = Запустити
+settings-dictation-restart = Перезапустити
+settings-dictation-language = Мова
+settings-dictation-language-auto = Автоматично
+settings-dictation-language-detail = Мова мовлення. Parakeet і CrispASR визначають її самі.
+settings-dictation-hotwords-boost = Підсилення назв
+settings-dictation-hotwords-boost-detail = Наскільки перевага надається назвам, яких очікує поле. Понад 6 слова навколо назви починають спотворюватися.
+settings-dictation-autostart = Запускати диктування під час входу
+settings-dictation-autostart-detail = Запускає otto-dictate з ~/.config/autostart — Otto читає цю теку, коли ввімкнено xdg_autostart
+
+## Studio — menus and the keyboard shortcuts sheet
+
+studio-menu-file = Файл
+studio-menu-edit = Редагування
+studio-menu-marks = Позначки
+studio-menu-view = Вигляд
+studio-menu-help = Довідка
+studio-close = Закрити вікно
+studio-undo = Скасувати
+studio-redo = Повторити
+studio-copy = Копіювати
+studio-select-all = Вибрати все
+studio-pen = Перо
+studio-show-marks = Показувати позначки
+studio-delete-mark = Видалити останню позначку
+studio-zoom-in = Збільшити
+studio-zoom-out = Зменшити
+studio-zoom-fit = За розміром вікна
+studio-previous-page = Попередня сторінка
+studio-next-page = Наступна сторінка
+studio-sidebar = Показувати сторінки
+studio-chat = Показувати чат
+studio-shortcuts = Сполучення клавіш
+studio-sheet-document = Документ
+studio-sheet-chat = Чат
+studio-sheet-scroll = Прокручування
+studio-sheet-page = Наступний екран
+studio-sheet-ends = Початок і кінець
+studio-sheet-zoom-pointer = Масштаб біля вказівника
+studio-sheet-stop = Відкласти перо
+studio-sheet-send = Надіслати
+studio-sheet-dictate = Диктувати
+studio-sheet-stop-agent = Зупинити агента
+studio-sheet-to-document = Повернутися до документа
+studio-sheet-cmd = Cmd працює всюди, де Ctrl
+# Toggle: the strip of tools that fill in and mark up a PDF, written into
+# the file itself.
+studio-markup = Інструменти розмітки
+# Writes a PDF's form and markup changes over the file.
+studio-save = Зберегти
+# Saves the PDF under another name or in another folder, and carries on with that file.
+studio-save-as = Зберегти як…
+# The save dialog's title.
+studio-save-as-title = Зберегти копію
+studio-open-title = Відкрити в Studio
+studio-open-filter-all = Зображення й документи
+studio-open-filter-pictures = Зображення
+studio-pick-hint = Виберіть файл, щоб відкрити
+# The window's title while a PDF has changes not yet saved. $name is the file's name.
+studio-title-edited = { $name } (змінено)
+# Asked when a window with unsaved changes is closed. $name is the file's name.
+studio-close-title = Зберегти зміни в «{ $name }»?
+studio-close-body = Якщо не зберегти зміни, їх буде втрачено.
+studio-close-discard = Не зберігати
+studio-close-cancel = Скасувати
+# Asked when saving would replace changes made to the file by another app
+# since it was opened. $name is the file's name.
+studio-changed-title = Файл «{ $name }» змінено на диску
+studio-changed-body = Збереження замінить зміни, зроблені в іншому місці.
+# Saves over the file anyway, replacing the changes made elsewhere.
+studio-changed-overwrite = Усе одно зберегти
+# Shown when a PDF's changes couldn't be written; the reason follows on its
+# own line. $name is the file's name.
+studio-save-failed-title = Не вдалося зберегти «{ $name }»
+studio-save-failed-body = Щоб не втратити зміни, збережи копію в іншому місці.
+# Deletes the highlight, drawing, text or signature selected on the page.
+studio-delete-selection = Видалити вибране
+studio-sheet-next-field = Наступне поле форми
+# The card a signature is drawn on, once, before it is placed on a PDF.
+studio-signature-title = Намалюй підпис
+studio-signature-hint = Розпишися над лінією
+studio-signature-clear = Очистити
+studio-signature-cancel = Скасувати
+studio-signature-done = Готово

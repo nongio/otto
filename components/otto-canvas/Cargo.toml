@@ -1,0 +1,20 @@
+[package]
+name = "otto-canvas"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "The agent sessions, in a panel in Otto's side canvas"
+
+[dependencies]
+# The session rows, and the feed that lists them, are shared with the
+# launcher's agents mode, so a session reads the same in either place.
+otto-agents-kit = { path = "../otto-agents-kit" }
+otto-kit = { path = "../otto-kit" }
+smithay-client-toolkit = { workspace = true, features = ["calloop", "xkbcommon"] }
+tracing.workspace = true
+wayland-client.workspace = true
+
+[lints]
+workspace = true

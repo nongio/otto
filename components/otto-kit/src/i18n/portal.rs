@@ -17,7 +17,7 @@
 //! `&'static str` that live as long as the process. The setting is marked
 //! `Restart` in the compositor's schema for exactly that reason.
 
-use zbus::zvariant::{OwnedValue, Value};
+use zbus::zvariant::Value;
 
 /// Read the preferred locales from the compositor, falling back to the
 /// environment.
@@ -34,57 +34,20 @@ pub fn locales_blocking() -> Vec<String> {
 }
 
 fn read_from_portal() -> Option<Vec<String>> {
-    // On a thread of its own, with a short-lived runtime.
+    // Through the shared portal client, which runs on a thread of its own:
+    // this is called from `main` before anything is drawn, and Otto's
+    // components do not agree on what `main` is (otto-bar is
+    // `#[tokio::main]`, otto-settings and otto-files are synchronous), so the
+    // read must not need the caller's thread, or a runtime on it, to finish.
     //
-    // The thread is not an optimisation. This runs from `main` before anything
-    // is drawn, and Otto's components do not agree on what `main` is: otto-bar
-    // is `#[tokio::main]`, so its calling thread is already driving a runtime,
-    // while otto-settings and otto-files are synchronous. Building a runtime
-    // on a thread that is already inside one panics rather than failing, so
-    // doing this on the caller's thread works in two components and kills the
-    // third at startup. A fresh thread belongs to no runtime, which makes the
-    // one call correct from either kind of `main`.
-    std::thread::spawn(|| {
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .ok()?;
-
-        runtime.block_on(async {
-            // A portal that is absent answers by not answering. Two seconds is
-            // long enough for a live one and short enough not to be felt.
-            tokio::time::timeout(std::time::Duration::from_secs(2), query())
-                .await
-                .ok()
-                .flatten()
-        })
-    })
-    .join()
-    .ok()
-    .flatten()
-}
-
-async fn query() -> Option<Vec<String>> {
-    use zbus::{proxy, Connection};
-
-    #[proxy(
-        interface = "org.freedesktop.portal.Settings",
-        default_service = "org.freedesktop.portal.Desktop",
-        default_path = "/org/freedesktop/portal/desktop"
-    )]
-    trait Settings {
-        fn read(&self, namespace: &str, key: &str) -> zbus::Result<OwnedValue>;
-    }
-
-    let conn = Connection::session().await.ok()?;
-    let proxy = SettingsProxy::new(&conn).await.ok()?;
-    match proxy.read("org.otto.desktop", "locales").await {
-        Ok(owned) => extract_strings(owned.into()),
-        Err(err) => {
-            tracing::debug!("locales read failed (portal absent?): {err}");
-            None
-        }
-    }
+    // A portal that is absent answers by not answering. Two seconds is long
+    // enough for a live one and short enough not to be felt.
+    let owned = crate::portal_settings::read_blocking(
+        "org.otto.desktop",
+        "locales",
+        std::time::Duration::from_secs(2),
+    )?;
+    extract_strings(owned.into())
 }
 
 /// Unwrap the array of strings, through however many variants the portal

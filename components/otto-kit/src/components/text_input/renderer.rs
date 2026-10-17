@@ -8,6 +8,12 @@ use super::style::TextInputStyle;
 /// Character used to mask the value in password mode.
 const MASK_CHAR: char = '•';
 
+/// The dictation equaliser, in ems of the field's font: the whole row of
+/// bars, one bar, and the space before it.
+const BARS_WIDTH_EM: f32 = 0.9;
+const BAR_WIDTH_EM: f32 = 0.12;
+const BARS_GAP_EM: f32 = 0.15;
+
 /// Stateless drawing and geometry for a text input.
 ///
 /// Everything here is a free function over `(state, style)` so consumers can
@@ -19,13 +25,62 @@ impl TextInputRenderer {
     /// The string actually drawn: the value, the mask in password mode, or the
     /// placeholder when the value is empty.
     pub fn display_text(state: &TextInputState) -> String {
-        if state.is_empty() {
+        if Self::shows_placeholder(state) {
             return state.placeholder.clone();
         }
         if state.password {
             return MASK_CHAR.to_string().repeat(state.value().chars().count());
         }
         state.value().to_string()
+    }
+
+    /// Whether the placeholder is drawn: the value is empty and nothing is
+    /// being dictated into it.
+    fn shows_placeholder(state: &TextInputState) -> bool {
+        state.is_empty() && state.dictation.is_none()
+    }
+
+    /// Width of what dictation draws at the caret: the pending words, then
+    /// the equaliser. Zero when not dictating.
+    fn mark_width(state: &TextInputState, style: &TextInputStyle) -> f32 {
+        let Some(mark) = &state.dictation else {
+            return 0.0;
+        };
+        let em = style.font().size();
+        Self::measure(style, &mark.pending) + em * (BARS_GAP_EM + BARS_WIDTH_EM)
+    }
+
+    /// Draw the pending words dimmed at `x`, then the equaliser after them,
+    /// as tall as the line.
+    fn draw_mark(
+        canvas: &Canvas,
+        mark: &super::state::DictationMark,
+        style: &TextInputStyle,
+        font: &skia_safe::Font,
+        x: f32,
+        baseline: f32,
+        metrics: &skia_safe::FontMetrics,
+    ) {
+        let mut paint = Paint::default();
+        paint.set_anti_alias(true);
+        paint.set_color(style.placeholder_color);
+        canvas.draw_str(&mark.pending, (x, baseline), font, &paint);
+
+        let em = font.size();
+        let count = mark.levels.len().max(1) as f32;
+        let bar_w = em * BAR_WIDTH_EM;
+        let left = x + Self::measure(style, &mark.pending) + em * BARS_GAP_EM;
+        let step = (em * BARS_WIDTH_EM - bar_w) / (count - 1.0).max(1.0);
+        let top = baseline + metrics.ascent;
+        let bottom = baseline + metrics.descent;
+        let middle = (top + bottom) / 2.0;
+        let tallest = bottom - top;
+        paint.set_color(style.caret_color);
+        for (i, level) in mark.levels.iter().enumerate() {
+            let h = (tallest * level.clamp(0.0, 1.0)).max(bar_w);
+            let rect = Rect::from_xywh(left + step * i as f32, middle - h / 2.0, bar_w, h);
+            canvas.draw_rrect(RRect::new_rect_xy(rect, bar_w / 2.0, bar_w / 2.0), &paint);
+        }
     }
 
     /// Display text of `value[..offset]` — what sits left of a caret at
@@ -49,7 +104,7 @@ impl TextInputRenderer {
 
     /// Full width of the drawn text.
     pub fn text_width(state: &TextInputState, style: &TextInputStyle) -> f32 {
-        Self::measure(style, &Self::display_text(state))
+        Self::measure(style, &Self::display_text(state)) + Self::mark_width(state, style)
     }
 
     /// Left edge of the text run inside a box of `width`, accounting for
@@ -78,8 +133,14 @@ impl TextInputRenderer {
         width: f32,
         offset: usize,
     ) -> f32 {
+        let past_mark = if offset > state.caret() {
+            Self::mark_width(state, style)
+        } else {
+            0.0
+        };
         Self::text_origin_x(state, style, width)
             + Self::measure(style, &Self::display_prefix(state, offset))
+            + past_mark
     }
 
     /// The caret's box, in box-local points: where [`Self::render`] paints it,
@@ -163,12 +224,14 @@ impl TextInputRenderer {
 
         // Caret x relative to the start of the text run.
         let caret_in_text = Self::measure(style, &Self::display_prefix(state, state.caret()));
+        // While dictating, what has to stay in view runs to the equaliser.
+        let caret_end = caret_in_text + Self::mark_width(state, style);
         let caret_width = style.scaled_caret_width();
         let mut scroll = state.scroll_px;
         if caret_in_text - scroll < 0.0 {
             scroll = caret_in_text;
-        } else if caret_in_text - scroll > inner - caret_width {
-            scroll = caret_in_text - inner + caret_width;
+        } else if caret_end - scroll > inner - caret_width {
+            scroll = caret_end - inner + caret_width;
         }
         state.scroll_px = scroll.clamp(0.0, text_width - inner);
     }
@@ -179,7 +242,7 @@ impl TextInputRenderer {
     /// selection is unreadable.
     pub fn ghost_text(state: &TextInputState) -> &str {
         let at_end = state.caret() == state.value().len() && state.selection().is_empty();
-        if state.password || state.is_empty() || !at_end {
+        if state.password || state.is_empty() || !at_end || state.dictation.is_some() {
             return "";
         }
         &state.ghost
@@ -256,7 +319,7 @@ impl TextInputRenderer {
         );
 
         let text = Self::display_text(state);
-        let is_placeholder = state.is_empty();
+        let is_placeholder = Self::shows_placeholder(state);
         let selection = state.selection();
 
         // Selection highlight sits behind the glyphs.
@@ -274,6 +337,21 @@ impl TextInputRenderer {
                 paint.set_color(style.placeholder_color);
                 canvas.draw_str(&text, (origin_x, baseline), &font, &paint);
             }
+        } else if let (Some(mark), true) = (&state.dictation, selection.is_empty()) {
+            // Dictating: the text before the caret, the mark, then the rest.
+            let before = Self::display_prefix(state, state.caret());
+            let after = text[before.len().min(text.len())..].to_string();
+            let at = origin_x + Self::measure(style, &before);
+            paint.set_color(style.text_color);
+            canvas.draw_str(&before, (origin_x, baseline), &font, &paint);
+            Self::draw_mark(canvas, mark, style, &font, at, baseline, &metrics);
+            paint.set_color(style.text_color);
+            canvas.draw_str(
+                &after,
+                (at + Self::mark_width(state, style), baseline),
+                &font,
+                &paint,
+            );
         } else if selection.is_empty() {
             paint.set_color(style.text_color);
             canvas.draw_str(&text, (origin_x, baseline), &font, &paint);
@@ -312,8 +390,9 @@ impl TextInputRenderer {
             );
         }
 
-        // Caret: hidden while a selection is active, like every other field.
-        if state.focused() && caret_visible && selection.is_empty() {
+        // Caret: hidden while a selection is active, like every other field,
+        // and while dictating, when the equaliser stands in for it.
+        if state.focused() && caret_visible && selection.is_empty() && state.dictation.is_none() {
             paint.set_color(style.caret_color);
             canvas.draw_rect(Self::caret_rect(state, style, width, height), &paint);
         }
@@ -487,6 +566,31 @@ mod tests {
         s.set_caret(0, false);
         TextInputRenderer::ensure_caret_visible(&mut s, &style, width);
         assert_eq!(s.scroll_px, 0.0);
+    }
+
+    /// While dictating, the pending words and the equaliser sit at the
+    /// caret: they widen the run, push the text after the caret along and
+    /// hide the placeholder, without becoming part of the value.
+    #[test]
+    fn a_dictation_mark_takes_room_at_the_caret() {
+        let style = style();
+        let mut s = TextInputState::new("ab").with_placeholder("Ask");
+        s.set_caret(1, false);
+        let plain_end = TextInputRenderer::caret_x(&s, &style, 400.0, 2);
+        s.dictation = Some(super::super::state::DictationMark {
+            pending: " hello".into(),
+            levels: vec![0.5; 5],
+        });
+        assert!(TextInputRenderer::caret_x(&s, &style, 400.0, 2) > plain_end);
+        assert_eq!(
+            TextInputRenderer::caret_x(&s, &style, 400.0, 1),
+            TextInputRenderer::caret_x(&TextInputState::new("ab"), &style, 400.0, 1)
+        );
+        assert_eq!(s.value(), "ab");
+
+        let mut empty = TextInputState::default().with_placeholder("Ask");
+        empty.dictation = Some(Default::default());
+        assert_eq!(TextInputRenderer::display_text(&empty), "");
     }
 
     #[test]

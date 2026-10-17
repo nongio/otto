@@ -117,6 +117,7 @@ desktop id or a plain command line.
 |--------|--------|
 | `Quit` | Exit Otto, ending the session |
 | `LockSession` | Launch the configured locker; see [Lock Screen](lock-screen.md) |
+| `CanvasToggle` | Show or hide the side canvas; see [Side Canvas](side-canvas.md) |
 
 ### Windows
 

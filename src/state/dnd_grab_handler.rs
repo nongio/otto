@@ -1,7 +1,7 @@
 use layers::prelude::{TimingFunction, Transition};
 use smithay::{
     input::{
-        dnd::{DnDGrab, DndGrabHandler, GrabType},
+        dnd::{DnDGrab, DndGrabHandler, DndTarget, GrabType},
         pointer::{CursorImageStatus, Focus},
         Seat,
     },
@@ -11,6 +11,7 @@ use smithay::{
 };
 
 use super::{Backend, Otto};
+use crate::focus::PointerFocusTarget;
 
 /// How long the icon takes to fly back to where the drag started, when the
 /// drop is refused. Long enough to read as a return rather than a glitch,
@@ -28,6 +29,13 @@ impl<BackendData: Backend> WaylandDndGrabHandler for Otto<BackendData> {
     ) {
         // The press that started this drag does not raise its window.
         self.pending_raise = None;
+
+        // The side canvas hears of every drag, and what it carries.
+        let mime_types = source
+            .metadata()
+            .map(|metadata| metadata.mime_types)
+            .unwrap_or_default();
+        self.canvas_drag_started(mime_types);
 
         // Whatever the last drag left behind, now that its flight home or its
         // fade is over and its layers are no longer being looked at.
@@ -80,11 +88,21 @@ impl<BackendData: Backend> WaylandDndGrabHandler for Otto<BackendData> {
 impl<BackendData: Backend> DndGrabHandler for Otto<BackendData> {
     fn dropped(
         &mut self,
-        _target: Option<smithay::input::dnd::DndTarget<'_, Self>>,
+        target: Option<smithay::input::dnd::DndTarget<'_, Self>>,
         validated: bool,
         _seat: Seat<Self>,
         _location: Point<f64, Logical>,
     ) {
+        // The drop has reached its target by now; the side canvas decides
+        // whether it stays.
+        let dropped_on = match target {
+            Some(DndTarget::Pointer(PointerFocusTarget::WlSurface(surface))) => {
+                Some(surface.clone())
+            }
+            _ => None,
+        };
+        self.canvas_drag_ended(dropped_on.as_ref());
+
         let dnd_surface = self.dnd_icon.clone();
         // Cleared first either way: `update_dnd` snaps the view to the cursor
         // every frame while an icon exists, and would fight the animation.
@@ -176,5 +194,8 @@ impl<BackendData: Backend> DndGrabHandler for Otto<BackendData> {
 
         // Reset cursor to default
         self.set_cursor(&CursorImageStatus::default_named());
+    }
+    fn cancelled(&mut self, _seat: Seat<Self>, _location: Point<f64, Logical>) {
+        self.canvas_drag_ended(None);
     }
 }

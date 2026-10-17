@@ -21,6 +21,12 @@ impl Browser {
             self.refuse(otto_kit::t_owned!("files-search-no-columns"));
             return;
         }
+        // The Photos view opens at its start, not wherever the column stack
+        // was last panned to.
+        if mode == ViewMode::Photos && self.mode != mode {
+            self.pan.stop();
+            self.pan.state.set_offset(0.0);
+        }
         self.mode = mode;
         if !self.sort_pinned {
             let (sort, ascending) = Self::default_sort(mode);
@@ -183,6 +189,11 @@ impl Browser {
         self.places.iter().position(|p| &p.path == here)
     }
 
+    /// Each Miller pane's width, by depth, as the geometry helpers take it.
+    pub(super) fn miller_widths(&self) -> view::MillerWidths {
+        view::MillerWidths::new(self.columns.iter().map(|column| column.width))
+    }
+
     /// The entry under a point, if any — the same hit test the left-click
     /// handler uses for the current view mode. `None` means empty space: the
     /// background, a gap between rows, or (in List view) the header.
@@ -191,6 +202,9 @@ impl Browser {
         match self.mode {
             ViewMode::Grid => {
                 let depth = self.columns.len() - 1;
+                if let Some(hit) = self.desk_overflow_entry_at(x, y) {
+                    return hit.map(|index| (depth, index));
+                }
                 let count = self.visible_len(depth);
                 let scroll = self.columns[depth].scroll.offset();
                 let area = view::content_viewport(width, height, ViewMode::Grid);
@@ -201,6 +215,13 @@ impl Browser {
                 let depth = self.columns.len() - 1;
                 let scroll = self.columns[depth].scroll.offset();
                 let area = self.photos.area(width, height);
+                if !self
+                    .photos
+                    .shown(width, height)
+                    .contains(skia_safe::Point::new(x, y))
+                {
+                    return None;
+                }
                 self.photos
                     .tile_at(area, x, y, scroll)
                     .filter(|&i| i < self.visible_len(depth))
@@ -222,7 +243,7 @@ impl Browser {
                     &self.columns,
                     &counts,
                     self.pan.offset(),
-                    self.miller_w,
+                    &self.miller_widths(),
                 ) {
                     Some((depth, Some(index))) => Some((depth, index)),
                     _ => None,
@@ -238,12 +259,14 @@ impl Browser {
         let scroll = self.columns[depth].scroll.offset();
 
         match self.mode {
-            ViewMode::Grid => view::grid_cell_rect_in(
-                view::content_viewport(width, height, ViewMode::Grid),
-                &self.recent_sections,
-                index,
-                scroll,
-            ),
+            ViewMode::Grid => self.desk_overflow_entry_rect(index).unwrap_or_else(|| {
+                view::grid_cell_rect_in(
+                    view::content_viewport(width, height, ViewMode::Grid),
+                    &self.recent_sections,
+                    index,
+                    scroll,
+                )
+            }),
             ViewMode::Photos => {
                 self.photos
                     .tile_rect(self.photos.area(width, height), index, scroll)
@@ -253,7 +276,7 @@ impl Browser {
                 depth,
                 height,
                 self.pan.offset(),
-                self.miller_w,
+                &self.miller_widths(),
                 count,
                 index,
                 scroll,

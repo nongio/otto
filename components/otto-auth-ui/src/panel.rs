@@ -17,10 +17,11 @@
 //! with [`Panel::update`], and paint by asking their surface to render the
 //! layer node the panel is parented to.
 
-use std::sync::{Arc, LazyLock};
+use std::sync::Arc;
 
 use layers::prelude::*;
 use layers::types::{BlendMode, Color as LayerColor, Point as LayerPoint, Size as LayerSize};
+use otto_kit::components::avatar;
 use otto_kit::lottie::LottiePlayer;
 use otto_kit::typography::get_font_with_fallback;
 use skia_safe::{
@@ -33,16 +34,6 @@ use crate::{Appearance, User};
 /// The Touch ID mark, as a Lottie animation. Shared with the fingerprint
 /// island in otto-islands, which is where it was drawn.
 static TOUCH_ID: &[u8] = include_bytes!("../assets/touch_id.json");
-
-/// The locale chrono formats the clock's month and weekday names against.
-///
-/// Resolved once — it cannot change without a restart. Falls back to the
-/// source locale when chrono does not know the tag, so an unknown locale
-/// still produces a clock.
-static CHRONO_LOCALE: LazyLock<chrono::Locale> = LazyLock::new(|| {
-    let posix = otto_kit::i18n::posix_locale();
-    chrono::Locale::try_from(posix.as_str()).unwrap_or(chrono::Locale::en_GB)
-});
 
 /// Where in the asset's timeline the mark is finished. Well short of the end:
 /// the ridges complete before the timeline does, and the tail past this is not
@@ -636,6 +627,7 @@ impl Panel {
         } else {
             self.wallpaper.set_draw_content(draw_wallpaper(
                 self.wallpaper_image.clone(),
+                self.appearance.wallpaper_layout,
                 self.appearance.background,
                 width,
                 height,
@@ -983,7 +975,10 @@ impl Panel {
             .avatar_image
             .as_ref()
             .and_then(|(_, image)| image.clone());
-        let initials = user.map(User::initials).filter(|i| !i.is_empty());
+        // Settings › Users draws the same initials on the same ground.
+        let initials = user
+            .map(|user| (user.initials(), avatar::ground_color(user.avatar_name())))
+            .filter(|(initials, _)| !initials.is_empty());
 
         self.avatar.set_draw_content(draw_avatar(
             image,
@@ -1219,6 +1214,7 @@ impl Panel {
 
 fn draw_wallpaper(
     image: Option<Image>,
+    layout: otto_kit::wallpaper::Layout,
     background: Color,
     width: f32,
     height: f32,
@@ -1228,15 +1224,14 @@ fn draw_wallpaper(
 
         match &image {
             Some(image) => {
-                canvas.draw_image_rect_with_sampling_options(
+                // Laid out as the desktop lays it out, so the lock screen
+                // shows the wallpaper the session does.
+                otto_kit::wallpaper::paint_layout(
+                    canvas,
                     image,
-                    Some((
-                        &cover_source(image.width() as f32, image.height() as f32, width, height),
-                        SrcRectConstraint::Fast,
-                    )),
+                    layout,
+                    skia_safe::Color4f::from(background),
                     Rect::from_wh(width, height),
-                    SamplingOptions::default(),
-                    &Paint::default(),
                 );
                 // Wallpapers are not chosen for text contrast, so darken the
                 // whole thing slightly; the card's frost does the rest.
@@ -1276,7 +1271,7 @@ fn draw_scrim(width: f32, height: f32) -> impl Fn(&Canvas, f32, f32) -> Rect + S
 
 fn draw_avatar(
     image: Option<Image>,
-    initials: Option<String>,
+    initials: Option<(String, Color)>,
     accent: Color,
     font: Font,
 ) -> impl Fn(&Canvas, f32, f32) -> Rect + Send + Sync + 'static {
@@ -1296,39 +1291,39 @@ fn draw_avatar(
                     &Paint::default(),
                 );
             }
-            None => {
-                let mut paint = Paint::default();
-                paint.set_shader(skia_safe::gradient_shader::linear(
-                    (Point::new(0.0, 0.0), Point::new(w, h)),
-                    skia_safe::gradient_shader::GradientShaderColors::Colors(&[
-                        lighten(accent, 0.25),
-                        darken(accent, 0.25),
-                    ]),
-                    None,
-                    skia_safe::TileMode::Clamp,
-                    None,
-                    None,
-                ));
-                canvas.draw_rect(bounds, &paint);
+            None => match &initials {
+                Some((initials, ground)) => {
+                    let mut paint = Paint::default();
+                    paint.set_anti_alias(true);
+                    paint.set_color(*ground);
+                    canvas.draw_rect(bounds, &paint);
 
-                match &initials {
-                    Some(initials) => {
-                        let mut text = Paint::new(Color4f::from(Color::WHITE), None);
-                        text.set_anti_alias(true);
-                        let width = font.measure_str(initials, Some(&text)).0;
-                        canvas.draw_str(
-                            initials,
-                            ((w - width) / 2.0, h / 2.0 + 12.0),
-                            &font,
-                            &text,
-                        );
-                    }
+                    let mut text = Paint::new(Color4f::from(Color::WHITE), None);
+                    text.set_anti_alias(true);
+                    let width = font.measure_str(initials, Some(&text)).0;
+                    canvas.draw_str(initials, ((w - width) / 2.0, h / 2.0 + 12.0), &font, &text);
+                }
+                None => {
+                    let mut paint = Paint::default();
+                    paint.set_shader(skia_safe::gradient_shader::linear(
+                        (Point::new(0.0, 0.0), Point::new(w, h)),
+                        skia_safe::gradient_shader::GradientShaderColors::Colors(&[
+                            lighten(accent, 0.25),
+                            darken(accent, 0.25),
+                        ]),
+                        None,
+                        skia_safe::TileMode::Clamp,
+                        None,
+                        None,
+                    ));
+                    canvas.draw_rect(bounds, &paint);
+
                     // Nobody has been named yet, so there are no initials. A
                     // silhouette says "a person, unspecified"; a "?" reads as
                     // something having gone wrong.
-                    None => draw_silhouette(canvas, w, h),
+                    draw_silhouette(canvas, w, h);
                 }
-            }
+            },
         }
 
         let mut ring = Paint::default();
@@ -1591,8 +1586,11 @@ fn draw_clock(appearance: &Appearance) -> impl Fn(&Canvas, f32, f32) -> Rect + S
         let mut paint = Paint::new(Color4f::from(Color::WHITE), None);
         paint.set_anti_alias(true);
         canvas.draw_str(
-            now.format_localized(otto_kit::t!("auth-clock-time-format"), *CHRONO_LOCALE)
-                .to_string(),
+            now.format_localized(
+                otto_kit::t!("auth-clock-time-format"),
+                otto_kit::i18n::chrono_locale(),
+            )
+            .to_string(),
             (0.0, 44.0),
             &time_font,
             &paint,
@@ -1600,8 +1598,11 @@ fn draw_clock(appearance: &Appearance) -> impl Fn(&Canvas, f32, f32) -> Rect + S
 
         paint.set_color(Color::from_argb(180, 255, 255, 255));
         canvas.draw_str(
-            now.format_localized(otto_kit::t!("auth-clock-date-format"), *CHRONO_LOCALE)
-                .to_string(),
+            now.format_localized(
+                otto_kit::t!("auth-clock-date-format"),
+                otto_kit::i18n::chrono_locale(),
+            )
+            .to_string(),
             (2.0, 70.0),
             &date_font,
             &paint,

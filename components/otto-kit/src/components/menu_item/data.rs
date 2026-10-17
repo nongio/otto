@@ -5,6 +5,10 @@ use std::hash::Hash;
 pub enum MenuItemIcon {
     /// Named icon from the XDG icon theme
     Named(String),
+    /// The first of these XDG theme icons the theme has, most specific first,
+    /// in its full-colour art rather than the outline glyph many themes ship
+    /// at menu size — a folder that should read as a folder, not a symbol.
+    Themed(Vec<String>),
     /// Raw ARGB32 pixel data (network byte order / big-endian)
     Pixmap {
         data: Vec<u8>,
@@ -75,6 +79,13 @@ pub struct MenuItem {
 
     /// Optional icon shown before the label
     pub icon: Option<MenuItemIcon>,
+
+    /// `Some` for a toggle: a check before the label when it is on.
+    pub checked: Option<bool>,
+
+    /// Room before the label for a check, so the items of a menu with any
+    /// toggle in it keep their labels in line.
+    pub check_gutter: bool,
 }
 impl Hash for MenuItem {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
@@ -102,6 +113,8 @@ impl Hash for MenuItem {
         }
         self.visual_state.hash(state);
         self.enabled.hash(state);
+        self.checked.hash(state);
+        self.check_gutter.hash(state);
         self.height.to_bits().hash(state);
     }
 }
@@ -109,8 +122,8 @@ impl MenuItem {
     /// Create new menu item data
     pub fn new(kind: MenuItemKind) -> Self {
         let height = match kind {
-            MenuItemKind::Separator => 9.0,
-            _ => 22.0, // LINE_HEIGHT
+            MenuItemKind::Separator => 11.0, // MenuItemStyle::separator_height
+            _ => 23.0,                       // MenuItemStyle::line_height
         };
 
         Self {
@@ -119,6 +132,8 @@ impl MenuItem {
             enabled: true,
             height,
             icon: None,
+            checked: None,
+            check_gutter: false,
         }
     }
 
@@ -235,6 +250,19 @@ impl MenuItem {
         self
     }
 
+    /// A toggle, checked when `checked`.
+    pub fn with_checked(mut self, checked: bool) -> Self {
+        self.checked = Some(checked);
+        self.check_gutter = true;
+        self
+    }
+
+    /// Room for a check before the label, though this item has none.
+    pub fn with_check_gutter(mut self) -> Self {
+        self.check_gutter = true;
+        self
+    }
+
     pub fn disabled(mut self) -> Self {
         self.enabled = false;
         self.visual_state = VisualState::Disabled;
@@ -283,7 +311,7 @@ mod tests {
         assert_eq!(item.shortcut(), Some("Ctrl+C"));
         assert!(!item.has_submenu());
         assert!(item.is_enabled());
-        assert_eq!(item.height, 22.0);
+        assert_eq!(item.height, 23.0);
     }
 
     #[test]
@@ -292,7 +320,7 @@ mod tests {
 
         assert!(item.is_separator());
         assert_eq!(item.label(), None);
-        assert_eq!(item.height, 9.0);
+        assert_eq!(item.height, 11.0);
     }
 
     #[test]

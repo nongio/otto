@@ -62,8 +62,10 @@ dock-quit = 退出
 ## sidebar does not grow to fit them.
 
 settings-pane-general = 通用
+settings-pane-appearance = 外观
 settings-pane-displays = 显示器
 settings-pane-dock = Dock
+settings-pane-top-bar = 顶部栏
 settings-pane-tiling = 平铺
 settings-pane-keyboard = 键盘
 settings-pane-pointing = 触控板与鼠标
@@ -72,6 +74,17 @@ settings-pane-power = 电源
 settings-pane-lock-and-login = 锁定与登录
 settings-pane-search = 搜索
 settings-pane-agents = 智能体
+settings-pane-about = 关于
+settings-sidebar-search = 搜索
+settings-sidebar-search-none = 没有与“{ $query }”匹配的设置
+settings-group-about-machine = 关于本机
+settings-about-version-line = 版本 { $version }
+settings-about-computer-name = 计算机名称
+settings-about-os = 操作系统
+settings-about-kernel = 内核
+settings-about-processor = 处理器
+settings-about-memory = 内存
+settings-about-memory-gb = { $size } GB
 
 
 ## Settings — General
@@ -92,15 +105,50 @@ settings-group-desktop = 桌面
 settings-background-colour = 背景颜色
 settings-background-image = 背景图片
 settings-background-image-detail = 通过桌面门户的文件选择器选取
+settings-background-layout = 显示方式
+settings-background-zoom = 缩放
+settings-background-position-x = 水平位置
+settings-background-position-y = 垂直位置
+settings-background-position-detail = 也可以点按图片中要保持可见的部分
+settings-desktop-widget = 背景小组件
+settings-desktop-widget-needs-ewwii = 需要 ewwii，但尚未安装
+# { $folder } is a path such as ~/.config/otto/widgets/ewwii.
+settings-desktop-widget-detail = 由 ewwii 绘制。你可以在 { $folder } 中添加自己的小组件
 # Stands in for the wallpaper thumbnail when the file cannot be decoded.
 settings-background-image-unavailable = 无法显示
 settings-show-desk = 在桌面上显示文件
 settings-show-desk-detail = “桌面”文件夹中的文件，显示在窗口后面
 
+settings-group-desk = 桌面
+settings-desk-folder = 文件夹
+settings-desk-folder-default = 你的“桌面”文件夹
+settings-desk-choose-folder-title = 选择桌面要显示的文件夹
+settings-desk-layout = 大小和位置
+settings-desk-layout-edit = 编辑…
+settings-desk-layout-reset = 重置
+settings-desk-layout-fill = 占满屏幕。“编辑”会在桌面上显示手柄，可拖动调整
+settings-desk-layout-placed = 已手动放置。“重置”可恢复为占满屏幕
+settings-desk-icon-size = 图标大小
+settings-desk-overflow = 图标放不下时
+settings-desk-overflow-scroll = 滚动
+settings-desk-overflow-stack = 以浮层显示
+settings-desk-overflow-detail = 滚动会移动网格。“以浮层显示”会把多出的图标留在最后一格，并在窗口上方打开
+
 settings-group-pointer-and-icons = 指针与图标
 settings-cursor-theme = 光标主题
 settings-cursor-size = 光标大小
 settings-icon-theme = 图标主题
+
+settings-group-app-menu = 应用程序菜单
+settings-show-app-menu = 显示应用程序菜单
+settings-show-app-menu-detail = 位于当前应用名称旁边。关闭期间打开的应用会在自己的窗口中保留菜单
+
+settings-group-clock = 时钟
+settings-show-clock = 显示日期和时间
+settings-show-clock-detail = 位于顶部栏的右端
+settings-clock-format = 格式
+settings-clock-format-detail = 也可以在配置文件的 [topbar] 中将任意 strftime 格式写为 clock_format
+settings-clock-format-automatic = { $preview }（语言默认）
 
 settings-group-window-switcher = 窗口切换器
 settings-follow-cursor = 在指针所在的显示器上显示
@@ -235,6 +283,26 @@ settings-scrolling-speed = 滚动速度
 
 settings-interface-sounds = 界面声音
 settings-sound-theme = 声音主题
+settings-group-sound-output = 输出设备
+settings-group-sound-input = 输入设备
+settings-sound-output-device = 输出设备
+settings-sound-input-device = 输入设备
+settings-sound-volume = 音量
+settings-sound-mute = 静音
+settings-sound-no-outputs = 没有输出设备
+settings-sound-no-inputs = 没有输入设备
+settings-sound-unavailable = 没有声音服务器响应。声音需要带 pipewire-pulse 的 PipeWire 或 PulseAudio，以及 pactl。
+settings-sound-show = 显示
+settings-sound-view-playback = 播放
+settings-sound-view-recording = 录音
+settings-sound-view-configuration = 配置
+settings-sound-port = 端口
+settings-sound-unplugged = 未插入
+settings-sound-default = 设为默认
+settings-sound-profile = 配置文件
+settings-sound-no-playback = 没有应用正在播放声音
+settings-sound-no-recording = 没有应用正在录音
+settings-sound-no-cards = 没有声卡
 
 
 ## Settings — Power
@@ -369,6 +437,14 @@ settings-agents-service-missing = 未安装
 settings-agents-service-unmanaged = 无法确定：此系统没有 systemctl
 settings-agents-start = 启动
 settings-agents-restart = 重启
+settings-agents-bridge-group = 聊天桥接
+settings-agents-bridge = 桥接
+settings-agents-bridge-off = 已关闭。聊天应用无法连接你的智能体。
+settings-agents-bridge-unset = 先在下方设置命令并应用，再打开此项。
+settings-agents-bridge-failed = 因错误而停止。原因可通过 journalctl --user -u otto-agents-bridge 查看。
+settings-agents-bridge-missing = 未安装
+settings-agents-bridge-command = 命令
+settings-agents-bridge-command-detail = 运行桥接的程序，例如配置为以 otto-agents acp 作为其智能体启动的网关。
 # The row that opens agents.toml. Its path is shown under it.
 settings-agents-file = 配置文件
 settings-agents-none = 尚未设置智能体
@@ -452,6 +528,18 @@ settings-choice-power-ignore = 不执行任何操作
 settings-choice-power-lock = 锁定屏幕
 settings-choice-power-suspend = 睡眠
 settings-choice-power-shutdown = 关机
+settings-choice-widget-none = 无
+settings-choice-widget-calendar = 日历
+# The next two name pages whose text is in English, so they stay as written.
+settings-choice-widget-cross-pad = Cross pad
+settings-choice-widget-grid-pad = Grid pad
+# How a background image fills the screen.
+settings-choice-background-fill = 填充屏幕
+settings-choice-background-fit = 适合屏幕
+settings-choice-background-stretch = 拉伸以填充
+settings-choice-background-center = 居中
+settings-choice-background-tile = 拼贴
+settings-choice-background-span = 跨越所有显示器
 # The automatic option for a theme that follows the system.
 settings-choice-auto = 自动
 
@@ -493,6 +581,14 @@ files-open-with-always = 始终使用此应用程序打开“{ $kind }”
 files-open-with-not-remembered = 已打开，但未保存此选择：{ $error }
 files-new-folder = 新建文件夹
 files-desk-open-in-files = 在文件中打开
+files-desk-edit-done = 完成
+# The desk's overflow tile: the caption under it, and what a screen reader
+# says for it. $count is how many items it holds.
+files-desk-overflow-caption = 更多项目
+files-desk-overflow =
+    { $count ->
+       *[other] 另外 { $count } 项
+    }
 files-move-to-trash = 移到废纸篓
 # $count is always two or more; the single-item case uses files-move-to-trash.
 files-move-count-to-trash =
@@ -609,6 +705,9 @@ files-undo-move = 移动
 files-undo-copy = 拷贝
 files-undo-delete = 删除
 files-undo-rename = 重命名
+files-undo-rotate = 旋转
+files-undo-flip = 翻转
+files-turn-failed = 无法旋转“{ $name }”：{ $error }
 # $name is a file or folder name, already wrapped in quotation marks.
 files-renamed-to = 已重命名为“{ $name }”
 files-new-folder-created = 新文件夹“{ $name }”
@@ -618,6 +717,7 @@ files-rename-failed = 无法重命名：{ $error }
 files-new-folder-failed = 无法创建文件夹：{ $error }
 files-open-failed = 无法打开该文件：{ $error }
 files-open-app-broken = 该应用的启动命令有误
+files-open-no-app = 没有已安装的应用能打开此类文件
 files-new-window-failed = 无法打开新窗口：{ $error }
 files-settings-open-failed = 无法打开设置：{ $error }
 
@@ -704,14 +804,14 @@ files-empty-trash-detail =
 ## not KiB. Most languages keep the symbols as they are; translate only the
 ## spelled-out "bytes".
 
-files-size-bytes =
+size-bytes =
     { $count ->
        *[other] { $count } 字节
     }
-files-size-kb = { $value } KB
-files-size-mb = { $value } MB
-files-size-gb = { $value } GB
-files-size-tb = { $value } TB
+size-kb = { $value } KB
+size-mb = { $value } MB
+size-gb = { $value } GB
+size-tb = { $value } TB
 
 
 ## Files — dates
@@ -755,6 +855,7 @@ files-new-folder-with-count =
 # The panel opened with Ctrl+P: type a few letters of a command's name to run it.
 files-palette-placeholder = 运行命令
 files-palette-no-matches = 没有匹配的命令
+files-palette-menu-item = 命令面板…
 # $count is how many commands the palette is offering; announced when it opens.
 files-palette-opened =
     { $count ->
@@ -876,6 +977,15 @@ bar-power-performance = 性能
 bar-power-settings = 电源设置…
 bar-keyboard-settings = 键盘设置…
 bar-keyboard-layout-label = 键盘布局：{ $layout }
+bar-otto-menu = Otto
+bar-otto-about = 关于 Otto
+bar-otto-settings = 设置…
+bar-otto-log-out = 注销
+# The menu under the focused application's name in the top bar.
+bar-app-minimize = 最小化
+bar-app-quit = 退出 { $app }
+bar-logout-title = 现在注销?
+bar-logout-body = 会先请各个应用关闭,让未保存的内容有机会保存。
 
 
 ## Settings — widgets
@@ -926,10 +1036,28 @@ schema-font-family-label = 界面字体
 schema-font-family-description = Otto 自身界面使用的字体族。
 schema-desk-enabled-label = 在桌面上显示文件
 schema-desk-enabled-description = “桌面”文件夹中的文件，显示在窗口后面。
+schema-canvas-width-label = 侧边画布宽度
+schema-canvas-width-description = 侧边画布的宽度，以逻辑点为单位。其中的所有内容都按此宽度绘制。
+schema-desktop-widget-label = 背景小组件
+schema-desktop-widget-description = 绘制在壁纸之上、窗口后面的全屏页面。需要 ewwii。
+schema-topbar-show-clock-label = 显示日期和时间
+schema-topbar-show-clock-description = 顶部栏右端的时钟。
+schema-topbar-clock-format-label = 时钟格式
+schema-topbar-clock-format-description = 顶部栏显示日期和时间所用的 strftime 格式。留空则跟随语言。
+schema-topbar-show-app-menu-label = 显示应用程序菜单
+schema-topbar-show-app-menu-description = 当前应用的菜单，显示在顶部栏中其名称旁边。
 schema-background-color-label = 背景颜色
-schema-background-color-description = 桌面背景颜色，以十六进制字符串表示。
+schema-background-color-description = 桌面背景颜色，以十六进制字符串表示：没有图片时显示的渐变，以及适合屏幕或居中的图片周围显示的颜色。
 schema-background-image-label = 背景图片
 schema-background-image-description = 桌面背景图片的路径。留空表示不使用。
+schema-background-mode-label = 背景显示方式
+schema-background-mode-description = 背景图片如何填满屏幕。
+schema-background-position-x-label = 背景水平位置
+schema-background-position-x-description = 裁切后的背景图片显示哪一部分，以及较小的图片放在哪里，从 0（左）到 1（右）。
+schema-background-position-y-label = 背景垂直位置
+schema-background-position-y-description = 裁切后的背景图片显示哪一部分，以及较小的图片放在哪里，从 0（上）到 1（下）。
+schema-background-zoom-label = 背景缩放
+schema-background-zoom-description = 填充屏幕或跨越显示器的背景图片的放大倍数，从 1（刚好覆盖屏幕）起。
 schema-cursor-theme-label = 光标主题
 schema-cursor-theme-description = XCursor 主题的名称。
 schema-cursor-size-label = 光标大小
@@ -1127,6 +1255,8 @@ launcher-agents-working = 工作中
 launcher-agents-needs-input = 等待回答
 launcher-agents-error = 失败
 launcher-agents-none = 尚无智能体会话
+canvas-sessions-heading = 智能体
+stash-drop-invite = 将文件拖放到此处以添加到收集
 # Ask mode: the files that go with a request, under it in the log, or above
 # the field before it is sent. { $files } is their names, comma-separated.
 # Ask mode, while an existing session is being opened to continue it.
@@ -1240,6 +1370,9 @@ agents-permission-reject = 拒绝
 agents-permission-reject-always = 从不允许
 # The button that hands the question to the Ask window instead.
 agents-permission-open-in-ask = 在 Ask 中打开
+# The same button for a session started in Preview about a file: the
+# question opens there, beside the file. Use the app's name as in its menu entry.
+agents-permission-open-in-preview = 在 Studio 中打开
 
 
 ## Emoji picker
@@ -1534,6 +1667,20 @@ peek-pdf-install-rasteriser = 安装其中之一即可看到页面：{ $packages
 peek-page-of = { $page } / { $pages }
 
 
+## Preview — chat
+
+# The chat field beside a file in Preview, before anything is typed.
+# $name is the file's name.
+preview-chat-placeholder = 询问关于 { $name }
+# Shown in the empty chat beside a file, until something is asked.
+preview-chat-empty = 向代理询问此文件，或让它修改文件。
+# Over the chat field in Preview, when marks drawn on the file will go with
+# the next message. $marks lists their numbers ("1, 2"); $count is how many.
+preview-chat-marks = { $count ->
+   *[other] 标记 { $marks } 会随消息一起发送
+}
+
+
 ## Peek — listings
 ##
 ## A folder or an archive is previewed as a list of what is inside, with one
@@ -1551,21 +1698,6 @@ peek-item-count =
 # size on disk. $items is peek-item-count, $size is a formatted byte
 # count. The dash is an em dash.
 peek-archive-summary = { $items } —— { $size }
-
-
-## Peek — sizes
-##
-## Byte units. Peek counts in powers of 1024, so the symbols are the
-## conventional binary-rounded ones. Translate only the spelled-out "bytes".
-
-peek-size-bytes =
-    { $count ->
-       *[other] { $count } 字节
-    }
-peek-size-kb = { $value } KB
-peek-size-mb = { $value } MB
-peek-size-gb = { $value } GB
-peek-size-tb = { $value } TB
 
 
 ## Peek — nothing to show
@@ -1729,6 +1861,7 @@ a11y-tray-item = 托盘项目 { $number }
 a11y-notifications = 通知
 # The sidebar of Settings, listing its panes.
 a11y-categories = 类别
+a11y-search-settings = 搜索设置
 # The launcher's list of matches for what has been typed.
 a11y-results = 结果
 # Names the Settings pane when no pane is selected.
@@ -1786,12 +1919,16 @@ files-photos-info-kind = { $format } 图像
 files-photos-info-copied = 已拷贝
 files-photos-info-dimensions = 尺寸
 files-photos-info-modified = 修改时间
+files-photos-info-taken = 拍摄时间
 files-photos-info-where = 位置
+files-photos-info-camera = 相机
+files-photos-info-lens = 镜头
+files-photos-info-exposure = 曝光
+files-photos-info-location = 拍摄地点
 files-photos-info-many =
     { $count ->
        *[other] { $count } 项
     }
-files-photos-one-selected = 已选择 1 项 · 空格预览 · ↵ 打开
 
 
 ## otto-authorize — the panel that asks for the password before a sensitive setting changes.
@@ -1829,3 +1966,147 @@ privacy-store-unavailable-detail = 权限存储（xdg-desktop-portal 中的 xdg-
 settings-pane-privacy = 隐私
 
 screencast-picker-remember = 为 { $app } 记住
+
+## Users pane
+
+settings-pane-account = 用户
+settings-account-picture = 头像
+settings-account-picture-detail = 显示在登录和锁屏界面上
+settings-account-choose-picture = 选择头像
+settings-account-picture-unreadable = 该文件不是 Otto 能读取的图像
+settings-account-full-name = 全名
+settings-account-name = 账户名
+settings-account-type = 账户类型
+settings-account-type-administrator = 管理员
+settings-account-type-standard = 标准
+settings-account-no-accountsservice = 无法在此更改：AccountsService 未运行
+settings-account-not-permitted = 系统不允许此更改
+settings-group-password = 密码
+settings-account-current-password = 当前密码
+settings-account-new-password = 新密码
+settings-account-confirm-password = 确认新密码
+settings-account-change-password = 更改密码
+settings-account-change-password-ellipsis = 更改密码…
+settings-account-password-detail = 用于登录、解锁屏幕和批准更改
+settings-account-password-changing = 正在更改密码…
+settings-account-password-changed = 密码已更改
+settings-account-password-missing = 请输入当前密码和新密码
+settings-account-password-mismatch = 两次输入的新密码不一致
+settings-account-password-same = 新密码与当前密码相同
+settings-account-password-wrong-current = 当前密码错误
+settings-account-password-failed = 无法更改密码
+settings-account-reset-password-ellipsis = 重置密码…
+settings-account-reset-detail = 为此账户设置新密码
+settings-account-working = 正在等待系统…
+settings-users-you = { $kind } · 你
+settings-users-reset-title = 重置 { $name } 的密码
+settings-users-reset-action = 重置密码
+settings-users-add-title = 添加用户
+settings-users-add-action = 添加用户
+settings-users-delete-title = 删除 { $name }？
+settings-users-delete-body = 该用户将无法再登录。其个人文件夹会保留。
+settings-users-delete-action = 删除用户
+settings-users-invalid-name = 账户名须以小写字母开头，且只能包含 a–z、0–9、- 和 _
+settings-users-name-taken = 已存在同名账户
+settings-users-password-missing = 请为该账户输入密码
+
+## 设置 › 听写
+
+settings-pane-dictation = 听写
+settings-dictation-intro = 语音在本机识别后输入到文本框中。在启动器中按 Ctrl+D 即可听写；在其他应用中，可使用绑定到 otto-dictate toggle 的快捷键。
+settings-dictation-engine = 引擎
+settings-dictation-engine-detail = 选择一个引擎会启动其语音服务器，并停止其他引擎
+settings-dictation-engine-parakeet = Parakeet
+settings-dictation-engine-whisper = Whisper（仅英语）
+settings-dictation-engine-crispasr = CrispASR
+settings-dictation-server = 语音服务器
+settings-dictation-server-checking = 正在检查…
+settings-dictation-server-running = 正在运行
+settings-dictation-server-stopped = 已停止。服务器启动前，听写听不到任何内容。
+settings-dictation-server-failed = 因错误而停止。原因可通过 journalctl --user -u { $unit } 查看。
+settings-dictation-server-missing = 未安装。可通过 components/otto-dictate/engines/install.sh { $engine } 安装。
+settings-dictation-server-unmanaged = 无法确定：此系统没有 systemctl
+settings-dictation-start = 启动
+settings-dictation-restart = 重启
+settings-dictation-language = 语言
+settings-dictation-language-auto = 自动
+settings-dictation-language-detail = 所说的语言。Parakeet 和 CrispASR 会自行识别。
+settings-dictation-hotwords-boost = 名称加权
+settings-dictation-hotwords-boost-detail = 对文本框预期的名称的偏好程度。超过 6 后，名称周围的词语会开始失真。
+settings-dictation-autostart = 登录时启动听写
+settings-dictation-autostart-detail = 从 ~/.config/autostart 启动 otto-dictate；xdg_autostart 开启时 Otto 会读取该文件夹
+
+## Studio — menus and the keyboard shortcuts sheet
+
+studio-menu-file = 文件
+studio-menu-edit = 编辑
+studio-menu-marks = 标记
+studio-menu-view = 显示
+studio-menu-help = 帮助
+studio-close = 关闭窗口
+studio-undo = 撤销
+studio-redo = 重做
+studio-copy = 拷贝
+studio-select-all = 全选
+studio-pen = 画笔
+studio-show-marks = 显示标记
+studio-delete-mark = 删除最后一个标记
+studio-zoom-in = 放大
+studio-zoom-out = 缩小
+studio-zoom-fit = 缩放至窗口大小
+studio-previous-page = 上一页
+studio-next-page = 下一页
+studio-sidebar = 显示页面
+studio-chat = 显示聊天
+studio-shortcuts = 键盘快捷键
+studio-sheet-document = 文档
+studio-sheet-chat = 聊天
+studio-sheet-scroll = 滚动
+studio-sheet-page = 下一屏
+studio-sheet-ends = 开头和结尾
+studio-sheet-zoom-pointer = 在指针处缩放
+studio-sheet-stop = 放下画笔
+studio-sheet-send = 发送
+studio-sheet-dictate = 听写
+studio-sheet-stop-agent = 停止代理
+studio-sheet-to-document = 返回文档
+studio-sheet-cmd = Cmd 在任何 Ctrl 可用的地方都可用
+# Toggle: the strip of tools that fill in and mark up a PDF, written into
+# the file itself.
+studio-markup = 标记工具
+# Writes a PDF's form and markup changes over the file.
+studio-save = 存储
+# Saves the PDF under another name or in another folder, and carries on with that file.
+studio-save-as = 存储为…
+# The save dialog's title.
+studio-save-as-title = 存储副本
+studio-open-title = 在 Studio 中打开
+studio-open-filter-all = 图片和文档
+studio-open-filter-pictures = 图片
+studio-pick-hint = 选择要打开的文件
+# The window's title while a PDF has changes not yet saved. $name is the file's name.
+studio-title-edited = { $name }（已编辑）
+# Asked when a window with unsaved changes is closed. $name is the file's name.
+studio-close-title = 要存储对“{ $name }”的更改吗？
+studio-close-body = 如果不存储，你的更改将会丢失。
+studio-close-discard = 不存储
+studio-close-cancel = 取消
+# Asked when saving would replace changes made to the file by another app
+# since it was opened. $name is the file's name.
+studio-changed-title = “{ $name }”已在磁盘上更改
+studio-changed-body = 存储会替换在别处所做的更改。
+# Saves over the file anyway, replacing the changes made elsewhere.
+studio-changed-overwrite = 仍然存储
+# Shown when a PDF's changes couldn't be written; the reason follows on its
+# own line. $name is the file's name.
+studio-save-failed-title = 无法存储“{ $name }”
+studio-save-failed-body = 将副本存储到别处以保留你的更改。
+# Deletes the highlight, drawing, text or signature selected on the page.
+studio-delete-selection = 删除所选内容
+studio-sheet-next-field = 下一个表单字段
+# The card a signature is drawn on, once, before it is placed on a PDF.
+studio-signature-title = 绘制签名
+studio-signature-hint = 在线上方签名
+studio-signature-clear = 清除
+studio-signature-cancel = 取消
+studio-signature-done = 完成

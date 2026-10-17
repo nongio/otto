@@ -89,20 +89,78 @@ and the bar and the launcher are told through the portal's
 ## Wallpaper
 
 ```toml
-background_image = "/usr/share/otto/background.jpg"
-background_color = "#2c2ca0"
+background_image = "/usr/share/otto/wallpaper.jpg"
+background_color = "#102E95"
+background_mode = "fill"
+background_position_x = 0.5
+background_position_y = 0.5
+background_zoom = 1.0
 ```
 
-`background_image` is an absolute path to the image shown on the desktop.
-It is scaled to cover the screen, and decoded at the resolution of the largest
-monitor, so a wallpaper at least as large as your display stays sharp; a much
-larger one is resampled down once at load rather than kept at full size.
+Otto's packages ship a wallpaper at `/usr/share/otto/wallpaper.jpg`, and the
+default configuration uses it. Point `background_image` at any other image to
+replace it: JPEG, PNG, WebP, GIF, BMP or SVG. A camera's rotation tag and an
+embedded colour profile are honoured.
 
-`background_color` is the fallback: when the image is missing or fails to load,
-Otto draws a gradient using this as the bottom colour. It is worth setting to
-something you like even if you use an image.
+`background_color` is shown when there is no image, or it fails to load, as a
+gradient with this as the bottom colour. It is also what shows around a fitted
+or centred image and through a transparent one.
 
-The wallpaper is global — the same on every monitor and every workspace.
+`background_mode` decides how the image fills the screen:
+
+| Mode | What it does |
+|------|--------------|
+| `fill` | Scaled to cover the screen, the excess cropped. The default. |
+| `fit` | Scaled to fit inside the screen, whole, with the colour around it. |
+| `stretch` | Stretched to the screen's shape, ignoring the image's own. |
+| `center` | At its own size, with the colour around it, or cropped if larger. |
+| `tile` | Repeated at its own size from the top-left corner. |
+| `span` | One image across all your displays, as if they were one; each shows its part. |
+
+In `center` and `tile` an image pixel is a point, so the image is the same
+size on a HiDPI display as on a normal one.
+
+`background_position_x` and `background_position_y` pick which part of a
+cropped image shows, and where a smaller one sits, as fractions across and
+down, the way CSS `object-position` does: `0.5` centres, `0.0` keeps the left
+or top edge, `1.0` the right or bottom. A portrait whose subject is near the
+top stays in view with `background_position_y = 0.2`. In the Settings app,
+click the part of the preview you want to keep.
+
+`background_zoom` (1.0 to 8.0) magnifies a `fill` or `span` image beyond just
+covering the screen; the position then pans it.
+
+The wallpaper is resampled once for each display, at that display's
+resolution, and drawn pixel for pixel, so it is as sharp as the image allows
+and stays still however the screen around a moving window is redrawn.
+
+### One display, or one workspace
+
+Any of these settings can be set for one display, and for one workspace:
+
+```toml
+[background_outputs."DP-1"]
+image = "/home/me/Pictures/ultrawide.jpg"
+mode = "fit"
+color = "#000000"
+
+[workspaces.entries."eDP-1:2".background]
+image = "/home/me/Pictures/focus.png"
+```
+
+The names are those of the global settings without `background_`. A workspace
+takes the global settings, then its display's, then its own, one setting at a
+time. `image = ""` means no image. The key `"eDP-1:2"` is the display and the
+workspace's position counting from 0; a workspace's wallpaper moves with it
+when you reorder workspaces.
+
+Both are easier set with [`otto-msg`](scripting.md#wallpaper):
+
+```sh
+otto-msg 'output DP-1 bg ~/Pictures/ultrawide.jpg fit #000000'
+otto-msg 'background ~/Pictures/focus.png'     # the focused workspace
+otto-msg 'output DP-1 bg reset'
+```
 
 Otto also supports the `wlr-layer-shell` background layer, so wallpaper daemons
 like `swaybg` and `swww` work if you want animated or per-monitor backgrounds:
@@ -128,9 +186,12 @@ installed on the system works.
 ## Cursor
 
 ```toml
-cursor_theme = "Notwaita-Black"
+cursor_theme = "Otto-MacTahoe"
 cursor_size = 24
 ```
+
+The icon theme Otto ships, `Otto-MacTahoe`, carries its own cursors, so the
+default configuration uses it for both.
 
 Cursor theme names are the directory names under `/usr/share/icons/` and
 `~/.local/share/icons/`, and they are **case-sensitive**. Check what you have:
@@ -145,14 +206,29 @@ cursor-shape protocol get themed cursors without shipping their own bitmaps.
 ## Icon theme
 
 ```toml
-icon_theme = "Adwaita"
+icon_theme = "Otto-MacTahoe"
 ```
 
 Used for application icons in the dock, the app switcher and notification
 islands. Commented out or absent, Otto auto-detects a reasonable theme from
 what is installed.
 
-Popular choices: `Adwaita`, `Papirus`, `WhiteSur`, `Fluent`. Otto's own
+Otto's packages ship the
+[MacTahoe icon theme](https://github.com/vinceliuice/MacTahoe-icon-theme)
+under Otto's own name — `Otto-MacTahoe`, `Otto-MacTahoe-light` and
+`Otto-MacTahoe-dark` — and the default configuration uses it, so a first
+install has a complete set of icons. The separate name keeps it from
+clashing with a MacTahoe you install yourself, which you can select by its
+own name, `MacTahoe`.
+Any other theme under `/usr/share/icons` works the same way.
+
+The theme draws apps, files and tray icons. The glyphs on the controls of
+Otto's own apps (toolbar buttons, menu ticks, the sidebars of Files and
+Settings) are Otto's own, from the
+[Solar icon set](https://github.com/saoudi-h/solar-icons) by 480 Design, and
+look the same whatever theme you choose.
+
+Popular choices: `Otto-MacTahoe`, `MacTahoe`, `WhiteSur`, `Adwaita`, `Papirus`, `Fluent`. Otto's own
 screenshots use the
 [Fluent icon theme](https://github.com/vinceliuice/Fluent-icon-theme).
 
@@ -246,8 +322,10 @@ gdbus call --session --dest org.freedesktop.portal.Desktop \
 `1` means dark, `2` means light, `0` means no preference.
 
 **The wallpaper is a gradient instead of my image.** The path is wrong or
-unreadable. Check the log. Otto reports the failure and falls back to
-`background_color`.
+unreadable, or the file is not an image Otto can decode. Check the log. Otto
+reports the failure (the Settings app and `otto-msg` say why) and falls back to
+`background_color`. An override in `[background_outputs]` or a workspace's
+`background` wins over the global setting, so check those too.
 
 ## Not yet supported
 

@@ -24,7 +24,7 @@ use otto_agents_client::session::{self, SESSION_SCHEME, session_id};
 
 use crate::uri;
 use crate::vendors::{self, Done, Home, State, Target, Vendor, first_sentence};
-use crate::xdg::tilde;
+use crate::xdg::tilde_in;
 
 const SHORT_ID_LEN: usize = 8;
 
@@ -37,14 +37,10 @@ pub async fn list_sessions(url: &str) -> anyhow::Result<()> {
     let sessions = fetch_sessions(&client).await?;
     client.shutdown().await;
 
-    let home = std::env::var_os("HOME");
+    let home = crate::xdg::home();
     print!(
         "{}",
-        render(
-            &sessions,
-            jiff::Timestamp::now(),
-            home.as_deref().map(Path::new)
-        )
+        render(&sessions, jiff::Timestamp::now(), home.as_deref())
     );
     Ok(())
 }
@@ -94,14 +90,14 @@ pub async fn show_session(url: &str, session: Option<&str>, follow: bool) -> any
     };
     let mut chat = *chat;
 
-    let home = std::env::var_os("HOME");
+    let home = crate::xdg::home();
     let mut out = std::io::stdout();
     writeln!(
         out,
         "{} · {} · {}\n",
         title(summary),
         summary.provider,
-        folder(summary, home.as_deref().map(Path::new))
+        folder(summary, home.as_deref())
     )?;
     write!(out, "{}", render_chat(&chat))?;
 
@@ -258,7 +254,10 @@ fn entry_from_meta(meta: Option<&serde_json::Map<String, serde_json::Value>>) ->
 
 /// The provider id `agent` names — its id, or the name it is shown under,
 /// either way ignoring case. `None` leaves the service its default agent.
-async fn resolve_agent(client: &Client, agent: Option<&str>) -> anyhow::Result<Option<String>> {
+pub(crate) async fn resolve_agent(
+    client: &Client,
+    agent: Option<&str>,
+) -> anyhow::Result<Option<String>> {
     let Some(agent) = agent else {
         return Ok(None);
     };
@@ -310,7 +309,7 @@ pub fn install_plugins(
         {
             out.push_str(&format!(
                 "removed {}: the skill it pointed at is gone\n",
-                tilde(&stale, Some(&home.root))
+                tilde_in(&stale, Some(&home.root))
             ));
         }
         let installed = skills::install(&plugins, &dir)
@@ -396,7 +395,7 @@ fn render_installed(
     }
     let mut out = String::new();
     for Installed { entry, created } in installed {
-        let link = tilde(&entry.link, home);
+        let link = tilde_in(&entry.link, home);
         out.push_str(&match (entry.state, created) {
             (LinkState::Linked, true) => format!("linked {link} -> {}\n", entry.source.display()),
             (LinkState::Linked, false) => format!("already linked: {link}\n"),
@@ -409,7 +408,7 @@ fn render_installed(
     }
     out.push_str(&format!(
         "Agents that read {} will find them from their next session.\n",
-        tilde(dir, home)
+        tilde_in(dir, home)
     ));
     out
 }
@@ -435,7 +434,7 @@ fn render_skills_status(plugins: &[Plugin], entries: &[Entry], home: Option<&Pat
                 "  {:<24} {:<11} {}\n",
                 entry.name,
                 state,
-                tilde(&entry.link, home)
+                tilde_in(&entry.link, home)
             ));
         }
         for agent in &plugin.agents {
@@ -523,7 +522,7 @@ fn no_plugins() -> String {
 }
 
 /// `path` with the home directory written as `~`.
-async fn connect(url: &str) -> anyhow::Result<Client> {
+pub(crate) async fn connect(url: &str) -> anyhow::Result<Client> {
     let transport = crate::client::connect(url)
         .await
         .with_context(|| format!("could not connect to {url}; is `otto-agents serve` running?"))?;
@@ -539,7 +538,7 @@ async fn connect(url: &str) -> anyhow::Result<Client> {
 }
 
 /// The host's sessions, most recently modified first.
-async fn fetch_sessions(client: &Client) -> anyhow::Result<Vec<SessionSummary>> {
+pub(crate) async fn fetch_sessions(client: &Client) -> anyhow::Result<Vec<SessionSummary>> {
     let result: ListSessionsResult = client
         .request("listSessions", json!({ "channel": ROOT_RESOURCE_URI }))
         .await?;
@@ -688,7 +687,7 @@ fn folder(session: &SessionSummary, home: Option<&Path>) -> String {
     else {
         return "-".to_owned();
     };
-    tilde(&path, home)
+    tilde_in(&path, home)
 }
 
 /// Checks the things that stop Ask working, in the order they fail.
@@ -697,6 +696,30 @@ fn folder(session: &SessionSummary, home: Option<&Path>) -> String {
 /// reading any code: is the service reachable, does the configuration parse,
 /// is each agent's command on the service's `PATH`, and is there a renderer
 /// to put a dialog on the screen.
+/// `otto-agents bridge`: becomes the chat bridge `agents.toml` configures.
+///
+/// It execs rather than spawns, so the `otto-agents-bridge` unit supervises
+/// the bridge itself: its logs, its exit status and its restarts are the
+/// bridge's own.
+pub fn run_bridge(config_path: Option<&Path>) -> anyhow::Result<()> {
+    let config = crate::config::load(config_path)?;
+    let Some(bridge) = config.bridge else {
+        bail!(
+            "no chat bridge is configured: set `[bridge] command` in agents.toml, \
+             or a command under Chat bridge in Settings › Agents"
+        );
+    };
+    tracing::info!(command = %bridge.command, "starting the chat bridge");
+    let err = std::process::Command::new(&bridge.command)
+        .args(crate::config::expand_args(&bridge.args))
+        .envs(crate::config::expand_env(&bridge.env))
+        .exec();
+    bail!(
+        "could not start the chat bridge `{}`: {err}",
+        bridge.command
+    )
+}
+
 pub async fn doctor(url: &str, config_path: Option<&Path>) -> anyhow::Result<()> {
     let mut sound = true;
     let mut check = |ok: bool, label: &str, detail: String| {
@@ -971,6 +994,7 @@ mod tests {
                 tools: vec!["Read".into()],
                 model: None,
                 skills: vec!["otto".into()],
+                session_only: false,
                 body: "You are Otto.".into(),
                 path: "/usr/share/otto/plugins/otto/agents/otto.md".into(),
             }],

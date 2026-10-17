@@ -37,6 +37,15 @@ pub enum Control {
     File(String),
     /// Static informational value, not editable here.
     Value(String),
+    /// A segmented control spanning the row, one segment per label, with
+    /// `selected` raised. It switches between views of a pane, as
+    /// pavucontrol's tabs do, so a pick goes to the pane that owns the row
+    /// (`panes::sound::select_tab`) rather than onto the bus. The row draws
+    /// no label of its own.
+    Tabs {
+        labels: &'static [&'static str],
+        selected: usize,
+    },
     /// One editable shortcut line: the action pop-up, the key combination
     /// field, and the button that deletes it.
     ///
@@ -63,8 +72,9 @@ pub struct Row {
     /// The `org.otto.Settings` identifier this row edits. `None` means the row
     /// is not wired to the compositor yet and is display-only.
     pub id: Option<&'static str>,
-    /// The row's push buttons have nothing to do right now — Apply with
-    /// nothing to apply — and are drawn dimmed and take no press.
+    /// The row's push buttons or pop-up have nothing to do right now — Apply
+    /// with nothing to apply, a choice nothing can act on — and are drawn
+    /// dimmed and take no press.
     pub inactive: bool,
     /// A pop-up row that can be taken out of its list: a "−" button sits at
     /// its trailing edge, and the pop-up moves in to make room for it.
@@ -102,7 +112,8 @@ impl Row {
         self
     }
 
-    /// Dim the row's push buttons and ignore presses on them while `inactive`.
+    /// Dim the row's push buttons or pop-up and ignore presses on them while
+    /// `inactive`.
     pub(crate) fn inactive(mut self, inactive: bool) -> Self {
         self.inactive = inactive;
         self
@@ -291,32 +302,21 @@ fn decimals(step: Option<f64>) -> usize {
 
 /// The compositor's accent palette, keyed by the name it stores.
 ///
-/// These are the values `src/theme/colors_dark.rs` paints with, so the swatch
-/// the user picks is the colour they get.
+/// otto-kit's dark palette, the one the compositor paints with in the dark
+/// scheme, so the swatch the user picks is the colour they get.
 pub fn named_argb(name: &str) -> Option<u32> {
-    Some(match name.to_ascii_lowercase().as_str() {
-        "red" => 0xFFFF453A,
-        "orange" => 0xFFFF9F0A,
-        "yellow" => 0xFFFFD60A,
-        "green" => 0xFF32D74B,
-        "mint" => 0xFF66D4CF,
-        "teal" => 0xFF6AC4DC,
-        "cyan" => 0xFF5AC8F5,
-        "blue" => 0xFF0A84FF,
-        "indigo" => 0xFF5E5CE6,
-        "purple" => 0xFFBF5AF2,
-        "pink" => 0xFFFF375F,
-        "gray" | "grey" | "graphite" => 0xFF98989D,
-        "brown" => 0xFFAC8E68,
-        _ => return None,
-    })
+    let name = name.to_ascii_lowercase();
+    let name = match name.as_str() {
+        "grey" | "graphite" => "gray",
+        other => other,
+    };
+    otto_kit::theme::Theme::dark_palette()
+        .named_accent(name)
+        .map(|c| u32::from_be_bytes([c.a(), c.r(), c.g(), c.b()]))
 }
 
 fn parse_hex(text: &str) -> Option<u32> {
-    let digits = text.strip_prefix('#')?;
-    u32::from_str_radix(digits, 16)
-        .ok()
-        .map(|rgb| 0xFF00_0000 | rgb)
+    otto_kit::color::parse_hex(text).map(|c| u32::from_be_bytes([c.a(), c.r(), c.g(), c.b()]))
 }
 
 /// A titled run of rows inside a pane.
@@ -341,28 +341,48 @@ pub struct Pane {
 /// The panes from the spec, in sidebar order.
 pub fn panes() -> Vec<Pane> {
     vec![
+        // The system as a whole, then the desktop, then input, then who can
+        // log in and what they can reach — and About last.
         panes::general::build(),
+        panes::appearance::build(),
         panes::displays::build(),
-        panes::dock::build(),
-        panes::tiling::build(),
-        panes::keyboard::build(),
-        panes::pointing::build(),
         panes::sound::build(),
         panes::power::build(),
-        panes::lock_and_login::build(),
-        panes::privacy::build(),
+        panes::dock::build(),
+        panes::top_bar::build(),
+        panes::tiling::build(),
         panes::search::build(),
         panes::agents::build(),
+        panes::keyboard::build(),
+        // Dictation is another way of typing, so it sits with the keyboard.
+        panes::dictation::build(),
+        panes::pointing::build(),
+        panes::account::build(),
+        panes::lock_and_login::build(),
+        panes::privacy::build(),
+        panes::about::build(),
     ]
 }
 
 /// Where the Search pane sits in [`panes`], so `main.rs` can tell the pane
 /// when it is on screen without building every pane to find out.
-pub const SEARCH_PANE: usize = 10;
+pub const SEARCH_PANE: usize = 8;
+
+/// Where the Sound pane sits in [`panes`]: it reads the sound server only
+/// while it is on screen.
+pub const SOUND_PANE: usize = 3;
 
 /// Where the Privacy pane sits in [`panes`]: it reads the permission store
 /// only while it is on screen.
-pub const PRIVACY_PANE: usize = 9;
+pub const PRIVACY_PANE: usize = 15;
+
+/// Where the Agents pane sits in [`panes`]: it watches its service only while
+/// it is on screen.
+pub const AGENTS_PANE: usize = 9;
+
+/// Where the Dictation pane sits in [`panes`]: it watches its engines' units
+/// only while it is on screen.
+pub const DICTATION_PANE: usize = 11;
 
 pub(crate) fn group(title: impl Into<Cow<'static, str>>, rows: Vec<Row>) -> Group {
     Group {
@@ -931,7 +951,12 @@ mod readout_tests {
 
 #[cfg(test)]
 mod pane_order_tests {
-    use super::{panes, PRIVACY_PANE, SEARCH_PANE};
+    use super::{panes, AGENTS_PANE, DICTATION_PANE, PRIVACY_PANE, SEARCH_PANE, SOUND_PANE};
+
+    #[test]
+    fn the_dictation_pane_sits_where_main_looks_for_it() {
+        assert_eq!(panes()[DICTATION_PANE].icon, "microphone");
+    }
 
     #[test]
     fn the_search_pane_sits_where_main_looks_for_it() {
@@ -941,5 +966,15 @@ mod pane_order_tests {
     #[test]
     fn the_privacy_pane_sits_where_main_looks_for_it() {
         assert_eq!(panes()[PRIVACY_PANE].icon, "hand");
+    }
+
+    #[test]
+    fn the_agents_pane_sits_where_main_looks_for_it() {
+        assert_eq!(panes()[AGENTS_PANE].icon, "agent");
+    }
+
+    #[test]
+    fn the_sound_pane_sits_where_main_looks_for_it() {
+        assert_eq!(panes()[SOUND_PANE].icon, "sound");
     }
 }

@@ -1,7 +1,8 @@
 use crate::{
-    command, model, ocrcache, palette, pane_surfaces, peek, perf, picker, remembered, rename,
-    scene, scripts, thumbcache, thumbnails, view,
+    command, model, palette, pane_surfaces, perf, picker, remembered, rename, scene, scripts,
+    thumbcache, thumbnails, view,
 };
+use otto_peek::{ocrcache, session as peek};
 
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
@@ -34,8 +35,11 @@ use listing_pointer::{After, DragStart, MenuAt};
 use model::{Column, Entry, Place, SortKey};
 use view::ViewMode;
 
+mod app_menu;
 mod construct;
 mod cursor;
+mod desk_edit;
+mod desk_overflow;
 mod drag_drop;
 mod file_ops;
 mod folder_views;
@@ -52,6 +56,7 @@ mod navigation;
 mod ocr;
 mod open_with;
 mod opening;
+mod overflow_surface;
 mod palette_session;
 mod panel_text;
 mod peek_session;
@@ -65,6 +70,10 @@ mod renaming;
 mod scroll;
 mod searching;
 mod selection;
+mod windows;
+
+use windows::Browse;
+pub use windows::{claim_or_forward, hosting, run_windows, Claim, Request};
 
 /// Reading text out of pictures from the command line, with no window.
 pub use ocr::recognise_paths;
@@ -208,7 +217,7 @@ impl DropTarget {
 fn hover_drag(state: &Arc<Mutex<Browser>>, x: f32, y: f32) {
     use otto_kit::dnd;
 
-    let mut browser = state.lock().unwrap();
+    let mut browser = state.browse();
     let target = browser.drop_target_at(x, y);
     let mime = dnd::first_offered(clipboard::file_mime_preference());
 
@@ -287,10 +296,9 @@ struct Browser {
     /// A column divider currently being dragged: which one, the pointer x it
     /// started at, and the width it started with.
     column_resize: Option<(view::ColumnBoundary, f32, f32)>,
-    /// The Miller view's shared, draggable pane width.
-    miller_w: f32,
-    /// A Miller pane divider being dragged: its depth, the pointer x it
-    /// started at, and the width it started with.
+    /// A Miller pane divider being dragged: the depth of the pane it
+    /// resizes, the pointer x it started at, and the width that pane started
+    /// with. Each pane's width lives on its [`Column`].
     miller_resize: Option<(usize, f32, f32)>,
     /// The last Miller divider clicked and when, so a second click shortly
     /// after reads as a double-click rather than a fresh drag.
@@ -418,7 +426,7 @@ struct Browser {
     /// survivor — rather than through an arrow key. Peek follows the
     /// cursor, so it has to re-decode for those moves too, and the deleted
     /// file's preview must not be left up over a file that no longer exists.
-    /// Drained by the host, which owns the decode; see [`FilesApp::follow_peek`].
+    /// Drained by the host, which owns the decode; see [`FilesWindow::follow_peek`].
     peek_follow: bool,
     /// This window is the Trash: one flat listing of the trash can, with Put
     /// Back and Empty Trash in place of the view switcher, and every command
@@ -434,6 +442,18 @@ struct Browser {
     ///
     /// A shell like [`Self::trash`], set once at startup.
     desk: bool,
+    /// The desk's edit mode, while the panel is being moved and resized with
+    /// the pointer. See [`desk_edit`].
+    desk_editing: Option<desk_edit::Editing>,
+    /// The `[desk]` config the desk is showing, so a change to the file can
+    /// be told from a write that changed nothing. `None` outside the desk.
+    desk_config: Option<crate::desk::DeskConfig>,
+    /// The desk's overflow panel while it is open: its scroll and when it
+    /// opened. `None` while it is closed. See [`desk_overflow`].
+    overflow_panel: Option<desk_overflow::OverflowSession>,
+    /// The overflow panel on its way back into its tile: drawn, but no
+    /// longer answering for the pointer or the keyboard.
+    overflow_panel_closing: Option<desk_overflow::OverflowSession>,
     /// This window is showing the Recent listing rather than a directory:
     /// what was written most recently across the user's folders, newest first,
     /// under a heading per day.
@@ -477,6 +497,27 @@ struct Browser {
     photo_hover: Option<usize>,
     /// The info panel's colour swatch under the pointer.
     photo_swatch_hover: Option<usize>,
+    /// The Photos info panel's turn or flip button under the pointer.
+    photo_tool_hover: Option<usize>,
+    /// Turns and flips asked for and not yet carried out, oldest first. They
+    /// rewrite the file, so they run off the UI thread, one at a time: two at
+    /// once on the same photo would each read what the other is replacing.
+    photo_turns: std::collections::VecDeque<photos_view::PhotoTurn>,
+    /// A turn from [`Self::photo_turns`] is running on a worker.
+    photo_turning: bool,
+    /// The info panel video's repaint key as last drawn, so a new frame
+    /// marks the window dirty — see [`Self::tick_photos_video`].
+    photos_video_key: Option<u64>,
+    /// The last press on a preview's picture — the preview column's, or the
+    /// Photos info panel's — so a second one soon after opens the file.
+    last_preview_click: Option<std::time::Instant>,
+    /// A press on a preview's *video* that has not yet said whether it is a
+    /// click, which plays or pauses it, or the start of a drag, which picks
+    /// the file up. Settled by the release, or cancelled by the drag.
+    video_click_pending: bool,
+    /// Where an open pulse rises from when the file was opened from its
+    /// preview rather than its row: the picture it was double-clicked on.
+    opening_stage: Option<Rect>,
     /// Text selected in an info panel of the main window.
     panel_text: Option<panel_text::PanelText>,
     /// Text selected in Get Info.
@@ -497,6 +538,8 @@ struct Browser {
     zoom_pinch: Option<f32>,
     /// The grouping menu is up, so its button draws open.
     photos_group_open: bool,
+    /// The picker's location menu is up, so its control draws open.
+    location_open: bool,
     /// The info panel's swatch whose colour was just copied, and when.
     photos_copied: Option<(usize, std::time::Instant)>,
     /// Where the Photos wall should be scrolled to once it has been packed
@@ -536,6 +579,13 @@ struct Browser {
     /// its title and traffic lights go gray, and the compositor stops blurring
     /// behind it.
     focused: bool,
+    /// The decoration the compositor's last configure implies for this
+    /// window. See [`Browser::enter_view`].
+    decoration: otto_kit::components::titlebar::DecorationVariant,
+    /// Whether the window has been asked to close: its close control, the
+    /// compositor's close, or the menus. The app takes it down on its next
+    /// pass; the other windows carry on.
+    closing: bool,
     /// Whether the compositor can blur behind the window at all. False when it
     /// carries no surface style — running under another compositor — or when
     /// the blur has been turned off for measurement. The materials are filled
@@ -553,6 +603,10 @@ struct Browser {
     /// column's snapshot yet when `new_folder` returns — the pane and the name
     /// are held here until the re-read lands.
     pending_rename: Option<(usize, String)>,
+    /// The picker made the folder now being renamed, and wants to be inside it
+    /// once it has its name: the place a save lands is the directory being
+    /// viewed, so a new folder left merely selected is not where it goes.
+    enter_after_rename: bool,
     /// The command palette, open on Ctrl+P. While it is up it takes the
     /// keyboard whole; the browser underneath is untouched until a command
     /// actually runs. See `specs/file-command-palette.md`.
@@ -897,6 +951,8 @@ struct PreviewPaneState {
     text: Option<ocrcache::Status>,
     /// The picture's main colours, for the Photos info panel's swatches.
     palette: Vec<skia_safe::Color>,
+    /// What the camera wrote down about the picture, read with the decode.
+    camera: Option<crate::camera::Shot>,
 }
 
 /// An in-place rename in progress: which row it belongs to and the text
@@ -1099,8 +1155,14 @@ fn row_focus(index: usize) -> otto_kit::focus::FocusId {
     otto_kit::focus::FocusId::new(format!("entry-{index}"))
 }
 
-struct FilesApp {
+struct FilesWindow {
     window: Option<Window>,
+    /// The window's menus in the top bar; `None` on the desk, in a file
+    /// dialog, and without a session bus. See [`app_menu`].
+    app_menu: Option<otto_kit::app_menu::AppMenu>,
+    /// When the menus were last brought up to date, to do it a few times a
+    /// second rather than on every pass.
+    app_menu_at: std::time::Instant,
     state: Arc<Mutex<Browser>>,
     /// The panel materials' fade, which the scene runs and this drains: the
     /// blur it wants switched, and whether it is still running. Held here
@@ -1126,10 +1188,10 @@ struct FilesApp {
     /// until `on_app_ready` constructs it, which is the earliest point
     /// `AppContext` is set up.
     context_menu: Option<ContextMenu>,
-    /// The Photos view's grouping menu, built with the context menu and for
-    /// the same reason. Held here as well as by the pointer handler so the
-    /// keyboard can drive it while it is open.
-    group_menu: Option<Rc<otto_kit::components::dropdown::DropdownMenu>>,
+    /// The window's pop-up buttons' menus, built with the context menu and
+    /// for the same reason. Held here as well as by the pointer handler so
+    /// the keyboard can drive the one that is open.
+    dropdowns: Option<Rc<pointer::Dropdowns>>,
     /// Peek's surfaces and its card's rect within its own, published by the
     /// render path for the pointer callback below. See
     /// [`pane_surfaces::PaneSurfaces::peek_target`].
@@ -1141,9 +1203,6 @@ struct FilesApp {
     /// The picker's request queue, when this process is serving
     /// `org.otto.FilePicker1`. `None` in the browser.
     picker_queue: Option<crate::dbus::SharedQueue>,
-    /// Questions from `org.otto.Files1` waiting for the UI thread. `None` in
-    /// the picker, whose selection belongs to the application it serves.
-    selection_queue: Option<crate::files_service::SharedQueue>,
     /// The surfaces the window hangs over itself: each column's scroll pane,
     /// the stack's bar, Peek, the palette and the preview's player.
     /// `None` until the window exists.
@@ -1158,6 +1217,23 @@ struct FilesApp {
     /// The Open With chooser's window, while one is open. Shared with its
     /// pointer callback for the same reason as [`Self::info_window`].
     open_with_window: Rc<RefCell<Option<Window>>>,
+    /// Whether the desk's surface is set up for edit mode: above the windows,
+    /// taking the keyboard and every press. Compared with the browser's
+    /// [`Browser::desk_editing`] each update, so the surface follows it.
+    desk_surface_editing: bool,
+    /// The desk's input region as last set, so it is only sent again when
+    /// the panel moves or edit mode comes or goes.
+    desk_input_region: Option<Rect>,
+    /// A watch on the folder `files.toml` lives in, so the desk follows an
+    /// edit to its config. `None` outside the desk.
+    desk_config_watch: Option<otto_kit::watch::DirWatch>,
+    /// The desk's overflow panel on screen, while it is. Shared with the
+    /// pointer callback, registered once, for the reason
+    /// [`Self::info_window`] is.
+    overflow_surface: Rc<RefCell<Option<overflow_surface::OverflowSurface>>>,
+    /// Whether the keyboard has been in this process since the overflow
+    /// panel opened. See [`FilesWindow::follow_overflow_focus`].
+    overflow_focus_seen: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -1258,25 +1334,6 @@ fn app_id() -> &'static str {
     }
 }
 
-/// Open a browser window at `start` and run until it is closed.
-pub fn run_browser(start: crate::launch::Start) -> Result<(), Box<dyn std::error::Error>> {
-    let mut browser = Browser::new(start.folder);
-    browser.remember(&remembered::Remembered::load());
-    if !start.select.is_empty() {
-        browser.pending_select = Some(
-            start
-                .select
-                .iter()
-                .map(|path| path.to_string_lossy().into_owned())
-                .collect(),
-        );
-    }
-    if let Some((query, scope)) = start.search {
-        browser.start_search(query, scope);
-    }
-    run_app(browser, None)
-}
-
 /// Show the desk and run until the session ends.
 ///
 /// Another shell over this view layer: the icon grid alone, on a transparent
@@ -1300,28 +1357,16 @@ pub fn run_desk() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
     let config = crate::desk::DeskConfig::load();
-    run_app(Browser::for_desk(&config), None)
-}
-
-/// Open the Trash window and run until it is closed.
-///
-/// The third shell over this view layer, beside the browser and the picker —
-/// its own window and its own entry in the applications list, out of the same
-/// binary, because a listing of the trash is a listing.
-pub fn run_trash() -> Result<(), Box<dyn std::error::Error>> {
-    run_app(Browser::for_trash(), None)
-}
-
-/// The Trash window with the Empty Trash question already up.
-///
-/// What the dock's *Empty Trash* runs. It is the window rather than a bare
-/// confirmation because the question is about a listing, and showing what is
-/// being destroyed is the point of asking; the operation, the wording and the
-/// count are the window's own, so the two routes cannot drift.
-pub fn run_empty_trash() -> Result<(), Box<dyn std::error::Error>> {
-    let mut browser = Browser::for_trash();
-    browser.pending_empty_ask = true;
-    run_app(browser, None)
+    // Settings asks the desk for edit mode over the bus. Without a runtime or
+    // a bus the desk still runs; it just cannot be asked.
+    if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+        runtime.spawn(async {
+            if let Err(error) = crate::desk_service::serve().await {
+                tracing::warn!(%error, "cannot serve org.otto.Desk1");
+            }
+        });
+    }
+    windows::run_single(Browser::for_desk(&config), None)
 }
 
 /// Serve `org.otto.FilePicker1` until there is nothing left to serve.
@@ -1352,11 +1397,12 @@ pub async fn run_picker() -> Result<(), Box<dyn std::error::Error>> {
     // idle picker: no Wayland connection, no window, no watchers.
     let session = queue.next_session_async().await;
 
-    let start = session.request.starting_directory(None);
-    run_app(Browser::for_picker(session, start), Some(queue))
+    let start = session
+        .request
+        .starting_directory(crate::picker_dirs::remembered(&session.request.app_id));
+    windows::run_single(Browser::for_picker(session, start), Some(queue))
 }
 
-/// Run the app shell around an already-built [`Browser`].
 /// One pointer event inside the Get Info window.
 ///
 /// `sheet` is the panel's rect in that window's own coordinates, which is the
@@ -1439,61 +1485,32 @@ fn info_pointer(
     }
 }
 
-fn run_app(
-    browser: Browser,
-    picker_queue: Option<crate::dbus::SharedQueue>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let state = Arc::new(Mutex::new(browser));
-
-    // Resolve the file-operation sounds off the main thread now, so the first
-    // delete of the session does not pay for a walk of every theme directory
-    // at the moment it wants to make a noise.
-    let sounds: Vec<&str> = SOUND_DESTROYED
-        .iter()
-        .chain(SOUND_REMOVED.iter())
-        .chain(SOUND_RESTORED.iter())
-        .chain(SOUND_ARRIVED.iter())
-        .copied()
-        .collect();
-    otto_kit::sound::prewarm(&sounds);
-
-    let selection_queue = picker_queue.is_none().then(serve_files_interface);
-
-    let app = FilesApp {
-        pane_surfaces: None,
-        window: None,
-        info_window: Rc::new(RefCell::new(None)),
-        open_with_window: Rc::new(RefCell::new(None)),
-        state: Arc::clone(&state),
-        frost: None,
-        opaque_region: None,
-        modifiers: Arc::new(Mutex::new(Modifiers::default())),
-        context_menu: None,
-        group_menu: None,
-        peek_target: Arc::new(Mutex::new(None)),
-        palette_target: Arc::new(Mutex::new(None)),
-        picker_queue,
-        selection_queue,
-    };
-
-    AppRunner::new(app).run()
-}
-
-/// Start serving `org.otto.Files1` for this window.
-///
-/// Outside a tokio runtime the queue is never fed and the window simply
-/// cannot be asked. A bus that refuses us costs nothing but that either.
-fn serve_files_interface() -> crate::files_service::SharedQueue {
-    let queue = crate::files_service::SharedQueue::default();
-    if let Ok(runtime) = tokio::runtime::Handle::try_current() {
-        let service_queue = Arc::clone(&queue);
-        runtime.spawn(async move {
-            if let Err(error) = crate::files_service::serve(service_queue).await {
-                tracing::warn!(%error, "cannot serve org.otto.Files1");
-            }
-        });
+impl FilesWindow {
+    /// A window over `browser`, not yet on screen; see [`FilesWindow::show`].
+    fn new(browser: Browser, picker_queue: Option<crate::dbus::SharedQueue>) -> Self {
+        Self {
+            pane_surfaces: None,
+            window: None,
+            app_menu: None,
+            app_menu_at: std::time::Instant::now(),
+            info_window: Rc::new(RefCell::new(None)),
+            open_with_window: Rc::new(RefCell::new(None)),
+            state: Arc::new(Mutex::new(browser)),
+            frost: None,
+            opaque_region: None,
+            modifiers: Arc::new(Mutex::new(Modifiers::default())),
+            context_menu: None,
+            dropdowns: None,
+            peek_target: Arc::new(Mutex::new(None)),
+            palette_target: Arc::new(Mutex::new(None)),
+            picker_queue,
+            desk_surface_editing: false,
+            desk_input_region: None,
+            desk_config_watch: None,
+            overflow_surface: Rc::new(RefCell::new(None)),
+            overflow_focus_seen: false,
+        }
     }
-    queue
 }
 
 #[cfg(test)]
@@ -1512,6 +1529,8 @@ mod folder_views_tests;
 mod rename_tests;
 
 #[cfg(test)]
+mod picker_toolbar_tests;
+#[cfg(test)]
 mod typeahead_tests;
 
 #[cfg(test)]
@@ -1520,6 +1539,10 @@ mod palette_tests;
 
 #[cfg(test)]
 mod dnd_tests;
+
+/// The desk's overflow tile and its panel, under `overflow = "stack"`.
+#[cfg(test)]
+mod desk_overflow_tests;
 
 #[cfg(test)]
 mod watch_tests;

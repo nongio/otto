@@ -1,0 +1,51 @@
+[package]
+name = "otto-render"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Otto's render stack: the Skia renderer over Smithay's GL and Vulkan backends, and the scene render elements"
+
+# The compositor's pixels: it turns elements into frames and knows nothing of
+# windows, workspaces, input or configuration, which stay in `otto` and hand
+# it what to draw.
+[dependencies]
+laye-rs.workspace = true
+libc.workspace = true
+otto-foundations = { path = "../../components/otto-foundations" }
+profiling.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+# The Vulkan wallpaper tests paint with the compositor's own wallpaper code.
+otto-kit = { path = "../../components/otto-kit" }
+
+[dependencies.smithay]
+workspace = true
+features = ["wayland_frontend", "renderer_gl", "backend_egl"]
+
+[features]
+# The features mirror the compositor's, which forwards each one here, and so
+# do the defaults: the render stack has only ever been built with the udev
+# backend (the plane path and its dmabufs are udev code).
+default = ["egl", "udev", "vulkan"]
+egl = ["smithay/use_system_lib", "smithay/backend_egl"]
+# The udev backend's multi-GPU renderer and the plane path's dmabufs.
+udev = [
+    "smithay/backend_drm",
+    "smithay/backend_gbm",
+    "smithay/renderer_multi",
+]
+# Skia on Vulkan for the udev backend.
+vulkan = ["udev", "smithay/backend_vulkan"]
+# The fps counter's digits.
+ticker = []
+# File-driven live toggles and command files (see src/debug_hooks.rs).
+debug-hooks = []
+perf-counters = []
+profile-with-puffin = ["profiling/profile-with-puffin"]
+
+[lints]
+workspace = true

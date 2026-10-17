@@ -15,7 +15,6 @@ impl Browser {
             show_hidden: false,
             list_columns: view::ListColumnWidths::default(),
             column_resize: None,
-            miller_w: view::MILLER_W,
             miller_resize: None,
             last_miller_click: None,
             last_row_click: None,
@@ -24,6 +23,7 @@ impl Browser {
             last_boundary_click: None,
             rename: None,
             pending_rename: None,
+            enter_after_rename: false,
             palette: None,
             palette_selection: None,
             palette_offset: (0.0, 0.0),
@@ -81,6 +81,10 @@ impl Browser {
             peek_follow: false,
             trash: false,
             desk: false,
+            desk_editing: None,
+            desk_config: None,
+            overflow_panel: None,
+            overflow_panel_closing: None,
             recent: false,
             search: None,
             search_where: String::new(),
@@ -94,6 +98,13 @@ impl Browser {
             photo_dims: crate::photos::Dims::new(),
             photo_hover: None,
             photo_swatch_hover: None,
+            photo_tool_hover: None,
+            photo_turns: std::collections::VecDeque::new(),
+            photo_turning: false,
+            photos_video_key: None,
+            last_preview_click: None,
+            video_click_pending: false,
+            opening_stage: None,
             panel_text: None,
             info_selection: Default::default(),
             folder_views: Vec::new(),
@@ -104,6 +115,7 @@ impl Browser {
             photos_slider: Default::default(),
             zoom_pinch: None,
             photos_group_open: false,
+            location_open: false,
             photos_copied: None,
             photos_anchor: None,
             scroll_to_after_layout: None,
@@ -120,6 +132,8 @@ impl Browser {
             open_with_dirty: false,
             controls: WindowControlsState::new(),
             focused: true,
+            decoration: otto_kit::components::titlebar::DecorationVariant::Floating,
+            closing: false,
             blur_available: false,
             dirty: true,
             scroll_moved: false,
@@ -153,11 +167,11 @@ impl Browser {
     /// browser's geometry is written against where the file area starts. What
     /// is set here is only what the *listing* is.
     pub(super) fn for_trash() -> Self {
-        // Two things are set, and this is the only place either is: the view
-        // layer's shell, which decides the chrome and is process-wide because
-        // a window does not change shell, and this browser's own flag, which
-        // decides what the commands do. Nothing else may set the global —
-        // that is what keeps the window's behaviour and its chrome agreeing.
+        // Two things are set: the view layer's shell, which decides the
+        // chrome, and this browser's own flag, which decides what the
+        // commands do. The shell is put back from the flag whenever this
+        // window is locked (see `Browser::enter_view`), which is what keeps
+        // the window's behaviour and its chrome agreeing.
         view::set_shell(view::Shell::Trash);
         Self::listing_the_trash()
     }
@@ -186,11 +200,7 @@ impl Browser {
     /// else to go.
     pub(super) fn for_desk(config: &crate::desk::DeskConfig) -> Self {
         view::set_shell(view::Shell::Desk);
-        view::set_desk_layout(view::DeskLayout {
-            anchor: config.anchor,
-            size: config.size,
-            padding: config.padding,
-        });
+        view::set_desk_layout(view::DeskLayout::from_config(config));
         view::set_grid_icon(config.icon_size);
         Self::listing_the_desk(config)
     }
@@ -211,6 +221,7 @@ impl Browser {
         // the way a window in the background does.
         browser.focused = false;
         browser.desk = true;
+        browser.desk_config = Some(config.clone());
         browser
     }
 

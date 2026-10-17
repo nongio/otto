@@ -526,21 +526,24 @@ pub fn describe() -> Vec<std::collections::HashMap<String, zbus::zvariant::Owned
             if let Some(step) = spec.step {
                 entry.insert("step".to_string(), numeric(spec.ty, step).to_variant());
             }
-            if !spec.choices.is_empty() {
-                put(
-                    &mut entry,
-                    "choices",
-                    SettingValue::StrList(spec.choices.iter().map(|c| c.to_string()).collect()),
-                );
-            }
-            if !spec.choice_labels.is_empty() {
-                put(
-                    &mut entry,
-                    "choice_labels",
-                    SettingValue::StrList(
-                        spec.choice_labels.iter().map(|c| choice_label(c)).collect(),
-                    ),
-                );
+            let choices = spec.choices_now();
+            if !choices.is_empty() {
+                // Labels for the choices past the static list, such as the
+                // widgets a customised theme adds, come from their names.
+                let labels = spec
+                    .choice_labels
+                    .iter()
+                    .map(|c| choice_label(c))
+                    .chain(
+                        choices[spec.choices.len()..]
+                            .iter()
+                            .map(|name| crate::desktop_widget::widget_label(name)),
+                    )
+                    .collect();
+                put(&mut entry, "choices", SettingValue::StrList(choices));
+                if !spec.choice_labels.is_empty() {
+                    put(&mut entry, "choice_labels", SettingValue::StrList(labels));
+                }
             }
             let unavailable = spec.unavailable_now();
             if !unavailable.is_empty() {

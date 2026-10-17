@@ -31,7 +31,7 @@ mkdir -p "$outdir"
 outdir=$(cd "$outdir" && pwd)
 
 BINARIES=(otto otto-bar otto-islands otto-lock otto-authorize otto-greeter otto-rdp
-          otto-settings otto-files otto-launcher otto-emoji otto-stash otto-peek otto-preview
+          otto-settings otto-files otto-launcher otto-emoji otto-stash otto-canvas otto-peek otto-preview
           otto-media-worker otto-msg otto-search otto-agents xdg-desktop-portal-otto)
 
 # The workspace version names the tarball and its top directory; the
@@ -61,6 +61,12 @@ install -m644 LICENSE                  "$tmpdir/$PKGDIR/LICENSE"
 install -m644 README.md                "$tmpdir/$PKGDIR/README.md"
 install -m644 otto_config.example.toml "$tmpdir/$PKGDIR/otto_config.example.toml"
 install -Dm755 resources/bin/otto-look "$tmpdir/$PKGDIR/resources/bin/otto-look"
+install -Dm644 resources/wallpaper.jpg  "$tmpdir/$PKGDIR/resources/wallpaper.jpg"
+
+# The Solar glyphs and their attribution, which PKGBUILD-nightly-bin installs.
+for f in resources/icons/solar/LICENSE resources/icons/solar/*/*.svg; do
+    install -Dm644 "$f" "$tmpdir/$PKGDIR/$f"
+done
 
 # Desktop entries. otto-trash.desktop is the Trash window — otto-files behind
 # its own entry, so it gets its own icon in the dock and the applications
@@ -86,6 +92,7 @@ for f in otto.portal \
         "$tmpdir/$PKGDIR/components/xdg-desktop-portal-otto/$f"
 done
 install -Dm644 components/otto-agents/otto-agents.service "$tmpdir/$PKGDIR/components/otto-agents/otto-agents.service"
+install -Dm644 components/otto-agents/otto-agents-bridge.service "$tmpdir/$PKGDIR/components/otto-agents/otto-agents-bridge.service"
 install -Dm644 components/otto-lock/otto-lock.pam \
     "$tmpdir/$PKGDIR/components/otto-lock/otto-lock.pam"
 install -Dm644 resources/polkit/org.otto.settings.policy \
@@ -98,6 +105,26 @@ while IFS= read -r f; do
     if [ -x "$f" ]; then m=755; else m=644; fi
     install -D -m$m "$f" "$tmpdir/$PKGDIR/$f"
 done < <(find resources/plugins/otto -type f)
+
+# The desktop widgets' ewwii configuration, likewise a tree with executable
+# scripts in it.
+while IFS= read -r f; do
+    if [ -x "$f" ]; then m=755; else m=644; fi
+    install -D -m$m "$f" "$tmpdir/$PKGDIR/$f"
+done < <(find resources/widgets -type f)
+
+# The default icon theme, Otto-MacTahoe: the PKGBUILDs copy the themes and
+# extract their symlinks from the links list into the package.
+scripts/packaging/fetch-icon-theme.sh
+mkdir -p "$tmpdir/$PKGDIR/icon-theme"
+cp -a target/icon-theme/Otto-MacTahoe target/icon-theme/Otto-MacTahoe-light \
+      target/icon-theme/Otto-MacTahoe-dark target/icon-theme/links-*.tar.gz \
+      target/icon-theme/COPYING target/icon-theme/SOURCE "$tmpdir/$PKGDIR/icon-theme/"
+
+# PDFium, which Studio fills and marks up PDFs with.
+scripts/packaging/fetch-pdfium.sh
+mkdir -p "$tmpdir/$PKGDIR/pdfium"
+cp -a target/pdfium/libpdfium.so target/pdfium/LICENSE target/pdfium/licenses "$tmpdir/$PKGDIR/pdfium/"
 
 install -m644 PKGBUILD-git "$tmpdir/$PKGDIR/PKGBUILD-git"
 

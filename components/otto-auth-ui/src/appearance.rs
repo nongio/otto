@@ -7,6 +7,7 @@
 
 use std::path::PathBuf;
 
+use otto_kit::color::parse_hex;
 use serde::Deserialize;
 use skia_safe::Color;
 
@@ -16,6 +17,8 @@ pub struct Appearance {
     /// Wallpaper to fill the screen with. `None` draws a gradient built from
     /// [`Appearance::background`] instead.
     pub wallpaper: Option<PathBuf>,
+    /// How the wallpaper fills the screen, as the desktop lays it out.
+    pub wallpaper_layout: otto_kit::wallpaper::Layout,
     pub background: Color,
     pub accent: Color,
     pub font_family: String,
@@ -26,6 +29,7 @@ impl Default for Appearance {
     fn default() -> Self {
         Self {
             wallpaper: None,
+            wallpaper_layout: otto_kit::wallpaper::Layout::default(),
             background: Color::from_argb(255, 26, 26, 46),
             accent: Color::from_argb(255, 10, 132, 255),
             font_family: "Inter".to_string(),
@@ -64,16 +68,7 @@ impl Appearance {
 
     /// System config first, so the user's overrides it.
     fn config_paths() -> Vec<PathBuf> {
-        let mut paths = vec![PathBuf::from("/etc/otto/config.toml")];
-
-        let config_home = std::env::var_os("XDG_CONFIG_HOME")
-            .map(PathBuf::from)
-            .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")));
-        if let Some(dir) = config_home {
-            paths.push(dir.join("otto").join("config.toml"));
-        }
-
-        paths
+        otto_kit::xdg::otto_config_paths("config.toml")
     }
 
     fn apply(&mut self, config: ConfigFile) {
@@ -85,6 +80,24 @@ impl Appearance {
         {
             self.wallpaper = Some(PathBuf::from(image));
         }
+        let layout = &mut self.wallpaper_layout;
+        if let Some(mode) = config
+            .background_mode
+            .as_deref()
+            .and_then(otto_kit::wallpaper::Mode::parse)
+        {
+            layout.mode = mode;
+        }
+        if let Some(x) = config.background_position_x {
+            layout.position.0 = x as f32;
+        }
+        if let Some(y) = config.background_position_y {
+            layout.position.1 = y as f32;
+        }
+        if let Some(zoom) = config.background_zoom {
+            layout.zoom = zoom as f32;
+        }
+        *layout = layout.sanitised();
         if let Some(color) = config.background_color.as_deref().and_then(parse_hex) {
             self.background = color;
         }
@@ -104,78 +117,30 @@ impl Appearance {
 struct ConfigFile {
     background_image: Option<String>,
     background_color: Option<String>,
+    background_mode: Option<String>,
+    background_position_x: Option<f64>,
+    background_position_y: Option<f64>,
+    background_zoom: Option<f64>,
     accent_color: Option<String>,
     font_family: Option<String>,
     theme_scheme: Option<String>,
 }
 
-/// Otto's named accents. Kept in step with `src/theme/colors_light.rs` in the
-/// compositor, which is where these values come from.
+/// Otto's named accents, from otto-kit's light palette — the one the
+/// compositor resolves `accent_color` against in the light scheme.
 fn accent_color(name: &str) -> Color {
-    let hex = match name.trim().to_ascii_lowercase().as_str() {
-        "red" => "#FF453A",
-        "orange" => "#FF9500",
-        "yellow" => "#FFCC00",
-        "green" => "#28CD41",
-        "mint" => "#00C7BE",
-        "teal" => "#59ADC4",
-        "cyan" => "#55BEF0",
-        "indigo" => "#5856D6",
-        "purple" => "#AF52DE",
-        "pink" => "#FF2D55",
-        "gray" => "#8E8E93",
-        "brown" => "#A2845E",
+    let name = name.trim().to_ascii_lowercase();
+    otto_kit::theme::Theme::light_palette()
+        .named_accent(&name)
         // An unknown name falls back to blue, as the compositor's theme does;
         // a literal colour is also accepted so a greeter can be themed alone.
-        other => return parse_hex(other).unwrap_or(Color::from_argb(255, 10, 132, 255)),
-        // "blue" lands here through the fallback, which resolves to the same
-        // value, so it needs no arm of its own.
-    };
-    parse_hex(hex).unwrap_or(Color::from_argb(255, 10, 132, 255))
-}
-
-/// Parse `#RGB`, `#RRGGBB` or `#RRGGBBAA`.
-fn parse_hex(value: &str) -> Option<Color> {
-    let hex = value.trim().strip_prefix('#')?;
-    let byte = |i: usize| u8::from_str_radix(&hex[i..i + 2], 16).ok();
-
-    match hex.len() {
-        3 => {
-            let nibble = |i: usize| {
-                u8::from_str_radix(&hex[i..i + 1], 16)
-                    .ok()
-                    .map(|v| v << 4 | v)
-            };
-            Some(Color::from_argb(255, nibble(0)?, nibble(1)?, nibble(2)?))
-        }
-        6 => Some(Color::from_argb(255, byte(0)?, byte(2)?, byte(4)?)),
-        8 => Some(Color::from_argb(byte(6)?, byte(0)?, byte(2)?, byte(4)?)),
-        _ => None,
-    }
+        .or_else(|| parse_hex(&name))
+        .unwrap_or(Color::from_argb(255, 10, 132, 255))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn parses_hex_colours() {
-        assert_eq!(
-            parse_hex("#0A84FF"),
-            Some(Color::from_argb(255, 10, 132, 255))
-        );
-        assert_eq!(
-            parse_hex("  #fff  "),
-            Some(Color::from_argb(255, 255, 255, 255))
-        );
-        assert_eq!(
-            parse_hex("#FF000080"),
-            Some(Color::from_argb(128, 255, 0, 0))
-        );
-        assert_eq!(parse_hex("0A84FF"), None, "a leading # is required");
-        assert_eq!(parse_hex("#GGGGGG"), None);
-        assert_eq!(parse_hex("#12345"), None);
-    }
 
     #[test]
     fn named_accents_resolve_and_unknown_names_fall_back() {
@@ -189,6 +154,20 @@ mod tests {
         assert_eq!(accent_color("#123456"), Color::from_argb(255, 18, 52, 86));
     }
 
+    /// The wallpaper layout keys come through, and a later file overrides
+    /// only what it sets.
+    #[test]
+    fn the_wallpaper_layout_is_read() {
+        let mut appearance = Appearance::default();
+        appearance
+            .apply(toml::from_str("background_mode = \"tile\"\nbackground_zoom = 2.0\n").unwrap());
+        appearance.apply(toml::from_str("background_position_y = 0.0\n").unwrap());
+        let layout = appearance.wallpaper_layout;
+        assert_eq!(layout.mode, otto_kit::wallpaper::Mode::Tile);
+        assert_eq!(layout.zoom, 2.0);
+        assert_eq!(layout.position, (0.5, 0.0));
+    }
+
     /// An empty `background_image` means "no wallpaper", not a path to ""..
     #[test]
     fn empty_config_strings_are_ignored() {
@@ -196,6 +175,10 @@ mod tests {
         appearance.apply(ConfigFile {
             background_image: Some("  ".into()),
             background_color: None,
+            background_mode: None,
+            background_position_x: None,
+            background_position_y: None,
+            background_zoom: None,
             accent_color: None,
             font_family: Some("".into()),
             theme_scheme: Some("Light".into()),

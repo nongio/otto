@@ -302,7 +302,6 @@ impl<A: RendererApi> Otto<UdevData<A>> {
     }
 
     /// Sets up a desktop (normal display) connector
-    #[allow(clippy::too_many_arguments)]
     fn setup_desktop_connector(
         &mut self,
         node: DrmNode,
@@ -589,7 +588,7 @@ impl<A: RendererApi> Otto<UdevData<A>> {
             smithay::desktop::layer_map_for_output(&output).arrange();
         }
 
-        #[cfg(feature = "fps_ticker")]
+        #[cfg(feature = "ticker")]
         let fps_element = self
             .backend_data
             .fps_texture
@@ -655,9 +654,9 @@ impl<A: RendererApi> Otto<UdevData<A>> {
                 render_node: device_render_node,
                 global: Some(global),
                 compositor,
-                #[cfg(feature = "fps_ticker")]
+                #[cfg(feature = "ticker")]
                 fps: fps_ticker::Fps::default(),
-                #[cfg(feature = "fps_ticker")]
+                #[cfg(feature = "ticker")]
                 fps_element,
                 dmabuf_feedback,
                 #[cfg(feature = "metrics")]

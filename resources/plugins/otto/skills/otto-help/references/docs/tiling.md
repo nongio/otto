@@ -5,7 +5,7 @@ overlapping, no wasted space. You shape the layout by splitting cells, moving
 windows between them and dragging the boundaries. Otto rearranges the windows
 for you as they open and close.
 
-![A tiled workspace: Otto Settings, a Files window and a terminal each filling their own cell, with no overlap](images/tiling.jpg)
+![A tiled workspace: a code editor filling the left half, and a terminal and a Files window stacked on the right, with no overlap](images/tiling.jpg)
 
 Tiling is a mode of **one workspace on one monitor**. Otto stacks windows by
 default, and you can switch any workspace between stacking and tiling whenever

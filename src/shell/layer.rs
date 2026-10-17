@@ -149,19 +149,9 @@ impl LayerShellSurface {
         self.geometry
     }
 
-    /// Update the computed geometry
-    pub fn set_geometry(&mut self, geometry: Rectangle<i32, Logical>) {
-        self.geometry = geometry;
-    }
-
     /// Get the last configure serial
     pub fn last_configure_serial(&self) -> u32 {
         self.last_configure_serial.load(Ordering::SeqCst)
-    }
-
-    /// Set the last configure serial
-    pub fn set_last_configure_serial(&self, serial: u32) {
-        self.last_configure_serial.store(serial, Ordering::SeqCst);
     }
 
     /// Check if this surface can receive keyboard focus

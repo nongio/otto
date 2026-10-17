@@ -23,7 +23,7 @@ pub const ITEM_HEIGHT: f32 = 30.0;
 pub const ITEM_STEP: f32 = 32.0;
 /// Horizontal and top/bottom inset of the row from the list's own bounds.
 pub const ITEM_INSET: f32 = 8.0;
-pub const CORNER_RADIUS: f32 = 7.0;
+pub(super) const CORNER_RADIUS: f32 = 7.0;
 /// Icon box side length, centred inside the row.
 pub const ICON_SIZE: f32 = 20.0;
 /// Distance from the icon box's centre to the row's left edge.

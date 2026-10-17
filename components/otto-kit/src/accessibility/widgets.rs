@@ -653,7 +653,10 @@ impl A11yTree {
                         } else {
                             crate::t!("files-kind-document")
                         };
-                        (row.name.clone(), format!("{kind}, {}", bytes(row.size)))
+                        (
+                            row.name.clone(),
+                            format!("{kind}, {}", crate::format::file_size(row.size)),
+                        )
                     })
                     .collect();
 
@@ -756,22 +759,6 @@ fn spoken_block(block: &crate::preview::Block) -> String {
         Block::Item { marker, spans, .. } => format!("{marker} {}", joined(spans)),
         Block::Code { lines } => lines.join("\n"),
         Block::Rule => String::new(),
-    }
-}
-
-/// A size, as a preview row says it.
-fn bytes(size: u64) -> String {
-    const UNITS: [&str; 5] = ["bytes", "kB", "MB", "GB", "TB"];
-    let mut value = size as f64;
-    let mut unit = 0;
-    while value >= 1000.0 && unit + 1 < UNITS.len() {
-        value /= 1000.0;
-        unit += 1;
-    }
-    if unit == 0 {
-        format!("{size} {}", UNITS[0])
-    } else {
-        format!("{value:.1} {}", UNITS[unit])
     }
 }
 

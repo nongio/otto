@@ -80,6 +80,10 @@ pub struct AgentFile {
     /// The frontmatter's `skills`, comma-separated there: the skills the agent
     /// is given when it runs.
     pub skills: Vec<String>,
+    /// The frontmatter's `session-only: true`: an agent a session runs as only
+    /// when its client asks for it (Preview's `studio`), never one offered for
+    /// questions about the desktop.
+    pub session_only: bool,
     /// The system prompt: everything under the frontmatter, trimmed.
     pub body: String,
     /// The file itself, absolute.
@@ -277,6 +281,9 @@ fn read_agents(dir: &Path) -> Vec<AgentFile> {
                 tools: comma_list(keys.get("tools")),
                 model: keys.remove("model").filter(|model| !model.is_empty()),
                 skills: comma_list(keys.get("skills")),
+                session_only: keys
+                    .get("session-only")
+                    .is_some_and(|value| value == "true"),
                 body: body(&text).to_owned(),
                 path: file,
             })
@@ -377,6 +384,7 @@ pub fn claude_system_prompt(plugins: &[Plugin]) -> String {
     let agent_names: Vec<String> = plugins
         .iter()
         .flat_map(|plugin| &plugin.agents)
+        .filter(|agent| !agent.session_only)
         .map(|agent| format!("`{}`", agent.name))
         .collect();
     let loaded = match plugin_names.len() {
@@ -440,7 +448,20 @@ pub fn claude_session_meta(
         .iter()
         .map(|plugin| serde_json::json!({ "type": "local", "path": plugin.dir }))
         .collect();
-    let mut options = serde_json::json!({ "plugins": dirs });
+    // Loading one of the desktop's own skills is reading its instructions:
+    // nothing to ask about, and a question on every request otherwise. What
+    // a skill then runs is still asked about, unless its `allowed-tools`
+    // says otherwise.
+    let allowed: Vec<String> = plugins
+        .iter()
+        .flat_map(|plugin| {
+            plugin.skills.iter().flat_map(move |skill| {
+                let name = format!("{}:{}", plugin.name, skill.name);
+                [format!("Skill({name})"), format!("Skill({name}:*)")]
+            })
+        })
+        .collect();
+    let mut options = serde_json::json!({ "plugins": dirs, "allowedTools": allowed });
     // `run_as` is Claude's own `--agent plugin:name`: Claude reads the agent
     // file itself and honours its instructions, tools, skills and model. It
     // travels as a CLI flag because the adapter drops the SDK's `agent`
@@ -492,7 +513,7 @@ pub fn claude_cli_args(plugins: &[Plugin], run_as: Option<&str>) -> Vec<String> 
 /// directory the Agent Skills convention names and Copilot, Codex and Claude
 /// read. `None` without a home directory.
 pub fn default_skills_dir() -> Option<PathBuf> {
-    std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".agents/skills"))
+    crate::xdg::home().map(|home| home.join(".agents/skills"))
 }
 
 /// One skill's place in a skills directory.
@@ -1003,7 +1024,10 @@ mod tests {
         assert_eq!(
             serde_json::Value::Object(meta),
             serde_json::json!({
-                "claudeCode": { "options": { "plugins": [{ "type": "local", "path": dir }] } },
+                "claudeCode": { "options": {
+                    "plugins": [{ "type": "local", "path": dir }],
+                    "allowedTools": ["Skill(otto:otto)", "Skill(otto:otto:*)"],
+                } },
                 "systemPrompt": { "append": claude_system_prompt(&plugins) },
             }),
             "`append` extends the adapter's claude_code preset; a string would replace it"
@@ -1101,6 +1125,22 @@ mod tests {
             ),
             "{prompt}"
         );
+
+        // An agent a session runs as only when asked for is not offered.
+        agent_file(
+            &helper,
+            "studio",
+            "description: Works on a file\nsession-only: true\n",
+        );
+        let plugins = discover_in(std::slice::from_ref(&root));
+        assert!(
+            plugins
+                .iter()
+                .flat_map(|plugin| &plugin.agents)
+                .any(|agent| agent.session_only)
+        );
+        let prompt = claude_system_prompt(&plugins);
+        assert!(!prompt.contains("`studio`"), "{prompt}");
 
         std::fs::remove_dir_all(&root).unwrap();
     }

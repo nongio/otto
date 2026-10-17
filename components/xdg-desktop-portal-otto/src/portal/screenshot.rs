@@ -1,19 +1,25 @@
 //! `org.freedesktop.impl.portal.Screenshot` backend.
 //!
 //! Capture goes through `grim`, which already talks to Otto's wlr-screencopy
-//! support directly — no new compositor-side capture path needed. Interactive
-//! requests are gated by a confirmation dialog, reusing the same renderer
-//! [`AccessPortal`](crate::portal::AccessPortal) brokers to.
+//! support directly — no new compositor-side capture path needed. Requests are
+//! gated by a confirmation dialog, reusing the same renderer
+//! [`AccessPortal`](crate::portal::AccessPortal) brokers to, unless the
+//! frontend says it already checked the app's `screenshot` permission and the
+//! app did not ask for an interactive capture (see [`needs_confirmation`]).
 
 use std::collections::HashMap;
-use std::process::Command;
+use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use otto_foundations::uri::path_to_uri;
+use otto_foundations::xdg;
+use tokio::process::Command;
 use tracing::{info, warn};
-use zbus::interface;
 use zbus::zvariant::{OwnedObjectPath, OwnedValue, Str, Value};
+use zbus::{interface, ObjectServer};
 
 use crate::otto_client::OttoClient;
+use crate::portal::Request;
 
 pub struct ScreenshotPortal {
     client: OttoClient,
@@ -36,19 +42,50 @@ impl ScreenshotPortal {
     /// `response`: `0` success, `1` cancelled, `2` failed.
     async fn screenshot(
         &self,
-        _handle: OwnedObjectPath,
+        handle: OwnedObjectPath,
         app_id: String,
         _parent_window: String,
         options: HashMap<String, OwnedValue>,
+        #[zbus(object_server)] object_server: &ObjectServer,
     ) -> (u32, HashMap<String, OwnedValue>) {
         info!(?app_id, "Screenshot requested");
 
-        let interactive = options
-            .get("interactive")
-            .and_then(|v| bool::try_from(v).ok())
-            .unwrap_or(false);
+        // Exported for the length of the call so the frontend can close it
+        // when the app withdraws.
+        let request = Request::new(handle.clone());
+        let cancellation = request.cancellation();
+        let exported = object_server
+            .at(handle.clone(), request)
+            .await
+            .unwrap_or_else(|err| {
+                warn!(?err, %handle, "could not export the request object");
+                false
+            });
 
-        if interactive {
+        let result = cancellation
+            .run(self.take(&app_id, &options))
+            .await
+            .unwrap_or_else(|| {
+                info!(?app_id, "Screenshot request closed by the frontend");
+                (1, HashMap::new())
+            });
+
+        if exported {
+            if let Err(err) = object_server.remove::<Request, _>(&handle).await {
+                warn!(?err, %handle, "could not remove the request object");
+            }
+        }
+        result
+    }
+}
+
+impl ScreenshotPortal {
+    async fn take(
+        &self,
+        app_id: &str,
+        options: &HashMap<String, OwnedValue>,
+    ) -> (u32, HashMap<String, OwnedValue>) {
+        if needs_confirmation(options) {
             let proxy = match self.client.dialog_proxy().await {
                 Ok(p) => p,
                 Err(err) => {
@@ -59,7 +96,7 @@ impl ScreenshotPortal {
             let body = format!("{app_id} wants to take a screenshot of your screen.");
             match proxy
                 .present_access(
-                    &app_id,
+                    app_id,
                     "Take Screenshot",
                     "",
                     &body,
@@ -82,7 +119,7 @@ impl ScreenshotPortal {
 
         match capture_to_file().await {
             Ok(path) => {
-                let uri = format!("file://{path}");
+                let uri = path_to_uri(&path);
                 let mut results = HashMap::new();
                 if let Ok(v) = OwnedValue::try_from(Value::from(Str::from(uri))) {
                     results.insert("uri".to_string(), v);
@@ -98,22 +135,90 @@ impl ScreenshotPortal {
     }
 }
 
-/// Runs `grim` to capture the full output set to a fresh PNG under
-/// `~/Pictures/Screenshots/`, returning the absolute path.
+/// Whether the user has to confirm the capture in the dialog first.
 ///
-/// Blocks the calling (zbus executor) thread for the ~100ms `grim` takes —
-/// not a Tokio task, so `spawn_blocking` isn't available here.
-async fn capture_to_file() -> anyhow::Result<String> {
-    let home = std::env::var("HOME").map_err(|_| anyhow::anyhow!("HOME is not set"))?;
-    let dir = format!("{home}/Pictures/Screenshots");
-    std::fs::create_dir_all(&dir)?;
+/// Per the impl Screenshot spec (version 2), `permission_store_checked` says
+/// the frontend already looked up the app's `screenshot` permission and it
+/// was granted; absent, it means no. Without it a non-interactive request is
+/// just as unvetted as an interactive one, so only a checked, non-interactive
+/// request skips the dialog.
+fn needs_confirmation(options: &HashMap<String, OwnedValue>) -> bool {
+    let flag = |key: &str| {
+        options
+            .get(key)
+            .and_then(|v| bool::try_from(v).ok())
+            .unwrap_or(false)
+    };
+    flag("interactive") || !flag("permission_store_checked")
+}
+
+/// Runs `grim` to capture the full output set to a fresh PNG under the
+/// user's Pictures folder, in `Screenshots/`, returning the absolute path.
+///
+/// zbus runs on Tokio here, so `grim` is awaited as a child process rather
+/// than blocking the executor for the ~100ms it takes.
+async fn capture_to_file() -> anyhow::Result<PathBuf> {
+    let dir = pictures_dir()?.join("Screenshots");
+    tokio::fs::create_dir_all(&dir).await?;
 
     let ts = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis();
-    let path = format!("{dir}/screenshot-{ts}.png");
+    let path = dir.join(format!("screenshot-{ts}.png"));
 
-    let status = Command::new("grim").arg(&path).status()?;
+    let status = Command::new("grim").arg(&path).status().await?;
     if !status.success() {
         anyhow::bail!("grim exited with {status}");
     }
     Ok(path)
+}
+
+/// `XDG_PICTURES_DIR` from `user-dirs.dirs`, or `~/Pictures`.
+fn pictures_dir() -> anyhow::Result<PathBuf> {
+    let home = xdg::home().ok_or_else(|| anyhow::anyhow!("HOME is not set"))?;
+    Ok(xdg::user_dir("XDG_PICTURES_DIR").unwrap_or_else(|| home.join("Pictures")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    fn options(pairs: &[(&str, bool)]) -> HashMap<String, OwnedValue> {
+        pairs
+            .iter()
+            .map(|(key, value)| (key.to_string(), OwnedValue::from(*value)))
+            .collect()
+    }
+
+    #[test]
+    fn only_a_checked_non_interactive_request_skips_the_dialog() {
+        assert!(needs_confirmation(&options(&[])));
+        assert!(needs_confirmation(&options(&[("interactive", false)])));
+        assert!(needs_confirmation(&options(&[("interactive", true)])));
+        assert!(needs_confirmation(&options(&[(
+            "permission_store_checked",
+            false
+        )])));
+        assert!(needs_confirmation(&options(&[
+            ("interactive", true),
+            ("permission_store_checked", true),
+        ])));
+        assert!(!needs_confirmation(&options(&[(
+            "permission_store_checked",
+            true
+        )])));
+        assert!(!needs_confirmation(&options(&[
+            ("interactive", false),
+            ("permission_store_checked", true),
+        ])));
+    }
+
+    /// The escaping is the toolkit's, so the URI an app is handed opens
+    /// the file it names.
+    #[test]
+    fn a_path_with_spaces_and_non_ascii_is_percent_encoded() {
+        assert_eq!(
+            path_to_uri(Path::new("/home/me/Immagini/Schermate 2026/caffè.png")),
+            "file:///home/me/Immagini/Schermate%202026/caff%C3%A8.png"
+        );
+    }
 }

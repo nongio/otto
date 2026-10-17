@@ -7,6 +7,9 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 pub mod default_apps;
 pub mod file;
 pub mod shortcuts;
+pub mod wallpaper;
+
+pub use wallpaper::{save_output_wallpaper, WallpaperOverride};
 
 use shortcuts::{build_bindings, RunCommandConfig, ShortcutBinding, ShortcutMap};
 use toml::map::Entry;
@@ -47,7 +50,25 @@ pub struct Config {
     pub theme_scheme: ThemeScheme,
     pub gtk_theme: Option<String>,
     pub background_image: String,
+    /// The colour of the gradient shown when there is no wallpaper, and of
+    /// what shows around a fitted or centred one.
     pub background_color: String,
+    /// How the wallpaper fills the screen: `fill`, `fit`, `stretch`, `center`,
+    /// `tile` or `span`. Anything else is read as `fill`. See
+    /// [`Config::wallpaper_layout`].
+    pub background_mode: String,
+    /// Which part of a cropped wallpaper shows, and where a smaller one sits,
+    /// as fractions across and down: CSS's `object-position`. `0.5`
+    /// centres.
+    pub background_position_x: f64,
+    pub background_position_y: f64,
+    /// Extra magnification in `fill` and `span` modes, from 1.0, panned by
+    /// the position.
+    pub background_zoom: f64,
+    /// Per-output wallpaper overrides, keyed by output name:
+    /// `[background_outputs."DP-1"]`. See [`wallpaper::WallpaperOverride`].
+    #[serde(default)]
+    pub background_outputs: BTreeMap<String, WallpaperOverride>,
     pub locales: Vec<String>,
     pub use_10bit_color: bool,
     /// The accent colour Otto's own interface paints with: a palette name,
@@ -103,6 +124,12 @@ pub struct Config {
     #[serde(default)]
     pub desk: DeskConfig,
     #[serde(default)]
+    pub canvas: CanvasConfig,
+    #[serde(default)]
+    pub desktop: DesktopConfig,
+    #[serde(default)]
+    pub topbar: TopbarConfig,
+    #[serde(default)]
     pub search: SearchConfig,
     #[serde(default)]
     pub workspaces: WorkspacesConfig,
@@ -152,7 +179,7 @@ impl Default for Config {
             // the cursor and every panel twice the size it should be.
             screen_scale: 1.0,
             displays: DisplaysConfig::default(),
-            cursor_theme: "Notwaita-Black".to_string(),
+            cursor_theme: "Otto-MacTahoe".to_string(),
             icon_theme: None,
             cursor_size: 24,
             input: InputConfig::default(),
@@ -171,6 +198,11 @@ impl Default for Config {
             gtk_theme: None,
             background_image: "".to_string(),
             background_color: "#1a1a2e".to_string(),
+            background_mode: otto_kit::wallpaper::Mode::default().token().to_string(),
+            background_position_x: 0.5,
+            background_position_y: 0.5,
+            background_zoom: 1.0,
+            background_outputs: BTreeMap::new(),
             locales: Vec::new(),
             use_10bit_color: false,
             accent_color: default_accent_color(),
@@ -185,6 +217,9 @@ impl Default for Config {
             login: LoginConfig::default(),
             lock: LockConfig::default(),
             desk: DeskConfig::default(),
+            canvas: CanvasConfig::default(),
+            desktop: DesktopConfig::default(),
+            topbar: TopbarConfig::default(),
             search: SearchConfig::default(),
             workspaces: WorkspacesConfig::default(),
             tiling: TilingConfig::default(),
@@ -339,7 +374,7 @@ impl Config {
                     continue;
                 }
             };
-            match content.parse::<toml::Value>() {
+            match toml::from_str::<toml::Value>(&content) {
                 Ok(mut value) => {
                     if let (Some(key), Some(writable)) = (without, writable.as_ref()) {
                         if &layer == writable {
@@ -369,6 +404,7 @@ impl Config {
             Self::default()
         });
 
+        errors.extend(config.wallpaper_problems());
         config.rebuild_shortcut_bindings();
         (config, errors)
     }
@@ -481,16 +517,7 @@ fn user_config_file() -> Option<PathBuf> {
     if let Some(path) = isolated_config_file() {
         return Some(path);
     }
-    let config_dir = std::env::var("XDG_CONFIG_HOME")
-        .ok()
-        .map(PathBuf::from)
-        .or_else(|| {
-            std::env::var("HOME")
-                .ok()
-                .map(|home| PathBuf::from(home).join(".config"))
-        })?;
-
-    Some(config_dir.join("otto").join("config.toml"))
+    otto_kit::xdg::otto_config_file("config.toml")
 }
 
 fn get_user_config_path() -> Option<PathBuf> {
@@ -777,7 +804,7 @@ fn report_materialized_dock_keys_in_file(path: &std::path::Path) {
     let Ok(content) = std::fs::read_to_string(path) else {
         return;
     };
-    let Ok(doc) = content.parse::<toml::Value>() else {
+    let Ok(doc) = toml::from_str::<toml::Value>(&content) else {
         return; // a parse error is reported when the file is loaded
     };
 
@@ -1089,7 +1116,7 @@ impl Default for WorkspacesConfig {
 /// One record rather than a table per field, so a workspace reads as a
 /// workspace in the file and a new per-workspace setting is a field here
 /// instead of another parallel map.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct WorkspaceEntry {
     /// The name the user typed in the workspace selector. Absent means the
@@ -1105,6 +1132,10 @@ pub struct WorkspaceEntry {
     pub inner_gap: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub outer_gap: Option<i32>,
+    /// The workspace's own wallpaper settings, over its output's:
+    /// `[workspaces.entries."eDP-1:0".background]`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub background: Option<WallpaperOverride>,
 }
 
 fn is_false(value: &bool) -> bool {
@@ -1372,15 +1403,6 @@ impl TilingConfig {
         ))
     }
 
-    /// The gaps a workspace lays out with.
-    pub fn gaps(&self) -> crate::workspaces::tiling::Gaps {
-        crate::workspaces::tiling::Gaps {
-            inner: self.inner_gap.max(0),
-            outer: self.outer_gap.max(0),
-            smart: self.smart_gaps,
-        }
-    }
-
     /// One keyboard resize step, as a share of the container.
     pub fn step(&self) -> f32 {
         self.resize_step.clamp(0.01, 0.5)
@@ -1517,6 +1539,11 @@ fn read_workspace_entries(workspaces: &toml_edit::Table) -> BTreeMap<String, Wor
                         .get("outer_gap")
                         .and_then(|v| v.as_integer())
                         .map(|n| n as i32),
+                    background: fields
+                        .get("background")
+                        .and_then(|v| v.as_table_like())
+                        .map(WallpaperOverride::from_table)
+                        .filter(|record| !record.is_empty()),
                 },
             );
         }
@@ -1572,6 +1599,9 @@ fn workspace_entry_table(entry: &WorkspaceEntry) -> toml_edit::Table {
     }
     if let Some(outer) = entry.outer_gap {
         table.insert("outer_gap", toml_edit::value(outer as i64));
+    }
+    if let Some(background) = entry.background.as_ref().filter(|b| !b.is_empty()) {
+        table.insert("background", toml_edit::Item::Table(background.to_table()));
     }
     table
 }
@@ -1643,6 +1673,92 @@ pub struct DeskConfig {
     /// compositor starts it, restarts it if it crashes and stops it when this
     /// is switched off.
     pub enabled: bool,
+}
+
+/// The side canvas: the column of client surfaces that slides in from the
+/// right edge of an output (`specs/side-canvas.md`).
+///
+/// All values are logical points.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CanvasConfig {
+    /// Width of the column, and so of every item in it.
+    pub width: u32,
+    /// Space between the column and the edges of the usable area.
+    pub margin: u32,
+    /// Space between two items.
+    pub gap: u32,
+}
+
+impl CanvasConfig {
+    /// The narrowest column an item can usefully be drawn in.
+    pub const MIN_WIDTH: u32 = 200;
+    /// The widest column; past this it stops being a side panel.
+    pub const MAX_WIDTH: u32 = 1200;
+
+    /// [`CanvasConfig::width`], held to the range the layout supports.
+    pub fn clamped_width(&self) -> u32 {
+        self.width.clamp(Self::MIN_WIDTH, Self::MAX_WIDTH)
+    }
+}
+
+impl Default for CanvasConfig {
+    fn default() -> Self {
+        Self {
+            width: 400,
+            margin: 12,
+            gap: 12,
+        }
+    }
+}
+
+/// What the desktop shows behind the windows besides the wallpaper and the
+/// desk.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DesktopConfig {
+    /// The desktop widget: `"none"` or one of the themes Otto draws with
+    /// ewwii, `"calendar"`, `"cross_pad"` or `"grid_pad"`. The
+    /// compositor runs ewwii for it and follows changes live (see
+    /// `src/desktop_widget.rs`).
+    pub widget: String,
+}
+
+impl Default for DesktopConfig {
+    fn default() -> Self {
+        Self {
+            widget: "none".to_string(),
+        }
+    }
+}
+
+/// The top bar's application menus and clock.
+///
+/// The compositor does not draw the bar: `otto-bar` reads these over
+/// `org.otto.Settings` and follows its `Changed` signal, so they apply live
+/// without anything to reconcile here.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TopbarConfig {
+    /// Show the focused application's menus beside its name. Off, the bar
+    /// also stops serving the menu registrar, so applications keep their menu
+    /// bar in their own window.
+    pub show_app_menu: bool,
+    /// Show the date and time at the bar's right edge.
+    pub show_clock: bool,
+    /// A chrono strftime format for the clock. Empty follows the language's
+    /// own convention, or `clock_format` in `otto-bar.toml` where one is set.
+    pub clock_format: String,
+}
+
+impl Default for TopbarConfig {
+    fn default() -> Self {
+        Self {
+            show_app_menu: true,
+            show_clock: true,
+            clock_format: String::new(),
+        }
+    }
 }
 
 /// The file index behind search: which folders LocalSearch looks in and what
@@ -2569,7 +2685,7 @@ mod tests {
             screen_scale = 3.0
             font_family = "Custom Font"
         "#;
-        let override_value: toml::Value = override_toml.parse().unwrap();
+        let override_value: toml::Value = toml::from_str(override_toml).unwrap();
 
         merge_value(&mut base, override_value);
 
@@ -2588,14 +2704,14 @@ mod tests {
         let override_toml = r#"
             screen_scale = 1.5
         "#;
-        let override_value: toml::Value = override_toml.parse().unwrap();
+        let override_value: toml::Value = toml::from_str(override_toml).unwrap();
 
         merge_value(&mut base, override_value);
 
         let config: Config = base.try_into().unwrap();
         assert_eq!(config.screen_scale, 1.5);
         // Other defaults should remain
-        assert_eq!(config.cursor_theme, "Notwaita-Black");
+        assert_eq!(config.cursor_theme, "Otto-MacTahoe");
     }
 
     #[test]
@@ -2757,6 +2873,7 @@ mod tests {
                 tiling: false,
                 inner_gap: Some(0),
                 outer_gap: Some(0),
+                background: None,
             }
         );
         assert_eq!(
@@ -2803,6 +2920,7 @@ outer = 4
                 tiling: false,
                 inner_gap: Some(0),
                 outer_gap: Some(4),
+                background: None,
             }
         );
         assert_eq!(
@@ -2859,6 +2977,7 @@ tiling = true
                 tiling: true,
                 inner_gap: Some(0),
                 outer_gap: Some(4),
+                background: None,
             }
         );
         assert_eq!(config.workspaces.switch_duration, 0.5);
@@ -2953,9 +3072,8 @@ tiling = true
 
     #[test]
     fn test_reports_the_materialized_table_old_builds_wrote() {
-        let doc: toml::Value = materialized_dock_table(&[])
-            .parse()
-            .expect("config should parse");
+        let doc: toml::Value =
+            toml::from_str(&materialized_dock_table(&[])).expect("config should parse");
         let reported = materialized_dock_keys(&doc);
 
         // Every key those builds copied in with no intent behind it.
@@ -2982,7 +3100,7 @@ tiling = true
             ("colorize_color", "\"\""),
             ("colorize_intensity", "0.0"),
         ]);
-        let doc: toml::Value = raw.parse().expect("config should parse");
+        let doc: toml::Value = toml::from_str(&raw).expect("config should parse");
         let reported = materialized_dock_keys(&doc);
 
         assert!(reported.contains(&"size"));
@@ -2999,7 +3117,7 @@ tiling = true
             ("genie_span", "10"),
             ("colorize_intensity", "1"),
         ]);
-        let doc: toml::Value = raw.parse().expect("config should parse");
+        let doc: toml::Value = toml::from_str(&raw).expect("config should parse");
 
         assert_eq!(materialized_dock_keys(&doc).len(), 6);
     }
@@ -3013,7 +3131,7 @@ tiling = true
             "[dock]\nsize = 1.0\ngenie_scale = {}\n",
             default_genie_scale()
         );
-        let doc: toml::Value = raw.parse().expect("config should parse");
+        let doc: toml::Value = toml::from_str(&raw).expect("config should parse");
 
         assert!(materialized_dock_keys(&doc).is_empty());
     }
@@ -3024,7 +3142,7 @@ tiling = true
         // written after them — by a human, or by a build that no longer
         // materialises anything.
         let raw = materialized_dock_table(&[("position", "\"left\"")]);
-        let doc: toml::Value = raw.parse().expect("config should parse");
+        let doc: toml::Value = toml::from_str(&raw).expect("config should parse");
 
         assert!(materialized_dock_keys(&doc).is_empty());
     }
@@ -3184,6 +3302,36 @@ bookmarks = []
         );
     }
 
+    /// The wallpaper layout keys read into a layout; a typo in the mode is
+    /// `fill`, and numbers out of range are pulled back in, rather than the
+    /// whole file being rejected.
+    #[test]
+    fn wallpaper_layout_reads_and_sanitises() {
+        use otto_kit::wallpaper::{Layout, Mode};
+        let config: Config = toml::from_str(
+            "background_mode = \"fit\"\nbackground_position_x = 0.25\nbackground_position_y = 0.0\nbackground_zoom = 2.0\n",
+        )
+        .unwrap();
+        assert_eq!(
+            config.wallpaper_layout(),
+            Layout {
+                mode: Mode::Fit,
+                position: (0.25, 0.0),
+                zoom: 2.0,
+            }
+        );
+        let config: Config = toml::from_str(
+            "background_mode = \"zoomed\"\nbackground_position_x = 4.0\nbackground_zoom = 0.1\n",
+        )
+        .unwrap();
+        let layout = config.wallpaper_layout();
+        assert_eq!(layout.mode, Mode::Fill);
+        assert_eq!(layout.position, (1.0, 0.5));
+        assert_eq!(layout.zoom, 1.0);
+        // Unset, it is today's behaviour: filled and centred.
+        assert_eq!(Config::default().wallpaper_layout(), Layout::default());
+    }
+
     /// The example config is what the packages install as
     /// `/etc/otto/config.toml`, so it is the default a fresh install runs
     /// with. It has to parse, and it has to bring up the desktop the user
@@ -3202,6 +3350,10 @@ bookmarks = []
             "the dynamic island autostarts"
         );
         assert!(started.contains(&"otto-stash"), "the stash autostarts");
+        assert!(
+            started.contains(&"otto-canvas"),
+            "the side canvas sample autostarts"
+        );
 
         assert!(!config.dock.bookmarks.is_empty(), "the dock has bookmarks");
         assert!(

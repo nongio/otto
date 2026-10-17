@@ -63,8 +63,10 @@ dock-quit = Quit
 ## sidebar does not grow to fit them.
 
 settings-pane-general = General
+settings-pane-appearance = Appearance
 settings-pane-displays = Displays
 settings-pane-dock = Dock
+settings-pane-top-bar = Top bar
 settings-pane-tiling = Tiling
 settings-pane-keyboard = Keyboard
 settings-pane-pointing = Trackpad & Mouse
@@ -73,6 +75,19 @@ settings-pane-power = Power
 settings-pane-lock-and-login = Lock & Login
 settings-pane-search = Search
 settings-pane-agents = Agents
+settings-pane-about = About
+# The search field over the sidebar, and the line its list shows when
+# nothing matches. $query is what was typed.
+settings-sidebar-search = Search
+settings-sidebar-search-none = No settings match “{ $query }”
+settings-group-about-machine = About this computer
+settings-about-version-line = Version { $version }
+settings-about-computer-name = Computer name
+settings-about-os = Operating system
+settings-about-kernel = Kernel
+settings-about-processor = Processor
+settings-about-memory = Memory
+settings-about-memory-gb = { $size } GB
 
 
 ## Settings — General
@@ -93,15 +108,51 @@ settings-group-desktop = Desktop
 settings-background-colour = Background colour
 settings-background-image = Background image
 settings-background-image-detail = Chosen through the desktop portal's file picker
+settings-background-layout = Layout
+settings-background-zoom = Zoom
+settings-background-position-x = Position across
+settings-background-position-y = Position down
+settings-background-position-detail = Or click the part of the picture to keep in view
+settings-desktop-widget = Background widget
+settings-desktop-widget-needs-ewwii = Needs ewwii, which isn't installed
+# { $folder } is a path such as ~/.config/otto/widgets/ewwii.
+settings-desktop-widget-detail = Drawn by ewwii. Add your own widgets in { $folder }
 # Stands in for the wallpaper thumbnail when the file cannot be decoded.
 settings-background-image-unavailable = Cannot be shown
 settings-show-desk = Show files on the desktop
 settings-show-desk-detail = The files in your Desktop folder, behind the windows
 
+settings-group-desk = Desk
+settings-desk-folder = Folder
+settings-desk-folder-default = Your Desktop folder
+settings-desk-choose-folder-title = Choose a Folder for the Desk
+settings-desk-layout = Size and position
+settings-desk-layout-edit = Edit…
+settings-desk-layout-reset = Reset
+settings-desk-layout-fill = Fills the screen. Edit shows handles on the desk to drag it into place
+settings-desk-layout-placed = Placed by hand. Reset makes it fill the screen again
+settings-desk-icon-size = Icon size
+settings-desk-overflow = When icons don’t fit
+settings-desk-overflow-scroll = Scroll
+# A tile in the last cell that opens the rest in a panel above the windows.
+settings-desk-overflow-stack = Show in overlay
+settings-desk-overflow-detail = Scroll moves the grid. Show in overlay keeps the rest in the last cell and opens them above the windows
+
 settings-group-pointer-and-icons = Pointer & icons
 settings-cursor-theme = Cursor theme
 settings-cursor-size = Cursor size
 settings-icon-theme = Icon theme
+
+settings-group-app-menu = Application menus
+settings-show-app-menu = Show application menus
+settings-show-app-menu-detail = Beside the name of the application in use. Applications opened while this is off keep the menu in their own window
+
+settings-group-clock = Clock
+settings-show-clock = Show date and time
+settings-show-clock-detail = At the right end of the top bar
+settings-clock-format = Format
+settings-clock-format-detail = Any strftime format works too, as clock_format under [topbar] in the configuration file
+settings-clock-format-automatic = { $preview } (language default)
 
 settings-group-window-switcher = Window switcher
 settings-follow-cursor = Show on the pointer's display
@@ -237,6 +288,26 @@ settings-scrolling-speed = Scrolling speed
 
 settings-interface-sounds = Interface sounds
 settings-sound-theme = Sound theme
+settings-group-sound-output = Output devices
+settings-group-sound-input = Input devices
+settings-sound-output-device = Output device
+settings-sound-input-device = Input device
+settings-sound-volume = Volume
+settings-sound-mute = Mute
+settings-sound-no-outputs = No output devices
+settings-sound-no-inputs = No input devices
+settings-sound-unavailable = No sound server answered. Sound needs PipeWire with pipewire-pulse, or PulseAudio, and pactl.
+settings-sound-show = Show
+settings-sound-view-playback = Playback
+settings-sound-view-recording = Recording
+settings-sound-view-configuration = Configuration
+settings-sound-port = Port
+settings-sound-unplugged = unplugged
+settings-sound-default = Use as default
+settings-sound-profile = Profile
+settings-sound-no-playback = No app is playing sound
+settings-sound-no-recording = No app is recording sound
+settings-sound-no-cards = No sound cards
 
 
 ## Settings — Power
@@ -376,6 +447,16 @@ settings-agents-service-missing = Not installed
 settings-agents-service-unmanaged = Can't tell: this system has no systemctl
 settings-agents-start = Start
 settings-agents-restart = Restart
+# The group that turns on a chat bridge: a program such as cc-connect
+# that lets chat apps on a phone talk to the agents.
+settings-agents-bridge-group = Chat bridge
+settings-agents-bridge = Bridge
+settings-agents-bridge-off = Off. Chat apps can't reach your agents.
+settings-agents-bridge-unset = Set a command below and apply it, then turn this on.
+settings-agents-bridge-failed = Stopped after an error. journalctl --user -u otto-agents-bridge says why.
+settings-agents-bridge-missing = Not installed
+settings-agents-bridge-command = Command
+settings-agents-bridge-command-detail = What runs the bridge, such as a gateway set up to start otto-agents acp as its agent.
 # The row that opens agents.toml. Its path is shown under it.
 settings-agents-file = Configuration file
 settings-agents-none = No agents set up
@@ -459,6 +540,18 @@ settings-choice-power-ignore = Do nothing
 settings-choice-power-lock = Lock the screen
 settings-choice-power-suspend = Suspend
 settings-choice-power-shutdown = Shut down
+settings-choice-widget-none = None
+settings-choice-widget-calendar = Calendar
+# The next two name pages whose text is in English, so they stay as written.
+settings-choice-widget-cross-pad = Cross pad
+settings-choice-widget-grid-pad = Grid pad
+# How a background image fills the screen.
+settings-choice-background-fill = Fill screen
+settings-choice-background-fit = Fit to screen
+settings-choice-background-stretch = Stretch to fill
+settings-choice-background-center = Centre
+settings-choice-background-tile = Tile
+settings-choice-background-span = Span across displays
 # The automatic option for a theme that follows the system.
 settings-choice-auto = Auto
 
@@ -502,6 +595,15 @@ files-open-with-not-remembered = Opened, but couldn’t save the choice: { $erro
 files-new-folder = New Folder
 # The desk's background menu: shows the desk's own folder in a Files window.
 files-desk-open-in-files = Open in Files
+files-desk-edit-done = Done
+# The desk's overflow tile: the caption under it, and what a screen reader
+# says for it. $count is how many items it holds.
+files-desk-overflow-caption = More items
+files-desk-overflow =
+    { $count ->
+        [one] 1 more item
+       *[other] { $count } more items
+    }
 files-new-folder-with-selection = New Folder with Selection
 # $count is always two or more; the single-item case uses
 # files-new-folder-with-selection.
@@ -535,6 +637,8 @@ files-delete-count-immediately =
 # The panel opened with Ctrl+P: type a few letters of a command's name to run it.
 files-palette-placeholder = Run a command
 files-palette-no-matches = No command matches
+# The View menu item that opens the palette.
+files-palette-menu-item = Command Palette…
 # $count is how many commands the palette is offering; announced when it opens.
 files-palette-opened =
     { $count ->
@@ -739,6 +843,11 @@ files-undo-copy = Copy
 files-undo-delete = Delete
 files-undo-new-folder-with-selection = New Folder with Selection
 files-undo-rename = Rename
+# A photograph turned or flipped from the Photos info panel, for Undo, and
+# the message when its file could not be changed.
+files-undo-rotate = Rotate
+files-undo-flip = Flip
+files-turn-failed = Couldn’t turn “{ $name }”: { $error }
 # $name is a file or folder name, already wrapped in quotation marks.
 files-renamed-to = Renamed to “{ $name }”
 files-new-folder-created = New folder “{ $name }”
@@ -748,6 +857,7 @@ files-rename-failed = Couldn’t rename: { $error }
 files-new-folder-failed = Couldn’t create folder: { $error }
 files-open-failed = Couldn’t open that file: { $error }
 files-open-app-broken = the app’s launch command is broken
+files-open-no-app = no app installed opens this kind of file
 files-new-window-failed = Couldn’t open a new window: { $error }
 files-settings-open-failed = Couldn’t open Settings: { $error }
 
@@ -843,15 +953,15 @@ files-empty-trash-detail =
 ## not KiB. Most languages keep the symbols as they are; translate only the
 ## spelled-out "bytes".
 
-files-size-bytes =
+size-bytes =
     { $count ->
         [one] { $count } byte
        *[other] { $count } bytes
     }
-files-size-kb = { $value } KB
-files-size-mb = { $value } MB
-files-size-gb = { $value } GB
-files-size-tb = { $value } TB
+size-kb = { $value } KB
+size-mb = { $value } MB
+size-gb = { $value } GB
+size-tb = { $value } TB
 
 
 ## Files — dates
@@ -908,14 +1018,20 @@ files-photos-info-kind = { $format } image
 files-photos-info-copied = Copied
 files-photos-info-dimensions = Dimensions
 files-photos-info-modified = Modified
+files-photos-info-taken = Taken
 files-photos-info-where = Where
+# How the picture was taken, from its EXIF: the camera, the lens, and the
+# exposure ("ƒ/1.8 · 1/120 s · ISO 100 · 26 mm").
+files-photos-info-camera = Camera
+files-photos-info-lens = Lens
+files-photos-info-exposure = Exposure
+# Where the picture was taken, from its GPS: "45.4642° N, 9.1900° E".
+files-photos-info-location = Location
 files-photos-info-many =
     { $count ->
         [one] 1 item
        *[other] { $count } items
     }
-# The path bar's note with one picture selected in the Photos view.
-files-photos-one-selected = 1 selected · Space to preview · ↵ to open
 # The Photos view's header line, e.g. "36 images, 2 folders". $images and
 # $folders are already-formatted counts from the two messages below it.
 files-photos-summary = { $images }, { $folders }
@@ -986,6 +1102,15 @@ bar-power-performance = Performance
 bar-power-settings = Power Settings…
 bar-keyboard-settings = Keyboard Settings…
 bar-keyboard-layout-label = Keyboard layout: { $layout }
+bar-otto-menu = Otto
+bar-otto-about = About Otto
+bar-otto-settings = Settings…
+bar-otto-log-out = Log Out
+# The menu under the focused application's name in the top bar.
+bar-app-minimize = Minimise
+bar-app-quit = Quit { $app }
+bar-logout-title = Log out now?
+bar-logout-body = Your apps will be asked to close first, so anything unsaved gets a chance to be saved.
 
 
 ## Settings — widgets
@@ -1036,10 +1161,28 @@ schema-font-family-label = Interface font
 schema-font-family-description = Font family used by Otto's own interface.
 schema-desk-enabled-label = Show files on the desktop
 schema-desk-enabled-description = The files in your Desktop folder, behind the windows.
+schema-canvas-width-label = Side canvas width
+schema-canvas-width-description = Width of the side canvas, in logical points. Everything in it is drawn at this width.
+schema-desktop-widget-label = Background widget
+schema-desktop-widget-description = A full-screen page drawn over the wallpaper, behind the windows. Needs ewwii.
+schema-topbar-show-clock-label = Show date and time
+schema-topbar-show-clock-description = The clock at the right end of the top bar.
+schema-topbar-clock-format-label = Clock format
+schema-topbar-clock-format-description = How the top bar writes the date and time, as a strftime format. Empty follows your language.
+schema-topbar-show-app-menu-label = Show application menus
+schema-topbar-show-app-menu-description = The menus of the application in use, beside its name in the top bar.
 schema-background-color-label = Background colour
-schema-background-color-description = Desktop background colour, as a hex string.
+schema-background-color-description = Desktop background colour, as a hex string: the gradient shown without an image, and what shows around a fitted or centred one.
 schema-background-image-label = Background image
 schema-background-image-description = Path to the desktop background image. Empty for none.
+schema-background-mode-label = Background layout
+schema-background-mode-description = How the background image fills the screen.
+schema-background-position-x-label = Background position across
+schema-background-position-x-description = Which part of a cropped background image shows, and where a smaller one sits, from 0 (left) to 1 (right).
+schema-background-position-y-label = Background position down
+schema-background-position-y-description = Which part of a cropped background image shows, and where a smaller one sits, from 0 (top) to 1 (bottom).
+schema-background-zoom-label = Background zoom
+schema-background-zoom-description = Magnification of a filled or spanned background image, from 1 (just covering the screen).
 schema-cursor-theme-label = Cursor theme
 schema-cursor-theme-description = Name of the XCursor theme.
 schema-cursor-size-label = Cursor size
@@ -1237,6 +1380,11 @@ launcher-agents-working = Working
 launcher-agents-needs-input = Waiting for an answer
 launcher-agents-error = Failed
 launcher-agents-none = No agent sessions yet
+# The heading of the panel in the side canvas that lists the agent sessions.
+canvas-sessions-heading = Agents
+# The card in the side canvas that takes files dragged there, while a
+# drag goes on and nothing is stashed yet.
+stash-drop-invite = Drop files here to stash them
 # Ask mode: the files that go with a request, under it in the log, or above
 # the field before it is sent. { $files } is their names, comma-separated.
 # Ask mode, while an existing session is being opened to continue it.
@@ -1353,6 +1501,9 @@ agents-permission-reject = Reject
 agents-permission-reject-always = Never allow
 # The button that hands the question to the Ask window instead.
 agents-permission-open-in-ask = Open in Ask
+# The same button for a session started in Studio about a file: the
+# question opens there, beside the file. Use the app's name as in its menu entry.
+agents-permission-open-in-preview = Open in Studio
 
 ## Emoji picker
 
@@ -1646,6 +1797,107 @@ peek-pdf-install-rasteriser = Install one of: { $packages } — to see the pages
 peek-page-of = { $page } / { $pages }
 
 
+## Studio — menus and the keyboard shortcuts sheet
+##
+## Studio's menus in the top bar, and the sheet (Help › Keyboard Shortcuts)
+## that lists every command with its key.
+
+studio-menu-file = File
+studio-menu-edit = Edit
+studio-menu-marks = Marks
+studio-menu-view = View
+studio-menu-help = Help
+studio-close = Close Window
+studio-undo = Undo
+studio-redo = Redo
+studio-copy = Copy
+studio-select-all = Select All
+# The pen: a press on the document draws a mark.
+studio-pen = Pen
+# Toggle: whether the marks show over the document.
+studio-show-marks = Show Marks
+# Takes away the person's last mark not yet sent.
+studio-delete-mark = Delete Last Mark
+studio-zoom-in = Zoom In
+studio-zoom-out = Zoom Out
+studio-zoom-fit = Zoom to Fit
+studio-previous-page = Previous Page
+studio-next-page = Next Page
+studio-sidebar = Show Pages
+studio-chat = Show Chat
+studio-shortcuts = Keyboard Shortcuts
+# Sections of the sheet for keys that are in no menu.
+studio-sheet-document = Document
+studio-sheet-chat = Chat
+studio-sheet-scroll = Scroll
+studio-sheet-page = Next screen
+studio-sheet-ends = Top and bottom
+studio-sheet-zoom-pointer = Zoom at the pointer
+studio-sheet-stop = Put the pen down
+studio-sheet-send = Send
+studio-sheet-dictate = Dictate
+studio-sheet-stop-agent = Stop the agent
+studio-sheet-to-document = Back to the document
+# Over the sheet: the Cmd key does what Ctrl does in every shortcut.
+studio-sheet-cmd = Cmd works wherever Ctrl does
+# Toggle: the strip of tools that fill in and mark up a PDF, written into
+# the file itself.
+studio-markup = Markup Tools
+# Writes a PDF's form and markup changes over the file.
+studio-save = Save
+# Saves the PDF under another name or in another folder, and carries on with that file.
+studio-save-as = Save As…
+# The save dialog's title.
+studio-save-as-title = Save a Copy
+# The open dialog's title, asked when Studio starts with no file named.
+studio-open-title = Open in Studio
+# The open dialog's filters: everything Studio shows, and pictures alone.
+studio-open-filter-all = Pictures and documents
+studio-open-filter-pictures = Pictures
+# The empty window under the open dialog, when Studio starts with no file.
+studio-pick-hint = Choose a file to open
+# The window's title while a PDF has changes not yet saved. $name is the file's name.
+studio-title-edited = { $name } (edited)
+# Asked when a window with unsaved changes is closed. $name is the file's name.
+studio-close-title = Save changes to { $name }?
+studio-close-body = Your changes are lost if you don't save them.
+studio-close-discard = Don't Save
+studio-close-cancel = Cancel
+# Asked when saving would replace changes made to the file by another app
+# since it was opened. $name is the file's name.
+studio-changed-title = { $name } changed on disk
+studio-changed-body = Saving replaces the changes made to it elsewhere.
+# Saves over the file anyway, replacing the changes made elsewhere.
+studio-changed-overwrite = Save Anyway
+# Shown when a PDF's changes couldn't be written; the reason follows on its
+# own line. $name is the file's name.
+studio-save-failed-title = { $name } couldn't be saved
+studio-save-failed-body = Save a copy somewhere else to keep your changes.
+# Deletes the highlight, drawing, text or signature selected on the page.
+studio-delete-selection = Delete Selection
+studio-sheet-next-field = Next form field
+# The card a signature is drawn on, once, before it is placed on a PDF.
+studio-signature-title = Draw your signature
+studio-signature-hint = Sign above the line
+studio-signature-clear = Clear
+studio-signature-cancel = Cancel
+studio-signature-done = Done
+
+## Preview — chat
+
+# The chat field beside a file in Preview, before anything is typed.
+# $name is the file's name.
+preview-chat-placeholder = Ask about { $name }
+# Shown in the empty chat beside a file, until something is asked.
+preview-chat-empty = Ask an agent about this file, or to change it.
+# Over the chat field in Preview, when marks drawn on the file will go with
+# the next message. $marks lists their numbers ("1, 2"); $count is how many.
+preview-chat-marks = { $count ->
+    [one] Mark { $marks } goes with your message
+   *[other] Marks { $marks } go with your message
+}
+
+
 ## Peek — listings
 ##
 ## A folder or an archive is previewed as a list of what is inside, with one
@@ -1664,22 +1916,6 @@ peek-item-count =
 # size on disk. $items is peek-item-count, $size is a formatted byte
 # count. The dash is an em dash.
 peek-archive-summary = { $items } — { $size }
-
-
-## Peek — sizes
-##
-## Byte units. Peek counts in powers of 1024, so the symbols are the
-## conventional binary-rounded ones. Translate only the spelled-out "bytes".
-
-peek-size-bytes =
-    { $count ->
-        [one] { $count } byte
-       *[other] { $count } bytes
-    }
-peek-size-kb = { $value } KB
-peek-size-mb = { $value } MB
-peek-size-gb = { $value } GB
-peek-size-tb = { $value } TB
 
 
 ## Peek — nothing to show
@@ -1846,6 +2082,8 @@ a11y-tray-item = Tray item { $number }
 a11y-notifications = Notifications
 # The sidebar of Settings, listing its panes.
 a11y-categories = Categories
+# The search field at the top of Settings' sidebar.
+a11y-search-settings = Search settings
 # The launcher's list of matches for what has been typed.
 a11y-results = Results
 # Names the Settings pane when no pane is selected.
@@ -1921,3 +2159,82 @@ agent-prompt-deny = Don't Allow
 
 agent-workspace-prompt-title = Let { $agent } work on { $workspace }?
 agent-workspace-prompt-body = { $app } asks for its agent's cursor to join yours on this workspace. It can see the windows there, click and type in them. Your cursor and keyboard stay yours, and Stop on the frame ends it.
+
+## Users pane
+
+settings-pane-account = Users
+settings-account-picture = Picture
+settings-account-picture-detail = Shown on the login and lock screens
+settings-account-choose-picture = Choose a Picture
+settings-account-picture-unreadable = That file isn't an image Otto can read
+settings-account-full-name = Full name
+settings-account-name = Account name
+settings-account-type = Account type
+settings-account-type-administrator = Administrator
+settings-account-type-standard = Standard
+settings-account-no-accountsservice = Can't be changed here: AccountsService isn't running
+settings-account-not-permitted = The system didn't allow this change
+settings-group-password = Password
+settings-account-current-password = Current password
+settings-account-new-password = New password
+settings-account-confirm-password = Confirm new password
+settings-account-change-password = Change Password
+settings-account-change-password-ellipsis = Change Password…
+settings-account-password-detail = Used to log in, unlock the screen and approve changes
+settings-account-password-changing = Changing password…
+settings-account-password-changed = Password changed
+settings-account-password-missing = Type your current password and a new one
+settings-account-password-mismatch = The new passwords don't match
+settings-account-password-same = The new password is the same as the current one
+settings-account-password-wrong-current = The current password is wrong
+settings-account-password-failed = The password couldn't be changed
+settings-account-reset-password-ellipsis = Reset Password…
+settings-account-reset-detail = Set a new password for this account
+settings-account-working = Waiting for the system…
+settings-users-you = { $kind } · You
+settings-users-reset-title = Reset Password for { $name }
+settings-users-reset-action = Reset Password
+settings-users-add-title = Add User
+settings-users-add-action = Add User
+settings-users-delete-title = Delete { $name }?
+settings-users-delete-body = They will no longer be able to log in. Their home folder is kept.
+settings-users-delete-action = Delete User
+settings-users-invalid-name = Account names start with a lower-case letter and use only a–z, 0–9, - and _
+settings-users-name-taken = There's already an account with that name
+settings-users-password-missing = Type a password for the account
+
+## Settings › Dictation: speech typed into a text field, recognised by a
+## speech server on this computer.
+
+settings-pane-dictation = Dictation
+# Ctrl+D is the launcher's key; otto-dictate toggle is a command, left as is.
+settings-dictation-intro = Speech typed into a text field, recognised on this computer. Ctrl+D dictates in the launcher; in other apps, a shortcut bound to otto-dictate toggle does.
+# The speech-to-text engine. Parakeet, Whisper and CrispASR are names.
+settings-dictation-engine = Engine
+settings-dictation-engine-detail = Picking one starts its speech server and stops the others
+settings-dictation-engine-parakeet = Parakeet
+settings-dictation-engine-whisper = Whisper (English only)
+settings-dictation-engine-crispasr = CrispASR
+# Whether the picked engine's server is running, with Start or Restart.
+settings-dictation-server = Speech server
+settings-dictation-server-checking = Checking…
+settings-dictation-server-running = Running
+settings-dictation-server-stopped = Stopped. Dictation hears nothing until it starts.
+# $unit is the server's systemd unit, such as otto-stt-parakeet.service.
+settings-dictation-server-failed = Stopped after an error. journalctl --user -u { $unit } says why.
+# $engine is the engine as the install script takes it, such as parakeet.
+settings-dictation-server-missing = Not installed. components/otto-dictate/engines/install.sh { $engine } sets it up.
+settings-dictation-server-unmanaged = Can't tell: this system has no systemctl
+settings-dictation-start = Start
+settings-dictation-restart = Restart
+settings-dictation-language = Language
+# Lets the engine work out the language itself.
+settings-dictation-language-auto = Automatic
+settings-dictation-language-detail = The language spoken. Parakeet and CrispASR detect it themselves.
+# How strongly the engine favours the names a field expects (hotwords).
+settings-dictation-hotwords-boost = Hotword boost
+settings-dictation-hotwords-boost-detail = How strongly the names a field expects are favoured. Above 6, the words around a name start to garble.
+settings-dictation-autostart = Start dictation at login
+# ~/.config/autostart is a folder and xdg_autostart a configuration key; both
+# stay as they are.
+settings-dictation-autostart-detail = Runs otto-dictate from ~/.config/autostart, which Otto reads when xdg_autostart is on

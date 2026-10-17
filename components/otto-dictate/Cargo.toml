@@ -1,0 +1,19 @@
+[package]
+name = "otto-dictate"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Proof of concept: dictation as a Wayland input method, with live text and an equaliser at the caret"
+
+[dependencies]
+otto-kit = { path = "../otto-kit", features = ["dictation"] }
+smithay-client-toolkit = { workspace = true, features = ["calloop"] }
+tracing.workspace = true
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+wayland-client.workspace = true
+wayland-protocols-misc = { workspace = true, features = ["client"] }
+
+[lints]
+workspace = true

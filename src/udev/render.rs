@@ -20,7 +20,7 @@ use crate::{
     render_elements::output_render_elements::OutputRenderElements,
     render_elements::workspace_render_elements::WorkspaceRenderElements,
     shell::{WindowElement, WindowRenderElement},
-    state::{post_repaint, take_presentation_feedback, SurfaceDmabufFeedback},
+    state::frame::{frame_done, FramePacing, Presentation, SurfaceDmabufFeedback},
 };
 
 use smithay::{
@@ -313,8 +313,6 @@ impl<A: RendererApi> Otto<UdevData<A>> {
             self.render_virtual_outputs();
         }
     }
-
-    #[allow(clippy::mutable_key_type)] // ObjectId as HashMap key — see window_throttle.rs
     /// Kernel reported a display FIFO underrun: the display engine could
     /// not fetch the currently-configured planes. Reduce the plane budget
     /// one step (1 = no window promotion, 2 = full GPU composite) and
@@ -435,7 +433,15 @@ impl<A: RendererApi> Otto<UdevData<A>> {
             && !capture_active
             // A modal overlay layer surface (the portal Access dialog) draws
             // in the overlay layer, which fullscreen scanout drops entirely.
-            && !self.has_modal_overlay_layer();
+            && !self.has_modal_overlay_layer()
+            // Nor may the side canvas, which slides in over fullscreen
+            // windows from the same plane.
+            && !self.canvas_on_screen()
+            // Least of all the lock: scanout puts the window alone on the
+            // primary plane, so the blank — and the locker on it — would be
+            // drawn nowhere, and a fullscreen video or game would play on
+            // over a locked session. Held until the shade is back up.
+            && !self.lock_blank_on_screen();
         let fullscreen_window = if allow_fullscreen_scanout {
             this_output
                 .as_ref()
@@ -483,8 +489,9 @@ impl<A: RendererApi> Otto<UdevData<A>> {
         // too, while the blank slides back off the top.
         // A modal overlay dialog, for the same reason as the lock plane: the
         // prompt lives in a subtree the plane decomposition never scans out.
+        let lock_on_screen = self.lock_blank_on_screen();
         let composite_now = self.workspaces.has_minimizing_window()
-            || self.lock_blank_on_screen()
+            || lock_on_screen
             || self.has_modal_overlay_layer();
         let composite_active = if let Some(surf) = self
             .backend_data
@@ -540,7 +547,6 @@ impl<A: RendererApi> Otto<UdevData<A>> {
         // removals apply this frame, additions only after the candidate set
         // has been stable for the full window.
         const PROMOTE_STABLE: std::time::Duration = std::time::Duration::from_millis(500);
-        #[allow(clippy::mutable_key_type)] // ObjectId as key — see window_throttle.rs
         let current_scanout = scanout_output_name
             .as_deref()
             .map(|n| self.workspaces.scanout_window_ids_for_output(n))
@@ -581,11 +587,9 @@ impl<A: RendererApi> Otto<UdevData<A>> {
         // lay-rs content import while promoted; re-import them now (after the
         // set update unhides their content_layer) so the first composited
         // frame shows the current buffer, not a stale one.
-        #[allow(clippy::mutable_key_type)] // ObjectId as key — see window_throttle.rs
         let new_scanout_ids: std::collections::HashSet<
             smithay::reexports::wayland_server::backend::ObjectId,
         > = scanout_desired.iter().cloned().collect();
-        #[allow(clippy::mutable_key_type)] // ObjectId as key — see window_throttle.rs
         let prev_scanout_ids = scanout_output_name
             .as_deref()
             .map(|n| self.workspaces.scanout_window_ids_for_output(n))
@@ -951,17 +955,6 @@ impl<A: RendererApi> Otto<UdevData<A>> {
         );
 
         crate::render_phase_stats::log_if_due();
-
-        #[allow(clippy::mutable_key_type)] // ObjectId as key — see window_throttle.rs
-        let effect_surfaces: std::collections::HashSet<_> =
-            self.background_effects.keys().cloned().collect();
-        #[allow(clippy::mutable_key_type)] // ObjectId as key — see window_throttle.rs
-        let translucent_ids = crate::state::window_throttle::translucent_window_ids(
-            &all_window_elements,
-            &effect_surfaces,
-        );
-        #[allow(clippy::mutable_key_type)] // ObjectId as key — see window_throttle.rs
-        let occluded_ids = self.workspaces.occluded_window_ids(&translucent_ids);
         #[allow(clippy::mutable_key_type)] // ObjectId as key — see window_throttle.rs
         let mut captured_ids = crate::screenshare::screencast_window_ids(
             &self.screenshare_sessions,
@@ -973,24 +966,14 @@ impl<A: RendererApi> Otto<UdevData<A>> {
             &self.agent_seats,
             &self.workspaces,
         ));
-        #[allow(clippy::mutable_key_type)] // ObjectId as key — see window_throttle.rs
-        let interacting_ids =
-            crate::state::window_throttle::interacting_ids(&self.pointer_interaction);
-        #[allow(clippy::mutable_key_type)] // ObjectId as key — see window_throttle.rs
-        let window_throttle_states = crate::state::window_throttle::classify_windows(
-            &self.workspaces,
-            &all_window_elements,
-            &occluded_ids,
-            expose_active,
-            &captured_ids,
-            &interacting_ids,
-        );
-        #[allow(clippy::mutable_key_type)] // ObjectId as key — see window_throttle.rs
-        let occluded_layer_ids = crate::state::window_throttle::occluded_layer_surface_ids(
+        let frame_pacing = FramePacing::classify(
             &self.workspaces,
             &output,
-            expose_active,
-            &translucent_ids,
+            &all_window_elements,
+            &self.background_effects,
+            &self.pointer_interaction,
+            true,
+            &captured_ids,
         );
 
         // ── Shadow-only / direct scanout window selection ─────────────────────
@@ -1221,21 +1204,30 @@ impl<A: RendererApi> Otto<UdevData<A>> {
         // came out black. So the composite fallback stacks the plane
         // subtrees instead, top→bottom like the plane push order (and like
         // the winit backend and virtual outputs already do).
+        // The lock plane goes on top of that stack: a lock can come down on
+        // an open exposé (an idle timer, the lid), and a stack without it
+        // drew the overview over the blank.
         let expose_scene_stack: Vec<crate::render_elements::scene_element::SceneElement> =
             match self.workspaces.output_workspaces.get(&output.name()) {
                 Some(ows) if expose_active => {
                     let pos = ows.output_layer.render_position();
                     let origin = (pos.x, pos.y);
-                    vec![
+                    let lock = lock_on_screen.then(|| {
                         self.scene_element
-                            .for_plane_subtree(&ows.switcher_plane, origin),
-                        self.scene_element
-                            .for_plane_subtree(&ows.overlay_plane, origin),
-                        self.scene_element
-                            .for_plane_subtree(&ows.expose_layer, origin),
-                        self.scene_element
-                            .for_plane_subtree(&ows.background_plane, origin),
-                    ]
+                            .for_plane_subtree(&ows.lock_plane, origin)
+                    });
+                    lock.into_iter()
+                        .chain([
+                            self.scene_element
+                                .for_plane_subtree(&ows.switcher_plane, origin),
+                            self.scene_element
+                                .for_plane_subtree(&ows.overlay_plane, origin),
+                            self.scene_element
+                                .for_plane_subtree(&ows.expose_layer, origin),
+                            self.scene_element
+                                .for_plane_subtree(&ows.background_plane, origin),
+                        ])
+                        .collect()
                 }
                 _ => Vec::new(),
             };
@@ -1266,6 +1258,9 @@ impl<A: RendererApi> Otto<UdevData<A>> {
                 || self.workspaces.osd.is_visible()
                 || self.workspaces.tiling_overlay.is_visible()
                 || self.workspaces.mirrors_active()
+                // The side canvas's items may declare a blur anywhere in the
+                // column, and the column moves; it is transient chrome too.
+                || self.canvas.on_screen()
                 || self
                     .workspaces
                     .is_animating
@@ -1305,7 +1300,6 @@ impl<A: RendererApi> Otto<UdevData<A>> {
                     };
                     let out_scale = output.current_scale().fractional_scale() as f32;
                     let map = layer_map_for_output(&output);
-                    #[allow(clippy::mutable_key_type)] // ObjectId as key — see window_throttle.rs
                     let effects = &self.background_effects;
                     let mut rects: Vec<layers::skia::Rect> = Vec::new();
                     if let Some(output_geo) = self.workspaces.output_geometry(&output) {
@@ -1364,8 +1358,7 @@ impl<A: RendererApi> Otto<UdevData<A>> {
             self.dnd_icon.as_ref(),
             &self.clock,
             scene_has_damage,
-            &window_throttle_states,
-            &occluded_layer_ids,
+            &frame_pacing,
             &mut self.pending_screencopy_frames,
             expose_active,
             fullscreen_window.as_ref(),
@@ -1665,7 +1658,7 @@ impl<A: RendererApi> Otto<UdevData<A>> {
                             let buffer_pool = stream.pipewire_stream.buffer_pool();
                             let mut pool = buffer_pool.lock().unwrap();
 
-                            if let Some(available) = pool.available.pop_front() {
+                            if let Some(available) = pool.take_available() {
                                 let size = match &window_capture {
                                     // The size of the buffer PipeWire handed
                                     // us, which follows the window across
@@ -1681,11 +1674,10 @@ impl<A: RendererApi> Otto<UdevData<A>> {
                                         .unwrap_or_else(|| (1920, 1080).into()),
                                 };
 
-                                // Force full frame for first render (when last_rendered_fd is None)
-                                let is_first_frame = pool.last_rendered_fd.is_none();
-                                let buffer_changed = pool.last_rendered_fd != Some(available.fd);
-
-                                pool.last_rendered_fd = Some(available.fd);
+                                // Force full frame for the first render and
+                                // whenever the buffer changes.
+                                let (is_first_frame, buffer_changed) =
+                                    pool.mark_rendered(&available);
 
                                 // Use damage only if not first frame and same buffer
                                 let damage_to_use = if is_first_frame || buffer_changed {
@@ -1777,12 +1769,16 @@ impl<A: RendererApi> Otto<UdevData<A>> {
 
                                 if let Err(e) = blit_result {
                                     tracing::debug!("Screenshare blit failed: {}", e);
+                                    // Never queue a buffer holding a partial
+                                    // frame; its next use renders in full.
+                                    pool.forget_rendered();
+                                    pool.put_back(available);
                                 } else {
                                     // Only increment sequence on successful blit
                                     stream.pipewire_stream.increment_frame_sequence();
+                                    pool.queue(available);
                                 }
 
-                                pool.to_queue.insert(available.fd, available.pw_buffer);
                                 drop(pool);
                                 // Trigger to queue the buffer we just rendered
                                 stream.pipewire_stream.trigger_frame();
@@ -2221,17 +2217,17 @@ impl<A: RendererApi> Otto<UdevData<A>> {
             // Deferred-fence model: keep the GPU fence wait off the main loop so
             // it never stalls input dispatch (calloop is single-threaded).
             //  1. Resolve the frame rendered last cycle: if its GPU fence has
-            //     signaled (non-blocking `is_reached()`), move its buffer from
-            //     the pool's `pending` holding area into `to_queue` so
+            //     signaled (non-blocking `is_reached()`), `release_pending()`
+            //     moves its buffer from `Pending` to `ToQueue` so
             //     `trigger_frame()` hands it to the consumer. If not signaled,
             //     keep it pending — never block.
-            //  2. `trigger_frame()` every cycle queues fence-ready buffers and
-            //     pumps buffer dequeues back into `available`.
+            //  2. `trigger_frame()` every cycle queues `ToQueue` buffers and
+            //     pumps buffer dequeues back to `Available`.
             //  3. Render a new frame only when nothing is pending, into a spare
             //     buffer, and stash its `SyncPoint` for next cycle. The buffer
-            //     enters `pending` (NOT `to_queue`) only after a successful
-            //     render, so the async process callback can't queue a
-            //     still-rendering buffer (the black/torn band 757a6f7 fixed).
+            //     goes `Rendering` → `Pending` (NOT `ToQueue`) only after a
+            //     successful render, so the async process callback can't queue
+            //     a still-rendering buffer (the black/torn band 757a6f7 fixed).
             let pool_arc = self.virtual_outputs[i].pipewire_stream.buffer_pool();
 
             if let Some(sync) = self.virtual_outputs[i].pending_frame.take() {
@@ -2249,13 +2245,7 @@ impl<A: RendererApi> Otto<UdevData<A>> {
                             crate::virtual_output::PENDING_FRAME_DEADLINE
                         );
                     }
-                    {
-                        let mut pool = pool_arc.lock().unwrap();
-                        let ready: Vec<_> = pool.pending.drain().collect();
-                        for (fd, buf) in ready {
-                            pool.to_queue.insert(fd, buf);
-                        }
-                    }
+                    pool_arc.lock().unwrap().release_pending();
                     self.virtual_outputs[i].pending_since = None;
                     self.virtual_outputs[i]
                         .pipewire_stream
@@ -2268,14 +2258,11 @@ impl<A: RendererApi> Otto<UdevData<A>> {
             self.virtual_outputs[i].pipewire_stream.trigger_frame();
 
             let maybe_buf = if self.virtual_outputs[i].pending_frame.is_none() {
-                let mut pool = pool_arc.lock().unwrap();
-                pool.available.pop_front()
+                pool_arc.lock().unwrap().take_available()
             } else {
                 None
             };
             if let Some(available) = maybe_buf {
-                let fd = available.fd;
-                let pw_buffer = available.pw_buffer;
                 let mut dmabuf = available.dmabuf.clone();
                 let mut rendered_sync = None;
                 {
@@ -2317,14 +2304,17 @@ impl<A: RendererApi> Otto<UdevData<A>> {
                     }
                 }
                 match rendered_sync {
+                    // A renegotiation that freed the buffer while it rendered
+                    // drops the frame.
                     Some(sync) => {
-                        pool_arc.lock().unwrap().pending.insert(fd, pw_buffer);
-                        self.virtual_outputs[i].pending_frame = Some(sync);
-                        self.virtual_outputs[i].pending_since = Some(std::time::Instant::now());
+                        if pool_arc.lock().unwrap().hold_pending(available) {
+                            self.virtual_outputs[i].pending_frame = Some(sync);
+                            self.virtual_outputs[i].pending_since = Some(std::time::Instant::now());
+                        }
                     }
                     // Render failed — return the buffer so it isn't leaked.
                     None => {
-                        pool_arc.lock().unwrap().available.push_back(available);
+                        pool_arc.lock().unwrap().put_back(available);
                     }
                 }
             }
@@ -2345,13 +2335,7 @@ impl<A: RendererApi> Otto<UdevData<A>> {
                     // 1. Resolve last cycle's frame without blocking.
                     if let Some(sync) = stream.pending_frame.take() {
                         if sync.is_reached() {
-                            {
-                                let mut pool = ss_pool.lock().unwrap();
-                                let ready: Vec<_> = pool.pending.drain().collect();
-                                for (fd, buf) in ready {
-                                    pool.to_queue.insert(fd, buf);
-                                }
-                            }
+                            ss_pool.lock().unwrap().release_pending();
                             stream.pipewire_stream.increment_frame_sequence();
                         } else {
                             stream.pending_frame = Some(sync);
@@ -2362,13 +2346,11 @@ impl<A: RendererApi> Otto<UdevData<A>> {
 
                     // 3. Render a new frame only when nothing is pending.
                     let maybe_ss_buf = if stream.pending_frame.is_none() {
-                        ss_pool.lock().unwrap().available.pop_front()
+                        ss_pool.lock().unwrap().take_available()
                     } else {
                         None
                     };
                     if let Some(ss_buf) = maybe_ss_buf {
-                        let fd = ss_buf.fd;
-                        let pw_buffer = ss_buf.pw_buffer;
                         let mut ss_dmabuf = ss_buf.dmabuf.clone();
                         let mut temp_tracker = OutputDamageTracker::from_output(&output_clone);
                         let mut rendered_sync = None;
@@ -2405,11 +2387,12 @@ impl<A: RendererApi> Otto<UdevData<A>> {
                         }
                         match rendered_sync {
                             Some(sync) => {
-                                ss_pool.lock().unwrap().pending.insert(fd, pw_buffer);
-                                stream.pending_frame = Some(sync);
+                                if ss_pool.lock().unwrap().hold_pending(ss_buf) {
+                                    stream.pending_frame = Some(sync);
+                                }
                             }
                             None => {
-                                ss_pool.lock().unwrap().available.push_back(ss_buf);
+                                ss_pool.lock().unwrap().put_back(ss_buf);
                             }
                         }
                     }
@@ -2418,9 +2401,6 @@ impl<A: RendererApi> Otto<UdevData<A>> {
         }
     }
 }
-
-#[allow(clippy::too_many_arguments)]
-#[allow(clippy::mutable_key_type)] // ObjectId as HashMap key — see window_throttle.rs
 pub(super) fn render_output_frame<'a, A: RendererApi>(
     surface: &'a mut SurfaceData,
     renderer: &mut UdevRenderer<'a, A>,
@@ -2435,13 +2415,7 @@ pub(super) fn render_output_frame<'a, A: RendererApi>(
     dnd_icon: Option<&wl_surface::WlSurface>,
     clock: &Clock<Monotonic>,
     scene_has_damage: bool,
-    window_throttle_states: &std::collections::HashMap<
-        smithay::reexports::wayland_server::backend::ObjectId,
-        crate::state::window_throttle::WindowThrottleState,
-    >,
-    occluded_layer_ids: &std::collections::HashSet<
-        smithay::reexports::wayland_server::backend::ObjectId,
-    >,
+    frame_pacing: &FramePacing,
     pending_screencopy: &mut Vec<crate::state::screencopy::PendingScreencopy>,
     expose_active: bool,
     fullscreen_window: Option<&WindowElement>,
@@ -2567,7 +2541,7 @@ pub(super) fn render_output_frame<'a, A: RendererApi>(
     let agent_cursor_left_output = surface.agent_cursor_was_in_output && !agent_cursor_drawn;
     surface.agent_cursor_was_in_output = agent_cursor_drawn;
 
-    #[cfg(feature = "fps_ticker")]
+    #[cfg(feature = "ticker")]
     if let Some(element) = surface.fps_element.as_mut() {
         element.update_fps(surface.fps.avg().round() as u32);
         surface.fps.tick();
@@ -3183,7 +3157,7 @@ pub(super) fn render_output_frame<'a, A: RendererApi>(
     // demotes everything behind a fullscreen window to the 2 Hz Occluded
     // bucket, and dropping below that starves Chromium's buffer-eviction
     // heuristic (blank canvas on restore).
-    post_repaint(
+    let output_presentation_feedback = frame_done(
         output,
         &states,
         window_elements,
@@ -3195,8 +3169,9 @@ pub(super) fn render_output_frame<'a, A: RendererApi>(
                 scanout_feedback: &feedback.scanout_feedback,
             }),
         clock.now(),
-        window_throttle_states,
-        occluded_layer_ids,
+        frame_pacing,
+        rendered,
+        Presentation::OnPageFlip,
     );
 
     if rendered {
@@ -3211,11 +3186,9 @@ pub(super) fn render_output_frame<'a, A: RendererApi>(
             );
         }
 
-        let output_presentation_feedback =
-            take_presentation_feedback(output, window_elements, &states);
         surface
             .compositor
-            .queue_frame(Some(output_presentation_feedback))?;
+            .queue_frame(output_presentation_feedback)?;
     }
 
     Ok(RenderOutcome {

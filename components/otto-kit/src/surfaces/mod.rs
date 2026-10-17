@@ -1,3 +1,4 @@
+pub mod canvas_item;
 mod common;
 pub mod dockitem;
 pub mod layer_shell;
@@ -6,6 +7,7 @@ pub mod session_lock;
 pub mod subsurface;
 pub mod toplevel;
 
+pub use canvas_item::{CanvasItemEvent, CanvasItemSurface, CanvasKeyboardInteractivity};
 pub use common::{apply_hairline_border, BaseWaylandSurface, BufferClaim, SurfaceError};
 pub use dockitem::DockItem;
 pub use layer_shell::LayerShellSurface;

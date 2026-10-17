@@ -5,7 +5,7 @@ use std::rc::Rc;
 use wayland_client::{protocol::wl_surface, Proxy};
 
 // Re-export sc-layer protocol for convenience
-pub use crate::protocols::{otto_surface_style_manager_v1, otto_surface_style_v1};
+pub(super) use crate::protocols::{otto_surface_style_manager_v1, otto_surface_style_v1};
 
 use crate::{rendering::SkiaSurface, AppContext};
 
@@ -72,7 +72,7 @@ pub struct BufferClaim {
 
 /// What a surface's next draw is known to have changed.
 #[derive(Clone, Debug, PartialEq)]
-pub enum FrameDamage {
+pub(super) enum FrameDamage {
     /// Anything may have changed: the whole buffer is reported.
     All,
     /// Only these rects, in points, changed.

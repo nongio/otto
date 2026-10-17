@@ -334,7 +334,11 @@ request that names no path, one whose only allow is "always", and every edit,
 move, delete or command, attached file or not. Nothing is shared between
 sessions. A session reopened after a release or an idle stop keeps what it
 attached; after a restart of the service it starts with nothing attached until
-a prompt attaches it again. The code is `attached.rs`.
+a prompt attaches it again. A message written in a chat app (marked
+`otto.remote`) attaches nothing: `otto-agents acp --remote` drops its resource
+links, and the host ignores the attachments of any message so marked, so
+whoever can write to a chat bridge cannot have files read unasked. The code is
+`attached.rs`.
 
 **Entering a terminal.** When the agent has an `enter` command, otto-agents
 publishes it, the folder and the agent's id for the session in the session's

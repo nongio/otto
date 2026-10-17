@@ -9,7 +9,13 @@
 //! The trash directory does not have to exist. A session that has never thrown
 //! anything away has no `Trash/files` at all, so the watch is placed on the
 //! deepest ancestor that does exist and moves down as the directories appear.
+//!
+//! There is more than one can: a file trashed on another filesystem goes to the
+//! can at the top of that filesystem (see [`otto_kit::trash`]). With the
+//! default `trash_path` every mounted filesystem's can counts, and the mount
+//! table is watched too, so plugging in a stick with a full can fills the bin.
 
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::time::Duration;
@@ -38,26 +44,18 @@ pub fn files_dir() -> Option<PathBuf> {
     let configured = crate::config::Config::with(|config| config.dock.trash_path.clone());
     let configured = configured.trim();
     if configured.is_empty() {
-        return Some(data_home()?.join("Trash/files"));
+        return Some(otto_kit::xdg::data_home()?.join("Trash/files"));
     }
     expand(configured)
-}
-
-/// `$XDG_DATA_HOME`, or the `~/.local/share` it defaults to.
-fn data_home() -> Option<PathBuf> {
-    match std::env::var_os("XDG_DATA_HOME") {
-        Some(dir) if !dir.is_empty() => Some(PathBuf::from(dir)),
-        _ => Some(PathBuf::from(std::env::var_os("HOME")?).join(".local/share")),
-    }
 }
 
 /// Expand the handful of things a path in the config may start with: `~`,
 /// `$HOME` and `$XDG_DATA_HOME` — the last of which is what the default is
 /// written in terms of, so the setting says where it actually looks.
 fn expand(path: &str) -> Option<PathBuf> {
-    let home = || std::env::var_os("HOME").map(PathBuf::from);
+    let home = otto_kit::xdg::home;
     for (prefix, base) in [
-        ("$XDG_DATA_HOME", data_home()),
+        ("$XDG_DATA_HOME", otto_kit::xdg::data_home()),
         ("$HOME", home()),
         ("~", home()),
     ] {
@@ -73,49 +71,83 @@ fn expand(path: &str) -> Option<PathBuf> {
     Some(PathBuf::from(path))
 }
 
+/// Every directory whose contents count: [`files_dir`] alone when it was
+/// pointed somewhere else, and otherwise the `files/` of every can there is,
+/// the home one first.
+fn watched_dirs() -> Vec<PathBuf> {
+    let Some(configured) = files_dir() else {
+        return Vec::new();
+    };
+    let home = otto_kit::trash::Can::home().map(|can| can.files_dir());
+    if home.as_ref() != Some(&configured) {
+        return vec![configured];
+    }
+    otto_kit::trash::cans()
+        .iter()
+        .map(otto_kit::trash::Can::files_dir)
+        .collect()
+}
+
 /// Whether the trash holds anything. A directory that does not exist is an
 /// empty trash, not an error: it is what a session that has never deleted
 /// anything looks like.
+///
+/// This reads the mount table and looks into every can, so it is not for the
+/// compositor's main thread.
 pub fn has_content() -> bool {
-    let Some(dir) = files_dir() else {
-        return false;
-    };
-    std::fs::read_dir(dir)
-        .map(|mut entries| entries.next().is_some())
-        .unwrap_or(false)
+    any_content(&watched_dirs())
+}
+
+/// Whether any of `dirs` has an entry.
+fn any_content(dirs: &[PathBuf]) -> bool {
+    dirs.iter().any(|dir| {
+        std::fs::read_dir(dir)
+            .map(|mut entries| entries.next().is_some())
+            .unwrap_or(false)
+    })
 }
 
 /// Call `on_change` with the trash's state now, and again every time it
 /// changes, until the process ends.
 ///
-/// One thread, blocking in `read(2)` on an inotify descriptor. If inotify is
-/// unavailable the state is still reported once — the icon is right until
-/// something changes it, which is better than no icon at all.
+/// One thread, blocking in `read(2)` on an inotify descriptor. The first look
+/// is made there too, not on the caller's thread: it stats every can, and the
+/// caller is the compositor. If inotify is unavailable the state is still
+/// reported once — the icon is right until something changes it, which is
+/// better than no icon at all.
 pub fn watch(on_change: impl Fn(bool) + Send + 'static) {
-    on_change(has_content());
-
-    let Some(files) = files_dir() else {
-        return;
-    };
-
-    std::thread::Builder::new()
+    let spawned = std::thread::Builder::new()
         .name("otto-trash-watch".into())
-        .spawn(move || run(&files, on_change))
-        .ok();
+        .spawn(move || run(on_change));
+    if let Err(err) = spawned {
+        tracing::warn!(error = %err, "trash watch: no thread, the dock icon will not follow the can");
+    }
 }
 
-fn run(files: &Path, on_change: impl Fn(bool)) {
+fn run(on_change: impl Fn(bool)) {
     // SAFETY: inotify_init1 takes flags and returns a descriptor or -1.
     let fd = unsafe { libc::inotify_init1(libc::IN_CLOEXEC) };
     if fd < 0 {
+        on_change(has_content());
         tracing::warn!("trash watch: inotify unavailable, the dock icon will not follow the can");
         return;
     }
 
-    let (tx, rx) = mpsc::channel::<()>();
+    let (tx, rx) = mpsc::channel::<Wake>();
+    // Held for as long as this function runs; dropped, it stops the thread.
+    let _mounts = watch_mounts(tx.clone());
+
+    // Armed before the first look, so a change between the two is an event
+    // rather than lost. Nothing reads the descriptor yet; events queue.
+    let mut armed: HashMap<PathBuf, i32> = HashMap::new();
+    let mut dirs = watched_dirs();
+    arm(fd, &dirs, &mut armed);
+    let mut last = any_content(&dirs);
+    on_change(last);
+
     // The read blocks, so it lives on its own thread and pokes this one; this
     // one owns the debounce and the re-arming.
-    std::thread::Builder::new()
+    let reader = std::thread::Builder::new()
         .name("otto-trash-inotify".into())
         .spawn(move || {
             let mut buffer = [0u8; 4096];
@@ -130,71 +162,157 @@ fn run(files: &Path, on_change: impl Fn(bool)) {
                 };
                 if read <= 0 {
                     // EINTR is worth retrying; anything else means the
-                    // descriptor is gone and so is the watch.
+                    // descriptor is gone and so is the watch. Said out loud:
+                    // the mount watcher holds a sender too, so the channel
+                    // alone would never tell.
                     if read < 0
                         && std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted
                     {
                         continue;
                     }
+                    tx.send(Wake::ReaderGone).ok();
                     return;
                 }
-                if tx.send(()).is_err() {
+                if tx.send(Wake::Changed).is_err() {
                     return;
                 }
             }
-        })
-        .ok();
+        });
+    if let Err(err) = reader {
+        tracing::warn!(error = %err, "trash watch: no reader thread, the dock icon will not follow the can");
+        // SAFETY: the descriptor this function opened, used by nobody else.
+        unsafe { libc::close(fd) };
+        return;
+    }
 
-    let mut armed: Option<(i32, PathBuf)> = None;
-    let mut last = has_content();
-    loop {
-        // Watch the deepest directory that exists: `Trash/files` once it is
-        // there, its parent while it is not, so its creation is itself an
-        // event.
-        let target = deepest_existing(files);
-        match (&armed, &target) {
-            (Some((_, current)), Some(target)) if current == target => {}
-            _ => {
-                if let Some((descriptor, _)) = armed.take() {
-                    // SAFETY: a descriptor this thread added and has not removed.
-                    unsafe { libc::inotify_rm_watch(fd, descriptor) };
-                }
-                if let Some(target) = target.clone() {
-                    if let Ok(c_path) =
-                        std::ffi::CString::new(target.as_os_str().as_encoded_bytes())
-                    {
-                        // SAFETY: a NUL-terminated path and a mask of inotify flags.
-                        let descriptor =
-                            unsafe { libc::inotify_add_watch(fd, c_path.as_ptr(), INTEREST) };
-                        if descriptor >= 0 {
-                            armed = Some((descriptor, target));
-                        }
-                    }
-                }
-            }
-        }
-
-        match rx.recv() {
-            Ok(()) => {}
-            // The reader thread is gone: the descriptor died with it.
-            Err(_) => return,
-        }
+    // Anything else means the reader thread is gone: the descriptor died with it.
+    while let Ok(Wake::Changed) = rx.recv() {
         // Drain the burst rather than looking once per file: keep waiting
         // until DEBOUNCE passes with nothing new.
+        let mut reader_gone = false;
         loop {
             match rx.recv_timeout(DEBOUNCE) {
-                Ok(()) => continue,
+                Ok(Wake::Changed) => continue,
                 Err(RecvTimeoutError::Timeout) => break,
-                Err(RecvTimeoutError::Disconnected) => return,
+                Ok(Wake::ReaderGone) | Err(RecvTimeoutError::Disconnected) => {
+                    reader_gone = true;
+                    break;
+                }
             }
         }
+        if reader_gone {
+            break;
+        }
 
-        let now = has_content();
+        // One read of the mount table per burst, for both the re-arming and
+        // the look.
+        dirs = watched_dirs();
+        arm(fd, &dirs, &mut armed);
+        let now = any_content(&dirs);
         if now != last {
             last = now;
             on_change(now);
         }
     }
+    tracing::warn!("trash watch: inotify reader stopped, the dock icon will not follow the can");
+    // SAFETY: the descriptor this function opened; its reader has returned.
+    unsafe { libc::close(fd) };
+}
+
+/// Watch the deepest directory that exists for each of `dirs`: `files/` once
+/// it is there, its parent while it is not, so its creation is itself an
+/// event. Called after every burst, since a mount may have brought a can or
+/// taken one away.
+///
+/// Every target is added again each time, not only the new ones: a `files/`
+/// deleted and made again is a new inode, and the kernel dropped the watch on
+/// the old one (`IN_IGNORED`) while the path stayed in `armed`. Adding a watch
+/// on an inode already watched just returns its descriptor.
+fn arm(fd: i32, dirs: &[PathBuf], armed: &mut HashMap<PathBuf, i32>) {
+    let targets: HashSet<PathBuf> = dirs
+        .iter()
+        .filter_map(|dir| deepest_existing(dir))
+        .collect();
+    armed.retain(|path, descriptor| {
+        let keep = targets.contains(path);
+        if !keep {
+            // SAFETY: a descriptor this thread added; if the kernel already
+            // dropped it, the call fails with EINVAL and changes nothing.
+            unsafe { libc::inotify_rm_watch(fd, *descriptor) };
+        }
+        keep
+    });
+    for target in targets {
+        let Ok(c_path) = std::ffi::CString::new(target.as_os_str().as_encoded_bytes()) else {
+            continue;
+        };
+        // SAFETY: a NUL-terminated path and a mask of inotify flags.
+        let descriptor = unsafe { libc::inotify_add_watch(fd, c_path.as_ptr(), INTEREST) };
+        if descriptor >= 0 {
+            armed.insert(target, descriptor);
+        } else {
+            armed.remove(&target);
+        }
+    }
+}
+
+/// What wakes the watcher.
+enum Wake {
+    /// Something under a watched directory, or the mount table, changed.
+    Changed,
+    /// The inotify reader has stopped, and with it every watch.
+    ReaderGone,
+}
+
+/// Poke `tx` whenever something is mounted or unmounted: the kernel flags
+/// `/proc/self/mountinfo` with `POLLPRI` on every change to the mount table.
+///
+/// Returns the write end of a pipe the thread also polls: dropping it (when
+/// the watcher stops) hangs the pipe up, and the thread returns rather than
+/// waiting for the next mount to notice nobody is listening.
+fn watch_mounts(tx: mpsc::Sender<Wake>) -> Option<std::os::fd::OwnedFd> {
+    use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+    let mounts = std::fs::File::open("/proc/self/mountinfo").ok()?;
+    let mut ends = [0; 2];
+    // SAFETY: `ends` has room for the two descriptors pipe2 writes.
+    if unsafe { libc::pipe2(ends.as_mut_ptr(), libc::O_CLOEXEC) } != 0 {
+        return None;
+    }
+    // SAFETY: both descriptors were just opened by pipe2 and are owned here.
+    let (stop_read, stop_write) =
+        unsafe { (OwnedFd::from_raw_fd(ends[0]), OwnedFd::from_raw_fd(ends[1])) };
+    std::thread::Builder::new()
+        .name("otto-trash-mounts".into())
+        .spawn(move || loop {
+            let mut polls = [
+                libc::pollfd {
+                    fd: mounts.as_raw_fd(),
+                    events: libc::POLLPRI,
+                    revents: 0,
+                },
+                libc::pollfd {
+                    fd: stop_read.as_raw_fd(),
+                    events: libc::POLLIN,
+                    revents: 0,
+                },
+            ];
+            // SAFETY: two pollfds we own, for descriptors this closure keeps open.
+            let ready = unsafe { libc::poll(polls.as_mut_ptr(), 2, -1) };
+            if ready < 0 {
+                if std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted {
+                    continue;
+                }
+                return;
+            }
+            if polls[1].revents != 0 {
+                return;
+            }
+            if polls[0].revents & libc::POLLPRI != 0 && tx.send(Wake::Changed).is_err() {
+                return;
+            }
+        })
+        .ok()?;
+    Some(stop_write)
 }
 
 /// `files`, or the nearest ancestor of it that exists.
@@ -239,6 +357,47 @@ mod tests {
         std::fs::create_dir_all(&files).unwrap();
         assert_eq!(deepest_existing(&files), Some(files.clone()));
 
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn a_can_made_again_is_watched_again() {
+        let root = std::env::temp_dir().join(format!("otto-trash-rearm-{}", std::process::id()));
+        let files = root.join("Trash/files");
+        std::fs::create_dir_all(&files).unwrap();
+        // SAFETY: inotify_init1 takes flags and returns a descriptor or -1.
+        let fd = unsafe { libc::inotify_init1(libc::IN_CLOEXEC | libc::IN_NONBLOCK) };
+        assert!(fd >= 0);
+        let drain = || {
+            let mut buffer = [0u8; 4096];
+            // SAFETY: reading into a buffer we own, of the size we pass.
+            unsafe {
+                libc::read(
+                    fd,
+                    buffer.as_mut_ptr() as *mut libc::c_void,
+                    buffer.len() as libc::size_t,
+                )
+            }
+        };
+
+        let dirs = vec![files.clone()];
+        let mut armed = HashMap::new();
+        arm(fd, &dirs, &mut armed);
+        let first = armed[&files];
+
+        // Deleted and made again between two bursts: same path, new inode,
+        // and the kernel has dropped the old watch.
+        std::fs::remove_dir(&files).unwrap();
+        std::fs::create_dir(&files).unwrap();
+        while drain() > 0 {}
+        arm(fd, &dirs, &mut armed);
+        assert_ne!(armed[&files], first);
+
+        std::fs::write(files.join("thrown-away"), b"").unwrap();
+        assert!(drain() > 0, "a file in the new can is an event");
+
+        // SAFETY: the descriptor this test opened.
+        unsafe { libc::close(fd) };
         std::fs::remove_dir_all(&root).ok();
     }
 }

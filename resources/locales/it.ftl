@@ -63,8 +63,10 @@ dock-quit = Esci
 ## sidebar does not grow to fit them.
 
 settings-pane-general = Generali
+settings-pane-appearance = Aspetto
 settings-pane-displays = Monitor
 settings-pane-dock = Dock
+settings-pane-top-bar = Barra superiore
 settings-pane-tiling = Affiancamento
 settings-pane-keyboard = Tastiera
 settings-pane-pointing = Trackpad e mouse
@@ -73,6 +75,17 @@ settings-pane-power = Energia
 settings-pane-lock-and-login = Blocco e accesso
 settings-pane-search = Ricerca
 settings-pane-agents = Agenti
+settings-pane-about = Informazioni
+settings-sidebar-search = Cerca
+settings-sidebar-search-none = Nessuna impostazione corrisponde a «{ $query }»
+settings-group-about-machine = Informazioni su questo computer
+settings-about-version-line = Versione { $version }
+settings-about-computer-name = Nome del computer
+settings-about-os = Sistema operativo
+settings-about-kernel = Kernel
+settings-about-processor = Processore
+settings-about-memory = Memoria
+settings-about-memory-gb = { $size } GB
 
 
 ## Settings — General
@@ -93,15 +106,50 @@ settings-group-desktop = Scrivania
 settings-background-colour = Colore di sfondo
 settings-background-image = Immagine di sfondo
 settings-background-image-detail = Scelta tramite il selettore file del portale del desktop
+settings-background-layout = Adattamento
+settings-background-zoom = Zoom
+settings-background-position-x = Posizione orizzontale
+settings-background-position-y = Posizione verticale
+settings-background-position-detail = Oppure fai clic sulla parte dell'immagine da tenere in vista
+settings-desktop-widget = Widget dello sfondo
+settings-desktop-widget-needs-ewwii = Serve ewwii, che non è installato
+# { $folder } is a path such as ~/.config/otto/widgets/ewwii.
+settings-desktop-widget-detail = Disegnato da ewwii. Aggiungi i tuoi widget in { $folder }
 # Stands in for the wallpaper thumbnail when the file cannot be decoded.
 settings-background-image-unavailable = Impossibile da mostrare
 settings-show-desk = Mostra i file sulla scrivania
 settings-show-desk-detail = I file della cartella Scrivania, dietro le finestre
 
+settings-group-desk = Scrivania
+settings-desk-folder = Cartella
+settings-desk-folder-default = La tua cartella Scrivania
+settings-desk-choose-folder-title = Scegli una cartella per la scrivania
+settings-desk-layout = Dimensioni e posizione
+settings-desk-layout-edit = Modifica…
+settings-desk-layout-reset = Ripristina
+settings-desk-layout-fill = Occupa tutto lo schermo. Modifica mostra le maniglie sulla scrivania per sistemarla
+settings-desk-layout-placed = Sistemata a mano. Ripristina la riporta a tutto schermo
+settings-desk-icon-size = Dimensione delle icone
+settings-desk-overflow = Quando le icone non entrano
+settings-desk-overflow-scroll = Scorri
+settings-desk-overflow-stack = Mostra in sovrapposizione
+settings-desk-overflow-detail = Scorri sposta la griglia. Mostra in sovrapposizione tiene il resto nell’ultima casella e lo apre sopra le finestre
+
 settings-group-pointer-and-icons = Puntatore e icone
 settings-cursor-theme = Tema del cursore
 settings-cursor-size = Dimensione del cursore
 settings-icon-theme = Tema delle icone
+
+settings-group-app-menu = Menu delle applicazioni
+settings-show-app-menu = Mostra i menu delle applicazioni
+settings-show-app-menu-detail = Accanto al nome dell’applicazione attiva. Le applicazioni aperte mentre è disattivato tengono il menu nella propria finestra
+
+settings-group-clock = Orologio
+settings-show-clock = Mostra data e ora
+settings-show-clock-detail = All’estremità destra della barra superiore
+settings-clock-format = Formato
+settings-clock-format-detail = Va bene anche qualsiasi formato strftime, come clock_format sotto [topbar] nel file di configurazione
+settings-clock-format-automatic = { $preview } (predefinito della lingua)
 
 settings-group-window-switcher = Cambio finestra
 settings-follow-cursor = Mostra sul monitor del puntatore
@@ -238,6 +286,26 @@ settings-scrolling-speed = Velocità di scorrimento
 
 settings-interface-sounds = Suoni dell'interfaccia
 settings-sound-theme = Tema sonoro
+settings-group-sound-output = Dispositivi di uscita
+settings-group-sound-input = Dispositivi di ingresso
+settings-sound-output-device = Dispositivo di uscita
+settings-sound-input-device = Dispositivo di ingresso
+settings-sound-volume = Volume
+settings-sound-mute = Silenzia
+settings-sound-no-outputs = Nessun dispositivo di uscita
+settings-sound-no-inputs = Nessun dispositivo di ingresso
+settings-sound-unavailable = Nessun server audio risponde. L'audio richiede PipeWire con pipewire-pulse, oppure PulseAudio, e pactl.
+settings-sound-show = Mostra
+settings-sound-view-playback = Riproduzione
+settings-sound-view-recording = Registrazione
+settings-sound-view-configuration = Configurazione
+settings-sound-port = Porta
+settings-sound-unplugged = scollegato
+settings-sound-default = Usa come predefinito
+settings-sound-profile = Profilo
+settings-sound-no-playback = Nessuna app sta riproducendo audio
+settings-sound-no-recording = Nessuna app sta registrando audio
+settings-sound-no-cards = Nessuna scheda audio
 
 
 ## Settings — Power
@@ -375,6 +443,14 @@ settings-agents-service-missing = Non installato
 settings-agents-service-unmanaged = Non si sa: questo sistema non ha systemctl
 settings-agents-start = Avvia
 settings-agents-restart = Riavvia
+settings-agents-bridge-group = Ponte per le chat
+settings-agents-bridge = Ponte
+settings-agents-bridge-off = Spento. Le app di chat non raggiungono i tuoi agenti.
+settings-agents-bridge-unset = Imposta un comando qui sotto e applicalo, poi attiva questo.
+settings-agents-bridge-failed = Fermato da un errore. journalctl --user -u otto-agents-bridge dice perché.
+settings-agents-bridge-missing = Non installato
+settings-agents-bridge-command = Comando
+settings-agents-bridge-command-detail = Cosa esegue il ponte, per esempio un gateway configurato per avviare otto-agents acp come suo agente.
 # The row that opens agents.toml. Its path is shown under it.
 settings-agents-file = File di configurazione
 settings-agents-none = Nessun agente configurato
@@ -458,6 +534,18 @@ settings-choice-power-ignore = Non fare nulla
 settings-choice-power-lock = Blocca lo schermo
 settings-choice-power-suspend = Sospendi
 settings-choice-power-shutdown = Arresta il sistema
+settings-choice-widget-none = Nessuno
+settings-choice-widget-calendar = Calendario
+# The next two name pages whose text is in English, so they stay as written.
+settings-choice-widget-cross-pad = Cross pad
+settings-choice-widget-grid-pad = Grid pad
+# How a background image fills the screen.
+settings-choice-background-fill = Riempi lo schermo
+settings-choice-background-fit = Adatta allo schermo
+settings-choice-background-stretch = Allarga per riempire
+settings-choice-background-center = Centra
+settings-choice-background-tile = Affianca
+settings-choice-background-span = Estendi su tutti i monitor
 # The automatic option for a theme that follows the system.
 settings-choice-auto = Auto
 
@@ -501,6 +589,15 @@ files-open-with-always = Usa sempre questa app per “{ $kind }”
 files-open-with-not-remembered = Aperto, ma la scelta non è stata salvata: { $error }
 files-new-folder = Nuova cartella
 files-desk-open-in-files = Apri in File
+files-desk-edit-done = Fine
+# The desk's overflow tile: the caption under it, and what a screen reader
+# says for it. $count is how many items it holds.
+files-desk-overflow-caption = Altri elementi
+files-desk-overflow =
+    { $count ->
+        [one] 1 altro elemento
+       *[other] Altri { $count } elementi
+    }
 files-move-to-trash = Sposta nel Cestino
 # $count is always two or more; the single-item case uses files-move-to-trash.
 files-move-count-to-trash =
@@ -629,6 +726,9 @@ files-undo-move = Spostamento
 files-undo-copy = Copia
 files-undo-delete = Eliminazione
 files-undo-rename = Ridenominazione
+files-undo-rotate = Rotazione
+files-undo-flip = Ribaltamento
+files-turn-failed = Impossibile ruotare “{ $name }”: { $error }
 # $name is a file or folder name, already wrapped in quotation marks.
 files-renamed-to = Rinominato in “{ $name }”
 files-new-folder-created = Nuova cartella “{ $name }”
@@ -638,6 +738,7 @@ files-rename-failed = Impossibile rinominare: { $error }
 files-new-folder-failed = Impossibile creare la cartella: { $error }
 files-open-failed = Impossibile aprire il file: { $error }
 files-open-app-broken = il comando di avvio dell’app non è valido
+files-open-no-app = nessuna app installata apre questo tipo di file
 files-new-window-failed = Impossibile aprire una nuova finestra: { $error }
 files-settings-open-failed = Impossibile aprire Impostazioni: { $error }
 
@@ -729,16 +830,16 @@ files-empty-trash-detail =
 ## not KiB. Most languages keep the symbols as they are; translate only the
 ## spelled-out "bytes".
 
-files-size-bytes =
+size-bytes =
     { $count ->
         [one] { $count } byte
         [many] { $count } byte
        *[other] { $count } byte
     }
-files-size-kb = { $value } KB
-files-size-mb = { $value } MB
-files-size-gb = { $value } GB
-files-size-tb = { $value } TB
+size-kb = { $value } KB
+size-mb = { $value } MB
+size-gb = { $value } GB
+size-tb = { $value } TB
 
 
 ## Files — dates
@@ -784,6 +885,7 @@ files-new-folder-with-count =
 # The panel opened with Ctrl+P: type a few letters of a command's name to run it.
 files-palette-placeholder = Esegui un comando
 files-palette-no-matches = Nessun comando corrisponde
+files-palette-menu-item = Palette dei comandi…
 # $count is how many commands the palette is offering; announced when it opens.
 files-palette-opened =
     { $count ->
@@ -916,6 +1018,15 @@ bar-power-performance = Prestazioni
 bar-power-settings = Impostazioni energia…
 bar-keyboard-settings = Impostazioni tastiera…
 bar-keyboard-layout-label = Disposizione della tastiera: { $layout }
+bar-otto-menu = Otto
+bar-otto-about = Informazioni su Otto
+bar-otto-settings = Impostazioni…
+bar-otto-log-out = Esci
+# The menu under the focused application's name in the top bar.
+bar-app-minimize = Riduci a icona
+bar-app-quit = Esci da { $app }
+bar-logout-title = Uscire adesso?
+bar-logout-body = Prima verrà chiesto alle app di chiudersi, così potrai salvare quello che non è ancora salvato.
 
 
 ## Settings — widgets
@@ -965,10 +1076,28 @@ schema-font-family-label = Carattere dell'interfaccia
 schema-font-family-description = Famiglia di caratteri usata dall'interfaccia di Otto.
 schema-desk-enabled-label = Mostra i file sulla scrivania
 schema-desk-enabled-description = I file della cartella Scrivania, dietro le finestre.
+schema-canvas-width-label = Larghezza della tela laterale
+schema-canvas-width-description = Larghezza della tela laterale, in punti logici. Tutto ciò che contiene viene disegnato a questa larghezza.
+schema-desktop-widget-label = Widget dello sfondo
+schema-desktop-widget-description = Una pagina a tutto schermo sopra lo sfondo, dietro le finestre. Serve ewwii.
+schema-topbar-show-clock-label = Mostra data e ora
+schema-topbar-show-clock-description = L’orologio all’estremità destra della barra superiore.
+schema-topbar-clock-format-label = Formato dell’orologio
+schema-topbar-clock-format-description = Come la barra superiore scrive data e ora, in formato strftime. Vuoto segue la lingua.
+schema-topbar-show-app-menu-label = Mostra i menu delle applicazioni
+schema-topbar-show-app-menu-description = I menu dell’applicazione attiva, accanto al suo nome nella barra superiore.
 schema-background-color-label = Colore di sfondo
-schema-background-color-description = Colore di sfondo della scrivania, come stringa esadecimale.
+schema-background-color-description = Colore di sfondo della scrivania, come stringa esadecimale: il gradiente mostrato senza immagine e ciò che appare intorno a un'immagine adattata o centrata.
 schema-background-image-label = Immagine di sfondo
 schema-background-image-description = Percorso dell'immagine di sfondo della scrivania. Vuoto per nessuna.
+schema-background-mode-label = Adattamento dello sfondo
+schema-background-mode-description = Come l'immagine di sfondo riempie lo schermo.
+schema-background-position-x-label = Posizione orizzontale dello sfondo
+schema-background-position-x-description = Quale parte di un'immagine di sfondo ritagliata è visibile, e dove si trova una più piccola, da 0 (sinistra) a 1 (destra).
+schema-background-position-y-label = Posizione verticale dello sfondo
+schema-background-position-y-description = Quale parte di un'immagine di sfondo ritagliata è visibile, e dove si trova una più piccola, da 0 (alto) a 1 (basso).
+schema-background-zoom-label = Zoom dello sfondo
+schema-background-zoom-description = Ingrandimento di un'immagine di sfondo che riempie lo schermo o si estende su più monitor, da 1 (copre appena lo schermo).
 schema-cursor-theme-label = Tema del cursore
 schema-cursor-theme-description = Nome del tema XCursor.
 schema-cursor-size-label = Dimensione del cursore
@@ -1165,6 +1294,8 @@ launcher-agents-working = In corso
 launcher-agents-needs-input = In attesa di risposta
 launcher-agents-error = Non riuscita
 launcher-agents-none = Ancora nessuna sessione degli agenti
+canvas-sessions-heading = Agenti
+stash-drop-invite = Rilascia qui i file per la raccolta
 # Ask mode: the files that go with a request, under it in the log, or above
 # the field before it is sent. { $files } is their names, comma-separated.
 # Ask mode, while an existing session is being opened to continue it.
@@ -1278,6 +1409,9 @@ agents-permission-reject = Rifiuta
 agents-permission-reject-always = Non consentire mai
 # The button that hands the question to the Ask window instead.
 agents-permission-open-in-ask = Apri in Ask
+# The same button for a session started in Preview about a file: the
+# question opens there, beside the file. Use the app's name as in its menu entry.
+agents-permission-open-in-preview = Apri in Studio
 
 
 ## Emoji picker
@@ -1572,6 +1706,21 @@ peek-pdf-install-rasteriser = Installa uno di questi: { $packages } — per vede
 peek-page-of = { $page } / { $pages }
 
 
+## Preview — chat
+
+# The chat field beside a file in Preview, before anything is typed.
+# $name is the file's name.
+preview-chat-placeholder = Chiedi su { $name }
+# Shown in the empty chat beside a file, until something is asked.
+preview-chat-empty = Chiedi a un agente di questo file, o di modificarlo.
+# Over the chat field in Preview, when marks drawn on the file will go with
+# the next message. $marks lists their numbers ("1, 2"); $count is how many.
+preview-chat-marks = { $count ->
+    [one] Il segno { $marks } parte con il tuo messaggio
+   *[other] I segni { $marks } partono con il tuo messaggio
+}
+
+
 ## Peek — listings
 ##
 ## A folder or an archive is previewed as a list of what is inside, with one
@@ -1588,23 +1737,6 @@ peek-item-count =
        *[other] { $count } elementi
     }
 peek-archive-summary = { $items } — { $size }
-
-
-## Peek — sizes
-##
-## Byte units. Peek counts in powers of 1024, so the symbols are the
-## conventional binary-rounded ones. Translate only the spelled-out "bytes".
-
-peek-size-bytes =
-    { $count ->
-        [one] { $count } byte
-        [many] { $count } byte
-       *[other] { $count } byte
-    }
-peek-size-kb = { $value } KB
-peek-size-mb = { $value } MB
-peek-size-gb = { $value } GB
-peek-size-tb = { $value } TB
 
 
 ## Peek — nothing to show
@@ -1755,6 +1887,7 @@ a11y-status = Stato
 a11y-tray-item = Elemento { $number }
 a11y-notifications = Notifiche
 a11y-categories = Categorie
+a11y-search-settings = Cerca nelle impostazioni
 a11y-results = Risultati
 a11y-settings = Impostazioni
 a11y-preview = Anteprima
@@ -1810,13 +1943,17 @@ files-photos-info-kind = Immagine { $format }
 files-photos-info-copied = Copiato
 files-photos-info-dimensions = Dimensioni
 files-photos-info-modified = Modificato
+files-photos-info-taken = Scattata
 files-photos-info-where = Posizione
+files-photos-info-camera = Fotocamera
+files-photos-info-lens = Obiettivo
+files-photos-info-exposure = Esposizione
+files-photos-info-location = Luogo
 files-photos-info-many =
     { $count ->
         [one] 1 elemento
        *[other] { $count } elementi
     }
-files-photos-one-selected = 1 selezionato · Spazio per l’anteprima · ↵ per aprire
 
 
 ## otto-authorize — the panel that asks for the password before a sensitive setting changes.
@@ -1854,3 +1991,147 @@ privacy-store-unavailable-detail = L’archivio dei permessi (xdg-permission-sto
 settings-pane-privacy = Privacy
 
 screencast-picker-remember = Ricorda per { $app }
+
+## Users pane
+
+settings-pane-account = Utenti
+settings-account-picture = Immagine
+settings-account-picture-detail = Mostrata nelle schermate di accesso e di blocco
+settings-account-choose-picture = Scegli un'immagine
+settings-account-picture-unreadable = Otto non riesce a leggere questo file come immagine
+settings-account-full-name = Nome completo
+settings-account-name = Nome account
+settings-account-type = Tipo di account
+settings-account-type-administrator = Amministratore
+settings-account-type-standard = Standard
+settings-account-no-accountsservice = Non modificabile qui: AccountsService non è in esecuzione
+settings-account-not-permitted = Il sistema non ha consentito questa modifica
+settings-group-password = Password
+settings-account-current-password = Password attuale
+settings-account-new-password = Nuova password
+settings-account-confirm-password = Conferma nuova password
+settings-account-change-password = Cambia password
+settings-account-change-password-ellipsis = Cambia password…
+settings-account-password-detail = Serve per accedere, sbloccare lo schermo e approvare le modifiche
+settings-account-password-changing = Modifica della password…
+settings-account-password-changed = Password modificata
+settings-account-password-missing = Inserisci la password attuale e una nuova
+settings-account-password-mismatch = Le nuove password non coincidono
+settings-account-password-same = La nuova password è uguale a quella attuale
+settings-account-password-wrong-current = La password attuale non è corretta
+settings-account-password-failed = Non è stato possibile cambiare la password
+settings-account-reset-password-ellipsis = Reimposta password…
+settings-account-reset-detail = Imposta una nuova password per questo account
+settings-account-working = In attesa del sistema…
+settings-users-you = { $kind } · Tu
+settings-users-reset-title = Reimposta la password di { $name }
+settings-users-reset-action = Reimposta password
+settings-users-add-title = Aggiungi utente
+settings-users-add-action = Aggiungi utente
+settings-users-delete-title = Eliminare { $name }?
+settings-users-delete-body = Non potrà più accedere. La sua cartella home viene conservata.
+settings-users-delete-action = Elimina utente
+settings-users-invalid-name = I nomi account iniziano con una lettera minuscola e usano solo a–z, 0–9, - e _
+settings-users-name-taken = Esiste già un account con questo nome
+settings-users-password-missing = Inserisci una password per l'account
+
+## Impostazioni › Dettatura
+
+settings-pane-dictation = Dettatura
+settings-dictation-intro = La voce viene scritta in un campo di testo e riconosciuta su questo computer. Ctrl+D detta nel launcher; nelle altre app lo fa una scorciatoia assegnata a otto-dictate toggle.
+settings-dictation-engine = Motore
+settings-dictation-engine-detail = Sceglierne uno avvia il suo server vocale e ferma gli altri
+settings-dictation-engine-parakeet = Parakeet
+settings-dictation-engine-whisper = Whisper (solo inglese)
+settings-dictation-engine-crispasr = CrispASR
+settings-dictation-server = Server vocale
+settings-dictation-server-checking = Verifica…
+settings-dictation-server-running = Attivo
+settings-dictation-server-stopped = Fermo. La dettatura non sente nulla finché non parte.
+settings-dictation-server-failed = Fermato da un errore. journalctl --user -u { $unit } dice perché.
+settings-dictation-server-missing = Non installato. components/otto-dictate/engines/install.sh { $engine } lo installa.
+settings-dictation-server-unmanaged = Non si sa: questo sistema non ha systemctl
+settings-dictation-start = Avvia
+settings-dictation-restart = Riavvia
+settings-dictation-language = Lingua
+settings-dictation-language-auto = Automatica
+settings-dictation-language-detail = La lingua parlata. Parakeet e CrispASR la riconoscono da soli.
+settings-dictation-hotwords-boost = Rinforzo dei nomi
+settings-dictation-hotwords-boost-detail = Quanto sono favoriti i nomi che un campo si aspetta. Oltre 6, le parole intorno a un nome iniziano a storpiarsi.
+settings-dictation-autostart = Avvia la dettatura all'accesso
+settings-dictation-autostart-detail = Avvia otto-dictate da ~/.config/autostart, che Otto legge quando xdg_autostart è attivo
+
+## Studio — menus and the keyboard shortcuts sheet
+
+studio-menu-file = File
+studio-menu-edit = Modifica
+studio-menu-marks = Segni
+studio-menu-view = Vista
+studio-menu-help = Aiuto
+studio-close = Chiudi finestra
+studio-undo = Annulla
+studio-redo = Ripeti
+studio-copy = Copia
+studio-select-all = Seleziona tutto
+studio-pen = Penna
+studio-show-marks = Mostra segni
+studio-delete-mark = Elimina l’ultimo segno
+studio-zoom-in = Ingrandisci
+studio-zoom-out = Riduci
+studio-zoom-fit = Adatta alla finestra
+studio-previous-page = Pagina precedente
+studio-next-page = Pagina successiva
+studio-sidebar = Mostra pagine
+studio-chat = Mostra chat
+studio-shortcuts = Scorciatoie da tastiera
+studio-sheet-document = Documento
+studio-sheet-chat = Chat
+studio-sheet-scroll = Scorri
+studio-sheet-page = Schermata successiva
+studio-sheet-ends = Inizio e fine
+studio-sheet-zoom-pointer = Zoom sul puntatore
+studio-sheet-stop = Posa la penna
+studio-sheet-send = Invia
+studio-sheet-dictate = Detta
+studio-sheet-stop-agent = Ferma l’agente
+studio-sheet-to-document = Torna al documento
+studio-sheet-cmd = Cmd funziona ovunque come Ctrl
+# Toggle: the strip of tools that fill in and mark up a PDF, written into
+# the file itself.
+studio-markup = Strumenti di markup
+# Writes a PDF's form and markup changes over the file.
+studio-save = Salva
+# Saves the PDF under another name or in another folder, and carries on with that file.
+studio-save-as = Salva con nome…
+# The save dialog's title.
+studio-save-as-title = Salva una copia
+studio-open-title = Apri in Studio
+studio-open-filter-all = Immagini e documenti
+studio-open-filter-pictures = Immagini
+studio-pick-hint = Scegli un file da aprire
+# The window's title while a PDF has changes not yet saved. $name is the file's name.
+studio-title-edited = { $name } (modificato)
+# Asked when a window with unsaved changes is closed. $name is the file's name.
+studio-close-title = Salvare le modifiche a “{ $name }”?
+studio-close-body = Se non le salvi, le modifiche vanno perse.
+studio-close-discard = Non salvare
+studio-close-cancel = Annulla
+# Asked when saving would replace changes made to the file by another app
+# since it was opened. $name is the file's name.
+studio-changed-title = “{ $name }” è cambiato sul disco
+studio-changed-body = Salvando, le modifiche fatte altrove vengono sostituite.
+# Saves over the file anyway, replacing the changes made elsewhere.
+studio-changed-overwrite = Salva comunque
+# Shown when a PDF's changes couldn't be written; the reason follows on its
+# own line. $name is the file's name.
+studio-save-failed-title = Impossibile salvare “{ $name }”
+studio-save-failed-body = Salva una copia altrove per tenere le modifiche.
+# Deletes the highlight, drawing, text or signature selected on the page.
+studio-delete-selection = Elimina selezione
+studio-sheet-next-field = Campo successivo del modulo
+# The card a signature is drawn on, once, before it is placed on a PDF.
+studio-signature-title = Disegna la firma
+studio-signature-hint = Firma sopra la linea
+studio-signature-clear = Cancella
+studio-signature-cancel = Annulla
+studio-signature-done = Fine

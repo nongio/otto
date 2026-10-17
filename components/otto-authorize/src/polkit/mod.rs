@@ -464,28 +464,17 @@ fn describe_path(path: &str) -> Option<String> {
 }
 
 /// `dir` with the user's home folder written as `~`, which is how people
-/// read it and keeps the reason line short.
+/// read it and keeps the reason line short. A home folder of `/` would turn
+/// every path into `~/…`, so it is ignored.
 fn home_as_tilde(dir: &str) -> String {
-    match std::env::var("HOME") {
-        Ok(home) if !home.is_empty() && home != "/" => match dir.strip_prefix(home.as_str()) {
-            Some("") => "~".to_string(),
-            Some(rest) if rest.starts_with('/') => format!("~{rest}"),
-            _ => dir.to_string(),
-        },
-        _ => dir.to_string(),
-    }
+    let home = otto_kit::xdg::home().filter(|home| home.as_os_str() != "/");
+    otto_kit::xdg::tilde_in(std::path::Path::new(dir), home.as_deref())
 }
 
 /// What polkit says the request is for, on one line and no longer than the
 /// dialog shows. The program that asked has a line of its own under it.
 fn message_line(message: &str) -> String {
-    let message = visible(message);
-    if message.chars().count() > MAX_MESSAGE_CHARS {
-        let cut: String = message.chars().take(MAX_MESSAGE_CHARS - 1).collect();
-        format!("{}…", cut.trim_end())
-    } else {
-        message
-    }
+    otto_kit::typography::ellipsize_chars(&visible(message), MAX_MESSAGE_CHARS)
 }
 
 /// `text` on one line, with control and invisible formatting characters
@@ -543,6 +532,12 @@ mod tests {
         assert_eq!(message.chars().count(), MAX_MESSAGE_CHARS);
         assert!(message.ends_with('…'));
         assert_eq!(message_line("Short."), "Short.");
+        // The ellipsis sits against the last word, not after a space.
+        let spaced = format!("{} {}", "x".repeat(MAX_MESSAGE_CHARS - 2), "y".repeat(10));
+        assert_eq!(
+            message_line(&spaced),
+            format!("{}…", "x".repeat(MAX_MESSAGE_CHARS - 2))
+        );
     }
 
     #[test]

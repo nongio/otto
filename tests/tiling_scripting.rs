@@ -573,9 +573,10 @@ mod tiling_scripting_tests {
         let list = outputs.as_array().expect("an array");
         assert_eq!(list.len(), 1, "the headless backend has one output");
         assert_eq!(list[0]["active"], Value::Bool(true));
-        for key in ["name", "current_workspace", "rect"] {
+        for key in ["name", "current_workspace", "rect", "scale", "current_mode"] {
             assert!(!list[0][key].is_null(), "an output carries `{key}`");
         }
+        assert!(list[0]["current_mode"]["width"].as_i64().unwrap_or(0) > 0);
 
         drop(windows);
         handle.stop();

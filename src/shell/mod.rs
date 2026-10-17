@@ -20,9 +20,10 @@ use smithay::{
     wayland::{
         buffer::BufferHandler,
         compositor::{
-            add_blocker, add_pre_commit_hook, get_parent, is_sync_subsurface, with_states,
-            with_surface_tree_upward, BufferAssignment, CompositorClientState, CompositorHandler,
-            CompositorState, SurfaceAttributes, TraversalAction,
+            add_blocker, add_pre_commit_hook, get_parent, get_role, is_sync_subsurface,
+            with_states, with_surface_tree_upward, BufferAssignment, CompositorClientState,
+            CompositorHandler, CompositorState, SurfaceAttributes, TraversalAction,
+            SUBSURFACE_ROLE,
         },
         dmabuf::get_dmabuf,
         shell::{
@@ -222,8 +223,18 @@ impl<BackendData: Backend> CompositorHandler for Otto<BackendData> {
 
         let sync = is_sync_subsurface(surface);
         let surface_id = surface.id();
+        // A subsurface whose `wl_subsurface` is gone. It belongs to no window
+        // any more, yet its layer is still under the one it was last appended
+        // to. A commit held behind a buffer fence lands here after the
+        // destroy request that followed it, when no window can be found for
+        // it and the window itself may not commit again for a while. smithay
+        // marks a detached subsurface sync, so this is decided before `sync`.
+        let detached_subsurface =
+            get_parent(surface).is_none() && get_role(surface) == Some(SUBSURFACE_ROLE);
 
-        if !sync {
+        if detached_subsurface {
+            self.hide_detached_surface_layer(&surface_id);
+        } else if !sync {
             // A lock surface is not in any workspace, space or layer map: it
             // belongs to the output's lock plane and is mirrored straight into
             // the scene. Its subsurfaces reach here too, and are handled by the
@@ -248,6 +259,14 @@ impl<BackendData: Backend> CompositorHandler for Otto<BackendData> {
                 self.backend_data.invalidate_scene_prefetch();
                 self.backend_data.request_redraw();
                 self.schedule_event_loop_dispatch();
+                return;
+            }
+
+            // A side canvas item, or a subsurface of one: like a lock surface
+            // it is in no space or layer map, and is mirrored into the canvas
+            // column directly.
+            if let Some(root) = self.canvas_item_root_for(surface) {
+                self.canvas_item_committed(&root);
                 return;
             }
 
@@ -478,7 +497,7 @@ impl<BackendData: Backend> Otto<BackendData> {
         let initial_context = (initial_location, initial_location, None);
 
         // Collect all surfaces and build parent-child map
-        #[allow(clippy::mutable_key_type, clippy::type_complexity)]
+        #[allow(clippy::type_complexity)]
         let mut surface_info: std::collections::HashMap<
             smithay::reexports::wayland_server::backend::ObjectId,
             (
@@ -490,7 +509,6 @@ impl<BackendData: Backend> Otto<BackendData> {
 
         // Track per-parent child ordering as Smithay delivers it
         // (respects wl_subsurface.place_above / place_below reordering)
-        #[allow(clippy::mutable_key_type)]
         let mut children_order: std::collections::HashMap<
             smithay::reexports::wayland_server::backend::ObjectId,
             Vec<smithay::reexports::wayland_server::backend::ObjectId>,
@@ -810,7 +828,6 @@ impl<BackendData: Backend> Otto<BackendData> {
             });
 
             // Send popup to the overlay layer and register its surface layers
-            #[allow(clippy::mutable_key_type)]
             let popup_layers = self.workspaces.popup_overlay.update_popup(
                 &popup_id,
                 surface_id,
@@ -1198,6 +1215,13 @@ impl<BackendData: crate::state::Backend> crate::state::Otto<BackendData> {
             return;
         }
 
+        // A window with a parent — a dialog, a portal file picker adopted
+        // through xdg-foreign — opens over the window it belongs to, not in
+        // the middle of whatever output the pointer happened to be on.
+        if self.centre_over_parent(window, size) {
+            return;
+        }
+
         let Some(output) = self.workspaces.output_for_window(window) else {
             return;
         };
@@ -1282,6 +1306,54 @@ impl<BackendData: crate::state::Backend> crate::state::Otto<BackendData> {
         );
         self.workspaces
             .map_window_on_output(&output, window, location, false, None);
+    }
+
+    /// Centre `window` over its parent toplevel, kept inside the usable area
+    /// of the parent's output. False when it has no parent, or the parent is
+    /// not on screen to be centred over — the caller then places it as any
+    /// other window.
+    fn centre_over_parent(
+        &mut self,
+        window: &WindowElement,
+        size: smithay::utils::Size<i32, Logical>,
+    ) -> bool {
+        let Some(parent_surface) = window.toplevel().and_then(|t| t.parent()) else {
+            return false;
+        };
+        let Some(parent) = self
+            .workspaces
+            .get_window_for_surface(&parent_surface.id())
+            .cloned()
+        else {
+            return false;
+        };
+        let Some(parent_loc) = self.workspaces.element_location(&parent) else {
+            return false;
+        };
+        let Some(output) = self.workspaces.output_for_window(&parent) else {
+            return false;
+        };
+        let Some(usable) = self.workspaces.usable_geometry(&output) else {
+            return false;
+        };
+        let parent_size = parent.geometry().size;
+        let x = parent_loc.x + (parent_size.w - size.w) / 2;
+        let y = parent_loc.y + (parent_size.h - size.h) / 2;
+        let location = smithay::utils::Point::<i32, Logical>::from((
+            x.min(usable.loc.x + (usable.size.w - size.w).max(0))
+                .max(usable.loc.x),
+            y.min(usable.loc.y + (usable.size.h - size.h).max(0))
+                .max(usable.loc.y),
+        ));
+        tracing::debug!(
+            "settle_initial_placement: centring {}x{} child over its parent at {:?}",
+            size.w,
+            size.h,
+            location
+        );
+        self.workspaces
+            .map_window_on_output(&output, window, location, false, None);
+        true
     }
 }
 

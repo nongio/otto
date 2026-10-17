@@ -116,7 +116,7 @@ async fn name_departure(
         .await
         .unwrap_or(false);
     Ok(async move {
-        use zbus::export::futures_util::StreamExt;
+        use futures_util::StreamExt;
         if gone_already {
             return;
         }
@@ -923,7 +923,7 @@ impl CompositorInterface {
             .await
             .unwrap_or(false);
         tokio::spawn(async move {
-            use zbus::export::futures_util::StreamExt;
+            use futures_util::StreamExt;
             if !gone_already {
                 while let Some(change) = changes.next().await {
                     if change.args().is_ok_and(|args| args.new_owner().is_none()) {
@@ -1307,7 +1307,7 @@ fn sender_of(header: &zbus::message::Header<'_>) -> zbus::fdo::Result<String> {
 /// Take the seats away from every program no longer allowed them, whenever
 /// the answers change: switched off or forgotten in Settings › Privacy.
 async fn revoke_on_change(connection: Connection, compositor_tx: Sender<CompositorCommand>) {
-    use zbus::export::futures_util::StreamExt;
+    use futures_util::StreamExt;
 
     let rule = match zbus::MatchRule::builder()
         .msg_type(zbus::message::Type::Signal)
@@ -1370,7 +1370,13 @@ pub async fn run_dbus_service(
         .at("/org/otto/ScreenCast", screencast)
         .await?;
 
-    connection.request_name("org.otto.ScreenCast").await?;
+    // No AllowReplacement: zbus 5's plain request_name would add it.
+    connection
+        .request_name_with_flags(
+            "org.otto.ScreenCast",
+            zbus::fdo::RequestNameFlags::ReplaceExisting | zbus::fdo::RequestNameFlags::DoNotQueue,
+        )
+        .await?;
 
     // Register the compositor interface (health + app management)
     tokio::spawn(revoke_on_change(connection.clone(), compositor_tx.clone()));
@@ -1380,7 +1386,13 @@ pub async fn run_dbus_service(
         .at("/org/otto/Compositor", compositor)
         .await?;
 
-    connection.request_name("org.otto.Compositor").await?;
+    // No AllowReplacement: zbus 5's plain request_name would add it.
+    connection
+        .request_name_with_flags(
+            "org.otto.Compositor",
+            zbus::fdo::RequestNameFlags::ReplaceExisting | zbus::fdo::RequestNameFlags::DoNotQueue,
+        )
+        .await?;
 
     // Register the Settings interface
     crate::settings_service::register_settings_interface(&connection, settings_tx).await?;
@@ -1397,10 +1409,15 @@ pub async fn run_dbus_service(
             .await
         {
             Ok(()) => match connection
-                .request_name(crate::a11y::keyboard_monitor::BUS_NAME)
+                // No AllowReplacement: zbus 5's plain request_name would add it.
+                .request_name_with_flags(
+                    crate::a11y::keyboard_monitor::BUS_NAME,
+                    zbus::fdo::RequestNameFlags::ReplaceExisting
+                        | zbus::fdo::RequestNameFlags::DoNotQueue,
+                )
                 .await
             {
-                Ok(()) => {
+                Ok(_) => {
                     // The pointer half of the same object. at-spi2-core builds
                     // one device from both interfaces, so a manager that
                     // serves only the keyboard is not one Orca can use.

@@ -10,6 +10,17 @@ use super::layout::Gaps;
 use super::tree::{Axis, NodeId, Tree};
 use crate::config::TilingConfig;
 
+impl Gaps {
+    /// The `[tiling]` defaults a workspace lays out with.
+    pub fn from_config(config: &TilingConfig) -> Self {
+        Gaps {
+            inner: config.inner_gap.max(0),
+            outer: config.outer_gap.max(0),
+            smart: config.smart_gaps,
+        }
+    }
+}
+
 /// Everything one workspace knows about its tiling.
 #[derive(Debug, Default)]
 pub struct TilingState {
@@ -77,7 +88,7 @@ impl TilingState {
                 smart: config.smart_gaps,
                 ..gaps
             },
-            None => config.gaps(),
+            None => Gaps::from_config(config),
         }
     }
 

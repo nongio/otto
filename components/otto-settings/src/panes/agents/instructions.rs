@@ -18,11 +18,8 @@ pub struct Instructions {
 
 /// Where plugins are looked for, most important first.
 fn plugin_dirs() -> Vec<PathBuf> {
-    let data = std::env::var_os("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .filter(|dir| dir.is_absolute())
-        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/share")));
-    data.map(|dir| dir.join("otto/plugins"))
+    otto_kit::xdg::data_home()
+        .map(|dir| dir.join("otto/plugins"))
         .into_iter()
         .chain([PathBuf::from("/usr/share/otto/plugins")])
         .collect()

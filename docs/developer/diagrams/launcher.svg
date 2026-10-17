@@ -1,0 +1,79 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 410" width="760" height="410" role="img" aria-label="The launcher: sources feed the ranker, rows fill the card, Ask runs beside them">
+  <style>
+    text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
+    .box  { fill: #f6f8fa; stroke: #8b949e; stroke-width: 1.4; }
+    .acc  { fill: #ddf4ff; stroke: #218bff; stroke-width: 1.4; }
+    .grp  { fill: none; stroke: #8b949e; stroke-width: 1.2; stroke-dasharray: 5 4; }
+    .t    { fill: #1f2328; font-size: 13px; }
+    .tb   { fill: #1f2328; font-size: 13px; font-weight: 600; }
+    .tm   { fill: #656d76; font-size: 11px; }
+    .ln   { stroke: #8b949e; stroke-width: 1.4; fill: none; marker-end: url(#ah); }
+    @media (prefers-color-scheme: dark) {
+      .box { fill: #161b22; stroke: #6e7681; }
+      .acc { fill: #10243b; stroke: #388bfd; }
+      .grp { stroke: #6e7681; }
+      .t, .tb { fill: #e6edf3; }
+      .tm  { fill: #9198a1; }
+      .ln  { stroke: #8b949e; }
+    }
+  </style>
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#8b949e"/>
+    </marker>
+  </defs>
+
+  <rect class="box" x="20" y="16" width="720" height="44" rx="8"/>
+  <text class="tb" x="36" y="36">Opened by</text>
+  <text class="tm" x="36" y="52">a key binding · otto-canvas · otto-stash · the agent service</text>
+  <path class="ln" d="M380 60 V86"/>
+
+  <rect class="grp" x="20" y="90" width="720" height="218" rx="10"/>
+  <text class="tm" x="36" y="110">otto-launcher · one process per run</text>
+
+  <rect class="box" x="40" y="124" width="130" height="32" rx="6"/>
+  <text class="t" x="56" y="145">Apps</text>
+  <rect class="box" x="40" y="166" width="130" height="32" rx="6"/>
+  <text class="t" x="56" y="187">Calculator</text>
+  <rect class="box" x="40" y="208" width="130" height="32" rx="6"/>
+  <text class="t" x="56" y="229">Windows</text>
+  <path class="ln" d="M170 140 L218 178"/>
+  <path class="ln" d="M170 182 L218 185"/>
+  <path class="ln" d="M170 224 L218 192"/>
+
+  <rect class="acc" x="220" y="160" width="160" height="50" rx="6"/>
+  <text class="tb" x="236" y="181">rank(query)</text>
+  <text class="tm" x="236" y="199">items scored and sorted</text>
+  <path class="ln" d="M380 185 H418"/>
+
+  <rect class="box" x="420" y="160" width="110" height="50" rx="6"/>
+  <text class="tb" x="436" y="190">rows</text>
+  <path class="ln" d="M530 185 H568"/>
+
+  <rect class="acc" x="570" y="148" width="150" height="74" rx="6"/>
+  <text class="tb" x="586" y="172">card</text>
+  <text class="tm" x="586" y="190">a layer surface and</text>
+  <text class="tm" x="586" y="206">a subsurface (lay-rs)</text>
+
+  <rect class="box" x="40" y="256" width="340" height="40" rx="6"/>
+  <text class="tb" x="56" y="281">Ask</text>
+  <text class="tm" x="92" y="281">helper thread: agents, sessions, questions</text>
+  <path class="ln" d="M380 276 H475 V212"/>
+
+  <rect class="box" x="20" y="340" width="165" height="50" rx="6"/>
+  <text class="tb" x="34" y="361">desktop entries</text>
+  <text class="tm" x="34" y="378">XDG data dirs</text>
+  <rect class="box" x="205" y="340" width="165" height="50" rx="6"/>
+  <text class="tb" x="219" y="361">foreign-toplevel</text>
+  <text class="tm" x="219" y="378">second Wayland connection</text>
+  <rect class="box" x="390" y="340" width="165" height="50" rx="6"/>
+  <text class="tb" x="404" y="361">agent service</text>
+  <text class="tm" x="404" y="378">socket, AHP</text>
+  <rect class="box" x="575" y="340" width="165" height="50" rx="6"/>
+  <text class="tb" x="589" y="361">otto-stash</text>
+  <text class="tm" x="589" y="378">D-Bus</text>
+  <path class="ln" d="M102 340 V311"/>
+  <path class="ln" d="M287 340 V311"/>
+  <path class="ln" d="M472 340 V311"/>
+  <path class="ln" d="M657 340 V311"/>
+</svg>

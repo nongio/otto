@@ -139,7 +139,7 @@ fn choose(title: &str, filters: &[(&str, &[&str])], directory: bool) -> Outcome 
 
     let paths: Vec<std::path::PathBuf> = uris
         .iter()
-        .filter_map(|u| otto_kit::clipboard::uri_to_path(u))
+        .filter_map(|u| otto_kit::uri::uri_to_path(u))
         .collect();
     if paths.is_empty() {
         // Accepted with nothing usable in it. Saying "dismissed" would be a

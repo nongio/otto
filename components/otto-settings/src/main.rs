@@ -8,8 +8,11 @@
 //! saved, which is enough to judge the layout in place.
 //!
 //! ```sh
-//! cargo run -p otto-settings                    # open the window
-//! cargo run -p otto-settings -- --png out.png   # offscreen render instead
+//! cargo run -p otto-settings                       # open the window
+//! cargo run -p otto-settings -- --pane dock        # open on a pane
+//! cargo run -p otto-settings -- --setting dock.size  # open on a setting
+//! cargo run -p otto-settings -- --png out.png      # offscreen render instead
+//! cargo run -p otto-settings -- --png out.png Dock --search size  # with a search
 //! ```
 
 mod discovery;
@@ -18,9 +21,13 @@ mod glyphs;
 mod model;
 mod panes;
 mod preview;
+mod pulse;
 mod settings_client;
+mod sheet;
+mod sidebar_search;
 mod theme_preview;
 mod view;
+mod wallpaper_preview;
 mod widgets;
 mod xkb_registry;
 
@@ -33,7 +40,9 @@ use otto_kit::accessibility::{node_id as a11y_node, A11yTree, Action, ActionRequ
 use otto_kit::clipboard;
 use otto_kit::components::color_picker::{ColorPickerPopup, Swatch};
 use otto_kit::components::dropdown::DropdownMenu;
+use otto_kit::components::item_list::rows::RowIcons;
 use otto_kit::components::scroll::{Axis, ScrollContent, ScrollPane};
+use otto_kit::components::selection_list::SelectionListHit;
 use otto_kit::components::text_input::{self, KeyMods, TextInput, TextInputKey, TextInputResponse};
 use otto_kit::components::titlebar::{WindowControl, WindowControlsState};
 use otto_kit::components::window::resize;
@@ -41,6 +50,7 @@ use otto_kit::prelude::*;
 use otto_kit::protocols::otto_surface_style_v1;
 use otto_kit::CursorShape;
 use panes::{agents, displays, keyboard};
+use skia_safe::Contains;
 use smithay_client_toolkit::reexports::client::protocol::{wl_keyboard, wl_surface};
 use smithay_client_toolkit::reexports::client::Proxy;
 use smithay_client_toolkit::seat::keyboard::KeyEvent;
@@ -50,6 +60,9 @@ use view::{Settings, ShortcutHit, WINDOW_H, WINDOW_W};
 
 struct SettingsApp {
     window: Option<Window>,
+    /// The Change Password sheet's surface while the sheet is up, and the
+    /// window size it was last drawn at. See [`sheet`].
+    sheet: Option<(otto_kit::surfaces::SubsurfaceSurface, (f32, f32))>,
     /// Shared with the draw and pointer callbacks, which outlive this struct's
     /// borrow of itself.
     selected: Arc<Mutex<usize>>,
@@ -130,7 +143,28 @@ struct SettingsApp {
     /// window with no blur at all still has to draw its background state.
     /// Shared with the draw closure, hence the atomic.
     active: Arc<std::sync::atomic::AtomicBool>,
+    /// The sidebar's search field and the matches it has found. Shared with
+    /// the pointer handlers and the window's draw closure. See
+    /// [`sidebar_search`].
+    search: Arc<Mutex<sidebar_search::Search>>,
+    /// The search's revision the window last drew its field at, so a change
+    /// to the field repaints the window and nothing else does.
+    search_drawn: u64,
+    /// The surface the list of matches is drawn on while it is down, and what
+    /// it was last drawn for: the window's size, the search's revision, and
+    /// the scheme and activation the colours came from.
+    search_panel: Option<(otto_kit::surfaces::SubsurfaceSurface, PanelDrawn)>,
+    /// Icons the list's rows decode. The settings list draws its panes'
+    /// glyphs instead, so this stays empty, but the row painter asks for it.
+    search_icons: RowIcons,
+    /// The row a search just went to, and when: it is lit in the accent and
+    /// fades out. See [`flash_strength`].
+    flash: Option<(&'static str, std::time::Instant)>,
 }
+
+/// What the list of matches was last drawn for: the window's size, the
+/// search's revision, and whether the scheme was dark and the window active.
+type PanelDrawn = ((f32, f32), u64, bool, bool);
 
 /// A text field with the keyboard: what it edits, and the live editor.
 ///
@@ -214,25 +248,51 @@ fn swatches_for(id: &str) -> Vec<Swatch> {
         }
     }
 
-    [
-        ("Blue", 0xFF0A84FF),
-        ("Purple", 0xFFBF5AF2),
-        ("Pink", 0xFFFF375F),
-        ("Red", 0xFFFF453A),
-        ("Orange", 0xFFFF9F0A),
-        ("Yellow", 0xFFFFD60A),
-        ("Green", 0xFF32D74B),
-        ("Teal", 0xFF40C8E0),
-        ("Graphite", 0xFF8E8E93),
-    ]
-    .into_iter()
-    .map(|(name, argb)| Swatch::new(name, Color::from(argb)))
-    .collect()
+    // The same named colours, from otto-kit's palette: a second list here
+    // would drift from the accents everything else draws.
+    otto_kit::theme::ACCENT_NAMES
+        .iter()
+        .filter_map(|name| named_color(name).map(|c| Swatch::new(capitalized(name), c)))
+        .collect()
+}
+
+/// `blue` as a swatch's label reads it: `Blue`.
+fn capitalized(name: &str) -> String {
+    let mut chars = name.chars();
+    chars
+        .next()
+        .map(|first| first.to_uppercase().chain(chars).collect())
+        .unwrap_or_default()
 }
 
 /// A palette name the compositor serves has to map to something drawable.
 fn named_color(name: &str) -> Option<Color> {
     model::named_argb(name).map(Color::from)
+}
+
+/// Take every pop-up menu down at once, one fading out included: a pop-up
+/// made while another is still up is not on the topmost one, which Otto
+/// refuses with a protocol error that ends the app.
+fn close_menus_now(
+    dropdowns: &HashMap<&'static str, DropdownMenu>,
+    open_dropdown: &Arc<Mutex<Option<&'static str>>>,
+) {
+    for menu in dropdowns.values().filter(|menu| menu.is_open()) {
+        menu.close_now();
+    }
+    *open_dropdown.lock().unwrap() = None;
+}
+
+/// Close every colour picker, for the same reason. A picker closed by its
+/// caller does not report it, so the open one is forgotten here.
+fn close_pickers(
+    pickers: &HashMap<&'static str, ColorPickerPopup>,
+    open_picker: &Arc<Mutex<Option<&'static str>>>,
+) {
+    for picker in pickers.values().filter(|picker| picker.is_open()) {
+        picker.close();
+    }
+    *open_picker.lock().unwrap() = None;
 }
 
 /// Open a colour well's picker.
@@ -372,6 +432,9 @@ fn select_ids() -> Vec<&'static str> {
     // The Privacy pane's Ask / Allow / Don't Allow pop-ups, one per row it
     // can hold.
     ids.extend_from_slice(panes::privacy::slot_ids());
+    // The Sound pane's device pop-ups, whose rows only appear once the sound
+    // server has answered.
+    ids.extend(panes::sound::slot_ids());
     ids
 }
 
@@ -525,20 +588,12 @@ fn open_menu(
     // is over a row, which is what a highlight means to someone using one.
     from_keyboard: bool,
 ) {
+    // A press on a field whose menu is up closes it, and any other menu
+    // still up goes before this one opens: both are the kit dropdown's
+    // rules, kept by `DropdownMenu::open`.
     let Some(menu) = dropdowns.get(select.id) else {
         return;
     };
-    // Clicking the field again closes the menu, the way clicking a colour
-    // well again closes its picker — without this the press is swallowed by
-    // the menu already being up, and a pop-up button becomes the one control
-    // in the pane that cannot undo its own click.
-    if menu.is_open() {
-        menu.close();
-        *open_dropdown.lock().unwrap() = None;
-        mark_pane_dirty(pane_dirty);
-        window.request_frame();
-        return;
-    }
     let Some(parent) = window
         .surface()
         .map(|s| s.xdg_window().xdg_surface().clone())
@@ -561,7 +616,17 @@ fn open_menu(
     let choices: Vec<discovery::Choice> =
         if let Some(choices) = panes::privacy::menu_choices(select.id) {
             choices
+        } else if let Some(choices) = panes::account::menu_choices(select.id) {
+            choices
+        } else if let Some(choices) = panes::sound::menu_choices(select.id) {
+            choices
         } else if let Some(choices) = panes::keyboard_layouts::menu_choices(select.id) {
+            choices
+        } else if let Some(choices) = panes::desk::menu_choices(select.id) {
+            choices
+        } else if let Some(choices) = panes::dictation::menu_choices(select.id) {
+            choices
+        } else if let Some(choices) = panes::top_bar::menu_choices(select.id, &select.current) {
             choices
         } else if let Some(values) = display_slot {
             values
@@ -618,13 +683,7 @@ fn open_menu(
     let dismissed_dirty = pane_dirty.clone();
     let dismissed_window = window.clone();
 
-    *open_dropdown.lock().unwrap() = Some(id);
-
-    if from_keyboard {
-        menu.highlight(selected);
-    }
-
-    menu.open(
+    let opened = menu.open(
         &parent,
         select.rect,
         serial,
@@ -632,7 +691,13 @@ fn open_menu(
         selected,
         move |index| {
             if let Some(value) = values.get(index) {
-                if panes::privacy::choose(id, value) || panes::keyboard_layouts::choose(id, value) {
+                if panes::privacy::choose(id, value)
+                    || panes::account::choose(id, value)
+                    || panes::sound::choose(id, value)
+                    || panes::keyboard_layouts::choose(id, value)
+                    || panes::desk::choose(id, value)
+                    || panes::dictation::choose(id, value)
+                {
                 } else if displays::menu_choices(id).is_some() {
                     displays::choose(id, value);
                 } else if agents::owns(id) {
@@ -653,11 +718,26 @@ fn open_menu(
             chosen_window.request_frame();
         },
         move || {
-            *dismissed_open.lock().unwrap() = None;
+            // Only if it is still this menu that is open.
+            let mut open = dismissed_open.lock().unwrap();
+            if *open == Some(id) {
+                *open = None;
+            }
+            drop(open);
             mark_pane_dirty(&dismissed_dirty);
             dismissed_window.request_frame();
         },
     );
+    if opened {
+        *open_dropdown.lock().unwrap() = Some(id);
+        if from_keyboard {
+            menu.highlight(selected);
+        }
+    } else {
+        *open_dropdown.lock().unwrap() = None;
+    }
+    mark_pane_dirty(pane_dirty);
+    window.request_frame();
 }
 
 /// Whether the pointer is still on the button it went down on.
@@ -680,6 +760,7 @@ fn released_on(settings: &Settings, held: view::Pressed, x: f32, y: f32, offset:
             Some(view::ShortcutHit::Remove(hit)) if hit == index
         ),
         view::Pressed::RemoveRow(id) => settings.row_remove_hit(x, y, offset) == Some(id),
+        view::Pressed::User(hit) => settings.users_hit(x, y, offset) == Some(hit),
         view::Pressed::Add => matches!(
             settings.shortcut_hit(x, y, offset),
             Some(view::ShortcutHit::Add)
@@ -702,8 +783,16 @@ fn activate(held: view::Pressed, editing: &Arc<Mutex<Option<Editing>>>) {
         view::Pressed::Button { row, button } => {
             panes::displays::press(row, button);
             panes::general::press(row, button);
+            panes::account::press(row, button);
+            // Change Password… opened the sheet: the keyboard goes straight
+            // to its first field.
+            if panes::account::take_sheet_opened() {
+                focus_sheet_field(editing, 0);
+            }
             panes::agents::press(row, button);
             panes::search::press(row, button);
+            panes::desk::press(row, button);
+            panes::dictation::press(row, button);
             panes::keyboard_layouts::press(row, button);
             if let Some((id, name)) = agents::take_rename() {
                 start_edit(
@@ -729,6 +818,14 @@ fn activate(held: view::Pressed, editing: &Arc<Mutex<Option<Editing>>>) {
             keyboard::remove(index);
         }
         view::Pressed::Add => keyboard::add(),
+        // The users list's + and −: their sheets take the keyboard straight
+        // away, as Change Password…'s does.
+        view::Pressed::User(hit) => {
+            panes::account::activate(hit);
+            if panes::account::take_sheet_opened() {
+                focus_sheet_field(editing, 0);
+            }
+        }
         view::Pressed::RemoveRow(id) => {
             panes::keyboard_layouts::remove(id);
             panes::search::remove(id);
@@ -776,9 +873,33 @@ fn stop_recording() -> bool {
 /// is updated there when the answer comes and a redraw is requested, exactly
 /// as for a `Changed` signal.
 fn apply(id: &str, value: settings_client::Value) {
+    // The agents pane's switches are its own, not the compositor's.
+    if let settings_client::Value::Bool(on) = value {
+        if agents::owns(id) {
+            agents::switch(id, on);
+            return;
+        }
+    }
     // The Privacy pane's notification switches write the permission store,
     // not a setting.
     if panes::privacy::apply(id, &value) {
+        return;
+    }
+    // The account picture goes to AccountsService, not to a setting.
+    if panes::account::apply(id, &value) {
+        return;
+    }
+    // The Sound pane's devices, volumes and mutes belong to the sound server.
+    if panes::sound::apply(id, &value) {
+        return;
+    }
+    // The desk's icon size is in files.toml, not a setting.
+    if panes::desk::apply(id, &value) {
+        return;
+    }
+    // Dictation keeps its settings in dictation.toml and its login switch
+    // in the autostart folder.
+    if panes::dictation::apply(id, &value) {
         return;
     }
     if settings_client::is_sensitive(id) {
@@ -822,8 +943,8 @@ fn open_file_picker(id: &'static str) {
     let spawned = std::thread::Builder::new()
         .name("file-picker".into())
         .spawn(move || {
-            // Wallpapers are the only file setting so far, so the filter is
-            // written here. When a second one appears this belongs on the row.
+            // Both file rows — the wallpaper and the account picture — take an
+            // image, so the filter is written here rather than on the row.
             let filters: &[(&str, &[&str])] = &[
                 (
                     "Images",
@@ -832,8 +953,12 @@ fn open_file_picker(id: &'static str) {
                 ("All Files", &["*"]),
             ];
 
-            match file_picker::open_file(otto_kit::t!("settings-choose-background-image"), filters)
-            {
+            let title = if id == panes::account::PICTURE_ID {
+                otto_kit::t!("settings-account-choose-picture")
+            } else {
+                otto_kit::t!("settings-choose-background-image")
+            };
+            match file_picker::open_file(title, filters) {
                 file_picker::Outcome::Chosen(paths) => {
                     if let Some(path) = paths.first() {
                         apply(
@@ -977,6 +1102,10 @@ fn describe_row(tree: &mut A11yTree, row: &model::Row, bounds: Rect) {
             // What the field shows, not the configuration token behind it.
             let shown = match row.id {
                 Some(id) => panes::keyboard_layouts::display(id, current)
+                    .or_else(|| panes::top_bar::display(id, current))
+                    .or_else(|| panes::desk::display(id, current))
+                    .or_else(|| panes::dictation::display(id, current))
+                    .or_else(|| panes::sound::display(id, current))
                     .unwrap_or_else(|| settings_client::display_choice(id, current)),
                 None => current.clone(),
             };
@@ -1040,6 +1169,17 @@ fn describe_row(tree: &mut A11yTree, row: &model::Row, bounds: Rect) {
         // button for a list this does not describe yet; announcing either as
         // one thing would be a lie about what it is.
         model::Control::Shortcut { .. } | model::Control::AddShortcut => {}
+        // One stop, as the keyboard has it: the arrow keys move between the
+        // tabs, and what is heard is the tab that is open.
+        model::Control::Tabs { labels, selected } => {
+            tree.control(focus, bounds, Role::TabList, true, |node| {
+                node.set_label(label);
+                if let Some(open) = labels.get(*selected) {
+                    node.set_value(*open);
+                }
+                describe(node);
+            });
+        }
     }
 
     // A named remove button is its own node, as it is its own stop, named
@@ -1116,6 +1256,92 @@ fn text_input_style(dark: bool) -> TextInputStyle {
     style
 }
 
+/// Put the keyboard in the sheet's `index`th field, committing the one it
+/// was in.
+fn focus_sheet_field(editing: &Arc<Mutex<Option<Editing>>>, index: usize) {
+    let Some(&id) = panes::account::sheet_fields().get(index) else {
+        return;
+    };
+    commit_edit(editing);
+    start_edit(
+        editing,
+        EditTarget::Setting(id),
+        panes::account::field_value(id),
+        f32::MAX,
+        sheet::FIELD_W,
+        current_color_scheme() == ColorScheme::Dark,
+    );
+}
+
+/// Which of the sheet's fields has the keyboard, if one does.
+fn sheet_field_index(editing: &Arc<Mutex<Option<Editing>>>) -> Option<usize> {
+    match editing.lock().unwrap().as_ref()?.target {
+        EditTarget::Setting(id) => panes::account::sheet_fields()
+            .iter()
+            .position(|field| *field == id),
+        _ => None,
+    }
+}
+
+/// A press while the password sheet is up. The sheet is modal, so every press
+/// is its own — one on the window behind it only takes the keyboard out of
+/// the field it was in. Returns whether the sheet was up.
+fn press_sheet(
+    size: &Arc<Mutex<(f32, f32)>>,
+    editing: &Arc<Mutex<Option<Editing>>>,
+    x: f32,
+    y: f32,
+) -> bool {
+    let Some(view) = panes::account::sheet() else {
+        return false;
+    };
+    let (width, height) = *size.lock().unwrap();
+    match sheet::hit(width, height, &view, x, y) {
+        sheet::SheetHit::Field { id, local_x } => {
+            let target = EditTarget::Setting(id);
+            {
+                let mut current = editing.lock().unwrap();
+                if let Some(edit) = current.as_mut().filter(|edit| edit.target == target) {
+                    // A second press in the open field moves the caret.
+                    edit.input.on_pointer_down(local_x, 1, false);
+                    return true;
+                }
+            }
+            commit_edit(editing);
+            start_edit(
+                editing,
+                target,
+                panes::account::field_value(id),
+                local_x,
+                sheet::FIELD_W,
+                current_color_scheme() == ColorScheme::Dark,
+            );
+        }
+        sheet::SheetHit::Cancel => {
+            cancel_edit(editing);
+            panes::account::close_sheet();
+        }
+        sheet::SheetHit::Action => {
+            commit_edit(editing);
+            panes::account::submit();
+        }
+        sheet::SheetHit::Card | sheet::SheetHit::Outside => {
+            commit_edit(editing);
+        }
+    }
+    true
+}
+
+/// Give `surface` an empty input region, so the pointer passes through it to
+/// the window. The compositor copies the region, so it goes straight away.
+fn set_empty_input_region(surface: &wl_surface::WlSurface) {
+    let region = AppContext::compositor_state()
+        .wl_compositor()
+        .create_region(AppContext::queue_handle(), ());
+    surface.set_input_region(Some(&region));
+    region.destroy();
+}
+
 /// Send what a field currently holds and stop editing.
 ///
 /// Returns whether there was anything to commit, so a caller can skip a
@@ -1126,6 +1352,9 @@ fn commit_edit(editing: &Arc<Mutex<Option<Editing>>>) -> bool {
     };
     match edit.target {
         EditTarget::Setting(id) if agents::owns(id) => agents::commit_text(id, edit.input.value()),
+        EditTarget::Setting(id) if panes::account::owns(id) => {
+            panes::account::commit_text(id, edit.input.value())
+        }
         EditTarget::Setting(id) => apply(id, settings_client::text_for(id, edit.input.value())),
         // Trimmed because the compositor's trigger parser splits on `+` and
         // trims each part, so surrounding space is noise either way — better
@@ -1152,6 +1381,8 @@ fn start_edit(
 ) {
     let mut input =
         TextInput::new(value, text_input_style(dark)).with_size(width, widgets::CONTROL_H);
+    input.state.password =
+        matches!(target, EditTarget::Setting(id) if panes::account::is_secret(id));
     input.state.set_focused(true);
     input.on_pointer_down(offset_x, 1, false);
     *editing.lock().unwrap() = Some(Editing { target, input });
@@ -1169,7 +1400,145 @@ fn cancel_edit(editing: &Arc<Mutex<Option<Editing>>>) -> bool {
 /// a switch mid-flip, or a caret blinking.
 const IDLE_TICK: std::time::Duration = std::time::Duration::from_millis(8);
 
+/// How long a row a search went to stays fully lit, and how long it then
+/// takes to fade: long enough for the eye to travel from the list to the pane
+/// and find it, short enough to be gone before it is in the way.
+const FLASH_HOLD: f32 = 0.6;
+const FLASH_FADE: f32 = 0.9;
+
+/// How strongly a row a search went to `elapsed` seconds ago is still lit,
+/// from 1.0 down to 0.0.
+fn flash_strength(elapsed: f32) -> f32 {
+    if elapsed <= FLASH_HOLD {
+        return 1.0;
+    }
+    let t = ((elapsed - FLASH_HOLD) / FLASH_FADE).clamp(0.0, 1.0);
+    // Eased out, so it leaves gently rather than switching off.
+    1.0 - t * t * (3.0 - 2.0 * t)
+}
+
+/// A press on the search field or its list, while nothing modal is up.
+/// Returns whether the press was the search's; a press anywhere else puts the
+/// list away and takes the keyboard off the field, and goes on to do whatever
+/// it does there.
+fn press_search(
+    search: &Arc<Mutex<sidebar_search::Search>>,
+    size: (f32, f32),
+    x: f32,
+    y: f32,
+) -> bool {
+    if panes::account::sheet().is_some() {
+        return false;
+    }
+    let point = skia_safe::Point::new(x, y);
+    let mut search = search.lock().unwrap();
+
+    if let Some(panel) = search.panel(size.0, size.1) {
+        if panel.contains(point) {
+            // Picked on release over the same row, as a button is.
+            search.pressed = sidebar_search::row_at(panel, search.result_count(), x, y);
+            return true;
+        }
+    }
+    if sidebar_search::clear_rect().contains(point) && !search.query().is_empty() {
+        search.clear();
+        search.focus = Some(Some(view::SEARCH_FOCUS));
+        return true;
+    }
+    if sidebar_search::field_rect().contains(point) {
+        let input = sidebar_search::field_input_rect();
+        let already = search.input.state.focused();
+        search.input.on_pointer_down(x - input.left, 1, false);
+        // A press back in a field that kept its query shows the list again.
+        if already && !search.query().trim().is_empty() {
+            search.open = true;
+        }
+        search.focus = Some(Some(view::SEARCH_FOCUS));
+        search.touch();
+        return true;
+    }
+    if search.input.state.focused() {
+        search.focus = Some(None);
+    }
+    search.close();
+    false
+}
+
 impl SettingsApp {
+    /// Bring the password sheet's surface in line with the account pane: made
+    /// when the sheet opens, dropped when it closes, and repainted when what
+    /// it shows has changed (`changed`, the pane's own repaint signal, which a
+    /// caret blink and every keystroke also raise) or the window was resized.
+    fn sync_sheet(&mut self, changed: bool) {
+        let Some(view) = panes::account::sheet() else {
+            if let Some((mut surface, _)) = self.sheet.take() {
+                surface.destroy();
+                // A field left open in a sheet that is gone has nowhere to go.
+                if sheet_field_index(&self.editing).is_some() {
+                    cancel_edit(&self.editing);
+                }
+                if let Some(window) = self.window.as_ref() {
+                    window.request_frame();
+                }
+            }
+            return;
+        };
+
+        let size = *self.size.lock().unwrap();
+        let created = self.sheet.is_none();
+        if created {
+            let Some(parent) = self.window.as_ref().and_then(Window::wl_surface) else {
+                return;
+            };
+            // Made after the pane's subsurfaces, so it is stacked above them.
+            match otto_kit::surfaces::SubsurfaceSurface::new(
+                &parent,
+                0,
+                0,
+                size.0 as i32,
+                size.1 as i32,
+            ) {
+                Ok(surface) => {
+                    set_empty_input_region(surface.base_surface().wl_surface());
+                    self.sheet = Some((surface, size));
+                }
+                Err(err) => {
+                    eprintln!("settings: cannot show the password sheet ({err})");
+                    return;
+                }
+            }
+        }
+        let Some((surface, drawn)) = self.sheet.as_mut() else {
+            return;
+        };
+        let resized = *drawn != size;
+        if resized {
+            surface.resize(size.0 as i32, size.1 as i32);
+            *drawn = size;
+        }
+        if !(created || resized || changed) {
+            return;
+        }
+
+        let dark = current_color_scheme() == ColorScheme::Dark;
+        let editing = self.editing.lock().unwrap();
+        let editor = editing.as_ref().and_then(|edit| match edit.target {
+            EditTarget::Setting(id) if panes::account::sheet_fields().contains(&id) => {
+                Some((id, &edit.input))
+            }
+            _ => None,
+        });
+        surface.draw(|canvas| sheet::paint(canvas, size.0, size.1, dark, &view, editor));
+        drop(editing);
+        // A new subsurface's place is part of the window's state, and only
+        // takes effect when the window commits.
+        if created {
+            if let Some(window) = self.window.as_ref() {
+                window.request_frame();
+            }
+        }
+    }
+
     /// Bring the pane in line with the model: where the viewport is, how tall
     /// the content is, and where the scroll has put it.
     ///
@@ -1187,7 +1556,11 @@ impl SettingsApp {
         )
         .with_open_dropdown(*self.open_dropdown.lock().unwrap())
         .with_open_picker(*self.open_picker.lock().unwrap())
-        .with_active(self.active.load(std::sync::atomic::Ordering::Relaxed));
+        .with_active(self.active.load(std::sync::atomic::Ordering::Relaxed))
+        .with_flash(
+            self.flash
+                .map(|(row, at)| (row, flash_strength(at.elapsed().as_secs_f32()))),
+        );
 
         let mut guard = self.pane.borrow_mut();
         let Some(pane) = guard.as_mut() else {
@@ -1276,8 +1649,20 @@ impl SettingsApp {
         let selected = *self.selected.lock().unwrap();
         let sidebar = view::sidebar_item_rect(selected.min(panes.saturating_sub(1)));
 
+        // A sheet is modal: nothing behind it is a stop. With the ring empty
+        // the toolkit leaves Tab alone, so it reaches the sheet's own handler,
+        // which walks the sheet's fields.
+        if panes::account::sheet().is_some() {
+            AppContext::with_focus_ring(&surface, |ring| {
+                ring.begin();
+                ring.end();
+            });
+            return;
+        }
+
         AppContext::with_focus_ring(&surface, |ring| {
             ring.begin();
+            ring.add(view::SEARCH_FOCUS, sidebar_search::field_rect(), true);
             ring.add(view::SIDEBAR_FOCUS, sidebar, true);
             for (id, rect) in &rows {
                 ring.add(*id, *rect, true);
@@ -1458,6 +1843,21 @@ impl SettingsApp {
                 }
                 apply(id, settings_client::number_for(id, moved));
             }
+            // The arrows walk the tabs, stopping at either end.
+            model::Control::Tabs { labels, selected } if step != 0.0 => {
+                let Some(id) = focused.id else {
+                    return false;
+                };
+                let next = if step < 0.0 {
+                    selected.checked_sub(1)
+                } else {
+                    Some(selected + 1).filter(|next| *next < labels.len())
+                };
+                let Some(next) = next else {
+                    return false;
+                };
+                panes::sound::select_tab(id, next);
+            }
             model::Control::Button(labels) if step == 0.0 => {
                 // The keyboard is on one particular button, so that is the one
                 // that is pressed. `Pressed` is keyed the way a click keys it —
@@ -1506,6 +1906,7 @@ impl SettingsApp {
                 let Some(window) = self.window.as_ref() else {
                     return false;
                 };
+                close_pickers(&self.pickers, &self.open_picker);
                 open_menu(
                     &self.dropdowns,
                     &self.open_dropdown,
@@ -1543,6 +1944,273 @@ impl SettingsApp {
     fn sidebar_focused(&self) -> bool {
         let surface = self.window.as_ref().and_then(Window::surface_id);
         surface.and_then(|s| AppContext::focused_control(&s)) == Some(view::SIDEBAR_FOCUS)
+    }
+
+    /// Whether the keyboard is on the search field. The window's focus ring
+    /// keeps its place while the window is in the background, so the window
+    /// has to hold the keyboard too.
+    fn search_focused(&self) -> bool {
+        let Some(surface) = self.window.as_ref().and_then(Window::surface_id) else {
+            return false;
+        };
+        AppContext::keyboard_focus().as_ref() == Some(&surface)
+            && AppContext::focused_control(&surface) == Some(view::SEARCH_FOCUS)
+    }
+
+    /// Move the keyboard to `focus`, or off every control.
+    fn focus(&self, focus: Option<FocusId>) {
+        if let Some(surface) = self.window.as_ref().and_then(Window::surface_id) {
+            AppContext::focus_control(&surface, focus);
+        }
+    }
+
+    /// Put the keyboard in the search field, with what it already holds
+    /// selected so typing replaces it — Ctrl+F, `/`, or a screen reader.
+    fn focus_search(&mut self) {
+        // The password sheet is modal: the field behind it waits.
+        if panes::account::sheet().is_some() {
+            return;
+        }
+        if commit_edit(&self.editing) {
+            mark_pane_dirty(&self.pane_dirty);
+        }
+        {
+            let mut search = self.search.lock().unwrap();
+            search.input.state.select_all();
+            search.touch();
+        }
+        self.focus(Some(view::SEARCH_FOCUS));
+        self.sync_search_focus();
+    }
+
+    /// Follow the keyboard onto or off the search field: the caret shows only
+    /// while the field has it, the list goes up when it leaves, and coming
+    /// back to a field that kept its query finds again.
+    fn sync_search_focus(&mut self) {
+        let request = self.search.lock().unwrap().focus.take();
+        if let Some(focus) = request {
+            self.focus(focus);
+        }
+        let focused = self.search_focused();
+        let mut search = self.search.lock().unwrap();
+        if search.input.state.focused() == focused {
+            return;
+        }
+        search.input.state.set_focused(focused);
+        if !focused {
+            search.close();
+        } else if !search.query().trim().is_empty() {
+            search.refresh(&model::panes());
+        }
+        search.touch();
+        drop(search);
+        // However the field got the keyboard — a click, Tab, Ctrl+F — a row
+        // being typed into has been answered by it.
+        if focused && commit_edit(&self.editing) {
+            mark_pane_dirty(&self.pane_dirty);
+        }
+    }
+
+    /// A key while the search field has the keyboard.
+    ///
+    /// The arrows walk the list and Enter goes to the selected match; Escape
+    /// empties the field, and from an empty one hands the keyboard to the
+    /// sidebar below it. Everything else is typing, and finds again.
+    fn search_key(&mut self, event: &KeyEvent, serial: u32) {
+        use smithay_client_toolkit::seat::keyboard::Keysym;
+
+        let mods = *self.modifiers.lock().unwrap();
+        let mut search = self.search.lock().unwrap();
+        match event.keysym {
+            Keysym::Escape if search.query().is_empty() => {
+                drop(search);
+                self.focus(Some(view::SIDEBAR_FOCUS));
+                self.sync_search_focus();
+            }
+            Keysym::Escape => search.clear(),
+            Keysym::Down | Keysym::KP_Down => {
+                if search.open {
+                    search.move_selection(1);
+                } else if !search.query().trim().is_empty() {
+                    search.refresh(&model::panes());
+                }
+            }
+            Keysym::Up | Keysym::KP_Up => {
+                search.move_selection(-1);
+            }
+            Keysym::Return | Keysym::KP_Enter => {
+                if search.open {
+                    let selected = search.selected;
+                    search.choose(selected);
+                }
+            }
+            // Ctrl+F again selects what is there, as it did to get here.
+            Keysym::f | Keysym::F if mods.ctrl && !mods.alt && !mods.logo => {
+                search.input.state.select_all();
+                search.touch();
+            }
+            keysym => {
+                let paste =
+                    mods.ctrl && !mods.alt && !mods.logo && matches!(keysym, Keysym::v | Keysym::V);
+                let (key, mods) = if paste {
+                    let Some(text) = clipboard::text() else {
+                        return;
+                    };
+                    // One line: a search is not a paragraph.
+                    let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+                    (TextInputKey::Paste(text), KeyMods::default())
+                } else {
+                    let Some(edit) = text_input::key_for(keysym, event.utf8.as_deref(), mods)
+                    else {
+                        return;
+                    };
+                    edit
+                };
+                match search.input.on_key(key, mods) {
+                    TextInputResponse::Changed => search.refresh(&model::panes()),
+                    TextInputResponse::Moved => search.touch(),
+                    TextInputResponse::Clipboard(text) => {
+                        clipboard::set_text(&text, serial);
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    /// Go where a search match points: select its pane, scroll its row a
+    /// third of the way down the pane, put the keyboard on its control and
+    /// light it in the accent. A match on a pane itself selects the pane and
+    /// leaves the keyboard on the sidebar, where the arrows carry on from it.
+    fn reveal(&mut self, target: sidebar_search::Target) {
+        if commit_edit(&self.editing) {
+            mark_pane_dirty(&self.pane_dirty);
+        }
+        select_pane(self, target.pane);
+        let Some(handle) = target.row else {
+            self.focus(Some(view::SIDEBAR_FOCUS));
+            return;
+        };
+
+        // The pane has to have taken in its new content — its height, above
+        // all — before it can be scrolled through.
+        self.sync_pane();
+        let settings = current_settings(
+            &self.selected,
+            &self.size,
+            &self.toggle_flips,
+            &self.editing,
+            &self.pressed,
+            &self.hovered_preview,
+        );
+        let viewport = settings.viewport();
+        let offset = self.pane_offset();
+        let found = settings
+            .pane_rows(offset)
+            .into_iter()
+            .find(|(row, _)| row.handle() == handle);
+        let Some((row, rect)) = found else {
+            return;
+        };
+
+        // A third of the way down rather than just inside the edge: it is
+        // where the eye goes looking, and leaves the rows around it in view.
+        let top = rect.top - viewport.top + offset;
+        let most = (settings.pane_content_height() - viewport.height()).max(0.0);
+        let wanted = (top - viewport.height() / 3.0).clamp(0.0, most);
+        if let Some(pane) = self.pane.borrow_mut().as_mut() {
+            pane.scroll_to(wanted);
+        }
+
+        // On the row's control, as Tab would have put it — so Space flips the
+        // switch that was searched for. A row with nothing to operate leaves
+        // the keyboard on the sidebar.
+        let focus = row_stops(row, rect)
+            .first()
+            .map(|stop| stop.focus)
+            .unwrap_or(view::SIDEBAR_FOCUS);
+        self.focus(Some(focus));
+        // Already where it should be: nothing for the focus to scroll to.
+        self.last_focus = Some(focus);
+
+        self.flash = Some((handle, std::time::Instant::now()));
+        mark_pane_dirty(&self.pane_dirty);
+        if let Some(window) = self.window.as_ref() {
+            window.request_frame();
+        }
+    }
+
+    /// Bring the list's surface in line with the search: made when the list
+    /// drops, gone when it goes up, and repainted when what it shows changed.
+    fn sync_search_panel(&mut self) {
+        let size = *self.size.lock().unwrap();
+        let dark = current_color_scheme() == ColorScheme::Dark;
+        let active = self.active.load(std::sync::atomic::Ordering::Relaxed);
+        let search = self.search.lock().unwrap();
+
+        if !search.open || panes::account::sheet().is_some() {
+            drop(search);
+            if let Some((mut surface, _)) = self.search_panel.take() {
+                surface.destroy();
+                if let Some(window) = self.window.as_ref() {
+                    window.request_frame();
+                }
+            }
+            return;
+        }
+
+        let created = self.search_panel.is_none();
+        if created {
+            let Some(parent) = self.window.as_ref().and_then(Window::wl_surface) else {
+                return;
+            };
+            // Made after the pane's subsurfaces, so it is stacked over them.
+            match otto_kit::surfaces::SubsurfaceSurface::new(
+                &parent,
+                0,
+                0,
+                size.0 as i32,
+                size.1 as i32,
+            ) {
+                Ok(surface) => {
+                    set_empty_input_region(surface.base_surface().wl_surface());
+                    self.search_panel = Some((surface, ((0.0, 0.0), 0, dark, active)));
+                }
+                Err(err) => {
+                    eprintln!("settings: cannot show the search results ({err})");
+                    return;
+                }
+            }
+        }
+        let Some((surface, drawn)) = self.search_panel.as_mut() else {
+            return;
+        };
+        let now = (size, search.revision, dark, active);
+        if !created && *drawn == now {
+            return;
+        }
+        if drawn.0 != size {
+            surface.resize(size.0 as i32, size.1 as i32);
+        }
+        *drawn = now;
+
+        let mut theme = if dark { Theme::dark() } else { Theme::light() };
+        if !active {
+            theme.with_muted_accent();
+        }
+        let icons = &self.search_icons;
+        surface.draw(|canvas| {
+            canvas.clear(Color::TRANSPARENT);
+            sidebar_search::paint_panel(canvas, size, dark, &theme, &search, icons);
+        });
+        drop(search);
+        // A new subsurface's place is part of the window's state, and only
+        // takes effect when the window commits.
+        if created {
+            if let Some(window) = self.window.as_ref() {
+                window.request_frame();
+            }
+        }
     }
 }
 
@@ -1599,6 +2267,11 @@ impl App for SettingsApp {
         // nobody is looking at. Same path `otto-files` takes.
         apply_material(&window);
         window.set_background_blur(want_blur);
+        // The field was made before there was a desktop to ask for its scheme.
+        self.search
+            .lock()
+            .unwrap()
+            .restyle(current_color_scheme() == ColorScheme::Dark);
 
         // Built here, at window setup, and never later: a `DropdownMenu`
         // constructed from inside a pointer handler deadlocks on
@@ -1624,14 +2297,23 @@ impl App for SettingsApp {
         let controls = self.controls.clone();
         let frosted = self.frosted.clone();
         let active = self.active.clone();
+        let search = self.search.clone();
         window.on_draw(move |canvas| {
             let index = *selected.lock().unwrap();
             let (w, h) = *size.lock().unwrap();
+            let field = {
+                let search = search.lock().unwrap();
+                sidebar_search::FieldView {
+                    input: search.input.clone(),
+                    focused: search.input.state.focused(),
+                }
+            };
             Settings::new(index, current_color_scheme() == ColorScheme::Dark)
                 .with_size(w, h)
                 .with_blur(frosted.load(std::sync::atomic::Ordering::Relaxed))
                 .with_active(active.load(std::sync::atomic::Ordering::Relaxed))
                 .with_controls(*controls.lock().unwrap())
+                .with_search_field(Some(field))
                 .render_chrome(canvas);
         });
 
@@ -1659,6 +2341,7 @@ impl App for SettingsApp {
         let pane_dirty = self.pane_dirty.clone();
         let size_hit = self.size.clone();
         let controls_hit = self.controls.clone();
+        let search_hit = self.search.clone();
         let redraw = window.clone();
         window.on_pointer_event(move |events| {
             let mut needs_redraw = false;
@@ -1667,6 +2350,14 @@ impl App for SettingsApp {
                 let (x, y) = (x as f32, y as f32);
                 match &event.kind {
                     PointerEventKind::Press { serial, .. } => {
+                        // The search field, and the list over the pane and
+                        // the sidebar alike, before either: the pane's own
+                        // handler steps aside for a press on the list.
+                        let size = *size_hit.lock().unwrap();
+                        if press_search(&search_hit, size, x, y) {
+                            needs_redraw = true;
+                            continue;
+                        }
                         if in_pane(&size_hit, x, y) {
                             continue;
                         }
@@ -1702,7 +2393,11 @@ impl App for SettingsApp {
                             continue;
                         }
 
-                        // Everything else the chrome owns is the sidebar.
+                        // Everything else the chrome owns is the sidebar,
+                        // which is behind the password sheet while it is up.
+                        if panes::account::sheet().is_some() {
+                            continue;
+                        }
                         if let Some(index) = view::pane_at(x, y) {
                             let mut current = selected.lock().unwrap();
                             if *current != index {
@@ -1720,6 +2415,19 @@ impl App for SettingsApp {
                         }
                     }
                     PointerEventKind::Motion { .. } | PointerEventKind::Enter { .. } => {
+                        // The match under the pointer is the selected one, as
+                        // in the launcher's list.
+                        {
+                            let (win_w, win_h) = *size_hit.lock().unwrap();
+                            let mut search = search_hit.lock().unwrap();
+                            let count = search.result_count();
+                            if let Some(row) = search
+                                .panel(win_w, win_h)
+                                .and_then(|panel| sidebar_search::row_at(panel, count, x, y))
+                            {
+                                search.hover(row);
+                            }
+                        }
                         // Show which way an edge will move before it is
                         // grabbed; anywhere else is the ordinary pointer.
                         let (win_w, win_h) = *size_hit.lock().unwrap();
@@ -1737,8 +2445,38 @@ impl App for SettingsApp {
                     }
                     // A wheel anywhere over the window scrolls the pane; the
                     // pane handler leaves it to this one.
-                    PointerEventKind::Axis { vertical, .. } => handle_wheel(&pane, vertical),
+                    // Not while the password sheet is up: the pane behind it
+                    // stays where it was.
+                    PointerEventKind::Axis { vertical, .. } => {
+                        // Not under the list of matches either: it is in
+                        // front of the pane, and the wheel is for it.
+                        let (win_w, win_h) = *size_hit.lock().unwrap();
+                        let over_list = search_hit
+                            .lock()
+                            .unwrap()
+                            .panel(win_w, win_h)
+                            .is_some_and(|panel| panel.contains(skia_safe::Point::new(x, y)));
+                        if panes::account::sheet().is_none() && !over_list {
+                            handle_wheel(&pane, vertical);
+                        }
+                    }
                     PointerEventKind::Release { .. } => {
+                        // A match is picked on release over the row it was
+                        // pressed on; `on_update` goes to it.
+                        {
+                            let (win_w, win_h) = *size_hit.lock().unwrap();
+                            let mut search = search_hit.lock().unwrap();
+                            if let Some(pressed) = search.pressed.take() {
+                                let count = search.result_count();
+                                let over = search
+                                    .panel(win_w, win_h)
+                                    .and_then(|panel| sidebar_search::row_at(panel, count, x, y));
+                                if over == Some(pressed) {
+                                    search.choose(pressed);
+                                }
+                                needs_redraw = true;
+                            }
+                        }
                         let win_w = size_hit.lock().unwrap().0;
                         let control = view::titlebar_control_at(x, y, win_w);
                         let fired = {
@@ -1787,6 +2525,7 @@ impl App for SettingsApp {
         let editing_hit = self.editing.clone();
         let pressed_hit = self.pressed.clone();
         let hovered_preview = self.hovered_preview.clone();
+        let search_hit = self.search.clone();
         let redraw = window.clone();
         // What a shortcut line's record button asks the compositor to stop
         // answering its own shortcuts for.
@@ -1807,6 +2546,21 @@ impl App for SettingsApp {
                 match &event.kind {
                     PointerEventKind::Press { serial, .. } => {
                         note_input_serial(*serial);
+                        // The list of matches is in front of the pane, and a
+                        // press on it is the chrome handler's.
+                        let (win_w, win_h) = *size_hit.lock().unwrap();
+                        if search_hit
+                            .lock()
+                            .unwrap()
+                            .panel(win_w, win_h)
+                            .is_some_and(|panel| panel.contains(point))
+                        {
+                            continue;
+                        }
+                        if press_sheet(&size_hit, &editing_hit, x, y) {
+                            mark_pane_dirty(&pane_dirty);
+                            continue;
+                        }
                         if !in_pane(&size_hit, x, y) {
                             continue;
                         }
@@ -1892,15 +2646,18 @@ impl App for SettingsApp {
                             }
 
                             match hit {
-                                ShortcutHit::Action(select) => open_menu(
-                                    &dropdowns,
-                                    &open_dropdown,
-                                    &pane_dirty,
-                                    &redraw,
-                                    select,
-                                    event_serial(&event.kind),
-                                    false,
-                                ),
+                                ShortcutHit::Action(select) => {
+                                    close_pickers(&pickers, &open_picker);
+                                    open_menu(
+                                        &dropdowns,
+                                        &open_dropdown,
+                                        &pane_dirty,
+                                        &redraw,
+                                        select,
+                                        event_serial(&event.kind),
+                                        false,
+                                    )
+                                }
                                 ShortcutHit::Keys { index, offset_x } => {
                                     // A second press in the field already open
                                     // moves the caret. Starting over would
@@ -1947,6 +2704,7 @@ impl App for SettingsApp {
                             }
                             mark_pane_dirty(&pane_dirty);
                         } else if let Some(color) = settings.color_hit(x, y, offset) {
+                            close_menus_now(&dropdowns, &open_dropdown);
                             open_picker_for(
                                 &pickers,
                                 &open_picker,
@@ -1957,11 +2715,28 @@ impl App for SettingsApp {
                                 settings.dark,
                             );
                             mark_pane_dirty(&pane_dirty);
+                        } else if let Some(hit) = settings.users_hit(x, y, offset) {
+                            // Picking someone in the users list shows them at
+                            // once, as the sidebar does; + and − act on
+                            // release, like every other push button.
+                            if matches!(hit, SelectionListHit::Item(_)) {
+                                commit_edit(&editing_hit);
+                                panes::account::press_list(hit);
+                            } else {
+                                *pressed_hit.lock().unwrap() = Some(view::Pressed::User(hit));
+                            }
+                            mark_pane_dirty(&pane_dirty);
                         } else if let Some(id) = settings.row_remove_hit(x, y, offset) {
                             // Acts on release, like every other push button.
                             *pressed_hit.lock().unwrap() = Some(view::Pressed::RemoveRow(id));
                             mark_pane_dirty(&pane_dirty);
+                        } else if let Some((row, index)) = settings.tab_hit(x, y, offset) {
+                            // A tab is a view of the pane, not a setting: the
+                            // pane owning the row switches it and is rebuilt.
+                            panes::sound::select_tab(row, index);
+                            mark_pane_dirty(&pane_dirty);
                         } else if let Some(select) = settings.select_hit(x, y, offset) {
+                            close_pickers(&pickers, &open_picker);
                             open_menu(
                                 &dropdowns,
                                 &open_dropdown,
@@ -1980,6 +2755,21 @@ impl App for SettingsApp {
                             // `view::Pressed`.
                             *pressed_hit.lock().unwrap() =
                                 Some(view::Pressed::RemoveFile(preview.id));
+                            mark_pane_dirty(&pane_dirty);
+                        } else if let Some(position) = settings
+                            .preview_hit(x, y, offset)
+                            .filter(|preview| preview.id == wallpaper_preview::IMAGE_ID)
+                            .and_then(|preview| {
+                                let path = match settings_client::value(preview.id) {
+                                    Some(settings_client::Value::Text(path)) => path,
+                                    _ => return None,
+                                };
+                                wallpaper_preview::position_at(&path, preview.at)
+                            })
+                        {
+                            // The point clicked on the wallpaper is the one
+                            // to keep in view.
+                            wallpaper_preview::set_position(position);
                             mark_pane_dirty(&pane_dirty);
                         } else if let Some(id) = settings.file_hit(x, y, offset) {
                             *pressed_hit.lock().unwrap() = Some(view::Pressed::Choose(id));
@@ -2258,6 +3048,7 @@ impl App for SettingsApp {
         }
         *size = (width, height);
         drop(size);
+        self.search.lock().unwrap().fit(height);
 
         // The pane's surfaces are placed against the window's size, so they
         // have to be told about the new one and repainted at it.
@@ -2273,16 +3064,33 @@ impl App for SettingsApp {
     /// and cannot be handed to it.
     fn on_update(&mut self, _ctx: &AppContext) {
         self.declare_focusables();
+        self.sync_search_focus();
+        // A match picked from the list — or named on the command line — is
+        // gone to here, where the pane and the focus can be reached.
+        let pick = self.search.lock().unwrap().pick.take();
+        if let Some(target) = pick.filter(|_| self.window.is_some()) {
+            self.reveal(target);
+        }
         self.scroll_focus_into_view();
 
         // The Search pane polls the file index only while it is on screen.
         panes::search::set_shown(*self.selected.lock().unwrap() == model::SEARCH_PANE);
         // The Privacy pane reads the permission store when it comes on screen.
         panes::privacy::set_shown(*self.selected.lock().unwrap() == model::PRIVACY_PANE);
+        // The Sound pane reads the sound server when it comes on screen.
+        panes::sound::set_shown(*self.selected.lock().unwrap() == model::SOUND_PANE);
+        // The Agents pane asks systemd about its service only while it is on
+        // screen.
+        agents::set_shown(*self.selected.lock().unwrap() == model::AGENTS_PANE);
+        // So does the Dictation pane about its engines.
+        panes::dictation::set_shown(*self.selected.lock().unwrap() == model::DICTATION_PANE);
 
         if settings_client::take_dirty()
             | agents::take_service_dirty()
             | panes::search::take_dirty()
+            | panes::desk::take_dirty()
+            | panes::dictation::take_dirty()
+            | panes::account::take_dirty()
         {
             // Values, not chrome: only the pane has to be repainted.
             mark_pane_dirty(&self.pane_dirty);
@@ -2313,10 +3121,42 @@ impl App for SettingsApp {
             }
         };
 
+        // The search field's caret blinks on the same clock. The field is on
+        // the window's own surface, which repaints whenever the search moved.
+        {
+            let mut search = self.search.lock().unwrap();
+            if search.input.state.focused() {
+                let was = search.input.caret_visible();
+                search.input.tick(IDLE_TICK.as_secs_f32());
+                if was != search.input.caret_visible() {
+                    search.touch();
+                }
+            }
+        }
+        // Asked for with the lock let go: the window's draw takes it.
+        let revision = self.search.lock().unwrap().revision;
+        if revision != self.search_drawn {
+            self.search_drawn = revision;
+            if let Some(window) = self.window.as_ref() {
+                window.request_frame();
+            }
+        }
+
+        // The row a search went to fades on every pass until it is out, and
+        // then once more so it is not left a shade short of gone.
+        let flashing = match self.flash {
+            Some((_, at)) if flash_strength(at.elapsed().as_secs_f32()) > 0.0 => true,
+            Some(_) => {
+                self.flash = None;
+                true
+            }
+            None => false,
+        };
+
         let dirty = std::mem::replace(&mut *self.pane_dirty.lock().unwrap(), false);
         // A flip changes what a row looks like, not where the pane is
         // scrolled, so it repaints the band like any other value change.
-        let changed = dirty || flipping || blinking;
+        let changed = dirty || flipping || blinking || flashing;
         if changed {
             self.pane_revision = self.pane_revision.wrapping_add(1);
         }
@@ -2332,6 +3172,8 @@ impl App for SettingsApp {
         if changed || animating || self.pane_busy {
             self.sync_pane();
         }
+        self.sync_sheet(changed);
+        self.sync_search_panel();
     }
 
     /// Modifier state, saved for the key press it belongs to.
@@ -2454,10 +3296,83 @@ impl App for SettingsApp {
             return;
         }
 
+        // The password sheet is up, and modal: Escape closes it, Tab walks its
+        // fields, Enter moves on to the next one or, from the last, changes
+        // the password. Anything else is typing for the field that has the
+        // keyboard, and nothing reaches the pane behind.
+        if panes::account::sheet().is_some() {
+            let fields = panes::account::sheet_fields().len();
+            let at = sheet_field_index(&self.editing);
+            let back = self.modifiers.lock().unwrap().shift || event.keysym == Keysym::ISO_Left_Tab;
+            let handled = match event.keysym {
+                Keysym::Escape => {
+                    cancel_edit(&self.editing);
+                    panes::account::close_sheet();
+                    true
+                }
+                Keysym::Tab | Keysym::ISO_Left_Tab if fields > 0 => {
+                    let next = match at {
+                        Some(i) if back => (i + fields - 1) % fields,
+                        Some(i) => (i + 1) % fields,
+                        None => 0,
+                    };
+                    focus_sheet_field(&self.editing, next);
+                    true
+                }
+                Keysym::Return | Keysym::KP_Enter => {
+                    match at {
+                        Some(i) if i + 1 < fields => focus_sheet_field(&self.editing, i + 1),
+                        _ => {
+                            commit_edit(&self.editing);
+                            panes::account::submit();
+                        }
+                    }
+                    true
+                }
+                _ => false,
+            };
+            if handled {
+                mark_pane_dirty(&self.pane_dirty);
+                return;
+            }
+            if at.is_none() {
+                return;
+            }
+        }
+
+        // The search field has the keyboard: it is typed into, and walks its
+        // list.
+        if self.search_focused() {
+            self.search_key(event, serial);
+            if let Some(window) = self.window.as_ref() {
+                window.request_frame();
+            }
+            return;
+        }
+
+        // Ctrl+F finds a setting from anywhere, a field being typed into
+        // included.
+        {
+            let mods = *self.modifiers.lock().unwrap();
+            if mods.ctrl && !mods.alt && !mods.logo && matches!(event.keysym, Keysym::f | Keysym::F)
+            {
+                self.focus_search();
+                if let Some(window) = self.window.as_ref() {
+                    window.request_frame();
+                }
+                return;
+            }
+        }
+
         // Nothing is being typed into: the key belongs to whatever the keyboard
         // focus is on — a sidebar row, or a control in the pane it selected.
         if self.editing.lock().unwrap().is_none() {
             match event.keysym {
+                // `/` starts a search, as it does on the web: with nothing
+                // being typed into it cannot be meant as a character.
+                Keysym::slash => {
+                    self.focus_search();
+                }
                 // The sidebar's selection follows the arrows straight away,
                 // so moving through it shows each pane rather than needing a
                 // press to confirm. Enter has nothing left to do there.
@@ -2541,6 +3456,9 @@ impl App for SettingsApp {
     /// answered, so it is dropped rather than left blinking on a window that
     /// no longer has focus.
     fn on_keyboard_leave(&mut self, _ctx: &AppContext, _surface: &wl_surface::WlSurface) {
+        // The list of matches goes up with the keyboard and the caret stops
+        // blinking; the query stays, for when it comes back.
+        self.sync_search_focus();
         // `|` rather than `||`: both have to be dropped.
         if cancel_edit(&self.editing) | stop_recording() {
             mark_pane_dirty(&self.pane_dirty);
@@ -2562,6 +3480,56 @@ impl App for SettingsApp {
         let panes = model::panes();
 
         let mut tree = A11yTree::new(window_title(selected));
+
+        // The search field, and the list of matches while it is down. The
+        // list is walked with the arrows from the field, so it is the
+        // selected match a screen reader is told about, not the field.
+        let (width, height) = *self.size.lock().unwrap();
+        let search_focused = self.search_focused();
+        let mut search_focus = None;
+        {
+            let search = self.search.lock().unwrap();
+            let query = search.query().to_string();
+            tree.control(
+                view::SEARCH_FOCUS,
+                sidebar_search::field_rect(),
+                Role::TextInput,
+                true,
+                |node| {
+                    node.set_label(otto_kit::t!("a11y-search-settings"));
+                    node.set_value(query);
+                },
+            );
+            if let Some(panel) = search.panel(width, height) {
+                tree.region(
+                    FocusId::new("search-results"),
+                    panel,
+                    Role::List,
+                    otto_kit::t!("a11y-results"),
+                    |tree| {
+                        for index in 0..search.result_count() {
+                            let Some(entry) = search.result(index) else {
+                                continue;
+                            };
+                            let label = match &entry.item.subtitle {
+                                Some(place) => format!("{}, {place}", entry.item.title),
+                                None => entry.item.title.clone(),
+                            };
+                            tree.list_row(
+                                view::search_result_focus_id(index),
+                                sidebar_search::row_rect(panel, index),
+                                label,
+                                index == search.selected,
+                            );
+                        }
+                    },
+                );
+                if search_focused && search.result_count() > 0 {
+                    search_focus = Some(view::search_result_focus_id(search.selected));
+                }
+            }
+        }
+
         tree.region(
             FocusId::new("sidebar"),
             Rect::from_xywh(0.0, 0.0, view::SIDEBAR_W, WINDOW_H),
@@ -2591,7 +3559,6 @@ impl App for SettingsApp {
             &self.hovered_preview,
         );
         let offset = self.pane_offset();
-        let (width, height) = *self.size.lock().unwrap();
         let rows = pane_settings.pane_rows(offset);
 
         tree.region(
@@ -2614,6 +3581,9 @@ impl App for SettingsApp {
         if self.sidebar_focused() {
             tree.set_focus(view::sidebar_focus_id(selected));
         }
+        if let Some(focus) = search_focus {
+            tree.set_focus(focus);
+        }
 
         Some(tree)
     }
@@ -2626,6 +3596,28 @@ impl App for SettingsApp {
         _surface: &ObjectId,
         request: &ActionRequest,
     ) {
+        // A match in the list: clicked, it is gone to as a pick from the
+        // pointer would be.
+        let picked = {
+            let mut search = self.search.lock().unwrap();
+            let index = (0..search.result_count()).find(|index| {
+                a11y_node(view::search_result_focus_id(*index)) == request.target_node
+            });
+            if let (Some(index), Action::Click) = (index, &request.action) {
+                search.choose(index);
+            }
+            index.is_some()
+        };
+        if picked {
+            return;
+        }
+        if a11y_node(view::SEARCH_FOCUS) == request.target_node {
+            if matches!(request.action, Action::Click | Action::Focus) {
+                self.focus_search();
+            }
+            return;
+        }
+
         let index = (0..model::panes().len())
             .find(|index| a11y_node(view::sidebar_focus_id(*index)) == request.target_node);
         if let Some(index) = index {
@@ -2684,6 +3676,10 @@ impl App for SettingsApp {
     /// surface, which only repaints when a frame is asked for — so ask.
     fn on_theme_changed(&mut self, _ctx: &AppContext) {
         mark_pane_dirty(&self.pane_dirty);
+        self.search
+            .lock()
+            .unwrap()
+            .restyle(current_color_scheme() == ColorScheme::Dark);
         if let Some(window) = self.window.as_ref() {
             // `[tiling] decoration` travels on this channel, and while the
             // window is tiled it decides how tall the bar is.
@@ -2719,7 +3715,10 @@ impl App for SettingsApp {
             || !self.toggle_flips.lock().unwrap().is_empty()
             // A blinking caret needs the same steady clock, and for the same
             // reason: nothing else is going to ask for the next frame.
-            || self.editing.lock().unwrap().is_some();
+            || self.editing.lock().unwrap().is_some()
+            || self.search.lock().unwrap().input.state.focused()
+            // So does a row a search went to, while it fades.
+            || self.flash.is_some();
         animating.then_some(IDLE_TICK)
     }
 }
@@ -2734,7 +3733,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.first().map(String::as_str) == Some("--png") {
-        preview::render_to_png(args.get(1), args.get(2));
+        // `--search <query>` draws the field holding it and the list it drops.
+        let at = args.iter().position(|arg| arg == "--search");
+        let search = at.and_then(|at| args.get(at + 1));
+        // What is left is `[out] [pane]`.
+        let plain: Vec<&String> = args
+            .iter()
+            .enumerate()
+            .skip(1)
+            .filter(|&(i, _)| at.is_none_or(|at| i != at && i != at + 1))
+            .map(|(_, arg)| arg)
+            .collect();
+        preview::render_to_png(plain.first().copied(), plain.get(1).copied(), search);
         return Ok(());
     }
 
@@ -2775,8 +3785,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         })
         .unwrap_or(0);
 
+    // `--setting dock.size` opens on that setting, as if it had been searched
+    // for and picked: its pane, scrolled to it, with the keyboard on it.
+    // Named by the identifier the configuration file uses, or by the row's
+    // label for a row with none.
+    let setting = args
+        .iter()
+        .position(|arg| arg == "--setting")
+        .and_then(|at| args.get(at + 1))
+        .and_then(|handle| {
+            let found = sidebar_search::Search::find(&model::panes(), handle);
+            if found.is_none() {
+                eprintln!("settings: no setting called {handle}");
+            }
+            found
+        });
+    let first_pane = setting.map_or(first_pane, |target| target.pane);
+    let mut search = sidebar_search::Search::new(false);
+    search.pick = setting;
+
     AppRunner::new(SettingsApp {
         window: None,
+        sheet: None,
         selected: Arc::new(Mutex::new(first_pane)),
         pane: Rc::new(RefCell::new(None)),
         // The pane has never been painted, so the first update has to.
@@ -2798,6 +3828,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         modifiers: Arc::new(Mutex::new(KeyMods::default())),
         frosted: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         active: Arc::new(std::sync::atomic::AtomicBool::new(true)),
+        search: Arc::new(Mutex::new(search)),
+        search_drawn: 0,
+        search_panel: None,
+        search_icons: RowIcons::default(),
+        flash: None,
     })
     .run()?;
     Ok(())

@@ -63,8 +63,10 @@ dock-quit = 終了
 ## sidebar does not grow to fit them.
 
 settings-pane-general = 一般
+settings-pane-appearance = 外観
 settings-pane-displays = ディスプレイ
 settings-pane-dock = Dock
+settings-pane-top-bar = 上部バー
 settings-pane-tiling = タイル表示
 settings-pane-keyboard = キーボード
 settings-pane-pointing = トラックパッドとマウス
@@ -73,6 +75,17 @@ settings-pane-power = 電源
 settings-pane-lock-and-login = ロックとログイン
 settings-pane-search = 検索
 settings-pane-agents = エージェント
+settings-pane-about = 情報
+settings-sidebar-search = 検索
+settings-sidebar-search-none = 「{ $query }」に一致する設定はありません
+settings-group-about-machine = このコンピュータについて
+settings-about-version-line = バージョン { $version }
+settings-about-computer-name = コンピュータ名
+settings-about-os = オペレーティングシステム
+settings-about-kernel = カーネル
+settings-about-processor = プロセッサ
+settings-about-memory = メモリ
+settings-about-memory-gb = { $size } GB
 
 
 ## Settings — General
@@ -93,14 +106,49 @@ settings-group-desktop = デスクトップ
 settings-background-colour = 背景色
 settings-background-image = 背景画像
 settings-background-image-detail = デスクトップポータルのファイル選択画面から選びます
+settings-background-layout = 表示方法
+settings-background-zoom = ズーム
+settings-background-position-x = 横位置
+settings-background-position-y = 縦位置
+settings-background-position-detail = または、表示しておきたい部分を画像上でクリックします
+settings-desktop-widget = 背景ウィジェット
+settings-desktop-widget-needs-ewwii = ewwii が必要ですが、インストールされていません
+# { $folder } is a path such as ~/.config/otto/widgets/ewwii.
+settings-desktop-widget-detail = ewwii で描画されます。独自のウィジェットは { $folder } に追加します
 settings-background-image-unavailable = 表示できません
 settings-show-desk = デスクトップにファイルを表示
 settings-show-desk-detail = 「デスクトップ」フォルダのファイルをウインドウの背後に表示
+
+settings-group-desk = デスク
+settings-desk-folder = フォルダ
+settings-desk-folder-default = 「デスクトップ」フォルダ
+settings-desk-choose-folder-title = デスクに表示するフォルダを選択
+settings-desk-layout = サイズと位置
+settings-desk-layout-edit = 編集…
+settings-desk-layout-reset = リセット
+settings-desk-layout-fill = 画面全体に表示。「編集」でデスクにハンドルが表示され、ドラッグで配置できます
+settings-desk-layout-placed = 手動で配置済み。「リセット」で画面全体に戻ります
+settings-desk-icon-size = アイコンのサイズ
+settings-desk-overflow = アイコンが収まらないとき
+settings-desk-overflow-scroll = スクロール
+settings-desk-overflow-stack = オーバーレイで表示
+settings-desk-overflow-detail = スクロールはグリッドを動かします。オーバーレイで表示は残りを最後のマスに置き、ウィンドウの上で開きます
 
 settings-group-pointer-and-icons = ポインタとアイコン
 settings-cursor-theme = カーソルテーマ
 settings-cursor-size = カーソルサイズ
 settings-icon-theme = アイコンテーマ
+
+settings-group-app-menu = アプリケーションメニュー
+settings-show-app-menu = アプリケーションメニューを表示
+settings-show-app-menu-detail = 使用中のアプリ名の横に表示。オフの間に開いたアプリは自分のウインドウにメニューを表示します
+
+settings-group-clock = 時計
+settings-show-clock = 日付と時刻を表示
+settings-show-clock-detail = 上部バーの右端に表示
+settings-clock-format = 表示形式
+settings-clock-format-detail = 設定ファイルの [topbar] に clock_format として任意の strftime 形式も書けます
+settings-clock-format-automatic = { $preview }（言語の既定）
 
 settings-group-window-switcher = ウインドウスイッチャー
 settings-follow-cursor = ポインタのあるディスプレイに表示
@@ -234,6 +282,26 @@ settings-scrolling-speed = スクロールの速さ
 
 settings-interface-sounds = インターフェイスのサウンド
 settings-sound-theme = サウンドテーマ
+settings-group-sound-output = 出力装置
+settings-group-sound-input = 入力装置
+settings-sound-output-device = 出力装置
+settings-sound-input-device = 入力装置
+settings-sound-volume = 音量
+settings-sound-mute = 消音
+settings-sound-no-outputs = 出力装置がありません
+settings-sound-no-inputs = 入力装置がありません
+settings-sound-unavailable = サウンドサーバーが応答しません。サウンドには pipewire-pulse を備えた PipeWire または PulseAudio と、pactl が必要です。
+settings-sound-show = 表示
+settings-sound-view-playback = 再生
+settings-sound-view-recording = 録音
+settings-sound-view-configuration = 構成
+settings-sound-port = ポート
+settings-sound-unplugged = 未接続
+settings-sound-default = デフォルトとして使用
+settings-sound-profile = プロファイル
+settings-sound-no-playback = サウンドを再生中のアプリはありません
+settings-sound-no-recording = サウンドを録音中のアプリはありません
+settings-sound-no-cards = サウンドカードがありません
 
 
 ## Settings — Power
@@ -368,6 +436,14 @@ settings-agents-service-missing = 未インストール
 settings-agents-service-unmanaged = 不明：このシステムには systemctl がありません
 settings-agents-start = 起動
 settings-agents-restart = 再起動
+settings-agents-bridge-group = チャットブリッジ
+settings-agents-bridge = ブリッジ
+settings-agents-bridge-off = オフ。チャットアプリからエージェントに接続できません。
+settings-agents-bridge-unset = 下にコマンドを設定して適用してから、ここをオンにしてください。
+settings-agents-bridge-failed = エラーで停止しました。理由は journalctl --user -u otto-agents-bridge で確認できます。
+settings-agents-bridge-missing = 未インストール
+settings-agents-bridge-command = コマンド
+settings-agents-bridge-command-detail = ブリッジを動かすもの。たとえば otto-agents acp をエージェントとして起動するよう設定したゲートウェイ。
 # The row that opens agents.toml. Its path is shown under it.
 settings-agents-file = 設定ファイル
 settings-agents-none = エージェントが設定されていません
@@ -451,6 +527,18 @@ settings-choice-power-ignore = 何もしない
 settings-choice-power-lock = 画面をロック
 settings-choice-power-suspend = スリープ
 settings-choice-power-shutdown = システム終了
+settings-choice-widget-none = なし
+settings-choice-widget-calendar = カレンダー
+# The next two name pages whose text is in English, so they stay as written.
+settings-choice-widget-cross-pad = Cross pad
+settings-choice-widget-grid-pad = Grid pad
+# How a background image fills the screen.
+settings-choice-background-fill = 画面全体に表示
+settings-choice-background-fit = 画面に合わせる
+settings-choice-background-stretch = 引き伸ばして表示
+settings-choice-background-center = 中央に表示
+settings-choice-background-tile = 並べて表示
+settings-choice-background-span = 複数のディスプレイにまたがる
 # The automatic option for a theme that follows the system.
 settings-choice-auto = 自動
 
@@ -492,6 +580,14 @@ files-open-with-always = 「{ $kind }」には常にこのAppを使用
 files-open-with-not-remembered = 開きましたが、選択を保存できませんでした：{ $error }
 files-new-folder = 新規フォルダ
 files-desk-open-in-files = ファイルで開く
+files-desk-edit-done = 完了
+# The desk's overflow tile: the caption under it, and what a screen reader
+# says for it. $count is how many items it holds.
+files-desk-overflow-caption = その他
+files-desk-overflow =
+    { $count ->
+       *[other] ほか { $count } 項目
+    }
 files-move-to-trash = ゴミ箱に入れる
 # $count is always two or more; the single-item case uses files-move-to-trash.
 files-move-count-to-trash =
@@ -609,6 +705,9 @@ files-undo-move = 移動
 files-undo-copy = コピー
 files-undo-delete = 削除
 files-undo-rename = 名称変更
+files-undo-rotate = 回転
+files-undo-flip = 反転
+files-turn-failed = 「{ $name }」を回転できませんでした: { $error }
 # $name is a file or folder name, already wrapped in quotation marks.
 files-renamed-to = 「{ $name }」に名称変更しました
 files-new-folder-created = 新規フォルダ「{ $name }」
@@ -618,6 +717,7 @@ files-rename-failed = 名称変更できません：{ $error }
 files-new-folder-failed = フォルダを作成できません：{ $error }
 files-open-failed = そのファイルを開けません：{ $error }
 files-open-app-broken = アプリの起動コマンドが正しくありません
+files-open-no-app = この種類のファイルを開けるアプリがインストールされていません
 files-new-window-failed = 新しいウインドウを開けません：{ $error }
 files-settings-open-failed = 設定を開けません：{ $error }
 
@@ -704,14 +804,14 @@ files-empty-trash-detail =
 ## not KiB. Most languages keep the symbols as they are; translate only the
 ## spelled-out "bytes".
 
-files-size-bytes =
+size-bytes =
     { $count ->
        *[other] { $count } バイト
     }
-files-size-kb = { $value } KB
-files-size-mb = { $value } MB
-files-size-gb = { $value } GB
-files-size-tb = { $value } TB
+size-kb = { $value } KB
+size-mb = { $value } MB
+size-gb = { $value } GB
+size-tb = { $value } TB
 
 
 ## Files — dates
@@ -754,6 +854,7 @@ files-new-folder-with-count =
 # The panel opened with Ctrl+P: type a few letters of a command's name to run it.
 files-palette-placeholder = コマンドを実行
 files-palette-no-matches = 一致するコマンドはありません
+files-palette-menu-item = コマンドパレット…
 # $count is how many commands the palette is offering; announced when it opens.
 files-palette-opened =
     { $count ->
@@ -873,6 +974,15 @@ bar-power-performance = パフォーマンス
 bar-power-settings = 電源設定…
 bar-keyboard-settings = キーボード設定…
 bar-keyboard-layout-label = キーボードレイアウト: { $layout }
+bar-otto-menu = Otto
+bar-otto-about = Otto について
+bar-otto-settings = 設定…
+bar-otto-log-out = ログアウト
+# The menu under the focused application's name in the top bar.
+bar-app-minimize = 最小化
+bar-app-quit = { $app } を終了
+bar-logout-title = 今すぐログアウトしますか?
+bar-logout-body = 先にアプリに終了を求めるので、保存していない内容を保存できます。
 
 
 ## Settings — widgets
@@ -923,10 +1033,28 @@ schema-font-family-label = インターフェイスフォント
 schema-font-family-description = Otto自身のインターフェイスが使うフォントファミリー。
 schema-desk-enabled-label = デスクトップにファイルを表示
 schema-desk-enabled-description = 「デスクトップ」フォルダのファイルをウインドウの背後に表示。
+schema-canvas-width-label = サイドキャンバスの幅
+schema-canvas-width-description = サイドキャンバスの幅（論理ポイント）。中のものはすべてこの幅で描画されます。
+schema-desktop-widget-label = 背景ウィジェット
+schema-desktop-widget-description = 壁紙の上、ウインドウの背後に描く全画面のページ。ewwii が必要です。
+schema-topbar-show-clock-label = 日付と時刻を表示
+schema-topbar-show-clock-description = 上部バーの右端の時計。
+schema-topbar-clock-format-label = 時計の表示形式
+schema-topbar-clock-format-description = 上部バーに表示する日付と時刻の strftime 形式。空なら言語に従います。
+schema-topbar-show-app-menu-label = アプリケーションメニューを表示
+schema-topbar-show-app-menu-description = 使用中のアプリのメニューを、上部バーのアプリ名の横に表示します。
 schema-background-color-label = 背景色
-schema-background-color-description = デスクトップの背景色。16進文字列で指定します。
+schema-background-color-description = デスクトップの背景色。16進文字列で指定します。画像がないときのグラデーションと、画面に合わせた画像や中央に表示した画像の周囲に使われます。
 schema-background-image-label = 背景画像
 schema-background-image-description = デスクトップの背景画像のパス。空なら画像なし。
+schema-background-mode-label = 背景の表示方法
+schema-background-mode-description = 背景画像を画面にどう表示するか。
+schema-background-position-x-label = 背景の横位置
+schema-background-position-x-description = 切り取られた背景画像のどの部分を表示するか、小さい画像をどこに置くか。0（左）から1（右）まで。
+schema-background-position-y-label = 背景の縦位置
+schema-background-position-y-description = 切り取られた背景画像のどの部分を表示するか、小さい画像をどこに置くか。0（上）から1（下）まで。
+schema-background-zoom-label = 背景のズーム
+schema-background-zoom-description = 画面全体に表示する、または複数のディスプレイにまたがる背景画像の拡大率。1（画面をちょうど覆う）から。
 schema-cursor-theme-label = カーソルテーマ
 schema-cursor-theme-description = XCursorテーマの名前。
 schema-cursor-size-label = カーソルサイズ
@@ -1124,6 +1252,8 @@ launcher-agents-working = 作業中
 launcher-agents-needs-input = 回答待ち
 launcher-agents-error = 失敗
 launcher-agents-none = エージェントセッションはまだありません
+canvas-sessions-heading = エージェント
+stash-drop-invite = ここにファイルをドロップして収集に追加
 # Ask mode: the files that go with a request, under it in the log, or above
 # the field before it is sent. { $files } is their names, comma-separated.
 # Ask mode, while an existing session is being opened to continue it.
@@ -1237,6 +1367,9 @@ agents-permission-reject = 拒否
 agents-permission-reject-always = 許可しない
 # The button that hands the question to the Ask window instead.
 agents-permission-open-in-ask = Ask で開く
+# The same button for a session started in Preview about a file: the
+# question opens there, beside the file. Use the app's name as in its menu entry.
+agents-permission-open-in-preview = Studio で開く
 
 
 ## Emoji picker
@@ -1530,6 +1663,20 @@ peek-pdf-install-rasteriser = ページを表示するには次のいずれか�
 peek-page-of = { $page } / { $pages }
 
 
+## Preview — chat
+
+# The chat field beside a file in Preview, before anything is typed.
+# $name is the file's name.
+preview-chat-placeholder = { $name } について質問
+# Shown in the empty chat beside a file, until something is asked.
+preview-chat-empty = このファイルについてエージェントに質問したり、変更を頼んだりできます。
+# Over the chat field in Preview, when marks drawn on the file will go with
+# the next message. $marks lists their numbers ("1, 2"); $count is how many.
+preview-chat-marks = { $count ->
+   *[other] マーク { $marks } をメッセージと一緒に送ります
+}
+
+
 ## Peek — listings
 ##
 ## A folder or an archive is previewed as a list of what is inside, with one
@@ -1547,21 +1694,6 @@ peek-item-count =
 # size on disk. $items is peek-item-count, $size is a formatted byte
 # count. The dash is an em dash.
 peek-archive-summary = { $items } — { $size }
-
-
-## Peek — sizes
-##
-## Byte units. Peek counts in powers of 1024, so the symbols are the
-## conventional binary-rounded ones. Translate only the spelled-out "bytes".
-
-peek-size-bytes =
-    { $count ->
-       *[other] { $count } バイト
-    }
-peek-size-kb = { $value } KB
-peek-size-mb = { $value } MB
-peek-size-gb = { $value } GB
-peek-size-tb = { $value } TB
 
 
 ## Peek — nothing to show
@@ -1725,6 +1857,7 @@ a11y-tray-item = トレイ項目 { $number }
 a11y-notifications = 通知
 # The sidebar of Settings, listing its panes.
 a11y-categories = カテゴリ
+a11y-search-settings = 設定を検索
 # The launcher's list of matches for what has been typed.
 a11y-results = 結果
 # Names the Settings pane when no pane is selected.
@@ -1782,12 +1915,16 @@ files-photos-info-kind = { $format } 画像
 files-photos-info-copied = コピーしました
 files-photos-info-dimensions = サイズ
 files-photos-info-modified = 変更日
+files-photos-info-taken = 撮影日
 files-photos-info-where = 場所
+files-photos-info-camera = カメラ
+files-photos-info-lens = レンズ
+files-photos-info-exposure = 露出
+files-photos-info-location = 撮影地
 files-photos-info-many =
     { $count ->
        *[other] { $count } 項目
     }
-files-photos-one-selected = 1 項目を選択 · Space でプレビュー · ↵ で開く
 
 
 ## otto-authorize — the panel that asks for the password before a sensitive setting changes.
@@ -1825,3 +1962,147 @@ privacy-store-unavailable-detail = 権限ストア（xdg-desktop-portal の xdg-
 settings-pane-privacy = プライバシー
 
 screencast-picker-remember = { $app } 用に記憶する
+
+## Users pane
+
+settings-pane-account = ユーザ
+settings-account-picture = 画像
+settings-account-picture-detail = ログイン画面とロック画面に表示されます
+settings-account-choose-picture = 画像を選択
+settings-account-picture-unreadable = このファイルは Otto で読み込める画像ではありません
+settings-account-full-name = フルネーム
+settings-account-name = アカウント名
+settings-account-type = アカウントの種類
+settings-account-type-administrator = 管理者
+settings-account-type-standard = 通常
+settings-account-no-accountsservice = ここでは変更できません: AccountsService が実行されていません
+settings-account-not-permitted = システムがこの変更を許可しませんでした
+settings-group-password = パスワード
+settings-account-current-password = 現在のパスワード
+settings-account-new-password = 新しいパスワード
+settings-account-confirm-password = 新しいパスワードを確認
+settings-account-change-password = パスワードを変更
+settings-account-change-password-ellipsis = パスワードを変更…
+settings-account-password-detail = ログイン、画面のロック解除、変更の承認に使用します
+settings-account-password-changing = パスワードを変更しています…
+settings-account-password-changed = パスワードを変更しました
+settings-account-password-missing = 現在のパスワードと新しいパスワードを入力してください
+settings-account-password-mismatch = 新しいパスワードが一致しません
+settings-account-password-same = 新しいパスワードが現在のものと同じです
+settings-account-password-wrong-current = 現在のパスワードが正しくありません
+settings-account-password-failed = パスワードを変更できませんでした
+settings-account-reset-password-ellipsis = パスワードをリセット…
+settings-account-reset-detail = このアカウントに新しいパスワードを設定します
+settings-account-working = システムを待っています…
+settings-users-you = { $kind } · あなた
+settings-users-reset-title = { $name } のパスワードをリセット
+settings-users-reset-action = パスワードをリセット
+settings-users-add-title = ユーザを追加
+settings-users-add-action = ユーザを追加
+settings-users-delete-title = { $name } を削除しますか?
+settings-users-delete-body = このユーザはログインできなくなります。ホームフォルダは残ります。
+settings-users-delete-action = ユーザを削除
+settings-users-invalid-name = アカウント名は英小文字で始まり、a–z、0–9、- と _ のみ使用できます
+settings-users-name-taken = その名前のアカウントはすでにあります
+settings-users-password-missing = アカウントのパスワードを入力してください
+
+## 設定 › 音声入力
+
+settings-pane-dictation = 音声入力
+settings-dictation-intro = 話した言葉をこのコンピュータ上で認識し、テキストフィールドに入力します。ランチャーでは Ctrl+D で音声入力でき、ほかのアプリでは otto-dictate toggle に割り当てたショートカットで行えます。
+settings-dictation-engine = エンジン
+settings-dictation-engine-detail = 選ぶとその音声サーバーが起動し、ほかは停止します
+settings-dictation-engine-parakeet = Parakeet
+settings-dictation-engine-whisper = Whisper（英語のみ）
+settings-dictation-engine-crispasr = CrispASR
+settings-dictation-server = 音声サーバー
+settings-dictation-server-checking = 確認中…
+settings-dictation-server-running = 実行中
+settings-dictation-server-stopped = 停止中。起動するまで、音声入力は何も聞き取りません。
+settings-dictation-server-failed = エラーで停止しました。理由は journalctl --user -u { $unit } で確認できます。
+settings-dictation-server-missing = 未インストール。components/otto-dictate/engines/install.sh { $engine } で導入できます。
+settings-dictation-server-unmanaged = 不明：このシステムには systemctl がありません
+settings-dictation-start = 起動
+settings-dictation-restart = 再起動
+settings-dictation-language = 言語
+settings-dictation-language-auto = 自動
+settings-dictation-language-detail = 話す言語。Parakeet と CrispASR は自分で判別します。
+settings-dictation-hotwords-boost = 名前の優先度
+settings-dictation-hotwords-boost-detail = フィールドが想定する名前をどれだけ優先するか。6 を超えると、名前の前後の言葉が崩れはじめます。
+settings-dictation-autostart = ログイン時に音声入力を起動
+settings-dictation-autostart-detail = ~/.config/autostart から otto-dictate を起動します。Otto は xdg_autostart がオンのときにこのフォルダを読み込みます
+
+## Studio — menus and the keyboard shortcuts sheet
+
+studio-menu-file = ファイル
+studio-menu-edit = 編集
+studio-menu-marks = マーク
+studio-menu-view = 表示
+studio-menu-help = ヘルプ
+studio-close = ウインドウを閉じる
+studio-undo = 取り消す
+studio-redo = やり直す
+studio-copy = コピー
+studio-select-all = すべてを選択
+studio-pen = ペン
+studio-show-marks = マークを表示
+studio-delete-mark = 最後のマークを削除
+studio-zoom-in = 拡大
+studio-zoom-out = 縮小
+studio-zoom-fit = ウインドウに合わせる
+studio-previous-page = 前のページ
+studio-next-page = 次のページ
+studio-sidebar = ページを表示
+studio-chat = チャットを表示
+studio-shortcuts = キーボードショートカット
+studio-sheet-document = 書類
+studio-sheet-chat = チャット
+studio-sheet-scroll = スクロール
+studio-sheet-page = 次の画面
+studio-sheet-ends = 先頭と末尾
+studio-sheet-zoom-pointer = ポインタ位置でズーム
+studio-sheet-stop = ペンを置く
+studio-sheet-send = 送信
+studio-sheet-dictate = 音声入力
+studio-sheet-stop-agent = エージェントを停止
+studio-sheet-to-document = 書類に戻る
+studio-sheet-cmd = Cmd は Ctrl と同じように使えます
+# Toggle: the strip of tools that fill in and mark up a PDF, written into
+# the file itself.
+studio-markup = マークアップツール
+# Writes a PDF's form and markup changes over the file.
+studio-save = 保存
+# Saves the PDF under another name or in another folder, and carries on with that file.
+studio-save-as = 別名で保存…
+# The save dialog's title.
+studio-save-as-title = コピーを保存
+studio-open-title = Studio で開く
+studio-open-filter-all = 画像と書類
+studio-open-filter-pictures = 画像
+studio-pick-hint = 開くファイルを選んでください
+# The window's title while a PDF has changes not yet saved. $name is the file's name.
+studio-title-edited = { $name }（編集済み）
+# Asked when a window with unsaved changes is closed. $name is the file's name.
+studio-close-title = 「{ $name }」の変更を保存しますか?
+studio-close-body = 保存しないと、変更内容は失われます。
+studio-close-discard = 保存しない
+studio-close-cancel = キャンセル
+# Asked when saving would replace changes made to the file by another app
+# since it was opened. $name is the file's name.
+studio-changed-title = 「{ $name }」はディスク上で変更されました
+studio-changed-body = 保存すると、ほかの場所で加えられた変更が置き換えられます。
+# Saves over the file anyway, replacing the changes made elsewhere.
+studio-changed-overwrite = それでも保存
+# Shown when a PDF's changes couldn't be written; the reason follows on its
+# own line. $name is the file's name.
+studio-save-failed-title = 「{ $name }」を保存できませんでした
+studio-save-failed-body = 変更を残すには、別の場所にコピーを保存します。
+# Deletes the highlight, drawing, text or signature selected on the page.
+studio-delete-selection = 選択部分を削除
+studio-sheet-next-field = 次のフォームフィールド
+# The card a signature is drawn on, once, before it is placed on a PDF.
+studio-signature-title = 署名を描く
+studio-signature-hint = 線の上に署名
+studio-signature-clear = 消去
+studio-signature-cancel = キャンセル
+studio-signature-done = 完了

@@ -37,9 +37,11 @@ components/otto-kit/src/
 ├── icon_theme.rs     freedesktop icon theme resolution
 ├── accent.rs         Accent colour, from the settings portal
 ├── color_scheme.rs   Light/dark, from the settings portal or OTTO_COLOR_SCHEME
+├── portal_settings.rs The one Settings portal client the watchers share
 ├── protocols/        Otto's own Wayland protocols, generated
 ├── desktop_entry.rs  .desktop parsing
 ├── filetype/         MIME lookup by glob and content
+├── watch.rs          Directory watching (inotify), waking the event loop
 ├── preview/          File thumbnails
 ├── clipboard.rs      Selection ownership and paste
 ├── dnd.rs            Drag and drop
@@ -185,8 +187,32 @@ backend for that portal is
 [`xdg-desktop-portal-otto`](settings-dbus-api.md); see
 [Color Scheme](color-scheme-setting.md) for the whole path.
 
+The watchers share one portal client, `portal_settings.rs`: one session
+connection and one `SettingChanged` subscription, fanned out by namespace and
+key to whichever watcher follows it.
+
+Otto's own D-Bus interfaces (`org.otto.Settings`, `org.otto.Shell1`, …) have
+their client proxies in the UI-free `otto-dbus` crate, re-exported here as
+`otto_kit::dbus`; see [otto-dbus](otto-dbus.md).
+
 `typography::styles` holds the named text styles (`SUBHEADLINE` and friends);
 `icons` and `icon_theme` resolve icon names against the user's icon theme.
+
+The glyphs Otto's own interface draws come from the vendored Solar set
+before the theme (see `scripts/README.md` for how the set is kept). The set
+is found at `$OTTO_SOLAR_ICONS`, then `<exe>/../share/otto/icons/solar`, then
+`/usr/share/otto/icons/solar`, then the repository's
+`resources/icons/solar`, so a development build needs no install.
+`icons::solar_icon(name, size, SolarStyle, color)` rasterises one glyph with
+its `currentColor` set to `color` (the colour on the root `<svg>`, the alpha
+as its group opacity), cached by name, size, style and colour; a bold request
+for a glyph kept only in linear gets the linear file. `named_icon`,
+`named_icon_sized` and the small-size `cached_icon_chain` lookups answer a
+Solar name with its glyph in black ink, which callers tint with `SrcIn` as
+they do a theme's symbolic art. `folder` is left to the theme there, since a
+listing asks for it as a file type; `cached_glyph_chain` is the variant for a
+caller that draws every icon as a glyph (Files' sidebar and path bar).
+`exact_icon_in_theme` and `find_icon` stay theme-only.
 
 ## Otto's own protocols
 

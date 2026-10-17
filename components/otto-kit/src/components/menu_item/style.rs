@@ -26,9 +26,12 @@ pub struct MenuItemStyle {
 impl Default for MenuItemStyle {
     fn default() -> Self {
         Self {
-            horizontal_padding: 10.0,
-            line_height: 22.0,
-            separator_height: 9.0,
+            // With the menu's own 5pt padding the text sits 13pt in and the
+            // shortcuts end 13pt from the edge; rows are 23pt and a divider
+            // gets 11pt.
+            horizontal_padding: 8.0,
+            line_height: 23.0,
+            separator_height: 11.0,
             border_radius: 5.0,
 
             text_color_normal: Color::from_argb(217, 0, 0, 0), // 85% black

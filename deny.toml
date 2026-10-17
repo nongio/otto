@@ -1,0 +1,131 @@
+# Third-party dependency policy, checked by cargo-deny:
+#
+#   cargo deny --workspace check bans licenses sources -D unused-wrapper
+#   cargo deny --workspace check advisories
+#
+# --workspace matters: the root manifest is also the compositor's package, and
+# without it cargo-deny judges only the compositor's graph and passes. With
+# -D unused-wrapper a wrapper nothing uses any more fails, as a stale
+# [[allow]] does in architecture.toml.
+#
+# The workspace's own layering (which Otto crate may use which) is in
+# architecture.toml. This file covers the outside world: which crates may
+# link a heavy or privileged library directly, and which libraries Otto does
+# not take at all. cargo-deny judges the resolved graph, so a ban holds
+# however deep the dependency is pulled in.
+#
+# `wrappers` lists every crate allowed to depend on the banned crate
+# directly, third-party ones included. Adding a crate to a list is a design
+# decision: say why in the review.
+
+[graph]
+all-features = true
+
+[bans]
+# Path dependencies between workspace members carry no version.
+wildcards = "allow"
+multiple-versions = "allow"
+
+deny = [
+    # The server side of Wayland. Only the compositor speaks it; a client
+    # that needs a compositor-side type wants a protocol instead.
+    { crate = "smithay", wrappers = ["otto", "otto-render"], reason = "only the compositor and its render stack link the Wayland server" },
+    { crate = "smithay-drm-extras", wrappers = ["otto"], reason = "only the compositor drives DRM" },
+    # The server library itself, so a client cannot go around Smithay. The
+    # third-party wrappers are protocol crates whose `server` feature the
+    # compositor turns on.
+    { crate = "wayland-server", wrappers = [
+        "otto",
+        "smithay",
+        "gbm",
+        "wayland-protocols",
+        "wayland-protocols-misc",
+        "wayland-protocols-wlr",
+    ], reason = "only the compositor speaks the server side of Wayland" },
+
+    # Media decoding goes through otto-media-kit; otto-rdp encodes the
+    # remote desktop stream.
+    { crate = "gstreamer", wrappers = [
+        "otto-media-kit",
+        "otto-rdp",
+        "gstreamer-app",
+        "gstreamer-base",
+    ], reason = "decode through otto-media-kit" },
+
+    # Screen capture: the compositor produces streams, otto-kit and the
+    # islands consume them, otto-rdp forwards them.
+    { crate = "pipewire", wrappers = [
+        "otto",
+        "otto-kit",
+        "otto-islands",
+        "otto-rdp",
+    ], reason = "consume streams through otto-kit" },
+
+    # TLS is rustls (otto-rdp); a second TLS stack means a second set of
+    # certificates and CVEs to track.
+    { crate = "openssl-sys", reason = "use rustls" },
+    { crate = "native-tls", reason = "use rustls" },
+]
+
+# Known vulnerabilities fail the check; an unmaintained crate fails only when
+# a workspace member depends on it directly (deeper ones are upstream's to
+# replace). An entry in `ignore` names the advisory and says why it stays.
+[advisories]
+unmaintained = "workspace"
+yanked = "warn"
+ignore = [
+    # h2 0.3 comes only from laye-rs' optional debug server (hyper 0.14,
+    # static_dir), which `all-features` pulls into the graph; no 0.3 release
+    # carries the fix. Drop once laye-rs moves to hyper 1.
+    { id = "RUSTSEC-2026-0258", reason = "h2 0.3 only in laye-rs' debug server; fixed upstream in 0.4" },
+    # rsa has no fixed release; it reaches otto-rdp through ironrdp's picky
+    # (CredSSP). Revisit when ironrdp moves off rsa or rsa ships the fix.
+    { id = "RUSTSEC-2023-0071", reason = "no fixed rsa release; only via ironrdp in otto-rdp" },
+]
+
+# Otto is MIT. Everything it links must be permissive, or weak copyleft at the
+# file level (MPL-2.0). A new licence here is a design decision: say why in
+# the review. GPL crates (greetd_ipc, for one) stay out.
+[licenses]
+confidence-threshold = 0.9
+allow = [
+    "0BSD",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "CC0-1.0",
+    "CC-PDDC",
+    "CDLA-Permissive-2.0",
+    "ISC",
+    "MIT",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Zlib",
+]
+
+[licenses.private]
+# The workspace's own crates are not published; their licence is the
+# workspace's.
+ignore = true
+
+# Dependencies come from crates.io and Otto's own forks only.
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-git = [
+    "https://github.com/nongio/layers",
+    "https://github.com/nongio/smithay",
+]
+
+# laye-rs (and its debug server) carry no licence field. Same author as Otto;
+# treated as MIT until upstream declares one in its manifest.
+[[licenses.clarify]]
+crate = "laye-rs"
+expression = "MIT"
+license-files = []
+
+[[licenses.clarify]]
+crate = "layers-debug-server"
+expression = "MIT"
+license-files = []

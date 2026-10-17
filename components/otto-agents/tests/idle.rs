@@ -14,7 +14,8 @@ use ahp_types::state::{
 mod common;
 
 use otto_agents::agent::{
-    Backend, SessionCommand, SessionEvent, SessionSpec, TurnOutcome, agent_info,
+    Backend, HistoryPart, HistoryTurn, SessionCommand, SessionEvent, SessionSpec, TurnOutcome,
+    agent_info,
 };
 use otto_agents::{host, uri};
 use serde_json::json;
@@ -24,7 +25,8 @@ use tokio::time::timeout;
 const IDLE_TIMEOUT: Duration = Duration::from_millis(300);
 
 /// Echoes prompts like the echo agent, reporting an agent session id, and
-/// records each start and each stop.
+/// records each start and each stop. Taken up again, it replays its history
+/// before it is ready, as an ACP agent does on `session/load`.
 struct Recording {
     /// The `resume` each start was given.
     starts: Arc<Mutex<Vec<Option<String>>>>,
@@ -42,9 +44,17 @@ impl Backend for Recording {
         mut commands: mpsc::UnboundedReceiver<SessionCommand>,
         events: mpsc::UnboundedSender<SessionEvent>,
     ) {
-        self.starts.lock().unwrap().push(spec.resume);
+        self.starts.lock().unwrap().push(spec.resume.clone());
         let stopped = self.stopped.clone();
         tokio::spawn(async move {
+            if spec.resume.is_some() {
+                let turns = vec![HistoryTurn {
+                    prompt: "first".into(),
+                    parts: vec![HistoryPart::Message("first".into())],
+                    ..HistoryTurn::default()
+                }];
+                let _ = events.send(SessionEvent::HistoryLoaded { turns });
+            }
             let _ = events.send(SessionEvent::Ready {
                 agent_session: Some("agent-1".into()),
             });
@@ -163,6 +173,8 @@ async fn an_idle_agent_stops_and_its_next_request_starts_it_again() {
         .expect("the idle agent was not stopped")
         .expect("backend gone");
 
+    // The agent replays its history as it starts again; the turn that
+    // started it is still the one it answers.
     run_turn("t2", "second", &mut chat).await;
     assert_eq!(
         *starts.lock().unwrap(),

@@ -27,6 +27,45 @@ use gen::zwlr_gamma_control_v1::{self, ZwlrGammaControlV1};
 
 use crate::state::{Backend, Otto};
 
+/// Generate a simple gamma LUT with color temperature adjustment
+///
+/// temperature: 1000-10000 (lower = warmer/more red, higher = cooler/more blue)
+/// size: number of entries in the LUT (typically 256 or 1024)
+pub fn generate_gamma_lut(temperature: u32, size: usize) -> (Vec<u16>, Vec<u16>, Vec<u16>) {
+    if size == 0 {
+        return (Vec::new(), Vec::new(), Vec::new());
+    }
+
+    let temp_f = temperature as f64;
+
+    // Simple color temperature calculation
+    // Based on Planckian locus approximation
+    let (r_mult, g_mult, b_mult) = if temp_f < 6600.0 {
+        // Warm (reduce blue, slightly reduce green)
+        let factor = (temp_f - 1000.0) / 5600.0; // 0.0 at 1000K, 1.0 at 6600K
+        (1.0, 0.7 + 0.3 * factor, 0.3 + 0.7 * factor)
+    } else {
+        // Cool (reduce red)
+        let factor = (temp_f - 6600.0) / 3400.0; // 0.0 at 6600K, 1.0 at 10000K
+        (1.0 - 0.3 * factor.min(1.0), 1.0, 1.0)
+    };
+
+    let mut red = Vec::with_capacity(size);
+    let mut green = Vec::with_capacity(size);
+    let mut blue = Vec::with_capacity(size);
+
+    for i in 0..size {
+        // Linear ramp from 0 to 65535
+        let value = ((i as f64 / (size - 1) as f64) * 65535.0) as u16;
+
+        red.push(((value as f64) * r_mult).min(65535.0) as u16);
+        green.push(((value as f64) * g_mult).min(65535.0) as u16);
+        blue.push(((value as f64) * b_mult).min(65535.0) as u16);
+    }
+
+    (red, green, blue)
+}
+
 /// Global state for gamma control protocol
 pub struct GammaControlManagerState {
     /// Active gamma controls per output

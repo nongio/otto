@@ -101,6 +101,18 @@ a path to go to or a new name to give a file.
 - Tab on the highlighted command always enters argument mode when it takes an
   argument. On a command that takes none, Tab does nothing.
 
+### In the top bar
+
+A browser window's menus in the top bar are the same commands: a menu per
+group (Go, File, Edit, View), holding what the palette's resting list holds
+for where the window is now, with their keys. The View menu leads with the
+views as checks, the one on ticked, and their Ctrl+1–4. A command whose
+argument is one of a few choices (Sort By, Go to Place) is a submenu of them,
+the sort in force ticked; one that needs something typed reads "…" and opens
+the palette on itself, as the context menu does. The View menu ends with
+Command Palette…, Ctrl+P, which opens the palette. The desk and a file dialog
+have no menus of their own.
+
 ### Argument mode
 
 - Entering argument mode replaces the query with a prompt: the command's name
@@ -164,7 +176,7 @@ the palette adds no new capability.
 | File | Put Back, Delete Immediately, Empty Trash | — (Trash only) |
 | Edit | Cut, Copy, Paste, Select All, Undo | — |
 | Edit | Select Matching | glob pattern, shown as it is typed |
-| File | Move to Folder | path (folders only) |
+| File | Move to Folder | path (folders only, symlinks to folders included) |
 | File | New Folder with Selection | name, optional; empty means the default |
 | File | Rename N Items | pattern, shown as a dry run while it is typed; two or more selected |
 | View | List View, Grid View, Column View | — (the one already on is not offered) |
@@ -203,7 +215,9 @@ the palette adds no new capability.
   something in the folder that is not being renamed, is drawn in red and the
   summary says so; Return then refuses and nothing moves. A name another file
   is *giving up* is not taken: `1 → 2, 2 → 3` is fine, because the renames go
-  through temporary names.
+  through temporary names. Every one of those moves refuses to replace, so a
+  file that takes one of the names after the dry run was drawn is left alone:
+  the batch fails naming it, and everything that had moved goes back.
 - Running it is one undo entry. The dry run's lines are read, not picked:
   the arrows do nothing on them and Return runs the command.
 

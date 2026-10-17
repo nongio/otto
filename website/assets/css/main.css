@@ -730,8 +730,9 @@ main img[src*="/diagrams/"] {
    The dialog is the desktop's launcher, on a web page: a 620pt frosted card
    held above centre, a tall query field with no box of its own, a hairline
    under it, and rows the selection washes. Sizes are the launcher's own
-   constants (components/otto-launcher/src/view.rs), in px rather than points,
-   so the two read as the same object.                                      */
+   constants (components/otto-launcher/src/view.rs and
+   components/otto-agents-kit/src/rows.rs), in px rather than points, so
+   the two read as the same object.                                         */
 
 #search-button {
    display: flex;

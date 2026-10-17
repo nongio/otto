@@ -1,7 +1,10 @@
-//! Files dropped on the balloon join the stash.
+//! Files dropped on the card join the stash.
 //!
-//! The overlay takes the pointer only over the card, so a drag enters it
-//! only there, and whatever it carries as `text/uri-list` is taken.
+//! A drag enters only the surface that takes the card's pointer: the
+//! floating balloon's overlay, which takes the pointer only over the card,
+//! the card itself in the side canvas, or, with no card yet, the drop
+//! invitation (see [`crate::invite`]). Whatever it carries as
+//! `text/uri-list` is taken.
 
 // Rust guideline compliant 2026-02-21
 
@@ -72,11 +75,21 @@ impl Dispatch<WlDataDevice, ()> for State {
                 ..
             } => {
                 state.drops.forget();
-                let over_card = state
-                    .panel
+                let over_invite = state
+                    .invite
                     .as_ref()
-                    .is_some_and(|panel| panel.takes_pointer(&surface));
+                    .is_some_and(|invite| invite.surface() == &surface);
+                let over_card = over_invite
+                    || state
+                        .panel
+                        .as_ref()
+                        .is_some_and(|panel| panel.takes_pointer(&surface));
                 if over_card && carries_files(&offer) {
+                    if over_invite {
+                        if let Some(invite) = state.invite.as_mut() {
+                            invite.set_hovered(true, &mut state.pool);
+                        }
+                    }
                     offer.accept(serial, Some(URI_LIST.into()));
                     if offer.version() >= 3 {
                         offer.set_actions(DndAction::Copy, DndAction::Copy);
@@ -87,9 +100,17 @@ impl Dispatch<WlDataDevice, ()> for State {
                     offer.destroy();
                 }
             }
-            wl_data_device::Event::Leave => state.drops.forget(),
+            wl_data_device::Event::Leave => {
+                state.drops.forget();
+                if let Some(invite) = state.invite.as_mut() {
+                    invite.set_hovered(false, &mut state.pool);
+                }
+            }
             wl_data_device::Event::Drop => {
                 if let Some(offer) = state.drops.offer.take() {
+                    if let Some(invite) = state.invite.as_mut() {
+                        invite.set_dropped();
+                    }
                     state.receive_drop(offer);
                 }
             }

@@ -18,9 +18,9 @@ otto-kit = { path = "../otto-kit" }
 
 # The example draws a window; the parser itself needs none of this.
 [dev-dependencies]
-tokio = { version = "1", features = ["rt-multi-thread"] }
-wayland-client = "0.31"
-smithay-client-toolkit = { version = "0.19", default-features = false, features = ["calloop", "xkbcommon"] }
+tokio = { workspace = true, features = ["rt-multi-thread"] }
+wayland-client.workspace = true
+smithay-client-toolkit = { workspace = true, features = ["calloop", "xkbcommon"] }
 
 [[example]]
 name = "markdown_window"

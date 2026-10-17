@@ -19,19 +19,25 @@ Three neighbouring pieces have their own pages: the video worker,
 components/
 ├── otto-kit/src/preview/          Preview payload types, layout, draw, zoom maths (pure Skia)
 ├── otto-kit/src/filetype/         name → type of record, bytes → sniffed type
-├── otto-peek/                     the decode worker and everything around it
+├── otto-peek/                     decode and present: the worker and the session hosts embed
 │   ├── src/spawn.rs               open a file, run a worker on it, read the payload back
 │   ├── src/sandbox.rs             rlimits, namespaces, fd hygiene, --sandbox-selftest
 │   ├── src/payload.rs             the wire format ("OQV2") and its validation
 │   ├── src/decode/                one decoder per content type, run in the worker
 │   ├── src/opening.rs             entrance/exit geometry for the panel
+│   ├── src/session.rs             Session, zoom/pan, Video, decode request sizing
+│   ├── src/decode_cache.rs        recent decodes, so reopening a file skips the worker
+│   ├── src/ocrcache.rs            words recognised in pictures, kept between runs
+│   ├── src/draw.rs                a Session's content and badge, the same in every host
+│   ├── src/badge.rs               the text-recognition badge in the preview's corner
+│   ├── src/imagesize.rs           a picture's size from its header
 │   ├── src/render.rs              PNG rendering for the standalone CLI only
 │   └── src/main.rs                `otto-peek` CLI: --describe, --render, --filmstrip
 ├── otto-media-kit/                video: Player (library) + otto-media-worker (GStreamer)
+├── otto-preview/                  one file in a window, around the same Session
 └── otto-files/src/
     ├── thumbnails.rs              in-memory thumbnail store (no threads, no I/O)
     ├── thumbcache.rs              read-only freedesktop thumbnail cache
-    ├── peek.rs                    Session, zoom/pan, Video, decode request sizing
     ├── pane_surfaces.rs           Peek's overlay and the preview video's subsurfaces
     ├── view.rs                    draw_peek, preview column stage, draw_thumbnail
     └── app.rs                     wiring: sync_thumbnails, start_preview, start_peek
@@ -177,6 +183,12 @@ The only dependencies are `skia-safe`, `libc` and `otto-kit`: there is no image
 crate, PDF library, archive crate or syntax highlighter. That is a deliberate
 choice. PDF rasterisers are run as programs rather than linked, so a new format
 can often be supported by adding a command to a table.
+
+Editing a PDF is apart from previewing one. Studio fills a PDF's form and
+marks it up through the `otto-pdf` crate, which loads PDFium
+(`libpdfium.so`) when first asked for and never links it; see
+`specs/preview-app.md`, *Form and markup*. Peek and the decoders above
+don't use it.
 
 `Request` sizes are in physical pixels. The host already asks for about twice
 the panel size, so **decoders must not double it again**.
@@ -355,9 +367,12 @@ margin. The setting survives moving to another file.
 ### Drawing and input
 
 `view::draw_peek` draws the card background and hairline, the title strip,
-and then either `otto_media_kit::view::draw` for a video or
-`otto_kit::preview::draw(content, preview, first_row, zoom, icons)`, followed by
-the pan scrollbars.
+and then `otto_peek::draw::content`: either `otto_media_kit::view::draw` for a
+video or `otto_kit::preview::draw(content, preview, first_row, zoom, icons)`
+with the picture edges and word selection, followed by the pan scrollbars.
+`otto_peek::draw::badge` adds the text-recognition badge. Studio
+(`otto-preview/src/content.rs`) calls the same two, laying its PDF form fields
+and marks over the picture through the `overlay` hook.
 
 `otto_kit::preview` owns layout and the zoom geometry, so every host clamps the
 same way:
@@ -527,7 +542,7 @@ Unit tests cover:
 - the payload round trip and rejection of bad input;
 - decoder limits, text encodings and PDF page counts;
 - `opening.rs` geometry;
-- zoom and pan in both `otto_kit::preview` and `peek.rs`;
+- zoom and pan in both `otto_kit::preview` and `otto_peek::session`;
 - the thumbnail store's throttling and eviction;
 - cache naming and mtime checks;
 - the media-kit protocol and transport layout.

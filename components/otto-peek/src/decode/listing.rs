@@ -29,7 +29,7 @@ const MAX_ROWS: usize = 2_000;
 
 /// The worker holds a descriptor, not a path — deliberately, so no name can be
 /// substituted underneath it. `fdopendir` is how a directory is read from one.
-pub fn directory(file: &mut File, _request: &Request) -> PreviewPayload {
+pub(super) fn directory(file: &mut File, _request: &Request) -> PreviewPayload {
     let mut rows = Vec::new();
     let mut total = 0u64;
     let mut truncated = false;
@@ -117,7 +117,7 @@ const EOCD_SEARCH: u64 = 22 + 0xFFFF;
 const EOCD_SIGNATURE: u32 = 0x0605_4B50;
 const CENTRAL_SIGNATURE: u32 = 0x0201_4B50;
 
-pub fn zip(file: &mut File, metadata: &Metadata, request: &Request) -> PreviewPayload {
+pub(super) fn zip(file: &mut File, metadata: &Metadata, request: &Request) -> PreviewPayload {
     match zip_rows(file, metadata) {
         Some((rows, truncated, total)) => PreviewPayload::Rows {
             rows,
@@ -248,7 +248,7 @@ fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
 /// Uncompressed tar only. A `.tar.gz` reaches here as its compressed type and
 /// gets a file card — listing it would need an inflate implementation, which is
 /// a dependency v1 declined.
-pub fn tar(file: &mut File, metadata: &Metadata, request: &Request) -> PreviewPayload {
+pub(super) fn tar(file: &mut File, metadata: &Metadata, request: &Request) -> PreviewPayload {
     // Headers are every 512 bytes and entries are padded to that, so walking
     // the whole archive means reading it. Cap it: the point is a look inside.
     let bytes = match read_capped(file, 64 * 1024 * 1024) {

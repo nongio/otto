@@ -21,13 +21,24 @@
 //!
 //! Sizes are logical points, on a canvas the caller has already scaled.
 
+// A `pub` item nothing outside the crate can reach is an accident: say
+// `pub(crate)` or `pub(super)`, so the public API is what lib.rs exports.
+#![warn(unreachable_pub)]
+
 mod appearance;
+mod pacing;
 #[cfg(feature = "pam")]
 pub mod pam;
 mod panel;
+pub mod power;
 pub mod reader;
+mod secret;
 mod user;
 
 pub use appearance::Appearance;
+pub use pacing::{frame_in_flight, Clock, FRAME_TIMEOUT};
 pub use panel::{Action, Field, Finger, Panel, PowerAction, Status, View};
+pub use secret::SecretInput;
 pub use user::User;
+/// Re-exported so a client can hold a taken answer without naming the crate.
+pub use zeroize::Zeroizing;

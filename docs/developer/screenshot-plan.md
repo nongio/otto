@@ -71,7 +71,7 @@ Screenshot app
 screenshot command yet.
 
 **Reuse the existing capture path.** The SHM branch of `zwlr_screencopy_v1`
-already does steps 4–5: `BlitCurrentFrame` (`src/renderer/mod.rs:41`) for the
+already does steps 4–5: `BlitCurrentFrame` (`crates/otto-render/src/renderer/mod.rs:41`) for the
 GPU side, `skia_surface.read_pixels` for the CPU readback. A screenshot is a
 one-shot version of that, and should call the same code rather than growing a
 parallel path.

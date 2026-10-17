@@ -23,13 +23,16 @@ use smithay::{
         pointer::{CursorIcon, CursorImageStatus},
     },
     reexports::calloop::channel::Sender as CalloopSender,
-    utils::Coordinate,
+    utils::Logical,
 };
 
 use crate::{
     interactive_view::ViewInteractions,
     theme::{self, theme_colors},
-    utils::{button_press_scale, button_release_scale, draw_named_icon_any, draw_text_content},
+    utils::{
+        button_press_scale, button_release_scale, draw_named_icon_any, draw_text_content,
+        geometry::{self, PhysicalPoint, PhysicalSize},
+    },
 };
 
 use super::workspace::WorkspaceView;
@@ -95,6 +98,54 @@ fn workspace_collapse_transition() -> Transition {
     Transition::spring(0.5, 0.1)
 }
 
+/// Hash a physical size by its bit pattern (`f32` is not `Hash`).
+fn hash_size<H: Hasher>(size: &PhysicalSize, state: &mut H) {
+    size.w.to_bits().hash(state);
+    size.h.to_bits().hash(state);
+}
+
+/// The geometry of one workspace preview, all in the physical scene space the
+/// strip is laid out in. Shared by the strip and the lifted drag copy, which
+/// must come out the same size.
+#[derive(Clone, Copy, Debug)]
+struct PreviewGeometry {
+    /// The workspace at full size, never smaller than a pixel on either axis.
+    workspace: PhysicalSize,
+    /// The preview box the workspace is squeezed into.
+    preview: PhysicalSize,
+    /// A ratio, not a length: how far down the full-size workspace is squeezed
+    /// to fit the preview box.
+    ratio: f32,
+    /// Height of the name label under the preview.
+    label_height: f32,
+}
+
+impl PreviewGeometry {
+    /// The preview of a workspace `workspace_size` big, on an output at
+    /// `ui_scale` (its fractional scale, which sizes the label).
+    fn new(workspace_size: PhysicalSize, ui_scale: f32) -> Self {
+        let workspace = PhysicalSize::new(workspace_size.w.max(1.0), workspace_size.h.max(1.0));
+        let preview_width = WORKSPACE_SELECTOR_PREVIEW_WIDTH;
+        let ratio = preview_width / workspace.w;
+        Self {
+            workspace,
+            preview: PhysicalSize::new(preview_width, workspace.h * ratio),
+            ratio,
+            label_height: 30.0 * ui_scale,
+        }
+    }
+
+    /// Preview plus label: the height of a whole item.
+    fn item_height(&self) -> f32 {
+        self.preview.h + self.label_height
+    }
+
+    /// The label box under the preview.
+    fn label(&self) -> PhysicalSize {
+        PhysicalSize::new(self.preview.w, self.label_height)
+    }
+}
+
 /// A press on a workspace preview that may become a reorder drag.
 ///
 /// Modelled on the dock's icon drag ([`crate::workspaces::dock`]): a press is
@@ -105,11 +156,12 @@ struct WorkspaceDrag {
     /// Stable id of the workspace under the press — what the item layers are
     /// keyed by, and what survives the strip being permuted underneath it.
     index: usize,
-    /// Pointer x when the press landed, in this output's scene space.
-    grab_x: f32,
-    /// The line of the row the lifted copy rides along, in scene space. The
-    /// pointer only carries it sideways: a drag towards the desktop must not
-    /// pull the preview out of the strip.
+    /// Where the press landed, in this output's physical scene space. Only
+    /// its x matters to the drag, which runs along the strip.
+    grab: PhysicalPoint,
+    /// The line of the row the lifted copy rides along, in physical scene
+    /// space. The pointer only carries it sideways: a drag towards the desktop
+    /// must not pull the preview out of the strip.
     ghost_y: f32,
     /// Whether the pointer has travelled far enough for this to be a drag.
     active: bool,
@@ -150,8 +202,7 @@ struct WorkspaceGhostState {
     background_node: Option<NodeRef>,
     /// The workspace at full size, which is what the mirrors are scaled down
     /// from.
-    workspace_width: f32,
-    workspace_height: f32,
+    workspace_size: PhysicalSize,
     /// The label under the preview, so the lifted copy is legible as the
     /// workspace it is rather than an anonymous rectangle.
     name: String,
@@ -165,8 +216,7 @@ impl Hash for WorkspaceGhostState {
         self.index.hash(state);
         self.workspace_node.hash(state);
         self.background_node.hash(state);
-        self.workspace_width.to_bits().hash(state);
-        self.workspace_height.to_bits().hash(state);
+        hash_size(&self.workspace_size, state);
         self.name.hash(state);
         self.current.hash(state);
     }
@@ -184,8 +234,8 @@ pub struct WorkspaceViewState {
     index: usize,
     workspace_node: Option<NodeRef>,
     background_node: Option<NodeRef>,
-    workspace_width: f32,
-    workspace_height: f32,
+    /// The workspace at full size: the output's mode, in physical pixels.
+    workspace_size: PhysicalSize,
     fullscreen: bool,
     window_count: usize,
     /// The agent holding the workspace: colour and name.
@@ -198,8 +248,7 @@ impl Hash for WorkspaceViewState {
         self.index.hash(state);
         self.workspace_node.hash(state);
         self.background_node.hash(state);
-        self.workspace_width.to_bits().hash(state);
-        self.workspace_height.to_bits().hash(state);
+        hash_size(&self.workspace_size, state);
         self.fullscreen.hash(state);
         self.window_count.hash(state);
         self.agent.hash(state);
@@ -264,8 +313,8 @@ impl Hash for WorkspaceSelectorViewState {
 struct LabelEdit {
     index: usize,
     input: TextInput,
-    /// Left edge of the field inside the label layer, in scene points. Pointer
-    /// x is translated by it before reaching the widget.
+    /// Left edge of the field, in physical scene pixels. Pointer x is
+    /// translated by it before reaching the widget.
     field_origin_x: f32,
     caret_visible: bool,
 }
@@ -274,7 +323,9 @@ struct LabelEdit {
 pub struct WorkspaceSelectorView {
     pub layer: layers::prelude::Layer,
     pub view: layers::prelude::View<WorkspaceSelectorViewState>,
-    pub cursor_location: Arc<RwLock<Point>>,
+    /// Last pointer position over the strip, in this output's physical scene
+    /// space.
+    pub cursor_location: Arc<RwLock<PhysicalPoint>>,
     pub drop_targets: Arc<RwLock<Vec<WorkspaceDropTarget>>>,
     pub drop_hover_index: Arc<RwLock<Option<usize>>>,
     /// When each workspace first appeared in this selector, so the enter
@@ -287,7 +338,7 @@ pub struct WorkspaceSelectorView {
     /// events arrive in global logical space; subtracting this yields
     /// output-local coordinates for hit-testing (all output subtrees render
     /// at scene origin).
-    output_origin: Arc<RwLock<(f64, f64)>>,
+    output_origin: Arc<RwLock<smithay::utils::Point<f64, Logical>>>,
     /// Name of the output this selector belongs to. Add/remove act on this
     /// output only, so each display manages its own independent workspaces.
     output_name: Arc<RwLock<String>>,
@@ -400,7 +451,7 @@ impl WorkspaceSelectorView {
                 let appeared_at = *known.entry(w.index).or_insert_with(Instant::now);
                 let entering = appeared_at.elapsed() < WORKSPACE_ENTER_SETTLE;
                 let leaving = state.removing.contains(&w.index);
-                let workspace_width = w.workspace_width.max(1.0);
+                let workspace_width = w.workspace_size.w.max(1.0);
 
                 let key = format!("workspace_selector_desktop_{}", w.index);
                 let wrap_key = format!("workspace_selector_desktop_wrap_{}", w.index);
@@ -479,13 +530,13 @@ impl WorkspaceSelectorView {
             // engine: layers_engine,
             layer,
             view,
-            cursor_location: Arc::new(RwLock::new(Point::default())),
+            cursor_location: Arc::new(RwLock::new(PhysicalPoint::default())),
             drop_targets,
             drop_hover_index,
             known_indices,
             removing,
             pressed_action,
-            output_origin: Arc::new(RwLock::new((0.0, 0.0))),
+            output_origin: Arc::new(RwLock::new(smithay::utils::Point::default())),
             output_name,
             editing: Arc::new(RwLock::new(None)),
             editing_flag,
@@ -498,13 +549,13 @@ impl WorkspaceSelectorView {
 
     /// Populate this selector from a single output's workspace set. Each
     /// output drives its own selector so previews reflect that output's
-    /// content at that output's physical resolution.
+    /// content at that output's physical resolution: `workspace_size` is the
+    /// output's mode and `scale` its own fractional scale.
     pub fn set_workspaces(
         &self,
         workspaces: &[Arc<WorkspaceView>],
         current: usize,
-        width: f32,
-        height: f32,
+        workspace_size: PhysicalSize,
         scale: f32,
     ) {
         let mut state = self.view.get_state();
@@ -517,8 +568,7 @@ impl WorkspaceSelectorView {
                     index: w.index,
                     workspace_node: Some(w.windows_layer.id()),
                     background_node: Some(w.wallpaper_group.id()),
-                    workspace_width: width,
-                    workspace_height: height,
+                    workspace_size,
                     fullscreen: w.get_fullscreen_mode(),
                     window_count: w.windows_list.read().unwrap().len(),
                     agent: w.agent_mark(),
@@ -602,7 +652,7 @@ impl WorkspaceSelectorView {
     /// Set the global logical origin of the output hosting this selector, so
     /// pointer events (delivered in global logical space) can be converted to
     /// output-local coordinates for hit-testing.
-    pub fn set_output_origin(&self, origin: (f64, f64)) {
+    pub fn set_output_origin(&self, origin: smithay::utils::Point<f64, Logical>) {
         *self.output_origin.write().unwrap() = origin;
     }
 
@@ -789,13 +839,13 @@ impl WorkspaceSelectorView {
     /// only becomes a drag once the pointer has moved
     /// [`WORKSPACE_DRAG_THRESHOLD_PX`] along the strip, so a plain click still
     /// switches workspace (and a double click still renames).
-    fn begin_drag(&self, index: usize, grab_x: f32) {
+    fn begin_drag(&self, index: usize, grab: PhysicalPoint) {
         if self.is_removing(index) {
             return;
         }
         *self.drag.write().unwrap() = Some(WorkspaceDrag {
             index,
-            grab_x,
+            grab,
             ghost_y: 0.0,
             active: false,
             start_pos: 0,
@@ -811,13 +861,13 @@ impl WorkspaceSelectorView {
 
     /// Advance an in-flight drag. Returns whether the drag has taken over the
     /// pointer, in which case the caller must not treat the motion as hovering.
-    fn drag_update(&self, location: Point) -> bool {
+    fn drag_update(&self, location: PhysicalPoint) -> bool {
         let Some(mut drag) = self.drag.read().unwrap().clone() else {
             return false;
         };
         let x = location.x;
         if !drag.active {
-            if (x - drag.grab_x).abs() < WORKSPACE_DRAG_THRESHOLD_PX {
+            if (x - drag.grab.x).abs() < WORKSPACE_DRAG_THRESHOLD_PX {
                 return false;
             }
             if !self.activate_drag(&mut drag) {
@@ -832,8 +882,8 @@ impl WorkspaceSelectorView {
         let last = drag.order.len().saturating_sub(1);
         let min = -(drag.start_pos as f32) * WORKSPACE_SLOT_PITCH;
         let max = last.saturating_sub(drag.start_pos) as f32 * WORKSPACE_SLOT_PITCH;
-        let travel = (x - drag.grab_x).clamp(min, max);
-        self.place_ghost(drag.grab_x + travel, drag.ghost_y);
+        let travel = (x - drag.grab.x).clamp(min, max);
+        self.place_ghost(PhysicalPoint::new(drag.grab.x + travel, drag.ghost_y));
 
         // Round to the nearest slot, so the workspace changes places once it
         // has covered half of one.
@@ -872,7 +922,7 @@ impl WorkspaceSelectorView {
         drag.start_pos = pos;
         drag.pos = pos;
         drag.order = order;
-        drag.ghost_y = bounds.center_y();
+        drag.ghost_y = geometry::layer_center(&wrap).y;
 
         // The slot keeps its place in the strip — it is the gap the workspace
         // leaves behind — but shows nothing while the lifted copy has it.
@@ -909,8 +959,7 @@ impl WorkspaceSelectorView {
             index: drag.index,
             workspace_node: w.workspace_node,
             background_node: w.background_node,
-            workspace_width: w.workspace_width,
-            workspace_height: w.workspace_height,
+            workspace_size: w.workspace_size,
             name: w.name.clone(),
             current: pos == state.current,
         });
@@ -918,7 +967,7 @@ impl WorkspaceSelectorView {
 
         // The copy takes the pointer with it from the first frame, and grows
         // into the lift rather than appearing already raised.
-        self.place_ghost(drag.grab_x, drag.ghost_y);
+        self.place_ghost(PhysicalPoint::new(drag.grab.x, drag.ghost_y));
         if let Some(ghost) = self.view.layer_by_key(WORKSPACE_DRAG_GHOST_KEY) {
             ghost.set_scale(Point::new(1.0, 1.0), None);
             ghost.set_scale(
@@ -929,16 +978,16 @@ impl WorkspaceSelectorView {
         true
     }
 
-    /// Centre the lifted copy on `(centre_x, centre_y)`, in this output's scene
+    /// Centre the lifted copy on `centre`, in this output's physical scene
     /// space. The ghost is an absolutely-positioned child of the strip anchored
     /// at its own centre, so its offset is simply the distance from the strip's
     /// origin — read live, since the strip slides in and out with expose.
-    fn place_ghost(&self, centre_x: f32, centre_y: f32) {
+    fn place_ghost(&self, centre: PhysicalPoint) {
         let Some(ghost) = self.view.layer_by_key(WORKSPACE_DRAG_GHOST_KEY) else {
             return;
         };
-        let root = self.layer.render_bounds_transformed();
-        ghost.set_position(Point::new(centre_x - root.x(), centre_y - root.y()), None);
+        let offset = centre - geometry::layer_origin(&self.layer);
+        ghost.set_position(geometry::layer_point(offset), None);
     }
 
     /// Move the dragged workspace to `new_pos` in the strip and slide every
@@ -998,10 +1047,7 @@ impl WorkspaceSelectorView {
         let target = self
             .view
             .layer_by_key(&format!("workspace_selector_desktop_wrap_{}", drag.index))
-            .map(|wrap| {
-                let bounds = wrap.render_bounds_transformed();
-                (bounds.center_x(), bounds.center_y())
-            });
+            .map(|wrap| geometry::layer_center(&wrap));
 
         let selector = self.clone();
         let index = drag.index;
@@ -1024,12 +1070,12 @@ impl WorkspaceSelectorView {
         };
 
         match (self.view.layer_by_key(WORKSPACE_DRAG_GHOST_KEY), target) {
-            (Some(ghost), Some((x, y))) => {
-                let root = self.layer.render_bounds_transformed();
+            (Some(ghost), Some(centre)) => {
+                let offset = centre - geometry::layer_origin(&self.layer);
                 ghost.set_scale(Point::new(1.0, 1.0), Some(Transition::ease_out_quad(0.18)));
                 ghost
                     .set_position(
-                        Point::new(x - root.x(), y - root.y()),
+                        geometry::layer_point(offset),
                         Some(Transition::ease_out_quad(0.18)),
                     )
                     .on_finish(move |_: &Layer, _| land(), true);
@@ -1120,12 +1166,6 @@ fn workspace_index_of_key(key: &str) -> Option<usize> {
         .and_then(|index| index.parse::<usize>().ok())
 }
 
-/// Is the scene-space point `(x, y)` inside this layer's transformed bounds?
-fn layer_contains(layer: &Layer, x: f32, y: f32) -> bool {
-    let r = layer.render_bounds_transformed();
-    x >= r.x() && x <= r.x() + r.width() && y >= r.y() && y <= r.y() + r.height()
-}
-
 /// The darkening applied to a workspace preview while it is pressed or is the
 /// drop target.
 fn press_darken_filter() -> Option<layers::skia::ColorFilter> {
@@ -1154,17 +1194,9 @@ fn render_workspace_selector_view(
 ) -> LayerTree {
     let workspaces = state.workspaces.clone();
 
-    let (_ww, wh) = workspaces.iter().fold((0.0, 0.0), |(max_w, max_h), w| {
-        let workspace_width = w.workspace_width.max(1.0);
-        let workspace_height = w.workspace_height.max(1.0);
-        let preview_width = WORKSPACE_SELECTOR_PREVIEW_WIDTH;
-        let scale = preview_width / workspace_width;
-        let preview_height = workspace_height * scale;
-        let label_height = 30.0 * state.scale;
-        (
-            max_w.max(preview_width + WORKSPACE_SELECTOR_GAP),
-            max_h.max(preview_height + label_height),
-        )
+    // The tallest item, in physical pixels: the strip is sized to it.
+    let max_item_height = workspaces.iter().fold(0.0_f32, |max_h, w| {
+        max_h.max(PreviewGeometry::new(w.workspace_size, state.scale).item_height())
     });
     let workspaces_tree = workspaces
         .iter()
@@ -1188,12 +1220,7 @@ fn render_workspace_selector_view(
             if is_drop_hover {
                 color_filter = press_darken_filter();
             }
-            let workspace_width = w.workspace_width.max(1.0);
-            let workspace_height = w.workspace_height.max(1.0);
-            let preview_width = WORKSPACE_SELECTOR_PREVIEW_WIDTH;
-            let scale = preview_width / workspace_width;
-            let preview_height = workspace_height * scale;
-            let label_height = 30.0 * state.scale;
+            let geom = PreviewGeometry::new(w.workspace_size, state.scale);
 
             LayerTreeBuilder::with_key(format!(
                 "workspace_selector_desktop_{}",
@@ -1235,7 +1262,7 @@ fn render_workspace_selector_view(
             .size((
                 layers::types::Size {
                     width: layers::taffy::style::Dimension::Auto,
-                    height: layers::taffy::style::Dimension::Length(preview_height + label_height),
+                    height: layers::taffy::style::Dimension::Length(geom.item_height()),
                 },
                 None,
             ))
@@ -1248,13 +1275,7 @@ fn render_workspace_selector_view(
                     ..Default::default()
                 })
                 .position(Point::new(0.0, 0.0))
-                .size((
-                    layers::types::Size {
-                        width: layers::taffy::style::Dimension::Length(preview_width),
-                        height: layers::taffy::style::Dimension::Length(preview_height),
-                    },
-                    None,
-                ))
+                .size((geometry::layer_size(geom.preview), None))
                 .on_pointer_move({
                     let view_ref = view.clone();
                     move |_layer: &Layer, _x, _y| {
@@ -1292,7 +1313,12 @@ fn render_workspace_selector_view(
                         // engine emits Out here (after the Move that revealed it) and
                         // the button would vanish under the cursor. Keep it shown while
                         // the pointer is still over the preview or over the button.
-                        if layer_contains(layer, x, y) || layer_contains(&remove_button, x, y) {
+                        // lay-rs hands the pointer over in the scene's
+                        // physical pixels.
+                        let pointer = PhysicalPoint::new(x, y);
+                        if geometry::layer_contains(layer, pointer)
+                            || geometry::layer_contains(&remove_button, pointer)
+                        {
                             return;
                         }
                         remove_button.set_opacity(0.0_f32, Transition::spring(0.3, 0.1));
@@ -1313,22 +1339,14 @@ fn render_workspace_selector_view(
                                 position: taffy::Position::Absolute,
                                 ..Default::default()
                             })
-                            .size((
-                                layers::types::Size {
-                                    width: layers::taffy::style::Dimension::Length(workspace_width),
-                                    height: layers::taffy::style::Dimension::Length(
-                                        workspace_height,
-                                    ),
-                                },
-                                None,
-                            ))
-                            .scale(Point::new(scale, scale))
+                            .size((geometry::layer_size(geom.workspace), None))
+                            .scale(Point::new(geom.ratio, geom.ratio))
                             .replicate_node(w.background_node)
                             .picture_cached(true)
                             .image_cache(true)
                             .color_filter(color_filter.clone())
                             .border_corner_radius(BorderRadius::new_single(
-                                otto_kit::corners::radius(20.0 / scale),
+                                otto_kit::corners::radius(20.0 / geom.ratio),
                             ))
                             .clip_children(true)
                             .clip_content(true)
@@ -1345,22 +1363,14 @@ fn render_workspace_selector_view(
                                 position: taffy::Position::Absolute,
                                 ..Default::default()
                             })
-                            .size((
-                                layers::types::Size {
-                                    width: layers::taffy::style::Dimension::Length(workspace_width),
-                                    height: layers::taffy::style::Dimension::Length(
-                                        workspace_height,
-                                    ),
-                                },
-                                None,
-                            ))
-                            .scale(Point::new(scale, scale))
+                            .size((geometry::layer_size(geom.workspace), None))
+                            .scale(Point::new(geom.ratio, geom.ratio))
                             .replicate_node(w.workspace_node)
                             .picture_cached(true)
                             .image_cache(true)
                             .color_filter(color_filter)
                             .border_corner_radius(BorderRadius::new_single(
-                                otto_kit::corners::radius(20.0 / scale),
+                                otto_kit::corners::radius(20.0 / geom.ratio),
                             ))
                             .clip_children(true)
                             .clip_content(true)
@@ -1448,10 +1458,7 @@ fn render_workspace_selector_view(
                                 ..Default::default()
                             })
                             .position(Point::new(0.0, 0.0))
-                            .size((
-                                layers::types::Size::points(preview_width, preview_height),
-                                None,
-                            ))
+                            .size((geometry::layer_size(geom.preview), None))
                             .content(Some(super::agent_frame::draw_preview_mark(color)))
                             .pointer_events(false)
                             .build()
@@ -1470,7 +1477,7 @@ fn render_workspace_selector_view(
                             .anchor_point(Point::new(0.5, 0.5))
                             .scale(Point::new(0.2, 0.2))
                             .opacity((0.0, None))
-                            .position(Point::new(preview_width, 0.0))
+                            .position(Point::new(geom.preview.w, 0.0))
                             .size((
                                 layers::types::Size {
                                     width: layers::taffy::style::Dimension::Length(50.0),
@@ -1479,7 +1486,7 @@ fn render_workspace_selector_view(
                                 None,
                             ))
                             .background_color(crate::theme::chrome_material(
-                                theme_colors().materials_ultrathick,
+                                theme_colors().material_ultrathick,
                             ))
                             .blend_mode(crate::theme::chrome_blend_mode())
                             .border_corner_radius(BorderRadius::new_single(25.0))
@@ -1509,13 +1516,7 @@ fn render_workspace_selector_view(
                     // A fixed width, not a percentage: the label is cropped
                     // along with the preview while the item collapses instead
                     // of re-centring its text in a shrinking box.
-                    .size((
-                        layers::types::Size {
-                            width: layers::taffy::style::Dimension::Length(preview_width),
-                            height: layers::taffy::style::Dimension::Length(label_height),
-                        },
-                        None,
-                    ))
+                    .size((geometry::layer_size(geom.label()), None))
                     .content(
                         match state.editing.as_ref().filter(|e| e.index == w.index) {
                             // Renaming: the field takes the label's place, so the
@@ -1553,10 +1554,10 @@ fn render_workspace_selector_view(
             None,
         ))
         .background_color(crate::theme::chrome_material(
-            theme_colors().materials_medium,
+            theme_colors().material_medium,
         ))
         .blend_mode(crate::theme::chrome_blend_mode())
-        .shadow_color(theme_colors().shadow_color)
+        .shadow_color(theme_colors().shadow)
         .shadow_offset(((0.0, -5.0).into(), None))
         .shadow_radius((20.0, None))
         .children({
@@ -1579,7 +1580,7 @@ fn render_workspace_selector_view(
                     .size((
                         layers::types::Size {
                             width: layers::taffy::style::Dimension::Percent(1.0),
-                            height: layers::taffy::style::Dimension::Length(wh + 50.0),
+                            height: layers::taffy::style::Dimension::Length(max_item_height + 50.0),
                         },
                         None,
                     ))
@@ -1628,14 +1629,7 @@ fn render_workspace_selector_view(
 /// what the user picks up looks like the workspace they pressed. It takes no
 /// pointer events; the drag owns the pointer until the button comes up.
 fn drag_ghost_tree(ghost: &WorkspaceGhostState, ui_scale: f32) -> LayerTree {
-    let workspace_width_px = ghost.workspace_width.max(1.0);
-    let workspace_height_px = ghost.workspace_height.max(1.0);
-    let preview_width_px = WORKSPACE_SELECTOR_PREVIEW_WIDTH;
-    // A ratio, not a length: how far down the full-size workspace is
-    // squeezed to fit the preview box.
-    let preview_ratio = preview_width_px / workspace_width_px;
-    let preview_height_px = workspace_height_px * preview_ratio;
-    let label_height_px = 30.0 * ui_scale;
+    let geom = PreviewGeometry::new(ghost.workspace_size, ui_scale);
 
     let mirror = |key: &str, node: Option<NodeRef>| {
         LayerTreeBuilder::with_key(key.to_string())
@@ -1643,19 +1637,13 @@ fn drag_ghost_tree(ghost: &WorkspaceGhostState, ui_scale: f32) -> LayerTree {
                 position: taffy::Position::Absolute,
                 ..Default::default()
             })
-            .size((
-                layers::types::Size {
-                    width: layers::taffy::style::Dimension::Length(workspace_width_px),
-                    height: layers::taffy::style::Dimension::Length(workspace_height_px),
-                },
-                None,
-            ))
-            .scale(Point::new(preview_ratio, preview_ratio))
+            .size((geometry::layer_size(geom.workspace), None))
+            .scale(Point::new(geom.ratio, geom.ratio))
             .replicate_node(node)
             .picture_cached(true)
             .image_cache(true)
             .border_corner_radius(BorderRadius::new_single(otto_kit::corners::radius(
-                20.0 / preview_ratio,
+                20.0 / geom.ratio,
             )))
             .clip_children(true)
             .clip_content(true)
@@ -1679,12 +1667,7 @@ fn drag_ghost_tree(ghost: &WorkspaceGhostState, ui_scale: f32) -> LayerTree {
             ..Default::default()
         })
         .size((
-            layers::types::Size {
-                width: layers::taffy::style::Dimension::Length(preview_width_px),
-                height: layers::taffy::style::Dimension::Length(
-                    preview_height_px + label_height_px,
-                ),
-            },
+            geometry::layer_size(PhysicalSize::new(geom.preview.w, geom.item_height())),
             None,
         ))
         // Anchored at its own centre, so the position the drag writes is where
@@ -1698,13 +1681,7 @@ fn drag_ghost_tree(ghost: &WorkspaceGhostState, ui_scale: f32) -> LayerTree {
                     position: taffy::Position::Relative,
                     ..Default::default()
                 })
-                .size((
-                    layers::types::Size {
-                        width: layers::taffy::style::Dimension::Length(preview_width_px),
-                        height: layers::taffy::style::Dimension::Length(preview_height_px),
-                    },
-                    None,
-                ))
+                .size((geometry::layer_size(geom.preview), None))
                 .pointer_events(false)
                 .children(vec![
                     mirror(
@@ -1744,13 +1721,7 @@ fn drag_ghost_tree(ghost: &WorkspaceGhostState, ui_scale: f32) -> LayerTree {
                     position: taffy::Position::Relative,
                     ..Default::default()
                 })
-                .size((
-                    layers::types::Size {
-                        width: layers::taffy::style::Dimension::Length(preview_width_px),
-                        height: layers::taffy::style::Dimension::Length(label_height_px),
-                    },
-                    None,
-                ))
+                .size((geometry::layer_size(geom.label()), None))
                 .content(draw_carried_label(&ghost.name, ui_scale))
                 .pointer_events(false)
                 .build()
@@ -1792,13 +1763,13 @@ fn draw_carried_label(text: &str, ui_scale: f32) -> Option<ContentDrawFunction> 
 
     // The same material the selector's own surfaces use, so the plate is light
     // on a light theme and dark on a dark one without asking which is on.
-    let plate_color = theme_colors().materials_medium;
+    let plate_color = theme_colors().material_medium;
     let pad_x_px = 10.0 * ui_scale;
     let pad_y_px = 5.0 * ui_scale;
     let radius_px = otto_kit::corners::radius(8.0 * ui_scale);
 
     let draw = move |canvas: &layers::skia::Canvas, w: f32, h: f32| -> layers::skia::Rect {
-        let mut builder = crate::workspaces::utils::FONT_CACHE.with(|font_cache| {
+        let mut builder = crate::utils::FONT_CACHE.with(|font_cache| {
             layers::skia::textlayout::ParagraphBuilder::new(
                 &paragraph_style,
                 font_cache.font_collection.clone(),
@@ -1904,18 +1875,14 @@ impl WorkspaceSelectorView {
         });
     }
 
-    /// Pointer location in this output's scene space. Events arrive in global
-    /// logical coordinates; output subtrees render at the scene origin.
-    fn scene_location(
-        &self,
-        location: smithay::utils::Point<f64, smithay::utils::Logical>,
-    ) -> Point {
+    /// Pointer location in this output's physical scene space. Events arrive
+    /// in global logical coordinates; output subtrees render at the scene
+    /// origin. The scale is this output's own, set by
+    /// [`Self::set_workspaces`].
+    fn scene_location(&self, location: smithay::utils::Point<f64, Logical>) -> PhysicalPoint {
         let origin = *self.output_origin.read().unwrap();
         let scale = self.view.get_state().scale as f64;
-        Point::new(
-            ((location.x - origin.0) * scale) as f32,
-            ((location.y - origin.1) * scale) as f32,
-        )
+        geometry::output_local_physical(location, origin, scale)
     }
 
     /// How many clicks in a row landed on `key`, according to the last press.
@@ -1976,7 +1943,10 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for WorkspaceSele
         // stays an I-beam over it.
         if let Some(edit_index) = self.editing_index() {
             let field_key = format!("workspace_selector_desktop_label_{edit_index}");
-            if self.view.hover_layer(&field_key, &location) {
+            if self
+                .view
+                .hover_layer(&field_key, &geometry::layer_point(location))
+            {
                 self.field_pointer_drag(location.x);
                 data.set_cursor(&CursorImageStatus::Named(CursorIcon::Text));
                 *self.cursor_location.write().unwrap() = location;
@@ -1984,10 +1954,11 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for WorkspaceSele
             }
         }
 
+        let hit = geometry::layer_point(location);
         let mut hover = false;
         if self
             .view
-            .hover_layer("workspace_selector_desktop_add", &location)
+            .hover_layer("workspace_selector_desktop_add", &hit)
         {
             hover = true;
         }
@@ -1995,16 +1966,16 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for WorkspaceSele
             if self.is_removing(w.index) {
                 continue;
             }
-            if self.view.hover_layer(
-                &format!("workspace_selector_desktop_{}", w.index),
-                &location,
-            ) {
+            if self
+                .view
+                .hover_layer(&format!("workspace_selector_desktop_{}", w.index), &hit)
+            {
                 hover = true;
                 break;
             }
             if self.view.hover_layer(
                 &format!("workspace_selector_desktop_remove_{}", w.index),
-                &location,
+                &hit,
             ) {
                 hover = true;
                 break;
@@ -2027,12 +1998,13 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for WorkspaceSele
         otto: &mut crate::Otto<Backend>,
         event: &smithay::input::pointer::ButtonEvent,
     ) {
-        let location = self.cursor_location.read().unwrap();
+        let location = *self.cursor_location.read().unwrap();
         let state = self.view.get_state().clone();
         let get_position_worspace_by_index = |index: usize| -> Option<usize> {
             state.workspaces.iter().position(|w| w.index == index)
         };
-        let hovered_key = |loc: &Point| -> Option<String> {
+        let hovered_key = |location: PhysicalPoint| -> Option<String> {
+            let loc = &geometry::layer_point(location);
             // check add first so it has priority over overlaps
             if self.view.hover_layer("workspace_selector_desktop_add", loc) {
                 return Some("workspace_selector_desktop_add".to_string());
@@ -2066,7 +2038,7 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for WorkspaceSele
 
         match event.state {
             ButtonState::Pressed => {
-                let key = hovered_key(&location);
+                let key = hovered_key(location);
 
                 if let Some(edit_index) = self.editing_index() {
                     let field_key = format!("workspace_selector_desktop_label_{edit_index}");
@@ -2089,7 +2061,7 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for WorkspaceSele
                 // A press on a workspace may turn into a reorder; it only does
                 // once the pointer travels, so the click still switches to it.
                 if let Some(index) = key.as_deref().and_then(workspace_index_of_key) {
-                    self.begin_drag(index, location.x);
+                    self.begin_drag(index, location);
                 }
                 let mut pressed = self.pressed_action.write().unwrap();
                 *pressed = key;
@@ -2110,7 +2082,7 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for WorkspaceSele
                     }
                     WorkspaceDragEnd::NotADrag => self.cancel_drag(),
                 }
-                let release_key = hovered_key(&location);
+                let release_key = hovered_key(location);
 
                 if self.is_editing() {
                     self.field_pointer_up();
@@ -2277,7 +2249,8 @@ mod tests {
                 ))
             })
             .collect();
-        selector.set_workspaces(&workspaces, 0, 1000.0, 600.0, 1.0);
+        selector.set_workspaces(&workspaces, 0, PhysicalSize::new(1000.0, 600.0), 1.0);
+
         // The strip is parked off screen until expose slides it in; put it on
         // screen so the previews have real bounds to measure against.
         selector.layer.set_position((0.0, 0.0), None);
@@ -2292,6 +2265,22 @@ mod tests {
         }
     }
 
+    #[test]
+    fn preview_geometry_scales_the_workspace_into_the_preview_width() {
+        let geom = PreviewGeometry::new(PhysicalSize::new(2000.0, 1200.0), 1.5);
+        assert_eq!(geom.ratio, WORKSPACE_SELECTOR_PREVIEW_WIDTH / 2000.0);
+        assert_eq!(
+            (geom.preview.w, geom.preview.h),
+            (WORKSPACE_SELECTOR_PREVIEW_WIDTH, 180.0)
+        );
+        // The label follows the output's own scale; the preview does not.
+        assert_eq!(geom.label_height, 45.0);
+        assert_eq!(geom.item_height(), 225.0);
+        // A degenerate workspace never divides by zero.
+        let empty = PreviewGeometry::new(PhysicalSize::new(0.0, 0.0), 1.0);
+        assert_eq!((empty.workspace.w, empty.workspace.h), (1.0, 1.0));
+    }
+
     /// The workspaces in the order the strip currently shows them.
     fn strip_order(selector: &WorkspaceSelectorView) -> Vec<usize> {
         selector
@@ -2303,19 +2292,18 @@ mod tests {
             .collect()
     }
 
-    /// The scene-space centre of a workspace's preview.
-    fn preview_centre(selector: &WorkspaceSelectorView, index: usize) -> Point {
-        let bounds = selector
+    /// The physical scene-space centre of a workspace's preview.
+    fn preview_centre(selector: &WorkspaceSelectorView, index: usize) -> PhysicalPoint {
+        let wrap = selector
             .view
             .layer_by_key(&format!("workspace_selector_desktop_wrap_{index}"))
-            .expect("the workspace should be laid out")
-            .render_bounds_transformed();
-        Point::new(bounds.center_x(), bounds.center_y())
+            .expect("the workspace should be laid out");
+        geometry::layer_center(&wrap)
     }
 
     /// A pointer `slots` slots along the strip from `grab`.
-    fn drag_to(grab: Point, slots: f32) -> Point {
-        Point::new(grab.x + WORKSPACE_SLOT_PITCH * slots, grab.y)
+    fn drag_to(grab: PhysicalPoint, slots: f32) -> PhysicalPoint {
+        PhysicalPoint::new(grab.x + WORKSPACE_SLOT_PITCH * slots, grab.y)
     }
 
     #[test]
@@ -2324,7 +2312,7 @@ mod tests {
         let order = strip_order(&selector);
         let grab = preview_centre(&selector, order[0]);
 
-        selector.begin_drag(order[0], grab.x);
+        selector.begin_drag(order[0], grab);
         assert!(selector.drag_update(drag_to(grab, 1.0)));
         assert!(selector.is_dragging());
         assert_eq!(
@@ -2340,7 +2328,7 @@ mod tests {
         let order = strip_order(&selector);
         let grab = preview_centre(&selector, order[0]);
 
-        selector.begin_drag(order[0], grab.x);
+        selector.begin_drag(order[0], grab);
         assert!(selector.drag_update(drag_to(grab, 0.45)));
         assert_eq!(strip_order(&selector), order);
         assert!(selector.drag_update(drag_to(grab, 0.55)));
@@ -2353,9 +2341,9 @@ mod tests {
         let order = strip_order(&selector);
         let grab = preview_centre(&selector, order[0]);
 
-        selector.begin_drag(order[0], grab.x);
+        selector.begin_drag(order[0], grab);
         // A hand that wobbles is still clicking.
-        assert!(!selector.drag_update(Point::new(grab.x + 4.0, grab.y)));
+        assert!(!selector.drag_update(PhysicalPoint::new(grab.x + 4.0, grab.y)));
         assert!(!selector.is_dragging());
         assert!(
             matches!(selector.end_drag(), WorkspaceDragEnd::NotADrag),
@@ -2370,7 +2358,7 @@ mod tests {
         let order = strip_order(&selector);
         let grab = preview_centre(&selector, order[0]);
 
-        selector.begin_drag(order[0], grab.x);
+        selector.begin_drag(order[0], grab);
         assert!(selector.drag_update(drag_to(grab, 3.0)));
         assert_eq!(
             strip_order(&selector),
@@ -2388,7 +2376,7 @@ mod tests {
         let order = strip_order(&selector);
         let grab = preview_centre(&selector, order[2]);
 
-        selector.begin_drag(order[2], grab.x);
+        selector.begin_drag(order[2], grab);
         assert!(selector.drag_update(drag_to(grab, 12.0)));
         assert_eq!(
             strip_order(&selector),
@@ -2403,7 +2391,7 @@ mod tests {
         let order = strip_order(&selector);
         let grab = preview_centre(&selector, order[0]);
 
-        selector.begin_drag(order[0], grab.x);
+        selector.begin_drag(order[0], grab);
         assert!(selector.drag_update(drag_to(grab, 2.0)));
         match selector.end_drag() {
             WorkspaceDragEnd::Dropped { from, to } => assert_eq!((from, to), (0, 2)),
@@ -2432,7 +2420,7 @@ mod tests {
         let order = strip_order(&selector);
         let grab = preview_centre(&selector, order[0]);
 
-        selector.begin_drag(order[0], grab.x);
+        selector.begin_drag(order[0], grab);
         let pointer = drag_to(grab, 0.7);
         assert!(selector.drag_update(pointer));
         engine.update(0.0);
@@ -2484,7 +2472,7 @@ mod tests {
         let grab = preview_centre(&selector, order[0]);
         let before = preview_centre(&selector, order[1]);
 
-        selector.begin_drag(order[0], grab.x);
+        selector.begin_drag(order[0], grab);
         assert!(selector.drag_update(drag_to(grab, 1.0)));
         engine.update(0.0);
 

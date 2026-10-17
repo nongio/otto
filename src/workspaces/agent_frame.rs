@@ -48,7 +48,7 @@ fn chip_font(scale: f32) -> skia::Font {
         skia::font_style::Width::NORMAL,
         skia::font_style::Slant::Upright,
     );
-    crate::workspaces::utils::FONT_CACHE
+    crate::utils::FONT_CACHE
         .with(|fonts| fonts.make_font_with_fallback(family, style, CHIP_FONT * scale))
 }
 

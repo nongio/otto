@@ -10,14 +10,20 @@ description = "Settings application for Otto — see specs/settings-app.md"
 [dependencies]
 otto-kit = { path = "../otto-kit" }
 otto-search = { path = "../otto-search" }
-smithay-client-toolkit = { version = "0.19", default-features = false, features = ["calloop", "xkbcommon"] }
-zbus = "4"
-serde = { version = "1", features = ["derive"] }
-toml_edit = "0.22"
-xcursor = "0.3.3"
+smithay-client-toolkit = { workspace = true, features = ["calloop", "xkbcommon"] }
+zbus.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+toml_edit.workspace = true
+xcursor.workspace = true
+sha-crypt.workspace = true
+zeroize.workspace = true
+# The clock format pop-up previews each format the way otto-bar renders it;
+# `unstable-locales` gives the day and month names in the user's language.
+chrono = { workspace = true, features = ["clock", "unstable-locales"] }
 
 [dependencies.skia-safe]
-version = "=0.93"
+workspace = true
 features = ["gl", "textlayout", "svg"]
 
 [lints]

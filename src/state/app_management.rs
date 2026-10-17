@@ -55,6 +55,52 @@ impl<BackendData: Backend> Otto<BackendData> {
         }
     }
 
+    /// Minimise `window` into the dock and hand focus to the window that
+    /// takes its place: what a window's own minimise request and the
+    /// `minimize` command both do.
+    pub fn minimize_window_element(&mut self, window: &crate::shell::WindowElement) {
+        // Ignore duplicate minimize requests (e.g. rapid clicks while the
+        // genie animation is still running).
+        if window.is_minimised() {
+            return;
+        }
+        let Some(id) = window.wl_surface().map(|s| s.id()) else {
+            return;
+        };
+        let Some(current_element_geometry) = self.workspaces.element_geometry(window) else {
+            return;
+        };
+
+        if let Some(mut view) = self.workspaces.get_window_view(&id) {
+            view.unmaximised_rect = current_element_geometry;
+            self.workspaces.set_window_view(&id, view);
+        }
+
+        // Leave scanout and re-import the current buffer BEFORE the genie
+        // starts: the spawned animation task captures layer bounds and
+        // renders scene content that promotion blanked.
+        self.demote_scanout_window(window);
+        let next_focus = self.workspaces.minimize_window(window);
+
+        match next_focus {
+            Some(wid) => self.set_keyboard_focus_on_surface(&wid),
+            None => self.clear_keyboard_focus(),
+        }
+    }
+
+    /// Close every window of `window`'s application, as the dock's Quit does.
+    /// The application is looked up the way the workspace model files it: by
+    /// its raw app id, or the one Otto shows when it has none.
+    pub fn quit_app_of(&mut self, window: &crate::shell::WindowElement) {
+        let raw = window.xdg_app_id();
+        let app_id = if raw.is_empty() {
+            window.display_app_id(&self.display_handle)
+        } else {
+            raw
+        };
+        self.workspaces.quit_app(&app_id);
+    }
+
     pub fn close_focused_window(&mut self) {
         if let Some(keyboard) = self.seat.get_keyboard() {
             if let Some(KeyboardFocusTarget::Window(window)) = keyboard.current_focus() {
@@ -394,6 +440,15 @@ impl<BackendData: Backend> Otto<BackendData> {
         crate::shell_service::announce_window_focus(container);
     }
 
+    /// Publish something about the focused window other than focus moving to
+    /// it, as an i3 `window` event with the given `change`.
+    pub(crate) fn announce_window_change(&self, change: &str) {
+        let container = self
+            .focused_container_node()
+            .unwrap_or(serde_json::Value::Null);
+        crate::shell_service::announce_window_event(change, container);
+    }
+
     /// Publish the current workspace on `org.otto.Shell1` as i3's `workspace`
     /// event.
     pub(crate) fn announce_workspace_focus(&self) {
@@ -487,6 +542,10 @@ impl<BackendData: Backend> Otto<BackendData> {
 
             keyboard.set_focus(self, None, serial);
         }
+        // No window has focus now (an empty workspace, the last window
+        // closing): say so, or a bar following `window` events keeps showing
+        // the window that had it.
+        self.announce_window_focus();
     }
 }
 

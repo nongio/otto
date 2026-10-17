@@ -185,12 +185,13 @@ fn the_window_border_outranks_a_column_divider() {
     // the last pane's right edge is flush with the window's own — the
     // ordinary resting state once a preview column has been revealed.
     let panes = browser.columns.len();
-    browser.size.0 = view::sidebar_w() + browser.miller_w - 50.0;
+    let miller = browser.miller_widths();
+    browser.size.0 = view::sidebar_w() + miller.width(0) - 50.0;
     browser.sync_scroll_metrics();
     browser
         .pan
         .state
-        .set_offset(view::sidebar_w() + panes as f32 * browser.miller_w - browser.size.0);
+        .set_offset(view::sidebar_w() + miller.left(panes) - browser.size.0);
     let (w, h) = browser.size;
     let y = view::header_h() + 80.0;
     let edge_x = w - 1.0;
@@ -203,7 +204,7 @@ fn the_window_border_outranks_a_column_divider() {
             browser.content_h(),
             browser.pan.offset(),
             panes,
-            browser.miller_w,
+            &browser.miller_widths(),
         )
         .is_some(),
         "the pane divider is not on the window border, so this proves nothing"
@@ -225,7 +226,7 @@ fn the_window_border_outranks_a_column_divider() {
     // nowhere else.
     let flush = browser.pan.offset();
     browser.pan.state.set_offset(flush + 40.0);
-    let inside = view::sidebar_w() + panes as f32 * browser.miller_w - browser.pan.offset();
+    let inside = view::sidebar_w() + miller.left(panes) - browser.pan.offset();
     assert_eq!(
         browser.hover_shape(inside, y),
         CursorShape::ColResize,
@@ -242,7 +243,7 @@ fn the_preview_picture_can_be_picked_up() {
         browser.columns.len(),
         browser.content_h(),
         browser.pan.offset(),
-        browser.miller_w,
+        &browser.miller_widths(),
     );
     let stage = view::preview_stage_rect(panel, 3);
 
@@ -788,4 +789,18 @@ fn the_drop_target_clears_once_it_has_been_applied() {
 
     assert_eq!(browser.drop_target, None, "the outline goes with the drop");
     assert!(browser.dirty, "and the window repaints");
+}
+
+/// A press on a preview's picture opens the file only when it is the second
+/// of a pair, and the pair is spent by opening: a third press starts over.
+#[test]
+fn a_preview_opens_on_its_second_press() {
+    let (mut browser, _dir) = browser_over(&["a.png"], &[]);
+    assert!(!browser.note_preview_click());
+    assert!(browser.note_preview_click());
+    assert!(!browser.note_preview_click());
+    // Too slow to be a double click.
+    browser.last_preview_click =
+        Some(std::time::Instant::now() - DOUBLE_CLICK_WINDOW - std::time::Duration::from_millis(1));
+    assert!(!browser.note_preview_click());
 }

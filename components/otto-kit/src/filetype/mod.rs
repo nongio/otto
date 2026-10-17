@@ -89,13 +89,14 @@ impl Kind {
 
     /// Can Otto *generate* a thumbnail for this kind itself?
     ///
-    /// Only images, which Skia and resvg decode in-process. This is narrower
-    /// than "has a thumbnail": every kind is worth a shared-cache *lookup*,
-    /// because other applications write there too — Peek contributes PDF
-    /// first pages, and other file managers contribute video frames. Look up
-    /// for anything; generate only for these.
+    /// Images, and videos — whose poster frame Peek's worker has a program
+    /// on the system make, and which are left as their icon where there is
+    /// none. This is narrower than "has a thumbnail": every kind is worth a
+    /// shared-cache *lookup*, because other applications write there too —
+    /// Peek contributes PDF first pages, other file managers video frames.
+    /// Look up for anything; generate only for these.
     pub fn thumbnailable(self) -> bool {
-        matches!(self, Kind::Image)
+        matches!(self, Kind::Image | Kind::Video)
     }
 }
 
@@ -130,29 +131,15 @@ pub fn database() -> &'static MimeDb {
 fn mime_dirs() -> Vec<std::path::PathBuf> {
     let mut dirs = Vec::new();
 
-    let data_dirs = std::env::var("XDG_DATA_DIRS")
-        .unwrap_or_else(|_| "/usr/local/share:/usr/share".to_string());
     // Reversed: XDG_DATA_DIRS is highest-priority-first, and later parses win.
-    for dir in data_dirs.split(':').rev().filter(|d| !d.is_empty()) {
-        dirs.push(std::path::Path::new(dir).join("mime"));
+    for dir in crate::xdg::data_dirs().iter().rev() {
+        dirs.push(dir.join("mime"));
     }
 
-    if let Some(home) = data_home() {
+    if let Some(home) = crate::xdg::data_home() {
         dirs.push(home.join("mime"));
     }
     dirs
-}
-
-fn data_home() -> Option<std::path::PathBuf> {
-    if let Ok(dir) = std::env::var("XDG_DATA_HOME") {
-        if !dir.is_empty() {
-            return Some(dir.into());
-        }
-    }
-    std::env::var("HOME")
-        .ok()
-        .filter(|h| !h.is_empty())
-        .map(|h| std::path::Path::new(&h).join(".local/share"))
 }
 
 // ---------------------------------------------------------------------------
@@ -222,7 +209,8 @@ pub fn sniff(bytes: &[u8]) -> Option<&'static str> {
         }
         if &b[4..8] == b"ftyp" {
             return Some(match &b[8..12] {
-                b"heic" | b"heix" | b"mif1" => "image/heif",
+                b"heic" | b"heix" | b"heim" | b"heis" | b"mif1" => "image/heif",
+                b"hevc" | b"hevx" | b"msf1" => "image/heif-sequence",
                 b"avif" => "image/avif",
                 _ => "video/mp4",
             });
@@ -382,7 +370,7 @@ fn comment_in(xml: &str, languages: &[String]) -> Option<String> {
             break;
         };
         let attributes = &after[..open_end];
-        let body = unescape_xml(after[open_end + 1..close].trim());
+        let body = crate::xml::unescape(after[open_end + 1..close].trim());
         match attributes.split_once("xml:lang=\"") {
             Some((_, lang)) => {
                 let lang = lang.split('"').next().unwrap_or_default();
@@ -421,14 +409,6 @@ fn without_script(lang: &str) -> String {
         .join("-")
 }
 
-fn unescape_xml(text: &str) -> String {
-    text.replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&quot;", "\"")
-        .replace("&apos;", "'")
-        .replace("&amp;", "&")
-}
-
 /// Expand a MIME type into the set of name globs that match it, including
 /// those of its descendants. This is how a portal MIME filter becomes the
 /// name-based filter the picker actually applies.
@@ -448,6 +428,18 @@ pub fn kind_of(mime: &str) -> Kind {
         "font" => Kind::Other,
         _ => document_or_archive(mime, sub),
     }
+}
+
+/// Whether a file of this name is a picture with pixels to read. The one
+/// spelling of the question, so the palette, the recogniser and every
+/// window that offers to read a picture cannot disagree about what they are
+/// offering to read.
+///
+/// An SVG is drawn from text, not photographed: whatever words it has are in
+/// the file already, and rendering it only to recognise them back is work for
+/// an answer nobody needs.
+pub fn is_picture_name(name: &str) -> bool {
+    mime_for_name(name).is_some_and(|mime| mime != "image/svg+xml" && kind_of(mime) == Kind::Image)
 }
 
 fn document_or_archive(mime: &str, sub: &str) -> Kind {

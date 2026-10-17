@@ -16,9 +16,10 @@
 use std::path::PathBuf;
 
 use layers::prelude::Engine;
+use otto_agents_kit::item::{rank, Item};
+use otto_agents_kit::rows::{field_style, HIGHLIGHT_RADIUS};
 use otto_kit::components::text_input::TextInput;
-use otto_launcher::view::HIGHLIGHT_RADIUS;
-use otto_launcher::{field_style, rank, Apps, Item, Palette, Source, CARD_W, MAX_CARD_H};
+use otto_launcher::{Apps, Palette, Source, CARD_W, MAX_CARD_H};
 
 fn main() {
     let mut args = std::env::args().skip(1);

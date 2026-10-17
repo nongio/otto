@@ -4,8 +4,8 @@ Otto draws with Skia. On the udev backend (a real session on a TTY) Skia can
 run on either of two GPU APIs:
 
 - **OpenGL ES**, through EGL. This is `SkiaRenderer` in
-  `src/skia_renderer.rs`, the fallback, and the only choice on winit and x11.
-- **Vulkan**. This is `SkiaVkRenderer` in `src/renderer/vulkan/`, the
+  `crates/otto-render/src/skia_renderer.rs`, the fallback, and the only choice on winit and x11.
+- **Vulkan**. This is `SkiaVkRenderer` in `crates/otto-render/src/renderer/vulkan/`, the
   default on the udev backend.
 
 Everything above the renderer is shared: the lay-rs scene graph, the render
@@ -50,10 +50,12 @@ an error naming the feature.
 ![Choosing the renderer](diagrams/vulkan-selection.svg)
 
 Before committing to Vulkan, `udev::run_selected` (`src/udev/init.rs`) probes
-the primary GPU with `udev::vulkan_api::probe`: it needs a Vulkan 1.3 instance
-and a physical device whose render or primary node is that GPU. When the probe
-fails (no loader, no ICD, an old driver, a VM GPU) the session logs why on
-`otto::udev` and runs on GL instead, and Settings shows Vulkan as unavailable.
+the primary GPU with `renderer::vulkan_api::probe`: it needs a Vulkan 1.3
+instance and a physical device whose render or primary node is that GPU. When
+the probe fails (no loader, no ICD, an old driver, a VM GPU) the session logs
+why on `otto::udev` and runs on GL instead, recording the reason with
+`renderer::vulkan_api::set_vulkan_fallback`, and Settings shows Vulkan as
+unavailable.
 This matters because a stored `renderer = "vulkan"` that simply exited would
 leave the user stuck at the greeter.
 
@@ -66,14 +68,14 @@ Rendering with Skia on Vulkan: <device> (<driver>), render node <path>, Vulkan <
 
 ## How the udev backend holds two renderers
 
-The udev backend is generic over a `RendererApi` (`src/renderer/active.rs`).
+The udev backend is generic over a `RendererApi` (`crates/otto-render/src/renderer/active.rs`).
 `UdevData<A>` and every `impl Otto<UdevData<A>>` are compiled once per
 renderer, and `main` picks which one runs. There is no runtime dispatch in the
 render loop and no mixed mode: one session, one renderer.
 
 | | `GlApi` | `VulkanApi` |
 |---|---|---|
-| Smithay multi-GPU api | `GbmGlesBackend` | `GbmVulkanBackend` (`src/udev/vulkan_api.rs`) |
+| Smithay multi-GPU api | `GbmGlesBackend` | `GbmVulkanBackend` (`crates/otto-render/src/renderer/vulkan_api.rs`) |
 | Device renderer | `SkiaRenderer` | `SkiaVkRenderer` |
 | `PLANES_SUPPORTED` | `true` | `false` (see [What is missing](#what-is-missing)) |
 | `wl_drm` | offered | not offered; clients use `linux-dmabuf` |
@@ -84,7 +86,7 @@ formats, the Skia context, flushing planes) goes through the small
 
 The drawing code exists once. Render elements draw into whatever frame they
 get through `FrameSurface`, and both `SkiaFrame` and `SkiaVkFrame` call the
-same helpers in `src/renderer/draw.rs`. A visual change to an element never
+same helpers in `crates/otto-render/src/renderer/draw.rs`. A visual change to an element never
 needs a Vulkan-specific twin.
 
 `GbmVulkanBackend` plays the part `GbmGlesBackend` plays for GL: one
@@ -247,7 +249,7 @@ in `flush_planes_for_scanout` after a CPU sync.
 
 ## Testing
 
-The GPU tests in `src/renderer/vulkan/tests.rs` need a real Vulkan device, so
+The GPU tests in `crates/otto-render/src/renderer/vulkan/tests.rs` need a real Vulkan device, so
 they are `#[ignore]`d and CI skips them:
 
 ```sh
@@ -286,8 +288,8 @@ requested but unavailable, the probe failed and the session is on GL.
 | Question | File |
 |---|---|
 | How is the renderer picked, and when does it fall back? | `src/udev/init.rs` (`run_selected`), `src/main.rs` |
-| What does the backend require of a renderer? | `src/renderer/active.rs` |
-| How are renderers created per GPU? | `src/udev/vulkan_api.rs` |
-| Why is my buffer refused? | `src/renderer/vulkan/format.rs`, then the `cannot render into dmabuf` warning in `mod.rs` |
-| Why is a frame not fenced? | `src/renderer/vulkan/sync.rs` |
-| Why is a texture still alive? | `src/renderer/vulkan/retire.rs` |
+| What does the backend require of a renderer? | `crates/otto-render/src/renderer/active.rs` |
+| How are renderers created per GPU? | `crates/otto-render/src/renderer/vulkan_api.rs` |
+| Why is my buffer refused? | `crates/otto-render/src/renderer/vulkan/format.rs`, then the `cannot render into dmabuf` warning in `mod.rs` |
+| Why is a frame not fenced? | `crates/otto-render/src/renderer/vulkan/sync.rs` |
+| Why is a texture still alive? | `crates/otto-render/src/renderer/vulkan/retire.rs` |

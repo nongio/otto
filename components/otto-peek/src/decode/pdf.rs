@@ -9,14 +9,13 @@
 //! It also sidesteps MuPDF's AGPL, which constrains *linking* and says nothing
 //! about running a program.
 //!
-//! The same table generalises: video poster frames arrive later as more rows,
-//! without GStreamer entering the default build. See `specs/peek.md`.
+//! The same table generalises: video poster frames and HEIF photographs are
+//! made the same way, by [`super::external`], without GStreamer or libheif
+//! entering the default build. See `specs/peek.md`.
 
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::process::{Command, Stdio};
-
-use skia_safe::{Codec, Data};
 
 use crate::payload;
 use crate::payload::{Fact, Page, Pixels, PreviewPayload, Word};
@@ -39,9 +38,10 @@ const RASTERISERS: &[Rasteriser] = &[
     Rasteriser {
         command: "pdftoppm",
         package: "poppler-utils",
+        // Raw pixels (PPM) rather than PNG: compressing a 2048-pixel page
+        // costs pdftoppm ten times what drawing it does.
         args: |page, width| {
             vec![
-                "-png".into(),
                 "-f".into(),
                 page.to_string(),
                 "-l".into(),
@@ -122,7 +122,7 @@ const RASTERISERS: &[Rasteriser] = &[
 /// comfortably above a full-screen panel's own pixels on a HiDPI display.
 const MAX_WIDTH: u32 = 2_048;
 
-pub fn render(file: &mut File, request: &Request) -> PreviewPayload {
+pub(super) fn render(file: &mut File, request: &Request) -> PreviewPayload {
     // Read the document once and hand it to the rasteriser on stdin. Passing
     // bytes rather than a path is the point: the child never resolves a name,
     // so nothing can be substituted between the worker's stat and its open.
@@ -195,7 +195,7 @@ pub fn render(file: &mut File, request: &Request) -> PreviewPayload {
     let width = width.clamp(320, MAX_WIDTH);
 
     match rasterise(rasteriser, &bytes, page, width) {
-        Some(png) => match decode_png(&png) {
+        Some(image) => match decode_ppm(&image).or_else(|| super::external::decode_png(&image)) {
             Some(mut pixels) => {
                 // A rasterised page is a picture like any other, so a
                 // document with no text layer — a scan — is recognised like
@@ -337,7 +337,7 @@ fn parse_bbox(xml: &str) -> Option<(Vec<Page>, Vec<Word>)> {
                 if raw.len() >= payload::MAX_DOC_WORDS {
                     break;
                 }
-                let text = unescape(&after[..close]);
+                let text = otto_kit::xml::unescape(after[..close].trim());
                 if text.is_empty() {
                     continue;
                 }
@@ -406,20 +406,6 @@ fn attribute(tag: &str, name: &str) -> Option<f32> {
         }
         at = found + name.len();
     }
-}
-
-/// The five entities `pdftotext` writes. Anything else is its own text.
-fn unescape(text: &str) -> String {
-    if !text.contains('&') {
-        return text.trim().to_string();
-    }
-    text.replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&quot;", "\"")
-        .replace("&apos;", "'")
-        .replace("&amp;", "&")
-        .trim()
-        .to_string()
 }
 
 /// The whole document as a strip, with the one page that has been rasterised
@@ -532,7 +518,54 @@ fn uniform_sizes(pages: u32, width: u32, height: u32) -> Vec<(f32, f32)> {
     vec![(612.0, height); pages.max(1) as usize]
 }
 
-/// Run one rasteriser and collect its PNG.
+/// A binary PPM (`P6`, 8 bits a channel) as pixels: what `pdftoppm` writes
+/// when asked for no other format. `None` for anything else, which is then
+/// read as PNG.
+fn decode_ppm(image: &[u8]) -> Option<otto_kit::preview::Pixels> {
+    let rest = image.strip_prefix(b"P6")?;
+    // Three numbers, width, height and the largest value, each after white
+    // space and any comment lines; then one white space byte, then the data.
+    let mut numbers = [0usize; 3];
+    let mut at = 0;
+    for number in &mut numbers {
+        loop {
+            match rest.get(at)? {
+                b'#' => {
+                    while *rest.get(at)? != b'\n' {
+                        at += 1;
+                    }
+                }
+                byte if byte.is_ascii_whitespace() => at += 1,
+                _ => break,
+            }
+        }
+        let start = at;
+        while rest.get(at)?.is_ascii_digit() {
+            at += 1;
+        }
+        *number = std::str::from_utf8(&rest[start..at]).ok()?.parse().ok()?;
+    }
+    let [width, height, max] = numbers;
+    if max != 255 || width == 0 || height == 0 {
+        return None;
+    }
+    let data = rest.get(at + 1..at + 1 + width.checked_mul(height)?.checked_mul(3)?)?;
+    let mut rgba = Vec::with_capacity(width * height * 4);
+    for pixel in data.chunks_exact(3) {
+        rgba.extend_from_slice(&[pixel[0], pixel[1], pixel[2], 255]);
+    }
+    Some(otto_kit::preview::Pixels {
+        width: width as u32,
+        height: height as u32,
+        intrinsic_width: width as u32,
+        intrinsic_height: height as u32,
+        data: rgba,
+        frame_delays: Vec::new(),
+        words: Vec::new(),
+    })
+}
+
+/// Run one rasteriser and collect the picture it writes.
 fn rasterise(rasteriser: &Rasteriser, document: &[u8], page: u32, width: u32) -> Option<Vec<u8>> {
     let png = run(
         rasteriser.command,
@@ -580,17 +613,6 @@ fn run(command: &str, args: &[String], document: &[u8]) -> Option<Vec<u8>> {
     let _ = writer.join();
     read?;
     Some(out)
-}
-
-fn decode_png(png: &[u8]) -> Option<crate::payload::Pixels> {
-    let mut codec = Codec::from_data(Data::new_copy(png))?;
-    let info = codec
-        .info()
-        .with_color_type(skia_safe::ColorType::RGBA8888)
-        .with_alpha_type(skia_safe::AlphaType::Premul);
-    let dimensions = codec.dimensions();
-    let image = codec.get_image(info, None).ok()?;
-    super::image::to_pixels(&image, dimensions)
 }
 
 /// Page count, read out of the document's own structure.
@@ -720,6 +742,18 @@ fn document_title(bytes: &[u8]) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_ppm_reads_as_opaque_pixels_and_anything_else_is_left_to_png() {
+        let mut ppm = b"P6\n# made by a test\n2 1\n255\n".to_vec();
+        ppm.extend_from_slice(&[255, 0, 0, 0, 0, 255]);
+        let pixels = decode_ppm(&ppm).expect("a PPM");
+        assert_eq!((pixels.width, pixels.height), (2, 1));
+        assert_eq!(pixels.data, vec![255, 0, 0, 255, 0, 0, 255, 255]);
+        // Short of its pixels, or not a PPM at all.
+        assert!(decode_ppm(&ppm[..ppm.len() - 1]).is_none());
+        assert!(decode_ppm(b"\x89PNG\r\n").is_none());
+    }
 
     /// `pdftotext -bbox-layout`, read into words boxed in the strip: the
     /// first page's own points, the second page's shifted down by a page and

@@ -119,10 +119,10 @@ underneath it.
   an icon it falls back to a stroked rounded rect. It does **not** draw the
   running-app indicator dot — that is a separate layer.
 - Labels are balloons with blurred shadows, hidden until hover. The
-  balloon body is `theme_colors().materials_controls_tooltip` and the text
+  balloon body is `theme_colors().material_tooltip` and the text
   `text_primary`, so both follow the light/dark palette.
-- The bar uses background blur and colours from `theme_colors()`, and resizes
-  with the icon height.
+- The bar uses background blur and colours from `theme_colors()` (otto-kit's
+  palette), and resizes with the icon height.
 
 The dock draws on its output's overlay plane, with the rest of the chrome,
 rather than on a plane of its own; see [DRM Planes](drm_plane.md). A KMS

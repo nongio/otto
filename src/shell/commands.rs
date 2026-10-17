@@ -18,10 +18,11 @@ use smithay::reexports::wayland_server::backend::ObjectId;
 use smithay::wayland::shell::xdg::XdgShellHandler;
 
 use crate::config::Config;
+use crate::shell::WindowElement;
 use crate::state::{Backend, Otto};
 use crate::workspaces::tiling::command::{
-    self, Amount, AxisArg, Command, Criteria, GapScope, GapTarget, Toggle, WindowFacts,
-    WorkspaceTarget,
+    self, Amount, AxisArg, BackgroundArg, Command, Criteria, GapScope, GapTarget, Toggle,
+    WindowFacts, WorkspaceTarget,
 };
 use crate::workspaces::tiling::tree::{Axis, NodeId};
 use crate::workspaces::tiling::{layout, Gaps, Rect};
@@ -81,6 +82,26 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                 self.close_focused_window();
                 Ok(())
             }
+            Command::Minimize(criteria) => {
+                let window = self.command_target(criteria.as_ref())?;
+                self.minimize_window_element(&window);
+                Ok(())
+            }
+            Command::Quit(criteria) => {
+                let window = self.command_target(criteria.as_ref())?;
+                self.quit_app_of(&window);
+                Ok(())
+            }
+            Command::Exit => {
+                tracing::info!("Quitting: exit command.");
+                self.running
+                    .store(false, std::sync::atomic::Ordering::SeqCst);
+                Ok(())
+            }
+            Command::Logout => {
+                self.begin_logout();
+                Ok(())
+            }
             Command::Tiling(toggle) => self.command_tiling(toggle),
             Command::Expose(toggle) => self.command_expose(toggle),
             Command::Gaps {
@@ -93,7 +114,99 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                 self.command_rename_workspace(number, name)
             }
             Command::SwitchLayout(target) => self.switch_layout(target),
+            Command::OutputBackground { output, background } => {
+                self.command_output_background(output.as_deref(), background)
+            }
+            Command::WorkspaceBackground(background) => {
+                self.command_workspace_background(background)
+            }
         }
+    }
+
+    /// `output <name>|* bg …`: an output's wallpaper, or with `*` the global
+    /// one, which the per-output overrides still win over.
+    ///
+    /// The global settings go through `org.otto.Settings`' own path, so a
+    /// settings app that is open hears about the change; an output's
+    /// override is written to `[background_outputs]`. An image that cannot
+    /// be shown is refused before anything is written.
+    fn command_output_background(
+        &mut self,
+        output: Option<&str>,
+        background: BackgroundArg,
+    ) -> CommandResult {
+        let background = checked_background(background)?;
+        let Some(output) = output else {
+            return self.set_global_background(background);
+        };
+        crate::config::save_output_wallpaper(output, |record| apply_background(record, background));
+        self.workspaces.reload_background()
+    }
+
+    /// `background …`: the focused workspace's own wallpaper, kept with the
+    /// workspace's other settings and travelling with it when it moves.
+    fn command_workspace_background(&mut self, background: BackgroundArg) -> CommandResult {
+        let background = checked_background(background)?;
+        let Some(output) = self.workspaces.focused_output().cloned() else {
+            return Err("no output has focus".to_string());
+        };
+        let name = output.name();
+        let Some((position, workspace)) =
+            self.workspaces
+                .output_workspaces
+                .get(&name)
+                .and_then(|ows| {
+                    ows.workspace_views
+                        .get(ows.current_workspace)
+                        .map(|w| (ows.current_workspace, w.clone()))
+                })
+        else {
+            return Err(format!("{name} has no workspaces"));
+        };
+        let mut record = workspace.background_override().unwrap_or_default();
+        apply_background(&mut record, background);
+        workspace.set_background_override(Some(record));
+        self.workspaces.persist_workspace_entry(&name, position);
+        self.workspaces.refresh_wallpapers();
+        Ok(())
+    }
+
+    fn set_global_background(&mut self, background: BackgroundArg) -> CommandResult {
+        use crate::settings::value::SettingValue;
+        let ids = [
+            "background_image",
+            "background_color",
+            "background_mode",
+            "background_position_x",
+            "background_position_y",
+            "background_zoom",
+        ];
+        let mut values: Vec<(&str, SettingValue)> = Vec::new();
+        match background {
+            BackgroundArg::Reset => {
+                for id in ids {
+                    crate::settings::reset(self, id).map_err(|err| err.to_string())?;
+                }
+                return Ok(());
+            }
+            BackgroundArg::Solid(color) => {
+                values.push(("background_color", SettingValue::Str(color)));
+                values.push(("background_image", SettingValue::Str(String::new())));
+            }
+            BackgroundArg::Image { path, mode, color } => {
+                if let Some(mode) = mode {
+                    values.push(("background_mode", SettingValue::Str(mode.token().into())));
+                }
+                if let Some(color) = color {
+                    values.push(("background_color", SettingValue::Str(color)));
+                }
+                values.push(("background_image", SettingValue::Str(path)));
+            }
+        }
+        for (id, value) in values {
+            crate::settings::set(self, id, value).map_err(|err| err.to_string())?;
+        }
+        Ok(())
     }
 
     /// `expose [show|hide|toggle]`: the window overview, the same state
@@ -153,8 +266,14 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
     /// Several matches take the first in window order rather than guessing;
     /// a narrower criteria is the way to reach the others.
     fn command_focus_window(&mut self, criteria: &Criteria) -> CommandResult {
-        let found = self
-            .workspaces
+        let id = self.window_matching(criteria)?.id();
+        self.activate_window(&id);
+        Ok(())
+    }
+
+    /// The first window `criteria` matches.
+    fn window_matching(&self, criteria: &Criteria) -> Result<WindowElement, String> {
+        self.workspaces
             .windows_map
             .iter()
             .find(|(id, window)| {
@@ -165,13 +284,19 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                     pid: window.client_pid(&self.display_handle),
                 })
             })
-            .map(|(_, window)| window.id());
-        match found {
-            Some(id) => {
-                self.activate_window(&id);
-                Ok(())
-            }
-            None => Err("no window matches".to_string()),
+            .map(|(_, window)| window.clone())
+            .ok_or_else(|| "no window matches".to_string())
+    }
+
+    /// The window a command acts on: the one its criteria matches, else the
+    /// focused one. otto-bar names the window, since its own menu holds the
+    /// keyboard while the command is chosen.
+    fn command_target(&self, criteria: Option<&Criteria>) -> Result<WindowElement, String> {
+        match criteria {
+            Some(criteria) => self.window_matching(criteria),
+            None => self
+                .focused_window()
+                .ok_or_else(|| "no window has focus".to_string()),
         }
     }
 
@@ -608,6 +733,14 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                     "focused": focused_output.as_deref() == Some(name.as_str()),
                     "current_workspace": current,
                     "rect": self.output_rect(output),
+                    // sway's: what the output's pixels are, and how many of
+                    // them make a point.
+                    "scale": output.current_scale().fractional_scale(),
+                    "current_mode": output.current_mode().map(|mode| json!({
+                        "width": mode.size.w,
+                        "height": mode.size.h,
+                        "refresh": mode.refresh,
+                    })),
                 }))
             })
             .collect();
@@ -723,7 +856,12 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                     state.gaps,
                 )
             })
-            .unwrap_or_else(|_| (Config::with(|config| config.tiling.gaps()), None));
+            .unwrap_or_else(|_| {
+                (
+                    Config::with(|config| Gaps::from_config(&config.tiling)),
+                    None,
+                )
+            });
 
         if let Ok(state) = view.tiling.read() {
             if state.enabled {
@@ -871,6 +1009,28 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         }
     }
 
+    /// The window `window` is a dialog of, through however many parents:
+    /// `window` itself when it has none, or when its parent is not a window
+    /// of ours.
+    fn dialog_owner<'a>(&'a self, window: &'a WindowElement) -> &'a WindowElement {
+        let mut owner = window;
+        // Bounded: a client could parent windows in a cycle.
+        for _ in 0..8 {
+            let Some(parent) = owner
+                .toplevel()
+                .and_then(|t| t.parent())
+                .and_then(|surface| {
+                    use smithay::reexports::wayland_server::Resource as _;
+                    self.workspaces.get_window_for_surface(&surface.id())
+                })
+            else {
+                break;
+            };
+            owner = parent;
+        }
+        owner
+    }
+
     fn window_node(
         &self,
         id: &ObjectId,
@@ -880,9 +1040,13 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
     ) -> Value {
         let window = self.workspaces.windows_map.get(id);
         let title = window.map(|w| w.xdg_title()).unwrap_or_default();
-        let app_id = window.map(|w| w.xdg_app_id()).unwrap_or_default();
-        let pid = window.and_then(|w| w.client_pid(&self.display_handle));
-        #[cfg_attr(not(feature = "xwayland"), allow(unused_mut))]
+        // A dialog belongs to the application that opened it, not to the
+        // process drawing it: the portal's file picker is a Files window
+        // parented to the asking app, and the bar should name and menu that
+        // app while the picker has the focus.
+        let owner = window.map(|w| self.dialog_owner(w));
+        let app_id = owner.map(|w| w.xdg_app_id()).unwrap_or_default();
+        let pid = owner.and_then(|w| w.client_pid(&self.display_handle));
         let mut node = json!({
             "id": window_con_id(id),
             "type": "con",
@@ -899,6 +1063,17 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             "nodes": Vec::<Value>::new(),
             "floating_nodes": Vec::<Value>::new(),
         });
+        // Where the window's global menu lives, when it said so over
+        // org_kde_kwin_appmenu: otto-bar reads it to draw the menu.
+        if let Some(address) = owner
+            .and_then(|w| w.wl_surface())
+            .and_then(|surface| crate::state::kde_appmenu::appmenu_address(&surface))
+        {
+            node["otto_appmenu"] = json!({
+                "service": address.service,
+                "object_path": address.object_path,
+            });
+        }
         // An X11 window answers to i3's `window_properties` as well, which is
         // what `for_window [class="…"]` scripts match on.
         #[cfg(feature = "xwayland")]
@@ -906,6 +1081,9 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             if let Some(smithay::desktop::WindowSurface::X11(surface)) =
                 Some(window.underlying_surface())
             {
+                // i3's X11 window id, which is what an app hands
+                // `com.canonical.AppMenu.Registrar` to register its menu.
+                node["window"] = json!(surface.window_id());
                 node["window_properties"] = json!({
                     "class": surface.class(),
                     "instance": surface.instance(),
@@ -996,4 +1174,48 @@ fn container_id(node: NodeId) -> u64 {
 /// The id `GetWorkspaces` gives the workspace at `index` on `output`.
 pub(crate) fn workspace_id(output: &str, index: usize) -> u64 {
     hash_id("workspace", &format!("{output}:{index}"))
+}
+
+/// `background`'s image with `~` expanded, refused if it cannot be shown.
+fn checked_background(background: BackgroundArg) -> Result<BackgroundArg, String> {
+    let BackgroundArg::Image { path, mode, color } = background else {
+        return Ok(background);
+    };
+    let path = match path.strip_prefix("~/") {
+        Some(rest) => otto_kit::xdg::home()
+            .map(|home| home.join(rest).to_string_lossy().into_owned())
+            .unwrap_or(path),
+        None => path,
+    };
+    // Stored and read back next login, when the working directory is
+    // whatever the session's is: a relative path would mean another file.
+    if !std::path::Path::new(&path).is_absolute() {
+        return Err(format!(
+            "give the background as an absolute path, or one starting with ~/ (not `{path}`)"
+        ));
+    }
+    otto_kit::wallpaper::probe(&path)
+        .map_err(|err| format!("cannot use `{path}` as a background: {err}"))?;
+    Ok(BackgroundArg::Image { path, mode, color })
+}
+
+/// Write `background` into an override: a reset clears it, anything else
+/// sets what it names and keeps the rest.
+fn apply_background(record: &mut crate::config::WallpaperOverride, background: BackgroundArg) {
+    match background {
+        BackgroundArg::Reset => *record = Default::default(),
+        BackgroundArg::Solid(color) => {
+            record.image = Some(String::new());
+            record.color = Some(color);
+        }
+        BackgroundArg::Image { path, mode, color } => {
+            record.image = Some(path);
+            if let Some(mode) = mode {
+                record.mode = Some(mode.token().to_string());
+            }
+            if let Some(color) = color {
+                record.color = Some(color);
+            }
+        }
+    }
 }

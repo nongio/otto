@@ -1,28 +1,19 @@
 //! Input event dispatching
 //!
-//! This file contains the top-level input event dispatchers that route events
-//! to the appropriate handler modules (keyboard, pointer, gestures, tablet).
+//! This file contains the windowed backends' input dispatcher, which routes
+//! events to the handler modules (keyboard, pointer); the udev backend's
+//! lives in `udev::input`.
 
+use smithay::utils::Transform;
+#[cfg(any(feature = "winit", feature = "x11"))]
 use smithay::{
-    backend::input::{InputBackend, InputEvent, Switch, SwitchState, SwitchToggleEvent},
+    backend::input::{InputBackend, InputEvent},
     output::Scale,
-    reexports::wayland_server::DisplayHandle,
-    utils::Transform,
 };
 
-use crate::{input::KeyAction, state::Backend, Otto};
-
-#[cfg(feature = "udev")]
-use crate::{renderer::active::RendererApi, udev::UdevData};
-
-#[cfg(feature = "udev")]
-use smithay::{
-    backend::{
-        input::{Device, DeviceCapability},
-        session::Session,
-    },
-    input::tablet::{TabletDescriptor, TabletSeatTrait},
-};
+#[cfg(any(feature = "winit", feature = "x11"))]
+use crate::input::KeyAction;
+use crate::Otto;
 
 #[cfg(any(feature = "winit", feature = "x11"))]
 impl<Backend: crate::state::Backend> Otto<Backend> {
@@ -36,178 +27,35 @@ impl<Backend: crate::state::Backend> Otto<Backend> {
         self.note_input_activity();
         self.note_press(&event);
         match event {
-            InputEvent::Keyboard { event } => match self.keyboard_key_to_action::<B>(event) {
-                KeyAction::ScaleUp => {
-                    let output = self
-                        .workspaces
-                        .outputs()
-                        .find(|o| o.name() == output_name)
-                        .unwrap()
-                        .clone();
-
-                    let current_scale = output.current_scale().fractional_scale();
-                    let new_scale = current_scale + 0.25;
-                    output.change_current_state(
-                        None,
-                        None,
-                        Some(Scale::Fractional(new_scale)),
-                        None,
-                    );
-                    let current_location = self.pointer.current_location();
-
-                    crate::shell::fixup_positions(&mut self.workspaces, current_location);
-                    self.backend_data.reset_buffers(&output);
-                    #[cfg(feature = "xwayland")]
-                    self.update_xwayland_scale();
-                }
-
-                KeyAction::ScaleDown => {
-                    let output = self
-                        .workspaces
-                        .outputs()
-                        .find(|o| o.name() == output_name)
-                        .unwrap()
-                        .clone();
-
-                    let current_scale = output.current_scale().fractional_scale();
-                    let new_scale = f64::max(1.0, current_scale - 0.25);
-                    output.change_current_state(
-                        None,
-                        None,
-                        Some(Scale::Fractional(new_scale)),
-                        None,
-                    );
-                    let current_location = self.pointer.current_location();
-                    crate::shell::fixup_positions(&mut self.workspaces, current_location);
-                    self.backend_data.reset_buffers(&output);
-                    #[cfg(feature = "xwayland")]
-                    self.update_xwayland_scale();
-                }
-
-                KeyAction::RotateOutput => {
-                    let output = self
-                        .workspaces
-                        .outputs()
-                        .find(|o| o.name() == output_name)
-                        .unwrap()
-                        .clone();
-
-                    let current_transform = output.current_transform();
-                    let new_transform = match current_transform {
-                        Transform::Normal => Transform::_90,
-                        Transform::_90 => Transform::_180,
-                        Transform::_180 => Transform::_270,
-                        Transform::_270 => Transform::Normal,
-                        _ => Transform::Normal,
-                    };
-                    output.change_current_state(None, Some(new_transform), None, None);
-                    let current_location = self.pointer.current_location();
-
-                    crate::shell::fixup_positions(&mut self.workspaces, current_location);
-                    self.backend_data.reset_buffers(&output);
-                }
-                KeyAction::ApplicationSwitchNext => {
-                    self.handle_app_switcher_next();
-                }
-                KeyAction::ApplicationSwitchPrev => {
-                    self.handle_app_switcher_prev();
-                }
-                KeyAction::ApplicationSwitchQuit => {
-                    self.handle_app_switcher_quit();
-                }
-                KeyAction::ToggleMaximize => {
-                    self.handle_toggle_maximize();
-                }
-                KeyAction::TileLeft => {
-                    self.handle_tile_left();
-                }
-                KeyAction::TileRight => {
-                    self.handle_tile_right();
-                }
-                KeyAction::CloseWindow => {
-                    self.handle_close_window();
-                }
-                KeyAction::ApplicationSwitchNextWindow => {
-                    self.handle_app_switcher_next_window();
-                }
-                KeyAction::ExposeShowDesktop => {
-                    self.handle_expose_show_desktop();
-                }
-                KeyAction::ExposeShowAll => {
-                    self.handle_expose_show_all();
-                }
-                KeyAction::WorkspaceNum(n) => {
-                    self.handle_workspace_num(n);
-                }
-                KeyAction::BrightnessUp => {
-                    self.handle_brightness_up();
-                }
-                KeyAction::BrightnessDown => {
-                    self.handle_brightness_down();
-                }
-                KeyAction::VolumeUp => {
-                    self.handle_volume_up();
-                }
-                KeyAction::VolumeDown => {
-                    self.handle_volume_down();
-                }
-                KeyAction::VolumeMute => {
-                    self.handle_volume_mute();
-                }
-                KeyAction::MediaPlayPause => {
-                    self.handle_media_play_pause();
-                }
-                KeyAction::MediaNext => {
-                    self.handle_media_next();
-                }
-                KeyAction::MediaPrev => {
-                    self.handle_media_prev();
-                }
-                KeyAction::MediaStop => {
-                    self.handle_media_stop();
-                }
-                KeyAction::TilingToggle => {
-                    self.handle_tiling_toggle();
-                }
-                KeyAction::TilingFocus(dir) => {
-                    self.handle_tiling_focus(dir);
-                }
-                KeyAction::TilingMove(dir) => {
-                    self.handle_tiling_move(dir);
-                }
-                KeyAction::TilingSplit(axis) => {
-                    self.handle_tiling_split(axis);
-                }
-                KeyAction::TilingResize(axis, grow) => {
-                    self.handle_tiling_resize(axis, grow);
-                }
-                KeyAction::TilingEqualize => {
-                    self.handle_tiling_equalize();
-                }
-                KeyAction::TilingFloatingToggle => {
-                    let _ = self.handle_tiling_floating(None);
-                }
-                KeyAction::TilingFocusModeToggle => {
-                    let _ = self.handle_tiling_focus_mode(None);
-                }
-
-                action => match action {
-                    KeyAction::None
-                    | KeyAction::Quit
-                    | KeyAction::Run(_)
-                    | KeyAction::ToggleDecorations
-                    | KeyAction::SceneSnapshot
-                    | KeyAction::SkpSnapshot
-                    | KeyAction::LockSession
-                    | KeyAction::PowerButton => self.process_common_key_action(action),
-
-                    _ => tracing::warn!(
+            InputEvent::Keyboard { event } => {
+                let action = self.keyboard_key_to_action::<B>(event);
+                match self.dispatch_key_action(action) {
+                    None => (),
+                    // Nested in a host window, the output is the one the
+                    // backend names, not the one under the pointer.
+                    Some(KeyAction::ScaleUp) => {
+                        self.change_windowed_output_scale(output_name, |scale| scale + 0.25)
+                    }
+                    Some(KeyAction::ScaleDown) => self
+                        .change_windowed_output_scale(output_name, |scale| {
+                            f64::max(1.0, scale - 0.25)
+                        }),
+                    Some(KeyAction::RotateOutput) => {
+                        let output = self
+                            .workspaces
+                            .outputs()
+                            .find(|o| o.name() == output_name)
+                            .unwrap()
+                            .clone();
+                        self.rotate_output(&output);
+                    }
+                    Some(action) => tracing::warn!(
                         ?action,
                         output_name,
                         "Key action unsupported on output backend.",
                     ),
-                },
-            },
+                }
+            }
 
             InputEvent::PointerMotionAbsolute { event } => {
                 let output = self
@@ -223,325 +71,47 @@ impl<Backend: crate::state::Backend> Otto<Backend> {
             _ => (), // other events are not handled (yet)
         }
     }
+
+    /// Step the scale of the backend's output `output_name` to
+    /// `new_scale(current)`.
+    fn change_windowed_output_scale(&mut self, output_name: &str, new_scale: impl Fn(f64) -> f64) {
+        let output = self
+            .workspaces
+            .outputs()
+            .find(|o| o.name() == output_name)
+            .unwrap()
+            .clone();
+
+        let current_scale = output.current_scale().fractional_scale();
+        output.change_current_state(
+            None,
+            None,
+            Some(Scale::Fractional(new_scale(current_scale))),
+            None,
+        );
+        let current_location = self.pointer.current_location();
+
+        crate::shell::fixup_positions(&mut self.workspaces, current_location);
+        self.backend_data.reset_buffers(&output);
+        #[cfg(feature = "xwayland")]
+        self.update_xwayland_scale();
+    }
 }
 
-#[cfg(feature = "udev")]
-impl<A: RendererApi> Otto<UdevData<A>> {
-    pub fn process_input_event<B: InputBackend>(
-        &mut self,
-        dh: &DisplayHandle,
-        event: InputEvent<B>,
-    ) {
-        // Every event, whatever it turns into: auto-lock measures idleness
-        // from the last one (`lock.auto_lock_timeout`).
-        self.note_input_activity();
-        self.note_press(&event);
-        match event {
-            InputEvent::Keyboard { event, .. } => match self.keyboard_key_to_action::<B>(event) {
-                #[cfg(feature = "udev")]
-                KeyAction::VtSwitch(vt) => {
-                    tracing::info!(to = vt, "Trying to switch vt");
-                    if let Err(err) = self.backend_data.session.change_vt(vt) {
-                        tracing::error!(vt, "Error switching vt: {}", err);
-                    }
-                }
-                KeyAction::Screen(num) => {
-                    let geometry = self
-                        .workspaces
-                        .outputs()
-                        .nth(num)
-                        .map(|o| self.workspaces.output_geometry(o).unwrap());
-
-                    if let Some(geometry) = geometry {
-                        let x = geometry.loc.x as f64 + geometry.size.w as f64 / 2.0;
-                        let y = geometry.size.h as f64 / 2.0;
-                        let location = (x, y).into();
-                        let pointer = self.pointer.clone();
-                        let under = self.surface_under(location);
-                        pointer.motion(
-                            self,
-                            under,
-                            &smithay::input::pointer::MotionEvent {
-                                location,
-                                serial: smithay::utils::SERIAL_COUNTER.next_serial(),
-                                time: smithay::backend::input::InputTime::from_millis(0),
-                            },
-                        );
-                        pointer.frame(self);
-                    }
-                }
-                KeyAction::ScaleUp => {
-                    let pos = self.pointer.current_location().to_i32_round();
-                    let output = self
-                        .workspaces
-                        .outputs()
-                        .find(|o| self.workspaces.output_geometry(o).unwrap().contains(pos))
-                        .cloned();
-
-                    if let Some(output) = output {
-                        let (output_location, scale) = (
-                            self.workspaces.output_geometry(&output).unwrap().loc,
-                            output.current_scale().fractional_scale(),
-                        );
-                        let new_scale = scale + 0.25;
-                        output.change_current_state(
-                            None,
-                            None,
-                            Some(Scale::Fractional(new_scale)),
-                            None,
-                        );
-
-                        let rescale = scale / new_scale;
-                        let output_location = output_location.to_f64();
-                        let mut pointer_output_location =
-                            self.pointer.current_location() - output_location;
-                        pointer_output_location.x *= rescale;
-                        pointer_output_location.y *= rescale;
-                        let pointer_location = output_location + pointer_output_location;
-                        crate::shell::fixup_positions(&mut self.workspaces, pointer_location);
-                        let pointer = self.pointer.clone();
-                        let under = self.surface_under(pointer_location);
-                        pointer.motion(
-                            self,
-                            under,
-                            &smithay::input::pointer::MotionEvent {
-                                location: pointer_location,
-                                serial: smithay::utils::SERIAL_COUNTER.next_serial(),
-                                time: smithay::backend::input::InputTime::from_millis(0),
-                            },
-                        );
-                        pointer.frame(self);
-                        self.backend_data.reset_buffers(&output);
-                    }
-                }
-                KeyAction::ScaleDown => {
-                    let pos = self.pointer.current_location().to_i32_round();
-                    let output = self
-                        .workspaces
-                        .outputs()
-                        .find(|o| self.workspaces.output_geometry(o).unwrap().contains(pos))
-                        .cloned();
-
-                    if let Some(output) = output {
-                        let (output_location, scale) = (
-                            self.workspaces.output_geometry(&output).unwrap().loc,
-                            output.current_scale().fractional_scale(),
-                        );
-                        let new_scale = f64::max(1.0, scale - 0.25);
-                        output.change_current_state(
-                            None,
-                            None,
-                            Some(Scale::Fractional(new_scale)),
-                            None,
-                        );
-
-                        let rescale = scale / new_scale;
-                        let output_location = output_location.to_f64();
-                        let mut pointer_output_location =
-                            self.pointer.current_location() - output_location;
-                        pointer_output_location.x *= rescale;
-                        pointer_output_location.y *= rescale;
-                        let pointer_location = output_location + pointer_output_location;
-
-                        crate::shell::fixup_positions(&mut self.workspaces, pointer_location);
-                        let pointer = self.pointer.clone();
-                        let under = self.surface_under(pointer_location);
-                        pointer.motion(
-                            self,
-                            under,
-                            &smithay::input::pointer::MotionEvent {
-                                location: pointer_location,
-                                serial: smithay::utils::SERIAL_COUNTER.next_serial(),
-                                time: smithay::backend::input::InputTime::from_millis(0),
-                            },
-                        );
-                        pointer.frame(self);
-                        self.backend_data.reset_buffers(&output);
-                    }
-                }
-                KeyAction::RotateOutput => {
-                    let pos = self.pointer.current_location().to_i32_round();
-                    let output = self
-                        .workspaces
-                        .outputs()
-                        .find(|o| self.workspaces.output_geometry(o).unwrap().contains(pos))
-                        .cloned();
-
-                    if let Some(output) = output {
-                        let current_transform = output.current_transform();
-                        let new_transform = match current_transform {
-                            Transform::Normal => Transform::_90,
-                            Transform::_90 => Transform::_180,
-                            Transform::_180 => Transform::_270,
-                            Transform::_270 => Transform::Normal,
-                            _ => Transform::Normal,
-                        };
-                        output.change_current_state(None, Some(new_transform), None, None);
-                        let current_location = self.pointer.current_location();
-                        crate::shell::fixup_positions(&mut self.workspaces, current_location);
-                        self.backend_data.reset_buffers(&output);
-                    }
-                }
-                KeyAction::ApplicationSwitchNext => {
-                    self.handle_app_switcher_next();
-                }
-                KeyAction::ApplicationSwitchPrev => {
-                    self.handle_app_switcher_prev();
-                }
-                KeyAction::ApplicationSwitchNextWindow => {
-                    self.handle_app_switcher_next_window();
-                }
-                KeyAction::ApplicationSwitchQuit => {
-                    self.handle_app_switcher_quit();
-                }
-                KeyAction::ToggleMaximize => {
-                    self.handle_toggle_maximize();
-                }
-                KeyAction::TileLeft => {
-                    self.handle_tile_left();
-                }
-                KeyAction::TileRight => {
-                    self.handle_tile_right();
-                }
-                KeyAction::CloseWindow => {
-                    self.handle_close_window();
-                }
-                KeyAction::ExposeShowDesktop => {
-                    self.handle_expose_show_desktop();
-                }
-                KeyAction::ExposeShowAll => {
-                    self.handle_expose_show_all();
-                }
-                KeyAction::WorkspaceNum(index) => {
-                    self.handle_workspace_num(index);
-                }
-                KeyAction::BrightnessUp => {
-                    self.handle_brightness_up();
-                }
-                KeyAction::BrightnessDown => {
-                    self.handle_brightness_down();
-                }
-                KeyAction::VolumeUp => {
-                    self.handle_volume_up();
-                }
-                KeyAction::VolumeDown => {
-                    self.handle_volume_down();
-                }
-                KeyAction::VolumeMute => {
-                    self.handle_volume_mute();
-                }
-                KeyAction::MediaPlayPause => {
-                    self.handle_media_play_pause();
-                }
-                KeyAction::MediaNext => {
-                    self.handle_media_next();
-                }
-                KeyAction::MediaPrev => {
-                    self.handle_media_prev();
-                }
-                KeyAction::MediaStop => {
-                    self.handle_media_stop();
-                }
-                KeyAction::TilingToggle => {
-                    self.handle_tiling_toggle();
-                }
-                KeyAction::TilingFocus(dir) => {
-                    self.handle_tiling_focus(dir);
-                }
-                KeyAction::TilingMove(dir) => {
-                    self.handle_tiling_move(dir);
-                }
-                KeyAction::TilingSplit(axis) => {
-                    self.handle_tiling_split(axis);
-                }
-                KeyAction::TilingResize(axis, grow) => {
-                    self.handle_tiling_resize(axis, grow);
-                }
-                KeyAction::TilingEqualize => {
-                    self.handle_tiling_equalize();
-                }
-                KeyAction::TilingFloatingToggle => {
-                    let _ = self.handle_tiling_floating(None);
-                }
-                KeyAction::TilingFocusModeToggle => {
-                    let _ = self.handle_tiling_focus_mode(None);
-                }
-                action => match action {
-                    KeyAction::None
-                    | KeyAction::Quit
-                    | KeyAction::Run(_)
-                    | KeyAction::ToggleDecorations
-                    | KeyAction::SceneSnapshot
-                    | KeyAction::SkpSnapshot
-                    | KeyAction::LockSession
-                    | KeyAction::PowerButton => self.process_common_key_action(action),
-
-                    // A bound action this dispatcher has no arm for must not
-                    // take the session down with it: every builtin lands
-                    // here first on the udev backend.
-                    _ => tracing::warn!(?action, "Key action unsupported on this backend."),
-                },
-            },
-            InputEvent::PointerMotion { event, .. } => self.on_pointer_move::<B>(dh, event),
-            InputEvent::PointerMotionAbsolute { event, .. } => {
-                self.on_pointer_move_absolute::<B>(dh, event)
-            }
-            InputEvent::PointerButton { event, .. } => self.on_pointer_button::<B>(event),
-            InputEvent::PointerAxis { event, .. } => self.on_pointer_axis::<B>(event),
-            InputEvent::TabletToolAxis { event, .. } => self.on_tablet_tool_axis::<B>(event),
-            InputEvent::TabletToolProximity { event, .. } => {
-                self.on_tablet_tool_proximity::<B>(dh, event)
-            }
-            InputEvent::TabletToolTip { event, .. } => self.on_tablet_tool_tip::<B>(event),
-            InputEvent::TabletToolButton { event, .. } => self.on_tablet_button::<B>(event),
-            InputEvent::GestureSwipeBegin { event, .. } => self.on_gesture_swipe_begin::<B>(event),
-            InputEvent::GestureSwipeUpdate { event, .. } => {
-                self.on_gesture_swipe_update::<B>(event)
-            }
-            InputEvent::GestureSwipeEnd { event, .. } => self.on_gesture_swipe_end::<B>(event),
-            InputEvent::GesturePinchBegin { event, .. } => self.on_gesture_pinch_begin::<B>(event),
-            InputEvent::GesturePinchUpdate { event, .. } => {
-                self.on_gesture_pinch_update::<B>(event)
-            }
-            InputEvent::GesturePinchEnd { event, .. } => self.on_gesture_pinch_end::<B>(event),
-            InputEvent::GestureHoldBegin { event, .. } => self.on_gesture_hold_begin::<B>(event),
-            InputEvent::GestureHoldEnd { event, .. } => self.on_gesture_hold_end::<B>(event),
-            InputEvent::SwitchToggle { event } => {
-                if let Some(switch) = event.switch() {
-                    if switch == Switch::Lid {
-                        let is_closed = event.state() == SwitchState::On;
-                        tracing::info!(
-                            is_closed,
-                            "Lid switch {}",
-                            if is_closed { "closed" } else { "opened" }
-                        );
-                        self.is_lid_closed = is_closed;
-                        self.update_display_power_state();
-                    }
-                }
-            }
-            InputEvent::DeviceAdded { device } => {
-                if device.has_capability(DeviceCapability::TabletTool) {
-                    self.seat
-                        .tablet_seat()
-                        .add_wp_tablet(dh, &TabletDescriptor::from(&device));
-                }
-            }
-            InputEvent::DeviceRemoved { device }
-                if device.has_capability(DeviceCapability::TabletTool) =>
-            {
-                let tablet_seat = self.seat.tablet_seat();
-
-                tablet_seat.remove_tablet(&TabletDescriptor::from(&device));
-
-                // If there are no tablets in seat we can remove all tools
-                if tablet_seat.count_tablets() == 0 {
-                    tablet_seat.clear_tools();
-                }
-            }
-            _ => {
-                // other events are not handled (yet)
-            }
-        }
+#[cfg(any(feature = "winit", feature = "x11", feature = "udev"))]
+impl<Backend: crate::state::Backend> Otto<Backend> {
+    /// Turn `output` a quarter turn clockwise (`RotateOutput`).
+    pub(crate) fn rotate_output(&mut self, output: &smithay::output::Output) {
+        let new_transform = match output.current_transform() {
+            Transform::Normal => Transform::_90,
+            Transform::_90 => Transform::_180,
+            Transform::_180 => Transform::_270,
+            Transform::_270 => Transform::Normal,
+            _ => Transform::Normal,
+        };
+        output.change_current_state(None, Some(new_transform), None, None);
+        let current_location = self.pointer.current_location();
+        crate::shell::fixup_positions(&mut self.workspaces, current_location);
+        self.backend_data.reset_buffers(output);
     }
 }

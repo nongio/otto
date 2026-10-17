@@ -18,9 +18,8 @@ pub mod background_effect;
 #[cfg(any(feature = "udev", feature = "xwayland", feature = "headless"))]
 pub mod cursor;
 pub mod debug_gesture;
-pub mod debug_hooks;
 pub mod desk;
-pub mod drawing;
+pub mod desktop_widget;
 pub mod focus;
 #[cfg(feature = "headless")]
 pub mod headless;
@@ -30,26 +29,22 @@ pub mod interactive_view;
 pub mod locale_env;
 pub mod lock;
 pub mod login;
+pub mod otto_canvas;
 pub mod otto_dock;
 pub mod polkit_agent;
 pub mod render;
-pub mod render_elements;
 #[cfg(feature = "metrics")]
 pub mod render_metrics;
-pub mod render_phase_stats;
-pub mod renderer;
 pub mod sandbox;
 pub mod screenshare;
 pub mod settings;
 pub mod settings_service;
 pub mod shell;
 pub mod shell_service;
-pub mod skia_renderer;
 pub mod state;
 pub mod surface_config_cache;
 pub mod surface_style;
 pub mod text_cursor;
-pub mod textures_storage;
 #[cfg(feature = "udev")]
 pub mod udev;
 pub mod virtual_output;
@@ -59,6 +54,14 @@ pub mod winit;
 pub mod x11;
 
 pub use state::{CalloopData, ClientState, Otto};
+
+// The render stack lives in its own crate, so the compiler keeps it below
+// window management. Re-exported under its old paths: the rest of the
+// compositor names `crate::renderer::…`, `crate::skia_renderer::…` as before.
+pub use otto_render::{
+    debug_hooks, drawing, render_elements, render_phase_stats, renderer, skia_renderer,
+    textures_storage,
+};
 mod workspaces;
 
 mod config;

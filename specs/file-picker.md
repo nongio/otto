@@ -46,12 +46,27 @@ picker window, and the path the user chooses comes back as a `file://` URI.
   clicking a file copies its name into the field. Ctrl+C, Ctrl+X and Ctrl+V
   work on the name text — the picker does no file management, so the chords are
   free for the field.
+- **The location menu.** The toolbar's location capsule opens a dropdown of the
+  directory being viewed and every directory above it, nearest first; choosing
+  one goes there. Each row, and the capsule, wears the theme's full-colour icon
+  for that directory: a sidebar place's own (the music folder), `user-home`,
+  `drive-harddisk` for `/`, otherwise `folder`.
+- **Not an app of its own.** The picker is parented to the requesting window,
+  so the compositor keeps it out of the dock and the app switcher; raising
+  that window raises the picker with it.
+- **New Folder.** A button beside the location capsule makes "untitled folder"
+  and opens its name for editing in place. In the save modes, and in an open
+  asking for directories, naming it also goes into it — that is where the user
+  made it to save; Escape keeps the folder and stays put.
+- **Per-`app_id` directory memory.** Every accept records the directory it was
+  made from in `$XDG_STATE_HOME/otto/file-picker-dirs`, and the next request
+  from that `app_id` starts there (after `current_file` and `current_folder`).
+  An empty `app_id` — what unsandboxed applications send — shares one slot
+  rather than getting no memory, so they still return to where the user last
+  was.
 
 ### What is not
 
-- **"New Folder" in the picker.** The browser has it; the picker does not yet,
-  so a save into a directory that does not exist means creating it elsewhere
-  first. The picker's Non-Goals already say it should have it.
 - **Drag-selection inside the name field.** A click places the caret and
   Ctrl+A selects the lot, but dragging across the text does not extend a
   selection the way it does in an in-place rename.
@@ -62,12 +77,8 @@ picker window, and the path the user chooses comes back as a `file://` URI.
   queueing. This is the one deliberate departure from *Concurrent requests*
   below.
 - **Choices** (`a(ssa(ss)s)`) are carried over the wire and not yet rendered.
-- **Search and the location popup.** The toolbar's location control says where
-  you are; it does not yet open the ancestor menu. Type-ahead is built: typing
-  printable characters walks the cursor, as *Keyboard* below describes.
-- **Per-`app_id` directory memory.** `Request::starting_directory` takes the
-  remembered directory as an argument and is always passed `None`; nothing is
-  persisted yet.
+- **Search.** Type-ahead is built: typing printable characters walks the
+  cursor, as *Keyboard* below describes.
 - **The header is still the browser's 92 px.** The layout is the reference's —
   one toolbar row, no title bar — but 19 pieces of geometry in `view.rs` are
   written against the `HEADER_H` constant, so making the picker's strip shorter
@@ -236,7 +247,11 @@ One window per request. Layout:
 - **Titlebar** — the request's `title`, or "Open" / "Save As" / "Save Files".
   Client-decorated, per Otto's convention.
 - **Toolbar** — back/forward, a parent-directory control, the view switcher
-  (list / icon), a sort control, and a search field.
+  (list / icon), a sort control, and a search field. It is the browser's
+  toolbar, Solar glyphs included. The location control and the action row's
+  file-type filter are the kit's pop-up buttons, drawn the way Settings draws
+  its own: the location shows the folder's icon before its name and opens its
+  menu below; the filter opens its menu on the current filter.
 - **Path bar** — the current directory as clickable ancestor segments; clicking
   a segment navigates to it.
 - **Sidebar** — the same places list as the browser: the XDG user directories
@@ -303,11 +318,12 @@ directory, or cannot be read, falls through to the next candidate.
 
 The picker remembers the last accepted directory **per `app_id`**, in its own
 state file, and nothing else across requests. It never remembers a selection, a
-filter, or a scroll position across requests. An empty `app_id` gets no
-memory. This is the one deliberate exception to "no state between requests":
+filter, or a scroll position across requests. An empty `app_id` gets the
+shared slot. This is the one deliberate exception to "no state between requests":
 returning a user to where they were last time is the behaviour they expect, and
 keying it on the app is what stops one app's directory leaking into another's
-dialog.
+dialog. Applications that arrive with no `app_id` share a single slot: the
+leak between them is the price of remembering anything for them at all.
 
 ### Filters
 
@@ -512,6 +528,8 @@ thread blocked in `poll(2)` until an event lands or a debounce comes due; the UI
 thread never blocks on it. A watch belongs to the column showing that directory
 and is dropped with it, so the watch set stays equal to what is on screen. Two
 panes on the same directory share one watch. Nothing is watched recursively.
+The watcher is `otto_kit::watch`, which Preview also uses for the folder of
+the file it shows.
 
 `IN_CREATE`, `IN_DELETE`, `IN_MOVED_FROM`, `IN_MOVED_TO`, `IN_CLOSE_WRITE` and
 `IN_ATTRIB` mark the directory dirty. A dirty directory is re-read after a

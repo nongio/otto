@@ -10,14 +10,16 @@
 use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
 
+use zeroize::Zeroizing;
+
 /// A request sent to greetd.
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Request {
     /// Begin an authentication conversation for `username`.
     CreateSession { username: String },
-    /// Answer the most recent `AuthMessage`.
-    PostAuthMessageResponse { response: Option<String> },
+    /// Answer the most recent `AuthMessage`. Wiped when the request drops.
+    PostAuthMessageResponse { response: Option<Zeroizing<String>> },
     /// Authentication succeeded — run `cmd` as the authenticated user.
     StartSession { cmd: Vec<String>, env: Vec<String> },
     /// Abandon the current conversation and start over.
@@ -185,19 +187,28 @@ impl Client {
     }
 
     fn send_real(stream: &mut UnixStream, request: Request) -> std::io::Result<()> {
-        let payload = serde_json::to_vec(&request)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        let invalid = |e| std::io::Error::new(std::io::ErrorKind::InvalidData, e);
+
+        // The payload can carry a password. Measured first, so the frame is
+        // allocated once at its final size: a buffer that grew while it was
+        // being written would free copies of the answer nothing can wipe.
+        let mut measure = ByteCount(0);
+        serde_json::to_writer(&mut measure, &request).map_err(invalid)?;
 
         // Length prefix is native-endian, per greetd-ipc(7).
-        let len = u32::try_from(payload.len()).map_err(|_| {
+        let len = u32::try_from(measure.0).map_err(|_| {
             std::io::Error::new(std::io::ErrorKind::InvalidData, "request too large")
         })?;
+
+        let mut frame = Zeroizing::new(Vec::with_capacity(4 + measure.0));
+        frame.extend_from_slice(&len.to_ne_bytes());
+        serde_json::to_writer(&mut *frame, &request).map_err(invalid)?;
+        drop(request);
 
         // Requests are a few hundred bytes at most, well under a socket buffer,
         // so a short write here would mean something is badly wrong — treat it
         // as the error it is rather than carrying a write queue around.
-        stream.write_all(&len.to_ne_bytes())?;
-        stream.write_all(&payload)?;
+        stream.write_all(&frame)?;
         stream.flush()
     }
 
@@ -268,7 +279,7 @@ impl Client {
             }
             Request::PostAuthMessageResponse { response } => {
                 *awaiting_password = false;
-                if response.as_deref() == Some("otto") {
+                if response.as_ref().map(|answer| answer.as_str()) == Some("otto") {
                     Response::Success
                 } else {
                     Response::Error {
@@ -286,6 +297,20 @@ impl Client {
                 Response::Success
             }
         }
+    }
+}
+
+/// A writer that keeps only the length of what is written to it.
+struct ByteCount(usize);
+
+impl Write for ByteCount {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0 += bytes.len();
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
     }
 }
 
@@ -308,7 +333,7 @@ mod tests {
     #[test]
     fn auth_response_carries_a_nullable_string() {
         let with_answer = serde_json::to_string(&Request::PostAuthMessageResponse {
-            response: Some("hunter2".to_string()),
+            response: Some(Zeroizing::new("hunter2".to_string())),
         })
         .unwrap();
         assert_eq!(
@@ -546,7 +571,7 @@ mod tests {
 
         let rejected = client
             .roundtrip(Request::PostAuthMessageResponse {
-                response: Some("wrong".to_string()),
+                response: Some(Zeroizing::new("wrong".to_string())),
             })
             .unwrap();
         assert!(matches!(
@@ -559,7 +584,7 @@ mod tests {
 
         let accepted = client
             .roundtrip(Request::PostAuthMessageResponse {
-                response: Some("otto".to_string()),
+                response: Some(Zeroizing::new("otto".to_string())),
             })
             .unwrap();
         assert!(matches!(accepted, Response::Success));

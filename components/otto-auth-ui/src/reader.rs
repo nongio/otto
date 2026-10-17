@@ -161,6 +161,28 @@ pub fn no_match_line(client: &str) -> String {
     otto_kit::i18n::lookup(&format!("{client}-status-no-match"), None).into_owned()
 }
 
+/// What the panel makes of an informational message: whether it puts the
+/// fingerprint mark up, and the line to show under it. A request for a finger
+/// is said again in the panel's language; anything else the module
+/// volunteers keeps its own words. `client` as in [`request_line`].
+pub fn info_line(text: String, client: &str) -> (bool, String) {
+    match finger_request(&text) {
+        Some(request) => (true, request_line(request, client)),
+        None => (mentions_fingerprint(&text), text),
+    }
+}
+
+/// What the panel makes of an error message: a missed finger in the panel's
+/// language, anything else as the module said it. `client` as in
+/// [`request_line`].
+pub fn error_line(text: String, client: &str) -> String {
+    if is_no_match(&text) {
+        no_match_line(client)
+    } else {
+        text
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

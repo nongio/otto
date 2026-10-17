@@ -23,6 +23,8 @@
 use std::ffi::{c_char, c_int, c_void, CStr, CString};
 use std::sync::mpsc::{Receiver, Sender, TryRecvError};
 
+use zeroize::Zeroizing;
+
 // -- libpam ------------------------------------------------------------------
 
 const PAM_SUCCESS: c_int = 0;
@@ -119,7 +121,8 @@ pub enum Event {
 /// blocked in its own I/O finishes when it finishes; nothing here can hurry it.
 pub struct Attempt {
     events: Receiver<Event>,
-    answers: Sender<String>,
+    /// Each answer is wiped by whichever side drops it last.
+    answers: Sender<Zeroizing<String>>,
     /// Set once [`Outcome`] has been read, so a caller cannot answer a
     /// conversation that has ended.
     finished: bool,
@@ -191,7 +194,7 @@ impl Attempt {
     /// channel means the attempt was dropped: it should give up.
     pub fn with_conversation<F>(converse: F) -> Self
     where
-        F: FnOnce(&Sender<Event>, &Receiver<String>) -> Outcome + Send + 'static,
+        F: FnOnce(&Sender<Event>, &Receiver<Zeroizing<String>>) -> Outcome + Send + 'static,
     {
         let (event_tx, events) = std::sync::mpsc::channel();
         let (answers, answer_rx) = std::sync::mpsc::channel();
@@ -241,11 +244,53 @@ impl Attempt {
     }
 
     /// Answer the prompt PAM is waiting on.
-    pub fn answer(&self, text: String) {
+    pub fn answer(&self, text: Zeroizing<String>) {
         if self.finished {
             return;
         }
         let _ = self.answers.send(text);
+    }
+}
+
+/// Whoever holds an [`Attempt`] and acts on what it says: otto-lock and
+/// otto-authorize.
+pub trait Conversant {
+    /// The attempt in progress, if any.
+    fn attempt(&mut self) -> &mut Option<Attempt>;
+    /// PAM said something.
+    fn said(&mut self, message: Message);
+    /// The attempt is over, and has already been dropped.
+    fn ended(&mut self, outcome: Outcome);
+
+    /// Collect whatever PAM has said. Returns whether the panel needs
+    /// redrawing.
+    ///
+    /// Called every loop iteration rather than waited on, so a module that
+    /// takes its time — a reader waiting for a finger — leaves the panel live.
+    fn pump(&mut self) -> bool {
+        let mut changed = false;
+        while let Some(event) = self.attempt().as_mut().and_then(Attempt::poll) {
+            changed = true;
+            match event {
+                Event::Said(message) => self.said(message),
+                Event::Ended(outcome) => {
+                    *self.attempt() = None;
+                    self.ended(outcome);
+                }
+            }
+        }
+        changed
+    }
+}
+
+/// PAM prompts are written for a terminal: `"Password: "`. The panel puts the
+/// label above the field, where the punctuation reads as a typo.
+pub fn prompt_label(text: &str) -> String {
+    let label = text.trim().trim_end_matches(':').trim_end().to_string();
+    if label.is_empty() {
+        otto_kit::t_owned!("lock-prompt-password")
+    } else {
+        label
     }
 }
 
@@ -298,34 +343,13 @@ fn resolve_service(service: &Service, installed: impl Fn(&str) -> bool) -> CStri
     }
 }
 
-/// Overwrite a secret before its memory goes back to the allocator.
-///
-/// Only what is still in the buffer: a `String` that grew has already left
-/// copies behind, which nothing here can reach. The volatile writes are what
-/// keep the compiler from dropping stores to memory it can see is about to be
-/// freed.
-pub fn wipe(secret: &mut String) {
-    // SAFETY: zero is valid UTF-8, so the string stays a string throughout.
-    let bytes = unsafe { secret.as_bytes_mut() };
-    wipe_bytes(bytes);
-    secret.clear();
-}
-
-fn wipe_bytes(bytes: &mut [u8]) {
-    for byte in bytes.iter_mut() {
-        // SAFETY: `byte` is a valid, exclusive reference.
-        unsafe { std::ptr::write_volatile(byte, 0) };
-    }
-    std::sync::atomic::compiler_fence(std::sync::atomic::Ordering::SeqCst);
-}
-
 /// The whole conversation, on the PAM thread.
 fn converse(
     service: &CStr,
     user: &str,
     refresh_credentials: bool,
     events: &Sender<Event>,
-    answers: &Receiver<String>,
+    answers: &Receiver<Zeroizing<String>>,
 ) -> Outcome {
     let Ok(user_c) = CString::new(user) else {
         return Outcome::Denied(otto_kit::t_owned!("lock-error-invalid-user"));
@@ -400,7 +424,7 @@ fn strerror(pamh: *mut PamHandle, status: c_int) -> String {
 /// PAM handle for the length of one attempt, on the thread that made it.
 struct ConversationState<'a> {
     events: &'a Sender<Event>,
-    answers: &'a Receiver<String>,
+    answers: &'a Receiver<Zeroizing<String>>,
 }
 
 /// PAM's conversation callback.
@@ -487,21 +511,20 @@ unsafe extern "C" fn conversation(
         };
 
         // A response of NULL is right for a message that asked nothing.
-        if let Some(mut answer) = answer {
+        if let Some(answer) = answer {
             // Copied into a buffer sized for the terminator up front, so the
-            // answer is not reallocated (and left behind) on the way to C,
-            // and both copies are wiped once PAM has its own.
-            let mut terminated = Vec::with_capacity(answer.len() + 1);
+            // answer is not reallocated (and left behind) on the way to C.
+            // Both copies are wiped when they drop, once PAM has its own.
+            let mut terminated = Zeroizing::new(Vec::with_capacity(answer.len() + 1));
             terminated.extend_from_slice(answer.as_bytes());
             terminated.push(0);
-            wipe(&mut answer);
+            drop(answer);
             if terminated[..terminated.len() - 1].contains(&0) {
-                wipe_bytes(&mut terminated);
                 libc::free(responses as *mut c_void);
                 return PAM_CONV_ERR;
             }
             let copy = libc::strdup(terminated.as_ptr() as *const c_char);
-            wipe_bytes(&mut terminated);
+            drop(terminated);
             if copy.is_null() {
                 libc::free(responses as *mut c_void);
                 return PAM_BUF_ERR;
@@ -517,6 +540,15 @@ unsafe extern "C" fn conversation(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// PAM writes its prompts for a terminal. The panel puts the label above
+    /// the field, where a trailing colon reads as a mistake.
+    #[test]
+    fn prompt_labels_lose_their_terminal_punctuation() {
+        assert_eq!(prompt_label("Password: "), "Password");
+        assert_eq!(prompt_label("Verification code:"), "Verification code");
+        assert_eq!(prompt_label("   "), otto_kit::t!("lock-prompt-password"));
+    }
 
     /// otto-authorize without its own file falls back the way otto-lock
     /// does — through the lock screen's stack first, which asks the same

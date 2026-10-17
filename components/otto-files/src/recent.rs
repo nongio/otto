@@ -74,23 +74,9 @@ const DAY: i64 = 86_400;
 /// from UTC in force at that moment, which is what makes this right across a
 /// daylight-saving change rather than only most of the year.
 fn local_midnight(secs: i64) -> i64 {
-    let offset = local_utc_offset(secs);
+    let offset = otto_search::dates::local_offset(secs);
     let local = secs + offset;
     local - local.rem_euclid(DAY) - offset
-}
-
-/// The UTC offset in seconds in force locally at `secs`.
-pub(crate) fn local_utc_offset(secs: i64) -> i64 {
-    // SAFETY: `tm` is fully written by `localtime_r` before it is read, and
-    // the reentrant form is used so this is safe off the main thread.
-    unsafe {
-        let mut tm: libc::tm = std::mem::zeroed();
-        let t = secs as libc::time_t;
-        if libc::localtime_r(&t, &mut tm).is_null() {
-            return 0;
-        }
-        tm.tm_gmtoff as i64
-    }
 }
 
 /// Which bucket `modified` falls in, relative to `now`.

@@ -20,9 +20,10 @@ use otto_kit::typography::styles;
 use crate::request::Stash;
 
 // Everything in logical pixels.
-const WIDTH: f32 = 360.0;
+/// The floating card's width. In the side canvas the card takes the
+/// column's.
+pub const WIDTH: f32 = 360.0;
 const PAD: f32 = 18.0;
-const INNER: f32 = WIDTH - 2.0 * PAD;
 const GAP: f32 = 16.0;
 /// The title: the launcher's field size, heavier.
 const TITLE_SIZE: f32 = 15.0;
@@ -75,6 +76,9 @@ pub struct Layout {
     /// Size in logical pixels.
     pub width: f32,
     pub height: f32,
+    /// How tall the card would be with every item showing, in logical
+    /// pixels, however tall that is.
+    pub natural_height: f32,
 }
 
 impl Layout {
@@ -142,8 +146,9 @@ fn style(size: f32, line_h: f32, weight: i32, color: Color, mono: bool) -> TextS
 }
 
 impl Balloon {
-    /// One line of `text`, cut with an ellipsis at the card's inner width.
-    fn line(&self, text: &str, style: &TextStyle) -> Paragraph {
+    /// One line of `text`, cut with an ellipsis at `inner`, the card's inner
+    /// width.
+    fn line(&self, text: &str, style: &TextStyle, inner: f32) -> Paragraph {
         let mut paragraph_style = ParagraphStyle::new();
         paragraph_style.set_max_lines(1);
         paragraph_style.set_ellipsis("…");
@@ -151,20 +156,21 @@ impl Balloon {
         builder.push_style(style);
         builder.add_text(text);
         let mut paragraph = builder.build();
-        paragraph.layout(INNER);
+        paragraph.layout(inner);
         paragraph
     }
 
-    /// Lay the card out for `stash`, no taller than `max_height`: past
-    /// that the items scroll between the title and the send shortcut. The
-    /// item at `leaving.0` is on its way out, as much of it left as
-    /// `leaving.1` says.
+    /// Lay the card out for `stash`, `width` wide and no taller than
+    /// `max_height`: past that the items scroll between the title and the
+    /// send shortcut. The item at `leaving.0` is on its way out, as much of
+    /// it left as `leaving.1` says.
     pub fn layout(
         &mut self,
         stash: &Stash,
         leaving: Option<(usize, f32)>,
-        max_height: f32,
+        (width, max_height): (f32, f32),
     ) -> Layout {
+        let inner = (width - 2.0 * PAD).max(1.0);
         self.theme = Theme::for_scheme(current_color_scheme());
         let items = stash.items.as_slice();
         let (primary, secondary) = (self.theme.text_primary, self.theme.text_secondary);
@@ -173,14 +179,19 @@ impl Balloon {
         let title = self.line(
             "Ask about…",
             &style(TITLE_SIZE, TITLE_LINE_H, 700, primary, false),
+            inner,
         );
         fixed.push((title, Point::new(PAD, PAD)));
         let mut clear = None;
         if !items.is_empty() {
             // Clear, at the right of the title, and the count before it.
-            let button = self.line("Clear", &style(13.0, TITLE_LINE_H, 500, secondary, false));
+            let button = self.line(
+                "Clear",
+                &style(13.0, TITLE_LINE_H, 500, secondary, false),
+                inner,
+            );
             let button_w = button.max_intrinsic_width().ceil();
-            let button_x = PAD + INNER - button_w;
+            let button_x = PAD + inner - button_w;
             clear = Some(
                 Rect::from_xywh(button_x, PAD, button_w, TITLE_LINE_H)
                     .with_outset((CLEAR_SLOP, CLEAR_SLOP)),
@@ -193,7 +204,7 @@ impl Balloon {
             } else {
                 format!("{included} of {}", items.len())
             };
-            let count = self.line(&count, &style(11.5, 18.0, 400, secondary, true));
+            let count = self.line(&count, &style(11.5, 18.0, 400, secondary, true), inner);
             let x = button_x - COUNT_GAP - count.max_intrinsic_width().ceil();
             fixed.push((count, Point::new(x, PAD + 1.0)));
         }
@@ -207,7 +218,7 @@ impl Balloon {
             .collect();
         let list = (!items.is_empty()).then(|| {
             let options = Options {
-                width: INNER,
+                width: inner,
                 newest_first: true,
                 removable: true,
             };
@@ -221,6 +232,7 @@ impl Balloon {
             let hint = self.line(
                 "Select something, then add it",
                 &style(11.0, 16.0, 400, secondary, false),
+                inner,
             );
             fixed.push((hint, Point::new(PAD, head_h + HOVER_PAD)));
         }
@@ -236,13 +248,17 @@ impl Balloon {
             .min(max_height - head_h - foot_h)
             .max(MIN_VIEW_H)
             .floor();
-        let viewport = Rect::from_xywh(0.0, head_h, WIDTH, view_h);
+        let viewport = Rect::from_xywh(0.0, head_h, width, view_h);
         if let Some(keys) = hint {
             let y = viewport.bottom + GAP - HOVER_PAD;
-            let label = self.line("Send to Ask", &style(11.0, 16.0, 400, secondary, false));
+            let label = self.line(
+                "Send to Ask",
+                &style(11.0, 16.0, 400, secondary, false),
+                inner,
+            );
             fixed.push((label, Point::new(PAD, y + 1.0)));
-            let keys = self.line(&keys, &style(11.5, 18.0, 500, primary, true));
-            let x = PAD + INNER - keys.max_intrinsic_width().ceil();
+            let keys = self.line(&keys, &style(11.5, 18.0, 500, primary, true), inner);
+            let x = PAD + inner - keys.max_intrinsic_width().ceil();
             fixed.push((keys, Point::new(x, y)));
         }
 
@@ -252,8 +268,9 @@ impl Balloon {
             viewport,
             clear,
             body_length,
-            width: WIDTH,
+            width,
             height: (viewport.bottom + foot_h).ceil(),
+            natural_height: (head_h + body_length.max(MIN_VIEW_H).floor() + foot_h).ceil(),
         }
     }
 
@@ -338,30 +355,49 @@ mod tests {
     use super::*;
     use crate::request::Item;
 
+    /// The floating card's inner width.
+    const INNER_W: f32 = WIDTH - 2.0 * PAD;
+
     #[test]
     fn remove_buttons_and_items_can_be_hit() {
         let mut balloon = Balloon::default();
         let mut stash = Stash::default();
         stash.add(Item::Text("one".into()));
         stash.add(Item::Text("two".into()));
-        let layout = balloon.layout(&stash, None, 800.0);
+        let layout = balloon.layout(&stash, None, (WIDTH, 800.0));
         // The newest leads, with its remove button beside its first line.
         let top = layout.viewport.top + HOVER_PAD;
         assert_eq!(
-            layout.hit(PAD + INNER - 6.0, top + 11.0, 0.0),
+            layout.hit(PAD + INNER_W - 6.0, top + 11.0, 0.0),
             Some(Hit::Remove(1))
         );
         assert_eq!(layout.item_at(PAD + 20.0, top + 11.0, 0.0), Some(1));
         assert_eq!(layout.hit(1.0, 1.0, 0.0), None);
         // Clear sits at the right end of the title line.
         assert_eq!(
-            layout.hit(PAD + INNER - 4.0, PAD + TITLE_LINE_H / 2.0, 0.0),
+            layout.hit(PAD + INNER_W - 4.0, PAD + TITLE_LINE_H / 2.0, 0.0),
             Some(Hit::Clear)
         );
-        let empty = balloon.layout(&Stash::default(), None, 800.0);
+        let empty = balloon.layout(&Stash::default(), None, (WIDTH, 800.0));
         assert_eq!(
-            empty.hit(PAD + INNER - 4.0, PAD + TITLE_LINE_H / 2.0, 0.0),
+            empty.hit(PAD + INNER_W - 4.0, PAD + TITLE_LINE_H / 2.0, 0.0),
             None
+        );
+    }
+
+    #[test]
+    fn the_card_takes_the_width_it_is_given() {
+        let mut balloon = Balloon::default();
+        let mut stash = Stash::default();
+        stash.add(Item::Text("one".into()));
+        let wide = 460.0;
+        let layout = balloon.layout(&stash, None, (wide, 800.0));
+        assert_eq!(layout.width, wide);
+        assert_eq!(layout.viewport.width(), wide);
+        // Clear moves out to the right edge with it.
+        assert_eq!(
+            layout.hit(wide - PAD - 4.0, PAD + TITLE_LINE_H / 2.0, 0.0),
+            Some(Hit::Clear)
         );
     }
 
@@ -372,7 +408,7 @@ mod tests {
         for i in 0..30 {
             stash.add(Item::Text(format!("item {i}")));
         }
-        let layout = balloon.layout(&stash, None, 500.0);
+        let layout = balloon.layout(&stash, None, (WIDTH, 500.0));
         assert!(layout.height <= 500.0);
         assert!(layout.body_length > layout.viewport.height());
         // Scrolled to the end, the oldest item is under the pointer at the

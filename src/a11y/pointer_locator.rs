@@ -26,7 +26,7 @@ use std::time::{Duration, Instant};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tracing::trace;
 use zbus::zvariant::OwnedValue;
-use zbus::{fdo, interface, Connection, SignalContext};
+use zbus::{fdo, interface, object_server::SignalEmitter, Connection};
 
 use super::keyboard_monitor::OBJECT_PATH;
 
@@ -123,7 +123,7 @@ impl PointerLocator {
     /// The pointer moved. Deliberately empty — a listener that cares calls
     /// `QueryPointer`, so a stale signal cannot report a stale position.
     #[zbus(signal)]
-    async fn pointer_position_changed(context: &SignalContext<'_>) -> zbus::Result<()>;
+    async fn pointer_position_changed(context: &SignalEmitter<'_>) -> zbus::Result<()>;
 }
 
 /// Serves the interface alongside the keyboard monitor, on the same object, and
@@ -140,7 +140,7 @@ pub async fn register(
 
     let signal_connection = connection.clone();
     tokio::spawn(async move {
-        let context = match SignalContext::new(&signal_connection, OBJECT_PATH) {
+        let context = match SignalEmitter::new(&signal_connection, OBJECT_PATH) {
             Ok(context) => context,
             Err(err) => {
                 tracing::warn!("a11y: no signal context for the pointer locator: {err}");

@@ -29,6 +29,9 @@ pub struct MenuBarStyle {
     // Typography
     pub font_size: f32,
     pub font_weight: skia_safe::font_style::Weight,
+    /// The first item's weight, when it differs from the rest: a menu bar
+    /// that leads with the application's name sets it in bold.
+    pub first_item_font_weight: Option<skia_safe::font_style::Weight>,
 
     // Borders/Shapes
     pub item_corner_radius: f32,
@@ -59,6 +62,7 @@ impl Default for MenuBarStyle {
             // Typography
             font_size: 13.0,
             font_weight: skia_safe::font_style::Weight::SEMI_BOLD,
+            first_item_font_weight: None,
 
             // Borders/Shapes
             item_corner_radius: 4.0,
@@ -106,7 +110,8 @@ impl MenuBarStyle {
             if i > 0 {
                 width += self.item_spacing;
             }
-            let content_w = self.item_content_width(item, font);
+            let first = (i == 0).then(|| self.first_item_font()).flatten();
+            let content_w = self.item_content_width(item, first.as_ref().unwrap_or(font));
             width += self.item_width(content_w);
         }
 
@@ -115,10 +120,25 @@ impl MenuBarStyle {
 
     /// Get the font style
     pub fn font_style(&self) -> skia_safe::FontStyle {
+        Self::style_with_weight(self.font_weight)
+    }
+
+    fn style_with_weight(weight: skia_safe::font_style::Weight) -> skia_safe::FontStyle {
         skia_safe::FontStyle::new(
-            self.font_weight,
+            weight,
             skia_safe::font_style::Width::NORMAL,
             skia_safe::font_style::Slant::Upright,
         )
+    }
+
+    /// The font the first item is set in, when `first_item_font_weight`
+    /// gives it a weight of its own.
+    pub fn first_item_font(&self) -> Option<skia_safe::Font> {
+        let weight = self.first_item_font_weight?;
+        Some(crate::typography::get_font_with_fallback(
+            "Inter",
+            Self::style_with_weight(weight),
+            self.font_size,
+        ))
     }
 }

@@ -86,8 +86,16 @@ A client-decorated toplevel. Layout:
 - **Titlebar** — the current directory's name.
 - **Toolbar** — back/forward, parent, the view switcher (list / icon), a sort
   control, a new-folder action, an action menu, and a search field.
+  Its glyphs (the back/forward arrows, the view switcher's segments, New
+  Folder) are Otto's own from the Solar set, never the theme's; the browser
+  and the file picker draw the same toolbar. The view switcher is the kit's
+  segmented control: the current view raised on a light pill with a soft
+  shadow under it.
 - **Path bar** — a breadcrumb strip along the **bottom** edge, spelling out
   where the selection is. See [The path bar](#the-path-bar).
+  Its icons, like the sidebar's, are Otto's own glyphs (the Solar set) in
+  the text tone, falling back to the theme's for a place the set lacks.
+  Entries in the listing keep the theme's type icons, folders included.
 - **Sidebar** — places: Recent, home, the XDG user directories that exist,
   and whatever the user has added (see [The sidebar's
   places](#the-sidebars-places)). A place takes a drop, which files into that
@@ -298,6 +306,19 @@ ordinary resting state once a preview column is up, and the divider's grab band
 is the narrower of the two. A press resolves the window border first, so the
 cursor must too — otherwise it promises a column resize while the click
 underneath it resizes the window.
+
+### Column widths
+
+**Each column keeps its own width.** Dragging the divider on a column's right
+edge resizes that column alone: the divider stays under the pointer, and the
+columns to its right shift along without changing width. Double-clicking a
+divider fits only that column to its longest name. Either way the width is
+clamped to a fixed minimum and maximum.
+
+A column opens at the default width. The width belongs to the column, so it
+goes when the column closes: a folder opened later at the same depth starts at
+the default again rather than inheriting a closed column's width. Widths are
+not persisted between windows.
 
 ### Column surfaces
 
@@ -597,11 +618,44 @@ which the compositor pushes to LocalSearch and Settings ▸ Search edits (see
 [settings-app.md](./settings-app.md#search)). Files itself never writes the
 indexer's settings.
 
+### One process, many windows
+
+Every browser and Trash window in a session lives in one `otto-files`
+process. The first start owns the session-bus name `org.otto.FilesWindows1`;
+a later start calls it and exits:
+
+- `Open(args: aay, cwd: ay, token: s)` — a browser window for `args`, a
+  command line as `otto-files` takes it, resolved against `cwd`, the folder
+  it was given in.
+- `OpenTrash(empty: b, token: s)` — the Trash window, or, when one is open,
+  that window brought forward through xdg-activation. With `empty` its Empty
+  Trash question is put up.
+
+`token` is the launcher's `XDG_ACTIVATION_TOKEN`, empty when there is none.
+Ctrl+N and Ctrl+double-click open their window in the same process without
+going over the bus. Closing a window (its close control, or the compositor's
+close) closes only that window, with its Get Info and Open With panels and
+Peek; the last one closed ends the process, and the name with it. Without a
+session bus every start stands alone.
+
+The desk and the file picker stay processes of their own: the desk is a layer
+surface that lasts the session, and the picker is a dialog the bus starts and
+stops. A new window asked for from either starts `otto-files`, which hands it
+to the running Files.
+
+What the windows share: the directory watcher (each pane is told of a change
+to its folder on its own, so two windows on one folder both refresh), the
+caches, the undo history and `org.otto.Files1`, which answers from the window
+holding the keyboard. The view layer's per-window settings (the shell, the
+decoration, the filter strip, the icon size) are put back for each window
+before it is measured, drawn or given input.
+
 ### Starting on a file or a search
 
 The command line can open a window already showing something, which is how
 the agents and scripts hand an answer to the person rather than printing
-paths. Every window is its own process, so each of these starts a new one.
+paths. Each of these opens a new window in the Files already running, when
+there is one (see *One process, many windows* above).
 
 | Command | Opens |
 |---|---|
@@ -674,8 +728,12 @@ What it adds:
   its sidecar records and the sidecar is dropped. This is the same operation,
   and the same code, as undoing a delete with Ctrl+Z — the two cannot drift.
   A missing parent directory is recreated; a name that something else has
-  taken since is refused, with the item left in the trash rather than
-  overwriting what is there now.
+  taken since — a dangling symlink included — is refused, with the item left
+  in the trash rather than overwriting what is there now. **A topdir can's
+  sidecar may only send an item back onto its own filesystem**: a relative
+  `Path=` of plain names. An absolute path or one with `..` is shown as no
+  origin, and Put Back refuses it with a message rather than making
+  directories wherever the stick's author chose.
 - **Empty Trash**, in the header, on everything. Asked about first, with the
   count in the question. It wears the accent, not a warning colour: emptying
   is what the window is for, and the warning belongs on the question that
@@ -716,8 +774,7 @@ than the icon alone, so it reads as *that file* opening: in the grid the caption
 pill goes with it, in the row views the highlight band does.
 
 - A directory is navigated into, in this window. **Ctrl+double-click opens it
-  in a new window instead** — a second `otto-files` process pointed at that
-  directory, since the app shell is one toplevel per process. The Ctrl+click
+  in a new window instead**, in this same process. The Ctrl+click
   that starts the pair still toggles the row into the selection the way a
   single Ctrl+click does; the second click opens rather than toggling back out.
   In the picker, which answers one request in one window, Ctrl+click only ever
@@ -992,7 +1049,17 @@ progress, and can cancel it.
 
 - **Rename** — inline in the view. A name containing `/`, or empty, or `.`
   or `..`, is rejected while typing. A name that collides with an existing
-  entry offers to replace it or to keep editing.
+  entry is refused — the status line says it is already there — and nothing
+  is replaced: the rename asks the kernel for `RENAME_NOREPLACE`, falling back
+  to a check before a plain rename where the filesystem lacks it.
+
+  That is the one move every operation that puts a file under a name goes
+  through (`otto_kit::fs::rename_no_replace`): the inline rename, the pattern
+  rename, a paste that moves, an undo putting a file back, and the Trash
+  choosing a name in its can. A name taken between the check and the move is
+  an error — or, for the Trash, the next free name — never a file replaced.
+  Only a paste the user explicitly told to **Replace** may land on a taken
+  name.
 - **New folder** — creates `untitled folder`, disambiguating with a numeric
   suffix, and immediately enters inline rename on it, scrolling the view to it
   first: the sort can put the new folder anywhere, and a rename field off
@@ -1030,12 +1097,48 @@ progress, and can cancel it.
 - **Move to trash** — the freedesktop trash specification: the file is moved to
   `$XDG_DATA_HOME/Trash/files/`, with a `.trashinfo` recording its original
   path and the deletion time, both under a name disambiguated against what is
-  already there. **v1 trashes only files on the same filesystem as the home
-  trash.** Trashing on another mount requires a `.Trash-$uid` directory at that
-  mount's root, with its own rules about creation and stickiness; until that
-  exists, the browser says plainly that the file is on another volume and
-  offers permanent deletion instead. It never silently copies a file across
-  filesystems in the name of trashing it.
+  already there. The `.trashinfo` is created first, with `O_EXCL`, so two
+  trashes of one name at once each get their own. **A file on another
+  filesystem goes to that filesystem's own can**, `$topdir/.Trash/$uid` when an
+  administrator made a sticky `$topdir/.Trash`, `$topdir/.Trash-$uid`
+  otherwise, with the path recorded relative to `$topdir` — a rename, not a
+  copy. Only when neither can could be made does it fall back to the home
+  trash, which is a copy across filesystems. A trashed folder gets a line in
+  the can's `directorysizes`. The topdir is the mount point above the file in
+  `/proc/self/mountinfo` — the same table the cans are listed from — so a
+  btrfs subvolume that is not mounted anywhere is not mistaken for one.
+- **Topdir cans are checked before they are used.** A can on a stick, or on
+  `/tmp`, is on a filesystem somebody else may have written, and a
+  `.Trash-$uid/files` planted as a symlink would point Empty Trash at someone's
+  home. So a topdir can is trashed into, listed, counted, emptied or restored
+  from only when `.Trash-$uid` (or `.Trash/$uid`, under a sticky, real
+  `.Trash` owned by root or the user) is a real directory owned by the user
+  and not writable by group or others, and `files/`, `info/` and
+  `directorysizes`, where present, are real and the user's too. One that
+  fails is left out of the Trash and, when trashing, the next can — finally
+  the home trash — is used instead. Filesystems that may hang a stat — NFS,
+  CIFS, sshfs and other FUSE daemons, 9p, Ceph and the like — are not searched
+  for cans at all.
+
+  **What goes by descriptor** (directories opened without following
+  symlinks, from the check on): trashing (the sidecar created `O_EXCL` in the
+  checked `info/`, the item renamed into the checked `files/`); Delete
+  permanently and Empty Trash (a walk down from the checked `files/` that
+  never follows a symlink, never enters another device, and stops 512 levels
+  down); Put Back from a topdir can (each folder from the topdir down to the
+  origin opened, or made, without following a symlink, and the item renamed —
+  never copied — with nothing replaced); reading sidecars and
+  `directorysizes` (`O_NOFOLLOW | O_NONBLOCK`, regular files only, capped at
+  64 KiB and 4 MiB); rewriting `directorysizes` (a temporary created
+  `O_EXCL | O_NOFOLLOW`, mode `0600`, renamed in place). **What goes by
+  path**, after the check and read-only: listing a can's `files/`, watching it
+  with inotify, and sizing a freshly trashed folder (`lstat` only). The home
+  trash is the user's own and is trashed into and put back from by path.
+
+  Known limits: a topdir can's absolute `Path=` is refused rather than
+  honoured when it points onto the same filesystem; a FAT stick mounted with a
+  loose `umask` makes every can group- or other-writable, and so unused (its
+  items go to the home trash).
 - **Delete permanently** — always confirmed, always says it cannot be undone,
   and is not undoable. Reachable only from the Trash window, where Delete
   means this because there is nowhere further to send a file.
@@ -1335,6 +1438,9 @@ Pressing space with a selection previews it. Peek
 ([peek.md](./peek.md)) is a **library the browser embeds**, not a
 service it calls: the panel is drawn on an overlay surface the browser owns,
 above every window, and the decoding happens in a sandboxed worker process.
+The session behind the panel (zoom, pan, pages, selection, playback) lives in
+`otto-peek` with the decoder, and Preview ([preview-app.md](./preview-app.md))
+embeds the same one; the browser owns the panel's chrome, keys and place.
 
 **This replaces an earlier `org.otto.Peek1` D-Bus contract**, which is
 deleted. It is recorded here so nobody reconstructs it: a separate process
@@ -1443,12 +1549,12 @@ call for.
 
 ### Wire contract: `org.otto.Files1`
 
-Every browser window serves this interface on the session bus, at object path
-`/org/otto/Files1`. Each window is its own process and queues for the bus name
-`org.otto.Files1` without replacing the owner, so the name's queued owners are
-the list of open Files windows, and a caller asks each by its unique name.
-Picker windows do not serve it: their selection belongs to the application
-they serve.
+The process hosting the browser windows, and the desk, serve this interface on
+the session bus, at object path `/org/otto/Files1`. Each queues for the bus
+name `org.otto.Files1` without replacing the owner, so the name's queued owners
+are the list of Files processes, and a caller asks each by its unique name; a
+process answers from its window holding the keyboard. Picker windows do not
+serve it: their selection belongs to the application they serve.
 
 ```
 FocusedSelection() → as
@@ -1705,11 +1811,12 @@ the same action, and Right arrow (or a double-click) opens.
 malware delivery mechanism, and the convenience it buys is a keystroke in a
 terminal.
 
-**Trash is home-filesystem-only in v1, and says so.** The alternative that looks
-like it works — copy the file to the home trash — moves gigabytes across a bus
-to "delete" something and breaks restore. The alternative that is correct
-requires `.Trash-$uid` handling with its own security rules. Refusing clearly is
-better than either, and it is a small, self-contained thing to add later.
+**Each filesystem's trash is its own.** Copying a file to the home trash moves
+gigabytes across a bus to "delete" something. The can at the top of the file's
+own filesystem makes trashing a rename there too; the Trash window, Empty Trash
+and the dock's icon list the home can together with the cans of every mounted
+filesystem, so where an item went is not something the user has to know. A can
+on a drive that is not plugged in is not listed until it is.
 
 **Drag and drop moves by default and copies when asked.** A drag between two
 directories on one filesystem is a move — what every other file manager does —

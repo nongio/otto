@@ -16,10 +16,13 @@ use std::{
 use crate::{
     config::Config,
     interactive_view::ViewInteractions,
-    utils::natural_layout::{natural_layout, LayoutRect},
+    utils::{
+        natural_layout::{natural_layout, LayoutRect},
+        FONT_CACHE,
+    },
 };
 
-use super::{utils::FONT_CACHE, WORKSPACE_SELECTOR_PREVIEW_WIDTH};
+use super::WORKSPACE_SELECTOR_PREVIEW_WIDTH;
 
 // Logical (unscaled) values - will be multiplied by screen scale when used
 const WINDOW_SELECTOR_DRAG_THRESHOLD_LOGICAL: f32 = 1.5;
@@ -174,9 +177,6 @@ impl WindowSelectorView {
             position: taffy::Position::Absolute,
             ..Default::default()
         });
-        // let mut overlay_color = theme_colors().accents_green;
-        // overlay_color.alpha = 0.5;
-        // window_selector_view.set_background_color(overlay_color, None);
         window_selector_view.set_size(layers::types::Size::percent(1.0, 1.0), None);
         window_selector_view.set_pointer_events(false);
         window_selector_view.set_opacity(0.0_f32, None);

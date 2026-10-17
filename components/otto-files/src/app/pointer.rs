@@ -2,7 +2,7 @@
 
 use super::*;
 
-impl FilesApp {
+impl FilesWindow {
     /// The palette's card handles its own pointer, for the same reason Quick
     /// View's does: dragged clear of the window, it sits over pixels the
     /// toplevel is never told about.
@@ -16,10 +16,15 @@ impl FilesApp {
     /// the press. That is what lets the card keep up with a fast drag instead
     /// of being dropped the moment the pointer outruns it.
     pub(super) fn install_palette_pointer(&self) {
-        let state = Arc::clone(&self.state);
+        // Weak: the callback is never taken off again, and must not keep a
+        // closed window's browser alive.
+        let state = Arc::downgrade(&self.state);
         let target = Arc::clone(&self.palette_target);
 
         AppContext::register_pointer_callback(move |events| {
+            let Some(state) = state.upgrade() else {
+                return;
+            };
             for event in events {
                 use smithay_client_toolkit::seat::pointer::PointerEventKind;
                 use wayland_client::Proxy;
@@ -33,7 +38,7 @@ impl FilesApp {
                 // into the window points everything else measures in.
                 let x = event.position.0 as f32 + rect.left;
                 let y = event.position.1 as f32 + rect.top;
-                let mut browser = state.lock().unwrap();
+                let mut browser = state.browse();
                 if browser.palette.is_none() {
                     continue;
                 }
@@ -79,10 +84,15 @@ impl FilesApp {
     /// and dismisses the preview. The overlay covers the display, so that
     /// press never reaches whatever is underneath.
     pub(super) fn install_peek_pointer(&self) {
-        let state = Arc::clone(&self.state);
+        // Weak: the callback is never taken off again, and must not keep a
+        // closed window's browser alive.
+        let state = Arc::downgrade(&self.state);
         let target = Arc::clone(&self.peek_target);
 
         AppContext::register_pointer_callback(move |events| {
+            let Some(state) = state.upgrade() else {
+                return;
+            };
             for event in events {
                 use wayland_client::Proxy;
                 let Some(pane_surfaces::PeekTarget {
@@ -94,7 +104,7 @@ impl FilesApp {
                     continue;
                 };
                 if event.surface.id() == overlay {
-                    let mut browser = state.lock().unwrap();
+                    let mut browser = state.browse();
                     match event.kind {
                         PointerEventKind::Press { .. } => {
                             browser.close_peek();
@@ -126,7 +136,7 @@ impl FilesApp {
                     .with_outset((4.0, 4.0))
                     .contains(point);
 
-                let mut browser = state.lock().unwrap();
+                let mut browser = state.browse();
                 match event.kind {
                     PointerEventKind::Press { .. } if over => {
                         browser.close_peek();
@@ -193,12 +203,17 @@ impl FilesApp {
     }
 
     /// The Get Info window's pointer. Registered once, for whichever panel is
-    /// open — see [`FilesApp::info_window`].
+    /// open — see [`FilesWindow::info_window`].
     pub(super) fn install_info_window_pointer(&self) {
-        let state = Arc::clone(&self.state);
+        // Weak: the callback is never taken off again, and must not keep a
+        // closed window's browser alive.
+        let state = Arc::downgrade(&self.state);
         let info_window = Rc::clone(&self.info_window);
 
         AppContext::register_pointer_callback(move |events| {
+            let Some(state) = state.upgrade() else {
+                return;
+            };
             use wayland_client::Proxy;
             let window = info_window.borrow().clone();
             let Some(window) = window else { return };
@@ -215,7 +230,7 @@ impl FilesApp {
                 }
                 let point = (event.position.0 as f32, event.position.1 as f32);
                 let drag = {
-                    let mut browser = state.lock().unwrap();
+                    let mut browser = state.browse();
                     info_pointer(&mut browser, &event.kind, sheet, point)
                 };
                 if drag {
@@ -232,10 +247,15 @@ impl FilesApp {
 
     /// The Open With chooser's pointer. Registered once, like Get Info's.
     pub(super) fn install_open_with_window_pointer(&self) {
-        let state = Arc::clone(&self.state);
+        // Weak: the callback is never taken off again, and must not keep a
+        // closed window's browser alive.
+        let state = Arc::downgrade(&self.state);
         let open_with_window = Rc::clone(&self.open_with_window);
 
         AppContext::register_pointer_callback(move |events| {
+            let Some(state) = state.upgrade() else {
+                return;
+            };
             use wayland_client::Proxy;
             let window = open_with_window.borrow().clone();
             let Some(window) = window else { return };
@@ -247,7 +267,7 @@ impl FilesApp {
                     continue;
                 }
                 let (x, y) = (event.position.0 as f32, event.position.1 as f32);
-                let drag = state.lock().unwrap().open_with_pointer(&event.kind, x, y);
+                let drag = state.browse().open_with_pointer(&event.kind, x, y);
                 if drag {
                     if let PointerEventKind::Press { serial, .. } = event.kind {
                         if let Some(seat) = AppContext::seat_state().seats().next() {
@@ -269,17 +289,21 @@ impl FilesApp {
         use otto_kit::dnd::{self, DragEvent};
         use wayland_client::Proxy;
 
-        let state = Arc::clone(&self.state);
-        let window = window.clone();
+        // Weak, and the surface rather than the window: the callback is
+        // never taken off again, and must not keep a closed window alive.
+        let state = Arc::downgrade(&self.state);
+        let toplevel = window.wl_surface().map(|surface| surface.id());
         // Enter names the surface; motion and drop do not. A drag over some
-        // other surface of ours — Peek, the info sheet — is not a drop
-        // target, so what the enter decided has to be remembered.
+        // other surface of ours — Peek, the info sheet, another window — is
+        // not a drop target here, so what the enter decided has to be
+        // remembered.
         let on_toplevel = std::cell::Cell::new(false);
 
         dnd::register(move |event| {
-            let is_ours = |id: &wayland_client::backend::ObjectId| {
-                window.wl_surface().is_some_and(|s| s.id() == *id)
+            let Some(state) = state.upgrade() else {
+                return;
             };
+            let is_ours = |id: &wayland_client::backend::ObjectId| toplevel.as_ref() == Some(id);
 
             match event {
                 DragEvent::Enter { surface, x, y } => {
@@ -299,7 +323,7 @@ impl FilesApp {
                     if !on_toplevel.replace(false) {
                         return;
                     }
-                    let mut browser = state.lock().unwrap();
+                    let mut browser = state.browse();
                     browser.dirty |= browser.drop_target.take().is_some();
                     drop(browser);
                     AppContext::request_wakeup();
@@ -323,7 +347,7 @@ impl FilesApp {
                         dnd::receive_files().map(|(paths, _)| paths)
                     };
 
-                    let mut browser = state.lock().unwrap();
+                    let mut browser = state.browse();
                     // Resolved again at the drop's own position rather than
                     // trusting the last motion: the release may land somewhere
                     // no motion reported.
@@ -346,19 +370,21 @@ impl FilesApp {
         &self,
         window: &Window,
         context_menu: ContextMenu,
-        group_menu: Rc<otto_kit::components::dropdown::DropdownMenu>,
+        dropdowns: Rc<Dropdowns>,
     ) {
-        let state = Arc::clone(&self.state);
+        // Weak: otto-kit keeps the handler for the life of the process, and
+        // it must not keep a closed window's browser alive.
+        let state = Arc::downgrade(&self.state);
         let window_for_events = window.clone();
         let modifiers = Arc::clone(&self.modifiers);
 
         window.on_pointer_event(move |events| {
+            let Some(state) = state.upgrade() else {
+                return;
+            };
             for event in events {
                 let mods = *modifiers.lock().unwrap();
-                let after = state
-                    .lock()
-                    .unwrap()
-                    .on_pointer(event, mods, &window_for_events);
+                let after = state.browse().on_pointer(event, mods, &window_for_events);
                 match after {
                     After::Next => {}
                     After::Stop => return,
@@ -367,8 +393,22 @@ impl FilesApp {
                         show_context_menu(&window_for_events, &context_menu, &state, menu)
                     }
                     After::GroupMenu { rect, serial } => {
-                        show_group_menu(&window_for_events, &group_menu, &state, rect, serial)
+                        show_group_menu(&window_for_events, &dropdowns.group, &state, rect, serial)
                     }
+                    After::LocationMenu { rect, serial } => show_location_menu(
+                        &window_for_events,
+                        &dropdowns.location,
+                        &state,
+                        rect,
+                        serial,
+                    ),
+                    After::FilterMenu { rect, serial } => show_filter_menu(
+                        &window_for_events,
+                        &dropdowns.filter,
+                        &state,
+                        rect,
+                        serial,
+                    ),
                 }
             }
             // Nothing is presented from here. What the batch changed is on
@@ -381,7 +421,7 @@ impl FilesApp {
 
 /// Hand the travelling selection to the compositor, which owns the pointer
 /// from here: nothing in the window sees the rest of the gesture.
-fn start_drag(window: &Window, drag: DragStart) {
+pub(super) fn start_drag(window: &Window, drag: DragStart) {
     let DragStart {
         paths,
         items,
@@ -408,6 +448,38 @@ fn start_drag(window: &Window, drag: DragStart) {
     }
 }
 
+/// The window's pop-up buttons' menus: one each, so a choice always goes
+/// back to the button that opened its menu, and opening one takes down
+/// whichever other is up (see `DropdownMenu::open`).
+pub(super) struct Dropdowns {
+    /// The Photos view's grouping button.
+    pub(super) group: otto_kit::components::dropdown::DropdownMenu,
+    /// The picker's location capsule.
+    pub(super) location: otto_kit::components::dropdown::DropdownMenu,
+    /// The picker's file-type filter.
+    pub(super) filter: otto_kit::components::dropdown::DropdownMenu,
+}
+
+impl Default for Dropdowns {
+    fn default() -> Self {
+        use otto_kit::components::dropdown::DropdownMenu;
+        Self {
+            group: DropdownMenu::new().with_placement(view::GROUP_PLACEMENT),
+            location: DropdownMenu::new().with_placement(view::LOCATION_PLACEMENT),
+            filter: DropdownMenu::new().with_placement(view::FILTER_PLACEMENT),
+        }
+    }
+}
+
+impl Dropdowns {
+    /// The menu that is up, if one is.
+    pub(super) fn open(&self) -> Option<&otto_kit::components::dropdown::DropdownMenu> {
+        [&self.group, &self.location, &self.filter]
+            .into_iter()
+            .find(|menu| menu.is_open())
+    }
+}
+
 /// Open the Photos view's grouping menu under its button.
 fn show_group_menu(
     window: &Window,
@@ -427,14 +499,15 @@ fn show_group_menu(
         .map(|g| g.label().to_string())
         .collect();
     let selected = {
-        let browser = state.lock().unwrap();
+        let browser = state.browse();
         crate::photos::Grouping::ALL
             .iter()
             .position(|g| *g == browser.photos_group)
     };
-    let chosen = Arc::clone(state);
-    let dismissed = Arc::clone(state);
-    menu.open(
+    // Weak: the menu outlives the window, in a callback never taken off.
+    let chosen = Arc::downgrade(state);
+    let dismissed = Arc::downgrade(state);
+    let opened = menu.open(
         &parent_xdg,
         rect,
         serial,
@@ -442,24 +515,174 @@ fn show_group_menu(
         selected,
         move |index| {
             if let Some(group) = crate::photos::Grouping::ALL.get(index) {
-                chosen.lock().unwrap().set_photos_group(*group);
+                if let Some(chosen) = chosen.upgrade() {
+                    chosen.browse().set_photos_group(*group);
+                }
             }
             AppContext::request_wakeup();
         },
         move || {
-            let mut browser = dismissed.lock().unwrap();
+            let Some(dismissed) = dismissed.upgrade() else {
+                return;
+            };
+            let mut browser = dismissed.browse();
             browser.photos_group_open = false;
             browser.dirty = true;
             drop(browser);
             AppContext::request_wakeup();
         },
     );
+    if opened {
+        let mut browser = state.browse();
+        browser.photos_group_open = true;
+        browser.dirty = true;
+    }
+}
+
+/// Open the picker's location menu under its capsule: the directory being
+/// viewed, then each one above it.
+fn show_location_menu(
+    window: &Window,
+    menu: &otto_kit::components::dropdown::DropdownMenu,
+    state: &Arc<Mutex<Browser>>,
+    rect: Rect,
+    serial: u32,
+) {
+    let Some(parent_xdg) = window
+        .surface()
+        .map(|s| s.xdg_window().xdg_surface().clone())
+    else {
+        return;
+    };
+    let (options, icons): (
+        Vec<String>,
+        Vec<otto_kit::components::menu_item::MenuItemIcon>,
+    ) = {
+        let browser = state.browse();
+        let options = browser
+            .location_ancestors()
+            .iter()
+            .map(|path| super::picking::location_label(path))
+            .collect();
+        let icons = browser
+            .location_icons()
+            .into_iter()
+            .map(otto_kit::components::menu_item::MenuItemIcon::Themed)
+            .collect();
+        (options, icons)
+    };
+    // Weak: the menu outlives the window, in a callback never taken off.
+    let chosen = Arc::downgrade(state);
+    let dismissed = Arc::downgrade(state);
+    let opened = menu.open_with_icons(
+        &parent_xdg,
+        rect,
+        serial,
+        &options,
+        &icons,
+        Some(0),
+        move |index| {
+            if let Some(chosen) = chosen.upgrade() {
+                chosen.browse().location_choose(index);
+            }
+            AppContext::request_wakeup();
+        },
+        move || {
+            let Some(dismissed) = dismissed.upgrade() else {
+                return;
+            };
+            let mut browser = dismissed.browse();
+            browser.location_open = false;
+            browser.dirty = true;
+            drop(browser);
+            AppContext::request_wakeup();
+        },
+    );
+    if opened {
+        let mut browser = state.browse();
+        browser.location_open = true;
+        browser.dirty = true;
+    }
+}
+
+/// Open the picker's filter menu over its control, the current filter
+/// ticked.
+fn show_filter_menu(
+    window: &Window,
+    menu: &otto_kit::components::dropdown::DropdownMenu,
+    state: &Arc<Mutex<Browser>>,
+    rect: Rect,
+    serial: u32,
+) {
+    let Some(parent_xdg) = window
+        .surface()
+        .map(|s| s.xdg_window().xdg_surface().clone())
+    else {
+        return;
+    };
+    let Some((options, current)) = state
+        .browse()
+        .picker
+        .as_ref()
+        .map(|session| (session.filter_labels.clone(), session.current_filter))
+    else {
+        return;
+    };
+    // Weak: the menu outlives the window, in a callback never taken off.
+    let chosen = Arc::downgrade(state);
+    let dismissed = Arc::downgrade(state);
+    let opened = menu.open(
+        &parent_xdg,
+        rect,
+        serial,
+        &options,
+        Some(current),
+        move |index| {
+            if let Some(chosen) = chosen.upgrade() {
+                chosen.browse().set_filter(index);
+            }
+            AppContext::request_wakeup();
+        },
+        move || {
+            let Some(dismissed) = dismissed.upgrade() else {
+                return;
+            };
+            let mut browser = dismissed.browse();
+            if let Some(session) = browser.picker.as_mut() {
+                session.filter_open = false;
+            }
+            browser.dirty = true;
+            drop(browser);
+            AppContext::request_wakeup();
+        },
+    );
+    if opened {
+        let mut browser = state.browse();
+        if let Some(session) = browser.picker.as_mut() {
+            session.filter_open = true;
+        }
+        browser.dirty = true;
+    }
 }
 
 /// Open the context menu at the press, acting on the browser when an item is
 /// picked.
 fn show_context_menu(
     window: &Window,
+    context_menu: &ContextMenu,
+    state: &Arc<Mutex<Browser>>,
+    menu: MenuAt,
+) {
+    show_context_menu_over(window, None, context_menu, state, menu);
+}
+
+/// [`show_context_menu`], hanging off `layer` rather than the window when
+/// one is given: the desk's overflow panel opens its items' menus off its
+/// own overlay, which is above the windows, at the same coordinates as the
+/// desk's.
+pub(super) fn show_context_menu_over(
+    window: &Window,
+    layer: Option<super::overflow_surface::LayerSurfaceProxy>,
     context_menu: &ContextMenu,
     state: &Arc<Mutex<Browser>>,
     menu: MenuAt,
@@ -474,8 +697,9 @@ fn show_context_menu(
     // surface through the layer shell's own popup request.
     let parent_xdg = window
         .surface()
-        .map(|s| s.xdg_window().xdg_surface().clone());
-    let parent_layer = window.layer_surface().map(|s| s.layer_surface());
+        .map(|s| s.xdg_window().xdg_surface().clone())
+        .filter(|_| layer.is_none());
+    let parent_layer = layer.or_else(|| window.layer_surface().map(|s| s.layer_surface()));
     if parent_xdg.is_none() && parent_layer.is_none() {
         return;
     }
@@ -501,9 +725,13 @@ fn show_context_menu(
             | xdg_positioner::ConstraintAdjustment::FlipY,
     );
 
-    let click_state = Arc::clone(state);
+    // Weak, for the reason the menus above are.
+    let click_state = Arc::downgrade(state);
     context_menu.clone().on_item_click(move |action_id| {
-        let mut browser = click_state.lock().unwrap();
+        let Some(click_state) = click_state.upgrade() else {
+            return;
+        };
+        let mut browser = click_state.browse();
         match action_id {
             "open" => browser.open_selection(),
             "open_with" => browser.open_with_selection(),

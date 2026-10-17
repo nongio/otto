@@ -7,6 +7,8 @@
 
 use std::path::{Path, PathBuf};
 
+use otto_kit::components::avatar;
+
 /// Where desktops keep avatars, in the order they are preferred. The
 /// AccountsService copy is the one GNOME/KDE write, so it is the most likely
 /// to exist and the most likely to be current.
@@ -85,25 +87,20 @@ impl User {
         })
     }
 
+    /// The name the avatar is drawn for: the display name, or the login name
+    /// when there is none. Settings › Users does the same, so both screens
+    /// pick the same initials and ground for a person.
+    pub fn avatar_name(&self) -> &str {
+        if self.display_name.trim().is_empty() {
+            &self.name
+        } else {
+            &self.display_name
+        }
+    }
+
     /// Up to two initials, for when there is no avatar to draw.
     pub fn initials(&self) -> String {
-        let mut initials: String = self
-            .display_name
-            .split_whitespace()
-            .filter_map(|word| word.chars().next())
-            .take(2)
-            .flat_map(|c| c.to_uppercase())
-            .collect();
-
-        if initials.is_empty() {
-            initials = self
-                .name
-                .chars()
-                .next()
-                .map(|c| c.to_uppercase().to_string())
-                .unwrap_or_default();
-        }
-        initials
+        avatar::initials(self.avatar_name())
     }
 }
 
@@ -222,6 +219,17 @@ mod tests {
             avatar: None,
         };
         assert_eq!(accented.initials(), "ÖÞ");
+    }
+
+    /// The lock screen and Settings › Users must agree: first and last word.
+    #[test]
+    fn initials_match_settings_for_long_names() {
+        let user = User {
+            name: "ana".into(),
+            display_name: "Ana María López".into(),
+            avatar: None,
+        };
+        assert_eq!(user.initials(), "AL");
     }
 
     #[test]

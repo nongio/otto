@@ -61,7 +61,8 @@ Checked against LocalSearch 3.11 on a home of 130,000 files before building:
   does not turn GPS coordinates into places. Left out of the language for now.
 - **Core in its own crate**, not `otto-kit`: otto-agentsd does not link the
   toolkit (Skia, Wayland), and Phase 4 needs the core there.
-  `otto_kit::matching` re-exports `otto_search::matching`.
+  Name matching later moved to `otto-foundations` (#326), which otto-kit
+  re-exports as `otto_kit::matching`.
 - **Words are independent.** The plan's "name contains both words" disagreed
   with `matching::score`, which reads a space as "in order". Each word is now
   scored on its own.

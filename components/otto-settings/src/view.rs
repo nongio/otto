@@ -2,6 +2,7 @@
 
 use otto_kit::components::color_picker::{self, WellInteraction};
 use otto_kit::components::dropdown::{self, DropdownInteraction};
+use otto_kit::components::selection_list::{self, SelectionListHit, SelectionListLayout};
 use otto_kit::components::text_input::TextInput;
 use otto_kit::components::titlebar::{
     DecorationVariant, Titlebar, TitlebarGroup, WindowControls, WindowControlsState,
@@ -98,9 +99,23 @@ const ARRANGEMENT_CANVAS_H: f32 = 168.0;
 /// constant, alongside that function, so [`Settings::pane_content_height`]
 /// cannot drift from what it actually draws.
 const ARRANGEMENT_HEIGHT: f32 = ARRANGEMENT_CANVAS_H + 30.0;
+/// The About pane's mark: the side of its rounded square.
+const ABOUT_MARK: f32 = 96.0;
+/// Height of the About pane's opening band: the mark, the name under it and
+/// the version under that, with room above and below.
+const ABOUT_HERO_HEIGHT: f32 = 24.0 + ABOUT_MARK + 20.0 + 36.0 + 22.0 + 30.0;
 /// One line of a pane's opening paragraph, and the space between the
 /// paragraph and the first group below it.
 const INTRO_LINE_H: f32 = 19.0;
+/// The users list's width beside the account detail.
+const USERS_W: f32 = 210.0;
+const USERS_GAP: f32 = 16.0;
+/// Below this much room the users list goes above the detail instead of
+/// beside it, so neither is squeezed.
+const USERS_SIDE_MIN: f32 = 560.0;
+/// The account header: the picture, the name and the Choose… button.
+const ACCOUNT_HEADER_H: f32 = 100.0;
+const ACCOUNT_AVATAR: f32 = 68.0;
 const INTRO_GAP: f32 = 14.0;
 /// A file row's preview: how tall the thumbnail box is, and the space above
 /// and below it. The width follows the image's own aspect, capped at
@@ -186,7 +201,8 @@ pub fn titlebar_material(dark: bool) -> Color {
 /// reader is told all go through this, so none of them can drift away from the
 /// painted row.
 pub fn sidebar_item_rect(index: usize) -> Rect {
-    let first_item_y = titlebar_h() + 10.0;
+    // Under the search field, which heads the sidebar.
+    let first_item_y = crate::sidebar_search::field_rect().bottom + 10.0;
     const ITEM_H: f32 = 30.0;
     const ITEM_STEP: f32 = 32.0;
     Rect::from_xywh(
@@ -203,6 +219,16 @@ pub fn sidebar_item_rect(index: usize) -> Rect {
 /// arrows move within it, which is what the list role tells a screen reader to
 /// expect and what every other toolkit does.
 pub const SIDEBAR_FOCUS: FocusId = FocusId::from_raw(0x5EED_5EED);
+
+/// The search field over the sidebar: the first stop Tab makes, ahead of the
+/// sidebar's list. See [`crate::sidebar_search`].
+pub const SEARCH_FOCUS: FocusId = FocusId::from_raw(0x5EED_F1ED);
+
+/// One of the search list's results, for assistive technologies: the list is
+/// walked with the arrows from the field, so a result is no keyboard stop.
+pub fn search_result_focus_id(index: usize) -> FocusId {
+    FocusId::new(format!("search-result-{index}"))
+}
 
 /// A sidebar row's identity for assistive technologies.
 ///
@@ -224,10 +250,11 @@ pub fn pane_focus_id(id: &str) -> FocusId {
 /// A pop-up row's field, in the same rect [`Settings::select_hit`] tests and
 /// the menu is anchored to, given the row's rect in window coordinates.
 ///
-/// `None` for any other kind of row. Shared with the hit test so a menu opened
-/// from the keyboard drops out of the same button a click would have opened.
+/// `None` for any other kind of row, or an inactive one. Shared with the hit
+/// test so a menu opened from the keyboard drops out of the same button a
+/// click would have opened.
 pub fn row_select_rect(row: &Row, rect: Rect) -> Option<Rect> {
-    if !matches!(row.control, Control::Select(_)) {
+    if !matches!(row.control, Control::Select(_)) || row.inactive {
         return None;
     }
     Some(select_rect(
@@ -638,6 +665,8 @@ pub enum Pressed {
     Add,
     /// A removable row's remove button ("−" or its word), by the row's handle.
     RemoveRow(&'static str),
+    /// The users list's add or remove button.
+    User(SelectionListHit),
 }
 
 /// What a press on the shortcuts group means.
@@ -666,6 +695,8 @@ pub struct PreviewHit {
     /// Whether it is over the button that clears the setting, rather than
     /// just over the picture that reveals it.
     pub remove: bool,
+    /// Where on the picture, as fractions across and down.
+    pub at: (f32, f32),
 }
 
 /// A click that landed on a control bound to a setting.
@@ -702,6 +733,13 @@ impl GroupLayout<'_> {
 struct PaneLayout<'a> {
     /// The displays arrangement canvas, on the pane that has one.
     arrangement: Option<Rect>,
+    /// The About pane's opening band: the Otto mark, name and version.
+    hero: Option<Rect>,
+    /// The users list, on the account pane.
+    users: Option<Rect>,
+    /// The account header over the detail: picture, name and Choose…. It
+    /// shares its card with the first group.
+    header: Option<Rect>,
     /// The opening paragraph, on the pane that has one: the wrapped lines and
     /// the band they occupy, laid out once so drawing and the content height
     /// cannot disagree about how tall it is.
@@ -727,12 +765,17 @@ fn preview_image(path: &str) -> Option<skia_safe::Image> {
             std::cell::RefCell::new(HashMap::new());
     }
 
+    // Keyed by when the file last changed as well as where it is: a new
+    // account picture is written over the old one at the same path, and a
+    // cache keyed by path alone would keep showing the old face.
+    let modified = std::fs::metadata(path).and_then(|m| m.modified()).ok();
+    let key = format!("{path}@{modified:?}");
     CACHE.with(|cache| {
-        if let Some(cached) = cache.borrow().get(path) {
+        if let Some(cached) = cache.borrow().get(&key) {
             return cached.clone();
         }
         let decoded = decode_preview(path);
-        cache.borrow_mut().insert(path.to_string(), decoded.clone());
+        cache.borrow_mut().insert(key, decoded.clone());
         decoded
     })
 }
@@ -776,7 +819,18 @@ fn decode_preview(path: &str) -> Option<skia_safe::Image> {
 /// Drawing and hit-testing both come through here: the box's width follows the
 /// image, so a rect measured any other way would put the remove button
 /// somewhere the picture is not.
-fn preview_box(path: &str, cx: f32, y: f32) -> Rect {
+fn preview_box(row: &Row, path: &str, cx: f32, y: f32) -> Rect {
+    // The wallpaper is shown on a picture of the screen it goes on, in that
+    // screen's shape, rather than in its own.
+    if row.id == Some(crate::wallpaper_preview::IMAGE_ID) {
+        let (w, h) = crate::wallpaper_preview::box_size(PREVIEW_W, PREVIEW_H);
+        return Rect::from_xywh(cx - w / 2.0, y, w, h);
+    }
+    image_preview_box(path, cx, y)
+}
+
+/// [`preview_box`] for an image shown in its own shape.
+fn image_preview_box(path: &str, cx: f32, y: f32) -> Rect {
     let (w, h) = match preview_image(path) {
         Some(image) => {
             let (iw, ih) = (image.width() as f32, image.height() as f32);
@@ -825,6 +879,24 @@ enum ThemeSwatch {
 /// measured control pushes past the nominal right edge. The comparison is
 /// inclusive so a row ending exactly on the band's top edge survives, and
 /// with it the separator hairline it draws on that edge.
+/// The grouped-list card fill.
+fn card_background(dark: bool) -> Color {
+    if dark {
+        Color::from_argb(0x14, 0xFF, 0xFF, 0xFF)
+    } else {
+        Color::WHITE
+    }
+}
+
+fn choose_label() -> &'static str {
+    otto_kit::t!("settings-choose")
+}
+
+/// Where the account header's Choose… button sits, for drawing and hitting.
+fn account_choose_rect(header: Rect) -> Rect {
+    widgets::button_rects(header.right - 14.0, header.center_y(), &[choose_label()])[0]
+}
+
 fn intersects_band(rect: Rect, band: Rect) -> bool {
     rect.bottom >= band.top && rect.top <= band.bottom
 }
@@ -869,6 +941,12 @@ pub struct Settings {
     /// combination — see `EditTarget` in `main.rs`. `None`, the usual case,
     /// draws every value as static text.
     pub editing: Option<(crate::EditTarget, TextInput)>,
+    /// The sidebar's search field as it stands, or `None` to draw it empty and
+    /// at rest — a still render with no window behind it.
+    pub search_field: Option<crate::sidebar_search::FieldView>,
+    /// The row a search just went to, and how strongly it is still lit, 1.0
+    /// fading to nothing. See [`Self::with_flash`].
+    pub flash: Option<(&'static str, f32)>,
 }
 
 impl Settings {
@@ -889,6 +967,8 @@ impl Settings {
             hovered_preview: None,
             controls: WindowControlsState::new(),
             editing: None,
+            search_field: None,
+            flash: None,
         }
     }
 
@@ -904,6 +984,20 @@ impl Settings {
     /// Carry an in-progress edit into this frame.
     pub fn with_editing(mut self, editing: Option<(crate::EditTarget, TextInput)>) -> Self {
         self.editing = editing;
+        self
+    }
+
+    /// Carry the search field's state into this frame.
+    pub fn with_search_field(mut self, field: Option<crate::sidebar_search::FieldView>) -> Self {
+        self.search_field = field;
+        self
+    }
+
+    /// Light the row whose handle is `row` in the accent, at `strength` from
+    /// 1.0 down to 0.0: where a search took the user, so the eye lands on the
+    /// row among the others in the pane.
+    pub fn with_flash(mut self, flash: Option<(&'static str, f32)>) -> Self {
+        self.flash = flash.filter(|(_, strength)| *strength > 0.0);
         self
     }
 
@@ -1130,6 +1224,37 @@ impl Settings {
             area
         });
 
+        let hero = (pane.icon == "about").then(|| {
+            let area = Rect::from_ltrb(x0, y, x1, y + ABOUT_HERO_HEIGHT);
+            y += ABOUT_HERO_HEIGHT;
+            area
+        });
+
+        // The account pane is a list and a detail: the users on the left —
+        // or above, in a narrow window — and the one selected beside them.
+        let account = pane.icon == "person";
+        let user_count = if account {
+            crate::panes::account::users().items.len()
+        } else {
+            0
+        };
+        let list_h = SelectionListLayout::height_for(user_count);
+        let beside = x1 - x0 >= USERS_SIDE_MIN;
+        let users_top = y;
+        let x0 = if account && beside {
+            x0 + USERS_W + USERS_GAP
+        } else {
+            if account {
+                y += list_h + GROUP_GAP;
+            }
+            x0
+        };
+        let header = account.then(|| {
+            let area = Rect::from_ltrb(x0, y, x1, y + ACCOUNT_HEADER_H);
+            y += ACCOUNT_HEADER_H;
+            area
+        });
+
         let intro = pane.intro.map(|text| {
             let lines = widgets::wrap(text, styles::SUBHEADLINE, x1 - x0);
             let height = lines.len() as f32 * INTRO_LINE_H + INTRO_GAP;
@@ -1139,14 +1264,18 @@ impl Settings {
         });
 
         let mut groups = Vec::with_capacity(pane.groups.len());
-        for group in &pane.groups {
+        for (index, group) in pane.groups.iter().enumerate() {
             let title_y = group.title.as_ref().map(|_| {
                 let top = y;
                 y += 24.0;
                 top
             });
 
-            let card_top = y;
+            // The header heads the first card when that card has no title.
+            let card_top = match header {
+                Some(header) if index == 0 && title_y.is_none() => header.top,
+                _ => y,
+            };
             let rows: Vec<_> = group
                 .rows
                 .iter()
@@ -1168,11 +1297,28 @@ impl Settings {
             });
         }
 
+        // Beside the detail the list runs down to the window's bottom edge,
+        // or the detail's, whichever is lower; above it, it is as tall as its
+        // users.
+        let users = account.then(|| {
+            if beside {
+                let floor = self.viewport().height() - CONTENT_PAD;
+                let bottom = (users_top + list_h).max(y - GROUP_GAP).max(floor);
+                Rect::from_ltrb(CONTENT_PAD, users_top, CONTENT_PAD + USERS_W, bottom)
+            } else {
+                Rect::from_ltrb(x0, users_top, x1, users_top + list_h)
+            }
+        });
+        let height = users.map_or(y, |users| y.max(users.bottom + GROUP_GAP));
+
         PaneLayout {
             arrangement,
+            hero,
+            users,
+            header,
             intro,
             groups,
-            height: y,
+            height,
         }
     }
 
@@ -1289,6 +1435,15 @@ impl Settings {
         let content_width = self.width - SIDEBAR_W;
         let local = Point::new(x - viewport.left, y - viewport.top + scroll_offset);
 
+        // The account header's Choose… is the picture's file button.
+        if let Some(header) = self.pane_layout(content_width).header {
+            if crate::panes::account::header().can_choose
+                && account_choose_rect(header).contains(local)
+            {
+                return Some(crate::panes::account::PICTURE_ID);
+            }
+        }
+
         let (row, rect) = self
             .row_rects(content_width)
             .into_iter()
@@ -1300,6 +1455,24 @@ impl Settings {
         widgets::choose_rect(rect.right - 14.0, Self::control_band(row, rect).center_y())
             .contains(local)
             .then_some(id)
+    }
+
+    /// What a point on the users list lands on: an account, or the add or
+    /// remove button while it can be used.
+    pub fn users_hit(&self, x: f32, y: f32, scroll_offset: f32) -> Option<SelectionListHit> {
+        let viewport = self.viewport();
+        if !viewport.contains(Point::new(x, y)) {
+            return None;
+        }
+        let area = self.pane_layout(self.width - SIDEBAR_W).users?;
+        let view = crate::panes::account::users();
+        let hit = SelectionListLayout::compute(view.items.len(), area)
+            .hit(x - viewport.left, y - viewport.top + scroll_offset)?;
+        match hit {
+            SelectionListHit::Add if !view.can_add => None,
+            SelectionListHit::Remove if !view.can_remove => None,
+            hit => Some(hit),
+        }
     }
 
     /// The file row whose preview a point falls on, and whether it falls on
@@ -1330,6 +1503,7 @@ impl Settings {
         }
 
         let box_rect = preview_box(
+            row,
             path,
             rect.center_x(),
             rect.top + Self::control_height(row) + PREVIEW_GAP,
@@ -1337,6 +1511,10 @@ impl Settings {
         box_rect.contains(local).then(|| PreviewHit {
             id,
             remove: preview_remove_rect(box_rect).contains(local),
+            at: (
+                (local.x - box_rect.left) / box_rect.width(),
+                (local.y - box_rect.top) / box_rect.height(),
+            ),
         })
     }
 
@@ -1398,6 +1576,9 @@ impl Settings {
         let Control::Select(current) = &row.control else {
             return None;
         };
+        if row.inactive {
+            return None;
+        }
 
         let field = select_rect(
             select_right(row, rect.right - 14.0),
@@ -1576,6 +1757,30 @@ impl Settings {
             })
     }
 
+    /// The tab row and segment a click lands on, measured the way
+    /// [`Self::render_row`] draws it.
+    pub fn tab_hit(&self, x: f32, y: f32, scroll_offset: f32) -> Option<(&'static str, usize)> {
+        let viewport = self.viewport();
+        if !viewport.contains(Point::new(x, y)) {
+            return None;
+        }
+        let content_width = self.width - SIDEBAR_W;
+        let local = Point::new(x - viewport.left, y - viewport.top + scroll_offset);
+        let (row, rect) = self
+            .row_rects(content_width)
+            .into_iter()
+            .find(|(_, rect)| rect.contains(local))?;
+        let Control::Tabs { labels, .. } = &row.control else {
+            return None;
+        };
+        let track = widgets::tabs_rect(
+            rect.left,
+            rect.right,
+            Self::control_band(row, rect).center_y(),
+        );
+        widgets::tab_at(track, labels.len(), local.x, local.y).map(|index| (row.handle(), index))
+    }
+
     /// The label of the switch a click lands on, for a row that is *not* bound
     /// to a setting.
     ///
@@ -1738,12 +1943,18 @@ impl Settings {
     }
 
     fn render_sidebar(&self, canvas: &Canvas) {
-        // No search field: it was drawn but never searched anything, and a
-        // control that does nothing is worse than no control. The list starts
-        // at the top of the sidebar instead — see `sidebar_item_rect`.
         // Which row the keyboard is on, if this window has it at all.
         let focused =
             AppContext::keyboard_focus().and_then(|surface| AppContext::focused_control(&surface));
+
+        let field = self
+            .search_field
+            .clone()
+            .unwrap_or_else(|| crate::sidebar_search::FieldView {
+                input: crate::sidebar_search::Search::new(self.dark).input,
+                focused: false,
+            });
+        crate::sidebar_search::paint_field(canvas, &field, &self.theme, self.dark);
 
         for (i, pane) in self.panes.iter().enumerate() {
             let item = sidebar_item_rect(i);
@@ -1811,6 +2022,18 @@ impl Settings {
             }
         }
 
+        if let Some(area) = layout.hero {
+            if intersects_band(area, content) {
+                self.render_about_hero(canvas, area);
+            }
+        }
+
+        if let Some(area) = layout.users {
+            if intersects_band(area, content) {
+                self.render_users(canvas, area);
+            }
+        }
+
         if let Some((lines, area)) = &layout.intro {
             if intersects_band(*area, content) {
                 for (i, line) in lines.iter().enumerate() {
@@ -1835,29 +2058,42 @@ impl Settings {
                 widgets::text_centered_y(
                     canvas,
                     title,
-                    x0 + 2.0,
+                    group.card.left + 2.0,
                     title_y + 9.0,
                     styles::SUBHEADLINE_EMPHASIZED,
                     self.theme.text_secondary,
                 );
             }
 
-            // Grouped-list card behind the rows.
+            // Grouped-list card behind the rows. A tab bar is the exception:
+            // it is chrome over the groups, not a setting in one, so it sits
+            // on the window itself.
             let rrect = RRect::new_rect_xy(group.card, 9.0, 9.0);
-            canvas.draw_rrect(
-                rrect,
-                &self.fill(if self.dark {
-                    Color::from_argb(0x14, 0xFF, 0xFF, 0xFF)
-                } else {
-                    Color::WHITE
-                }),
-            );
-            let mut border = Paint::default();
-            border.set_anti_alias(true);
-            border.set_style(skia_safe::PaintStyle::Stroke);
-            border.set_stroke_width(1.0);
-            border.set_color(self.theme.fill_tertiary);
-            canvas.draw_rrect(rrect, &border);
+            let tabs_only = !group.rows.is_empty()
+                && group
+                    .rows
+                    .iter()
+                    .all(|(row, _)| matches!(row.control, Control::Tabs { .. }));
+            if !tabs_only {
+                canvas.draw_rrect(
+                    rrect,
+                    &self.fill(if self.dark {
+                        Color::from_argb(0x14, 0xFF, 0xFF, 0xFF)
+                    } else {
+                        Color::WHITE
+                    }),
+                );
+                let mut border = Paint::default();
+                border.set_anti_alias(true);
+                border.set_style(skia_safe::PaintStyle::Stroke);
+                border.set_stroke_width(1.0);
+                border.set_color(self.theme.fill_tertiary);
+                canvas.draw_rrect(rrect, &border);
+            }
+
+            if let Some(header) = layout.header.filter(|h| h.top == group.card.top) {
+                self.render_account_header(canvas, header, !group.rows.is_empty());
+            }
 
             for (i, (row, rect)) in group.rows.iter().enumerate() {
                 if !intersects_band(*rect, content) {
@@ -1898,11 +2134,135 @@ impl Settings {
                         );
                     }
                 }
-                self.render_row(canvas, row, x0, x1, rect.top, rect.height());
+                if let Some((_, strength)) = self.flash.filter(|(h, _)| *h == row.handle()) {
+                    self.render_flash(canvas, *rect, strength);
+                }
+                self.render_row(canvas, row, rect.left, rect.right, rect.top, rect.height());
                 if i + 1 < group.rows.len() {
-                    widgets::separator(canvas, x0 + 14.0, x1, rect.bottom, &self.theme);
+                    widgets::separator(
+                        canvas,
+                        rect.left + 14.0,
+                        rect.right,
+                        rect.bottom,
+                        &self.theme,
+                    );
                 }
             }
+        }
+    }
+
+    /// The accent a search lands a row in: a wash over the row and a bar at
+    /// its leading edge, both fading out with `strength`.
+    fn render_flash(&self, canvas: &Canvas, rect: Rect, strength: f32) {
+        let accent = self.theme.accent;
+        let alpha = |max: f32| (max * strength.clamp(0.0, 1.0) * 255.0).round() as u8;
+        let wash = rect.with_inset((3.0, 1.0));
+        canvas.draw_rrect(
+            RRect::new_rect_xy(wash, 8.0, 8.0),
+            &self.fill(accent.with_a(alpha(0.22))),
+        );
+        let bar = Rect::from_xywh(wash.left + 4.0, wash.top + 8.0, 3.0, wash.height() - 16.0);
+        canvas.draw_rrect(
+            RRect::new_rect_xy(bar, 1.5, 1.5),
+            &self.fill(accent.with_a(alpha(1.0))),
+        );
+    }
+
+    /// The users list, in the same card material as the groups beside it.
+    fn render_users(&self, canvas: &Canvas, area: Rect) {
+        let view = crate::panes::account::users();
+        let items: Vec<_> = view
+            .items
+            .iter()
+            .map(|item| {
+                selection_list::SelectionListItem::new(item.name.clone())
+                    .with_subtitle(item.subtitle.clone())
+            })
+            .collect();
+        let layout = SelectionListLayout::compute(items.len(), area);
+        let state = selection_list::SelectionListState {
+            selected: Some(view.selected),
+            can_add: view.can_add,
+            can_remove: view.can_remove,
+            pressed: match self.pressed {
+                Some(Pressed::User(hit)) => Some(hit),
+                _ => None,
+            },
+        };
+        selection_list::draw(
+            canvas,
+            &layout,
+            &items,
+            &state,
+            &self.theme,
+            card_background(self.dark),
+            |canvas, index, square| {
+                let item = &view.items[index];
+                let picture = (!item.picture.is_empty())
+                    .then(|| preview_image(&item.picture))
+                    .flatten();
+                otto_kit::components::avatar::draw(canvas, square, picture.as_ref(), &item.name);
+            },
+        );
+    }
+
+    /// The account header: the selected account's picture and name, and the
+    /// button that changes the picture. `rows_below` draws the separator
+    /// between it and the first row of the card it heads.
+    fn render_account_header(&self, canvas: &Canvas, area: Rect, rows_below: bool) {
+        let header = crate::panes::account::header();
+        let avatar = Rect::from_xywh(
+            area.left + 16.0,
+            area.center_y() - ACCOUNT_AVATAR / 2.0,
+            ACCOUNT_AVATAR,
+            ACCOUNT_AVATAR,
+        );
+        let picture = (!header.picture.is_empty())
+            .then(|| preview_image(&header.picture))
+            .flatten();
+        otto_kit::components::avatar::draw(canvas, avatar, picture.as_ref(), &header.name);
+
+        let choose = account_choose_rect(area);
+        let text_x = avatar.right + 14.0;
+        let room = choose.left - 12.0 - text_x;
+        widgets::text_centered_y(
+            canvas,
+            &otto_kit::typography::ellipsize(&styles::HEADLINE.font(), &header.name, room),
+            text_x,
+            area.center_y() - 10.0,
+            styles::HEADLINE,
+            self.theme.text_primary,
+        );
+        widgets::text_centered_y(
+            canvas,
+            &otto_kit::typography::ellipsize(
+                &styles::FOOTNOTE.font(),
+                otto_kit::t!("settings-account-picture-detail"),
+                room,
+            ),
+            text_x,
+            area.center_y() + 10.0,
+            styles::FOOTNOTE,
+            self.theme.text_secondary,
+        );
+        let pressed = self.pressed == Some(Pressed::Choose(crate::panes::account::PICTURE_ID));
+        widgets::buttons(
+            canvas,
+            choose.right,
+            choose.center_y(),
+            &[choose_label()],
+            pressed.then_some(0),
+            header.can_choose,
+            &self.theme,
+        );
+        if rows_below {
+            widgets::separator(
+                canvas,
+                area.left + 14.0,
+                area.right,
+                area.bottom,
+                &self.theme,
+            );
         }
     }
 
@@ -1919,9 +2279,37 @@ impl Settings {
     /// draws the empty frame with a line saying so rather than nothing at all,
     /// which would read as a preview still loading.
     fn render_preview(&self, canvas: &Canvas, row: &Row, path: &str, cx: f32, y: f32) {
-        let image = preview_image(path);
-        let box_rect = preview_box(path, cx, y);
-        let rrect = RRect::new_rect_xy(box_rect, 6.0, 6.0);
+        let box_rect = preview_box(row, path, cx, y);
+        let wallpaper = row.id == Some(crate::wallpaper_preview::IMAGE_ID);
+        // The wallpaper is rendered as the desktop will lay it out, at the
+        // buffer's own resolution so it is drawn 1:1.
+        let mut loading = false;
+        let image = if wallpaper {
+            match crate::wallpaper_preview::frame(
+                path,
+                (
+                    (box_rect.width() * BUFFER_SCALE).round() as i32,
+                    (box_rect.height() * BUFFER_SCALE).round() as i32,
+                ),
+            ) {
+                crate::wallpaper_preview::Preview::Ready(image) => Some(image),
+                crate::wallpaper_preview::Preview::Loading => {
+                    loading = true;
+                    None
+                }
+                crate::wallpaper_preview::Preview::Unavailable => None,
+            }
+        } else {
+            preview_image(path)
+        };
+        // A person's picture is shown the way the greeter and the lock screen
+        // show it: round.
+        let radius = if row.id == Some(crate::panes::account::PICTURE_ID) {
+            box_rect.width().min(box_rect.height()) / 2.0
+        } else {
+            6.0
+        };
+        let rrect = RRect::new_rect_xy(box_rect, radius, radius);
 
         canvas.save();
         canvas.clip_rrect(rrect, ClipOp::Intersect, true);
@@ -1942,6 +2330,13 @@ impl Settings {
                     ),
                     &paint,
                 );
+            }
+            None if loading => {
+                // Still being prepared: the frame alone, no verdict yet.
+                let mut paint = Paint::default();
+                paint.set_anti_alias(true);
+                paint.set_color(self.theme.fill_quaternary);
+                canvas.draw_rect(box_rect, &paint);
             }
             None => {
                 let mut paint = Paint::default();
@@ -2170,6 +2565,8 @@ impl Settings {
                 }
             }
             Control::Shortcut { .. } | Control::AddShortcut => right,
+            // The segments span the row and leave its label no room.
+            Control::Tabs { .. } => label_x,
         }
     }
 
@@ -2289,6 +2686,10 @@ impl Settings {
                 // the schema's human name for it where there is one.
                 let shown = match row.id {
                     Some(id) => crate::panes::keyboard_layouts::display(id, value)
+                        .or_else(|| crate::panes::top_bar::display(id, value))
+                        .or_else(|| crate::panes::desk::display(id, value))
+                        .or_else(|| crate::panes::dictation::display(id, value))
+                        .or_else(|| crate::panes::sound::display(id, value))
                         .unwrap_or_else(|| settings_client::display_choice(id, value)),
                     None => value.clone(),
                 };
@@ -2296,7 +2697,9 @@ impl Settings {
                     canvas,
                     select_rect(select_right(row, right), cy),
                     &shown,
-                    if open {
+                    if row.inactive {
+                        DropdownInteraction::Disabled
+                    } else if open {
                         DropdownInteraction::Open
                     } else {
                         DropdownInteraction::Normal
@@ -2394,6 +2797,13 @@ impl Settings {
                     )
                 }
             }
+            Control::Tabs { labels, selected } => widgets::tabs(
+                canvas,
+                widgets::tabs_rect(x0, x1, cy),
+                labels,
+                *selected,
+                &self.theme,
+            ),
         }
 
         // A chosen file gets shown, not just named: a wallpaper is picked by
@@ -2508,6 +2918,75 @@ impl Settings {
 
     /// Displays arrangement canvas, drawn from `y` down. It occupies
     /// [`ARRANGEMENT_HEIGHT`], which is what the pane walk reserves for it.
+    /// The About pane's opening band, centred: the Otto mark, the name in
+    /// large type, and the version under it.
+    fn render_about_hero(&self, canvas: &Canvas, area: Rect) {
+        let cx = area.center_x();
+        let top = area.top + 24.0;
+
+        // The logo as the website draws it: a rounded square in the text
+        // colour, and two dots in the opposite one — black on white in dark
+        // mode, white on black in light.
+        let square = Rect::from_xywh(cx - ABOUT_MARK / 2.0, top, ABOUT_MARK, ABOUT_MARK);
+        let mut shadow = Paint::default();
+        shadow.set_anti_alias(true);
+        shadow.set_color(self.theme.shadow);
+        shadow.set_mask_filter(skia_safe::MaskFilter::blur(
+            skia_safe::BlurStyle::Normal,
+            8.0,
+            false,
+        ));
+        let corner = ABOUT_MARK * 0.24;
+        canvas.draw_round_rect(square.with_offset((0.0, 4.0)), corner, corner, &shadow);
+
+        let mut fill = Paint::default();
+        fill.set_anti_alias(true);
+        fill.set_color(self.theme.text_primary);
+        canvas.draw_round_rect(square, corner, corner, &fill);
+        let mut dot = Paint::default();
+        dot.set_anti_alias(true);
+        dot.set_color(if self.dark {
+            Color::BLACK
+        } else {
+            Color::WHITE
+        });
+        // The logo's proportions: each dot 18% of the square across, their
+        // centres 30% of it apart.
+        let radius = ABOUT_MARK * 0.09;
+        let spacing = ABOUT_MARK * 0.305;
+        for dx in [-spacing / 2.0, spacing / 2.0] {
+            canvas.draw_circle(Point::new(cx + dx, square.center_y()), radius, &dot);
+        }
+
+        let name = "Otto";
+        let name_style = styles::LARGE_TITLE_EMPHASIZED;
+        let name_cy = square.bottom + 20.0 + 18.0;
+        let name_w = name_style.font().measure_str(name, None).0;
+        widgets::text_centered_y(
+            canvas,
+            name,
+            cx - name_w / 2.0,
+            name_cy,
+            name_style,
+            self.theme.text_primary,
+        );
+
+        let version = otto_kit::t_owned!(
+            "settings-about-version-line",
+            version = env!("CARGO_PKG_VERSION")
+        );
+        let version_style = styles::SUBHEADLINE;
+        let version_w = version_style.font().measure_str(&version, None).0;
+        widgets::text_centered_y(
+            canvas,
+            &version,
+            cx - version_w / 2.0,
+            name_cy + 18.0 + 11.0,
+            version_style,
+            self.theme.text_secondary,
+        );
+    }
+
     fn render_arrangement(&self, canvas: &Canvas, x0: f32, x1: f32, y: f32) {
         let area = arrangement_canvas(Rect::from_ltrb(x0, y, x1, y + ARRANGEMENT_HEIGHT));
         let rrect = RRect::new_rect_xy(area, 9.0, 9.0);
@@ -2754,6 +3233,7 @@ mod tests {
             .find(|(row, _)| row.id == Some("background_image"))
             .expect("the wallpaper row");
         let box_rect = preview_box(
+            row,
             path,
             rect.center_x(),
             rect.top + Settings::control_height(row) + PREVIEW_GAP,
@@ -2948,28 +3428,23 @@ mod tests {
 
     #[test]
     fn hit_testing_still_reaches_a_row_that_is_only_visible_when_scrolled() {
-        // The tallest pane is not necessarily one with a toggle in it, and a
-        // toggle is what this test aims at — so pick the tallest pane that
-        // overflows its viewport AND has one, rather than assuming the two
-        // coincide (they stopped coinciding once a row was removed).
-        let settings = (0..model::panes().len())
+        // Aim at a toggle that starts out below the fold, in whichever pane
+        // has one, rather than assuming the tallest pane ends in a toggle
+        // (it stopped doing so once the clock moved to the Top bar pane).
+        let below_fold = |s: &Settings| {
+            let height = s.viewport().height();
+            s.row_rects(s.width - SIDEBAR_W)
+                .into_iter()
+                .rfind(|(row, rect)| matches!(row.control, Control::Toggle(_)) && rect.top > height)
+                .map(|(_, rect)| rect)
+        };
+        let (settings, rect) = (0..model::panes().len())
             .map(|i| Settings::new(i, false))
-            .filter(|s| s.pane_content_height() > s.viewport().height())
-            .filter(|s| {
-                s.row_rects(s.width - SIDEBAR_W)
-                    .iter()
-                    .any(|(row, _)| matches!(row.control, Control::Toggle(_)))
-            })
-            .max_by(|a, b| a.pane_content_height().total_cmp(&b.pane_content_height()))
-            .expect("a scrolling pane with a toggle in it");
+            .find_map(|s| below_fold(&s).map(|rect| (s, rect)))
+            .expect("a pane with a toggle below the fold");
         let viewport = settings.viewport();
-        let offset = settings.pane_content_height() - viewport.height();
-
-        let (_, rect) = settings
-            .row_rects(settings.width - SIDEBAR_W)
-            .into_iter()
-            .rfind(|(row, _)| matches!(row.control, Control::Toggle(_)))
-            .expect("a toggle somewhere in the pane");
+        let max_offset = settings.pane_content_height() - viewport.height();
+        let offset = (rect.bottom - viewport.height()).clamp(0.0, max_offset);
 
         let x = viewport.left + rect.right - 14.0 - widgets::TOGGLE_W / 2.0;
         let y = viewport.top + rect.center_y() - offset;

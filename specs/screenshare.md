@@ -116,6 +116,18 @@ documented in `docs/developer/screenshare.md`.
   session; it exits on its own once it observes the stop flag.
 - `xdg-desktop-portal-otto` drives this from `org.freedesktop.impl.portal.Session.Close`,
   which also removes its own session object and emits `Closed`.
+- If `CreateSession` fails to create the compositor session, the portal session object it
+  exported for the handle is removed again before the error is returned; a failed
+  `CreateSession` leaves nothing on the bus.
+- Each call's `org.freedesktop.impl.portal.Request` object is exported for the length of
+  the call. When the frontend calls `Request.Close` while `SelectSources` or `Start` is
+  still pending (the app withdrew), the call stops where it stands, answers response 1
+  (cancelled) and removes the request object. The same holds for
+  `org.freedesktop.impl.portal.Screenshot.Screenshot`.
+- `Screenshot` shows the Take Screenshot dialog unless the frontend passed
+  `permission_store_checked = true` *and* the request is not `interactive`. An absent or
+  false `permission_store_checked` means the app's screenshot permission was not vetted, so
+  a non-interactive request is never captured silently.
 
 ### Portal implementation properties and cursor modes
 

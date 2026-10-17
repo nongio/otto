@@ -1,0 +1,80 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 340" width="760" height="340" role="img" aria-label="otto-islands: callers on D-Bus feed one activity list, painted as subsurfaces the compositor animates">
+  <style>
+    text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
+    .box  { fill: #f6f8fa; stroke: #8b949e; stroke-width: 1.4; }
+    .acc  { fill: #ddf4ff; stroke: #218bff; stroke-width: 1.4; }
+    .grp  { fill: none; stroke: #8b949e; stroke-width: 1.2; stroke-dasharray: 5 4; }
+    .t    { fill: #1f2328; font-size: 13px; }
+    .tb   { fill: #1f2328; font-size: 13px; font-weight: 600; }
+    .tm   { fill: #656d76; font-size: 11px; }
+    .ln   { stroke: #8b949e; stroke-width: 1.4; fill: none; marker-end: url(#ah); }
+    @media (prefers-color-scheme: dark) {
+      .box { fill: #161b22; stroke: #6e7681; }
+      .acc { fill: #10243b; stroke: #388bfd; }
+      .grp { stroke: #6e7681; }
+      .t, .tb { fill: #e6edf3; }
+      .tm  { fill: #9198a1; }
+      .ln  { stroke: #8b949e; }
+    }
+  </style>
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#8b949e"/>
+    </marker>
+  </defs>
+
+  <text class="tb" x="16" y="28">Callers</text>
+  <text class="tb" x="236" y="28">otto-islands</text>
+  <text class="tb" x="566" y="28">compositor</text>
+  <rect class="grp" x="226" y="38" width="320" height="288" rx="10"/>
+
+  <rect class="box" x="16" y="44" width="190" height="40" rx="6"/>
+  <text class="t" x="28" y="61">notify-send, apps</text>
+  <text class="tm" x="28" y="76">org.freedesktop.Notifications</text>
+  <rect class="box" x="16" y="96" width="190" height="40" rx="6"/>
+  <text class="t" x="28" y="113">apps</text>
+  <text class="tm" x="28" y="128">org.otto.Island1</text>
+  <rect class="box" x="16" y="148" width="190" height="40" rx="6"/>
+  <text class="t" x="28" y="165">portal, agents</text>
+  <text class="tm" x="28" y="180">org.otto.Dialog1</text>
+  <rect class="box" x="16" y="212" width="190" height="40" rx="6"/>
+  <text class="t" x="28" y="229">MPRIS players</text>
+  <text class="tm" x="28" y="244">D-Bus</text>
+  <rect class="box" x="16" y="276" width="190" height="40" rx="6"/>
+  <text class="t" x="28" y="293">PipeWire streams</text>
+  <text class="tm" x="28" y="308">audio levels</text>
+
+  <rect class="acc" x="236" y="60" width="150" height="60" rx="6"/>
+  <text class="tb" x="250" y="84">activity list</text>
+  <text class="tm" x="250" y="102">and the dialog queue</text>
+  <path class="ln" d="M206 64 L234 82"/>
+  <path class="ln" d="M206 116 L234 96"/>
+  <path class="ln" d="M206 168 L234 108"/>
+
+  <rect class="box" x="236" y="212" width="150" height="40" rx="6"/>
+  <text class="t" x="250" y="236">music activity</text>
+  <path class="ln" d="M206 232 H234"/>
+  <path class="ln" d="M311 212 V122"/>
+
+  <rect class="box" x="236" y="276" width="150" height="40" rx="6"/>
+  <text class="t" x="250" y="300">equaliser bars</text>
+  <path class="ln" d="M206 296 H234"/>
+  <path class="ln" d="M386 296 H446 V122"/>
+
+  <rect class="acc" x="406" y="60" width="130" height="60" rx="6"/>
+  <text class="tb" x="420" y="84">UI thread</text>
+  <text class="tm" x="420" y="102">paints, then sleeps</text>
+  <path class="ln" d="M386 90 H404"/>
+
+  <rect class="box" x="566" y="52" width="180" height="76" rx="6"/>
+  <text class="tb" x="580" y="74">layer surface</text>
+  <text class="tm" x="580" y="92">one subsurface per island,</text>
+  <text class="tm" x="580" y="108">styled and animated by springs</text>
+  <path class="ln" d="M536 90 H564"/>
+
+  <rect class="box" x="566" y="196" width="180" height="56" rx="6"/>
+  <text class="tb" x="580" y="218">dock badges</text>
+  <text class="tm" x="580" y="236">and progress</text>
+  <path class="ln" d="M500 120 V224 H564"/>
+  <text class="tm" x="508" y="190">otto_dock_v1</text>
+</svg>

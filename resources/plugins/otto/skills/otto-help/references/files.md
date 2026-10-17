@@ -24,10 +24,12 @@ the starter. **Do not copy, move or `chmod` files yourself** — the
 `<this skill>` is the folder this skill's `SKILL.md` is in; write it as an
 absolute path.
 
-`check` and running a draft by hand (Step 5) run a script you wrote, so unlike
-the rest they are not pre-approved: the harness will ask the person first. That
-is deliberate. Expect the prompt, and say what you are about to run and why
-rather than treating it as a failure.
+`check`, running a draft by hand (Step 5) and `publish` (Step 7) run or
+install a script you wrote, so unlike the rest they are not pre-approved: the
+harness will ask the person first. `publish` is the moment your code becomes
+something Files runs on its own, so the person approves it every time, wherever
+they are talking to you from. That is deliberate. Expect the prompt, and say
+what you are about to run and why rather than treating it as a failure.
 
 A draft lives in `~/.local/state/otto/files-drafts/`, where Files never looks,
 so a half-finished command never appears in a window.
@@ -123,7 +125,9 @@ Ask: "The command is ready. Do you want to read it before I install it?"
 <this skill>/scripts/files-command publish NAME
 ```
 
-It replaces a published command of the same name. Then tell them: open a **new** Files window, press `Ctrl+P`, type the first few
+The harness asks the person to approve this; if they decline, the draft stays
+a draft and nothing is installed. It replaces a published command of the same
+name. Then tell them: open a **new** Files window, press `Ctrl+P`, type the first few
 letters of the title, press Return. The command is also in the right-click menu,
 and `Ctrl+Z` undoes it.
 

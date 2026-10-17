@@ -1,22 +1,33 @@
+// A `pub` item nothing outside the crate can reach is an accident: say
+// `pub(crate)` or `pub(super)`, so the public API is what lib.rs exports.
+#![warn(unreachable_pub)]
+
 #[cfg(feature = "testing")]
 pub mod testing;
 
 pub mod accent;
 pub mod accessibility;
+pub mod app_menu;
 pub mod app_runner;
 pub mod backdrop;
 pub mod clipboard;
+pub mod color;
 pub mod color_scheme;
 pub mod common;
 pub mod components;
 pub mod controls_side;
+/// Typed client proxies for Otto's own `org.otto.*` D-Bus interfaces.
+pub use otto_dbus as dbus;
 pub mod corners;
 pub mod desktop_appearance;
 pub mod desktop_entry;
+#[cfg(feature = "dictation")]
+pub mod dictation;
 pub mod dnd;
 pub mod filetype;
 pub mod focus;
 pub mod foreign;
+pub mod format;
 pub mod frosted;
 pub mod frosting;
 pub mod fs;
@@ -25,14 +36,13 @@ pub mod icon_theme;
 pub mod icons;
 pub mod input;
 pub mod key_capture;
+pub mod logging;
 pub mod lottie;
-/// Name matching lives with file search, which the agents daemon links
-/// without the toolkit; re-exported so apps keep one import path.
-pub use otto_search::matching;
 pub mod maximize_button;
 pub mod mime_apps;
 pub mod permission_store;
 mod portal_runtime;
+mod portal_settings;
 pub mod preview;
 pub mod process_app;
 pub mod protocols;
@@ -45,6 +55,14 @@ pub mod trash;
 pub mod trust;
 pub mod typography;
 pub mod utils;
+pub mod wallpaper;
+pub mod watch;
+pub mod xml;
+
+/// The UI-free base: XDG directories, `file://` URIs and name matching live
+/// in `otto-foundations`, which programs that do not link the toolkit share;
+/// re-exported so apps keep one import path.
+pub use otto_foundations::{matching, uri, xdg};
 
 // Re-export commonly used items
 pub use common::Renderable;
@@ -71,7 +89,7 @@ pub use surfaces::{
 };
 
 // Re-export app framework
-pub use app_runner::{App, AppContext, AppRunner, AppRunnerWithType, Modifiers};
+pub use app_runner::{App, AppContext, AppRunner, AppRunnerWithType, CursorImage, Modifiers};
 
 // Re-export cursor shape type for apps
 pub use wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_device_v1::Shape as CursorShape;

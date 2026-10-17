@@ -17,9 +17,9 @@ use skia_safe::Rect;
 use super::*;
 
 /// The `[peek]` section, read once per process.
-fn config() -> &'static crate::places_config::PeekConfig {
-    static CONFIG: OnceLock<crate::places_config::PeekConfig> = OnceLock::new();
-    CONFIG.get_or_init(crate::places_config::peek)
+fn config() -> &'static otto_peek::config::PeekConfig {
+    static CONFIG: OnceLock<otto_peek::config::PeekConfig> = OnceLock::new();
+    CONFIG.get_or_init(otto_peek::config::load)
 }
 
 /// Whether pictures are recognised at all. On unless `files.toml` says
@@ -57,7 +57,7 @@ fn prune_once() {
     if PRUNED.swap(true, Ordering::Relaxed) {
         return;
     }
-    std::thread::spawn(|| crate::ocrcache::prune(crate::ocrcache::KEEP_FOR));
+    std::thread::spawn(|| otto_peek::ocrcache::prune(otto_peek::ocrcache::KEEP_FOR));
 }
 
 /// The size the background pass recognises at: a preview-sized decode, so a
@@ -142,7 +142,7 @@ fn pictures_under(paths: &[PathBuf]) -> Vec<PathBuf> {
 
 pub(super) fn is_picture(path: &Path) -> bool {
     path.file_name()
-        .is_some_and(|name| crate::command::is_picture_name(&name.to_string_lossy()))
+        .is_some_and(|name| otto_kit::filetype::is_picture_name(&name.to_string_lossy()))
 }
 
 /// A picture to recognise, and how much of a hurry it is in.
@@ -195,8 +195,13 @@ impl Browser {
         // An entry made by another engine, or before a language pack was
         // installed, still shows and still searches — but it is read again,
         // which is how the cache catches up with what is installed now.
-        if crate::ocrcache::is_current(&path, 1, modified, &otto_peek::ocr::languages(), command())
-        {
+        if otto_peek::ocrcache::is_current(
+            &path,
+            1,
+            modified,
+            &otto_peek::ocr::languages(),
+            command(),
+        ) {
             return None;
         }
         self.begin_reading(path.clone());
@@ -277,8 +282,8 @@ impl Browser {
     /// will ever read: with no recogniser installed, "not read yet" is a
     /// promise that is not coming. Reads the cache, so it is asked when the
     /// answer can have changed rather than while drawing.
-    pub(super) fn text_status(&self, path: &Path) -> Option<crate::ocrcache::Status> {
-        use crate::ocrcache::Status;
+    pub(super) fn text_status(&self, path: &Path) -> Option<otto_peek::ocrcache::Status> {
+        use otto_peek::ocrcache::Status;
         if !is_picture(path) {
             return None;
         }
@@ -286,7 +291,7 @@ impl Browser {
             return Some(Status::Reading);
         }
         let modified = std::fs::metadata(path).ok()?.modified().ok()?;
-        match crate::ocrcache::lookup(path, 1, modified) {
+        match otto_peek::ocrcache::lookup(path, 1, modified) {
             Some(entry) if entry.words.is_empty() => Some(Status::Empty),
             Some(entry) => Some(Status::Words(entry.words.len())),
             None => (enabled() && available()).then_some(Status::Unread),
@@ -311,14 +316,14 @@ impl Browser {
     }
 }
 
-impl FilesApp {
+impl FilesWindow {
     /// Recognise one picture off the UI thread, for Find.
     pub(super) fn start_recognition(&self, job: Job) {
         let state = Arc::clone(&self.state);
         let scale = AppContext::scale_factor().max(1) as f32;
         tokio::task::spawn_blocking(move || {
             let _ = peek::recognise(&job.path, pass_panel(), scale, 1, command(), job.priority);
-            state.lock().unwrap().end_reading(&job.path);
+            state.browse().end_reading(&job.path);
             // Another picture may be waiting its turn; the frame loop hands
             // it out.
             AppContext::request_wakeup();
@@ -351,13 +356,16 @@ mod tests {
         browser.info = Some(crate::model::read_info(&path));
 
         browser.begin_reading(path.clone());
-        assert_eq!(browser.info_text, Some(crate::ocrcache::Status::Reading));
+        assert_eq!(
+            browser.info_text,
+            Some(otto_peek::ocrcache::Status::Reading)
+        );
         assert!(browser.info_dirty, "the panel has its own window to redraw");
 
         browser.end_reading(&path);
         assert_ne!(
             browser.info_text,
-            Some(crate::ocrcache::Status::Reading),
+            Some(otto_peek::ocrcache::Status::Reading),
             "the recogniser has finished"
         );
         let _ = std::fs::remove_dir_all(&dir);
@@ -399,11 +407,12 @@ mod tests {
             video: None,
             text: None,
             palette: Vec::new(),
+            camera: None,
         });
 
         browser.begin_reading(path.clone());
         let pane = browser.preview.as_ref().unwrap();
-        assert_eq!(pane.text, Some(crate::ocrcache::Status::Reading));
+        assert_eq!(pane.text, Some(otto_peek::ocrcache::Status::Reading));
         assert!(browser.dirty);
         let _ = std::fs::remove_dir_all(&dir);
     }

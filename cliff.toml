@@ -50,6 +50,9 @@ split_commits = false
 tag_pattern = "v[0-9].*"
 # regex for preprocessing the commit messages
 commit_preprocessors = [
+  # #264 was squashed with an unconventional subject; keep its breaking
+  # change (otto-bar's 8-digit colours flipped to #RRGGBBAA) in the changelog.
+  { pattern = '^Unify hex colours and the colour palette \(#264\)', replace = "refactor!: unify hex colours and the colour palette (#264). otto-bar's `[battery] color_*` eight-digit colours are now `#RRGGBBAA` (alpha last), not `#AARRGGBB`: move the alpha pair to the end" },
   # Replace issue numbers
   #{ pattern = '\((\w+\s)?#([0-9]+)\)', replace = "([#${2}](<REPO>/issues/${2}))"},
   # Check spelling of the commit with https://github.com/crate-ci/typos

@@ -28,6 +28,7 @@ const BUILTIN_ACTIONS: &[&str] = &[
     "ApplicationSwitchQuit",
     "BrightnessDown",
     "BrightnessUp",
+    "CanvasToggle",
     "CloseWindow",
     "EqualizeContainer",
     "ExposeShowAll",

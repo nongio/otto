@@ -3,26 +3,22 @@ use layers::{
     skia::{self},
 };
 
-use crate::{config::Config, workspaces::utils::FONT_CACHE};
+use crate::config::Config;
+mod font_cache;
+pub mod geometry;
 pub mod natural_layout;
 
-/// Parse a hex color string (e.g., "#1a1a2e" or "1a1a2e") into a Skia Color4f
+pub use font_cache::FONT_CACHE;
+
+/// Parse a hex colour (`#1a1a2e`, `1a1a2e`, `#RGB`, `#RRGGBBAA`) into a Skia
+/// `Color4f`, falling back to a dark blue for anything unreadable.
 pub fn parse_hex_color(hex: &str) -> skia::Color4f {
-    let hex = hex.trim_start_matches('#');
-
-    // Default to a dark color if parsing fails
-    let default_color = skia::Color4f::new(0.1, 0.1, 0.18, 1.0);
-
-    if hex.len() != 6 {
-        tracing::warn!("Invalid hex color format: {}, using default", hex);
-        return default_color;
-    }
-
-    let r = u8::from_str_radix(&hex[0..2], 16).unwrap_or(26) as f32 / 255.0;
-    let g = u8::from_str_radix(&hex[2..4], 16).unwrap_or(26) as f32 / 255.0;
-    let b = u8::from_str_radix(&hex[4..6], 16).unwrap_or(46) as f32 / 255.0;
-
-    skia::Color4f::new(r, g, b, 1.0)
+    otto_kit::color::parse_hex_lenient(hex)
+        .map(skia::Color4f::from)
+        .unwrap_or_else(|| {
+            tracing::warn!("Invalid hex color format: {}, using default", hex);
+            skia::Color4f::new(0.1, 0.1, 0.18, 1.0)
+        })
 }
 
 // Delegate icon functions to otto-kit
@@ -46,7 +42,17 @@ pub fn find_icon_with_theme(icon_name: &str, size: i32, scale: i32) -> Option<St
 ///
 /// The lookup is strict — a generic `application-default-icon` substituted for
 /// a missing UI icon is rejected, so the caller can try the next candidate name.
+///
+/// Otto's own Solar glyph comes first, so chrome looks the same in any theme.
 fn themed_chrome_icon(icon_name: &str) -> Option<layers::skia::Image> {
+    if let Some(glyph) = otto_kit::icons::solar_icon(
+        icon_name,
+        512,
+        otto_kit::icons::SolarStyle::Linear,
+        skia::Color::BLACK,
+    ) {
+        return Some(glyph);
+    }
     let path = find_icon_with_theme(icon_name, 512, 1)?;
     let matches = std::path::Path::new(&path)
         .file_stem()

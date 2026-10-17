@@ -1,0 +1,366 @@
+# Otto's architecture, as rules a machine checks.
+#
+#   cargo run -p otto-arch            # check (CI runs this)
+#   cargo run -p otto-arch -- --bless # also rewrite the graph in docs/developer/architecture.md
+#
+# Three kinds of rule live here:
+#
+#   [[layer]]        which workspace crates may depend on which, and which
+#                    third-party crates a layer must stay free of
+#   [[module_rule]]  which top-level modules of the compositor (`src/`) may
+#                    not reach into which others: inside one crate the
+#                    compiler draws no boundary, so this file does
+#   [[source_rule]]  a pattern that belongs in exactly one place
+#
+# Code that breaks a rule today is listed under [[allow]] with the reason it
+# is still there. An entry is debt, not permission: once the code is fixed the
+# checker fails on the stale entry, so the list only shrinks. A new violation
+# is never fixed by adding an entry without a reason someone would accept in
+# review.
+#
+# Third-party *policy* (only the compositor links the Smithay server, only the
+# media crates link GStreamer, …) lives in deny.toml, where cargo-deny also
+# sees transitive dependencies.
+
+# ---------------------------------------------------------------------------
+# Crate layers
+# ---------------------------------------------------------------------------
+#
+# Every workspace member belongs to exactly one layer; a new crate fails the
+# check until it is placed. `may_use` lists the layers a crate in this layer
+# may depend on (normal and build dependencies; dev-dependencies are free, so
+# a test can drive an app). A layer may only use itself when it says so.
+# `forbid_deps` are third-party crates no crate in the layer may pull in,
+# directly or through anything else (judged on the resolved graph). Which
+# crates may link a library directly is deny.toml's job.
+# `lib_lints` are lints each crate's lib root must turn on: library layers
+# use `unreachable_pub` so their public API is exactly what lib.rs exports.
+# `graph = false` leaves a layer out of the generated picture.
+
+[[layer]]
+name = "foundation"
+description = "UI-free base: pure functions over std, and the D-Bus interface definitions"
+crates = ["otto-foundations", "otto-dbus"]
+may_use = []
+lib_lints = ["unreachable_pub"]
+forbid_deps = [
+    "skia-safe",
+    "laye-rs",
+    "smithay-client-toolkit",
+    "wayland-client",
+]
+
+[[layer]]
+name = "service"
+description = "Clients of system services with no toolkit: search, the agents protocol, PDFium"
+crates = ["otto-search", "otto-agents-client", "otto-pdf"]
+may_use = ["foundation"]
+lib_lints = ["unreachable_pub"]
+forbid_deps = [
+    "skia-safe",
+    "laye-rs",
+    "smithay-client-toolkit",
+    "wayland-client",
+]
+
+[[layer]]
+name = "toolkit"
+description = "otto-kit: windows, drawing, menus and the shared widgets every app is built from"
+crates = ["otto-kit"]
+may_use = ["foundation"]
+lib_lints = ["unreachable_pub"]
+
+[[layer]]
+name = "kit"
+description = "Feature libraries on top of the toolkit, shared by more than one app"
+crates = [
+    "otto-md-kit",
+    "otto-media-kit",
+    "otto-auth-ui",
+    "otto-peek",
+    "otto-agents-kit",
+]
+may_use = ["foundation", "service", "toolkit", "kit"]
+lib_lints = ["unreachable_pub"]
+
+[[layer]]
+name = "app"
+description = "Programs: Wayland clients, daemons and the portal. Nothing depends on an app"
+crates = [
+    "otto-bar",
+    "otto-islands",
+    "otto-launcher",
+    "otto-emoji",
+    "otto-settings",
+    "otto-files",
+    "otto-preview",
+    "otto-stash",
+    "otto-canvas",
+    "otto-greeter",
+    "otto-lock",
+    "otto-authorize",
+    "otto-input-overlay",
+    "otto-dictate",
+    "otto-msg",
+    "otto-agents",
+    "otto-rdp",
+    "xdg-desktop-portal-otto",
+]
+may_use = ["foundation", "service", "toolkit", "kit"]
+
+[[layer]]
+name = "compositor-core"
+description = "The compositor's own libraries, split out of it so the compiler keeps them below window management: the render stack"
+crates = ["otto-render"]
+may_use = ["foundation"]
+lib_lints = ["unreachable_pub"]
+
+[[layer]]
+name = "compositor"
+description = "The compositor. It draws with the same toolkit as the apps (titlebars, text, icons, theme), so it may use otto-kit, but no kit or app"
+crates = ["otto"]
+may_use = ["foundation", "toolkit", "compositor-core"]
+
+[[layer]]
+name = "sample"
+description = "Sample and test clients: standalone, they exercise the protocols from outside"
+crates = ["client-rainbow", "submenu", "submenu-gtk", "deadlock-test"]
+may_use = []
+graph = false
+
+[[layer]]
+name = "tool"
+description = "Repository tooling"
+crates = ["otto-arch"]
+may_use = []
+graph = false
+
+# ---------------------------------------------------------------------------
+# Compositor module rules
+# ---------------------------------------------------------------------------
+#
+# Modules are the top-level entries of src/ (a file or a directory). A rule
+# forbids any module in `from` from naming a module in `to` through a
+# `crate::` path, in code, use trees or macro calls; a name the crate root
+# re-exports (`crate::Otto`) counts as its module. "*" in `from` means every
+# module, so one backend naming another breaks backends-are-leaves too. Test
+# code counts. The crate roots (lib.rs, main.rs) wire everything together and
+# are exempt.
+#
+# A boundary that holds can become a crate boundary, which the compiler
+# enforces and these rules no longer need: the render stack (renderer,
+# skia_renderer, render_elements, drawing, …) is the otto-render crate, which
+# cannot name the compositor at all. lib.rs re-exports its modules under their
+# old paths; a rule's `to` may name such a re-exported module (`renderer`),
+# reached as `crate::renderer::…` or `otto_render::renderer::…`.
+
+[[module_rule]]
+name = "backends-are-leaves"
+from = ["*"]
+to = ["udev", "winit", "x11", "headless"]
+reason = "A backend drives the shared compositor, never the other way round: code that needs something from a backend takes it through the Backend trait or a value the backend hands over."
+
+[[module_rule]]
+name = "config-is-a-leaf"
+from = ["config", "theme", "utils"]
+to = [
+    "state",
+    "shell",
+    "workspaces",
+    "input",
+    "input_handler",
+    "render",
+    "renderer",
+    "render_elements",
+    "skia_renderer",
+    "udev",
+    "winit",
+    "x11",
+    "headless",
+]
+reason = "Configuration, theme and utilities are read by everything, so they can depend on nothing that reads them."
+
+# ---------------------------------------------------------------------------
+# Source rules
+# ---------------------------------------------------------------------------
+#
+# Scanned over src/, crates/*/src and components/*/src, skipping `#[test]`
+# functions and `#[cfg(test)]` items. `allowed_in` lists path prefixes (from
+# the repository root) where the pattern is the implementation.
+
+[[source_rule]]
+name = "xdg-dirs-through-foundations"
+pattern = 'env::var(_os)?\(\s*"(HOME|XDG_(CONFIG|DATA|STATE|CACHE)_HOME|XDG_RUNTIME_DIR|XDG_(DATA|CONFIG)_DIRS)"'
+allowed_in = ["components/otto-foundations/"]
+reason = "The XDG base directories, with their fallbacks, are otto_foundations::xdg (re-exported as otto_kit::xdg). A hand-rolled lookup drifts: a missing fallback, or a relative path the spec says to ignore."
+
+# ---------------------------------------------------------------------------
+# Known debt
+# ---------------------------------------------------------------------------
+
+# Crates: none.
+
+# Compositor modules: none.
+
+# ---------------------------------------------------------------------------
+# What a change reaches
+# ---------------------------------------------------------------------------
+#
+# `cargo run -q -p otto-arch -- affected --base <rev>` tells CI which crates a
+# change needs checked. The selection is determinator's (guppy): it compares
+# the package graphs `cargo metadata` resolves at the base and the head, maps
+# each changed file to the member whose directory holds it (the root package
+# owns only its target directories, src/, tests/ and examples/), and closes
+# the result over dependents through simulated builds. Cargo.lock needs no
+# mapping: a member whose simulated build resolves a different package or
+# feature set is affected.
+#
+# The rules below place the files no member's directory holds, and the files
+# a crate reads from outside its own directory (an `include_str!` of
+# ../../resources, a protocol XML). otto-arch translates them into
+# determinator path rules. Rules add up: a file reaches its own crate plus
+# every rule that matches it. `crates = ["*"]` is every member, `[]` none;
+# `areas = ["packaging"]` also runs the packaging jobs. A tracked file no rule
+# covers fails the check, and a change to a file no rule covers (a new one)
+# makes CI check everything. See docs/developer/architecture.md.
+#
+# Paths are anchored at the repository root: `dir/` is everything under it;
+# anything else is a globset glob, where `*` matches any characters, `/`
+# included (determinator's matching), and `**/` any number of directories.
+
+[[affects]]
+paths = ["Cargo.toml"]
+crates = ["*"]
+areas = ["packaging"]
+reason = "The workspace manifest sets every member's dependencies, profiles, lints and package assets."
+
+[[affects]]
+paths = [".github/workflows/ci.yml"]
+crates = ["*"]
+areas = ["packaging"]
+reason = "The workflow decides what runs, so a change to it runs everything."
+
+[[affects]]
+paths = ["architecture.toml", "tools/otto-arch/src/", "tools/otto-arch/Cargo.toml"]
+crates = ["*"]
+reason = "The selection's own rules and code: a change to them must not be able to shrink the checks it is judged by, so it runs everything."
+
+[[affects]]
+paths = ["rust-toolchain.toml", "clippy.toml"]
+crates = ["*"]
+reason = "The compiler and the lint configuration every member is checked with."
+
+[[affects]]
+paths = ["Cargo.lock"]
+crates = []
+reason = "determinator diffs the resolved graphs: a member is affected when its build resolves a different package or feature set."
+
+[[affects]]
+paths = ["protocols/"]
+crates = ["otto", "otto-kit"]
+reason = "Wayland protocol XML: the compositor generates the server side, otto-kit the client side every app uses."
+
+[[affects]]
+paths = [
+    "resources/*.svg",
+    "resources/cursor.rgba",
+    "resources/wallpaper.jpg",
+    "resources/widgets/",
+    "resources/polkit/",
+    "resources/*.desktop",
+    "resources/deb-copyright",
+    "resources/icon-theme-links",
+]
+crates = ["otto"]
+areas = ["packaging"]
+reason = "The compositor embeds the icons and fallback cursor and its tests read the widgets; the rest is installed with it. A new file directly in resources/ matches none of these, so it checks everything until it is placed."
+
+[[affects]]
+paths = ["resources/icons/solar/"]
+crates = ["otto-kit"]
+areas = ["packaging"]
+reason = "Otto's interface glyphs: otto-kit finds and draws them for every app and the compositor, and its tests read them from the checkout; the packages install them."
+
+[[affects]]
+paths = ["resources/locales/"]
+crates = ["otto-kit", "otto-agents", "otto-files"]
+areas = ["packaging"]
+reason = "The Fluent catalogues are compiled into otto-kit (and so every app and the compositor) and into otto-agents; otto-files reads them at run time from ../../resources/locales."
+
+[[affects]]
+paths = ["resources/bin/", "resources/plugins/"]
+crates = []
+areas = ["packaging"]
+reason = "Installed files no crate reads: helper scripts and the Claude plugin."
+
+[[affects]]
+paths = ["resources/plugins/otto/agents/studio.md"]
+crates = ["otto-preview"]
+reason = "otto-preview's MCP tests embed the studio agent's prompt to check the tool names it promises."
+
+[[affects]]
+paths = ["components/otto-agents/src/config.rs"]
+crates = ["otto-kit"]
+reason = "otto-kit's frosted-material test reads the agent service's config source to check the two stay in step."
+
+[[affects]]
+paths = ["otto_config*.toml"]
+crates = ["otto"]
+reason = "The compositor's configuration; a test parses the example."
+
+[[affects]]
+paths = ["PKGBUILD*", "LICENSE", "scripts/"]
+crates = []
+areas = ["packaging"]
+reason = "Packaging recipes and the scripts that build and check packages; no crate reads them."
+
+[[affects]]
+paths = [
+    "README.md",
+    "otto_config.example.toml",
+    "components/otto-lock/otto-lock.pam",
+    "components/xdg-desktop-portal-otto/otto.portal",
+    "components/xdg-desktop-portal-otto/org.freedesktop.impl.portal.desktop.otto.service",
+    "components/xdg-desktop-portal-otto/xdg-desktop-portal-otto.service",
+    "components/xdg-desktop-portal-otto/portals.conf.example",
+    "components/otto-agents/otto-agents.service",
+    "components/otto-agents/otto-agents-bridge.service",
+    "components/otto-files/resources/icons/",
+]
+crates = []
+areas = ["packaging"]
+reason = "Installed by the packages (PKGBUILD*, the deb assets in Cargo.toml, scripts/packaging): the PAM file, the portal and agent units, the file browser's icons. The crates they sit in are still affected through their directories."
+
+[[affects]]
+paths = ["docs/developer/architecture.md"]
+crates = ["otto-arch"]
+reason = "otto-arch checks the generated graph in the doc against the manifests."
+
+[[affects]]
+paths = ["deny.toml"]
+crates = []
+reason = "cargo-deny's policy: the architecture job runs it on every change, ungated."
+
+[[affects]]
+paths = ["**/*.md", "docs/", "specs/", "website/", "assets/", ".claude/", ".github/instructions/"]
+crates = []
+reason = "Prose, specs, the website and media no crate embeds. A crate's own README still reaches that crate, by its directory; the locales job checks the user guides the plugin ships on every change."
+
+[[affects]]
+paths = [
+    ".github/workflows/pages.yml",
+    ".gitignore",
+    ".rustfmt",
+    "cliff.toml",
+    "wlcs",
+    "capture-virtual.sh",
+    "claude.sh",
+    "prerequisites.sh",
+    "run-rdp.sh",
+    "run-scanout.sh",
+    "start.sh",
+    "test-notifications.sh",
+    "otto_topbar.toml",
+]
+crates = []
+reason = "Repository tooling and helper scripts no build or test reads: the website workflow, formatting (the format job runs on every change), the changelog, the WLCS submodule, launch scripts, a stale top-bar config."

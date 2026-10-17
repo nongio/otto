@@ -1,0 +1,51 @@
+#!/bin/sh
+# Create or remove the default icon theme's symlinks (Otto-MacTahoe).
+#
+#   icon-theme-links install    once the package's files are in place
+#   icon-theme-links remove     before they are replaced or erased
+#
+# The deb and rpm carry the theme's regular files and lists of its symlinks
+# separately, since neither package tool can package the links themselves
+# (see scripts/packaging/fetch-icon-theme.sh). Arch packages own the links
+# directly and do not ship this.
+#
+# Each list is named after the MacTahoe tag it was made from. `remove` works
+# through every list present, so an upgrade that changes the tag still finds
+# the links the older package made; `install` extracts every list, of which
+# there is one once the transaction is over. The packages remove the links
+# before an upgrade unpacks (deb prerm, rpm %preun) and make them again
+# after it (deb postinst, rpm %posttrans), so no file is ever written
+# through a link, and a downgrade to a package without this script does not
+# leave them dangling.
+set -e
+
+LISTS=/usr/share/otto/icon-theme-links
+ICONS=/usr/share/icons
+THEMES="Otto-MacTahoe Otto-MacTahoe-light Otto-MacTahoe-dark"
+
+case "$1" in
+    install)
+        for list in "$LISTS"/*.tar.gz; do
+            [ -f "$list" ] || continue
+            tar -xzf "$list" -C "$ICONS" --unlink-first --no-same-owner
+        done
+        ;;
+    remove)
+        for list in "$LISTS"/*.tar.gz; do
+            [ -f "$list" ] || continue
+            tar -tzf "$list" | (cd "$ICONS" && xargs -d '\n' rm -f)
+        done
+        # The icon caches the distribution's triggers wrote, and directories
+        # that held only links: the package owns neither, and either would
+        # keep the theme directories from going away.
+        for theme in $THEMES; do
+            rm -f "$ICONS/$theme/icon-theme.cache"
+            [ -d "$ICONS/$theme" ] || continue
+            find "$ICONS/$theme" -depth -type d -empty -delete 2>/dev/null || true
+        done
+        ;;
+    *)
+        echo "usage: $0 install|remove" >&2
+        exit 2
+        ;;
+esac

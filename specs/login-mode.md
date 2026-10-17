@@ -278,8 +278,11 @@ prefix followed by a JSON payload, in both directions.
 - Sessions are discovered from `.desktop` files in
   `/usr/share/wayland-sessions` and `/usr/local/share/wayland-sessions`,
   sorted by name, skipping entries marked `Hidden=true` or `NoDisplay=true`.
-- Only the `[Desktop Entry]` group is read; `Name` and `Exec` are used and
-  field codes (`%f`, `%U`, …) are stripped from `Exec`.
+- Only the `[Desktop Entry]` group is read; `Name` and `Exec` are used.
+  `Exec` is unquoted per the Desktop Entry spec (a double-quoted argument stays
+  one argument) and field codes (`%f`, `%U`, …) are stripped.
+- Entries whose `TryExec` program is neither an existing absolute path nor
+  found on `PATH` are skipped too.
 - If nothing is installed, a single fallback session running `otto` is offered.
 - `$OTTO_GREETER_SESSION` overrides discovery entirely with one argv.
 

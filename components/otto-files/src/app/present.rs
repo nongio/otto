@@ -3,7 +3,7 @@
 use super::*;
 use otto_kit::preview::Preview;
 
-impl FilesApp {
+impl FilesWindow {
     /// Bring every surface beside the window up to date: the columns, the
     /// preview, Peek and the palette.
     pub(super) fn sync_pane_surfaces(&mut self) {
@@ -14,7 +14,7 @@ impl FilesApp {
             return;
         };
         let window_style = window.surface_style();
-        let mut browser = self.state.lock().unwrap();
+        let mut browser = self.state.browse();
         browser.sync_scroll_metrics();
         // Before the frame is built from it: a panel dragged aside in a
         // bigger window, or before the display answered, may otherwise be
@@ -125,7 +125,7 @@ impl FilesApp {
     /// stale panel, against a panel that would otherwise sit there showing a
     /// file that is now in the Trash.
     pub(super) fn follow_peek(&self) {
-        let mut browser = self.state.lock().unwrap();
+        let mut browser = self.state.browse();
         // Peek asked for by name, from the palette. Its command ran in
         // the browser, which does not own the decode.
         if browser.take_palette_peek() {
@@ -145,14 +145,14 @@ impl FilesApp {
     /// blank, so this is what turns scrolling into reading.
     pub(super) fn follow_peek_document(&self) {
         let work = {
-            let mut browser = self.state.lock().unwrap();
+            let mut browser = self.state.browse();
             browser.peek_document_work()
         };
         let Some((path, generation, pages, text)) = work else {
             return;
         };
         let panel = {
-            let browser = self.state.lock().unwrap();
+            let browser = self.state.browse();
             peek::panel_rect(browser.size.0, browser.size.1)
         };
         let scale = AppContext::scale_factor().max(1) as f32;
@@ -228,7 +228,7 @@ impl FilesApp {
                 }
             }
             {
-                let mut browser = state.lock().unwrap();
+                let mut browser = state.browse();
                 browser.finish_peek(generation, anchor, name, preview, video);
                 if let Some(session) = browser.peek.as_mut() {
                     session.dir = path.parent().map(Path::to_path_buf);
@@ -250,7 +250,7 @@ impl FilesApp {
             // expensive half, so it is not started for a file nobody is
             // looking at any more.
             {
-                let mut browser = state.lock().unwrap();
+                let mut browser = state.browse();
                 if browser.peek_generation != generation {
                     browser.end_reading(&path);
                     return;
@@ -265,7 +265,7 @@ impl FilesApp {
                 peek::Priority::Interactive,
             );
             {
-                let mut browser = state.lock().unwrap();
+                let mut browser = state.browse();
                 match words {
                     Some(words) => browser.finish_peek_words(generation, words),
                     None => browser.finish_peek_recognising(generation),
@@ -281,7 +281,7 @@ impl FilesApp {
     /// [`Browser::finish_preview`] instead of [`Browser::finish_peek`].
     pub(super) fn start_preview(&self, path: PathBuf, generation: u64) {
         let panel = {
-            let browser = self.state.lock().unwrap();
+            let browser = self.state.browse();
             Rect::from_wh(view::PREVIEW_W, browser.size.1)
         };
         let scale = AppContext::scale_factor().max(1) as f32;
@@ -294,10 +294,12 @@ impl FilesApp {
             .then(|| peek::video_options(panel, scale, false));
         tokio::task::spawn_blocking(move || {
             let preview = peek::decode(&path, panel, scale, 1);
+            // A few header bytes, read here rather than on the UI thread.
+            let camera = crate::camera::read(&path);
             state
                 .lock()
                 .unwrap()
-                .finish_preview(generation, preview, video);
+                .finish_preview(generation, preview, video, camera);
             AppContext::request_wakeup();
         });
     }
@@ -312,7 +314,7 @@ impl FilesApp {
         let state = Arc::clone(&self.state);
         tokio::task::spawn_blocking(move || {
             let found = thumbnails::fetch(&job);
-            let mut browser = state.lock().unwrap();
+            let mut browser = state.browse();
             let before = browser.thumbs.epoch();
             browser.thumbs.finish(job.path, job.modified, found);
             // A picture landing changes what the panes draw; a miss changes
@@ -337,7 +339,18 @@ impl FilesApp {
         let state = Arc::clone(&self.state);
         tokio::task::spawn_blocking(move || {
             let results = crate::photos::probe_all(jobs);
-            state.lock().unwrap().finish_photo_dims(results);
+            state.browse().finish_photo_dims(results);
+            AppContext::request_wakeup();
+        });
+    }
+
+    /// Turn or flip a photo off the UI thread: it reads and may rewrite the
+    /// whole file. The view is refreshed when it lands.
+    pub(super) fn start_photo_turn(&self, job: super::photos_view::PhotoTurn) {
+        let state = Arc::clone(&self.state);
+        tokio::task::spawn_blocking(move || {
+            let result = crate::orient::apply(&job.path, job.turn);
+            state.browse().finish_photo_turn(job, result);
             AppContext::request_wakeup();
         });
     }
@@ -348,7 +361,7 @@ impl FilesApp {
         let state = Arc::clone(&self.state);
         tokio::task::spawn_blocking(move || {
             let results = crate::photos::preview_all(jobs);
-            state.lock().unwrap().finish_folder_previews(results);
+            state.browse().finish_folder_previews(results);
             AppContext::request_wakeup();
         });
     }
@@ -377,7 +390,7 @@ impl FilesApp {
 
         AppContext::register_frame_callback(surface.id(), move || {
             let repaint = {
-                let mut browser = state.lock().unwrap();
+                let mut browser = state.browse();
                 // A read that lands *here* is not in the frame just drawn, and
                 // clears `loading` — so without the `changed` arm the column
                 // that finished would sit empty until the next input event.
@@ -422,7 +435,7 @@ impl FilesApp {
     /// icon instead of adding one of its own.
     pub(super) fn sync_info_window(&mut self) {
         let (wanted, dirty) = {
-            let mut browser = self.state.lock().unwrap();
+            let mut browser = self.state.browse();
             (
                 browser.info.is_some(),
                 std::mem::take(&mut browser.info_dirty),
@@ -479,7 +492,7 @@ impl FilesApp {
 
         let state = Arc::clone(&self.state);
         window.on_draw(move |canvas| {
-            let browser = state.lock().unwrap();
+            let browser = state.browse();
             let Some(info) = browser.info.as_ref() else {
                 return;
             };
@@ -502,7 +515,7 @@ impl FilesApp {
         // runner would take it for the application's own close request and
         // end the process, which is a surprising way for Get Info to go away.
         let state = Arc::clone(&self.state);
-        window.on_close_request(move || state.lock().unwrap().close_info());
+        window.on_close_request(move || state.browse().close_info());
 
         Some(window)
     }
@@ -512,7 +525,7 @@ impl FilesApp {
     /// the same reasons it is a window rather than a sheet.
     pub(super) fn sync_open_with_window(&mut self) {
         let (wanted, dirty) = {
-            let mut browser = self.state.lock().unwrap();
+            let mut browser = self.state.browse();
             (
                 browser.open_with.is_some(),
                 std::mem::take(&mut browser.open_with_dirty),
@@ -565,7 +578,7 @@ impl FilesApp {
 
         let state = Arc::clone(&self.state);
         window.on_draw(move |canvas| {
-            let mut browser = state.lock().unwrap();
+            let mut browser = state.browse();
             let Some(session) = browser.open_with.as_mut() else {
                 return;
             };
@@ -594,7 +607,7 @@ impl FilesApp {
         });
 
         let state = Arc::clone(&self.state);
-        window.on_close_request(move || state.lock().unwrap().close_open_with());
+        window.on_close_request(move || state.browse().close_open_with());
 
         Some(window)
     }

@@ -1,0 +1,47 @@
+#!/bin/sh
+# screenshot [-o OUTPUT] [APP_ID]
+#
+# Capture the screen into ~/Pictures/Screenshots and print the file's path.
+# With APP_ID, that app's window is brought to the front first. With -o, only
+# that monitor is captured (names from `otto-msg -t get_outputs -r`).
+#
+# One command rather than focus, sleep, mkdir and grim chained together, so a
+# single permission rule covers taking a screenshot.
+set -eu
+
+output=
+while getopts o: flag; do
+    case $flag in
+        o) output=$OPTARG ;;
+        *) echo "usage: screenshot [-o OUTPUT] [APP_ID]" >&2; exit 2 ;;
+    esac
+done
+shift $((OPTIND - 1))
+
+name=screen
+if [ $# -gt 0 ]; then
+    # An app id and nothing else: it goes inside an otto-msg command.
+    case $1 in
+        '' | *[!A-Za-z0-9._-]*) echo "screenshot: not an app id: $1" >&2; exit 2 ;;
+    esac
+    if ! otto-msg "[app_id=\"$1\"] focus" >/dev/null 2>&1; then
+        echo "screenshot: no window of $1 is open" >&2
+        exit 1
+    fi
+    # Let it come forward.
+    sleep 0.5
+    name=$1
+fi
+case $output in
+    *[!A-Za-z0-9._-]*) echo "screenshot: not an output name: $output" >&2; exit 2 ;;
+esac
+
+dir="$HOME/Pictures/Screenshots"
+mkdir -p "$dir"
+file="$dir/$name-$(date +%Y%m%d-%H%M%S).png"
+if [ -n "$output" ]; then
+    grim -o "$output" "$file"
+else
+    grim "$file"
+fi
+echo "$file"

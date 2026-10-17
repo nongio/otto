@@ -348,7 +348,7 @@ fn draw_label(text: &str, color: [u8; 3], scale: i32) -> Option<MemoryRenderBuff
         skia::font_style::Width::NORMAL,
         skia::font_style::Slant::Upright,
     );
-    let font = crate::workspaces::utils::FONT_CACHE
+    let font = crate::utils::FONT_CACHE
         .with(|fonts| fonts.make_font_with_fallback(font_family, style, 12.0 * s));
     let [r, g, b] = color;
     // Dark text on light colours, white on the rest.

@@ -434,9 +434,13 @@ resize grow|shrink width|height <n> px|ppt
 floating toggle|enable|disable
 fullscreen
 kill
+exit                               # end the session
+logout                             # Otto: close windows, then exit
 tiling toggle                      # Otto: workspace mode
 expose toggle                      # Otto: the overview
 gaps inner|outer <n> [current|all]  # current = this workspace's override, all = the default
+output <name>|* bg <file> [<mode>] [<#colour>]  # sway's; also `<#colour> solid_color`, `reset`
+background <file> [<mode>] [<#colour>]          # Otto: the focused workspace's wallpaper
 ```
 
 `layout tabbed` and `layout stacking` parse and then report that they are not
