@@ -32,7 +32,7 @@ tracing.workspace = true
 # Marks and the MCP tools speak JSON; a rendered view goes back as base64.
 serde_json.workspace = true
 serde.workspace = true
-base64 = "0.22"
+base64.workspace = true
 zbus.workspace = true
 
 [dev-dependencies]

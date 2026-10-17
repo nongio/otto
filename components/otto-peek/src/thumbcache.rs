@@ -247,7 +247,9 @@ fn same_mtime(recorded: &str, actual: u64) -> bool {
 /// pixel data, so a lookup that fails the mtime check never pays to
 /// decompress anything.
 fn png_text(bytes: &[u8], keyword: &str) -> Option<String> {
-    let reader = png::Decoder::new(bytes).read_info().ok()?;
+    let reader = png::Decoder::new(std::io::Cursor::new(bytes))
+        .read_info()
+        .ok()?;
     let info = reader.info();
     if let Some(chunk) = info
         .uncompressed_latin1_text

@@ -1,6 +1,7 @@
 # Third-party dependency policy, checked by cargo-deny:
 #
-#   cargo deny --workspace check bans -D unused-wrapper
+#   cargo deny --workspace check bans licenses sources -D unused-wrapper
+#   cargo deny --workspace check advisories
 #
 # --workspace matters: the root manifest is also the compositor's package, and
 # without it cargo-deny judges only the compositor's graph and passes. With
@@ -65,3 +66,66 @@ deny = [
     { crate = "openssl-sys", reason = "use rustls" },
     { crate = "native-tls", reason = "use rustls" },
 ]
+
+# Known vulnerabilities fail the check; an unmaintained crate fails only when
+# a workspace member depends on it directly (deeper ones are upstream's to
+# replace). An entry in `ignore` names the advisory and says why it stays.
+[advisories]
+unmaintained = "workspace"
+yanked = "warn"
+ignore = [
+    # h2 0.3 comes only from laye-rs' optional debug server (hyper 0.14,
+    # static_dir), which `all-features` pulls into the graph; no 0.3 release
+    # carries the fix. Drop once laye-rs moves to hyper 1.
+    { id = "RUSTSEC-2026-0258", reason = "h2 0.3 only in laye-rs' debug server; fixed upstream in 0.4" },
+    # rsa has no fixed release; it reaches otto-rdp through ironrdp's picky
+    # (CredSSP). Revisit when ironrdp moves off rsa or rsa ships the fix.
+    { id = "RUSTSEC-2023-0071", reason = "no fixed rsa release; only via ironrdp in otto-rdp" },
+]
+
+# Otto is MIT. Everything it links must be permissive, or weak copyleft at the
+# file level (MPL-2.0). A new licence here is a design decision: say why in
+# the review. GPL crates (greetd_ipc, for one) stay out.
+[licenses]
+confidence-threshold = 0.9
+allow = [
+    "0BSD",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "CC0-1.0",
+    "CC-PDDC",
+    "CDLA-Permissive-2.0",
+    "ISC",
+    "MIT",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Zlib",
+]
+
+[licenses.private]
+# The workspace's own crates are not published; their licence is the
+# workspace's.
+ignore = true
+
+# Dependencies come from crates.io and Otto's own forks only.
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-git = [
+    "https://github.com/nongio/layers",
+    "https://github.com/nongio/smithay",
+]
+
+# laye-rs (and its debug server) carry no licence field. Same author as Otto;
+# treated as MIT until upstream declares one in its manifest.
+[[licenses.clarify]]
+crate = "laye-rs"
+expression = "MIT"
+license-files = []
+
+[[licenses.clarify]]
+crate = "layers-debug-server"
+expression = "MIT"
+license-files = []

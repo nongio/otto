@@ -190,7 +190,11 @@ jobs:
       # --workspace: the root manifest is also the compositor's package, and
       # without it cargo-deny would only judge the compositor's graph.
       - name: Third-party dependency policy
-        run: cargo deny --workspace check bans -D unused-wrapper
+        run: cargo deny --workspace check bans licenses sources -D unused-wrapper
+      # Its own step: the advisory database changes on its own, so a red
+      # here on an unrelated change means a new advisory, not that change.
+      - name: Security advisories
+        run: cargo deny --workspace check advisories
 
   # Cheap and early: a locale missing keys otherwise only surfaces in the
   # otto-kit unit tests, after the compositor has been built and linted.

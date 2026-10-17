@@ -11,12 +11,12 @@ edition = "2024"
 # Must match otto-agents' pins: this crate is the wire between them.
 ahp.workspace = true
 ahp-types.workspace = true
-ahp-ws = { version = "=0.9.0", default-features = false }
+ahp-ws.workspace = true
 futures-util.workspace = true
 otto-foundations = { path = "../otto-foundations" }
 serde_json.workspace = true
 tokio = { workspace = true, features = ["io-util", "net"] }
-tokio-tungstenite = { version = "0.29", default-features = false, features = ["handshake"] }
+tokio-tungstenite = { workspace = true, features = ["handshake"] }
 
 [lints]
 workspace = true

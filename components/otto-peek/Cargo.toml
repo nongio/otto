@@ -27,7 +27,7 @@ tracing.workspace = true
 libc.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "sync", "macros"] }
 md5 = { package = "md-5", version = "0.10" }
-png = "0.17"
+png = "0.18"
 # Image sizes from headers, for laying pictures out before they decode.
 imagesize = "0.13"
 # The `[peek]` section of files.toml; see `config`.

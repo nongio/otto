@@ -9,7 +9,7 @@ where the strongest available tool can check it:
 | Which Otto crate may depend on which (layers) | `architecture.toml` | `cargo run -p otto-arch` |
 | Which compositor module may reach into which | `architecture.toml` | `cargo run -p otto-arch` |
 | Code that has exactly one home (XDG lookups) | `architecture.toml` | `cargo run -p otto-arch` |
-| Which crates may link Smithay, the Wayland server, GStreamer, PipeWire; no OpenSSL | `deny.toml` | `cargo deny --workspace check bans -D unused-wrapper` |
+| Which crates may link Smithay, the Wayland server, GStreamer, PipeWire; no OpenSSL; allowed licences and sources; security advisories | `deny.toml` | `cargo deny --workspace check bans licenses sources -D unused-wrapper`, `cargo deny --workspace check advisories` |
 | APIs nobody calls directly | `clippy.toml` | `cargo clippy` |
 | What a module exposes | the code: `pub(crate)`, sealed traits, newtypes | the compiler |
 
