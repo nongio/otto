@@ -27,7 +27,7 @@ otto-bar looks for a TOML config file in this order:
 | Key            | Default                  | Description                  |
 |----------------|--------------------------|------------------------------|
 | `clock_format` | `"%B %-d, %A %H:%M"`    | Clock format ([chrono strftime](https://docs.rs/chrono/latest/chrono/format/strftime/index.html)) |
-| `update_check_url` | `"https://otto-version.riccardo-canalicchio.workers.dev/latest"` | Where to ask for the latest release; empty string turns the check off |
+| `update_check_url` | `"https://otto-version.otto-desktop.workers.dev/latest"` | Where to ask for the latest release; empty string turns the check off |
 
 When a newer release is out, the Otto menu shows "New Version Available…",
 which opens the release page. There is no notification. The check runs a
