@@ -993,3 +993,20 @@ fn the_palette_leaves_the_browser_alone() {
         before
     );
 }
+
+/// "Move to…" offers a symlink to a folder, since it accepts one as the
+/// destination, and still leaves out files and links to files.
+#[test]
+fn a_folder_argument_offers_symlinked_folders() {
+    let (browser, dir) = browser_over(&["mfile.txt"]);
+    std::fs::create_dir(dir.0.join("mreal")).unwrap();
+    std::os::unix::fs::symlink(dir.0.join("mreal"), dir.0.join("mlink")).unwrap();
+    std::os::unix::fs::symlink(dir.0.join("mfile.txt"), dir.0.join("mfile-link")).unwrap();
+
+    let values: Vec<String> = browser
+        .path_completions("m", true)
+        .into_iter()
+        .map(|completion| completion.value)
+        .collect();
+    assert_eq!(values, ["mlink/", "mreal/"]);
+}
