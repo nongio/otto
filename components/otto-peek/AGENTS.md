@@ -19,7 +19,7 @@ How it works: [File previews](../../docs/developer/file-previews.md).
 - Tests: `cargo test -p otto-peek`.
 
 ## Where things are
-- `src/session.rs` is the embedded preview a host drives (zoom, pan, pages, selection, playback).
+- `src/session.rs` is the embedded preview a host drives (zoom, pan, pages, selection, playback); `src/draw.rs` paints it, the same in every host.
 - The host side of decoding (spawn, deadline, payload) is `src/spawn.rs` and `src/payload.rs`; the decoders, one per kind, are in `src/decode/`.
 - `src/sandbox.rs` is the worker's containment and self-test.
 - Text in pictures (`ocr*.rs`, `badge.rs`) and thumbnails (`thumbcache.rs`, `thumbnailer.rs`) sit beside them.

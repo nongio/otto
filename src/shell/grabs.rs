@@ -85,6 +85,64 @@ macro_rules! forward_pointer_grab_events {
     };
 }
 
+/// The `TouchGrab` methods a window move/resize grab passes straight
+/// through, or ignores (a second finger going down, `frame`), plus
+/// `start_data` from a `start_data` field. Expands inside an
+/// `impl TouchGrab<$data> for ...`.
+macro_rules! forward_touch_grab_events {
+    ($data:ty) => {
+        fn down(
+            &mut self,
+            _data: &mut $data,
+            _handle: &mut smithay::input::touch::TouchInnerHandle<'_, $data>,
+            _focus: Option<(
+                <$data as smithay::input::SeatHandler>::TouchFocus,
+                Point<f64, Logical>,
+            )>,
+            _event: &smithay::input::touch::DownEvent,
+        ) {
+        }
+
+        fn frame(
+            &mut self,
+            _data: &mut $data,
+            _handle: &mut smithay::input::touch::TouchInnerHandle<'_, $data>,
+        ) {
+        }
+
+        fn cancel(
+            &mut self,
+            data: &mut $data,
+            handle: &mut smithay::input::touch::TouchInnerHandle<'_, $data>,
+        ) {
+            handle.cancel(data);
+            handle.unset_grab(self, data);
+        }
+
+        fn shape(
+            &mut self,
+            data: &mut $data,
+            handle: &mut smithay::input::touch::TouchInnerHandle<'_, $data>,
+            event: &smithay::input::touch::ShapeEvent,
+        ) {
+            handle.shape(data, event);
+        }
+
+        fn orientation(
+            &mut self,
+            data: &mut $data,
+            handle: &mut smithay::input::touch::TouchInnerHandle<'_, $data>,
+            event: &smithay::input::touch::OrientationEvent,
+        ) {
+            handle.orientation(data, event);
+        }
+
+        fn start_data(&self) -> &smithay::input::touch::GrabStartData<$data> {
+            &self.start_data
+        }
+    };
+}
+
 pub struct PointerResizeSurfaceGrab<B: Backend + 'static> {
     pub start_data: PointerGrabStartData<Otto<B>>,
     pub window: WindowElement,
@@ -354,17 +412,7 @@ pub struct TouchMoveSurfaceGrab<BackendData: Backend + 'static> {
 }
 
 impl<BackendData: Backend> TouchGrab<Otto<BackendData>> for TouchMoveSurfaceGrab<BackendData> {
-    fn down(
-        &mut self,
-        _data: &mut Otto<BackendData>,
-        _handle: &mut smithay::input::touch::TouchInnerHandle<'_, Otto<BackendData>>,
-        _focus: Option<(
-            <Otto<BackendData> as smithay::input::SeatHandler>::TouchFocus,
-            Point<f64, Logical>,
-        )>,
-        _event: &smithay::input::touch::DownEvent,
-    ) {
-    }
+    forward_touch_grab_events!(Otto<BackendData>);
 
     fn up(
         &mut self,
@@ -434,44 +482,6 @@ impl<BackendData: Backend> TouchGrab<Otto<BackendData>> for TouchMoveSurfaceGrab
         if self.tiling_detached {
             data.tiling_drag_motion(event.location.x, event.location.y);
         }
-    }
-
-    fn frame(
-        &mut self,
-        _data: &mut Otto<BackendData>,
-        _handle: &mut smithay::input::touch::TouchInnerHandle<'_, Otto<BackendData>>,
-    ) {
-    }
-
-    fn cancel(
-        &mut self,
-        data: &mut Otto<BackendData>,
-        handle: &mut smithay::input::touch::TouchInnerHandle<'_, Otto<BackendData>>,
-    ) {
-        handle.cancel(data);
-        handle.unset_grab(self, data);
-    }
-
-    fn shape(
-        &mut self,
-        data: &mut Otto<BackendData>,
-        handle: &mut smithay::input::touch::TouchInnerHandle<'_, Otto<BackendData>>,
-        event: &smithay::input::touch::ShapeEvent,
-    ) {
-        handle.shape(data, event);
-    }
-
-    fn orientation(
-        &mut self,
-        data: &mut Otto<BackendData>,
-        handle: &mut smithay::input::touch::TouchInnerHandle<'_, Otto<BackendData>>,
-        event: &smithay::input::touch::OrientationEvent,
-    ) {
-        handle.orientation(data, event);
-    }
-
-    fn start_data(&self) -> &smithay::input::touch::GrabStartData<Otto<BackendData>> {
-        &self.start_data
     }
 
     /// A cancelled touch drag puts the leaf back where it was.
@@ -833,17 +843,7 @@ pub struct TouchResizeSurfaceGrab<BackendData: Backend + 'static> {
 }
 
 impl<BackendData: Backend> TouchGrab<Otto<BackendData>> for TouchResizeSurfaceGrab<BackendData> {
-    fn down(
-        &mut self,
-        _data: &mut Otto<BackendData>,
-        _handle: &mut smithay::input::touch::TouchInnerHandle<'_, Otto<BackendData>>,
-        _focus: Option<(
-            <Otto<BackendData> as smithay::input::SeatHandler>::TouchFocus,
-            Point<f64, Logical>,
-        )>,
-        _event: &smithay::input::touch::DownEvent,
-    ) {
-    }
+    forward_touch_grab_events!(Otto<BackendData>);
 
     fn up(
         &mut self,
@@ -1050,44 +1050,6 @@ impl<BackendData: Backend> TouchGrab<Otto<BackendData>> for TouchResizeSurfaceGr
                     .unwrap();
             }
         }
-    }
-
-    fn frame(
-        &mut self,
-        _data: &mut Otto<BackendData>,
-        _handle: &mut smithay::input::touch::TouchInnerHandle<'_, Otto<BackendData>>,
-    ) {
-    }
-
-    fn cancel(
-        &mut self,
-        data: &mut Otto<BackendData>,
-        handle: &mut smithay::input::touch::TouchInnerHandle<'_, Otto<BackendData>>,
-    ) {
-        handle.cancel(data);
-        handle.unset_grab(self, data);
-    }
-
-    fn shape(
-        &mut self,
-        data: &mut Otto<BackendData>,
-        handle: &mut smithay::input::touch::TouchInnerHandle<'_, Otto<BackendData>>,
-        event: &smithay::input::touch::ShapeEvent,
-    ) {
-        handle.shape(data, event);
-    }
-
-    fn orientation(
-        &mut self,
-        data: &mut Otto<BackendData>,
-        handle: &mut smithay::input::touch::TouchInnerHandle<'_, Otto<BackendData>>,
-        event: &smithay::input::touch::OrientationEvent,
-    ) {
-        handle.orientation(data, event);
-    }
-
-    fn start_data(&self) -> &smithay::input::touch::GrabStartData<Otto<BackendData>> {
-        &self.start_data
     }
 
     fn unset(&mut self, _data: &mut Otto<BackendData>) {}

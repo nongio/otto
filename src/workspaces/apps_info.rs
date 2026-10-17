@@ -72,26 +72,14 @@ impl Application {
         Self::split_exec(exec, extra_args)
     }
 
-    /// Split an `Exec=` line into a program and its arguments, dropping the
-    /// `%` field codes nothing here fills in.
+    /// Split an `Exec=` line into a program and its arguments, as the
+    /// desktop entry specification quotes them, dropping the `%` field codes
+    /// nothing here fills in.
     fn split_exec(exec: &str, extra_args: &[String]) -> Option<(String, Vec<String>)> {
-        let mut parts = shell_words::split(exec).ok()?;
-        if parts.is_empty() {
-            return None;
-        }
+        let mut parts = otto_kit::mime_apps::exec_argv(exec)?;
         let cmd = parts.remove(0);
-        let mut args: Vec<String> = parts
-            .into_iter()
-            .filter_map(|arg| {
-                if arg.starts_with('%') {
-                    None
-                } else {
-                    Some(arg)
-                }
-            })
-            .collect();
-        args.extend(extra_args.iter().cloned());
-        Some((cmd, args))
+        parts.extend(extra_args.iter().cloned());
+        Some((cmd, parts))
     }
 }
 
@@ -254,3 +242,21 @@ impl ApplicationsInfo {
 }
 
 // Tests for desktop entry matching are now in otto_kit::desktop_entry
+
+#[cfg(test)]
+mod tests {
+    use super::Application;
+
+    #[test]
+    fn split_exec_unquotes_and_drops_field_codes() {
+        let (cmd, args) =
+            Application::split_exec(r#"foo --file=%u "a b" 100%% %U"#, &["--new".into()]).unwrap();
+        assert_eq!(cmd, "foo");
+        assert_eq!(args, ["--file=", "a b", "100%", "--new"]);
+    }
+
+    #[test]
+    fn split_exec_refuses_an_empty_line() {
+        assert!(Application::split_exec("%U", &[]).is_none());
+    }
+}

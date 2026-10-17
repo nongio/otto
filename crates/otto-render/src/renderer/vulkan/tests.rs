@@ -31,6 +31,24 @@ fn first_physical_device() -> PhysicalDevice {
     phd
 }
 
+/// [`first_physical_device`], or any device when none has a render node: the
+/// wallpaper tests only draw offscreen, so a software Vulkan with the DRM
+/// format modifier extension (`VK_DRIVER_FILES=.../lvp_icd.json`) will do.
+fn drawing_physical_device() -> PhysicalDevice {
+    let instance = Instance::new(Version::VERSION_1_3, None).expect("vulkan instance");
+    let devices: Vec<_> = PhysicalDevice::enumerate(&instance)
+        .expect("enumerate physical devices")
+        .collect();
+    let pick = devices
+        .iter()
+        .position(|phd| matches!(phd.render_node(), Ok(Some(_))))
+        .unwrap_or(0);
+    devices
+        .into_iter()
+        .nth(pick)
+        .expect("a Vulkan physical device")
+}
+
 fn full() -> Rectangle<i32, smithay::utils::Physical> {
     Rectangle::from_size((SIZE, SIZE).into())
 }
@@ -1155,4 +1173,190 @@ fn vulkan_nv12_dmabuf_samples_as_rgb() {
             [r, g, b, a]
         );
     }
+}
+
+// ── The wallpaper (nongio/otto#361) ──────────────────────────────────────
+//
+// While a window is dragged only the damage rect around it is repainted, and
+// the GPU rasterises the wallpaper's fill cropped to that rect: different
+// triangles from the whole-screen paint. Where a pixel centre lands exactly
+// between two texels, nearest sampling decides by the last bit of the
+// interpolated coordinate, which those triangles round differently — and the
+// repainted band tears along a diagonal from the rect's corner. The wallpaper
+// is now a frame the size of the screen drawn 1:1 (`otto_kit::wallpaper`),
+// so every pixel centre is a texel centre and both paints agree exactly.
+//
+// A second renderer in one process crashes, so run these one at a time:
+// `cargo test -p otto-render --lib -- --ignored --exact renderer::vulkan::tests::<name>`.
+// They need a device with VK_EXT_image_drm_format_modifier, which the
+// lavapipe of Ubuntu 24.04's Mesa 25.2 lacks, so CI does not run them; the
+// rule they check is held there by `otto_kit::wallpaper`'s own tests, which
+// need no GPU.
+
+/// A pseudo-random image: every texel differs from its neighbours, so a
+/// pixel sampled from the wrong one changes.
+fn wallpaper_noise(w: i32, h: i32) -> layers::skia::Image {
+    use layers::skia;
+    let mut pixels = Vec::with_capacity((w * h * 4) as usize);
+    let mut seed: u32 = 0x9E37_79B9;
+    for _ in 0..w * h {
+        seed ^= seed << 13;
+        seed ^= seed >> 17;
+        seed ^= seed << 5;
+        pixels.extend_from_slice(&[
+            (seed & 0xff) as u8,
+            ((seed >> 8) & 0xff) as u8,
+            ((seed >> 16) & 0xff) as u8,
+            255,
+        ]);
+    }
+    let info = skia::ImageInfo::new(
+        (w, h),
+        skia::ColorType::RGBA8888,
+        skia::AlphaType::Premul,
+        None,
+    );
+    skia::images::raster_from_data(&info, skia::Data::new_copy(&pixels), (w * 4) as usize)
+        .expect("raster image")
+}
+
+/// Paint with `paint` once over the whole `w`x`h` target and once under
+/// each of `clips` over black, and return per clip the pixels that differ
+/// and the largest channel difference.
+fn wallpaper_whole_against_cropped(
+    (w, h): (i32, i32),
+    clips: &[layers::skia::IRect],
+    paint: &dyn Fn(&layers::skia::Canvas),
+) -> Vec<(usize, u8)> {
+    use layers::skia;
+
+    let mut renderer = SkiaVkRenderer::new(&drawing_physical_device()).expect("renderer");
+    let mut target = renderer
+        .create_buffer(Fourcc::Abgr8888, (w, h).into())
+        .expect("offscreen target");
+    let mut pass = |renderer: &mut SkiaVkRenderer, clip: Option<skia::IRect>| -> Vec<u8> {
+        let sync = {
+            let mut frame = renderer
+                .render(&mut target, (w, h).into(), Transform::Normal)
+                .expect("frame");
+            frame
+                .clear(
+                    Color32F::new(0.0, 0.0, 0.0, 1.0),
+                    &[Rectangle::from_size((w, h).into())],
+                )
+                .expect("clear");
+            let canvas = frame.skia_surface.canvas();
+            let save = canvas.save();
+            if let Some(clip) = clip {
+                canvas.clip_irect(clip, Some(skia::ClipOp::Intersect));
+            }
+            paint(canvas);
+            canvas.restore_to_count(save);
+            frame.finish().expect("finish")
+        };
+        sync.wait().expect("sync point signals");
+        let mapping = renderer
+            .copy_framebuffer(
+                &target,
+                Rectangle::from_size((w, h).into()),
+                Fourcc::Abgr8888,
+            )
+            .expect("copy framebuffer");
+        renderer.map_texture(&mapping).expect("map").to_vec()
+    };
+    let whole = pass(&mut renderer, None);
+    clips
+        .iter()
+        .map(|clip| {
+            let cropped = pass(&mut renderer, Some(*clip));
+            let (mut differing, mut worst) = (0usize, 0u8);
+            for y in clip.top..clip.bottom {
+                for x in clip.left..clip.right {
+                    let i = ((y * w + x) * 4) as usize;
+                    let delta = (0..3)
+                        .map(|c| whole[i + c].abs_diff(cropped[i + c]))
+                        .max()
+                        .unwrap_or(0);
+                    if delta > 0 {
+                        differing += 1;
+                        worst = worst.max(delta);
+                    }
+                }
+            }
+            (differing, worst)
+        })
+        .collect()
+}
+
+/// Window-sized damage rects at odd offsets, as a drag produces: a 300x260
+/// window plus its 100 px shadow margin.
+fn wallpaper_drag_clips() -> Vec<layers::skia::IRect> {
+    use layers::skia::IRect;
+    vec![
+        IRect::from_xywh(411, 233, 500, 460),
+        IRect::from_xywh(418, 228, 500, 460),
+        IRect::from_xywh(1003, 101, 500, 460),
+        IRect::from_xywh(2551, 977, 500, 460),
+    ]
+}
+
+/// The production path: a 16:9 photo rendered into a frame for a 21:9
+/// screen and painted by `otto_kit::wallpaper::paint`. A drag's cropped
+/// repaint equals the whole paint exactly.
+#[test]
+#[ignore = "needs a Vulkan device"]
+fn vulkan_wallpaper_cropped_repaint_matches_whole() {
+    use layers::skia;
+    use otto_kit::wallpaper::{self, FrameStyle, Source};
+
+    const SCREEN: (i32, i32) = (3440, 1440);
+    let frame = wallpaper::render_frame(
+        &Source::Raster(wallpaper_noise(3840, 2160)),
+        &FrameStyle::default(),
+        SCREEN,
+    )
+    .expect("frame");
+    let placement = wallpaper::cover((frame.width(), frame.height()), SCREEN);
+    assert!(placement.is_pixel_exact());
+    let report = wallpaper_whole_against_cropped(SCREEN, &wallpaper_drag_clips(), &|canvas| {
+        wallpaper::paint(
+            canvas,
+            &frame,
+            placement,
+            skia::Rect::from_iwh(SCREEN.0, SCREEN.1),
+        );
+    });
+    eprintln!("wallpaper, cropped against whole (pixels differing, worst delta): {report:?}");
+    assert!(
+        report.iter().all(|&(differing, _)| differing == 0),
+        "a cropped repaint differs from the whole paint: {report:?}"
+    );
+}
+
+/// Diagnostic for the hardware #361 was reported on, run with
+/// `--nocapture`: what the wallpaper did before, a 3440x1935 image drawn at
+/// y = -247.5 with nearest sampling, cropped against whole. Nonzero here and
+/// zero in [`vulkan_wallpaper_cropped_repaint_matches_whole`] confirms the
+/// cause on that GPU. Asserts nothing: anv and lavapipe report zero for both.
+#[test]
+#[ignore = "needs a Vulkan device"]
+fn vulkan_wallpaper_half_pixel_nearest_report() {
+    use layers::skia;
+
+    const SCREEN: (i32, i32) = (3440, 1440);
+    let image = wallpaper_noise(3440, 1935);
+    let mut matrix = skia::Matrix::new_identity();
+    matrix.set_translate((0.0, -247.5));
+    let report = wallpaper_whole_against_cropped(SCREEN, &wallpaper_drag_clips(), &|canvas| {
+        let mut paint = skia::Paint::default();
+        paint.set_shader(image.to_shader(
+            (skia::TileMode::Repeat, skia::TileMode::Repeat),
+            skia::SamplingOptions::default(),
+            &matrix,
+        ));
+        canvas.draw_rect(skia::Rect::from_iwh(SCREEN.0, SCREEN.1), &paint);
+    });
+    eprintln!(
+        "half-pixel nearest, cropped against whole (pixels differing, worst delta): {report:?}"
+    );
 }

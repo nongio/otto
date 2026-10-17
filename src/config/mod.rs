@@ -7,6 +7,9 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 pub mod default_apps;
 pub mod file;
 pub mod shortcuts;
+pub mod wallpaper;
+
+pub use wallpaper::{save_output_wallpaper, WallpaperOverride};
 
 use shortcuts::{build_bindings, RunCommandConfig, ShortcutBinding, ShortcutMap};
 use toml::map::Entry;
@@ -43,7 +46,25 @@ pub struct Config {
     pub theme_scheme: ThemeScheme,
     pub gtk_theme: Option<String>,
     pub background_image: String,
+    /// The colour of the gradient shown when there is no wallpaper, and of
+    /// what shows around a fitted or centred one.
     pub background_color: String,
+    /// How the wallpaper fills the screen: `fill`, `fit`, `stretch`, `center`,
+    /// `tile` or `span`. Anything else is read as `fill`. See
+    /// [`Config::wallpaper_layout`].
+    pub background_mode: String,
+    /// Which part of a cropped wallpaper shows, and where a smaller one sits,
+    /// as fractions across and down: CSS's `object-position`. `0.5`
+    /// centres.
+    pub background_position_x: f64,
+    pub background_position_y: f64,
+    /// Extra magnification in `fill` and `span` modes, from 1.0, panned by
+    /// the position.
+    pub background_zoom: f64,
+    /// Per-output wallpaper overrides, keyed by output name:
+    /// `[background_outputs."DP-1"]`. See [`wallpaper::WallpaperOverride`].
+    #[serde(default)]
+    pub background_outputs: BTreeMap<String, WallpaperOverride>,
     pub locales: Vec<String>,
     pub use_10bit_color: bool,
     /// The accent colour Otto's own interface paints with: a palette name,
@@ -171,6 +192,11 @@ impl Default for Config {
             gtk_theme: None,
             background_image: "".to_string(),
             background_color: "#1a1a2e".to_string(),
+            background_mode: otto_kit::wallpaper::Mode::default().token().to_string(),
+            background_position_x: 0.5,
+            background_position_y: 0.5,
+            background_zoom: 1.0,
+            background_outputs: BTreeMap::new(),
             locales: Vec::new(),
             use_10bit_color: false,
             accent_color: default_accent_color(),
@@ -372,6 +398,7 @@ impl Config {
             Self::default()
         });
 
+        errors.extend(config.wallpaper_problems());
         config.rebuild_shortcut_bindings();
         (config, errors)
     }
@@ -1083,7 +1110,7 @@ impl Default for WorkspacesConfig {
 /// One record rather than a table per field, so a workspace reads as a
 /// workspace in the file and a new per-workspace setting is a field here
 /// instead of another parallel map.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct WorkspaceEntry {
     /// The name the user typed in the workspace selector. Absent means the
@@ -1099,6 +1126,10 @@ pub struct WorkspaceEntry {
     pub inner_gap: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub outer_gap: Option<i32>,
+    /// The workspace's own wallpaper settings, over its output's:
+    /// `[workspaces.entries."eDP-1:0".background]`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub background: Option<WallpaperOverride>,
 }
 
 fn is_false(value: &bool) -> bool {
@@ -1502,6 +1533,11 @@ fn read_workspace_entries(workspaces: &toml_edit::Table) -> BTreeMap<String, Wor
                         .get("outer_gap")
                         .and_then(|v| v.as_integer())
                         .map(|n| n as i32),
+                    background: fields
+                        .get("background")
+                        .and_then(|v| v.as_table_like())
+                        .map(WallpaperOverride::from_table)
+                        .filter(|record| !record.is_empty()),
                 },
             );
         }
@@ -1557,6 +1593,9 @@ fn workspace_entry_table(entry: &WorkspaceEntry) -> toml_edit::Table {
     }
     if let Some(outer) = entry.outer_gap {
         table.insert("outer_gap", toml_edit::value(outer as i64));
+    }
+    if let Some(background) = entry.background.as_ref().filter(|b| !b.is_empty()) {
+        table.insert("background", toml_edit::Item::Table(background.to_table()));
     }
     table
 }
@@ -2791,6 +2830,7 @@ mod tests {
                 tiling: false,
                 inner_gap: Some(0),
                 outer_gap: Some(0),
+                background: None,
             }
         );
         assert_eq!(
@@ -2837,6 +2877,7 @@ outer = 4
                 tiling: false,
                 inner_gap: Some(0),
                 outer_gap: Some(4),
+                background: None,
             }
         );
         assert_eq!(
@@ -2893,6 +2934,7 @@ tiling = true
                 tiling: true,
                 inner_gap: Some(0),
                 outer_gap: Some(4),
+                background: None,
             }
         );
         assert_eq!(config.workspaces.switch_duration, 0.5);
@@ -3215,6 +3257,36 @@ bookmarks = []
             config.exec_once.is_empty(),
             "exec_once should default to empty"
         );
+    }
+
+    /// The wallpaper layout keys read into a layout; a typo in the mode is
+    /// `fill`, and numbers out of range are pulled back in, rather than the
+    /// whole file being rejected.
+    #[test]
+    fn wallpaper_layout_reads_and_sanitises() {
+        use otto_kit::wallpaper::{Layout, Mode};
+        let config: Config = toml::from_str(
+            "background_mode = \"fit\"\nbackground_position_x = 0.25\nbackground_position_y = 0.0\nbackground_zoom = 2.0\n",
+        )
+        .unwrap();
+        assert_eq!(
+            config.wallpaper_layout(),
+            Layout {
+                mode: Mode::Fit,
+                position: (0.25, 0.0),
+                zoom: 2.0,
+            }
+        );
+        let config: Config = toml::from_str(
+            "background_mode = \"zoomed\"\nbackground_position_x = 4.0\nbackground_zoom = 0.1\n",
+        )
+        .unwrap();
+        let layout = config.wallpaper_layout();
+        assert_eq!(layout.mode, Mode::Fill);
+        assert_eq!(layout.position, (1.0, 0.5));
+        assert_eq!(layout.zoom, 1.0);
+        // Unset, it is today's behaviour: filled and centred.
+        assert_eq!(Config::default().wallpaper_layout(), Layout::default());
     }
 
     /// The example config is what the packages install as

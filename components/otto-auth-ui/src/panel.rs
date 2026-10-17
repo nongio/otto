@@ -627,6 +627,7 @@ impl Panel {
         } else {
             self.wallpaper.set_draw_content(draw_wallpaper(
                 self.wallpaper_image.clone(),
+                self.appearance.wallpaper_layout,
                 self.appearance.background,
                 width,
                 height,
@@ -1213,6 +1214,7 @@ impl Panel {
 
 fn draw_wallpaper(
     image: Option<Image>,
+    layout: otto_kit::wallpaper::Layout,
     background: Color,
     width: f32,
     height: f32,
@@ -1222,15 +1224,14 @@ fn draw_wallpaper(
 
         match &image {
             Some(image) => {
-                canvas.draw_image_rect_with_sampling_options(
+                // Laid out as the desktop lays it out, so the lock screen
+                // shows the wallpaper the session does.
+                otto_kit::wallpaper::paint_layout(
+                    canvas,
                     image,
-                    Some((
-                        &cover_source(image.width() as f32, image.height() as f32, width, height),
-                        SrcRectConstraint::Fast,
-                    )),
+                    layout,
+                    skia_safe::Color4f::from(background),
                     Rect::from_wh(width, height),
-                    SamplingOptions::default(),
-                    &Paint::default(),
                 );
                 // Wallpapers are not chosen for text contrast, so darken the
                 // whole thing slightly; the card's frost does the rest.

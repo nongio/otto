@@ -54,6 +54,7 @@ pub mod tile_decoration;
 pub mod trash;
 pub mod typography;
 pub mod utils;
+pub mod wallpaper;
 pub mod watch;
 pub mod xml;
 

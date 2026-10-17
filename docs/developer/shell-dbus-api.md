@@ -155,8 +155,10 @@ to the focused output.
 
 ### `GetOutputs() → s`
 
-An array of `{name, active, primary, focused, current_workspace, rect}`.
-`current_workspace` is a name, as i3 reports it.
+An array of `{name, active, primary, focused, current_workspace, rect, scale,
+current_mode}`. `current_workspace` is a name, as i3 reports it. `rect` is in
+logical points; `scale` and `current_mode` (`{width, height, refresh}`, the
+mode in physical pixels and mHz) are sway's.
 
 ### `GetInputs() → s`
 

@@ -474,13 +474,7 @@ fn home_as_tilde(dir: &str) -> String {
 /// What polkit says the request is for, on one line and no longer than the
 /// dialog shows. The program that asked has a line of its own under it.
 fn message_line(message: &str) -> String {
-    let message = visible(message);
-    if message.chars().count() > MAX_MESSAGE_CHARS {
-        let cut: String = message.chars().take(MAX_MESSAGE_CHARS - 1).collect();
-        format!("{}…", cut.trim_end())
-    } else {
-        message
-    }
+    otto_kit::typography::ellipsize_chars(&visible(message), MAX_MESSAGE_CHARS)
 }
 
 /// `text` on one line, with control and invisible formatting characters
@@ -538,6 +532,12 @@ mod tests {
         assert_eq!(message.chars().count(), MAX_MESSAGE_CHARS);
         assert!(message.ends_with('…'));
         assert_eq!(message_line("Short."), "Short.");
+        // The ellipsis sits against the last word, not after a space.
+        let spaced = format!("{} {}", "x".repeat(MAX_MESSAGE_CHARS - 2), "y".repeat(10));
+        assert_eq!(
+            message_line(&spaced),
+            format!("{}…", "x".repeat(MAX_MESSAGE_CHARS - 2))
+        );
     }
 
     #[test]

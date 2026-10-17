@@ -57,12 +57,15 @@ D-Bus client that reads a described schema, sets values, and observes changes.
 
 ## Non-Goals
 
-- Wallpaper selection and management. Otto exposes only `background_color` /
-  `background_image`; those two keys are in scope, and `background_image` is
-  chosen through the desktop portal's file picker
-  ([file-picker.md](./file-picker.md)) rather than by typing a path. Cropping,
-  per-output wallpapers and slideshow behaviour still belong to a separate
-  application.
+- Wallpaper management beyond the global settings. `background_color`,
+  `background_image`, `background_mode`, `background_position_x`,
+  `background_position_y` and `background_zoom` are in scope
+  ([wallpaper.md](./wallpaper.md)); `background_image` is chosen through the
+  desktop portal's file picker ([file-picker.md](./file-picker.md)) rather
+  than by typing a path, and its preview shows the primary screen with the
+  layout applied, a click on it setting the position. Per-output and
+  per-workspace wallpapers (set through the config file or `otto-msg`) and
+  slideshows still have no control here.
 - Configuring anything Otto does not already have a configuration key for.
   This app exposes the existing surface; it does not motivate new features.
   The exceptions are services Otto's features stand on that keep their own
@@ -160,7 +163,7 @@ setting. Today these are reconciled with a changed configuration:
 - `appswitcher.colorize_icons` and `appswitcher.follow_cursor`;
 - the appearance settings: `theme_scheme`, `accent_color`, `rounded_corners`, `frosting`,
   `window_controls_side`, `show_maximize_button`, `cursor_theme`,
-  `cursor_size`, `icon_theme`, `background_image` and `background_color`;
+  `cursor_size`, `icon_theme`, and the six `background_*` settings;
 - all of `input.*` — the touchpad and pointer settings by reconfiguring the
   devices, and the keymap (`input.xkb_layout`, `input.xkb_variant`,
   `input.xkb_options`) by replacing the seat's, which is sent to the clients

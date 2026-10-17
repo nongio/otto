@@ -22,6 +22,7 @@ How it works: [otto-kit](../../docs/developer/otto-kit.md).
 - Drawing: `src/rendering/` (EGL, Skia, the lay-rs renderer) and `src/components/` (the widget set).
 - The design system: `theme.rs`, `typography.rs`, `icons.rs`, with the portal watchers sharing `portal_settings.rs`.
 - `portal_file_chooser.rs` is the one `org.freedesktop.portal.FileChooser` client: apps build a `Request` and `spawn` it rather than calling the portal themselves.
+- The desktop wallpaper's layout, frame rendering and drawing are `src/wallpaper/`, shared by the compositor and the settings app's preview; `src/utils/resample.rs` is the high-quality CPU resampler it renders with.
 - Otto's own protocols are generated in `src/protocols/`; desktop entries, file types, previews, clipboard, drag and drop, sound and Lottie have their own modules.
 
 ## Rules

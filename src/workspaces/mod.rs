@@ -48,7 +48,8 @@ mod window_selector;
 mod window_view;
 mod workspace_selector;
 
-pub use background::BackgroundView;
+use background::store::Lookup;
+pub use background::{BackgroundContent, BackgroundView};
 pub use window_selector::{WindowSelectorView, WindowSelectorWindow};
 pub use window_view::{
     resize_edges_at, WindowDecorationModel, WindowDecorationView, WindowResizeView, WindowView,
@@ -356,6 +357,9 @@ pub struct Workspaces {
     /// Carries `(output_name, workspace_index, name)` from a selector whose
     /// rename ended without a `&mut Otto` at hand (losing keyboard focus).
     rename_workspace_sender: CalloopSender<(String, usize, String)>,
+    /// Decoded wallpapers and the frames rendered from them, shared by every
+    /// workspace on every output. See [`background::store`].
+    wallpapers: std::sync::Mutex<background::store::WallpaperStore>,
 }
 
 /// # Workspaces Layer Structure
@@ -411,6 +415,11 @@ pub struct Workspaces {
 pub type RemoveWorkspaceChannel =
     smithay::reexports::calloop::channel::Channel<(Option<String>, usize)>;
 
+/// Wallpaper frames finished on the decode thread, for
+/// [`Workspaces::wallpaper_frame_ready`].
+pub type WallpaperChannel =
+    smithay::reexports::calloop::channel::Channel<background::store::FrameDone>;
+
 /// Rename requests from a selector: `(output, workspace index, name)`.
 pub type RenameWorkspaceChannel =
     smithay::reexports::calloop::channel::Channel<(String, usize, String)>;
@@ -448,6 +457,7 @@ fn restore_workspace_settings(workspace: &WorkspaceView, output: &str, position:
     if let Some(name) = entry.name {
         workspace.set_custom_name(Some(name));
     }
+    workspace.set_background_override(entry.background);
     let gaps = match (entry.inner_gap, entry.outer_gap) {
         (None, None) => None,
         (inner, outer) => Config::with(|c| {
@@ -462,6 +472,20 @@ fn restore_workspace_settings(workspace: &WorkspaceView, output: &str, position:
         state.gaps = gaps;
         state.enabled = entry.tiling;
     }
+}
+
+/// `output`'s rect in the global logical space: where it is, and its mode
+/// in points. `None` before it has a mode.
+fn output_logical_rect(output: &Output) -> Option<layers::skia::Rect> {
+    let mode = output.current_mode()?;
+    let scale = output.current_scale().fractional_scale() as f32;
+    let location = output.current_location();
+    Some(layers::skia::Rect::from_xywh(
+        location.x as f32,
+        location.y as f32,
+        mode.size.w as f32 / scale,
+        mode.size.h as f32 / scale,
+    ))
 }
 
 /// Where the item at old position `i` ends up once the item at `from` is moved
@@ -545,29 +569,128 @@ impl Workspaces {
     /// carrying it in their state, so `update_state` would hash to the same
     /// value and skip the render — the layer trees are rebuilt directly.
     /// Re-read the desktop background from the live configuration and push it
-    /// to every workspace.
+    /// to every workspace on every output.
     ///
-    /// Every workspace has its own `BackgroundView`, so a wallpaper that
-    /// changed on one and not the others would show up the moment the user
-    /// swiped sideways. Returns whether the image loaded — an unreadable path
-    /// is reported rather than leaving the old wallpaper up and claiming
-    /// success.
+    /// Returns whether the global image can be shown — an unreadable path is
+    /// reported rather than leaving the old wallpaper up and claiming
+    /// success. Only that image: an output's or a workspace's own that has
+    /// gone missing (an unplugged drive) shows the gradient and is logged,
+    /// but must not refuse a change to the global settings. The check is a
+    /// stat and a look at the file's first bytes; the decode itself finishes
+    /// later, on the wallpaper thread.
     pub fn reload_background(&self) -> Result<(), String> {
-        let path = Config::with(|c| c.background_image.clone());
-        let color = crate::utils::parse_hex_color(&Config::with(|c| c.background_color.clone()));
-
-        let mut failed = false;
-        for workspace in self.with_model(|m| m.workspaces.clone()) {
-            workspace.background_view.set_fallback_color(color);
-            if !workspace.background_view.set_image_path(&path) {
-                failed = true;
+        self.wallpaper_store().forget_failures();
+        let global = Config::with(|c| c.global_wallpaper_image());
+        let mut result = Ok(());
+        for (image, err) in self.refresh_wallpapers() {
+            if image == global {
+                result = Err(format!("cannot show the background image `{image}`: {err}"));
+            } else {
+                tracing::warn!("cannot show the background image `{image}`: {err}");
             }
         }
+        result
+    }
 
-        if failed {
-            return Err(format!("cannot read a background image at `{path}`"));
+    /// The wallpaper store. A panic while it was held leaves nothing in it
+    /// half-done that matters, so a poisoned lock is taken over rather than
+    /// silently skipping every refresh after it.
+    fn wallpaper_store(&self) -> std::sync::MutexGuard<'_, background::store::WallpaperStore> {
+        self.wallpapers
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// Point every workspace's background at the frame it should show now,
+    /// asking for the ones not rendered yet. Cheap when nothing changed:
+    /// every lookup is a hit, and an unchanged state does not re-render.
+    ///
+    /// Run on every layout pass, since an output's size is part of what a
+    /// frame is. Returns every image that could not be shown, once each,
+    /// with the reason.
+    pub(crate) fn refresh_wallpapers(&self) -> Vec<(String, String)> {
+        let config = Config::current();
+        let fallback_size = self.with_model(|m| (m.width, m.height));
+
+        // Span lays one image over every output at once.
+        let screens: Vec<(String, layers::skia::Rect)> = self
+            .outputs
+            .iter()
+            .filter_map(|o| Some((o.name(), output_logical_rect(o)?)))
+            .collect();
+        let desktop = background::desktop_bounds(screens.iter().map(|(_, rect)| *rect));
+
+        let mut store = self.wallpaper_store();
+        let mut errors: Vec<(String, String)> = Vec::new();
+        store.begin_pass();
+        for (output_name, ows) in self.output_workspaces.iter() {
+            let output = self.outputs.iter().find(|o| o.name() == *output_name);
+            let target = output
+                .and_then(|o| o.current_mode())
+                .map(|mode| (mode.size.w, mode.size.h))
+                .unwrap_or(fallback_size);
+            let output_scale = output
+                .map(|o| o.current_scale().fractional_scale() as f32)
+                .unwrap_or(1.0);
+            let span = screens
+                .iter()
+                .find(|(name, _)| name == output_name)
+                .zip(desktop)
+                .map(|((_, screen), desktop)| otto_kit::wallpaper::SpanView {
+                    desktop,
+                    screen: *screen,
+                });
+            for workspace in ows.workspace_views.iter() {
+                let settings =
+                    config.wallpaper_for(output_name, workspace.background_override().as_ref());
+                let view = &workspace.background_view;
+                let color = settings.color;
+                if settings.image.is_empty() || target.0 <= 0 || target.1 <= 0 {
+                    view.show(BackgroundContent::Gradient, color);
+                    continue;
+                }
+                let style = otto_kit::wallpaper::FrameStyle {
+                    layout: settings.layout,
+                    fill: color,
+                    output_scale,
+                    span,
+                };
+                match store.lookup(&settings.image, &style, target) {
+                    Lookup::Ready(frame) => view.show(BackgroundContent::Frame(frame), color),
+                    Lookup::Pending => {
+                        // Keep a frame that is up while the new one renders;
+                        // with nothing up yet, wait on black rather than flash
+                        // the gradient.
+                        if !matches!(view.content(), BackgroundContent::Frame(_)) {
+                            view.show(BackgroundContent::Loading, color);
+                        }
+                    }
+                    Lookup::Failed(err) => {
+                        view.show(BackgroundContent::Gradient, color);
+                        if !errors.iter().any(|(image, _)| *image == settings.image) {
+                            errors.push((settings.image.clone(), err));
+                        }
+                    }
+                }
+            }
         }
-        Ok(())
+        store.end_pass();
+        errors
+    }
+
+    /// A frame finished rendering on the wallpaper thread. Returns whether
+    /// anything on screen changed, so the caller can ask for a redraw.
+    pub fn wallpaper_frame_ready(&self, done: background::store::FrameDone) -> bool {
+        let refresh = self.wallpaper_store().finish(done);
+        if refresh {
+            self.refresh_wallpapers();
+        }
+        refresh
+    }
+
+    /// Whether a wallpaper some workspace is waiting for is still rendering.
+    pub fn wallpapers_pending(&self) -> bool {
+        self.wallpaper_store().pending()
     }
 
     /// Repaint every piece of chrome the compositor draws itself.
@@ -661,7 +784,12 @@ impl Workspaces {
     pub fn new(
         layers_engine: Arc<Engine>,
         display_handle: DisplayHandle,
-    ) -> (Self, RemoveWorkspaceChannel, RenameWorkspaceChannel) {
+    ) -> (
+        Self,
+        RemoveWorkspaceChannel,
+        RenameWorkspaceChannel,
+        WallpaperChannel,
+    ) {
         let model = WorkspacesModel::default();
 
         let expose_layer = layers_engine.new_layer();
@@ -738,6 +866,12 @@ impl Workspaces {
 
         let (remove_workspace_sender, remove_receiver) = channel::<(Option<String>, usize)>();
         let (rename_workspace_sender, rename_receiver) = channel::<(String, usize, String)>();
+        let (wallpaper_sender, wallpaper_receiver) = channel::<background::store::FrameDone>();
+        let wallpapers = background::store::WallpaperStore::new(Box::new(move |done| {
+            // The event loop is gone only at shutdown, when nobody is
+            // waiting for a wallpaper.
+            let _ = wallpaper_sender.send(done);
+        }));
 
         // Create OSD view; attach it to overlay_layer in map_output_with_primary
         let osd = OsdView::new(layers_engine.clone());
@@ -787,12 +921,18 @@ impl Workspaces {
             expose_dragged_window: Arc::new(std::sync::Mutex::new(None)),
             remove_workspace_sender,
             rename_workspace_sender,
+            wallpapers: std::sync::Mutex::new(wallpapers),
             display_handle,
         };
 
         workspaces.add_listener(dock.clone());
         workspaces.add_listener(app_switcher.clone());
-        (workspaces, remove_receiver, rename_receiver)
+        (
+            workspaces,
+            remove_receiver,
+            rename_receiver,
+            wallpaper_receiver,
+        )
     }
 
     fn primary_output_name(&self) -> Option<String> {
@@ -921,6 +1061,7 @@ impl Workspaces {
             return;
         };
         let name = workspace.get_custom_name();
+        let background = workspace.background_override();
         let (tiling, gaps) = workspace
             .tiling
             .read()
@@ -933,6 +1074,7 @@ impl Workspaces {
                 entry.tiling = tiling;
                 entry.inner_gap = gaps.map(|gaps| gaps.inner);
                 entry.outer_gap = gaps.map(|gaps| gaps.outer);
+                entry.background = background;
             },
         );
     }
@@ -1156,13 +1298,6 @@ impl Workspaces {
             }
         }
 
-        // Wallpapers are decoded for the largest output; when a bigger one
-        // shows up (including the first one, at startup) the images loaded so
-        // far are now being upscaled, so decode them again at the new size.
-        if background::set_wallpaper_target_px(max_phys_w, max_phys_h) {
-            let _ = self.reload_background();
-        }
-
         // The scene root only needs to fit the largest output.
         if max_phys_w > 0.0 && max_phys_h > 0.0 {
             self.layers_engine.scene_set_size(max_phys_w, max_phys_h);
@@ -1217,6 +1352,10 @@ impl Workspaces {
         // Keep every output's selector previews in sync with the new sizes and
         // workspace set.
         self.refresh_output_selectors();
+
+        // A frame is rendered for its output's size, and new workspaces have
+        // none yet.
+        self.refresh_wallpapers();
     }
 
     pub fn with_model_mut<T>(&self, f: impl FnOnce(&mut WorkspacesModel) -> T) -> T {

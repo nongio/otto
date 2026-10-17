@@ -472,7 +472,8 @@ pub static SETTINGS: &[SettingSpec] = &[
         "background_color",
         Str,
         "Background colour",
-        "Desktop background colour, as a hex string.",
+        "Desktop background colour, as a hex string: the gradient shown \
+         without an image, and what shows around a fitted or centred one.",
         Live,
     ),
     spec(
@@ -481,6 +482,54 @@ pub static SETTINGS: &[SettingSpec] = &[
         "Background image",
         "Path to the desktop background image. Empty for none.",
         Live,
+    ),
+    labelled_choice(
+        "background_mode",
+        "Background layout",
+        "How the background image fills the screen.",
+        Live,
+        &["fill", "fit", "stretch", "center", "tile", "span"],
+        &[
+            "settings-choice-background-fill",
+            "settings-choice-background-fit",
+            "settings-choice-background-stretch",
+            "settings-choice-background-center",
+            "settings-choice-background-tile",
+            "settings-choice-background-span",
+        ],
+    ),
+    ranged(
+        "background_position_x",
+        Double,
+        "Background position across",
+        "Which part of a cropped background image shows, and where a smaller \
+         one sits, from 0 (left) to 1 (right).",
+        Live,
+        0.0,
+        1.0,
+        0.01,
+    ),
+    ranged(
+        "background_position_y",
+        Double,
+        "Background position down",
+        "Which part of a cropped background image shows, and where a smaller \
+         one sits, from 0 (top) to 1 (bottom).",
+        Live,
+        0.0,
+        1.0,
+        0.01,
+    ),
+    ranged(
+        "background_zoom",
+        Double,
+        "Background zoom",
+        "Magnification of a filled or spanned background image, from 1 \
+         (just covering the screen).",
+        Live,
+        1.0,
+        otto_kit::wallpaper::MAX_ZOOM as f64,
+        0.05,
     ),
     spec(
         "cursor_theme",

@@ -105,6 +105,11 @@ settings-group-desktop = Рабочий стол
 settings-background-colour = Цвет фона
 settings-background-image = Изображение фона
 settings-background-image-detail = Выбирается через диалог выбора файлов портала рабочего стола
+settings-background-layout = Размещение
+settings-background-zoom = Масштаб
+settings-background-position-x = По горизонтали
+settings-background-position-y = По вертикали
+settings-background-position-detail = Или нажми на ту часть изображения, которая должна остаться видна
 settings-desktop-widget = Фоновый виджет
 settings-desktop-widget-needs-ewwii = Нужен ewwii, а он не установлен
 # { $folder } is a path such as ~/.config/otto/widgets/ewwii.
@@ -540,6 +545,13 @@ settings-choice-widget-calendar = Календарь
 # The next two name pages whose text is in English, so they stay as written.
 settings-choice-widget-cross-pad = Cross pad
 settings-choice-widget-grid-pad = Grid pad
+# How a background image fills the screen.
+settings-choice-background-fill = Заполнить экран
+settings-choice-background-fit = По размеру экрана
+settings-choice-background-stretch = Растянуть
+settings-choice-background-center = По центру
+settings-choice-background-tile = Замостить
+settings-choice-background-span = На все дисплеи
 # The automatic option for a theme that follows the system.
 settings-choice-auto = Авто
 
@@ -1102,9 +1114,17 @@ schema-topbar-clock-format-description = Как верхняя панель пи
 schema-topbar-show-app-menu-label = Показывать меню приложений
 schema-topbar-show-app-menu-description = Меню активного приложения рядом с его названием на верхней панели.
 schema-background-color-label = Цвет фона
-schema-background-color-description = Цвет фона рабочего стола в виде шестнадцатеричной строки.
+schema-background-color-description = Цвет фона рабочего стола в виде шестнадцатеричной строки: градиент, который виден без изображения, и то, что видно вокруг изображения, вписанного в экран или размещённого по центру.
 schema-background-image-label = Изображение фона
 schema-background-image-description = Путь к изображению фона рабочего стола. Пусто, если фон не задан.
+schema-background-mode-label = Размещение фона
+schema-background-mode-description = Как изображение фона заполняет экран.
+schema-background-position-x-label = Положение фона по горизонтали
+schema-background-position-x-description = Какая часть обрезанного изображения фона видна и где находится изображение меньшего размера, от 0 (слева) до 1 (справа).
+schema-background-position-y-label = Положение фона по вертикали
+schema-background-position-y-description = Какая часть обрезанного изображения фона видна и где находится изображение меньшего размера, от 0 (сверху) до 1 (снизу).
+schema-background-zoom-label = Масштаб фона
+schema-background-zoom-description = Увеличение изображения фона, заполняющего экран или растянутого на все дисплеи, от 1 (ровно покрывает экран).
 schema-cursor-theme-label = Тема курсора
 schema-cursor-theme-description = Название темы XCursor.
 schema-cursor-size-label = Размер курсора

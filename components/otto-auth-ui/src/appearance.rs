@@ -17,6 +17,8 @@ pub struct Appearance {
     /// Wallpaper to fill the screen with. `None` draws a gradient built from
     /// [`Appearance::background`] instead.
     pub wallpaper: Option<PathBuf>,
+    /// How the wallpaper fills the screen, as the desktop lays it out.
+    pub wallpaper_layout: otto_kit::wallpaper::Layout,
     pub background: Color,
     pub accent: Color,
     pub font_family: String,
@@ -27,6 +29,7 @@ impl Default for Appearance {
     fn default() -> Self {
         Self {
             wallpaper: None,
+            wallpaper_layout: otto_kit::wallpaper::Layout::default(),
             background: Color::from_argb(255, 26, 26, 46),
             accent: Color::from_argb(255, 10, 132, 255),
             font_family: "Inter".to_string(),
@@ -77,6 +80,24 @@ impl Appearance {
         {
             self.wallpaper = Some(PathBuf::from(image));
         }
+        let layout = &mut self.wallpaper_layout;
+        if let Some(mode) = config
+            .background_mode
+            .as_deref()
+            .and_then(otto_kit::wallpaper::Mode::parse)
+        {
+            layout.mode = mode;
+        }
+        if let Some(x) = config.background_position_x {
+            layout.position.0 = x as f32;
+        }
+        if let Some(y) = config.background_position_y {
+            layout.position.1 = y as f32;
+        }
+        if let Some(zoom) = config.background_zoom {
+            layout.zoom = zoom as f32;
+        }
+        *layout = layout.sanitised();
         if let Some(color) = config.background_color.as_deref().and_then(parse_hex) {
             self.background = color;
         }
@@ -96,6 +117,10 @@ impl Appearance {
 struct ConfigFile {
     background_image: Option<String>,
     background_color: Option<String>,
+    background_mode: Option<String>,
+    background_position_x: Option<f64>,
+    background_position_y: Option<f64>,
+    background_zoom: Option<f64>,
     accent_color: Option<String>,
     font_family: Option<String>,
     theme_scheme: Option<String>,
@@ -129,6 +154,20 @@ mod tests {
         assert_eq!(accent_color("#123456"), Color::from_argb(255, 18, 52, 86));
     }
 
+    /// The wallpaper layout keys come through, and a later file overrides
+    /// only what it sets.
+    #[test]
+    fn the_wallpaper_layout_is_read() {
+        let mut appearance = Appearance::default();
+        appearance
+            .apply(toml::from_str("background_mode = \"tile\"\nbackground_zoom = 2.0\n").unwrap());
+        appearance.apply(toml::from_str("background_position_y = 0.0\n").unwrap());
+        let layout = appearance.wallpaper_layout;
+        assert_eq!(layout.mode, otto_kit::wallpaper::Mode::Tile);
+        assert_eq!(layout.zoom, 2.0);
+        assert_eq!(layout.position, (0.5, 0.0));
+    }
+
     /// An empty `background_image` means "no wallpaper", not a path to ""..
     #[test]
     fn empty_config_strings_are_ignored() {
@@ -136,6 +175,10 @@ mod tests {
         appearance.apply(ConfigFile {
             background_image: Some("  ".into()),
             background_color: None,
+            background_mode: None,
+            background_position_x: None,
+            background_position_y: None,
+            background_zoom: None,
             accent_color: None,
             font_family: Some("".into()),
             theme_scheme: Some("Light".into()),

@@ -28,6 +28,7 @@ components/
 │   ├── src/session.rs             Session, zoom/pan, Video, decode request sizing
 │   ├── src/decode_cache.rs        recent decodes, so reopening a file skips the worker
 │   ├── src/ocrcache.rs            words recognised in pictures, kept between runs
+│   ├── src/draw.rs                a Session's content and badge, the same in every host
 │   ├── src/badge.rs               the text-recognition badge in the preview's corner
 │   ├── src/imagesize.rs           a picture's size from its header
 │   ├── src/render.rs              PNG rendering for the standalone CLI only
@@ -366,9 +367,12 @@ margin. The setting survives moving to another file.
 ### Drawing and input
 
 `view::draw_peek` draws the card background and hairline, the title strip,
-and then either `otto_media_kit::view::draw` for a video or
-`otto_kit::preview::draw(content, preview, first_row, zoom, icons)`, followed by
-the pan scrollbars.
+and then `otto_peek::draw::content`: either `otto_media_kit::view::draw` for a
+video or `otto_kit::preview::draw(content, preview, first_row, zoom, icons)`
+with the picture edges and word selection, followed by the pan scrollbars.
+`otto_peek::draw::badge` adds the text-recognition badge. Studio
+(`otto-preview/src/content.rs`) calls the same two, laying its PDF form fields
+and marks over the picture through the `overlay` hook.
 
 `otto_kit::preview` owns layout and the zoom geometry, so every host clamps the
 same way:

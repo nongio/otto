@@ -106,6 +106,11 @@ settings-group-desktop = Área de trabalho
 settings-background-colour = Cor do plano de fundo
 settings-background-image = Imagem do plano de fundo
 settings-background-image-detail = Escolhida através do seletor de arquivos do portal da área de trabalho
+settings-background-layout = Ajuste
+settings-background-zoom = Zoom
+settings-background-position-x = Posição horizontal
+settings-background-position-y = Posição vertical
+settings-background-position-detail = Ou clique na parte da imagem que deve ficar à vista
 settings-desktop-widget = Widget do plano de fundo
 settings-desktop-widget-needs-ewwii = Precisa do ewwii, que não está instalado
 # { $folder } is a path such as ~/.config/otto/widgets/ewwii.
@@ -534,6 +539,13 @@ settings-choice-widget-calendar = Calendário
 # The next two name pages whose text is in English, so they stay as written.
 settings-choice-widget-cross-pad = Cross pad
 settings-choice-widget-grid-pad = Grid pad
+# How a background image fills the screen.
+settings-choice-background-fill = Preencher a tela
+settings-choice-background-fit = Ajustar à tela
+settings-choice-background-stretch = Esticar para preencher
+settings-choice-background-center = Centralizar
+settings-choice-background-tile = Lado a lado
+settings-choice-background-span = Estender pelos monitores
 # The automatic option for a theme that follows the system.
 settings-choice-auto = Automático
 
@@ -1070,9 +1082,17 @@ schema-topbar-clock-format-description = Como a barra superior escreve a data e 
 schema-topbar-show-app-menu-label = Mostrar menus dos aplicativos
 schema-topbar-show-app-menu-description = Os menus do aplicativo em uso, ao lado do nome dele na barra superior.
 schema-background-color-label = Cor do plano de fundo
-schema-background-color-description = Cor do plano de fundo da área de trabalho, como uma string hexadecimal.
+schema-background-color-description = Cor do plano de fundo da área de trabalho, como uma string hexadecimal: o degradê mostrado sem imagem e o que aparece em volta de uma imagem ajustada ou centralizada.
 schema-background-image-label = Imagem do plano de fundo
 schema-background-image-description = Caminho da imagem de plano de fundo da área de trabalho. Vazio para nenhuma.
+schema-background-mode-label = Ajuste do plano de fundo
+schema-background-mode-description = Como a imagem do plano de fundo preenche a tela.
+schema-background-position-x-label = Posição horizontal do plano de fundo
+schema-background-position-x-description = Qual parte de uma imagem do plano de fundo cortada aparece, e onde fica uma menor, de 0 (esquerda) a 1 (direita).
+schema-background-position-y-label = Posição vertical do plano de fundo
+schema-background-position-y-description = Qual parte de uma imagem do plano de fundo cortada aparece, e onde fica uma menor, de 0 (topo) a 1 (base).
+schema-background-zoom-label = Zoom do plano de fundo
+schema-background-zoom-description = Ampliação de uma imagem do plano de fundo que preenche a tela ou se estende pelos monitores, a partir de 1 (cobre a tela na medida exata).
 schema-cursor-theme-label = Tema do cursor
 schema-cursor-theme-description = Nome do tema XCursor.
 schema-cursor-size-label = Tamanho do cursor

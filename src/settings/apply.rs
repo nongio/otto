@@ -47,6 +47,10 @@ pub fn is_applied_live(id: &str) -> bool {
             | "accent_color"
             | "background_image"
             | "background_color"
+            | "background_mode"
+            | "background_position_x"
+            | "background_position_y"
+            | "background_zoom"
             | "theme_scheme"
             | "rounded_corners"
             | "frosting"
@@ -163,10 +167,16 @@ pub fn apply_live<B: Backend + 'static>(state: &mut Otto<B>, id: &str) -> Result
             state.workspaces.rerender_accent_colored_views();
             Ok(())
         }
-        // Both background settings are read together by `reload_background`:
-        // the colour is the gradient behind a wallpaper that is absent or
-        // unreadable, so changing either one is the same reconciliation.
-        "background_image" | "background_color" => state.workspaces.reload_background(),
+        // The background settings are read together by `reload_background`:
+        // each is part of what a wallpaper frame is — the colour is also the
+        // gradient behind a wallpaper that is absent or unreadable — so
+        // changing any one is the same reconciliation.
+        "background_image"
+        | "background_color"
+        | "background_mode"
+        | "background_position_x"
+        | "background_position_y"
+        | "background_zoom" => state.workspaces.reload_background(),
         // Light against dark changes the palette every render function reads,
         // so all of Otto's own chrome is repainted. The accent is republished
         // first: it is usually a palette *name*, and the colour that name
