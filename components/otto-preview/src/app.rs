@@ -579,22 +579,32 @@ fn open_for_editing(viewer: &Arc<Mutex<Viewer>>, path: &Path, generation: u64) {
 }
 
 /// Ask where to save a copy of `file` on a thread of its own (the dialog
-/// blocks), then save there and carry on with that file.
+/// blocks), then save there and carry on with that file. The kit wakes the
+/// run loop once the answer is in, whatever it is.
 fn ask_save_as(viewer: Arc<Mutex<Viewer>>, file: PathBuf) {
-    std::thread::spawn(move || {
-        let title = otto_kit::t_owned!("studio-save-as-title");
-        match crate::file_dialog::save_as(&file, &title) {
-            crate::file_dialog::Outcome::Chosen(path) => {
-                viewer.lock().unwrap().save_as(path);
-                AppContext::request_wakeup();
-            }
-            crate::file_dialog::Outcome::Dismissed => viewer.lock().unwrap().save_as_dismissed(),
-            crate::file_dialog::Outcome::Failed(why) => {
+    use otto_kit::portal_file_chooser::Outcome;
+
+    let title = otto_kit::t_owned!("studio-save-as-title");
+    let answered = Arc::clone(&viewer);
+    let spawned = crate::file_dialog::save_as(&file, &title).spawn(move |outcome| {
+        let chosen = match outcome {
+            Outcome::Chosen(paths) => paths.into_iter().next(),
+            Outcome::Dismissed => None,
+            Outcome::Failed(why) => {
                 tracing::warn!(%why, "no save dialog");
-                viewer.lock().unwrap().save_as_dismissed();
+                None
             }
+        };
+        let mut viewer = answered.lock().unwrap();
+        match chosen {
+            Some(path) => viewer.save_as(crate::file_dialog::saved_path(path)),
+            None => viewer.save_as_dismissed(),
         }
     });
+    if let Err(err) = spawned {
+        tracing::warn!(%err, "no thread for the save dialog");
+        viewer.lock().unwrap().save_as_dismissed();
+    }
 }
 
 /// Whether the file at `path` is a PDF, by its first bytes.

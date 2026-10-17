@@ -41,6 +41,7 @@ pub mod lottie;
 pub mod maximize_button;
 pub mod mime_apps;
 pub mod permission_store;
+pub mod portal_file_chooser;
 mod portal_runtime;
 mod portal_settings;
 pub mod preview;

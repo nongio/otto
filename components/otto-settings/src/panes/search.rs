@@ -20,9 +20,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
+use otto_kit::portal_file_chooser::{Outcome, Request};
 use otto_search::{index, State, Status};
 
-use crate::file_picker;
 use crate::model::{group, untitled, Control, Pane, Row};
 use crate::settings_client::{self, Value};
 
@@ -281,31 +281,29 @@ pub fn remove(id: &str) {
 /// Ask for a folder through the desktop portal and add it, on a thread of its
 /// own: the call blocks for as long as the dialog is up.
 fn add_folder() {
-    let spawned = std::thread::Builder::new()
-        .name("search-add-folder".into())
-        .spawn(|| {
-            let title = otto_kit::t!("settings-search-choose-folder-title");
-            let path = match file_picker::open_folder(title) {
-                file_picker::Outcome::Chosen(paths) => paths.into_iter().next(),
-                file_picker::Outcome::Dismissed => None,
-                file_picker::Outcome::Failed(why) => {
-                    eprintln!("search: {why}");
-                    update(|snapshot| snapshot.added = Some(Added::Failed));
-                    None
-                }
-            };
-            let (Some(path), Some(folders)) = (path, folders()) else {
-                return;
-            };
-            let outcome = match with_folder(&folders, &path, &home(), &user_dirs_file()) {
-                Ok(next) => {
-                    set_folders(next);
-                    None
-                }
-                Err(why) => Some(why),
-            };
-            update(|snapshot| snapshot.added = outcome);
-        });
+    let title = otto_kit::t!("settings-search-choose-folder-title");
+    let spawned = Request::open_folder(title).spawn(|outcome| {
+        let path = match outcome {
+            Outcome::Chosen(paths) => paths.into_iter().next(),
+            Outcome::Dismissed => None,
+            Outcome::Failed(why) => {
+                eprintln!("search: {why}");
+                update(|snapshot| snapshot.added = Some(Added::Failed));
+                None
+            }
+        };
+        let (Some(path), Some(folders)) = (path, folders()) else {
+            return;
+        };
+        let outcome = match with_folder(&folders, &path, &home(), &user_dirs_file()) {
+            Ok(next) => {
+                set_folders(next);
+                None
+            }
+            Err(why) => Some(why),
+        };
+        update(|snapshot| snapshot.added = outcome);
+    });
     if let Err(err) = spawned {
         eprintln!("search: could not open the folder picker: {err}");
     }
