@@ -20,6 +20,7 @@ pub mod power;
 pub mod privacy;
 pub mod search;
 pub mod sound;
+pub mod startup;
 pub mod tiling;
 pub mod top_bar;
 

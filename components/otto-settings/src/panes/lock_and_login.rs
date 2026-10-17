@@ -81,6 +81,9 @@ pub fn build() -> Pane {
                     ),
                 ],
             ),
+            // What the session starts once it has begun. Not a setting and
+            // not behind the password: it runs after login, as the user.
+            super::startup::group_rows(),
         ],
     }
 }

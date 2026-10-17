@@ -546,7 +546,15 @@ another way of typing. The panes are:
   interface-sound rows.
 - **Power** — lid switch handling, power button action.
 - **Lock & Login** — automatic lock timeout, which locker runs the lock screen,
-  which greeter runs the login screen.
+  which greeter runs the login screen. *Start at login* edits `[[exec_once]]`
+  in the writable configuration directly, keeping the rest of the file: a
+  switch for each Otto component (top bar, dynamic island, stash, Agents
+  panel), a "−" for any other command, and a field that appends one. The
+  user's list replaces the system's, so until the file has one the group
+  shows the system's and its first change copies it in; turning every entry
+  off writes `exec_once = []` rather than dropping the key. Applies at the
+  next login, and does not ask for the password: it runs as the user, after
+  login.
 - **About** — the last pane, and not settings. It opens on a centred band:
   the Otto mark large (the logo's rounded square in the text colour, its two
   dots in the opposite one), "Otto" in large type, and the version under it.

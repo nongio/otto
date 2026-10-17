@@ -829,6 +829,7 @@ fn activate(held: view::Pressed, editing: &Arc<Mutex<Option<Editing>>>) {
             panes::keyboard_layouts::remove(id);
             panes::search::remove(id);
             panes::privacy::remove(id);
+            panes::startup::remove(id);
         }
         // A second press on the listening line's button stops it.
         view::Pressed::Record(index) => keyboard::set_recording(
@@ -899,6 +900,10 @@ fn apply(id: &str, value: settings_client::Value) {
     // Dictation keeps its settings in dictation.toml and its login switch
     // in the autostart folder.
     if panes::dictation::apply(id, &value) {
+        return;
+    }
+    // What starts at login is `[[exec_once]]`, which no setting carries.
+    if panes::startup::apply(id, &value) {
         return;
     }
     if settings_client::is_sensitive(id) {
@@ -3084,6 +3089,7 @@ impl App for SettingsApp {
             | agents::take_service_dirty()
             | panes::search::take_dirty()
             | panes::desk::take_dirty()
+            | panes::startup::take_dirty()
             | panes::dictation::take_dirty()
             | panes::account::take_dirty()
         {
