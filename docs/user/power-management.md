@@ -65,8 +65,7 @@ The internal panel comes back exactly as it was: same position in the monitor
 layout, same primary status, same workspaces, same windows, same dock. Closing
 and reopening the lid is visually a no-op.
 
-`disable_internal_screen` is the exception: it keeps the panel off even with
-the lid open, which is what you want for a kiosk or a display-manager host.
+This holds for every `on_lid_close` value, `disable_internal_screen` included.
 
 ## The power button
 

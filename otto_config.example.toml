@@ -315,8 +315,8 @@ manage_lid_switch = true
 #            way on_power_button = "lock" does, so the machine wakes to the
 #            lock screen. Clamshell and remote sessions stay unlocked: the
 #            session is still in use
-#   "disable_internal_screen" - Always disable screen but stay running, never
-#            suspend (for display managers/kiosks)
+#   "disable_internal_screen" - Disable the screen while the lid is closed
+#            but stay running, never suspend or lock
 on_lid_close = "auto"
 
 # What to do when the hardware power button is pressed (default: "lock")

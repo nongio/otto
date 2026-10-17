@@ -907,18 +907,9 @@ impl<A: RendererApi> Otto<UdevData<A>> {
             return;
         }
 
-        // Determine if we should disable laptop panels based on lid state and config
-        let disable_laptop_panels = match lid_action {
-            LidCloseAction::Auto | LidCloseAction::Lock => {
-                // Normal laptop behavior: only disable if lid is closed
-                self.is_lid_closed
-            }
-            LidCloseAction::DisableInternalScreen => {
-                // Display manager mode: always act like lid is closed
-                // (screen turns off, system stays running)
-                true
-            }
-        };
+        // Every mode turns the laptop panels off while the lid is closed and
+        // back on when it opens; they differ in what else happens on close.
+        let disable_laptop_panels = self.is_lid_closed;
 
         // Check if any external monitor is connected (clamshell mode blocks suspend)
         let mut has_external_monitor = false;
