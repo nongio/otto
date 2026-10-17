@@ -791,6 +791,7 @@ fn activate(held: view::Pressed, editing: &Arc<Mutex<Option<Editing>>>) {
             panes::agents::press(row, button);
             panes::search::press(row, button);
             panes::desk::press(row, button);
+            panes::startup::press(row, button);
             panes::dictation::press(row, button);
             panes::keyboard_layouts::press(row, button);
             if let Some((id, name)) = agents::take_rename() {

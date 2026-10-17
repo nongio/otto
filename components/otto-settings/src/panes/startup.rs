@@ -15,7 +15,14 @@
 //! off the rest with it.
 //!
 //! Each component has a switch. Other commands are listed with a "−" that
-//! takes them out, and *Add command* appends one.
+//! takes them out. *Add command* appends one typed in, and *Add app or
+//! program* one chosen through the portal: an application's `.desktop` entry
+//! or a program file.
+//!
+//! The XDG switch is `xdg_autostart`, which also starts the entries in the
+//! autostart folders. Not a session setting either, so it is written here
+//! the same way. The last row opens the file, through the General pane's
+//! own row of the same name.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -24,6 +31,8 @@ use std::sync::{Mutex, OnceLock};
 use std::time::SystemTime;
 
 use toml_edit::{ArrayOfTables, DocumentMut, Item};
+
+use otto_kit::portal_file_chooser::{Outcome, Request, Rule};
 
 use crate::model::{group, Control, Group, Row};
 use crate::settings_client::{self, Value};
@@ -43,6 +52,15 @@ const COMMAND_ROW: &str = "startup.command.";
 
 /// The *Add command* field.
 const ADD_ID: &str = "startup.add";
+
+/// The key that also starts the autostart folders' entries.
+const XDG_KEY: &str = "xdg_autostart";
+
+/// Its switch.
+const XDG_ID: &str = "startup.xdg";
+
+/// Where the picker opens: the installed applications.
+const APPLICATIONS: &str = "/usr/share/applications";
 
 /// Otto's components that start with the session, in the order the system
 /// configuration lists them: the program, its label and its detail.
@@ -149,6 +167,49 @@ fn parse_line(line: &str) -> Option<Entry> {
     })
 }
 
+/// The command a chosen file stands for: an application's `.desktop` entry
+/// runs its `Exec=` line, with the field codes dropped since nothing is
+/// opened at login, and any other file runs itself. `text` is the file's
+/// contents, read only for an entry.
+fn entry_for_file(path: &Path, text: Option<&str>) -> Option<Entry> {
+    if path.extension().is_some_and(|ext| ext == "desktop") {
+        let exec = desktop_exec(text?)?;
+        let mut argv = otto_kit::mime_apps::exec_argv(&exec)?.into_iter();
+        return Some(Entry {
+            cmd: argv.next()?,
+            args: argv.collect(),
+        });
+    }
+    Some(Entry {
+        cmd: path.to_str()?.to_string(),
+        args: Vec::new(),
+    })
+}
+
+/// The `Exec=` value of an entry's `[Desktop Entry]` group.
+fn desktop_exec(text: &str) -> Option<String> {
+    let mut in_entry = false;
+    for line in text.lines().map(str::trim) {
+        if line.starts_with('[') {
+            in_entry = line == "[Desktop Entry]";
+        } else if in_entry {
+            if let Some(exec) = line.strip_prefix("Exec").map(str::trim_start) {
+                if let Some(exec) = exec.strip_prefix('=') {
+                    return Some(exec.trim().to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Whether `path` is a file that may be run.
+fn is_executable(path: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::metadata(path)
+        .is_ok_and(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
+}
+
 /// One entry of the list, as a table of either kind.
 fn entry(table: &dyn toml_edit::TableLike) -> Option<Entry> {
     let cmd = table.get("cmd")?.as_str()?.to_string();
@@ -218,11 +279,20 @@ fn layers() -> Vec<PathBuf> {
 struct List {
     entries: Vec<Entry>,
     own: bool,
+    /// `xdg_autostart` from the first layer that sets it, off by default as
+    /// in the compositor.
+    xdg: bool,
 }
 
-/// The first layer that sets a list, given each layer's text.
+/// `xdg_autostart` in `text`, or `None` when it does not say.
+fn read_xdg(text: &str) -> Option<bool> {
+    text.parse::<DocumentMut>().ok()?.get(XDG_KEY)?.as_bool()
+}
+
+/// The first layer that sets a list, and the first that sets the XDG
+/// switch, given each layer's text.
 fn list_in(texts: &[Option<String>]) -> List {
-    texts
+    let mut list = texts
         .iter()
         .enumerate()
         .find_map(|(layer, text)| {
@@ -230,9 +300,15 @@ fn list_in(texts: &[Option<String>]) -> List {
             Some(List {
                 entries,
                 own: layer == 0,
+                xdg: false,
             })
         })
-        .unwrap_or_default()
+        .unwrap_or_default();
+    list.xdg = texts
+        .iter()
+        .find_map(|text| read_xdg(text.as_deref()?))
+        .unwrap_or(false);
+    list
 }
 
 /// The list as last read, with each layer's modification time then, so the
@@ -344,6 +420,13 @@ fn with_command(text: &str, inherited: &[Entry], line: &Entry) -> Result<String,
     edited(text, inherited, |tables| tables.push(line.table()))
 }
 
+/// `text` with the autostart folders' entries started at login, or not.
+fn with_xdg(text: &str, on: bool) -> Result<String, String> {
+    let mut doc = text.parse::<DocumentMut>().map_err(|err| err.to_string())?;
+    doc[XDG_KEY] = toml_edit::value(on);
+    Ok(doc.to_string())
+}
+
 /// `text` without the first command that reads as `line`.
 fn without_command(text: &str, inherited: &[Entry], line: &str) -> Result<String, String> {
     edited(text, inherited, |tables| {
@@ -447,7 +530,94 @@ pub fn group_rows() -> Group {
     .detail(detail);
     add.id = Some(ADD_ID);
     rows.push(add);
+    rows.push(
+        Row::new(add_app_label(), Control::Button(choose_buttons()))
+            .detail(otto_kit::t!("settings-startup-add-app-detail")),
+    );
+    let mut xdg = Row::new(
+        otto_kit::t!("settings-startup-xdg"),
+        Control::Toggle(list.xdg),
+    )
+    .detail(otto_kit::t!("settings-startup-xdg-detail"));
+    xdg.id = Some(XDG_ID);
+    rows.push(xdg);
+    // The General pane's row, label and button alike, so its press opens the
+    // same file from here.
+    rows.push(
+        Row::new(
+            super::general::config_file(),
+            Control::Button(super::general::open_button()),
+        )
+        .detail(
+            writable_path()
+                .map(|path| path.display().to_string())
+                .unwrap_or_else(|| otto_kit::t_owned!("settings-configuration-file-unknown")),
+        ),
+    );
     group(otto_kit::t!("settings-group-start-at-login"), rows)
+}
+
+fn add_app_label() -> &'static str {
+    otto_kit::t!("settings-startup-add-app")
+}
+fn choose_label() -> &'static str {
+    otto_kit::t!("settings-search-choose")
+}
+fn choose_buttons() -> &'static [&'static str] {
+    static BUTTONS: OnceLock<Vec<&'static str>> = OnceLock::new();
+    BUTTONS.get_or_init(|| vec![choose_label()])
+}
+
+/// A press on one of the group's push buttons. The file's Open is the
+/// General pane's to answer.
+pub fn press(row: &str, button: &str) {
+    if row == add_app_label() && button == choose_label() {
+        choose_app();
+    }
+}
+
+/// Ask for an application or a program through the desktop portal and add
+/// what it runs. The portal blocks, so the request runs on its own thread.
+fn choose_app() {
+    let spawned = Request::open_file(otto_kit::t!("settings-startup-choose-title"))
+        .current_folder(APPLICATIONS)
+        .filter(
+            otto_kit::t!("settings-startup-filter-apps"),
+            &[Rule::Glob("*.desktop".into())],
+        )
+        .filter(
+            otto_kit::t!("settings-startup-filter-all"),
+            &[Rule::Glob("*".into())],
+        )
+        .spawn(|outcome| {
+            let path = match outcome {
+                Outcome::Chosen(paths) => paths.into_iter().next(),
+                Outcome::Dismissed => None,
+                Outcome::Failed(why) => {
+                    eprintln!("startup: {why}");
+                    None
+                }
+            };
+            let Some(path) = path else {
+                return;
+            };
+            let is_entry = path.extension().is_some_and(|ext| ext == "desktop");
+            if !is_entry && !is_executable(&path) {
+                eprintln!("startup: {} is not a program", path.display());
+                return;
+            }
+            let text = is_entry
+                .then(|| std::fs::read_to_string(&path).ok())
+                .flatten();
+            let Some(entry) = entry_for_file(&path, text.as_deref()) else {
+                eprintln!("startup: {} runs nothing", path.display());
+                return;
+            };
+            write(move |text, inherited| with_command(text, inherited, &entry));
+        });
+    if let Err(err) = spawned {
+        eprintln!("startup: could not open the file picker: {err}");
+    }
 }
 
 /// Take a switch or a new command into the configuration. Returns whether
@@ -460,6 +630,13 @@ pub fn apply(id: &str, value: &Value) -> bool {
         if let Value::Bool(on) = value {
             let on = *on;
             write(move |text, inherited| with_component(text, inherited, program, on));
+        }
+        return true;
+    }
+    if id == XDG_ID {
+        if let Value::Bool(on) = value {
+            let on = *on;
+            write(move |text, _| with_xdg(text, on));
         }
         return true;
     }
@@ -590,6 +767,32 @@ mod tests {
     fn a_file_that_does_not_parse_is_left_alone() {
         assert!(with_component("[x\n", &system(), "otto-bar", true).is_err());
         assert!(with_component("exec_once = 3\n", &system(), "otto-bar", true).is_err());
+    }
+
+    #[test]
+    fn the_xdg_switch_is_read_from_the_first_layer_that_says() {
+        assert!(!list_in(&[None]).xdg);
+        let list = list_in(&[
+            Some("[dock]\n".into()),
+            Some("xdg_autostart = true\n".into()),
+        ]);
+        assert!(list.xdg);
+        let next = with_xdg("# mine\n[dock]\nsize = 3\n", true).unwrap();
+        assert_eq!(read_xdg(&next), Some(true));
+        // A key at the top level, not inside the last table, and the
+        // table's comment still over it.
+        assert!(next.find("xdg_autostart").unwrap() < next.find("[dock]").unwrap());
+        assert!(next.contains("# mine\n[dock]"));
+    }
+
+    #[test]
+    fn a_desktop_entry_runs_its_exec_line() {
+        let text = "[Desktop Entry]\nName=Foo\nExec=foo --bar %U\n\n[Desktop Action new]\nExec=foo --new\n";
+        let entry = entry_for_file(Path::new("/x/foo.desktop"), Some(text)).unwrap();
+        assert_eq!(entry.line(), "foo --bar");
+        assert!(entry_for_file(Path::new("/x/foo.desktop"), Some("[Desktop Entry]\n")).is_none());
+        let program = entry_for_file(Path::new("/usr/bin/foo"), None).unwrap();
+        assert_eq!(program.line(), "/usr/bin/foo");
     }
 
     #[test]

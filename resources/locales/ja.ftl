@@ -336,6 +336,13 @@ settings-startup-canvas-detail = 右端からスワイプすると現れるサ�
 settings-startup-add = コマンドを追加
 settings-startup-add-detail = コマンドを入力して Return キーを押します。次回ログイン時に反映されます
 settings-startup-system-detail = システムのリストを使用中です。変更するとそのリストが設定にコピーされ、次回ログイン時に反映されます
+settings-startup-add-app = アプリまたはプログラムを追加
+settings-startup-add-app-detail = アプリケーションの .desktop ファイル、またはプログラムファイル
+settings-startup-choose-title = アプリまたはプログラムを選択
+settings-startup-filter-apps = アプリケーション
+settings-startup-filter-all = すべてのファイル
+settings-startup-xdg = 自動起動アプリも起動
+settings-startup-xdg-detail = ~/.config/autostart と /etc/xdg/autostart のエントリ。次回ログイン時に反映されます
 settings-lock-never = ロックしない
 # Under each Lock & Login row: the compositor asks for the password before it applies a change.
 settings-asks-for-password = 変更するにはパスワードが必要です

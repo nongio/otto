@@ -340,6 +340,13 @@ settings-startup-canvas-detail = O canvas lateral que aparece ao deslizar a part
 settings-startup-add = Adicionar comando
 settings-startup-add-detail = Digite um comando e pressione Return. Vale a partir do próximo login
 settings-startup-system-detail = Usando a lista do sistema. Uma alteração a copia para sua configuração e vale a partir do próximo login
+settings-startup-add-app = Adicionar app ou programa
+settings-startup-add-app-detail = O arquivo .desktop de um aplicativo, ou um arquivo de programa
+settings-startup-choose-title = Escolha um app ou programa
+settings-startup-filter-apps = Aplicativos
+settings-startup-filter-all = Todos os arquivos
+settings-startup-xdg = Abrir também os apps de inicialização automática
+settings-startup-xdg-detail = As entradas em ~/.config/autostart e /etc/xdg/autostart. Vale a partir do próximo login
 settings-lock-never = Nunca
 # Under each Lock & Login row: the compositor asks for the password before it applies a change.
 settings-asks-for-password = Para alterar, será pedida a sua senha

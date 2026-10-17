@@ -39,7 +39,7 @@ Each entry takes:
 | `cmd` | string | yes | Executable name (must be on `$PATH`) or absolute path |
 | `args` | array of strings | no | Command-line arguments (defaults to `[]`) |
 
-You can also manage this list in **Settings → Lock & Login → Start at login**: switch Otto's own components (top bar, dynamic island, stash, Agents panel) on or off, remove other commands, or type a new one. Your list replaces the system one in `/etc/otto/config.toml`, so the first change there copies the system list into your config before changing it. Changes apply at the next login.
+You can also manage this list in **Settings → Lock & Login → Start at login**: switch Otto's own components (top bar, dynamic island, stash, Agents panel) on or off, remove other commands, type a new one or choose an app's `.desktop` file or a program, turn `xdg_autostart` on or off, and open the config file. Your list replaces the system one in `/etc/otto/config.toml`, so the first change there copies the system list into your config before changing it. Changes apply at the next login.
 
 Entries are spawned non-blocking (fire-and-forget) in listed order. Otto calls `spawn()` sequentially but does not wait for any process to become ready before launching the next. There is no startup ordering or readiness guarantee between entries.
 

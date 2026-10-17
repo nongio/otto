@@ -341,6 +341,13 @@ settings-startup-canvas-detail = Бічне полотно, що з’являє
 settings-startup-add = Додати команду
 settings-startup-add-detail = Введіть команду й натисніть Enter. Діє з наступного входу
 settings-startup-system-detail = Використовується системний список. Зміна скопіює його у вашу конфігурацію й діятиме з наступного входу
+settings-startup-add-app = Додати застосунок або програму
+settings-startup-add-app-detail = Файл .desktop застосунку або файл програми
+settings-startup-choose-title = Виберіть застосунок або програму
+settings-startup-filter-apps = Застосунки
+settings-startup-filter-all = Усі файли
+settings-startup-xdg = Також запускати застосунки автозапуску
+settings-startup-xdg-detail = Записи з ~/.config/autostart і /etc/xdg/autostart. Діє з наступного входу
 settings-lock-never = Ніколи
 # Under each Lock & Login row: the compositor asks for the password before it applies a change.
 settings-asks-for-password = Для зміни знадобиться пароль

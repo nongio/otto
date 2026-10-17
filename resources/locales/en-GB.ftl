@@ -342,6 +342,13 @@ settings-startup-canvas-detail = The side canvas a swipe from the right edge bri
 settings-startup-add = Add command
 settings-startup-add-detail = Type a command and press Return. Applies at the next login
 settings-startup-system-detail = Following the system’s list. A change copies it into your configuration and applies at the next login
+settings-startup-add-app = Add app or program
+settings-startup-add-app-detail = An application’s .desktop file, or a program file
+settings-startup-choose-title = Choose an App or Program
+settings-startup-filter-apps = Applications
+settings-startup-filter-all = All files
+settings-startup-xdg = Also start autostart apps
+settings-startup-xdg-detail = The entries in ~/.config/autostart and /etc/xdg/autostart. Applies at the next login
 settings-lock-never = Never
 # Under each Lock & Login row: the compositor asks for the password before it applies a change.
 settings-asks-for-password = Changing this asks for your password
