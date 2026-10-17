@@ -25,7 +25,6 @@ zbus.workspace = true
 futures-util.workspace = true
 serde_json.workspace = true
 ureq = "3"
-uuid = { workspace = true, features = ["v4"] }
 tracing.workspace = true
 # Reads its config, never writes it: no TOML encoder.
 toml = { workspace = true, features = ["std", "serde", "parse"] }
