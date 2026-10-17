@@ -62,4 +62,31 @@ mod headless_tests {
 
         handle.stop();
     }
+
+    /// The accent picker swaps the letter a held key typed for the chosen
+    /// form: Backspace, on the key every client reads as Backspace, then the
+    /// form.
+    #[test]
+    #[serial]
+    fn replacing_erases_then_types() {
+        let handle = HeadlessHandle::start(HeadlessConfig::default());
+        let mut client = TestClient::connect(&handle.socket_name).expect("connect");
+        let _window = client.create_toplevel("accent-target", 640, 480);
+        handle.wait(Duration::from_millis(150));
+        client.roundtrip().expect("roundtrip");
+        client.state.keys.clear();
+
+        std::env::set_var("WAYLAND_DISPLAY", &handle.socket_name);
+        otto_emoji::typing::type_replacing(1, "é").expect("typing");
+
+        handle.wait(Duration::from_millis(150));
+        client.roundtrip().expect("roundtrip");
+
+        const KEY_BACKSPACE: u32 = 14;
+        assert_eq!(client.state.keys.first(), Some(&(KEY_BACKSPACE, true)));
+        let keymap = client.state.keymaps.last().unwrap();
+        assert_eq!(decode(keymap, &client.state.keys), "\u{8}é");
+
+        handle.stop();
+    }
 }

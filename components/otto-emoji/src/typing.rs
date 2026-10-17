@@ -108,6 +108,15 @@ pub const MAX_CODEPOINTS: usize = PRINTABLE_KEYS.len();
 /// how xkb spells an arbitrary codepoint, so nothing in the text needs a
 /// name of its own.
 pub fn keymap_for(text: &str) -> String {
+    keymap_with_erase(text, false)
+}
+
+/// Backspace's evdev code. Every client, Chromium's fixed table included,
+/// reads it as Backspace.
+const KEY_BACKSPACE: u32 = 14;
+
+/// [`keymap_for`], plus Backspace on its usual key when `erase` is set.
+fn keymap_with_erase(text: &str, erase: bool) -> String {
     let count = text.chars().count().clamp(1, MAX_CODEPOINTS);
     let mut keymap = String::new();
     keymap.push_str("xkb_keymap {\n");
@@ -115,6 +124,9 @@ pub fn keymap_for(text: &str) -> String {
     keymap.push_str("xkb_keycodes \"otto-emoji\" {\n  minimum = 8;\n  maximum = 255;\n");
     for (index, code) in PRINTABLE_KEYS.iter().take(count).enumerate() {
         keymap.push_str(&format!("  <K{}> = {};\n", index + 1, code + 8));
+    }
+    if erase {
+        keymap.push_str(&format!("  <BKSP> = {};\n", KEY_BACKSPACE + 8));
     }
     keymap.push_str("};\n");
     keymap.push_str(
@@ -129,6 +141,9 @@ pub fn keymap_for(text: &str) -> String {
             c as u32
         ));
     }
+    if erase {
+        keymap.push_str("  key <BKSP> { [ BackSpace ] };\n");
+    }
     keymap.push_str("};\n};\n");
     keymap
 }
@@ -136,7 +151,13 @@ pub fn keymap_for(text: &str) -> String {
 /// Type `text` into the focused window. Blocks for the few round trips it
 /// takes, which is a handful of milliseconds.
 pub fn type_text(text: &str) -> Result<(), String> {
-    if text.is_empty() {
+    type_replacing(0, text)
+}
+
+/// Press Backspace `erase` times, then type `text`: how a letter the user
+/// just typed is swapped for one of its accented forms.
+pub fn type_replacing(erase: usize, text: &str) -> Result<(), String> {
+    if text.is_empty() && erase == 0 {
         return Ok(());
     }
     let connection = Connection::connect_to_env().map_err(|err| err.to_string())?;
@@ -155,9 +176,14 @@ pub fn type_text(text: &str) -> Result<(), String> {
         .ok_or("the compositor does not offer zwp-virtual-keyboard-v1")?;
 
     let keyboard = manager.create_virtual_keyboard(&seat, &qh, ());
-    upload(&keyboard, &keymap_for(text))?;
+    upload(&keyboard, &keymap_with_erase(text, erase > 0))?;
 
     let started = Instant::now();
+    for _ in 0..erase {
+        let time = started.elapsed().as_millis() as u32;
+        keyboard.key(time, KEY_BACKSPACE, wl_keyboard::KeyState::Pressed as u32);
+        keyboard.key(time, KEY_BACKSPACE, wl_keyboard::KeyState::Released as u32);
+    }
     for key in PRINTABLE_KEYS.iter().take(text.chars().count()) {
         let time = started.elapsed().as_millis() as u32;
         keyboard.key(time, *key, wl_keyboard::KeyState::Pressed as u32);

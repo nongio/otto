@@ -12,7 +12,7 @@ The emoji picker: a card over the desktop with a search field, category tabs and
   - The emoji table is Unicode's `emoji-test.txt`, slimmed into `data/emoji.txt` and baked into the binary.
 
 ## Develop
-- Against a dev compositor: `cargo run -- --winit`, then `WAYLAND_DISPLAY=wayland-1 cargo run -p otto-emoji`. Arguments: `--auto` (default), `--type`, `--copy`, then an optional starting query.
+- Against a dev compositor: `cargo run -- --winit`, then `WAYLAND_DISPLAY=wayland-1 cargo run -p otto-emoji`. Arguments: `--auto` (default), `--type`, `--copy`, then an optional starting query. `--insert TEXT` and `--replace TEXT` type with no card (the second presses Backspace first); the compositor runs `--replace` for accents on hold, see `specs/accent-hold.md`.
 - `cargo run -p otto-emoji --example preview -- /tmp/emoji "" cat` renders the card to PNGs without taking over a screen. `OTTO_EMOJI_PAN` sets the pan position in the preview.
 - `cargo run -p otto-emoji --example type -- "👋🏽"` types text through the picker's virtual-keyboard path into the focused window, to check how a client decodes it. Point it at a nested compositor with a window such as `wev` focused.
 - Swipe tuning: `OTTO_EMOJI_PAN_SPEED` and `OTTO_EMOJI_FLICK`.

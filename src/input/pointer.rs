@@ -101,6 +101,8 @@ impl<BackendData: Backend> Otto<BackendData> {
         if wl_pointer::ButtonState::Pressed == state {
             let seat = self.seat.clone();
             self.note_seat_press(&seat, serial, None);
+            // A click anywhere puts the accent row away, as Escape does.
+            self.close_accent_row();
         }
 
         // A shown side canvas sees the button first: a press outside it hides

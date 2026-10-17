@@ -1642,8 +1642,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut deliver = Deliver::Auto;
     let mut words: Vec<String> = Vec::new();
-    for arg in std::env::args().skip(1) {
+    let mut args = std::env::args().skip(1);
+    while let Some(arg) = args.next() {
         match arg.as_str() {
+            // No card: type straight into the focused window. The
+            // compositor's accent picker uses `--replace` to swap the letter
+            // a held key typed for the accented one.
+            "--insert" | "--replace" => {
+                let erase = usize::from(arg == "--replace");
+                let text = args.next().unwrap_or_default();
+                otto_emoji::typing::type_replacing(erase, &text)?;
+                return Ok(());
+            }
             "--copy" | "-c" => deliver = Deliver::Copy,
             "--type" | "-t" => deliver = Deliver::Type,
             "--auto" => deliver = Deliver::Auto,
@@ -1652,6 +1662,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 println!("  --auto  type where keys work, paste where they don't (default)");
                 println!("  --type  always type the pick into the focused window");
                 println!("  --copy  put the pick on the clipboard and stop there");
+                println!("       otto-emoji --insert TEXT | --replace TEXT");
+                println!("  --insert   type TEXT into the focused window, no card");
+                println!("  --replace  erase the character before the caret, then type TEXT");
                 return Ok(());
             }
             _ => words.push(arg),

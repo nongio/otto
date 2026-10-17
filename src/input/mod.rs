@@ -8,6 +8,7 @@
 //! - `edge_swipe`: Two-finger touchpad swipe from the right edge (side canvas)
 //! - `tablet`: Tablet input support
 
+pub mod accents;
 pub mod actions;
 pub mod keyboard;
 pub mod keyboard_layout;
