@@ -356,6 +356,11 @@ impl TopBarApp {
             )
         } else {
             ContextMenu::new(otto_menu_items()).on_item_click(|action_id| match action_id {
+                "update" => {
+                    if let Some(release) = crate::update::available() {
+                        crate::update::open(&release);
+                    }
+                }
                 "about" => open_settings(&["--pane", "about"]),
                 "settings" => open_settings(&[]),
                 "logout" => crate::logout::confirm_and_log_out(),
@@ -1725,9 +1730,17 @@ fn open_settings(extra: &[&str]) {
 }
 
 /// The Otto menu's items. About and Settings both open the settings app,
-/// so they go only where it is configured; Log Out is always there.
+/// so they go only where it is configured; Log Out is always there. A newer
+/// release, when there is one, goes first.
 fn otto_menu_items() -> Vec<KitMenuItem> {
     let mut items = Vec::new();
+    if crate::update::available().is_some() {
+        items.push(
+            KitMenuItem::action(otto_kit::t!("bar-otto-update-available"))
+                .with_action_id("update".to_string()),
+        );
+        items.push(KitMenuItem::separator());
+    }
     if !battery_config().settings_command.is_empty() {
         items.push(
             KitMenuItem::action(otto_kit::t!("bar-otto-about")).with_action_id("about".to_string()),

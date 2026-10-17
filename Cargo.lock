@@ -5337,6 +5337,8 @@ dependencies = [
  "tokio",
  "toml 1.1.2+spec-1.1.0",
  "tracing",
+ "ureq",
+ "uuid",
  "wayland-client",
  "wayland-protocols",
  "wayland-protocols-wlr",
