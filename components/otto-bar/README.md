@@ -31,9 +31,10 @@ otto-bar looks for a TOML config file in this order:
 
 When a newer release is out, the Otto menu shows "New Version Available…",
 which opens the release page. There is no notification. The check runs a
-minute after start and every six hours, and sends the running version and a
-random install id (`$XDG_STATE_HOME/otto/install-id`) so installs can be
-counted; delete the file to get a new id.
+minute after start and every six hours and sends the running version. Once a
+week it also sends `count=1` and how long Otto has been installed (first week,
+first month, first six months, older), so active installs can be counted per
+week. The week last counted is kept in `$XDG_STATE_HOME/otto/update-check`.
 
 ### `[battery]`
 
