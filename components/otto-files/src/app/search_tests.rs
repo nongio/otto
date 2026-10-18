@@ -403,12 +403,14 @@ fn the_row_that_was_clicked_is_the_row_that_lights() {
             path: dir.clone(),
             icon: "folder-download".into(),
             recent: false,
+            builtin: None,
         },
         model::Place {
             label: "Inbox".into(),
             path: dir.clone(),
             icon: "folder".into(),
             recent: false,
+            builtin: None,
         },
     ];
 

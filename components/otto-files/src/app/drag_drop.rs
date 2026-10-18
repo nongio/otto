@@ -23,6 +23,11 @@ impl Browser {
         if !self.dnd_enabled() {
             return None;
         }
+        // Between two places, or below the last: a folder dropped there joins
+        // the sidebar. Asked before the rows, whose edges it shares.
+        if let Some(slot) = self.sidebar_gap_at(x, y) {
+            return Some(DropTarget::PlaceGap { slot });
+        }
         if let Some(index) = view::place_at(x, y, self.places.len()) {
             // Recent is a listing, not a folder. There is nowhere for a drop
             // on it to put anything, so it takes none.
@@ -121,7 +126,12 @@ impl Browser {
             return;
         };
         self.dirty = true;
-        let dest = target.path().clone();
+        let Some(dest) = target.path().cloned() else {
+            if let DropTarget::PlaceGap { slot } = target {
+                self.add_to_sidebar(&paths, slot);
+            }
+            return;
+        };
 
         // A drop onto the Trash window is a delete, not a move into a
         // directory that happens to be the trash: pasting there would leave

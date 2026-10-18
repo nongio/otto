@@ -769,6 +769,11 @@ pub(super) fn show_context_menu_over(
                     browser.dirty = true;
                 }
             }
+            "sidebar_add_selection" => browser.add_selection_to_sidebar(),
+            "sidebar_remove" => browser.remove_menu_place(),
+            id if id.starts_with(super::sidebar_edit::SHOW_PREFIX) => {
+                browser.show_builtin(&id[super::sidebar_edit::SHOW_PREFIX.len()..]);
+            }
             // A provider's command, by its namespaced id.
             id if id.contains(':') => browser.run_menu_command(id, serial),
             _ => {}

@@ -1848,19 +1848,87 @@ pub fn photos_rename_rect(
     )
 }
 
+/// The distance from one sidebar place to the next.
+pub const PLACE_STEP: f32 = 30.0;
+
 pub fn place_rect(index: usize) -> Rect {
     const FIRST_Y: f32 = 78.0;
-    const STEP: f32 = 30.0;
     Rect::from_xywh(
         10.0,
-        FIRST_Y - sidebar_lift() + index as f32 * STEP,
+        FIRST_Y - sidebar_lift() + index as f32 * PLACE_STEP,
         sidebar_w() - 20.0,
         26.0,
     )
 }
 
+/// Where among the other rows a row being sorted would sit, carried `dy`
+/// from row `index` of `count`: the position its ghost is over, counting the
+/// rows that stay, so `index` itself means "where it was".
+pub fn place_sort_position(index: usize, dy: f32, count: usize) -> usize {
+    let center = place_rect(index).center_y() + dy;
+    let position = ((center - place_rect(0).top) / PLACE_STEP).floor();
+    (position.max(0.0) as usize).min(count.saturating_sub(1))
+}
+
+/// How far row `i` stands from its own place while row `index` is being
+/// sorted to `position`: the rows after the dragged one close up, and the
+/// ones from `position` on move down to leave it room.
+pub fn place_sort_shift(i: usize, index: usize, position: usize) -> f32 {
+    if i == index {
+        return 0.0;
+    }
+    let among_others = if i < index { i } else { i - 1 };
+    let shown = if among_others >= position {
+        among_others + 1
+    } else {
+        among_others
+    };
+    (shown as f32 - i as f32) * PLACE_STEP
+}
+
 pub fn place_at(x: f32, y: f32, count: usize) -> Option<usize> {
     (0..count).find(|i| place_rect(*i).contains(Point::new(x, y)))
+}
+
+/// How far into a place's row, from its top or bottom edge, a drag counts as
+/// aiming *between* rows rather than at the row. The rest of the row's height
+/// is the row itself, which takes the files into its folder.
+const PLACE_GAP_REACH: f32 = 6.0;
+
+/// The gap a drag at `(x, y)` points into, as the index the new row would
+/// take: `0` above the first row, `count` below the last.
+///
+/// `None` over a row's own middle — that is a drop into the folder — over the
+/// heading above the rows, and outside the sidebar. Everything below the last
+/// row is the gap after it, so there is always somewhere obvious to drop.
+pub fn place_gap_at(x: f32, y: f32, count: usize) -> Option<usize> {
+    let first = place_rect(0);
+    if x < first.left || x >= first.right || y < first.top - PLACE_GAP_REACH {
+        return None;
+    }
+    for index in 0..count {
+        let row = place_rect(index);
+        if y < row.top + PLACE_GAP_REACH {
+            return Some(index);
+        }
+        if y < row.bottom - PLACE_GAP_REACH {
+            return None;
+        }
+    }
+    Some(count)
+}
+
+/// The line drawn for a drop into gap `slot`: centred in the space between
+/// the two rows, the width of a row.
+pub fn place_gap_rect(slot: usize) -> Rect {
+    const THICKNESS: f32 = 2.0;
+    let y = if slot == 0 {
+        place_rect(0).top - 2.0
+    } else {
+        place_rect(slot - 1).bottom + 2.0
+    };
+    let row = place_rect(slot);
+    Rect::from_xywh(row.left, y - THICKNESS / 2.0, row.width(), THICKNESS)
 }
 
 /// The split button holding both arrows, before the title.
@@ -3144,6 +3212,8 @@ pub enum DropHighlight {
     Pane { depth: usize },
     /// A sidebar place.
     Place { index: usize },
+    /// A gap between sidebar places, where a dropped folder would be added.
+    PlaceGap { slot: usize },
     /// The desk's free placement: the slot the dragged icon would land on.
     Slot { slot: usize },
 }
@@ -3161,6 +3231,7 @@ fn clipped_to(rect: Rect, clip: Rect) -> Option<Rect> {
 pub fn drop_highlight_rect(f: &Frame, target: DropHighlight) -> Option<Rect> {
     match target {
         DropHighlight::Place { index } => (index < f.places.len()).then(|| place_rect(index)),
+        DropHighlight::PlaceGap { slot } => (slot <= f.places.len()).then(|| place_gap_rect(slot)),
         DropHighlight::Slot { slot } => {
             let grid = content_viewport(f.width, f.height, ViewMode::Grid);
             let scroll = f.panes.first().map_or(0.0, |pane| pane.scroll);
@@ -3228,6 +3299,21 @@ fn draw_drop_highlight(canvas: &Canvas, f: &Frame) {
         return;
     }
 
+    // Where a new sidebar row will go: an insertion line in the accent, with
+    // a small ring at its leading end so it reads as "here" rather than as a
+    // divider that was always there.
+    if let DropHighlight::PlaceGap { .. } = target {
+        let mut paint = Paint::default();
+        paint.set_anti_alias(true);
+        paint.set_color(accent_light(f.theme));
+        let radius = rect.height() / 2.0;
+        canvas.draw_rrect(RRect::new_rect_xy(rect, radius, radius), &paint);
+        paint.set_style(skia_safe::paint::Style::Stroke);
+        paint.set_stroke_width(2.0);
+        canvas.draw_circle(Point::new(rect.left, rect.center_y()), 3.5, &paint);
+        return;
+    }
+
     // Where a placed icon will land: a faint wash in the icon's own shape,
     // a hint rather than a target, since nothing goes into it.
     if let DropHighlight::Slot { .. } = target {
@@ -3271,6 +3357,8 @@ fn drop_ring_radius(mode: ViewMode, target: DropHighlight) -> f32 {
     match target {
         // The same radius the place's own selection is drawn with.
         DropHighlight::Place { .. } => 6.0,
+        // Drawn as a line of its own, never as a ring.
+        DropHighlight::PlaceGap { .. } => 0.0,
         // A cell in the grid; a band abutting its neighbours anywhere else.
         DropHighlight::Row { .. } if mode == ViewMode::Grid => 8.0,
         DropHighlight::Row { .. } if mode == ViewMode::Photos => PHOTOS_RADIUS,
@@ -4409,6 +4497,12 @@ pub struct Frame<'a> {
     pub subtitle: String,
     pub places: &'a [Place],
     pub selected_place: Option<usize>,
+    /// The sidebar row being dragged to a new place in the list, drawn as
+    /// its ghost under the pointer while the other rows make room.
+    pub dragging_place: Option<PlaceDragFrame>,
+    /// How far each sidebar row stands from its own place, easing toward
+    /// where a sort in progress wants it. Missing rows stand still.
+    pub place_shifts: &'a [f32],
     pub mode: ViewMode,
     /// One per column in the path stack. In list view only the last is drawn.
     pub panes: Vec<PaneData<'a>>,
@@ -5802,8 +5896,15 @@ fn draw_sidebar(canvas: &Canvas, f: &Frame) {
         .centered_on(20.0, 54.0 - sidebar_lift())
         .render(canvas);
 
+    let dragging = f.dragging_place.map(|drag| drag.index);
     for (i, place) in f.places.iter().enumerate() {
-        let rect = place_rect(i);
+        // The row being sorted is its ghost until it is let go; the others
+        // stand aside to leave it the room it will land in.
+        if dragging == Some(i) {
+            continue;
+        }
+        let shift = f.place_shifts.get(i).copied().unwrap_or(0.0);
+        let rect = place_rect(i).with_offset((0.0, shift));
         let selected = f.selected_place == Some(i);
 
         if selected {
@@ -5812,41 +5913,88 @@ fn draw_sidebar(canvas: &Canvas, f: &Frame) {
             paint.set_color(theme.material_selection_focused);
             canvas.draw_rrect(RRect::new_rect_xy(rect, 6.0, 6.0), &paint);
         }
+        draw_place_content(canvas, theme, place, rect, selected);
+    }
 
-        // A selected place reads white on the selection, like its label.
-        let tone = if selected {
+    if let Some(drag) = f.dragging_place {
+        if let Some(place) = f.places.get(drag.index) {
+            draw_place_ghost(canvas, theme, place, place_ghost_rect(drag));
+        }
+    }
+}
+
+/// A sidebar row being sorted, and how far the pointer has carried it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PlaceDragFrame {
+    pub index: usize,
+    /// The pointer's travel since the press, down positive.
+    pub dy: f32,
+}
+
+/// Where the ghost of a row being sorted is drawn: the row, carried by the
+/// pointer's travel, held inside the sidebar's column of rows so it reads as
+/// the row moving along its list rather than as something torn off it.
+pub fn place_ghost_rect(drag: PlaceDragFrame) -> Rect {
+    let rect = place_rect(drag.index);
+    let top = place_rect(0).top - PLACE_GAP_REACH;
+    let dy = drag.dy.max(top - rect.top);
+    rect.with_offset((0.0, dy))
+}
+
+/// A place's icon and label, in `rect`.
+fn draw_place_content(canvas: &Canvas, theme: &Theme, place: &Place, rect: Rect, selected: bool) {
+    // A selected place reads white on the selection, like its label.
+    let tone = if selected {
+        Color::WHITE
+    } else {
+        theme.text_secondary
+    };
+    if let Some(image) = icons::cached_glyph_chain(
+        &[place.icon.as_str(), "folder"],
+        device_px(canvas, 16.0),
+        Color::BLACK,
+    ) {
+        let dst = Rect::from_xywh(rect.left + 8.0, rect.center_y() - 8.0, 16.0, 16.0);
+        // Otto's own glyph where it has one, otherwise the theme's
+        // small-size art: a monochrome outline baked at whatever colour
+        // the theme authored it in. Either way SrcIn gives it the tone
+        // once, keeping its alpha, the way a symbolic icon is drawn.
+        let mut paint = Paint::default();
+        paint.set_color_filter(skia_safe::color_filters::blend(
+            tone,
+            skia_safe::BlendMode::SrcIn,
+        ));
+        canvas.draw_image_rect(&image, None, dst, &paint);
+    }
+
+    Label::new(&place.label)
+        .with_style(styles::BODY_EMPHASIZED)
+        .with_color(if selected {
             Color::WHITE
         } else {
-            theme.text_secondary
-        };
-        if let Some(image) = icons::cached_glyph_chain(
-            &[place.icon.as_str(), "folder"],
-            device_px(canvas, 16.0),
-            Color::BLACK,
-        ) {
-            let dst = Rect::from_xywh(rect.left + 8.0, rect.center_y() - 8.0, 16.0, 16.0);
-            // Otto's own glyph where it has one, otherwise the theme's
-            // small-size art: a monochrome outline baked at whatever colour
-            // the theme authored it in. Either way SrcIn gives it the tone
-            // once, keeping its alpha, the way a symbolic icon is drawn.
-            let mut paint = Paint::default();
-            paint.set_color_filter(skia_safe::color_filters::blend(
-                tone,
-                skia_safe::BlendMode::SrcIn,
-            ));
-            canvas.draw_image_rect(&image, None, dst, &paint);
-        }
+            theme.text_primary
+        })
+        .centered_on(rect.left + 32.0, rect.center_y())
+        .render(canvas);
+}
 
-        Label::new(&place.label)
-            .with_style(styles::BODY_EMPHASIZED)
-            .with_color(if selected {
-                Color::WHITE
-            } else {
-                theme.text_primary
-            })
-            .centered_on(rect.left + 32.0, rect.center_y())
-            .render(canvas);
-    }
+/// The row being sorted, lifted off the list: the row itself on a card of
+/// the popup material, with a shadow under it so it reads as above the rows
+/// it passes over.
+fn draw_place_ghost(canvas: &Canvas, theme: &Theme, place: &Place, rect: Rect) {
+    let mut card = Paint::default();
+    card.set_anti_alias(true);
+    card.set_image_filter(skia_safe::image_filters::drop_shadow(
+        (0.0, 2.0),
+        (4.0, 4.0),
+        Color::from_argb(70, 0, 0, 0),
+        None,
+        None,
+        None,
+    ));
+    card.set_color(opaque(theme.material_popup));
+    canvas.draw_rrect(RRect::new_rect_xy(rect, 6.0, 6.0), &card);
+    draw_place_content(canvas, theme, place, rect, false);
 }
 
 fn draw_header(canvas: &Canvas, f: &Frame) {
@@ -10673,6 +10821,8 @@ mod geometry_tests {
             subtitle: String::new(),
             places: &[],
             selected_place: None,
+            dragging_place: None,
+            place_shifts: &[],
             mode,
             panes,
             active: 0,

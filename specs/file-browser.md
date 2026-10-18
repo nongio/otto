@@ -99,9 +99,9 @@ A client-decorated toplevel. Layout:
 - **Sidebar** — places: Recent, home, the XDG user directories that exist,
   and whatever the user has added (see [The sidebar's
   places](#the-sidebars-places)). A place takes a drop, which files into that
-  place's directory; dragging a directory onto the sidebar to *bookmark* it is
-  a separate gesture and is not yet built, so bookmarking is still a menu
-  action on the selection. Mounted volumes are not listed yet.
+  place's directory; a drop *between* places adds the folders to the sidebar
+  instead (see [Editing the sidebar](#editing-the-sidebar)). Mounted volumes
+  are not listed yet.
 - **File view** — the shared list / icon / column presentation. List and icon
   ship in v1. Every scrolling pane draws **only the rows its scroll view is
   asking for**: the visible band, taken from the scroll view's own content
@@ -199,9 +199,13 @@ icon = "folder-code"    # optional: a plain folder otherwise
 - **`hide` names rows by a stable id**, not by label — the label is translated,
   and a config written on an English desktop must keep working when the
   language changes. Matched case-insensitively: a config is prose, not code.
-- **Added folders go after the built-in ones.** A sidebar that reordered itself
-  around a config would make every screenshot, every instruction and every
-  piece of muscle memory wrong for a preference nobody expressed.
+- **Added folders go after the built-in ones, until the user sorts the rows.**
+  A sidebar that reordered itself unasked would make every screenshot, every
+  instruction and every piece of muscle memory wrong for a preference nobody
+  expressed. A sort *is* that preference, so it is written down as `order`:
+  every row by key, a built-in by its id and a folder by its path. Rows named
+  there come in its sequence. A row it does not name, such as a hidden row
+  shown again or a folder added by hand, goes back to its standard position.
 - **`~` and `$HOME` expand**, because neither has been through a shell by the
   time it reaches a config file. A path that is not a directory is dropped, so
   a moved disk costs that row and nothing else.
@@ -209,8 +213,49 @@ icon = "folder-code"    # optional: a plain folder otherwise
   defaults stand. The sidebar is how you get anywhere in this window, and
   losing it to a stray bracket would be a bad trade for strictness nobody
   asked for.
-- **Read when a window opens.** Editing the file changes the next window, not
-  the ones already up.
+- **Followed while a window is open.** Every browser window watches the
+  file's folder and reads the sidebar again when it changes, so an edit from
+  another window, from Settings or from an editor shows everywhere at once.
+
+### Editing the sidebar
+
+The sidebar is edited where it is, by direct manipulation, not on a settings
+page. The file stays the one record: every edit is written to it through
+`toml_edit`, which keeps comments and the other sections as they were, and the
+rows are then read back from it. No window keeps a list of its own.
+
+- **A folder dropped between two places, or below the last, is added there.**
+  The top and bottom 6 points of a row count as the gap and the rest as the
+  row, which still takes a drop *into* its folder. An accent insertion line
+  marks the gap, and the folder goes exactly there, among the built-in rows
+  too. The drop writes the whole `order`.
+- **Such a drop is negotiated as a copy, never a move.** Nothing on disk
+  changes, and a source told its files were moved may delete the originals.
+- **A folder already in the sidebar moves to the gap it was dropped in.**
+  That is how the user's folders are reordered. Files, and folders that are
+  already built-in rows, add nothing. For our own drag the gap does not light
+  up for them, and the row's edge stays part of the row.
+- **Every row is sorted by dragging it**, built-in ones included: a sidebar
+  with one folder of the user's own would otherwise have nothing to sort. A
+  press still opens the place. Past the drag threshold, the row lifts into a
+  ghost under the pointer, and the other rows make room for it: they close up
+  behind it and ease apart where it would land (about 60 ms to get most of the
+  way). There is no insertion line, because the space the rows open is the
+  answer. Letting go writes the new `order`. The rows are already where it
+  puts them, so they do not move again. A folder dragged in from the listing
+  has no ghost of ours, so it keeps the insertion line. Rows the order names but the window does not show, such as hidden
+  ones or folders on an unmounted disk, keep their place in it. This happens
+  inside the window, not through drag and drop: nothing leaves it. Leaving the
+  window, or a reload mid-drag, cancels it.
+- **Right-clicking a place offers Remove from Sidebar.** One of the user's
+  folders leaves `[[sidebar.places]]`. A built-in row joins `hide` instead.
+- **Right-clicking anywhere in the sidebar offers each hidden built-in row
+  back** (Show "Music"), for those whose folder exists. This is the one edit
+  with no row left to click, and the reason no settings page is needed.
+- **Add to Sidebar** is in the context menu when every selected entry is a
+  folder that would add something.
+- A file that does not parse is not rewritten: the edit fails with a status
+  message, and the person's half-typed change survives.
 
 **Which row is lit** is the row that was clicked, while the window is still
 showing what it led to. It cannot be worked out from the path alone: two rows
@@ -430,23 +475,25 @@ aligned by navigation, not by a selection changing what the last column holds.
 
 ### Places
 
-The sidebar's places come from three sources, under a row for **Recent** that
-leads the list and is not a directory at all — see *Recent and Find*:
+The sidebar's places come from three sources. By default they sit under a row
+for **Recent**, which leads the list and is not a directory at all (see
+*Recent and Find*):
 
 1. The XDG user directories — Desktop, Documents, Downloads, Music, Pictures,
-   Videos, Public, Templates — read from `user-dirs.dirs`, and shown only when
-   the directory exists. Home is always first.
-2. The user's bookmarks, from Otto's own `$XDG_CONFIG_HOME/otto/places`: one
-   absolute path per line, optionally followed by a display name. The browser
-   is the only writer. On first run, if that file does not exist and
-   `$XDG_CONFIG_HOME/gtk-3.0/bookmarks` does, it is read once to seed Otto's,
-   and never read again.
+   Videos — read from `user-dirs.dirs`, and shown only when the directory
+   exists. Home comes first among them.
+2. The user's own folders, `[[sidebar.places]]` in `files.toml` — see [The
+   sidebar's places](#the-sidebars-places) and [Editing the
+   sidebar](#editing-the-sidebar). Seeding them once from
+   `$XDG_CONFIG_HOME/gtk-3.0/bookmarks` is not built yet.
 3. Mounted volumes, from `/proc/self/mounts`, filtered to mounts under
    `/run/media`, `/media` and `/mnt` and to filesystems that are not virtual.
+   Not built yet.
 
-Bookmarks can be reordered and removed. A bookmark whose path no longer exists
-is shown dimmed and offers removal rather than silently disappearing — a
-disconnected drive is not a deleted bookmark.
+Every row can be reordered, and removed or hidden; see [Editing the
+sidebar](#editing-the-sidebar). One of the user's folders whose path no longer
+exists is left out for now. Showing it dimmed and offering removal, since a
+disconnected drive is not a deleted folder, is not built yet.
 
 Trash is **not** a place in this sidebar. It is a window of its own — see
 *The Trash window* below — so a row here pointing at it would be a shortcut to

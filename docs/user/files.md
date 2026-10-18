@@ -121,9 +121,25 @@ Type or paste a path and press `Return` to go there; `Escape`, or a second
 
 ### Changing what is in the sidebar
 
-The sidebar works out of the box and needs no setting up. If you want your own
-folders in it, or fewer of the standard ones, make
-`~/.config/otto/files.toml`:
+The sidebar works out of the box and needs no setting up. To change it, work
+on the sidebar itself:
+
+- **Add a folder** by dragging it into the sidebar, between two rows or below
+  the last one. A line shows where it will go. Nothing on disk moves. (Dropping
+  onto the middle of a row still moves files into that folder.) You can also
+  right-click selected folders and choose **Add to Sidebar**.
+- **Reorder the sidebar** by dragging any row, standard or your own, up or
+  down. A line shows where the row will land.
+- **Remove a row** by right-clicking it and choosing **Remove from Sidebar**.
+  A standard row, such as Music, is hidden rather than removed.
+- **Bring a hidden standard row back** by right-clicking an empty part of the
+  sidebar and choosing **Show** with that row's name.
+
+Until you reorder anything, your own folders come after the standard ones.
+Every open window updates straight away.
+
+All of this is saved in `~/.config/otto/files.toml`, which you can also edit by
+hand. Comments and anything else in the file are kept when Files changes it:
 
 ```toml
 [sidebar]
@@ -146,8 +162,8 @@ rather than shown as a row leading nowhere, so a moved disk costs you that one
 row and nothing else. `icon` is an icon name from your theme; if the theme has
 no such icon you get a plain folder.
 
-The file is read when a window opens, so open a new one to see a change. If it
-contains a mistake, Files says so in its log and carries on with the standard
+Open windows pick up a saved change by themselves. If the file contains a
+mistake, Files says so in its log and carries on with the standard
 sidebar. You will not lose the sidebar over a stray bracket.
 
 ## Finding files
