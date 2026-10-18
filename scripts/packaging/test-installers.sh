@@ -15,6 +15,12 @@
 #                            nightly has to install as an upgrade
 #   arch-local               the working tree's tarball and both PKGBUILDs
 #                            that install out of it (see stage_local_tarball)
+#   arch-local-upgrade       the release named by OTTO_TAG, with its config
+#                            edited, then the working tree's otto-bin and
+#                            (separately) its nightly on top
+#
+# OTTO_STAND_IN=1 builds the local tarball with stand-in binaries, for
+# checking the packaging without a release build.
 #
 # By default the packages come from the GitHub releases, because those are
 # the artifacts CI built and users install. That matters for more than
@@ -100,7 +106,9 @@ stage_release() {  # stage_release <deb|rpm> <dir>
 # make-arch-tarball.sh, for a name carrying its pkgver.
 stage_local_tarball() {
     echo "assembling the release tarball from the working tree..."
-    "$repo/scripts/packaging/make-arch-tarball.sh" "$ctx" >/dev/null
+    local stand_in=()
+    [[ "${OTTO_STAND_IN:-0}" == 1 ]] && stand_in=(--stand-in)
+    "$repo/scripts/packaging/make-arch-tarball.sh" "${stand_in[@]}" "$ctx" >/dev/null
     local pkgver
     pkgver=$(sed -n 's/^pkgver=//p' "$ctx/PKGBUILD-nightly-bin")
     cp "$ctx/otto-nightly-x86_64.tar.gz" "$ctx/otto-nightly-$pkgver-x86_64.tar.gz"
@@ -178,6 +186,18 @@ for t in "${targets[@]}"; do
             stage_local_tarball
             run arch-local Dockerfile.arch-bin 1 "${arch_base[@]}"
             run arch-local-nightly Dockerfile.arch-bin 1 "${arch_base[@]}" \
+                --build-arg PKGBUILD_FILE=PKGBUILD-nightly-bin ;;
+        # What someone on the last release gets from this branch: the
+        # release PKGBUILD as it was tagged, then the working tree's packages
+        # over it. otto-bin with a bumped pkgrel is an upgrade, so an edited
+        # config.toml stays in place; otto-nightly-bin replaces otto-bin, so
+        # pacman saves the edited one as .pacsave.
+        arch-local-upgrade)
+            stage_local_tarball
+            git -C "$repo" show "$OTTO_TAG:PKGBUILD" > "$ctx/before/PKGBUILD"
+            sed -i 's/^pkgrel=.*/pkgrel=99/' "$ctx/PKGBUILD"
+            run arch-local-upgrade Dockerfile.arch-bin 1 "${arch_base[@]}"
+            run arch-local-switch Dockerfile.arch-bin 1 "${arch_base[@]}" \
                 --build-arg PKGBUILD_FILE=PKGBUILD-nightly-bin ;;
         *) echo "unknown target: $t" >&2; exit 2 ;;
     esac

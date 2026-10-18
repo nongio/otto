@@ -11,7 +11,7 @@ How it works: [xdg-desktop-portal-otto](../../docs/developer/xdg-desktop-portal-
 - **External:** the `xdg-desktop-portal` frontend, xdg-permission-store (remembered screen shares), `grim` for screenshots. Built on zbus and tokio.
 
 ## Develop
-- Installed as `/usr/libexec/xdg-desktop-portal-otto`, bus-activated through `org.freedesktop.impl.portal.desktop.otto.service` and run by the `xdg-desktop-portal-otto.service` user unit. `otto.portal` tells the frontend which interfaces it serves, for sessions whose `XDG_CURRENT_DESKTOP` contains `otto`.
+- Installed as `/usr/libexec/xdg-desktop-portal-otto` (`/usr/lib/otto/` on Arch, whose PKGBUILDs rewrite the two activation files to match), bus-activated through `org.freedesktop.impl.portal.desktop.otto.service` and run by the `xdg-desktop-portal-otto.service` user unit. `otto.portal` tells the frontend which interfaces it serves, for sessions whose `XDG_CURRENT_DESKTOP` contains `otto`.
 - `cargo run -p xdg-desktop-portal-otto` replaces the running backend: it takes the bus name even when another instance holds it, and the old one exits.
 - After the backend restarts, run `scripts/portal-refresh.sh`. The frontend caches the backend's properties when it loads it, so a stale frontend rejects every screencast with "Unavailable cursor mode".
 - Logs go to stderr and follow `RUST_LOG`.

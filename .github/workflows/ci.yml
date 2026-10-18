@@ -642,8 +642,8 @@ jobs:
         # The file list lives in the script, not here, so the packaging
         # test can assemble the same tarball and check it against the
         # PKGBUILDs that install out of it. Alongside the tarball it writes
-        # the fixed-name copy the nightly publishes and the
-        # PKGBUILD-nightly-bin pinned to it.
+        # the PKGBUILD pinned to it, the fixed-name copy the nightly
+        # publishes and the PKGBUILD-nightly-bin pinned to that.
         run: scripts/packaging/make-arch-tarball.sh dist
       - name: Upload Arch tarball
         uses: actions/upload-artifact@v4
@@ -651,6 +651,7 @@ jobs:
           name: otto-arch
           path: |
             dist/otto-*.tar.gz
+            dist/PKGBUILD
             dist/PKGBUILD-nightly-bin
           retention-days: 30
 
@@ -883,10 +884,10 @@ jobs:
 
           ### Arch Linux
           ```bash
-          curl -fsSLO https://raw.githubusercontent.com/nongio/otto/main/PKGBUILD
+          curl -fsSLO https://github.com/nongio/otto/releases/download/${{ github.ref_name }}/PKGBUILD
           makepkg -si
           ```
-          If you already downloaded the tarball, place the PKGBUILD in the same directory and run `makepkg -si`: it will use the local file without downloading again.
+          The PKGBUILD is pinned to this release's tarball. If you already downloaded the tarball, place the PKGBUILD in the same directory and run `makepkg -si`: it will use the local file without downloading again.
 
           ---
           EOF
@@ -897,6 +898,7 @@ jobs:
             artifacts/deb/*.deb
             artifacts/rpm/*.rpm
             artifacts/arch/otto-[0-9]*.tar.gz
+            artifacts/arch/PKGBUILD
           body_path: release_notes.md
           generate_release_notes: true
           draft: true

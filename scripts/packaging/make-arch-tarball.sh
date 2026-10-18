@@ -12,9 +12,9 @@
 # nothing catches it until someone tries to install a published release.
 # Sharing one list means the packaging test exercises what CI actually ships.
 #
-# Writes three files to the output directory: the versioned tarball a release
-# publishes, the fixed-name copy the nightly publishes, and the
-# PKGBUILD-nightly-bin pinned to that copy.
+# Writes four files to the output directory: the versioned tarball a release
+# publishes and the PKGBUILD pinned to it, the fixed-name copy the nightly
+# publishes, and the PKGBUILD-nightly-bin pinned to that copy.
 #
 # Requires target/release to be populated (a release build, or CI's downloaded
 # artifacts), and the full git history: the nightly pkgver counts commits.
@@ -137,5 +137,18 @@ tar -czf "$TARBALL" -C "$tmpdir" "$PKGDIR"
 # Fixed-name copy for the nightly release, and the PKGBUILD pinned to it.
 cp "$TARBALL" "$outdir/otto-nightly-x86_64.tar.gz"
 scripts/packaging/make-nightly-pkgbuild.sh "$outdir/otto-nightly-x86_64.tar.gz" "$outdir" >/dev/null
+
+# The release PKGBUILD pinned to the versioned tarball, which a release
+# publishes beside it. The tarball is rebuilt for every release, so its
+# checksum is only known here; the copy in the repository says SKIP.
+if [ "$outdir" = "$PWD" ]; then
+    echo "output directory is the repository root, which holds the PKGBUILD template" >&2
+    exit 1
+fi
+[ "$(sed -n 's/^_ver=//p' PKGBUILD)" = "$PKGVER" ] \
+    || { echo "PKGBUILD's _ver is not the workspace version $PKGVER" >&2; exit 1; }
+sha256=$(sha256sum "$TARBALL" | cut -d' ' -f1)
+sed -e "s/^sha256sums=.*/sha256sums=(\"$sha256\")/" PKGBUILD > "$outdir/PKGBUILD"
+grep -q "^sha256sums=(\"$sha256\")\$" "$outdir/PKGBUILD"
 
 echo "$TARBALL"

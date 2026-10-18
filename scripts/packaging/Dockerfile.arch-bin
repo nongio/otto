@@ -57,6 +57,7 @@ USER root
 RUN if [ -f /build/before/PKGBUILD ]; then \
         bname=$(sed -n 's/^pkgname=//p' /build/before/PKGBUILD); \
         pacman -U --noconfirm /build/before/"$bname"-[0-9]*.pkg.tar.zst && rm -rf /var/cache/pacman/pkg/*; \
+        printf '\n# edited before the upgrade\n' >> /etc/otto/config.toml; \
     fi
 
 # -s installs the declared dependencies from the repositories, so a
@@ -88,6 +89,14 @@ RUN set -eu; \
             echo "$bname is still installed beside $name"; exit 1; \
         fi; \
         echo "upgraded: $bname $before -> $name $want"; \
+        if [ "$bname" = "$name" ]; then kept=/etc/otto/config.toml; \
+        else kept=/etc/otto/config.toml.pacsave; fi; \
+        grep -q '^# edited before the upgrade$' "$kept" \
+            || { echo "the edited /etc/otto/config.toml did not survive as $kept"; exit 1; }; \
+        if [ -e /usr/libexec/xdg-desktop-portal-otto ] \
+                && ! pacman -Qqo /usr/libexec/xdg-desktop-portal-otto >/dev/null 2>&1; then \
+            echo "/usr/libexec/xdg-desktop-portal-otto was left behind"; exit 1; \
+        fi; \
     fi
 
 ARG SKIP_RUN=0

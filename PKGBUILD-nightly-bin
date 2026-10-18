@@ -17,15 +17,64 @@
 pkgname=otto-nightly-bin
 pkgver=0
 pkgrel=1
-pkgdesc="A visually-focused desktop system designed around smooth animations, thoughtful gestures and careful attention to detail. (nightly build)"
+pkgdesc="A Wayland desktop built around smooth animations, gestures and careful detail"
 url="https://github.com/nongio/otto"
-license=("MIT" "GPL-3.0-only")
+# Otto is MIT. The package also carries the MacTahoe icon theme (GPL-3.0),
+# PDFium (BSD-3-Clause, Apache-2.0) and the Solar glyphs (CC-BY-4.0).
+license=("MIT" "GPL-3.0-only" "BSD-3-Clause" "Apache-2.0" "CC-BY-4.0")
 arch=("x86_64")
 provides=("otto")
 conflicts=("otto" "otto-bin" "otto-git")
-depends=("libdrm" "systemd-libs" "mesa" "libxkbcommon" "wayland" "libinput" "dbus" "seatd" "pipewire" "freetype2" "fontconfig" "pixman" "noto-fonts" "inter-font" "gstreamer" "gst-plugins-base-libs" "polkit" "xorg-xwayland")
-optdepends=("xdg-desktop-portal: Desktop integration" "fprintd: fingerprint unlock for otto-lock, otto-greeter and otto-authorize" "greetd: login manager otto --login hosts a greeter for" "gst-plugin-pipewire: otto-rdp video capture" "gst-plugins-bad: otto-rdp hardware H.264 (VA-API)" "gst-plugins-base: Peek video playback (the playbin element)" "gst-plugins-good: Peek playback of MP4 and Matroska" "gst-libav: Peek playback of H.264 and AAC" "ffmpegthumbnailer: video thumbnails and poster frames in Files and Peek" "libvips: HEIC and AVIF photos in Files and Peek" "localsearch: file search and the Recent listing in otto-files" "ewwii: the desktop widgets in Settings ▸ Appearance" "python: the desktop widgets' scripts" "otf-libertinus: the desktop widgets' titles" "noto-fonts-emoji: colour emoji in the emoji picker" "pipewire-pulse: output and input devices in Settings ▸ Sound" "libpulse: pactl, which Settings ▸ Sound drives")
-source=("otto-nightly-${pkgver}-x86_64.tar.gz::https://github.com/nongio/otto/releases/download/nightly/otto-nightly-x86_64.tar.gz")
+depends=(
+    "dbus"
+    "fontconfig"
+    "freetype2"
+    "glib2"
+    "glibc"
+    "gst-plugins-base-libs"
+    "gstreamer"
+    "inter-font"
+    "libgcc"
+    "libglvnd"
+    "libinput"
+    "libpipewire"
+    "libstdc++"
+    "libxkbcommon"
+    "mesa"
+    "noto-fonts"
+    "pam"
+    "pipewire"
+    "pixman"
+    "polkit"
+    "seatd"
+    "systemd-libs"
+    "wayland"
+    "xorg-xwayland"
+)
+optdepends=(
+    "xdg-desktop-portal: desktop integration"
+    "fprintd: fingerprint unlock for otto-lock, otto-greeter and otto-authorize"
+    "greetd: login manager otto --login hosts a greeter for"
+    "gst-plugin-pipewire: otto-rdp video capture"
+    "gst-plugins-bad: otto-rdp hardware H.264 (VA-API)"
+    "gst-plugins-base: Peek video playback (the playbin element)"
+    "gst-plugins-good: Peek playback of MP4 and Matroska"
+    "gst-libav: Peek playback of H.264 and AAC"
+    "ffmpegthumbnailer: video thumbnails and poster frames in Files and Peek"
+    "libvips: HEIC and AVIF photos in Files and Peek"
+    "localsearch: file search and the Recent listing in otto-files"
+    "vulkan-icd-loader: the Vulkan renderer"
+    "vulkan-intel: the Vulkan renderer on Intel GPUs"
+    "vulkan-radeon: the Vulkan renderer on AMD GPUs"
+    "ewwii: the desktop widgets in Settings ▸ Appearance"
+    "python: the desktop widgets' scripts"
+    "otf-libertinus: the desktop widgets' titles"
+    "noto-fonts-emoji: colour emoji in the emoji picker"
+    "pipewire-pulse: output and input devices in Settings ▸ Sound"
+    "libpulse: pactl, which Settings ▸ Sound drives"
+)
+_url_tarball="https://github.com/nongio/otto/releases/download/nightly/otto-nightly-x86_64.tar.gz"
+source=("otto-nightly-${pkgver}-x86_64.tar.gz::$_url_tarball")
 sha256sums=("SKIP")
 noextract=("otto-nightly-${pkgver}-x86_64.tar.gz")
 backup=("etc/otto/config.toml" "etc/pam.d/otto-lock")
@@ -56,7 +105,8 @@ package() {
     install -Dm755 target/release/otto-islands "$pkgdir/usr/bin/otto-islands"
     install -Dm755 target/release/otto-lock "$pkgdir/usr/bin/otto-lock"
     install -Dm755 target/release/otto-authorize "$pkgdir/usr/bin/otto-authorize"
-    install -Dm644 resources/polkit/org.otto.settings.policy "$pkgdir/usr/share/polkit-1/actions/org.otto.settings.policy"
+    install -Dm644 resources/polkit/org.otto.settings.policy \
+        "$pkgdir/usr/share/polkit-1/actions/org.otto.settings.policy"
     install -Dm755 target/release/otto-greeter "$pkgdir/usr/bin/otto-greeter"
     install -Dm755 target/release/otto-rdp "$pkgdir/usr/bin/otto-rdp"
     install -Dm755 target/release/otto-settings "$pkgdir/usr/bin/otto-settings"
@@ -75,12 +125,16 @@ package() {
     # Peek's playback worker: otto-files looks for it beside itself.
     install -Dm755 target/release/otto-media-worker "$pkgdir/usr/bin/otto-media-worker"
     install -Dm755 resources/bin/otto-look "$pkgdir/usr/bin/otto-look"
-    install -Dm755 target/release/xdg-desktop-portal-otto "$pkgdir/usr/libexec/xdg-desktop-portal-otto"
+    # Arch keeps helper binaries in /usr/lib/otto rather than /usr/libexec;
+    # the D-Bus and systemd files that name it are rewritten to match below.
+    install -Dm755 target/release/xdg-desktop-portal-otto \
+        "$pkgdir/usr/lib/otto/xdg-desktop-portal-otto"
 
     # Install documentation
     install -Dm644 README.md "$pkgdir/usr/share/doc/otto/README.md"
     install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
-    install -Dm644 components/xdg-desktop-portal-otto/portals.conf.example "$pkgdir/usr/share/doc/otto/portals.conf.example"
+    install -Dm644 components/xdg-desktop-portal-otto/portals.conf.example \
+        "$pkgdir/usr/share/doc/otto/portals.conf.example"
 
     # Install configuration
     # Both the live config and the example it was copied from. config.toml is
@@ -101,30 +155,41 @@ package() {
     # The Trash window: the same binary behind its own entry, so it gets its
     # own icon in the dock and the applications list.
     install -Dm644 resources/otto-trash.desktop "$pkgdir/usr/share/applications/otto-trash.desktop"
-    install -Dm644 resources/otto-settings.desktop "$pkgdir/usr/share/applications/otto-settings.desktop"
-    install -Dm644 resources/otto-preview.desktop "$pkgdir/usr/share/applications/otto-preview.desktop"
+    install -Dm644 resources/otto-settings.desktop \
+        "$pkgdir/usr/share/applications/otto-settings.desktop"
+    install -Dm644 resources/otto-preview.desktop \
+        "$pkgdir/usr/share/applications/otto-preview.desktop"
 
     # Install icons
-    for _px in 16 24 32 48 64 128 256 512; do
-        install -Dm644 "components/otto-files/resources/icons/hicolor/${_px}x${_px}/apps/otto-files.png" \
-            "$pkgdir/usr/share/icons/hicolor/${_px}x${_px}/apps/otto-files.png"
+    _icons=components/otto-files/resources/icons/hicolor
+    for _size in 16x16 24x24 32x32 48x48 64x64 128x128 256x256 512x512; do
+        install -Dm644 "$_icons/$_size/apps/otto-files.png" \
+            "$pkgdir/usr/share/icons/hicolor/$_size/apps/otto-files.png"
     done
-    install -Dm644 components/otto-files/resources/icons/hicolor/scalable/apps/otto-files.svg "$pkgdir/usr/share/icons/hicolor/scalable/apps/otto-files.svg"
+    install -Dm644 "$_icons/scalable/apps/otto-files.svg" \
+        "$pkgdir/usr/share/icons/hicolor/scalable/apps/otto-files.svg"
 
     # The default wallpaper, which the shipped config names.
     install -Dm644 resources/wallpaper.jpg "$pkgdir/usr/share/otto/wallpaper.jpg"
 
     # The Solar glyphs Otto's own interface draws (CC BY 4.0), with their
     # attribution.
-    install -Dm644 -t "$pkgdir/usr/share/otto/icons/solar/linear" resources/icons/solar/linear/*.svg
-    install -Dm644 -t "$pkgdir/usr/share/otto/icons/solar/bold" resources/icons/solar/bold/*.svg
+    install -Dm644 -t "$pkgdir/usr/share/otto/icons/solar/linear" \
+        resources/icons/solar/linear/*.svg
+    install -Dm644 -t "$pkgdir/usr/share/otto/icons/solar/bold" \
+        resources/icons/solar/bold/*.svg
     install -Dm644 resources/icons/solar/LICENSE "$pkgdir/usr/share/otto/icons/solar/LICENSE"
+    install -Dm644 resources/icons/solar/LICENSE "$pkgdir/usr/share/licenses/$pkgname/Solar-LICENSE"
 
     # Otto-MacTahoe, the default icon theme (MacTahoe, GPL-3.0). Its symlinks
     # come as a list (see scripts/packaging/fetch-icon-theme.sh); extracting
     # it here makes pacman own them like any other file.
     install -d "$pkgdir/usr/share/icons"
-    cp -r --no-preserve=ownership icon-theme/Otto-MacTahoe icon-theme/Otto-MacTahoe-light icon-theme/Otto-MacTahoe-dark "$pkgdir/usr/share/icons/"
+    cp -r --no-preserve=ownership \
+        icon-theme/Otto-MacTahoe \
+        icon-theme/Otto-MacTahoe-light \
+        icon-theme/Otto-MacTahoe-dark \
+        "$pkgdir/usr/share/icons/"
     for _links in icon-theme/links-*.tar.gz; do
         tar -xzf "$_links" -C "$pkgdir/usr/share/icons" --no-same-owner
     done
@@ -135,13 +200,23 @@ package() {
     if [ -d pdfium ]; then
         install -Dm755 pdfium/libpdfium.so "$pkgdir/usr/lib/otto/libpdfium.so"
         install -Dm644 pdfium/LICENSE "$pkgdir/usr/share/licenses/$pkgname/PDFium-LICENSE"
-        cp -r --no-preserve=ownership pdfium/licenses "$pkgdir/usr/share/licenses/$pkgname/PDFium-licenses"
+        cp -r --no-preserve=ownership pdfium/licenses \
+            "$pkgdir/usr/share/licenses/$pkgname/PDFium-licenses"
     fi
-    install -Dm644 components/xdg-desktop-portal-otto/otto.portal "$pkgdir/usr/share/xdg-desktop-portal/portals/otto.portal"
-    install -Dm644 components/xdg-desktop-portal-otto/org.freedesktop.impl.portal.desktop.otto.service "$pkgdir/usr/share/dbus-1/services/org.freedesktop.impl.portal.desktop.otto.service"
-    install -Dm644 components/xdg-desktop-portal-otto/xdg-desktop-portal-otto.service "$pkgdir/usr/lib/systemd/user/xdg-desktop-portal-otto.service"
-    install -Dm644 components/otto-agents/otto-agents.service "$pkgdir/usr/lib/systemd/user/otto-agents.service"
-    install -Dm644 components/otto-agents/otto-agents-bridge.service "$pkgdir/usr/lib/systemd/user/otto-agents-bridge.service"
+    install -Dm644 components/xdg-desktop-portal-otto/otto.portal \
+        "$pkgdir/usr/share/xdg-desktop-portal/portals/otto.portal"
+    install -Dm644 \
+        components/xdg-desktop-portal-otto/org.freedesktop.impl.portal.desktop.otto.service \
+        "$pkgdir/usr/share/dbus-1/services/org.freedesktop.impl.portal.desktop.otto.service"
+    install -Dm644 components/xdg-desktop-portal-otto/xdg-desktop-portal-otto.service \
+        "$pkgdir/usr/lib/systemd/user/xdg-desktop-portal-otto.service"
+    sed -i "s|/usr/libexec/xdg-desktop-portal-otto|/usr/lib/otto/xdg-desktop-portal-otto|" \
+        "$pkgdir/usr/share/dbus-1/services/org.freedesktop.impl.portal.desktop.otto.service" \
+        "$pkgdir/usr/lib/systemd/user/xdg-desktop-portal-otto.service"
+    install -Dm644 components/otto-agents/otto-agents.service \
+        "$pkgdir/usr/lib/systemd/user/otto-agents.service"
+    install -Dm644 components/otto-agents/otto-agents-bridge.service \
+        "$pkgdir/usr/lib/systemd/user/otto-agents-bridge.service"
 
     # Agent skills. One plugin directory — `.claude-plugin/plugin.json`, a
     # `skills/` tree and an `agents/` file — that an agent running on this
