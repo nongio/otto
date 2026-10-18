@@ -1466,10 +1466,10 @@ fn render_workspace_selector_view(
                             ))
                             .blend_mode(crate::theme::chrome_blend_mode())
                             .border_corner_radius(BorderRadius::new_single(25.0))
-                            .content(draw_named_icon_any(&[
-                                "close-symbolic",
-                                "window-close-symbolic",
-                            ]))
+                            .content(draw_named_icon_any(
+                                &["close-symbolic", "window-close-symbolic"],
+                                10.0,
+                            ))
                             .shadow_color((Color::new_rgba(0.0, 0.0, 0.0, 0.2), None))
                             .shadow_offset(((0.0, 0.0).into(), None))
                             .shadow_radius((5.0, None))
@@ -1575,7 +1575,10 @@ fn render_workspace_selector_view(
                         },
                         None,
                     ))
-                    .content(draw_named_icon_any(&["plus-symbolic", "list-add-symbolic"]))
+                    .content(draw_named_icon_any(
+                        &["plus-symbolic", "list-add-symbolic"],
+                        0.0,
+                    ))
                     .image_cache(true)
                     .on_pointer_press(button_press_scale(0.9))
                     .on_pointer_release(button_release_scale())
