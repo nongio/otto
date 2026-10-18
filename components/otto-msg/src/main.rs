@@ -11,6 +11,7 @@ mod doctor;
 
 use std::process::ExitCode;
 
+use otto_dbus::compositor::CompositorProxyBlocking;
 use otto_dbus::shell::ShellProxyBlocking;
 use serde_json::Value;
 use zbus::blocking::Connection;
@@ -25,7 +26,7 @@ lists its options.
 
 Options:
   -t, --type <type>   run_command (default), get_tree, get_workspaces,
-                      get_outputs, get_inputs, subscribe
+                      get_outputs, get_inputs, get_debug_info, subscribe
   -m, --monitor       with -t subscribe, keep printing events
   -r, --raw           print raw JSON rather than pretty-printing it
   -p, --pretty        pretty-print even when stdout is not a terminal
@@ -47,6 +48,7 @@ enum Kind {
     GetWorkspaces,
     GetOutputs,
     GetInputs,
+    GetDebugInfo,
     Subscribe,
 }
 
@@ -60,6 +62,7 @@ impl Kind {
             "get_workspaces" => Some(Kind::GetWorkspaces),
             "get_outputs" => Some(Kind::GetOutputs),
             "get_inputs" => Some(Kind::GetInputs),
+            "get_debug_info" => Some(Kind::GetDebugInfo),
             "subscribe" => Some(Kind::Subscribe),
             _ => None,
         }
@@ -154,6 +157,11 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    // DebugInfo is the compositor's own interface, not the shell's.
+    if options.kind == Kind::GetDebugInfo {
+        let answer = CompositorProxyBlocking::new(&connection).and_then(|p| p.debug_info());
+        return print_answer(answer, &options);
+    }
     let proxy = match ShellProxyBlocking::new(&connection) {
         Ok(proxy) => proxy,
         Err(err) => {
@@ -221,8 +229,15 @@ fn get(proxy: &ShellProxyBlocking<'_>, kind: Kind, options: &Options) -> ExitCod
         Kind::GetWorkspaces => proxy.get_workspaces(),
         Kind::GetOutputs => proxy.get_outputs(),
         Kind::GetInputs => proxy.get_inputs(),
-        Kind::RunCommand | Kind::Subscribe => unreachable!("not a query"),
+        Kind::RunCommand | Kind::Subscribe | Kind::GetDebugInfo => {
+            unreachable!("not a Shell1 query")
+        }
     };
+    print_answer(answer, options)
+}
+
+/// Prints a getter's JSON answer, or the error.
+fn print_answer(answer: zbus::Result<String>, options: &Options) -> ExitCode {
     let json = match answer {
         Ok(json) => json,
         Err(err) => {
@@ -365,6 +380,7 @@ mod tests {
         assert!(args(&["-t", "get_tree"]).kind == Kind::GetTree);
         assert!(args(&["--type=get-outputs"]).kind == Kind::GetOutputs);
         assert!(args(&["-t", "get_inputs"]).kind == Kind::GetInputs);
+        assert!(args(&["-t", "get-debug-info"]).kind == Kind::GetDebugInfo);
     }
 
     #[test]

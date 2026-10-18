@@ -128,11 +128,16 @@ otto-msg -t get_tree          # every window, in i3's node shape
 otto-msg -t get_workspaces    # every workspace
 otto-msg -t get_outputs       # every monitor
 otto-msg -t get_inputs        # the keyboard and its layouts
+otto-msg -t get_debug_info    # version, backend, renderer, config files
 ```
 
 Output is pretty-printed; `-r` gives one line, which is what you want in a
 pipe. `-q` prints nothing at all and leaves only the exit status, which is `1`
 if any command failed.
+
+`get_debug_info` is what a bug report needs about the running session; to
+write a whole report, with logs and redaction, use `otto-msg doctor` (see
+[Reporting a bug](bug-reports.md)).
 
 ## Following along
 

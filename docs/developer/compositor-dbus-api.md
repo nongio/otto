@@ -30,7 +30,8 @@ compositor does not answer it; a caller should set a short timeout
 ### `DebugInfo() → s`
 
 A JSON string, like the `org.otto.Shell1` getters, so it can be read with
-`jq` and grow fields without a signature change. A client ignores fields it
+`jq` and grow fields without a signature change. `otto-msg -t get_debug_info`
+prints it. A client ignores fields it
 does not know and treats a missing field as unknown.
 
 ```json
