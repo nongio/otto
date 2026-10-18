@@ -944,13 +944,15 @@ pub const GRID_ICON_STEP: f32 = 16.0;
 fn grid_label_chars(cell: Rect) -> usize {
     ((13.0 * cell.width() / DEFAULT_CELL_W).floor() as usize).max(7)
 }
+/// The space between the icon's selection rectangle and the caption's pill.
+/// Small, so the two still read as one highlight, but apart.
+const GRID_LABEL_SPACING: f32 = 2.0;
 /// Space between the bottom of the icon and the optical centre of the
-/// caption's first line. Tuned so the icon's selection rectangle and the
-/// caption's pill meet edge to edge: they read as one highlight, without
-/// either overlapping the other.
-const GRID_LABEL_GAP: f32 = 16.0;
+/// caption's first line: the icon's selection inset, the spacing, then the
+/// pill's own inset above the text.
+const GRID_LABEL_GAP: f32 = GRID_ICON_INSET + GRID_LABEL_SPACING + GRID_LABEL_INSET;
 /// Baseline-to-baseline distance between the caption's two lines.
-const GRID_LABEL_LINE: f32 = 16.0;
+const GRID_LABEL_LINE: f32 = 15.0;
 /// Padding above and below the caption inside its selection pill. The pill is
 /// built out from the line centres, so the text sits optically centred in it.
 const GRID_LABEL_INSET: f32 = 10.0;
@@ -961,7 +963,7 @@ const GRID_LABEL_INSET: f32 = 10.0;
 const GRID_LABEL_STYLE: TextStyle = styles::BODY_EMPHASIZED;
 /// How far the icon's selection rectangle stands off the icon itself. Small,
 /// so the highlight reads as belonging to the icon rather than to the cell.
-const GRID_ICON_INSET: f32 = 6.0;
+const GRID_ICON_INSET: f32 = 4.0;
 
 /// The selection rectangle behind a grid icon, given its cell and the top of
 /// the icon inside it. Public because a desktop surface draws the same
@@ -3223,6 +3225,17 @@ fn draw_drop_highlight(canvas: &Canvas, f: &Frame) {
         return;
     };
     if rect.is_empty() {
+        return;
+    }
+
+    // Where a placed icon will land: a faint wash in the icon's own shape,
+    // a hint rather than a target, since nothing goes into it.
+    if let DropHighlight::Slot { .. } = target {
+        let mut wash = Paint::default();
+        wash.set_anti_alias(true);
+        wash.set_color(Color::WHITE.with_a(46));
+        let radius = drop_ring_radius(f.mode, target);
+        canvas.draw_rrect(RRect::new_rect_xy(rect, radius, radius), &wash);
         return;
     }
 
@@ -7214,13 +7227,32 @@ fn draw_grid_caption(
 /// Split a name across at most two lines of `per_line` characters, eliding the
 /// tail. Character-count based rather than measured — good enough for a fixed
 /// cell, and it keeps this callable without a font.
+///
+/// The first line breaks at the last space that fits, or after the last
+/// hyphen or underscore, so words stay whole. A name with nowhere to break
+/// in its first line is cut where the line ends.
 fn split_label(name: &str, per_line: usize) -> (String, String) {
     let chars: Vec<char> = name.chars().collect();
     if chars.len() <= per_line {
         return (name.to_string(), String::new());
     }
-    let first: String = chars[..per_line].iter().collect();
-    let rest = &chars[per_line..];
+    // Where the second line starts, and where the first one ends: a space
+    // is dropped at the break, a hyphen or underscore stays on the first
+    // line. Never at the very start, which would leave the first line empty.
+    let (end, start) = (1..=per_line)
+        .rev()
+        .find_map(|at| match chars.get(at) {
+            Some(' ') => Some((at, at + 1)),
+            _ if matches!(chars[at - 1], '-' | '_') => Some((at, at)),
+            _ => None,
+        })
+        .unwrap_or((per_line, per_line));
+    let first: String = chars[..end]
+        .iter()
+        .collect::<String>()
+        .trim_end()
+        .to_string();
+    let rest = &chars[start..];
     if rest.len() <= per_line {
         return (first, rest.iter().collect());
     }
@@ -7662,8 +7694,8 @@ fn draw_entry_icon(
 /// Fitted rather than filled: a thumbnail is the file, and cropping it to a
 /// square would be showing the user the middle of their photograph and calling
 /// it the photograph. The picture keeps its own proportions and is centred in
-/// the box, so a panorama and a portrait both sit on the same baseline as the
-/// icons around them.
+/// the box, so a panorama and a portrait both sit in the middle of the space
+/// the icons around them fill.
 ///
 /// The hairline matters more than it looks. A photograph with a white sky and
 /// no border does not end anywhere — it bleeds into the window and stops
@@ -7682,9 +7714,9 @@ pub(crate) fn draw_thumbnail(canvas: &Canvas, image: &skia_safe::Image, box_rect
     let (dst_w, dst_h) = (w * scale, h * scale);
     let dst = Rect::from_xywh(
         box_rect.center_x() - dst_w / 2.0,
-        // Sat on the box's bottom edge rather than its middle, so a row of
-        // mixed shapes shares a baseline the way the icons they replace do.
-        box_rect.bottom - dst_h,
+        // Centred both ways, so a wide picture sits in the middle of the
+        // icon's square and keeps an even gap to the caption below.
+        box_rect.center_y() - dst_h / 2.0,
         dst_w,
         dst_h,
     );
@@ -10078,15 +10110,47 @@ mod geometry_tests {
         assert!(rect.width() < cell.width() - 20.0);
     }
 
-    /// And it meets the caption's pill edge to edge — the two read as one
-    /// highlight, with neither overlapping the other.
     #[test]
-    fn the_icon_highlight_meets_the_caption_pill() {
+    fn a_long_name_breaks_between_words() {
+        assert_eq!(
+            split_label("Holiday photos 2024", 13),
+            ("Holiday".into(), "photos 2024".into())
+        );
+        assert_eq!(
+            split_label("Quarterly report final.pdf", 13),
+            ("Quarterly".into(), "report final…".into())
+        );
+        assert_eq!(
+            split_label("draft-notes-v2.txt", 13),
+            ("draft-notes-".into(), "v2.txt".into())
+        );
+        assert_eq!(
+            split_label("IMG_20240512_183012.jpg", 13),
+            ("IMG_20240512_".into(), "183012.jpg".into())
+        );
+        // Nowhere to break: cut where the line ends.
+        assert_eq!(
+            split_label("Screenshot20240512.png", 13),
+            ("Screenshot202".into(), "40512.png".into())
+        );
+        assert_eq!(
+            split_label("short.txt", 13),
+            ("short.txt".into(), String::new())
+        );
+    }
+
+    /// And it stops just short of the caption's pill: two points apart,
+    /// with neither overlapping the other.
+    #[test]
+    fn the_icon_highlight_sits_just_above_the_caption_pill() {
         let cell = grid_cell_rect(Rect::from_xywh(0.0, 0.0, 800.0, 600.0), 0, 0.0);
         let icon_top = cell.top + 8.0;
         let pill_top = icon_top + grid_icon() + GRID_LABEL_GAP - GRID_LABEL_INSET;
 
-        assert_eq!(grid_icon_highlight_rect(cell, icon_top).bottom, pill_top);
+        assert_eq!(
+            pill_top - grid_icon_highlight_rect(cell, icon_top).bottom,
+            GRID_LABEL_SPACING
+        );
     }
 
     /// The first frames of the entrance are a card the size of the file's own
