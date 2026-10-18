@@ -1336,6 +1336,12 @@ are. A taken name gets a numbered one, as `KeepBoth` would give it, and undo
 takes the link away — the link itself, even when what it points at is a folder
 or is gone — never its target.
 
+**A link wears a badge.** Every symbolic link, whoever made it, is drawn with a
+curved arrow on a small white card in its icon's bottom-left corner, sized off
+the icon, in every view that draws file icons: list, columns, grid, the desk,
+and the drag image. The icon under it is the target's, so a link to a folder
+still reads as a folder.
+
 **A move is performed by the receiver.** The source deletes nothing when the
 drop finishes. A foreign target that accepted `text/uri-list` has not
 necessarily written those files anywhere, and deleting on its say-so would lose
