@@ -771,6 +771,7 @@ files-nothing-to-undo = Nie ma nic do cofnięcia
 files-undid = Cofnięto { $label }
 files-undo-move = Przeniesienie
 files-undo-copy = Kopiowanie
+files-undo-link = Utwórz dowiązanie
 files-undo-delete = Usunięcie
 files-undo-rename = Zmianę nazwy
 files-undo-rotate = Obrót

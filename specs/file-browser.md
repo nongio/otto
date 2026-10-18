@@ -1325,6 +1325,17 @@ dropped back into the directory they already live in are skipped when the action
 is a move — there is nothing to do — but kept when it is a copy, which is how a
 duplicate is made.
 
+**The action is chosen with modifiers.** A drop moves by default; Ctrl held
+during the drag copies, Shift moves, and Ctrl+Shift makes a link — the chord
+every Linux file manager shares. The compositor reads the modifiers when it
+settles the action, on every motion, and the cursor says which it settled on.
+`wl_data_device` has no link action, so a link travels as `Ask`: Files offers
+and accepts it, and a drop whose negotiated action is `Ask` makes a symbolic
+link in the target to each file's absolute path, leaving the files where they
+are. A taken name gets a numbered one, as `KeepBoth` would give it, and undo
+takes the link away — the link itself, even when what it points at is a folder
+or is gone — never its target.
+
 **A move is performed by the receiver.** The source deletes nothing when the
 drop finishes. A foreign target that accepted `text/uri-list` has not
 necessarily written those files anywhere, and deleting on its say-so would lose

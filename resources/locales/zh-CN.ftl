@@ -738,6 +738,7 @@ files-nothing-to-undo = 没有可撤销的操作
 files-undid = 已撤销{ $label }
 files-undo-move = 移动
 files-undo-copy = 拷贝
+files-undo-link = 创建链接
 files-undo-delete = 删除
 files-undo-rename = 重命名
 files-undo-rotate = 旋转

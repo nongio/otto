@@ -758,6 +758,7 @@ files-nothing-to-undo = Nada que deshacer
 files-undid = Se deshizo: { $label }
 files-undo-move = Mover
 files-undo-copy = Copiar
+files-undo-link = Crear enlace
 files-undo-delete = Eliminar
 files-undo-rename = Cambiar nombre
 files-undo-rotate = Rotación

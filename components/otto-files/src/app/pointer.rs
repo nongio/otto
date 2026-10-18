@@ -335,7 +335,7 @@ impl FilesWindow {
                     // The negotiated action, not the one we asked for: the
                     // compositor picks, and a source that only offered a copy
                     // must not have its files moved.
-                    let move_them = dnd::selected_action().contains(dnd::DndAction::Move);
+                    let op = DropOp::from_action(dnd::selected_action());
 
                     // Our own drag is served from our own payload; see
                     // `dnd::own_files` for why it cannot go over the pipe.
@@ -360,7 +360,7 @@ impl FilesWindow {
                             browser.dirty = true;
                             browser.place_desk_drop(&paths, *x as f32, *y as f32);
                         }
-                        Some(paths) => browser.apply_drop(paths, move_them),
+                        Some(paths) => browser.apply_drop(paths, op),
                         None => {
                             browser.drop_target = None;
                             browser.dirty = true;
@@ -440,7 +440,8 @@ pub(super) fn start_drag(window: &Window, drag: DragStart) {
         let theme = AppContext::current_theme();
         otto_kit::dnd::start_file_drag_with_icon(
             &paths,
-            DndAction::Copy | DndAction::Move,
+            // Ask carries a link: see `DropOp::from_action`.
+            DndAction::Copy | DndAction::Move | DndAction::Ask,
             &surface,
             serial,
             (size.0 as i32, size.1 as i32),

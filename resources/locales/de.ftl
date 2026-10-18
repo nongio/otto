@@ -752,6 +752,7 @@ files-nothing-to-undo = Nichts rückgängig zu machen
 files-undid = { $label } rückgängig gemacht
 files-undo-move = Verschieben
 files-undo-copy = Kopieren
+files-undo-link = Verknüpfung erstellen
 files-undo-delete = Löschen
 files-undo-rename = Umbenennen
 files-undo-rotate = Drehen

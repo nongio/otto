@@ -1424,6 +1424,8 @@ pub struct OpResult {
     pub changes: Vec<Change>,
     pub moved: usize,
     pub copied: usize,
+    /// Symbolic links made to items, which stay where they were.
+    pub linked: usize,
     pub skipped: usize,
     /// Items moved to Trash — kept apart from `moved` since it reads as a
     /// different sentence in [`Self::summary`].
@@ -1454,6 +1456,9 @@ impl OpResult {
         }
         if self.deleted > 0 {
             return format!("Deleted {} item{}", self.deleted, plural(self.deleted));
+        }
+        if self.linked > 0 {
+            return format!("Made {} link{}", self.linked, plural(self.linked));
         }
         match (self.moved, self.copied, self.skipped) {
             (0, 0, 0) => String::new(),
@@ -1578,6 +1583,42 @@ pub fn paste_reporting(
     result
 }
 
+/// Make a symbolic link in `dest` to each of `paths`, leaving the items
+/// themselves where they are.
+///
+/// Each link points at the item's absolute path, so it keeps working however
+/// far the link itself is moved from it. A name already taken in `dest` gets a
+/// numbered one, the `KeepBoth` rule: making a link never replaces anything.
+/// Undone like a copy, by taking the link away again; the item it points at
+/// is never touched.
+pub fn link(paths: &[PathBuf], dest: &Path) -> OpResult {
+    let mut result = OpResult::default();
+
+    for source in paths {
+        let Some(name) = source.file_name() else {
+            continue;
+        };
+        let source = std::path::absolute(source).unwrap_or_else(|_| source.clone());
+        let mut target = dest.join(name);
+        if target.symlink_metadata().is_ok() {
+            target = unique_name(dest, name);
+        }
+        // `symlink` fails on a taken name rather than writing through it, so a
+        // name that appears between the check and here is an error, not a loss.
+        match std::os::unix::fs::symlink(&source, &target) {
+            Ok(()) => {
+                result.linked += 1;
+                result.changes.push(Change::Created { path: target });
+            }
+            Err(err) => result
+                .errors
+                .push(format!("“{}”: {err}", name.to_string_lossy())),
+        }
+    }
+
+    result
+}
+
 /// Put back everything in `changes`, most recent first.
 ///
 /// Reverse order matters: a paste that both created a file and moved another
@@ -1615,10 +1656,14 @@ pub fn undo(changes: &[Change]) -> OpResult {
                 }
             }
             Change::Created { path } => {
-                if !path.exists() {
+                // Not `exists`, which follows a symlink: a link made here whose
+                // target has since gone is still ours to take back.
+                let Ok(meta) = path.symlink_metadata() else {
                     continue;
-                }
-                let empty_dir = path.is_dir()
+                };
+                // A link to an empty folder is a link, not the folder: it goes
+                // to the Trash like a file rather than through `remove_dir`.
+                let empty_dir = meta.is_dir()
                     && std::fs::read_dir(path)
                         .map(|mut d| d.next().is_none())
                         .unwrap_or(false);
@@ -2005,6 +2050,61 @@ mod paste_tests {
             std::fs::read_to_string(dest.join("a.txt")).unwrap(),
             "hello"
         );
+    }
+
+    #[test]
+    fn a_link_points_at_the_item_and_leaves_it_where_it_was() {
+        let t = Tmp::new("link");
+        let src = t.file("a.txt", "hello");
+        let dest = t.dir("dest");
+
+        let result = link(std::slice::from_ref(&src), &dest);
+
+        assert_eq!(result.linked, 1);
+        assert!(result.errors.is_empty());
+        assert_eq!(result.summary(), "Made 1 link");
+        let made = dest.join("a.txt");
+        assert!(made.symlink_metadata().unwrap().is_symlink());
+        assert_eq!(std::fs::read_link(&made).unwrap(), src);
+        assert_eq!(std::fs::read_to_string(&src).unwrap(), "hello");
+    }
+
+    #[test]
+    fn a_link_never_takes_a_name_already_there() {
+        let t = Tmp::new("link-taken");
+        let src = t.file("a.txt", "new");
+        let dest = t.dir("dest");
+        std::fs::write(dest.join("a.txt"), "old").unwrap();
+
+        let result = link(std::slice::from_ref(&src), &dest);
+
+        assert_eq!(result.linked, 1);
+        assert_eq!(std::fs::read_to_string(dest.join("a.txt")).unwrap(), "old");
+        let Change::Created { path } = &result.changes[0] else {
+            panic!("a link is recorded as created");
+        };
+        assert_ne!(path, &dest.join("a.txt"));
+        assert_eq!(std::fs::read_link(path).unwrap(), src);
+    }
+
+    /// A link to a folder, or one whose target is gone, is still the link
+    /// undo takes away — never the folder, and never skipped.
+    #[test]
+    fn undoing_a_link_takes_the_link_and_leaves_its_target() {
+        test_data_home();
+        let t = Tmp::new("link-undo");
+        let folder = t.dir("empty");
+        let gone = t.file("gone.txt", "x");
+        let dest = t.dir("dest");
+
+        let made = link(&[folder.clone(), gone.clone()], &dest);
+        std::fs::remove_file(&gone).unwrap();
+        let undone = undo(&made.changes);
+
+        assert!(undone.errors.is_empty(), "{:?}", undone.errors);
+        assert!(dest.join("empty").symlink_metadata().is_err());
+        assert!(dest.join("gone.txt").symlink_metadata().is_err());
+        assert!(folder.is_dir(), "the folder a link pointed at stays");
     }
 
     #[test]

@@ -771,6 +771,7 @@ files-nothing-to-undo = Нечего отменять
 files-undid = Действие отменено: { $label }
 files-undo-move = Перемещение
 files-undo-copy = Копирование
+files-undo-link = Создать ссылку
 files-undo-delete = Удаление
 files-undo-rename = Переименование
 files-undo-rotate = Поворот

@@ -421,7 +421,7 @@ fn a_drop_keeps_the_pane_where_it_was_scrolled() {
             index: 0,
             path: dir.join("sub"),
         });
-        browser.apply_drop(vec![dir.join("f00.txt")], true);
+        browser.apply_drop(vec![dir.join("f00.txt")], DropOp::Move);
 
         // The frame loop re-measures every frame, including the ones that
         // land while the re-read is still in flight. Those are the frames
@@ -451,7 +451,7 @@ fn undoing_a_drop_puts_the_file_back() {
         index: 0,
         path: dir.join("sub"),
     });
-    browser.apply_drop(vec![dir.join("a.txt")], true);
+    browser.apply_drop(vec![dir.join("a.txt")], DropOp::Move);
     assert!(dir.join("sub/a.txt").exists(), "the move happened");
 
     browser.undo_last();
@@ -477,13 +477,47 @@ fn undoing_a_copy_removes_the_copy_and_leaves_the_original() {
         index: 0,
         path: dir.join("sub"),
     });
-    browser.apply_drop(vec![dir.join("a.txt")], false);
+    browser.apply_drop(vec![dir.join("a.txt")], DropOp::Copy);
     assert!(dir.join("sub/a.txt").exists(), "the copy happened");
 
     browser.undo_last();
 
     assert!(dir.join("a.txt").exists(), "the original is untouched");
     assert!(!dir.join("sub/a.txt").exists(), "the copy is gone");
+}
+
+/// Ctrl+Shift makes a link: the file stays where it was, the folder it was
+/// dropped on gains a link to it, and an undo takes only the link away.
+#[test]
+fn a_link_drop_leaves_the_file_and_undoes_to_nothing() {
+    let _trash = model::test_data_home();
+    let (mut browser, dir) = browser_over(&["a.txt"], &["sub"]);
+    browser.drop_target = Some(DropTarget::Entry {
+        depth: 0,
+        index: 0,
+        path: dir.join("sub"),
+    });
+    browser.apply_drop(vec![dir.join("a.txt")], DropOp::Link);
+
+    let made = dir.join("sub/a.txt");
+    assert!(made.symlink_metadata().unwrap().is_symlink());
+    assert_eq!(std::fs::read_link(&made).unwrap(), dir.join("a.txt"));
+    assert!(dir.join("a.txt").exists(), "the file itself stays put");
+
+    browser.undo_last();
+
+    assert!(made.symlink_metadata().is_err(), "the link is gone");
+    assert!(dir.join("a.txt").exists(), "and the file is still there");
+}
+
+/// Ask is the link, a move is a move, and anything else is a copy — so a
+/// source that only offered a copy never loses its files.
+#[test]
+fn the_negotiated_action_decides_the_drop() {
+    assert_eq!(DropOp::from_action(DndAction::Ask), DropOp::Link);
+    assert_eq!(DropOp::from_action(DndAction::Move), DropOp::Move);
+    assert_eq!(DropOp::from_action(DndAction::Copy), DropOp::Copy);
+    assert_eq!(DropOp::from_action(DndAction::empty()), DropOp::Copy);
 }
 
 #[test]
@@ -512,7 +546,7 @@ fn undo_walks_back_one_operation_at_a_time() {
             index: 0,
             path: dir.join("sub"),
         });
-        browser.apply_drop(vec![dir.join(name)], true);
+        browser.apply_drop(vec![dir.join(name)], DropOp::Move);
     }
 
     browser.undo_last();
@@ -692,7 +726,7 @@ fn moving_a_file_into_the_directory_it_is_already_in_does_nothing() {
         path: dir.0.clone(),
     });
 
-    browser.apply_drop(vec![dir.join("a.txt")], true);
+    browser.apply_drop(vec![dir.join("a.txt")], DropOp::Move);
 
     assert!(dir.join("a.txt").exists(), "the file is still there");
     assert!(
@@ -712,7 +746,7 @@ fn copying_a_file_into_the_directory_it_is_already_in_duplicates_it() {
         path: dir.0.clone(),
     });
 
-    browser.apply_drop(vec![dir.join("a.txt")], false);
+    browser.apply_drop(vec![dir.join("a.txt")], DropOp::Copy);
 
     assert!(dir.join("a.txt").exists(), "the original is untouched");
     let copies: Vec<_> = std::fs::read_dir(&dir.0)
@@ -733,7 +767,7 @@ fn a_drop_moves_a_file_into_a_directory() {
         path: dir.join("target"),
     });
 
-    browser.apply_drop(vec![dir.join("a.txt")], true);
+    browser.apply_drop(vec![dir.join("a.txt")], DropOp::Move);
 
     assert!(dir.join("target/a.txt").exists(), "the file moved in");
     assert!(!dir.join("a.txt").exists(), "and left where it was");
@@ -748,7 +782,7 @@ fn a_drop_copy_leaves_the_original_alone() {
         path: dir.join("target"),
     });
 
-    browser.apply_drop(vec![dir.join("a.txt")], false);
+    browser.apply_drop(vec![dir.join("a.txt")], DropOp::Copy);
 
     assert!(dir.join("target/a.txt").exists(), "the copy arrived");
     assert!(dir.join("a.txt").exists(), "the original stayed");
@@ -763,7 +797,7 @@ fn a_directory_cannot_be_dropped_into_itself() {
         path: dir.join("outer/inner"),
     });
 
-    browser.apply_drop(vec![dir.join("outer")], true);
+    browser.apply_drop(vec![dir.join("outer")], DropOp::Move);
 
     assert!(dir.join("outer").exists(), "nothing was moved");
     assert!(
@@ -785,7 +819,7 @@ fn the_drop_target_clears_once_it_has_been_applied() {
         path: dir.join("target"),
     });
 
-    browser.apply_drop(vec![dir.join("a.txt")], true);
+    browser.apply_drop(vec![dir.join("a.txt")], DropOp::Move);
 
     assert_eq!(browser.drop_target, None, "the outline goes with the drop");
     assert!(browser.dirty, "and the window repaints");
