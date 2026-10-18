@@ -43,7 +43,7 @@ sudo apt install ./otto-amd64.deb
 sudo dnf install https://github.com/nongio/otto/releases/latest/download/otto-x86_64.rpm
 
 # Arch
-curl -fsSLO https://raw.githubusercontent.com/nongio/otto/main/PKGBUILD && makepkg -si
+curl -fsSLO https://github.com/nongio/otto/releases/latest/download/PKGBUILD && makepkg -si
 ```
 
 Log out and pick **Otto** in your login manager's session menu. To look first, `otto --winit` runs it in a window inside your current Wayland session.

@@ -27,11 +27,12 @@ sudo dnf install https://github.com/nongio/otto/releases/latest/download/otto-x8
 ### Arch Linux
 
 ```sh
-curl -fsSLO https://raw.githubusercontent.com/nongio/otto/main/PKGBUILD
+curl -fsSLO https://github.com/nongio/otto/releases/latest/download/PKGBUILD
 makepkg -si
 ```
 
-`makepkg` fetches the release tarball itself. If you already downloaded it,
+`makepkg` fetches the release tarball itself and checks it against the
+checksum in the `PKGBUILD`, which each release pins. If you already downloaded it,
 drop the `PKGBUILD` next to it and it will be used without downloading again.
 
 On Debian, Ubuntu and Fedora the package manager also installs the recommended

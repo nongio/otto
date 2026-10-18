@@ -48,7 +48,9 @@ and refreshes `Cargo.lock`. Run with no argument to print the current version.
   `1.0.0-rc.2` would not.
 - **PKGBUILD**, the binary package: `_ver` (Cargo's version, which names the
   release tarball), `_tag` (`v$version`) and `pkgver` (the version with
-  hyphens dropped, since `pkgver` may not contain one).
+  hyphens dropped, since `pkgver` may not contain one). Its `sha256sums` stays
+  `SKIP` in the repository: `scripts/packaging/make-arch-tarball.sh` writes a
+  copy pinned to the tarball it builds, and the release publishes that copy.
 
 Two more files follow on their own:
 
