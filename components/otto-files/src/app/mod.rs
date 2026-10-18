@@ -224,10 +224,11 @@ impl DropTarget {
 /// Called for every enter and every motion, because that is what the protocol
 /// asks for: the answer is per-position, and a target that goes quiet has said
 /// no. See [`otto_kit::dnd::accept`].
-fn hover_drag(state: &Arc<Mutex<Browser>>, x: f32, y: f32) {
+fn hover_drag(state: &Arc<Mutex<Browser>>, x: f32, y: f32, copy_held: bool) {
     use otto_kit::dnd;
 
     let mut browser = state.browse();
+    browser.drag_copy_held = copy_held;
     let target = browser.drop_target_at(x, y);
     let mime = dnd::first_offered(clipboard::file_mime_preference());
 
@@ -357,6 +358,11 @@ struct Browser {
     /// Where a drag now over the window would drop. Drawn outlined, and read
     /// again when the drop arrives.
     drop_target: Option<DropTarget>,
+    /// Ctrl is held during the drag now over the window: a copy or a link
+    /// is being asked for, so a drop back where the files already are has
+    /// something to do. Read from our own keyboard, which a drag we started
+    /// still has; see [`Browser::is_a_move_home`].
+    drag_copy_held: bool,
     /// The last operation's outcome, shown in the header until the next action.
     status: Option<String>,
     /// The file operation running on a worker thread, if there is one. See
