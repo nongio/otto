@@ -57,6 +57,7 @@ declare -A PAGE_TITLE=(
     [privacy]="Privacy in Otto - What Apps Were Allowed"
     [remote-desktop]="Remote Desktop for Otto - RDP and Virtual Outputs"
     [troubleshooting]="Troubleshooting Otto - Logs and Common Failures"
+    [bug-reports]="Reporting a Bug in Otto - otto-doctor"
     [credits]="Credits - Wallpapers, Icons and Fonts in Otto's Screenshots"
     [dev/readme]="Otto Developer Guide - Architecture Overview"
     [dev/project-structure]="Otto Project Structure - Crates and Building"
@@ -139,6 +140,7 @@ declare -A PAGE_DESC=(
     [privacy]="See and take back what apps were allowed to do in Otto, remember a screen share, and when Otto asks for your password."
     [remote-desktop]="Serve an Otto session over RDP with otto-rdp, create virtual outputs, and connect from Windows, macOS or mobile clients."
     [troubleshooting]="Find Otto's logs, diagnose the most common startup and rendering failures, and gather what a useful bug report needs."
+    [bug-reports]="Write a bug report with otto-doctor: gather the system, graphics, screens, configuration and session logs, choose and preview what to share, redact personal details, and attach one file."
     [credits]="Who made the wallpapers, icons and fonts you see in Otto's screenshots, and the licences they are used under."
     [dev/readme]="How Otto is built: Smithay for Wayland, Skia for drawing, and a retained lay-rs scene graph - plus where to start reading the source."
     [dev/project-structure]="Where everything lives in the Otto repository, what each Cargo feature flag turns on, and how to build the workspace."
@@ -264,6 +266,7 @@ USER_FILES=(
     "user/accessibility.md"
     "user/scripting.md"
     "user/troubleshooting.md"
+    "user/bug-reports.md"
     "user/credits.md"
 )
 
@@ -364,6 +367,7 @@ DEVELOPER_FILES=(
     "developer/color-scheme-setting.md"
     "developer/settings-dbus-api.md"
     "developer/shell-dbus-api.md"
+    "developer/compositor-dbus-api.md"
     "developer/rdp-virtual-output.md"
     "developer/remote-desktop-indicator.md"
     "developer/agents.md"

@@ -158,8 +158,12 @@ tells you quickly.
 
 ## Reporting a bug
 
-Open an issue at [github.com/nongio/otto](https://github.com/nongio/otto/issues)
-with:
+The quickest way is `otto-doctor`: it gathers the system details, your
+configuration and the session logs, lets you choose what to share, and writes
+one file to attach. See [Reporting a bug with otto-doctor](bug-reports.md).
+
+Otherwise, open an issue at
+[github.com/nongio/otto](https://github.com/nongio/otto/issues) with:
 
 1. **What you did, what happened, what you expected.**
 2. **Otto version.** `otto --version`, or the commit if you built it.

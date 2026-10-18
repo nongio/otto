@@ -4,7 +4,7 @@ The small rules several Otto programs have to agree on: where the XDG directorie
 
 How it works: [otto-foundations](../../docs/developer/otto-foundations.md).
 
-- **Layer:** foundation. Used by `otto-kit` (re-exported as `otto_kit::xdg`, `otto_kit::uri`, `otto_kit::matching`), and directly by crates that do not link the toolkit: `otto-search`, `otto-agents-client`, `otto-agents`, `xdg-desktop-portal-otto`, `otto-pdf`, `otto-rdp` and `otto-render`.
+- **Layer:** foundation. Used by `otto-kit` (re-exported as `otto_kit::xdg`, `otto_kit::uri`, `otto_kit::matching`), and directly by crates that do not link the toolkit: `otto-search`, `otto-agents-client`, `otto-agents`, `xdg-desktop-portal-otto`, `otto-pdf`, `otto-rdp`, `otto-doctor` and `otto-render`.
 
 ## Dependencies
 - **Internal:** none.

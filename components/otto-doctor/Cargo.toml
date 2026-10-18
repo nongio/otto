@@ -1,0 +1,25 @@
+[package]
+name = "otto-doctor"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Gather what a bug report about Otto needs, let the user choose what to share, and write it as Markdown."
+
+[[bin]]
+name = "otto-doctor"
+path = "src/main.rs"
+
+[dependencies]
+libc.workspace = true
+otto-dbus = { path = "../otto-dbus" }
+otto-foundations = { path = "../otto-foundations" }
+serde_json.workspace = true
+zbus.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

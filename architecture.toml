@@ -102,6 +102,7 @@ crates = [
     "otto-input-overlay",
     "otto-dictate",
     "otto-msg",
+    "otto-doctor",
     "otto-agents",
     "otto-rdp",
     "xdg-desktop-portal-otto",
