@@ -2,9 +2,9 @@ use super::*;
 
 use crate::places_config::Builtin;
 
-/// One of the user's rows dragged past the threshold is lifted, and the line
-/// follows the nearest gap among the user's rows — never among the built-ins,
-/// and never the two gaps beside where it already is.
+/// A row dragged past the threshold is lifted, and the line follows the
+/// nearest gap — anywhere in the list, but never the two beside where the row
+/// already is.
 #[test]
 fn sorting_a_row_shows_the_gap_it_would_land_in() {
     let (mut browser, dir) = browser_with_sidebar();
@@ -20,9 +20,9 @@ fn sorting_a_row_shows_the_gap_it_would_land_in() {
     assert_eq!(browser.dragging_place(), Some(3));
     assert_eq!(browser.drop_target, Some(DropTarget::PlaceGap { slot: 2 }));
 
-    // Up among the built-ins: still the first of the user's gaps.
+    // Up among the built-ins: the row can go above them too.
     assert!(browser.drag_place_to(view::place_rect(0).top));
-    assert_eq!(browser.drop_target, Some(DropTarget::PlaceGap { slot: 2 }));
+    assert_eq!(browser.drop_target, Some(DropTarget::PlaceGap { slot: 0 }));
 
     // Back over itself: nowhere to go, no line.
     assert!(browser.drag_place_to(b.center_y() + 8.0));
@@ -34,14 +34,51 @@ fn sorting_a_row_shows_the_gap_it_would_land_in() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// The built-in rows keep their order: pressing one arms no sort.
+/// The built-in rows are the user's to arrange as well. A sidebar with a
+/// single folder of the user's own has nothing else it could sort.
 #[test]
-fn a_built_in_row_is_not_sorted() {
+fn a_built_in_row_sorts_too() {
     let (mut browser, dir) = browser_with_sidebar();
     browser.press_place(1, view::place_rect(1).center_y());
-    assert!(!browser.drag_place_to(view::place_rect(3).center_y()));
-    assert_eq!(browser.dragging_place(), None);
-    assert!(!browser.release_place_drag(view::place_rect(3).center_y()));
+    assert!(browser.drag_place_to(view::place_rect(3).bottom + 10.0));
+    assert_eq!(browser.dragging_place(), Some(1));
+    assert_eq!(browser.drop_target, Some(DropTarget::PlaceGap { slot: 4 }));
+    browser.cancel_place_drag();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The order a sort writes: the moved row at its gap, everything else as
+/// shown, and rows the config orders but this window does not show kept in
+/// their place.
+#[test]
+fn a_sort_writes_the_whole_order() {
+    use crate::places_config::PlaceKey;
+    let (browser, dir) = browser_with_sidebar();
+    let home = PlaceKey::Builtin(Builtin::Home);
+    let docs = PlaceKey::Builtin(Builtin::Documents);
+    let a = PlaceKey::Path(dir.join("a"));
+    let b = PlaceKey::Path(dir.join("b"));
+
+    // Documents dragged below b.
+    assert_eq!(
+        browser.order_with(std::slice::from_ref(&docs), 4, Vec::new()),
+        [home.clone(), a.clone(), b.clone(), docs.clone()]
+    );
+    // b dragged above everything.
+    assert_eq!(
+        browser.order_with(std::slice::from_ref(&b), 0, Vec::new()),
+        [b.clone(), home.clone(), docs.clone(), a.clone()]
+    );
+    // Music is hidden but was second in the order; it stays second.
+    let music = PlaceKey::Builtin(Builtin::Music);
+    assert_eq!(
+        browser.order_with(
+            std::slice::from_ref(&a),
+            0,
+            vec![home.clone(), music.clone(), docs.clone()]
+        ),
+        [a, music, home, docs, b]
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -114,15 +151,14 @@ fn the_gaps_between_rows_are_where_folders_are_added() {
     );
 }
 
-/// The user's folders follow the built-in rows, so a gap among the
-/// built-ins drops after them — and the line says so.
+/// A folder dropped in a gap goes in that gap, among the built-ins too.
 #[test]
-fn a_gap_among_the_built_in_rows_lands_after_them() {
+fn a_folder_lands_in_the_gap_it_was_dropped_in() {
     let (browser, dir) = browser_with_sidebar();
     let between_home_and_docs = view::place_rect(0).bottom + 2.0;
     assert_eq!(
         browser.drop_target_at(x(), between_home_and_docs),
-        Some(DropTarget::PlaceGap { slot: 2 })
+        Some(DropTarget::PlaceGap { slot: 1 })
     );
     let between_a_and_b = view::place_rect(2).bottom + 2.0;
     assert_eq!(

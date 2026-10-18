@@ -128,15 +128,15 @@ on the sidebar itself:
   the last one. A line shows where it will go. Nothing on disk moves. (Dropping
   onto the middle of a row still moves files into that folder.) You can also
   right-click selected folders and choose **Add to Sidebar**.
-- **Reorder your folders** by dragging their rows up or down the sidebar. A
-  line shows where the row will land. The standard rows stay in their order.
+- **Reorder the sidebar** by dragging any row, standard or your own, up or
+  down. A line shows where the row will land.
 - **Remove a row** by right-clicking it and choosing **Remove from Sidebar**.
   A standard row, such as Music, is hidden rather than removed.
 - **Bring a hidden standard row back** by right-clicking an empty part of the
   sidebar and choosing **Show** with that row's name.
 
-Your own folders always come after the standard ones. Every open window
-updates straight away.
+Until you reorder anything, your own folders come after the standard ones.
+Every open window updates straight away.
 
 All of this is saved in `~/.config/otto/files.toml`, which you can also edit by
 hand. Comments and anything else in the file are kept when Files changes it:

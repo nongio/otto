@@ -199,9 +199,13 @@ icon = "folder-code"    # optional: a plain folder otherwise
 - **`hide` names rows by a stable id**, not by label — the label is translated,
   and a config written on an English desktop must keep working when the
   language changes. Matched case-insensitively: a config is prose, not code.
-- **Added folders go after the built-in ones.** A sidebar that reordered itself
-  around a config would make every screenshot, every instruction and every
-  piece of muscle memory wrong for a preference nobody expressed.
+- **Added folders go after the built-in ones, until the user sorts the rows.**
+  A sidebar that reordered itself unasked would make every screenshot, every
+  instruction and every piece of muscle memory wrong for a preference nobody
+  expressed. A sort *is* that preference, so it is written down as `order`:
+  every row by key, a built-in by its id and a folder by its path. Rows named
+  there come in its sequence. A row it does not name, such as a hidden row
+  shown again or a folder added by hand, goes back to its standard position.
 - **`~` and `$HOME` expand**, because neither has been through a shell by the
   time it reaches a config file. A path that is not a directory is dropped, so
   a moved disk costs that row and nothing else.
@@ -223,21 +227,21 @@ rows are then read back from it. No window keeps a list of its own.
 - **A folder dropped between two places, or below the last, is added there.**
   The top and bottom 6 points of a row count as the gap and the rest as the
   row, which still takes a drop *into* its folder. An accent insertion line
-  marks the gap. A gap among the built-in rows lands after them, because the
-  user's folders follow the built-ins, and the line is drawn where the row
-  will actually appear.
+  marks the gap, and the folder goes exactly there, among the built-in rows
+  too. The drop writes the whole `order`.
 - **Such a drop is negotiated as a copy, never a move.** Nothing on disk
   changes, and a source told its files were moved may delete the originals.
 - **A folder already in the sidebar moves to the gap it was dropped in.**
   That is how the user's folders are reordered. Files, and folders that are
   already built-in rows, add nothing. For our own drag the gap does not light
   up for them, and the row's edge stays part of the row.
-- **The user's own rows are sorted by dragging them.** A press still opens
-  the place. Past the drag threshold, the row fades where it is and the
-  insertion line follows the nearest gap among the user's rows. Letting go
-  moves it there, through the same edit a drop uses. This happens inside the
-  window, not through drag and drop: nothing leaves it. Built-in rows are not
-  picked up, because their order is the spec's, not a preference. Leaving the
+- **Every row is sorted by dragging it**, built-in ones included: a sidebar
+  with one folder of the user's own would otherwise have nothing to sort. A
+  press still opens the place. Past the drag threshold, the row fades where it
+  is and the insertion line follows the nearest gap. Letting go writes the new
+  `order`. Rows the order names but the window does not show, such as hidden
+  ones or folders on an unmounted disk, keep their place in it. This happens
+  inside the window, not through drag and drop: nothing leaves it. Leaving the
   window, or a reload mid-drag, cancels it.
 - **Right-clicking a place offers Remove from Sidebar.** One of the user's
   folders leaves `[[sidebar.places]]`. A built-in row joins `hide` instead.

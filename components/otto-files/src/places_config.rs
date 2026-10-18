@@ -95,6 +95,8 @@ struct Sidebar {
     hide: Vec<String>,
     #[serde(default)]
     places: Vec<Entry>,
+    #[serde(default)]
+    order: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -112,11 +114,40 @@ pub struct Custom {
     pub icon: String,
 }
 
+/// A sidebar row as `order` names it: a built-in row by its id, or one of
+/// the user's folders by its path.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PlaceKey {
+    Builtin(Builtin),
+    Path(PathBuf),
+}
+
+impl PlaceKey {
+    /// Read one entry of `order`. A built-in row's id wins over a relative
+    /// path that happens to spell it.
+    fn parse(raw: &str, home: Option<&Path>) -> Option<Self> {
+        Builtin::from_id(raw)
+            .map(Self::Builtin)
+            .or_else(|| expand_home(raw, home).map(Self::Path))
+    }
+
+    /// This key the way `order` writes it.
+    fn written(&self, home: Option<&Path>) -> String {
+        match self {
+            Self::Builtin(builtin) => builtin.id().to_string(),
+            Self::Path(path) => abbreviate(path, home),
+        }
+    }
+}
+
 /// The sidebar as configured, or an empty one where nothing was said.
 #[derive(Debug, Default, Clone)]
 pub struct SidebarConfig {
     hidden: Vec<String>,
     pub extra: Vec<Custom>,
+    /// The order the user dragged the rows into, if they have. Empty means
+    /// the standard order.
+    pub order: Vec<PlaceKey>,
 }
 
 impl SidebarConfig {
@@ -147,6 +178,12 @@ impl SidebarConfig {
 
     fn from_file(file: File, home: Option<&Path>) -> Self {
         Self {
+            order: file
+                .sidebar
+                .order
+                .iter()
+                .filter_map(|raw| PlaceKey::parse(raw, home))
+                .collect(),
             hidden: file
                 .sidebar
                 .hide
@@ -182,6 +219,7 @@ impl SidebarConfig {
         Self {
             hidden: builtins.iter().map(|b| b.id().to_string()).collect(),
             extra: Vec::new(),
+            order: Vec::new(),
         }
     }
 
@@ -196,8 +234,32 @@ impl SidebarConfig {
         Self {
             hidden: Vec::new(),
             extra: self.extra.clone(),
+            order: self.order.clone(),
         }
     }
+}
+
+/// Write `order` into `text`'s `[sidebar]`, one row per line.
+///
+/// # Errors
+///
+/// As [`with_places_added`].
+pub fn with_order(
+    text: &str,
+    order: &[PlaceKey],
+    home: Option<&Path>,
+) -> Result<String, toml_edit::TomlError> {
+    let mut doc = text.parse::<toml_edit::DocumentMut>()?;
+    let mut array = toml_edit::Array::new();
+    for key in order {
+        let mut value = toml_edit::Value::from(key.written(home));
+        value.decor_mut().set_prefix("\n    ");
+        array.push_formatted(value);
+    }
+    array.set_trailing_comma(true);
+    array.set_trailing("\n");
+    sidebar_table(&mut doc)["order"] = toml_edit::value(array);
+    Ok(doc.to_string())
 }
 
 /// Add `paths` to the sidebar's own folders in `text`, before the entry for
@@ -252,6 +314,16 @@ pub fn with_place_removed(
     let places = places_array(&mut doc);
     while let Some(index) = entry_index(places, path, home) {
         places.remove(index);
+    }
+    // Its place in the order goes with it.
+    if let Some(order) = sidebar_table(&mut doc)
+        .get_mut("order")
+        .and_then(|item| item.as_array_mut())
+    {
+        order.retain(|value| {
+            value.as_str().and_then(|raw| PlaceKey::parse(raw, home))
+                != Some(PlaceKey::Path(path.to_path_buf()))
+        });
     }
     Ok(doc.to_string())
 }
@@ -587,6 +659,32 @@ mod tests {
         let config = SidebarConfig::from_file(toml::from_str(&text).unwrap(), None);
         assert!(!config.hides(Builtin::Music));
         assert!(config.hides(Builtin::Videos));
+    }
+
+    /// The order a sort writes reads back as the same rows, one per line,
+    /// paths under `~`; removing a folder takes it out of the order too.
+    #[test]
+    fn the_order_is_written_and_read_back() {
+        let home = Path::new("/home/me");
+        let order = [
+            PlaceKey::Path(PathBuf::from("/home/me/Pictures/Screenshots")),
+            PlaceKey::Builtin(Builtin::Home),
+            PlaceKey::Builtin(Builtin::Downloads),
+        ];
+        let text = with_order("# kept\n[desk]\narrange = \"free\"\n", &order, Some(home)).unwrap();
+        assert!(text.contains("# kept"));
+        assert!(text.contains("\n    \"~/Pictures/Screenshots\",\n"));
+        let config = SidebarConfig::from_file(toml::from_str(&text).unwrap(), Some(home));
+        assert_eq!(config.order, order);
+
+        let text = with_place_removed(
+            &text,
+            Path::new("/home/me/Pictures/Screenshots"),
+            Some(home),
+        )
+        .unwrap();
+        let config = SidebarConfig::from_file(toml::from_str(&text).unwrap(), Some(home));
+        assert_eq!(config.order, order[1..]);
     }
 
     /// Saying nothing is the ordinary case and has to mean "the defaults".

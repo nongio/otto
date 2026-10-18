@@ -31,18 +31,15 @@ pub(super) struct PlaceDrag {
 }
 
 impl Browser {
-    /// A press on sidebar row `index` at height `y`. One of the user's own
-    /// rows may be about to be dragged; the built-in rows keep their order.
+    /// A press on sidebar row `index` at height `y`, which may be about to
+    /// be dragged to a new place in the list. Any row: the built-in ones are
+    /// the user's to arrange too.
     pub(super) fn press_place(&mut self, index: usize, y: f32) {
-        self.place_drag = self
-            .places
-            .get(index)
-            .filter(|place| place.builtin.is_none())
-            .map(|_| PlaceDrag {
-                index,
-                start_y: y,
-                moving: false,
-            });
+        self.place_drag = (index < self.places.len()).then_some(PlaceDrag {
+            index,
+            start_y: y,
+            moving: false,
+        });
     }
 
     /// Follow a sorting drag to height `y`. Whether one is under way, in
@@ -69,10 +66,10 @@ impl Browser {
         true
     }
 
-    /// The gap row `index`, dragged to height `y`, would land in: among the
-    /// user's own rows, and `None` when that is where it already is.
+    /// The gap row `index`, dragged to height `y`, would land in; `None`
+    /// when that is where it already is.
     fn sort_slot(&self, index: usize, y: f32) -> Option<usize> {
-        let slot = view::place_gap_nearest(y, self.places.len()).max(self.first_own_place());
+        let slot = view::place_gap_nearest(y, self.places.len());
         (slot != index && slot != index + 1).then_some(slot)
     }
 
@@ -88,8 +85,10 @@ impl Browser {
         self.drop_target = None;
         self.dirty = true;
         if let Some(slot) = self.sort_slot(drag.index, y) {
-            if let Some(path) = self.places.get(drag.index).map(|place| place.path.clone()) {
-                self.add_to_sidebar(&[path], slot);
+            if let Some(key) = self.places.get(drag.index).map(Place::key) {
+                let order = self.order_with(&[key], slot, SidebarConfig::load().order);
+                let home = places_config::home_dir();
+                self.edit_sidebar(|text| places_config::with_order(text, &order, home.as_deref()));
             }
         }
         true
@@ -110,12 +109,38 @@ impl Browser {
             .map(|drag| drag.index)
     }
 
-    /// The gap a drag at `(x, y)` would add folders at, if it would add any.
+    /// The sidebar's order once `moving` sits at gap `slot` of the rows shown.
     ///
-    /// The user's own folders follow the built-in rows, so a gap among the
-    /// built-ins means the first place theirs can go — and the line is drawn
-    /// there, where the row will actually appear, rather than where the
-    /// pointer is.
+    /// Rows the config's order names but this window does not show — a
+    /// hidden one, a folder whose disk is not mounted — keep their place in
+    /// it, so showing or mounting them again puts them back where they were.
+    pub(super) fn order_with(
+        &self,
+        moving: &[places_config::PlaceKey],
+        slot: usize,
+        stored: Vec<places_config::PlaceKey>,
+    ) -> Vec<places_config::PlaceKey> {
+        let shown: Vec<places_config::PlaceKey> = self.places.iter().map(Place::key).collect();
+        let before = shown[..slot.min(shown.len())]
+            .iter()
+            .filter(|key| moving.contains(key))
+            .count();
+        let mut order: Vec<places_config::PlaceKey> = shown
+            .iter()
+            .filter(|key| !moving.contains(key))
+            .cloned()
+            .collect();
+        let at = (slot - before).min(order.len());
+        order.splice(at..at, moving.iter().cloned());
+        for (index, key) in stored.into_iter().enumerate() {
+            if !order.contains(&key) {
+                order.insert(index.min(order.len()), key);
+            }
+        }
+        order
+    }
+
+    /// The gap a drag at `(x, y)` would add folders at, if it would add any.
     pub(super) fn sidebar_gap_at(&self, x: f32, y: f32) -> Option<usize> {
         if self.trash || self.desk {
             return None;
@@ -129,20 +154,12 @@ impl Browser {
                 return None;
             }
         }
-        Some(slot.max(self.first_own_place()))
-    }
-
-    /// Where the user's own folders start in the sidebar.
-    fn first_own_place(&self) -> usize {
-        self.places
-            .iter()
-            .position(|place| place.builtin.is_none())
-            .unwrap_or(self.places.len())
+        Some(slot)
     }
 
     /// Whether adding `path` would change the sidebar: a folder, and not one
     /// of the built-in rows under another name. One of the user's own rows
-    /// does change it — dropping it elsewhere is how they are reordered.
+    /// does change it — dropping it elsewhere moves it.
     fn would_add(&self, path: &Path) -> bool {
         path.is_dir()
             && !self
@@ -161,14 +178,22 @@ impl Browser {
         if paths.is_empty() {
             return;
         }
-        let before = self
-            .places
-            .get(slot)
-            .filter(|place| place.builtin.is_none())
-            .map(|place| place.path.clone());
+        // New folders get an entry; ones already listed keep theirs, label
+        // and icon included. Where any of them sits is the order's business.
+        let new: Vec<PathBuf> = paths
+            .iter()
+            .filter(|path| !self.places.iter().any(|place| &place.path == *path))
+            .cloned()
+            .collect();
+        let keys: Vec<places_config::PlaceKey> = paths
+            .into_iter()
+            .map(places_config::PlaceKey::Path)
+            .collect();
+        let order = self.order_with(&keys, slot, SidebarConfig::load().order);
         let home = places_config::home_dir();
         self.edit_sidebar(|text| {
-            places_config::with_places_added(text, &paths, before.as_deref(), home.as_deref())
+            let text = places_config::with_places_added(text, &new, None, home.as_deref())?;
+            places_config::with_order(&text, &order, home.as_deref())
         });
     }
 
