@@ -38,6 +38,9 @@ Each entry takes:
 |-------|------|----------|-------------|
 | `cmd` | string | yes | Executable name (must be on `$PATH`) or absolute path |
 | `args` | array of strings | no | Command-line arguments (defaults to `[]`) |
+| `enabled` | bool | no | `false` keeps the entry and its place in the list without starting it (defaults to `true`) |
+
+You can also manage this list in **Settings → Lock & Login → Start at login**. The **Startup apps** pop-up sets `xdg_autostart` (*Otto only* or *Otto + XDG*). The list under it shows every entry in launch order: drag one to move it, untick it to keep it without starting it (`enabled = false`), **+** adds an app's `.desktop` file, a program or a typed command, and **−** removes the selected one. Otto's own apps (top bar, dynamic island, stash, Agents panel) can be unticked but not removed. **Open config file** opens the file itself. Your list replaces the system one in `/etc/otto/config.toml`, so the first change copies the system list into your config before changing it. Changes apply at the next login.
 
 Entries are spawned non-blocking (fire-and-forget) in listed order. Otto calls `spawn()` sequentially but does not wait for any process to become ready before launching the next. There is no startup ordering or readiness guarantee between entries.
 
