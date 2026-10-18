@@ -253,6 +253,22 @@ That one renders as `March 23, Thursday 21:16`. Some other useful formats:
 | `"%I:%M %p"` | `09:16 PM` |
 | `"%Y-%m-%d %H:%M:%S"` | `2026-03-23 21:16:04` |
 
+## New versions
+
+When a newer Otto has been released, the Otto menu (the two dots at the far
+left) gains **New Version Available…** at the top, which opens the release
+page in your browser. There is no notification, and nothing else in the bar
+changes.
+
+The bar checks a minute after it starts and every six hours after. What it
+sends is described in [Privacy](privacy.md#checking-for-new-versions). To turn
+the check off:
+
+```toml
+# ~/.config/otto/otto-bar.toml
+update_check_url = ""
+```
+
 ## Configuration
 
 `otto-bar` has its own config file. The first one that exists and parses is
@@ -262,7 +278,7 @@ used — there is no merging, so a system file shadows a user one:
 2. `~/.config/otto/otto-bar.toml`
 3. `./otto-bar.toml` (development override in the working directory)
 
-`clock_format` and the `[battery]` section are the options. Bar height, colours
+`clock_format`, `update_check_url` and the `[battery]` section are the options. Bar height, colours
 and blur follow the compositor's theme.
 
 ## Theming
