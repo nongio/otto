@@ -9,7 +9,9 @@
 #
 # So keep the console silent and put the log where it can be read afterwards.
 # One generation is kept, because the interesting log is usually the one from
-# the session that just died.
+# the session that just died. Otto writes its own otto.log beside it; this one
+# also catches what the programs it starts print, and anything before that
+# log is open.
 #
 # Nothing here may prevent the session from starting: a wrapper that fails
 # leaves the user staring at the greeter with no way in. If the log directory

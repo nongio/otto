@@ -5,7 +5,22 @@ failures people hit most often, and what makes a useful bug report.
 
 ## Getting logs
 
-Otto logs to stderr, controlled by `RUST_LOG`:
+Otto writes its log to a file of its own, whichever way it was started:
+
+| File | What |
+|------|------|
+| `~/.local/state/otto/otto.log` | The session on your screens (`--tty-udev`) |
+| `~/.local/state/otto/otto.log.1` | The previous session: after a crash, read this one |
+| `~/.local/state/otto/otto-winit.log` | Otto running in a window (`--winit`), with its own `.1` |
+| `~/.local/state/otto/panic.log` | Every crash, with a backtrace |
+
+(`$XDG_STATE_HOME/otto/` when `XDG_STATE_HOME` is set.) The file has the same
+lines as stderr, at the same `RUST_LOG` level. When the `otto-session` login
+script starts Otto, it also keeps `session.log` and `session.log.1` in the
+same folder: those hold everything written to the terminal, including the
+output of programs Otto starts and messages from before the log file opens.
+
+Otto also logs to stderr, controlled by `RUST_LOG`:
 
 ```sh
 RUST_LOG=info otto --winit &> /tmp/otto.log

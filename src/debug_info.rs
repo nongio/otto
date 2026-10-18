@@ -62,6 +62,7 @@ impl<B: Backend + 'static> Otto<B> {
             "renderer": renderer,
             "vulkan_fallback": vulkan_fallback,
             "config_files": crate::config::config_layer_paths(),
+            "log_path": crate::session_log::path(),
             "outputs": outputs,
         })
     }

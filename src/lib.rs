@@ -36,6 +36,7 @@ pub mod render;
 pub mod render_metrics;
 pub mod sandbox;
 pub mod screenshare;
+pub mod session_log;
 pub mod settings;
 pub mod settings_service;
 pub mod shell;

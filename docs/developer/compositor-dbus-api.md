@@ -47,6 +47,7 @@ does not know and treats a missing field as unknown.
   },
   "vulkan_fallback": null,
   "config_files": ["/etc/otto/config.toml", "/home/me/.config/otto/config.toml"],
+  "log_path": "/home/me/.local/state/otto/otto.log",
   "outputs": [
     {
       "name": "eDP-1",
@@ -72,6 +73,7 @@ does not know and treats a missing field as unknown.
 | `renderer` | The first renderer the session created, or `null` before one exists. `api` is `gl` or `vulkan`. For GL, `vendor`, `renderer` and `version` are `GL_VENDOR`, `GL_RENDERER` and `GL_VERSION`; for Vulkan they are the driver name, the device name, and the API version with the driver info |
 | `vulkan_fallback` | Why the session draws with OpenGL although Vulkan was asked for, or `null` |
 | `config_files` | The configuration files on disk, lowest priority first, the layers the compositor merges |
+| `log_path` | The file this session logs to (`$XDG_STATE_HOME/otto/otto.log`, or `otto-winit.log` for a nested run), or `null` when it logs only to stderr |
 | `outputs` | Every output, sorted by name. `width` and `height` are the current mode in physical pixels, `refresh_mhz` its refresh in millihertz, `scale` the fractional scale, `x` and `y` the position in the layout in logical points, `virtual` whether it is a PipeWire-backed output |
 
 The answer holds paths with the user's home folder in them. `otto-msg doctor`
