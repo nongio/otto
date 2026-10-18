@@ -7265,6 +7265,9 @@ fn draw_grid_icon(
             .paint(&layer),
     );
     draw_grid_icon_face(canvas, entry, box_rect, thumb);
+    if entry.is_symlink {
+        draw_link_badge(canvas, box_rect, false);
+    }
     canvas.restore();
 }
 
@@ -7871,9 +7874,15 @@ fn draw_entry_icon(
     let box_rect = Rect::from_xywh(left, center_y - ICON_SIZE / 2.0, ICON_SIZE, ICON_SIZE);
     if let Some(image) = thumb {
         draw_thumbnail(canvas, image, box_rect, cut);
-        return;
+    } else {
+        draw_entry_icon_face(canvas, entry, box_rect, cut);
     }
+    if entry.is_symlink {
+        draw_link_badge(canvas, box_rect, cut);
+    }
+}
 
+fn draw_entry_icon_face(canvas: &Canvas, entry: &Entry, box_rect: Rect, cut: bool) {
     let chain = entry.icon_chain();
     let refs: Vec<&str> = chain.iter().map(String::as_str).collect();
     if let Some(image) =
@@ -7888,6 +7897,56 @@ fn draw_entry_icon(
         }
         canvas.draw_image_rect(&image, None, dst, &paint);
     }
+}
+
+/// The mark a symbolic link wears: a curved arrow on a small white card in
+/// the icon's bottom-left corner, the way an alias has always looked.
+///
+/// Sized off the icon it sits on, so the 18pt list icon and a large desk icon
+/// carry the same mark at their own scale, but never so small its arrow stops
+/// reading as one. A cut link is dimmed with its icon.
+fn draw_link_badge(canvas: &Canvas, icon: Rect, cut: bool) {
+    let side = (icon.width().min(icon.height()) * 0.36).max(8.0);
+    let card = Rect::from_xywh(icon.left, icon.bottom - side, side, side);
+    let radius = side * 0.22;
+    let fade = if cut { 0.45 } else { 1.0 };
+    let alpha = |a: f32| (a * fade) as u8;
+
+    let mut fill = Paint::default();
+    fill.set_anti_alias(true);
+    fill.set_color(Color::from_argb(alpha(250.0), 255, 255, 255));
+    canvas.draw_rrect(RRect::new_rect_xy(card, radius, radius), &fill);
+
+    // The card's own edge, so it does not melt into a white icon behind it.
+    let mut edge = Paint::default();
+    edge.set_anti_alias(true);
+    edge.set_style(skia_safe::paint::Style::Stroke);
+    edge.set_stroke_width((side * 0.035).max(0.75));
+    edge.set_color(Color::from_argb(alpha(70.0), 0, 0, 0));
+    canvas.draw_rrect(RRect::new_rect_xy(card, radius, radius), &edge);
+
+    // The arrow: a shaft that rises from the bottom-left and curves over to
+    // the right, ending in an open head pointing up and right.
+    let mut ink = Paint::default();
+    ink.set_anti_alias(true);
+    ink.set_style(skia_safe::paint::Style::Stroke);
+    ink.set_stroke_width((side * 0.13).max(1.1));
+    ink.set_stroke_cap(skia_safe::paint::Cap::Round);
+    ink.set_stroke_join(skia_safe::paint::Join::Round);
+    ink.set_color(Color::from_argb(alpha(235.0), 0, 0, 0));
+
+    let at = |x: f32, y: f32| Point::new(card.left + side * x, card.top + side * y);
+    let tip = at(0.74, 0.28);
+    let mut shaft = PathBuilder::new();
+    shaft.move_to(at(0.30, 0.76));
+    shaft.quad_to(at(0.30, 0.34), tip);
+    canvas.draw_path(&shaft.detach(), &ink);
+
+    let mut head = PathBuilder::new();
+    head.move_to(at(0.50, 0.24));
+    head.line_to(tip);
+    head.line_to(at(0.64, 0.50));
+    canvas.draw_path(&head.detach(), &ink);
 }
 
 /// A thumbnail, fitted into the box an icon would have had, with rounded
