@@ -71,6 +71,7 @@ mod renaming;
 mod scroll;
 mod searching;
 mod selection;
+mod sidebar_edit;
 mod windows;
 
 use windows::Browse;
@@ -190,6 +191,9 @@ enum DropTarget {
     Pane { depth: usize, path: PathBuf },
     /// A sidebar place.
     Place { index: usize, path: PathBuf },
+    /// A gap between sidebar places: the folders dropped there are added to
+    /// the sidebar at `slot`, and nothing on disk moves.
+    PlaceGap { slot: usize },
     /// The desk's own icons dragged within it, under free placement: they
     /// move to another slot and the files stay where they are. `slot` is
     /// where the picked-up icon lands.
@@ -197,13 +201,14 @@ enum DropTarget {
 }
 
 impl DropTarget {
-    /// The directory the drop lands in.
-    fn path(&self) -> &PathBuf {
+    /// The directory the drop lands in, if it puts files anywhere.
+    fn path(&self) -> Option<&PathBuf> {
         match self {
             Self::Entry { path, .. }
             | Self::Pane { path, .. }
             | Self::Place { path, .. }
-            | Self::Slot { path, .. } => path,
+            | Self::Slot { path, .. } => Some(path),
+            Self::PlaceGap { .. } => None,
         }
     }
 
@@ -212,6 +217,7 @@ impl DropTarget {
             Self::Entry { depth, index, .. } => view::DropHighlight::Row { depth, index },
             Self::Pane { depth, .. } => view::DropHighlight::Pane { depth },
             Self::Place { index, .. } => view::DropHighlight::Place { index },
+            Self::PlaceGap { slot } => view::DropHighlight::PlaceGap { slot },
             Self::Slot { slot, .. } => view::DropHighlight::Slot { slot },
         }
     }
@@ -231,6 +237,12 @@ fn hover_drag(state: &Arc<Mutex<Browser>>, x: f32, y: f32) {
     let mime = dnd::first_offered(clipboard::file_mime_preference());
 
     match (&target, mime) {
+        // Adding a folder to the sidebar leaves it where it is. A copy is the
+        // only action that says so: a source told its files were moved may
+        // delete the originals.
+        (Some(DropTarget::PlaceGap { .. }), Some(mime)) => {
+            dnd::accept(Some(&mime), DndAction::Copy, DndAction::Copy)
+        }
         (Some(_), Some(mime)) => dnd::accept(
             Some(&mime),
             DndAction::Copy | DndAction::Move,
@@ -756,6 +768,9 @@ struct Browser {
     /// reads as not having worked. Remembering the row is the only way to
     /// light the one that was pressed.
     active_place: Option<usize>,
+    /// The sidebar row a right-click landed on, for the menu it opened to
+    /// act on once an item is picked.
+    menu_place: Option<usize>,
     footer_pressed: Option<view::FooterButton>,
     /// Pointer is over Peek's close button.
     peek_close_hovered: bool,
@@ -1239,6 +1254,9 @@ struct FilesWindow {
     /// A watch on the folder `files.toml` lives in, so the desk follows an
     /// edit to its config. `None` outside the desk.
     desk_config_watch: Option<otto_kit::watch::DirWatch>,
+    /// The folder `files.toml` is in, watched by a browser window so its
+    /// sidebar follows edits made anywhere else.
+    places_watch: Option<otto_kit::watch::DirWatch>,
     /// The desk's overflow panel on screen, while it is. Shared with the
     /// pointer callback, registered once, for the reason
     /// [`Self::info_window`] is.
@@ -1519,6 +1537,7 @@ impl FilesWindow {
             desk_surface_editing: false,
             desk_input_region: None,
             desk_config_watch: None,
+            places_watch: None,
             overflow_surface: Rc::new(RefCell::new(None)),
             overflow_focus_seen: false,
         }
@@ -1551,6 +1570,8 @@ mod palette_tests;
 
 #[cfg(test)]
 mod dnd_tests;
+#[cfg(test)]
+mod sidebar_edit_tests;
 
 /// The desk's overflow tile and its panel, under `overflow = "stack"`.
 #[cfg(test)]

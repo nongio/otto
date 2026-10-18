@@ -650,6 +650,10 @@ files-new-folder-with-count =
 files-move-to-trash = Move to Trash
 # Hands the selected files to the stash balloon, to ask about in Ask.
 files-add-to-stash = Add to Stash
+files-add-to-sidebar = Add to Sidebar
+files-remove-from-sidebar = Remove from Sidebar
+files-sidebar-show = Show “{ $place }”
+files-sidebar-save-failed = Couldn’t update the sidebar: { $error }
 # $count is always two or more; the single-item case uses files-move-to-trash.
 files-move-count-to-trash =
     { $count ->

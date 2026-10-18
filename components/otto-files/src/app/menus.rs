@@ -11,6 +11,11 @@ impl Browser {
     /// alone, so the menu acts on the whole group. An empty-space click just
     /// moves the keyboard focus to that pane, for New Folder and Paste.
     pub(super) fn context_menu_items(&mut self, x: f32, y: f32) -> Vec<MenuItem> {
+        // The sidebar's own menu acts on the sidebar, and leaves the
+        // selection and the focused pane alone.
+        if (0.0..view::sidebar_w()).contains(&x) {
+            return self.sidebar_menu_items(x, y);
+        }
         match self.entry_at(x, y) {
             Some((depth, index)) => {
                 let already_selected = self
@@ -132,6 +137,13 @@ impl Browser {
             items.push(MenuItem::separator());
             items.push(MenuItem::action(otto_kit::t!("common-cut")).with_action_id("cut"));
             items.push(MenuItem::action(otto_kit::t!("common-copy")).with_action_id("copy"));
+            if self.selection_for_sidebar().is_some() {
+                items.push(MenuItem::separator());
+                items.push(
+                    MenuItem::action(otto_kit::t!("files-add-to-sidebar"))
+                        .with_action_id("sidebar_add_selection"),
+                );
+            }
             if crate::stash::available() {
                 items.push(MenuItem::separator());
                 items.push(

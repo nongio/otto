@@ -77,7 +77,7 @@ fn a_directory_row_takes_the_drop_itself() {
     let (x, y) = row_point(row_of(&browser, "target"));
 
     let hit = browser.drop_target_at(x, y).expect("a target");
-    assert_eq!(hit.path(), &dir.join("target"));
+    assert_eq!(hit.path(), Some(&dir.join("target")));
     assert!(matches!(hit, DropTarget::Entry { .. }));
 }
 
@@ -308,7 +308,7 @@ fn a_file_row_drops_into_the_directory_it_is_in() {
     let (x, y) = row_point(row_of(&browser, "a.txt"));
 
     let hit = browser.drop_target_at(x, y).expect("a target");
-    assert_eq!(hit.path(), &dir.0);
+    assert_eq!(hit.path(), Some(&dir.0));
     assert!(matches!(hit, DropTarget::Pane { .. }));
 }
 
@@ -320,7 +320,7 @@ fn empty_space_below_the_rows_drops_into_the_pane() {
     let (x, y) = row_point(10);
 
     let hit = browser.drop_target_at(x, y).expect("a target");
-    assert_eq!(hit.path(), &dir.0);
+    assert_eq!(hit.path(), Some(&dir.0));
 }
 
 #[test]
@@ -339,7 +339,7 @@ fn the_sidebar_takes_a_drop_only_on_a_place() {
     let hit = browser
         .drop_target_at(place.center_x(), place.center_y())
         .expect("a place takes a drop");
-    assert_eq!(hit.path(), &browser.places[folder].path);
+    assert_eq!(hit.path(), Some(&browser.places[folder].path));
 
     // The header band above the first place is chrome, and takes nothing.
     assert_eq!(browser.drop_target_at(20.0, 4.0), None);

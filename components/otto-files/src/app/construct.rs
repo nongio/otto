@@ -146,6 +146,7 @@ impl Browser {
             footer_hover: None,
             path_crumb_hover: None,
             active_place: None,
+            menu_place: None,
             footer_pressed: None,
             peek_drag: None,
             last_peek_title_click: None,

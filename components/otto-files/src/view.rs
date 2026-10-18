@@ -1863,6 +1863,47 @@ pub fn place_at(x: f32, y: f32, count: usize) -> Option<usize> {
     (0..count).find(|i| place_rect(*i).contains(Point::new(x, y)))
 }
 
+/// How far into a place's row, from its top or bottom edge, a drag counts as
+/// aiming *between* rows rather than at the row. The rest of the row's height
+/// is the row itself, which takes the files into its folder.
+const PLACE_GAP_REACH: f32 = 6.0;
+
+/// The gap a drag at `(x, y)` points into, as the index the new row would
+/// take: `0` above the first row, `count` below the last.
+///
+/// `None` over a row's own middle — that is a drop into the folder — over the
+/// heading above the rows, and outside the sidebar. Everything below the last
+/// row is the gap after it, so there is always somewhere obvious to drop.
+pub fn place_gap_at(x: f32, y: f32, count: usize) -> Option<usize> {
+    let first = place_rect(0);
+    if x < first.left || x >= first.right || y < first.top - PLACE_GAP_REACH {
+        return None;
+    }
+    for index in 0..count {
+        let row = place_rect(index);
+        if y < row.top + PLACE_GAP_REACH {
+            return Some(index);
+        }
+        if y < row.bottom - PLACE_GAP_REACH {
+            return None;
+        }
+    }
+    Some(count)
+}
+
+/// The line drawn for a drop into gap `slot`: centred in the space between
+/// the two rows, the width of a row.
+pub fn place_gap_rect(slot: usize) -> Rect {
+    const THICKNESS: f32 = 2.0;
+    let y = if slot == 0 {
+        place_rect(0).top - 2.0
+    } else {
+        place_rect(slot - 1).bottom + 2.0
+    };
+    let row = place_rect(slot);
+    Rect::from_xywh(row.left, y - THICKNESS / 2.0, row.width(), THICKNESS)
+}
+
 /// The split button holding both arrows, before the title.
 ///
 /// On [`CONTROL_CY`] rather than on the title's own centre. The nav pair and
@@ -3144,6 +3185,8 @@ pub enum DropHighlight {
     Pane { depth: usize },
     /// A sidebar place.
     Place { index: usize },
+    /// A gap between sidebar places, where a dropped folder would be added.
+    PlaceGap { slot: usize },
     /// The desk's free placement: the slot the dragged icon would land on.
     Slot { slot: usize },
 }
@@ -3161,6 +3204,7 @@ fn clipped_to(rect: Rect, clip: Rect) -> Option<Rect> {
 pub fn drop_highlight_rect(f: &Frame, target: DropHighlight) -> Option<Rect> {
     match target {
         DropHighlight::Place { index } => (index < f.places.len()).then(|| place_rect(index)),
+        DropHighlight::PlaceGap { slot } => (slot <= f.places.len()).then(|| place_gap_rect(slot)),
         DropHighlight::Slot { slot } => {
             let grid = content_viewport(f.width, f.height, ViewMode::Grid);
             let scroll = f.panes.first().map_or(0.0, |pane| pane.scroll);
@@ -3228,6 +3272,21 @@ fn draw_drop_highlight(canvas: &Canvas, f: &Frame) {
         return;
     }
 
+    // Where a new sidebar row will go: an insertion line in the accent, with
+    // a small ring at its leading end so it reads as "here" rather than as a
+    // divider that was always there.
+    if let DropHighlight::PlaceGap { .. } = target {
+        let mut paint = Paint::default();
+        paint.set_anti_alias(true);
+        paint.set_color(accent_light(f.theme));
+        let radius = rect.height() / 2.0;
+        canvas.draw_rrect(RRect::new_rect_xy(rect, radius, radius), &paint);
+        paint.set_style(skia_safe::paint::Style::Stroke);
+        paint.set_stroke_width(2.0);
+        canvas.draw_circle(Point::new(rect.left, rect.center_y()), 3.5, &paint);
+        return;
+    }
+
     // Where a placed icon will land: a faint wash in the icon's own shape,
     // a hint rather than a target, since nothing goes into it.
     if let DropHighlight::Slot { .. } = target {
@@ -3271,6 +3330,8 @@ fn drop_ring_radius(mode: ViewMode, target: DropHighlight) -> f32 {
     match target {
         // The same radius the place's own selection is drawn with.
         DropHighlight::Place { .. } => 6.0,
+        // Drawn as a line of its own, never as a ring.
+        DropHighlight::PlaceGap { .. } => 0.0,
         // A cell in the grid; a band abutting its neighbours anywhere else.
         DropHighlight::Row { .. } if mode == ViewMode::Grid => 8.0,
         DropHighlight::Row { .. } if mode == ViewMode::Photos => PHOTOS_RADIUS,

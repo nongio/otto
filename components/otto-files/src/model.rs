@@ -725,7 +725,7 @@ fn describe_error(err: &std::io::Error) -> String {
 // Places
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Place {
     pub label: String,
     pub path: PathBuf,
@@ -737,6 +737,10 @@ pub struct Place {
     /// the sentinel in [`crate::recent`] and is never navigated to; the
     /// browser switches into its recent mode instead.
     pub recent: bool,
+    /// Which built-in row this is, or `None` for one of the user's own
+    /// folders. Removing a built-in hides it; removing one of theirs takes
+    /// it out of the config.
+    pub builtin: Option<crate::places_config::Builtin>,
 }
 
 /// The sidebar's places: Recent, home, then the XDG user directories that
@@ -769,6 +773,7 @@ pub fn places_with(config: &crate::places_config::SidebarConfig) -> Vec<Place> {
             path: PathBuf::from(crate::recent::SENTINEL),
             icon: "document-open-recent".to_string(),
             recent: true,
+            builtin: Some(Builtin::Recent),
         });
     }
 
@@ -780,6 +785,7 @@ pub fn places_with(config: &crate::places_config::SidebarConfig) -> Vec<Place> {
             path: home.clone(),
             icon: "user-home".to_string(),
             recent: false,
+            builtin: Some(Builtin::Home),
         });
     }
 
@@ -865,6 +871,7 @@ pub fn places_with(config: &crate::places_config::SidebarConfig) -> Vec<Place> {
                 path,
                 icon: (*icon).to_string(),
                 recent: false,
+                builtin: Some(*builtin),
             });
         }
     }
@@ -878,6 +885,7 @@ pub fn places_with(config: &crate::places_config::SidebarConfig) -> Vec<Place> {
         path: custom.path.clone(),
         icon: custom.icon.clone(),
         recent: false,
+        builtin: None,
     }));
 
     places

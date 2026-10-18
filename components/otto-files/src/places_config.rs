@@ -18,6 +18,11 @@
 //! icon = "folder-code"    # optional: a generic folder otherwise
 //! ```
 //!
+//! The browser edits the same file when someone drags a folder onto the
+//! sidebar or removes a row from it — see [`with_places_added`] and its
+//! siblings — through `toml_edit`, so whatever else the file holds, comments
+//! included, is left as it was written.
+//!
 //! A file that cannot be read or cannot be parsed is a warning in the log and
 //! nothing more. A sidebar is how you get anywhere in this window, and losing
 //! it over a stray bracket would be a bad trade for a strictness nobody asked
@@ -45,6 +50,24 @@ pub enum Builtin {
 }
 
 impl Builtin {
+    /// Every built-in row, in sidebar order.
+    pub const ALL: [Builtin; 8] = [
+        Builtin::Recent,
+        Builtin::Home,
+        Builtin::Desktop,
+        Builtin::Documents,
+        Builtin::Downloads,
+        Builtin::Music,
+        Builtin::Pictures,
+        Builtin::Videos,
+    ];
+
+    /// The row `id` names in `hide`, matched the way `hide` is read.
+    pub fn from_id(id: &str) -> Option<Self> {
+        let id = id.trim().to_lowercase();
+        Self::ALL.into_iter().find(|builtin| builtin.id() == id)
+    }
+
     /// The name this row answers to in `hide`.
     pub fn id(self) -> &'static str {
         match self {
@@ -166,6 +189,189 @@ impl SidebarConfig {
     pub fn hides(&self, builtin: Builtin) -> bool {
         self.hidden.iter().any(|name| name == builtin.id())
     }
+
+    /// The same config with every built-in row shown: what the sidebar would
+    /// hold if nothing had been hidden.
+    pub fn hiding_nothing(&self) -> Self {
+        Self {
+            hidden: Vec::new(),
+            extra: self.extra.clone(),
+        }
+    }
+}
+
+/// Add `paths` to the sidebar's own folders in `text`, before the entry for
+/// `before`, or after the last one when `before` is `None` or not listed.
+///
+/// A folder already listed moves rather than appearing twice, which is what
+/// makes dragging one of the user's folders to another gap a reorder. Paths
+/// are written under `~` where they can be, the way a person would type them.
+///
+/// # Errors
+///
+/// When `text` is not TOML. The file is left alone then: rewriting it would
+/// lose whatever the person was halfway through typing.
+pub fn with_places_added(
+    text: &str,
+    paths: &[PathBuf],
+    before: Option<&Path>,
+    home: Option<&Path>,
+) -> Result<String, toml_edit::TomlError> {
+    let mut doc = text.parse::<toml_edit::DocumentMut>()?;
+    let places = places_array(&mut doc);
+    for path in paths {
+        // Dropped on the gap beside itself: it is already there.
+        if before == Some(path.as_path()) {
+            continue;
+        }
+        if let Some(index) = entry_index(places, path, home) {
+            places.remove(index);
+        }
+        let at = before
+            .and_then(|before| entry_index(places, before, home))
+            .unwrap_or(places.len());
+        let mut entry = toml_edit::Table::new();
+        entry["path"] = toml_edit::value(abbreviate(path, home));
+        places.insert(at, entry);
+    }
+    Ok(doc.to_string())
+}
+
+/// Take `path` out of the sidebar's own folders in `text`. Every entry naming
+/// it goes, so a folder listed twice by hand does not survive its removal.
+///
+/// # Errors
+///
+/// As [`with_places_added`].
+pub fn with_place_removed(
+    text: &str,
+    path: &Path,
+    home: Option<&Path>,
+) -> Result<String, toml_edit::TomlError> {
+    let mut doc = text.parse::<toml_edit::DocumentMut>()?;
+    let places = places_array(&mut doc);
+    while let Some(index) = entry_index(places, path, home) {
+        places.remove(index);
+    }
+    Ok(doc.to_string())
+}
+
+/// Hide `builtin` in `text`, or show it again.
+///
+/// # Errors
+///
+/// As [`with_places_added`].
+pub fn with_builtin_hidden(
+    text: &str,
+    builtin: Builtin,
+    hidden: bool,
+) -> Result<String, toml_edit::TomlError> {
+    let mut doc = text.parse::<toml_edit::DocumentMut>()?;
+    let sidebar = sidebar_table(&mut doc);
+    if !sidebar.contains_key("hide") {
+        sidebar["hide"] = toml_edit::value(toml_edit::Array::new());
+    }
+    let Some(hide) = sidebar["hide"].as_array_mut() else {
+        // Something that is not a list sits where the list goes. Better left
+        // for the person to see than overwritten.
+        return Ok(doc.to_string());
+    };
+    let names_it = |value: &toml_edit::Value| {
+        value
+            .as_str()
+            .is_some_and(|name| Builtin::from_id(name) == Some(builtin))
+    };
+    if hidden {
+        if !hide.iter().any(names_it) {
+            hide.push(builtin.id());
+        }
+    } else {
+        hide.retain(|value| !names_it(value));
+    }
+    Ok(doc.to_string())
+}
+
+/// `[sidebar]`, made if it is not there yet.
+fn sidebar_table(doc: &mut toml_edit::DocumentMut) -> &mut toml_edit::Table {
+    if !doc.contains_table("sidebar") {
+        doc["sidebar"] = toml_edit::table();
+    }
+    doc["sidebar"]
+        .as_table_mut()
+        .expect("`sidebar` was just made a table")
+}
+
+/// `[[sidebar.places]]`, made if it is not there yet.
+///
+/// An inline array a person wrote by hand is turned into the array-of-tables
+/// form, keeping its entries; anything else under the key is not a list of
+/// places and is replaced.
+fn places_array(doc: &mut toml_edit::DocumentMut) -> &mut toml_edit::ArrayOfTables {
+    let item = sidebar_table(doc)
+        .entry("places")
+        .or_insert_with(|| toml_edit::Item::ArrayOfTables(toml_edit::ArrayOfTables::new()));
+    if !item.is_array_of_tables() {
+        let tables = std::mem::take(item)
+            .into_array_of_tables()
+            .unwrap_or_else(|_| toml_edit::ArrayOfTables::new());
+        *item = toml_edit::Item::ArrayOfTables(tables);
+    }
+    item.as_array_of_tables_mut()
+        .expect("`places` was just made an array of tables")
+}
+
+/// Where the entry for `path` is in `places`, comparing paths as the reader
+/// expands them rather than as they were written.
+fn entry_index(
+    places: &toml_edit::ArrayOfTables,
+    path: &Path,
+    home: Option<&Path>,
+) -> Option<usize> {
+    places.iter().position(|entry| {
+        entry
+            .get("path")
+            .and_then(|item| item.as_str())
+            .and_then(|raw| expand_home(raw, home))
+            .is_some_and(|written| written == path)
+    })
+}
+
+/// `path` the way a person would write it: under `~` when it is in home.
+fn abbreviate(path: &Path, home: Option<&Path>) -> String {
+    match home.and_then(|home| path.strip_prefix(home).ok()) {
+        Some(rest) if rest.as_os_str().is_empty() => "~".to_string(),
+        Some(rest) => format!("~/{}", rest.display()),
+        None => path.display().to_string(),
+    }
+}
+
+/// Rewrite `~/.config/otto/files.toml` with `edit`, a missing file reading
+/// as an empty one.
+///
+/// # Errors
+///
+/// When there is no home folder, the file cannot be read or written, or
+/// `edit` refuses the text.
+pub(crate) fn edit_file(
+    edit: impl FnOnce(&str) -> Result<String, toml_edit::TomlError>,
+) -> std::io::Result<()> {
+    let path = config_path()
+        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "no home folder"))?;
+    let text = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(err) => return Err(err),
+    };
+    let next =
+        edit(&text).map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err))?;
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    // Written beside and renamed over, so the windows watching the file
+    // never read a half-written one.
+    let temp = path.with_extension(format!("toml.tmp.{}", std::process::id()));
+    std::fs::write(&temp, next)?;
+    std::fs::rename(&temp, &path)
 }
 
 /// `~/.config/otto/files.toml`. otto-settings' desk pane edits the same
@@ -270,6 +476,117 @@ mod tests {
             &home,
         );
         assert!(config.extra.is_empty());
+    }
+
+    /// The paths written in `text`'s `[[sidebar.places]]`, in order.
+    fn written(text: &str) -> Vec<String> {
+        let file: File = toml::from_str(text).expect("valid toml");
+        file.sidebar.places.into_iter().map(|e| e.path).collect()
+    }
+
+    /// A folder dropped on a gap lands in that gap, written the way a person
+    /// would have typed it, and the rest of the file is left as it was.
+    #[test]
+    fn adding_a_folder_puts_it_where_it_was_dropped() {
+        let home = Path::new("/home/me");
+        let text = "# my sidebar\n[sidebar]\nhide = [\"music\"]\n\n\
+                    [[sidebar.places]]\npath = \"~/a\"\nlabel = \"A\" # mine\n\n\
+                    [[sidebar.places]]\npath = \"~/b\"\n\n\
+                    [desk]\narrange = \"free\"\n";
+
+        let between = with_places_added(
+            text,
+            &[PathBuf::from("/home/me/new")],
+            Some(Path::new("/home/me/b")),
+            Some(home),
+        )
+        .unwrap();
+        assert_eq!(written(&between), ["~/a", "~/new", "~/b"]);
+        assert!(between.contains("# my sidebar"));
+        assert!(between.contains("label = \"A\" # mine"));
+        assert!(between.contains("hide = [\"music\"]"));
+        assert!(between.contains("[desk]\narrange = \"free\""));
+
+        let appended =
+            with_places_added(text, &[PathBuf::from("/srv/data")], None, Some(home)).unwrap();
+        assert_eq!(written(&appended), ["~/a", "~/b", "/srv/data"]);
+    }
+
+    /// Dropping a folder that is already listed moves it: that is reordering.
+    #[test]
+    fn adding_a_listed_folder_moves_it() {
+        let home = Path::new("/home/me");
+        let text = "[[sidebar.places]]\npath = \"~/a\"\nlabel = \"A\"\n\n\
+                    [[sidebar.places]]\npath = \"~/b\"\n\n\
+                    [[sidebar.places]]\npath = \"~/c\"\n";
+
+        let to_end =
+            with_places_added(text, &[PathBuf::from("/home/me/a")], None, Some(home)).unwrap();
+        assert_eq!(written(&to_end), ["~/b", "~/c", "~/a"]);
+
+        let up = with_places_added(
+            text,
+            &[PathBuf::from("/home/me/c")],
+            Some(Path::new("/home/me/a")),
+            Some(home),
+        )
+        .unwrap();
+        assert_eq!(written(&up), ["~/c", "~/a", "~/b"]);
+
+        // Beside itself: nothing moves, and nothing is lost either.
+        let stay = with_places_added(
+            text,
+            &[PathBuf::from("/home/me/b")],
+            Some(Path::new("/home/me/b")),
+            Some(home),
+        )
+        .unwrap();
+        assert_eq!(written(&stay), ["~/a", "~/b", "~/c"]);
+    }
+
+    /// The first edit to a file that has none of this yet makes the section.
+    #[test]
+    fn adding_to_an_empty_file_makes_the_section() {
+        let home = Path::new("/home/me");
+        let text =
+            with_places_added("", &[PathBuf::from("/home/me/dev")], None, Some(home)).unwrap();
+        assert_eq!(written(&text), ["~/dev"]);
+
+        let inline = "[sidebar]\nplaces = [{ path = \"~/a\" }]\n";
+        let text =
+            with_places_added(inline, &[PathBuf::from("/home/me/b")], None, Some(home)).unwrap();
+        assert_eq!(written(&text), ["~/a", "~/b"]);
+    }
+
+    /// Removing matches on the expanded path, however it was written.
+    #[test]
+    fn removing_a_folder_takes_every_entry_for_it() {
+        let home = Path::new("/home/me");
+        let text = "[[sidebar.places]]\npath = \"~/a\"\n\n\
+                    [[sidebar.places]]\npath = \"$HOME/b\"\n\n\
+                    [[sidebar.places]]\npath = \"/home/me/a/\"\n";
+        let text = with_place_removed(text, Path::new("/home/me/a"), Some(home)).unwrap();
+        assert_eq!(written(&text), ["$HOME/b"]);
+    }
+
+    /// A built-in row hides once and comes back however its name was cased.
+    #[test]
+    fn hiding_and_showing_a_built_in_row() {
+        let text = with_builtin_hidden("", Builtin::Music, true).unwrap();
+        let text = with_builtin_hidden(&text, Builtin::Music, true).unwrap();
+        let config = SidebarConfig::from_file(toml::from_str(&text).unwrap(), None);
+        assert!(config.hides(Builtin::Music));
+        assert_eq!(text.matches("music").count(), 1);
+
+        let text = with_builtin_hidden(
+            "[sidebar]\nhide = [\"Music\", \"videos\"]\n",
+            Builtin::Music,
+            false,
+        )
+        .unwrap();
+        let config = SidebarConfig::from_file(toml::from_str(&text).unwrap(), None);
+        assert!(!config.hides(Builtin::Music));
+        assert!(config.hides(Builtin::Videos));
     }
 
     /// Saying nothing is the ordinary case and has to mean "the defaults".

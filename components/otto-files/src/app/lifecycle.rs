@@ -397,6 +397,7 @@ impl FilesWindow {
                 self.opaque_region = Some(area);
                 window.set_opaque_region(&[area]);
             }
+            self.follow_places_config();
         }
 
         let (
@@ -1052,6 +1053,33 @@ impl FilesWindow {
         let scene = Arc::new(Mutex::new(window.layer_node().map(scene::Scene::new)));
         self.install_window(window, scene);
         Ok(())
+    }
+
+    /// Keep the sidebar in step with `files.toml`, whoever changed it: another
+    /// window dropping a folder on its sidebar, Settings, or an editor.
+    fn follow_places_config(&mut self) {
+        if view::sidebar_w() <= 0.0 {
+            return;
+        }
+        if self.places_watch.is_none() {
+            let dir = crate::places_config::config_path()
+                .and_then(|path| path.parent().map(Path::to_path_buf));
+            if let Some(dir) = dir {
+                // Made if missing, for the reason the desk's watch makes it.
+                let _ = std::fs::create_dir_all(&dir);
+                self.places_watch = Some(otto_kit::watch::DirWatch::new(&dir));
+            }
+        }
+        let changed = self
+            .places_watch
+            .as_ref()
+            .is_some_and(|watch| watch.take().is_some());
+        if changed {
+            self.state.browse().reload_places();
+            if let Some(window) = self.window.as_ref() {
+                window.request_frame();
+            }
+        }
     }
 
     /// Keep the desk's surface in step with its config and its edit mode.

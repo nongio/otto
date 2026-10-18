@@ -99,9 +99,9 @@ A client-decorated toplevel. Layout:
 - **Sidebar** — places: Recent, home, the XDG user directories that exist,
   and whatever the user has added (see [The sidebar's
   places](#the-sidebars-places)). A place takes a drop, which files into that
-  place's directory; dragging a directory onto the sidebar to *bookmark* it is
-  a separate gesture and is not yet built, so bookmarking is still a menu
-  action on the selection. Mounted volumes are not listed yet.
+  place's directory; a drop *between* places adds the folders to the sidebar
+  instead (see [Editing the sidebar](#editing-the-sidebar)). Mounted volumes
+  are not listed yet.
 - **File view** — the shared list / icon / column presentation. List and icon
   ship in v1. Every scrolling pane draws **only the rows its scroll view is
   asking for**: the visible band, taken from the scroll view's own content
@@ -209,8 +209,38 @@ icon = "folder-code"    # optional: a plain folder otherwise
   defaults stand. The sidebar is how you get anywhere in this window, and
   losing it to a stray bracket would be a bad trade for strictness nobody
   asked for.
-- **Read when a window opens.** Editing the file changes the next window, not
-  the ones already up.
+- **Followed while a window is open.** Every browser window watches the
+  file's folder and reads the sidebar again when it changes, so an edit from
+  another window, from Settings or from an editor shows everywhere at once.
+
+### Editing the sidebar
+
+The sidebar is edited where it is, by direct manipulation, not on a settings
+page. The file stays the one record: every edit is written to it through
+`toml_edit`, which keeps comments and the other sections as they were, and the
+rows are then read back from it. No window keeps a list of its own.
+
+- **A folder dropped between two places, or below the last, is added there.**
+  The top and bottom 6 points of a row count as the gap and the rest as the
+  row, which still takes a drop *into* its folder. An accent insertion line
+  marks the gap. A gap among the built-in rows lands after them, because the
+  user's folders follow the built-ins, and the line is drawn where the row
+  will actually appear.
+- **Such a drop is negotiated as a copy, never a move.** Nothing on disk
+  changes, and a source told its files were moved may delete the originals.
+- **A folder already in the sidebar moves to the gap it was dropped in.**
+  That is how the user's folders are reordered. Files, and folders that are
+  already built-in rows, add nothing. For our own drag the gap does not light
+  up for them, and the row's edge stays part of the row.
+- **Right-clicking a place offers Remove from Sidebar.** One of the user's
+  folders leaves `[[sidebar.places]]`. A built-in row joins `hide` instead.
+- **Right-clicking anywhere in the sidebar offers each hidden built-in row
+  back** (Show "Music"), for those whose folder exists. This is the one edit
+  with no row left to click, and the reason no settings page is needed.
+- **Add to Sidebar** is in the context menu when every selected entry is a
+  folder that would add something.
+- A file that does not parse is not rewritten: the edit fails with a status
+  message, and the person's half-typed change survives.
 
 **Which row is lit** is the row that was clicked, while the window is still
 showing what it led to. It cannot be worked out from the path alone: two rows
