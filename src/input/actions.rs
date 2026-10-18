@@ -190,7 +190,7 @@ impl<BackendData: Backend> Otto<BackendData> {
         self.start_polkit_agent();
 
         let entries = Config::with(|c| c.exec_once.clone());
-        for entry in entries {
+        for entry in entries.into_iter().filter(|entry| entry.enabled) {
             self.launch_program(entry.cmd, entry.args);
         }
 

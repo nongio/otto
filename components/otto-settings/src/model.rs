@@ -55,6 +55,30 @@ pub enum Control {
     Shortcut { index: usize },
     /// The trailing line that appends a shortcut.
     AddShortcut,
+    /// A list in a card of its own, spanning the row: one line per item with
+    /// a checkbox, a selection, and + and − under it — the users list's
+    /// look, for a list the pane keeps. The row draws no label of its own.
+    /// Presses go to the pane that owns the row, by its handle.
+    ListBox(ListBox),
+}
+
+/// What a [`Control::ListBox`] shows.
+#[derive(Clone, Default)]
+pub struct ListBox {
+    pub items: Vec<ListBoxItem>,
+    pub selected: Option<usize>,
+    /// Whether "−" does anything for the selected item; dimmed when not.
+    pub can_remove: bool,
+    /// A text button at the footer's trailing edge, such as "Open…".
+    pub action: Option<&'static str>,
+}
+
+/// One line of a [`Control::ListBox`].
+#[derive(Clone)]
+pub struct ListBoxItem {
+    pub title: String,
+    pub subtitle: Option<String>,
+    pub checked: bool,
 }
 
 pub struct Row {

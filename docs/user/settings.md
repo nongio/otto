@@ -28,7 +28,7 @@ Launch **Settings** from the Dock or the launcher, or run `otto-settings`.
 | Trackpad & Mouse | Tap to click, drag lock, natural scrolling, click method, scroll and pointer speed |
 | Sound | Interface sounds on or off and which sound theme to use, then a mixer like pavucontrol's: each app's volume and device, each device's port, volume, mute and whether it is the default, and each sound card's profile |
 | Power | What the lid switch and the power button do |
-| Lock & Login | Auto-lock timeout, and which lock screen and greeter to run |
+| Lock & Login | Auto-lock timeout, which lock screen and greeter to run, and what starts at login |
 | Search | What the file index is doing, which folders it covers, whether it skips code repositories and removable drives |
 | Agents | The default agent for Ask, and each agent's name, harness, command, permissions, model, folder and colour |
 

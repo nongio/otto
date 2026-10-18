@@ -354,9 +354,11 @@ fn row_buttons(row: &Row) -> &'static [&'static str] {
 /// somewhere it is not drawn.
 pub fn row_button_rects(row: &Row, rect: Rect) -> Vec<Rect> {
     match &row.control {
-        Control::Button(labels) => {
-            widgets::button_rects(rect.right - 14.0, rect.center_y(), labels)
-        }
+        Control::Button(labels) => widgets::button_rects(
+            select_right(row, rect.right - 14.0),
+            rect.center_y(),
+            labels,
+        ),
         _ => Vec::new(),
     }
 }
@@ -667,6 +669,90 @@ pub enum Pressed {
     RemoveRow(&'static str),
     /// The users list's add or remove button.
     User(SelectionListHit),
+    /// A list box's footer button, by its row's handle.
+    List { row: &'static str, hit: ListBoxHit },
+}
+
+/// What a press on a [`Control::ListBox`] landed on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ListBoxHit {
+    /// The checkbox of the item at this index.
+    Check(usize),
+    /// The item at this index, anywhere but its checkbox: selects it, and a
+    /// drag from there moves it.
+    Item(usize),
+    /// The footer's "+".
+    Add,
+    /// The footer's "−", only while it does something.
+    Remove,
+    /// The footer's trailing text button.
+    Action,
+}
+
+/// A press on a list box: the row's handle, what it landed on, and that
+/// part's rect in window-local coordinates, for anchoring a menu to "+".
+pub struct ListBoxPress {
+    pub row: &'static str,
+    pub hit: ListBoxHit,
+    pub anchor: Rect,
+}
+
+/// Room kept above and below a list box's card, and on either side of it:
+/// none, since it stands in its group instead of a grouped-list card, and
+/// lines up with the cards around it.
+const LIST_GAP: f32 = 0.0;
+const LIST_INSET: f32 = 0.0;
+/// A list box item's checkbox side.
+const LIST_CHECK: f32 = 18.0;
+
+/// A list box's card inside its row.
+fn list_card(rect: Rect) -> Rect {
+    Rect::from_ltrb(
+        rect.left + LIST_INSET,
+        rect.top + LIST_GAP,
+        rect.right - LIST_INSET,
+        rect.bottom - LIST_GAP,
+    )
+}
+
+/// An item's checkbox, in the square the list keeps at its leading edge.
+fn list_check_rect(item: Rect) -> Rect {
+    let square = selection_list::leading_rect(item);
+    Rect::from_xywh(
+        square.center_x() - LIST_CHECK / 2.0,
+        square.center_y() - LIST_CHECK / 2.0,
+        LIST_CHECK,
+        LIST_CHECK,
+    )
+}
+
+/// The footer's trailing text button.
+fn list_action_rect(footer: Rect, label: &str) -> Rect {
+    widgets::button_rects(footer.right - 6.0, footer.center_y(), &[label])[0]
+}
+
+/// What `point` lands on in a list box laid out in the row rect `rect`.
+fn list_box_hit_at(list: &model::ListBox, rect: Rect, point: Point) -> Option<ListBoxHit> {
+    let layout = SelectionListLayout::compute(list.items.len(), list_card(rect));
+    if let Some(label) = list.action {
+        if list_action_rect(layout.footer, label).contains(point) {
+            return Some(ListBoxHit::Action);
+        }
+    }
+    match layout.hit(point.x, point.y)? {
+        SelectionListHit::Add => Some(ListBoxHit::Add),
+        SelectionListHit::Remove => list.can_remove.then_some(ListBoxHit::Remove),
+        SelectionListHit::Item(index) => {
+            // A little bigger than drawn: the box is small, and a near miss
+            // selecting the line instead of ticking it reads as a fault.
+            let check = list_check_rect(layout.item_rects[index]).with_outset((6.0, 6.0));
+            Some(if check.contains(point) {
+                ListBoxHit::Check(index)
+            } else {
+                ListBoxHit::Item(index)
+            })
+        }
+    }
 }
 
 /// What a press on the shortcuts group means.
@@ -1459,6 +1545,63 @@ impl Settings {
 
     /// What a point on the users list lands on: an account, or the add or
     /// remove button while it can be used.
+    /// What a press on a list box lands on, if it lands on one.
+    pub fn list_box_hit(&self, x: f32, y: f32, scroll_offset: f32) -> Option<ListBoxPress> {
+        let viewport = self.viewport();
+        if !viewport.contains(Point::new(x, y)) {
+            return None;
+        }
+        let local = Point::new(x - viewport.left, y - viewport.top + scroll_offset);
+        let (row, rect) = self
+            .row_rects(self.width - SIDEBAR_W)
+            .into_iter()
+            .find(|(_, rect)| rect.contains(local))?;
+        let Control::ListBox(list) = &row.control else {
+            return None;
+        };
+        let hit = list_box_hit_at(list, rect, local)?;
+        let layout = SelectionListLayout::compute(list.items.len(), list_card(rect));
+        let part = match hit {
+            ListBoxHit::Add => layout.add,
+            ListBoxHit::Remove => layout.remove,
+            ListBoxHit::Action => list_action_rect(layout.footer, list.action.unwrap_or("")),
+            ListBoxHit::Item(index) | ListBoxHit::Check(index) => layout.item_rects[index],
+        };
+        Some(ListBoxPress {
+            row: row.handle(),
+            hit,
+            anchor: Rect::from_xywh(
+                part.left + viewport.left,
+                part.top + viewport.top - scroll_offset,
+                part.width(),
+                part.height(),
+            ),
+        })
+    }
+
+    /// The item of the list box `row` that a drag at height `y` is over:
+    /// the one under it, or the first or last when it is above or below the
+    /// items.
+    pub fn list_box_item_at(&self, row: &str, y: f32, scroll_offset: f32) -> Option<usize> {
+        let local_y = y - self.viewport().top + scroll_offset;
+        let (list, rect) = self
+            .row_rects(self.width - SIDEBAR_W)
+            .into_iter()
+            .find_map(|(candidate, rect)| match &candidate.control {
+                Control::ListBox(list) if candidate.handle() == row => Some((list, rect)),
+                _ => None,
+            })?;
+        let layout = SelectionListLayout::compute(list.items.len(), list_card(rect));
+        let last = layout.item_rects.len().checked_sub(1)?;
+        Some(
+            layout
+                .item_rects
+                .iter()
+                .position(|item| local_y < item.bottom)
+                .unwrap_or(last),
+        )
+    }
+
     pub fn users_hit(&self, x: f32, y: f32, scroll_offset: f32) -> Option<SelectionListHit> {
         let viewport = self.viewport();
         if !viewport.contains(Point::new(x, y)) {
@@ -1748,7 +1891,7 @@ impl Settings {
             return None;
         }
 
-        widgets::button_rects(rect.right - 14.0, rect.center_y(), labels)
+        row_button_rects(row, rect)
             .into_iter()
             .position(|button| button.contains(local))
             .map(|index| ButtonHit {
@@ -2067,13 +2210,13 @@ impl Settings {
 
             // Grouped-list card behind the rows. A tab bar is the exception:
             // it is chrome over the groups, not a setting in one, so it sits
-            // on the window itself.
+            // on the window itself. So is a list box alone in its group: it
+            // is a card of its own, and one inside another reads as nested.
             let rrect = RRect::new_rect_xy(group.card, 9.0, 9.0);
             let tabs_only = !group.rows.is_empty()
-                && group
-                    .rows
-                    .iter()
-                    .all(|(row, _)| matches!(row.control, Control::Tabs { .. }));
+                && group.rows.iter().all(|(row, _)| {
+                    matches!(row.control, Control::Tabs { .. } | Control::ListBox(_))
+                });
             if !tabs_only {
                 canvas.draw_rrect(
                     rrect,
@@ -2169,6 +2312,62 @@ impl Settings {
     }
 
     /// The users list, in the same card material as the groups beside it.
+    /// A list box: the users list's card, a checkbox in each item's leading
+    /// square, and the trailing text button over the footer.
+    fn render_list_box(&self, canvas: &Canvas, row: &Row, list: &model::ListBox, rect: Rect) {
+        let layout = SelectionListLayout::compute(list.items.len(), list_card(rect));
+        let items: Vec<_> = list
+            .items
+            .iter()
+            .map(|item| {
+                let line = selection_list::SelectionListItem::new(item.title.clone());
+                match &item.subtitle {
+                    Some(subtitle) => line.with_subtitle(subtitle.clone()),
+                    None => line,
+                }
+            })
+            .collect();
+        let held = match self.pressed {
+            Some(Pressed::List { row: held, hit }) if held == row.handle() => Some(hit),
+            _ => None,
+        };
+        let state = selection_list::SelectionListState {
+            selected: list.selected,
+            can_add: true,
+            can_remove: list.can_remove,
+            pressed: match held {
+                Some(ListBoxHit::Remove) => Some(SelectionListHit::Remove),
+                _ => None,
+            },
+        };
+        selection_list::draw(
+            canvas,
+            &layout,
+            &items,
+            &state,
+            &self.theme,
+            card_background(self.dark),
+            |canvas, index, _| {
+                if let (Some(item), Some(line)) =
+                    (list.items.get(index), layout.item_rects.get(index))
+                {
+                    widgets::checkbox(canvas, list_check_rect(*line), item.checked, &self.theme);
+                }
+            },
+        );
+        if let Some(label) = list.action {
+            widgets::buttons(
+                canvas,
+                layout.footer.right - 6.0,
+                layout.footer.center_y(),
+                &[label],
+                (held == Some(ListBoxHit::Action)).then_some(0),
+                true,
+                &self.theme,
+            );
+        }
+    }
+
     fn render_users(&self, canvas: &Canvas, area: Rect) {
         let view = crate::panes::account::users();
         let items: Vec<_> = view
@@ -2471,7 +2670,10 @@ impl Settings {
     }
 
     fn control_height(row: &Row) -> f32 {
-        if row.detail.is_some() {
+        // A list box has no line of its own: its card is the whole row.
+        if matches!(row.control, Control::ListBox(_)) {
+            0.0
+        } else if row.detail.is_some() {
             ROW_H_DETAIL
         } else {
             ROW_H
@@ -2487,6 +2689,9 @@ impl Settings {
         match &row.control {
             Control::File(path) if !path.is_empty() => PREVIEW_H + PREVIEW_GAP * 2.0,
             Control::Select(_) if theme_swatch_kind(row).is_some() => SWATCH_H + PREVIEW_GAP * 2.0,
+            Control::ListBox(list) => {
+                SelectionListLayout::height_for(list.items.len()) + LIST_GAP * 2.0
+            }
             _ => 0.0,
         }
     }
@@ -2548,7 +2753,7 @@ impl Settings {
             Control::Select(_) => select_rect(select_right(row, right), cy).left,
             Control::Color(argb) => well_rect(right, cy, Color::from(*argb)).left,
             Control::Text(_) => text_rect(right, cy).left,
-            Control::Button(labels) => widgets::button_rects(right, cy, labels)
+            Control::Button(labels) => widgets::button_rects(select_right(row, right), cy, labels)
                 .first()
                 .map(|rect| rect.left)
                 .unwrap_or(right),
@@ -2566,7 +2771,7 @@ impl Settings {
             }
             Control::Shortcut { .. } | Control::AddShortcut => right,
             // The segments span the row and leave its label no room.
-            Control::Tabs { .. } => label_x,
+            Control::Tabs { .. } | Control::ListBox(_) => label_x,
         }
     }
 
@@ -2613,7 +2818,10 @@ impl Settings {
         // The controls sit on the row's first line, not in the middle of it:
         // a row carrying a preview is much taller than the line its field is
         // on. See [`Self::control_band`].
-        let _ = h;
+        if let Control::ListBox(list) = &row.control {
+            self.render_list_box(canvas, row, list, Rect::from_ltrb(x0, y, x1, y + h));
+            return;
+        }
         let cy = y + Self::control_height(row) / 2.0;
         let label_x = x0 + 14.0;
         let right = x1 - 14.0;
@@ -2688,6 +2896,7 @@ impl Settings {
                     Some(id) => crate::panes::keyboard_layouts::display(id, value)
                         .or_else(|| crate::panes::top_bar::display(id, value))
                         .or_else(|| crate::panes::desk::display(id, value))
+                        .or_else(|| crate::panes::startup::display(id, value))
                         .or_else(|| crate::panes::dictation::display(id, value))
                         .or_else(|| crate::panes::sound::display(id, value))
                         .unwrap_or_else(|| settings_client::display_choice(id, value)),
@@ -2760,6 +2969,13 @@ impl Settings {
                 }
             }
             Control::Button(labels) => {
+                // A removable entry (a command started at login) keeps its
+                // remove button at the trailing edge, as a removable pop-up
+                // does.
+                if row.removable {
+                    self.render_remove(canvas, row, right, cy);
+                }
+                let right = select_right(row, right);
                 let held = labels
                     .iter()
                     .position(|button| self.button_pressed(row.handle(), button));
@@ -2804,6 +3020,8 @@ impl Settings {
                 *selected,
                 &self.theme,
             ),
+            // Drawn whole by `render_list_box`, before the label.
+            Control::ListBox(_) => {}
         }
 
         // A chosen file gets shown, not just named: a wallpaper is picked by

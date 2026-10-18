@@ -11,11 +11,27 @@ pub mod wallpaper;
 
 pub use wallpaper::{save_output_wallpaper, WallpaperOverride};
 
-use shortcuts::{build_bindings, RunCommandConfig, ShortcutBinding, ShortcutMap};
+use shortcuts::{build_bindings, ShortcutBinding, ShortcutMap};
 use toml::map::Entry;
 use tracing::warn;
 
 use crate::theme::ThemeScheme;
+
+/// One `[[exec_once]]` entry: a command the session starts once, at login.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExecOnceConfig {
+    pub cmd: String,
+    #[serde(default)]
+    pub args: Vec<String>,
+    /// `false` keeps the entry, and its place in the list, without starting
+    /// it: how the Settings app switches one off.
+    #[serde(default = "enabled_by_default")]
+    pub enabled: bool,
+}
+
+fn enabled_by_default() -> bool {
+    true
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -134,7 +150,7 @@ pub struct Config {
     #[serde(default)]
     pub rendering: RenderingConfig,
     #[serde(default)]
-    pub exec_once: Vec<RunCommandConfig>,
+    pub exec_once: Vec<ExecOnceConfig>,
     #[serde(default)]
     pub xdg_autostart: bool,
     /// Run Otto's polkit authentication agent (`otto-authorize
@@ -3248,6 +3264,21 @@ bookmarks = []
             config.exec_once[1].args,
             vec!["-i", "/path/to/wallpaper.png"]
         );
+    }
+
+    #[test]
+    fn exec_once_entries_are_enabled_unless_they_say_not() {
+        let toml_str = r#"
+            [[exec_once]]
+            cmd = "otto-bar"
+
+            [[exec_once]]
+            cmd = "otto-stash"
+            enabled = false
+        "#;
+        let config: Config = toml::from_str(toml_str).expect("Config should deserialize");
+        assert!(config.exec_once[0].enabled);
+        assert!(!config.exec_once[1].enabled);
     }
 
     #[test]

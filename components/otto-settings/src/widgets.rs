@@ -201,6 +201,26 @@ pub fn button_rects(right: f32, cy: f32, labels: &[&str]) -> Vec<Rect> {
         .collect()
 }
 
+/// A checkbox filling `rect`: an outlined rounded square, or filled in the
+/// accent with a tick when `checked`. The same look as Files' item lists.
+pub fn checkbox(canvas: &Canvas, rect: Rect, checked: bool, theme: &Theme) {
+    let rrect = RRect::new_rect_xy(rect, 4.0, 4.0);
+    if !checked {
+        canvas.draw_rrect(rrect, &stroke(theme.text_tertiary, 1.5));
+        return;
+    }
+    canvas.draw_rrect(rrect, &fill(theme.accent));
+    let mut tick = stroke(Color::WHITE, 2.0);
+    tick.set_stroke_cap(skia_safe::paint::Cap::Round);
+    tick.set_stroke_join(skia_safe::paint::Join::Round);
+    let (x, y, s) = (rect.left, rect.top, rect.width());
+    let mut path = skia_safe::PathBuilder::new();
+    path.move_to(Point::new(x + s * 0.26, y + s * 0.52));
+    path.line_to(Point::new(x + s * 0.43, y + s * 0.69));
+    path.line_to(Point::new(x + s * 0.75, y + s * 0.33));
+    canvas.draw_path(&path.detach(), &tick);
+}
+
 /// A row's push buttons, in the rects [`button_rects`] places them at.
 pub fn buttons(
     canvas: &Canvas,

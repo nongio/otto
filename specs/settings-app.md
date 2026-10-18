@@ -546,7 +546,20 @@ another way of typing. The panes are:
   interface-sound rows.
 - **Power** — lid switch handling, power button action.
 - **Lock & Login** — automatic lock timeout, which locker runs the lock screen,
-  which greeter runs the login screen.
+  which greeter runs the login screen. *Start at login* edits `[[exec_once]]`
+  in the writable configuration directly, keeping the rest of the file. A
+  *Startup apps* pop-up writes `xdg_autostart` (Otto only, or Otto + XDG).
+  Under it a list box (`Control::ListBox`, the users list's card) shows every
+  entry in launch order: a checkbox writes `enabled = false` and keeps the
+  entry in place, a drag moves it, "+" opens a menu (an app or program
+  through the portal, or a typed command), "−" removes the selected entry,
+  and the footer's *Open config file* opens the file. Otto's components (top
+  bar, dynamic island, stash, Agents panel) are never removed, only
+  unticked; one missing from the list is offered unticked at its end. The
+  user's list replaces the system's, so until the file has one the list
+  shows the system's and its first change copies it in. Applies at the next
+  login, and does not ask for the password: it runs as the user, after
+  login.
 - **About** — the last pane, and not settings. It opens on a centred band:
   the Otto mark large (the logo's rounded square in the text colour, its two
   dots in the opposite one), "Otto" in large type, and the version under it.
