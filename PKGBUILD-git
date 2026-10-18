@@ -60,6 +60,10 @@ optdepends=(
     "libpulse: pactl, which Settings ▸ Sound drives"
 )
 backup=("etc/otto/config.toml" "etc/pam.d/otto-lock")
+# makepkg's LTO turns the C objects cc-built dependencies bundle into LTO
+# bitcode, which rustc's link step cannot read ("unable to handle this LTO
+# object file"). The rest of makepkg's flags apply.
+options=(!lto)
 
 # X11 applications run through XWayland. Build without it with
 # `OTTO_XWAYLAND=0 makepkg -p PKGBUILD-git -si`.
