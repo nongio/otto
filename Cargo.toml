@@ -304,7 +304,7 @@ sha-crypt = { version = "0.6", features = ["getrandom"] }
 zeroize = "1"
 
 [workspace.package]
-version = "1.7.1"
+version = "1.8.0"
 edition = "2021"
 authors = ["Riccardo Canalicchio <riccardo.canalicchio@gmail.com>"]
 license = "MIT"
@@ -449,7 +449,7 @@ post_uninstall_script = "if [ \"$1\" -eq 0 ]; then rm -f /usr/bin/otto-ask; find
 license = "MIT AND GPL-3.0-only"
 # RPM forbids a hyphen in Version; "~rc1" is the RPM idiom and sorts
 # before 1.0.0, which "1.0.0-rc.1" would not.
-version = "1.7.1"
+version = "1.8.0"
 assets = [
     { source = "target/release/otto", dest = "/usr/bin/otto", mode = "755" },
     { source = "target/release/otto-bar", dest = "/usr/bin/otto-bar", mode = "755" },
