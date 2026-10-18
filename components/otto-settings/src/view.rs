@@ -354,9 +354,11 @@ fn row_buttons(row: &Row) -> &'static [&'static str] {
 /// somewhere it is not drawn.
 pub fn row_button_rects(row: &Row, rect: Rect) -> Vec<Rect> {
     match &row.control {
-        Control::Button(labels) => {
-            widgets::button_rects(rect.right - 14.0, rect.center_y(), labels)
-        }
+        Control::Button(labels) => widgets::button_rects(
+            select_right(row, rect.right - 14.0),
+            rect.center_y(),
+            labels,
+        ),
         _ => Vec::new(),
     }
 }
@@ -1748,7 +1750,7 @@ impl Settings {
             return None;
         }
 
-        widgets::button_rects(rect.right - 14.0, rect.center_y(), labels)
+        row_button_rects(row, rect)
             .into_iter()
             .position(|button| button.contains(local))
             .map(|index| ButtonHit {
@@ -2548,7 +2550,7 @@ impl Settings {
             Control::Select(_) => select_rect(select_right(row, right), cy).left,
             Control::Color(argb) => well_rect(right, cy, Color::from(*argb)).left,
             Control::Text(_) => text_rect(right, cy).left,
-            Control::Button(labels) => widgets::button_rects(right, cy, labels)
+            Control::Button(labels) => widgets::button_rects(select_right(row, right), cy, labels)
                 .first()
                 .map(|rect| rect.left)
                 .unwrap_or(right),
@@ -2760,6 +2762,13 @@ impl Settings {
                 }
             }
             Control::Button(labels) => {
+                // A removable entry (a command started at login) keeps its
+                // remove button at the trailing edge, as a removable pop-up
+                // does.
+                if row.removable {
+                    self.render_remove(canvas, row, right, cy);
+                }
+                let right = select_right(row, right);
                 let held = labels
                     .iter()
                     .position(|button| self.button_pressed(row.handle(), button));

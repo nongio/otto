@@ -14,10 +14,11 @@
 //! list in before changing it, so turning one component off does not turn
 //! off the rest with it.
 //!
-//! Each component has a switch. Other commands are listed with a "−" that
-//! takes them out. *Add command* appends one typed in, and *Add app or
-//! program* one chosen through the portal: an application's `.desktop` entry
-//! or a program file.
+//! Each component has a switch. *Add command* appends one typed in, and
+//! *Add app or program* one chosen through the portal: an application's
+//! `.desktop` entry or a program file. A second group, *Launch order*, lists
+//! every entry in the order the compositor starts them, with ↑ and ↓ to move
+//! one and a "−" to take it out; a component switched on joins at the end.
 //!
 //! The XDG switch is `xdg_autostart`, which also starts the entries in the
 //! autostart folders. Not a session setting either, so it is written here
@@ -427,14 +428,64 @@ fn with_xdg(text: &str, on: bool) -> Result<String, String> {
     Ok(doc.to_string())
 }
 
-/// `text` without the first command that reads as `line`.
-fn without_command(text: &str, inherited: &[Entry], line: &str) -> Result<String, String> {
+/// Where the entry a row showed at `index`, reading `line`, is now: still
+/// there, or the first that reads the same if the file moved it.
+fn find_entry(tables: &ArrayOfTables, index: usize, line: &str) -> Option<usize> {
+    let reads = |table: &toml_edit::Table| entry(table).is_some_and(|entry| entry.line() == line);
+    if tables.get(index).is_some_and(reads) {
+        return Some(index);
+    }
+    tables.iter().position(reads)
+}
+
+/// `text` without the entry a row showed at `index`.
+fn without_entry(
+    text: &str,
+    inherited: &[Entry],
+    index: usize,
+    line: &str,
+) -> Result<String, String> {
     edited(text, inherited, |tables| {
-        let index = tables
-            .iter()
-            .position(|table| entry(table).is_some_and(|entry| entry.line() == line));
-        if let Some(index) = index {
+        if let Some(index) = find_entry(tables, index, line) {
             tables.remove(index);
+        }
+    })
+}
+
+/// `text` with the entry a row showed at `index` swapped with its neighbour
+/// `step` places away, its comment going with it. Nothing moves past either
+/// end.
+fn moved(
+    text: &str,
+    inherited: &[Entry],
+    index: usize,
+    line: &str,
+    step: isize,
+) -> Result<String, String> {
+    edited(text, inherited, |tables| {
+        let Some(from) = find_entry(tables, index, line) else {
+            return;
+        };
+        let Some(to) = from
+            .checked_add_signed(step)
+            .filter(|to| *to < tables.len())
+        else {
+            return;
+        };
+        // Tables are written in the order of their place in the file, not
+        // of the list, so each takes the other's place along with its slot.
+        let (Some(mut a), Some(mut b)) = (tables.get(from).cloned(), tables.get(to).cloned())
+        else {
+            return;
+        };
+        let (place_a, place_b) = (a.position(), b.position());
+        a.set_position(place_b);
+        b.set_position(place_a);
+        if let Some(slot) = tables.get_mut(from) {
+            *slot = b;
+        }
+        if let Some(slot) = tables.get_mut(to) {
+            *slot = a;
         }
     })
 }
@@ -494,10 +545,68 @@ fn intern(text: String) -> &'static str {
         .or_insert_with_key(|text| text.clone().leak())
 }
 
-/// The Start at login group: a switch per component, the other commands,
-/// and the field that adds one.
-pub fn group_rows() -> Group {
+/// The Start at login group — a switch per component, the fields that add a
+/// command, the XDG switch and the file — then the launch order, every
+/// entry in the order the compositor starts them.
+pub fn groups() -> Vec<Group> {
     let list = list();
+    let order = order_rows(&list.entries);
+    vec![
+        start_group(&list),
+        group(otto_kit::t!("settings-group-launch-order"), order),
+    ]
+}
+
+/// The buttons that move an entry one place earlier or later.
+fn move_buttons() -> &'static [&'static str] {
+    &[MOVE_UP, MOVE_DOWN]
+}
+
+const MOVE_UP: &str = "↑";
+const MOVE_DOWN: &str = "↓";
+
+/// An entry's row identifier: its place in the list and its command line,
+/// so a press acts on the entry the row showed even if the file has changed
+/// under it since.
+fn entry_row_id(index: usize, entry: &Entry) -> &'static str {
+    intern(format!("{COMMAND_ROW}{index}:{}", entry.line()))
+}
+
+/// The place and command line an entry's row identifier carries.
+fn entry_of_row(id: &str) -> Option<(usize, &str)> {
+    let (index, line) = id.strip_prefix(COMMAND_ROW)?.split_once(':')?;
+    Some((index.parse().ok()?, line))
+}
+
+/// A row per entry, in launch order: a component by its name, anything
+/// else by its command line, each with ↑ and ↓ and a "−".
+fn order_rows(entries: &[Entry]) -> Vec<Row> {
+    if entries.is_empty() {
+        return vec![Row::new(
+            otto_kit::t!("settings-startup-order-empty"),
+            Control::Value(String::new()),
+        )];
+    }
+    entries
+        .iter()
+        .enumerate()
+        .map(|(index, entry)| {
+            let component = COMPONENTS.iter().find(|(program, ..)| entry.runs(program));
+            let mut row = match component {
+                Some((_, label, _)) => {
+                    Row::new(otto_kit::t!(*label), Control::Button(move_buttons()))
+                        .detail(entry.line())
+                }
+                None => Row::new(intern(entry.line()), Control::Button(move_buttons())),
+            }
+            .removable(true);
+            row.id = Some(entry_row_id(index, entry));
+            row
+        })
+        .collect()
+}
+
+fn start_group(list: &List) -> Group {
     let mut rows: Vec<Row> = COMPONENTS
         .iter()
         .map(|(program, label, detail)| {
@@ -508,16 +617,6 @@ pub fn group_rows() -> Group {
             row
         })
         .collect();
-    let others = list
-        .entries
-        .iter()
-        .filter(|entry| !COMPONENTS.iter().any(|(program, ..)| entry.runs(program)));
-    for entry in others {
-        let line = entry.line();
-        let mut row = Row::new(intern(line.clone()), Control::Value(String::new())).removable(true);
-        row.id = Some(intern(format!("{COMMAND_ROW}{line}")));
-        rows.push(row);
-    }
     let detail = if list.own {
         otto_kit::t!("settings-startup-add-detail")
     } else {
@@ -573,7 +672,18 @@ fn choose_buttons() -> &'static [&'static str] {
 pub fn press(row: &str, button: &str) {
     if row == add_app_label() && button == choose_label() {
         choose_app();
+        return;
     }
+    let Some((index, line)) = entry_of_row(row) else {
+        return;
+    };
+    let step = match button {
+        MOVE_UP => -1,
+        MOVE_DOWN => 1,
+        _ => return,
+    };
+    let line = line.to_string();
+    write(move |text, inherited| moved(text, inherited, index, &line, step));
 }
 
 /// Ask for an application or a program through the desktop portal and add
@@ -652,13 +762,13 @@ pub fn apply(id: &str, value: &Value) -> bool {
     true
 }
 
-/// A press on another command's "−".
+/// A press on an entry's "−".
 pub fn remove(id: &str) {
-    let Some(line) = id.strip_prefix(COMMAND_ROW) else {
+    let Some((index, line)) = entry_of_row(id) else {
         return;
     };
     let line = line.to_string();
-    write(move |text, inherited| without_command(text, inherited, &line));
+    write(move |text, inherited| without_entry(text, inherited, index, &line));
 }
 
 #[cfg(test)]
@@ -751,7 +861,7 @@ mod tests {
 
         let next = with_command("", &system(), &entry).unwrap();
         assert_eq!(read_list(&next).unwrap().len(), 5);
-        let back = without_command(&next, &system(), &entry.line()).unwrap();
+        let back = without_entry(&next, &system(), 4, &entry.line()).unwrap();
         assert_eq!(read_list(&back).unwrap(), system());
     }
 
@@ -793,6 +903,50 @@ mod tests {
         assert!(entry_for_file(Path::new("/x/foo.desktop"), Some("[Desktop Entry]\n")).is_none());
         let program = entry_for_file(Path::new("/usr/bin/foo"), None).unwrap();
         assert_eq!(program.line(), "/usr/bin/foo");
+    }
+
+    fn programs(text: &str) -> Vec<String> {
+        read_list(text)
+            .unwrap()
+            .into_iter()
+            .map(|entry| entry.cmd)
+            .collect()
+    }
+
+    #[test]
+    fn an_entry_moves_with_its_comment_and_stops_at_the_ends() {
+        let text = "# The bar.\n[[exec_once]]\ncmd = \"otto-bar\"\n\n# Mine.\n[[exec_once]]\ncmd = \"foo\"\n\n[dock]\nsize = 3\n";
+        let next = moved(text, &[], 1, "foo", -1).unwrap();
+        assert_eq!(programs(&next), ["foo", "otto-bar"]);
+        assert!(next.find("# Mine.").unwrap() < next.find("# The bar.").unwrap());
+        assert!(next.find("otto-bar").unwrap() < next.find("[dock]").unwrap());
+        assert_eq!(moved(&next, &[], 0, "foo", -1).unwrap(), next);
+        assert_eq!(moved(&next, &[], 1, "otto-bar", 1).unwrap(), next);
+    }
+
+    #[test]
+    fn a_move_finds_its_entry_when_the_file_moved_it() {
+        let text =
+            "[[exec_once]]\ncmd = \"a\"\n[[exec_once]]\ncmd = \"b\"\n[[exec_once]]\ncmd = \"c\"\n";
+        // The row showed "c" at 1; it is at 2 now.
+        let next = moved(text, &[], 1, "c", -1).unwrap();
+        assert_eq!(programs(&next), ["a", "c", "b"]);
+    }
+
+    #[test]
+    fn the_first_move_copies_the_inherited_list_in() {
+        let next = moved("", &system(), 2, "otto-stash", -1).unwrap();
+        assert_eq!(
+            programs(&next),
+            ["otto-bar", "otto-stash", "otto-islands", "otto-canvas"]
+        );
+    }
+
+    #[test]
+    fn an_entry_row_carries_its_place_and_line() {
+        let entry = parse_line("foo 'a:b'").unwrap();
+        assert_eq!(entry_of_row(entry_row_id(3, &entry)), Some((3, "foo a:b")));
+        assert!(entry_of_row("startup.add").is_none());
     }
 
     #[test]

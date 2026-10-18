@@ -81,10 +81,13 @@ pub fn build() -> Pane {
                     ),
                 ],
             ),
-            // What the session starts once it has begun. Not a setting and
-            // not behind the password: it runs after login, as the user.
-            super::startup::group_rows(),
-        ],
+        ]
+        .into_iter()
+        // What the session starts once it has begun, and in which order.
+        // Not settings and not behind the password: they run after login,
+        // as the user.
+        .chain(super::startup::groups())
+        .collect(),
     }
 }
 

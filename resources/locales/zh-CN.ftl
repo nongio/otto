@@ -344,6 +344,8 @@ settings-startup-filter-apps = 应用程序
 settings-startup-filter-all = 所有文件
 settings-startup-xdg = 同时启动自动启动应用
 settings-startup-xdg-detail = ~/.config/autostart 和 /etc/xdg/autostart 中的条目。下次登录时生效
+settings-group-launch-order = 启动顺序
+settings-startup-order-empty = 登录时不启动任何内容
 settings-lock-never = 从不
 # Under each Lock & Login row: the compositor asks for the password before it applies a change.
 settings-asks-for-password = 更改此项需要输入密码

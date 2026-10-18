@@ -347,6 +347,8 @@ settings-startup-filter-apps = Aplicativos
 settings-startup-filter-all = Todos os arquivos
 settings-startup-xdg = Abrir também os apps de inicialização automática
 settings-startup-xdg-detail = As entradas em ~/.config/autostart e /etc/xdg/autostart. Vale a partir do próximo login
+settings-group-launch-order = Ordem de inicialização
+settings-startup-order-empty = Nada é aberto ao fazer login
 settings-lock-never = Nunca
 # Under each Lock & Login row: the compositor asks for the password before it applies a change.
 settings-asks-for-password = Para alterar, será pedida a sua senha
