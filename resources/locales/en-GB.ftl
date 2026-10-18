@@ -242,6 +242,7 @@ settings-tiling-mode-bounce = Tiling mode bounce
 
 settings-key-repeat-delay = Key repeat delay
 settings-key-repeat-rate = Key repeat rate
+settings-press-and-hold-accents = Accents on hold
 settings-group-input-source = Input source
 settings-xkb-layout-nth = Layout { $n }
 settings-xkb-layout-default = System default

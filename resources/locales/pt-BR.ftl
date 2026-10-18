@@ -240,6 +240,7 @@ settings-tiling-mode-bounce = Rebote do modo lado a lado
 
 settings-key-repeat-delay = Atraso de repetição de tecla
 settings-key-repeat-rate = Taxa de repetição de tecla
+settings-press-and-hold-accents = Acentos ao manter pressionado
 settings-group-input-source = Fonte de entrada
 settings-xkb-layout-nth = Layout { $n }
 settings-xkb-layout-default = Padrão do sistema

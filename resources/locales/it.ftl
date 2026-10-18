@@ -240,6 +240,7 @@ settings-tiling-mode-bounce = Rimbalzo dell'affiancamento
 
 settings-key-repeat-delay = Ritardo di ripetizione dei tasti
 settings-key-repeat-rate = Velocità di ripetizione dei tasti
+settings-press-and-hold-accents = Accenti tenendo premuto
 settings-group-input-source = Sorgente di input
 settings-xkb-layout-nth = Disposizione { $n }
 settings-xkb-layout-default = Predefinita di sistema

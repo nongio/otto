@@ -237,6 +237,7 @@ settings-tiling-mode-bounce = タイル表示のバウンス
 
 settings-key-repeat-delay = リピート開始までの時間
 settings-key-repeat-rate = リピート速度
+settings-press-and-hold-accents = 長押しでアクセント
 settings-group-input-source = 入力ソース
 settings-xkb-layout-nth = レイアウト { $n }
 settings-xkb-layout-default = システムの既定

@@ -240,6 +240,7 @@ settings-tiling-mode-bounce = Odbicie kafelkowania
 
 settings-key-repeat-delay = Opóźnienie powtarzania klawiszy
 settings-key-repeat-rate = Szybkość powtarzania klawiszy
+settings-press-and-hold-accents = Akcenty po przytrzymaniu
 settings-group-input-source = Źródło wprowadzania
 settings-xkb-layout-nth = Układ { $n }
 settings-xkb-layout-default = Domyślny systemowy

@@ -237,6 +237,7 @@ settings-tiling-mode-bounce = 平铺模式回弹
 
 settings-key-repeat-delay = 按键重复延迟
 settings-key-repeat-rate = 按键重复速率
+settings-press-and-hold-accents = 长按输入重音字母
 settings-group-input-source = 输入源
 settings-xkb-layout-nth = 布局 { $n }
 settings-xkb-layout-default = 系统默认

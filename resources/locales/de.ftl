@@ -239,6 +239,7 @@ settings-tiling-mode-bounce = Überschwingen im Kachelmodus
 
 settings-key-repeat-delay = Verzögerung bis zur Wiederholung
 settings-key-repeat-rate = Wiederholungsrate
+settings-press-and-hold-accents = Akzente beim Halten
 settings-group-input-source = Eingabequelle
 settings-xkb-layout-nth = Layout { $n }
 settings-xkb-layout-default = Systemstandard

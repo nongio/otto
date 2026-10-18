@@ -332,6 +332,11 @@ pub fn build() -> Pane {
                     },
                 )
                 .id("keyboard_repeat_rate"),
+                Row::new(
+                    otto_kit::t!("settings-press-and-hold-accents"),
+                    Control::Toggle(true),
+                )
+                .id("input.press_and_hold_accents"),
             ]),
             group(
                 otto_kit::t!("settings-group-input-source"),

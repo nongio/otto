@@ -153,7 +153,8 @@ a key that has them no longer repeats while held.
 
 The row only appears in applications that report their text cursor, which
 covers GTK, Qt, Chromium, Firefox and most terminals. In other windows, and
-in X11 applications, a held key repeats as usual. To turn it off:
+in X11 applications, a held key repeats as usual. Turn it off with **Accents
+on hold** in Settings → Keyboard, or in the config:
 
 ```toml
 [input]

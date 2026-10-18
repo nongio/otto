@@ -240,6 +240,7 @@ settings-tiling-mode-bounce = Отскок мозаики
 
 settings-key-repeat-delay = Задержка перед повтором
 settings-key-repeat-rate = Скорость повтора
+settings-press-and-hold-accents = Акценты при удержании
 settings-group-input-source = Источник ввода
 settings-xkb-layout-nth = Раскладка { $n }
 settings-xkb-layout-default = Системная по умолчанию
