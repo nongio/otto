@@ -65,15 +65,16 @@ fn themed_chrome_icon(icon_name: &str) -> Option<layers::skia::Image> {
 ///
 /// Themes disagree on names for the same glyph (`close-symbolic` vs
 /// `window-close-symbolic`, `plus-symbolic` vs `list-add-symbolic`), so chrome
-/// passes every spelling it accepts.
-pub fn draw_named_icon_any(icon_names: &[&str]) -> Option<ContentDrawFunction> {
+/// passes every spelling it accepts. The glyph is drawn `inset` points in from
+/// every edge of the layer.
+pub fn draw_named_icon_any(icon_names: &[&str], inset: f32) -> Option<ContentDrawFunction> {
     icon_names
         .iter()
         .find_map(|name| themed_chrome_icon(name))
-        .map(icon_draw_function)
+        .map(|icon| icon_draw_function(icon, inset))
 }
 
-fn icon_draw_function(icon: layers::skia::Image) -> ContentDrawFunction {
+fn icon_draw_function(icon: layers::skia::Image, inset: f32) -> ContentDrawFunction {
     let resampler = skia::CubicResampler::catmull_rom();
 
     let draw_function = move |canvas: &skia::Canvas, w: f32, h: f32| -> layers::skia::Rect {
@@ -88,7 +89,7 @@ fn icon_draw_function(icon: layers::skia::Image) -> ContentDrawFunction {
         canvas.draw_image_rect_with_sampling_options(
             &icon,
             None,
-            skia::Rect::from_xywh(0.0, 0.0, w, h),
+            skia::Rect::from_xywh(inset, inset, w - 2.0 * inset, h - 2.0 * inset),
             resampler,
             &paint,
         );
