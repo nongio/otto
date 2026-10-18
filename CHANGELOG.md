@@ -2,6 +2,34 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.8.0] - 2026-10-18
+
+### 🚀 Features
+
+- *(wallpaper)* Exact 1:1 frames, layouts, per-display wallpapers (#369)
+- *(bar)* New Version Available… in the Otto menu (#378)
+- *(settings)* Start at login (#377)
+- *(input)* Accents on hold (#376)
+- *(desk)* Place icons freely on the grid (#379)
+- *(files)* Shadow under grid icons (#383)
+
+### 🐛 Bug Fixes
+
+- *(power)* Restore the panel on lid open (#375)
+- *(workspaces)* Plain plus and close glyphs (#380)
+- *(focus)* Keep the window active under bar menus (#381)
+- *(packaging)* Follow the Arch package guidelines (#382)
+
+### 🚜 Refactor
+
+- Dock Exec via kit, touch grab macro (#374)
+- Dedupe Peek drawing, path completion, ellipsis (#373)
+- *(otto-kit)* One portal FileChooser client (#372)
+
+### 📚 Documentation
+
+- *(search)* Add file search diagram (#368)
+
 ## [1.7.1] - 2026-10-15
 
 ### 🐛 Bug Fixes
@@ -10,6 +38,10 @@ All notable changes to this project will be documented in this file.
 - *(vulkan)* Pick up the NVIDIA dmabuf import fix (#363)
 - *(files)* Command Palette item in the View menu (#364)
 - *(deps)* Bump lay-rs to v1.18.2 (#366)
+
+### ⚙️ Miscellaneous Tasks
+
+- *(release)* 1.7.1 (#367)
 
 ## [1.7.0] - 2026-10-13
 
@@ -74,7 +106,7 @@ All notable changes to this project will be documented in this file.
 ### 🚜 Refactor
 
 - *(kit)* Share small helpers across crates (#261)
-- [**breaking**] Unify hex colours and the colour palette (#264). otto-bar's `[battery] color_*` eight-digit colours are now `#RRGGBBAA` (alpha last), not `#AARRGGBB`; an old value still parses, as another colour (`"#FF34C759"`, opaque green, now reads as translucent magenta). Move the alpha pair to the end: `"#34C759FF"`.
+- [**breaking**] Unify hex colours and the colour palette (#264). otto-bar's `[battery] color_*` eight-digit colours are now `#RRGGBBAA` (alpha last), not `#AARRGGBB`: move the alpha pair to the end
 - One client proxy per D-Bus interface (otto-dbus) (#266)
 - Compositor dedupe (post-1.6.0 wave 2) (#268)
 - *(agents-kit)* Move the Ask chat out of the launcher (#314)
@@ -107,6 +139,7 @@ All notable changes to this project will be documented in this file.
 - One job per area instead of one check job (#349)
 - Install what the area jobs actually link (#350)
 - Give every job a read-only GITHUB_TOKEN (#351)
+- *(release)* 1.7.0
 
 ### Build
 
@@ -150,7 +183,7 @@ All notable changes to this project will be documented in this file.
 - Widget install check and dependency alerts (#251)
 - *(release)* 1.6.0 (#256)
 
-## [1.5.0] - 2026-09-25
+## [1.5.0] - 2026-09-26
 
 ### 🚀 Features
 
