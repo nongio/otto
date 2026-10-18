@@ -1,12 +1,12 @@
 # Maintainer: Riccardo Canalicchio <riccardo.canalicchio@gmail.com>
 
 pkgname=otto-bin
-pkgver=1.7.1
+pkgver=1.8.0
 # Cargo's version (names the release tarball) and the git tag. They differ
 # from pkgver for a prerelease: '-' is illegal in pkgver, and pacman sorts
 # a '~' suffix *after* the plain version rather than before it.
-_ver=1.7.1
-_tag=v1.7.1
+_ver=1.8.0
+_tag=v1.8.0
 pkgrel=1
 pkgdesc="A Wayland desktop built around smooth animations, gestures and careful detail"
 url="https://github.com/nongio/otto"
