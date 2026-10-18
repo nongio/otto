@@ -1,4 +1,5 @@
 use smithay::{
+    input::pointer::{CursorIcon, CursorImageStatus},
     reexports::wayland_server::protocol::wl_data_device_manager::DndAction,
     wayland::selection::{
         data_device::{DataDeviceHandler, DataDeviceState},
@@ -21,6 +22,29 @@ impl<BackendData: Backend> DataDeviceHandler for Otto<BackendData> {
         preferred: smithay::reexports::wayland_server::protocol::wl_data_device_manager::DndAction,
     ) -> smithay::reexports::wayland_server::protocol::wl_data_device_manager::DndAction {
         // println!("available {:?} preferred {:?}", available, preferred);
+
+        // Modifiers held during the drag override the target's preference,
+        // the convention every Linux file manager shares: Ctrl copies, Shift
+        // moves, Ctrl+Shift makes a link. The protocol has no link action, so
+        // a link is carried as Ask, which a file manager that offers it reads
+        // as "link here" (see otto-files' `DropOp`). The target re-sends its
+        // actions on every motion, so this is asked again as the pointer moves.
+        let mods = self.current_modifiers;
+        let requested = match (mods.ctrl, mods.shift) {
+            (true, true) => Some(DndAction::Ask),
+            (true, false) => Some(DndAction::Copy),
+            (false, true) => Some(DndAction::Move),
+            (false, false) => None,
+        };
+        if let Some(action) = requested.filter(|action| available.contains(*action)) {
+            if action == DndAction::Ask {
+                self.set_cursor(&CursorImageStatus::Named(CursorIcon::Alias));
+            } else {
+                self.load_cursor_for_action(action);
+            }
+            return action;
+        }
+
         // if the preferred action is valid (a single action) and in the available actions, use it
         // otherwise, follow a fallback stategy
 

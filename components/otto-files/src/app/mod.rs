@@ -31,6 +31,7 @@ use wayland_client::protocol::{wl_keyboard, wl_surface};
 /// button.
 const BTN_RIGHT: u32 = 0x111;
 
+use drag_drop::DropOp;
 use listing_pointer::{After, DragStart, MenuAt};
 use model::{Column, Entry, Place, SortKey};
 use view::ViewMode;
@@ -245,10 +246,11 @@ fn hover_drag(state: &Arc<Mutex<Browser>>, x: f32, y: f32) {
         }
         (Some(_), Some(mime)) => dnd::accept(
             Some(&mime),
-            DndAction::Copy | DndAction::Move,
-            // Move by default, copy on request — what every other file manager
-            // does. The compositor still has the last word, and a source that
-            // only offers a copy gets one.
+            // Ask is how a link is asked for; see `DropOp::from_action`.
+            DndAction::Copy | DndAction::Move | DndAction::Ask,
+            // Move by default, copy or link on request — what every other
+            // file manager does. The compositor still has the last word, and a
+            // source that only offers a copy gets one.
             DndAction::Move,
         ),
         // Over nothing that takes files, or a drag carrying none.
