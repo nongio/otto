@@ -38,6 +38,7 @@ use view::ViewMode;
 mod app_menu;
 mod construct;
 mod cursor;
+mod desk_arrange;
 mod desk_edit;
 mod desk_overflow;
 mod drag_drop;
@@ -189,13 +190,20 @@ enum DropTarget {
     Pane { depth: usize, path: PathBuf },
     /// A sidebar place.
     Place { index: usize, path: PathBuf },
+    /// The desk's own icons dragged within it, under free placement: they
+    /// move to another slot and the files stay where they are. `slot` is
+    /// where the picked-up icon lands.
+    Slot { slot: usize, path: PathBuf },
 }
 
 impl DropTarget {
     /// The directory the drop lands in.
     fn path(&self) -> &PathBuf {
         match self {
-            Self::Entry { path, .. } | Self::Pane { path, .. } | Self::Place { path, .. } => path,
+            Self::Entry { path, .. }
+            | Self::Pane { path, .. }
+            | Self::Place { path, .. }
+            | Self::Slot { path, .. } => path,
         }
     }
 
@@ -204,6 +212,7 @@ impl DropTarget {
             Self::Entry { depth, index, .. } => view::DropHighlight::Row { depth, index },
             Self::Pane { depth, .. } => view::DropHighlight::Pane { depth },
             Self::Place { index, .. } => view::DropHighlight::Place { index },
+            Self::Slot { slot, .. } => view::DropHighlight::Slot { slot },
         }
     }
 }
@@ -454,6 +463,9 @@ struct Browser {
     /// The overflow panel on its way back into its tile: drawn, but no
     /// longer answering for the pointer or the keyboard.
     overflow_panel_closing: Option<desk_overflow::OverflowSession>,
+    /// Where the desk's icons are placed under `arrange = "free"`. See
+    /// [`desk_arrange`].
+    desk_placement: desk_arrange::DeskPlacement,
     /// This window is showing the Recent listing rather than a directory:
     /// what was written most recently across the user's folders, newest first,
     /// under a heading per day.
@@ -1636,6 +1648,10 @@ mod picture_info_tests {
         assert!(picture_info(&text).is_none());
     }
 }
+
+/// The desk's icons placed by hand.
+#[cfg(test)]
+mod desk_arrange_tests;
 
 /// What `org.otto.Files1.FocusedSelection` answers.
 #[cfg(test)]

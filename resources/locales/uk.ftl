@@ -130,6 +130,11 @@ settings-desk-layout-reset = Скинути
 settings-desk-layout-fill = На весь екран. «Змінити» показує маркери, щоб перетягнути її на місце
 settings-desk-layout-placed = Розміщено вручну. «Скинути» знову розтягне її на весь екран
 settings-desk-icon-size = Розмір значків
+settings-desk-arrange = Розташування
+settings-desk-arrange-grid = Сітка за порядком
+# Icons stay where they are dragged, snapped to the grid.
+settings-desk-arrange-free = Вільне
+settings-desk-arrange-detail = «Сітка за порядком» тримає значки впорядкованими. «Вільне» лишає кожен там, де його відпустиш, із прив’язкою до сітки
 settings-desk-overflow = Коли значки не вміщаються
 settings-desk-overflow-scroll = Прокручувати
 settings-desk-overflow-stack = Показувати поверх
@@ -620,6 +625,13 @@ files-open-with-always = Завжди використовувати для ти
 files-open-with-not-remembered = Відкрито, але вибір не збережено: { $error }
 files-new-folder = Нова папка
 files-desk-open-in-files = Відкрити у Файлах
+# The desk's background menu: how the icons are laid out. Grid keeps them
+# sorted; Free leaves each where it was dropped.
+files-desk-arrange = Розташування
+files-desk-arrange-grid = Сітка за порядком
+files-desk-arrange-free = Вільне
+# Puts every icon on the desk back in sorted order.
+files-desk-clean-up = Упорядкувати
 files-desk-edit-done = Готово
 # The desk's overflow tile: the caption under it, and what a screen reader
 # says for it. $count is how many items it holds.

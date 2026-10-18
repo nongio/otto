@@ -25,6 +25,7 @@ pub mod command;
 pub mod dbus;
 pub mod desk;
 pub mod desk_service;
+pub mod desk_slots;
 pub mod files_service;
 pub mod launch;
 pub mod model;

@@ -12,6 +12,7 @@ impl Browser {
     /// wrong end.
     pub(super) fn sync_scroll_metrics(&mut self) {
         self.rebuild_recent_sections();
+        self.arrange_desk();
         self.rebuild_photos_layout();
         self.settle_overflow_panel();
         // A desk that stacks is exactly as tall as its cells up to the tile,

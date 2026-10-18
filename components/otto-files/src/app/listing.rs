@@ -43,6 +43,7 @@ impl Browser {
             self.show_hidden,
             filter,
             photos,
+            self.desk_placement.rank_epoch,
         );
         if column.sorted.borrow().key == Some(key) {
             return;
@@ -88,6 +89,12 @@ impl Browser {
             });
         } else {
             order.sort_by(|&a, &b| self.compare(&entries[a], &entries[b]));
+        }
+        // The desk's placed icons in slot order, and those with no slot (in
+        // the overflow tile) after them, each run still in sort order.
+        let rank = &self.desk_placement.rank;
+        if !rank.is_empty() {
+            order.sort_by_key(|&i| rank.get(&entries[i].name).copied().unwrap_or(usize::MAX));
         }
         *column.sorted.borrow_mut() = model::SortCache {
             key: Some(key),

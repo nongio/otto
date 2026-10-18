@@ -38,6 +38,8 @@ Requests are served one at a time. A second request queues and reuses the same w
 
 The compositor starts `otto-files --desk` when the session's desk setting is on, restarts it with a back-off if it dies, and stops it when the setting goes off. A lock file in the runtime directory keeps it to one desk per session. The desk is a plain `zwlr_layer_shell_v1` client on the bottom layer, with no exclusive zone. Its folder, arrangement, size and position come from the `[desk]` section of the Files config, which it watches and follows live. Settings can ask it over `org.otto.Desk1` to enter edit mode, where the desk moves itself to the top layer, takes the keyboard, and lets the panel be moved and resized with the pointer before writing the result back to the config.
 
+Under `arrange = "free"` each icon sits on a slot of the grid instead of the cell of its index. `desk_slots::arrange` gives every file a slot from the positions saved in `$XDG_STATE_HOME/otto/desk.toml`, and the grid's sections carry the result as a slot map that every hit test, rubber band and drawing goes through. The listing is put in slot order, so the overflow tile's items stay the run at its end. A drag within the desk drops onto a slot rather than the folder, and only the state file changes.
+
 The desk never navigates. Opening a folder from it starts `otto-files` with that folder, and that start hands it to the running browser process exactly as in step 1 above. The picker does the same for a new window.
 
 ## Boundaries
@@ -74,7 +76,7 @@ The desk never navigates. Opening a folder from it starts `otto-files` with that
 
 - The initial listing still stats every entry as it reads. The spec asks for names first and metadata after, so very large or remote folders draw sooner; the snapshot shape is already the one that pass will deliver.
 - The picker serves one request at a time and cannot mount a drive that is not already mounted.
-- The desk shows one surface on one output, in a sorted grid. A surface per output, free placement, and Peek above the windows are not built yet ([desk spec](../../specs/desk.md)).
+- The desk shows one surface on one output, so its free-placement positions are not yet kept per output. A surface per output and Peek above the windows are not built yet ([desk spec](../../specs/desk.md)).
 - `org.freedesktop.FileManager1` is specified but not served.
 - The command palette's data-only seam is meant to grow into extensions that live in other processes ([command palette spec](../../specs/file-command-palette.md)).
 

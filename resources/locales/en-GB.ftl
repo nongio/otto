@@ -132,6 +132,11 @@ settings-desk-layout-reset = Reset
 settings-desk-layout-fill = Fills the screen. Edit shows handles on the desk to drag it into place
 settings-desk-layout-placed = Placed by hand. Reset makes it fill the screen again
 settings-desk-icon-size = Icon size
+settings-desk-arrange = Arrangement
+settings-desk-arrange-grid = Sorted grid
+# Icons stay where they are dragged, snapped to the grid.
+settings-desk-arrange-free = Free
+settings-desk-arrange-detail = Sorted grid keeps the icons in order. Free leaves each one where you drop it, snapped to the grid
 settings-desk-overflow = When icons don’t fit
 settings-desk-overflow-scroll = Scroll
 # A tile in the last cell that opens the rest in a panel above the windows.
@@ -618,6 +623,13 @@ files-open-with-not-remembered = Opened, but couldn’t save the choice: { $erro
 files-new-folder = New Folder
 # The desk's background menu: shows the desk's own folder in a Files window.
 files-desk-open-in-files = Open in Files
+# The desk's background menu: how the icons are laid out. Grid keeps them
+# sorted; Free leaves each where it was dropped.
+files-desk-arrange = Arrange
+files-desk-arrange-grid = Sorted Grid
+files-desk-arrange-free = Free
+# Puts every icon on the desk back in sorted order.
+files-desk-clean-up = Clean Up
 files-desk-edit-done = Done
 # The desk's overflow tile: the caption under it, and what a screen reader
 # says for it. $count is how many items it holds.

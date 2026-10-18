@@ -141,6 +141,7 @@ impl Browser {
         let depth = self.columns.len() - 1;
         view::DeskOverflow::new(
             self.desk_grid_area(),
+            &self.recent_sections,
             Rect::from_wh(self.size.0, self.size.1),
             self.visible_len(depth),
             self.overflow_panel
@@ -164,8 +165,7 @@ impl Browser {
 
     /// Where entry `index` of the desk is when the tile holds it.
     pub(super) fn desk_overflow_entry_rect(&self, index: usize) -> Option<Rect> {
-        self.desk_overflow()?
-            .entry_rect(self.desk_grid_area(), index)
+        self.desk_overflow()?.entry_rect(index)
     }
 
     /// Whether entry `index` is in the open overflow panel, and so drawn on
@@ -235,7 +235,7 @@ impl Browser {
         let Some(mut session) = self.overflow_panel.take() else {
             return false;
         };
-        let anchor = view::entry_icon_rect(overflow.cell(self.desk_grid_area()), ViewMode::Grid);
+        let anchor = view::entry_icon_rect(overflow.cell(), ViewMode::Grid);
         // Back from wherever it has got to: a panel closed part way in goes
         // home from there rather than jumping to rest first.
         let elapsed = CLOSE_DURATION.mul_f32(1.0 - session.progress());
@@ -267,6 +267,7 @@ impl Browser {
         .then(|| {
             view::DeskOverflow::new(
                 area,
+                &self.recent_sections,
                 Rect::from_wh(self.size.0, self.size.1),
                 self.visible_len(depth),
                 Some(0.0),
@@ -291,8 +292,7 @@ impl Browser {
         if let Some(session) = self.overflow_panel.as_ref() {
             let overflow = self.desk_overflow()?;
             overflow.panel?;
-            let anchor =
-                view::entry_icon_rect(overflow.cell(self.desk_grid_area()), ViewMode::Grid);
+            let anchor = view::entry_icon_rect(overflow.cell(), ViewMode::Grid);
             return Some(OverflowShown {
                 overflow,
                 anchor,
@@ -428,9 +428,7 @@ impl Browser {
     ) -> Option<After> {
         let overflow = self.desk_overflow()?;
         let (x, y) = (at.x, at.y);
-        let on_tile = overflow
-            .cell(self.desk_grid_area())
-            .contains(Point::new(x, y));
+        let on_tile = overflow.cell().contains(Point::new(x, y));
         match event.kind {
             PointerEventKind::Press { button, .. } if button != BTN_RIGHT => {
                 if let Some((panel, scroll)) = overflow.panel {

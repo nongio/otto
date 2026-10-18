@@ -130,6 +130,11 @@ settings-desk-layout-reset = Zurücksetzen
 settings-desk-layout-fill = Füllt den Bildschirm. „Bearbeiten“ zeigt Griffe auf dem Schreibtisch, um ihn zurechtzuziehen
 settings-desk-layout-placed = Von Hand platziert. „Zurücksetzen“ lässt ihn wieder den Bildschirm füllen
 settings-desk-icon-size = Symbolgröße
+settings-desk-arrange = Anordnung
+settings-desk-arrange-grid = Sortiertes Raster
+# Icons stay where they are dragged, snapped to the grid.
+settings-desk-arrange-free = Frei
+settings-desk-arrange-detail = „Sortiertes Raster“ hält die Symbole geordnet. „Frei“ lässt jedes dort, wo du es ablegst, am Raster ausgerichtet
 settings-desk-overflow = Wenn Symbole nicht passen
 settings-desk-overflow-scroll = Scrollen
 settings-desk-overflow-stack = Im Overlay zeigen
@@ -610,6 +615,13 @@ files-open-with-always = Diese App immer für „{ $kind }“ verwenden
 files-open-with-not-remembered = Geöffnet, aber die Auswahl wurde nicht gespeichert: { $error }
 files-new-folder = Neuer Ordner
 files-desk-open-in-files = In Dateien öffnen
+# The desk's background menu: how the icons are laid out. Grid keeps them
+# sorted; Free leaves each where it was dropped.
+files-desk-arrange = Anordnen
+files-desk-arrange-grid = Sortiertes Raster
+files-desk-arrange-free = Frei
+# Puts every icon on the desk back in sorted order.
+files-desk-clean-up = Aufräumen
 files-desk-edit-done = Fertig
 # The desk's overflow tile: the caption under it, and what a screen reader
 # says for it. $count is how many items it holds.

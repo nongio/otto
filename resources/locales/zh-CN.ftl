@@ -129,6 +129,11 @@ settings-desk-layout-reset = 重置
 settings-desk-layout-fill = 占满屏幕。“编辑”会在桌面上显示手柄，可拖动调整
 settings-desk-layout-placed = 已手动放置。“重置”可恢复为占满屏幕
 settings-desk-icon-size = 图标大小
+settings-desk-arrange = 排列方式
+settings-desk-arrange-grid = 有序网格
+# Icons stay where they are dragged, snapped to the grid.
+settings-desk-arrange-free = 自由排列
+settings-desk-arrange-detail = 有序网格让图标保持顺序。自由排列会把每个图标留在你放下的位置，并对齐网格
 settings-desk-overflow = 图标放不下时
 settings-desk-overflow-scroll = 滚动
 settings-desk-overflow-stack = 以浮层显示
@@ -604,6 +609,13 @@ files-open-with-always = 始终使用此应用程序打开“{ $kind }”
 files-open-with-not-remembered = 已打开，但未保存此选择：{ $error }
 files-new-folder = 新建文件夹
 files-desk-open-in-files = 在文件中打开
+# The desk's background menu: how the icons are laid out. Grid keeps them
+# sorted; Free leaves each where it was dropped.
+files-desk-arrange = 排列方式
+files-desk-arrange-grid = 有序网格
+files-desk-arrange-free = 自由排列
+# Puts every icon on the desk back in sorted order.
+files-desk-clean-up = 整理
 files-desk-edit-done = 完成
 # The desk's overflow tile: the caption under it, and what a screen reader
 # says for it. $count is how many items it holds.

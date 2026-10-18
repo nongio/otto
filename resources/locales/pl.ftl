@@ -129,6 +129,11 @@ settings-desk-layout-reset = Resetuj
 settings-desk-layout-fill = Wypełnia ekran. Edytuj pokazuje uchwyty na pulpicie do przeciągania
 settings-desk-layout-placed = Ustawiony ręcznie. Resetuj przywraca wypełnienie ekranu
 settings-desk-icon-size = Rozmiar ikon
+settings-desk-arrange = Układ
+settings-desk-arrange-grid = Siatka posortowana
+# Icons stay where they are dragged, snapped to the grid.
+settings-desk-arrange-free = Swobodny
+settings-desk-arrange-detail = Siatka posortowana trzyma ikony w kolejności. Swobodny zostawia każdą tam, gdzie ją upuścisz, przyciągniętą do siatki
 settings-desk-overflow = Gdy ikony się nie mieszczą
 settings-desk-overflow-scroll = Przewijaj
 settings-desk-overflow-stack = Pokaż w nakładce
@@ -619,6 +624,13 @@ files-open-with-always = Zawsze używaj tej aplikacji dla typu „{ $kind }”
 files-open-with-not-remembered = Otwarto, ale nie zapisano wyboru: { $error }
 files-new-folder = Nowy folder
 files-desk-open-in-files = Otwórz w Plikach
+# The desk's background menu: how the icons are laid out. Grid keeps them
+# sorted; Free leaves each where it was dropped.
+files-desk-arrange = Układ
+files-desk-arrange-grid = Siatka posortowana
+files-desk-arrange-free = Swobodny
+# Puts every icon on the desk back in sorted order.
+files-desk-clean-up = Uporządkuj
 files-desk-edit-done = Gotowe
 # The desk's overflow tile: the caption under it, and what a screen reader
 # says for it. $count is how many items it holds.

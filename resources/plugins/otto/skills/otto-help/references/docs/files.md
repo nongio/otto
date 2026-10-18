@@ -445,6 +445,16 @@ it back. **Reset** makes it fill the screen again.
 *Icon size* in the same group makes the desk's icons bigger or smaller, from
 32 to 160 px; the desk follows as you drag.
 
+*Arrangement* decides where the icons go. **Sorted grid** (the default) keeps
+them in order from the top-left corner. **Free** lets you put each one where
+you like: drag an icon within the desk and it snaps to the nearest empty
+spot on the grid, with a ring showing where it will land. Drag several at
+once and they keep their places around the one you hold. New files take the
+first empty spot, and a renamed file stays put. Right-click the desk for the
+same choice under **Arrange**, and **Clean Up** to put every icon back in
+order. Positions are saved in `~/.local/state/otto/desk.toml`, never in the
+Desktop folder.
+
 When there are more files than fit, *When icons don't fit* in the same group
 decides what happens. **Scroll** (the default) lets the grid run on and scroll.
 **Show in overlay** keeps the grid still: the extra icons go into
@@ -463,6 +473,7 @@ changes to that file as soon as they are saved:
 ```toml
 [desk]
 folder = "~/Desktop"      # default: your Desktop folder
+arrange = "grid"          # grid | free
 sort = "name"             # name | kind | modified
 anchor = "fill"           # fill | top-left | top | top-right | left | center
                           # | right | bottom-left | bottom | bottom-right

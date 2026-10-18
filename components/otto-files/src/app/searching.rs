@@ -102,7 +102,10 @@ impl Browser {
                 }),
             }
         }
-        let sections = view::GridSections { sections };
+        let sections = view::GridSections {
+            sections,
+            slots: None,
+        };
         if self.recent_sections != sections {
             self.recent_sections = sections;
             self.dirty = true;

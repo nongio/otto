@@ -594,6 +594,7 @@ impl Browser {
         if let Some((start_x, start_y, serial)) = self.drag_armed {
             if (x - start_x).hypot(y - start_y) >= DRAG_THRESHOLD {
                 self.drag_armed = None;
+                self.note_desk_drag(start_x, start_y);
                 self.drag_started();
                 return After::Drag(DragStart {
                     paths: self.drag_paths(),

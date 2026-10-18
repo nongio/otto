@@ -193,14 +193,15 @@ impl FilesWindow {
                 let cells =
                     view::content_viewport(browser.size.0, browser.content_h(), ViewMode::Grid);
                 let overflow = browser.desk_overflow().expect("checked by the guard");
+                let sections = browser.recent_sections.clone();
                 let end = match overflow.panel {
                     Some(_) => browser.desk_overflow_shown().unwrap_or_default().end,
                     None => overflow.tile.first + 1,
                 };
                 (
                     Box::new(move |index| {
-                        overflow.entry_rect(cells, index).unwrap_or_else(|| {
-                            view::grid_cell_rect_in(cells, view::GridSections::FLAT, index, 0.0)
+                        overflow.entry_rect(index).unwrap_or_else(|| {
+                            view::grid_cell_rect_in(cells, &sections, index, 0.0)
                         })
                     }),
                     0..end.min(count),
