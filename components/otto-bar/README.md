@@ -27,6 +27,14 @@ otto-bar looks for a TOML config file in this order:
 | Key            | Default                  | Description                  |
 |----------------|--------------------------|------------------------------|
 | `clock_format` | `"%B %-d, %A %H:%M"`    | Clock format ([chrono strftime](https://docs.rs/chrono/latest/chrono/format/strftime/index.html)) |
+| `update_check_url` | `"https://otto-version.otto-desktop.workers.dev/latest"` | Where to ask for the latest release; empty string turns the check off |
+
+When a newer release is out, the Otto menu shows "New Version Available…",
+which opens the release page. There is no notification. The check runs a
+minute after start and every six hours and sends the running version. Once a
+week it also sends `count=1` and how long Otto has been installed (first week,
+first month, first six months, older), so active installs can be counted per
+week. The week last counted is kept in `$XDG_STATE_HOME/otto/update-check`.
 
 ### `[battery]`
 
