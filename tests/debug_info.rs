@@ -1,6 +1,6 @@
 //! `org.otto.Compositor.DebugInfo` reports the session a bug happened in.
 //!
-//! otto-doctor reads it to fill the "Otto" and "Screens" sections of a bug
+//! otto-msg doctor reads it to fill the "Otto" and "Screens" sections of a bug
 //! report, so the fields it reads must be there and match the outputs.
 
 #[cfg(feature = "headless")]

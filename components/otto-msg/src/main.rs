@@ -7,6 +7,8 @@
 //! The wire contract is `docs/developer/shell-dbus-api.md`; the user-facing
 //! guide is `docs/user/scripting.md`.
 
+mod doctor;
+
 use std::process::ExitCode;
 
 use otto_dbus::shell::ShellProxyBlocking;
@@ -15,9 +17,11 @@ use zbus::blocking::Connection;
 
 const USAGE: &str = "\
 Usage: otto-msg [options] [command]
+       otto-msg doctor [options]
 
 Drive the Otto compositor: run i3-syntax commands, read its tree, or follow
-its events.
+its events. `otto-msg doctor` writes a bug report; `otto-msg doctor --help`
+lists its options.
 
 Options:
   -t, --type <type>   run_command (default), get_tree, get_workspaces,
@@ -129,7 +133,12 @@ fn parse_args(args: Vec<String>) -> Result<Options, String> {
 }
 
 fn main() -> ExitCode {
-    let options = match parse_args(std::env::args().skip(1).collect()) {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    // `doctor` is a tool of its own with its own options, not an i3 command.
+    if args.first().map(String::as_str) == Some("doctor") {
+        return doctor::main(args.into_iter().skip(1).collect());
+    }
+    let options = match parse_args(args) {
         Ok(options) => options,
         Err(message) => {
             eprintln!("otto-msg: {message}");

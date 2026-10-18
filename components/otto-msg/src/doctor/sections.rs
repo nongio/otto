@@ -10,7 +10,7 @@ use std::fs;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
-use crate::compositor::DebugInfo;
+use crate::doctor::compositor::DebugInfo;
 
 /// Which part of the report a section is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -366,7 +366,7 @@ fn otto(sources: &Sources) -> Section {
                 .map(|c| format!(" ({c})"))
                 .unwrap_or_default();
             let mut body = format!(
-                "- Version: {}{commit}\n- Backend: {}\n- otto-doctor: {doctor}\n",
+                "- Version: {}{commit}\n- Backend: {}\n- otto-msg: {doctor}\n",
                 info.version, info.backend
             );
             if !info.config_files.is_empty() {
@@ -382,7 +382,7 @@ fn otto(sources: &Sources) -> Section {
         }
         Err(reason) => (
             format!("compositor {reason}"),
-            format!("- Compositor {reason}\n- otto-doctor: {doctor}\n"),
+            format!("- Compositor {reason}\n- otto-msg: {doctor}\n"),
         ),
     };
     Section {
@@ -571,7 +571,7 @@ fn read(path: &Path) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compositor::{Output, Renderer};
+    use crate::doctor::compositor::{Output, Renderer};
 
     fn write(root: &Path, rel: &str, content: &str) {
         let path = root.join(rel);

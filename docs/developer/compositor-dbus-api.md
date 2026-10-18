@@ -7,8 +7,8 @@ bringing an application forward, and the details a bug report needs.
 > (`src/screenshare/dbus_service.rs`, answered on the main loop through
 > `CompositorCommand`), and the client proxy is
 > `otto_dbus::compositor::CompositorProxy`. The watchdog calls `Ping`,
-> notification clicks call `FocusApp`, and `otto-doctor`
-> (`components/otto-doctor/`) calls `DebugInfo`.
+> notification clicks call `FocusApp`, and `otto-msg doctor`
+> (`components/otto-msg/src/doctor/`) calls `DebugInfo`.
 
 Bus name `org.otto.Compositor`, object path `/org/otto/Compositor`, interface
 `org.otto.Compositor`. The compositor owns the name on the same connection as
@@ -25,7 +25,7 @@ Bus name `org.otto.Compositor`, object path `/org/otto/Compositor`, interface
 `Ping` answers on the D-Bus thread, so it proves the bus side is up, not that
 the main loop is. `DebugInfo` goes through the main loop, so a frozen
 compositor does not answer it; a caller should set a short timeout
-(`otto-doctor` waits three seconds).
+(`otto-msg doctor` waits three seconds).
 
 ### `DebugInfo() → s`
 
@@ -73,7 +73,7 @@ does not know and treats a missing field as unknown.
 | `config_files` | The configuration files on disk, lowest priority first, the layers the compositor merges |
 | `outputs` | Every output, sorted by name. `width` and `height` are the current mode in physical pixels, `refresh_mhz` its refresh in millihertz, `scale` the fractional scale, `x` and `y` the position in the layout in logical points, `virtual` whether it is a PipeWire-backed output |
 
-The answer holds paths with the user's home folder in them. `otto-doctor`
+The answer holds paths with the user's home folder in them. `otto-msg doctor`
 redacts them before showing or writing anything; another caller that passes
 the answer on should do the same.
 
@@ -82,4 +82,4 @@ the answer on should do the same.
 - [otto-dbus](otto-dbus.md): the client proxies.
 - [Screen sharing](screenshare.md): the `CompositorCommand` bridge the methods
   are answered through.
-- [Reporting a bug with otto-doctor](../user/bug-reports.md).
+- [Reporting a bug with otto-msg doctor](../user/bug-reports.md).

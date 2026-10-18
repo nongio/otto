@@ -1,4 +1,4 @@
-//! `otto-doctor`: gather what a bug report about Otto needs.
+//! `otto-msg doctor`: gather what a bug report about Otto needs.
 //!
 //! Collects the operating system, graphics, screens, Otto's version, and
 //! optionally the configuration and session logs; lets the user choose and
@@ -20,12 +20,12 @@ use std::process::{ExitCode, Stdio};
 
 use otto_foundations::xdg;
 
-use crate::redact::Redactor;
-use crate::report::{Redaction, Timestamp};
-use crate::sections::Sources;
+use crate::doctor::redact::Redactor;
+use crate::doctor::report::{Redaction, Timestamp};
+use crate::doctor::sections::Sources;
 
 const USAGE: &str = "\
-Usage: otto-doctor [options]
+Usage: otto-msg doctor [options]
 
 Gather what a bug report about Otto needs, choose what to share, and write it
 as a Markdown file to attach to an issue. Nothing is uploaded.
@@ -117,26 +117,27 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Command, String>
     Ok(Command::Run(options))
 }
 
-fn main() -> ExitCode {
-    let options = match parse_args(std::env::args().skip(1)) {
+/// Runs `otto-msg doctor` with the arguments after `doctor`.
+pub fn main(args: Vec<String>) -> ExitCode {
+    let options = match parse_args(args) {
         Ok(Command::Run(options)) => options,
         Ok(Command::Help) => {
             print!("{USAGE}");
             return ExitCode::SUCCESS;
         }
         Ok(Command::Version) => {
-            println!("otto-doctor {}", env!("CARGO_PKG_VERSION"));
+            println!("otto-msg {}", env!("CARGO_PKG_VERSION"));
             return ExitCode::SUCCESS;
         }
         Err(message) => {
-            eprintln!("otto-doctor: {message}\n\n{USAGE}");
+            eprintln!("otto-msg doctor: {message}\n\n{USAGE}");
             return ExitCode::from(2);
         }
     };
     match run(&options) {
         Ok(()) => ExitCode::SUCCESS,
         Err(message) => {
-            eprintln!("otto-doctor: {message}");
+            eprintln!("otto-msg doctor: {message}");
             ExitCode::FAILURE
         }
     }

@@ -1,6 +1,6 @@
-# Reporting a bug with otto-doctor
+# Reporting a bug
 
-`otto-doctor` gathers what a bug report about Otto needs, lets you choose what
+`otto-msg doctor` gathers what a bug report about Otto needs, lets you choose what
 to share, and writes it as one Markdown file you attach to an issue. It never
 uploads anything: the file stays on your computer until you attach it.
 
@@ -9,7 +9,7 @@ uploads anything: the file stays on your computer until you attach it.
 Open a terminal and run:
 
 ```sh
-otto-doctor
+otto-msg doctor
 ```
 
 It lists the parts of a report, each with a one-line summary:
@@ -46,7 +46,7 @@ the section, and `q` goes back to the list.
 
 The report is written to `~/.local/state/otto/otto-report-<date>-<time>.md`
 (under `$XDG_STATE_HOME` when that is set) and copied to the clipboard when
-`wl-copy` is installed. otto-doctor then prints a link that opens a new issue
+`wl-copy` is installed. `otto-msg doctor` then prints a link that opens a new issue
 on GitHub with the summary filled in. Describe what happened, then drag the
 report file into the issue to attach it.
 
@@ -67,7 +67,7 @@ is not replaced.
 
 ## When Otto is not running
 
-otto-doctor asks the running Otto for its version, renderer and screens. When
+`otto-msg doctor` asks the running Otto for its version, renderer and screens. When
 it cannot, because Otto crashed or you are in another session, those sections
 say "compositor not reachable" and the report still has everything else. The
 configuration section then lists the usual files, and the session logs from
@@ -86,8 +86,8 @@ the last run are still there to include.
 | `-V`, `--version` | Print the version |
 | `-h`, `--help` | Print the options |
 
-When its output is not a terminal, otto-doctor prints the report, so
-`otto-doctor --all > report.md` works too.
+When its output is not a terminal, `otto-msg doctor` prints the report, so
+`otto-msg doctor --all > report.md` works too.
 
 ## See also
 

@@ -4,7 +4,7 @@ One typed zbus client proxy for every `org.otto.*` D-Bus interface: those the co
 
 How it works: [otto-dbus](../../docs/developer/otto-dbus.md).
 
-- **Layer:** foundation. Used by `otto-kit` (re-exported as `otto_kit::dbus`, the path toolkit apps use), and directly by `xdg-desktop-portal-otto`, `otto-agents`, `otto-rdp`, `otto-msg` and `otto-doctor`, which link it without pulling in Skia.
+- **Layer:** foundation. Used by `otto-kit` (re-exported as `otto_kit::dbus`, the path toolkit apps use), and directly by `xdg-desktop-portal-otto`, `otto-agents`, `otto-rdp` and `otto-msg`, which link it without pulling in Skia.
 
 ## Dependencies
 - **Internal:** none.

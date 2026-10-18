@@ -79,7 +79,7 @@ versions: useful day to day, still filling in.
 | Page | What it covers |
 |------|----------------|
 | [Troubleshooting](troubleshooting.md) | Logs, common failures, and how to report a bug |
-| [Reporting a Bug](bug-reports.md) | `otto-doctor`: gather system details and logs, choose what to share, attach one file |
+| [Reporting a Bug](bug-reports.md) | `otto-msg doctor`: gather system details and logs, choose what to share, attach one file |
 | [Credits](credits.md) | The wallpapers, icons and fonts in Otto's screenshots, and who they belong to |
 
 ## How it works, and helping build it

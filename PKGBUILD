@@ -100,10 +100,6 @@ package() {
     install -Dm755 target/release/otto-peek "$pkgdir/usr/bin/otto-peek"
     install -Dm755 target/release/otto-preview "$pkgdir/usr/bin/otto-preview"
     install -Dm755 target/release/otto-msg "$pkgdir/usr/bin/otto-msg"
-    # Older tarballs predate it.
-    if [ -f target/release/otto-doctor ]; then
-        install -Dm755 target/release/otto-doctor "$pkgdir/usr/bin/otto-doctor"
-    fi
     install -Dm755 target/release/otto-search "$pkgdir/usr/bin/otto-search"
     install -Dm755 target/release/otto-agents "$pkgdir/usr/bin/otto-agents"
     # Aliases: the launcher opens in ask or agents mode under these names.

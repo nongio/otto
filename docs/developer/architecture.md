@@ -90,7 +90,6 @@ flowchart BT
     otto_input_overlay[otto-input-overlay]
     otto_dictate[otto-dictate]
     otto_msg[otto-msg]
-    otto_doctor[otto-doctor]
     otto_agents[otto-agents]
     otto_rdp[otto-rdp]
     xdg_desktop_portal_otto[xdg-desktop-portal-otto]
@@ -117,8 +116,6 @@ flowchart BT
   otto_canvas --> otto_agents_kit
   otto_canvas --> otto_kit
   otto_dictate --> otto_kit
-  otto_doctor --> otto_dbus
-  otto_doctor --> otto_foundations
   otto_emoji --> otto_kit
   otto_files --> otto_kit
   otto_files --> otto_media_kit
@@ -138,6 +135,7 @@ flowchart BT
   otto_md_kit --> otto_kit
   otto_media_kit --> otto_kit
   otto_msg --> otto_dbus
+  otto_msg --> otto_foundations
   otto_pdf --> otto_foundations
   otto_peek --> otto_kit
   otto_peek --> otto_md_kit

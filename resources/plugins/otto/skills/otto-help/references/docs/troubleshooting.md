@@ -158,9 +158,9 @@ tells you quickly.
 
 ## Reporting a bug
 
-The quickest way is `otto-doctor`: it gathers the system details, your
+The quickest way is `otto-msg doctor`: it gathers the system details, your
 configuration and the session logs, lets you choose what to share, and writes
-one file to attach. See [Reporting a bug with otto-doctor](bug-reports.md).
+one file to attach. See [Reporting a bug](bug-reports.md).
 
 Otherwise, open an issue at
 [github.com/nongio/otto](https://github.com/nongio/otto/issues) with:

@@ -27,7 +27,7 @@ zbus generates an async proxy (`SettingsProxy`) and a blocking one
 ## Who links it
 
 The crate has no UI and no async runtime of its own, so the portal backend,
-`otto-agents`, `otto-rdp`, `otto-msg` and `otto-doctor` link it without pulling in Skia.
+`otto-agents`, `otto-rdp` and `otto-msg` link it without pulling in Skia.
 otto-kit re-exports it as `otto_kit::dbus`, and toolkit apps use that path.
 
 It takes zbus from `[workspace.dependencies]`, like every other member, so

@@ -8,10 +8,10 @@
 
 use std::io;
 
-use crate::redact::Redactor;
-use crate::report::{self, Redaction};
-use crate::sections::Section;
-use crate::term::{self, Key, Terminal};
+use crate::doctor::redact::Redactor;
+use crate::doctor::report::{self, Redaction};
+use crate::doctor::sections::Section;
+use crate::doctor::term::{self, Key, Terminal};
 
 const RESET: &str = "\x1b[0m";
 const BOLD: &str = "\x1b[1m";

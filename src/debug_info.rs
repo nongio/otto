@@ -1,7 +1,7 @@
 //! What a bug report needs to know about the running compositor.
 //!
 //! Served as JSON by `org.otto.Compositor.DebugInfo` (see
-//! `docs/developer/compositor-dbus-api.md`) and read by `otto-doctor`.
+//! `docs/developer/compositor-dbus-api.md`) and read by `otto-msg doctor`.
 
 // Rust guideline compliant 2026-02-21
 

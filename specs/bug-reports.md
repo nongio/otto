@@ -1,11 +1,11 @@
-# Bug reports (otto-doctor)
+# Bug reports (`otto-msg doctor`)
 
 **Status:** draft
 **Related specs:** none
 
 ## Summary
 
-`otto-doctor` puts together what a bug report about Otto needs in one Markdown
+`otto-msg doctor` puts together what a bug report about Otto needs in one Markdown
 file, after the user has chosen and seen exactly what goes in it. It exists
 because most reports arrive without the version, the graphics driver or the
 log that would make them fixable, and gathering those by hand takes a dozen

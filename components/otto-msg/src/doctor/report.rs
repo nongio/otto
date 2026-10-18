@@ -4,8 +4,8 @@
 
 use std::fmt::Write as _;
 
-use crate::redact::Redactor;
-use crate::sections::Section;
+use crate::doctor::redact::Redactor;
+use crate::doctor::sections::Section;
 
 /// Where a new issue is opened.
 pub const NEW_ISSUE_URL: &str = "https://github.com/nongio/otto/issues/new";
@@ -108,7 +108,7 @@ pub fn render(sections: &[Section], redaction: Redaction<'_>, when: Timestamp) -
     let mut out = String::from("# Otto bug report\n\n");
     let _ = writeln!(
         out,
-        "Written by otto-doctor {} on {}.",
+        "Written by otto-msg doctor {} on {}.",
         env!("CARGO_PKG_VERSION"),
         when.display()
     );
@@ -151,7 +151,7 @@ fn issue_body(summaries: &[String], file_name: &str) -> String {
     }
     let _ = write!(
         body,
-        "\nThe full report is {file_name}, written by otto-doctor. \
+        "\nThe full report is {file_name}, written by otto-msg doctor. \
          Please attach it here (drag the file into this box)."
     );
     body
@@ -187,7 +187,7 @@ pub fn issue_url(sections: &[Section], redaction: Redaction<'_>, file_name: &str
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sections::SectionId;
+    use crate::doctor::sections::SectionId;
 
     fn section(id: SectionId, title: &'static str, summary: &str, include: bool) -> Section {
         Section {

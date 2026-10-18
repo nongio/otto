@@ -105,8 +105,7 @@ works, where one exists.
 | [otto-agents](../../components/otto-agents/) | Otto's agent service: runs ACP agents and serves them over the Agent Host Protocol | [Agents](agents.md) |
 | [otto-rdp](../../components/otto-rdp/) | The RDP bridge that serves an Otto output and forwards remote input | [RDP Bridge](rdp-virtual-output.md) |
 | [xdg-desktop-portal-otto](../../components/xdg-desktop-portal-otto/) | Otto's xdg-desktop-portal backend: screen sharing, settings, dialogs, screenshots and file chooser | [The Portal Backend](xdg-desktop-portal-otto.md) |
-| [otto-msg](../../components/otto-msg/) | The command-line tool that drives Otto from scripts over `org.otto.Shell1` | [Shell D-Bus API](shell-dbus-api.md) |
-| [otto-doctor](../../components/otto-doctor/) | The bug-report helper: gathers system details, configuration and logs, lets the user choose and redact, writes one Markdown file | [Compositor D-Bus API](compositor-dbus-api.md) |
+| [otto-msg](../../components/otto-msg/) | The command-line tool that drives Otto from scripts over `org.otto.Shell1`, and writes bug reports with `otto-msg doctor` | [Shell D-Bus API](shell-dbus-api.md), [Compositor D-Bus API](compositor-dbus-api.md) |
 | [otto-input-overlay](../../components/otto-input-overlay/) | On-screen touchpad and key-press overlays for screen recordings |  |
 | [otto-dictate](../../components/otto-dictate/) | A proof of concept: dictation as a Wayland input method, with live text and an equaliser at the caret |  |
 

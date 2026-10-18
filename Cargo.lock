@@ -5374,18 +5374,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "otto-doctor"
-version = "1.8.0"
-dependencies = [
- "libc",
- "otto-dbus",
- "otto-foundations",
- "serde_json",
- "tempfile",
- "zbus",
-]
-
-[[package]]
 name = "otto-emoji"
 version = "1.8.0"
 dependencies = [
@@ -5578,8 +5566,11 @@ dependencies = [
 name = "otto-msg"
 version = "1.8.0"
 dependencies = [
+ "libc",
  "otto-dbus",
+ "otto-foundations",
  "serde_json",
+ "tempfile",
  "zbus",
 ]
 
