@@ -416,6 +416,9 @@ fn select_ids() -> Vec<&'static str> {
     // be built later: the list is editable, and a line added at runtime has to
     // find its menu already made.
     ids.extend_from_slice(keyboard::slot_ids());
+    // The menu a list box's "+" opens: no row carries it, so the walk above
+    // does not find it.
+    ids.push(panes::startup::ADD_MENU_ID);
     // The Displays pane's resolution and refresh pop-ups. They already come
     // back from the walk above — the rows carry an `id` — but only while the
     // pane has a display to show, and a session that gains its first output
@@ -623,6 +626,8 @@ fn open_menu(
             choices
         } else if let Some(choices) = panes::desk::menu_choices(select.id) {
             choices
+        } else if let Some(choices) = panes::startup::menu_choices(select.id) {
+            choices
         } else if let Some(choices) = panes::dictation::menu_choices(select.id) {
             choices
         } else if let Some(choices) = panes::top_bar::menu_choices(select.id, &select.current) {
@@ -695,6 +700,7 @@ fn open_menu(
                     || panes::sound::choose(id, value)
                     || panes::keyboard_layouts::choose(id, value)
                     || panes::desk::choose(id, value)
+                    || panes::startup::choose(id, value)
                     || panes::dictation::choose(id, value)
                 {
                 } else if displays::menu_choices(id).is_some() {
@@ -760,6 +766,9 @@ fn released_on(settings: &Settings, held: view::Pressed, x: f32, y: f32, offset:
         ),
         view::Pressed::RemoveRow(id) => settings.row_remove_hit(x, y, offset) == Some(id),
         view::Pressed::User(hit) => settings.users_hit(x, y, offset) == Some(hit),
+        view::Pressed::List { row, hit } => settings
+            .list_box_hit(x, y, offset)
+            .is_some_and(|press| press.row == row && press.hit == hit),
         view::Pressed::Add => matches!(
             settings.shortcut_hit(x, y, offset),
             Some(view::ShortcutHit::Add)
@@ -791,7 +800,6 @@ fn activate(held: view::Pressed, editing: &Arc<Mutex<Option<Editing>>>) {
             panes::agents::press(row, button);
             panes::search::press(row, button);
             panes::desk::press(row, button);
-            panes::startup::press(row, button);
             panes::dictation::press(row, button);
             panes::keyboard_layouts::press(row, button);
             if let Some((id, name)) = agents::take_rename() {
@@ -826,11 +834,11 @@ fn activate(held: view::Pressed, editing: &Arc<Mutex<Option<Editing>>>) {
                 focus_sheet_field(editing, 0);
             }
         }
+        view::Pressed::List { row, hit } => panes::startup::list_activate(row, hit),
         view::Pressed::RemoveRow(id) => {
             panes::keyboard_layouts::remove(id);
             panes::search::remove(id);
             panes::privacy::remove(id);
-            panes::startup::remove(id);
         }
         // A second press on the listening line's button stops it.
         view::Pressed::Record(index) => keyboard::set_recording(
@@ -1105,6 +1113,7 @@ fn describe_row(tree: &mut A11yTree, row: &model::Row, bounds: Rect) {
                 Some(id) => panes::keyboard_layouts::display(id, current)
                     .or_else(|| panes::top_bar::display(id, current))
                     .or_else(|| panes::desk::display(id, current))
+                    .or_else(|| panes::startup::display(id, current))
                     .or_else(|| panes::dictation::display(id, current))
                     .or_else(|| panes::sound::display(id, current))
                     .unwrap_or_else(|| settings_client::display_choice(id, current)),
@@ -1172,6 +1181,15 @@ fn describe_row(tree: &mut A11yTree, row: &model::Row, bounds: Rect) {
         model::Control::Shortcut { .. } | model::Control::AddShortcut => {}
         // One stop, as the keyboard has it: the arrow keys move between the
         // tabs, and what is heard is the tab that is open.
+        model::Control::ListBox(list) => {
+            tree.control(focus, bounds, Role::List, true, |node| {
+                node.set_label(label);
+                if let Some(item) = list.selected.and_then(|index| list.items.get(index)) {
+                    node.set_value(item.title.clone());
+                }
+                describe(node);
+            });
+        }
         model::Control::Tabs { labels, selected } => {
             tree.control(focus, bounds, Role::TabList, true, |node| {
                 node.set_label(label);
@@ -2716,6 +2734,43 @@ impl App for SettingsApp {
                                 settings.dark,
                             );
                             mark_pane_dirty(&pane_dirty);
+                        } else if let Some(press) = settings.list_box_hit(x, y, offset) {
+                            // A tick and a pick act at once, and a pick is
+                            // where a drag starts; "+" opens its menu at once,
+                            // as a pop-up does; "−" and the text button act on
+                            // release, like every other push button.
+                            match press.hit {
+                                view::ListBoxHit::Check(index) => {
+                                    panes::startup::list_check(press.row, index);
+                                }
+                                view::ListBoxHit::Item(index) => {
+                                    commit_edit(&editing_hit);
+                                    panes::startup::list_pick(press.row, index);
+                                }
+                                view::ListBoxHit::Add => {
+                                    close_pickers(&pickers, &open_picker);
+                                    open_menu(
+                                        &dropdowns,
+                                        &open_dropdown,
+                                        &pane_dirty,
+                                        &redraw,
+                                        view::SelectHit {
+                                            id: panes::startup::ADD_MENU_ID,
+                                            rect: press.anchor,
+                                            current: String::new(),
+                                        },
+                                        event_serial(&event.kind),
+                                        false,
+                                    );
+                                }
+                                hit => {
+                                    *pressed_hit.lock().unwrap() = Some(view::Pressed::List {
+                                        row: press.row,
+                                        hit,
+                                    });
+                                }
+                            }
+                            mark_pane_dirty(&pane_dirty);
                         } else if let Some(hit) = settings.users_hit(x, y, offset) {
                             // Picking someone in the users list shows them at
                             // once, as the sidebar does; + and − act on
@@ -2844,6 +2899,7 @@ impl App for SettingsApp {
                             pane.pointer_up();
                         }
                         *dragging.lock().unwrap() = None;
+                        panes::startup::end_drag();
 
                         // A button acts here, not on the press — and only if
                         // the pointer is still on the one it went down on. A
@@ -2933,6 +2989,24 @@ impl App for SettingsApp {
                                 *pressed_hit.lock().unwrap() = None;
                                 mark_pane_dirty(&pane_dirty);
                                 redraw.request_frame();
+                            }
+                        }
+
+                        // An item held in a list box follows the pointer: it
+                        // moves a place each time the pointer crosses into
+                        // the next item.
+                        if let Some(row) = panes::startup::dragging() {
+                            let settings = current_settings(
+                                &selected,
+                                &size_hit,
+                                &toggle_flips,
+                                &editing_hit,
+                                &pressed_hit,
+                                &hovered_preview,
+                            );
+                            let over = settings.list_box_item_at(row, y, pane_offset(&pane));
+                            if let Some(over) = over {
+                                panes::startup::drag_over(over);
                             }
                         }
 
@@ -3085,6 +3159,20 @@ impl App for SettingsApp {
         agents::set_shown(*self.selected.lock().unwrap() == model::AGENTS_PANE);
         // So does the Dictation pane about its engines.
         panes::dictation::set_shown(*self.selected.lock().unwrap() == model::DICTATION_PANE);
+
+        // "Command…" from a list box's "+" shows the field a command is typed
+        // into, and the keyboard goes straight to it.
+        if panes::startup::take_command_request() {
+            start_edit(
+                &self.editing,
+                EditTarget::Setting(panes::startup::ADD_ID),
+                String::new(),
+                f32::MAX,
+                widgets::TEXT_W,
+                current_color_scheme() == ColorScheme::Dark,
+            );
+            mark_pane_dirty(&self.pane_dirty);
+        }
 
         if settings_client::take_dirty()
             | agents::take_service_dirty()

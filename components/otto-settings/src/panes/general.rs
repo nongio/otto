@@ -97,7 +97,7 @@ fn renderer_row() -> Row {
 
 /// The row that shows where settings are written, and the button that opens
 /// it. Matched by label, the way every unbound row in this app is.
-pub(crate) fn config_file() -> &'static str {
+fn config_file() -> &'static str {
     otto_kit::t!("settings-configuration-file")
 }
 fn open() -> &'static str {
@@ -105,7 +105,7 @@ fn open() -> &'static str {
 }
 
 /// The row's single button, as the `'static` slice a button row wants.
-pub(crate) fn open_button() -> &'static [&'static str] {
+fn open_button() -> &'static [&'static str] {
     static BUTTONS: std::sync::OnceLock<Vec<&'static str>> = std::sync::OnceLock::new();
     BUTTONS.get_or_init(|| vec![open()])
 }

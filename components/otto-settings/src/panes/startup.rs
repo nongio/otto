@@ -14,18 +14,15 @@
 //! list in before changing it, so turning one component off does not turn
 //! off the rest with it.
 //!
-//! One list: every entry in the order the compositor starts them, with ↑ and
-//! ↓ to move one and a "−" to take it out, then each component that does not
-//! start with an Add that puts it back at the end. *Add command* appends a
-//! command typed in, and *Add app or program* one chosen through the portal:
-//! an application's `.desktop` entry or a program file.
-//!
-//! The XDG switch is `xdg_autostart`, which also starts the entries in the
-//! autostart folders. Not a session setting either, so it is written here
-//! the same way. The last row opens the file, through the General pane's
-//! own row of the same name.
+//! A pop-up says where startup apps come from: Otto's list alone, or the
+//! XDG autostart folders too (`xdg_autostart`, written here the same way).
+//! Under it, one list box holds every entry in the order the compositor
+//! starts them: a checkbox switches one off where it stands (`enabled =
+//! false`), a drag moves it, "+" adds an app or program through the portal
+//! or a typed command, and "−" takes the picked one out. Otto's own apps are
+//! only ever switched off, never taken out; one missing from the list is
+//! offered unticked at its end. The footer's text button opens the file.
 
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
@@ -35,8 +32,10 @@ use toml_edit::{ArrayOfTables, DocumentMut, Item};
 
 use otto_kit::portal_file_chooser::{Outcome, Request, Rule};
 
-use crate::model::{group, Control, Group, Row};
+use crate::discovery::Choice;
+use crate::model::{group, Control, Group, ListBox, ListBoxItem, Row};
 use crate::settings_client::{self, Value};
+use crate::view::ListBoxHit;
 
 /// The key the compositor reads the list from.
 const KEY: &str = "exec_once";
@@ -44,21 +43,24 @@ const KEY: &str = "exec_once";
 /// The system's configuration, the bottom layer.
 const SYSTEM_CONFIG: &str = "/etc/otto/config.toml";
 
-/// The row of a component that does not start is this followed by its
-/// program. Not session settings: the group answers for them.
-const COMPONENT_ROW: &str = "startup.component.";
+/// The list box. Not session settings, this and the ids below: the group
+/// answers for them.
+const LIST_ID: &str = "startup.list";
 
-/// An entry's row identifier is this followed by its place and command line.
-const COMMAND_ROW: &str = "startup.command.";
+/// The menu the list box's "+" opens, and its two choices.
+pub const ADD_MENU_ID: &str = "startup.add-menu";
+const ADD_APP: &str = "app";
+const ADD_COMMAND: &str = "command";
 
-/// The *Add command* field.
-const ADD_ID: &str = "startup.add";
+/// The field a typed command goes into, shown after "Command…".
+pub const ADD_ID: &str = "startup.add";
 
 /// The key that also starts the autostart folders' entries.
 const XDG_KEY: &str = "xdg_autostart";
 
-/// Its switch.
+/// The pop-up that writes it, and what it may hold: off, then on.
 const XDG_ID: &str = "startup.xdg";
+const SOURCES: [&str; 2] = ["otto", "otto-xdg"];
 
 /// Where the picker opens: the installed applications.
 const APPLICATIONS: &str = "/usr/share/applications";
@@ -93,6 +95,8 @@ const COMPONENTS: [(&str, &str, &str); 4] = [
 struct Entry {
     cmd: String,
     args: Vec<String>,
+    /// `enabled`, which the compositor reads as true when it is missing.
+    enabled: bool,
 }
 
 impl Entry {
@@ -126,6 +130,9 @@ impl Entry {
             args.push(arg.as_str());
         }
         table["args"] = toml_edit::value(args);
+        if !self.enabled {
+            table["enabled"] = toml_edit::value(false);
+        }
         table
     }
 }
@@ -165,6 +172,7 @@ fn parse_line(line: &str) -> Option<Entry> {
     Some(Entry {
         cmd,
         args: words.collect(),
+        enabled: true,
     })
 }
 
@@ -179,11 +187,13 @@ fn entry_for_file(path: &Path, text: Option<&str>) -> Option<Entry> {
         return Some(Entry {
             cmd: argv.next()?,
             args: argv.collect(),
+            enabled: true,
         });
     }
     Some(Entry {
         cmd: path.to_str()?.to_string(),
         args: Vec::new(),
+        enabled: true,
     })
 }
 
@@ -223,7 +233,8 @@ fn entry(table: &dyn toml_edit::TableLike) -> Option<Entry> {
                 .collect()
         })
         .unwrap_or_default();
-    Some(Entry { cmd, args })
+    let enabled = table.get("enabled").and_then(Item::as_bool).unwrap_or(true);
+    Some(Entry { cmd, args, enabled })
 }
 
 /// The list `item` holds: `[[exec_once]]` tables, or an inline array.
@@ -406,6 +417,7 @@ fn with_component(
                     Entry {
                         cmd: program.to_string(),
                         args: Vec::new(),
+                        enabled: true,
                     }
                     .table(),
                 );
@@ -436,6 +448,30 @@ fn find_entry(tables: &ArrayOfTables, index: usize, line: &str) -> Option<usize>
         return Some(index);
     }
     tables.iter().position(reads)
+}
+
+/// `text` with the entry the list showed at `index` switched on or off where
+/// it stands. On drops the key rather than writing `true`, which is what a
+/// missing one means.
+fn with_enabled(
+    text: &str,
+    inherited: &[Entry],
+    index: usize,
+    line: &str,
+    on: bool,
+) -> Result<String, String> {
+    edited(text, inherited, |tables| {
+        let Some(index) = find_entry(tables, index, line) else {
+            return;
+        };
+        if let Some(table) = tables.get_mut(index) {
+            if on {
+                table.remove("enabled");
+            } else {
+                table["enabled"] = toml_edit::value(false);
+            }
+        }
+    })
 }
 
 /// `text` without the entry a row showed at `index`.
@@ -534,164 +570,304 @@ fn write_atomically(path: &Path, text: &str) -> std::io::Result<()> {
     std::fs::rename(&temp, path)
 }
 
-/// `text` as a `&'static str`, kept once however often it is asked for: row
-/// labels and identifiers are static, and command lines are not known until
-/// the list is read.
-fn intern(text: String) -> &'static str {
-    static INTERNED: OnceLock<Mutex<HashMap<String, &'static str>>> = OnceLock::new();
-    let mut interned = INTERNED.get_or_init(Default::default).lock().unwrap();
-    interned
-        .entry(text)
-        .or_insert_with_key(|text| text.clone().leak())
+/// What the list box keeps between frames: the item picked, the one being
+/// dragged, and whether the field for a typed command is showing.
+#[derive(Default)]
+struct Ui {
+    selected: Option<usize>,
+    dragging: Option<usize>,
+    adding: bool,
+    /// Set when "Command…" is chosen, until `main.rs` puts the keyboard in
+    /// the field.
+    focus_field: bool,
 }
 
-/// The Start at login group: every entry in the order the compositor starts
-/// them, the components not started after them with an Add, then the rows
-/// that add a command, the XDG switch and the file.
-pub fn groups() -> Vec<Group> {
-    vec![start_group(&list())]
+fn ui() -> std::sync::MutexGuard<'static, Ui> {
+    static UI: OnceLock<Mutex<Ui>> = OnceLock::new();
+    UI.get_or_init(Default::default).lock().unwrap()
 }
 
-fn add_label() -> &'static str {
-    otto_kit::t!("common-add")
-}
-fn add_buttons() -> &'static [&'static str] {
-    static BUTTONS: OnceLock<Vec<&'static str>> = OnceLock::new();
-    BUTTONS.get_or_init(|| vec![add_label()])
+/// Repaint after a change to [`Ui`].
+fn changed() {
+    DIRTY.store(true, Ordering::Relaxed);
+    otto_kit::AppContext::request_wakeup();
 }
 
-/// The buttons that move an entry one place earlier or later.
-fn move_buttons() -> &'static [&'static str] {
-    &[MOVE_UP, MOVE_DOWN]
+/// One line of the list box: an entry the list has, or a component it does
+/// not, offered unticked at the end so it can be put back.
+enum Line {
+    Entry(usize, Entry),
+    Missing(&'static str),
 }
 
-const MOVE_UP: &str = "↑";
-const MOVE_DOWN: &str = "↓";
-
-/// An entry's row identifier: its place in the list and its command line,
-/// so a press acts on the entry the row showed even if the file has changed
-/// under it since.
-fn entry_row_id(index: usize, entry: &Entry) -> &'static str {
-    intern(format!("{COMMAND_ROW}{index}:{}", entry.line()))
-}
-
-/// The place and command line an entry's row identifier carries.
-fn entry_of_row(id: &str) -> Option<(usize, &str)> {
-    let (index, line) = id.strip_prefix(COMMAND_ROW)?.split_once(':')?;
-    Some((index.parse().ok()?, line))
-}
-
-/// A row per entry, in launch order: a component by its name, anything
-/// else by its command line, each with ↑ and ↓ and a "−".
-fn order_rows(entries: &[Entry]) -> Vec<Row> {
-    entries
+/// The list box's lines, in order.
+fn lines(entries: &[Entry]) -> Vec<Line> {
+    let mut lines: Vec<Line> = entries
         .iter()
+        .cloned()
         .enumerate()
-        .map(|(index, entry)| {
-            let component = COMPONENTS.iter().find(|(program, ..)| entry.runs(program));
-            let mut row = match component {
-                Some((_, label, detail)) => {
-                    Row::new(otto_kit::t!(*label), Control::Button(move_buttons()))
-                        .detail(otto_kit::t!(*detail))
-                }
-                None => Row::new(intern(entry.line()), Control::Button(move_buttons())),
-            }
-            .removable(true);
-            row.id = Some(entry_row_id(index, entry));
-            row
-        })
-        .collect()
-}
-
-fn start_group(list: &List) -> Group {
-    let mut rows = order_rows(&list.entries);
-    // A component that does not start is still offered, after the list, so
-    // it can be put back; it joins at the end.
-    rows.extend(
+        .map(|(index, entry)| Line::Entry(index, entry))
+        .collect();
+    lines.extend(
         COMPONENTS
             .iter()
-            .filter(|(program, ..)| !list.entries.iter().any(|entry| entry.runs(program)))
-            .map(|(program, label, detail)| {
-                let mut row = Row::new(otto_kit::t!(*label), Control::Button(add_buttons()))
-                    .detail(otto_kit::t!(*detail));
-                row.id = Some(intern(format!("{COMPONENT_ROW}{program}")));
-                row
-            }),
+            .filter(|(program, ..)| !entries.iter().any(|entry| entry.runs(program)))
+            .map(|(program, ..)| Line::Missing(program)),
     );
-    let detail = if list.own {
-        otto_kit::t!("settings-startup-add-detail")
-    } else {
-        otto_kit::t!("settings-startup-system-detail")
-    };
-    let mut add = Row::new(
-        otto_kit::t!("settings-startup-add"),
-        Control::Text(String::new()),
-    )
-    .detail(detail);
-    add.id = Some(ADD_ID);
-    rows.push(add);
-    rows.push(
-        Row::new(add_app_label(), Control::Button(choose_buttons()))
-            .detail(otto_kit::t!("settings-startup-add-app-detail")),
-    );
-    let mut xdg = Row::new(
-        otto_kit::t!("settings-startup-xdg"),
-        Control::Toggle(list.xdg),
+    lines
+}
+
+/// The component `entry` starts, if it is one of Otto's.
+fn component_of(entry: &Entry) -> Option<&'static (&'static str, &'static str, &'static str)> {
+    COMPONENTS.iter().find(|(program, ..)| entry.runs(program))
+}
+
+fn list_item(line: &Line) -> ListBoxItem {
+    match line {
+        Line::Entry(_, entry) => match component_of(entry) {
+            Some((_, label, detail)) => ListBoxItem {
+                title: otto_kit::t_owned!(*label),
+                subtitle: Some(otto_kit::t_owned!(*detail)),
+                checked: entry.enabled,
+            },
+            None => ListBoxItem {
+                title: Path::new(&entry.cmd)
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or(&entry.cmd)
+                    .to_string(),
+                subtitle: Some(entry.line()),
+                checked: entry.enabled,
+            },
+        },
+        Line::Missing(program) => {
+            let (_, label, detail) = COMPONENTS
+                .iter()
+                .find(|(known, ..)| known == program)
+                .expect("a missing line is one of the components");
+            ListBoxItem {
+                title: otto_kit::t_owned!(*label),
+                subtitle: Some(otto_kit::t_owned!(*detail)),
+                checked: false,
+            }
+        }
+    }
+}
+
+/// The Start at login group: where startup apps come from, the list of them
+/// in launch order, and the field a typed command goes into while it is
+/// being added.
+pub fn groups() -> Vec<Group> {
+    let list = list();
+    let lines = lines(&list.entries);
+    let ui = ui();
+    let selected = ui.selected.filter(|index| *index < lines.len());
+    // Otto's own apps are switched off, never taken out.
+    let can_remove = selected
+        .and_then(|index| lines.get(index))
+        .is_some_and(|line| matches!(line, Line::Entry(_, entry) if component_of(entry).is_none()));
+    let mut source = Row::new(
+        otto_kit::t!("settings-startup-apps"),
+        Control::Select(source_value(list.xdg).to_string()),
     )
     .detail(otto_kit::t!("settings-startup-xdg-detail"));
-    xdg.id = Some(XDG_ID);
-    rows.push(xdg);
-    // The General pane's row, label and button alike, so its press opens the
-    // same file from here.
-    rows.push(
-        Row::new(
-            super::general::config_file(),
-            Control::Button(super::general::open_button()),
-        )
-        .detail(
-            writable_path()
-                .map(|path| path.display().to_string())
-                .unwrap_or_else(|| otto_kit::t_owned!("settings-configuration-file-unknown")),
-        ),
+    source.id = Some(XDG_ID);
+    let mut rows = vec![source];
+    let mut items = Row::new(
+        otto_kit::t!("settings-startup-list"),
+        Control::ListBox(ListBox {
+            items: lines.iter().map(list_item).collect(),
+            selected,
+            can_remove,
+            action: Some(otto_kit::t!("settings-startup-open-config")),
+        }),
     );
-    group(otto_kit::t!("settings-group-start-at-login"), rows)
+    items.id = Some(LIST_ID);
+    rows.push(items);
+    if ui.adding {
+        let mut field = Row::new(
+            otto_kit::t!("settings-startup-add"),
+            Control::Text(String::new()),
+        )
+        .detail(otto_kit::t!("settings-startup-add-detail"));
+        field.id = Some(ADD_ID);
+        rows.push(field);
+    }
+    vec![group(otto_kit::t!("settings-group-start-at-login"), rows)]
 }
 
-fn add_app_label() -> &'static str {
-    otto_kit::t!("settings-startup-add-app")
-}
-fn choose_label() -> &'static str {
-    otto_kit::t!("settings-search-choose")
-}
-fn choose_buttons() -> &'static [&'static str] {
-    static BUTTONS: OnceLock<Vec<&'static str>> = OnceLock::new();
-    BUTTONS.get_or_init(|| vec![choose_label()])
+/// What the source pop-up holds for `xdg`.
+fn source_value(xdg: bool) -> &'static str {
+    if xdg {
+        SOURCES[1]
+    } else {
+        SOURCES[0]
+    }
 }
 
-/// A press on one of the group's push buttons. The file's Open is the
-/// General pane's to answer.
-pub fn press(row: &str, button: &str) {
-    if row == add_app_label() && button == choose_label() {
-        choose_app();
+fn source_label(value: &str) -> String {
+    if value == SOURCES[1] {
+        otto_kit::t_owned!("settings-startup-apps-xdg")
+    } else {
+        otto_kit::t_owned!("settings-startup-apps-otto")
+    }
+}
+
+/// The choices for the source pop-up and for the menu "+" opens.
+pub fn menu_choices(id: &str) -> Option<Vec<Choice>> {
+    let choice = |label: String, value: &str| Choice {
+        label,
+        value: value.to_string(),
+    };
+    match id {
+        XDG_ID => Some(
+            SOURCES
+                .iter()
+                .map(|value| choice(source_label(value), value))
+                .collect(),
+        ),
+        ADD_MENU_ID => Some(vec![
+            choice(otto_kit::t_owned!("settings-startup-menu-app"), ADD_APP),
+            choice(
+                otto_kit::t_owned!("settings-startup-menu-command"),
+                ADD_COMMAND,
+            ),
+        ]),
+        _ => None,
+    }
+}
+
+/// What the source pop-up shows for `value`, or `None` for any other.
+pub fn display(id: &str, value: &str) -> Option<String> {
+    (id == XDG_ID).then(|| source_label(value))
+}
+
+/// Take a choice from the source pop-up or the "+" menu. Returns whether `id`
+/// was the group's.
+pub fn choose(id: &str, value: &str) -> bool {
+    match id {
+        XDG_ID => {
+            let on = value == SOURCES[1];
+            write(move |text, _| with_xdg(text, on));
+            true
+        }
+        ADD_MENU_ID => {
+            match value {
+                ADD_APP => choose_app(),
+                ADD_COMMAND => {
+                    let mut ui = ui();
+                    ui.adding = true;
+                    ui.focus_field = true;
+                    drop(ui);
+                    changed();
+                }
+                _ => {}
+            }
+            true
+        }
+        _ => false,
+    }
+}
+
+/// Whether "Command…" asked for the keyboard to go to the command field
+/// since the last call.
+pub fn take_command_request() -> bool {
+    std::mem::take(&mut ui().focus_field)
+}
+
+/// A press on an item's checkbox: an entry switched on or off where it
+/// stands, or a missing component put back at the end.
+pub fn list_check(row: &str, index: usize) {
+    if row != LIST_ID {
         return;
     }
-    if let Some(program) = row.strip_prefix(COMPONENT_ROW) {
-        let known = COMPONENTS.iter().find(|(known, ..)| *known == program);
-        if let (Some((program, ..)), true) = (known, button == add_label()) {
+    match lines(&list().entries).into_iter().nth(index) {
+        Some(Line::Entry(index, entry)) => {
+            let line = entry.line();
+            let on = !entry.enabled;
+            write(move |text, inherited| with_enabled(text, inherited, index, &line, on));
+        }
+        Some(Line::Missing(program)) => {
             write(move |text, inherited| with_component(text, inherited, program, true));
         }
+        None => {}
+    }
+}
+
+/// A press on an item anywhere but its checkbox: it is picked, and held for
+/// a drag if it is in the list.
+pub fn list_pick(row: &str, index: usize) {
+    if row != LIST_ID {
         return;
     }
-    let Some((index, line)) = entry_of_row(row) else {
+    let in_list = index < list().entries.len();
+    let mut ui = ui();
+    ui.selected = Some(index);
+    ui.dragging = in_list.then_some(index);
+    drop(ui);
+    changed();
+}
+
+/// The list box an item is being dragged in, if one is.
+pub fn dragging() -> Option<&'static str> {
+    ui().dragging.map(|_| LIST_ID)
+}
+
+/// The held item is over the item at `over`: it moves a place towards it,
+/// and the next motion moves it on.
+pub fn drag_over(over: usize) {
+    let Some(from) = ui().dragging else {
         return;
     };
-    let step = match button {
-        MOVE_UP => -1,
-        MOVE_DOWN => 1,
-        _ => return,
+    let entries = list().entries;
+    let over = over.min(entries.len().saturating_sub(1));
+    if over == from {
+        return;
+    }
+    let Some(line) = entries.get(from).map(Entry::line) else {
+        return;
     };
-    let line = line.to_string();
-    write(move |text, inherited| moved(text, inherited, index, &line, step));
+    let step: isize = if over > from { 1 } else { -1 };
+    write(move |text, inherited| moved(text, inherited, from, &line, step));
+    let to = from.saturating_add_signed(step);
+    let mut ui = ui();
+    ui.dragging = Some(to);
+    ui.selected = Some(to);
+}
+
+/// The pointer let go: nothing is held any more.
+pub fn end_drag() {
+    ui().dragging = None;
+}
+
+/// A footer button let go on: "−" takes the picked entry out, the text
+/// button opens the file.
+pub fn list_activate(row: &str, hit: ListBoxHit) {
+    if row != LIST_ID {
+        return;
+    }
+    match hit {
+        ListBoxHit::Remove => {
+            let picked = ui().selected;
+            let entries = list().entries;
+            let Some((index, entry)) = picked.and_then(|index| Some((index, entries.get(index)?)))
+            else {
+                return;
+            };
+            if component_of(entry).is_some() {
+                return;
+            }
+            let line = entry.line();
+            write(move |text, inherited| without_entry(text, inherited, index, &line));
+            ui().selected = None;
+        }
+        ListBoxHit::Action => {
+            if let Some(path) = writable_path() {
+                super::open_in_default_app(&path);
+            }
+        }
+        ListBoxHit::Add | ListBoxHit::Item(_) | ListBoxHit::Check(_) => {}
+    }
 }
 
 /// Ask for an application or a program through the desktop portal and add
@@ -738,16 +914,9 @@ fn choose_app() {
     }
 }
 
-/// Take the XDG switch or a new command into the configuration. Returns whether
-/// `id` was the group's, taken or not.
+/// Take a typed command into the list. Returns whether `id` was the
+/// group's, taken or not.
 pub fn apply(id: &str, value: &Value) -> bool {
-    if id == XDG_ID {
-        if let Value::Bool(on) = value {
-            let on = *on;
-            write(move |text, _| with_xdg(text, on));
-        }
-        return true;
-    }
     if id != ADD_ID {
         return false;
     }
@@ -757,16 +926,9 @@ pub fn apply(id: &str, value: &Value) -> bool {
     } {
         write(move |text, inherited| with_command(text, inherited, &entry));
     }
+    ui().adding = false;
+    changed();
     true
-}
-
-/// A press on an entry's "−".
-pub fn remove(id: &str) {
-    let Some((index, line)) = entry_of_row(id) else {
-        return;
-    };
-    let line = line.to_string();
-    write(move |text, inherited| without_entry(text, inherited, index, &line));
 }
 
 #[cfg(test)]
@@ -779,6 +941,7 @@ mod tests {
             .map(|(program, ..)| Entry {
                 cmd: program.to_string(),
                 args: Vec::new(),
+                enabled: true,
             })
             .collect()
     }
@@ -803,6 +966,7 @@ mod tests {
         let entry = Entry {
             cmd: "/home/me/.local/bin/otto-stash".into(),
             args: vec!["add".into()],
+            enabled: true,
         };
         assert!(entry.runs("otto-stash"));
         assert!(!entry.runs("otto-bar"));
@@ -941,16 +1105,49 @@ mod tests {
     }
 
     #[test]
-    fn an_entry_row_carries_its_place_and_line() {
-        let entry = parse_line("foo 'a:b'").unwrap();
-        assert_eq!(entry_of_row(entry_row_id(3, &entry)), Some((3, "foo a:b")));
-        assert!(entry_of_row("startup.add").is_none());
+    fn an_entry_switched_off_keeps_its_place_and_back_on_drops_the_key() {
+        let text = "[[exec_once]]\ncmd = \"otto-bar\"\n\n[[exec_once]]\ncmd = \"otto-stash\"\n";
+        let off = with_enabled(text, &[], 1, "otto-stash", false).unwrap();
+        let list = read_list(&off).unwrap();
+        assert_eq!(list[1].cmd, "otto-stash");
+        assert!(!list[1].enabled);
+        assert!(off.contains("enabled = false"));
+        let on = with_enabled(&off, &[], 1, "otto-stash", true).unwrap();
+        assert!(read_list(&on).unwrap()[1].enabled);
+        assert!(!on.contains("enabled"));
     }
 
     #[test]
-    fn the_group_owns_only_its_own_ids() {
+    fn a_missing_component_is_offered_after_the_list() {
+        let entries =
+            read_list("[[exec_once]]\ncmd = \"foo\"\n[[exec_once]]\ncmd = \"otto-bar\"\n").unwrap();
+        let lines = lines(&entries);
+        assert!(matches!(&lines[0], Line::Entry(0, entry) if entry.cmd == "foo"));
+        assert!(matches!(&lines[1], Line::Entry(1, entry) if entry.cmd == "otto-bar"));
+        let missing: Vec<&str> = lines[2..]
+            .iter()
+            .map(|line| match line {
+                Line::Missing(program) => *program,
+                Line::Entry(..) => "",
+            })
+            .collect();
+        assert_eq!(missing, ["otto-islands", "otto-stash", "otto-canvas"]);
+    }
+
+    #[test]
+    fn the_pop_ups_offer_their_choices_and_own_only_their_ids() {
+        let values = |id| -> Vec<String> {
+            menu_choices(id)
+                .unwrap()
+                .into_iter()
+                .map(|choice| choice.value)
+                .collect()
+        };
+        assert_eq!(values(XDG_ID), SOURCES);
+        assert_eq!(values(ADD_MENU_ID), [ADD_APP, ADD_COMMAND]);
+        assert!(menu_choices("desk.enabled").is_none());
+        assert!(display("desk.enabled", "otto").is_none());
+        assert_eq!(source_value(true), "otto-xdg");
         assert!(!apply("desk.enabled", &Value::Bool(true)));
-        assert!(!apply("startup.component.otto-bar", &Value::Bool(true)));
-        assert!(apply(XDG_ID, &Value::Text(String::new())));
     }
 }
