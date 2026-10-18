@@ -697,9 +697,11 @@ pub struct ListBoxPress {
     pub anchor: Rect,
 }
 
-/// Room kept above and below a list box's card, and on either side of it.
-const LIST_GAP: f32 = 8.0;
-const LIST_INSET: f32 = 10.0;
+/// Room kept above and below a list box's card, and on either side of it:
+/// none, since it stands in its group instead of a grouped-list card, and
+/// lines up with the cards around it.
+const LIST_GAP: f32 = 0.0;
+const LIST_INSET: f32 = 0.0;
 /// A list box item's checkbox side.
 const LIST_CHECK: f32 = 18.0;
 
@@ -2208,13 +2210,13 @@ impl Settings {
 
             // Grouped-list card behind the rows. A tab bar is the exception:
             // it is chrome over the groups, not a setting in one, so it sits
-            // on the window itself.
+            // on the window itself. So is a list box alone in its group: it
+            // is a card of its own, and one inside another reads as nested.
             let rrect = RRect::new_rect_xy(group.card, 9.0, 9.0);
             let tabs_only = !group.rows.is_empty()
-                && group
-                    .rows
-                    .iter()
-                    .all(|(row, _)| matches!(row.control, Control::Tabs { .. }));
+                && group.rows.iter().all(|(row, _)| {
+                    matches!(row.control, Control::Tabs { .. } | Control::ListBox(_))
+                });
             if !tabs_only {
                 canvas.draw_rrect(
                     rrect,

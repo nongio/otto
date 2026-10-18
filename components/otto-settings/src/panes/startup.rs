@@ -33,7 +33,7 @@ use toml_edit::{ArrayOfTables, DocumentMut, Item};
 use otto_kit::portal_file_chooser::{Outcome, Request, Rule};
 
 use crate::discovery::Choice;
-use crate::model::{group, Control, Group, ListBox, ListBoxItem, Row};
+use crate::model::{group, untitled, Control, Group, ListBox, ListBoxItem, Row};
 use crate::settings_client::{self, Value};
 use crate::view::ListBoxHit;
 
@@ -654,9 +654,10 @@ fn list_item(line: &Line) -> ListBoxItem {
     }
 }
 
-/// The Start at login group: where startup apps come from, the list of them
-/// in launch order, and the field a typed command goes into while it is
-/// being added.
+/// The Start at login group — where startup apps come from, and the field a
+/// typed command goes into while it is being added — then the list of them
+/// in launch order, in a group of its own so its card is not drawn inside
+/// another.
 pub fn groups() -> Vec<Group> {
     let list = list();
     let lines = lines(&list.entries);
@@ -673,6 +674,15 @@ pub fn groups() -> Vec<Group> {
     .detail(otto_kit::t!("settings-startup-xdg-detail"));
     source.id = Some(XDG_ID);
     let mut rows = vec![source];
+    if ui.adding {
+        let mut field = Row::new(
+            otto_kit::t!("settings-startup-add"),
+            Control::Text(String::new()),
+        )
+        .detail(otto_kit::t!("settings-startup-add-detail"));
+        field.id = Some(ADD_ID);
+        rows.push(field);
+    }
     let mut items = Row::new(
         otto_kit::t!("settings-startup-list"),
         Control::ListBox(ListBox {
@@ -683,17 +693,10 @@ pub fn groups() -> Vec<Group> {
         }),
     );
     items.id = Some(LIST_ID);
-    rows.push(items);
-    if ui.adding {
-        let mut field = Row::new(
-            otto_kit::t!("settings-startup-add"),
-            Control::Text(String::new()),
-        )
-        .detail(otto_kit::t!("settings-startup-add-detail"));
-        field.id = Some(ADD_ID);
-        rows.push(field);
-    }
-    vec![group(otto_kit::t!("settings-group-start-at-login"), rows)]
+    vec![
+        group(otto_kit::t!("settings-group-start-at-login"), rows),
+        untitled(vec![items]),
+    ]
 }
 
 /// What the source pop-up holds for `xdg`.
