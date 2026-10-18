@@ -41,7 +41,7 @@ commands.
 | Screens | Each output: name, mode size in pixels, refresh rate in Hz, scale, layout position, make and model, whether it is virtual | included |
 | Otto | Otto's version and commit, backend, this tool's version, the configuration files the compositor reads | included |
 | Configuration | Each configuration file, whole, in a fenced block | left out |
-| Session logs | The last 2000 lines (configurable) of the current session log, the previous session log, and the panic log, without terminal escape codes | left out |
+| Session logs | The last 2000 lines (configurable) of each log found (see below), without terminal escape codes; each says where it came from | left out |
 
 Each section has a one-line summary shown in the list.
 
@@ -52,6 +52,23 @@ the method, those parts say so ("compositor not reachable", "compositor is
 running but too old to report this") and the rest of the report is unchanged.
 The configuration section then lists the usual locations: the system file,
 the user's file, and the local override files in the home folder.
+
+**Finding the logs.** In this order, each file at most once:
+
+1. The log file the compositor reports (`log_path`) and the same name with
+   `.1`; then `otto.log` and `otto.log.1` in `$XDG_STATE_HOME/otto`.
+2. For each running process of the same user named `otto` (by `comm`, or by
+   its executable, also when that was replaced): where its stderr points. A
+   regular file is read through the process's file descriptor. A socket, when
+   the process's environment has `JOURNAL_STREAM`, is read with
+   `journalctl --user _PID=<pid>`, falling back to the system journal. A
+   terminal or anything else is skipped.
+3. `session.log` and `session.log.1` from the `otto-session` login script,
+   unless a running Otto's stderr already is that file.
+4. `panic.log`.
+
+The list summary names each source (`otto.log`, `stderr → session.log (pid
+1234)`, `journal (pid 1234)`) with its line count.
 
 **Redaction.** On by default. Replaces the home folder with `~` where it is a
 whole path prefix, the login name with `<user>` and the host name with

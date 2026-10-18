@@ -21,13 +21,23 @@ It lists the parts of a report, each with a one-line summary:
 | Screens | Each screen's name, resolution, refresh rate, scale and position | yes |
 | Otto | Otto's version, the backend it runs on, and the configuration files it reads | yes |
 | Configuration | Your configuration files, whole | no |
-| Session logs | The end of the current and previous session logs, and the crash log | no |
+| Session logs | The end of Otto's log for this session and the previous one, wherever a running Otto writes its output, and the crash log | no |
 
 The configuration and the logs are left out until you tick them, because they
 can hold things you may not want to share, such as the programs you start at
 login. When the problem is a crash or a freeze, the session logs are usually
 what makes it fixable: the previous session's log is normally the one that
 went wrong.
+
+The logs are looked for in this order, and the list says where each one came
+from:
+
+1. Otto's own log, `otto.log`, and the previous session's `otto.log.1`.
+2. Where a running Otto sends its output: a file, or the journal when Otto
+   was started as a systemd service (read with `journalctl`).
+3. `session.log` and `session.log.1`, which the `otto-session` login script
+   keeps.
+4. `panic.log`, every recorded crash.
 
 The keys:
 

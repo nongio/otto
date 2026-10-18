@@ -72,6 +72,8 @@ pub struct DebugInfo {
     pub vulkan_fallback: Option<String>,
     /// The configuration files the compositor reads, lowest priority first.
     pub config_files: Vec<PathBuf>,
+    /// The file the compositor logs to, if it logs to one.
+    pub log_path: Option<PathBuf>,
     /// Every output, sorted by name.
     pub outputs: Vec<Output>,
 }
@@ -134,6 +136,7 @@ impl DebugInfo {
             renderer,
             vulkan_fallback: value["vulkan_fallback"].as_str().map(str::to_owned),
             config_files,
+            log_path: value["log_path"].as_str().map(PathBuf::from),
             outputs,
         })
     }

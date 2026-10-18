@@ -8,6 +8,7 @@
 // Rust guideline compliant 2026-02-21
 
 mod compositor;
+mod logs;
 mod redact;
 mod report;
 mod sections;
@@ -157,6 +158,9 @@ fn run(options: &Options) -> Result<(), String> {
         config_from_compositor,
         compositor,
         log_lines: options.log_lines,
+        // SAFETY: getuid has no preconditions.
+        uid: unsafe { libc::getuid() },
+        journal: logs::read_journal,
     };
     let mut sections = sections::gather(&sources, options.all);
     let redactor = Redactor::new(

@@ -11,6 +11,7 @@ use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
 use crate::doctor::compositor::DebugInfo;
+use crate::doctor::logs;
 
 /// Which part of the report a section is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -66,17 +67,11 @@ pub struct Sources {
     pub compositor: Result<DebugInfo, String>,
     /// How many lines to keep from the end of each log.
     pub log_lines: usize,
+    /// The user whose running Otto counts.
+    pub uid: u32,
+    /// Reads a process's journal: `(pid, lines)` to the text.
+    pub journal: fn(u32, usize) -> Option<String>,
 }
-
-/// The log files, with what each one is.
-const LOGS: [(&str, &str); 3] = [
-    ("session.log", "current session"),
-    (
-        "session.log.1",
-        "previous session, usually the one that went wrong",
-    ),
-    ("panic.log", "every recorded crash"),
-];
 
 /// The most bytes read from the end of one log.
 ///
@@ -450,15 +445,33 @@ fn config(sources: &Sources) -> Section {
     }
 }
 
-/// The end of each session log and the panic log.
+/// The end of each of Otto's logs, wherever [`logs::find`] finds them.
 fn logs(sources: &Sources) -> Section {
     let mut body = String::new();
     let mut summary = Vec::new();
-    for (name, what) in LOGS {
-        let Some(path) = sources.log_dir.as_ref().map(|dir| dir.join(name)) else {
-            continue;
+    let reported = sources
+        .compositor
+        .as_ref()
+        .ok()
+        .and_then(|info| info.log_path.as_deref());
+    let found = logs::find(logs::Places {
+        proc_root: &sources.root.join("proc"),
+        log_dir: sources.log_dir.as_deref(),
+        reported,
+        uid: sources.uid,
+    });
+    for log in found {
+        let read = match &log.origin {
+            logs::Origin::File(path) => tail_lines(path, sources.log_lines),
+            logs::Origin::Stderr { fd, .. } => tail_lines(fd, sources.log_lines),
+            logs::Origin::Journal { pid } => {
+                (sources.journal)(*pid, sources.log_lines).map(|text| {
+                    let count = text.lines().count();
+                    (text, count, count)
+                })
+            }
         };
-        let Some((text, kept, total)) = tail_lines(&path, sources.log_lines) else {
+        let Some((text, kept, total)) = read else {
             continue;
         };
         let text = strip_ansi(&text);
@@ -467,12 +480,18 @@ fn logs(sources: &Sources) -> Section {
         } else {
             line_count(kept)
         };
+        let heading = match &log.origin {
+            logs::Origin::File(path) => path.display().to_string(),
+            logs::Origin::Stderr { target, .. } => target.display().to_string(),
+            logs::Origin::Journal { pid } => format!("journalctl _PID={pid}"),
+        };
         let _ = write!(
             body,
-            "### {name} ({what})\n\n{extent}\n\n{}\n",
+            "### {heading} ({})\n\n{extent}\n\n{}\n",
+            log.what,
             fenced(&text, "text")
         );
-        summary.push(format!("{name} {}", line_count(kept)));
+        summary.push(format!("{} {}", log.label, line_count(kept)));
     }
     if summary.is_empty() {
         body.push_str("No session or panic logs found.\n");
@@ -614,7 +633,14 @@ mod tests {
             config_from_compositor: compositor.is_ok(),
             compositor,
             log_lines: 3,
+            uid: current_uid(),
+            journal: |_, _| None,
         }
+    }
+
+    fn current_uid() -> u32 {
+        // SAFETY: getuid has no preconditions.
+        unsafe { libc::getuid() }
     }
 
     fn running() -> DebugInfo {
@@ -630,6 +656,7 @@ mod tests {
             }),
             vulkan_fallback: None,
             config_files: vec![],
+            log_path: None,
             outputs: vec![Output {
                 name: "eDP-1".into(),
                 make: "BOE".into(),
@@ -781,7 +808,27 @@ mod tests {
             .body
             .contains("last 3 of 5 lines\n\n```text\nINFO three\nfour\nfive\n```\n"));
         assert!(!logs.body.contains("two"));
-        assert!(!logs.body.contains("### session.log ("));
+        assert!(!logs.body.contains("session.log ("));
+    }
+
+    #[test]
+    fn a_journal_log_is_read_and_says_where_it_came_from() {
+        let dir = fixture_root();
+        let proc_dir = dir.path().join("proc/321");
+        write(dir.path(), "proc/321/comm", "otto\n");
+        write(dir.path(), "proc/321/environ", "JOURNAL_STREAM=8:1\0");
+        fs::create_dir_all(proc_dir.join("fd")).unwrap();
+        std::os::unix::fs::symlink("socket:[1]", proc_dir.join("fd/2")).unwrap();
+        let mut sources = sources(dir.path(), Ok(running()));
+        sources.journal = |pid, lines| Some(format!("pid {pid} wants {lines}\n"));
+
+        let sections = gather(&sources, false);
+        let logs = section(&sections, SectionId::Logs);
+
+        assert_eq!(logs.summary, "journal (pid 321) 1 line");
+        assert!(logs.body.contains(
+            "### journalctl _PID=321 (the journal, Otto pid 321)\n\n1 line\n\n```text\npid 321 wants 3\n```\n"
+        ));
     }
 
     #[test]
