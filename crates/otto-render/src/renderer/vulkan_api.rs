@@ -116,6 +116,7 @@ impl GbmVulkanBackend {
             }
         };
         let phd = physical_device_of(&instance, node)?;
+        record_vulkan(&phd);
         let renderer = SkiaVkRenderer::new(&phd)
             .map_err(|source| GbmVulkanError::Renderer { node, source })?;
 
@@ -168,6 +169,22 @@ fn physical_device_of(
 pub fn probe(node: DrmNode) -> Result<(), GbmVulkanError> {
     let instance = Instance::new(Version::VERSION_1_3, None)?;
     physical_device_of(&instance, node).map(drop)
+}
+
+/// Records the device and driver of the first Vulkan renderer.
+fn record_vulkan(phd: &PhysicalDevice) {
+    let (vendor, driver) = phd
+        .driver()
+        .map(|driver| (driver.name.clone(), driver.info.clone()))
+        .unwrap_or_default();
+    let api = phd.api_version();
+    let version = format!("Vulkan {}.{}.{} {driver}", api.major, api.minor, api.patch);
+    crate::renderer_info::record(crate::renderer_info::RendererInfo {
+        api: "vulkan",
+        vendor,
+        renderer: phd.name().to_string(),
+        version: version.trim_end().to_string(),
+    });
 }
 
 /// Why the session draws with OpenGL although Vulkan was asked for; unset

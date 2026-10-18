@@ -1258,6 +1258,11 @@ impl HeadlessHandle {
         self.query(|state| state.outputs_json())
     }
 
+    /// `org.otto.Compositor.DebugInfo`: version, backend, renderer, outputs.
+    pub fn debug_info_json(&self) -> serde_json::Value {
+        self.query(|state| state.debug_info_json())
+    }
+
     /// `GetInputs`, in sway's shape: the keyboard and its layouts.
     pub fn inputs_json(&self) -> serde_json::Value {
         self.query(|state| state.inputs_json())

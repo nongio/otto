@@ -11,7 +11,7 @@ in a string.
 | `settings` | `org.otto.Settings` | compositor, `src/settings_service.rs` ([contract](settings-dbus-api.md)) |
 | `shell` | `org.otto.Shell1` | compositor, `src/shell_service.rs` ([contract](shell-dbus-api.md)) |
 | `screencast` | `org.otto.ScreenCast`, `.Session`, `.Stream` | compositor, `src/screenshare/dbus_service.rs` |
-| `compositor` | `org.otto.Compositor` | compositor, `src/screenshare/dbus_service.rs` |
+| `compositor` | `org.otto.Compositor` | compositor, `src/screenshare/dbus_service.rs` ([contract](compositor-dbus-api.md)) |
 | `dialog` | `org.otto.Dialog1` | otto-islands, `src/dbus_service.rs` |
 | `island` | `org.otto.Island1` | otto-islands, `src/dbus_service.rs` |
 | `file_picker` | `org.otto.FilePicker1` | otto-files, `src/dbus.rs` |
@@ -27,7 +27,7 @@ zbus generates an async proxy (`SettingsProxy`) and a blocking one
 ## Who links it
 
 The crate has no UI and no async runtime of its own, so the portal backend,
-`otto-agents`, `otto-rdp` and `otto-msg` link it without pulling in Skia.
+`otto-agents`, `otto-rdp`, `otto-msg` and `otto-doctor` link it without pulling in Skia.
 otto-kit re-exports it as `otto_kit::dbus`, and toolkit apps use that path.
 
 It takes zbus from `[workspace.dependencies]`, like every other member, so

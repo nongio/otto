@@ -577,6 +577,12 @@ fn config_layers() -> Vec<PathBuf> {
     layers
 }
 
+/// The configuration files on disk, lowest priority first, as
+/// [`config_layers`] lists them. Reads the file system.
+pub(crate) fn config_layer_paths() -> Vec<PathBuf> {
+    config_layers()
+}
+
 /// Whether any configuration layer sets the dotted key `path`.
 ///
 /// Reads every layer from disk, so call it off the compositor thread.
