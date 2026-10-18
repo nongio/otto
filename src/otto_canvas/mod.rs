@@ -133,6 +133,9 @@ enum Phase {
     /// Following the fingers. `was_shown` is where the gesture started, which
     /// is where a cancelled gesture goes back to.
     Dragging { was_shown: bool },
+    /// A little of it out, as a drag near the right edge shows it. Takes
+    /// no presses.
+    Peeking,
     /// On screen, or sliding in.
     Shown,
     /// Sliding out. `generation` names the slide, so the end of an earlier
@@ -310,7 +313,7 @@ impl<B: Backend> Otto<B> {
         match self.canvas.phase {
             Phase::Shown => true,
             Phase::Dragging { was_shown } => was_shown,
-            Phase::Hidden | Phase::Closing { .. } => false,
+            Phase::Hidden | Phase::Peeking | Phase::Closing { .. } => false,
         }
     }
 
@@ -441,10 +444,32 @@ impl<B: Backend> Otto<B> {
                 }
                 self.canvas_place_column(0.0, false);
             }
-            Phase::Closing { .. } => {}
+            Phase::Peeking | Phase::Closing { .. } => {}
         }
         self.canvas.passive = true;
         self.canvas_settle_open(false);
+        true
+    }
+
+    /// Slide a little of the canvas out, as a drag near the edge does.
+    /// Returns whether it is now peeking.
+    fn canvas_peek(&mut self) -> bool {
+        self.canvas_finish_close_if_done();
+        if self.is_session_locked() || self.canvas_suspended() || !self.canvas_available() {
+            return false;
+        }
+        match self.canvas.phase {
+            Phase::Shown | Phase::Dragging { .. } | Phase::Peeking => return false,
+            Phase::Hidden => {
+                if !self.canvas_bring_on_screen() {
+                    return false;
+                }
+                self.canvas_place_column(0.0, false);
+            }
+            Phase::Closing { .. } => {}
+        }
+        self.canvas.phase = Phase::Peeking;
+        self.canvas_place_column(drag::PEEK_PROGRESS, true);
         true
     }
 
@@ -485,7 +510,7 @@ impl<B: Backend> Otto<B> {
     pub fn canvas_hide(&mut self) {
         match self.canvas.phase {
             Phase::Hidden | Phase::Closing { .. } => return,
-            Phase::Shown | Phase::Dragging { .. } => {}
+            Phase::Shown | Phase::Peeking | Phase::Dragging { .. } => {}
         }
         self.canvas.passive = false;
         self.canvas_restore_focus();
@@ -520,6 +545,7 @@ impl<B: Backend> Otto<B> {
         if self.canvas.on_screen() {
             let progress = match self.canvas.phase {
                 Phase::Dragging { .. } => self.canvas.drag_progress,
+                Phase::Peeking => drag::PEEK_PROGRESS,
                 Phase::Closing { .. } => 0.0,
                 _ => 1.0,
             };
@@ -984,7 +1010,7 @@ impl<B: Backend> Otto<B> {
         let landed_on_item =
             target.is_some_and(|surface| self.canvas_item_root_for(surface).is_some());
         if drag::hide_when_drag_ends(session.opened_canvas, landed_on_item)
-            && self.canvas_is_shown()
+            && self.canvas_on_screen()
         {
             self.canvas_hide();
         }
@@ -996,21 +1022,22 @@ impl<B: Backend> Otto<B> {
         tracing::debug!(landed_on_item, "drag ended");
     }
 
-    /// Look at the pointer during a drag: resting at the right edge of an
-    /// output long enough opens the canvas there. Returns whether the drag
-    /// is still going on.
+    /// Look at the pointer during a drag: resting near the right edge of
+    /// an output makes the canvas peek out there, resting close to it opens
+    /// the canvas. A peek the drag made goes again when the pointer moves
+    /// away. Returns whether the drag is still going on.
     fn canvas_drag_tick(&mut self) -> bool {
         if self.canvas.drag.is_none() {
             return false;
         }
         let location = self.pointer.current_location();
-        let at_edge = self
+        let zone = self
             .workspaces
             .output_under(edge_probe(location))
             .next()
             .and_then(|output| self.workspaces.output_geometry(output))
-            .is_some_and(|geo| {
-                drag::at_right_edge(
+            .map_or(drag::EdgeZone::Away, |geo| {
+                drag::edge_zone(
                     location.x,
                     f64::from(geo.loc.x + geo.size.w),
                     f64::from(canvas_width_points()),
@@ -1020,20 +1047,45 @@ impl<B: Backend> Otto<B> {
         let Some(session) = self.canvas.drag.as_mut() else {
             return false;
         };
-        if !session.dwell.observe(at_edge, now) {
-            return true;
-        }
-        if self.canvas_is_shown() {
-            return true;
-        }
-        if self.canvas_show_passive() {
+        let open = session
+            .open_dwell
+            .observe(zone == drag::EdgeZone::Close, now);
+        let peek = session
+            .peek_dwell
+            .observe(zone != drag::EdgeZone::Away, now);
+        let opened_canvas = session.opened_canvas;
+
+        if zone == drag::EdgeZone::Away
+            && opened_canvas
+            && matches!(self.canvas.phase, Phase::Peeking)
+        {
+            self.canvas_hide();
             if let Some(session) = self.canvas.drag.as_mut() {
-                session.opened_canvas = true;
+                session.opened_canvas = false;
             }
-            tracing::debug!("canvas opened by a drag at the edge");
-        } else if let Some(session) = self.canvas.drag.as_mut() {
-            // Nothing to show yet: a client may still be adding its item.
-            session.dwell.rearm();
+            return true;
+        }
+        if open && !self.canvas_is_shown() {
+            if self.canvas_show_passive() {
+                if let Some(session) = self.canvas.drag.as_mut() {
+                    session.opened_canvas = true;
+                }
+                tracing::debug!("canvas opened by a drag close to the edge");
+            } else if let Some(session) = self.canvas.drag.as_mut() {
+                // Nothing to show yet: a client may still be adding its item.
+                session.open_dwell.rearm();
+            }
+        } else if peek && !self.canvas_is_shown() {
+            if self.canvas_peek() {
+                if let Some(session) = self.canvas.drag.as_mut() {
+                    session.opened_canvas = true;
+                }
+                tracing::debug!("canvas peeking for a drag near the edge");
+            } else if !matches!(self.canvas.phase, Phase::Peeking) {
+                if let Some(session) = self.canvas.drag.as_mut() {
+                    session.peek_dwell.rearm();
+                }
+            }
         }
         true
     }

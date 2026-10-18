@@ -1,8 +1,9 @@
 //! What a drag and drop operation means to the side canvas, as plain
 //! decisions the compositor state applies.
 //!
-//! A drag that rests at the right edge of an output opens the canvas, so an
-//! item can take the drop ([`EdgeDwell`]). When the drag ends the canvas
+//! A drag that rests near the right edge of an output shows a little of the
+//! canvas, and one that rests closer to the edge opens it, so an item can
+//! take the drop ([`EdgeZone`], [`EdgeDwell`]). When the drag ends the canvas
 //! goes again, unless it was open before the drag or the drop landed on an
 //! item ([`hide_when_drag_ends`]). A press outside a shown canvas reaches
 //! what is under it, and the canvas hides when that button comes up, unless
@@ -13,12 +14,19 @@
 use std::time::{Duration, Instant};
 
 /// How much of the canvas width, measured in from the right edge of an
-/// output, counts as the edge for a drag.
+/// output, counts as near the edge for a drag: there the canvas peeks out.
 ///
 /// A strip rather than the last point: a drag on a touchpad drifts, and the
 /// canvas should answer a drag taken over to the right side, not only one
 /// pinned against the edge. The whole strip the column slides into counts.
 pub const EDGE_FRACTION: f64 = 1.0;
+
+/// How much of the canvas width, measured in from the right edge of an
+/// output, counts as close to the edge: there the canvas opens.
+pub const OPEN_FRACTION: f64 = 0.25;
+
+/// How far out a peeking canvas is, from 0 (hidden) to 1 (shown).
+pub const PEEK_PROGRESS: f64 = 0.1;
 
 /// How long a drag rests at the edge before the canvas opens.
 ///
@@ -30,10 +38,28 @@ pub const DWELL: Duration = Duration::from_millis(250);
 /// How often the pointer is looked at while a drag goes on.
 pub const POLL: Duration = Duration::from_millis(50);
 
-/// Whether a pointer at `x` is at the right edge of an output whose right
-/// edge is at `output_right`, both in global logical points.
-pub fn at_right_edge(x: f64, output_right: f64, canvas_width: f64) -> bool {
-    x >= output_right - canvas_width * EDGE_FRACTION
+/// Where a pointer is relative to the right edge of an output, during a
+/// drag.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EdgeZone {
+    /// Away from the edge.
+    Away,
+    /// Near the edge: the canvas peeks out.
+    Near,
+    /// Close to the edge: the canvas opens.
+    Close,
+}
+
+/// The zone of a pointer at `x` on an output whose right edge is at
+/// `output_right`, both in global logical points.
+pub fn edge_zone(x: f64, output_right: f64, canvas_width: f64) -> EdgeZone {
+    if x >= output_right - canvas_width * OPEN_FRACTION {
+        EdgeZone::Close
+    } else if x >= output_right - canvas_width * EDGE_FRACTION {
+        EdgeZone::Near
+    } else {
+        EdgeZone::Away
+    }
 }
 
 /// Times how long the pointer has rested at the edge.
@@ -75,8 +101,10 @@ pub struct DragSession {
     pub mime_types: Vec<String>,
     /// The drag opened the canvas, which was hidden when it started.
     pub opened_canvas: bool,
-    /// The pointer's rest at the edge.
-    pub dwell: EdgeDwell,
+    /// The pointer's rest near the edge, which makes the canvas peek.
+    pub peek_dwell: EdgeDwell,
+    /// The pointer's rest close to the edge, which opens the canvas.
+    pub open_dwell: EdgeDwell,
 }
 
 /// Whether the canvas hides as a drag ends: only when the drag opened it
@@ -105,11 +133,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_edge_is_the_last_points_of_the_output() {
-        assert!(at_right_edge(1920.0, 1920.0, 400.0));
-        assert!(at_right_edge(1520.0, 1920.0, 400.0));
-        assert!(!at_right_edge(1519.0, 1920.0, 400.0));
-        assert!(!at_right_edge(100.0, 1920.0, 400.0));
+    fn near_is_the_canvas_strip_and_close_its_outer_quarter() {
+        assert_eq!(edge_zone(1920.0, 1920.0, 400.0), EdgeZone::Close);
+        assert_eq!(edge_zone(1820.0, 1920.0, 400.0), EdgeZone::Close);
+        assert_eq!(edge_zone(1819.0, 1920.0, 400.0), EdgeZone::Near);
+        assert_eq!(edge_zone(1520.0, 1920.0, 400.0), EdgeZone::Near);
+        assert_eq!(edge_zone(1519.0, 1920.0, 400.0), EdgeZone::Away);
+        assert_eq!(edge_zone(100.0, 1920.0, 400.0), EdgeZone::Away);
     }
 
     #[test]
