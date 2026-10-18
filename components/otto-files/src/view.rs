@@ -1848,15 +1848,42 @@ pub fn photos_rename_rect(
     )
 }
 
+/// The distance from one sidebar place to the next.
+pub const PLACE_STEP: f32 = 30.0;
+
 pub fn place_rect(index: usize) -> Rect {
     const FIRST_Y: f32 = 78.0;
-    const STEP: f32 = 30.0;
     Rect::from_xywh(
         10.0,
-        FIRST_Y - sidebar_lift() + index as f32 * STEP,
+        FIRST_Y - sidebar_lift() + index as f32 * PLACE_STEP,
         sidebar_w() - 20.0,
         26.0,
     )
+}
+
+/// Where among the other rows a row being sorted would sit, carried `dy`
+/// from row `index` of `count`: the position its ghost is over, counting the
+/// rows that stay, so `index` itself means "where it was".
+pub fn place_sort_position(index: usize, dy: f32, count: usize) -> usize {
+    let center = place_rect(index).center_y() + dy;
+    let position = ((center - place_rect(0).top) / PLACE_STEP).floor();
+    (position.max(0.0) as usize).min(count.saturating_sub(1))
+}
+
+/// How far row `i` stands from its own place while row `index` is being
+/// sorted to `position`: the rows after the dragged one close up, and the
+/// ones from `position` on move down to leave it room.
+pub fn place_sort_shift(i: usize, index: usize, position: usize) -> f32 {
+    if i == index {
+        return 0.0;
+    }
+    let among_others = if i < index { i } else { i - 1 };
+    let shown = if among_others >= position {
+        among_others + 1
+    } else {
+        among_others
+    };
+    (shown as f32 - i as f32) * PLACE_STEP
 }
 
 pub fn place_at(x: f32, y: f32, count: usize) -> Option<usize> {
@@ -1889,15 +1916,6 @@ pub fn place_gap_at(x: f32, y: f32, count: usize) -> Option<usize> {
         }
     }
     Some(count)
-}
-
-/// The gap nearest `y`, wherever it is: a row being sorted is always headed
-/// for one gap or another, so unlike [`place_gap_at`] the middle of a row
-/// answers too — with the gap on whichever side of its centre `y` is.
-pub fn place_gap_nearest(y: f32, count: usize) -> usize {
-    (0..count)
-        .find(|index| y < place_rect(*index).center_y())
-        .unwrap_or(count)
 }
 
 /// The line drawn for a drop into gap `slot`: centred in the space between
@@ -4483,6 +4501,9 @@ pub struct Frame<'a> {
     /// it was, its ghost following the pointer, the insertion line where it
     /// goes.
     pub dragging_place: Option<PlaceDragFrame>,
+    /// How far each sidebar row stands from its own place, easing toward
+    /// where a sort in progress wants it. Missing rows stand still.
+    pub place_shifts: &'a [f32],
     pub mode: ViewMode,
     /// One per column in the path stack. In list view only the last is drawn.
     pub panes: Vec<PaneData<'a>>,
@@ -5878,15 +5899,14 @@ fn draw_sidebar(canvas: &Canvas, f: &Frame) {
 
     let dragging = f.dragging_place.map(|drag| drag.index);
     for (i, place) in f.places.iter().enumerate() {
-        let rect = place_rect(i);
-        let selected = f.selected_place == Some(i);
-
-        // The row being sorted stays where it was, faded, until it is let go:
-        // the ghost is what is moving, and the insertion line where it goes.
-        let lifted = dragging == Some(i);
-        if lifted {
-            canvas.save_layer_alpha(rect, 90);
+        // The row being sorted is its ghost until it is let go; the others
+        // stand aside to leave it the room it will land in.
+        if dragging == Some(i) {
+            continue;
         }
+        let shift = f.place_shifts.get(i).copied().unwrap_or(0.0);
+        let rect = place_rect(i).with_offset((0.0, shift));
+        let selected = f.selected_place == Some(i);
 
         if selected {
             let mut paint = Paint::default();
@@ -5895,10 +5915,6 @@ fn draw_sidebar(canvas: &Canvas, f: &Frame) {
             canvas.draw_rrect(RRect::new_rect_xy(rect, 6.0, 6.0), &paint);
         }
         draw_place_content(canvas, theme, place, rect, selected);
-
-        if lifted {
-            canvas.restore();
-        }
     }
 
     if let Some(drag) = f.dragging_place {
@@ -10807,6 +10823,7 @@ mod geometry_tests {
             places: &[],
             selected_place: None,
             dragging_place: None,
+            place_shifts: &[],
             mode,
             panes,
             active: 0,

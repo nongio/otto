@@ -237,9 +237,13 @@ rows are then read back from it. No window keeps a list of its own.
   up for them, and the row's edge stays part of the row.
 - **Every row is sorted by dragging it**, built-in ones included: a sidebar
   with one folder of the user's own would otherwise have nothing to sort. A
-  press still opens the place. Past the drag threshold, the row fades where it
-  is and the insertion line follows the nearest gap. Letting go writes the new
-  `order`. Rows the order names but the window does not show, such as hidden
+  press still opens the place. Past the drag threshold, the row lifts into a
+  ghost under the pointer, and the other rows make room for it: they close up
+  behind it and ease apart where it would land (about 60 ms to get most of the
+  way). There is no insertion line, because the space the rows open is the
+  answer. Letting go writes the new `order`. The rows are already where it
+  puts them, so they do not move again. A folder dragged in from the listing
+  has no ghost of ours, so it keeps the insertion line. Rows the order names but the window does not show, such as hidden
   ones or folders on an unmounted disk, keep their place in it. This happens
   inside the window, not through drag and drop: nothing leaves it. Leaving the
   window, or a reload mid-drag, cancels it.

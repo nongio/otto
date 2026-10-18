@@ -2,11 +2,30 @@ use super::*;
 
 use crate::places_config::Builtin;
 
-/// A row dragged past the threshold is lifted, and the line follows the
-/// nearest gap — anywhere in the list, but never the two beside where the row
-/// already is.
+/// The gap a sort let go of now would land in.
+fn sort_slot(browser: &Browser) -> Option<usize> {
+    browser
+        .place_drag
+        .filter(|drag| drag.moving)
+        .and_then(|drag| browser.sort_slot(&drag))
+}
+
+/// Run the frame clock until the rows have settled.
+fn settle(browser: &mut Browser) {
+    for _ in 0..100 {
+        if !browser.tick_place_shifts() {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    panic!("the rows never settled");
+}
+
+/// A row dragged past the threshold is lifted, and lands wherever its ghost
+/// is over — anywhere in the list, and nowhere new when that is its own place.
+/// No insertion line: the rows standing aside show where it goes.
 #[test]
-fn sorting_a_row_shows_the_gap_it_would_land_in() {
+fn sorting_a_row_lands_where_its_ghost_is() {
     let (mut browser, dir) = browser_with_sidebar();
     let b = view::place_rect(3);
     browser.press_place(3, b.center_y());
@@ -15,25 +34,51 @@ fn sorting_a_row_shows_the_gap_it_would_land_in() {
     assert!(!browser.drag_place_to(b.center_y() + 2.0));
     assert_eq!(browser.dragging_place_frame().map(|drag| drag.index), None);
 
-    // Up over `a`'s top half: the gap before it.
+    // Up over `a`: in front of it.
     assert!(browser.drag_place_to(view::place_rect(2).top + 4.0));
     assert_eq!(
         browser.dragging_place_frame().map(|drag| drag.index),
         Some(3)
     );
-    assert_eq!(browser.drop_target, Some(DropTarget::PlaceGap { slot: 2 }));
+    assert_eq!(sort_slot(&browser), Some(2));
+    assert_eq!(browser.drop_target, None, "no line while sorting");
 
     // Up among the built-ins: the row can go above them too.
     assert!(browser.drag_place_to(view::place_rect(0).top));
-    assert_eq!(browser.drop_target, Some(DropTarget::PlaceGap { slot: 0 }));
+    assert_eq!(sort_slot(&browser), Some(0));
 
-    // Back over itself: nowhere to go, no line.
+    // Back over itself: nowhere to go.
     assert!(browser.drag_place_to(b.center_y() + 8.0));
-    assert_eq!(browser.drop_target, None);
+    assert_eq!(sort_slot(&browser), None);
 
     // Let go there: the gesture ends, and nothing is written.
     assert!(browser.release_place_drag(b.center_y() + 8.0));
     assert_eq!(browser.dragging_place_frame().map(|drag| drag.index), None);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// While a row is carried, the others close up behind it and open a space
+/// where it would land; let go of outside, they ease back.
+#[test]
+fn the_rows_stand_aside_for_the_row_being_sorted() {
+    let (mut browser, dir) = browser_with_sidebar();
+    // b, the last row, carried to the top.
+    browser.press_place(3, view::place_rect(3).center_y());
+    assert!(browser.drag_place_to(view::place_rect(0).top + 2.0));
+    settle(&mut browser);
+    let step = view::PLACE_STEP;
+    assert_eq!(browser.place_shifts, [step, step, step, 0.0]);
+
+    // a, the third, carried below b: b closes up, nothing opens above.
+    browser.cancel_place_drag();
+    settle(&mut browser);
+    assert_eq!(browser.place_shifts, [0.0; 4]);
+    browser.press_place(2, view::place_rect(2).center_y());
+    assert!(browser.drag_place_to(view::place_rect(3).bottom + 4.0));
+    settle(&mut browser);
+    assert_eq!(browser.place_shifts, [0.0, 0.0, 0.0, -step]);
+    assert_eq!(sort_slot(&browser), Some(4));
+    browser.cancel_place_drag();
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -48,7 +93,7 @@ fn a_built_in_row_sorts_too() {
         browser.dragging_place_frame().map(|drag| drag.index),
         Some(1)
     );
-    assert_eq!(browser.drop_target, Some(DropTarget::PlaceGap { slot: 4 }));
+    assert_eq!(sort_slot(&browser), Some(4));
     browser.cancel_place_drag();
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -88,15 +133,15 @@ fn a_sort_writes_the_whole_order() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// Leaving the window drops the gesture and the line with it.
+/// Leaving the window drops the gesture.
 #[test]
 fn a_sort_let_go_outside_the_window_leaves_the_row() {
     let (mut browser, dir) = browser_with_sidebar();
     browser.press_place(2, view::place_rect(2).center_y());
     assert!(browser.drag_place_to(view::place_rect(3).bottom + 40.0));
-    assert_eq!(browser.drop_target, Some(DropTarget::PlaceGap { slot: 4 }));
+    assert_eq!(sort_slot(&browser), Some(4));
     browser.cancel_place_drag();
-    assert_eq!(browser.drop_target, None);
+    assert_eq!(sort_slot(&browser), None);
     assert_eq!(browser.dragging_place_frame().map(|drag| drag.index), None);
     let _ = std::fs::remove_dir_all(&dir);
 }

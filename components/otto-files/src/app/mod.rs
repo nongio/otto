@@ -364,6 +364,11 @@ struct Browser {
     /// A press on one of the user's own sidebar rows, which a drag turns
     /// into moving that row; see `sidebar_edit`.
     place_drag: Option<sidebar_edit::PlaceDrag>,
+    /// Each sidebar row's offset from its own place while a sort moves
+    /// them aside; see `sidebar_edit`.
+    place_shifts: Vec<f32>,
+    /// When the shifts were last stepped, for the next step's length.
+    place_shifts_at: Option<std::time::Instant>,
     /// A rubber band being dragged out over the icon grid, if one is in
     /// progress. See [`Marquee`].
     marquee: Option<Marquee>,

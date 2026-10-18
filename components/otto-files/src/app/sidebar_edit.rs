@@ -58,37 +58,87 @@ impl Browser {
             drag.moving = true;
         }
         drag.y = y;
-        let index = drag.index;
-        let slot = self.sort_slot(index, y);
-        let target = slot.map(|slot| DropTarget::PlaceGap { slot });
-        if self.drop_target != target {
-            self.drop_target = target;
-        }
-        // The ghost and the cursor follow every move.
+        // The ghost and the cursor follow every move; the rows standing aside
+        // are stepped by the frame clock, in `tick_place_shifts`.
         self.dirty = true;
         AppContext::set_cursor_shape(CursorShape::Grabbing);
         true
     }
 
-    /// The gap row `index`, dragged to height `y`, would land in; `None`
-    /// when that is where it already is.
-    fn sort_slot(&self, index: usize, y: f32) -> Option<usize> {
-        let slot = view::place_gap_nearest(y, self.places.len());
-        (slot != index && slot != index + 1).then_some(slot)
+    /// Where among the other rows the row being sorted is over now.
+    fn sort_position(&self, drag: &PlaceDrag) -> usize {
+        view::place_sort_position(drag.index, drag.y - drag.start_y, self.places.len())
+    }
+
+    /// The gap, counted in the rows shown, a sort let go of now would land
+    /// in; `None` when that is where the row already is.
+    pub(super) fn sort_slot(&self, drag: &PlaceDrag) -> Option<usize> {
+        let position = self.sort_position(drag);
+        match position.cmp(&drag.index) {
+            std::cmp::Ordering::Equal => None,
+            std::cmp::Ordering::Less => Some(position),
+            // Past its own place, the gap is counted with the row still in.
+            std::cmp::Ordering::Greater => Some(position + 1),
+        }
+    }
+
+    /// Whether sidebar rows are still easing to where a sort wants them, and
+    /// so need the frame clock.
+    pub(super) fn place_shifts_animating(&self) -> bool {
+        self.place_shifts_at.is_some()
+    }
+
+    /// Step each row toward where the sort in progress wants it — or back
+    /// home once there is none. Whether any is still on its way.
+    pub(super) fn tick_place_shifts(&mut self) -> bool {
+        // How long a row takes to get most of the way there.
+        const EASE: f32 = 0.06;
+        let count = self.places.len();
+        let targets: Vec<f32> = match self.place_drag.filter(|drag| drag.moving) {
+            Some(drag) => {
+                let position = self.sort_position(&drag);
+                (0..count)
+                    .map(|i| view::place_sort_shift(i, drag.index, position))
+                    .collect()
+            }
+            None => vec![0.0; count],
+        };
+        self.place_shifts.resize(count, 0.0);
+        let now = std::time::Instant::now();
+        let dt = self
+            .place_shifts_at
+            .map_or(0.016, |at| now.duration_since(at).as_secs_f32().min(0.1));
+        let step = 1.0 - (-dt / EASE).exp();
+        let mut moving = false;
+        for (shift, target) in self.place_shifts.iter_mut().zip(targets) {
+            let gap = target - *shift;
+            if gap.abs() < 0.5 {
+                if *shift != target {
+                    *shift = target;
+                    self.dirty = true;
+                }
+                continue;
+            }
+            *shift += gap * step;
+            self.dirty = true;
+            moving = true;
+        }
+        self.place_shifts_at = moving.then_some(now);
+        moving
     }
 
     /// The button came up. A sorting drag puts its row in the gap it was let
     /// go over; whether there was one, in which case the release was its.
     pub(super) fn release_place_drag(&mut self, y: f32) -> bool {
-        let Some(drag) = self.place_drag.take() else {
+        let Some(mut drag) = self.place_drag.take() else {
             return false;
         };
         if !drag.moving {
             return false;
         }
-        self.drop_target = None;
+        drag.y = y;
         self.dirty = true;
-        if let Some(slot) = self.sort_slot(drag.index, y) {
+        if let Some(slot) = self.sort_slot(&drag) {
             if let Some(key) = self.places.get(drag.index).map(Place::key) {
                 let order = self.order_with(&[key], slot, SidebarConfig::load().order);
                 let home = places_config::home_dir();
@@ -98,10 +148,10 @@ impl Browser {
         true
     }
 
-    /// A sorting drag let go of outside the window: the row stays put.
+    /// A sorting drag let go of outside the window: the row stays put, and
+    /// the others ease back around it.
     pub(super) fn cancel_place_drag(&mut self) {
         if self.place_drag.take().is_some_and(|drag| drag.moving) {
-            self.drop_target = None;
             self.dirty = true;
         }
     }
@@ -341,6 +391,10 @@ impl Browser {
         self.menu_place = None;
         // A row being sorted may not be at its index any more.
         self.place_drag = None;
+        // The rows a sort moved aside are already where the new order puts
+        // them, so they arrive by standing still.
+        self.place_shifts.clear();
+        self.place_shifts_at = None;
         self.places = next;
         // A drag still hovering points at a gap or a row that has moved.
         self.drop_target = None;

@@ -653,6 +653,7 @@ mod tests {
             places: &[],
             selected_place: None,
             dragging_place: None,
+            place_shifts: &[],
             mode: ViewMode::Columns,
             panes,
             active: 0,

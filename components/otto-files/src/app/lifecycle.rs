@@ -433,7 +433,8 @@ impl FilesWindow {
                 | browser.tick_peek_exit()
                 | browser.tick_open_pulse()
                 | browser.tick_photos_copied()
-                | browser.tick_photos_video();
+                | browser.tick_photos_video()
+                | browser.tick_place_shifts();
             // The docked preview column follows the selection wherever it
             // moves — a click, an arrow key, a directory finishing a load
             // that changes what "the selection" resolves to — so this is
@@ -635,6 +636,8 @@ impl FilesWindow {
             // nothing else on screen moving to ask for one.
             || browser.peek_frames_running()
             || browser.opening.is_some()
+            // Sidebar rows standing aside for a sort, or easing back.
+            || browser.place_shifts_animating()
             // The panel materials' fade runs on this client's own engine, and
             // an engine only advances when it is ticked.
             || self.frost.as_ref().is_some_and(|frost| frost.is_fading())

@@ -61,6 +61,8 @@ impl Browser {
             clipboard: model::Clipboard::default(),
             drag_armed: None,
             place_drag: None,
+            place_shifts: Vec::new(),
+            place_shifts_at: None,
             marquee: None,
             drop_target: None,
             peek: None,
