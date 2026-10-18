@@ -93,7 +93,7 @@ impl Browser {
 
         if let Some((depth, index)) = self.entry_at(x, y) {
             if let Some(entry) = self.visible(depth).get(index) {
-                if entry.is_dir && !Self::is_a_move_home(&entry.path) {
+                if entry.is_dir && !self.is_a_move_home(&entry.path) {
                     return Some(DropTarget::Entry {
                         depth,
                         index,
@@ -109,7 +109,7 @@ impl Browser {
         }
         let depth = self.pane_under(x, y);
         let path = self.columns[depth].path.clone();
-        if Self::is_a_move_home(&path) {
+        if self.is_a_move_home(&path) {
             return None;
         }
         Some(DropTarget::Pane { depth, path })
@@ -125,24 +125,24 @@ impl Browser {
     ///
     /// A *copy* onto the same directory is a real request — that is how a
     /// duplicate is made — and so is a link, so this only speaks for a move.
-    /// The test is "not a copy" rather than "is a move" so it stays put once
-    /// we refuse:
-    /// refusing clears the negotiated action, and an `is_move` test would then
-    /// accept again on the next motion and flicker between the two.
-    pub(super) fn is_a_move_home(dest: &Path) -> bool {
+    ///
+    /// The test is whether Ctrl is held, not which action was negotiated:
+    /// refusing clears the negotiated action, so a target that waited for the
+    /// compositor to settle on a copy would never see one, and Ctrl or
+    /// Ctrl+Shift over the files' own folder would do nothing. The drag is our
+    /// own, so the keyboard it is held on is ours too.
+    pub(super) fn is_a_move_home(&self, dest: &Path) -> bool {
         use otto_kit::dnd;
 
         // Someone else's drag: we do not know where those files live, and the
-        // source is the one that would have to answer this anyway. Asked first
-        // because it reads our own payload, while `selected_action` needs a
-        // live `AppContext` there is no reason to require of a target test.
+        // source is the one that would have to answer this anyway.
         let Some(paths) = dnd::own_files() else {
             return false;
         };
         if paths.is_empty() || paths.iter().any(|path| path.parent() != Some(dest)) {
             return false;
         }
-        !dnd::selected_action().intersects(DndAction::Copy | DndAction::Ask)
+        !self.drag_copy_held
     }
 
     /// Put `paths` into the current drop target, moving them, copying them or

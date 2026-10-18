@@ -298,11 +298,13 @@ impl FilesWindow {
         // not a drop target here, so what the enter decided has to be
         // remembered.
         let on_toplevel = std::cell::Cell::new(false);
+        let modifiers = Arc::clone(&self.modifiers);
 
         dnd::register(move |event| {
             let Some(state) = state.upgrade() else {
                 return;
             };
+            let copy_held = modifiers.lock().unwrap().ctrl;
             let is_ours = |id: &wayland_client::backend::ObjectId| toplevel.as_ref() == Some(id);
 
             match event {
@@ -311,13 +313,13 @@ impl FilesWindow {
                     if !on_toplevel.get() {
                         return;
                     }
-                    hover_drag(&state, *x as f32, *y as f32);
+                    hover_drag(&state, *x as f32, *y as f32, copy_held);
                 }
                 DragEvent::Motion { x, y } => {
                     if !on_toplevel.get() {
                         return;
                     }
-                    hover_drag(&state, *x as f32, *y as f32);
+                    hover_drag(&state, *x as f32, *y as f32, copy_held);
                 }
                 DragEvent::Leave => {
                     if !on_toplevel.replace(false) {
@@ -348,6 +350,7 @@ impl FilesWindow {
                     };
 
                     let mut browser = state.browse();
+                    browser.drag_copy_held = copy_held;
                     // Resolved again at the drop's own position rather than
                     // trusting the last motion: the release may land somewhere
                     // no motion reported.
