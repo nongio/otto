@@ -348,8 +348,6 @@ settings-startup-filter-apps = Застосунки
 settings-startup-filter-all = Усі файли
 settings-startup-xdg = Також запускати застосунки автозапуску
 settings-startup-xdg-detail = Записи з ~/.config/autostart і /etc/xdg/autostart. Діє з наступного входу
-settings-group-launch-order = Порядок запуску
-settings-startup-order-empty = Під час входу нічого не запускається
 settings-lock-never = Ніколи
 # Under each Lock & Login row: the compositor asks for the password before it applies a change.
 settings-asks-for-password = Для зміни знадобиться пароль

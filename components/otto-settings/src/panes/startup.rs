@@ -14,11 +14,11 @@
 //! list in before changing it, so turning one component off does not turn
 //! off the rest with it.
 //!
-//! Each component has a switch. *Add command* appends one typed in, and
-//! *Add app or program* one chosen through the portal: an application's
-//! `.desktop` entry or a program file. A second group, *Launch order*, lists
-//! every entry in the order the compositor starts them, with ↑ and ↓ to move
-//! one and a "−" to take it out; a component switched on joins at the end.
+//! One list: every entry in the order the compositor starts them, with ↑ and
+//! ↓ to move one and a "−" to take it out, then each component that does not
+//! start with an Add that puts it back at the end. *Add command* appends a
+//! command typed in, and *Add app or program* one chosen through the portal:
+//! an application's `.desktop` entry or a program file.
 //!
 //! The XDG switch is `xdg_autostart`, which also starts the entries in the
 //! autostart folders. Not a session setting either, so it is written here
@@ -44,11 +44,11 @@ const KEY: &str = "exec_once";
 /// The system's configuration, the bottom layer.
 const SYSTEM_CONFIG: &str = "/etc/otto/config.toml";
 
-/// A component switch's identifier is this followed by the component's
+/// The row of a component that does not start is this followed by its
 /// program. Not session settings: the group answers for them.
 const COMPONENT_ROW: &str = "startup.component.";
 
-/// Another command's row identifier is this followed by its command line.
+/// An entry's row identifier is this followed by its place and command line.
 const COMMAND_ROW: &str = "startup.command.";
 
 /// The *Add command* field.
@@ -545,16 +545,19 @@ fn intern(text: String) -> &'static str {
         .or_insert_with_key(|text| text.clone().leak())
 }
 
-/// The Start at login group — a switch per component, the fields that add a
-/// command, the XDG switch and the file — then the launch order, every
-/// entry in the order the compositor starts them.
+/// The Start at login group: every entry in the order the compositor starts
+/// them, the components not started after them with an Add, then the rows
+/// that add a command, the XDG switch and the file.
 pub fn groups() -> Vec<Group> {
-    let list = list();
-    let order = order_rows(&list.entries);
-    vec![
-        start_group(&list),
-        group(otto_kit::t!("settings-group-launch-order"), order),
-    ]
+    vec![start_group(&list())]
+}
+
+fn add_label() -> &'static str {
+    otto_kit::t!("common-add")
+}
+fn add_buttons() -> &'static [&'static str] {
+    static BUTTONS: OnceLock<Vec<&'static str>> = OnceLock::new();
+    BUTTONS.get_or_init(|| vec![add_label()])
 }
 
 /// The buttons that move an entry one place earlier or later.
@@ -581,21 +584,15 @@ fn entry_of_row(id: &str) -> Option<(usize, &str)> {
 /// A row per entry, in launch order: a component by its name, anything
 /// else by its command line, each with ↑ and ↓ and a "−".
 fn order_rows(entries: &[Entry]) -> Vec<Row> {
-    if entries.is_empty() {
-        return vec![Row::new(
-            otto_kit::t!("settings-startup-order-empty"),
-            Control::Value(String::new()),
-        )];
-    }
     entries
         .iter()
         .enumerate()
         .map(|(index, entry)| {
             let component = COMPONENTS.iter().find(|(program, ..)| entry.runs(program));
             let mut row = match component {
-                Some((_, label, _)) => {
+                Some((_, label, detail)) => {
                     Row::new(otto_kit::t!(*label), Control::Button(move_buttons()))
-                        .detail(entry.line())
+                        .detail(otto_kit::t!(*detail))
                 }
                 None => Row::new(intern(entry.line()), Control::Button(move_buttons())),
             }
@@ -607,16 +604,20 @@ fn order_rows(entries: &[Entry]) -> Vec<Row> {
 }
 
 fn start_group(list: &List) -> Group {
-    let mut rows: Vec<Row> = COMPONENTS
-        .iter()
-        .map(|(program, label, detail)| {
-            let on = list.entries.iter().any(|entry| entry.runs(program));
-            let mut row =
-                Row::new(otto_kit::t!(*label), Control::Toggle(on)).detail(otto_kit::t!(*detail));
-            row.id = Some(intern(format!("{COMPONENT_ROW}{program}")));
-            row
-        })
-        .collect();
+    let mut rows = order_rows(&list.entries);
+    // A component that does not start is still offered, after the list, so
+    // it can be put back; it joins at the end.
+    rows.extend(
+        COMPONENTS
+            .iter()
+            .filter(|(program, ..)| !list.entries.iter().any(|entry| entry.runs(program)))
+            .map(|(program, label, detail)| {
+                let mut row = Row::new(otto_kit::t!(*label), Control::Button(add_buttons()))
+                    .detail(otto_kit::t!(*detail));
+                row.id = Some(intern(format!("{COMPONENT_ROW}{program}")));
+                row
+            }),
+    );
     let detail = if list.own {
         otto_kit::t!("settings-startup-add-detail")
     } else {
@@ -672,6 +673,13 @@ fn choose_buttons() -> &'static [&'static str] {
 pub fn press(row: &str, button: &str) {
     if row == add_app_label() && button == choose_label() {
         choose_app();
+        return;
+    }
+    if let Some(program) = row.strip_prefix(COMPONENT_ROW) {
+        let known = COMPONENTS.iter().find(|(known, ..)| *known == program);
+        if let (Some((program, ..)), true) = (known, button == add_label()) {
+            write(move |text, inherited| with_component(text, inherited, program, true));
+        }
         return;
     }
     let Some((index, line)) = entry_of_row(row) else {
@@ -730,19 +738,9 @@ fn choose_app() {
     }
 }
 
-/// Take a switch or a new command into the configuration. Returns whether
+/// Take the XDG switch or a new command into the configuration. Returns whether
 /// `id` was the group's, taken or not.
 pub fn apply(id: &str, value: &Value) -> bool {
-    if let Some(program) = id.strip_prefix(COMPONENT_ROW) {
-        let Some((program, ..)) = COMPONENTS.iter().find(|(known, ..)| *known == program) else {
-            return true;
-        };
-        if let Value::Bool(on) = value {
-            let on = *on;
-            write(move |text, inherited| with_component(text, inherited, program, on));
-        }
-        return true;
-    }
     if id == XDG_ID {
         if let Value::Bool(on) = value {
             let on = *on;
@@ -952,6 +950,7 @@ mod tests {
     #[test]
     fn the_group_owns_only_its_own_ids() {
         assert!(!apply("desk.enabled", &Value::Bool(true)));
-        assert!(apply("startup.component.otto-nothing", &Value::Bool(true)));
+        assert!(!apply("startup.component.otto-bar", &Value::Bool(true)));
+        assert!(apply(XDG_ID, &Value::Text(String::new())));
     }
 }

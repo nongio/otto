@@ -548,11 +548,12 @@ another way of typing. The panes are:
 - **Lock & Login** — automatic lock timeout, which locker runs the lock screen,
   which greeter runs the login screen. *Start at login* edits `[[exec_once]]`
   in the writable configuration directly, keeping the rest of the file: a
-  switch for each Otto component (top bar, dynamic island, stash, Agents
-  panel), a field that appends a command and a portal picker for a `.desktop`
-  entry or a program, the `xdg_autostart` switch, and the file's Open. *Launch
-  order* lists every entry in the order the compositor starts them, with ↑/↓
-  to move one and "−" to remove it. The
+  single list of every entry in launch order, with ↑/↓ and "−", each Otto
+  component (top bar, dynamic island, stash, Agents
+  panel) that is off, offered after the list with an Add, a field that
+  appends a command and a portal picker for a `.desktop`
+  entry or a program, the `xdg_autostart` switch, and the file's Open.
+  The
   user's list replaces the system's, so until the file has one the group
   shows the system's and its first change copies it in; turning every entry
   off writes `exec_once = []` rather than dropping the key. Applies at the
