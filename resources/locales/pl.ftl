@@ -240,6 +240,7 @@ settings-tiling-mode-bounce = Odbicie kafelkowania
 
 settings-key-repeat-delay = Opóźnienie powtarzania klawiszy
 settings-key-repeat-rate = Szybkość powtarzania klawiszy
+settings-press-and-hold-accents = Akcenty po przytrzymaniu
 settings-group-input-source = Źródło wprowadzania
 settings-xkb-layout-nth = Układ { $n }
 settings-xkb-layout-default = Domyślny systemowy
@@ -1221,6 +1222,8 @@ schema-input-xkb-options-label = Opcje klawiatury
 schema-input-xkb-options-description = Ciągi opcji XKB.
 schema-input-show-layout-in-bar-label = Pokaż układ na pasku
 schema-input-show-layout-in-bar-description = Pokazuje aktywny układ klawiatury w otto-bar, gdy jest ich więcej niż jeden.
+schema-input-press-and-hold-accents-label = Akcenty po przytrzymaniu
+schema-input-press-and-hold-accents-description = Przytrzymanie litery, takiej jak e lub n, pokazuje przy kursorze tekstu jej odmiany ze znakami diakrytycznymi zamiast ją powtarzać.
 schema-input-tap-enabled-label = Stuknięcie jako kliknięcie
 schema-input-tap-enabled-description = Traktuj stuknięcie w gładzik jako kliknięcie.
 schema-input-tap-drag-enabled-label = Stuknięcie i przeciąganie

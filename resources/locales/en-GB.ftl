@@ -242,6 +242,7 @@ settings-tiling-mode-bounce = Tiling mode bounce
 
 settings-key-repeat-delay = Key repeat delay
 settings-key-repeat-rate = Key repeat rate
+settings-press-and-hold-accents = Accents on hold
 settings-group-input-source = Input source
 settings-xkb-layout-nth = Layout { $n }
 settings-xkb-layout-default = System default
@@ -1272,6 +1273,8 @@ schema-input-xkb-options-label = Keyboard options
 schema-input-xkb-options-description = XKB option strings.
 schema-input-show-layout-in-bar-label = Show layout in the bar
 schema-input-show-layout-in-bar-description = Shows the active keyboard layout in otto-bar when there is more than one.
+schema-input-press-and-hold-accents-label = Accents on hold
+schema-input-press-and-hold-accents-description = Holding a letter such as e or n shows its accented forms at the text cursor instead of repeating it.
 schema-input-tap-enabled-label = Tap to click
 schema-input-tap-enabled-description = Treat a tap on the touchpad as a click.
 schema-input-tap-drag-enabled-label = Tap and drag

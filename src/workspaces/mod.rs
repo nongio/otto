@@ -29,6 +29,7 @@ use smithay::{
 use wayland_server::DisplayHandle;
 use workspace::WorkspaceView;
 
+mod accent_picker;
 mod app_icons_manager;
 mod app_switcher;
 mod background;
@@ -56,6 +57,7 @@ pub use window_view::{
     WindowViewBaseModel, WindowViewSurface,
 };
 
+pub use accent_picker::AccentPickerView;
 pub use app_icons_manager::AppIconsManager;
 pub use app_switcher::AppSwitcherView;
 pub use apps_info::ApplicationsInfo;
@@ -291,6 +293,7 @@ pub struct Workspaces {
     pub dnd_view: DndView,
     pub popup_overlay: PopupOverlayView,
     pub osd: OsdView,
+    pub accent_picker: AccentPickerView,
     pub tiling_overlay: TilingOverlayView,
     pub app_icons_manager: Arc<AppIconsManager>,
 
@@ -875,6 +878,7 @@ impl Workspaces {
 
         // Create OSD view; attach it to overlay_layer in map_output_with_primary
         let osd = OsdView::new(layers_engine.clone());
+        let accent_picker = AccentPickerView::new(layers_engine.clone());
 
         // Window-tiling drop-zone overlay; attached to overlay_layer in map_output_with_primary
         let tiling_overlay = TilingOverlayView::new(layers_engine.clone());
@@ -896,6 +900,7 @@ impl Workspaces {
             dnd_view,
             popup_overlay,
             osd,
+            accent_picker,
             tiling_overlay,
             app_icons_manager,
             overlay_layer,
@@ -1394,7 +1399,7 @@ impl Workspaces {
         }
 
         // Check if OSD (volume/brightness) is visible
-        if self.osd.is_visible() {
+        if self.osd.is_visible() || self.accent_picker.is_visible() {
             return false;
         }
 
@@ -4848,6 +4853,9 @@ impl Workspaces {
                 .overlay_layer
                 .add_sublayer(&self.tiling_overlay.wrap_layer);
             let _ = self.overlay_layer.add_sublayer(&self.osd.wrap_layer);
+            let _ = self
+                .overlay_layer
+                .add_sublayer(&self.accent_picker.wrap_layer);
             // App icons manager lives at the root — sibling of output layers, never rendered
             // on any output, but present in the scene so its subtree gets laid out.
             if let Some(root) = self
@@ -6099,7 +6107,7 @@ impl Workspaces {
         let selector = self.is_expose_transitioning()
             || self.get_show_all()
             || self.is_animating.load(std::sync::atomic::Ordering::Relaxed);
-        let osd = self.osd.is_visible();
+        let osd = self.osd.is_visible() || self.accent_picker.is_visible();
         let tiling = self.tiling_overlay.is_visible();
         // The side canvas is in this output's plane only while it is on
         // screen here; its container is hidden the rest of the time.

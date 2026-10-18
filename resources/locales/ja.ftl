@@ -237,6 +237,7 @@ settings-tiling-mode-bounce = タイル表示のバウンス
 
 settings-key-repeat-delay = リピート開始までの時間
 settings-key-repeat-rate = リピート速度
+settings-press-and-hold-accents = 長押しでアクセント
 settings-group-input-source = 入力ソース
 settings-xkb-layout-nth = レイアウト { $n }
 settings-xkb-layout-default = システムの既定
@@ -1144,6 +1145,8 @@ schema-input-xkb-options-label = キーボードオプション
 schema-input-xkb-options-description = XKBのオプション文字列。
 schema-input-show-layout-in-bar-label = バーにレイアウトを表示
 schema-input-show-layout-in-bar-description = レイアウトが複数あるとき、使用中のキーボードレイアウトを otto-bar に表示します。
+schema-input-press-and-hold-accents-label = 長押しでアクセント
+schema-input-press-and-hold-accents-description = e や n などの文字を長押しすると、繰り返す代わりにテキストカーソルの位置にアクセント付きの文字を表示します。
 schema-input-tap-enabled-label = タップでクリック
 schema-input-tap-enabled-description = トラックパッドのタップをクリックとして扱います。
 schema-input-tap-drag-enabled-label = タップでドラッグ

@@ -240,6 +240,7 @@ settings-tiling-mode-bounce = Rebote do modo lado a lado
 
 settings-key-repeat-delay = Atraso de repetição de tecla
 settings-key-repeat-rate = Taxa de repetição de tecla
+settings-press-and-hold-accents = Acentos ao manter pressionado
 settings-group-input-source = Fonte de entrada
 settings-xkb-layout-nth = Layout { $n }
 settings-xkb-layout-default = Padrão do sistema
@@ -1182,6 +1183,8 @@ schema-input-xkb-options-label = Opções do teclado
 schema-input-xkb-options-description = Strings de opções XKB.
 schema-input-show-layout-in-bar-label = Mostrar layout na barra
 schema-input-show-layout-in-bar-description = Mostra o layout de teclado ativo no otto-bar quando há mais de um.
+schema-input-press-and-hold-accents-label = Acentos ao manter pressionado
+schema-input-press-and-hold-accents-description = Manter pressionada uma letra como e ou n mostra suas formas acentuadas no cursor de texto em vez de repeti-la.
 schema-input-tap-enabled-label = Tocar para clicar
 schema-input-tap-enabled-description = Tratar um toque no trackpad como um clique.
 schema-input-tap-drag-enabled-label = Tocar e arrastar

@@ -129,6 +129,38 @@ keyboard_repeat_rate = 30      # repeats per second
 These are top-level keys, not inside `[input]`. Otto sends them to clients over
 `wl_keyboard`, so applications repeat at the rate you set.
 
+## Accents and special characters
+
+Hold a letter such as `e`, `a`, `n` or `c` and a row of its accented forms
+appears at the text cursor, each with a number under it:
+
+```text
+è é ê ë ē ė ę
+1 2 3 4 5 6 7
+```
+
+Press the number, or move with the arrow keys and press Return. The letter you
+held is replaced by the one you picked. Escape or a click puts the row away and
+keeps the plain letter, and any other key closes it and types as usual. Hold
+Shift for the capital forms.
+
+A few symbols work the same way: `$` gives € £ ¥ ¢, `-` gives – —, `.` gives
+… · •, `"` and `'` give typographic quotes, and `!` and `?` give ¡ and ¿.
+
+The row follows the character your layout types, not the key's position, so it
+works with any Latin layout. Keys that have no accented forms repeat as before;
+a key that has them no longer repeats while held.
+
+The row only appears in applications that report their text cursor, which
+covers GTK, Qt, Chromium, Firefox and most terminals. In other windows, and
+in X11 applications, a held key repeats as usual. Turn it off with **Accents
+on hold** in Settings → Keyboard, or in the config:
+
+```toml
+[input]
+press_and_hold_accents = false
+```
+
 ## Touchpad
 
 ```toml

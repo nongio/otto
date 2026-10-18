@@ -825,6 +825,13 @@ pub static SETTINGS: &[SettingSpec] = &[
         "Shows the active keyboard layout in otto-bar when there is more than one.",
         Live,
     ),
+    spec(
+        "input.press_and_hold_accents",
+        Bool,
+        "Accents on hold",
+        "Holding a letter such as e or n shows its accented forms at the text cursor instead of repeating it.",
+        Live,
+    ),
     // ---- Trackpad & Mouse ------------------------------------------------
     spec(
         "input.tap_enabled",

@@ -523,124 +523,130 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         );
         let event_time = Duration::from_millis(u64::from(time.millis()));
 
-        let action = keyboard
-            .input(
-                self,
-                keycode,
-                state,
-                serial,
-                time,
-                |_, modifiers, handle| {
-                    let keysym = handle.modified_sym();
+        let action = keyboard.input(
+            self,
+            keycode,
+            state,
+            serial,
+            time,
+            |otto, modifiers, handle| {
+                let keysym = handle.modified_sym();
 
-                    // A screen reader's own keys never reach the session: no
-                    // shortcut fires, the focused client is not told, and a
-                    // toggle does not flip. Its release is swallowed too, so a
-                    // client never sees half of a keystroke.
-                    let serialized = modifiers.serialized;
-                    let grabbed = a11y.process_key(
-                        repeat_delay,
-                        event_time,
-                        keycode.raw() as u16,
-                        matches!(state, KeyState::Released),
-                        serialized.depressed | serialized.latched | serialized.locked,
-                        keysym,
-                        xkb::keysym_to_utf32(keysym),
-                    );
-                    if grabbed {
+                // A screen reader's own keys never reach the session: no
+                // shortcut fires, the focused client is not told, and a
+                // toggle does not flip. Its release is swallowed too, so a
+                // client never sees half of a keystroke.
+                let serialized = modifiers.serialized;
+                let grabbed = a11y.process_key(
+                    repeat_delay,
+                    event_time,
+                    keycode.raw() as u16,
+                    matches!(state, KeyState::Released),
+                    serialized.depressed | serialized.latched | serialized.locked,
+                    keysym,
+                    xkb::keysym_to_utf32(keysym),
+                );
+                if grabbed {
+                    return FilterResult::Intercept(KeyAction::None);
+                }
+
+                if let Some(result) =
+                    otto.accent_key(keycode, state, keysym, modifiers, &mut suppressed_keys)
+                {
+                    return result;
+                }
+
+                // Debug plane PNG dumps. Shift-modified so clients still
+                // receive plain digit keys even in debug-kms builds.
+                #[cfg(feature = "debug-kms")]
+                if matches!(state, KeyState::Pressed)
+                    && modifiers.shift
+                    && !modifiers.ctrl
+                    && !modifiers.alt
+                    && !modifiers.logo
+                {
+                    use std::sync::atomic::Ordering;
+                    let toggled = match keysym {
+                        Keysym::_6 | Keysym::asciicircum => {
+                            DBG_SAVE_BG.store(true, Ordering::Relaxed);
+                            Some("save bg")
+                        }
+                        Keysym::_7 | Keysym::ampersand => {
+                            DBG_SAVE_WIN.store(true, Ordering::Relaxed);
+                            Some("save win")
+                        }
+                        Keysym::_8 | Keysym::asterisk => {
+                            DBG_SAVE_EXPOSE.store(true, Ordering::Relaxed);
+                            Some("save expose")
+                        }
+                        Keysym::_9 | Keysym::parenleft => {
+                            DBG_SAVE_OVERLAY.store(true, Ordering::Relaxed);
+                            Some("save overlay")
+                        }
+                        _ => None,
+                    };
+                    if let Some(msg) = toggled {
+                        tracing::info!(target: "otto::planes", "debug plane dump: {msg}");
+                        suppressed_keys.push(keysym);
                         return FilterResult::Intercept(KeyAction::None);
                     }
+                }
 
-                    // Debug plane PNG dumps. Shift-modified so clients still
-                    // receive plain digit keys even in debug-kms builds.
-                    #[cfg(feature = "debug-kms")]
-                    if matches!(state, KeyState::Pressed)
-                        && modifiers.shift
-                        && !modifiers.ctrl
-                        && !modifiers.alt
-                        && !modifiers.logo
-                    {
-                        use std::sync::atomic::Ordering;
-                        let toggled = match keysym {
-                            Keysym::_6 | Keysym::asciicircum => {
-                                DBG_SAVE_BG.store(true, Ordering::Relaxed);
-                                Some("save bg")
-                            }
-                            Keysym::_7 | Keysym::ampersand => {
-                                DBG_SAVE_WIN.store(true, Ordering::Relaxed);
-                                Some("save win")
-                            }
-                            Keysym::_8 | Keysym::asterisk => {
-                                DBG_SAVE_EXPOSE.store(true, Ordering::Relaxed);
-                                Some("save expose")
-                            }
-                            Keysym::_9 | Keysym::parenleft => {
-                                DBG_SAVE_OVERLAY.store(true, Ordering::Relaxed);
-                                Some("save overlay")
-                            }
-                            _ => None,
-                        };
-                        if let Some(msg) = toggled {
-                            tracing::info!(target: "otto::planes", "debug plane dump: {msg}");
-                            suppressed_keys.push(keysym);
-                            return FilterResult::Intercept(KeyAction::None);
-                        }
-                    }
+                // Escape puts a window being dragged out of a tree back
+                // in the slot it came from.
+                if tiling_drag_active
+                    && matches!(state, KeyState::Pressed)
+                    && keysym == Keysym::Escape
+                {
+                    suppressed_keys.push(keysym);
+                    return FilterResult::Intercept(KeyAction::TilingDragCancel);
+                }
 
-                    // Escape puts a window being dragged out of a tree back
-                    // in the slot it came from.
-                    if tiling_drag_active
-                        && matches!(state, KeyState::Pressed)
-                        && keysym == Keysym::Escape
-                    {
-                        suppressed_keys.push(keysym);
-                        return FilterResult::Intercept(KeyAction::TilingDragCancel);
-                    }
+                if canvas_owns_escape
+                    && matches!(state, KeyState::Pressed)
+                    && keysym == Keysym::Escape
+                {
+                    suppressed_keys.push(keysym);
+                    return FilterResult::Intercept(KeyAction::CanvasToggle);
+                }
 
-                    if canvas_owns_escape
-                        && matches!(state, KeyState::Pressed)
-                        && keysym == Keysym::Escape
-                    {
-                        suppressed_keys.push(keysym);
-                        return FilterResult::Intercept(KeyAction::CanvasToggle);
-                    }
-
-                    let shortcut_action = Config::with(|config| {
-                        if matches!(state, KeyState::Pressed) {
-                            let modifiers =
-                                shortcut_modifiers(*modifiers, cmd_held, cmd_is_ctrl(config));
-                            process_keyboard_shortcut(config, modifiers, keysym)
-                                .filter(|action| !inhibited || survives_shortcut_inhibition(action))
-                        } else {
-                            None
-                        }
-                    });
-                    updated_modifiers = Some(*modifiers);
-
-                    // If the key is pressed and triggered an action
-                    // we will not forward the key to the client.
-                    // Additionally add the key to the suppressed keys
-                    // so that we can decide on a release if the key
-                    // should be forwarded to the client or not.
-                    if let KeyState::Pressed = state {
-                        if let Some(action) = shortcut_action {
-                            suppressed_keys.push(keysym);
-                            FilterResult::Intercept(action)
-                        } else {
-                            FilterResult::Forward
-                        }
+                let shortcut_action = Config::with(|config| {
+                    if matches!(state, KeyState::Pressed) {
+                        let modifiers =
+                            shortcut_modifiers(*modifiers, cmd_held, cmd_is_ctrl(config));
+                        process_keyboard_shortcut(config, modifiers, keysym)
+                            .filter(|action| !inhibited || survives_shortcut_inhibition(action))
                     } else {
-                        let suppressed = suppressed_keys.contains(&keysym);
-                        if suppressed {
-                            suppressed_keys.retain(|k| *k != keysym);
-                            FilterResult::Intercept(KeyAction::None)
-                        } else {
-                            FilterResult::Forward
-                        }
+                        None
                     }
-                },
-            )
-            .unwrap_or(KeyAction::None);
+                });
+                updated_modifiers = Some(*modifiers);
+
+                // If the key is pressed and triggered an action
+                // we will not forward the key to the client.
+                // Additionally add the key to the suppressed keys
+                // so that we can decide on a release if the key
+                // should be forwarded to the client or not.
+                if let KeyState::Pressed = state {
+                    if let Some(action) = shortcut_action {
+                        suppressed_keys.push(keysym);
+                        FilterResult::Intercept(action)
+                    } else {
+                        FilterResult::Forward
+                    }
+                } else {
+                    let suppressed = suppressed_keys.contains(&keysym);
+                    if suppressed {
+                        suppressed_keys.retain(|k| *k != keysym);
+                        FilterResult::Intercept(KeyAction::None)
+                    } else {
+                        FilterResult::Forward
+                    }
+                }
+            },
+        );
+        self.accent_key_delivered(action.is_none(), time);
+        let action = action.unwrap_or(KeyAction::None);
 
         // Capture modifiers when pressing app switcher actions
         if matches!(state, KeyState::Pressed)

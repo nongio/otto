@@ -237,6 +237,7 @@ settings-tiling-mode-bounce = 平铺模式回弹
 
 settings-key-repeat-delay = 按键重复延迟
 settings-key-repeat-rate = 按键重复速率
+settings-press-and-hold-accents = 长按输入重音字母
 settings-group-input-source = 输入源
 settings-xkb-layout-nth = 布局 { $n }
 settings-xkb-layout-default = 系统默认
@@ -1147,6 +1148,8 @@ schema-input-xkb-options-label = 键盘选项
 schema-input-xkb-options-description = XKB 选项字符串。
 schema-input-show-layout-in-bar-label = 在栏中显示布局
 schema-input-show-layout-in-bar-description = 有多个布局时，在 otto-bar 中显示当前键盘布局。
+schema-input-press-and-hold-accents-label = 长按输入重音字母
+schema-input-press-and-hold-accents-description = 长按 e 或 n 等字母时，在文本光标处显示其带重音的形式，而不是重复输入。
 schema-input-tap-enabled-label = 轻点来点按
 schema-input-tap-enabled-description = 将触控板上的轻点视为点按。
 schema-input-tap-drag-enabled-label = 轻点拖移

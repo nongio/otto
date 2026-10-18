@@ -240,6 +240,7 @@ settings-tiling-mode-bounce = Отскок мозаики
 
 settings-key-repeat-delay = Задержка перед повтором
 settings-key-repeat-rate = Скорость повтора
+settings-press-and-hold-accents = Акценты при удержании
 settings-group-input-source = Источник ввода
 settings-xkb-layout-nth = Раскладка { $n }
 settings-xkb-layout-default = Системная по умолчанию
@@ -1214,6 +1215,8 @@ schema-input-xkb-options-label = Параметры клавиатуры
 schema-input-xkb-options-description = Строки параметров XKB.
 schema-input-show-layout-in-bar-label = Показывать раскладку на панели
 schema-input-show-layout-in-bar-description = Показывает активную раскладку клавиатуры в otto-bar, если их больше одной.
+schema-input-press-and-hold-accents-label = Акценты при удержании
+schema-input-press-and-hold-accents-description = При удержании буквы, например e или n, у текстового курсора появляются её варианты с диакритикой вместо повтора.
 schema-input-tap-enabled-label = Нажатие касанием
 schema-input-tap-enabled-description = Считать касание тачпада нажатием.
 schema-input-tap-drag-enabled-label = Касание и перетаскивание

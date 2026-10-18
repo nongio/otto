@@ -240,6 +240,7 @@ settings-tiling-mode-bounce = Rebond du mode mosaïque
 
 settings-key-repeat-delay = Délai de répétition des touches
 settings-key-repeat-rate = Vitesse de répétition des touches
+settings-press-and-hold-accents = Accents par appui long
 settings-group-input-source = Source de saisie
 settings-xkb-layout-nth = Disposition { $n }
 settings-xkb-layout-default = Valeur par défaut du système
@@ -1192,6 +1193,8 @@ schema-input-xkb-options-label = Options du clavier
 schema-input-xkb-options-description = Chaînes d’options XKB.
 schema-input-show-layout-in-bar-label = Afficher la disposition dans la barre
 schema-input-show-layout-in-bar-description = Affiche la disposition de clavier active dans otto-bar quand il y en a plusieurs.
+schema-input-press-and-hold-accents-label = Accents par appui long
+schema-input-press-and-hold-accents-description = Maintenir une lettre comme e ou n affiche ses formes accentuées au curseur de texte au lieu de la répéter.
 schema-input-tap-enabled-label = Toucher pour cliquer
 schema-input-tap-enabled-description = Traiter un toucher sur le pavé tactile comme un clic.
 schema-input-tap-drag-enabled-label = Toucher-glisser

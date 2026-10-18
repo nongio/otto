@@ -69,6 +69,7 @@ pub fn is_applied_live(id: &str) -> bool {
             | "cursor_size"
             | "icon_theme"
             | "input.show_layout_in_bar"
+            | "input.press_and_hold_accents"
             | "desk.enabled"
             | "canvas.width"
             | "desktop.widget"

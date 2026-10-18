@@ -2070,6 +2070,10 @@ pub struct InputConfig {
     /// has nothing to tell.
     #[serde(default = "default_show_layout_in_bar")]
     pub show_layout_in_bar: bool,
+    /// Holding a letter that has accented forms (e, n, a, …) shows them in a
+    /// row at the caret instead of repeating it. On by default.
+    #[serde(default = "default_press_and_hold_accents")]
+    pub press_and_hold_accents: bool,
 }
 
 /// Touchpad click method configuration
@@ -2123,12 +2127,17 @@ impl Default for InputConfig {
             xkb_options: Vec::new(),
             mac_style_modifiers: None,
             show_layout_in_bar: default_show_layout_in_bar(),
+            press_and_hold_accents: default_press_and_hold_accents(),
         }
     }
 }
 
 fn default_show_layout_in_bar() -> bool {
     false
+}
+
+fn default_press_and_hold_accents() -> bool {
+    true
 }
 
 fn default_tap_enabled() -> bool {
