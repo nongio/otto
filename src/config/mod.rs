@@ -1910,8 +1910,8 @@ pub struct PowerManagementConfig {
     ///     bridge / screenshare) is actively consuming frames
     ///   "lock" - Like "auto", but lock the session first, the way
     ///     `on_power_button = "lock"` does, so the machine wakes to the locker
-    ///   "disable_internal_screen" - Always disable screen but stay running,
-    ///     never suspend (for display managers/kiosks)
+    ///   "disable_internal_screen" - Disable the screen while the lid is
+    ///     closed but stay running, never suspend or lock
     #[serde(default = "default_on_lid_close")]
     pub on_lid_close: LidCloseAction,
 
@@ -1934,8 +1934,8 @@ pub enum LidCloseAction {
     /// the locker. Skipped in the same cases the suspend is: a clamshell or
     /// remote session is still in use, and stays unlocked
     Lock,
-    /// Always disable screen but keep running, never suspend (for display
-    /// managers/kiosks)
+    /// Disable the screen while the lid is closed but keep running, never
+    /// suspend or lock
     DisableInternalScreen,
 }
 
