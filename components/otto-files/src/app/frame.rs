@@ -234,7 +234,7 @@ impl Browser {
             subtitle: self.subtitle(),
             places: &self.places,
             selected_place: self.selected_place(),
-            dragging_place: self.dragging_place(),
+            dragging_place: self.dragging_place_frame(),
             cut: if self.clipboard.cut {
                 self.clipboard.paths.clone()
             } else {

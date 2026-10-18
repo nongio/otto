@@ -18,13 +18,15 @@ use crate::places_config::{self, Builtin, SidebarConfig};
 /// row's config id follows it.
 pub(super) const SHOW_PREFIX: &str = "sidebar_show_";
 
-/// A press on one of the user's own sidebar rows, and where it has got to.
+/// A press on a sidebar row, and where it has got to.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(super) struct PlaceDrag {
     /// The row pressed.
     pub index: usize,
     /// Where the press landed, to tell a drag from an unsteady click.
     pub start_y: f32,
+    /// Where the pointer is now, for the ghost to follow.
+    pub y: f32,
     /// Past the drag threshold: the row is being sorted, and the press is no
     /// longer a click.
     pub moving: bool,
@@ -38,6 +40,7 @@ impl Browser {
         self.place_drag = (index < self.places.len()).then_some(PlaceDrag {
             index,
             start_y: y,
+            y,
             moving: false,
         });
     }
@@ -54,13 +57,14 @@ impl Browser {
             }
             drag.moving = true;
         }
+        drag.y = y;
         let index = drag.index;
         let slot = self.sort_slot(index, y);
         let target = slot.map(|slot| DropTarget::PlaceGap { slot });
         if self.drop_target != target {
             self.drop_target = target;
         }
-        // The faded row and the cursor follow every move.
+        // The ghost and the cursor follow every move.
         self.dirty = true;
         AppContext::set_cursor_shape(CursorShape::Grabbing);
         true
@@ -102,11 +106,15 @@ impl Browser {
         }
     }
 
-    /// The row being sorted, for the frame to draw faded.
-    pub(super) fn dragging_place(&self) -> Option<usize> {
+    /// The row being sorted and how far it has been carried, for the frame
+    /// to draw it faded and its ghost under the pointer.
+    pub(super) fn dragging_place_frame(&self) -> Option<view::PlaceDragFrame> {
         self.place_drag
             .filter(|drag| drag.moving)
-            .map(|drag| drag.index)
+            .map(|drag| view::PlaceDragFrame {
+                index: drag.index,
+                dy: drag.y - drag.start_y,
+            })
     }
 
     /// The sidebar's order once `moving` sits at gap `slot` of the rows shown.

@@ -4479,9 +4479,10 @@ pub struct Frame<'a> {
     pub subtitle: String,
     pub places: &'a [Place],
     pub selected_place: Option<usize>,
-    /// The sidebar row being dragged to a new place in the list, drawn
-    /// faded where it was while the insertion line shows where it goes.
-    pub dragging_place: Option<usize>,
+    /// The sidebar row being dragged to a new place in the list: faded where
+    /// it was, its ghost following the pointer, the insertion line where it
+    /// goes.
+    pub dragging_place: Option<PlaceDragFrame>,
     pub mode: ViewMode,
     /// One per column in the path stack. In list view only the last is drawn.
     pub panes: Vec<PaneData<'a>>,
@@ -5875,13 +5876,14 @@ fn draw_sidebar(canvas: &Canvas, f: &Frame) {
         .centered_on(20.0, 54.0 - sidebar_lift())
         .render(canvas);
 
+    let dragging = f.dragging_place.map(|drag| drag.index);
     for (i, place) in f.places.iter().enumerate() {
         let rect = place_rect(i);
         let selected = f.selected_place == Some(i);
 
         // The row being sorted stays where it was, faded, until it is let go:
-        // the insertion line is where it is going.
-        let lifted = f.dragging_place == Some(i);
+        // the ghost is what is moving, and the insertion line where it goes.
+        let lifted = dragging == Some(i);
         if lifted {
             canvas.save_layer_alpha(rect, 90);
         }
@@ -5892,45 +5894,92 @@ fn draw_sidebar(canvas: &Canvas, f: &Frame) {
             paint.set_color(theme.material_selection_focused);
             canvas.draw_rrect(RRect::new_rect_xy(rect, 6.0, 6.0), &paint);
         }
-
-        // A selected place reads white on the selection, like its label.
-        let tone = if selected {
-            Color::WHITE
-        } else {
-            theme.text_secondary
-        };
-        if let Some(image) = icons::cached_glyph_chain(
-            &[place.icon.as_str(), "folder"],
-            device_px(canvas, 16.0),
-            Color::BLACK,
-        ) {
-            let dst = Rect::from_xywh(rect.left + 8.0, rect.center_y() - 8.0, 16.0, 16.0);
-            // Otto's own glyph where it has one, otherwise the theme's
-            // small-size art: a monochrome outline baked at whatever colour
-            // the theme authored it in. Either way SrcIn gives it the tone
-            // once, keeping its alpha, the way a symbolic icon is drawn.
-            let mut paint = Paint::default();
-            paint.set_color_filter(skia_safe::color_filters::blend(
-                tone,
-                skia_safe::BlendMode::SrcIn,
-            ));
-            canvas.draw_image_rect(&image, None, dst, &paint);
-        }
-
-        Label::new(&place.label)
-            .with_style(styles::BODY_EMPHASIZED)
-            .with_color(if selected {
-                Color::WHITE
-            } else {
-                theme.text_primary
-            })
-            .centered_on(rect.left + 32.0, rect.center_y())
-            .render(canvas);
+        draw_place_content(canvas, theme, place, rect, selected);
 
         if lifted {
             canvas.restore();
         }
     }
+
+    if let Some(drag) = f.dragging_place {
+        if let Some(place) = f.places.get(drag.index) {
+            draw_place_ghost(canvas, theme, place, place_ghost_rect(drag));
+        }
+    }
+}
+
+/// A sidebar row being sorted, and how far the pointer has carried it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PlaceDragFrame {
+    pub index: usize,
+    /// The pointer's travel since the press, down positive.
+    pub dy: f32,
+}
+
+/// Where the ghost of a row being sorted is drawn: the row, carried by the
+/// pointer's travel, held inside the sidebar's column of rows so it reads as
+/// the row moving along its list rather than as something torn off it.
+pub fn place_ghost_rect(drag: PlaceDragFrame) -> Rect {
+    let rect = place_rect(drag.index);
+    let top = place_rect(0).top - PLACE_GAP_REACH;
+    let dy = drag.dy.max(top - rect.top);
+    rect.with_offset((0.0, dy))
+}
+
+/// A place's icon and label, in `rect`.
+fn draw_place_content(canvas: &Canvas, theme: &Theme, place: &Place, rect: Rect, selected: bool) {
+    // A selected place reads white on the selection, like its label.
+    let tone = if selected {
+        Color::WHITE
+    } else {
+        theme.text_secondary
+    };
+    if let Some(image) = icons::cached_glyph_chain(
+        &[place.icon.as_str(), "folder"],
+        device_px(canvas, 16.0),
+        Color::BLACK,
+    ) {
+        let dst = Rect::from_xywh(rect.left + 8.0, rect.center_y() - 8.0, 16.0, 16.0);
+        // Otto's own glyph where it has one, otherwise the theme's
+        // small-size art: a monochrome outline baked at whatever colour
+        // the theme authored it in. Either way SrcIn gives it the tone
+        // once, keeping its alpha, the way a symbolic icon is drawn.
+        let mut paint = Paint::default();
+        paint.set_color_filter(skia_safe::color_filters::blend(
+            tone,
+            skia_safe::BlendMode::SrcIn,
+        ));
+        canvas.draw_image_rect(&image, None, dst, &paint);
+    }
+
+    Label::new(&place.label)
+        .with_style(styles::BODY_EMPHASIZED)
+        .with_color(if selected {
+            Color::WHITE
+        } else {
+            theme.text_primary
+        })
+        .centered_on(rect.left + 32.0, rect.center_y())
+        .render(canvas);
+}
+
+/// The row being sorted, lifted off the list: the row itself on a card of
+/// the popup material, with a shadow under it so it reads as above the rows
+/// it passes over.
+fn draw_place_ghost(canvas: &Canvas, theme: &Theme, place: &Place, rect: Rect) {
+    let mut card = Paint::default();
+    card.set_anti_alias(true);
+    card.set_image_filter(skia_safe::image_filters::drop_shadow(
+        (0.0, 2.0),
+        (4.0, 4.0),
+        Color::from_argb(70, 0, 0, 0),
+        None,
+        None,
+        None,
+    ));
+    card.set_color(opaque(theme.material_popup));
+    canvas.draw_rrect(RRect::new_rect_xy(rect, 6.0, 6.0), &card);
+    draw_place_content(canvas, theme, place, rect, false);
 }
 
 fn draw_header(canvas: &Canvas, f: &Frame) {

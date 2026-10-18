@@ -13,11 +13,14 @@ fn sorting_a_row_shows_the_gap_it_would_land_in() {
 
     // An unsteady click is still a click.
     assert!(!browser.drag_place_to(b.center_y() + 2.0));
-    assert_eq!(browser.dragging_place(), None);
+    assert_eq!(browser.dragging_place_frame().map(|drag| drag.index), None);
 
     // Up over `a`'s top half: the gap before it.
     assert!(browser.drag_place_to(view::place_rect(2).top + 4.0));
-    assert_eq!(browser.dragging_place(), Some(3));
+    assert_eq!(
+        browser.dragging_place_frame().map(|drag| drag.index),
+        Some(3)
+    );
     assert_eq!(browser.drop_target, Some(DropTarget::PlaceGap { slot: 2 }));
 
     // Up among the built-ins: the row can go above them too.
@@ -30,7 +33,7 @@ fn sorting_a_row_shows_the_gap_it_would_land_in() {
 
     // Let go there: the gesture ends, and nothing is written.
     assert!(browser.release_place_drag(b.center_y() + 8.0));
-    assert_eq!(browser.dragging_place(), None);
+    assert_eq!(browser.dragging_place_frame().map(|drag| drag.index), None);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -41,7 +44,10 @@ fn a_built_in_row_sorts_too() {
     let (mut browser, dir) = browser_with_sidebar();
     browser.press_place(1, view::place_rect(1).center_y());
     assert!(browser.drag_place_to(view::place_rect(3).bottom + 10.0));
-    assert_eq!(browser.dragging_place(), Some(1));
+    assert_eq!(
+        browser.dragging_place_frame().map(|drag| drag.index),
+        Some(1)
+    );
     assert_eq!(browser.drop_target, Some(DropTarget::PlaceGap { slot: 4 }));
     browser.cancel_place_drag();
     let _ = std::fs::remove_dir_all(&dir);
@@ -91,7 +97,7 @@ fn a_sort_let_go_outside_the_window_leaves_the_row() {
     assert_eq!(browser.drop_target, Some(DropTarget::PlaceGap { slot: 4 }));
     browser.cancel_place_drag();
     assert_eq!(browser.drop_target, None);
-    assert_eq!(browser.dragging_place(), None);
+    assert_eq!(browser.dragging_place_frame().map(|drag| drag.index), None);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -109,7 +115,15 @@ fn place(label: &str, path: &Path, builtin: Option<Builtin>) -> Place {
 /// own — written straight in, so nothing is read from or written to the
 /// machine's real config.
 fn browser_with_sidebar() -> (Browser, PathBuf) {
-    let dir = std::env::temp_dir().join(format!("otto-files-sidebar-{}", std::process::id()));
+    // One folder per call: the tests run in parallel, and each sweeps its
+    // own away when it is done.
+    use std::sync::atomic::{AtomicU32, Ordering};
+    static COUNTER: AtomicU32 = AtomicU32::new(0);
+    let dir = std::env::temp_dir().join(format!(
+        "otto-files-sidebar-{}-{}",
+        std::process::id(),
+        COUNTER.fetch_add(1, Ordering::Relaxed)
+    ));
     for name in ["docs", "a", "b"] {
         std::fs::create_dir_all(dir.join(name)).expect("temp dir");
     }
@@ -247,5 +261,27 @@ fn adding_the_selection_needs_folders_that_are_not_built_in() {
     let c = index_of(&browser, "c");
     browser.select(0, c);
     assert_eq!(browser.selection_for_sidebar(), Some(vec![dir.join("c")]));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The ghost is the row carried by the pointer's travel, and is held from
+/// leaving the top of the list.
+#[test]
+fn the_ghost_follows_the_pointer_along_the_list() {
+    let (mut browser, dir) = browser_with_sidebar();
+    let start = view::place_rect(3).center_y();
+    browser.press_place(3, start);
+    assert!(browser.drag_place_to(start - 40.0));
+    let drag = browser.dragging_place_frame().expect("sorting");
+    assert_eq!(drag.dy, -40.0);
+    let ghost = view::place_ghost_rect(drag);
+    assert_eq!(ghost.top, view::place_rect(3).top - 40.0);
+    assert_eq!(ghost.left, view::place_rect(3).left);
+
+    // Far above the list: it stops at the top.
+    assert!(browser.drag_place_to(-500.0));
+    let ghost = view::place_ghost_rect(browser.dragging_place_frame().unwrap());
+    assert!(ghost.top >= view::place_rect(0).top - 6.0);
+    browser.cancel_place_drag();
     let _ = std::fs::remove_dir_all(&dir);
 }
