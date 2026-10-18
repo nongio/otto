@@ -35,8 +35,8 @@ content-loading-symbolic    refresh
 font-x-generic-symbolic     text-selection
 
 # Workspace selector
-close-symbolic              close-circle
-plus-symbolic               add-circle
+close-symbolic              close
+plus-symbolic               add
 
 # Pop-up buttons: the arrow for a menu that opens on its value; one opening
 # below or above its field uses go-down or go-up
