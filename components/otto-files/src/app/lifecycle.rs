@@ -1064,6 +1064,12 @@ impl FilesWindow {
         if view::sidebar_w() <= 0.0 {
             return;
         }
+        // When `files.toml` was last written, if it is there at all.
+        let written = || {
+            crate::places_config::config_path()
+                .and_then(|path| std::fs::metadata(path).ok())
+                .and_then(|meta| meta.modified().ok())
+        };
         if self.places_watch.is_none() {
             let dir = crate::places_config::config_path()
                 .and_then(|path| path.parent().map(Path::to_path_buf));
@@ -1071,12 +1077,22 @@ impl FilesWindow {
                 // Made if missing, for the reason the desk's watch makes it.
                 let _ = std::fs::create_dir_all(&dir);
                 self.places_watch = Some(otto_kit::watch::DirWatch::new(&dir));
+                self.places_written = written();
             }
         }
-        let changed = self
+        let touched = self
             .places_watch
             .as_ref()
             .is_some_and(|watch| watch.take().is_some());
+        // The watch is on the whole folder, which every part of Otto writes
+        // its settings into. Only a change to this file is worth re-reading
+        // the sidebar for — and re-checking each of its folders on disk.
+        if !touched {
+            return;
+        }
+        let now = written();
+        let changed = now != self.places_written;
+        self.places_written = now;
         if changed {
             self.state.browse().reload_places();
             if let Some(window) = self.window.as_ref() {

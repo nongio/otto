@@ -354,7 +354,17 @@ pub fn with_builtin_hidden(
 }
 
 /// `[sidebar]`, made if it is not there yet.
+///
+/// A `sidebar = { … }` inline table a person wrote by hand is the same
+/// section and keeps everything in it; it is only spelled out as a table.
 fn sidebar_table(doc: &mut toml_edit::DocumentMut) -> &mut toml_edit::Table {
+    if let Some(inline) = doc
+        .get_mut("sidebar")
+        .and_then(|item| item.as_inline_table_mut())
+    {
+        let table = std::mem::take(inline).into_table();
+        doc["sidebar"] = toml_edit::Item::Table(table);
+    }
     if !doc.contains_table("sidebar") {
         doc["sidebar"] = toml_edit::table();
     }
@@ -366,16 +376,30 @@ fn sidebar_table(doc: &mut toml_edit::DocumentMut) -> &mut toml_edit::Table {
 /// `[[sidebar.places]]`, made if it is not there yet.
 ///
 /// An inline array a person wrote by hand is turned into the array-of-tables
-/// form, keeping its entries; anything else under the key is not a list of
-/// places and is replaced.
+/// form, keeping its entries: inline tables as they are, and bare strings as
+/// the paths they name. Anything else under the key is not a list of places
+/// and is replaced.
 fn places_array(doc: &mut toml_edit::DocumentMut) -> &mut toml_edit::ArrayOfTables {
     let item = sidebar_table(doc)
         .entry("places")
         .or_insert_with(|| toml_edit::Item::ArrayOfTables(toml_edit::ArrayOfTables::new()));
     if !item.is_array_of_tables() {
-        let tables = std::mem::take(item)
-            .into_array_of_tables()
-            .unwrap_or_else(|_| toml_edit::ArrayOfTables::new());
+        let tables = match std::mem::take(item).into_array_of_tables() {
+            Ok(tables) => tables,
+            Err(other) => {
+                let mut tables = toml_edit::ArrayOfTables::new();
+                for value in other.as_array().into_iter().flatten() {
+                    if let Some(raw) = value.as_str() {
+                        let mut entry = toml_edit::Table::new();
+                        entry["path"] = toml_edit::value(raw);
+                        tables.push(entry);
+                    } else if let Some(inline) = value.as_inline_table() {
+                        tables.push(inline.clone().into_table());
+                    }
+                }
+                tables
+            }
+        };
         *item = toml_edit::Item::ArrayOfTables(tables);
     }
     item.as_array_of_tables_mut()
@@ -400,11 +424,7 @@ fn entry_index(
 
 /// `path` the way a person would write it: under `~` when it is in home.
 fn abbreviate(path: &Path, home: Option<&Path>) -> String {
-    match home.and_then(|home| path.strip_prefix(home).ok()) {
-        Some(rest) if rest.as_os_str().is_empty() => "~".to_string(),
-        Some(rest) => format!("~/{}", rest.display()),
-        None => path.display().to_string(),
-    }
+    otto_kit::xdg::tilde_in(path, home)
 }
 
 /// Rewrite `~/.config/otto/files.toml` with `edit`, a missing file reading
@@ -412,13 +432,32 @@ fn abbreviate(path: &Path, home: Option<&Path>) -> String {
 ///
 /// # Errors
 ///
-/// When there is no home folder, the file cannot be read or written, or
-/// `edit` refuses the text.
+/// When there is no home folder, or as [`edit_file_at`].
 pub(crate) fn edit_file(
     edit: impl FnOnce(&str) -> Result<String, toml_edit::TomlError>,
 ) -> std::io::Result<()> {
     let path = config_path()
         .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "no home folder"))?;
+    edit_file_at(&path, edit)
+}
+
+/// Rewrite the config file at `path` with `edit`, a missing file reading as
+/// an empty one.
+///
+/// Written beside and renamed over, so the windows watching the file never
+/// read a half-written one. A symlinked file — a dotfiles checkout — is
+/// written where the link points, so the link survives, and the file keeps
+/// the permissions it had.
+///
+/// # Errors
+///
+/// When the file cannot be read or written, or `edit` refuses the text
+/// ([`std::io::ErrorKind::InvalidData`]). The file is left as it was then.
+pub(crate) fn edit_file_at(
+    path: &Path,
+    edit: impl FnOnce(&str) -> Result<String, toml_edit::TomlError>,
+) -> std::io::Result<()> {
+    let path = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     let text = match std::fs::read_to_string(&path) {
         Ok(text) => text,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => String::new(),
@@ -429,11 +468,17 @@ pub(crate) fn edit_file(
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
     }
-    // Written beside and renamed over, so the windows watching the file
-    // never read a half-written one.
     let temp = path.with_extension(format!("toml.tmp.{}", std::process::id()));
-    std::fs::write(&temp, next)?;
-    std::fs::rename(&temp, &path)
+    let written = std::fs::write(&temp, next)
+        .and_then(|()| match std::fs::metadata(&path) {
+            Ok(meta) => std::fs::set_permissions(&temp, meta.permissions()),
+            Err(_) => Ok(()),
+        })
+        .and_then(|()| std::fs::rename(&temp, &path));
+    if written.is_err() {
+        let _ = std::fs::remove_file(&temp);
+    }
+    written
 }
 
 /// `~/.config/otto/files.toml`. otto-settings' desk pane edits the same
@@ -622,6 +667,63 @@ mod tests {
         let config = SidebarConfig::from_file(toml::from_str(&text).unwrap(), None);
         assert!(!config.hides(Builtin::Music));
         assert!(config.hides(Builtin::Videos));
+    }
+
+    /// A sidebar written as inline tables, or places as bare paths, keeps
+    /// everything it said through an edit.
+    #[test]
+    fn hand_written_shapes_survive_an_edit() {
+        let home = Path::new("/home/me");
+        let inline =
+            "sidebar = { hide = [\"music\"], places = [{ path = \"~/dev\", label = \"Dev\" }] }\n";
+        let text = with_builtin_hidden(inline, Builtin::Videos, true).unwrap();
+        let config: File = toml::from_str(&text).unwrap();
+        assert_eq!(config.sidebar.hide, ["music", "videos"]);
+        assert_eq!(written(&text), ["~/dev"]);
+        assert!(text.contains("label = \"Dev\""));
+
+        let bare = "[sidebar]\nplaces = [\"~/a\", \"/srv/b\"]\n";
+        let text = with_places_added(bare, &[PathBuf::from("/home/me/c")], Some(home)).unwrap();
+        assert_eq!(written(&text), ["~/a", "/srv/b", "~/c"]);
+    }
+
+    /// The file is rewritten where a symlink points, keeping the link and
+    /// the file's permissions; a refused edit leaves it untouched and no
+    /// temporary file behind.
+    #[test]
+    fn the_file_is_rewritten_in_place() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("otto-files-edit-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("dotfiles")).unwrap();
+        let target = dir.join("dotfiles/files.toml");
+        std::fs::write(&target, "# mine\n").unwrap();
+        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let link = dir.join("files.toml");
+        let _ = std::fs::remove_file(&link);
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        edit_file_at(&link, |text| {
+            with_builtin_hidden(text, Builtin::Music, true)
+        })
+        .unwrap();
+        assert!(std::fs::symlink_metadata(&link)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        let text = std::fs::read_to_string(&target).unwrap();
+        assert!(text.contains("# mine") && text.contains("music"));
+        let mode = std::fs::metadata(&target).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+
+        std::fs::write(&target, "not [ toml").unwrap();
+        let refused = edit_file_at(&link, |text| {
+            with_builtin_hidden(text, Builtin::Music, true)
+        });
+        assert_eq!(refused.unwrap_err().kind(), std::io::ErrorKind::InvalidData);
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "not [ toml");
+        let leftovers = std::fs::read_dir(dir.join("dotfiles")).unwrap().count();
+        assert_eq!(leftovers, 1);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// The order a sort writes reads back as the same rows, one per line,

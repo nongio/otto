@@ -102,8 +102,14 @@ impl Browser {
                 After::Next
             }
             PointerEventKind::Press { serial, button, .. } if button == BTN_RIGHT => {
+                let items = self.context_menu_items(at.x, at.y);
+                // Nothing to offer — the sidebar below its rows, with no row
+                // hidden — opens no menu rather than an empty one.
+                if items.is_empty() {
+                    return After::Next;
+                }
                 After::Menu(MenuAt {
-                    items: self.context_menu_items(at.x, at.y),
+                    items,
                     x: at.x,
                     y: at.y,
                     serial,
@@ -601,6 +607,7 @@ impl Browser {
                 self.drag_armed = None;
                 self.note_desk_drag(start_x, start_y);
                 self.drag_started();
+                self.note_own_drag();
                 return After::Drag(DragStart {
                     paths: self.drag_paths(),
                     items: self.drag_items(start_x, start_y),

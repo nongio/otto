@@ -8,6 +8,8 @@ impl Browser {
             columns: vec![Column::new(start)],
             active: 0,
             places: model::places(),
+            builtin_paths: model::builtin_paths(),
+            own_drag_adds: false,
             mode: ViewMode::Columns,
             sort: SortKey::Name,
             ascending: true,

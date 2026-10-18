@@ -5918,7 +5918,7 @@ fn draw_sidebar(canvas: &Canvas, f: &Frame) {
 
     if let Some(drag) = f.dragging_place {
         if let Some(place) = f.places.get(drag.index) {
-            draw_place_ghost(canvas, theme, place, place_ghost_rect(drag));
+            draw_place_ghost(canvas, theme, place, place_ghost_rect(drag, f.places.len()));
         }
     }
 }
@@ -5934,10 +5934,16 @@ pub struct PlaceDragFrame {
 /// Where the ghost of a row being sorted is drawn: the row, carried by the
 /// pointer's travel, held inside the sidebar's column of rows so it reads as
 /// the row moving along its list rather than as something torn off it.
-pub fn place_ghost_rect(drag: PlaceDragFrame) -> Rect {
+///
+/// Held at both ends, by the first row and the last of `count`: past either,
+/// the row would still land at that end, and the ghost says so.
+pub fn place_ghost_rect(drag: PlaceDragFrame, count: usize) -> Rect {
     let rect = place_rect(drag.index);
     let top = place_rect(0).top - PLACE_GAP_REACH;
-    let dy = drag.dy.max(top - rect.top);
+    let bottom = place_rect(count.saturating_sub(1)).top + PLACE_GAP_REACH;
+    let dy = drag
+        .dy
+        .clamp(top - rect.top, (bottom - rect.top).max(top - rect.top));
     rect.with_offset((0.0, dy))
 }
 

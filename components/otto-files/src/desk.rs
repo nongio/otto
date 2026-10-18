@@ -855,7 +855,7 @@ pub fn save_geometry(
     size: [Extent; 2],
     position: Option<[Extent; 2]>,
 ) -> std::io::Result<()> {
-    edit_config(|text| with_geometry(text, anchor, size, position))
+    places_config::edit_file(|text| with_geometry(text, anchor, size, position))
 }
 
 /// `text`, a whole `files.toml`, with `[desk] arrange` set to `arrange`.
@@ -880,15 +880,7 @@ pub fn with_arrange(text: &str, arrange: Arrange) -> Result<String, toml_edit::T
 ///
 /// As [`save_geometry`].
 pub fn save_arrange(arrange: Arrange) -> std::io::Result<()> {
-    edit_config(|text| with_arrange(text, arrange))
-}
-
-/// Rewrite `~/.config/otto/files.toml` with `edit`; see
-/// [`places_config::edit_file`].
-fn edit_config(
-    edit: impl FnOnce(&str) -> Result<String, toml_edit::TomlError>,
-) -> std::io::Result<()> {
-    places_config::edit_file(edit)
+    places_config::edit_file(|text| with_arrange(text, arrange))
 }
 
 /// Holds the session's desk lock for as long as it lives.

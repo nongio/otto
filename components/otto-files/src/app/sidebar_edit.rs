@@ -91,28 +91,43 @@ impl Browser {
     /// Step each row toward where the sort in progress wants it — or back
     /// home once there is none. Whether any is still on its way.
     pub(super) fn tick_place_shifts(&mut self) -> bool {
-        // How long a row takes to get most of the way there.
+        // The time constant of the ease, in seconds: a row covers about two
+        // thirds of the way in this long. Much longer and the rows lag the
+        // ghost; much shorter and they jump.
         const EASE: f32 = 0.06;
+        // The first step's length, before there is a previous one to time:
+        // one frame at 60 Hz.
+        const FIRST_STEP: f32 = 1.0 / 60.0;
+        // The longest step taken, so a stall — a slow frame, a window that
+        // went unpainted — lands the rows rather than throwing them past.
+        const MAX_STEP: f32 = 0.1;
+        // Closer than this, in points, a row is there: the rest of the ease
+        // would be sub-pixel.
+        const SNAP: f32 = 0.5;
+
+        let drag = self.place_drag.filter(|drag| drag.moving);
+        // Nothing sorting and nothing still easing home: the common case,
+        // every frame of every window, and it costs nothing.
+        if drag.is_none() && self.place_shifts.iter().all(|shift| *shift == 0.0) {
+            self.place_shifts_at = None;
+            return false;
+        }
         let count = self.places.len();
-        let targets: Vec<f32> = match self.place_drag.filter(|drag| drag.moving) {
-            Some(drag) => {
-                let position = self.sort_position(&drag);
-                (0..count)
-                    .map(|i| view::place_sort_shift(i, drag.index, position))
-                    .collect()
-            }
-            None => vec![0.0; count],
-        };
+        let position = drag.map(|drag| self.sort_position(&drag));
         self.place_shifts.resize(count, 0.0);
         let now = std::time::Instant::now();
-        let dt = self
-            .place_shifts_at
-            .map_or(0.016, |at| now.duration_since(at).as_secs_f32().min(0.1));
+        let dt = self.place_shifts_at.map_or(FIRST_STEP, |at| {
+            now.duration_since(at).as_secs_f32().min(MAX_STEP)
+        });
         let step = 1.0 - (-dt / EASE).exp();
         let mut moving = false;
-        for (shift, target) in self.place_shifts.iter_mut().zip(targets) {
+        for (i, shift) in self.place_shifts.iter_mut().enumerate() {
+            let target = match (drag, position) {
+                (Some(drag), Some(position)) => view::place_sort_shift(i, drag.index, position),
+                _ => 0.0,
+            };
             let gap = target - *shift;
-            if gap.abs() < 0.5 {
+            if gap.abs() < SNAP {
                 if *shift != target {
                     *shift = target;
                     self.dirty = true;
@@ -204,26 +219,51 @@ impl Browser {
             return None;
         }
         let slot = view::place_gap_at(x, y, self.places.len())?;
-        // Our own drag says what it carries. Files alone, or folders already
-        // built in, would add nothing, and the row's edge is still the row.
-        // Someone else's drag only says at the drop, so it is taken on trust.
-        if let Some(paths) = otto_kit::dnd::own_files() {
-            if !paths.iter().any(|path| self.would_add(path)) {
-                return None;
-            }
+        // Our own drag says what it carries, worked out once when it started
+        // rather than on every motion. Files alone, or folders already built
+        // in, would add nothing, and the row's edge is still the row.
+        // Someone else's drag only says at the drop — see `settle_gap_drop`.
+        if otto_kit::dnd::own_files().is_some() && !self.own_drag_adds {
+            return None;
         }
         Some(slot)
     }
 
+    /// Our own drag is starting from the selection: note whether it carries
+    /// any folder the sidebar could take, from the listing's own entries
+    /// rather than the disk.
+    pub(super) fn note_own_drag(&mut self) {
+        self.own_drag_adds = self
+            .selected_entries()
+            .iter()
+            .any(|entry| entry.is_dir && !self.builtin_paths.contains(&entry.path));
+    }
+
+    /// A drop is landing on a sidebar gap with `paths`. Someone else's drag
+    /// was taken on trust while it hovered; if it carries no folder after
+    /// all, it is a drop on the row under the pointer instead, the way the
+    /// same spot took files before there were gaps.
+    pub(super) fn settle_gap_drop(&mut self, paths: &[PathBuf], x: f32, y: f32) {
+        if !matches!(self.drop_target, Some(DropTarget::PlaceGap { .. })) {
+            return;
+        }
+        if paths.iter().any(|path| self.would_add(path)) {
+            return;
+        }
+        self.drop_target = view::place_at(x, y, self.places.len())
+            .filter(|index| !self.places[*index].recent)
+            .map(|index| DropTarget::Place {
+                index,
+                path: self.places[index].path.clone(),
+            });
+    }
+
     /// Whether adding `path` would change the sidebar: a folder, and not one
-    /// of the built-in rows under another name. One of the user's own rows
-    /// does change it — dropping it elsewhere moves it.
+    /// of the built-in rows, shown or hidden, under another name. Hidden
+    /// Music is brought back with Show, not added a second time. One of the
+    /// user's own rows does change it: dropping it elsewhere moves it.
     fn would_add(&self, path: &Path) -> bool {
-        path.is_dir()
-            && !self
-                .places
-                .iter()
-                .any(|place| place.builtin.is_some() && place.path == path)
+        !self.builtin_paths.iter().any(|builtin| builtin == path) && path.is_dir()
     }
 
     /// Add the folders among `paths` to the sidebar, as the row at `slot`.
@@ -357,9 +397,14 @@ impl Browser {
     fn edit_sidebar(&mut self, edit: impl FnOnce(&str) -> Result<String, toml_edit::TomlError>) {
         if let Err(err) = places_config::edit_file(edit) {
             tracing::warn!(%err, "cannot update the sidebar config");
+            // The status line is one line. A parse error is several — the
+            // offending line quoted, a caret under it — and its first says
+            // where; the rest is in the log.
+            let error = err.to_string();
+            let error = error.lines().next().unwrap_or_default().to_string();
             self.status = Some(otto_kit::t_owned!(
                 "files-sidebar-save-failed",
-                error = err.to_string()
+                error = error
             ));
         }
         self.reload_places();
@@ -375,6 +420,7 @@ impl Browser {
         if self.trash || self.desk {
             return;
         }
+        self.builtin_paths = model::builtin_paths();
         self.set_places(model::places());
     }
 

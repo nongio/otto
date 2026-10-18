@@ -129,7 +129,7 @@ on the sidebar itself:
   onto the middle of a row still moves files into that folder.) You can also
   right-click selected folders and choose **Add to Sidebar**.
 - **Reorder the sidebar** by dragging any row, standard or your own, up or
-  down. A line shows where the row will land.
+  down. The other rows move aside to make room where it will land.
 - **Remove a row** by right-clicking it and choosing **Remove from Sidebar**.
   A standard row, such as Music, is hidden rather than removed.
 - **Bring a hidden standard row back** by right-clicking an empty part of the

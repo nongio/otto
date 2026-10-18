@@ -243,8 +243,9 @@ rows are then read back from it. No window keeps a list of its own.
   way). There is no insertion line, because the space the rows open is the
   answer. Letting go writes the new `order`. The rows are already where it
   puts them, so they do not move again. A folder dragged in from the listing
-  has no ghost of ours, so it keeps the insertion line. Rows the order names but the window does not show, such as hidden
-  ones or folders on an unmounted disk, keep their place in it. This happens
+  has no ghost of ours, so it keeps the insertion line. Rows the order names
+  but the window does not show, such as hidden ones or folders on an
+  unmounted disk, keep their place in it. This happens
   inside the window, not through drag and drop: nothing leaves it. Leaving the
   window, or a reload mid-drag, cancels it.
 - **Right-clicking a place offers Remove from Sidebar.** One of the user's

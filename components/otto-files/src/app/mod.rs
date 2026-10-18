@@ -303,6 +303,12 @@ struct Browser {
     /// Which column has the keyboard.
     active: usize,
     places: Vec<Place>,
+    /// Every built-in place's folder, hidden ones included: what the
+    /// sidebar cannot take a second time as one of the user's own.
+    builtin_paths: Vec<PathBuf>,
+    /// Whether our own drag in progress carries a folder the sidebar could
+    /// take, noted when it started.
+    own_drag_adds: bool,
     mode: ViewMode,
     sort: SortKey,
     ascending: bool,
@@ -1265,6 +1271,8 @@ struct FilesWindow {
     /// The folder `files.toml` is in, watched by a browser window so its
     /// sidebar follows edits made anywhere else.
     places_watch: Option<otto_kit::watch::DirWatch>,
+    /// When `files.toml` was last written, as the watch last saw it.
+    places_written: Option<std::time::SystemTime>,
     /// The desk's overflow panel on screen, while it is. Shared with the
     /// pointer callback, registered once, for the reason
     /// [`Self::info_window`] is.
@@ -1546,6 +1554,7 @@ impl FilesWindow {
             desk_input_region: None,
             desk_config_watch: None,
             places_watch: None,
+            places_written: None,
             overflow_surface: Rc::new(RefCell::new(None)),
             overflow_focus_seen: false,
         }

@@ -352,6 +352,9 @@ impl FilesWindow {
                     // trusting the last motion: the release may land somewhere
                     // no motion reported.
                     browser.drop_target = browser.drop_target_at(*x as f32, *y as f32);
+                    if let Some(paths) = paths.as_deref() {
+                        browser.settle_gap_drop(paths, *x as f32, *y as f32);
+                    }
                     match paths {
                         Some(paths)
                             if matches!(browser.drop_target, Some(DropTarget::Slot { .. })) =>

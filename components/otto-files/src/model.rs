@@ -891,6 +891,16 @@ pub fn places_with(config: &crate::places_config::SidebarConfig) -> Vec<Place> {
     arrange(places, &config.order)
 }
 
+/// The folder of every built-in place that exists, whether the user has
+/// hidden its row or not.
+pub fn builtin_paths() -> Vec<PathBuf> {
+    places_with(&crate::places_config::SidebarConfig::default())
+        .into_iter()
+        .filter(|place| place.builtin.is_some() && !place.recent)
+        .map(|place| place.path)
+        .collect()
+}
+
 impl Place {
     /// This row as the config's `order` names it.
     pub fn key(&self) -> crate::places_config::PlaceKey {

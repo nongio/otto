@@ -179,6 +179,7 @@ fn browser_with_sidebar() -> (Browser, PathBuf) {
         place("a", &dir.join("a"), None),
         place("b", &dir.join("b"), None),
     ];
+    browser.builtin_paths = vec![dir.clone(), dir.join("docs")];
     (browser, dir)
 }
 
@@ -319,14 +320,96 @@ fn the_ghost_follows_the_pointer_along_the_list() {
     assert!(browser.drag_place_to(start - 40.0));
     let drag = browser.dragging_place_frame().expect("sorting");
     assert_eq!(drag.dy, -40.0);
-    let ghost = view::place_ghost_rect(drag);
+    let ghost = view::place_ghost_rect(drag, browser.places.len());
     assert_eq!(ghost.top, view::place_rect(3).top - 40.0);
     assert_eq!(ghost.left, view::place_rect(3).left);
 
     // Far above the list: it stops at the top.
     assert!(browser.drag_place_to(-500.0));
-    let ghost = view::place_ghost_rect(browser.dragging_place_frame().unwrap());
+    let ghost = view::place_ghost_rect(
+        browser.dragging_place_frame().unwrap(),
+        browser.places.len(),
+    );
     assert!(ghost.top >= view::place_rect(0).top - 6.0);
     browser.cancel_place_drag();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The ghost is held at the bottom of the list as well as the top.
+#[test]
+fn the_ghost_stops_at_the_last_row() {
+    let (mut browser, dir) = browser_with_sidebar();
+    let start = view::place_rect(1).center_y();
+    browser.press_place(1, start);
+    assert!(browser.drag_place_to(start + 900.0));
+    let ghost = view::place_ghost_rect(
+        browser.dragging_place_frame().unwrap(),
+        browser.places.len(),
+    );
+    assert!(ghost.top <= view::place_rect(3).top + 6.0);
+    browser.cancel_place_drag();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Someone else's drag carrying plain files, let go on a row's edge, files
+/// them into that row's folder, the way the edge did before it was a gap.
+/// One carrying a folder adds it.
+#[test]
+fn a_foreign_drop_of_files_on_a_gap_goes_into_the_row() {
+    let (mut browser, dir) = browser_with_sidebar();
+    std::fs::write(dir.join("note.txt"), b"x").unwrap();
+    let edge = view::place_rect(2).top + 2.0;
+    browser.drop_target = browser.drop_target_at(x(), edge);
+    assert_eq!(browser.drop_target, Some(DropTarget::PlaceGap { slot: 2 }));
+
+    browser.settle_gap_drop(&[dir.join("note.txt")], x(), edge);
+    assert_eq!(
+        browser.drop_target,
+        Some(DropTarget::Place {
+            index: 2,
+            path: dir.join("a"),
+        })
+    );
+
+    std::fs::create_dir_all(dir.join("new")).unwrap();
+    browser.drop_target = Some(DropTarget::PlaceGap { slot: 2 });
+    browser.settle_gap_drop(&[dir.join("new")], x(), edge);
+    assert_eq!(browser.drop_target, Some(DropTarget::PlaceGap { slot: 2 }));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A built-in row's folder is never added as one of the user's own, even
+/// while its row is hidden: Show brings it back, once.
+#[test]
+fn a_hidden_built_in_folder_is_not_added_twice() {
+    let (mut browser, dir) = browser_with_sidebar();
+    std::fs::create_dir_all(dir.join("music")).unwrap();
+    // Music is hidden: not among the rows, but still a built-in folder.
+    browser.builtin_paths.push(dir.join("music"));
+    browser.reload_all();
+    for _ in 0..500 {
+        if browser.columns[0].poll() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    let music = browser
+        .visible(0)
+        .iter()
+        .position(|entry| entry.name == "music")
+        .expect("listed");
+    browser.select(0, music);
+    assert!(browser.selection_for_sidebar().is_none());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// With nothing sorting and every row at rest, the frame clock's tick does
+/// nothing and asks for no more frames.
+#[test]
+fn an_idle_sidebar_costs_no_frames() {
+    let (mut browser, dir) = browser_with_sidebar();
+    assert!(!browser.tick_place_shifts());
+    assert!(!browser.place_shifts_animating());
+    assert!(browser.place_shifts.is_empty(), "nothing was allocated");
     let _ = std::fs::remove_dir_all(&dir);
 }
