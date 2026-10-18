@@ -7117,7 +7117,7 @@ fn draw_grid_icon(
 /// A grid icon's shadow on the desk and in a window: blur sigma and drop in
 /// points, and opacity.
 const DESK_ICON_SHADOW: (f32, f32, u8) = (2.5, 1.5, 85);
-const PANE_ICON_SHADOW: (f32, f32, u8) = (1.25, 2.5, 72);
+const PANE_ICON_SHADOW: (f32, f32, u8) = (1.75, 2.5, 60);
 
 fn draw_grid_icon_face(
     canvas: &Canvas,
