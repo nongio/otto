@@ -36,7 +36,14 @@ for b in otto otto-bar otto-islands otto-lock otto-authorize otto-settings otto-
          otto-launcher otto-emoji otto-stash otto-canvas otto-peek otto-preview otto-media-worker otto-msg otto-search otto-greeter otto-rdp otto-agents; do
     check "/usr/bin/$b" exec
 done
-check /usr/libexec/xdg-desktop-portal-otto exec
+# Arch keeps helper binaries out of /usr/libexec, in the package's own
+# /usr/lib directory.
+if [[ "$flavour" == arch ]]; then
+    portal=/usr/lib/otto/xdg-desktop-portal-otto
+else
+    portal=/usr/libexec/xdg-desktop-portal-otto
+fi
+check "$portal" exec
 check /usr/share/polkit-1/actions/org.otto.settings.policy
 check /usr/bin/otto-look exec
 # PDFium, which Studio fills and marks up PDFs with.
@@ -57,6 +64,14 @@ check /usr/share/dbus-1/services/org.freedesktop.impl.portal.desktop.otto.servic
 # The D-Bus service file names this unit in SystemdService=; shipping one
 # without the other leaves the portal bus-activatable but unstartable.
 check /usr/lib/systemd/user/xdg-desktop-portal-otto.service
+# Both activation files have to name the binary where it was installed.
+for f in /usr/share/dbus-1/services/org.freedesktop.impl.portal.desktop.otto.service \
+         /usr/lib/systemd/user/xdg-desktop-portal-otto.service; do
+    if [[ -f "$f" ]] && ! grep -q "$portal" "$f"; then
+        echo "WRONG PATH: $f does not start $portal"
+        fail=1
+    fi
+done
 
 echo "== agent service =="
 check /usr/lib/systemd/user/otto-agents.service
@@ -248,7 +263,7 @@ for b in /usr/bin/otto /usr/bin/otto-bar /usr/bin/otto-islands /usr/bin/otto-loc
          /usr/bin/otto-settings /usr/bin/otto-files /usr/bin/otto-launcher /usr/bin/otto-emoji /usr/bin/otto-stash /usr/bin/otto-canvas /usr/bin/otto-msg /usr/bin/otto-search \
          /usr/bin/otto-peek /usr/bin/otto-preview /usr/bin/otto-media-worker \
          /usr/bin/otto-greeter /usr/bin/otto-rdp /usr/bin/otto-agents \
-         /usr/libexec/xdg-desktop-portal-otto; do
+         "$portal"; do
     [[ -x "$b" ]] || continue   # already reported missing above
     # `version \`GLIBC_2.44' not found` is the foreign-glibc case above, not a
     # missing dependency — the library was found, it is just older than the
