@@ -1,5 +1,9 @@
 //! Editing the sidebar from the sidebar: folders dropped between its rows
-//! join it, and a right-click on a row takes it out.
+//! join it, the user's own rows are dragged into a new order, and a
+//! right-click on a row takes it out.
+//!
+//! Sorting is a gesture inside the window, not drag and drop: nothing leaves
+//! it, so there is no payload to offer anyone and no compositor to ask.
 //!
 //! Nothing here keeps a list of its own. Every edit is written to
 //! `files.toml` through [`places_config`] and the rows are read back from
@@ -14,7 +18,98 @@ use crate::places_config::{self, Builtin, SidebarConfig};
 /// row's config id follows it.
 pub(super) const SHOW_PREFIX: &str = "sidebar_show_";
 
+/// A press on one of the user's own sidebar rows, and where it has got to.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) struct PlaceDrag {
+    /// The row pressed.
+    pub index: usize,
+    /// Where the press landed, to tell a drag from an unsteady click.
+    pub start_y: f32,
+    /// Past the drag threshold: the row is being sorted, and the press is no
+    /// longer a click.
+    pub moving: bool,
+}
+
 impl Browser {
+    /// A press on sidebar row `index` at height `y`. One of the user's own
+    /// rows may be about to be dragged; the built-in rows keep their order.
+    pub(super) fn press_place(&mut self, index: usize, y: f32) {
+        self.place_drag = self
+            .places
+            .get(index)
+            .filter(|place| place.builtin.is_none())
+            .map(|_| PlaceDrag {
+                index,
+                start_y: y,
+                moving: false,
+            });
+    }
+
+    /// Follow a sorting drag to height `y`. Whether one is under way, in
+    /// which case it owns the pointer.
+    pub(super) fn drag_place_to(&mut self, y: f32) -> bool {
+        let Some(drag) = self.place_drag.as_mut() else {
+            return false;
+        };
+        if !drag.moving {
+            if (y - drag.start_y).abs() < DRAG_THRESHOLD {
+                return false;
+            }
+            drag.moving = true;
+        }
+        let index = drag.index;
+        let slot = self.sort_slot(index, y);
+        let target = slot.map(|slot| DropTarget::PlaceGap { slot });
+        if self.drop_target != target {
+            self.drop_target = target;
+        }
+        // The faded row and the cursor follow every move.
+        self.dirty = true;
+        AppContext::set_cursor_shape(CursorShape::Grabbing);
+        true
+    }
+
+    /// The gap row `index`, dragged to height `y`, would land in: among the
+    /// user's own rows, and `None` when that is where it already is.
+    fn sort_slot(&self, index: usize, y: f32) -> Option<usize> {
+        let slot = view::place_gap_nearest(y, self.places.len()).max(self.first_own_place());
+        (slot != index && slot != index + 1).then_some(slot)
+    }
+
+    /// The button came up. A sorting drag puts its row in the gap it was let
+    /// go over; whether there was one, in which case the release was its.
+    pub(super) fn release_place_drag(&mut self, y: f32) -> bool {
+        let Some(drag) = self.place_drag.take() else {
+            return false;
+        };
+        if !drag.moving {
+            return false;
+        }
+        self.drop_target = None;
+        self.dirty = true;
+        if let Some(slot) = self.sort_slot(drag.index, y) {
+            if let Some(path) = self.places.get(drag.index).map(|place| place.path.clone()) {
+                self.add_to_sidebar(&[path], slot);
+            }
+        }
+        true
+    }
+
+    /// A sorting drag let go of outside the window: the row stays put.
+    pub(super) fn cancel_place_drag(&mut self) {
+        if self.place_drag.take().is_some_and(|drag| drag.moving) {
+            self.drop_target = None;
+            self.dirty = true;
+        }
+    }
+
+    /// The row being sorted, for the frame to draw faded.
+    pub(super) fn dragging_place(&self) -> Option<usize> {
+        self.place_drag
+            .filter(|drag| drag.moving)
+            .map(|drag| drag.index)
+    }
+
     /// The gap a drag at `(x, y)` would add folders at, if it would add any.
     ///
     /// The user's own folders follow the built-in rows, so a gap among the
@@ -211,6 +306,8 @@ impl Browser {
             .map(|place| place.path.clone());
         self.active_place = lit.and_then(|path| next.iter().position(|place| place.path == path));
         self.menu_place = None;
+        // A row being sorted may not be at its index any more.
+        self.place_drag = None;
         self.places = next;
         // A drag still hovering points at a gap or a row that has moved.
         self.drop_target = None;

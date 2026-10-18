@@ -361,6 +361,9 @@ struct Browser {
     /// drag yet: where it landed, and the serial that will authorise the drag
     /// if it does. Cleared on release, so a click that never moves is a click.
     drag_armed: Option<(f32, f32, u32)>,
+    /// A press on one of the user's own sidebar rows, which a drag turns
+    /// into moving that row; see `sidebar_edit`.
+    place_drag: Option<sidebar_edit::PlaceDrag>,
     /// A rubber band being dragged out over the icon grid, if one is in
     /// progress. See [`Marquee`].
     marquee: Option<Marquee>,

@@ -2,6 +2,62 @@ use super::*;
 
 use crate::places_config::Builtin;
 
+/// One of the user's rows dragged past the threshold is lifted, and the line
+/// follows the nearest gap among the user's rows — never among the built-ins,
+/// and never the two gaps beside where it already is.
+#[test]
+fn sorting_a_row_shows_the_gap_it_would_land_in() {
+    let (mut browser, dir) = browser_with_sidebar();
+    let b = view::place_rect(3);
+    browser.press_place(3, b.center_y());
+
+    // An unsteady click is still a click.
+    assert!(!browser.drag_place_to(b.center_y() + 2.0));
+    assert_eq!(browser.dragging_place(), None);
+
+    // Up over `a`'s top half: the gap before it.
+    assert!(browser.drag_place_to(view::place_rect(2).top + 4.0));
+    assert_eq!(browser.dragging_place(), Some(3));
+    assert_eq!(browser.drop_target, Some(DropTarget::PlaceGap { slot: 2 }));
+
+    // Up among the built-ins: still the first of the user's gaps.
+    assert!(browser.drag_place_to(view::place_rect(0).top));
+    assert_eq!(browser.drop_target, Some(DropTarget::PlaceGap { slot: 2 }));
+
+    // Back over itself: nowhere to go, no line.
+    assert!(browser.drag_place_to(b.center_y() + 8.0));
+    assert_eq!(browser.drop_target, None);
+
+    // Let go there: the gesture ends, and nothing is written.
+    assert!(browser.release_place_drag(b.center_y() + 8.0));
+    assert_eq!(browser.dragging_place(), None);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The built-in rows keep their order: pressing one arms no sort.
+#[test]
+fn a_built_in_row_is_not_sorted() {
+    let (mut browser, dir) = browser_with_sidebar();
+    browser.press_place(1, view::place_rect(1).center_y());
+    assert!(!browser.drag_place_to(view::place_rect(3).center_y()));
+    assert_eq!(browser.dragging_place(), None);
+    assert!(!browser.release_place_drag(view::place_rect(3).center_y()));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Leaving the window drops the gesture and the line with it.
+#[test]
+fn a_sort_let_go_outside_the_window_leaves_the_row() {
+    let (mut browser, dir) = browser_with_sidebar();
+    browser.press_place(2, view::place_rect(2).center_y());
+    assert!(browser.drag_place_to(view::place_rect(3).bottom + 40.0));
+    assert_eq!(browser.drop_target, Some(DropTarget::PlaceGap { slot: 4 }));
+    browser.cancel_place_drag();
+    assert_eq!(browser.drop_target, None);
+    assert_eq!(browser.dragging_place(), None);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 fn place(label: &str, path: &Path, builtin: Option<Builtin>) -> Place {
     Place {
         label: label.to_string(),

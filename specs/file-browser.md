@@ -232,6 +232,13 @@ rows are then read back from it. No window keeps a list of its own.
   That is how the user's folders are reordered. Files, and folders that are
   already built-in rows, add nothing. For our own drag the gap does not light
   up for them, and the row's edge stays part of the row.
+- **The user's own rows are sorted by dragging them.** A press still opens
+  the place. Past the drag threshold, the row fades where it is and the
+  insertion line follows the nearest gap among the user's rows. Letting go
+  moves it there, through the same edit a drop uses. This happens inside the
+  window, not through drag and drop: nothing leaves it. Built-in rows are not
+  picked up, because their order is the spec's, not a preference. Leaving the
+  window, or a reload mid-drag, cancels it.
 - **Right-clicking a place offers Remove from Sidebar.** One of the user's
   folders leaves `[[sidebar.places]]`. A built-in row joins `hide` instead.
 - **Right-clicking anywhere in the sidebar offers each hidden built-in row

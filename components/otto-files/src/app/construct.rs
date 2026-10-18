@@ -60,6 +60,7 @@ impl Browser {
             size: (view::WINDOW_W, view::WINDOW_H),
             clipboard: model::Clipboard::default(),
             drag_armed: None,
+            place_drag: None,
             marquee: None,
             drop_target: None,
             peek: None,

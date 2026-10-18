@@ -1891,6 +1891,15 @@ pub fn place_gap_at(x: f32, y: f32, count: usize) -> Option<usize> {
     Some(count)
 }
 
+/// The gap nearest `y`, wherever it is: a row being sorted is always headed
+/// for one gap or another, so unlike [`place_gap_at`] the middle of a row
+/// answers too — with the gap on whichever side of its centre `y` is.
+pub fn place_gap_nearest(y: f32, count: usize) -> usize {
+    (0..count)
+        .find(|index| y < place_rect(*index).center_y())
+        .unwrap_or(count)
+}
+
 /// The line drawn for a drop into gap `slot`: centred in the space between
 /// the two rows, the width of a row.
 pub fn place_gap_rect(slot: usize) -> Rect {
@@ -4470,6 +4479,9 @@ pub struct Frame<'a> {
     pub subtitle: String,
     pub places: &'a [Place],
     pub selected_place: Option<usize>,
+    /// The sidebar row being dragged to a new place in the list, drawn
+    /// faded where it was while the insertion line shows where it goes.
+    pub dragging_place: Option<usize>,
     pub mode: ViewMode,
     /// One per column in the path stack. In list view only the last is drawn.
     pub panes: Vec<PaneData<'a>>,
@@ -5867,6 +5879,13 @@ fn draw_sidebar(canvas: &Canvas, f: &Frame) {
         let rect = place_rect(i);
         let selected = f.selected_place == Some(i);
 
+        // The row being sorted stays where it was, faded, until it is let go:
+        // the insertion line is where it is going.
+        let lifted = f.dragging_place == Some(i);
+        if lifted {
+            canvas.save_layer_alpha(rect, 90);
+        }
+
         if selected {
             let mut paint = Paint::default();
             paint.set_anti_alias(true);
@@ -5907,6 +5926,10 @@ fn draw_sidebar(canvas: &Canvas, f: &Frame) {
             })
             .centered_on(rect.left + 32.0, rect.center_y())
             .render(canvas);
+
+        if lifted {
+            canvas.restore();
+        }
     }
 }
 
@@ -10734,6 +10757,7 @@ mod geometry_tests {
             subtitle: String::new(),
             places: &[],
             selected_place: None,
+            dragging_place: None,
             mode,
             panes,
             active: 0,
