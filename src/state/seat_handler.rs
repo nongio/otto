@@ -1,6 +1,6 @@
 use smithay::{
     backend::input::TabletToolDescriptor,
-    desktop::{find_popup_root_surface, space::SpaceElement},
+    desktop::{find_popup_root_surface, space::SpaceElement, PopupManager},
     input::{pointer::CursorImageStatus, tablet::TabletSeatHandler, SeatHandler, SeatState},
     reexports::wayland_server::{protocol::wl_surface::WlSurface, Resource},
     wayland::{
@@ -122,29 +122,44 @@ impl<BackendData: Backend> SeatHandler for Otto<BackendData> {
     }
 }
 
-/// The surface of the window the keyboard focus belongs to, which is not the
-/// same as the surface holding the focus.
-///
-/// A popup is chrome the focused window put up — a menu, a tooltip — so the
-/// window behind it is still the focused window. Anything else with the
-/// keyboard (a layer surface, the lock screen, Otto's own views) means no
-/// window has it.
-///
-/// Everything that draws a window differently when it is focused must agree on
-/// this, or a window dims itself the moment one of its own menus opens.
-pub fn focused_window_surface<BackendData: Backend>(
-    target: Option<&KeyboardFocusTarget<BackendData>>,
-) -> Option<WlSurface> {
-    match target {
-        Some(KeyboardFocusTarget::Window(window)) => {
-            window.wl_surface().map(|surface| surface.into_owned())
-        }
-        Some(KeyboardFocusTarget::Popup(popup)) => find_popup_root_surface(popup).ok(),
-        _ => None,
-    }
-}
-
 impl<BackendData: Backend> Otto<BackendData> {
+    /// The surface of the window the keyboard focus belongs to, which is not
+    /// the same as the surface holding the focus.
+    ///
+    /// A popup is chrome the focused window put up — a menu, a tooltip — so
+    /// the window behind it is still the focused window. A layer surface with
+    /// a menu open is the same: an otto-bar menu takes the keyboard for its
+    /// arrow keys, not the focus of the window it is about, so the last
+    /// focused window keeps it. Anything else with the keyboard (a layer
+    /// surface such as the launcher, the lock screen, Otto's own views) means
+    /// no window has it.
+    ///
+    /// Everything that draws a window differently when it is focused must
+    /// agree on this, or a window dims itself the moment a menu opens.
+    pub fn focused_window_surface(
+        &self,
+        target: Option<&KeyboardFocusTarget<BackendData>>,
+    ) -> Option<WlSurface> {
+        match target {
+            Some(KeyboardFocusTarget::Window(window)) => {
+                window.wl_surface().map(|surface| surface.into_owned())
+            }
+            Some(KeyboardFocusTarget::Popup(popup)) => find_popup_root_surface(popup).ok(),
+            Some(KeyboardFocusTarget::LayerSurface(layer))
+                if PopupManager::popups_for_surface(layer.wl_surface())
+                    .next()
+                    .is_some() =>
+            {
+                let id = self.workspaces.last_focused_window()?;
+                self.workspaces
+                    .get_window_for_surface(&id)?
+                    .wl_surface()
+                    .map(|surface| surface.into_owned())
+            }
+            _ => None,
+        }
+    }
+
     /// Keep every toplevel's `activated` state in step with the keyboard.
     ///
     /// Clients draw themselves differently when they lose the focus — a
@@ -154,7 +169,7 @@ impl<BackendData: Backend> Otto<BackendData> {
     /// activation within its own space, which leaves a window on another
     /// workspace or another output believing it is still the focused one.
     fn update_toplevel_activation(&self, target: Option<&KeyboardFocusTarget<BackendData>>) {
-        let focused = focused_window_surface(target);
+        let focused = self.focused_window_surface(target);
 
         for window in self.workspaces.spaces_elements() {
             let active = match (&focused, window.wl_surface()) {

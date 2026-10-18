@@ -547,6 +547,7 @@ impl TestClient {
             width: width as i32,
             height: height as i32,
             maximized: false,
+            activated: false,
             closed: false,
             title: title.to_string(),
             surface: surface.clone(),
@@ -705,7 +706,18 @@ impl TestClient {
         width: u32,
         height: u32,
     ) -> Arc<Mutex<TestPopup>> {
-        self.create_popup_inner(parent, x, y, width, height, 0, None)
+        self.create_popup_inner(PopupParent::Toplevel(parent), x, y, width, height, 0, None)
+    }
+
+    /// Create an XDG popup on a layer surface (`zwlr_layer_surface_v1.get_popup`),
+    /// the way a panel opens one of its menus, and attach a minimal SHM buffer.
+    pub fn create_layer_popup(
+        &mut self,
+        parent: &Arc<Mutex<TestLayerSurface>>,
+        width: u32,
+        height: u32,
+    ) -> Arc<Mutex<TestPopup>> {
+        self.create_popup_inner(PopupParent::Layer(parent), 10, 10, width, height, 0, None)
     }
 
     /// Create a popup that asks for an explicit grab (`xdg_popup.grab`) with
@@ -718,7 +730,15 @@ impl TestClient {
         height: u32,
         serial: u32,
     ) -> Arc<Mutex<TestPopup>> {
-        self.create_popup_inner(parent, 10, 10, width, height, 0, Some(serial))
+        self.create_popup_inner(
+            PopupParent::Toplevel(parent),
+            10,
+            10,
+            width,
+            height,
+            0,
+            Some(serial),
+        )
     }
 
     /// Create a popup that pads its buffer with a drop shadow, the way a GTK
@@ -735,13 +755,21 @@ impl TestClient {
         height: u32,
         shadow: i32,
     ) -> Arc<Mutex<TestPopup>> {
-        self.create_popup_inner(parent, x, y, width, height, shadow, None)
+        self.create_popup_inner(
+            PopupParent::Toplevel(parent),
+            x,
+            y,
+            width,
+            height,
+            shadow,
+            None,
+        )
     }
 
     #[allow(clippy::too_many_arguments)]
     fn create_popup_inner(
         &mut self,
-        parent: &Arc<Mutex<TestToplevel>>,
+        parent: PopupParent<'_>,
         x: i32,
         y: i32,
         width: u32,
@@ -774,18 +802,27 @@ impl TestClient {
         }));
 
         let xdg_surface = xdg_wm_base.get_xdg_surface(&surface, &self.qh, popup_state.clone());
-        let parent_xdg = parent
-            .lock()
-            .unwrap()
-            .xdg_surface
-            .clone()
-            .expect("parent toplevel has no xdg_surface");
-        let popup = xdg_surface.get_popup(
-            Some(&parent_xdg),
-            &positioner,
-            &self.qh,
-            popup_state.clone(),
-        );
+        let popup = match parent {
+            PopupParent::Toplevel(toplevel) => {
+                let parent_xdg = toplevel
+                    .lock()
+                    .unwrap()
+                    .xdg_surface
+                    .clone()
+                    .expect("parent toplevel has no xdg_surface");
+                xdg_surface.get_popup(
+                    Some(&parent_xdg),
+                    &positioner,
+                    &self.qh,
+                    popup_state.clone(),
+                )
+            }
+            PopupParent::Layer(layer) => {
+                let popup = xdg_surface.get_popup(None, &positioner, &self.qh, popup_state.clone());
+                layer.lock().unwrap().layer_surface.get_popup(&popup);
+                popup
+            }
+        };
         positioner.destroy();
         if let Some(serial) = grab {
             popup.grab(
@@ -817,6 +854,12 @@ impl TestClient {
 
         popup_state
     }
+}
+
+/// The surface a test popup hangs off.
+enum PopupParent<'a> {
+    Toplevel(&'a Arc<Mutex<TestToplevel>>),
+    Layer(&'a Arc<Mutex<TestLayerSurface>>),
 }
 
 /// Tracks the state of a test layer-shell surface.
@@ -892,6 +935,8 @@ pub struct TestToplevel {
     pub height: i32,
     /// Whether the last configure carried the `maximized` state.
     pub maximized: bool,
+    /// Whether the last configure carried the `activated` state.
+    pub activated: bool,
     pub closed: bool,
     pub title: String,
     /// The toplevel's wl_surface, so tests can push further commits.
@@ -1496,10 +1541,14 @@ impl Dispatch<xdg_toplevel::XdgToplevel, Arc<Mutex<TestToplevel>>> for TestClien
                     tl.height = height;
                 }
                 // States arrive as a flat array of little-endian u32 enum values.
-                tl.maximized = states
-                    .chunks_exact(4)
-                    .map(|c| u32::from_ne_bytes([c[0], c[1], c[2], c[3]]))
-                    .any(|s| s == u32::from(xdg_toplevel::State::Maximized));
+                let has = |state: xdg_toplevel::State| {
+                    states
+                        .chunks_exact(4)
+                        .map(|c| u32::from_ne_bytes([c[0], c[1], c[2], c[3]]))
+                        .any(|s| s == u32::from(state))
+                };
+                tl.maximized = has(xdg_toplevel::State::Maximized);
+                tl.activated = has(xdg_toplevel::State::Activated);
             }
             xdg_toplevel::Event::Close => {
                 data.lock().unwrap().closed = true;
