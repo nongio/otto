@@ -898,6 +898,10 @@ Ctrl+- step it by 16 points and a two-finger pinch scales it, as in Photos.
 - Remembered in the state file under `[icons]`, apart from the Photos size.
 - The desk has no slider and no zoom: its icons are the size its
   `[desk] icon_size` says, and the browser's remembered size never reaches it.
+- Each icon and thumbnail casts a small shadow lit from above: it falls
+  under the icon and leaves its top edge clean, so a pale icon keeps an edge
+  on the light pane without a halo around it. The desk's is softer and wider
+  (see the desk spec).
   It is the same process-wide icon size the desk sets, driven here by the
   slider.
 
