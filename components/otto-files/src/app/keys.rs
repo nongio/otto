@@ -411,14 +411,20 @@ impl FilesWindow {
                 Keysym::Left if browser.mode == ViewMode::Photos => {
                     browser.move_photo_cursor(Direction::Left, shift)
                 }
-                Keysym::Down => {
-                    let step = browser.row_step();
-                    browser.move_cursor(step, shift)
-                }
-                Keysym::Up => {
-                    let step = browser.row_step();
-                    browser.move_cursor(-step, shift)
-                }
+                Keysym::Down => match browser.desk_free_vertical(true) {
+                    Some(next) => browser.move_cursor_to(next, shift),
+                    None => {
+                        let step = browser.row_step();
+                        browser.move_cursor(step, shift)
+                    }
+                },
+                Keysym::Up => match browser.desk_free_vertical(false) {
+                    Some(next) => browser.move_cursor_to(next, shift),
+                    None => {
+                        let step = browser.row_step();
+                        browser.move_cursor(-step, shift)
+                    }
+                },
                 // The grid is two-dimensional: sideways is the next cell, not
                 // a move in or out of a directory the way it is in the list
                 // and Miller views.

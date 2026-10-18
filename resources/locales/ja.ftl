@@ -129,6 +129,11 @@ settings-desk-layout-reset = リセット
 settings-desk-layout-fill = 画面全体に表示。「編集」でデスクにハンドルが表示され、ドラッグで配置できます
 settings-desk-layout-placed = 手動で配置済み。「リセット」で画面全体に戻ります
 settings-desk-icon-size = アイコンのサイズ
+settings-desk-arrange = 配置
+settings-desk-arrange-grid = 整列グリッド
+# Icons stay where they are dragged, snapped to the grid.
+settings-desk-arrange-free = 自由配置
+settings-desk-arrange-detail = 整列グリッドはアイコンを順番どおりに並べます。自由配置はアイコンをドロップした場所に残し、グリッドに揃えます
 settings-desk-overflow = アイコンが収まらないとき
 settings-desk-overflow-scroll = スクロール
 settings-desk-overflow-stack = オーバーレイで表示
@@ -603,6 +608,13 @@ files-open-with-always = 「{ $kind }」には常にこのAppを使用
 files-open-with-not-remembered = 開きましたが、選択を保存できませんでした：{ $error }
 files-new-folder = 新規フォルダ
 files-desk-open-in-files = ファイルで開く
+# The desk's background menu: how the icons are laid out. Grid keeps them
+# sorted; Free leaves each where it was dropped.
+files-desk-arrange = 配置
+files-desk-arrange-grid = 整列グリッド
+files-desk-arrange-free = 自由配置
+# Puts every icon on the desk back in sorted order.
+files-desk-clean-up = 整頓
 files-desk-edit-done = 完了
 # The desk's overflow tile: the caption under it, and what a screen reader
 # says for it. $count is how many items it holds.

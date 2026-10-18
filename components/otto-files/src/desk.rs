@@ -67,6 +67,16 @@ pub enum Arrange {
     Free,
 }
 
+impl Arrange {
+    /// The name the config file spells this arrangement with.
+    fn name(self) -> &'static str {
+        match self {
+            Self::Grid => "grid",
+            Self::Free => "free",
+        }
+    }
+}
+
 /// What the desk does with icons its panel has no cell for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Overflow {
@@ -845,6 +855,39 @@ pub fn save_geometry(
     size: [Extent; 2],
     position: Option<[Extent; 2]>,
 ) -> std::io::Result<()> {
+    edit_config(|text| with_geometry(text, anchor, size, position))
+}
+
+/// `text`, a whole `files.toml`, with `[desk] arrange` set to `arrange`.
+/// Everything else in the file stays as it was.
+///
+/// # Errors
+///
+/// Fails when `text` is not TOML.
+pub fn with_arrange(text: &str, arrange: Arrange) -> Result<String, toml_edit::TomlError> {
+    let mut doc: toml_edit::DocumentMut = text.parse()?;
+    if !doc.contains_table("desk") {
+        doc["desk"] = toml_edit::table();
+    }
+    doc["desk"]["arrange"] = toml_edit::value(arrange.name());
+    Ok(doc.to_string())
+}
+
+/// Write the arrangement into `~/.config/otto/files.toml`, keeping the rest
+/// of the file.
+///
+/// # Errors
+///
+/// As [`save_geometry`].
+pub fn save_arrange(arrange: Arrange) -> std::io::Result<()> {
+    edit_config(|text| with_arrange(text, arrange))
+}
+
+/// Rewrite `~/.config/otto/files.toml` with `edit`, a missing file reading
+/// as an empty one.
+fn edit_config(
+    edit: impl FnOnce(&str) -> Result<String, toml_edit::TomlError>,
+) -> std::io::Result<()> {
     let path = places_config::config_path()
         .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "no home folder"))?;
     let text = match std::fs::read_to_string(&path) {
@@ -852,8 +895,8 @@ pub fn save_geometry(
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => String::new(),
         Err(err) => return Err(err),
     };
-    let next = with_geometry(&text, anchor, size, position)
-        .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err))?;
+    let next =
+        edit(&text).map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err))?;
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
     }
@@ -1207,6 +1250,23 @@ mod tests {
     #[test]
     fn a_file_that_does_not_parse_is_not_overwritten() {
         assert!(with_geometry("[desk\n", Anchor::Fill, DEFAULT_SIZE, None).is_err());
+        assert!(with_arrange("[desk\n", Arrange::Free).is_err());
+    }
+
+    #[test]
+    fn the_arrangement_is_written_and_the_rest_kept() {
+        let text = "# mine\n[sidebar]\nshow = 1\n\n[desk]\nicon_size = 80 # big\n";
+        let written = with_arrange(text, Arrange::Free).unwrap();
+        assert!(written.contains("# mine") && written.contains("# big"));
+        let config = parse(&written);
+        assert_eq!(config.arrange, Arrange::Free);
+        assert_eq!(config.icon_size, 80.0);
+        let back = with_arrange(&written, Arrange::Grid).unwrap();
+        assert_eq!(parse(&back).arrange, Arrange::Grid);
+        assert_eq!(
+            parse(&with_arrange("", Arrange::Free).unwrap()).arrange,
+            Arrange::Free
+        );
     }
 
     #[test]

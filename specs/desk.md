@@ -1,13 +1,14 @@
 # Desk
 
 **Status:** partly implemented — `otto-files --desk` shows one surface on the
-output the compositor picks, grid arrangement only, with the `[desk]` config
-read at startup and followed live, the single-instance lock, edit mode
-for the panel's size and position, and `overflow = "stack"` with its
-overflow tile and overflow panel. Not yet: a surface per output, free
-placement and its state file, Arrange and Clean Up in the menu, watching for
-a missing folder to appear, and Peek above the windows (it is still a
-subsurface of the desk, so windows cover it).
+output the compositor picks, the sorted grid and free placement with its
+state file, Arrange and Clean Up in the menu, the `[desk]` config read at
+startup and followed live, the single-instance lock, edit mode for the
+panel's size and position, and `overflow = "stack"` with its overflow tile
+and overflow panel. Not yet: a surface per output (so the saved positions
+are not yet per output), watching for a missing folder to appear, and Peek
+above the windows (it is still a subsurface of the desk, so windows cover
+it).
 **Related specs:** [settings-app.md](./settings-app.md), [file-browser.md](./file-browser.md), [peek.md](./peek.md),
 [context-menus.md](./context-menus.md), [multi-output.md](./multi-output.md),
 [usable-area-refit.md](./usable-area-refit.md)
@@ -132,7 +133,11 @@ browser's own.
 - Items dropped on the desk from elsewhere move into the folder, or copy if
   they come from another filesystem, following the browser's rules.
 - In free placement, dragging an item within the desk moves its icon and
-  leaves the file alone.
+  leaves the file alone. While the drag is over the desk, a ring in the
+  accent colour shows the slot the picked-up icon would land on. Several
+  items dragged together keep their places around the one picked up, each
+  on the free slot nearest where it would fall. Dropping onto a folder icon
+  that is not itself being dragged still moves the items into it.
 - Dropping onto a folder icon on the desk moves the items into that folder.
 
 ### Arrangement
@@ -142,17 +147,28 @@ browser's own.
   place.
 - **Free**: each icon has a slot on an invisible grid of cell-sized slots. A
   dropped icon snaps to the nearest free slot, so icons never overlap. New
-  files take the first free slot in grid order. When a file goes away, its
-  slot is freed. Positions are kept per output and file name in
-  `~/.local/state/otto/desk.toml`, never in the folder itself.
+  files take the first free slot in grid order, and keep it. When a file
+  goes away, its slot is freed. A renamed file keeps its slot. Positions are
+  kept by file name as a column and a row in
+  `~/.local/state/otto/desk.toml` (`[positions]`, `"name" = [col, row]`),
+  never in the folder itself; per output once there is a surface per output.
+  Switching to free placement for the first time keeps the icons where the
+  grid had them.
+- Under free placement the keyboard's Left and Right walk the icons in
+  reading order, and Up and Down go to the nearest icon in the nearest row
+  that has one that way, past empty rows.
 - A slot that no longer fits (the panel shrank, or the output changed size)
   reflows its icon to the first free slot, without forgetting the saved one.
   Under `overflow = "stack"`, an icon with no free slot left goes into the
-  overflow tile, which takes the last free slot in grid order.
+  overflow tile, which takes the last free slot in grid order. The tile is
+  not an icon: an icon dropped on its slot takes it, and the tile moves to
+  the last slot left free.
 - **Clean Up** in the background menu snaps free-placed icons back into sort
-  order. **Arrange ▸ Grid / Free** switches arrangement from the menu and
-  writes it back to the config. Switching to grid keeps the free positions
-  for when free placement comes back.
+  order; it is inactive on the sorted grid. **Arrange ▸ Sorted Grid / Free**
+  switches arrangement from the menu, with a check on the current one, and
+  writes it back to the config. Settings ▸ Appearance ▸ Desk ▸
+  *Arrangement* writes the same key. Switching to grid keeps the free
+  positions for when free placement comes back.
 
 ### Icons that don't fit
 
@@ -244,7 +260,8 @@ overflow = "scroll"     # scroll | stack
   folder is listed at once, and the order, icon size, padding, anchor, size,
   position and overflow take effect on the next frame.
 - Settings ▸ Appearance ▸ Desk writes `folder` (through the desktop portal's
-  folder picker, under the home folder as `~/…`), `overflow` (*When icons
+  folder picker, under the home folder as `~/…`), `arrange`
+  (*Arrangement*), `overflow` (*When icons
   don't fit*), `icon_size` (*Icon size*, a slider from 32 to 160 points in
   steps of 4, written once per step while dragging) and, through Reset, the geometry. It edits the file in place and keeps everything else in it.
 - A folder that does not exist shows an empty desk and is watched for being

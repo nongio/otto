@@ -353,6 +353,13 @@ impl FilesWindow {
                     // no motion reported.
                     browser.drop_target = browser.drop_target_at(*x as f32, *y as f32);
                     match paths {
+                        Some(paths)
+                            if matches!(browser.drop_target, Some(DropTarget::Slot { .. })) =>
+                        {
+                            browser.drop_target = None;
+                            browser.dirty = true;
+                            browser.place_desk_drop(&paths, *x as f32, *y as f32);
+                        }
                         Some(paths) => browser.apply_drop(paths, move_them),
                         None => {
                             browser.drop_target = None;
@@ -750,6 +757,9 @@ pub(super) fn show_context_menu_over(
                 let folder = browser.columns[0].path.clone();
                 browser.spawn_window(&folder);
             }
+            "desk_arrange_grid" => browser.set_desk_arrange(crate::desk::Arrange::Grid),
+            "desk_arrange_free" => browser.set_desk_arrange(crate::desk::Arrange::Free),
+            "desk_clean_up" => browser.clean_up_desk(),
             "new_folder_with_selection" => {
                 // No name from a menu: the folder takes the
                 // default one and lands in rename, ready to

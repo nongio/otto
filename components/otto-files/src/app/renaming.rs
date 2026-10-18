@@ -110,6 +110,7 @@ impl Browser {
                 .selection
                 .insert(target.to_string_lossy().into_owned());
         }
+        self.desk_renamed(&old_name, new_name);
         self.status = Some(otto_kit::t_owned!("files-renamed-to", name = new_name));
         self.record_undo(
             otto_kit::t!("files-undo-rename"),

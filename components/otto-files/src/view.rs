@@ -944,13 +944,15 @@ pub const GRID_ICON_STEP: f32 = 16.0;
 fn grid_label_chars(cell: Rect) -> usize {
     ((13.0 * cell.width() / DEFAULT_CELL_W).floor() as usize).max(7)
 }
+/// The space between the icon's selection rectangle and the caption's pill.
+/// Small, so the two still read as one highlight, but apart.
+const GRID_LABEL_SPACING: f32 = 2.0;
 /// Space between the bottom of the icon and the optical centre of the
-/// caption's first line. Tuned so the icon's selection rectangle and the
-/// caption's pill meet edge to edge: they read as one highlight, without
-/// either overlapping the other.
-const GRID_LABEL_GAP: f32 = 16.0;
+/// caption's first line: the icon's selection inset, the spacing, then the
+/// pill's own inset above the text.
+const GRID_LABEL_GAP: f32 = GRID_ICON_INSET + GRID_LABEL_SPACING + GRID_LABEL_INSET;
 /// Baseline-to-baseline distance between the caption's two lines.
-const GRID_LABEL_LINE: f32 = 16.0;
+const GRID_LABEL_LINE: f32 = 15.0;
 /// Padding above and below the caption inside its selection pill. The pill is
 /// built out from the line centres, so the text sits optically centred in it.
 const GRID_LABEL_INSET: f32 = 10.0;
@@ -961,7 +963,7 @@ const GRID_LABEL_INSET: f32 = 10.0;
 const GRID_LABEL_STYLE: TextStyle = styles::BODY_EMPHASIZED;
 /// How far the icon's selection rectangle stands off the icon itself. Small,
 /// so the highlight reads as belonging to the icon rather than to the cell.
-const GRID_ICON_INSET: f32 = 6.0;
+const GRID_ICON_INSET: f32 = 4.0;
 
 /// The selection rectangle behind a grid icon, given its cell and the top of
 /// the icon inside it. Public because a desktop surface draws the same
@@ -1046,16 +1048,74 @@ pub struct GridSection {
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct GridSections {
     pub sections: Vec<GridSection>,
+    /// The desk's free placement: each entry's slot on the lattice, rather
+    /// than the slot of its own index. `None` everywhere else.
+    pub slots: Option<std::sync::Arc<GridSlots>>,
+}
+
+/// Which slot of a flat grid each entry sits on, for a grid whose icons are
+/// placed rather than filled in order — the desk's `arrange = "free"`.
+///
+/// Slots may be left empty between entries, and several entries may share
+/// one: the desk's overflow tile is one slot holding every entry after the
+/// first in it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct GridSlots {
+    /// The slot of each entry, by its index in the listing.
+    of: Vec<usize>,
+    /// The first entry on each occupied slot.
+    at: std::collections::HashMap<usize, usize>,
+}
+
+impl GridSlots {
+    /// The map with entry `i` on slot `of[i]`.
+    pub fn new(of: Vec<usize>) -> Self {
+        let mut at = std::collections::HashMap::with_capacity(of.len());
+        for (index, slot) in of.iter().enumerate() {
+            at.entry(*slot).or_insert(index);
+        }
+        Self { of, at }
+    }
+
+    /// Entry `index`'s slot, if the map has the entry.
+    pub fn slot(&self, index: usize) -> Option<usize> {
+        self.of.get(index).copied()
+    }
+
+    /// The entry on `slot`, if any.
+    pub fn entry(&self, slot: usize) -> Option<usize> {
+        self.at.get(&slot).copied()
+    }
+
+    /// One past the last slot any entry sits on: how many slots the grid
+    /// has to lay out.
+    pub fn extent(&self) -> usize {
+        self.of.iter().max().map_or(0, |last| last + 1)
+    }
 }
 
 impl GridSections {
     /// The unsectioned grid: what every directory listing uses.
     pub const FLAT: &'static GridSections = &GridSections {
         sections: Vec::new(),
+        slots: None,
     };
 
+    /// Whether the grid has no sections: no headings break it up.
     pub fn is_flat(&self) -> bool {
         self.sections.is_empty()
+    }
+
+    /// Entry `index`'s cell in content coordinates, `width` across: its own
+    /// slot, or the one the free placement gives it.
+    fn cell_rect(&self, index: usize, width: f32) -> Rect {
+        match &self.slots {
+            Some(slots) => match slots.slot(index) {
+                Some(slot) => self.layout(usize::MAX).cell_rect(slot, width),
+                None => Rect::new_empty(),
+            },
+            None => self.layout(usize::MAX).cell_rect(index, width),
+        }
     }
 
     /// The grid's geometry in content coordinates, over `count` cells: the
@@ -1102,11 +1162,32 @@ pub fn grid_cell_rect(area: Rect, index: usize, scroll: f32) -> Rect {
 /// rect is a less surprising answer than a panic. A flat grid has no end to be
 /// past — every index has a place on the lattice.
 pub fn grid_cell_rect_in(area: Rect, sections: &GridSections, index: usize, scroll: f32) -> Rect {
-    let cell = sections.layout(usize::MAX).cell_rect(index, area.width());
+    let cell = sections.cell_rect(index, area.width());
     if cell.is_empty() {
         return cell;
     }
     cell.with_offset((area.left, area.top - scroll))
+}
+
+/// Slot `slot` of a flat grid in `area`, scrolled by `scroll`: where an icon
+/// placed there is drawn, whether or not one is.
+pub fn grid_slot_rect(area: Rect, slot: usize, scroll: f32) -> Rect {
+    GridSections::FLAT
+        .layout(usize::MAX)
+        .cell_rect(slot, area.width())
+        .with_offset((area.left, area.top - scroll))
+}
+
+/// The slot of a flat grid in `area` whose cell's top-left corner is
+/// nearest `(left, top)`, as a column and a row. Never before the first
+/// column or row; past the last column it is the last one.
+pub fn grid_slot_nearest(area: Rect, left: f32, top: f32, scroll: f32) -> crate::desk_slots::Cell {
+    let columns = grid_columns(area);
+    let col = ((left - area.left - GRID_PAD) / cell_w()).round().max(0.0) as usize;
+    let row = ((top - area.top + scroll - GRID_PAD) / cell_h())
+        .round()
+        .max(0.0) as u32;
+    crate::desk_slots::Cell::new(col.min(columns - 1) as u32, row)
 }
 
 /// The heading rects to draw, each with its text, in window coordinates.
@@ -1147,10 +1228,15 @@ pub fn grid_cell_at_in(
     }
     // A heading, the padding and the air after a section's last cell are all
     // clicks on nothing, not on the cell below.
-    sections.layout(count).index_at(
-        Point::new(x - area.left, y - area.top + scroll),
-        area.width(),
-    )
+    let point = Point::new(x - area.left, y - area.top + scroll);
+    match &sections.slots {
+        Some(slots) => sections
+            .layout(usize::MAX)
+            .index_at(point, area.width())
+            .and_then(|slot| slots.entry(slot))
+            .filter(|index| *index < count),
+        None => sections.layout(count).index_at(point, area.width()),
+    }
 }
 
 /// The cells that intersect `band` — the visible strip of the grid, in the
@@ -1183,6 +1269,11 @@ pub fn grid_visible_range_in(
 ) -> std::ops::Range<usize> {
     if count == 0 || band.is_empty() {
         return 0..0;
+    }
+    // Placed icons are in no order down the grid: every one is a candidate,
+    // and a cell outside the band is clipped like any other.
+    if sections.slots.is_some() {
+        return 0..count;
     }
     let top = area.top - scroll;
     sections
@@ -1222,10 +1313,21 @@ pub fn grid_cells_in_rect_in(
     if count == 0 || (band.width() <= 0.0 && band.height() <= 0.0) {
         return Vec::new();
     }
-    sections.layout(count).cells_in(
-        band.with_offset((-area.left, scroll - area.top)),
-        area.width(),
-    )
+    let band = band.with_offset((-area.left, scroll - area.top));
+    match &sections.slots {
+        Some(slots) => {
+            let mut hit: Vec<usize> = sections
+                .layout(slots.extent())
+                .cells_in(band, area.width())
+                .into_iter()
+                .filter_map(|slot| slots.entry(slot))
+                .filter(|index| *index < count)
+                .collect();
+            hit.sort_unstable();
+            hit
+        }
+        None => sections.layout(count).cells_in(band, area.width()),
+    }
 }
 
 /// How many whole cells fit in `area` without scrolling: every column,
@@ -1250,6 +1352,8 @@ pub fn grid_capacity(area: Rect) -> usize {
 pub struct DeskOverflow {
     pub tile: crate::desk::OverflowTile,
     pub panel: Option<(crate::desk::OverflowPanel, f32)>,
+    /// The tile's own cell in the grid.
+    tile_cell: Rect,
 }
 
 /// How far the overflow panel keeps from the edges of the desk's surface, in
@@ -1257,40 +1361,51 @@ pub struct DeskOverflow {
 const PANEL_MARGIN: f32 = 12.0;
 
 impl DeskOverflow {
-    /// The overflow over `count` entries in the grid at `area`, if they make
-    /// a tile. `panel_scroll` opens its panel, scrolled that far, somewhere
-    /// inside `surface`: the panel is a surface of its own, so it is not
-    /// held inside the grid.
-    pub fn new(area: Rect, surface: Rect, count: usize, panel_scroll: Option<f32>) -> Option<Self> {
+    /// The overflow over `count` entries in the grid at `area`, laid out as
+    /// `sections` says, if they make a tile. `panel_scroll` opens its panel,
+    /// scrolled that far, somewhere inside `surface`: the panel is a surface
+    /// of its own, so it is not held inside the grid.
+    pub fn new(
+        area: Rect,
+        sections: &GridSections,
+        surface: Rect,
+        count: usize,
+        panel_scroll: Option<f32>,
+    ) -> Option<Self> {
         let tile = crate::desk::overflow_tile(count, grid_capacity(area))?;
+        let tile_cell = grid_cell_rect_in(area, sections, tile.first, 0.0);
         let panel = panel_scroll.map(|scroll| {
             let panel = crate::desk::OverflowPanel::new(
                 surface.with_inset((PANEL_MARGIN, PANEL_MARGIN)),
-                grid_cell_rect(area, tile.first, 0.0),
+                tile_cell,
                 tile.count,
                 (cell_w(), cell_h()),
             );
             (panel, scroll)
         });
-        Some(Self { tile, panel })
+        Some(Self {
+            tile,
+            panel,
+            tile_cell,
+        })
     }
 
     /// Where entry `index` is drawn and hit, when the tile holds it: its cell
     /// in the panel while the panel is open, the tile's own cell while it is
     /// not. `None` for an entry in the grid.
-    pub fn entry_rect(&self, area: Rect, index: usize) -> Option<Rect> {
+    pub fn entry_rect(&self, index: usize) -> Option<Rect> {
         if !self.tile.contains(index) {
             return None;
         }
         Some(match self.panel {
             Some((panel, scroll)) => panel.cell_rect(index - self.tile.first, scroll),
-            None => grid_cell_rect(area, self.tile.first, 0.0),
+            None => self.tile_cell,
         })
     }
 
-    /// The tile's own cell in the grid at `area`.
-    pub fn cell(&self, area: Rect) -> Rect {
-        grid_cell_rect(area, self.tile.first, 0.0)
+    /// The tile's own cell in the grid.
+    pub fn cell(&self) -> Rect {
+        self.tile_cell
     }
 }
 
@@ -1489,7 +1604,11 @@ pub fn grid_content_height(area: Rect, count: usize) -> f32 {
 /// [`grid_content_height`] against a sectioned grid — the cells plus every
 /// heading between them.
 pub fn grid_content_height_in(area: Rect, sections: &GridSections, count: usize) -> f32 {
-    sections.layout(count).length(area.width())
+    let laid_out = sections
+        .slots
+        .as_ref()
+        .map_or(count, |slots| slots.extent());
+    sections.layout(laid_out).length(area.width())
 }
 
 // --- Photos geometry --------------------------------------------------------
@@ -3025,6 +3144,8 @@ pub enum DropHighlight {
     Pane { depth: usize },
     /// A sidebar place.
     Place { index: usize },
+    /// The desk's free placement: the slot the dragged icon would land on.
+    Slot { slot: usize },
 }
 
 /// `rect` cut down to `clip`, or `None` when the two do not meet.
@@ -3040,6 +3161,13 @@ fn clipped_to(rect: Rect, clip: Rect) -> Option<Rect> {
 pub fn drop_highlight_rect(f: &Frame, target: DropHighlight) -> Option<Rect> {
     match target {
         DropHighlight::Place { index } => (index < f.places.len()).then(|| place_rect(index)),
+        DropHighlight::Slot { slot } => {
+            let grid = content_viewport(f.width, f.height, ViewMode::Grid);
+            let scroll = f.panes.first().map_or(0.0, |pane| pane.scroll);
+            let cell = grid_slot_rect(grid, slot, scroll);
+            let icon = entry_icon_rect(cell, ViewMode::Grid);
+            clipped_to(grid_icon_highlight_rect(cell, icon.top), grid)
+        }
         DropHighlight::Pane { depth } => {
             let viewport = content_viewport(f.width, f.height, f.mode);
             let pane = match f.mode {
@@ -3060,7 +3188,7 @@ pub fn drop_highlight_rect(f: &Frame, target: DropHighlight) -> Option<Rect> {
             let rect = match f.mode {
                 ViewMode::Grid => f
                     .desk_overflow
-                    .and_then(|overflow| overflow.entry_rect(grid, index))
+                    .and_then(|overflow| overflow.entry_rect(index))
                     .unwrap_or_else(|| {
                         grid_cell_rect_in(grid, f.grid_sections, index, pane.scroll)
                     }),
@@ -3100,6 +3228,17 @@ fn draw_drop_highlight(canvas: &Canvas, f: &Frame) {
         return;
     }
 
+    // Where a placed icon will land: a faint wash in the icon's own shape,
+    // a hint rather than a target, since nothing goes into it.
+    if let DropHighlight::Slot { .. } = target {
+        let mut wash = Paint::default();
+        wash.set_anti_alias(true);
+        wash.set_color(Color::WHITE.with_a(46));
+        let radius = drop_ring_radius(f.mode, target);
+        canvas.draw_rrect(RRect::new_rect_xy(rect, radius, radius), &wash);
+        return;
+    }
+
     // The ring alone. A wash inside it as well says the same thing twice, and
     // over a pane it tints a whole column of rows to point at one target.
     let mut ring = Paint::default();
@@ -3136,6 +3275,8 @@ fn drop_ring_radius(mode: ViewMode, target: DropHighlight) -> f32 {
         DropHighlight::Row { .. } if mode == ViewMode::Grid => 8.0,
         DropHighlight::Row { .. } if mode == ViewMode::Photos => PHOTOS_RADIUS,
         DropHighlight::Row { .. } | DropHighlight::Pane { .. } => 0.0,
+        // The icon's own selection shape, where the icon will land.
+        DropHighlight::Slot { .. } => 8.0,
     }
 }
 
@@ -4142,7 +4283,7 @@ pub fn item_span_in(
         ViewMode::Columns => (MILLER_ROW_INSET + index as f32 * ROW_H, ROW_H),
         ViewMode::Grid => {
             let area = content_viewport(width, height, mode);
-            let cell = sections.layout(usize::MAX).cell_rect(index, area.width());
+            let cell = sections.cell_rect(index, area.width());
             (cell.top, cell.height())
         }
         ViewMode::Photos => {
@@ -6227,6 +6368,11 @@ fn draw_grid(canvas: &Canvas, f: &Frame) {
             .map_or(pane.entries.len(), |overflow| overflow.tile.first);
         for index in grid_visible_range_in(area, sections, in_grid, pane.scroll, band) {
             let cell = grid_cell_rect_in(area, sections, index, pane.scroll);
+            // Placed icons come in no order down the grid, so the range is
+            // all of them: skip those off the band here.
+            if sections.slots.is_some() && !cell.intersects(band) {
+                continue;
+            }
             let entry = pane.entries[index];
             draw_grid_cell_with(
                 canvas,
@@ -6250,7 +6396,7 @@ fn draw_grid(canvas: &Canvas, f: &Frame) {
                 f,
                 &pane.entries,
                 overflow.tile,
-                overflow.cell(area),
+                overflow.cell(),
                 selected,
             );
         }
@@ -7081,13 +7227,32 @@ fn draw_grid_caption(
 /// Split a name across at most two lines of `per_line` characters, eliding the
 /// tail. Character-count based rather than measured — good enough for a fixed
 /// cell, and it keeps this callable without a font.
+///
+/// The first line breaks at the last space that fits, or after the last
+/// hyphen or underscore, so words stay whole. A name with nowhere to break
+/// in its first line is cut where the line ends.
 fn split_label(name: &str, per_line: usize) -> (String, String) {
     let chars: Vec<char> = name.chars().collect();
     if chars.len() <= per_line {
         return (name.to_string(), String::new());
     }
-    let first: String = chars[..per_line].iter().collect();
-    let rest = &chars[per_line..];
+    // Where the second line starts, and where the first one ends: a space
+    // is dropped at the break, a hyphen or underscore stays on the first
+    // line. Never at the very start, which would leave the first line empty.
+    let (end, start) = (1..=per_line)
+        .rev()
+        .find_map(|at| match chars.get(at) {
+            Some(' ') => Some((at, at + 1)),
+            _ if matches!(chars[at - 1], '-' | '_') => Some((at, at)),
+            _ => None,
+        })
+        .unwrap_or((per_line, per_line));
+    let first: String = chars[..end]
+        .iter()
+        .collect::<String>()
+        .trim_end()
+        .to_string();
+    let rest = &chars[start..];
     if rest.len() <= per_line {
         return (first, rest.iter().collect());
     }
@@ -7529,8 +7694,8 @@ fn draw_entry_icon(
 /// Fitted rather than filled: a thumbnail is the file, and cropping it to a
 /// square would be showing the user the middle of their photograph and calling
 /// it the photograph. The picture keeps its own proportions and is centred in
-/// the box, so a panorama and a portrait both sit on the same baseline as the
-/// icons around them.
+/// the box, so a panorama and a portrait both sit in the middle of the space
+/// the icons around them fill.
 ///
 /// The hairline matters more than it looks. A photograph with a white sky and
 /// no border does not end anywhere — it bleeds into the window and stops
@@ -7549,9 +7714,9 @@ pub(crate) fn draw_thumbnail(canvas: &Canvas, image: &skia_safe::Image, box_rect
     let (dst_w, dst_h) = (w * scale, h * scale);
     let dst = Rect::from_xywh(
         box_rect.center_x() - dst_w / 2.0,
-        // Sat on the box's bottom edge rather than its middle, so a row of
-        // mixed shapes shares a baseline the way the icons they replace do.
-        box_rect.bottom - dst_h,
+        // Centred both ways, so a wide picture sits in the middle of the
+        // icon's square and keeps an even gap to the caption below.
+        box_rect.center_y() - dst_h / 2.0,
         dst_w,
         dst_h,
     );
@@ -8571,9 +8736,9 @@ pub fn draw_open_pulse(canvas: &Canvas, f: &Frame) {
         draw_preview_open_pulse(canvas, f, entry, stage, t);
         return;
     }
-    let in_overflow = f.desk_overflow.and_then(|overflow| {
-        overflow.entry_rect(content_viewport(f.width, f.height, ViewMode::Grid), index)
-    });
+    let in_overflow = f
+        .desk_overflow
+        .and_then(|overflow| overflow.entry_rect(index));
     let rect = in_overflow.unwrap_or_else(|| {
         cursor_entry_rect_in(
             f.width,
@@ -9633,6 +9798,7 @@ mod geometry_tests {
                     section
                 })
                 .collect(),
+            slots: None,
         }
     }
 
@@ -9944,15 +10110,47 @@ mod geometry_tests {
         assert!(rect.width() < cell.width() - 20.0);
     }
 
-    /// And it meets the caption's pill edge to edge — the two read as one
-    /// highlight, with neither overlapping the other.
     #[test]
-    fn the_icon_highlight_meets_the_caption_pill() {
+    fn a_long_name_breaks_between_words() {
+        assert_eq!(
+            split_label("Holiday photos 2024", 13),
+            ("Holiday".into(), "photos 2024".into())
+        );
+        assert_eq!(
+            split_label("Quarterly report final.pdf", 13),
+            ("Quarterly".into(), "report final…".into())
+        );
+        assert_eq!(
+            split_label("draft-notes-v2.txt", 13),
+            ("draft-notes-".into(), "v2.txt".into())
+        );
+        assert_eq!(
+            split_label("IMG_20240512_183012.jpg", 13),
+            ("IMG_20240512_".into(), "183012.jpg".into())
+        );
+        // Nowhere to break: cut where the line ends.
+        assert_eq!(
+            split_label("Screenshot20240512.png", 13),
+            ("Screenshot202".into(), "40512.png".into())
+        );
+        assert_eq!(
+            split_label("short.txt", 13),
+            ("short.txt".into(), String::new())
+        );
+    }
+
+    /// And it stops just short of the caption's pill: two points apart,
+    /// with neither overlapping the other.
+    #[test]
+    fn the_icon_highlight_sits_just_above_the_caption_pill() {
         let cell = grid_cell_rect(Rect::from_xywh(0.0, 0.0, 800.0, 600.0), 0, 0.0);
         let icon_top = cell.top + 8.0;
         let pill_top = icon_top + grid_icon() + GRID_LABEL_GAP - GRID_LABEL_INSET;
 
-        assert_eq!(grid_icon_highlight_rect(cell, icon_top).bottom, pill_top);
+        assert_eq!(
+            pill_top - grid_icon_highlight_rect(cell, icon_top).bottom,
+            GRID_LABEL_SPACING
+        );
     }
 
     /// The first frames of the entrance are a card the size of the file's own
@@ -10459,8 +10657,14 @@ mod geometry_tests {
         let owned = entries(count);
         let theme = Theme::light();
         let area = content_viewport(1100.0, 700.0, ViewMode::Grid);
-        let overflow =
-            DeskOverflow::new(area, Rect::from_wh(1100.0, 700.0), count, None).expect("a tile");
+        let overflow = DeskOverflow::new(
+            area,
+            GridSections::FLAT,
+            Rect::from_wh(1100.0, 700.0),
+            count,
+            None,
+        )
+        .expect("a tile");
         let mut frame = test_frame(&theme, ViewMode::Grid, vec![pane(&owned, None, 0.0)], 700.0);
         frame.desk_overflow = Some(overflow);
         let mut surface = skia_safe::surfaces::raster_n32_premul((1100, 700)).unwrap();
@@ -10496,7 +10700,7 @@ mod geometry_tests {
         // Six in the tile: one digit, so the badge is a round dot.
         let (mut surface, overflow, area) = draw_stacked_grid(capacity + 5);
         assert_eq!(overflow.tile.count, 6);
-        let cell = overflow.cell(area);
+        let cell = overflow.cell();
         let icon = grid_icon();
         let right = cell.center_x() + icon / 2.0;
         let top = cell.top + 8.0;
@@ -10543,8 +10747,16 @@ mod geometry_tests {
         let theme = Theme::light();
         let area = content_viewport(1100.0, 700.0, ViewMode::Grid);
         let surface_rect = Rect::from_wh(1100.0, 700.0);
-        let open = DeskOverflow::new(area, surface_rect, owned.len(), Some(0.0)).unwrap();
-        let closed = DeskOverflow::new(area, surface_rect, owned.len(), None).unwrap();
+        let open = DeskOverflow::new(
+            area,
+            GridSections::FLAT,
+            surface_rect,
+            owned.len(),
+            Some(0.0),
+        )
+        .unwrap();
+        let closed =
+            DeskOverflow::new(area, GridSections::FLAT, surface_rect, owned.len(), None).unwrap();
         let draw = |overflow: DeskOverflow| {
             let mut frame =
                 test_frame(&theme, ViewMode::Grid, vec![pane(&owned, None, 0.0)], 700.0);
@@ -10567,8 +10779,14 @@ mod geometry_tests {
         let owned = entries(capacity + 20);
         let theme = Theme::light();
         let area = content_viewport(1100.0, 700.0, ViewMode::Grid);
-        let overflow =
-            DeskOverflow::new(area, Rect::from_wh(1100.0, 700.0), owned.len(), Some(0.0)).unwrap();
+        let overflow = DeskOverflow::new(
+            area,
+            GridSections::FLAT,
+            Rect::from_wh(1100.0, 700.0),
+            owned.len(),
+            Some(0.0),
+        )
+        .unwrap();
         let (panel, _) = overflow.panel.unwrap();
         assert_eq!(
             panel.rect.height(),

@@ -459,6 +459,7 @@ pub type SortCacheKey = (
     bool,
     usize,
     Option<(crate::photos::Grouping, u64)>,
+    u64,
 );
 
 /// The filtered, sorted order of a column's listing, remembered between
@@ -479,7 +480,8 @@ pub type SortCacheKey = (
 #[derive(Default)]
 pub struct SortCache {
     /// The column epoch, sort key, direction, hidden files shown, picker
-    /// filter, and the Photos view's grouping when the order is that view's.
+    /// filter, the Photos view's grouping when the order is that view's, and
+    /// the desk's placement epoch.
     pub key: Option<SortCacheKey>,
     pub order: Vec<usize>,
 }

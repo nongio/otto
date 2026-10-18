@@ -39,6 +39,25 @@ impl Browser {
             return None;
         }
 
+        // The desk's own icons moved about it, under free placement. A
+        // folder under the pointer that is not itself being dragged still
+        // takes the drop into it.
+        if self.desk_free() {
+            let own = otto_kit::dnd::own_files().unwrap_or_default();
+            let folder_under = self
+                .entry_at(x, y)
+                .and_then(|(depth, index)| self.visible(depth).get(index).cloned())
+                .is_some_and(|entry| entry.is_dir && !own.contains(&entry.path));
+            if !folder_under {
+                if let Some(slot) = self.desk_drop_slot(&own, x, y) {
+                    return Some(DropTarget::Slot {
+                        slot,
+                        path: self.columns[0].path.clone(),
+                    });
+                }
+            }
+        }
+
         if let Some((depth, index)) = self.entry_at(x, y) {
             if let Some(entry) = self.visible(depth).get(index) {
                 if entry.is_dir && !Self::is_a_move_home(&entry.path) {

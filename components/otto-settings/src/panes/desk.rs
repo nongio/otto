@@ -7,9 +7,10 @@
 //! them there, keeping everything else in the file, and the desk follows the
 //! file as it changes.
 //!
-//! *When icons don't fit* writes `overflow`: the grid scrolls, or its last
-//! cell becomes the overflow tile, which opens the rest in the overflow
-//! panel. *Icon size* writes `icon_size`, in points.
+//! *Arrangement* writes `arrange`: a sorted grid, or icons left where they
+//! are dropped. *When icons don't fit* writes `overflow`: the grid scrolls,
+//! or its last cell becomes the overflow tile, which opens the rest in the
+//! overflow panel. *Icon size* writes `icon_size`, in points.
 //!
 //! The size and position are set on the desk, not here: *Edit…* asks the
 //! running desk for its edit mode over `org.otto.Desk1`, where the panel is
@@ -40,6 +41,20 @@ const OVERFLOW_ID: &str = "files.desk.overflow";
 /// What `overflow` may say, the default first.
 const OVERFLOWS: [&str; 2] = ["scroll", "stack"];
 
+/// The *Arrangement* pop-up: `arrange` in `files.toml`, like
+/// [`OVERFLOW_ID`].
+const ARRANGE_ID: &str = "files.desk.arrange";
+
+/// What `arrange` may say, the default first.
+const ARRANGES: [&str; 2] = ["grid", "free"];
+
+/// The group's pop-ups: each one's id, its key in `[desk]` and the values
+/// it may take, the default first.
+const SELECTS: [(&str, &str, [&str; 2]); 2] = [
+    (ARRANGE_ID, "arrange", ARRANGES),
+    (OVERFLOW_ID, "overflow", OVERFLOWS),
+];
+
 /// The *Icon size* slider. Not a session setting either: `icon_size` in
 /// `files.toml`.
 const ICON_SIZE_ID: &str = "files.desk.icon_size";
@@ -60,6 +75,8 @@ struct DeskFile {
     folder: Option<String>,
     /// Whether the panel is anything other than the default `fill`.
     placed: bool,
+    /// `arrange`, one of [`ARRANGES`]; the default when unset or unknown.
+    arrange: &'static str,
     /// `overflow`, one of [`OVERFLOWS`]; the default when unset or unknown,
     /// which is what the desk makes of it too.
     overflow: &'static str,
@@ -72,6 +89,7 @@ impl Default for DeskFile {
         Self {
             folder: None,
             placed: false,
+            arrange: ARRANGES[0],
             overflow: OVERFLOWS[0],
             icon_size: DEFAULT_ICON_SIZE,
         }
@@ -114,15 +132,20 @@ fn read_desk(text: &str) -> DeskFile {
             .and_then(|item| item.as_str())
             .map(str::to_string)
     };
+    // One of `known`, or the first of them for anything else.
+    let one_of = |key: &str, known: [&'static str; 2]| {
+        string(key)
+            .and_then(|value| {
+                let value = value.trim().to_ascii_lowercase();
+                known.into_iter().find(|known| *known == value)
+            })
+            .unwrap_or(known[0])
+    };
     DeskFile {
         folder: string("folder").filter(|folder| !folder.trim().is_empty()),
         placed: string("anchor").is_some_and(|anchor| !anchor.trim().eq_ignore_ascii_case("fill")),
-        overflow: string("overflow")
-            .and_then(|value| {
-                let value = value.trim().to_ascii_lowercase();
-                OVERFLOWS.into_iter().find(|known| *known == value)
-            })
-            .unwrap_or(OVERFLOWS[0]),
+        arrange: one_of("arrange", ARRANGES),
+        overflow: one_of("overflow", OVERFLOWS),
         icon_size: desk
             .and_then(|desk| desk.get("icon_size"))
             .and_then(|item| {
@@ -187,10 +210,10 @@ fn with_folder(text: &str, folder: &str) -> Result<String, String> {
     })
 }
 
-/// `text` with the desk's `overflow` set to `value`.
-fn with_overflow(text: &str, value: &str) -> Result<String, String> {
+/// `text` with the desk's `key` set to `value`.
+fn with_value(text: &str, key: &str, value: &str) -> Result<String, String> {
     edited(text, |desk| {
-        desk["overflow"] = toml_edit::value(value);
+        desk[key] = toml_edit::value(value);
     })
 }
 
@@ -272,11 +295,22 @@ fn reset_label() -> &'static str {
     otto_kit::t!("settings-desk-layout-reset")
 }
 
-fn overflow_label(value: &str) -> String {
-    match value {
-        "stack" => otto_kit::t_owned!("settings-desk-overflow-stack"),
+/// What pop-up `id` shows for `value`.
+fn select_label(id: &str, value: &str) -> String {
+    match (id, value) {
+        (ARRANGE_ID, "free") => otto_kit::t_owned!("settings-desk-arrange-free"),
+        (ARRANGE_ID, _) => otto_kit::t_owned!("settings-desk-arrange-grid"),
+        (_, "stack") => otto_kit::t_owned!("settings-desk-overflow-stack"),
         _ => otto_kit::t_owned!("settings-desk-overflow-scroll"),
     }
+}
+
+/// Pop-up `id`'s key in `[desk]` and its values, if it is the group's.
+fn select(id: &str) -> Option<(&'static str, [&'static str; 2])> {
+    SELECTS
+        .iter()
+        .find(|(select, _, _)| *select == id)
+        .map(|(_, key, values)| (*key, *values))
 }
 
 fn choose_buttons() -> &'static [&'static str] {
@@ -309,6 +343,12 @@ pub fn group_rows() -> Group {
                 .detail(otto_kit::t!("settings-show-desk-detail"))
                 .id(ENABLED_ID),
             Row::new(folder_label(), Control::Button(choose_buttons())).detail(folder),
+            Row::new(
+                otto_kit::t!("settings-desk-arrange"),
+                Control::Select(file.arrange.to_string()),
+            )
+            .detail(otto_kit::t!("settings-desk-arrange-detail"))
+            .id(ARRANGE_ID),
             Row::new(
                 otto_kit::t!("settings-desk-overflow"),
                 Control::Select(file.overflow.to_string()),
@@ -347,31 +387,32 @@ pub fn press(row: &str, button: &str) {
 
 /// The choices for the group's pop-up, or `None` for any other.
 pub fn menu_choices(id: &str) -> Option<Vec<Choice>> {
-    (id == OVERFLOW_ID).then(|| {
-        OVERFLOWS
+    let (_, values) = select(id)?;
+    Some(
+        values
             .iter()
             .map(|value| Choice {
-                label: overflow_label(value),
+                label: select_label(id, value),
                 value: (*value).to_string(),
             })
-            .collect()
-    })
+            .collect(),
+    )
 }
 
 /// What the group's pop-up shows for `value`, or `None` for any other.
 pub fn display(id: &str, value: &str) -> Option<String> {
-    (id == OVERFLOW_ID).then(|| overflow_label(value))
+    select(id).map(|_| select_label(id, value))
 }
 
 /// Take a choice from the group's pop-up into `files.toml`. Returns whether
 /// `id` was the group's, taken or not.
 pub fn choose(id: &str, value: &str) -> bool {
-    if id != OVERFLOW_ID {
+    let Some((key, values)) = select(id) else {
         return false;
-    }
-    if OVERFLOWS.contains(&value) {
+    };
+    if values.contains(&value) {
         let value = value.to_string();
-        write(move |text| with_overflow(text, &value));
+        write(move |text| with_value(text, key, &value));
     }
     true
 }
@@ -472,7 +513,7 @@ mod tests {
     fn a_file_that_does_not_parse_is_left_alone() {
         assert!(with_folder("[desk\n", "~/x").is_err());
         assert!(with_fill("[desk\n").is_err());
-        assert!(with_overflow("[desk\n", "stack").is_err());
+        assert!(with_value("[desk\n", "overflow", "stack").is_err());
     }
 
     #[test]
@@ -491,11 +532,11 @@ mod tests {
     #[test]
     fn a_new_overflow_keeps_the_rest_of_the_file() {
         let text = "# mine\n[desk]\nsort = \"kind\" # by kind\n";
-        let next = with_overflow(text, "stack").unwrap();
+        let next = with_value(text, "overflow", "stack").unwrap();
         assert!(next.starts_with("# mine"));
         assert!(next.contains("sort = \"kind\" # by kind"));
         assert_eq!(read_desk(&next).overflow, "stack");
-        let back = with_overflow(&next, "scroll").unwrap();
+        let back = with_value(&next, "overflow", "scroll").unwrap();
         assert_eq!(read_desk(&back).overflow, "scroll");
     }
 
@@ -507,9 +548,25 @@ mod tests {
             .map(|choice| choice.value)
             .collect();
         assert_eq!(values, ["scroll", "stack"]);
+        let arranges: Vec<String> = menu_choices(ARRANGE_ID)
+            .unwrap()
+            .into_iter()
+            .map(|choice| choice.value)
+            .collect();
+        assert_eq!(arranges, ["grid", "free"]);
         assert!(menu_choices("desk.enabled").is_none());
         assert!(!choose("desk.enabled", "stack"));
         assert!(display("desk.enabled", "stack").is_none());
+    }
+
+    #[test]
+    fn arrange_is_read_and_defaults_to_the_grid() {
+        assert_eq!(read_desk("").arrange, "grid");
+        assert_eq!(read_desk("[desk]\narrange = \"Free\"\n").arrange, "free");
+        assert_eq!(read_desk("[desk]\narrange = \"pile\"\n").arrange, "grid");
+        let next = with_value("# mine\n[desk]\n", "arrange", "free").unwrap();
+        assert!(next.starts_with("# mine"));
+        assert_eq!(read_desk(&next).arrange, "free");
     }
 
     #[test]

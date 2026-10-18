@@ -85,6 +85,7 @@ impl Browser {
             desk_config: None,
             overflow_panel: None,
             overflow_panel_closing: None,
+            desk_placement: Default::default(),
             recent: false,
             search: None,
             search_where: String::new(),

@@ -130,6 +130,11 @@ settings-desk-layout-reset = Restablecer
 settings-desk-layout-fill = Ocupa toda la pantalla. Editar muestra tiradores en el escritorio para colocarlo
 settings-desk-layout-placed = Colocado a mano. Restablecer hace que vuelva a ocupar toda la pantalla
 settings-desk-icon-size = Tamaño de los iconos
+settings-desk-arrange = Disposición
+settings-desk-arrange-grid = Cuadrícula ordenada
+# Icons stay where they are dragged, snapped to the grid.
+settings-desk-arrange-free = Libre
+settings-desk-arrange-detail = Cuadrícula ordenada mantiene los iconos en orden. Libre deja cada uno donde lo sueltas, ajustado a la cuadrícula
 settings-desk-overflow = Cuando los iconos no caben
 settings-desk-overflow-scroll = Desplazar
 settings-desk-overflow-stack = Mostrar en superposición
@@ -612,6 +617,13 @@ files-open-with-always = Usar siempre esta aplicación para «{ $kind }»
 files-open-with-not-remembered = Se abrió, pero no se guardó la elección: { $error }
 files-new-folder = Nueva carpeta
 files-desk-open-in-files = Abrir en Archivos
+# The desk's background menu: how the icons are laid out. Grid keeps them
+# sorted; Free leaves each where it was dropped.
+files-desk-arrange = Disposición
+files-desk-arrange-grid = Cuadrícula ordenada
+files-desk-arrange-free = Libre
+# Puts every icon on the desk back in sorted order.
+files-desk-clean-up = Ordenar
 files-desk-edit-done = Listo
 # The desk's overflow tile: the caption under it, and what a screen reader
 # says for it. $count is how many items it holds.

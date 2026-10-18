@@ -96,6 +96,22 @@ impl Browser {
                     MenuItem::action(otto_kit::t!("files-desk-open-in-files"))
                         .with_action_id("open_in_files"),
                 );
+                let free = self.desk_free();
+                items.push(MenuItem::separator());
+                items.push(MenuItem::submenu(
+                    otto_kit::t!("files-desk-arrange"),
+                    vec![
+                        MenuItem::action(otto_kit::t!("files-desk-arrange-grid"))
+                            .with_action_id("desk_arrange_grid")
+                            .with_checked(!free),
+                        MenuItem::action(otto_kit::t!("files-desk-arrange-free"))
+                            .with_action_id("desk_arrange_free")
+                            .with_checked(free),
+                    ],
+                ));
+                let clean_up = MenuItem::action(otto_kit::t!("files-desk-clean-up"))
+                    .with_action_id("desk_clean_up");
+                items.push(if free { clean_up } else { clean_up.disabled() });
             }
             let can_paste = !self.clipboard.is_empty()
                 || clipboard::first_available(clipboard::file_mime_preference()).is_some();
