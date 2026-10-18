@@ -65,6 +65,29 @@ polkit_agent = false
 Do that only if you start another polkit agent yourself; without one,
 `pkexec` can't ask for a password.
 
+## Checking for new versions
+
+The top bar asks `otto-version.otto-desktop.workers.dev` whether a newer Otto
+has been released, a minute after it starts and every six hours after. Each
+request carries the version you are running.
+
+Once a week the request also says "count me", with how long Otto has been
+installed: its first week, first month, first six months, or longer. The
+server adds one to that week's total for your version and age, which is how
+the number of people using Otto is known. It keeps those weekly totals and
+nothing else. This works the same way as Fedora's
+[countme](https://fedoraproject.org/wiki/Changes/DNF_Better_Counting).
+
+On your machine, `~/.local/state/otto/update-check` holds the date Otto was
+first seen and the week it last counted itself.
+
+To turn the check off, and with it the count:
+
+```toml
+# ~/.config/otto/otto-bar.toml, or /etc/otto/otto-bar.toml for every user
+update_check_url = ""
+```
+
 ## What this doesn't cover
 
 These answers keep **sandboxed apps** in check. A program running as you,
