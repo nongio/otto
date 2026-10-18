@@ -7087,6 +7087,44 @@ fn draw_grid_icon(
     box_rect: Rect,
     thumb: Option<&skia_safe::Image>,
 ) {
+    // A contact shadow lifts the icon off its ground and gives a pale icon on
+    // a light ground the edge it would otherwise lack. The wallpaper under the
+    // desk is busy enough to take a soft one; on a window's flat pane the same
+    // spread reads as a halo, so there it stays tight and under the icon.
+    let (blur, drop, alpha) = if is_desk() {
+        DESK_ICON_SHADOW
+    } else {
+        PANE_ICON_SHADOW
+    };
+    let mut layer = Paint::default();
+    layer.set_image_filter(skia_safe::image_filters::drop_shadow(
+        (0.0, drop),
+        (blur, blur),
+        Color::from_argb(alpha, 0, 0, 0),
+        None,
+        None,
+        None,
+    ));
+    canvas.save_layer(
+        &skia_safe::canvas::SaveLayerRec::default()
+            .bounds(&box_rect.with_outset((12.0, 12.0)))
+            .paint(&layer),
+    );
+    draw_grid_icon_face(canvas, entry, box_rect, thumb);
+    canvas.restore();
+}
+
+/// A grid icon's shadow on the desk and in a window: blur sigma and drop in
+/// points, and opacity.
+const DESK_ICON_SHADOW: (f32, f32, u8) = (2.5, 1.5, 85);
+const PANE_ICON_SHADOW: (f32, f32, u8) = (1.25, 2.5, 72);
+
+fn draw_grid_icon_face(
+    canvas: &Canvas,
+    entry: &Entry,
+    box_rect: Rect,
+    thumb: Option<&skia_safe::Image>,
+) {
     if let Some(image) = thumb {
         draw_thumbnail(canvas, image, box_rect, false);
     } else {
@@ -10345,9 +10383,9 @@ mod geometry_tests {
         let icon_top = cell.top + 8.0;
         let x = cell.center_x() as i32;
 
-        // Just below the box's bottom edge minus a quarter of its height: in
-        // the picture.
-        let inside = (icon_top + grid_icon() * 0.75) as i32;
+        // Centred, the picture spans the middle half of the box; well inside
+        // its lower part, clear of the edge the shadow under it softens.
+        let inside = (icon_top + grid_icon() * 0.65) as i32;
         let (r, _, _) = pixel_at(&mut surface, x, inside);
         assert!(r > 200, "expected picture in the lower half of the box");
 

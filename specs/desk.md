@@ -27,6 +27,9 @@ browser's own.
   the windows. The default folder is `XDG_DESKTOP_DIR`.
 - Look and behave like the browser's icon view: same icons, thumbnails, labels,
   selection highlight, right-click menu, drag and drop, rename and Peek.
+- Read on any wallpaper: captions are white over a soft shadow, and each
+  icon and thumbnail casts a soft shadow of its own, wider than the browser's,
+  so a pale icon keeps its edge on a light picture.
 - Work from the keyboard once focused: arrows, type-ahead, Enter to open,
   Space for Peek, the browser's file shortcuts.
 - Select with the pointer, one item at a time or several with a rubber band.
