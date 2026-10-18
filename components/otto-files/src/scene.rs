@@ -250,13 +250,11 @@ impl Scene {
             .is_some_and(|(was_dark, was_blurred)| was_dark == dark && was_blurred != f.blurred);
         let transition = fades.then(|| Transition::ease_out_quad(MATERIAL_FADE));
 
-        // The sidebar takes the same material as everything else on this
-        // window's chrome — see [`view::panel_material`] — rather than the
-        // toolkit's sidebar colour, which is a shade apart and showed as a
-        // seam down the edge where the two met.
+        // The sidebar is frost — see [`view::sidebar_material`] — and the
+        // header beside it the nearly opaque panel material.
         let sidebar = self
             .sidebar
-            .set_background_color(fill(view::panel_material()), transition.clone());
+            .set_background_color(fill(view::sidebar_material()), transition.clone());
         self.header
             .set_background_color(fill(view::panel_material()), transition.clone());
         // The action row is the same material as the header, and for the same

@@ -7651,24 +7651,34 @@ pub fn opaque(color: Color) -> Color {
     Color::from_argb(0xFF, color.r(), color.g(), color.b())
 }
 
-/// The material every piece of this window's chrome is made of: the sidebar,
-/// the header, the picker's action row and the confirmation card.
+/// The material this window's chrome is made of, past the sidebar: the
+/// header, the picker's action row and the confirmation card.
 ///
-/// One value rather than one per panel. They meet along shared edges — the
-/// sidebar runs the full height of the window with the header beside it — and
-/// two materials a few percent apart read as a seam between them rather than
-/// as a deliberate difference, which is exactly what nobody wants to see in
-/// the corner where they meet.
-///
-/// Deliberately *not* [`otto_kit::theme::Theme::material_sidebar`], which the
-/// settings window draws its own sidebar from: this is one window's judgement
-/// about its own chrome, and changing the toolkit's value to express it would
-/// restyle every other application that has a sidebar.
+/// One value rather than one per panel: they meet along shared edges, and two
+/// materials a few percent apart read as a seam between them rather than as a
+/// deliberate difference. The sidebar is the exception, and a deliberate one
+/// — see [`sidebar_material`].
 pub fn panel_material() -> Color {
     if matches!(current_color_scheme(), ColorScheme::Dark) {
         Color::from_argb(0xF2, 0x1C, 0x1C, 0x1E)
     } else {
         Color::from_argb(0xF2, 0xFF, 0xFF, 0xFF)
+    }
+}
+
+/// The sidebar's material: the toolkit's, the one the settings window's
+/// sidebar is made of too.
+///
+/// Not [`panel_material`]. That is nearly opaque — the header carries the
+/// title and sits a hairline above the listing, so the backdrop may only be
+/// hinted at there — and over the sidebar it hid the frost entirely, leaving
+/// a white column that read as part of the listing. The sidebar is meant to
+/// be heavily tinted frost, distinctly not the content's ground.
+pub fn sidebar_material() -> Color {
+    if matches!(current_color_scheme(), ColorScheme::Dark) {
+        Theme::dark_palette().material_sidebar
+    } else {
+        Theme::light_palette().material_sidebar
     }
 }
 
