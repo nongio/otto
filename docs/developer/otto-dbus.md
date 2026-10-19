@@ -6,6 +6,8 @@ otto-islands or otto-files takes the proxy from there. It does not declare
 its own `#[zbus::proxy]` and does not call `call_method` with a method name
 in a string.
 
+![otto-dbus: one typed client proxy per org.otto interface, linked by the callers and served by the compositor, otto-islands, otto-files and otto-stash](diagrams/otto-dbus.svg)
+
 | Module | Interface | Served by |
 |--------|-----------|-----------|
 | `settings` | `org.otto.Settings` | compositor, `src/settings_service.rs` ([contract](settings-dbus-api.md)) |

@@ -1,0 +1,77 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 296" width="760" height="296" role="img" aria-label="otto-search: Files and the otto-search command parse a query, plan it and run find, which pages SPARQL results from LocalSearch over D-Bus and checks each row on disk; Settings reads the indexer's status and asks it to reindex">
+  <style>
+    text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
+    .box  { fill: #f6f8fa; stroke: #8b949e; stroke-width: 1.4; }
+    .acc  { fill: #ddf4ff; stroke: #218bff; stroke-width: 1.4; }
+    .grp  { fill: none; stroke: #8b949e; stroke-width: 1.2; stroke-dasharray: 5 4; }
+    .t    { fill: #1f2328; font-size: 13px; }
+    .tb   { fill: #1f2328; font-size: 13px; font-weight: 600; }
+    .tm   { fill: #656d76; font-size: 11px; }
+    .ln   { stroke: #8b949e; stroke-width: 1.4; fill: none; marker-end: url(#ah); }
+    @media (prefers-color-scheme: dark) {
+      .box { fill: #161b22; stroke: #6e7681; }
+      .acc { fill: #10243b; stroke: #388bfd; }
+      .grp { stroke: #6e7681; }
+      .t, .tb { fill: #e6edf3; }
+      .tm  { fill: #9198a1; }
+      .ln  { stroke: #8b949e; }
+    }
+  </style>
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#8b949e"/>
+    </marker>
+  </defs>
+
+
+  <text class="tb" x="16" y="28">Callers</text>
+  <text class="tb" x="216" y="28">otto-search</text>
+  <text class="tb" x="580" y="28">System</text>
+
+  <rect class="box" x="16" y="56" width="170" height="44" rx="6"/>
+  <text class="t" x="28" y="74">otto-files</text>
+  <text class="tm" x="28" y="90">search strip, Recent</text>
+  <rect class="box" x="16" y="124" width="170" height="44" rx="6"/>
+  <text class="t" x="28" y="142">otto-search command</text>
+  <text class="tm" x="28" y="158">--in, --limit, --json</text>
+  <rect class="box" x="16" y="214" width="170" height="44" rx="6"/>
+  <text class="t" x="28" y="232">otto-settings</text>
+  <text class="tm" x="28" y="248">index status, reindex</text>
+
+  <rect class="acc" x="216" y="56" width="150" height="48" rx="6"/>
+  <text class="tb" x="228" y="76">query</text>
+  <text class="tm" x="228" y="93">text to terms, never fails</text>
+  <path class="ln" d="M186 78 H214"/>
+  <path class="ln" d="M186 140 L214 98"/>
+
+  <rect class="acc" x="216" y="124" width="150" height="48" rx="6"/>
+  <text class="tb" x="228" y="144">plan</text>
+  <text class="tm" x="228" y="161">SPARQL, or a check</text>
+  <path class="ln" d="M291 104 V122"/>
+
+  <rect class="acc" x="392" y="120" width="158" height="62" rx="6"/>
+  <text class="tb" x="404" y="142">find</text>
+  <text class="tm" x="404" y="159">page, stat, recheck,</text>
+  <text class="tm" x="404" y="173">rank and cap</text>
+  <path class="ln" d="M366 148 H390"/>
+
+  <rect class="acc" x="392" y="212" width="158" height="48" rx="6"/>
+  <text class="tb" x="404" y="232">index</text>
+  <text class="tm" x="404" y="249">blocking D-Bus calls</text>
+  <path class="ln" d="M471 182 V210"/>
+  <path class="ln" d="M186 236 H390"/>
+
+  <rect class="box" x="580" y="56" width="166" height="44" rx="6"/>
+  <text class="t" x="592" y="74">the disk</text>
+  <text class="tm" x="592" y="90">each row statted</text>
+  <path class="ln" d="M550 132 L578 90"/>
+
+  <rect class="box" x="580" y="168" width="166" height="44" rx="6"/>
+  <text class="t" x="592" y="186">LocalSearch3</text>
+  <text class="tm" x="592" y="202">Tracker3.Endpoint, SPARQL</text>
+  <rect class="box" x="580" y="236" width="166" height="44" rx="6"/>
+  <text class="t" x="592" y="254">files miner</text>
+  <text class="tm" x="592" y="270">status, IndexLocation</text>
+  <path class="ln" d="M550 228 L578 194"/>
+  <path class="ln" d="M550 246 L578 256"/>
+</svg>

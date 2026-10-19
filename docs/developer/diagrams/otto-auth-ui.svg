@@ -1,0 +1,81 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 444" width="760" height="444" role="img" aria-label="otto-auth-ui: the greeter, lock screen and polkit agent draw one shared Panel; PAM and logind calls run on threads of their own">
+  <style>
+    text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
+    .box  { fill: #f6f8fa; stroke: #8b949e; stroke-width: 1.4; }
+    .acc  { fill: #ddf4ff; stroke: #218bff; stroke-width: 1.4; }
+    .grp  { fill: none; stroke: #8b949e; stroke-width: 1.2; stroke-dasharray: 5 4; }
+    .t    { fill: #1f2328; font-size: 13px; }
+    .tb   { fill: #1f2328; font-size: 13px; font-weight: 600; }
+    .tm   { fill: #656d76; font-size: 11px; }
+    .ln   { stroke: #8b949e; stroke-width: 1.4; fill: none; marker-end: url(#ah); }
+    @media (prefers-color-scheme: dark) {
+      .box { fill: #161b22; stroke: #6e7681; }
+      .acc { fill: #10243b; stroke: #388bfd; }
+      .grp { stroke: #6e7681; }
+      .t, .tb { fill: #e6edf3; }
+      .tm  { fill: #9198a1; }
+      .ln  { stroke: #8b949e; }
+    }
+  </style>
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#8b949e"/>
+    </marker>
+  </defs>
+
+  <text class="tb" x="40" y="28">Clients</text>
+  <text class="tb" x="246" y="28">otto-auth-ui, inside each client</text>
+  <text class="tb" x="586" y="28">System</text>
+  <rect class="grp" x="230" y="38" width="330" height="390" rx="10"/>
+
+  <rect class="box" x="40" y="52" width="170" height="48" rx="6"/>
+  <text class="t" x="52" y="71">otto-greeter</text>
+  <text class="tm" x="52" y="88">greetd, no PAM</text>
+  <rect class="box" x="40" y="124" width="170" height="48" rx="6"/>
+  <text class="t" x="52" y="143">otto-lock</text>
+  <text class="tm" x="52" y="160">PAM, to unlock</text>
+  <rect class="box" x="40" y="196" width="170" height="48" rx="6"/>
+  <text class="t" x="52" y="215">otto-authorize</text>
+  <text class="tm" x="52" y="232">polkit's helper</text>
+
+  <rect class="acc" x="246" y="52" width="298" height="192" rx="6"/>
+  <text class="tb" x="262" y="78">Panel</text>
+  <text class="tm" x="262" y="100">View in, Action out</text>
+  <text class="tm" x="262" y="124">lay-rs scene: card, field, caret,</text>
+  <text class="tm" x="262" y="142">clock, session picker, power</text>
+  <text class="tm" x="262" y="160">buttons, fingerprint mark</text>
+  <text class="tm" x="262" y="184">dialog variant for otto-authorize</text>
+  <path class="ln" d="M210 76 H244"/>
+  <path class="ln" d="M210 148 H244"/>
+  <path class="ln" d="M210 220 H244"/>
+
+  <rect class="acc" x="246" y="264" width="298" height="52" rx="6"/>
+  <text class="tb" x="262" y="286">PAM thread</text>
+  <text class="tm" x="262" y="304">Attempt, behind the pam feature</text>
+  <path class="ln" d="M40 160 H24 V290 H244"/>
+  <path class="ln" d="M40 232 H24 V290 H244"/>
+  <text class="tm" x="40" y="282">Attempt (lock, authorize)</text>
+
+  <rect class="box" x="246" y="332" width="298" height="52" rx="6"/>
+  <text class="tb" x="262" y="354">power thread</text>
+  <text class="tm" x="262" y="372">PowerRequest, from greeter and lock</text>
+
+  <text class="tm" x="246" y="408">also: SecretInput, fingerprint messages,</text>
+  <text class="tm" x="246" y="422">user and avatar, appearance, pacing</text>
+
+  <rect class="box" x="586" y="52" width="160" height="64" rx="6"/>
+  <text class="t" x="598" y="74">config.toml</text>
+  <text class="tm" x="598" y="92">/etc/passwd,</text>
+  <text class="tm" x="598" y="106">avatars</text>
+  <path class="ln" d="M584 84 H546"/>
+
+  <rect class="box" x="586" y="264" width="160" height="52" rx="6"/>
+  <text class="t" x="598" y="286">PAM stack</text>
+  <text class="tm" x="598" y="304">libpam, /etc/pam.d</text>
+  <path class="ln" d="M544 290 H584"/>
+
+  <rect class="box" x="586" y="332" width="160" height="52" rx="6"/>
+  <text class="t" x="598" y="354">logind</text>
+  <text class="tm" x="598" y="372">system bus</text>
+  <path class="ln" d="M544 358 H584"/>
+</svg>

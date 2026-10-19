@@ -9,6 +9,8 @@ no UI, no async runtime and no D-Bus. Its one dependency is
 It sits in the **foundation** layer (see [Architecture Rules](architecture.md))
 and depends on no other workspace crate.
 
+![otto-foundations: the xdg, uri and matching modules, and the crates that link them](diagrams/otto-foundations.svg)
+
 | Module | What it does |
 |--------|--------------|
 | `xdg` | The XDG base directories (`config_home`, `data_home`, `state_home`, `cache_home`, `runtime_dir`, `data_dirs`, `config_dirs`), `home`, Otto's config paths, the user's folders from `user-dirs.dirs` (`user_dirs`, `user_dir`, `parse_user_dirs`), and the `~/…` spelling of a path (`tilde`, `tilde_in`) |

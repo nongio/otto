@@ -21,6 +21,8 @@ no ownership of a surface. A component that needs to be told about a click
 takes a state struct the caller owns and hands events to; it never subscribes
 to anything itself.
 
+![otto-kit: client apps use the runtime and the drawing half, the compositor only the drawing half](diagrams/otto-kit.svg)
+
 ## Layout
 
 ```

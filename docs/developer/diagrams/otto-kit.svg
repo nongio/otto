@@ -1,0 +1,78 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 390" width="760" height="390" role="img" aria-label="otto-kit: client apps use its runtime and drawing, the compositor only its drawing half; it talks Wayland, follows the Settings portal and re-exports otto-dbus and otto-foundations">
+  <style>
+    text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
+    .box  { fill: #f6f8fa; stroke: #8b949e; stroke-width: 1.4; }
+    .acc  { fill: #ddf4ff; stroke: #218bff; stroke-width: 1.4; }
+    .grp  { fill: none; stroke: #8b949e; stroke-width: 1.2; stroke-dasharray: 5 4; }
+    .t    { fill: #1f2328; font-size: 13px; }
+    .tb   { fill: #1f2328; font-size: 13px; font-weight: 600; }
+    .tm   { fill: #656d76; font-size: 11px; }
+    .ln   { stroke: #8b949e; stroke-width: 1.4; fill: none; marker-end: url(#ah); }
+    @media (prefers-color-scheme: dark) {
+      .box { fill: #161b22; stroke: #6e7681; }
+      .acc { fill: #10243b; stroke: #388bfd; }
+      .grp { stroke: #6e7681; }
+      .t, .tb { fill: #e6edf3; }
+      .tm  { fill: #9198a1; }
+      .ln  { stroke: #8b949e; }
+    }
+  </style>
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#8b949e"/>
+    </marker>
+  </defs>
+
+  <rect class="box" x="16" y="16" width="330" height="52" rx="6"/>
+  <text class="tb" x="30" y="38">client apps</text>
+  <text class="tm" x="30" y="56">the whole runtime: otto-bar, otto-files, ...</text>
+  <rect class="box" x="416" y="16" width="330" height="52" rx="6"/>
+  <text class="tb" x="430" y="38">compositor</text>
+  <text class="tm" x="430" y="56">drawing only: decorations, menus, theme</text>
+
+  <rect class="grp" x="16" y="96" width="730" height="200" rx="10"/>
+  <text class="tb" x="30" y="118">otto-kit</text>
+
+  <rect class="acc" x="30" y="130" width="220" height="150" rx="6"/>
+  <text class="tb" x="44" y="152">runtime</text>
+  <text class="tm" x="44" y="174">app_runner: App, AppRunner,</text>
+  <text class="tm" x="44" y="190">AppContext, frame pacing</text>
+  <text class="tm" x="44" y="212">surfaces: one type per role</text>
+  <text class="tm" x="44" y="234">protocols: Otto's own</text>
+  <text class="tm" x="44" y="256">rendering: EGL, Skia, lay-rs</text>
+
+  <rect class="acc" x="270" y="130" width="220" height="150" rx="6"/>
+  <text class="tb" x="284" y="152">drawing</text>
+  <text class="tm" x="284" y="174">components: the widget set,</text>
+  <text class="tm" x="284" y="190">drawable from a bare Canvas</text>
+  <text class="tm" x="284" y="212">WindowDecoration,</text>
+  <text class="tm" x="284" y="228">ContextMenuRenderer</text>
+  <text class="tm" x="284" y="256">theme, typography, icons</text>
+
+  <rect class="acc" x="510" y="130" width="222" height="150" rx="6"/>
+  <text class="tb" x="524" y="152">desktop helpers</text>
+  <text class="tm" x="524" y="174">portal_settings: colour</text>
+  <text class="tm" x="524" y="190">scheme, accent, locale</text>
+  <text class="tm" x="524" y="212">desktop_entry, filetype,</text>
+  <text class="tm" x="524" y="228">preview, watch</text>
+  <text class="tm" x="524" y="256">clipboard, dnd, sound, lottie</text>
+
+  <path class="ln" d="M120 68 V128"/>
+  <path class="ln" d="M310 68 V128"/>
+  <path class="ln" d="M450 68 V128"/>
+
+  <rect class="box" x="30" y="326" width="220" height="48" rx="6"/>
+  <text class="tb" x="44" y="346">Wayland connection</text>
+  <text class="tm" x="44" y="364">globals, surfaces, seat</text>
+  <rect class="box" x="270" y="326" width="220" height="48" rx="6"/>
+  <text class="tb" x="284" y="346">otto-dbus, otto-foundations</text>
+  <text class="tm" x="284" y="364">dbus, xdg, uri, matching</text>
+  <rect class="box" x="510" y="326" width="222" height="48" rx="6"/>
+  <text class="tb" x="524" y="346">Settings portal</text>
+  <text class="tm" x="524" y="364">SettingChanged</text>
+
+  <path class="ln" d="M140 280 V324"/>
+  <path class="ln" d="M380 296 V324"/>
+  <text class="tm" x="388" y="314">re-exported</text>
+  <path class="ln" d="M620 280 V324"/>
+</svg>

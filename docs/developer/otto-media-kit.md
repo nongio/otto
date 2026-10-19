@@ -8,6 +8,8 @@ The user-facing behaviour is specified in
 [specs/peek.md](../../specs/peek.md#video-playback); this page is
 about the pieces.
 
+![otto-media-kit: the host library drives otto-media-worker over stdin and stdout, hands it the file on fd 3 and reads frames from a ring on fd 4](diagrams/otto-media-kit.svg)
+
 ## Two halves
 
 ```
