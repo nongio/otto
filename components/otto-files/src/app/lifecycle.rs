@@ -397,6 +397,7 @@ impl FilesWindow {
                 self.opaque_region = Some(area);
                 window.set_opaque_region(&[area]);
             }
+            self.follow_places_config();
         }
 
         let (
@@ -432,7 +433,8 @@ impl FilesWindow {
                 | browser.tick_peek_exit()
                 | browser.tick_open_pulse()
                 | browser.tick_photos_copied()
-                | browser.tick_photos_video();
+                | browser.tick_photos_video()
+                | browser.tick_place_shifts();
             // The docked preview column follows the selection wherever it
             // moves — a click, an arrow key, a directory finishing a load
             // that changes what "the selection" resolves to — so this is
@@ -634,6 +636,8 @@ impl FilesWindow {
             // nothing else on screen moving to ask for one.
             || browser.peek_frames_running()
             || browser.opening.is_some()
+            // Sidebar rows standing aside for a sort, or easing back.
+            || browser.place_shifts_animating()
             // The panel materials' fade runs on this client's own engine, and
             // an engine only advances when it is ticked.
             || self.frost.as_ref().is_some_and(|frost| frost.is_fading())
@@ -1052,6 +1056,49 @@ impl FilesWindow {
         let scene = Arc::new(Mutex::new(window.layer_node().map(scene::Scene::new)));
         self.install_window(window, scene);
         Ok(())
+    }
+
+    /// Keep the sidebar in step with `files.toml`, whoever changed it: another
+    /// window dropping a folder on its sidebar, Settings, or an editor.
+    fn follow_places_config(&mut self) {
+        if view::sidebar_w() <= 0.0 {
+            return;
+        }
+        // When `files.toml` was last written, if it is there at all.
+        let written = || {
+            crate::places_config::config_path()
+                .and_then(|path| std::fs::metadata(path).ok())
+                .and_then(|meta| meta.modified().ok())
+        };
+        if self.places_watch.is_none() {
+            let dir = crate::places_config::config_path()
+                .and_then(|path| path.parent().map(Path::to_path_buf));
+            if let Some(dir) = dir {
+                // Made if missing, for the reason the desk's watch makes it.
+                let _ = std::fs::create_dir_all(&dir);
+                self.places_watch = Some(otto_kit::watch::DirWatch::new(&dir));
+                self.places_written = written();
+            }
+        }
+        let touched = self
+            .places_watch
+            .as_ref()
+            .is_some_and(|watch| watch.take().is_some());
+        // The watch is on the whole folder, which every part of Otto writes
+        // its settings into. Only a change to this file is worth re-reading
+        // the sidebar for — and re-checking each of its folders on disk.
+        if !touched {
+            return;
+        }
+        let now = written();
+        let changed = now != self.places_written;
+        self.places_written = now;
+        if changed {
+            self.state.browse().reload_places();
+            if let Some(window) = self.window.as_ref() {
+                window.request_frame();
+            }
+        }
     }
 
     /// Keep the desk's surface in step with its config and its edit mode.

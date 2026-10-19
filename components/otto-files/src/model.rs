@@ -725,7 +725,7 @@ fn describe_error(err: &std::io::Error) -> String {
 // Places
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Place {
     pub label: String,
     pub path: PathBuf,
@@ -737,6 +737,10 @@ pub struct Place {
     /// the sentinel in [`crate::recent`] and is never navigated to; the
     /// browser switches into its recent mode instead.
     pub recent: bool,
+    /// Which built-in row this is, or `None` for one of the user's own
+    /// folders. Removing a built-in hides it; removing one of theirs takes
+    /// it out of the config.
+    pub builtin: Option<crate::places_config::Builtin>,
 }
 
 /// The sidebar's places: Recent, home, then the XDG user directories that
@@ -769,6 +773,7 @@ pub fn places_with(config: &crate::places_config::SidebarConfig) -> Vec<Place> {
             path: PathBuf::from(crate::recent::SENTINEL),
             icon: "document-open-recent".to_string(),
             recent: true,
+            builtin: Some(Builtin::Recent),
         });
     }
 
@@ -780,6 +785,7 @@ pub fn places_with(config: &crate::places_config::SidebarConfig) -> Vec<Place> {
             path: home.clone(),
             icon: "user-home".to_string(),
             recent: false,
+            builtin: Some(Builtin::Home),
         });
     }
 
@@ -865,22 +871,73 @@ pub fn places_with(config: &crate::places_config::SidebarConfig) -> Vec<Place> {
                 path,
                 icon: (*icon).to_string(),
                 recent: false,
+                builtin: Some(*builtin),
             });
         }
     }
 
-    // The user's own folders go after the built-in ones: a sidebar that
-    // reordered itself around a config would make every screenshot, every
-    // instruction and every muscle memory wrong for the sake of a preference
-    // nobody expressed.
+    // The user's own folders go after the built-in ones, until the user says
+    // otherwise by dragging the rows: a sidebar that reordered itself unasked
+    // would make every screenshot, every instruction and every muscle memory
+    // wrong for the sake of a preference nobody expressed.
     places.extend(config.extra.iter().map(|custom| Place {
         label: custom.label.clone(),
         path: custom.path.clone(),
         icon: custom.icon.clone(),
         recent: false,
+        builtin: None,
     }));
 
-    places
+    arrange(places, &config.order)
+}
+
+/// The folder of every built-in place that exists, whether the user has
+/// hidden its row or not.
+pub fn builtin_paths() -> Vec<PathBuf> {
+    places_with(&crate::places_config::SidebarConfig::default())
+        .into_iter()
+        .filter(|place| place.builtin.is_some() && !place.recent)
+        .map(|place| place.path)
+        .collect()
+}
+
+impl Place {
+    /// This row as the config's `order` names it.
+    pub fn key(&self) -> crate::places_config::PlaceKey {
+        use crate::places_config::PlaceKey;
+        match self.builtin {
+            Some(builtin) => PlaceKey::Builtin(builtin),
+            None => PlaceKey::Path(self.path.clone()),
+        }
+    }
+}
+
+/// `places`, in the standard order, put into the order the user dragged
+/// them into.
+///
+/// The rows `order` names come in its sequence. One it does not — a hidden
+/// row shown again, a folder added by hand — goes back to its standard
+/// position, or the end if the list is shorter now, rather than all such rows
+/// piling up at the bottom.
+pub fn arrange(places: Vec<Place>, order: &[crate::places_config::PlaceKey]) -> Vec<Place> {
+    if order.is_empty() {
+        return places;
+    }
+    let rank = |place: &Place| order.iter().position(|key| *key == place.key());
+    let mut named: Vec<(usize, Place)> = Vec::new();
+    let mut unnamed: Vec<(usize, Place)> = Vec::new();
+    for (index, place) in places.into_iter().enumerate() {
+        match rank(&place) {
+            Some(rank) => named.push((rank, place)),
+            None => unnamed.push((index, place)),
+        }
+    }
+    named.sort_by_key(|(rank, _)| *rank);
+    let mut arranged: Vec<Place> = named.into_iter().map(|(_, place)| place).collect();
+    for (index, place) in unnamed {
+        arranged.insert(index.min(arranged.len()), place);
+    }
+    arranged
 }
 
 /// The folder `user-dirs.dirs` names for `key` (`XDG_DESKTOP_DIR`, say), if
@@ -1921,7 +1978,46 @@ pub fn empty_trash() -> OpResult {
 #[cfg(test)]
 mod places_tests {
     use super::*;
-    use crate::places_config::{Builtin, SidebarConfig};
+    use crate::places_config::{Builtin, PlaceKey, SidebarConfig};
+
+    fn row(builtin: Option<Builtin>, path: &str) -> Place {
+        Place {
+            label: path.to_string(),
+            path: PathBuf::from(path),
+            icon: "folder".to_string(),
+            recent: false,
+            builtin,
+        }
+    }
+
+    /// The dragged order wins, and a row it does not name goes back near
+    /// where it stands by default rather than to the bottom.
+    #[test]
+    fn the_rows_follow_the_order_they_were_dragged_into() {
+        let standard = vec![
+            row(Some(Builtin::Home), "/h"),
+            row(Some(Builtin::Desktop), "/h/Desktop"),
+            row(Some(Builtin::Music), "/h/Music"),
+            row(None, "/h/dev"),
+        ];
+        let order = [
+            PlaceKey::Path(PathBuf::from("/h/dev")),
+            PlaceKey::Builtin(Builtin::Music),
+            PlaceKey::Builtin(Builtin::Home),
+        ];
+        let paths: Vec<String> = arrange(standard.clone(), &order)
+            .into_iter()
+            .map(|p| p.label)
+            .collect();
+        // Desktop is not in the order: back in its standard second place.
+        assert_eq!(paths, ["/h/dev", "/h/Desktop", "/h/Music", "/h"]);
+
+        let unchanged: Vec<String> = arrange(standard.clone(), &[])
+            .into_iter()
+            .map(|p| p.label)
+            .collect();
+        assert_eq!(unchanged, ["/h", "/h/Desktop", "/h/Music", "/h/dev"]);
+    }
 
     /// The sidebar is complete without anyone configuring anything, and an
     /// empty config has to leave it exactly as it was. This is the case

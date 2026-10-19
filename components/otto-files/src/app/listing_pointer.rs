@@ -102,8 +102,14 @@ impl Browser {
                 After::Next
             }
             PointerEventKind::Press { serial, button, .. } if button == BTN_RIGHT => {
+                let items = self.context_menu_items(at.x, at.y);
+                // Nothing to offer — the sidebar below its rows, with no row
+                // hidden — opens no menu rather than an empty one.
+                if items.is_empty() {
+                    return After::Next;
+                }
                 After::Menu(MenuAt {
-                    items: self.context_menu_items(at.x, at.y),
+                    items,
                     x: at.x,
                     y: at.y,
                     serial,
@@ -587,6 +593,11 @@ impl Browser {
             return After::Next;
         }
 
+        // A sidebar row being sorted, likewise.
+        if self.drag_place_to(y) {
+            return After::Next;
+        }
+
         // Far enough from the press to be a drag rather than an
         // unsteady click. The whole selection goes, and the
         // compositor owns the pointer from here — nothing else
@@ -596,6 +607,7 @@ impl Browser {
                 self.drag_armed = None;
                 self.note_desk_drag(start_x, start_y);
                 self.drag_started();
+                self.note_own_drag();
                 return After::Drag(DragStart {
                     paths: self.drag_paths(),
                     items: self.drag_items(start_x, start_y),
@@ -644,6 +656,10 @@ impl Browser {
         // The palette stays where it was let go of.
         if self.palette_drag.take().is_some() {
             self.palette_dropped();
+            return After::Next;
+        }
+        // A sidebar row lands in the gap it was let go over.
+        if self.release_place_drag(y) {
             return After::Next;
         }
         // A press that came up without travelling was a click —
@@ -751,6 +767,7 @@ impl Browser {
 
     /// The pointer left the window.
     fn pointer_leave(&mut self) {
+        self.cancel_place_drag();
         self.column_resize = None;
         self.miller_resize = None;
         self.pan.on_pointer_leave();
@@ -913,6 +930,8 @@ impl Browser {
             // showing a folder refuses half its own menu.
             self.active_place = Some(index);
             self.dirty = true;
+            // Opening on the press, as before; a drag from here sorts it.
+            self.press_place(index, y);
             if self.places[index].recent {
                 self.enter_recent();
             } else {

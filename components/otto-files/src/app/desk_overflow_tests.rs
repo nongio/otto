@@ -93,7 +93,7 @@ fn the_last_cell_is_a_tile_of_the_rest() {
     let (x, y) = centre(browser.entry_rect(0, tile.first));
     assert_eq!(browser.entry_at(x, y), None);
     let hit = browser.drop_target_at(x, y).expect("a target");
-    assert_eq!(hit.path(), &browser.columns[0].path);
+    assert_eq!(hit.path(), Some(&browser.columns[0].path));
 }
 
 /// Open, the panel answers for the tile's items where it draws them, and

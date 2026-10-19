@@ -855,7 +855,7 @@ pub fn save_geometry(
     size: [Extent; 2],
     position: Option<[Extent; 2]>,
 ) -> std::io::Result<()> {
-    edit_config(|text| with_geometry(text, anchor, size, position))
+    places_config::edit_file(|text| with_geometry(text, anchor, size, position))
 }
 
 /// `text`, a whole `files.toml`, with `[desk] arrange` set to `arrange`.
@@ -880,31 +880,7 @@ pub fn with_arrange(text: &str, arrange: Arrange) -> Result<String, toml_edit::T
 ///
 /// As [`save_geometry`].
 pub fn save_arrange(arrange: Arrange) -> std::io::Result<()> {
-    edit_config(|text| with_arrange(text, arrange))
-}
-
-/// Rewrite `~/.config/otto/files.toml` with `edit`, a missing file reading
-/// as an empty one.
-fn edit_config(
-    edit: impl FnOnce(&str) -> Result<String, toml_edit::TomlError>,
-) -> std::io::Result<()> {
-    let path = places_config::config_path()
-        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "no home folder"))?;
-    let text = match std::fs::read_to_string(&path) {
-        Ok(text) => text,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => String::new(),
-        Err(err) => return Err(err),
-    };
-    let next =
-        edit(&text).map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err))?;
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
-    // Written beside and renamed over, so the desk's own watch never reads a
-    // half-written file.
-    let temp = path.with_extension(format!("toml.tmp.{}", std::process::id()));
-    std::fs::write(&temp, next)?;
-    std::fs::rename(&temp, &path)
+    places_config::edit_file(|text| with_arrange(text, arrange))
 }
 
 /// Holds the session's desk lock for as long as it lives.

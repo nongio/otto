@@ -89,6 +89,7 @@ fn each_location_wears_the_icon_it_has_elsewhere() {
         path: PathBuf::from("/home/me/Music"),
         icon: "folder-music".to_string(),
         recent: false,
+        builtin: None,
     }];
     let home = Some(Path::new("/home/me"));
     let first = |path: &str| picking::location_icon(Path::new(path), &places, home)[0].clone();
