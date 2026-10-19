@@ -1,8 +1,8 @@
 //! `otto-msg doctor`: gather what a bug report about Otto needs.
 //!
-//! Collects the operating system, graphics, screens, Otto's version, and
-//! optionally the configuration and session logs; lets the user choose and
-//! preview each part; then writes a Markdown report to attach to an issue.
+//! Collects the operating system, graphics, screens, Otto's version, the
+//! configuration and the logs; lets the user choose and preview each part;
+//! then writes a Markdown report to attach to an issue.
 //! Nothing is uploaded. The user guide is `docs/user/bug-reports.md`.
 
 // Rust guideline compliant 2026-02-21
@@ -33,7 +33,6 @@ Gather what a bug report about Otto needs, choose what to share, and write it
 as a Markdown file to attach to an issue. Nothing is uploaded.
 
 Options:
-  -a, --all            include every section, configuration and logs too
       --no-redact      keep the home folder, user and host names, and IP and
                        MAC addresses as they are
   -p, --print          write the report to stdout instead of choosing
@@ -56,7 +55,6 @@ const DEFAULT_LOG_LINES: usize = 2000;
 /// The command-line options.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Options {
-    all: bool,
     redact: bool,
     print: bool,
     output: Option<PathBuf>,
@@ -75,7 +73,6 @@ enum Command {
 /// Parses the arguments after the program name.
 fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Command, String> {
     let mut options = Options {
-        all: false,
         redact: true,
         print: false,
         output: None,
@@ -97,7 +94,6 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Command, String>
                 .ok_or_else(|| format!("{name} needs a value"))
         };
         match flag.as_str() {
-            "-a" | "--all" => options.all = true,
             "--no-redact" => options.redact = false,
             "-p" | "--print" => options.print = true,
             "-o" | "--output" => options.output = Some(PathBuf::from(value("--output")?)),
@@ -163,7 +159,7 @@ fn run(options: &Options) -> Result<(), String> {
         uid: unsafe { libc::getuid() },
         journal: logs::read_journal,
     };
-    let mut sections = sections::gather(&sources, options.all);
+    let mut sections = sections::gather(&sources);
     let redactor = Redactor::new(
         home.map(|h| h.to_string_lossy().into_owned()),
         user_name(),
@@ -293,14 +289,13 @@ mod tests {
         let Ok(Command::Run(options)) = parse(&[]) else {
             panic!("no arguments runs");
         };
-        assert!(options.redact && options.clipboard && !options.all && !options.print);
+        assert!(options.redact && options.clipboard && !options.print);
         assert_eq!(options.log_lines, 2000);
     }
 
     #[test]
     fn reads_every_option() {
         let Ok(Command::Run(options)) = parse(&[
-            "--all",
             "--no-redact",
             "-o",
             "/tmp/r.md",
@@ -309,7 +304,7 @@ mod tests {
         ]) else {
             panic!("valid options");
         };
-        assert!(options.all && !options.redact && !options.clipboard);
+        assert!(!options.redact && !options.clipboard);
         assert_eq!(options.output.as_deref(), Some(Path::new("/tmp/r.md")));
         assert_eq!(options.log_lines, 50);
         assert_eq!(parse(&["-V"]), Ok(Command::Version));
@@ -322,5 +317,6 @@ mod tests {
         assert!(parse(&["--output"]).is_err());
         assert!(parse(&["--print", "--output", "x"]).is_err());
         assert!(parse(&["--frobnicate"]).is_err());
+        assert!(parse(&["--all"]).is_err());
     }
 }

@@ -12,22 +12,23 @@ Open a terminal and run:
 otto-msg doctor
 ```
 
-It lists the parts of a report, each with a one-line summary:
+It lists the parts of a report, each with a one-line summary. All of them
+are ticked to start with:
 
-| Section | What it holds | Included by default |
-|---------|---------------|---------------------|
-| Operating system | Your distribution and kernel version | yes |
-| Graphics | Each graphics card, its kernel driver, and the renderer Otto draws with | yes |
-| Screens | Each screen's name, resolution, refresh rate, scale and position | yes |
-| Otto | Otto's version, the backend it runs on, and the configuration files it reads | yes |
-| Configuration | Your configuration files, whole | no |
-| Session logs | The end of Otto's log for this session and the previous one, wherever a running Otto writes its output, and the crash log | no |
+| Section | What it holds |
+|---------|---------------|
+| Operating system | Your distribution and kernel version |
+| Graphics | Each graphics card, its kernel driver, and the renderer Otto draws with |
+| Screens | Each screen's name, resolution, refresh rate, scale and position |
+| Otto | Otto's version, the backend it runs on, and the configuration files it reads |
+| Configuration | Your configuration files, whole |
+| Session logs | The end of Otto's log for this session and the previous one, wherever a running Otto writes its output, and the crash log |
 
-The configuration and the logs are left out until you tick them, because they
-can hold things you may not want to share, such as the programs you start at
-login. When the problem is a crash or a freeze, the session logs are usually
-what makes it fixable: the previous session's log is normally the one that
-went wrong.
+The configuration and the logs can hold things you may not want to share,
+such as the programs you start at login: preview them, and untick them if you
+would rather not. When the problem is a crash or a freeze, the session logs
+are usually what makes it fixable: the previous session's log is normally the
+one that went wrong.
 
 The logs are looked for in this order, and the list says where each one came
 from:
@@ -90,9 +91,8 @@ run are still there to include.
 
 | Option | Does |
 |--------|------|
-| `-a`, `--all` | Include every section |
 | `--no-redact` | Start with redaction off |
-| `-p`, `--print` | Print the report instead of choosing, with the default sections (or every one with `--all`) |
+| `-p`, `--print` | Print the report, with every section, instead of choosing |
 | `-o`, `--output <path>` | Write the report to this file |
 | `-n`, `--lines <n>` | Keep this many lines from the end of each log (2000 by default) |
 | `--no-clipboard` | Do not copy the report to the clipboard |
@@ -100,7 +100,7 @@ run are still there to include.
 | `-h`, `--help` | Print the options |
 
 When its output is not a terminal, `otto-msg doctor` prints the report, so
-`otto-msg doctor --all > report.md` works too.
+`otto-msg doctor > report.md` works too.
 
 ## See also
 

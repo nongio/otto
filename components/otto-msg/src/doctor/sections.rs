@@ -79,10 +79,8 @@ pub struct Sources {
 /// report much larger than this is one nobody reads or GitHub accepts.
 const MAX_LOG_BYTES: u64 = 8 * 1024 * 1024;
 
-/// Gathers every section, with the default selection.
-///
-/// `all` selects every section, as `--all` does.
-pub fn gather(sources: &Sources, all: bool) -> Vec<Section> {
+/// Gathers every section, all of them selected.
+pub fn gather(sources: &Sources) -> Vec<Section> {
     // When the compositor cannot answer, the last summary it logged stands
     // in for it, and the sections built from it say so.
     let logged = match &sources.compositor {
@@ -103,20 +101,14 @@ pub fn gather(sources: &Sources, all: bool) -> Vec<Section> {
     let note = logged
         .as_ref()
         .map(|(_, from, reason)| Logged { from, reason });
-    let mut sections = vec![
+    vec![
         os(sources),
         with_note(gpu(sources, live), note),
         with_note(screens(live), note),
         with_note(otto(live), note),
         config(sources),
         logs(sources),
-    ];
-    if all {
-        for section in &mut sections {
-            section.include = true;
-        }
-    }
-    sections
+    ]
 }
 
 /// Where the compositor's details came from when it could not answer.
@@ -486,7 +478,7 @@ fn config(sources: &Sources) -> Section {
             n => format!("{n} files, {}", line_count(lines)),
         },
         body,
-        include: false,
+        include: true,
     }
 }
 
@@ -550,7 +542,7 @@ fn logs(sources: &Sources) -> Section {
             summary.join(", ")
         },
         body,
-        include: false,
+        include: true,
     }
 }
 
@@ -724,7 +716,7 @@ mod tests {
     #[test]
     fn reads_os_and_cards_from_the_root() {
         let dir = fixture_root();
-        let sections = gather(&sources(dir.path(), Ok(running())), false);
+        let sections = gather(&sources(dir.path(), Ok(running())));
 
         let os = section(&sections, SectionId::Os);
         assert_eq!(os.summary, "Arch \"Rolling\" Linux, kernel 6.12.1-arch1");
@@ -767,7 +759,7 @@ mod tests {
             y: 0,
             is_virtual: true,
         });
-        let sections = gather(&sources(dir.path(), Ok(info)), false);
+        let sections = gather(&sources(dir.path(), Ok(info)));
 
         let screens = section(&sections, SectionId::Screens);
         assert_eq!(
@@ -783,7 +775,7 @@ mod tests {
     fn says_so_when_the_compositor_is_not_reachable() {
         let dir = fixture_root();
         let reason = "not reachable (no owner)".to_owned();
-        let sections = gather(&sources(dir.path(), Err(reason)), false);
+        let sections = gather(&sources(dir.path(), Err(reason)));
 
         for id in [SectionId::Screens, SectionId::Otto] {
             assert_eq!(
@@ -809,7 +801,7 @@ mod tests {
             ),
         );
         let reason = "not reachable (no owner)".to_owned();
-        let sections = gather(&sources(dir.path(), Err(reason)), false);
+        let sections = gather(&sources(dir.path(), Err(reason)));
 
         let otto = section(&sections, SectionId::Otto);
         assert_eq!(otto.summary, "1.7.2 on udev (from otto.log.1)");
@@ -829,21 +821,25 @@ mod tests {
     }
 
     #[test]
-    fn default_selection_leaves_out_config_and_logs() {
+    fn every_section_is_selected_by_default() {
         let dir = fixture_root();
-        let default = gather(&sources(dir.path(), Ok(running())), false);
-        let chosen: Vec<SectionId> = default.iter().filter(|s| s.include).map(|s| s.id).collect();
+        let sections = gather(&sources(dir.path(), Ok(running())));
+        let chosen: Vec<SectionId> = sections
+            .iter()
+            .filter(|s| s.include)
+            .map(|s| s.id)
+            .collect();
         assert_eq!(
             chosen,
             [
                 SectionId::Os,
                 SectionId::Gpu,
                 SectionId::Screens,
-                SectionId::Otto
+                SectionId::Otto,
+                SectionId::Config,
+                SectionId::Logs
             ]
         );
-        let all = gather(&sources(dir.path(), Ok(running())), true);
-        assert!(all.iter().all(|s| s.include));
     }
 
     #[test]
@@ -854,7 +850,7 @@ mod tests {
             "config/otto/config.toml",
             "# ```not a fence```\ndock_size = 48\n",
         );
-        let sections = gather(&sources(dir.path(), Ok(running())), false);
+        let sections = gather(&sources(dir.path(), Ok(running())));
         let config = section(&sections, SectionId::Config);
         assert_eq!(config.summary, "1 file, 2 lines");
         let path = dir.path().join("config/otto/config.toml");
@@ -876,7 +872,7 @@ mod tests {
             "one\ntwo\n\u{1b}[32mINFO\u{1b}[0m three\nfour\nfive\n",
         );
         write(dir.path(), "state/otto/panic.log", "=== otto panic\n");
-        let sections = gather(&sources(dir.path(), Ok(running())), false);
+        let sections = gather(&sources(dir.path(), Ok(running())));
         let logs = section(&sections, SectionId::Logs);
 
         assert_eq!(logs.summary, "session.log.1 3 lines, panic.log 1 line");
@@ -898,7 +894,7 @@ mod tests {
         let mut sources = sources(dir.path(), Ok(running()));
         sources.journal = |pid, lines| Some(format!("pid {pid} wants {lines}\n"));
 
-        let sections = gather(&sources, false);
+        let sections = gather(&sources);
         let logs = section(&sections, SectionId::Logs);
 
         assert_eq!(logs.summary, "journal (pid 321) 1 line");

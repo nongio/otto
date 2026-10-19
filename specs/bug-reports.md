@@ -34,16 +34,17 @@ commands.
 
 **Sections.** A report is made of these sections, in this order:
 
-| Section | Content | Default |
-|---------|---------|---------|
-| Operating system | `PRETTY_NAME` from os-release (or name and version), kernel release | included |
-| Graphics | Each DRM card: PCI vendor and device IDs, vendor name for known vendors, kernel driver, whether it is the boot VGA device; the renderer the session draws with (API, vendor, renderer, version); why Vulkan fell back to OpenGL, if it did | included |
-| Screens | Each output: name, mode size in pixels, refresh rate in Hz, scale, layout position, make and model, whether it is virtual | included |
-| Otto | Otto's version and commit, backend, this tool's version, the configuration files the compositor reads | included |
-| Configuration | Each configuration file, whole, in a fenced block | left out |
-| Session logs | The last 2000 lines (configurable) of each log found (see below), without terminal escape codes; each says where it came from | left out |
+| Section | Content |
+|---------|---------|
+| Operating system | `PRETTY_NAME` from os-release (or name and version), kernel release |
+| Graphics | Each DRM card: PCI vendor and device IDs, vendor name for known vendors, kernel driver, whether it is the boot VGA device; the renderer the session draws with (API, vendor, renderer, version); why Vulkan fell back to OpenGL, if it did |
+| Screens | Each output: name, mode size in pixels, refresh rate in Hz, scale, layout position, make and model, whether it is virtual |
+| Otto | Otto's version and commit, backend, this tool's version, the configuration files the compositor reads |
+| Configuration | Each configuration file, whole, in a fenced block |
+| Session logs | The last 2000 lines (configurable) of each log found (see below), without terminal escape codes; each says where it came from |
 
-Each section has a one-line summary shown in the list.
+Every section is included to start with. Each has a one-line summary shown in
+the list.
 
 **The compositor.** Graphics renderer, Screens and Otto come from the running
 compositor's `org.otto.Compositor.DebugInfo`. When the compositor is not on
@@ -119,12 +120,11 @@ happened and the steps, the summaries of the included system sections, and a
 reminder to attach the file. The link is at most 6000 characters; summary
 lines are dropped from the end to fit.
 
-**Non-interactive.** `--print`, or stdout not a terminal: the report with the
-default selection (or all with `--all`) is written to stdout, and nothing
-else happens. Stdin not a terminal (and stdout a terminal): the report is
+**Non-interactive.** `--print`, or stdout not a terminal: the report with
+every section is written to stdout, and nothing else happens. Stdin not a terminal (and stdout a terminal): the report is
 written to the file as above, without the chooser.
 
-**Options.** `--all`, `--no-redact`, `--print`, `--output <path>`,
+**Options.** `--no-redact`, `--print`, `--output <path>`,
 `--lines <n>`, `--no-clipboard`, `--help`, `--version`. `--print` with
 `--output` is an error. An unknown option prints the usage and exits with
 status 2.
@@ -142,10 +142,11 @@ status 2.
 
 ## Rationale
 
-- Configuration and logs are off by default because they can hold autostart
-  commands, paths and names a user may not want to publish; the system
-  sections are what almost every report needs and hold nothing personal once
-  redacted.
+- Every section, configuration and logs included, is selected by default:
+  a report without the log is rarely fixable, and leaving them to be ticked
+  meant they were usually missing. They can hold autostart commands, paths
+  and names a user may not want to publish, so redaction stays on by default
+  and the preview shows each one before anything is written.
 - The preview shows the redacted text rather than the original so the user
   checks what will actually be shared.
 - The report is attached rather than pasted into the issue: logs exceed what
