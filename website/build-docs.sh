@@ -81,6 +81,7 @@ declare -A PAGE_TITLE=(
     [dev/scroll-pane]="Otto Scroll Panes - Scrolling by Moving Surfaces"
     [dev/tiling-plan]="Otto Tiling - What Is Built and What Is Planned"
     [dev/otto-kit-roadmap]="otto-kit Roadmap - UI Toolkit Gap Analysis"
+    [dev/otto-kit-library]="otto-kit Library - Every Component, Pictured"
     [dev/surface-style-protocol]="Surface Style Protocol"
     [dev/screenshot-plan]="Screenshot Portal Plan (Not Implemented)"
     [dev/airplay-screenshare]="AirPlay Screencast Exploration in Otto"
@@ -185,6 +186,7 @@ declare -A PAGE_DESC=(
     [dev/remote-desktop-indicator]="The sharing indicator otto-rdp publishes while a remote client is watching the session, and how the compositor draws it."
     [dev/scroll-pane]="Scrolling an otto-kit application at display rate by moving subsurfaces instead of repainting, and the layouts that go with it."
     [dev/tiling-plan]="Otto's tiling window management: the tree, the command language, decorations and drag behaviour — what is built, and what is still planned."
+    [dev/otto-kit-library]="Every UI component in otto-kit with a picture of it, what it is for, how it is driven and which crates use it."
     [dev/otto-kit-roadmap]="What Otto's UI toolkit provides today, what is still missing, and the planned direction. Partially built - read it as a plan."
     [dev/surface-style-protocol]="otto-surface-style-unstable-v1: how a client styles and animates its own surface through the compositor's scene graph, and why the protocol looks the way it does."
     [dev/screenshot-plan]="A design for screenshot support through the desktop portal. Not implemented - a proposal rather than documentation."
@@ -394,6 +396,7 @@ DEVELOPER_FILES=(
     "developer/scene-graph.md"
     "developer/layers.md"
     "developer/otto-kit.md"
+    "developer/otto-kit-library.md"
     "developer/scroll-pane.md"
     "developer/file-previews.md"
     "developer/file-icons.md"
@@ -493,6 +496,7 @@ done
 perl -i -pe '
     s{\]\(README\.md\)}{](/developer/)}gi;
     s{\]\(diagrams/([A-Za-z0-9_-]+\.svg)\)}{](/diagrams/$1)}g;
+    s{\]\(images/([A-Za-z0-9_./-]+\.png)\)}{](/developer-images/$1)}g;
     s{\]\(\.\./user/README\.md\)}{](/)}gi;
     s{\]\(\.\./user/([A-Za-z0-9_-]+)\.md#([^)]+)\)}{"](/" . lc($1) . "/#$2)"}ge;
     s{\]\(\.\./user/([A-Za-z0-9_-]+)\.md\)}{"](/" . lc($1) . "/)"}ge;
@@ -509,6 +513,20 @@ DIAGRAM_SRC="$DOCS_DIR/developer/diagrams"
 if [ -d "$DIAGRAM_SRC" ]; then
     mkdir -p "$SCRIPT_DIR/assets/diagrams"
     cp "$DIAGRAM_SRC"/*.svg "$SCRIPT_DIR/assets/diagrams/" 2>/dev/null
+fi
+
+# Pictures in docs/developer/images/ (the otto-kit library's, one folder per
+# set) are referenced as /developer-images/<path>.png above, kept apart from
+# the user guide's /images/ so the two sets cannot collide.
+DEV_IMAGE_SRC="$DOCS_DIR/developer/images"
+if [ -d "$DEV_IMAGE_SRC" ]; then
+    DEV_IMAGE_OUT="$SCRIPT_DIR/assets/developer-images"
+    rm -rf "$DEV_IMAGE_OUT"
+    find "$DEV_IMAGE_SRC" -name '*.png' | while read -r src; do
+        rel="${src#"$DEV_IMAGE_SRC"/}"
+        mkdir -p "$DEV_IMAGE_OUT/$(dirname "$rel")"
+        cp "$src" "$DEV_IMAGE_OUT/$rel"
+    done
 fi
 
 echo "✓ Built User Guide: $OUTPUT_DIR/_index.md"

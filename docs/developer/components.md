@@ -52,7 +52,7 @@ foundation; the **foundation** uses nothing in the workspace.
 | kit | [otto-auth-ui](otto-auth-ui.md) | The password panel shared by the greeter, the lock screen and the polkit agent |
 | kit | [otto-peek](otto-peek.md) | Peek, the Space-bar preview, with a sandboxed decode worker |
 | kit | [otto-agents-kit](otto-agents-kit.md) | The session feed, Ask chat, log and keys shared by the agent UIs |
-| toolkit | [otto-kit](otto-kit.md) | The toolkit every app is built on, and the drawing half of the compositor's chrome |
+| toolkit | [otto-kit](otto-kit.md) | The toolkit every app is built on, and the drawing half of the compositor's chrome. Its widgets, pictured: [otto-kit library](otto-kit-library.md) |
 | service | [otto-search](otto-search.md) | File search: one query language over LocalSearch, as a library and a command |
 | service | [otto-agents-client](otto-agents-client.md) | The wire between `otto-agents` and its clients: socket, session and file URIs |
 | service | [otto-pdf](otto-pdf.md) | Editing PDFs in place through a runtime-loaded PDFium |

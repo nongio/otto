@@ -160,14 +160,8 @@ each returning a response describing what changed. `TextInput` is the model;
 the form controls, scroll view, dropdown, slider and context menu all follow
 it.
 
-| Group | Components |
-|-------|-----------|
-| Text and images | `Label`, `Icon` |
-| Containers | `Frame`, `Stack`, `Toolbar`, `ScrollView` |
-| Controls | `Button`, `Toggle`, `Slider`, `TextInput`, `dropdown`, `color_picker` |
-| Collections | `ListLayout`, `SourceListLayout` |
-| Menus | `MenuBarRenderer`, `ContextMenu`, `MenuItem` |
-| Window chrome | `Titlebar`, `WindowControl`, `WindowDecoration`, `SharingIndicator`, `Window` |
+Every component, with a picture of it, its shape and the crates that use it,
+is in the [otto-kit library](otto-kit-library.md).
 
 `WindowDecoration` (which builds a `Titlebar`), `WindowControl` and
 `ContextMenuRenderer` are the ones the compositor draws directly, so a change
