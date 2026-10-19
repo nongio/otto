@@ -1,5 +1,8 @@
 # otto-greeter
 
+**User guide:** [Login Greeter](../user/login-greeter.md)\
+**Specs:** [Login Mode](../../specs/login-mode.md)
+
 otto-greeter is Otto's login screen. greetd runs `otto --login`, a compositor
 in login mode, and that compositor launches `otto-greeter` in place of the
 usual autostart entries. The greeter draws the shared password panel on a

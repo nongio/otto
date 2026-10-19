@@ -1,5 +1,8 @@
 # otto-agents-kit
 
+**User guide:** [Ask and Agents](../user/agents.md)\
+**Specs:** [Launcher](../../specs/launcher.md), [Dictation](../../specs/dictation.md), [Preview](../../specs/preview-app.md)
+
 `components/otto-agents-kit/` holds what Otto's agent interfaces have in
 common: the feed of [otto-agents](otto-agents.md) sessions and the rows that
 show them, the keys that walk a list and edit its field, the Ask chat, and the

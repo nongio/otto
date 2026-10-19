@@ -1,5 +1,8 @@
 # otto-launcher
 
+**User guide:** [Launcher](../user/launcher.md)\
+**Specs:** [Launcher](../../specs/launcher.md), [Stash](../../specs/stash.md), [Dictation](../../specs/dictation.md)
+
 The launcher is how Otto is driven from the keyboard. A key opens a card over the
 desktop, typing narrows a list, and Enter starts an application, brings a window
 forward, or copies the answer to a sum. The same card is also Ask, where what is

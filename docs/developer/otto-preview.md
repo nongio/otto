@@ -1,5 +1,7 @@
 # otto-preview
 
+**Specs:** [Preview](../../specs/preview-app.md), [Peek](../../specs/peek.md)
+
 otto-preview is the app people know as **Studio**, in
 `components/otto-preview/`. It shows one file in a window of its own, drawn
 exactly as Peek draws it over the file list, because it wraps the same Peek

@@ -1,5 +1,8 @@
 # otto-emoji
 
+**User guide:** [Emoji Picker](../user/emoji.md)\
+**Specs:** [Emoji Picker](../../specs/emoji-picker.md), [Accents on hold](../../specs/accent-hold.md)
+
 otto-emoji is the emoji picker: a card with a search field, category tabs, a
 grid and a footer naming the emoji under the pointer and the skin tone in
 use. Picking one closes the card and delivers the emoji to the window that

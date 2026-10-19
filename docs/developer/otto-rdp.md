@@ -1,5 +1,8 @@
 # otto-rdp
 
+**User guide:** [Remote Desktop](../user/remote-desktop.md)\
+**Specs:** [RDP Bridge](../../specs/rdp-bridge.md)
+
 `components/otto-rdp/` serves one Otto output over RDP and injects the remote
 client's mouse and keyboard back into it. It captures a virtual output's
 PipeWire stream, or a physical output through `org.otto.ScreenCast`, encodes

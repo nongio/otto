@@ -1,5 +1,8 @@
 # otto-lock
 
+**User guide:** [Lock Screen](../user/lock-screen.md)\
+**Specs:** [Lock Screen](../../specs/lock-screen.md)
+
 otto-lock is Otto's screen locker. It takes the lock with
 `ext-session-lock-v1`, draws the shared password panel on every output,
 authenticates the session's own user against PAM, and only then gives the

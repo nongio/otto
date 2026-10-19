@@ -1,5 +1,8 @@
 # otto-bar
 
+**User guide:** [Top Bar](../user/topbar.md)\
+**Specs:** [Top Bar](../../specs/topbar.md)
+
 otto-bar is the strip along the top of the screen: the Otto menu and the
 focused app's menus on the left, and the tray, the keyboard layout, the
 battery and the clock on the right. It lives in `components/otto-bar/` and

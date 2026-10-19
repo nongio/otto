@@ -1,5 +1,7 @@
 # otto-authorize
 
+**User guide:** [Privacy](../user/privacy.md)
+
 otto-authorize is the session's polkit authentication agent. When a program
 asks polkit for something that needs a password (`pkexec`, a system service's
 action, a protected Otto setting), polkitd asks the agent registered for the

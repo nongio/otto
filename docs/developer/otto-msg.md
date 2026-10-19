@@ -1,5 +1,8 @@
 # otto-msg
 
+**User guide:** [Scripting Otto](../user/scripting.md)\
+**Specs:** [Window Tiling](../../specs/tiling.md)
+
 `components/otto-msg/` is a command-line tool that runs i3-syntax commands
 against Otto, prints the window tree, workspaces, outputs and inputs as JSON,
 and follows events. It is a client of the compositor's `org.otto.Shell1`

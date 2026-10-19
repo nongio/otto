@@ -1,5 +1,8 @@
 # otto-search
 
+**User guide:** [Files](../user/files.md)\
+**Specs:** [Search Language](../../specs/search-language.md)
+
 otto-search is Otto's file search, in `components/otto-search/`: one query
 language over the desktop's file index, so the same words find the same
 files in Files, in Settings and on the command line. It turns a query into

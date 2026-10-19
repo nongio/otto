@@ -1,5 +1,8 @@
 # otto-dictate
 
+**User guide:** [Settings: Dictation](../user/settings.md#dictation)\
+**Specs:** [Dictation](../../specs/dictation.md)
+
 otto-dictate is a proof of concept for dictating into any text field. It runs
 for the whole session as the seat's Wayland input method and waits.
 `otto-dictate toggle` starts listening in the focused field: a balloon under

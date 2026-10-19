@@ -1,5 +1,8 @@
 # otto-canvas
 
+**User guide:** [Side Canvas](../user/side-canvas.md), [Ask and Agents](../user/agents.md)\
+**Specs:** [Side Canvas](../../specs/side-canvas.md)
+
 `components/otto-canvas/` is the Agents panel in Otto's side canvas: a prompt
 field over the list of [otto-agents](otto-agents.md) sessions, in one frosted
 item of the column that slides in from the right edge. It is an **app** in

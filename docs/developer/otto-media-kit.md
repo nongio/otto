@@ -1,5 +1,7 @@
 # otto-media-kit
 
+**Specs:** [Peek](../../specs/peek.md)
+
 Video playback for Otto applications, kept out of otto-kit on purpose: a
 media stack is more code than the toolkit it would be bolted onto, and it
 links GStreamer, which no application binary should.

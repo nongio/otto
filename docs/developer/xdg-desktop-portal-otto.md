@@ -1,5 +1,8 @@
 # xdg-desktop-portal-otto
 
+**User guide:** [Screen Sharing](../user/screen-sharing.md), [Privacy](../user/privacy.md)\
+**Specs:** [Screenshare](../../specs/screenshare.md), [File Picker](../../specs/file-picker.md), [Portal Access Dialog](../../specs/portal-access-dialog.md)
+
 Apps that want something only the desktop can give them (a screen to share, a
 file to open, the dark-mode preference, a screenshot) ask xdg-desktop-portal.
 That frontend is a generic freedesktop service: it checks who is asking, keeps

@@ -1,5 +1,8 @@
 # otto-auth-ui
 
+**User guide:** [Lock Screen](../user/lock-screen.md), [Login Greeter](../user/login-greeter.md)\
+**Specs:** [Lock Screen](../../specs/lock-screen.md), [Login Mode](../../specs/login-mode.md)
+
 otto-auth-ui is the panel Otto draws whenever it needs to know who is at the
 keyboard: the login screen, the lock screen and the polkit password dialog all
 show it. It lives in `components/otto-auth-ui/` and sits in the **kit** layer

@@ -1,5 +1,8 @@
 # otto-kit
 
+**User guide:** [Theming](../user/theming.md)\
+**Specs:** [Window Decorations](../../specs/window-decorations.md), [otto-kit Window Focus](../../specs/otto-kit-window-focus.md), [Accessibility](../../specs/accessibility.md), [Background Effect](../../specs/background-effect.md), [Localisation](../../specs/localisation.md)
+
 `components/otto-kit/` is the crate every Otto application is built on, and the
 one the compositor draws its own chrome with. It is a Wayland client runtime,
 a Skia drawing layer, a widget set and a design system in one crate.

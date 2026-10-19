@@ -1,5 +1,8 @@
 # otto-stash
 
+**User guide:** [Side Canvas: Stash](../user/side-canvas.md#stash)\
+**Specs:** [Stash](../../specs/stash.md)
+
 `components/otto-stash/` collects things to ask an agent about (selected text,
 files, a screen region) into one "Ask about…" card, then hands them to Ask
 together. It is an **app** in `architecture.toml` and a proof of concept. It

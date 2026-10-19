@@ -1,5 +1,7 @@
 # otto-pdf
 
+**Specs:** [Preview](../../specs/preview-app.md)
+
 otto-pdf fills a PDF's form and marks it up, in `components/otto-pdf/`. It
 reads a document's form fields and annotations in the page's own coordinates,
 applies edits to them (a field's value, an annotation added, moved,

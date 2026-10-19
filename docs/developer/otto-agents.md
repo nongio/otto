@@ -1,5 +1,7 @@
 # otto-agents
 
+**User guide:** [Ask and Agents](../user/agents.md)
+
 `components/otto-agents/` is Otto's agent service. It runs coding agents as
 child processes that speak the Agent Client Protocol (ACP) on stdio, and serves
 their sessions to every client over the Agent Host Protocol (AHP), so the

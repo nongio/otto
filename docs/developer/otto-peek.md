@@ -1,5 +1,8 @@
 # otto-peek
 
+**User guide:** [Files](../user/files.md)\
+**Specs:** [Peek](../../specs/peek.md), [Peek text recognition](../../specs/peek-ocr.md)
+
 otto-peek is Peek, the preview that opens when you press Space on a file, in
 `components/otto-peek/`. It is a library the file views embed, not a service
 they call: a host draws the preview into a subsurface of its own window, so

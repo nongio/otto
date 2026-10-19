@@ -1,5 +1,8 @@
 # otto-settings
 
+**User guide:** [Settings](../user/settings.md)\
+**Specs:** [Settings App](../../specs/settings-app.md), [Desktop Widget](../../specs/desktop-widget.md)
+
 otto-settings is the Settings window: a sidebar of panes with a search
 field, and on the right the selected pane, each row bound to one setting. It
 lives in `components/otto-settings/` and sits in the `app` layer of
