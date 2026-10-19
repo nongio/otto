@@ -128,7 +128,9 @@ impl From<GlesRenderer> for SkiaRenderer {
             if res.is_err() {
                 panic!("Failed to make current");
             }
-            SkiaRenderer::load_gl()
+            let gl = SkiaRenderer::load_gl();
+            crate::renderer_info::record_gl(&gl);
+            gl
         };
 
         let mut options = skia::gpu::ContextOptions::default();
@@ -244,6 +246,7 @@ impl SkiaRenderer {
                 CStr::from_ptr(gl.GetString(ffi::RENDERER) as *const c_char)
             );
             tracing::info!("Supported GL Extensions: {:?}", exts);
+            crate::renderer_info::record_gl(&gl);
 
             // let gl_version = smithay::backend::renderer::gles::version::GlVersion::try_from(&gl).unwrap_or_else(|_| {
             //     tracing::warn!("Failed to detect GLES version, defaulting to 2.0");

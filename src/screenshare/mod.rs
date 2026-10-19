@@ -204,6 +204,11 @@ pub enum CompositorCommand {
     GetShellInputs {
         response_tx: tokio::sync::oneshot::Sender<String>,
     },
+    /// Version, backend, renderer and outputs for a bug report, as JSON.
+    /// See `docs/developer/compositor-dbus-api.md`.
+    GetDebugInfo {
+        response_tx: tokio::sync::oneshot::Sender<String>,
+    },
 }
 
 /// Information about an available output.
@@ -774,6 +779,9 @@ pub fn handle_screenshare_command<B: crate::state::Backend + 'static>(
         }
         CompositorCommand::GetShellInputs { response_tx } => {
             let _ = response_tx.send(state.inputs_json().to_string());
+        }
+        CompositorCommand::GetDebugInfo { response_tx } => {
+            let _ = response_tx.send(state.debug_info_json().to_string());
         }
     }
 }

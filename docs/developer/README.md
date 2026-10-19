@@ -60,6 +60,7 @@ is the place to start.
 | [Color Scheme](color-scheme-setting.md) | How apps learn whether Otto is in light or dark mode, and the accent colour |
 | [Settings D-Bus API](settings-dbus-api.md) | The `org.otto.Settings` wire contract |
 | [Shell D-Bus API](shell-dbus-api.md) | The `org.otto.Shell1` wire contract: i3-syntax commands, the tree as JSON, `otto-msg` |
+| [Compositor D-Bus API](compositor-dbus-api.md) | The `org.otto.Compositor` contract: `Ping`, `FocusApp`, and `DebugInfo` for bug reports |
 | [otto-dbus](otto-dbus.md) | The one client proxy per `org.otto.*` interface, and where a new one goes |
 | [otto-foundations](otto-foundations.md) | The UI-free base: XDG directories, `user-dirs.dirs`, `file://` URIs and name matching |
 | [RDP Bridge](rdp-virtual-output.md) | Serving a virtual output over RDP (`otto-rdp`) |
@@ -104,7 +105,7 @@ works, where one exists.
 | [otto-agents](../../components/otto-agents/) | Otto's agent service: runs ACP agents and serves them over the Agent Host Protocol | [Agents](agents.md) |
 | [otto-rdp](../../components/otto-rdp/) | The RDP bridge that serves an Otto output and forwards remote input | [RDP Bridge](rdp-virtual-output.md) |
 | [xdg-desktop-portal-otto](../../components/xdg-desktop-portal-otto/) | Otto's xdg-desktop-portal backend: screen sharing, settings, dialogs, screenshots and file chooser | [The Portal Backend](xdg-desktop-portal-otto.md) |
-| [otto-msg](../../components/otto-msg/) | The command-line tool that drives Otto from scripts over `org.otto.Shell1` | [Shell D-Bus API](shell-dbus-api.md) |
+| [otto-msg](../../components/otto-msg/) | The command-line tool that drives Otto from scripts over `org.otto.Shell1`, and writes bug reports with `otto-msg doctor` | [Shell D-Bus API](shell-dbus-api.md), [Compositor D-Bus API](compositor-dbus-api.md) |
 | [otto-input-overlay](../../components/otto-input-overlay/) | On-screen touchpad and key-press overlays for screen recordings |  |
 | [otto-dictate](../../components/otto-dictate/) | A proof of concept: dictation as a Wayland input method, with live text and an equaliser at the caret |  |
 

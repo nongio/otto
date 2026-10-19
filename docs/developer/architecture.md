@@ -135,6 +135,7 @@ flowchart BT
   otto_md_kit --> otto_kit
   otto_media_kit --> otto_kit
   otto_msg --> otto_dbus
+  otto_msg --> otto_foundations
   otto_pdf --> otto_foundations
   otto_peek --> otto_kit
   otto_peek --> otto_md_kit

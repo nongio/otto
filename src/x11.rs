@@ -546,6 +546,7 @@ pub fn run_x11() {
             state.workspaces.refresh_space();
             state.flush_tiling_relayout();
             state.flush_dock_reserved_change();
+            state.log_session_summary_if_changed();
             state.popups.cleanup();
             display_handle.flush_clients().unwrap();
         }

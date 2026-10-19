@@ -85,17 +85,7 @@ async fn main() {
 
     install_panic_log();
 
-    if let Ok(env_filter) = tracing_subscriber::EnvFilter::try_from_default_env() {
-        tracing_subscriber::fmt()
-            .compact()
-            .with_env_filter(env_filter)
-            .init();
-    } else {
-        tracing_subscriber::fmt()
-            .with_env_filter("info")
-            .compact()
-            .init();
-    }
+    init_logging();
 
     // Load the string catalogues before any chrome is built — the dock's
     // context menus are assembled during construction. `config.locales`
@@ -231,6 +221,79 @@ fn run_udev(args: &[String]) {
         std::process::exit(1);
     }
 }
+
+/// The log file for this run, by backend: `otto.log` for a session on the
+/// hardware, its own file for a nested one, none for a probe or a test.
+///
+/// A nested `--winit` run inside an Otto session must not rotate away the
+/// log of the session it runs in, so it writes `otto-winit.log` instead.
+/// The auto-detection mirrors the one in `main`.
+fn log_file_name(args: &[String]) -> Option<&'static str> {
+    let has = |flag: &str| args.iter().any(|a| a == flag);
+    if has("--tty-udev") {
+        Some("otto.log")
+    } else if has("--winit") {
+        Some("otto-winit.log")
+    } else if has("--x11") {
+        Some("otto-x11.log")
+    } else if has("--probe") || has("--headless") {
+        None
+    } else if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+        Some("otto-winit.log")
+    } else {
+        Some("otto.log")
+    }
+}
+
+/// Logs to stderr and to `$XDG_STATE_HOME/otto/<log file>`, both at
+/// `RUST_LOG` (default `info`).
+///
+/// The file gets no colours, and a panic is written to it and flushed
+/// before the process goes down.
+fn init_logging() {
+    use tracing_subscriber::layer::SubscriberExt as _;
+    use tracing_subscriber::util::SubscriberInitExt as _;
+
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let log_file = log_file_name(&args).and_then(|name| {
+        let dir = otto_kit::xdg::state_home()?.join("otto");
+        match otto::session_log::start(&dir, name) {
+            Ok(log) => Some(log),
+            Err(err) => {
+                eprintln!("otto: cannot write {}: {err}", dir.join(name).display());
+                None
+            }
+        }
+    });
+    let file_layer = log_file.map(|log| {
+        tracing_subscriber::fmt::layer()
+            .compact()
+            .with_ansi(false)
+            .with_writer(log)
+    });
+    tracing_subscriber::registry()
+        .with(filter)
+        .with(tracing_subscriber::fmt::layer().compact())
+        .with(file_layer)
+        .init();
+
+    if otto::session_log::path().is_some() {
+        let previous = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            tracing::error!("{info}");
+            previous(info);
+            otto::session_log::flush(PANIC_FLUSH_TIMEOUT);
+        }));
+    }
+}
+
+/// How long a panic waits for the log to reach the disk.
+///
+/// The writer thread normally drains in microseconds; the bound only matters
+/// when the disk is stuck, where a panicking compositor must still exit.
+const PANIC_FLUSH_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(500);
 
 /// Keep a copy of every panic in `$XDG_STATE_HOME/otto/panic.log`.
 ///

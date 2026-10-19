@@ -217,4 +217,6 @@ busctl --user --json=short call org.otto.Shell1 /org/otto/Shell1 \
 ```
 
 `otto-msg` is the same calls with the argument handling and output formatting
-`swaymsg` has; see [docs/user/scripting.md](../user/scripting.md).
+`swaymsg` has; see [docs/user/scripting.md](../user/scripting.md). Its
+`-t get_debug_info` is not a Shell1 call: it reads `DebugInfo` from
+`org.otto.Compositor` ([compositor-dbus-api.md](compositor-dbus-api.md)).

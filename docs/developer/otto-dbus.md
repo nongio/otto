@@ -11,7 +11,7 @@ in a string.
 | `settings` | `org.otto.Settings` | compositor, `src/settings_service.rs` ([contract](settings-dbus-api.md)) |
 | `shell` | `org.otto.Shell1` | compositor, `src/shell_service.rs` ([contract](shell-dbus-api.md)) |
 | `screencast` | `org.otto.ScreenCast`, `.Session`, `.Stream` | compositor, `src/screenshare/dbus_service.rs` |
-| `compositor` | `org.otto.Compositor` | compositor, `src/screenshare/dbus_service.rs` |
+| `compositor` | `org.otto.Compositor` | compositor, `src/screenshare/dbus_service.rs` ([contract](compositor-dbus-api.md)) |
 | `dialog` | `org.otto.Dialog1` | otto-islands, `src/dbus_service.rs` |
 | `island` | `org.otto.Island1` | otto-islands, `src/dbus_service.rs` |
 | `file_picker` | `org.otto.FilePicker1` | otto-files, `src/dbus.rs` |

@@ -5566,8 +5566,11 @@ dependencies = [
 name = "otto-msg"
 version = "1.8.0"
 dependencies = [
+ "libc",
  "otto-dbus",
+ "otto-foundations",
  "serde_json",
+ "tempfile",
  "zbus",
 ]
 
