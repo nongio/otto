@@ -240,7 +240,7 @@ fn build_request(
         string_opt(&options, "current_name").unwrap_or_default(),
         path_opt(&options, "current_folder").unwrap_or_default(),
         path_opt(&options, "current_file").unwrap_or_default(),
-        strings_opt(&options, "files"),
+        files_opt(&options, "files"),
         filters_opt(&options, "filters"),
         // `current_filter` arrives as a whole filter; only its label
         // identifies it.
@@ -275,11 +275,28 @@ fn bool_opt(options: &HashMap<String, OwnedValue>, key: &str) -> Option<bool> {
     options.get(key).and_then(|v| bool::try_from(v).ok())
 }
 
-fn strings_opt(options: &HashMap<String, OwnedValue>, key: &str) -> Vec<String> {
-    options
+/// The save-multiple `files` option, which the portal sends as `aay`: one
+/// NUL-terminated byte string per name, like a path option.
+///
+/// Each trailing NUL is stripped. One name that is not UTF-8 empties the whole
+/// list rather than shortening it: the picker then refuses the request as
+/// malformed, where a list missing a name would have the application believe
+/// a file was written that was not.
+fn files_opt(options: &HashMap<String, OwnedValue>, key: &str) -> Vec<String> {
+    let Some(names) = options
         .get(key)
         .and_then(|v| v.try_clone().ok())
-        .and_then(|v| Vec::<String>::try_from(v).ok())
+        .and_then(|v| Vec::<Vec<u8>>::try_from(v).ok())
+    else {
+        return Vec::new();
+    };
+    names
+        .into_iter()
+        .map(|bytes| {
+            let bytes = bytes.strip_suffix(&[0]).unwrap_or(&bytes);
+            String::from_utf8(bytes.to_vec()).ok()
+        })
+        .collect::<Option<Vec<_>>>()
         .unwrap_or_default()
 }
 
@@ -360,6 +377,29 @@ mod tests {
             Value::from(b"/tmp/\xff\0".to_vec()),
         )]);
         assert!(path_opt(&opts, "current_folder").is_none());
+    }
+
+    #[test]
+    fn the_files_to_save_arrive_as_byte_strings() {
+        let files: Vec<Vec<u8>> = vec![b"a.txt\0".to_vec(), b"b c.png\0".to_vec()];
+        let value = Value::from(files);
+        assert_eq!(value.value_signature().to_string(), "aay");
+        let request = build_request(
+            MODE_SAVE_FILES,
+            OwnedObjectPath::try_from("/org/freedesktop/portal/desktop/request/x/1").unwrap(),
+            String::new(),
+            String::new(),
+            String::new(),
+            options(vec![("files", value)]),
+        );
+        assert_eq!(request.12, vec!["a.txt".to_string(), "b c.png".to_string()]);
+    }
+
+    #[test]
+    fn one_non_utf8_name_empties_the_files_to_save() {
+        let files: Vec<Vec<u8>> = vec![b"a.txt\0".to_vec(), b"\xff\0".to_vec()];
+        let opts = options(vec![("files", Value::from(files))]);
+        assert!(files_opt(&opts, "files").is_empty());
     }
 
     #[test]
