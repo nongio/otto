@@ -1,4 +1,4 @@
-# Components: every crate at a glance
+# Otto Components
 
 Otto is one Cargo workspace. The compositor is the root crate; everything
 else is a library or a program in `components/`, `crates/` or `tools/`. Each
