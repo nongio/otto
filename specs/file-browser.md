@@ -1397,10 +1397,15 @@ it points at is a folder or is gone — never its target.
 **A copy or a link back home is still a request.** Over the folder the dragged
 files already live in, Files accepts only a copy or a link, and states no
 preference. The compositor reads a target with no preference as one that takes
-the drop only when asked, so a plain drag there settles on nothing and is
-refused, while Ctrl or Ctrl+Shift settles on a copy or a link and is taken.
-Files learns which from the negotiated action, not from its own keyboard,
-which a drag from a window without focus does not have.
+the drop only when asked, so a plain drag there settles on nothing and the
+icon flies home, while Ctrl or Ctrl+Shift settles on a copy or a link and is
+taken. Nothing is wrong with the plain drag, so the cursor stays the plain
+pointer rather than saying the drop is refused; the refusal cursor is kept for
+a place that takes nothing. Files learns which action was settled from the
+negotiated action, not from its own keyboard, which a drag from a window
+without focus does not have. A desk slot is never "home": moving an icon to
+another spot on its own desk is a plain drag under free placement, taken like
+any other.
 
 **A link wears a badge.** Every symbolic link, whoever made it, is drawn with
 the icon theme's `emblem-symbolic-link` in its icon's bottom-left corner, so a

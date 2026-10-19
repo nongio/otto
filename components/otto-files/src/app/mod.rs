@@ -202,6 +202,14 @@ enum DropTarget {
 }
 
 impl DropTarget {
+    /// Would a move here put our own drag's files back in the folder they
+    /// are already in? A desk slot never does: dropping an icon on another
+    /// spot of its own desk is how free placement moves it, and it takes a
+    /// plain drag like any other target.
+    fn is_move_home(&self) -> bool {
+        !matches!(self, Self::Slot { .. }) && self.path().is_some_and(|path| Browser::is_home(path))
+    }
+
     /// The directory the drop lands in, if it puts files anywhere.
     fn path(&self) -> Option<&PathBuf> {
         match self {
@@ -245,10 +253,9 @@ fn hover_drag(state: &Arc<Mutex<Browser>>, x: f32, y: f32) {
             let copies = std::mem::replace(&mut browser.drag_copies, true);
             let open = browser.drop_target_at(x, y);
             browser.drag_copies = copies;
-            open.and_then(|open| open.path().cloned())
-                .is_some_and(|path| Browser::is_home(&path))
+            open.is_some_and(|open| open.is_move_home())
         },
-        |target| target.path().is_some_and(|path| Browser::is_home(path)),
+        DropTarget::is_move_home,
     );
 
     match (&target, mime) {

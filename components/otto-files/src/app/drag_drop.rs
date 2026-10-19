@@ -120,8 +120,9 @@ impl Browser {
     ///
     /// Such a drop has nothing to do, and a target that lights up to say it
     /// will do nothing is worse than no target at all: the answer is a
-    /// dismissal — no outline, a cursor that says the drop is refused, and the
-    /// icon flying home to where it was picked up.
+    /// dismissal — no outline, the plain pointer (nothing is wrong, there is
+    /// just nothing to do), and the icon flying home to where it was picked
+    /// up.
     ///
     /// A *copy* onto the same directory is a real request — that is how a
     /// duplicate is made — and so is a link, so this only speaks for a move:

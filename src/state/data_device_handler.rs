@@ -1,4 +1,5 @@
 use smithay::{
+    input::pointer::CursorImageStatus,
     reexports::wayland_server::protocol::wl_data_device_manager::DndAction,
     wayland::selection::{
         data_device::{DataDeviceHandler, DataDeviceState},
@@ -32,7 +33,14 @@ impl<BackendData: Backend> DataDeviceHandler for Otto<BackendData> {
             ?action,
             "dnd action chosen"
         );
-        self.load_cursor_for_action(action);
+        if action.is_empty() && !available.is_empty() && preferred.is_empty() {
+            // A target that takes this drag only when a chord asks for it has
+            // nothing to do without one — a file dragged back into its own
+            // folder — and nothing is wrong: the plain pointer, not a refusal.
+            self.set_cursor(&CursorImageStatus::default_named());
+        } else {
+            self.load_cursor_for_action(action);
+        }
         action
     }
 }
