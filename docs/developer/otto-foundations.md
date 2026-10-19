@@ -1,4 +1,4 @@
-# otto-foundations: the UI-free base
+# otto-foundations
 
 `components/otto-foundations/` holds the small rules that several Otto
 programs have to agree on: where the XDG directories are, how a path becomes

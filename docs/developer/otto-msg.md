@@ -1,4 +1,4 @@
-# otto-msg: drive the compositor from a script
+# otto-msg
 
 `components/otto-msg/` is a command-line tool that runs i3-syntax commands
 against Otto, prints the window tree, workspaces, outputs and inputs as JSON,

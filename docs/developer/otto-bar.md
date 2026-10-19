@@ -1,4 +1,4 @@
-# otto-bar: the top menu bar
+# otto-bar
 
 otto-bar is the strip along the top of the screen: the Otto menu and the
 focused app's menus on the left, and the tray, the keyboard layout, the

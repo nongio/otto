@@ -1,4 +1,4 @@
-# otto-rdp: the RDP bridge for an output
+# otto-rdp
 
 `components/otto-rdp/` serves one Otto output over RDP and injects the remote
 client's mouse and keyboard back into it. It captures a virtual output's

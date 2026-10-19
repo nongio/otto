@@ -1,4 +1,4 @@
-# otto-agents-client: the wire to the agent service
+# otto-agents-client
 
 `components/otto-agents-client/` holds what [otto-agents](otto-agents.md) and
 its clients have to agree on: where the service's socket is, how a URL names

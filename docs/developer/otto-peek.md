@@ -1,4 +1,4 @@
-# otto-peek: the space-bar preview, embedded
+# otto-peek
 
 otto-peek is Peek, the preview that opens when you press Space on a file, in
 `components/otto-peek/`. It is a library the file views embed, not a service

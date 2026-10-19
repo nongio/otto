@@ -1,4 +1,4 @@
-# otto-input-overlay: touchpad and key overlays for recordings
+# otto-input-overlay
 
 otto-input-overlay draws two small overlays for screen recordings: one circle
 per finger on the touchpad, and the keys being pressed, chords included. It

@@ -1,4 +1,4 @@
-# otto-stash: collecting things to ask about
+# otto-stash
 
 `components/otto-stash/` collects things to ask an agent about (selected text,
 files, a screen region) into one "Ask about…" card, then hands them to Ask

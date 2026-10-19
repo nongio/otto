@@ -1,4 +1,4 @@
-# otto-canvas: the Agents panel in the side canvas
+# otto-canvas
 
 `components/otto-canvas/` is the Agents panel in Otto's side canvas: a prompt
 field over the list of [otto-agents](otto-agents.md) sessions, in one frosted

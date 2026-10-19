@@ -1,4 +1,4 @@
-# otto-auth-ui: the shared password panel
+# otto-auth-ui
 
 otto-auth-ui is the panel Otto draws whenever it needs to know who is at the
 keyboard: the login screen, the lock screen and the polkit password dialog all

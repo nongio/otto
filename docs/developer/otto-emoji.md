@@ -1,4 +1,4 @@
-# otto-emoji: the emoji picker
+# otto-emoji
 
 otto-emoji is the emoji picker: a card with a search field, category tabs, a
 grid and a footer naming the emoji under the pointer and the skin tone in

@@ -1,4 +1,4 @@
-# The Render Stack
+# otto-render
 
 `otto-render` is the part of the compositor that turns a scene into pixels. It
 holds the Skia renderer that sits on top of Smithay's GL and Vulkan renderers,

@@ -1,4 +1,4 @@
-# otto-pdf: editing pdfs in place through pdfium
+# otto-pdf
 
 otto-pdf fills a PDF's form and marks it up, in `components/otto-pdf/`. It
 reads a document's form fields and annotations in the page's own coordinates,

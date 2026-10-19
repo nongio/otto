@@ -1,4 +1,4 @@
-# The Portal Backend
+# xdg-desktop-portal-otto
 
 Apps that want something only the desktop can give them (a screen to share, a
 file to open, the dark-mode preference, a screenshot) ask xdg-desktop-portal.

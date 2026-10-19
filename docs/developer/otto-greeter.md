@@ -1,4 +1,4 @@
-# otto-greeter: the login screen
+# otto-greeter
 
 otto-greeter is Otto's login screen. greetd runs `otto --login`, a compositor
 in login mode, and that compositor launches `otto-greeter` in place of the

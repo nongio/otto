@@ -1,4 +1,4 @@
-# otto-agents: the agent service
+# otto-agents
 
 `components/otto-agents/` is Otto's agent service. It runs coding agents as
 child processes that speak the Agent Client Protocol (ACP) on stdio, and serves

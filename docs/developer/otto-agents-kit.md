@@ -1,4 +1,4 @@
-# otto-agents-kit: the shared parts of Otto's agent UIs
+# otto-agents-kit
 
 `components/otto-agents-kit/` holds what Otto's agent interfaces have in
 common: the feed of [otto-agents](otto-agents.md) sessions and the rows that

@@ -1,4 +1,4 @@
-# otto-search: one query language over the file index
+# otto-search
 
 otto-search is Otto's file search, in `components/otto-search/`: one query
 language over the desktop's file index, so the same words find the same

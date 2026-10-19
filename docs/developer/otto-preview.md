@@ -1,4 +1,4 @@
-# otto-preview: studio, one file in a window
+# otto-preview
 
 otto-preview is the app people know as **Studio**, in
 `components/otto-preview/`. It shows one file in a window of its own, drawn

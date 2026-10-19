@@ -1,4 +1,4 @@
-# otto-authorize: the session's polkit agent
+# otto-authorize
 
 otto-authorize is the session's polkit authentication agent. When a program
 asks polkit for something that needs a password (`pkexec`, a system service's

@@ -1,4 +1,4 @@
-# The Dynamic Island
+# otto-islands
 
 otto-islands is the strip of bubbles at the top centre of the screen. It does
 three jobs for the session. It is the notification daemon: anything that calls

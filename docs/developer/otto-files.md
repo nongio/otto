@@ -1,4 +1,4 @@
-# Files
+# otto-files
 
 `otto-files` is how a person sees and handles the files on their disk. One program plays three parts. The **browser** is a document window for navigating folders and acting on files. The **file picker** is the dialog another application gets when it asks to open or save a file through the desktop portal. The **desk** is the Desktop folder drawn as an icon grid between the wallpaper and the windows. All three are ordinary Wayland clients built on otto-kit, running outside the compositor.
 

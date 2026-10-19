@@ -1,4 +1,4 @@
-# The Launcher
+# otto-launcher
 
 The launcher is how Otto is driven from the keyboard. A key opens a card over the
 desktop, typing narrows a list, and Enter starts an application, brings a window

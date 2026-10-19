@@ -1,4 +1,4 @@
-# otto-dbus: client proxies for Otto's D-Bus interfaces
+# otto-dbus
 
 Every `org.otto.*` interface has one typed client proxy, in
 `components/otto-dbus/`. A caller that wants to talk to the compositor,

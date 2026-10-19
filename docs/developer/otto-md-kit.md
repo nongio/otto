@@ -1,4 +1,4 @@
-# otto-md-kit: markdown read as a document
+# otto-md-kit
 
 otto-md-kit is Otto's Markdown parser, in `components/otto-md-kit/`. It takes
 a `&str` and returns the block vocabulary the toolkit's document renderer
