@@ -62,7 +62,7 @@ impl Browser {
             drag_armed: None,
             marquee: None,
             drop_target: None,
-            drag_copy_held: false,
+            drag_copies: false,
             peek: None,
             preview: None,
             preview_generation_seed: 0,

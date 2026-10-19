@@ -1599,6 +1599,15 @@ pub fn link(paths: &[PathBuf], dest: &Path) -> OpResult {
             continue;
         };
         let source = std::path::absolute(source).unwrap_or_else(|_| source.clone());
+        // A link to a folder inside that folder is a loop, refused by the same
+        // check a paste makes.
+        if source.is_dir() && dest.starts_with(&source) {
+            result.errors.push(format!(
+                "Cannot link “{}” into itself.",
+                name.to_string_lossy()
+            ));
+            continue;
+        }
         let mut target = dest.join(name);
         if target.symlink_metadata().is_ok() {
             target = unique_name(dest, name);
@@ -2067,6 +2076,18 @@ mod paste_tests {
         assert!(made.symlink_metadata().unwrap().is_symlink());
         assert_eq!(std::fs::read_link(&made).unwrap(), src);
         assert_eq!(std::fs::read_to_string(&src).unwrap(), "hello");
+    }
+
+    #[test]
+    fn a_folder_is_never_linked_into_itself() {
+        let t = Tmp::new("link-self");
+        let folder = t.dir("folder");
+
+        let result = link(std::slice::from_ref(&folder), &folder);
+
+        assert_eq!(result.linked, 0);
+        assert_eq!(result.errors.len(), 1);
+        assert!(folder.join("folder").symlink_metadata().is_err());
     }
 
     #[test]

@@ -1670,7 +1670,8 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         } else if action == DndAction::Move {
             CursorImageStatus::Named(CursorIcon::Move)
         } else if action == DndAction::Ask {
-            CursorImageStatus::Named(CursorIcon::Help)
+            // Ask carries a link; see `choose_dnd_action`.
+            CursorImageStatus::Named(CursorIcon::Alias)
         } else {
             // No action the target will take — say so, rather than saying
             // nothing. Hiding the cursor here left the user dragging with no

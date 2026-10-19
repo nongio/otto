@@ -438,6 +438,8 @@ struct Row {
     ends: RunEnds,
     cursor: bool,
     cut: bool,
+    /// The entry is a symbolic link, and wears the link badge.
+    link: bool,
     /// Suppressed while the host's text field is over this row.
     renaming: bool,
     text_color: Color,
@@ -472,6 +474,9 @@ impl Row {
                 paint.set_alpha(110);
             }
             canvas.draw_image_rect(image, None, icon_box, &paint);
+        }
+        if self.link {
+            view::draw_link_badge(canvas, icon_box, self.cut);
         }
 
         if !self.renaming {
@@ -541,6 +546,7 @@ fn build_rows(pane: &PaneData<'_>, range: (usize, usize), f: &Frame, depth: usiz
                 ends: RunEnds::of_pane(pane, index),
                 cursor: active && pane.cursor == Some(index) && !selected,
                 cut,
+                link: entry.is_symlink,
                 renaming: f.renaming == Some((depth, index)),
                 text_color: if cut {
                     view::dim_color(text_color)

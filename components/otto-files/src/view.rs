@@ -3418,36 +3418,25 @@ fn draw_drag_entry(
         ViewMode::Grid | ViewMode::Photos => {
             let cell = Rect::from_wh(cell_w(), cell_h());
             let icon_top = cell.top + 8.0;
+            let icon_box = Rect::from_xywh(
+                cell.center_x() - grid_icon() / 2.0,
+                icon_top,
+                grid_icon(),
+                grid_icon(),
+            );
             if let Some(image) = thumb {
-                draw_thumbnail(
-                    canvas,
-                    image,
-                    Rect::from_xywh(
-                        cell.center_x() - grid_icon() / 2.0,
-                        icon_top,
-                        grid_icon(),
-                        grid_icon(),
-                    ),
-                    false,
-                );
+                draw_thumbnail(canvas, image, icon_box, false);
             } else {
                 let chain = entry.icon_chain();
                 let refs: Vec<&str> = chain.iter().map(String::as_str).collect();
                 if let Some(image) =
                     icons::cached_icon_chain_at(&refs, grid_icon() as i32, icons::FULL_COLOUR_SIZE)
                 {
-                    canvas.draw_image_rect(
-                        &image,
-                        None,
-                        Rect::from_xywh(
-                            cell.center_x() - grid_icon() / 2.0,
-                            icon_top,
-                            grid_icon(),
-                            grid_icon(),
-                        ),
-                        &Paint::default(),
-                    );
+                    canvas.draw_image_rect(&image, None, icon_box, &Paint::default());
                 }
+            }
+            if entry.is_symlink {
+                draw_link_badge(canvas, icon_box, false);
             }
 
             // The caption on its pill, the way a selected cell wears it.
@@ -6873,6 +6862,9 @@ fn draw_photo_card(
             }
         }
     }
+    if entry.is_symlink {
+        draw_link_badge(canvas, icon, cut);
+    }
     let style = styles::FOOTNOTE;
     let name = ellipsize(&style.font(), &entry.name, tile.width() - 16.0);
     Label::new(name)
@@ -7741,7 +7733,7 @@ fn draw_entry_icon_face(canvas: &Canvas, entry: &Entry, box_rect: Rect, cut: boo
 /// Sized off the icon it sits on, so the 18pt list icon and a large desk icon
 /// carry the same mark at their own scale, but never so small its arrow stops
 /// reading as one. A cut link is dimmed with its icon.
-fn draw_link_badge(canvas: &Canvas, icon: Rect, cut: bool) {
+pub(crate) fn draw_link_badge(canvas: &Canvas, icon: Rect, cut: bool) {
     let side = (icon.width().min(icon.height()) * 0.36).max(8.0);
     let card = Rect::from_xywh(icon.left, icon.bottom - side, side, side);
     let radius = side * 0.22;

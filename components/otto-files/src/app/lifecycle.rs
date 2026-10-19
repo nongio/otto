@@ -751,6 +751,12 @@ impl FilesWindow {
         if !on_peek && !on_window {
             return;
         }
+        // No key is held for us once the keyboard is elsewhere. A modifier
+        // still down as focus left is never released to us, and would
+        // otherwise turn the next plain click into a Ctrl+click.
+        if on_window {
+            *self.modifiers.lock().unwrap() = Modifiers::default();
+        }
         // A panel that is nothing but a place to type has no reason to stay up
         // once the typing would land elsewhere.
         let mut browser = self.state.browse();

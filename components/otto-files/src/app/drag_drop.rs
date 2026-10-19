@@ -119,25 +119,24 @@ impl Browser {
     /// icon flying home to where it was picked up.
     ///
     /// A *copy* onto the same directory is a real request — that is how a
-    /// duplicate is made — and so is a link, so this only speaks for a move.
-    ///
-    /// The test is whether Ctrl is held, not which action was negotiated:
-    /// refusing clears the negotiated action, so a target that waited for the
-    /// compositor to settle on a copy would never see one, and Ctrl or
-    /// Ctrl+Shift over the files' own folder would do nothing. The drag is our
-    /// own, so the keyboard it is held on is ours too.
+    /// duplicate is made — and so is a link, so this only speaks for a move:
+    /// it holds until the compositor has settled on one of those
+    /// ([`Browser::drag_copies`]). Over the files' own folder the drag is
+    /// accepted for a copy or a link only, with no preference, so the
+    /// compositor settles on one when Ctrl or Ctrl+Shift asks for it and on
+    /// nothing otherwise — see `hover_drag`.
     pub(super) fn is_a_move_home(&self, dest: &Path) -> bool {
-        use otto_kit::dnd;
+        Self::is_home(dest) && !self.drag_copies
+    }
 
+    /// Is a drag of our own carrying files that all live in `dest`?
+    pub(super) fn is_home(dest: &Path) -> bool {
         // Someone else's drag: we do not know where those files live, and the
         // source is the one that would have to answer this anyway.
-        let Some(paths) = dnd::own_files() else {
+        let Some(paths) = otto_kit::dnd::own_files() else {
             return false;
         };
-        if paths.is_empty() || paths.iter().any(|path| path.parent() != Some(dest)) {
-            return false;
-        }
-        !self.drag_copy_held
+        !paths.is_empty() && paths.iter().all(|path| path.parent() == Some(dest))
     }
 
     /// Put `paths` into the current drop target, moving them, copying them or

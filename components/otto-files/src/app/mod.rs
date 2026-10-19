@@ -224,15 +224,35 @@ impl DropTarget {
 /// Called for every enter and every motion, because that is what the protocol
 /// asks for: the answer is per-position, and a target that goes quiet has said
 /// no. See [`otto_kit::dnd::accept`].
-fn hover_drag(state: &Arc<Mutex<Browser>>, x: f32, y: f32, copy_held: bool) {
+fn hover_drag(state: &Arc<Mutex<Browser>>, x: f32, y: f32) {
     use otto_kit::dnd;
 
     let mut browser = state.browse();
-    browser.drag_copy_held = copy_held;
+    browser.drag_copies = dnd::selected_action().intersects(DndAction::Copy | DndAction::Ask);
     let target = browser.drop_target_at(x, y);
     let mime = dnd::first_offered(clipboard::file_mime_preference());
 
+    // Where the drop would land if a move home were not refused: over the
+    // files' own folder a copy or a link is still worth taking.
+    let home = target.as_ref().map_or_else(
+        || {
+            let copies = std::mem::replace(&mut browser.drag_copies, true);
+            let open = browser.drop_target_at(x, y);
+            browser.drag_copies = copies;
+            open.is_some_and(|open| Browser::is_home(open.path()))
+        },
+        |target| Browser::is_home(target.path()),
+    );
+
     match (&target, mime) {
+        // A copy or a link, and no preference: the compositor settles on one
+        // only when Ctrl or Ctrl+Shift asks for it, and on nothing otherwise,
+        // which is the dismissal a move home gets.
+        (_, Some(mime)) if home => dnd::accept(
+            Some(&mime),
+            DndAction::Copy | DndAction::Ask,
+            DndAction::empty(),
+        ),
         (Some(_), Some(mime)) => dnd::accept(
             Some(&mime),
             // Ask is how a link is asked for; see `DropOp::from_action`.
@@ -358,11 +378,12 @@ struct Browser {
     /// Where a drag now over the window would drop. Drawn outlined, and read
     /// again when the drop arrives.
     drop_target: Option<DropTarget>,
-    /// Ctrl is held during the drag now over the window: a copy or a link
-    /// is being asked for, so a drop back where the files already are has
-    /// something to do. Read from our own keyboard, which a drag we started
-    /// still has; see [`Browser::is_a_move_home`].
-    drag_copy_held: bool,
+    /// The compositor has settled on a copy or a link for the drag now over
+    /// the window, so a drop back where the files already are has something
+    /// to do. Taken from the negotiated action rather than our own keyboard,
+    /// which a drag started from an unfocused window does not have; see
+    /// [`Browser::is_a_move_home`].
+    drag_copies: bool,
     /// The last operation's outcome, shown in the header until the next action.
     status: Option<String>,
     /// The file operation running on a worker thread, if there is one. See
