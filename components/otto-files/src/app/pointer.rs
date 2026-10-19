@@ -298,13 +298,11 @@ impl FilesWindow {
         // not a drop target here, so what the enter decided has to be
         // remembered.
         let on_toplevel = std::cell::Cell::new(false);
-        let modifiers = Arc::clone(&self.modifiers);
 
         dnd::register(move |event| {
             let Some(state) = state.upgrade() else {
                 return;
             };
-            let copy_held = modifiers.lock().unwrap().ctrl;
             let is_ours = |id: &wayland_client::backend::ObjectId| toplevel.as_ref() == Some(id);
 
             match event {
@@ -313,13 +311,13 @@ impl FilesWindow {
                     if !on_toplevel.get() {
                         return;
                     }
-                    hover_drag(&state, *x as f32, *y as f32, copy_held);
+                    hover_drag(&state, *x as f32, *y as f32);
                 }
                 DragEvent::Motion { x, y } => {
                     if !on_toplevel.get() {
                         return;
                     }
-                    hover_drag(&state, *x as f32, *y as f32, copy_held);
+                    hover_drag(&state, *x as f32, *y as f32);
                 }
                 DragEvent::Leave => {
                     if !on_toplevel.replace(false) {
@@ -337,7 +335,17 @@ impl FilesWindow {
                     // The negotiated action, not the one we asked for: the
                     // compositor picks, and a source that only offered a copy
                     // must not have its files moved.
-                    let op = DropOp::from_action(dnd::selected_action());
+                    let action = dnd::selected_action();
+                    let op = DropOp::from_action(action);
+                    // `ask` is never final: the protocol wants one last
+                    // answer before the drop is finished. A link copies
+                    // nothing away from the source, so that answer is a copy,
+                    // which no source reads as leave to delete its files.
+                    if op == DropOp::Link {
+                        if let Some(mime) = dnd::first_offered(clipboard::file_mime_preference()) {
+                            dnd::accept(Some(&mime), DndAction::Copy, DndAction::Copy);
+                        }
+                    }
 
                     // Our own drag is served from our own payload; see
                     // `dnd::own_files` for why it cannot go over the pipe.
@@ -350,7 +358,7 @@ impl FilesWindow {
                     };
 
                     let mut browser = state.browse();
-                    browser.drag_copy_held = copy_held;
+                    browser.drag_copies = action.intersects(DndAction::Copy | DndAction::Ask);
                     // Resolved again at the drop's own position rather than
                     // trusting the last motion: the release may land somewhere
                     // no motion reported.

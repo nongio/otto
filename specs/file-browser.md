@@ -1375,20 +1375,37 @@ duplicate is made.
 
 **The action is chosen with modifiers.** A drop moves by default; Ctrl held
 during the drag copies, Shift moves, and Ctrl+Shift makes a link — the chord
-every Linux file manager shares. The compositor reads the modifiers when it
-settles the action, on every motion, and the cursor says which it settled on.
+every Linux file manager shares. The compositor reads the modifiers from the
+keyboard when it settles the action, which it does on every motion, so a key
+pressed or released in place takes effect at the next one; the cursor says
+which action it settled on. A chord never turns into a move: Ctrl+Shift over a
+target that takes no link copies, and any other chord the target cannot take
+settles on nothing. Without a chord the target's preference stands, and when
+it has none the least destructive action left is taken — a copy before a move,
+a link only when nothing else is offered.
+
 `wl_data_device` has no link action, so a link travels as `Ask`: Files offers
 and accepts it, and a drop whose negotiated action is `Ask` makes a symbolic
 link in the target to each file's absolute path, leaving the files where they
-are. A taken name gets a numbered one, as `KeepBoth` would give it, and undo
-takes the link away — the link itself, even when what it points at is a folder
-or is gone — never its target.
+are. Because `ask` is never final, Files answers once more with a copy before
+finishing the drop, which no source reads as leave to delete anything. A
+taken name gets a numbered one, as `KeepBoth` would give it; a folder is never
+linked into itself. Undo takes the link away — the link itself, even when what
+it points at is a folder or is gone — never its target.
+
+**A copy or a link back home is still a request.** Over the folder the dragged
+files already live in, Files accepts only a copy or a link, and states no
+preference. The compositor reads a target with no preference as one that takes
+the drop only when asked, so a plain drag there settles on nothing and is
+refused, while Ctrl or Ctrl+Shift settles on a copy or a link and is taken.
+Files learns which from the negotiated action, not from its own keyboard,
+which a drag from a window without focus does not have.
 
 **A link wears a badge.** Every symbolic link, whoever made it, is drawn with a
 curved arrow on a small white card in its icon's bottom-left corner, sized off
-the icon, in every view that draws file icons: list, columns, grid, the desk,
-and the drag image. The icon under it is the target's, so a link to a folder
-still reads as a folder.
+the icon, in every view that draws file icons: list, columns, grid, Photos, the
+desk, and the drag image. The icon under it is the target's, so a link to a
+folder still reads as a folder.
 
 **A move is performed by the receiver.** The source deletes nothing when the
 drop finishes. A foreign target that accepted `text/uri-list` has not
