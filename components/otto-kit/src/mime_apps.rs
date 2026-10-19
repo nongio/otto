@@ -307,16 +307,23 @@ fn app_from_entry(
     })
 }
 
-/// Is `program` an absolute path that exists, or a name found on `PATH`?
+/// Is `program` an executable file at an absolute path, or a name found on
+/// `PATH` as one?
 ///
 /// This is the check `TryExec=` asks for.
 pub fn program_exists(program: &str) -> bool {
     let program = Path::new(program);
     if program.is_absolute() {
-        return program.exists();
+        return is_executable(program);
     }
-    std::env::var_os("PATH")
-        .is_some_and(|path| std::env::split_paths(&path).any(|dir| dir.join(program).is_file()))
+    std::env::var_os("PATH").is_some_and(|path| {
+        std::env::split_paths(&path).any(|dir| is_executable(&dir.join(program)))
+    })
+}
+
+fn is_executable(path: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::metadata(path).is_ok_and(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
 }
 
 /// The `mimeapps.list` files in the specification's precedence order, highest
@@ -875,6 +882,22 @@ fn expand(text: &str, file: Option<&Target>, app: &App) -> OsString {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_program_has_to_be_executable() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("otto-kit-program-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("tool");
+        std::fs::write(&file, "#!/bin/sh\n").unwrap();
+        let path = file.to_str().unwrap();
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(!program_exists(path));
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(program_exists(path));
+        assert!(!program_exists(dir.to_str().unwrap()));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     fn app(id: &str, name: &str, mimes: &[&str]) -> App {
         App {

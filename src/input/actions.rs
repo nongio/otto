@@ -204,74 +204,25 @@ impl<BackendData: Backend> Otto<BackendData> {
     }
 
     fn launch_xdg_autostart(&mut self) {
-        // Collect autostart .desktop files from system then user dirs (user overrides system)
-        let xdg_config_home = otto_kit::xdg::config_home()
-            .unwrap_or_else(|| std::path::PathBuf::from("/root/.config"));
-
-        // Build ordered list: system dirs first, user dir last (user overrides by basename)
-        let mut search_dirs: Vec<std::path::PathBuf> = otto_kit::xdg::config_dirs()
-            .into_iter()
-            .map(|d| d.join("autostart"))
-            .collect();
-        search_dirs.push(xdg_config_home.join("autostart"));
-
-        // Collect entries: later entries (user) override earlier (system) by filename
-        let mut entries: std::collections::HashMap<String, std::path::PathBuf> =
-            std::collections::HashMap::new();
-        for dir in &search_dirs {
-            let Ok(read_dir) = std::fs::read_dir(dir) else {
-                continue;
-            };
-            for entry in read_dir.flatten() {
-                let path = entry.path();
-                if path.extension().and_then(|e| e.to_str()) == Some("desktop") {
-                    if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                        entries.insert(name.to_string(), path);
-                    }
-                }
-            }
-        }
-
         let locales = Config::with(|c| c.locales.clone());
-        let locale_refs: Vec<&str> = locales.iter().map(|s| s.as_str()).collect();
+        let desktops = freedesktop_desktop_entry::current_desktop().unwrap_or_default();
 
-        for (_, path) in entries {
-            let entry = match DesktopEntry::from_path(&path, Some(&locale_refs)) {
+        for path in xdg_autostart_files(&xdg_autostart_dirs()) {
+            let entry = match DesktopEntry::from_path(&path, Some(locales.as_slice())) {
                 Ok(e) => e,
                 Err(e) => {
                     warn!(path = %path.display(), error = %e, "Failed to parse autostart entry");
                     continue;
                 }
             };
-
-            // Respect Hidden=true
-            if entry.hidden() {
-                continue;
-            }
-
-            // Respect OnlyShowIn / NotShowIn against "Otto"
-            if let Some(only) = entry.only_show_in() {
-                if !only.iter().any(|de| de.eq_ignore_ascii_case("Otto")) {
-                    continue;
-                }
-            }
-            if let Some(not) = entry.not_show_in() {
-                if not.iter().any(|de| de.eq_ignore_ascii_case("Otto")) {
-                    continue;
-                }
-            }
-
-            match entry.parse_exec() {
-                Ok(mut args) if !args.is_empty() => {
-                    let cmd = args.remove(0);
+            match autostart_command(&entry, &desktops, otto_kit::mime_apps::program_exists) {
+                Autostart::Start(cmd, args) => {
                     info!(cmd = %cmd, args = ?args, path = %path.display(), "Launching XDG autostart entry");
                     self.launch_program(cmd, args);
                 }
-                Ok(_) => {
-                    warn!(path = %path.display(), "Autostart entry has empty Exec field");
-                }
-                Err(e) => {
-                    warn!(path = %path.display(), error = ?e, "Failed to parse Exec field");
+                Autostart::Skip => {}
+                Autostart::Broken(reason) => {
+                    warn!(path = %path.display(), %reason, "Cannot start autostart entry");
                 }
             }
         }
@@ -902,10 +853,157 @@ pub fn resolve_shortcut_action(config: &Config, action: &ShortcutAction) -> Opti
     }
 }
 
+/// The XDG autostart directories, most important first: the user's
+/// `$XDG_CONFIG_HOME/autostart`, then each of `$XDG_CONFIG_DIRS` in order.
+fn xdg_autostart_dirs() -> Vec<std::path::PathBuf> {
+    otto_kit::xdg::config_home()
+        .into_iter()
+        .chain(otto_kit::xdg::config_dirs())
+        .map(|dir| dir.join("autostart"))
+        .collect()
+}
+
+/// The `.desktop` files in `dirs`, given most important first, one per file
+/// name: the first directory that has a name is the one it is read from, so
+/// a user's file hides the system's (`Hidden=true` turns it off). Sorted by
+/// file name, so the launch order does not change from one login to the
+/// next.
+fn xdg_autostart_files(dirs: &[std::path::PathBuf]) -> Vec<std::path::PathBuf> {
+    let mut entries = std::collections::BTreeMap::new();
+    for dir in dirs {
+        let Ok(read_dir) = fs::read_dir(dir) else {
+            continue;
+        };
+        for entry in read_dir.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("desktop") {
+                continue;
+            }
+            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                entries.entry(name.to_string()).or_insert(path);
+            }
+        }
+    }
+    entries.into_values().collect()
+}
+
+/// What to do with one autostart entry.
+#[derive(Debug, PartialEq)]
+enum Autostart {
+    Start(String, Vec<String>),
+    /// Turned off, or not for this desktop.
+    Skip,
+    /// Meant to start, but there is nothing to run.
+    Broken(String),
+}
+
+/// Decide an autostart entry, by the autostart and desktop entry specs:
+/// `Hidden=true` and `X-GNOME-Autostart-enabled=false` turn it off,
+/// `OnlyShowIn`/`NotShowIn` are matched against `desktops`
+/// (`XDG_CURRENT_DESKTOP`, which Otto sets to `otto`), and a `TryExec`
+/// program that `exists` does not find skips it.
+fn autostart_command(
+    entry: &DesktopEntry,
+    desktops: &[String],
+    exists: impl Fn(&str) -> bool,
+) -> Autostart {
+    if entry.hidden()
+        || entry
+            .desktop_entry("X-GNOME-Autostart-enabled")
+            .is_some_and(|v| v.trim().eq_ignore_ascii_case("false"))
+    {
+        return Autostart::Skip;
+    }
+    let here = |names: Vec<&str>| {
+        names
+            .iter()
+            .any(|name| desktops.iter().any(|d| d.eq_ignore_ascii_case(name)))
+    };
+    if entry.only_show_in().is_some_and(|names| !here(names))
+        || entry.not_show_in().is_some_and(here)
+    {
+        return Autostart::Skip;
+    }
+    if entry.try_exec().is_some_and(|program| !exists(program)) {
+        return Autostart::Skip;
+    }
+    match entry.parse_exec() {
+        Ok(mut args) if !args.is_empty() => {
+            let cmd = args.remove(0);
+            Autostart::Start(cmd, args)
+        }
+        Ok(_) => Autostart::Broken("empty Exec".into()),
+        Err(e) => Autostart::Broken(format!("{e:?}")),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::config::shortcuts::RunCommandConfig;
+
+    fn entry(body: &str) -> DesktopEntry {
+        let text = format!("[Desktop Entry]\nType=Application\nName=App\n{body}");
+        DesktopEntry::from_str("/x/app.desktop", &text, None::<&[&str]>).unwrap()
+    }
+
+    fn decide(body: &str) -> Autostart {
+        autostart_command(&entry(body), &["otto".to_string()], |p| p == "present")
+    }
+
+    fn start(cmd: &str, args: &[&str]) -> Autostart {
+        Autostart::Start(cmd.into(), args.iter().map(|a| a.to_string()).collect())
+    }
+
+    #[test]
+    fn autostart_starts_a_plain_entry() {
+        assert_eq!(decide("Exec=mako --x"), start("mako", &["--x"]));
+    }
+
+    #[test]
+    fn autostart_honours_the_switches_that_turn_an_entry_off() {
+        assert_eq!(decide("Exec=a\nHidden=true"), Autostart::Skip);
+        assert_eq!(
+            decide("Exec=a\nX-GNOME-Autostart-enabled=false"),
+            Autostart::Skip
+        );
+        assert_eq!(
+            decide("Exec=a\nX-GNOME-Autostart-enabled=true"),
+            start("a", &[])
+        );
+        assert_eq!(decide("Exec=a\nTryExec=missing"), Autostart::Skip);
+        assert_eq!(decide("Exec=a\nTryExec=present"), start("a", &[]));
+    }
+
+    #[test]
+    fn autostart_matches_the_current_desktop() {
+        assert_eq!(decide("Exec=a\nOnlyShowIn=Otto;"), start("a", &[]));
+        assert_eq!(decide("Exec=a\nOnlyShowIn=GNOME;KDE;"), Autostart::Skip);
+        assert_eq!(decide("Exec=a\nNotShowIn=Otto;"), Autostart::Skip);
+        assert_eq!(decide("Exec=a\nNotShowIn=GNOME;"), start("a", &[]));
+    }
+
+    #[test]
+    fn autostart_reads_the_most_important_directory_first() {
+        let root = tempfile::tempdir().unwrap();
+        let dirs: Vec<_> = ["user", "first", "second"]
+            .iter()
+            .map(|name| root.path().join(name))
+            .collect();
+        for dir in &dirs {
+            fs::create_dir_all(dir).unwrap();
+            fs::write(dir.join("shared.desktop"), "").unwrap();
+        }
+        fs::write(dirs[2].join("only-second.desktop"), "").unwrap();
+        fs::write(dirs[1].join("not-an-entry.txt"), "").unwrap();
+        assert_eq!(
+            xdg_autostart_files(&dirs),
+            vec![
+                dirs[2].join("only-second.desktop"),
+                dirs[0].join("shared.desktop"),
+            ]
+        );
+    }
 
     #[test]
     fn builtin_quit_maps_to_key_action() {

@@ -73,31 +73,31 @@ xdg_autostart = true
 
 ### Directory Scan Order
 
-Otto scans directories in this order, with later entries overriding earlier ones by filename:
+Otto looks for each entry, by filename, in these directories, most important first:
 
-1. **System dirs**: each directory in `$XDG_CONFIG_DIRS` (defaults to `/etc/xdg`), with `/autostart` appended
-   ```
-   /etc/xdg/autostart/*.desktop
-   ```
-2. **User dir**: `$XDG_CONFIG_HOME/autostart` (defaults to `~/.config/autostart`)
+1. **User dir**: `$XDG_CONFIG_HOME/autostart` (defaults to `~/.config/autostart`)
    ```
    ~/.config/autostart/*.desktop
    ```
+2. **System dirs**: each directory in `$XDG_CONFIG_DIRS` (defaults to `/etc/xdg`), in the order listed, with `/autostart` appended
+   ```
+   /etc/xdg/autostart/*.desktop
+   ```
 
-If a user entry has the same filename as a system entry, the user entry takes precedence.
+The first directory holding a filename is the one it is read from: a user entry with the same filename as a system entry replaces it, and an earlier `$XDG_CONFIG_DIRS` entry replaces a later one. To turn off a system entry, copy it to `~/.config/autostart` and add `Hidden=true`. Entries start in filename order.
 
 ### Filtering Rules
-
-Otto implements the full XDG autostart filtering spec:
 
 | Field | Effect |
 |-------|--------|
 | `Hidden=true` | Entry is skipped |
-| `OnlyShowIn=Otto` | Only launched when running under Otto |
-| `NotShowIn=Otto` | Skipped when running under Otto |
-| _(neither set)_ | Always launched |
+| `X-GNOME-Autostart-enabled=false` | Entry is skipped |
+| `TryExec=<program>` | Skipped unless the program is an executable file (an absolute path, or a name on `$PATH`) |
+| `OnlyShowIn=…` | Only launched when one of the names is in `$XDG_CURRENT_DESKTOP` |
+| `NotShowIn=…` | Skipped when one of the names is in `$XDG_CURRENT_DESKTOP` |
+| _(none set)_ | Always launched |
 
-The desktop environment name matched is `Otto` (case-insensitive).
+Otto sets `XDG_CURRENT_DESKTOP=otto`, so `OnlyShowIn=Otto;` and `NotShowIn=Otto;` match it (names are compared case-insensitively).
 
 ### Example
 
