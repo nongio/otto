@@ -64,8 +64,10 @@ impl Source for Calculator {
         let answer = self.last.as_ref().ok_or("nothing to copy")?;
         // `wl-copy` forks and stays alive to serve the selection, which this
         // process cannot: it is about to exit, and a Wayland clipboard offer
-        // dies with the client that made it.
+        // dies with the client that made it. `--` keeps a negative answer
+        // from being read as an option.
         Command::new("wl-copy")
+            .arg("--")
             .arg(answer)
             .spawn()
             .map(|_| ())

@@ -88,7 +88,11 @@ pub enum FieldEdit {
 /// is the key press that asked for the copy.
 pub fn copy_to_clipboard(text: &str, serial: u32) {
     clipboard::set_text(text, serial);
-    if let Err(err) = std::process::Command::new("wl-copy").arg(text).spawn() {
+    // `--`: text starting with `-` is the text, not an option.
+    if let Err(err) = std::process::Command::new("wl-copy")
+        .args(["--", text])
+        .spawn()
+    {
         tracing::debug!(%err, "wl-copy is not available: the copy lasts as long as the program");
     }
 }
