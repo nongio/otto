@@ -5,8 +5,9 @@
 //! go there. From the middle of the output on, it follows the pointer
 //! further out the further right the pointer goes ([`PeekFollow`]). Turning
 //! back left takes it in to where it started, and it stops following: the
-//! user does not want it. Reaching the last stretch of the output opens it
-//! either way, so an item can take the drop ([`in_open_zone`],
+//! user does not want it. Heading right again nudges it out, and going on
+//! makes it follow once more. Reaching the last stretch of the output opens
+//! it either way, so an item can take the drop ([`in_open_zone`],
 //! [`EdgeDwell`]). When the drag ends the canvas goes again, unless it was
 //! open before the drag or the drop landed on an item
 //! ([`hide_when_drag_ends`]). A press outside a shown canvas reaches what is
@@ -25,18 +26,24 @@ pub const FOLLOW_FROM: f64 = 0.5;
 /// the canvas.
 pub const OPEN_FRACTION: f64 = 0.1;
 
-/// How far out the canvas peeks while a drag goes on, from 0 (hidden) to 1
-/// (shown).
+/// How much of the column is on screen while the canvas peeks during a
+/// drag, from 0 (none) to 1 (all of it, where it rests when shown).
 pub const PEEK_MIN: f64 = 0.1;
 
-/// How far out a following canvas is when the pointer reaches the stretch
-/// that opens it.
-pub const PEEK_MAX: f64 = 0.5;
+/// How much of the column is on screen when the pointer reaches the stretch
+/// that opens it: all of it, so a drag heading there finds the canvas out.
+pub const PEEK_MAX: f64 = 1.0;
 
-/// How far the pointer goes back left, in logical points, before a
-/// following canvas takes it as turning away. Enough to ride out the drift
-/// of a touchpad.
-pub const RETREAT_POINTS: f64 = 24.0;
+/// How far the pointer goes back left, as a fraction of the output's width,
+/// before a following canvas takes it as turning away; and how far right
+/// again, after that, before it follows once more. Well past the drift of a
+/// touchpad or a hand correcting its aim.
+pub const TURN_FRACTION: f64 = 0.08;
+
+/// How much further out than [`PEEK_MIN`] a turned-away canvas comes as the
+/// pointer heads right again, at most, just before it follows once more: a
+/// hint that going on brings it back.
+pub const RESUME_NUDGE: f64 = 0.05;
 
 /// How long a drag rests in the stretch that opens the canvas before it
 /// does. Short, but enough that a drag on its way to an output further
@@ -53,32 +60,74 @@ pub fn in_open_zone(x: f64, output_left: f64, output_width: f64) -> bool {
     x >= output_left + output_width * (1.0 - OPEN_FRACTION)
 }
 
-/// How far out a peeking canvas is as the pointer moves, and when it turns
-/// back.
+/// What a look at the pointer changed about following it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FollowChange {
+    /// Nothing: the canvas goes on as it was.
+    None,
+    /// The pointer turned back: the canvas goes in to [`PEEK_MIN`] and stops
+    /// following.
+    TurnedAway,
+    /// The pointer headed right again after turning back: the canvas follows
+    /// once more.
+    Resumed,
+}
+
+/// How far out a peeking canvas is as the pointer moves.
 ///
 /// [`PEEK_MIN`] left of the middle of the output, growing from there to
 /// [`PEEK_MAX`] where the stretch that opens the canvas starts. The pointer
-/// going back left by [`RETREAT_POINTS`] from the furthest right it has
-/// been, while the canvas follows it, is turning back.
+/// going back left by [`TURN_FRACTION`] of the output from the furthest right
+/// it has been, past the middle, turns it away: it stays near [`PEEK_MIN`],
+/// nudged out by up to [`RESUME_NUDGE`] as the pointer heads right again,
+/// and follows once more when the pointer has gone as far right as it went
+/// back.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct PeekFollow {
-    /// The furthest right the pointer has been, since the drag started or it
-    /// last turned back.
+    /// The furthest right the pointer has been while followed.
     furthest: Option<f64>,
+    /// The furthest left the pointer has been since it turned away, while
+    /// turned away.
+    lowest: Option<f64>,
 }
 
 impl PeekFollow {
-    /// The progress for a pointer at `x` on an output whose left edge is at
-    /// `output_left` and `output_width` wide, and whether the pointer has
-    /// just turned back.
-    pub fn observe(&mut self, x: f64, output_left: f64, output_width: f64) -> (f64, bool) {
+    /// How much of the column is on screen for a pointer at `x` on an
+    /// output whose left edge is at `output_left` and `output_width` wide,
+    /// and what changed.
+    pub fn observe(&mut self, x: f64, output_left: f64, output_width: f64) -> (f64, FollowChange) {
         let from = output_left + output_width * FOLLOW_FROM;
         let to = output_left + output_width * (1.0 - OPEN_FRACTION);
-        let furthest = self.furthest.map_or(x, |f| f.max(x));
-        let retreated = furthest > from && furthest - x >= RETREAT_POINTS;
-        self.furthest = Some(if retreated { x } else { furthest });
+        let turn = output_width * TURN_FRACTION;
         let depth = ((x - from) / (to - from).max(1.0)).clamp(0.0, 1.0);
-        (PEEK_MIN + (PEEK_MAX - PEEK_MIN) * depth, retreated)
+        let following = PEEK_MIN + (PEEK_MAX - PEEK_MIN) * depth;
+
+        if let Some(lowest) = self.lowest {
+            let lowest = lowest.min(x);
+            let back = x - lowest;
+            if back >= turn && following > PEEK_MIN {
+                self.lowest = None;
+                self.furthest = Some(x);
+                return (following, FollowChange::Resumed);
+            }
+            self.lowest = Some(lowest);
+            let nudge = PEEK_MIN + RESUME_NUDGE * (back / turn).clamp(0.0, 1.0);
+            return (nudge, FollowChange::None);
+        }
+
+        let furthest = self.furthest.map_or(x, |f| f.max(x));
+        if furthest > from && furthest - x >= turn {
+            self.furthest = None;
+            self.lowest = Some(x);
+            return (PEEK_MIN, FollowChange::TurnedAway);
+        }
+        self.furthest = Some(furthest);
+        (following, FollowChange::None)
+    }
+
+    /// Whether the pointer has turned away and not headed back since.
+    pub fn turned_away(&self) -> bool {
+        self.lowest.is_some()
     }
 }
 
@@ -125,10 +174,6 @@ pub struct DragSession {
     pub open_dwell: EdgeDwell,
     /// How far out the canvas is while it peeks.
     pub follow: PeekFollow,
-    /// The pointer turned back while the canvas followed it: it stays at
-    /// [`PEEK_MIN`] for the rest of the drag, unless the pointer reaches the
-    /// stretch that opens it.
-    pub dismissed: bool,
 }
 
 /// Whether the canvas hides as a drag ends: only when the drag opened it
@@ -171,33 +216,58 @@ mod tests {
         assert!(!in_open_zone(LEFT, LEFT, WIDTH));
     }
 
+    const TURN: f64 = WIDTH * TURN_FRACTION;
+
     #[test]
     fn the_peek_follows_from_the_middle_to_the_opening_stretch() {
         let mut follow = PeekFollow::default();
-        assert_eq!(follow.observe(LEFT, LEFT, WIDTH), (PEEK_MIN, false));
-        assert_eq!(follow.observe(FROM, LEFT, WIDTH), (PEEK_MIN, false));
+        let none = FollowChange::None;
+        assert_eq!(follow.observe(LEFT, LEFT, WIDTH), (PEEK_MIN, none));
+        assert_eq!(follow.observe(FROM, LEFT, WIDTH), (PEEK_MIN, none));
         let (mid, _) = follow.observe((FROM + OPEN) / 2.0, LEFT, WIDTH);
         assert!((mid - (PEEK_MIN + PEEK_MAX) / 2.0).abs() < 1e-9);
-        assert_eq!(follow.observe(OPEN, LEFT, WIDTH), (PEEK_MAX, false));
-        assert_eq!(follow.observe(LEFT + WIDTH, LEFT, WIDTH), (PEEK_MAX, false));
+        assert_eq!(follow.observe(OPEN, LEFT, WIDTH), (PEEK_MAX, none));
+        assert_eq!(follow.observe(LEFT + WIDTH, LEFT, WIDTH), (PEEK_MAX, none));
     }
 
     #[test]
-    fn going_back_left_while_following_is_turning_back() {
+    fn going_back_left_while_following_turns_it_away() {
         let mut follow = PeekFollow::default();
-        follow.observe(OPEN - 100.0, LEFT, WIDTH);
-        let (_, turned) = follow.observe(OPEN - 100.0 - RETREAT_POINTS / 2.0, LEFT, WIDTH);
-        assert!(!turned, "a little drift is not turning back");
-        let (_, turned) = follow.observe(OPEN - 100.0 - RETREAT_POINTS, LEFT, WIDTH);
-        assert!(turned);
+        follow.observe(OPEN - 10.0, LEFT, WIDTH);
+        let (_, change) = follow.observe(OPEN - 10.0 - TURN / 2.0, LEFT, WIDTH);
+        assert_eq!(
+            change,
+            FollowChange::None,
+            "correcting aim is not turning back"
+        );
+        assert_eq!(
+            follow.observe(OPEN - 11.0 - TURN, LEFT, WIDTH),
+            (PEEK_MIN, FollowChange::TurnedAway)
+        );
+        assert!(follow.turned_away());
+    }
+
+    #[test]
+    fn heading_right_again_nudges_then_follows_once_more() {
+        let mut follow = PeekFollow::default();
+        let low = OPEN - 11.0 - TURN;
+        follow.observe(OPEN - 10.0, LEFT, WIDTH);
+        follow.observe(low, LEFT, WIDTH);
+        let (nudged, change) = follow.observe(low + TURN / 2.0, LEFT, WIDTH);
+        assert_eq!(change, FollowChange::None);
+        assert!(nudged > PEEK_MIN && nudged <= PEEK_MIN + RESUME_NUDGE);
+        let (back, change) = follow.observe(low + TURN + 1.0, LEFT, WIDTH);
+        assert_eq!(change, FollowChange::Resumed);
+        assert!(back > PEEK_MIN + RESUME_NUDGE);
+        assert!(!follow.turned_away());
     }
 
     #[test]
     fn going_left_before_the_middle_is_not_turning_back() {
         let mut follow = PeekFollow::default();
         follow.observe(FROM - 10.0, LEFT, WIDTH);
-        let (_, turned) = follow.observe(LEFT, LEFT, WIDTH);
-        assert!(!turned);
+        let (_, change) = follow.observe(LEFT, LEFT, WIDTH);
+        assert_eq!(change, FollowChange::None);
     }
 
     #[test]

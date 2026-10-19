@@ -80,7 +80,11 @@ const FLICK_VELOCITY: f64 = 300.0;
 
 /// How long a peeking canvas takes to catch up with the pointer, in seconds:
 /// a little over the time between two looks at it during a drag.
-const PEEK_FOLLOW_DURATION: f32 = 0.08;
+const PEEK_FOLLOW_DURATION: f32 = 0.06;
+
+/// How long a peeking canvas takes to go in when the pointer turns away, or
+/// out when it comes back, in seconds: slow enough to read as an answer.
+const PEEK_TURN_DURATION: f32 = 0.3;
 
 /// Room around the items, in physical pixels, for what an item draws past
 /// its edges: the drop shadow a panel asks for through its surface style.
@@ -205,6 +209,15 @@ impl ColumnGeometry {
     /// The distance, in physical pixels, between hidden and shown.
     fn travel_px(&self) -> f64 {
         (self.hidden_x_px - self.shown_x_px).max(1.0)
+    }
+
+    /// The progress at which `visible` of the way from the output's right
+    /// edge to where the column rests shown is on screen, from 0 to 1.
+    /// Hidden is a bleed past the edge, so a small progress shows nothing
+    /// but shadow.
+    fn progress_showing(&self, visible: f64) -> f64 {
+        let edge_px = self.hidden_x_px - self.bleed_px;
+        self.progress_at(edge_px - (edge_px - self.shown_x_px) * visible.clamp(0.0, 1.0))
     }
 }
 
@@ -455,9 +468,9 @@ impl<B: Backend> Otto<B> {
         true
     }
 
-    /// Slide `progress` of the canvas out, as a drag near the edge does.
-    /// Returns whether it is now peeking.
-    fn canvas_peek(&mut self, progress: f64) -> bool {
+    /// Slide the canvas out until `visible` of it is on screen, as a drag
+    /// does. Returns whether it is now peeking.
+    fn canvas_peek(&mut self, visible: f64) -> bool {
         self.canvas_finish_close_if_done();
         if self.is_session_locked() || self.canvas_suspended() || !self.canvas_available() {
             return false;
@@ -473,27 +486,32 @@ impl<B: Backend> Otto<B> {
             Phase::Closing { .. } => {}
         }
         self.canvas.phase = Phase::Peeking;
+        let progress = self
+            .canvas_geometry()
+            .map_or(visible, |geometry| geometry.progress_showing(visible));
         self.canvas.drag_progress = progress;
         self.canvas_place_column(progress, true);
         true
     }
 
-    /// Move a peeking canvas to `progress`, easing over about one look at
-    /// the pointer so it glides rather than steps.
-    fn canvas_peek_follow(&mut self, progress: f64) {
-        if (progress - self.canvas.drag_progress).abs() < f64::EPSILON {
-            return;
-        }
-        self.canvas.drag_progress = progress;
+    /// Move a peeking canvas until `visible` of it is on screen, easing over
+    /// `duration` seconds: about one look at the pointer, so it glides
+    /// rather than steps, or longer for a turn.
+    fn canvas_peek_follow(&mut self, visible: f64, duration: f32) {
         let (Some(geometry), Some(column)) = (self.canvas_geometry(), self.canvas.column.clone())
         else {
             return;
         };
+        let progress = geometry.progress_showing(visible);
+        if (progress - self.canvas.drag_progress).abs() < f64::EPSILON {
+            return;
+        }
+        self.canvas.drag_progress = progress;
         column.set_position(
             geometry.layer_position(progress),
             Some(Transition {
                 delay: 0.0,
-                timing: TimingFunction::ease_out_quad(PEEK_FOLLOW_DURATION),
+                timing: TimingFunction::ease_out_quad(duration),
             }),
         );
         self.canvas_request_redraw();
@@ -1052,7 +1070,8 @@ impl<B: Backend> Otto<B> {
     /// Look at the pointer during a drag. The canvas peeks out on the
     /// output under it, and from the middle of that output on follows it,
     /// further out the further right it goes: a drop can go here. Turning
-    /// back left takes it in to where it started, and it stops following.
+    /// back left takes it in to where it started, and it stops following
+    /// until the pointer heads right as far again.
     /// Resting in the last stretch of the output opens it either way.
     /// Returns whether the drag is still going on.
     fn canvas_drag_tick(&mut self) -> bool {
@@ -1079,17 +1098,20 @@ impl<B: Backend> Otto<B> {
         let open = session
             .open_dwell
             .observe(in_open_zone, now, drag::OPEN_DWELL);
-        let (progress, retreated) = span.map_or((drag::PEEK_MIN, false), |(left, width)| {
-            session.follow.observe(location.x, left, width)
-        });
-        if retreated && peeking && !session.dismissed {
-            session.dismissed = true;
-            tracing::debug!("canvas peek dismissed by turning back");
-        }
-        let progress = if session.dismissed {
-            drag::PEEK_MIN
-        } else {
-            progress
+        let (progress, change) = span.map_or(
+            (drag::PEEK_MIN, drag::FollowChange::None),
+            |(left, width)| session.follow.observe(location.x, left, width),
+        );
+        let duration = match change {
+            drag::FollowChange::None => PEEK_FOLLOW_DURATION,
+            drag::FollowChange::TurnedAway => {
+                tracing::debug!("canvas peek turned away");
+                PEEK_TURN_DURATION
+            }
+            drag::FollowChange::Resumed => {
+                tracing::debug!("canvas peek follows again");
+                PEEK_TURN_DURATION
+            }
         };
 
         if open && !self.canvas_is_shown() {
@@ -1110,7 +1132,7 @@ impl<B: Backend> Otto<B> {
             if output.is_some() && output != self.canvas.output && self.canvas_bring_on_screen() {
                 self.canvas_place_column(self.canvas.drag_progress, false);
             }
-            self.canvas_peek_follow(progress);
+            self.canvas_peek_follow(progress, duration);
         } else if matches!(self.canvas.phase, Phase::Hidden | Phase::Closing { .. })
             && self.canvas_peek(progress)
         {
@@ -1565,6 +1587,16 @@ mod tests {
             let x = f64::from(g.layer_position(progress).x);
             assert!((g.progress_at_layer(x) - progress).abs() < 1e-3);
         }
+    }
+
+    #[test]
+    fn showing_counts_from_the_edge_not_from_the_bleed() {
+        let g = geometry();
+        let edge_px = g.hidden_x_px - g.bleed_px;
+        assert!(g.progress_showing(0.0) > 0.0, "the bleed is crossed first");
+        assert!((g.progress_showing(1.0) - 1.0).abs() < 1e-9);
+        let tenth = g.x_for(g.progress_showing(0.1));
+        assert!((edge_px - tenth - (edge_px - g.shown_x_px) * 0.1).abs() <= 1.0);
     }
 
     #[test]

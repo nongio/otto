@@ -206,13 +206,16 @@ one swipe away and out of the way the rest of the time.
 - Every drag and drop operation is announced to every manager (version 4)
   with `drag_mime_type` events and `drag_started`, and its end with
   `drag_ended`, whether it was dropped or cancelled.
-- As soon as a drag starts, the canvas peeks out 10% of the way on the
-  output under the pointer, and goes with the pointer to another output.
-  From the middle of that output on, it follows the pointer: 10% at the
-  middle, growing to 50% where the last tenth of the output starts. A
-  peeking canvas takes no presses.
-- The pointer turning back left by 24 points while the canvas follows it
-  takes it in to 10% again, and it stays there for the rest of the drag.
+- As soon as a drag starts, the canvas peeks out on the output under the
+  pointer, with a tenth of the column on screen, and goes with the pointer
+  to another output. From the middle of that output on, it follows the
+  pointer, more of it on screen the further right the pointer goes, all of
+  it where the last tenth of the output starts: a drag heading there finds
+  the canvas out. A peeking canvas takes no presses.
+- The pointer turning back left by 8% of the output's width while the
+  canvas follows it takes it in to a tenth again (eased over 0.3 s), and it
+  stops following. Heading right again nudges it out a little more, up to
+  15%, and going right as far as it went back makes it follow once more.
 - The pointer resting in the last tenth of the output for 150 ms opens the
   canvas, turned back or not, as an item's `show` does: passive, without
   moving the keyboard. Once open it stays open for the rest of the drag.
@@ -336,11 +339,13 @@ are read the next time the column is laid out.
   as a drag starts tells the user a drop can go there before they have to
   look for it; it covers little, so a drag meant for a window is not in its
   way. Following from the middle shows that going right brings it out, and
-  starts early enough for it to be well out by the time the pointer reaches
-  the edge. Turning back is the user saying they do not want it, so it goes
-  back to the first step, as an undo, and stops following; going all the
-  way to the edge is still a clear enough ask to open it. The short rest
-  there keeps a drag on its way to an output further right from opening it.
+  has it all the way out by the time the pointer reaches the edge. Turning
+  back is the user saying they do not want it, so it goes back to the first
+  step, as an undo, and stops following; it has to be a clear move, not a
+  hand correcting its aim. The nudge as the pointer heads right again says
+  the undo can itself be undone, and going on does it. Going all the way to
+  the edge is always a clear enough ask to open it. The short rest there
+  keeps a drag on its way to an output further right from opening it.
 - **Drags are announced to everyone.** A client with nothing in the canvas
   may still want the drop (the stash starts one); it cannot add an item for
   it unless it knows a drag is on. The mime types let it add one only for
