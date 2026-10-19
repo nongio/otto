@@ -19,14 +19,14 @@
 
 ## Where things are
 - `src/main.rs`: argument parsing, one call per `-t` type, and JSON printing.
-- `src/doctor/`: `mod.rs` (options, choosing between the interface, `--print` and a non-interactive write), `sections.rs` (each section's reader, everything read through `Sources`), `logs.rs` (where Otto's logs are), `compositor.rs` (the `DebugInfo` call), `redact.rs`, `report.rs` (Markdown, file name, issue link), `term.rs` and `tui.rs` (the terminal and the chooser).
+- `src/doctor/`: `mod.rs` (options, choosing between the interface, `--print` and a non-interactive write), `sections.rs` (each section's reader, everything read through `Sources`), `logs.rs` (where Otto's logs are), `summary.rs` (the last `otto::summary` line in a log, used when the compositor cannot answer), `compositor.rs` (the `DebugInfo` call), `redact.rs`, `report.rs` (Markdown, file name, issue link), `term.rs` and `tui.rs` (the terminal and the chooser).
 - The services live in the compositor: `src/shell_service.rs` and `src/screenshare/dbus_service.rs` at the repository root; `DebugInfo`'s JSON is built in `src/debug_info.rs`.
 
 ## Rules
 - The wire contracts are [shell-dbus-api.md](../../docs/developer/shell-dbus-api.md) and [compositor-dbus-api.md](../../docs/developer/compositor-dbus-api.md). A change to the commands or the JSON goes there and into the user guides, [scripting.md](../../docs/user/scripting.md) and [bug-reports.md](../../docs/user/bug-reports.md).
 - `doctor` sends nothing anywhere. It writes a file, may copy it to the clipboard, and prints a link; the user attaches the file.
 - Redaction is on by default, and the preview shows the text after redaction: what the user reads is what is written. Sections that can hold personal choices (configuration, logs) are off by default.
-- Every doctor section still renders when Otto is not running, saying the compositor is not reachable.
+- Every doctor section still renders when Otto is not running: from the last `otto::summary` log line, marked as not live, or else saying the compositor is not reachable. The line's format is in [compositor-dbus-api.md](../../docs/developer/compositor-dbus-api.md); the compositor writes it in `src/debug_info.rs`.
 - The user guides are copied into the Otto plugin's help skill. After editing one, run `scripts/sync-skill-docs.sh`; CI checks the copies with `--check`.
 
 ## See also

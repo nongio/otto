@@ -48,8 +48,19 @@ Each section has a one-line summary shown in the list.
 **The compositor.** Graphics renderer, Screens and Otto come from the running
 compositor's `org.otto.Compositor.DebugInfo`. When the compositor is not on
 the session bus, does not answer within three seconds, or is too old to have
-the method, those parts say so ("compositor not reachable", "compositor is
-running but too old to report this") and the rest of the report is unchanged.
+the method, those parts are filled from the last `otto::summary` line in the
+newest log that has one (in the order of *Finding the logs*, files only:
+Otto's logs, a running Otto's stderr file, the `otto-session` logs). Each of
+those sections then names the log and says the details are not live, and its
+summary ends in `(from <log>)`. With no such line anywhere, they say so
+("compositor not reachable", "compositor is running but too old to report
+this") and the rest of the report is unchanged.
+
+**The summary line.** The compositor logs its `DebugInfo` JSON at `info` as
+`session summary: <JSON>` under the target `otto::summary`, once the renderer
+and an output are up and again whenever the outputs change (added, removed,
+mode, scale, position). An unchanged session logs it once. The reader ignores
+colour codes and every other line.
 The configuration section then lists the usual locations: the system file,
 the user's file, and the local override files in the home folder.
 

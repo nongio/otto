@@ -11,7 +11,7 @@ use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
 use crate::doctor::compositor::DebugInfo;
-use crate::doctor::logs;
+use crate::doctor::{logs, summary};
 
 /// Which part of the report a section is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -83,11 +83,31 @@ const MAX_LOG_BYTES: u64 = 8 * 1024 * 1024;
 ///
 /// `all` selects every section, as `--all` does.
 pub fn gather(sources: &Sources, all: bool) -> Vec<Section> {
+    // When the compositor cannot answer, the last summary it logged stands
+    // in for it, and the sections built from it say so.
+    let logged = match &sources.compositor {
+        Ok(_) => None,
+        Err(reason) => summary::from_logs(logs::Places {
+            proc_root: &sources.root.join("proc"),
+            log_dir: sources.log_dir.as_deref(),
+            reported: None,
+            uid: sources.uid,
+        })
+        .map(|(info, from)| (info, from, reason.as_str())),
+    };
+    let live = match (&sources.compositor, &logged) {
+        (Ok(info), _) => Ok(info),
+        (Err(_), Some((info, _, _))) => Ok(info),
+        (Err(reason), None) => Err(reason.as_str()),
+    };
+    let note = logged
+        .as_ref()
+        .map(|(_, from, reason)| Logged { from, reason });
     let mut sections = vec![
         os(sources),
-        gpu(sources),
-        screens(sources),
-        otto(sources),
+        with_note(gpu(sources, live), note),
+        with_note(screens(live), note),
+        with_note(otto(live), note),
         config(sources),
         logs(sources),
     ];
@@ -97,6 +117,31 @@ pub fn gather(sources: &Sources, all: bool) -> Vec<Section> {
         }
     }
     sections
+}
+
+/// Where the compositor's details came from when it could not answer.
+#[derive(Debug, Clone, Copy)]
+struct Logged<'a> {
+    /// The log the summary line was read from.
+    from: &'a str,
+    /// Why the compositor could not answer.
+    reason: &'a str,
+}
+
+/// `section`, saying it was read from a log when `logged` is set.
+fn with_note(mut section: Section, logged: Option<Logged<'_>>) -> Section {
+    if let Some(Logged { from, reason }) = logged {
+        let _ = writeln!(
+            section.body,
+            "- Not live: read from the last session summary in {from}, because the \
+             compositor {reason}"
+        );
+        let name = Path::new(from)
+            .file_name()
+            .map_or_else(|| from.to_owned(), |n| n.to_string_lossy().into_owned());
+        section.summary = format!("{} (from {name})", section.summary);
+    }
+    section
 }
 
 /// Distribution and kernel version.
@@ -224,7 +269,7 @@ fn vendor_name(id: &str) -> Option<&'static str> {
 }
 
 /// Graphics cards, kernel drivers and the renderer the session uses.
-fn gpu(sources: &Sources) -> Section {
+fn gpu(sources: &Sources, live: Result<&DebugInfo, &str>) -> Section {
     let cards = cards(&sources.root);
     let mut body = String::new();
     let mut summary = Vec::new();
@@ -248,7 +293,7 @@ fn gpu(sources: &Sources) -> Section {
             None => vendor.to_owned(),
         });
     }
-    match &sources.compositor {
+    match live {
         Ok(info) => {
             match &info.renderer {
                 Some(r) => {
@@ -301,8 +346,8 @@ fn refresh_text(mhz: i64) -> String {
 }
 
 /// Every output with its mode, refresh, scale and position.
-fn screens(sources: &Sources) -> Section {
-    let (summary, body) = match &sources.compositor {
+fn screens(live: Result<&DebugInfo, &str>) -> Section {
+    let (summary, body) = match live {
         Ok(info) if info.outputs.is_empty() => (
             "no outputs".to_owned(),
             "- The compositor reports no outputs\n".to_owned(),
@@ -351,9 +396,9 @@ fn screens(sources: &Sources) -> Section {
 }
 
 /// Otto's version, commit and backend, and this tool's version.
-fn otto(sources: &Sources) -> Section {
+fn otto(live: Result<&DebugInfo, &str>) -> Section {
     let doctor = env!("CARGO_PKG_VERSION");
-    let (summary, body) = match &sources.compositor {
+    let (summary, body) = match live {
         Ok(info) => {
             let commit = info
                 .git_commit
@@ -521,7 +566,7 @@ fn line_count(n: usize) -> String {
 /// The last `n` lines of `path`: the text, how many lines it holds, and how
 /// many the file has in all (counting only the part read, past
 /// [`MAX_LOG_BYTES`]).
-fn tail_lines(path: &Path, n: usize) -> Option<(String, usize, usize)> {
+pub(crate) fn tail_lines(path: &Path, n: usize) -> Option<(String, usize, usize)> {
     let mut file = fs::File::open(path).ok()?;
     let len = file.metadata().ok()?.len();
     let start = len.saturating_sub(MAX_LOG_BYTES);
@@ -750,6 +795,37 @@ mod tests {
             .body
             .contains("- Renderer: compositor not reachable (no owner)\n"));
         assert!(section(&sections, SectionId::Gpu).body.contains("card0"));
+    }
+
+    #[test]
+    fn a_logged_summary_stands_in_for_an_unreachable_compositor() {
+        let dir = fixture_root();
+        let info = r#"{"version":"1.7.2","backend":"udev","outputs":[{"name":"DP-2","width":1920,"height":1080,"refresh_mhz":60000,"scale":1.0}]}"#;
+        write(
+            dir.path(),
+            "state/otto/otto.log.1",
+            &format!(
+                "INFO otto: up\nINFO otto::summary: session summary: {info}\nWARN otto: bye\n"
+            ),
+        );
+        let reason = "not reachable (no owner)".to_owned();
+        let sections = gather(&sources(dir.path(), Err(reason)), false);
+
+        let otto = section(&sections, SectionId::Otto);
+        assert_eq!(otto.summary, "1.7.2 on udev (from otto.log.1)");
+        let log = dir.path().join("state/otto/otto.log.1");
+        assert!(otto.body.ends_with(&format!(
+            "- Not live: read from the last session summary in {}, because the compositor \
+             not reachable (no owner)\n",
+            log.display()
+        )));
+        let screens = section(&sections, SectionId::Screens);
+        assert!(screens
+            .body
+            .starts_with("- DP-2: 1920×1080 @ 60 Hz, scale 1, at 0,0\n"));
+        assert!(section(&sections, SectionId::Gpu)
+            .body
+            .contains("- Renderer: not reported by the compositor\n"));
     }
 
     #[test]

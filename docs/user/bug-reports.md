@@ -77,11 +77,14 @@ is not replaced.
 
 ## When Otto is not running
 
-`otto-msg doctor` asks the running Otto for its version, renderer and screens. When
-it cannot, because Otto crashed or you are in another session, those sections
-say "compositor not reachable" and the report still has everything else. The
-configuration section then lists the usual files, and the session logs from
-the last run are still there to include.
+`otto-msg doctor` asks the running Otto for its version, renderer and screens.
+When it cannot, because Otto crashed or you are in another session, it reads
+them from the summary Otto writes to its log at startup instead: the Graphics,
+Screens and Otto sections then say which log they came from and that the
+details are not live. With no log to read either, those sections say
+"compositor not reachable" and the report still has everything else. The
+configuration section then lists the usual files, and the logs from the last
+run are still there to include.
 
 ## Options
 

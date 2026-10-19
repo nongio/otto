@@ -12,6 +12,7 @@ mod logs;
 mod redact;
 mod report;
 mod sections;
+mod summary;
 mod term;
 mod tui;
 
