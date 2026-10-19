@@ -100,6 +100,16 @@ Otto is the compositor plus a set of separate programs it starts by name: `otto-
 
 Build prerequisites, backends, feature flags and the component crates are in [Project Structure](./docs/developer/project-structure.md). The [Developer Guide](https://nongio.github.io/otto/developer/) covers the architecture, rendering and the rest; the same pages live in [docs/developer/](./docs/developer/README.md).
 
+## Reporting a problem
+
+Run this in a terminal:
+
+```sh
+otto-msg doctor
+```
+
+It gathers your system, graphics, screens, configuration and Otto's logs, lets you choose what to share and hides personal details, then writes one file to attach to a [new issue](https://github.com/nongio/otto/issues/new). Nothing is uploaded. It works even when Otto is not running. More in [Reporting a Bug](https://nongio.github.io/otto/bug-reports/).
+
 ## Contributing
 
 Bug reports, testing on your hardware, features and ideas are all welcome: the [issue tracker](https://github.com/nongio/otto/issues), [Discord](https://discord.gg/Mp7cBfaACD) or [Matrix](https://matrix.to/#/#otto-compositor:matrix.org). [AGENTS.md](AGENTS.md) and the developer docs are written for human contributors and coding agents alike.
