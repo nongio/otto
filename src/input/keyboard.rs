@@ -305,8 +305,17 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         &mut self,
         evt: B::KeyboardKeyEvent,
     ) -> KeyAction {
+        let before = self.seat.get_keyboard().map(|k| k.modifier_state());
         let action = self.key_to_action::<B>(evt);
         self.note_active_layout();
+        // The drag's action is settled when the target answers a motion, and
+        // a key pressed with the pointer held still sends none: Ctrl, then
+        // Shift, would leave the copy cursor up over a drop that is about to
+        // make a link. Sending the motion again has the target answer, and
+        // `choose_dnd_action` read the keys as they are now.
+        if self.dnd_active && self.seat.get_keyboard().map(|k| k.modifier_state()) != before {
+            self.restore_pointer_focus();
+        }
         action
     }
 

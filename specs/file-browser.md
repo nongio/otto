@@ -1328,9 +1328,10 @@ duplicate is made.
 **The action is chosen with modifiers.** A drop moves by default; Ctrl held
 during the drag copies, Shift moves, and Ctrl+Shift makes a link — the chord
 every Linux file manager shares. The compositor reads the modifiers from the
-keyboard when it settles the action, which it does on every motion, so a key
-pressed or released in place takes effect at the next one; the cursor says
-which action it settled on. A chord never turns into a move: Ctrl+Shift over a
+keyboard when it settles the action, which it does on every motion. A
+modifier pressed or released mid-drag re-sends the pointer's motion to the
+target, so pressing Ctrl and then Shift with the pointer still updates the
+action and the cursor at once; the cursor says which action it settled on. A chord never turns into a move: Ctrl+Shift over a
 target that takes no link copies, and any other chord the target cannot take
 settles on nothing. Without a chord the target's preference stands, and when
 it has none the least destructive action left is taken — a copy before a move,

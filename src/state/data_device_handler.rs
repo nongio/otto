@@ -46,8 +46,9 @@ impl<BackendData: Backend> DataDeviceHandler for Otto<BackendData> {
 /// chosen — Copy before Move — and Ask, being a link, only when nothing else
 /// is.
 ///
-/// Asked on every `set_actions`, which a target sends on every motion: a
-/// modifier pressed or released in place takes effect at the next motion.
+/// Asked on every `set_actions`, which a target sends on every motion. A
+/// modifier pressed or released during a drag re-sends the motion
+/// (`Otto::dnd_active`), so the keys take effect with the pointer held still.
 fn choose_dnd_action(
     ctrl: bool,
     shift: bool,

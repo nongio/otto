@@ -346,6 +346,11 @@ pub struct Otto<BackendData: Backend + 'static> {
     pub xwayland_shell_state: xwayland_shell::XWaylandShellState,
 
     pub dnd_icon: Option<WlSurface>,
+    /// A pointer drag-and-drop grab is in progress. A modifier pressed or
+    /// released during one re-sends the pointer's motion, so the target
+    /// answers again and the action follows the keys without the pointer
+    /// having to move; see `keyboard_key_to_action`.
+    pub dnd_active: bool,
     /// Every surface a drag icon has had a layer built for, so the next drag
     /// can sweep them whether or not those surfaces are still alive.
     pub dnd_layer_ids: Vec<ObjectId>,
@@ -1196,6 +1201,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             pending_screencopy_frames: Vec::new(),
             virtual_pointer_manager_state,
             dnd_icon: None,
+            dnd_active: false,
             dnd_layer_ids: Vec::new(),
             pending_dnd_cleanup: None,
             pending_raise: None,
