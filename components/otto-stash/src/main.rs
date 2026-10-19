@@ -876,6 +876,7 @@ impl State {
             layout,
             &self.scroll,
             self.hovered_item,
+            self.pressed,
             canvas,
             (w, h),
             scale,
@@ -987,6 +988,7 @@ impl State {
                 self.refresh();
             }
             Hit::Clear => self.on_command(Command::Cancel),
+            Hit::Send => self.on_command(Command::Send),
         }
     }
 
@@ -1196,6 +1198,9 @@ impl Dispatch<wl_pointer::WlPointer, ()> for State {
                     // A press on a button clicks it, one on the scrollbar
                     // scrolls, and anywhere else drags the card.
                     state.pressed = state.hit_at_pointer();
+                    if state.pressed == Some(Hit::Send) {
+                        state.draw_panel();
+                    }
                     let on_card = state.panel.as_ref().and_then(Card::pointer_on_card);
                     let on_thumb = on_card
                         .is_some_and(|(x, y)| state.scroll.on_pointer_down(x as f32, y as f32));
@@ -1215,6 +1220,9 @@ impl Dispatch<wl_pointer::WlPointer, ()> for State {
                     let pressed = state.pressed.take();
                     if let Some(hit) = pressed.filter(|&hit| state.hit_at_pointer() == Some(hit)) {
                         state.on_click(hit);
+                    } else if pressed == Some(Hit::Send) {
+                        // Slid off before letting go: no longer held.
+                        state.draw_panel();
                     }
                     // Clicked, not dragged: the card is where it was.
                     let origin = state.panel.as_ref().map(Card::card_origin);
@@ -1227,7 +1235,9 @@ impl Dispatch<wl_pointer::WlPointer, ()> for State {
             },
             wl_pointer::Event::Leave { .. } => {
                 panel.pointer_left();
-                state.pressed = None;
+                if state.pressed.take() == Some(Hit::Send) {
+                    state.draw_panel();
+                }
                 state.scroll.on_pointer_up();
                 state.scroll.on_pointer_leave();
                 state.pressed_item = None;
