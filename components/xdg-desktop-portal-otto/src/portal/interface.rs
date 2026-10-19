@@ -497,7 +497,7 @@ impl ScreenCastPortal {
 
             if available_outputs.is_empty() && available_windows.is_empty() {
                 warn!(session = %session_handle, "No sources available for screencast");
-                return Ok((3, HashMap::new()));
+                return Ok((2, HashMap::new()));
             }
 
             if multiple {
