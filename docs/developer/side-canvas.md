@@ -262,18 +262,20 @@ until it has.
 ## Drag and drop
 
 `src/otto_canvas/drag.rs` holds the decisions as plain functions and types,
-unit tested on their own: `edge_zone` (`Near` within 1.5 canvas widths,
-`EDGE_FRACTION`; `Close` within half of one, `OPEN_FRACTION`),
-`PeekFollow` (`PEEK_MIN` 0.1 to `PEEK_MAX` 0.4 across the near strip, and
-turning back once the pointer goes `RETREAT_POINTS` left of its furthest),
-`EdgeDwell` (fires once per rest of a given wait: `DWELL`, 120 ms, to peek;
-`OPEN_DWELL`, 200 ms, to open), `hide_when_drag_ends` and `hide_on_release`.
-`mod.rs` applies them, `canvas_drag_tick` every `POLL`: a rest near the edge
-puts the canvas in `Phase::Peeking` (`canvas_peek`), which then follows the
-pointer (`canvas_peek_follow`, eased over `PEEK_FOLLOW_DURATION`); a rest
-close to the edge opens it (`canvas_show_passive`); leaving the strip while
-peeking hides it. Turning back while peeking sets `DragSession::dismissed`:
-the column goes to `PEEK_MIN` and nothing else happens until the drag ends.
+unit tested on their own: `in_open_zone` (the last `OPEN_FRACTION`, a
+tenth, of the output's width), `PeekFollow` (`PEEK_MIN` 0.1 up to the
+middle of the output, `FOLLOW_FROM`, growing to `PEEK_MAX` 0.5 where the
+open zone starts, and turning back once the pointer goes `RETREAT_POINTS`
+left of its furthest past the middle), `EdgeDwell` (fires once per rest of
+a given wait, `OPEN_DWELL`, 150 ms), `hide_when_drag_ends` and
+`hide_on_release`. `mod.rs` applies them in `canvas_drag_tick`, called
+when the drag starts and then every `POLL`: a hidden canvas is put in
+`Phase::Peeking` (`canvas_peek`, retried until an item exists), which
+follows the pointer (`canvas_peek_follow`, eased over
+`PEEK_FOLLOW_DURATION`) and moves to the pointer's output; a rest in the
+open zone opens it (`canvas_show_passive`). Turning back while peeking sets
+`DragSession::dismissed`: the column stays at `PEEK_MIN`, and only the open
+zone still opens it.
 
 - `WaylandDndGrabHandler::dnd_requested` reads the source's mime types from
   `Source::metadata()` and calls `canvas_drag_started`, which marks a
