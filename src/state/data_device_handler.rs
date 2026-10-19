@@ -24,6 +24,14 @@ impl<BackendData: Backend> DataDeviceHandler for Otto<BackendData> {
             .map(|keyboard| keyboard.modifier_state())
             .unwrap_or(self.current_modifiers);
         let action = choose_dnd_action(mods.ctrl, mods.shift, available, preferred);
+        tracing::debug!(
+            ctrl = mods.ctrl,
+            shift = mods.shift,
+            ?available,
+            ?preferred,
+            ?action,
+            "dnd action chosen"
+        );
         self.load_cursor_for_action(action);
         action
     }

@@ -313,7 +313,9 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         // Shift, would leave the copy cursor up over a drop that is about to
         // make a link. Sending the motion again has the target answer, and
         // `choose_dnd_action` read the keys as they are now.
-        if self.dnd_active && self.seat.get_keyboard().map(|k| k.modifier_state()) != before {
+        let after = self.seat.get_keyboard().map(|k| k.modifier_state());
+        if self.dnd_active && after != before {
+            tracing::debug!(?after, "modifiers changed mid-drag, re-sending motion");
             self.restore_pointer_focus();
         }
         action
