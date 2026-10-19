@@ -49,7 +49,7 @@ impl LayerSurface {
         conn: &Connection,
     ) -> Result<Self, Box<dyn std::error::Error>>
     where
-        D: Dispatch<wl_surface::WlSurface, SurfaceData>
+        D: Dispatch<wl_surface::WlSurface, SurfaceData<()>>
             + Dispatch<wl_subsurface::WlSubsurface, ()>
             + Dispatch<otto_surface_style_v1::OttoSurfaceStyleV1, ()>
             + Dispatch<otto_surface_style_manager_v1::OttoSurfaceStyleManagerV1, ()>

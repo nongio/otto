@@ -82,7 +82,9 @@ god-objects, and kit widgets the apps never adopted.
 - [x] toml 0.8 → 1.x with matching toml_edit (otto, auth-ui, bar, files;
   otto-agents already on 1.1). **S–M** Fixed in #265.
 - [x] image 0.24 → 0.25; thiserror 1 → 2 (ours only; v1 stays transitively). **S** Fixed in #265.
-- [ ] smithay-client-toolkit 0.19 → 0.21 (drops calloop 0.13, xkbcommon 0.7). **M**
+- [x] smithay-client-toolkit 0.19 → 0.21 (drops calloop 0.13, xkbcommon 0.7). **M**
+  *(chore/sctk-0.21: one sctk, calloop, calloop-wayland-source and memmap2;
+  xkbcommon 0.8 (sctk) vs 0.9 (ours) and rustix 0.38 (drm) remain)*
 - [x] zbus 4 → 5 (accesskit_unix and brightness already pull 5; drops zbus 4
   and nix 0.29). **M** Fixed in #271.
 - [ ] bitflags 1 via laye-rs: fix upstream in layers. **S**
@@ -305,9 +307,9 @@ otto-kit, so the portal and otto-agents need not link Skia): `xdg`, `dbus`,
 - [x] otto-settings' hard-coded accent swatch list (`main.rs` ~217-227) is a
   third palette; its Teal `#40C8E0` is in neither (#264). **S**
   - *Now `otto_kit::theme::ACCENT_NAMES` through the same palette lookup.*
-- [ ] zbus 4 → 5 and smithay-client-toolkit 0.19 → 0.21 (§2) are now
+- [x] zbus 4 → 5 and smithay-client-toolkit 0.19 → 0.21 (§2) are now
   unblocked: every org.otto proxy lives in `otto-dbus`. **M each**
-  - *zbus 5 done in #271; smithay-client-toolkit 0.21 still open.*
+  - *zbus 5 done in #271; smithay-client-toolkit 0.21 in chore/sctk-0.21.*
 - [x] **Topdir trash cans trusted as found** (after #272): a planted
   `.Trash-$uid/files -> /home/victim` symlink (hostile stick, or another user
   on `/tmp`) let Empty Trash delete outside the can, and the

@@ -46,7 +46,6 @@ use std::time::{Duration, Instant};
 
 use anyhow::Context;
 use otto_kit::clipboard::URI_LIST;
-use smithay_client_toolkit::delegate_shm;
 use smithay_client_toolkit::reexports::calloop::channel;
 use smithay_client_toolkit::reexports::calloop::generic::Generic;
 use smithay_client_toolkit::reexports::calloop::timer::{TimeoutAction, Timer};
@@ -1258,7 +1257,7 @@ impl ShmHandler for State {
     }
 }
 
-delegate_shm!(State);
+smithay_client_toolkit::delegate_dispatch2!(State);
 delegate_noop!(State: ignore wl_compositor::WlCompositor);
 delegate_noop!(State: ignore wl_surface::WlSurface);
 delegate_noop!(State: ignore wl_seat::WlSeat);

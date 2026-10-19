@@ -908,20 +908,6 @@ dependencies = [
 
 [[package]]
 name = "calloop"
-version = "0.13.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b99da2f8558ca23c71f4fd15dc57c906239752dd27ff3c00a1d56b685b7cbfec"
-dependencies = [
- "bitflags 2.13.1",
- "log",
- "polling",
- "rustix 0.38.44",
- "slab",
- "thiserror 1.0.69",
-]
-
-[[package]]
-name = "calloop"
 version = "0.14.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cb9f6e1368bd4621d2c86baa7e37de77a938adf5221e5dd3d6133340101b309e"
@@ -935,23 +921,11 @@ dependencies = [
 
 [[package]]
 name = "calloop-wayland-source"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "95a66a987056935f7efce4ab5668920b5d0dac4a7c99991a67395f13702ddd20"
-dependencies = [
- "calloop 0.13.0",
- "rustix 0.38.44",
- "wayland-backend",
- "wayland-client",
-]
-
-[[package]]
-name = "calloop-wayland-source"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "138efcf0940a02ebf0cc8d1eff41a1682a46b431630f4c52450d6265876021fa"
 dependencies = [
- "calloop 0.14.3",
+ "calloop",
  "rustix 1.1.5",
  "wayland-backend",
  "wayland-client",
@@ -2311,7 +2285,7 @@ checksum = "a3a6f9af55fb97ad673fb7a69533eb2f967648a06fa21f8c9bb2cd6d33975716"
 dependencies = [
  "fontconfig-parser",
  "log",
- "memmap2 0.9.11",
+ "memmap2",
  "slotmap",
  "tinyvec",
  "ttf-parser",
@@ -4657,15 +4631,6 @@ dependencies = [
 
 [[package]]
 name = "memmap2"
-version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "43a5a03cefb0d953ec0be133036f14e109412fa594edc2f77227249db66cc3ed"
-dependencies = [
- "libc",
-]
-
-[[package]]
-name = "memmap2"
 version = "0.9.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d1219ed1b7f229ee7104d281dd01d6802fe28bb6e95d292942c4daacdeb798c0"
@@ -5268,7 +5233,7 @@ dependencies = [
  "otto-md-kit",
  "serde_json",
  "skia-safe",
- "smithay-client-toolkit 0.19.2",
+ "smithay-client-toolkit",
  "tempfile",
  "tokio",
  "tracing",
@@ -5316,7 +5281,7 @@ dependencies = [
  "otto-auth-ui",
  "otto-kit",
  "polkit-agent-rs",
- "smithay-client-toolkit 0.19.2",
+ "smithay-client-toolkit",
  "tokio",
  "tracing",
  "wayland-client",
@@ -5332,7 +5297,7 @@ dependencies = [
  "otto-kit",
  "serde_json",
  "skia-safe",
- "smithay-client-toolkit 0.19.2",
+ "smithay-client-toolkit",
  "tokio",
  "toml 1.1.2+spec-1.1.0",
  "tracing",
@@ -5349,7 +5314,7 @@ version = "1.8.0"
 dependencies = [
  "otto-agents-kit",
  "otto-kit",
- "smithay-client-toolkit 0.19.2",
+ "smithay-client-toolkit",
  "tracing",
  "wayland-client",
 ]
@@ -5366,7 +5331,7 @@ name = "otto-dictate"
 version = "1.8.0"
 dependencies = [
  "otto-kit",
- "smithay-client-toolkit 0.19.2",
+ "smithay-client-toolkit",
  "tracing",
  "tracing-subscriber",
  "wayland-client",
@@ -5381,7 +5346,7 @@ dependencies = [
  "memfd",
  "otto-kit",
  "skia-safe",
- "smithay-client-toolkit 0.19.2",
+ "smithay-client-toolkit",
  "taffy",
  "tracing",
  "wayland-client",
@@ -5406,7 +5371,7 @@ dependencies = [
  "serde",
  "serde_json",
  "skia-safe",
- "smithay-client-toolkit 0.19.2",
+ "smithay-client-toolkit",
  "tokio",
  "toml 1.1.2+spec-1.1.0",
  "toml_edit 0.25.12+spec-1.1.0",
@@ -5431,7 +5396,7 @@ dependencies = [
  "otto-kit",
  "serde",
  "serde_json",
- "smithay-client-toolkit 0.19.2",
+ "smithay-client-toolkit",
  "tracing",
  "wayland-client",
  "wayland-protocols-wlr",
@@ -5446,7 +5411,7 @@ dependencies = [
  "libc",
  "otto-kit",
  "skia-safe",
- "smithay-client-toolkit 0.19.2",
+ "smithay-client-toolkit",
  "tokio",
  "wayland-protocols-wlr",
  "zbus",
@@ -5460,7 +5425,7 @@ dependencies = [
  "pipewire",
  "serde_json",
  "skia-safe",
- "smithay-client-toolkit 0.19.2",
+ "smithay-client-toolkit",
  "tokio",
  "tracing",
  "ureq",
@@ -5492,7 +5457,7 @@ dependencies = [
  "rustix 0.38.44",
  "serde_json",
  "skia-safe",
- "smithay-client-toolkit 0.19.2",
+ "smithay-client-toolkit",
  "tokio",
  "toml_edit 0.25.12+spec-1.1.0",
  "tracing",
@@ -5520,7 +5485,7 @@ dependencies = [
  "otto-peek",
  "serde_json",
  "skia-safe",
- "smithay-client-toolkit 0.19.2",
+ "smithay-client-toolkit",
  "taffy",
  "tempfile",
  "tracing",
@@ -5534,7 +5499,7 @@ version = "1.8.0"
 dependencies = [
  "otto-auth-ui",
  "otto-kit",
- "smithay-client-toolkit 0.19.2",
+ "smithay-client-toolkit",
  "tracing",
  "wayland-client",
  "wayland-protocols",
@@ -5545,7 +5510,7 @@ name = "otto-md-kit"
 version = "1.8.0"
 dependencies = [
  "otto-kit",
- "smithay-client-toolkit 0.19.2",
+ "smithay-client-toolkit",
  "tokio",
  "wayland-client",
 ]
@@ -5613,7 +5578,7 @@ dependencies = [
  "otto-peek",
  "serde",
  "serde_json",
- "smithay-client-toolkit 0.19.2",
+ "smithay-client-toolkit",
  "tempfile",
  "tokio",
  "tracing",
@@ -5692,7 +5657,7 @@ dependencies = [
  "serde_json",
  "sha-crypt",
  "skia-safe",
- "smithay-client-toolkit 0.19.2",
+ "smithay-client-toolkit",
  "toml_edit 0.25.12+spec-1.1.0",
  "xcursor",
  "zbus",
@@ -5707,7 +5672,7 @@ dependencies = [
  "futures-util",
  "otto-kit",
  "otto-peek",
- "smithay-client-toolkit 0.19.2",
+ "smithay-client-toolkit",
  "tokio",
  "tracing",
  "wayland-client",
@@ -6746,7 +6711,7 @@ version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4b967ec6489a42067a20724f11987bb96178ea796873cbe1afd25fb93ee6f85f"
 dependencies = [
- "calloop 0.14.3",
+ "calloop",
  "enumflags2",
  "log",
  "rustix 1.1.5",
@@ -7582,7 +7547,7 @@ dependencies = [
  "ash",
  "bitflags 2.13.1",
  "bytemuck",
- "calloop 0.14.3",
+ "calloop",
  "cc",
  "cursor-icon",
  "downcast-rs",
@@ -7631,44 +7596,18 @@ dependencies = [
 
 [[package]]
 name = "smithay-client-toolkit"
-version = "0.19.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3457dea1f0eb631b4034d61d4d8c32074caa6cd1ab2d59f2327bd8461e2c0016"
-dependencies = [
- "bitflags 2.13.1",
- "bytemuck",
- "calloop 0.13.0",
- "calloop-wayland-source 0.3.0",
- "cursor-icon",
- "libc",
- "log",
- "memmap2 0.9.11",
- "pkg-config",
- "rustix 0.38.44",
- "thiserror 1.0.69",
- "wayland-backend",
- "wayland-client",
- "wayland-csd-frame",
- "wayland-cursor",
- "wayland-protocols",
- "wayland-protocols-wlr",
- "wayland-scanner",
- "xkbcommon 0.7.0",
- "xkeysym",
-]
-
-[[package]]
-name = "smithay-client-toolkit"
 version = "0.21.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "74dc9ee14b0fdcb535f9556141bacac070c994a977d2240ee455d7438a617f00"
 dependencies = [
  "bitflags 2.13.1",
- "calloop 0.14.3",
- "calloop-wayland-source 0.4.1",
+ "bytemuck",
+ "calloop",
+ "calloop-wayland-source",
  "cursor-icon",
  "log",
- "memmap2 0.9.11",
+ "memmap2",
+ "pkg-config",
  "rustix 1.1.5",
  "thiserror 2.0.17",
  "wayland-client",
@@ -7679,6 +7618,7 @@ dependencies = [
  "wayland-protocols-misc",
  "wayland-protocols-wlr",
  "wayland-scanner",
+ "xkbcommon 0.8.0",
  "xkeysym",
 ]
 
@@ -7910,7 +7850,7 @@ name = "submenu"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "memmap2 0.9.11",
+ "memmap2",
  "tempfile",
  "wayland-client",
  "wayland-protocols",
@@ -9898,7 +9838,7 @@ checksum = "e90422ff1c04502aaaac1dad1d099791c2bbb3fbb3f823019e0ce5cdeee04025"
 dependencies = [
  "block2",
  "dpi",
- "memmap2 0.9.11",
+ "memmap2",
  "objc2",
  "objc2-core-foundation",
  "objc2-foundation",
@@ -9970,16 +9910,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8b64ceed06de0c45886eef05102106abe1413e703384e337bc57c7e95b71f803"
 dependencies = [
  "bitflags 2.13.1",
- "calloop 0.14.3",
+ "calloop",
  "cursor-icon",
  "dpi",
  "foldhash 0.2.0",
  "libc",
- "memmap2 0.9.11",
+ "memmap2",
  "percent-encoding",
  "raw-window-handle",
  "rustix 1.1.5",
- "smithay-client-toolkit 0.21.1",
+ "smithay-client-toolkit",
  "smol_str",
  "tracing",
  "wayland-backend",
@@ -10040,7 +9980,7 @@ checksum = "bb5746cd907e514b7895491a1c6f7d0cb70077f9e16928cd74ae6f987ffd96aa"
 dependencies = [
  "bitflags 2.13.1",
  "bytemuck",
- "calloop 0.14.3",
+ "calloop",
  "cursor-icon",
  "dpi",
  "libc",
@@ -10227,12 +10167,12 @@ dependencies = [
 
 [[package]]
 name = "xkbcommon"
-version = "0.7.0"
+version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "13867d259930edc7091a6c41b4ce6eee464328c6ff9659b7e4c668ca20d4c91e"
+checksum = "8d66ca9352cbd4eecbbc40871d8a11b4ac8107cfc528a6e14d7c19c69d0e1ac9"
 dependencies = [
  "libc",
- "memmap2 0.8.0",
+ "memmap2",
  "xkeysym",
 ]
 
@@ -10243,7 +10183,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a7a974f48060a14e95705c01f24ad9c3345022f4d97441b8a36beb7ed5c4a02d"
 dependencies = [
  "libc",
- "memmap2 0.9.11",
+ "memmap2",
  "xkeysym",
 ]
 
