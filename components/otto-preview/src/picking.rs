@@ -17,7 +17,7 @@ use std::sync::{Arc, Mutex};
 
 use otto_kit::components::label::Label;
 use otto_kit::components::titlebar::{DecorationVariant, WindowControl, WindowDecoration};
-use otto_kit::portal_file_chooser::Outcome;
+use otto_kit::portal_file_chooser::{Cancel, Outcome};
 use otto_kit::prelude::*;
 use otto_kit::typography::styles;
 use smithay_client_toolkit::seat::pointer::{PointerEvent, PointerEventKind};
@@ -57,6 +57,8 @@ pub struct Picking {
     answer: Arc<Mutex<Option<Picked>>>,
     /// Whether the window was closed under the dialog.
     closed: Arc<std::sync::atomic::AtomicBool>,
+    /// Takes the dialog down with the window; `None` until it is asked.
+    dialog: Option<Cancel>,
     inbox: Inbox,
     documents: Documents,
 }
@@ -145,6 +147,7 @@ impl Picking {
             session,
             answer: Arc::new(Mutex::new(None)),
             closed,
+            dialog: None,
             inbox,
             documents,
         })
@@ -221,18 +224,24 @@ impl Picking {
             };
             *answer.lock().unwrap() = Some(picked);
         });
-        if let Err(err) = spawned {
-            tracing::warn!(%err, "no thread for the open dialog");
-            *fallback.lock().unwrap() = Some(Picked::Nothing);
+        match spawned {
+            Ok(cancel) => self.dialog = Some(cancel),
+            Err(err) => {
+                tracing::warn!(%err, "no thread for the open dialog");
+                *fallback.lock().unwrap() = Some(Picked::Nothing);
+            }
         }
     }
 
     /// Move the pick along, and take its answer once there is one. The
     /// window is closed with the answer; closing the window first counts as
-    /// cancelling.
+    /// cancelling, and takes the dialog down with it.
     pub fn poll(&mut self) -> Option<Picked> {
         self.ask();
         if self.closed.load(std::sync::atomic::Ordering::Relaxed) {
+            if let Some(dialog) = self.dialog.take() {
+                dialog.cancel();
+            }
             self.window.close();
             return Some(Picked::Nothing);
         }
