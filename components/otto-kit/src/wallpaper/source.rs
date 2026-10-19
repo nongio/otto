@@ -75,8 +75,7 @@ const PROBE_BYTES: usize = 4096;
 /// still turn out to be corrupt when it is decoded.
 pub fn probe(path: &str) -> Result<(), OpenError> {
     use std::io::Read;
-    let mut file =
-        std::fs::File::open(path).map_err(|err| OpenError::Unreadable(err.to_string()))?;
+    let mut file = open_regular(path)?;
     let mut head = vec![0u8; PROBE_BYTES];
     let mut read = 0;
     while read < head.len() {
@@ -124,9 +123,30 @@ fn is_svg_path(path: &str) -> bool {
         .is_some_and(|ext| ext.eq_ignore_ascii_case("svg"))
 }
 
+/// Open `path` for reading if it is a regular file. `O_NONBLOCK` keeps the
+/// open itself from waiting on a FIFO or a device; the type is checked on
+/// the opened file, so it cannot change in between.
+fn open_regular(path: &str) -> Result<std::fs::File, OpenError> {
+    use std::os::unix::fs::OpenOptionsExt;
+    let unreadable = |err: std::io::Error| OpenError::Unreadable(err.to_string());
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NONBLOCK)
+        .open(path)
+        .map_err(unreadable)?;
+    if !file.metadata().map_err(unreadable)?.is_file() {
+        return Err(OpenError::NotAnImage);
+    }
+    Ok(file)
+}
+
 /// Open the wallpaper at `path`.
 pub fn open(path: &str) -> Result<Source, OpenError> {
-    let bytes = std::fs::read(path).map_err(|err| OpenError::Unreadable(err.to_string()))?;
+    use std::io::Read;
+    let mut bytes = Vec::new();
+    open_regular(path)?
+        .read_to_end(&mut bytes)
+        .map_err(|err| OpenError::Unreadable(err.to_string()))?;
     if is_svg_path(path) {
         // Parse once here so a broken document is reported now rather than
         // as a blank frame later.
@@ -426,6 +446,21 @@ mod tests {
         let path = dir.join(name);
         std::fs::write(&path, png.as_bytes()).unwrap();
         path.to_string_lossy().into_owned()
+    }
+
+    #[test]
+    fn a_fifo_or_device_is_refused_without_blocking() {
+        let dir = std::env::temp_dir().join(format!("otto-kit-wallpaper-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let fifo = dir.join("pipe.png");
+        let _ = std::fs::remove_file(&fifo);
+        let c_path = std::ffi::CString::new(fifo.to_string_lossy().as_bytes()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(c_path.as_ptr(), 0o600) }, 0);
+        let fifo = fifo.to_string_lossy().into_owned();
+        assert_eq!(probe(&fifo), Err(OpenError::NotAnImage));
+        assert!(matches!(open(&fifo), Err(OpenError::NotAnImage)));
+        assert_eq!(probe("/dev/zero"), Err(OpenError::NotAnImage));
+        assert_eq!(probe(&dir.to_string_lossy()), Err(OpenError::NotAnImage));
     }
 
     fn pixel(image: &skia::Image, x: i32, y: i32) -> [u8; 4] {
