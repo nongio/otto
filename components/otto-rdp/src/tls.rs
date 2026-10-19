@@ -9,7 +9,7 @@
 //! client would re-prompt (or refuse, if the cert was pinned) every run.
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::Context;
@@ -40,18 +40,30 @@ fn cert_pair() -> anyhow::Result<(Vec<u8>, Vec<u8>)> {
 
     fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
     fs::write(&cert_path, &cert_der)?;
-    fs::write(&key_path, &key_der)?;
-    // The key is private — never world-readable.
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&key_path, fs::Permissions::from_mode(0o600))?;
-    }
+    write_private(&key_path, &key_der)?;
     tracing::info!(
         "generated self-signed TLS certificate for '{host}' at {}",
         dir.display()
     );
     Ok((cert_der, key_der))
+}
+
+/// Write `bytes` to `path` readable by its owner alone, from the moment it
+/// exists: the file is created `0600`, and one left over from before is made
+/// so before anything is written into it.
+fn write_private(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(path)
+        .with_context(|| format!("creating {}", path.display()))?;
+    file.set_permissions(fs::Permissions::from_mode(0o600))?;
+    file.write_all(bytes)?;
+    Ok(())
 }
 
 pub fn acceptor() -> anyhow::Result<TlsAcceptor> {
@@ -65,4 +77,28 @@ pub fn acceptor() -> anyhow::Result<TlsAcceptor> {
         .with_single_cert(vec![cert], key)
         .context("building rustls server config")?;
     Ok(TlsAcceptor::from(Arc::new(config)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn the_key_is_never_readable_by_others() {
+        let dir = std::env::temp_dir().join(format!("otto-rdp-tls-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("key.der");
+        write_private(&path, b"secret").unwrap();
+        let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+
+        // One left world-readable from before is tightened too.
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+        write_private(&path, b"new").unwrap();
+        let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+        assert_eq!(fs::read(&path).unwrap(), b"new");
+        fs::remove_dir_all(&dir).unwrap();
+    }
 }
