@@ -2204,6 +2204,7 @@ fn run_headless_loop(
             // left dirty; a no-op flag read when nothing changed.
             state.flush_tiling_relayout();
             state.flush_dock_reserved_change();
+            state.log_session_summary_if_changed();
             state.popups.cleanup();
             send_frames(&mut state);
             display_handle.flush_clients().unwrap();

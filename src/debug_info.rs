@@ -66,4 +66,51 @@ impl<B: Backend + 'static> Otto<B> {
             "outputs": outputs,
         })
     }
+
+    /// Logs [`Self::debug_info_json`] as one `otto::summary` line when what
+    /// it describes has changed: once the renderer and the first output are
+    /// up, and again after a hotplug or a mode, scale or layout change.
+    ///
+    /// Called from every backend's loop, so it only hashes the outputs'
+    /// names, modes, scales and positions; the JSON is built when the hash
+    /// differs from the last line's. `otto-msg doctor` reads the last such
+    /// line from the log when the compositor cannot answer itself.
+    pub fn log_session_summary_if_changed(&mut self) {
+        use std::hash::{Hash, Hasher};
+
+        let renderer = crate::renderer_info::renderer_info();
+        if renderer.is_none() || self.workspaces.outputs().next().is_none() {
+            return;
+        }
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        renderer.map(|info| info.api).hash(&mut hasher);
+        for output in self.workspaces.outputs() {
+            output.name().hash(&mut hasher);
+            if let Some(mode) = output.current_mode() {
+                (mode.size.w, mode.size.h, mode.refresh).hash(&mut hasher);
+            }
+            output
+                .current_scale()
+                .fractional_scale()
+                .to_bits()
+                .hash(&mut hasher);
+            if let Some(geometry) = self.workspaces.output_geometry(output) {
+                (geometry.loc.x, geometry.loc.y).hash(&mut hasher);
+            }
+        }
+        let key = hasher.finish();
+        if self.session_summary_key == Some(key) {
+            return;
+        }
+        self.session_summary_key = Some(key);
+        tracing::info!(
+            target: SUMMARY_TARGET,
+            "session summary: {}",
+            self.debug_info_json()
+        );
+    }
 }
+
+/// The tracing target of the session summary line, which `otto-msg doctor`
+/// looks for in the log.
+pub const SUMMARY_TARGET: &str = "otto::summary";

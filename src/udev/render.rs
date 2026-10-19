@@ -1789,6 +1789,7 @@ impl<A: RendererApi> Otto<UdevData<A>> {
             // dirty; a no-op flag read when nothing changed.
             self.flush_tiling_relayout();
             self.flush_dock_reserved_change();
+            self.log_session_summary_if_changed();
             self.popups.cleanup();
             self.update_dnd();
         }

@@ -220,6 +220,9 @@ pub struct Otto<BackendData: Backend + 'static> {
     pub exclusive_zones: HashMap<String, ExclusiveZones>,
     /// A refit of zoned windows is waiting for the dock to come to rest.
     pub dock_refit_pending: bool,
+    /// What the last `otto::summary` log line described; see
+    /// [`Otto::log_session_summary_if_changed`].
+    pub session_summary_key: Option<u64>,
     /// Whether the fullscreen chrome is currently held visible for a modal
     /// overlay layer surface (a portal Access dialog, say). Fullscreen hides
     /// the layer-shell top/overlay layers and scans the window out directly,
@@ -1146,6 +1149,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             layer_surfaces: HashMap::new(),
             exclusive_zones: HashMap::new(),
             dock_refit_pending: false,
+            session_summary_key: None,
             modal_overlay_shown: false,
             compositor_state,
             data_device_state,

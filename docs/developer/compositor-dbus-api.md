@@ -76,6 +76,21 @@ does not know and treats a missing field as unknown.
 | `log_path` | The file this session logs to (`$XDG_STATE_HOME/otto/otto.log`, or `otto-winit.log` for a nested run), or `null` when it logs only to stderr |
 | `outputs` | Every output, sorted by name. `width` and `height` are the current mode in physical pixels, `refresh_mhz` its refresh in millihertz, `scale` the fractional scale, `x` and `y` the position in the layout in logical points, `virtual` whether it is a PipeWire-backed output |
 
+### The session summary in the log
+
+The same JSON is logged at `info`, on one line under the target
+`otto::summary`:
+
+```text
+2026-10-19T08:00:01.123Z  INFO otto::summary: session summary: {"version":"1.8.0",…}
+```
+
+It is written once the renderer and at least one output are up, and again
+whenever an output is added or removed or changes mode, scale or position.
+Each backend's loop checks a hash of the outputs, so nothing is built or
+logged while they stay the same. `otto-msg doctor` reads the last such line
+from the newest log when the compositor does not answer `DebugInfo`.
+
 The answer holds paths with the user's home folder in them. `otto-msg doctor`
 redacts them before showing or writing anything; another caller that passes
 the answer on should do the same.
