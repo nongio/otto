@@ -17,6 +17,7 @@
 // `pub(crate)` or `pub(super)`, so the public API is what lib.rs exports.
 #![warn(unreachable_pub)]
 
+pub mod locale;
 pub mod matching;
 pub mod uri;
 pub mod xdg;

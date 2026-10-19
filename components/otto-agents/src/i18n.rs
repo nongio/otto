@@ -124,21 +124,19 @@ fn build_chain(requested: &[String]) -> Vec<FluentBundle<FluentResource>> {
         .collect()
 }
 
-/// The locales the environment asks for, most preferred first, each expanded
+/// The locales the environment asks for, most preferred first in gettext's
+/// order (see [`otto_foundations::locale::message_locales`]), each expanded
 /// to the catalogues worth trying: `pt_BR.UTF-8` becomes `pt-BR`, then `pt`.
 fn env_locales() -> Vec<String> {
+    candidates(&otto_foundations::locale::env_message_locales())
+}
+
+/// Every tag in `tags` [`expand`]ed, in order, without repeats.
+fn candidates(tags: &[String]) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
-    for var in ["LC_ALL", "LC_MESSAGES", "LANG", "LANGUAGE"] {
-        let Ok(value) = std::env::var(var) else {
-            continue;
-        };
-        // LANGUAGE is a colon-separated list; the others name one locale.
-        for tag in value.split(':') {
-            for candidate in expand(tag) {
-                if !out.contains(&candidate) {
-                    out.push(candidate);
-                }
-            }
+    for candidate in tags.iter().flat_map(|tag| expand(tag)) {
+        if !out.contains(&candidate) {
+            out.push(candidate);
         }
     }
     out
@@ -183,6 +181,17 @@ mod tests {
         assert_eq!(expand("zh_TW"), ["zh-TW", "zh-CN"]);
         assert_eq!(expand("en"), ["en", "en-US"]);
         assert!(expand("C").is_empty());
+    }
+
+    #[test]
+    fn language_is_tried_before_the_locale() {
+        let tags = otto_foundations::locale::message_locales(|name| match name {
+            "LANG" => Some("de_DE.UTF-8".to_owned()),
+            "LANGUAGE" => Some("pt_BR:de".to_owned()),
+            _ => None,
+        });
+        assert_eq!(candidates(&tags), ["pt-BR", "pt", "de", "de-DE"]);
+        assert!(candidates(&["C.UTF-8".to_owned()]).is_empty());
     }
 
     #[test]

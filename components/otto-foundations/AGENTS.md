@@ -17,6 +17,7 @@ How it works: [otto-foundations](../../docs/developer/otto-foundations.md).
 ## Where things are
 - `xdg`: the base directories, `home`, Otto's config paths, `user-dirs.dirs`, and the `~/…` spelling of a path (`tilde`).
 - `uri`: `file://` URIs over a path's bytes, with a lenient and a strict decoder.
+- `locale`: the locales the environment asks messages in, in gettext's order (`LANGUAGE` first, ignored under `C`). otto-kit and otto-agents map them to catalogues.
 - `matching`: subsequence scoring for typed queries, shared by the launcher, every toolkit list and file search.
 
 ## Rules
