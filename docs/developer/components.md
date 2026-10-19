@@ -34,7 +34,7 @@ depends on an app.
 | [otto-authorize](otto-authorize.md) | The polkit authentication agent: the password panel for `pkexec`, system services and protected settings |
 | [otto-input-overlay](otto-input-overlay.md) | On-screen touchpad and key-press overlays for screen recordings |
 | [otto-dictate](otto-dictate.md) | A proof of concept: dictation as a Wayland input method |
-| [otto-msg](otto-msg.md) | The command-line client of `org.otto.Shell1`: commands, the tree as JSON, events |
+| [otto-msg](otto-msg.md) | The command-line client of `org.otto.Shell1`: commands, the tree as JSON, events; bug reports with `otto-msg doctor` |
 | [otto-agents](otto-agents.md) | The agent service: runs ACP agents and serves them over the Agent Host Protocol |
 | [otto-rdp](otto-rdp.md) | The RDP bridge that serves an output and forwards remote input |
 | [xdg-desktop-portal-otto](xdg-desktop-portal-otto.md) | The xdg-desktop-portal backend: screen sharing, settings, dialogs, screenshots and file chooser |

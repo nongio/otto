@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 270" width="760" height="270" role="img" aria-label="otto-msg: an argument parser and a blocking otto-dbus proxy call org.otto.Shell1 on the session bus; the compositor answers on its own thread">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 446" width="760" height="446" role="img" aria-label="otto-msg: an argument parser and a blocking otto-dbus proxy call org.otto.Shell1 on the session bus, and the compositor answers on its own thread; otto-msg doctor asks org.otto.Compositor for DebugInfo, reads the logs, the configuration and the system, and writes a report file">
   <style>
     text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
     .box  { fill: #f6f8fa; stroke: #8b949e; stroke-width: 1.4; }
@@ -26,8 +26,8 @@
   <text class="tb" x="16" y="28">Caller</text>
   <text class="tb" x="196" y="28">otto-msg</text>
   <text class="tb" x="576" y="28">compositor</text>
-  <rect class="grp" x="186" y="38" width="220" height="218" rx="10"/>
-  <rect class="grp" x="566" y="110" width="180" height="146" rx="10"/>
+  <rect class="grp" x="186" y="38" width="220" height="396" rx="10"/>
+  <rect class="grp" x="566" y="110" width="180" height="244" rx="10"/>
 
   <rect class="box" x="16" y="52" width="150" height="52" rx="6"/>
   <text class="t" x="28" y="74">script, terminal</text>
@@ -41,7 +41,7 @@
   <text class="tm" x="214" y="92">-t, -m, -r, -q, command tail</text>
   <rect class="acc" x="200" y="124" width="192" height="52" rx="6"/>
   <text class="tb" x="214" y="146">ShellProxyBlocking</text>
-  <text class="tm" x="214" y="164">otto-dbus, blocking zbus</text>
+  <text class="tm" x="214" y="164">+ Compositor proxy, blocking zbus</text>
   <rect class="acc" x="200" y="196" width="192" height="48" rx="6"/>
   <text class="tb" x="214" y="216">JSON printer</text>
   <text class="tm" x="214" y="232">pretty, raw or quiet</text>
@@ -65,4 +65,35 @@
   <text class="tm" x="420" y="132">RunCommand, Get*</text>
   <path class="ln" d="M574 162 H394"/>
   <text class="tm" x="420" y="180">replies and signals</text>
+  <rect class="box" x="16" y="290" width="150" height="52" rx="6"/>
+  <text class="t" x="28" y="312">otto-msg doctor</text>
+  <text class="tm" x="28" y="330">a terminal, or --print</text>
+  <rect class="box" x="16" y="372" width="150" height="52" rx="6"/>
+  <text class="t" x="28" y="394">report file</text>
+  <text class="tm" x="28" y="412">issue link, clipboard</text>
+
+  <rect class="acc" x="200" y="290" width="192" height="62" rx="6"/>
+  <text class="tb" x="214" y="312">doctor</text>
+  <text class="tm" x="214" y="330">sections, chooser, redaction</text>
+  <text class="tm" x="214" y="344">src/doctor/</text>
+  <path class="ln" d="M166 316 H198"/>
+  <path class="ln" d="M250 352 V398 H168"/>
+
+  <rect class="box" x="576" y="290" width="160" height="52" rx="6"/>
+  <text class="tb" x="590" y="312">org.otto.Compositor</text>
+  <text class="tm" x="590" y="330">DebugInfo, on the main loop</text>
+  <path class="ln" d="M656 290 V246"/>
+
+  <path class="ln" d="M392 304 H574"/>
+  <text class="tm" x="410" y="296">DebugInfo, 3 s timeout</text>
+  <path class="ln" d="M574 326 H394"/>
+  <text class="tm" x="410" y="344">JSON, or no answer</text>
+
+  <rect class="box" x="576" y="376" width="160" height="52" rx="6"/>
+  <text class="tb" x="590" y="398">files on disk</text>
+  <text class="tm" x="590" y="416">logs, config, /proc, /sys</text>
+  <path class="ln" d="M700 342 V374"/>
+  <text class="tm" x="618" y="368">writes logs</text>
+  <path class="ln" d="M360 352 V402 H574"/>
+  <text class="tm" x="410" y="394">reads, otto::summary</text>
 </svg>
