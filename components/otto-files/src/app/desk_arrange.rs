@@ -21,6 +21,7 @@ pub(super) struct ArrangeKey {
     epoch: u64,
     sort: SortKey,
     ascending: bool,
+    show_hidden: bool,
     columns: usize,
     rows: Option<usize>,
     places: u64,
@@ -37,9 +38,12 @@ pub(super) struct DeskDrag {
 /// The desk's free placement as the browser keeps it.
 #[derive(Debug, Default)]
 pub(super) struct DeskPlacement {
-    /// The saved cells, read from the state file the first time free
-    /// placement is on.
-    places: Option<desk_slots::Places>,
+    /// The saved cells of [`Self::folder`], read from the state file the
+    /// first time free placement is on in it.
+    pub(super) places: Option<desk_slots::Places>,
+    /// The folder [`Self::places`] belong to: the desk's folder when they
+    /// were read.
+    pub(super) folder: Option<PathBuf>,
     /// Bumped whenever [`Self::places`] changes.
     places_epoch: u64,
     /// Each icon's slot, by name: the order the listing is put in.
@@ -95,14 +99,13 @@ impl Browser {
         if self.columns[0].awaiting_first_listing() {
             return;
         }
-        self.desk_placement
-            .places
-            .get_or_insert_with(desk_slots::Places::load);
+        self.desk_places();
         let (columns, rows) = self.desk_slot_grid();
         let key = ArrangeKey {
             epoch: self.columns[0].epoch,
             sort: self.sort,
             ascending: self.ascending,
+            show_hidden: self.show_hidden,
             columns,
             rows,
             places: self.desk_placement.places_epoch,
@@ -126,12 +129,22 @@ impl Browser {
         let arrangement = desk_slots::arrange(&refs, &positions, columns, rows);
 
         // New files keep the slot they were given, and files that went away
-        // give theirs up.
-        let present: HashSet<&str> = refs.iter().copied().collect();
-        let mut next = positions;
-        next.retain(|name, _| present.contains(name.as_str()));
-        next.extend(arrangement.placed.iter().cloned());
-        self.save_desk_positions(next);
+        // give theirs up. A folder that could not be read, or has gone, lists
+        // nothing, and that is not every file going away. A hidden file is
+        // still there, so it keeps its slot for when hidden files show.
+        let column = &self.columns[0];
+        if column.snapshot.error.is_none() && !column.gone {
+            let present: HashSet<&str> = column
+                .snapshot
+                .entries
+                .iter()
+                .map(|entry| entry.name.as_str())
+                .collect();
+            let mut next = positions;
+            next.retain(|name, _| present.contains(name.as_str()));
+            next.extend(arrangement.placed.iter().cloned());
+            self.save_desk_positions(next);
+        }
 
         if arrangement.slots != self.desk_placement.rank {
             self.desk_placement.rank = arrangement.slots.clone();
@@ -154,18 +167,30 @@ impl Browser {
         });
     }
 
+    /// The saved cells of the folder the desk shows, read from the state
+    /// file when that folder's are not in hand yet: the first time, and
+    /// after `desk.folder` moved the desk to another folder.
+    fn desk_places(&mut self) -> &mut desk_slots::Places {
+        let folder = &self.columns[0].path;
+        let placement = &mut self.desk_placement;
+        if placement.folder.as_ref() != Some(folder) || placement.places.is_none() {
+            placement.places = Some(desk_slots::Places::load(folder));
+            placement.folder = Some(folder.clone());
+            placement.places_epoch += 1;
+        }
+        placement.places.get_or_insert_with(Default::default)
+    }
+
     /// Keep `positions` as the saved cells, writing the state file when they
     /// changed.
     fn save_desk_positions(&mut self, positions: HashMap<String, Cell>) {
-        let places = self
-            .desk_placement
-            .places
-            .get_or_insert_with(Default::default);
+        let folder = self.columns[0].path.clone();
+        let places = self.desk_places();
         if places.positions == positions {
             return;
         }
         places.positions = positions;
-        places.save();
+        places.save(&folder);
         self.desk_placement.places_epoch += 1;
     }
 

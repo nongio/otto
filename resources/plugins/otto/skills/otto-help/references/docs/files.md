@@ -469,7 +469,8 @@ once and they keep their places around the one you hold. New files take the
 first empty spot, and a renamed file stays put. Right-click the desk for the
 same choice under **Arrange**, and **Clean Up** to put every icon back in
 order. Positions are saved in `~/.local/state/otto/desk.toml`, never in the
-Desktop folder.
+Desktop folder, and each folder keeps its own: pointing the desk at another
+folder and back brings the first layout back.
 
 When there are more files than fit, *When icons don't fit* in the same group
 decides what happens. **Scroll** (the default) lets the grid run on and scroll.
