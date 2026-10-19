@@ -7891,15 +7891,40 @@ fn draw_entry_icon_face(canvas: &Canvas, entry: &Entry, box_rect: Rect, cut: boo
     }
 }
 
-/// The mark a symbolic link wears: a curved arrow on a small white card in
-/// the icon's bottom-left corner, the way an alias has always looked.
+/// The freedesktop emblem a symbolic link wears, from the icon theme.
+const LINK_EMBLEM: &str = "emblem-symbolic-link";
+
+/// The mark a symbolic link wears in the icon's bottom-left corner: the icon
+/// theme's [`LINK_EMBLEM`], so a link looks the way the rest of the desktop
+/// marks one. A theme without it gets [`draw_link_badge_card`] instead.
 ///
 /// Sized off the icon it sits on, so the 18pt list icon and a large desk icon
-/// carry the same mark at their own scale, but never so small its arrow stops
+/// carry the same mark at their own scale, but never so small it stops
 /// reading as one. A cut link is dimmed with its icon.
 pub(crate) fn draw_link_badge(canvas: &Canvas, icon: Rect, cut: bool) {
     let side = (icon.width().min(icon.height()) * 0.36).max(8.0);
-    let card = Rect::from_xywh(icon.left, icon.bottom - side, side, side);
+    let corner = Rect::from_xywh(icon.left, icon.bottom - side, side, side);
+    // Looked up at the badge's own size: themes draw emblems for small sizes
+    // (MacTahoe has only 16 and 22), and rasterised at device pixels so a
+    // vector emblem stays sharp on a scaled output.
+    let emblem = icons::cached_icon_chain_at(&[LINK_EMBLEM], device_px(canvas, side), side as i32);
+    match emblem {
+        Some(image) => {
+            let mut paint = Paint::default();
+            paint.set_anti_alias(true);
+            if cut {
+                paint.set_alpha(110);
+            }
+            canvas.draw_image_rect(&image, None, corner, &paint);
+        }
+        None => draw_link_badge_card(canvas, corner, cut),
+    }
+}
+
+/// A curved arrow on a small white card filling `card`, the way an alias has
+/// always looked: the link badge for an icon theme with no link emblem.
+fn draw_link_badge_card(canvas: &Canvas, card: Rect, cut: bool) {
+    let side = card.width();
     let radius = side * 0.22;
     let fade = if cut { 0.45 } else { 1.0 };
     let alpha = |a: f32| (a * fade) as u8;

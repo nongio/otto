@@ -1402,9 +1402,11 @@ refused, while Ctrl or Ctrl+Shift settles on a copy or a link and is taken.
 Files learns which from the negotiated action, not from its own keyboard,
 which a drag from a window without focus does not have.
 
-**A link wears a badge.** Every symbolic link, whoever made it, is drawn with a
-curved arrow on a small white card in its icon's bottom-left corner, sized off
-the icon, in every view that draws file icons: list, columns, grid, Photos, the
+**A link wears a badge.** Every symbolic link, whoever made it, is drawn with
+the icon theme's `emblem-symbolic-link` in its icon's bottom-left corner, so a
+link is marked the way the rest of the desktop marks one; a theme without that
+emblem gets a curved arrow on a small white card instead. The badge is sized
+off the icon, in every view that draws file icons: list, columns, grid, Photos, the
 desk, and the drag image. The icon under it is the target's, so a link to a
 folder still reads as a folder.
 
