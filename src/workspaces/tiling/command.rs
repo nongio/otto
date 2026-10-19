@@ -371,14 +371,16 @@ fn criteria_pairs(inner: &str) -> Vec<(&str, String)> {
 
 /// Split on `;`, keeping each segment's byte offset in the original string.
 /// A `;` inside double quotes — a path, a window title — does not split.
-/// Single quotes do not protect one: they are apostrophes as often as not.
+/// A `"` with no closing one after it opens nothing: it is an inch mark or
+/// a typo, and must not swallow every command after it. Single quotes do
+/// not protect one: they are apostrophes as often as not.
 fn split_commands(text: &str) -> Vec<(usize, &str)> {
     let mut out = Vec::new();
     let mut start = 0;
     let mut quoted = false;
     for (i, ch) in text.char_indices() {
         if ch == '"' {
-            quoted = !quoted;
+            quoted = !quoted && text[i + 1..].contains('"');
         } else if ch == ';' && !quoted {
             out.push((start, &text[start..i]));
             start = i + ch.len_utf8();
@@ -1205,6 +1207,32 @@ mod tests {
                 rename(None, "Music"),
                 Command::Workspace(WorkspaceTarget::Number(2))
             ]
+        );
+    }
+
+    #[test]
+    fn a_quoted_semicolon_does_not_split() {
+        assert_eq!(
+            parse("rename workspace to \"a; b\"; workspace 2").unwrap(),
+            vec![
+                rename(None, "a; b"),
+                Command::Workspace(WorkspaceTarget::Number(2))
+            ]
+        );
+    }
+
+    #[test]
+    fn an_unclosed_quote_does_not_swallow_the_commands_after_it() {
+        assert_eq!(
+            parse("rename workspace to 27\" panel; workspace 3").unwrap(),
+            vec![
+                rename(None, "27\" panel"),
+                Command::Workspace(WorkspaceTarget::Number(3))
+            ]
+        );
+        assert_eq!(
+            split_commands("a \"; b; c"),
+            vec![(0, "a \""), (4, " b"), (7, " c")]
         );
     }
 
