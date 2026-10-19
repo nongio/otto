@@ -262,9 +262,17 @@ until it has.
 ## Drag and drop
 
 `src/otto_canvas/drag.rs` holds the decisions as plain functions and types,
-unit tested on their own: `at_right_edge` (within the canvas width, `EDGE_FRACTION`),
-`EdgeDwell` (fires once per rest of `DWELL`, 250 ms), `hide_when_drag_ends`
-and `hide_on_release`. `mod.rs` applies them:
+unit tested on their own: `edge_zone` (`Near` within the canvas width,
+`EDGE_FRACTION`; `Close` within its outer quarter, `OPEN_FRACTION`),
+`PeekFollow` (`PEEK_MIN` 0.1 to `PEEK_MAX` 0.4 across the near strip, back
+to `PEEK_MIN` when the pointer turns back left by `RETREAT_POINTS`),
+`EdgeDwell` (fires once per rest of a given wait: `DWELL`, 250 ms, to peek;
+`OPEN_DWELL`, 400 ms, to open), `hide_when_drag_ends` and `hide_on_release`.
+`mod.rs` applies them, `canvas_drag_tick` every `POLL`: a rest near the edge
+puts the canvas in `Phase::Peeking` (`canvas_peek`), which then follows the
+pointer (`canvas_peek_follow`, eased over `PEEK_FOLLOW_DURATION`); a rest
+close to the edge opens it (`canvas_show_passive`); leaving the strip while
+peeking hides it.
 
 - `WaylandDndGrabHandler::dnd_requested` reads the source's mime types from
   `Source::metadata()` and calls `canvas_drag_started`, which marks a
