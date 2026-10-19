@@ -1,4 +1,7 @@
-# The Dynamic Island
+# otto-islands
+
+**User guide:** [Dynamic Island](../user/dynamic-island.md)\
+**Specs:** [Dynamic Island](../../specs/dynamic-island.md), [Notification Island](../../specs/notification-island.md), [Notification Daemon](../../specs/notification-daemon.md), [Portal Access Dialog](../../specs/portal-access-dialog.md)
 
 otto-islands is the strip of bubbles at the top centre of the screen. It does
 three jobs for the session. It is the notification daemon: anything that calls

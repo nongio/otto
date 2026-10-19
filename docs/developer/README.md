@@ -27,6 +27,7 @@ is the place to start.
 | [XDG Specifications](xdg-specifications.md) | Every freedesktop/XDG standard Otto implements, and where |
 | [The Scene Graph](scene-graph.md) | The layer tree: how it is shaped, how surfaces enter it, how subtrees become KMS planes |
 | [Layers](layers.md) | The unit the tree is made of: properties, content closures, transactions, caching, damage |
+| [Components](components.md) | Every workspace crate by layer, each with a page and an architecture diagram |
 
 ![Otto architecture](diagrams/architecture.svg)
 
@@ -60,7 +61,6 @@ is the place to start.
 | [Color Scheme](color-scheme-setting.md) | How apps learn whether Otto is in light or dark mode, and the accent colour |
 | [Settings D-Bus API](settings-dbus-api.md) | The `org.otto.Settings` wire contract |
 | [Shell D-Bus API](shell-dbus-api.md) | The `org.otto.Shell1` wire contract: i3-syntax commands, the tree as JSON, `otto-msg` |
-| [Compositor D-Bus API](compositor-dbus-api.md) | The `org.otto.Compositor` contract: `Ping`, `FocusApp`, and `DebugInfo` for bug reports |
 | [otto-dbus](otto-dbus.md) | The one client proxy per `org.otto.*` interface, and where a new one goes |
 | [otto-foundations](otto-foundations.md) | The UI-free base: XDG directories, `user-dirs.dirs`, `file://` URIs and name matching |
 | [RDP Bridge](rdp-virtual-output.md) | Serving a virtual output over RDP (`otto-rdp`) |
@@ -68,46 +68,13 @@ is the place to start.
 | [Versioning & Releases](versioning.md) | One workspace version for the compositor and every component, and how to bump it |
 | [Remote-Desktop Indicator](remote-desktop-indicator.md) | The sharing indicator `otto-rdp` publishes while a client is watching |
 
-## Crates
+## Components
 
-Every workspace crate, by layer. The name links to its folder, whose
-`AGENTS.md` holds the working notes: dependencies, how to build, run and
-test it, and its rules. The last column links the page that explains how it
-works, where one exists.
-
-| Crate | What it is | How it works |
-|-------|------------|--------------|
-| [otto-render](../../crates/otto-render/) | The compositor's render stack: the Skia renderer, its GL and Vulkan plumbing, and the scene render elements | [The Render Stack](otto-render.md) |
-| [otto-arch](../../tools/otto-arch/) | The checker for `architecture.toml` and the affected-crate selection CI runs on | [Architecture Rules](architecture.md) |
-| [otto-foundations](../../components/otto-foundations/) | The UI-free base: XDG directories, `file://` URIs and name matching, over `std` alone | [otto-foundations](otto-foundations.md) |
-| [otto-dbus](../../components/otto-dbus/) | Typed zbus client proxies for Otto's own `org.otto.*` D-Bus interfaces | [otto-dbus](otto-dbus.md) |
-| [otto-search](../../components/otto-search/) | File search: one query language over LocalSearch, as a library and the `otto-search` command | [File Search](file-search.md) |
-| [otto-agents-client](../../components/otto-agents-client/) | The wire between `otto-agents` and its clients: the socket, session URIs and file URIs | [Agents](agents.md) |
-| [otto-pdf](../../components/otto-pdf/) | Editing PDFs in place (form fields and annotations) through a runtime-loaded PDFium |  |
-| [otto-kit](../../components/otto-kit/) | The toolkit every Otto app is built on, and the drawing half the compositor uses for its own chrome | [otto-kit](otto-kit.md) |
-| [otto-md-kit](../../components/otto-md-kit/) | Otto's Markdown parser, producing the toolkit's document blocks |  |
-| [otto-media-kit](../../components/otto-media-kit/) | Video playback for Otto apps: a `Player` and view in the library, GStreamer in the sandboxed `otto-media-worker` | [otto-media-kit](otto-media-kit.md) |
-| [otto-agents-kit](../../components/otto-agents-kit/) | The session feed, rows, keys and Ask chat shared by Otto's agent UIs | [Agents](agents.md) |
-| [otto-auth-ui](../../components/otto-auth-ui/) | The password panel shared by the greeter, the lock screen and the polkit agent | [Permissions](permissions.md) |
-| [otto-peek](../../components/otto-peek/) | Peek, the Space-bar preview, as a library with a sandboxed decode worker | [File Previews](file-previews.md) |
-| [otto-bar](../../components/otto-bar/) | The top menu bar: global app menu, tray, keyboard layout, battery and clock |  |
-| [otto-islands](../../components/otto-islands/) | The dynamic island, the session's notification daemon and the system dialog | [The Dynamic Island](otto-islands.md) |
-| [otto-launcher](../../components/otto-launcher/) | Otto's keyboard launcher, with Ask and the agents mode | [The Launcher](otto-launcher.md) |
-| [otto-files](../../components/otto-files/) | Otto's file browser, file picker and desk | [Files](otto-files.md) |
-| [otto-preview](../../components/otto-preview/) | Studio: one file in a window of its own, with an agent chat and PDF editing |  |
-| [otto-settings](../../components/otto-settings/) | Otto's Settings app |  |
-| [otto-canvas](../../components/otto-canvas/) | The Agents panel in Otto's side canvas | [Agents](agents.md) |
-| [otto-stash](../../components/otto-stash/) | The card that collects selections, files and screen regions to hand to Ask |  |
-| [otto-emoji](../../components/otto-emoji/) | The emoji picker: search or browse, pick one, and it is typed or pasted where the cursor was |  |
-| [otto-lock](../../components/otto-lock/) | Otto's screen locker, backed by PAM | [Permissions](permissions.md) |
-| [otto-greeter](../../components/otto-greeter/) | Otto's login screen, backed by greetd |  |
-| [otto-authorize](../../components/otto-authorize/) | Otto's polkit authentication agent: the password panel for `pkexec`, system services and protected settings | [Permissions](permissions.md) |
-| [otto-agents](../../components/otto-agents/) | Otto's agent service: runs ACP agents and serves them over the Agent Host Protocol | [Agents](agents.md) |
-| [otto-rdp](../../components/otto-rdp/) | The RDP bridge that serves an Otto output and forwards remote input | [RDP Bridge](rdp-virtual-output.md) |
-| [xdg-desktop-portal-otto](../../components/xdg-desktop-portal-otto/) | Otto's xdg-desktop-portal backend: screen sharing, settings, dialogs, screenshots and file chooser | [The Portal Backend](xdg-desktop-portal-otto.md) |
-| [otto-msg](../../components/otto-msg/) | The command-line tool that drives Otto from scripts over `org.otto.Shell1`, and writes bug reports with `otto-msg doctor` | [Shell D-Bus API](shell-dbus-api.md), [Compositor D-Bus API](compositor-dbus-api.md) |
-| [otto-input-overlay](../../components/otto-input-overlay/) | On-screen touchpad and key-press overlays for screen recordings |  |
-| [otto-dictate](../../components/otto-dictate/) | A proof of concept: dictation as a Wayland input method, with live text and an equaliser at the caret |  |
+Every workspace crate has a page of its own, with a diagram of how it is
+built. [Components](components.md) lists them all by layer, from the apps
+down to the foundation, and links each one. A crate's folder holds its
+`AGENTS.md`, with the working notes: dependencies, how to build, run and test
+it, and its rules.
 
 ## Design docs and plans
 

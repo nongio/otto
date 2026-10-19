@@ -1,0 +1,73 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 340" width="760" height="340" role="img" aria-label="otto-foundations: the xdg, uri and matching modules, linked by otto-kit, otto-search, the agents crates, the portal, otto-pdf, otto-rdp and otto-render">
+  <style>
+    text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
+    .box  { fill: #f6f8fa; stroke: #8b949e; stroke-width: 1.4; }
+    .acc  { fill: #ddf4ff; stroke: #218bff; stroke-width: 1.4; }
+    .grp  { fill: none; stroke: #8b949e; stroke-width: 1.2; stroke-dasharray: 5 4; }
+    .t    { fill: #1f2328; font-size: 13px; }
+    .tb   { fill: #1f2328; font-size: 13px; font-weight: 600; }
+    .tm   { fill: #656d76; font-size: 11px; }
+    .ln   { stroke: #8b949e; stroke-width: 1.4; fill: none; marker-end: url(#ah); }
+    @media (prefers-color-scheme: dark) {
+      .box { fill: #161b22; stroke: #6e7681; }
+      .acc { fill: #10243b; stroke: #388bfd; }
+      .grp { stroke: #6e7681; }
+      .t, .tb { fill: #e6edf3; }
+      .tm  { fill: #9198a1; }
+      .ln  { stroke: #8b949e; }
+    }
+  </style>
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#8b949e"/>
+    </marker>
+  </defs>
+
+  <text class="tb" x="26" y="28">otto-foundations</text>
+  <text class="tb" x="420" y="28">Linked by</text>
+  <rect class="grp" x="16" y="38" width="330" height="290" rx="10"/>
+
+  <rect class="acc" x="30" y="52" width="302" height="68" rx="6"/>
+  <text class="tb" x="44" y="74">xdg</text>
+  <text class="tm" x="44" y="92">base directories, user-dirs.dirs,</text>
+  <text class="tm" x="44" y="108">Otto's config paths, the ~/ spelling</text>
+  <rect class="acc" x="30" y="132" width="302" height="68" rx="6"/>
+  <text class="tb" x="44" y="154">uri</text>
+  <text class="tm" x="44" y="172">file:// URIs over a path's bytes,</text>
+  <text class="tm" x="44" y="188">a lenient and a strict decoder</text>
+  <rect class="acc" x="30" y="212" width="302" height="52" rx="6"/>
+  <text class="tb" x="44" y="234">matching</text>
+  <text class="tm" x="44" y="252">subsequence scoring for typed queries</text>
+  <text class="tm" x="44" y="290">std only, plus percent-encoding</text>
+  <text class="tm" x="44" y="306">no UI, no runtime, no D-Bus</text>
+
+  <rect class="box" x="420" y="52" width="326" height="34" rx="6"/>
+  <text class="t" x="432" y="74">otto-kit</text>
+  <text class="tm" x="604" y="74">re-exports all three</text>
+  <rect class="box" x="420" y="92" width="326" height="34" rx="6"/>
+  <text class="t" x="432" y="114">otto-search</text>
+  <text class="tm" x="604" y="114">matching, uri</text>
+  <rect class="box" x="420" y="132" width="326" height="34" rx="6"/>
+  <text class="t" x="432" y="154">otto-agents, -client</text>
+  <text class="tm" x="604" y="154">xdg, uri</text>
+  <rect class="box" x="420" y="172" width="326" height="34" rx="6"/>
+  <text class="t" x="432" y="194">xdg-desktop-portal-otto</text>
+  <text class="tm" x="604" y="194">xdg, uri</text>
+  <rect class="box" x="420" y="212" width="326" height="34" rx="6"/>
+  <text class="t" x="432" y="234">otto-pdf</text>
+  <text class="tm" x="604" y="234">xdg::home</text>
+  <rect class="box" x="420" y="252" width="326" height="34" rx="6"/>
+  <text class="t" x="432" y="274">otto-rdp</text>
+  <text class="tm" x="604" y="274">xdg::state_home</text>
+  <rect class="box" x="420" y="292" width="326" height="34" rx="6"/>
+  <text class="t" x="432" y="314">otto-render</text>
+  <text class="tm" x="604" y="314">xdg::runtime_dir</text>
+
+  <path class="ln" d="M420 69 H348"/>
+  <path class="ln" d="M420 109 H348"/>
+  <path class="ln" d="M420 149 H348"/>
+  <path class="ln" d="M420 189 H348"/>
+  <path class="ln" d="M420 229 H348"/>
+  <path class="ln" d="M420 269 H348"/>
+  <path class="ln" d="M420 309 H348"/>
+</svg>

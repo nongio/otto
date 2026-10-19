@@ -1,0 +1,72 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 362" width="760" height="362" role="img" aria-label="otto-greeter: greetd starts Otto in login mode, Otto launches the greeter, the greeter drives the login over greetd's socket and greetd replaces it with the session">
+  <style>
+    text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
+    .box  { fill: #f6f8fa; stroke: #8b949e; stroke-width: 1.4; }
+    .acc  { fill: #ddf4ff; stroke: #218bff; stroke-width: 1.4; }
+    .grp  { fill: none; stroke: #8b949e; stroke-width: 1.2; stroke-dasharray: 5 4; }
+    .t    { fill: #1f2328; font-size: 13px; }
+    .tb   { fill: #1f2328; font-size: 13px; font-weight: 600; }
+    .tm   { fill: #656d76; font-size: 11px; }
+    .ln   { stroke: #8b949e; stroke-width: 1.4; fill: none; marker-end: url(#ah); }
+    @media (prefers-color-scheme: dark) {
+      .box { fill: #161b22; stroke: #6e7681; }
+      .acc { fill: #10243b; stroke: #388bfd; }
+      .grp { stroke: #6e7681; }
+      .t, .tb { fill: #e6edf3; }
+      .tm  { fill: #9198a1; }
+      .ln  { stroke: #8b949e; }
+    }
+  </style>
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#8b949e"/>
+    </marker>
+  </defs>
+
+  <rect class="box" x="16" y="40" width="170" height="72" rx="6"/>
+  <text class="tb" x="28" y="62">greetd</text>
+  <text class="tm" x="28" y="80">root, owns the VT,</text>
+  <text class="tm" x="28" y="96">runs PAM and the session</text>
+
+  <rect class="box" x="16" y="172" width="170" height="56" rx="6"/>
+  <text class="tb" x="28" y="194">otto --login</text>
+  <text class="tm" x="28" y="212">login mode, src/login.rs</text>
+  <path class="ln" d="M101 112 V170"/>
+  <text class="tm" x="108" y="146">starts</text>
+
+  <rect class="box" x="16" y="290" width="170" height="56" rx="6"/>
+  <text class="t" x="28" y="312">the user's session</text>
+  <text class="tm" x="28" y="330">replaces the greeter</text>
+  <path class="ln" d="M16 76 H6 V318 H14"/>
+
+  <rect class="grp" x="266" y="40" width="280" height="306" rx="10"/>
+  <text class="tb" x="282" y="62">otto-greeter</text>
+
+  <rect class="acc" x="282" y="76" width="248" height="72" rx="6"/>
+  <text class="tb" x="296" y="98">conversation</text>
+  <text class="tm" x="296" y="116">greetd IPC over $GREETD_SOCK</text>
+  <text class="tm" x="296" y="134">Asked queue: what each reply means</text>
+  <path class="ln" d="M280 88 H188"/>
+  <path class="ln" d="M188 104 H280"/>
+
+  <rect class="acc" x="282" y="168" width="248" height="56" rx="6"/>
+  <text class="tb" x="296" y="190">overlay and Panel</text>
+  <text class="tm" x="296" y="208">layer-shell, exclusive keyboard</text>
+  <path class="ln" d="M280 188 H188"/>
+  <path class="ln" d="M186 214 H264"/>
+  <text class="tm" x="192" y="232">launches</text>
+
+  <rect class="box" x="282" y="244" width="248" height="40" rx="6"/>
+  <text class="t" x="296" y="268">session picker</text>
+
+  <rect class="box" x="282" y="296" width="248" height="36" rx="6"/>
+  <text class="t" x="296" y="319">power buttons</text>
+
+  <rect class="box" x="586" y="244" width="160" height="40" rx="6"/>
+  <text class="t" x="598" y="268">wayland-sessions</text>
+  <path class="ln" d="M584 264 H532"/>
+
+  <rect class="box" x="586" y="296" width="160" height="36" rx="6"/>
+  <text class="t" x="598" y="319">logind</text>
+  <path class="ln" d="M530 314 H584"/>
+</svg>

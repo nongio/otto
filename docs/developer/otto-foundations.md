@@ -1,4 +1,4 @@
-# otto-foundations: the UI-free base
+# otto-foundations
 
 `components/otto-foundations/` holds the small rules that several Otto
 programs have to agree on: where the XDG directories are, how a path becomes
@@ -8,6 +8,8 @@ no UI, no async runtime and no D-Bus. Its one dependency is
 
 It sits in the **foundation** layer (see [Architecture Rules](architecture.md))
 and depends on no other workspace crate.
+
+![otto-foundations: the xdg, uri and matching modules, and the crates that link them](diagrams/otto-foundations.svg)
 
 | Module | What it does |
 |--------|--------------|

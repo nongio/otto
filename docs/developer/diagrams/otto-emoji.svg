@@ -1,0 +1,76 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 348" width="760" height="348" role="img" aria-label="otto-emoji: started by a key binding or by accent hold; it reads the focused app, shows a card on an overlay layer surface, then types, pastes or copies the pick through a virtual keyboard">
+  <style>
+    text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
+    .box  { fill: #f6f8fa; stroke: #8b949e; stroke-width: 1.4; }
+    .acc  { fill: #ddf4ff; stroke: #218bff; stroke-width: 1.4; }
+    .grp  { fill: none; stroke: #8b949e; stroke-width: 1.2; stroke-dasharray: 5 4; }
+    .t    { fill: #1f2328; font-size: 13px; }
+    .tb   { fill: #1f2328; font-size: 13px; font-weight: 600; }
+    .tm   { fill: #656d76; font-size: 11px; }
+    .ln   { stroke: #8b949e; stroke-width: 1.4; fill: none; marker-end: url(#ah); }
+    @media (prefers-color-scheme: dark) {
+      .box { fill: #161b22; stroke: #6e7681; }
+      .acc { fill: #10243b; stroke: #388bfd; }
+      .grp { stroke: #6e7681; }
+      .t, .tb { fill: #e6edf3; }
+      .tm  { fill: #9198a1; }
+      .ln  { stroke: #8b949e; }
+    }
+  </style>
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#8b949e"/>
+    </marker>
+  </defs>
+
+  <text class="tb" x="16" y="28">Started by</text>
+  <text class="tb" x="236" y="28">otto-emoji</text>
+  <text class="tb" x="566" y="28">compositor</text>
+  <rect class="grp" x="226" y="38" width="170" height="244" rx="10"/>
+
+  <rect class="box" x="16" y="132" width="190" height="40" rx="6"/>
+  <text class="t" x="28" y="149">Ctrl+period</text>
+  <text class="tm" x="28" y="164">key binding in the config</text>
+  <rect class="box" x="16" y="220" width="190" height="40" rx="6"/>
+  <text class="t" x="28" y="237">accent hold</text>
+  <text class="tm" x="28" y="252">--replace TEXT, no card</text>
+
+  <rect class="box" x="236" y="52" width="150" height="40" rx="6"/>
+  <text class="t" x="248" y="69">target</text>
+  <text class="tm" x="248" y="84">which app had focus</text>
+
+  <rect class="acc" x="236" y="122" width="150" height="60" rx="6"/>
+  <text class="tb" x="248" y="144">card</text>
+  <text class="tm" x="248" y="161">search, tabs, grid,</text>
+  <text class="tm" x="248" y="175">laye-rs scene</text>
+  <path class="ln" d="M311 92 V120"/>
+  <path class="ln" d="M206 152 H234"/>
+
+  <rect class="acc" x="236" y="212" width="150" height="56" rx="6"/>
+  <text class="tb" x="248" y="234">delivery</text>
+  <text class="tm" x="248" y="252">type, paste or copy</text>
+  <path class="ln" d="M311 182 V210"/>
+  <path class="ln" d="M206 240 H234"/>
+
+  <rect class="box" x="566" y="52" width="180" height="40" rx="6"/>
+  <text class="t" x="580" y="69">foreign toplevels</text>
+  <text class="tm" x="580" y="84">the activated app id</text>
+  <path class="ln" d="M564 72 H388"/>
+
+  <rect class="box" x="566" y="122" width="180" height="60" rx="6"/>
+  <text class="t" x="580" y="142">overlay layer surface</text>
+  <text class="tm" x="580" y="159">card subsurface, styled;</text>
+  <text class="tm" x="580" y="173">text cursor for placement</text>
+  <path class="ln" d="M386 152 H564"/>
+
+  <rect class="box" x="566" y="210" width="180" height="60" rx="6"/>
+  <text class="t" x="580" y="230">virtual keyboard</text>
+  <text class="tm" x="580" y="247">keymap and keys, or</text>
+  <text class="tm" x="580" y="261">clipboard and paste chord</text>
+  <path class="ln" d="M386 240 H564"/>
+
+  <rect class="box" x="566" y="294" width="180" height="40" rx="6"/>
+  <text class="t" x="580" y="311">focused app</text>
+  <text class="tm" x="580" y="326">receives the emoji</text>
+  <path class="ln" d="M656 270 V292"/>
+</svg>

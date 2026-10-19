@@ -1,0 +1,69 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 290" width="760" height="290" role="img" aria-label="otto-pdf: inside Studio, the edit queue and page drawing call Document handles, which send work to the one thread that owns PDFium, loaded from libpdfium.so; saves are written beside the file and renamed over it">
+  <style>
+    text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
+    .box  { fill: #f6f8fa; stroke: #8b949e; stroke-width: 1.4; }
+    .acc  { fill: #ddf4ff; stroke: #218bff; stroke-width: 1.4; }
+    .grp  { fill: none; stroke: #8b949e; stroke-width: 1.2; stroke-dasharray: 5 4; }
+    .t    { fill: #1f2328; font-size: 13px; }
+    .tb   { fill: #1f2328; font-size: 13px; font-weight: 600; }
+    .tm   { fill: #656d76; font-size: 11px; }
+    .ln   { stroke: #8b949e; stroke-width: 1.4; fill: none; marker-end: url(#ah); }
+    @media (prefers-color-scheme: dark) {
+      .box { fill: #161b22; stroke: #6e7681; }
+      .acc { fill: #10243b; stroke: #388bfd; }
+      .grp { stroke: #6e7681; }
+      .t, .tb { fill: #e6edf3; }
+      .tm  { fill: #9198a1; }
+      .ln  { stroke: #8b949e; }
+    }
+  </style>
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#8b949e"/>
+    </marker>
+  </defs>
+
+
+  <text class="tb" x="16" y="28">otto-preview process (Studio)</text>
+  <text class="tb" x="596" y="28">on disk</text>
+  <rect class="grp" x="16" y="40" width="560" height="234" rx="10"/>
+
+  <rect class="box" x="32" y="60" width="170" height="44" rx="6"/>
+  <text class="t" x="44" y="78">person's edits</text>
+  <text class="tm" x="44" y="94">window input</text>
+  <rect class="box" x="32" y="124" width="170" height="44" rx="6"/>
+  <text class="t" x="44" y="142">agent's edits</text>
+  <text class="tm" x="44" y="158">preview_edit, Preview1</text>
+
+  <rect class="box" x="226" y="92" width="150" height="48" rx="6"/>
+  <text class="t" x="240" y="112">edit queue</text>
+  <text class="tm" x="240" y="129">undo, redo, save</text>
+  <path class="ln" d="M202 82 L224 106"/>
+  <path class="ln" d="M202 146 L224 128"/>
+
+  <rect class="box" x="226" y="180" width="150" height="48" rx="6"/>
+  <text class="t" x="240" y="200">page drawing</text>
+  <text class="tm" x="240" y="217">render(page, width)</text>
+
+  <text class="tm" x="400" y="80">otto-pdf</text>
+  <rect class="acc" x="400" y="92" width="160" height="48" rx="6"/>
+  <text class="tb" x="414" y="112">Document</text>
+  <text class="tm" x="414" y="129">a handle per document</text>
+  <path class="ln" d="M376 116 H398"/>
+  <path class="ln" d="M376 200 L398 136"/>
+
+  <rect class="acc" x="400" y="196" width="160" height="62" rx="6"/>
+  <text class="tb" x="414" y="216">PDFium thread</text>
+  <text class="tm" x="414" y="233">every open document,</text>
+  <text class="tm" x="414" y="248">the only caller of PDFium</text>
+  <path class="ln" d="M480 140 V194"/>
+
+  <rect class="box" x="596" y="94" width="150" height="44" rx="6"/>
+  <text class="t" x="608" y="112">the PDF file</text>
+  <text class="tm" x="608" y="128">written beside, renamed</text>
+  <rect class="box" x="596" y="205" width="150" height="44" rx="6"/>
+  <text class="t" x="608" y="223">libpdfium.so</text>
+  <text class="tm" x="608" y="239">loaded on first use</text>
+  <path class="ln" d="M560 116 H594"/>
+  <path class="ln" d="M560 227 H594"/>
+</svg>
