@@ -701,15 +701,23 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
     /// before we left stays latched forever and silently arms every
     /// modifier-gated interaction (window-drag tiling, shortcuts).
     pub fn release_all_keys(&mut self) {
+        // A held accent key would open its row while we are away. Its release
+        // already reached the application, so it is not sent twice.
+        let accent_held = self.reset_accent_hold();
         let keyboard = self.seat.get_keyboard().unwrap();
         for keycode in keyboard.pressed_keys() {
+            let filter = if Some(keycode) == accent_held {
+                FilterResult::Intercept(false)
+            } else {
+                FilterResult::Forward
+            };
             keyboard.input(
                 self,
                 keycode,
                 KeyState::Released,
                 SCOUNTER.next_serial(),
                 InputTime::from_millis(0),
-                |_, _, _| FilterResult::Forward::<bool>,
+                move |_, _, _| filter,
             );
         }
         self.current_modifiers = keyboard.modifier_state();
