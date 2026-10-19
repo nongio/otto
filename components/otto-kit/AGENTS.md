@@ -7,7 +7,7 @@ How it works: [otto-kit](../../docs/developer/otto-kit.md).
 - **Layer:** toolkit. Used by the compositor, every kit crate (`otto-md-kit`, `otto-media-kit`, `otto-auth-ui`, `otto-peek`, `otto-agents-kit`) and every toolkit app.
 
 ## Dependencies
-- **Internal:** `otto-foundations` (re-exported as `otto_kit::xdg`, `otto_kit::uri`, `otto_kit::matching`) and `otto-dbus` (the `org.otto.*` proxies, re-exported as `otto_kit::dbus`).
+- **Internal:** `otto-foundations` (re-exported as `otto_kit::xdg`, `otto_kit::uri`, `otto_kit::matching`, and `write_atomically` as `otto_kit::fs::write_atomically`) and `otto-dbus` (the `org.otto.*` proxies, re-exported as `otto_kit::dbus`).
 - **External:** `smithay-client-toolkit` and `wayland-client`; `skia-safe` (gl, textlayout, svg, skottie), re-exported as `otto_kit::skia`; `laye-rs` for the retained scene graph; EGL, loaded at run time. From the compositor it needs `zwlr_layer_shell_v1`, `ext_session_lock_v1`, fractional scale, `zwp_text_input_v3`, pointer gestures and Otto's own protocols. It follows the `org.freedesktop.portal.Settings` portal for colour scheme, accent and locale, puts up file dialogs through the portal's `FileChooser`, and serves accessibility through AccessKit over AT-SPI. The `dictation` feature adds PipeWire capture and an HTTP speech-to-text client.
 
 ## Develop

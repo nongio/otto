@@ -457,28 +457,14 @@ pub(crate) fn edit_file_at(
     path: &Path,
     edit: impl FnOnce(&str) -> Result<String, toml_edit::TomlError>,
 ) -> std::io::Result<()> {
-    let path = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-    let text = match std::fs::read_to_string(&path) {
+    let text = match std::fs::read_to_string(path) {
         Ok(text) => text,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => String::new(),
         Err(err) => return Err(err),
     };
     let next =
         edit(&text).map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err))?;
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
-    let temp = path.with_extension(format!("toml.tmp.{}", std::process::id()));
-    let written = std::fs::write(&temp, next)
-        .and_then(|()| match std::fs::metadata(&path) {
-            Ok(meta) => std::fs::set_permissions(&temp, meta.permissions()),
-            Err(_) => Ok(()),
-        })
-        .and_then(|()| std::fs::rename(&temp, &path));
-    if written.is_err() {
-        let _ = std::fs::remove_file(&temp);
-    }
-    written
+    otto_kit::fs::write_atomically(path, next.as_bytes())
 }
 
 /// `~/.config/otto/files.toml`. otto-settings' desk pane edits the same

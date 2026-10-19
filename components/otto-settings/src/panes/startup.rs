@@ -551,23 +551,13 @@ fn write(change: impl FnOnce(&str, &[Entry]) -> Result<String, String>) {
             return;
         }
     };
-    if let Err(err) = write_atomically(&path, &next) {
+    if let Err(err) = otto_kit::fs::write_atomically(&path, next.as_bytes()) {
         eprintln!("startup: cannot write {}: {err}", path.display());
         return;
     }
     *cached().lock().unwrap() = None;
     DIRTY.store(true, Ordering::Relaxed);
     otto_kit::AppContext::request_wakeup();
-}
-
-/// Replace `path` with `text` in one step, so nothing reads it half written.
-fn write_atomically(path: &Path, text: &str) -> std::io::Result<()> {
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
-    let temp = path.with_extension(format!("toml.tmp.{}", std::process::id()));
-    std::fs::write(&temp, text)?;
-    std::fs::rename(&temp, path)
 }
 
 /// What the list box keeps between frames: the item picked, the one being

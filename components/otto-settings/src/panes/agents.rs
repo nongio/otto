@@ -420,7 +420,7 @@ fn apply() {
             .map(|home| home.display().to_string())
             .unwrap_or_default();
         let text = render(&user, source.as_deref(), &state.saved, &state.draft, &home)?;
-        write_atomically(&path, &text).map_err(|err| err.to_string())
+        otto_kit::fs::write_atomically(&path, text.as_bytes()).map_err(|err| err.to_string())
     })();
     match result {
         Ok(()) => {
@@ -437,20 +437,6 @@ fn apply() {
             state.error = Some(err);
         }
     }
-}
-
-/// Replace `path` with `text` in one step, so the service never starts on a
-/// half-written file.
-fn write_atomically(path: &Path, text: &str) -> std::io::Result<()> {
-    use std::io::Write;
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
-    let temp = path.with_extension(format!("toml.tmp.{}", std::process::id()));
-    let mut file = std::fs::File::create(&temp)?;
-    file.write_all(text.as_bytes())?;
-    file.sync_all()?;
-    std::fs::rename(&temp, path)
 }
 
 /// Bring the harnesses and the service up to date with the saved file.
