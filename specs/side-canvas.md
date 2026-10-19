@@ -206,16 +206,16 @@ one swipe away and out of the way the rest of the time.
 - Every drag and drop operation is announced to every manager (version 4)
   with `drag_mime_type` events and `drag_started`, and its end with
   `drag_ended`, whether it was dropped or cancelled.
-- While a drag goes on, the pointer resting within the canvas width of the
-  right edge of an output for 250 ms brings the canvas out a little there
+- While a drag goes on, the pointer resting within 1.5 canvas widths of the
+  right edge of an output for 120 ms brings the canvas out a little there
   (peeking): 10% of the way at the inner side of that strip, and from then on
-  it follows the pointer, up to 40% at the outer quarter of the strip. The
-  pointer turning back left by 12 points takes it in to 10% again, and it
-  grows from there if the pointer heads right once more. A peeking canvas
-  takes no presses. Moving out of the strip slides it away
+  it follows the pointer, up to 40% where the close zone (the outer half of
+  the canvas width) starts. The pointer turning back left by 24 points takes
+  it in to 10% again, and for the rest of the drag it stays there: it does
+  not follow, open, or peek again. A peeking canvas takes no presses. Moving out of the strip slides it away
   again.
-- The pointer resting within the outer quarter of the strip for 400 ms opens
-  the canvas (turning back starts that rest over), as an item's `show` does: passive, without moving the
+- The pointer resting within the close zone for 200 ms opens the canvas,
+  unless the drag has turned back, as an item's `show` does: passive, without moving the
   keyboard. Once open it stays open for the rest of the drag.
 - Neither happens while the session is locked or during exposé, and only if
   an item exists by then; a client may add one on `drag_started` for this. A
@@ -336,8 +336,10 @@ are read the next time the column is laid out.
   shortcut, and the right edge is where the canvas lives. The peek tells the
   user a drop can go there, and following the pointer shows that going
   further right brings it out; it covers little, so a drag meant for a
-  window near the edge is not in its way. Turning back is the user saying
-  they do not want it, so it goes back to the first step, as an undo.
+  window near the edge is not in its way. It starts before the column's own
+  strip, so it has time to open before the pointer reaches the edge. Turning
+  back is the user saying they do not want it, so it goes back to the first
+  step, as an undo, and stays there for that drag.
   Opening covers what is under the
   column, so it waits for two signs of intent: the pointer close to the edge,
   and resting there. The pauses keep a drag on its way to an output further

@@ -1050,8 +1050,8 @@ impl<B: Backend> Otto<B> {
     /// Look at the pointer during a drag. Resting near the right edge of an
     /// output brings the canvas out a little there, and from then on it
     /// follows the pointer, further out the closer it gets: a drop can go
-    /// here. Turning back left takes it in to where it started. Resting
-    /// close to the edge opens it. A peek the drag made goes
+    /// here. Turning back left takes it in to where it started, for the rest
+    /// of the drag. Resting close to the edge opens it. A peek the drag made goes
     /// again when the pointer moves away. Returns whether the drag is still
     /// going on.
     fn canvas_drag_tick(&mut self) -> bool {
@@ -1098,11 +1098,21 @@ impl<B: Backend> Otto<B> {
             .observe(zone != drag::EdgeZone::Away, now, drag::DWELL);
         let opened_canvas = session.opened_canvas;
         let peeking = matches!(self.canvas.phase, Phase::Peeking);
+        let dismissing = retreated && peeking && !session.dismissed;
+        session.dismissed |= dismissing;
+        let dismissed = session.dismissed;
 
         if zone == drag::EdgeZone::Away && opened_canvas && peeking {
             self.canvas_hide();
             if let Some(session) = self.canvas.drag.as_mut() {
                 session.opened_canvas = false;
+            }
+            return true;
+        }
+        if dismissed {
+            if dismissing {
+                self.canvas_peek_follow(drag::PEEK_MIN);
+                tracing::debug!("canvas peek dismissed by turning back");
             }
             return true;
         }

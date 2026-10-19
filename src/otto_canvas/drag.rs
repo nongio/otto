@@ -4,7 +4,8 @@
 //! A drag that rests near the right edge of an output brings the canvas out
 //! a little, following the pointer, to say a drop can go there
 //! ([`PeekFollow`]). Turning back left takes it in again to where it
-//! started: the user does not want it. Only a drag that rests close to the
+//! started, and it stays there for the rest of the drag: the user does not
+//! want it. Only a drag that rests close to the
 //! edge opens it, so an item can take the drop ([`EdgeZone`], [`EdgeDwell`]). When the drag ends the canvas
 //! goes again, unless it was open before the drag or the drop landed on an
 //! item ([`hide_when_drag_ends`]). A press outside a shown canvas reaches
@@ -19,14 +20,15 @@ use std::time::{Duration, Instant};
 /// output, counts as near the edge for a drag: there the canvas peeks out
 /// and follows the pointer.
 ///
-/// A strip rather than the last point: a drag on a touchpad drifts, and the
-/// canvas should answer a drag taken over to the right side, not only one
-/// pinned against the edge. The whole strip the column slides into counts.
-pub const EDGE_FRACTION: f64 = 1.0;
+/// Wider than the column, so the canvas starts to come out while the drag is
+/// still on its way, and has time to open before the pointer reaches the
+/// edge.
+pub const EDGE_FRACTION: f64 = 1.5;
 
 /// How much of the canvas width, measured in from the right edge of an
-/// output, counts as close to the edge: there the canvas opens.
-pub const OPEN_FRACTION: f64 = 0.25;
+/// output, counts as close to the edge: there the canvas opens. Half the
+/// column, so it opens before the pointer is pinned against the edge.
+pub const OPEN_FRACTION: f64 = 0.5;
 
 /// How far out a peeking canvas is when the pointer has just come near the
 /// edge, from 0 (hidden) to 1 (shown).
@@ -39,20 +41,20 @@ pub const PEEK_MAX: f64 = 0.4;
 
 /// How far the pointer goes back left, in logical points, before a peeking
 /// canvas takes it as turning away. Enough to ride out the drift of a
-/// touchpad.
-pub const RETREAT_POINTS: f64 = 12.0;
+/// touchpad: turning away holds for the rest of the drag.
+pub const RETREAT_POINTS: f64 = 24.0;
 
 /// How long a drag rests near the edge before the canvas peeks out.
 ///
 /// Long enough that a drag on its way to an output further right, or to a
 /// window near the edge, passes through without opening it, short enough not
 /// to feel like waiting.
-pub const DWELL: Duration = Duration::from_millis(250);
+pub const DWELL: Duration = Duration::from_millis(120);
 
 /// How long a drag rests close to the edge before the canvas opens. Longer
 /// than [`DWELL`]: opening covers what is under the column, so the drag has
 /// to mean it.
-pub const OPEN_DWELL: Duration = Duration::from_millis(400);
+pub const OPEN_DWELL: Duration = Duration::from_millis(200);
 
 /// How often the pointer is looked at while a drag goes on.
 pub const POLL: Duration = Duration::from_millis(50);
@@ -81,38 +83,31 @@ pub fn edge_zone(x: f64, output_right: f64, canvas_width: f64) -> EdgeZone {
     }
 }
 
-/// How far out a peeking canvas is as the pointer moves.
+/// How far out a peeking canvas is as the pointer moves, and when it turns
+/// back.
 ///
 /// It grows from [`PEEK_MIN`] where the near strip starts to [`PEEK_MAX`]
-/// where the close one does. When the pointer turns back left by
-/// [`RETREAT_POINTS`], it goes back to [`PEEK_MIN`], and grows again from
-/// there as the pointer heads right once more.
+/// where the close one does. The pointer going back left by
+/// [`RETREAT_POINTS`] from the furthest right it has been is turning back.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct PeekFollow {
-    /// Where [`PEEK_MIN`] is, once the pointer has turned back.
-    anchor: Option<f64>,
-    /// The furthest right the pointer has been since it last turned back.
+    /// The furthest right the pointer has been during this peek.
     furthest: Option<f64>,
 }
 
 impl PeekFollow {
     /// The progress for a pointer at `x` on an output whose right edge is
-    /// at `output_right`, and whether the pointer just turned back.
+    /// at `output_right`, and whether the pointer has turned back.
     pub fn observe(&mut self, x: f64, output_right: f64, canvas_width: f64) -> (f64, bool) {
         let near = output_right - canvas_width * EDGE_FRACTION;
         let close = output_right - canvas_width * OPEN_FRACTION;
         let furthest = self.furthest.map_or(x, |f| f.max(x));
-        let retreated = furthest - x >= RETREAT_POINTS;
-        self.furthest = Some(if retreated { x } else { furthest });
-        let anchor = if retreated {
-            x
-        } else {
-            self.anchor.unwrap_or(near).min(x)
-        };
-        self.anchor = Some(anchor);
-        let span = (close - anchor).max(canvas_width * OPEN_FRACTION);
-        let depth = ((x - anchor) / span).clamp(0.0, 1.0);
-        (PEEK_MIN + (PEEK_MAX - PEEK_MIN) * depth, retreated)
+        self.furthest = Some(furthest);
+        let depth = ((x - near) / (close - near).max(1.0)).clamp(0.0, 1.0);
+        (
+            PEEK_MIN + (PEEK_MAX - PEEK_MIN) * depth,
+            furthest - x >= RETREAT_POINTS,
+        )
     }
 
     /// Forget the pointer, for a new peek.
@@ -166,6 +161,9 @@ pub struct DragSession {
     pub open_dwell: EdgeDwell,
     /// How far out the canvas is while it peeks.
     pub follow: PeekFollow,
+    /// The pointer turned back while the canvas peeked: it neither follows,
+    /// nor opens, nor peeks again until the drag ends.
+    pub dismissed: bool,
 }
 
 /// Whether the canvas hides as a drag ends: only when the drag opened it
@@ -193,41 +191,44 @@ pub fn hide_on_release(press: PressOutside, released_inside: bool) -> bool {
 mod tests {
     use super::*;
 
+    const RIGHT: f64 = 1920.0;
+    const WIDTH: f64 = 400.0;
+    const NEAR: f64 = RIGHT - WIDTH * EDGE_FRACTION;
+    const CLOSE: f64 = RIGHT - WIDTH * OPEN_FRACTION;
+
     #[test]
-    fn near_is_the_canvas_strip_and_close_its_outer_quarter() {
-        assert_eq!(edge_zone(1920.0, 1920.0, 400.0), EdgeZone::Close);
-        assert_eq!(edge_zone(1820.0, 1920.0, 400.0), EdgeZone::Close);
-        assert_eq!(edge_zone(1819.0, 1920.0, 400.0), EdgeZone::Near);
-        assert_eq!(edge_zone(1520.0, 1920.0, 400.0), EdgeZone::Near);
-        assert_eq!(edge_zone(1519.0, 1920.0, 400.0), EdgeZone::Away);
-        assert_eq!(edge_zone(100.0, 1920.0, 400.0), EdgeZone::Away);
+    fn near_starts_before_the_column_and_close_is_its_outer_half() {
+        assert_eq!(edge_zone(RIGHT, RIGHT, WIDTH), EdgeZone::Close);
+        assert_eq!(edge_zone(CLOSE, RIGHT, WIDTH), EdgeZone::Close);
+        assert_eq!(edge_zone(CLOSE - 1.0, RIGHT, WIDTH), EdgeZone::Near);
+        assert_eq!(edge_zone(RIGHT - WIDTH, RIGHT, WIDTH), EdgeZone::Near);
+        assert_eq!(edge_zone(NEAR, RIGHT, WIDTH), EdgeZone::Near);
+        assert_eq!(edge_zone(NEAR - 1.0, RIGHT, WIDTH), EdgeZone::Away);
+        assert_eq!(edge_zone(100.0, RIGHT, WIDTH), EdgeZone::Away);
     }
 
     #[test]
     fn the_peek_grows_from_min_to_max_across_the_near_strip() {
         let mut follow = PeekFollow::default();
-        assert_eq!(follow.observe(1520.0, 1920.0, 400.0), (PEEK_MIN, false));
-        let (mid, _) = follow.observe(1670.0, 1920.0, 400.0);
+        assert_eq!(follow.observe(NEAR, RIGHT, WIDTH), (PEEK_MIN, false));
+        let (mid, _) = follow.observe((NEAR + CLOSE) / 2.0, RIGHT, WIDTH);
         assert!((mid - (PEEK_MIN + PEEK_MAX) / 2.0).abs() < 1e-9);
-        assert_eq!(follow.observe(1820.0, 1920.0, 400.0), (PEEK_MAX, false));
-        assert_eq!(follow.observe(1920.0, 1920.0, 400.0), (PEEK_MAX, false));
+        assert_eq!(follow.observe(CLOSE, RIGHT, WIDTH), (PEEK_MAX, false));
+        assert_eq!(follow.observe(RIGHT, RIGHT, WIDTH), (PEEK_MAX, false));
     }
 
     #[test]
-    fn turning_back_takes_the_peek_in_and_it_grows_again_from_there() {
+    fn going_back_left_past_the_drift_is_turning_back() {
         let mut follow = PeekFollow::default();
-        follow.observe(1520.0, 1920.0, 400.0);
-        follow.observe(1800.0, 1920.0, 400.0);
-        let (drift, retreated) = follow.observe(1800.0 - RETREAT_POINTS / 2.0, 1920.0, 400.0);
-        assert!(!retreated, "a little drift is not turning back");
-        assert!(drift > PEEK_MIN);
-        assert_eq!(follow.observe(1780.0, 1920.0, 400.0), (PEEK_MIN, true));
-        let (again, retreated) = follow.observe(1790.0, 1920.0, 400.0);
-        assert!(!retreated);
-        assert!(
-            again > PEEK_MIN && again < PEEK_MAX,
-            "grows, without a jump"
-        );
+        follow.observe(NEAR, RIGHT, WIDTH);
+        follow.observe(CLOSE, RIGHT, WIDTH);
+        let (_, turned) = follow.observe(CLOSE - RETREAT_POINTS / 2.0, RIGHT, WIDTH);
+        assert!(!turned, "a little drift is not turning back");
+        let (_, turned) = follow.observe(CLOSE - RETREAT_POINTS, RIGHT, WIDTH);
+        assert!(turned);
+        follow.reset();
+        let (_, turned) = follow.observe(NEAR, RIGHT, WIDTH);
+        assert!(!turned, "a new peek starts over");
     }
 
     #[test]
