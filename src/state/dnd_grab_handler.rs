@@ -63,6 +63,7 @@ impl<BackendData: Backend> WaylandDndGrabHandler for Otto<BackendData> {
         // Actually start the DnD grab!
         match type_ {
             GrabType::Pointer => {
+                self.dnd_active = true;
                 let pointer = seat.get_pointer().unwrap();
                 let start_data = pointer.grab_start_data().unwrap();
                 pointer.set_grab(
@@ -93,6 +94,7 @@ impl<BackendData: Backend> DndGrabHandler for Otto<BackendData> {
         _seat: Seat<Self>,
         _location: Point<f64, Logical>,
     ) {
+        self.dnd_active = false;
         // The drop has reached its target by now; the side canvas decides
         // whether it stays.
         let dropped_on = match target {
@@ -196,6 +198,7 @@ impl<BackendData: Backend> DndGrabHandler for Otto<BackendData> {
         self.set_cursor(&CursorImageStatus::default_named());
     }
     fn cancelled(&mut self, _seat: Seat<Self>, _location: Point<f64, Logical>) {
+        self.dnd_active = false;
         self.canvas_drag_ended(None);
     }
 }

@@ -335,7 +335,17 @@ impl FilesWindow {
                     // The negotiated action, not the one we asked for: the
                     // compositor picks, and a source that only offered a copy
                     // must not have its files moved.
-                    let move_them = dnd::selected_action().contains(dnd::DndAction::Move);
+                    let action = dnd::selected_action();
+                    let op = DropOp::from_action(action);
+                    // `ask` is never final: the protocol wants one last
+                    // answer before the drop is finished. A link copies
+                    // nothing away from the source, so that answer is a copy,
+                    // which no source reads as leave to delete its files.
+                    if op == DropOp::Link {
+                        if let Some(mime) = dnd::first_offered(clipboard::file_mime_preference()) {
+                            dnd::accept(Some(&mime), DndAction::Copy, DndAction::Copy);
+                        }
+                    }
 
                     // Our own drag is served from our own payload; see
                     // `dnd::own_files` for why it cannot go over the pipe.
@@ -348,6 +358,7 @@ impl FilesWindow {
                     };
 
                     let mut browser = state.browse();
+                    browser.drag_copies = action.intersects(DndAction::Copy | DndAction::Ask);
                     // Resolved again at the drop's own position rather than
                     // trusting the last motion: the release may land somewhere
                     // no motion reported.
@@ -363,7 +374,7 @@ impl FilesWindow {
                             browser.dirty = true;
                             browser.place_desk_drop(&paths, *x as f32, *y as f32);
                         }
-                        Some(paths) => browser.apply_drop(paths, move_them),
+                        Some(paths) => browser.apply_drop(paths, op),
                         None => {
                             browser.drop_target = None;
                             browser.dirty = true;
@@ -443,7 +454,8 @@ pub(super) fn start_drag(window: &Window, drag: DragStart) {
         let theme = AppContext::current_theme();
         otto_kit::dnd::start_file_drag_with_icon(
             &paths,
-            DndAction::Copy | DndAction::Move,
+            // Ask carries a link: see `DropOp::from_action`.
+            DndAction::Copy | DndAction::Move | DndAction::Ask,
             &surface,
             serial,
             (size.0 as i32, size.1 as i32),

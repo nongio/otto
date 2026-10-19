@@ -3506,36 +3506,25 @@ fn draw_drag_entry(
         ViewMode::Grid | ViewMode::Photos => {
             let cell = Rect::from_wh(cell_w(), cell_h());
             let icon_top = cell.top + 8.0;
+            let icon_box = Rect::from_xywh(
+                cell.center_x() - grid_icon() / 2.0,
+                icon_top,
+                grid_icon(),
+                grid_icon(),
+            );
             if let Some(image) = thumb {
-                draw_thumbnail(
-                    canvas,
-                    image,
-                    Rect::from_xywh(
-                        cell.center_x() - grid_icon() / 2.0,
-                        icon_top,
-                        grid_icon(),
-                        grid_icon(),
-                    ),
-                    false,
-                );
+                draw_thumbnail(canvas, image, icon_box, false);
             } else {
                 let chain = entry.icon_chain();
                 let refs: Vec<&str> = chain.iter().map(String::as_str).collect();
                 if let Some(image) =
                     icons::cached_icon_chain_at(&refs, grid_icon() as i32, icons::FULL_COLOUR_SIZE)
                 {
-                    canvas.draw_image_rect(
-                        &image,
-                        None,
-                        Rect::from_xywh(
-                            cell.center_x() - grid_icon() / 2.0,
-                            icon_top,
-                            grid_icon(),
-                            grid_icon(),
-                        ),
-                        &Paint::default(),
-                    );
+                    canvas.draw_image_rect(&image, None, icon_box, &Paint::default());
                 }
+            }
+            if entry.is_symlink {
+                draw_link_badge(canvas, icon_box, false);
             }
 
             // The caption on its pill, the way a selected cell wears it.
@@ -7027,6 +7016,9 @@ fn draw_photo_card(
             }
         }
     }
+    if entry.is_symlink {
+        draw_link_badge(canvas, icon, cut);
+    }
     let style = styles::FOOTNOTE;
     let name = ellipsize(&style.font(), &entry.name, tile.width() - 16.0);
     Label::new(name)
@@ -7265,6 +7257,9 @@ fn draw_grid_icon(
             .paint(&layer),
     );
     draw_grid_icon_face(canvas, entry, box_rect, thumb);
+    if entry.is_symlink {
+        draw_link_badge(canvas, box_rect, false);
+    }
     canvas.restore();
 }
 
@@ -7871,9 +7866,15 @@ fn draw_entry_icon(
     let box_rect = Rect::from_xywh(left, center_y - ICON_SIZE / 2.0, ICON_SIZE, ICON_SIZE);
     if let Some(image) = thumb {
         draw_thumbnail(canvas, image, box_rect, cut);
-        return;
+    } else {
+        draw_entry_icon_face(canvas, entry, box_rect, cut);
     }
+    if entry.is_symlink {
+        draw_link_badge(canvas, box_rect, cut);
+    }
+}
 
+fn draw_entry_icon_face(canvas: &Canvas, entry: &Entry, box_rect: Rect, cut: bool) {
     let chain = entry.icon_chain();
     let refs: Vec<&str> = chain.iter().map(String::as_str).collect();
     if let Some(image) =
@@ -7888,6 +7889,81 @@ fn draw_entry_icon(
         }
         canvas.draw_image_rect(&image, None, dst, &paint);
     }
+}
+
+/// The freedesktop emblem a symbolic link wears, from the icon theme.
+const LINK_EMBLEM: &str = "emblem-symbolic-link";
+
+/// The mark a symbolic link wears in the icon's bottom-left corner: the icon
+/// theme's [`LINK_EMBLEM`], so a link looks the way the rest of the desktop
+/// marks one. A theme without it gets [`draw_link_badge_card`] instead.
+///
+/// Sized off the icon it sits on, so the 18pt list icon and a large desk icon
+/// carry the same mark at their own scale, but never so small it stops
+/// reading as one. A cut link is dimmed with its icon.
+pub(crate) fn draw_link_badge(canvas: &Canvas, icon: Rect, cut: bool) {
+    let side = (icon.width().min(icon.height()) * 0.36).max(8.0);
+    let corner = Rect::from_xywh(icon.left, icon.bottom - side, side, side);
+    // Looked up at the badge's own size: themes draw emblems for small sizes
+    // (MacTahoe has only 16 and 22), and rasterised at device pixels so a
+    // vector emblem stays sharp on a scaled output.
+    let emblem = icons::cached_icon_chain_at(&[LINK_EMBLEM], device_px(canvas, side), side as i32);
+    match emblem {
+        Some(image) => {
+            let mut paint = Paint::default();
+            paint.set_anti_alias(true);
+            if cut {
+                paint.set_alpha(110);
+            }
+            canvas.draw_image_rect(&image, None, corner, &paint);
+        }
+        None => draw_link_badge_card(canvas, corner, cut),
+    }
+}
+
+/// A curved arrow on a small white card filling `card`, the way an alias has
+/// always looked: the link badge for an icon theme with no link emblem.
+fn draw_link_badge_card(canvas: &Canvas, card: Rect, cut: bool) {
+    let side = card.width();
+    let radius = side * 0.22;
+    let fade = if cut { 0.45 } else { 1.0 };
+    let alpha = |a: f32| (a * fade) as u8;
+
+    let mut fill = Paint::default();
+    fill.set_anti_alias(true);
+    fill.set_color(Color::from_argb(alpha(250.0), 255, 255, 255));
+    canvas.draw_rrect(RRect::new_rect_xy(card, radius, radius), &fill);
+
+    // The card's own edge, so it does not melt into a white icon behind it.
+    let mut edge = Paint::default();
+    edge.set_anti_alias(true);
+    edge.set_style(skia_safe::paint::Style::Stroke);
+    edge.set_stroke_width((side * 0.035).max(0.75));
+    edge.set_color(Color::from_argb(alpha(70.0), 0, 0, 0));
+    canvas.draw_rrect(RRect::new_rect_xy(card, radius, radius), &edge);
+
+    // The arrow: a shaft that rises from the bottom-left and curves over to
+    // the right, ending in an open head pointing up and right.
+    let mut ink = Paint::default();
+    ink.set_anti_alias(true);
+    ink.set_style(skia_safe::paint::Style::Stroke);
+    ink.set_stroke_width((side * 0.13).max(1.1));
+    ink.set_stroke_cap(skia_safe::paint::Cap::Round);
+    ink.set_stroke_join(skia_safe::paint::Join::Round);
+    ink.set_color(Color::from_argb(alpha(235.0), 0, 0, 0));
+
+    let at = |x: f32, y: f32| Point::new(card.left + side * x, card.top + side * y);
+    let tip = at(0.74, 0.28);
+    let mut shaft = PathBuilder::new();
+    shaft.move_to(at(0.30, 0.76));
+    shaft.quad_to(at(0.30, 0.34), tip);
+    canvas.draw_path(&shaft.detach(), &ink);
+
+    let mut head = PathBuilder::new();
+    head.move_to(at(0.50, 0.24));
+    head.line_to(tip);
+    head.line_to(at(0.64, 0.50));
+    canvas.draw_path(&head.detach(), &ink);
 }
 
 /// A thumbnail, fitted into the box an icon would have had, with rounded

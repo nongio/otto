@@ -540,7 +540,7 @@ impl Browser {
             otto_kit::sound::play_first(&SOUND_REMOVED);
         } else if result.restored > 0 {
             otto_kit::sound::play_first(&SOUND_RESTORED);
-        } else if result.moved + result.copied > 0 {
+        } else if result.moved + result.copied + result.linked > 0 {
             otto_kit::sound::play_first(&SOUND_ARRIVED);
         }
     }
