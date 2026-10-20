@@ -79,6 +79,7 @@ crates = [
     "otto-auth-ui",
     "otto-peek",
     "otto-agents-kit",
+    "otto-term-kit",
 ]
 may_use = ["foundation", "service", "toolkit", "kit"]
 lib_lints = ["unreachable_pub"]
@@ -101,6 +102,7 @@ crates = [
     "otto-authorize",
     "otto-dictate",
     "otto-msg",
+    "otto-setup",
     "otto-agents",
     "otto-rdp",
     "xdg-desktop-portal-otto",

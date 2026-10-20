@@ -29,11 +29,10 @@ use toml_edit::{value, ArrayOfTables, DocumentMut, Item, Table};
 
 use crate::model::{group, untitled, Control, Pane, Row};
 
-mod harness;
 mod instructions;
 
-use harness::Harness;
 use instructions::Instructions;
+use otto_agents_client::harness::{self, Harness};
 
 /// The permission policies `agents.toml` accepts, in the order the pop-up
 /// offers them. `deny` is what an agent gets when the key is unset.
@@ -797,7 +796,15 @@ pub fn owns(id: &str) -> bool {
 }
 
 /// The instructions Otto ships, listed straight after Default.
-const OTTO_INSTRUCTIONS: &str = "otto";
+const OTTO_INSTRUCTIONS: &str = harness::OTTO;
+
+/// The name the harness pop-up shows. Product names, so only Custom is
+/// translated.
+fn harness_label(harness: Harness) -> &'static str {
+    harness
+        .name()
+        .unwrap_or_else(|| otto_kit::t!("settings-agent-harness-custom"))
+}
 
 /// How the Instructions pop-up names a set: none as Default, the harness
 /// running as itself, and any other by the name in its file.
@@ -856,7 +863,7 @@ pub fn menu_choices(id: &str) -> Option<Vec<String>> {
         (_, Field::Harness) => Some(
             Harness::ALL
                 .iter()
-                .map(|harness| harness.label().to_string())
+                .map(|harness| harness_label(*harness).to_string())
                 .collect(),
         ),
         (_, Field::Instructions) => {
@@ -901,7 +908,10 @@ pub fn choose(id: &str, label: &str) {
         // Custom has nothing to set up: it is what a command the pane does
         // not recognise shows as.
         Field::Harness => {
-            let Some(picked) = Harness::ALL.into_iter().find(|h| h.label() == label) else {
+            let Some(picked) = Harness::ALL
+                .into_iter()
+                .find(|h| harness_label(*h) == label)
+            else {
                 return;
             };
             if picked == Harness::Custom || picked == Harness::detect(&agent.command) {
@@ -1444,7 +1454,7 @@ pub fn build() -> Pane {
             },
             row(
                 otto_kit::t!("settings-agent-harness"),
-                Control::Select(Harness::detect(&agent.command).label().to_string()),
+                Control::Select(harness_label(Harness::detect(&agent.command)).to_string()),
                 row_id(index, Field::Harness),
             ),
             row(

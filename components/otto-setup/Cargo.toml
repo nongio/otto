@@ -1,0 +1,25 @@
+[package]
+name = "otto-setup"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Set Otto up the first time, from a terminal: the agents, their service and Otto's knowledge."
+
+[[bin]]
+name = "otto-setup"
+path = "src/main.rs"
+
+[dependencies]
+libc.workspace = true
+otto-agents-client = { path = "../otto-agents-client" }
+otto-foundations = { path = "../otto-foundations" }
+otto-term-kit = { path = "../otto-term-kit" }
+toml_edit.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

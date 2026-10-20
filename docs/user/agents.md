@@ -11,6 +11,12 @@ installed and logged in, and answers as **Otto** whichever one is underneath.
 
 ## Before it works
 
+The quickest way is `otto-setup`, in a terminal. It finds the agents you have
+installed, lets you tick the ones Otto should run, and does steps 2 and 3
+below for you, plus the PATH fix under [When something is wrong](#when-something-is-wrong).
+Each step shows exactly what it will write or run, and nothing changes until
+you apply. `otto-setup --check` only reports what is left. By hand:
+
 1. **Install an agent** and log it in: Claude Code, OpenCode, Codex, Hermes or
    pi. Otto runs the command you name; it does not manage accounts or keys.
 2. **Start the service**, which is off until you ask for it:
@@ -237,8 +243,9 @@ that names the file.
 - **Nothing happens.** Check the service: `systemctl --user status otto-agents`
   and `journalctl --user -u otto-agents -f`.
 - **"command not found" in the log.** The service does not get a login shell's
-  PATH, so anything under nvm or `~/.local/bin` is invisible to it. Put the
-  full path in `agents.toml`, or add the directory with
+  PATH, so anything under nvm or `~/.local/bin` is invisible to it. Run
+  `otto-setup`, which adds the folders your agents live in; or put the full
+  path in `agents.toml`, or add the directory with
   `systemctl --user edit otto-agents`.
 - **The agent says it is Claude, or Codex, rather than Otto.** Run
   `otto-agents plugins install` again, then `otto-agents plugins status`: a

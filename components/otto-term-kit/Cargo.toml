@@ -1,0 +1,14 @@
+[package]
+name = "otto-term-kit"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "The terminal interfaces of Otto's command-line tools: raw mode, keys and styled lines."
+
+[dependencies]
+libc.workspace = true
+
+[lints]
+workspace = true

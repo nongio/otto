@@ -1,8 +1,7 @@
 //! The interactive chooser: a list of sections to tick, and a preview of
 //! each one exactly as the report will carry it.
 //!
-//! Colours are the terminal's own palette (bold, dim, reverse video and the
-//! standard green and cyan), so they follow its light or dark theme.
+//! The look and the terminal are `otto-term-kit`'s, shared with `otto-setup`.
 
 // Rust guideline compliant 2026-02-21
 
@@ -11,14 +10,8 @@ use std::io;
 use crate::doctor::redact::Redactor;
 use crate::doctor::report::{self, Redaction};
 use crate::doctor::sections::Section;
-use crate::doctor::term::{self, Key, Terminal};
-
-const RESET: &str = "\x1b[0m";
-const BOLD: &str = "\x1b[1m";
-const DIM: &str = "\x1b[2m";
-const REVERSE: &str = "\x1b[7m";
-const GREEN: &str = "\x1b[32m";
-const CYAN: &str = "\x1b[36m";
+use otto_term_kit::style::{BOLD, DIM, GREEN, REVERSE};
+use otto_term_kit::{printable, Key, Spans, Terminal};
 
 /// How often the loop wakes without input to notice a resize.
 const RESIZE_POLL_MS: i32 = 250;
@@ -79,7 +72,7 @@ pub fn run(
     let mut drawn_size = None;
     let mut dirty = true;
     loop {
-        let size = term::size();
+        let size = otto_term_kit::size();
         if dirty || drawn_size != Some(size) {
             terminal.draw(&app.frame(size))?;
             drawn_size = Some(size);
@@ -200,41 +193,21 @@ impl App<'_> {
             View::List => self.list_lines(cols, rows),
             View::Preview { index, scroll } => self.preview_frame(index, scroll, cols, rows),
         };
-        let mut frame = String::new();
-        for (row, line) in lines.iter().take(rows).enumerate() {
-            frame.push_str(&format!("\x1b[{};1H{line}{RESET}\x1b[K", row + 1));
-        }
-        frame.push_str(&format!("\x1b[{};1H\x1b[J", lines.len().min(rows) + 1));
-        frame
+        otto_term_kit::compose(&lines, rows)
     }
 
-    /// The header row: the mark, the title and, on the right, the redaction
-    /// state.
+    /// The header row, with the redaction state on the right.
     fn header(&self, cols: usize, crumb: Option<&str>) -> String {
-        let mut left = Spans::new(cols);
-        left.push(CYAN, " ● ● ");
-        left.push(BOLD, "Otto");
-        left.push(DIM, "  doctor");
-        if let Some(crumb) = crumb {
-            left.push(DIM, "  ›  ");
-            left.push("", crumb);
-        }
         let right = if *self.redact {
-            "redaction on "
+            (GREEN, "redaction on ")
         } else {
-            "redaction off "
+            (BOLD, "redaction off ")
         };
-        let right_style = if *self.redact { GREEN } else { BOLD };
-        left.push_right(right_style, right);
-        left.finish()
-    }
-
-    fn rule(cols: usize) -> String {
-        format!("{DIM}{}{RESET}", "─".repeat(cols))
+        otto_term_kit::header(cols, "doctor", crumb, Some(right))
     }
 
     fn list_lines(&self, cols: usize, rows: usize) -> Vec<String> {
-        let mut lines = vec![self.header(cols, None), Self::rule(cols)];
+        let mut lines = vec![self.header(cols, None), otto_term_kit::rule(cols)];
         let mut intro = Spans::new(cols);
         intro.push(
             "",
@@ -297,7 +270,10 @@ impl App<'_> {
 
     fn preview_frame(&self, index: usize, scroll: usize, cols: usize, rows: usize) -> Vec<String> {
         let section = &self.sections[index];
-        let mut lines = vec![self.header(cols, Some(section.title)), Self::rule(cols)];
+        let mut lines = vec![
+            self.header(cols, Some(section.title)),
+            otto_term_kit::rule(cols),
+        ];
         let content = self.preview_lines(index);
         let page = rows.saturating_sub(3).max(1);
         for text in content.iter().skip(scroll).take(page) {
@@ -327,87 +303,5 @@ impl App<'_> {
         );
         lines.push(help.finish());
         lines
-    }
-}
-
-/// `text` with tabs expanded and control characters made visible, so file
-/// content cannot move the cursor or change colours.
-fn printable(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    for c in text.chars() {
-        match c {
-            '\t' => out.push_str("    "),
-            c if c.is_control() => out.push('\u{fffd}'),
-            c => out.push(c),
-        }
-    }
-    out
-}
-
-/// One screen line built from styled pieces, cut at the terminal width.
-///
-/// Width is counted in characters, which matches the terminal for the text
-/// this tool shows; a wide character in a log line can push that line's end
-/// past the edge, where it is clipped because wrapping is off.
-struct Spans {
-    cols: usize,
-    used: usize,
-    text: String,
-}
-
-impl Spans {
-    fn new(cols: usize) -> Self {
-        Self {
-            cols,
-            used: 0,
-            text: String::new(),
-        }
-    }
-
-    /// Appends `piece` in `style`, cut with an ellipsis if it overflows.
-    fn push(&mut self, style: &str, piece: &str) {
-        let room = self.cols.saturating_sub(self.used);
-        if room == 0 {
-            return;
-        }
-        let count = piece.chars().count();
-        let shown: String = if count > room {
-            piece
-                .chars()
-                .take(room.saturating_sub(1))
-                .chain(std::iter::once('…'))
-                .collect()
-        } else {
-            piece.to_owned()
-        };
-        self.used += shown.chars().count();
-        self.text.push_str(RESET);
-        self.text.push_str(style);
-        self.text.push_str(&shown);
-    }
-
-    /// Appends `piece` flush with the right edge, if it fits.
-    fn push_right(&mut self, style: &str, piece: &str) {
-        let width = piece.chars().count();
-        if self.used + width + 1 > self.cols {
-            return;
-        }
-        let gap = self.cols - self.used - width;
-        self.text.push_str(RESET);
-        self.text.push_str(&" ".repeat(gap));
-        self.used += gap;
-        self.push(style, piece);
-    }
-
-    /// Pads to the full width in `style`, so a highlight spans the row.
-    fn fill(&mut self, style: &str) {
-        let gap = self.cols.saturating_sub(self.used);
-        self.text.push_str(style);
-        self.text.push_str(&" ".repeat(gap));
-        self.used = self.cols;
-    }
-
-    fn finish(self) -> String {
-        self.text
     }
 }

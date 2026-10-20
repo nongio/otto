@@ -16,6 +16,7 @@ libc.workspace = true
 zbus.workspace = true
 otto-dbus = { path = "../otto-dbus" }
 otto-foundations = { path = "../otto-foundations" }
+otto-term-kit = { path = "../otto-term-kit" }
 serde_json.workspace = true
 
 [dev-dependencies]

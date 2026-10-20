@@ -7,8 +7,8 @@
 - **Layer:** app. Used by nothing (an app); the Otto plugin's skills call it.
 
 ## Dependencies
-- **Internal:** `otto-dbus` (the `org.otto.Shell1` and `org.otto.Compositor` proxies), `otto-foundations` (XDG directories, `tilde`, the login name).
-- **External:** a running Otto on the session bus for everything but `doctor`, which works without one. Blocking zbus, serde_json, libc (termios, `poll`, `localtime_r`, `getuid`). No terminal UI crate: raw mode, the alternate screen and key parsing are hand-written in `src/doctor/term.rs`. `doctor` runs `journalctl` when Otto logs to the journal, and `wl-copy`, when present, for the clipboard.
+- **Internal:** `otto-dbus` (the `org.otto.Shell1` and `org.otto.Compositor` proxies), `otto-foundations` (XDG directories, `tilde`, the login name), `otto-term-kit` (the doctor's terminal and its look, shared with `otto-setup`).
+- **External:** a running Otto on the session bus for everything but `doctor`, which works without one. Blocking zbus, serde_json, libc (termios, `poll`, `localtime_r`, `getuid`). No terminal UI crate: raw mode, the alternate screen and key parsing are hand-written in `otto-term-kit`. `doctor` runs `journalctl` when Otto logs to the journal, and `wl-copy`, when present, for the clipboard.
 
 ## Develop
 - `cargo run -p otto-msg -- focus right`, or `cargo run -p otto-msg -- -t get_tree`. `--help` lists the options.
@@ -19,7 +19,7 @@
 
 ## Where things are
 - `src/main.rs`: argument parsing, one call per `-t` type, and JSON printing.
-- `src/doctor/`: `mod.rs` (options, choosing between the interface, `--print` and a non-interactive write), `sections.rs` (each section's reader, everything read through `Sources`), `logs.rs` (where Otto's logs are), `summary.rs` (the last `otto::summary` line in a log, used when the compositor cannot answer), `compositor.rs` (the `DebugInfo` call), `redact.rs`, `report.rs` (Markdown, file name, issue link), `term.rs` and `tui.rs` (the terminal and the chooser).
+- `src/doctor/`: `mod.rs` (options, choosing between the interface, `--print` and a non-interactive write), `sections.rs` (each section's reader, everything read through `Sources`), `logs.rs` (where Otto's logs are), `summary.rs` (the last `otto::summary` line in a log, used when the compositor cannot answer), `compositor.rs` (the `DebugInfo` call), `redact.rs`, `report.rs` (Markdown, file name, issue link), `tui.rs` (the chooser, on `otto-term-kit`).
 - The services live in the compositor: `src/shell_service.rs` and `src/screenshare/dbus_service.rs` at the repository root; `DebugInfo`'s JSON is built in `src/debug_info.rs`.
 
 ## Rules

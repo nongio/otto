@@ -455,6 +455,7 @@ const BIN_TESTS: &[&str] = &[
     "otto-islands",
     "otto-lock",
     "otto-msg",
+    "otto-setup",
     "otto-preview",
     "otto-settings",
     "otto-stash",
