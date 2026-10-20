@@ -3520,7 +3520,7 @@ fn draw_drag_entry(
                 if let Some(image) =
                     icons::cached_icon_chain_at(&refs, grid_icon() as i32, icons::FULL_COLOUR_SIZE)
                 {
-                    canvas.draw_image_rect(&image, None, icon_box, &Paint::default());
+                    icons::draw_icon(canvas, &image, icon_box, &Paint::default());
                 }
             }
             if entry.is_symlink {
@@ -3939,7 +3939,7 @@ fn draw_path_bar(canvas: &Canvas, f: &Frame) {
                 tone,
                 otto_kit::skia::BlendMode::SrcIn,
             ));
-            canvas.draw_image_rect(&image, None, dst, &icon_paint);
+            icons::draw_icon(canvas, &image, dst, &icon_paint);
         }
 
         Label::new(&crumb.label)
@@ -5841,7 +5841,7 @@ fn draw_preview_icon(canvas: &Canvas, stage: Rect, icon_chain: &[String]) {
         side,
         side,
     );
-    canvas.draw_image_rect(&image, None, dst, &Paint::default());
+    icons::draw_icon(canvas, &image, dst, &Paint::default());
 }
 
 /// `size` points in the canvas's device pixels, so a glyph rasterised at
@@ -5872,7 +5872,7 @@ fn draw_solar_glyph(canvas: &Canvas, name: &str, center: Point, size: f32, color
         center.x + half,
         center.y + half,
     );
-    canvas.draw_image_rect(&image, None, dst, &Paint::default());
+    icons::draw_icon(canvas, &image, dst, &Paint::default());
     true
 }
 
@@ -5959,7 +5959,7 @@ fn draw_place_content(canvas: &Canvas, theme: &Theme, place: &Place, rect: Rect,
             tone,
             otto_kit::skia::BlendMode::SrcIn,
         ));
-        canvas.draw_image_rect(&image, None, dst, &paint);
+        icons::draw_icon(canvas, &image, dst, &paint);
     }
 
     Label::new(&place.label)
@@ -6865,9 +6865,9 @@ pub fn draw_folder_card(
             if let Some(image) =
                 icons::cached_icon_chain_at(&refs, edge as i32, icons::FULL_COLOUR_SIZE)
             {
-                canvas.draw_image_rect(
+                icons::draw_icon(
+                    canvas,
                     &image,
-                    None,
                     Rect::from_xywh(
                         mosaic.center_x() - edge / 2.0,
                         mosaic.center_y() - edge / 2.0,
@@ -6900,9 +6900,9 @@ pub fn draw_folder_card(
     if let Some(image) =
         icons::cached_icon_chain_at(&refs, CAPTION_ICON as i32, icons::FULL_COLOUR_SIZE)
     {
-        canvas.draw_image_rect(
+        icons::draw_icon(
+            canvas,
             &image,
-            None,
             Rect::from_xywh(
                 cell.left + 2.0,
                 name_cy - CAPTION_ICON / 2.0,
@@ -7012,7 +7012,7 @@ fn draw_photo_card(
                 if cut {
                     paint.set_alpha(110);
                 }
-                canvas.draw_image_rect(&image, None, icon, &paint);
+                icons::draw_icon(canvas, &image, icon, &paint);
             }
         }
     }
@@ -7282,7 +7282,7 @@ fn draw_grid_icon_face(
         if let Some(image) =
             icons::cached_icon_chain_at(&refs, box_rect.width() as i32, icons::FULL_COLOUR_SIZE)
         {
-            canvas.draw_image_rect(&image, None, box_rect, &Paint::default());
+            icons::draw_icon(canvas, &image, box_rect, &Paint::default());
         }
     }
 }
@@ -7887,7 +7887,7 @@ fn draw_entry_icon_face(canvas: &Canvas, entry: &Entry, box_rect: Rect, cut: boo
             // so it is dimmed rather than hidden.
             paint.set_alpha(110);
         }
-        canvas.draw_image_rect(&image, None, dst, &paint);
+        icons::draw_icon(canvas, &image, dst, &paint);
     }
 }
 
@@ -7915,7 +7915,7 @@ pub(crate) fn draw_link_badge(canvas: &Canvas, icon: Rect, cut: bool) {
             if cut {
                 paint.set_alpha(110);
             }
-            canvas.draw_image_rect(&image, None, corner, &paint);
+            icons::draw_icon(canvas, &image, corner, &paint);
         }
         None => draw_link_badge_card(canvas, corner, cut),
     }
@@ -8658,7 +8658,7 @@ pub fn draw_info(
     let refs: Vec<&str> = chain.iter().map(String::as_str).collect();
     if let Some(image) = icons::cached_icon_chain(&refs, 64) {
         let dst = Rect::from_xywh(sheet.center_x() - 32.0, sheet.top + 34.0, 64.0, 64.0);
-        canvas.draw_image_rect(&image, None, dst, &Paint::default());
+        icons::draw_icon(canvas, &image, dst, &Paint::default());
     }
 
     let runs = info_runs(sheet, info, text, theme);
@@ -9447,7 +9447,7 @@ pub fn draw_open_with(canvas: &Canvas, theme: &Theme, sheet: Rect, data: &OpenWi
     let refs: Vec<&str> = chooser.icon_names.iter().map(String::as_str).collect();
     if let Some(image) = icons::cached_icon_chain(&refs, 48) {
         let dst = Rect::from_xywh(sheet.left + 24.0, sheet.top + 44.0, 48.0, 48.0);
-        canvas.draw_image_rect(&image, None, dst, &Paint::default());
+        icons::draw_icon(canvas, &image, dst, &Paint::default());
     }
     let text_x = sheet.left + 84.0;
     Label::new(otto_kit::typography::ellipsize_chars(&chooser.title, 34))
@@ -9534,7 +9534,7 @@ pub fn draw_open_with(canvas: &Canvas, theme: &Theme, sheet: Rect, data: &OpenWi
                             OPEN_WITH_ICON,
                             OPEN_WITH_ICON,
                         );
-                        canvas.draw_image_rect(&image, None, dst, &Paint::default());
+                        icons::draw_icon(canvas, &image, dst, &Paint::default());
                     }
                     let tag = is_default.then(|| otto_kit::t!("files-open-with-default"));
                     let tag_w = tag.map_or(0.0, |tag| {
