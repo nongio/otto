@@ -111,8 +111,12 @@ pub struct ScrollSurfaces {
     /// Thumb thickness and length its buffer was last painted at, so it is
     /// only redrawn when it changes shape rather than every time it moves.
     thumb_size: (f32, f32),
-    /// The scroll offset the band was last placed for.
+    /// The scroll offset the band was last placed for, forgotten whenever it
+    /// has to be placed again.
     last_band_offset: Option<f32>,
+    /// The scroll offset the band stands at on screen, kept until it is
+    /// placed again: what [`Self::shown_content`] reports.
+    shown_offset: Option<f32>,
     /// The content coordinate, along the axis, of the band surface's first
     /// shown point; see [`Self::band_origin`].
     band_local_origin: f32,
@@ -240,6 +244,7 @@ impl ScrollSurfaces {
             background,
             thumb_size: (0.0, 0.0),
             last_band_offset: None,
+            shown_offset: None,
             band_local_origin: 0.0,
             last_input_window: None,
             last_thumb_rect: None,
@@ -351,8 +356,14 @@ impl ScrollSurfaces {
     /// panes are placed in. Hand it to each of them through
     /// [`Self::set_clip_rect`] after a sync, so they crop to what the
     /// container shows. `None` while it shows nothing.
+    ///
+    /// It is where the band stands, which trails the scroll while a move
+    /// waits for the last one to be presented (see [`Self::waiting`]). A crop
+    /// worked out from the scroll's own offset runs ahead of the content by
+    /// that much: a pan would show the panes' crops shifted off the container
+    /// by a frame's travel.
     pub fn shown_content(&self) -> Option<Rect> {
-        let offset = self.last_band_offset?;
+        let offset = self.shown_offset?;
         let window = self.window()?;
         Some(match self.axis {
             Axis::Vertical => window.with_offset((0.0, offset)),
@@ -728,6 +739,7 @@ impl ScrollSurfaces {
             if self.place_band(offset) {
                 self.band_surface.commit();
                 self.last_band_offset = Some(offset);
+                self.shown_offset = Some(offset);
             }
         }
         if paint {
@@ -806,6 +818,7 @@ impl ScrollSurfaces {
             canvas.restore();
         });
         self.last_band_offset = Some(offset);
+        self.shown_offset = Some(offset);
     }
 
     /// A container's band: the whole content, as a transparent pixel stretched
@@ -841,6 +854,7 @@ impl ScrollSurfaces {
             return false;
         };
         self.last_band_offset = Some(offset);
+        self.shown_offset = Some(offset);
 
         let placed = if self.container {
             // Whole and uncropped: only its position moves, in whole points.

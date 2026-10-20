@@ -85,10 +85,12 @@ viewport cannot be empty, and painted again when it comes back.
 - Hiding unmaps. Opacity 0 leaves a surface on screen wherever the style
   protocol is missing.
 - A pane nested in a container is not clipped by it: the host hands each
-  nested pane what the container shows (`ScrollPane::visible()` of the
+  nested pane what the container shows (`ScrollPane::shown()` of the
   container, or `ScrollSurfaces::shown_content()`) through `set_clip_rect`,
   and a `Fill` or `PlacedSurface` riding in the container gets the same rect
-  through `set_window`.
+  through `set_window`. That is where the container's band stands, not where
+  its scroll is: a move waits for the last one to be presented, and a crop
+  taken from the scroll runs a frame's travel ahead of the content.
 
 The surface style is left for what a crop cannot do: rounded corners,
 shadows, frost, output placement and compositor-run fades.
@@ -225,7 +227,7 @@ scroll views are not panes (see above).
 **Nesting.** A pane can be the parent of other panes: `ScrollPane::band_surface()`
 is a valid parent. A horizontal pane whose band holds vertical panes is a
 column stack: panning moves one band, and the columns ride inside it. Each
-column crops itself to the container's `visible()` through `set_clip_rect`,
+column crops itself to the container's `shown()` through `set_clip_rect`,
 which is the one per-column request a pan costs.
 
 ### `RowLayout` and `GridLayout`: closed-form geometry

@@ -461,8 +461,11 @@ impl Picker {
         // rather than scrolling on its own.
         let pan = self.pan.offset();
         busy |= stack.update_container_at(self.layout.content_width(), pan, &theme);
-        // What of the stack the card shows, which each pane crops itself to.
-        let stack_shown = stack.visible();
+        // What of the stack the card shows, which each pane crops itself to:
+        // where the stack stands, which trails the pan while its last move is
+        // on its way to the screen.
+        let stack_shown = stack.shown().unwrap_or_else(|| stack.visible());
+        let at = stack_shown.left;
 
         let selected = self
             .selected
@@ -470,7 +473,7 @@ impl Picker {
         for (index, pane) in self.panes.iter_mut().enumerate() {
             let origin = Layout::pane_origin(index);
             let shown =
-                index < self.layout.pane_count() && origin + CARD_W > pan && origin < pan + CARD_W;
+                index < self.layout.pane_count() && origin + CARD_W > at && origin < at + CARD_W;
             busy |= pane.set_hidden(!shown);
             if !shown {
                 continue;

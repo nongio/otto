@@ -309,9 +309,16 @@ impl PaneSurfaces {
 
         // What of the stack the file area shows, along it — and as a rect in
         // the stack's coordinates, which everything in it is cropped to: no
-        // compositor clips a subsurface to its parent.
-        let (shown_from, shown_to) = (f.pan, f.pan + viewport.width());
-        let shown = Rect::from_ltrb(shown_from, 0.0, shown_to, viewport.height());
+        // compositor clips a subsurface to its parent. It is where the stack
+        // stands, which trails the pan while its last move is on its way to
+        // the screen.
+        let shown = stack.shown_content().unwrap_or(Rect::from_xywh(
+            f.pan,
+            0.0,
+            viewport.width(),
+            viewport.height(),
+        ));
+        let (shown_from, shown_to) = (shown.left, shown.right);
         for depth in 0..f.panes.len() {
             // Placed once, in the stack's own coordinates: the pan moves the
             // stack, never a column.
@@ -400,7 +407,7 @@ impl PaneSurfaces {
             painted |= column.hide();
         }
         painted |= self.sync_preview_pane(&band, f, viewport, (shown_from, shown_to));
-        painted |= self.sync_preview_video(&band, f, viewport, peek.is_some());
+        painted |= self.sync_preview_video(&band, f, viewport, shown, peek.is_some());
         painted |= self.sync_peek(parent, window_style, f, peek);
         self.restack(parent);
         painted
@@ -979,6 +986,7 @@ impl PaneSurfaces {
         stack: &WlSurface,
         f: &Frame,
         viewport: Rect,
+        shown: Rect,
         peek_up: bool,
     ) -> bool {
         // Shown only for a video in the column view, and never behind the
@@ -1035,7 +1043,6 @@ impl PaneSurfaces {
         };
         let mut painted = pane.set_hidden(false);
         pane.set_rect(rect);
-        let shown = Rect::from_xywh(f.pan, 0.0, viewport.width(), viewport.height());
         painted |= pane.set_window(Some(shown));
 
         let key = hash_rect(rect) ^ video.key().rotate_left(19);
