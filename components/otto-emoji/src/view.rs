@@ -178,6 +178,16 @@ impl Layout {
         Some(first + row * COLUMNS + column.min(width - 1))
     }
 
+    /// The selection once the pan rests on `pane`: kept while it is in that
+    /// pane, otherwise the pane's first cell, so the footer and Enter always
+    /// mean something on screen.
+    pub fn selection_on_pane(&self, selected: Option<usize>, pane: usize) -> Option<usize> {
+        match selected.and_then(|cell| self.place(cell)) {
+            Some((in_pane, _, _)) if in_pane == pane => selected,
+            _ => self.cell_in(pane, 0, 0),
+        }
+    }
+
     /// A cell's rectangle inside its own pane, before any scrolling.
     pub fn cell_rect(&self, cell: usize) -> Option<Rect> {
         let (_, row, column) = self.place(cell)?;
@@ -1046,6 +1056,16 @@ mod tests {
             first += count;
         }
         Layout::new(panes)
+    }
+
+    #[test]
+    fn a_pan_that_leaves_the_selection_behind_selects_the_first_cell() {
+        let layout = layout_of(&[16, 30, 5]);
+        // The last recent pick, then a swipe to the next pane.
+        assert_eq!(layout.selection_on_pane(Some(15), 1), Some(16));
+        // A selection in the pane the pan rests on stays.
+        assert_eq!(layout.selection_on_pane(Some(20), 1), Some(20));
+        assert_eq!(layout.selection_on_pane(None, 2), Some(46));
     }
 
     #[test]

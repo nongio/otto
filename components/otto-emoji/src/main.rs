@@ -1569,6 +1569,14 @@ impl App for Picker {
         // a stalled vertical gesture is released here — so neither can leave
         // the picker painting for ever.
         self.pan.tick(now);
+        // A swipe leaves the selection alone while it runs; once it rests on
+        // another pane, the selection moves into it.
+        if !self.pan.is_busy() && !self.cells.is_empty() {
+            let selected = self
+                .layout
+                .selection_on_pane(self.selected, self.current_pane());
+            self.select(selected);
+        }
         // The tab marker is the card's: it moves only when the pane does.
         if self.current_pane() != self.shown_pane {
             self.shown_pane = self.current_pane();
