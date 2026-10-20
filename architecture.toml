@@ -194,6 +194,12 @@ pattern = 'env::var(_os)?\(\s*"(HOME|XDG_(CONFIG|DATA|STATE|CACHE)_HOME|XDG_RUNT
 allowed_in = ["components/otto-foundations/"]
 reason = "The XDG base directories, with their fallbacks, are otto_foundations::xdg (re-exported as otto_kit::xdg). A hand-rolled lookup drifts: a missing fallback, or a relative path the spec says to ignore."
 
+[[source_rule]]
+name = "wayland-connection-through-kit"
+pattern = 'Connection::connect_to_env'
+allowed_in = ["components/otto-kit/", "components/otto-rdp/"]
+reason = "An app's Wayland connection, registry and event loop are otto-kit's AppRunner. A second connection runs outside the toolkit's input, scale and frame pacing. otto-rdp is a headless bridge with no toolkit: it injects input on a connection of its own."
+
 # ---------------------------------------------------------------------------
 # Known debt
 # ---------------------------------------------------------------------------
@@ -201,6 +207,17 @@ reason = "The XDG base directories, with their fallbacks, are otto_foundations::
 # Crates: none.
 
 # Compositor modules: none.
+
+[[allow]]
+rule = "wayland-connection-through-kit"
+reason = "otto-stash and otto-dictate run their own event loop rather than AppRunner. otto-emoji (virtual keyboard, toplevel list) and otto-launcher (toplevel list) open side connections because AppRunner dispatches only otto-kit's own protocols and an app cannot add one."
+files = [
+    { path = "components/otto-dictate/src/main.rs", count = 1 },
+    { path = "components/otto-emoji/src/target.rs", count = 1 },
+    { path = "components/otto-emoji/src/typing.rs", count = 2 },
+    { path = "components/otto-launcher/src/windows.rs", count = 1 },
+    { path = "components/otto-stash/src/main.rs", count = 1 },
+]
 
 # ---------------------------------------------------------------------------
 # What a change reaches
