@@ -116,8 +116,10 @@ is cached per family for the process, so a `fonts.conf` change applies from
 the next login. `lcdfilter` is not applied: Skia filters LCD glyphs with its
 own default and has no per-font control.
 
-`rgba = none` turns subpixel text off everywhere. Any other answer only
-*requests* it, and the surface decides: Skia draws per-channel coverage only
+Every antialiased font *requests* subpixel text, and the surface decides:
+fontconfig's `rgba` takes part in which outputs declare a layout (below), not
+in the font, so `rgba = none` still turns it off except on a display set up
+for it. Skia draws per-channel coverage only
 into a surface that declares a pixel geometry, and only an opaque one may,
 since per-channel coverage blended through one alpha shows as colour fringes.
 Where geometry is declared is covered under *Per-output pixel geometry* below.
@@ -141,8 +143,10 @@ layout wherever it lands on that output's buffer:
   greyscale: dock badges and the workspace selector's thumbnails.
 
 **Per-output pixel geometry.** An output's subpixel layout is the display
-profile's `subpixel` key, else what the connector reports (`src/udev/device.rs`),
-and lands in the `Output`'s physical properties, so clients read the same value
+profile's `subpixel` key (the Settings app's Displays pane writes it); else
+none when fontconfig's `rgba` is `none`, the user's own switch; else what the
+connector reports; else fontconfig's `rgba` (`src/udev/device.rs`). It lands
+in the `Output`'s physical properties, so clients read the same value
 from `wl_output`. Around each output's frame the udev backend hands it to the
 renderer (`SkiaDeviceRenderer::set_target_pixel_geometry`), which declares it
 on that output's swapchain buffers and nothing else: plane slots, screencast
@@ -176,7 +180,9 @@ once for both channels:
 - the subpixel order is the outputs' when every output that knows its layout
   names the same one (X11 has one screen, the portal one value), else
   fontconfig's `rgba`. It goes out only where Otto itself would draw subpixel
-  text: `rgba = none` in `fonts.conf`, or no known order, publishes grayscale.
+  text: outputs with no layout (`rgba = none` in `fonts.conf` gives them none
+  unless a display's own setting says otherwise), or no known order at all,
+  publish grayscale.
 
 | Channel | Keys |
 |---------|------|

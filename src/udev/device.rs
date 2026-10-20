@@ -429,17 +429,22 @@ impl<A: RendererApi> Otto<UdevData<A>> {
         };
 
         // The display's own setting wins: most connectors report nothing, and
-        // a few report the wrong layout. Failing both, the desktop-wide
-        // `rgba` from fontconfig, which is where other desktops keep it.
+        // a few report the wrong layout. Then fontconfig's desktop-wide
+        // `rgba`, which is where other desktops keep it: as `none` it is the
+        // user turning subpixel text off, which only the display's setting
+        // overrides; any other value stands in for a connector that reports
+        // nothing.
+        let fontconfig = fontconfig_subpixel();
         let subpixel = match config_profile.as_ref().and_then(|profile| profile.subpixel) {
             Some(subpixel) => subpixel.into(),
+            None if fontconfig == Subpixel::None => Subpixel::None,
             None => match connector.subpixel() {
                 SubPixel::None => Subpixel::None,
                 SubPixel::HorizontalRgb => Subpixel::HorizontalRgb,
                 SubPixel::HorizontalBgr => Subpixel::HorizontalBgr,
                 SubPixel::VerticalRgb => Subpixel::VerticalRgb,
                 SubPixel::VerticalBgr => Subpixel::VerticalBgr,
-                _ => fontconfig_subpixel(),
+                _ => fontconfig,
             },
         };
         let (phys_w, phys_h) = connector.size().unwrap_or((0, 0));

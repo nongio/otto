@@ -12,12 +12,13 @@
 //! cached with its settings, so a change to `fonts.conf` applies from the
 //! next login.
 //!
-//! Subpixel antialiasing is requested whenever fontconfig does not rule it
-//! out, and the surface decides: Skia draws per-channel coverage only into a
-//! surface that declares a pixel geometry, and Otto declares one only where
-//! the layout is known and the result is shown 1:1 (see `wl_output`'s
-//! subpixel and the compositor's `surface_props`). Elsewhere the same font
-//! draws grayscale. `lcdfilter` is not applied: Skia filters LCD glyphs with
+//! Subpixel antialiasing is requested whenever text is antialiased, and the
+//! surface decides: Skia draws per-channel coverage only into a surface that
+//! declares a pixel geometry, and Otto declares one only where the layout is
+//! known and the result is shown 1:1 (see `wl_output`'s subpixel and the
+//! compositor's `surface_props`). Elsewhere the same font draws grayscale.
+//! fontconfig's `rgba` takes part in which layout an output gets, `none`
+//! included, rather than in the font. `lcdfilter` is not applied: Skia filters LCD glyphs with
 //! its own default and offers no per-font control.
 
 use std::{
@@ -120,10 +121,14 @@ impl TextRendering {
                 _ => FontHinting::Full,
             }
         };
+        // Subpixel edging only asks for subpixel text: Skia draws it where
+        // the surface declares a layout and grayscale everywhere else. Which
+        // surfaces declare one is decided per output, from the display's own
+        // setting, fontconfig's `rgba` and the connector, so `rgba = none`
+        // is honoured there rather than here, where it would also overrule
+        // a display the user set up for subpixel text.
         let edging = if !values.antialias.unwrap_or(true) {
             Edging::Alias
-        } else if rgba == Some(FontconfigRgba::None) {
-            Edging::AntiAlias
         } else {
             Edging::SubpixelAntiAlias
         };
@@ -337,14 +342,16 @@ mod tests {
                 Some(None),
                 (1, 1, "hintslight", "none", "grayscale", "slight", "rgb"),
             ),
-            // `rgba = none` in fonts.conf wins over the panel's layout.
+            // The screen's order is already resolved with fonts.conf's
+            // `rgba = none` in it: the panel has an order only where the
+            // display's own setting overrode it, and then it is published.
             (
                 rendering(Values {
                     rgba: Some(FC_RGBA_NONE),
                     ..Values::default()
                 }),
                 Some(Vrgb),
-                (1, 1, "hintslight", "none", "grayscale", "slight", "rgb"),
+                (1, 1, "hintslight", "vrgb", "rgba", "slight", "vrgb"),
             ),
             (
                 rendering(Values {
@@ -455,13 +462,14 @@ mod tests {
                 FontHinting::None,
                 true,
             ),
-            // `rgba = none` asks for grayscale on every surface.
+            // `rgba = none` is applied to outputs, not fonts: a display set up
+            // for subpixel text still gets it.
             (
                 Values {
                     rgba: Some(FC_RGBA_NONE),
                     ..Values::default()
                 },
-                Edging::AntiAlias,
+                Edging::SubpixelAntiAlias,
                 FontHinting::Slight,
                 true,
             ),
