@@ -433,10 +433,13 @@ fn draw_marked(
 
 /// Decode an icon once and keep it. Misses are remembered too — an app whose
 /// icon the theme does not have must not be looked up again on every keystroke.
+/// Kept per pixel size, so a list that moves to a display of another scale
+/// decodes its icons again for it.
 fn resolve_icon(cache: &mut HashMap<String, Option<Image>>, name: &str) -> Option<Image> {
+    let size = (ICON * crate::app_runner::AppContext::scale_factor() as f32) as i32;
     cache
-        .entry(name.to_string())
-        .or_insert_with(|| named_icon_sized(name, (ICON * 2.0) as i32))
+        .entry(format!("{name}@{size}"))
+        .or_insert_with(|| named_icon_sized(name, size))
         .clone()
 }
 

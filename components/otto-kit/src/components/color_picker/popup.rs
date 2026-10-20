@@ -284,7 +284,7 @@ impl ColorPickerPopup {
         let Some(surface_style) = popup.base_surface().surface_style() else {
             return;
         };
-        let scale = AppContext::fractional_scale();
+        let scale = popup.base_surface().scale();
         let shadow = theme.shadow;
         surface_style.set_corner_radius(panel::CORNER_RADIUS as f64);
         surface_style.set_masks_to_bounds(ClipMode::Enabled);

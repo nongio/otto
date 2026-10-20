@@ -252,31 +252,6 @@ static RENDERER_EXIT_FLAG: LazyLock<std::sync::atomic::AtomicBool> =
 /// iteration, after flushing whatever the app asked for last.
 static EXIT_REQUESTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-// -- Display scale factor (updated by compositor, default 2) --
-
-/// Starts at 2, the buffer scale every otto-kit surface renders at, so icons
-/// and images rasterised by it stay crisp in those buffers. SCTK only reports
-/// a scale that differs from 1, so on a 1x output this is never updated.
-static DISPLAY_SCALE_FACTOR: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(2);
-
-/// Whether [`AppContext::set_scale_factor`] has already taken a value. The
-/// scale is latched for the lifetime of the process — see
-/// [`AppContext::fractional_scale`] for why.
-static SCALE_FACTOR_LATCHED: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
-
-/// Preferred fractional scale in 120ths, as sent by `wp_fractional_scale_v1`.
-/// 0 means the compositor has not sent one yet — callers fall back to
-/// [`OUTPUT_SCALE_SEED_120`], then to the integer `wl_surface` scale.
-static DISPLAY_FRACTIONAL_SCALE_120: std::sync::atomic::AtomicU32 =
-    std::sync::atomic::AtomicU32::new(0);
-
-/// The first output's scale in 120ths, read from `wl_output` and
-/// `xdg_output` during startup, before the app makes a surface. Kept apart
-/// from the preferred scale so it never blocks that one from landing. 0 means
-/// no output reported one.
-static OUTPUT_SCALE_SEED_120: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
-
 // -- Wakeup pipe (cross-thread) --
 
 use std::sync::OnceLock;
@@ -451,81 +426,79 @@ impl<'a> AppContext<'a> {
         Self::with_global(|ctx| unsafe { &*(ctx.compositor_state_ref() as *const CompositorState) })
     }
 
-    /// Returns the current display scale factor (updated by the compositor).
+    /// How many pixels a point is worth when rasterising an icon or image —
+    /// a whole number, rounded up so a 1.5x surface gets 2x pixels to shrink
+    /// rather than 1x ones to stretch.
     ///
-    /// A rasterisation hint, not geometry: it is 2 — the buffer scale otto-kit
-    /// surfaces render at — until a `scale_factor_changed` event arrives, and
-    /// SCTK never sends one on a 1x output. Geometry in physical pixels uses
-    /// [`Self::fractional_scale`].
+    /// A hint for code that has a canvas but no surface: inside a surface's
+    /// draw it is that surface's scale, elsewhere the app-wide
+    /// [`Self::fractional_scale`]. Code that knows its surface should round
+    /// [`Self::surface_scale`] up itself. A process with no connection at
+    /// all — the compositor drawing kit components for its own chrome, an
+    /// offscreen render — gets 2, which oversamples on a 1x output rather than
+    /// blurring on a 2x one.
     pub fn scale_factor() -> i32 {
-        DISPLAY_SCALE_FACTOR.load(std::sync::atomic::Ordering::Relaxed)
-    }
-
-    /// Record the display scale factor (called from CompositorHandler).
-    ///
-    /// Only the first value is kept; later `scale_factor_changed` events are
-    /// ignored until the process restarts.
-    pub(crate) fn set_scale_factor(factor: i32) {
-        if SCALE_FACTOR_LATCHED.swap(true, std::sync::atomic::Ordering::Relaxed) {
-            return;
+        match super::surface_scale::global_scale_120() {
+            Some(scale_120) => scale_120.div_ceil(120).max(1) as i32,
+            None => 2,
         }
-        DISPLAY_SCALE_FACTOR.store(factor, std::sync::atomic::Ordering::Relaxed);
     }
 
-    /// The output scale as a fraction (physical pixels per logical point).
+    /// Record SCTK's integer scale for `surface` (from `CompositorHandler`).
+    /// Returns the surface's new scale, in 120ths, if it moved.
+    pub(crate) fn note_integer_scale(surface: &ObjectId, factor: i32) -> Option<u32> {
+        super::surface_scale::note_integer(surface, factor)
+    }
+
+    /// The output scale as a fraction (physical pixels per logical point), for
+    /// code that has no surface in hand.
     ///
-    /// Buffers are still rendered at the integer [`scale_factor`], but geometry
-    /// handed to the compositor in physical pixels — surface-style sizes and
-    /// positions — must use this: on a 1.5x output the integer factor is 2, and
-    /// scaling by it makes a surface a third too large.
+    /// Each surface has a scale of its own — see [`Self::surface_scale`], which
+    /// is what anything that knows its surface should ask. This answers for
+    /// the surface being drawn when called from inside a draw, and otherwise
+    /// with the scale the compositor most recently moved one of the app's
+    /// surfaces to. On a single display, or several at one scale, that is
+    /// every surface's scale; on a mixed-scale setup it is a guess.
     ///
-    /// Latched at startup. A surface fixes its buffer scale when it is created
-    /// and never re-rasters, so letting this follow a live scale change would
-    /// move the geometry out from under a buffer that stayed put — the panel
-    /// keeps its old pixels at a new size. A scale change takes effect on the
-    /// next restart, which is how the compositor-side chrome treats it too.
+    /// It follows live changes. Geometry handed to the compositor in physical
+    /// pixels — surface-style sizes and positions — has to be re-applied when
+    /// it moves; [`App::on_scale_changed`](super::App::on_scale_changed) says
+    /// when.
     ///
-    /// The preferred scale only lands after a surface's first frames, so
-    /// until then this is the scale of the first output the compositor
-    /// advertised, read at startup — before the app made anything, so code
-    /// that sizes a surface or rasterises an atlas up front gets the real
-    /// value. Which output a surface will map on is not known that early; on
-    /// a mixed-scale setup it may be another one, and geometry set before the
-    /// preferred scale arrives must be re-applied once this changes. With no
-    /// output scale either, it is the latched integer scale if there is one,
-    /// else 1 — not the integer default of 2, which is a buffer scale and
-    /// would double every panel on a 1x output.
+    /// The preferred scale only lands once a surface exists, so until then
+    /// this is the scale of the first output the compositor advertised, read
+    /// at startup — before the app made anything, so code that sizes a
+    /// surface or rasterises an atlas up front gets the real value. With no
+    /// output scale either, it is the integer scale if there is one, else 1.
     pub fn fractional_scale() -> f64 {
-        use std::sync::atomic::Ordering::Relaxed;
-        match DISPLAY_FRACTIONAL_SCALE_120.load(Relaxed) {
-            0 => match OUTPUT_SCALE_SEED_120.load(Relaxed) {
-                0 if SCALE_FACTOR_LATCHED.load(Relaxed) => Self::scale_factor().max(1) as f64,
-                0 => 1.0,
-                n => n as f64 / 120.0,
-            },
-            n => n as f64 / 120.0,
-        }
+        super::surface_scale::global_scale_120().unwrap_or(120) as f64 / 120.0
+    }
+
+    /// The scale `surface` is drawn at (physical pixels per logical point):
+    /// the compositor's preferred scale for that surface, which follows it
+    /// from output to output.
+    ///
+    /// Until the preferred scale arrives, a stand-in: the startup output
+    /// scale, else the surface's integer scale, else 1. The surface's buffer
+    /// is sized from this — `round(logical × scale)` pixels — so it is also
+    /// the factor between the surface's points and its buffer's pixels, and
+    /// between its points and the physical pixels of surface-style geometry.
+    pub fn surface_scale(surface: &ObjectId) -> f64 {
+        super::surface_scale::surface_scale_120(surface) as f64 / 120.0
     }
 
     /// Record the output scale read at startup (in 120ths). A stand-in until
-    /// the surface's own `preferred_scale` arrives, which still replaces it —
-    /// see [`Self::fractional_scale`].
+    /// each surface's own `preferred_scale` arrives — see
+    /// [`Self::surface_scale`].
     pub(crate) fn seed_output_scale_120(scale_120: u32) {
-        OUTPUT_SCALE_SEED_120.store(scale_120, std::sync::atomic::Ordering::Relaxed);
+        super::surface_scale::seed_output_scale_120(scale_120);
     }
 
-    /// Store the preferred scale from `wp_fractional_scale_v1` (in 120ths).
-    ///
-    /// First one wins: 0 is the "nothing received yet" sentinel, so the
-    /// compare-exchange takes the compositor's opening value and ignores every
-    /// later `preferred_scale`. See [`Self::fractional_scale`].
-    pub(crate) fn set_fractional_scale_120(scale_120: u32) {
-        let _ = DISPLAY_FRACTIONAL_SCALE_120.compare_exchange(
-            0,
-            scale_120,
-            std::sync::atomic::Ordering::Relaxed,
-            std::sync::atomic::Ordering::Relaxed,
-        );
+    /// Record the preferred scale `wp_fractional_scale_v1` sent for `surface`
+    /// (in 120ths). Returns the surface's new scale if it moved; the
+    /// compositor resends an unchanged one every frame.
+    pub(crate) fn note_preferred_scale_120(surface: &ObjectId, scale_120: u32) -> Option<u32> {
+        super::surface_scale::note_preferred_120(surface, scale_120)
     }
 
     pub fn xdg_shell_state() -> &'static XdgShell {
@@ -1717,6 +1690,7 @@ impl<'a> AppContext<'a> {
                 outputs.remove(surface_id);
             }
         });
+        super::surface_scale::forget(surface_id);
     }
 
     /// Wake the main event loop from any thread.
@@ -2170,7 +2144,7 @@ impl<'a> AppContext<'a> {
         let Some((x, y, width, height)) = Self::desktop_frame(surface_id) else {
             return;
         };
-        let scale = Self::fractional_scale().max(0.1);
+        let scale = Self::surface_scale(surface_id).max(0.1);
         let frame = accesskit::Rect::new(
             f64::from(x) / scale,
             f64::from(y) / scale,
@@ -2331,51 +2305,5 @@ mod frame_in_flight_tests {
             FRAME_ANSWER_TIMEOUT - Duration::from_millis(1)
         ));
         assert!(!still_in_flight(FRAME_ANSWER_TIMEOUT));
-    }
-}
-
-#[cfg(test)]
-mod scale_latch_tests {
-    use super::*;
-
-    /// The scale lives in process-wide statics; tests that set it take turns.
-    static SCALE: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-    fn reset() -> std::sync::MutexGuard<'static, ()> {
-        let guard = SCALE.lock().unwrap_or_else(|e| e.into_inner());
-        DISPLAY_FRACTIONAL_SCALE_120.store(0, std::sync::atomic::Ordering::Relaxed);
-        OUTPUT_SCALE_SEED_120.store(0, std::sync::atomic::Ordering::Relaxed);
-        guard
-    }
-
-    /// The compositor's opening `preferred_scale` is the one the process keeps:
-    /// a later change must not move geometry under buffers that never re-raster.
-    #[test]
-    fn fractional_scale_ignores_later_changes() {
-        let _guard = reset();
-
-        AppContext::set_fractional_scale_120(180); // 1.5x
-        assert_eq!(AppContext::fractional_scale(), 1.5);
-
-        AppContext::set_fractional_scale_120(240); // user switches to 2x
-        assert_eq!(
-            AppContext::fractional_scale(),
-            1.5,
-            "scale change should wait for a restart"
-        );
-    }
-
-    /// The startup output scale stands in until the surface's preferred scale
-    /// arrives, and does not stop that one landing: on a 1.5x output the
-    /// integer `wl_output` scale is 2, and the preferred 1.5 must win.
-    #[test]
-    fn output_scale_seed_yields_to_preferred_scale() {
-        let _guard = reset();
-
-        AppContext::seed_output_scale_120(240);
-        assert_eq!(AppContext::fractional_scale(), 2.0);
-
-        AppContext::set_fractional_scale_120(180);
-        assert_eq!(AppContext::fractional_scale(), 1.5);
     }
 }

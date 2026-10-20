@@ -111,16 +111,11 @@ impl SessionLockSurface {
 
         let wl_surface = compositor.create_surface(qh);
 
-        // The same 2x buffer scale the rest of otto-kit draws at, so the panel
-        // is laid out in logical points and scaled once.
-        let buffer_scale = 2;
-        wl_surface.set_buffer_scale(buffer_scale);
-
         let lock_surface = lock.get_lock_surface(&wl_surface, output, qh, ());
 
         // No commit here: a lock surface may not attach a buffer before it has
         // acked a configure, and the compositor sends that on its own.
-        let base_surface = BaseWaylandSurface::new(wl_surface, 0, 0, buffer_scale);
+        let base_surface = BaseWaylandSurface::new(wl_surface, 0, 0);
 
         let surface = Self {
             inner: Rc::new(RefCell::new(SessionLockSurfaceInner {

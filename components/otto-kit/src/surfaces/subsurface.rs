@@ -7,7 +7,6 @@ use wayland_client::{
     protocol::{wl_subcompositor, wl_subsurface},
     Dispatch,
 };
-use wayland_protocols::wp::viewporter::client::wp_viewport::WpViewport;
 
 use super::common::{
     otto_surface_style_manager_v1, otto_surface_style_v1, BaseWaylandSurface, SurfaceError,
@@ -23,10 +22,8 @@ pub struct SubsurfaceSurface {
     subsurface: Option<wl_subsurface::WlSubsurface>,
     /// The surface this one hangs from, whose commit carries its position.
     parent: wl_surface::WlSurface,
-    /// Its `wp_viewport`, made the first time it is cropped or stretched.
-    viewport: Option<WpViewport>,
-    /// The source and destination last sent to the viewport; `None` while
-    /// the viewport is unset and the buffer shows at its own size.
+    /// The crop last asked for; `None` while the buffer shows whole at the
+    /// surface's own size.
     view: Option<(skia_safe::Rect, (i32, i32))>,
     /// Whether a buffer is attached. A surface is unmapped by attaching none,
     /// and only its next draw maps it again.
@@ -126,10 +123,6 @@ impl SubsurfaceSurface {
         subsurface.set_position(x, y);
         subsurface.set_desync();
 
-        // Use 2x buffer for HiDPI rendering
-        let buffer_scale = 2;
-        wl_surface.set_buffer_scale(buffer_scale);
-
         // Apply sc_layer augmentation if available
         use crate::app_runner::AppContext;
         let sc_layer = AppContext::surface_style_manager()
@@ -138,7 +131,7 @@ impl SubsurfaceSurface {
         // Commit the surface
         wl_surface.commit();
 
-        let mut core = BaseWaylandSurface::new(wl_surface, width, height, buffer_scale);
+        let mut core = BaseWaylandSurface::new(wl_surface, width, height);
         core.surface_style = sc_layer;
         core.create_skia_surface()?;
 
@@ -146,7 +139,6 @@ impl SubsurfaceSurface {
             base_surface: core,
             subsurface: Some(subsurface),
             parent: parent_surface.clone(),
-            viewport: None,
             view: None,
             mapped: std::cell::Cell::new(true),
         })
@@ -213,44 +205,17 @@ impl SubsurfaceSurface {
     ///
     /// Returns `false` when the compositor has no `wp_viewporter`, in which
     /// case nothing is sent and the buffer keeps showing whole.
+    ///
+    /// The surface has one viewport, which also shows a buffer drawn at a
+    /// fractional scale at its logical size; the crop is composed with that,
+    /// its source mapped from points to that buffer's pixels. See
+    /// [`BaseWaylandSurface::set_crop`].
     pub fn set_view(&mut self, view: Option<(skia_safe::Rect, (i32, i32))>) -> bool {
-        use wayland_client::Proxy;
-
         if self.view == view {
             return true;
         }
-        if self.viewport.is_none() {
-            let Some(viewporter) = crate::app_runner::AppContext::viewporter() else {
-                return false;
-            };
-            if view.is_none() {
-                return true;
-            }
-            let surface = self.base_surface.wl_surface();
-            self.viewport = Some(viewporter.get_viewport(
-                surface,
-                crate::app_runner::AppContext::queue_handle(),
-                (),
-            ));
-        }
-        let Some(viewport) = self.viewport.as_ref().filter(|v| v.is_alive()) else {
+        if !self.base_surface.set_crop(view) {
             return false;
-        };
-        match view {
-            Some((source, (width, height))) => {
-                viewport.set_source(
-                    source.left as f64,
-                    source.top as f64,
-                    source.width() as f64,
-                    source.height() as f64,
-                );
-                viewport.set_destination(width.max(1), height.max(1));
-            }
-            // -1 everywhere unsets both: the buffer shows whole again.
-            None => {
-                viewport.set_source(-1.0, -1.0, -1.0, -1.0);
-                viewport.set_destination(-1, -1);
-            }
         }
         self.view = view;
         true
@@ -303,9 +268,6 @@ impl SubsurfaceSurface {
         let Some(subsurface) = self.subsurface.take() else {
             return;
         };
-        if let Some(viewport) = self.viewport.take() {
-            viewport.destroy();
-        }
         drop(self.base_surface.take_skia_surface());
         self.base_surface.take_surface_style();
         subsurface.destroy();

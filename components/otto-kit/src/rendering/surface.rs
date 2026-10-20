@@ -86,9 +86,12 @@ impl SkiaSurface {
         *self.cached_surface.borrow_mut() = None;
     }
 
-    /// Draw on this surface using the provided context and drawing function
+    /// Draw on this surface using the provided context and drawing function.
+    ///
+    /// `scale` is buffer pixels per logical point: the canvas is scaled by it
+    /// before `draw_fn` runs, so `draw_fn` works in points.
     /// Zero-overhead hot path - only accesses the cached Skia surface
-    pub fn draw<F>(&self, ctx: &mut super::SkiaContext, draw_fn: F)
+    pub fn draw<F>(&self, ctx: &mut super::SkiaContext, scale: f32, draw_fn: F)
     where
         F: FnOnce(&Canvas),
     {
@@ -113,9 +116,10 @@ impl SkiaSurface {
         if let Some(ref mut skia_surface) = *self.cached_surface.borrow_mut() {
             let canvas = skia_surface.canvas();
 
-            // Scale canvas by 2x for HiDPI rendering (buffers are 2x size)
+            // The buffer is the surface's logical size times its scale; the
+            // caller draws in points.
             canvas.save();
-            canvas.scale((2.0, 2.0));
+            canvas.scale((scale, scale));
 
             // Clear to transparent to prevent glitches from old buffer content
             canvas.clear(skia_safe::Color::TRANSPARENT);

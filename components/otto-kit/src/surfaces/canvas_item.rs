@@ -129,12 +129,9 @@ impl CanvasItemSurface {
         let qh = AppContext::queue_handle();
 
         let wl_surface = compositor.create_surface(qh);
-        // The 2x buffer the rest of otto-kit draws at, laid out in points.
-        let buffer_scale = 2;
-        wl_surface.set_buffer_scale(buffer_scale);
         let item = manager.get_canvas_item(&wl_surface, qh, ());
         // Width 0 until the compositor says; the height is ours.
-        let base_surface = BaseWaylandSurface::new(wl_surface, 0, height, buffer_scale);
+        let base_surface = BaseWaylandSurface::new(wl_surface, 0, height);
 
         let surface = Self {
             inner: Rc::new(RefCell::new(Inner {

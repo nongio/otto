@@ -57,6 +57,7 @@ use std::time::{Duration, Instant};
 
 use skia_safe::{Canvas, Color, Rect, Size};
 use wayland_client::protocol::wl_surface::WlSurface;
+use wayland_client::Proxy;
 
 use crate::app_runner::AppContext;
 use crate::surfaces::{SubsurfaceSurface, SurfaceError};
@@ -101,8 +102,9 @@ pub struct ScrollSurfaces {
     /// the clip is unmapped.
     clip_origin: Option<(i32, i32)>,
     /// The scale the pane was last laid out at. The preferred scale arrives
-    /// after these surfaces are built, so the first layout is always at the
-    /// integer fallback and has to be redone once the real one lands.
+    /// after these surfaces are built, so the first layout is at a stand-in
+    /// and has to be redone once the real one lands — and again whenever the
+    /// window moves to a display of another scale.
     configured_scale: f32,
     /// Background painted into the clip surface, repainted only when it or the
     /// viewport changes.
@@ -159,14 +161,15 @@ fn slide(from: Rect, to: Rect, elapsed: Duration) -> Rect {
 }
 
 impl ScrollSurfaces {
-    /// The output's fractional scale, read fresh every time.
+    /// The parent surface's scale, read fresh every time: the pane's
+    /// subsurfaces are on the outputs it is on.
     ///
     /// Not cached: `wp_fractional_scale_v1` delivers the preferred scale
     /// asynchronously, and these surfaces are usually built before the first
-    /// event arrives — a value snapshotted in the constructor is the integer
-    /// fallback, and stays wrong for the life of the pane.
+    /// event arrives — a value snapshotted in the constructor is a stand-in,
+    /// and the scale moves again whenever the window goes to another display.
     fn scale(&self) -> f32 {
-        AppContext::fractional_scale() as f32
+        AppContext::surface_scale(&self.clip.parent_surface().id()) as f32
     }
 
     /// A vertical pane under `parent`, occupying `viewport` in the parent's
@@ -571,7 +574,6 @@ impl ScrollSurfaces {
         // the compositor never shows, and a host loop woken by anything else
         // would spin through them.
         {
-            use wayland_client::Proxy;
             self.waiting = AppContext::frame_in_flight(&self.band_surface.wl_surface().id());
             if self.waiting {
                 return false;
