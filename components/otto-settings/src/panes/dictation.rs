@@ -205,23 +205,12 @@ fn write(key: &str, value: toml_edit::Value) {
             return;
         }
     };
-    if let Err(err) = write_atomically(&path, &next) {
+    if let Err(err) = otto_kit::fs::write_atomically(&path, next.as_bytes()) {
         eprintln!("dictation: cannot write {}: {err}", path.display());
         return;
     }
     *cached().lock().unwrap() = None;
     wake();
-}
-
-/// Replace `path` with `text` in one step, so a dictation starting just then
-/// never reads it half written.
-fn write_atomically(path: &Path, text: &str) -> std::io::Result<()> {
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
-    let temp = path.with_extension(format!("tmp.{}", std::process::id()));
-    std::fs::write(&temp, text)?;
-    std::fs::rename(&temp, path)
 }
 
 /// Set when what the pane shows moved off the main thread, until `main.rs`
@@ -549,7 +538,7 @@ fn set_autostart(on: bool) {
     else {
         return;
     };
-    if let Err(err) = write_atomically(&path, &entry) {
+    if let Err(err) = otto_kit::fs::write_atomically(&path, entry.as_bytes()) {
         eprintln!("dictation: cannot write {}: {err}", path.display());
     }
 }
@@ -970,7 +959,7 @@ mod tests {
             std::env::temp_dir().join(format!("otto-settings-autostart-{}", std::process::id()));
         let path = dir.join("autostart").join(AUTOSTART_FILE);
         let entry = autostart_entry(true, None, None, Some(&dir)).unwrap();
-        write_atomically(&path, &entry).unwrap();
+        otto_kit::fs::write_atomically(&path, entry.as_bytes()).unwrap();
         let read = std::fs::read_to_string(&path).unwrap();
         std::fs::remove_dir_all(&dir).unwrap();
         assert!(autostart(Some(&read), None));

@@ -3,14 +3,19 @@
 //! `specs/desk.md`, *Arrangement*.
 //!
 //! A slot is a column and a row of the grid the panel holds. Positions are
-//! kept by file name in `$XDG_STATE_HOME/otto/desk.toml`, never in the
-//! folder itself:
+//! kept by folder, then by file name, in `$XDG_STATE_HOME/otto/desk.toml`,
+//! never in the folder itself, so pointing the desk at another folder
+//! neither wipes nor borrows this one's layout:
 //!
 //! ```toml
-//! [positions]
+//! [folders."/home/me/Desktop".positions]
 //! "notes.txt" = [0, 0]
 //! "Projects" = [3, 1]
 //! ```
+//!
+//! A file from before positions were kept per folder has a bare
+//! `[positions]` table. The first folder read with no layout of its own
+//! takes it up, and the next save writes it under that folder.
 //!
 //! [`arrange`] turns the saved cells and the listing into a slot per icon.
 //! It never moves a saved cell: one that no longer fits the panel is
@@ -18,8 +23,8 @@
 
 // Rust guideline compliant 2026-02-21
 
-use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -66,50 +71,53 @@ impl From<Cell> for [u32; 2] {
     }
 }
 
-/// Where the desk's icons were put, by file name.
+/// Where the desk's icons were put in one folder, by file name.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Places {
     #[serde(default)]
     pub positions: HashMap<String, Cell>,
 }
 
+/// The whole state file: every folder's layout.
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct StateFile {
+    /// The one layout of a file from before folders were told apart.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    positions: HashMap<String, Cell>,
+    #[serde(default)]
+    folders: BTreeMap<String, Places>,
+}
+
+/// The key `folder`'s layout is kept under.
+fn folder_key(folder: &Path) -> String {
+    folder.to_string_lossy().into_owned()
+}
+
 impl Places {
-    /// Read the state file, or nothing where there is none or it cannot be
-    /// read.
-    pub fn load() -> Self {
-        let Some(path) = state_path() else {
-            return Self::default();
-        };
-        match std::fs::read_to_string(&path) {
-            Ok(text) => toml::from_str(&text).unwrap_or_else(|err| {
-                tracing::warn!(
-                    name: "desk.places.invalid",
-                    path = %path.display(),
-                    %err,
-                    "ignoring the desk's saved positions"
-                );
-                Self::default()
-            }),
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Self::default(),
-            Err(err) => {
-                tracing::warn!(
-                    name: "desk.places.unreadable",
-                    path = %path.display(),
-                    %err,
-                    "cannot read the desk's saved positions"
-                );
-                Self::default()
-            }
+    /// Read `folder`'s layout from the state file, or nothing where there is
+    /// none or the file cannot be read.
+    pub fn load(folder: &Path) -> Self {
+        state_path().map_or_else(Self::default, |path| Self::load_from(&path, folder))
+    }
+
+    fn load_from(path: &Path, folder: &Path) -> Self {
+        let mut state = read_state(path).unwrap_or_default();
+        match state.folders.remove(&folder_key(folder)) {
+            Some(places) => places,
+            None => Self {
+                positions: state.positions,
+            },
         }
     }
 
-    /// Write the state file. A failure is a warning: the icons stay where
-    /// they are for this session either way.
-    pub fn save(&self) {
+    /// Write this as `folder`'s layout, keeping every other folder's. A
+    /// failure is a warning: the icons stay where they are for this session
+    /// either way.
+    pub fn save(&self, folder: &Path) {
         let Some(path) = state_path() else {
             return;
         };
-        if let Err(err) = self.write(&path) {
+        if let Err(err) = self.save_to(&path, folder) {
             tracing::warn!(
                 name: "desk.places.write_failed",
                 path = %path.display(),
@@ -119,14 +127,54 @@ impl Places {
         }
     }
 
-    fn write(&self, path: &std::path::Path) -> std::io::Result<()> {
-        let text = toml::to_string(self).map_err(std::io::Error::other)?;
-        if let Some(dir) = path.parent() {
-            std::fs::create_dir_all(dir)?;
+    fn save_to(&self, path: &Path, folder: &Path) -> std::io::Result<()> {
+        // A file that does not parse is not written over: it may be a newer
+        // Otto's, or a hand edit gone wrong, and either is worth keeping.
+        let mut state = read_state(path).ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "the state file cannot be read",
+            )
+        })?;
+        // Whichever folder read the old single layout took it up.
+        state.positions.clear();
+        let key = folder_key(folder);
+        if self.positions.is_empty() {
+            state.folders.remove(&key);
+        } else {
+            state.folders.insert(key, self.clone());
         }
-        let temp = path.with_extension(format!("toml.tmp.{}", std::process::id()));
-        std::fs::write(&temp, text)?;
-        std::fs::rename(&temp, path)
+        let text = toml::to_string(&state).map_err(std::io::Error::other)?;
+        otto_kit::fs::write_atomically(path, text.as_bytes())
+    }
+}
+
+/// The state file at `path`: empty where there is none, `None` where it
+/// cannot be read or does not parse.
+fn read_state(path: &Path) -> Option<StateFile> {
+    match std::fs::read_to_string(path) {
+        Ok(text) => match toml::from_str(&text) {
+            Ok(state) => Some(state),
+            Err(err) => {
+                tracing::warn!(
+                    name: "desk.places.invalid",
+                    path = %path.display(),
+                    %err,
+                    "ignoring the desk's saved positions"
+                );
+                None
+            }
+        },
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Some(StateFile::default()),
+        Err(err) => {
+            tracing::warn!(
+                name: "desk.places.unreadable",
+                path = %path.display(),
+                %err,
+                "cannot read the desk's saved positions"
+            );
+            None
+        }
     }
 }
 
@@ -396,5 +444,87 @@ mod tests {
         let text = toml::to_string(&places).unwrap();
         assert!(text.contains("[3, 1]"), "{text}");
         assert_eq!(toml::from_str::<Places>(&text).unwrap(), places);
+    }
+
+    /// A state file of its own, swept up on drop.
+    struct StateDir(PathBuf);
+
+    impl StateDir {
+        fn new() -> Self {
+            use std::sync::atomic::{AtomicU32, Ordering};
+            static COUNTER: AtomicU32 = AtomicU32::new(0);
+            let dir = std::env::temp_dir().join(format!(
+                "otto-files-desk-state-{}-{}",
+                std::process::id(),
+                COUNTER.fetch_add(1, Ordering::Relaxed)
+            ));
+            std::fs::create_dir_all(&dir).unwrap();
+            Self(dir)
+        }
+
+        fn file(&self) -> PathBuf {
+            self.0.join("desk.toml")
+        }
+    }
+
+    impl Drop for StateDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn each_folder_keeps_its_own_layout() {
+        let dir = StateDir::new();
+        let (desktop, stuff) = (Path::new("/home/me/Desktop"), Path::new("/home/me/Stuff"));
+        let mine = Places {
+            positions: saved(&[("a", 1, 0)]),
+        };
+        let theirs = Places {
+            positions: saved(&[("b", 2, 2)]),
+        };
+        mine.save_to(&dir.file(), desktop).unwrap();
+        theirs.save_to(&dir.file(), stuff).unwrap();
+        assert_eq!(Places::load_from(&dir.file(), desktop), mine);
+        assert_eq!(Places::load_from(&dir.file(), stuff), theirs);
+        assert_eq!(
+            Places::load_from(&dir.file(), Path::new("/elsewhere")),
+            Places::default()
+        );
+
+        // Cleaning one folder up leaves the other alone.
+        Places::default().save_to(&dir.file(), stuff).unwrap();
+        assert_eq!(Places::load_from(&dir.file(), desktop), mine);
+        assert_eq!(Places::load_from(&dir.file(), stuff), Places::default());
+    }
+
+    #[test]
+    fn an_old_single_layout_is_taken_up_by_the_first_folder_read() {
+        let dir = StateDir::new();
+        std::fs::write(dir.file(), "[positions]\n\"notes.txt\" = [3, 1]\n").unwrap();
+        let desktop = Path::new("/home/me/Desktop");
+        let places = Places::load_from(&dir.file(), desktop);
+        assert_eq!(places.positions, saved(&[("notes.txt", 3, 1)]));
+
+        places.save_to(&dir.file(), desktop).unwrap();
+        let text = std::fs::read_to_string(dir.file()).unwrap();
+        assert!(!text.starts_with("[positions]"), "{text}");
+        assert_eq!(Places::load_from(&dir.file(), desktop), places);
+        // Moved, not copied: another folder does not inherit it as well.
+        assert_eq!(
+            Places::load_from(&dir.file(), Path::new("/home/me/Stuff")),
+            Places::default()
+        );
+    }
+
+    #[test]
+    fn a_state_file_that_does_not_parse_is_not_written_over() {
+        let dir = StateDir::new();
+        std::fs::write(dir.file(), "not [ toml").unwrap();
+        let places = Places {
+            positions: saved(&[("a", 0, 0)]),
+        };
+        assert!(places.save_to(&dir.file(), Path::new("/d")).is_err());
+        assert_eq!(std::fs::read_to_string(dir.file()).unwrap(), "not [ toml");
     }
 }
