@@ -3068,6 +3068,15 @@ pub(super) fn render_output_frame<'a, A: RendererApi>(
         );
     }
 
+    super::debug::maybe_dump_scanout(
+        renderer.as_mut(),
+        &output.name(),
+        matches!(
+            render_frame_result.primary_element,
+            smithay::backend::drm::compositor::PrimaryPlaneElement::Swapchain(_)
+        ) && !render_frame_result.is_empty,
+    );
+
     #[cfg(feature = "renderer_sync")]
     {
         // Store this frame's GPU fence for deferred waiting.  The fence will be

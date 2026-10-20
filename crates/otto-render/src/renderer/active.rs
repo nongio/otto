@@ -13,7 +13,7 @@
 
 use std::any::Any;
 
-use layers::skia::{gpu::DirectContext, PixelGeometry};
+use layers::skia::{self, gpu::DirectContext, PixelGeometry};
 use smithay::backend::{
     allocator::{dmabuf::Dmabuf, format::FormatSet, gbm::GbmDevice},
     drm::{DrmDeviceFd, DrmNode},
@@ -176,6 +176,10 @@ pub trait SkiaDeviceRenderer {
     /// Surface of the frame rendered last.
     fn current_surface(&mut self) -> Option<&SkiaSurface>;
 
+    /// The frame rendered last, read back into memory, with the subpixel
+    /// layout it was drawn for. A debugging aid: it waits for the GPU.
+    fn read_current_frame(&mut self) -> Option<(skia::Image, PixelGeometry)>;
+
     /// Records that this frame renders into `dmabuf` for scanout, so
     /// [`Self::flush_planes`] can fence that write for the KMS commit.
     fn note_scanout_write(&mut self, dmabuf: &Dmabuf);
@@ -214,6 +218,17 @@ impl SkiaDeviceRenderer for SkiaRenderer {
 
     fn current_surface(&mut self) -> Option<&SkiaSurface> {
         self.current_skia_renderer()
+    }
+
+    fn read_current_frame(&mut self) -> Option<(skia::Image, PixelGeometry)> {
+        let mut context = self.context.clone()?;
+        let surface = self.current_skia_renderer()?;
+        let geometry = surface.pixel_geometry();
+        let image = surface
+            .surface()
+            .image_snapshot()
+            .make_raster_image(&mut context, skia::image::CachingHint::Disallow)?;
+        Some((image, geometry))
     }
 
     fn note_scanout_write(&mut self, dmabuf: &Dmabuf) {
@@ -310,7 +325,7 @@ pub use vulkan::VulkanApi;
 mod vulkan {
     use std::any::Any;
 
-    use layers::skia::{gpu::DirectContext, PixelGeometry};
+    use layers::skia::{self, gpu::DirectContext, PixelGeometry};
     use smithay::backend::{
         allocator::{dmabuf::Dmabuf, format::FormatSet, gbm::GbmDevice},
         drm::{DrmDeviceFd, DrmNode, NodeType},
@@ -349,6 +364,10 @@ mod vulkan {
 
         fn current_surface(&mut self) -> Option<&SkiaSurface> {
             self.current_skia_renderer()
+        }
+
+        fn read_current_frame(&mut self) -> Option<(skia::Image, PixelGeometry)> {
+            SkiaVkRenderer::read_current_frame(self)
         }
 
         /// The Vulkan renderer waits for its plane writes on the CPU in

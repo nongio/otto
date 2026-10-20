@@ -379,6 +379,27 @@ impl SkiaVkRenderer {
             .map(|target| &target.skia_surface)
     }
 
+    /// The target last rendered to, read back into memory, with the subpixel
+    /// layout it was drawn for. Like [`ExportMem::copy_framebuffer`] it hands
+    /// a dmabuf target back to the foreign queue family afterwards, so the
+    /// buffer still scans out.
+    pub fn read_current_frame(&mut self) -> Option<(skia::Image, skia::PixelGeometry)> {
+        let target = self.current_target.clone()?;
+        let geometry = target.skia_surface.pixel_geometry();
+        let mut surface = target.skia_surface.surface.clone();
+        let info = skia::ImageInfo::new_n32_premul((surface.width(), surface.height()), None);
+        let row_bytes = info.min_row_bytes();
+        let mut data = vec![0u8; row_bytes * surface.height().max(0) as usize];
+        let read = surface.read_pixels(&info, &mut data, row_bytes, (0, 0));
+        self.flush_target(&target);
+        self.ctx().submit(None);
+        if !read {
+            return None;
+        }
+        let image = skia::images::raster_from_data(&info, skia::Data::new_copy(&data), row_bytes)?;
+        Some((image, geometry))
+    }
+
     /// Waits for `sync` on the GPU if it can be imported, on the CPU otherwise.
     pub(crate) fn wait_sync(&mut self, sync: &SyncPoint) -> Result<(), SkiaVkError> {
         if sync.is_reached() {
