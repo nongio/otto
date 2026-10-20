@@ -235,6 +235,12 @@ pattern = '\blog::(trace|debug|info|warn|error|log)!|\buse log::|extern crate lo
 allowed_in = []
 reason = "Otto logs with tracing. The log crate's records still arrive (the subscriber bridges them for dependencies), but its macros carry no spans or fields, and a second facade in the code splits the filters people learn."
 
+[[source_rule]]
+name = "image-sampling-explicit"
+pattern = '\.draw_image(_rect)?\('
+allowed_in = ["components/otto-kit/src/icons.rs"]
+reason = "A plain draw_image or draw_image_rect samples nearest, which is right only for a 1:1 copy on whole device pixels, and a fractional scale does not give one: icons lose a column and blur apart. Draw icons with otto_kit::icons::draw_icon, and everything else with draw_image_rect_with_sampling_options and the sampling chosen for it."
+
 # ---------------------------------------------------------------------------
 # Known debt
 # ---------------------------------------------------------------------------

@@ -262,7 +262,13 @@ fn draw_raster(
         );
     } else {
         let piece = resample(image, src, out)?;
-        canvas.draw_image(&piece, (left, top), None);
+        // Already resampled to `out` pixels: a whole-pixel 1:1 copy.
+        canvas.draw_image_with_sampling_options(
+            &piece,
+            (left, top),
+            skia::SamplingOptions::default(),
+            None,
+        );
     }
     Some(())
 }
@@ -367,7 +373,8 @@ fn draw_svg(
         (dest.width() / sw, dest.height() / sh),
         (dest.left, dest.top),
     )?;
-    canvas.draw_image(&image, (0, 0), None);
+    // Rasterised at the target's pixels: a 1:1 copy.
+    canvas.draw_image_with_sampling_options(&image, (0, 0), skia::SamplingOptions::default(), None);
     Some(())
 }
 

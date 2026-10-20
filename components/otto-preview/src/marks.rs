@@ -699,7 +699,13 @@ pub fn render(preview: &Preview, marks: &[Mark]) -> Option<Vec<u8>> {
     let (width, height) = (image.width(), image.height());
     let mut surface = otto_kit::skia::surfaces::raster_n32_premul((width, height))?;
     let canvas = surface.canvas();
-    canvas.draw_image(&image, (0, 0), None);
+    // The picture at its own size: a 1:1 copy.
+    canvas.draw_image_with_sampling_options(
+        &image,
+        (0, 0),
+        otto_kit::skia::SamplingOptions::default(),
+        None,
+    );
     let frame = Frame {
         page: None,
         screen: Rect::from_wh(width as f32, height as f32),
@@ -904,7 +910,16 @@ fn draw_mark(canvas: &Canvas, frame: &Frame, mark: &Mark, scale: f32, faint: boo
             paint.set_alpha_f(*opacity * if faint { 0.45 } else { 1.0 });
             match overlay_image(path) {
                 Some(image) => {
-                    canvas.draw_image_rect(&image, None, rect, &paint);
+                    canvas.draw_image_rect_with_sampling_options(
+                        &image,
+                        None,
+                        rect,
+                        otto_kit::skia::SamplingOptions::new(
+                            otto_kit::skia::FilterMode::Linear,
+                            otto_kit::skia::MipmapMode::Linear,
+                        ),
+                        &paint,
+                    );
                 }
                 // Where it would be, so it can still be moved or deleted.
                 None => {

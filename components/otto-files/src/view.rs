@@ -8017,7 +8017,15 @@ pub(crate) fn draw_thumbnail(
         ClipOp::Intersect,
         true,
     );
-    canvas.draw_image_rect(image, None, dst, &paint);
+    canvas.draw_image_rect_with_sampling_options(
+        image,
+        None,
+        dst,
+        otto_kit::skia::sampling_options::SamplingOptions::from(
+            otto_kit::skia::sampling_options::CubicResampler::mitchell(),
+        ),
+        &paint,
+    );
     canvas.restore();
 
     draw_picture_edge(canvas, dst, radius, cut);

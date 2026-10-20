@@ -213,6 +213,11 @@ rules today:
   bridge.
 - `wayland-connection-through-kit`: only otto-kit opens an app's Wayland
   connection; otto-rdp, a bridge with no toolkit, opens its own.
+- `image-sampling-explicit`: no plain `draw_image`/`draw_image_rect`, whose
+  nearest sampling is right only for a 1:1 copy on whole device pixels.
+  Icons go through `otto_kit::icons::draw_icon`; everything else names its
+  sampling (`*_with_sampling_options`), `SamplingOptions::default()` for a
+  deliberate 1:1 copy.
 - `dbus-proxies-in-otto-dbus`: a zbus client proxy (`#[zbus::proxy]`) is
   declared only in `otto-dbus`, one per interface, so every caller agrees on
   the contract. Serving an interface (`#[interface]`) stays with the service.
