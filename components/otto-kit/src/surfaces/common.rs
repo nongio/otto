@@ -463,6 +463,12 @@ impl BaseWaylandSurface {
         let Some(applied) = self.scale.geometry() else {
             return;
         };
+        // The swap below attaches a buffer of `applied`'s size: now the
+        // scale and viewport describing it can go out with it.
+        self.scale
+            .buffer
+            .borrow_mut()
+            .flush(AppContext::viewporter(), AppContext::queue_handle());
         // Components rasterising from `AppContext::scale_factor` in here
         // answer for this surface.
         let _drawing = surface_scale::DrawingScope::enter(surface_scale::surface_scale_120(

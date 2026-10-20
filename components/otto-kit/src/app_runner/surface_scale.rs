@@ -354,11 +354,24 @@ pub struct ScaleSync {
 /// it listens for the surface's `wp_fractional_scale_v1.preferred_scale`
 /// itself, and asks [`Self::sync`] for the buffer to paint before each frame.
 /// The buffer it gets is then shown pixel for pixel.
+///
+/// What is sent to the surface describes a buffer, and the compositor
+/// checks it against the buffer a commit carries: a viewport source outside
+/// that buffer, or a buffer scale its size is no multiple of, is a protocol
+/// error. So state for a buffer of a new size, or a new scale, waits in
+/// `wanted` until [`Self::flush`], which the draw calls just before the
+/// buffer of that size is attached. A commit in between — a crop or a
+/// position sent without a repaint — carries the old buffer with the state
+/// that was sent for it. A crop that keeps the buffer's size and scale is
+/// sent at once: it is clamped to the buffer the surface already shows.
 #[derive(Debug)]
 pub struct ScaledBuffer {
     surface: WlSurface,
     viewport: Option<WpViewport>,
-    applied: Option<BufferGeometry>,
+    /// What the next buffer is to be: the last [`Self::sync`]'s answer.
+    wanted: Option<BufferGeometry>,
+    /// What the surface was last sent, with a buffer of that size.
+    sent: Option<BufferGeometry>,
 }
 
 impl ScaledBuffer {
@@ -366,17 +379,17 @@ impl ScaledBuffer {
         Self {
             surface: surface.clone(),
             viewport: None,
-            applied: None,
+            wanted: None,
+            sent: None,
         }
     }
 
-    /// Bring the surface's buffer scale and viewport in line with
-    /// `scale_120`, a `logical` size in points and a `crop`, sending only
-    /// what moved, and say what changed. The buffer to paint is then
-    /// [`Self::geometry`]'s.
+    /// Work out the surface's buffer scale, buffer size and viewport for
+    /// `scale_120`, a `logical` size in points and a `crop`, and say what
+    /// changed. The buffer to paint is then [`Self::geometry`]'s; what the
+    /// surface is sent waits for [`Self::flush`] unless the buffer keeps its
+    /// size and scale.
     ///
-    /// Everything sent is surface state: it lands with the next commit,
-    /// together with the buffer it describes, which has to be that size.
     /// `viewporter` is what shows a fractional buffer at its logical size;
     /// without one, a fractional scale is drawn at the next whole one and
     /// left to the compositor to shrink.
@@ -399,21 +412,40 @@ impl ScaledBuffer {
             buffer,
             viewport,
         };
-        let previous = self.applied;
+        let previous = self.wanted;
         if previous == Some(next) {
             return ScaleSync::default();
         }
-        if previous.map(|p| p.scale) != Some(scale) {
-            self.surface.set_buffer_scale(scale.wl_buffer_scale());
+        self.wanted = Some(next);
+        if sendable_now(self.sent, next) {
+            self.flush(viewporter, qh);
         }
-        if previous.map(|p| p.viewport) != Some(viewport) {
-            self.send_viewport(viewport, viewporter, qh);
-        }
-        self.applied = Some(next);
         ScaleSync {
             buffer: previous.map(|p| p.buffer) != Some(buffer),
             scale: previous.is_some_and(|p| p.scale != scale),
         }
+    }
+
+    /// Send what the last [`Self::sync`] worked out, just before the buffer
+    /// it describes is attached: the next commit has to carry a buffer of
+    /// [`Self::geometry`]'s size. Sends only what moved.
+    pub fn flush<D>(&mut self, viewporter: Option<&WpViewporter>, qh: &QueueHandle<D>)
+    where
+        D: Dispatch<WpViewport, ()> + 'static,
+    {
+        let Some(next) = self.wanted else {
+            return;
+        };
+        if self.sent == Some(next) {
+            return;
+        }
+        if self.sent.map(|s| s.scale) != Some(next.scale) {
+            self.surface.set_buffer_scale(next.scale.wl_buffer_scale());
+        }
+        if self.sent.map(|s| s.viewport) != Some(next.viewport) {
+            self.send_viewport(next.viewport, viewporter, qh);
+        }
+        self.sent = Some(next);
     }
 
     /// Send `state` to the viewport, making it if the surface has none yet
@@ -445,17 +477,26 @@ impl ScaledBuffer {
         viewport.set_destination(w, h);
     }
 
-    /// What the surface was last given; `None` before the first
-    /// [`Self::sync`].
+    /// The buffer to paint: what the last [`Self::sync`] worked out, `None`
+    /// before the first.
     pub fn geometry(&self) -> Option<BufferGeometry> {
-        self.applied
+        self.wanted
     }
 
-    /// Forget what was sent, so the next [`Self::sync`] sends everything
-    /// again.
+    /// Forget what was worked out and sent, so the next [`Self::sync`] and
+    /// [`Self::flush`] send everything again.
     pub fn reset(&mut self) {
-        self.applied = None;
+        self.wanted = None;
+        self.sent = None;
     }
+}
+
+/// Whether `next` can be sent while the surface still shows a buffer of
+/// what was last `sent`: only when it is the same buffer, so the state is
+/// checked against the buffer it was clamped to. A new size or scale waits
+/// for the draw that attaches it.
+fn sendable_now(sent: Option<BufferGeometry>, next: BufferGeometry) -> bool {
+    sent.is_some_and(|sent| sent.scale == next.scale && sent.buffer == next.buffer)
 }
 
 impl Drop for ScaledBuffer {
@@ -549,7 +590,8 @@ where
 
     /// The buffer to paint for a surface `logical` points big. Sets the
     /// surface's buffer scale and viewport to match, both landing with the
-    /// commit that carries the buffer.
+    /// commit that carries the buffer: the caller paints a buffer of this
+    /// size and commits it next.
     pub fn frame(&mut self, logical: (i32, i32)) -> Frame {
         self.buffer.sync(
             self.scale_120.unwrap_or(self.stand_in_120),
@@ -558,6 +600,7 @@ where
             self.viewporter.as_ref(),
             &self.qh,
         );
+        self.buffer.flush(self.viewporter.as_ref(), &self.qh);
         let geometry = self
             .buffer
             .geometry()
@@ -699,6 +742,42 @@ mod tests {
                 source: None,
                 destination: Some((101, 33)),
             }
+        );
+    }
+
+    /// State for a buffer of another size, or at another scale, is not sent
+    /// while the surface shows the old one: a commit without a repaint would
+    /// land it on a buffer it does not fit (the compositor kills the client
+    /// for a viewport source outside the buffer). A crop that keeps the
+    /// buffer goes out at once.
+    #[test]
+    fn state_for_a_buffer_not_yet_attached_waits_for_the_draw() {
+        let at = |scale, buffer, crop| BufferGeometry {
+            scale,
+            buffer,
+            viewport: ViewportState::for_surface(scale, (100, 50), buffer, crop),
+        };
+        let crop = Some((skia_safe::Rect::from_ltrb(0.0, 0.0, 50.0, 50.0), (50, 50)));
+        let shown = at(BufferScale::Fractional(150), (150, 75), None);
+
+        assert!(!sendable_now(None, shown), "nothing attached yet");
+        assert!(
+            sendable_now(
+                Some(shown),
+                at(BufferScale::Fractional(150), (150, 75), crop)
+            ),
+            "a crop of the buffer on screen"
+        );
+        assert!(
+            !sendable_now(
+                Some(shown),
+                at(BufferScale::Fractional(150), (151, 75), crop)
+            ),
+            "a resize: the buffer is not there yet"
+        );
+        assert!(
+            !sendable_now(Some(shown), at(BufferScale::Integer(2), (200, 100), None)),
+            "a scale change"
         );
     }
 
