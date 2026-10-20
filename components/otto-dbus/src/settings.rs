@@ -33,6 +33,10 @@ pub trait Settings {
     /// The preferred locales, most preferred first.
     fn get_locales(&self) -> zbus::Result<Vec<String>>;
 
+    /// The UI font and text rendering, keyed by their
+    /// `org.gnome.desktop.interface` names.
+    fn get_font_settings(&self) -> zbus::Result<HashMap<String, String>>;
+
     /// The schema: one dictionary per setting.
     fn describe(&self) -> zbus::Result<Vec<HashMap<String, OwnedValue>>>;
 

@@ -112,6 +112,40 @@ impl SettingsInterface {
         Config::with(|config| config.locales.clone())
     }
 
+    /// Otto's UI font and text rendering, keyed by their
+    /// `org.gnome.desktop.interface` names: `font-name`, `font-antialiasing`,
+    /// `font-hinting` and `font-rgba-order`.
+    ///
+    /// Not settings: the rendering is fontconfig's and the subpixel order the
+    /// outputs', so it is worked out on the compositor thread. The portal
+    /// serves it to GTK and Qt; XSETTINGS carries the same to X11 clients.
+    async fn get_font_settings(&self) -> Result<HashMap<String, String>, SettingsFault> {
+        let (response_tx, response_rx) = oneshot::channel();
+        self.compositor_tx
+            .send(CompositorCommand::FontSettings { response_tx })
+            .map_err(|err| {
+                SettingsFault::ApplyFailed(format!("compositor is not listening: {err}"))
+            })?;
+        let fonts = response_rx
+            .await
+            .map_err(|_| SettingsFault::ApplyFailed("compositor did not answer".to_string()))?;
+        Ok(HashMap::from([
+            ("font-name".to_string(), fonts.name),
+            (
+                "font-antialiasing".to_string(),
+                fonts.rendering.antialiasing.to_string(),
+            ),
+            (
+                "font-hinting".to_string(),
+                fonts.rendering.hinting.to_string(),
+            ),
+            (
+                "font-rgba-order".to_string(),
+                fonts.rendering.rgba_order.to_string(),
+            ),
+        ]))
+    }
+
     /// The schema: one dictionary per setting. Clients ignore keys they do not
     /// know, so the schema can grow without breaking them.
     async fn describe(&self) -> Vec<HashMap<String, OwnedValue>> {

@@ -85,20 +85,20 @@ composites a finished image and cannot alter how the glyphs in it were
 rasterised. Your fontconfig settings are already fully in effect for the text
 you spend most of your time reading.
 
-With that scope, three limits worth knowing:
+With that scope, three things worth knowing:
 
 - Otto's chrome draws with grayscale antialiasing, and there is currently no
   way to turn subpixel (LCD) antialiasing on for it. On a HiDPI display this is
   what you would probably pick anyway. On a 1080p display Otto's own dock, bar
   and window titles will look a little lighter and softer than the applications
   running above them.
-- Hinting does not follow your fontconfig settings. If you have set a
-  `hintstyle` in `fonts.conf`, applications will follow it and Otto's chrome
-  will not.
-- Otto's font choice applies to Otto. It is not published to applications the
-  way its light/dark mode and accent color are, so set the interface font for
-  GTK and Qt apps as you normally would. Otto does not override it, and does
-  not set it either.
+- Hinting and antialiasing follow your fontconfig settings (`hintstyle`,
+  `hinting`, `antialias`, `rgba`), in Otto's chrome as in your applications.
+- Otto tells applications its font and how it draws text, the way it tells
+  them its light/dark mode: GTK 4 and Qt apps read them from the desktop
+  portal, X11 apps from XSETTINGS. The interface font they get is Otto's
+  `font_family` at Otto's body size. GTK 3 apps outside a sandbox read their
+  own settings instead, so set the font for those as you normally would.
 
 ## Files, trash and thumbnails
 

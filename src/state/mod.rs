@@ -763,6 +763,14 @@ smithay::reexports::wayland_server::delegate_dispatch!(@<BackendData: Backend + 
     smithay::reexports::wayland_protocols_wlr::screencopy::v1::server::zwlr_screencopy_frame_v1::ZwlrScreencopyFrameV1: screencopy::ScreencopyFrameData
 ] => screencopy::ScreencopyManagerState);
 
+/// Otto's UI font and text rendering, as other toolkits are told them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FontSettings {
+    /// A Pango font description: the configured family at body size.
+    pub name: String,
+    pub rendering: otto_kit::text_rendering::PublishedRendering,
+}
+
 impl<BackendData: Backend + 'static> Otto<BackendData> {
     pub fn init(
         display: Display<Otto<BackendData>>,
@@ -1593,6 +1601,35 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             .unwrap_or(1.0)
     }
 
+    /// Otto's text rendering as it is published to toolkits that rasterise
+    /// their own: XSETTINGS for X11 clients, the Settings portal for the rest.
+    ///
+    /// The rendering is fontconfig's, as Otto draws with it. The subpixel
+    /// order is the outputs' when they all name the same one (X11 has one
+    /// screen and the portal one value), else fontconfig's `rgba`.
+    pub fn font_settings(&self) -> FontSettings {
+        use otto_kit::text_rendering::{self, FontconfigRgba, TextRendering};
+        use smithay::output::Subpixel;
+        let rendering = TextRendering::system();
+        let mut layouts = self.workspaces.outputs().filter_map(|output| {
+            match output.physical_properties().subpixel {
+                Subpixel::HorizontalRgb => Some(FontconfigRgba::Rgb),
+                Subpixel::HorizontalBgr => Some(FontconfigRgba::Bgr),
+                Subpixel::VerticalRgb => Some(FontconfigRgba::Vrgb),
+                Subpixel::VerticalBgr => Some(FontconfigRgba::Vbgr),
+                Subpixel::None => Some(FontconfigRgba::None),
+                _ => None,
+            }
+        });
+        let first = layouts.next();
+        let outputs_agree = first.filter(|first| layouts.all(|layout| layout == *first));
+        let family = Config::with(|c| c.font_family.clone());
+        FontSettings {
+            name: text_rendering::font_name(&family, otto_kit::typography::styles::BODY.size),
+            rendering: rendering.published(outputs_agree.or(rendering.rgba)),
+        }
+    }
+
     /// Apply the primary output's integer scale to the given XWayland client's
     /// `client_scale`. See `start_xwayland` for why this yields a native-resolution
     /// X screen.
@@ -1631,6 +1668,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         use smithay::xwayland::xwm::settings::Value;
         let scale = self.xwayland_target_scale();
         let (cursor_theme, cursor_size) = Config::with(|c| (c.cursor_theme.clone(), c.cursor_size));
+        let fonts = self.font_settings();
         let Some(wm) = self.xwm.as_mut() else { return };
         let settings = [
             (
@@ -1658,6 +1696,25 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                 "Gtk/CursorThemeSize".to_string(),
                 Value::Integer((cursor_size as f64 * scale) as i32),
             ),
+            // How Otto rasterises text, so Xft, GTK and Chromium draw theirs
+            // the same way beside it (see `font_settings`).
+            (
+                "Xft/Antialias".to_string(),
+                Value::Integer(fonts.rendering.xft_antialias),
+            ),
+            (
+                "Xft/Hinting".to_string(),
+                Value::Integer(fonts.rendering.xft_hinting),
+            ),
+            (
+                "Xft/HintStyle".to_string(),
+                Value::String(fonts.rendering.xft_hint_style.to_string()),
+            ),
+            (
+                "Xft/RGBA".to_string(),
+                Value::String(fonts.rendering.xft_rgba.to_string()),
+            ),
+            ("Gtk/FontName".to_string(), Value::String(fonts.name)),
         ];
         match wm.set_xsettings(settings.into_iter()) {
             Ok(()) => tracing::info!(scale, "published XWayland XSETTINGS scale"),

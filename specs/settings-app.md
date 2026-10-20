@@ -235,6 +235,9 @@ one, and that is different work for each of them:
   keys (`color-scheme`, `accent-color`, `icon-theme`). `rounded_corners`,
   `frosting`, `window_controls_side` and `show_maximize_button` have none, so they go out
   under Otto's own namespace, `org.otto.desktop`, beside `locales`.
+  `font_family` goes out as `org.gnome.desktop.interface font-name` (and
+  `Gtk/FontName` over XSETTINGS), at body size, together with fontconfig's
+  rendering; it needs a restart, so it is not relayed live.
 
   Otto's own applications do not depend on that relay for those three: the
   toolkit also follows `org.otto.Settings` itself, reading each identifier

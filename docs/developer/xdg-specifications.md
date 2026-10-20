@@ -163,20 +163,44 @@ on one output (`BaseWaylandSurface::pixel_geometry`). A pixel reaches the
 compositor with one alpha, so on a frosted sidebar or a translucent bar the
 per-channel coverage would fringe; every such surface draws grayscale.
 
-**What Otto does not publish.** The Settings portal carries no font key, and
-XSETTINGS publishes only the scaling ones (`Xft/DPI`,
-`Gdk/WindowScalingFactor`, `Gdk/UnscaledDPI`; see `apply_xwayland_xsettings`
-in `src/state/mod.rs`). Other desktops publish `font-name` and
-`text-scaling-factor` under `org.gnome.desktop.interface`, and `Gtk/FontName`
-plus the `Xft/*` rendering keys over XSETTINGS. Otto's font choice therefore
-stops at Otto's own chrome.
+**What Otto publishes.** Otto's UI font and its text rendering go out to the
+toolkits that rasterise their own text, so GTK, Qt and X11 applications draw
+like Otto beside them. `Otto::font_settings` in `src/state/mod.rs` builds them
+once for both channels:
+
+- the font is `font_family` at `styles::BODY` size, as a Pango description in
+  points at 96 DPI (`otto_kit::text_rendering::font_name`): Otto's 13 px body
+  text is `Inter 9.75`, the same height in a GTK label as in Otto's chrome;
+- the rendering is `TextRendering::system()`, fontconfig's answer with no
+  family named, mapped by `TextRendering::published`;
+- the subpixel order is the outputs' when every output that knows its layout
+  names the same one (X11 has one screen, the portal one value), else
+  fontconfig's `rgba`. It goes out only where Otto itself would draw subpixel
+  text: `rgba = none` in `fonts.conf`, or no known order, publishes grayscale.
+
+| Channel | Keys |
+|---------|------|
+| XSETTINGS (`apply_xwayland_xsettings`) | `Xft/Antialias` (0/1), `Xft/Hinting` (0/1), `Xft/HintStyle` (`hintnone`…`hintfull`), `Xft/RGBA` (`none`, `rgb`, `bgr`, `vrgb`, `vbgr`), `Gtk/FontName` |
+| Settings portal, `org.gnome.desktop.interface` | `font-name`, `font-antialiasing` (`none`, `grayscale`, `rgba`), `font-hinting` (`none`…`full`), `font-rgba-order` (`rgb` when unknown: the key has no "none") |
+
+The portal does not link otto-kit or fontconfig: it asks the compositor
+(`org.otto.Settings.GetFontSettings`, see
+[settings-dbus-api.md](settings-dbus-api.md)), which works the values out on
+its own thread because the subpixel order comes from the outputs. None of
+these is relayed live: `font_family` needs a restart, the fontconfig answer is
+cached for the process, and an output plugged in later does not re-publish
+the order. XSETTINGS is re-sent whenever the scale is.
+
+Other desktops also publish `text-scaling-factor`; Otto does not (see Known
+gaps).
 
 ### Portal namespaces
 
 The Settings portal publishes `org.freedesktop.appearance` (`color-scheme`,
 `accent-color`, `icon-theme`), which is how GTK and Qt applications learn
 Otto's light/dark state. Keys with no portal-standard home go out under
-`org.gnome.desktop.sound` (sound theme) and Otto's own `org.otto.desktop`
+`org.gnome.desktop.sound` (sound theme), `org.gnome.desktop.interface` (font
+and text rendering, see [Fonts and text](#fonts-and-text)) and Otto's own `org.otto.desktop`
 namespace rather than being invented inside the freedesktop one. See
 [Color Scheme](color-scheme-setting.md).
 
@@ -210,7 +234,9 @@ directly and only consults the portal under `GTK_USE_PORTAL=1`.
   are honoured, but subpixel antialiasing reaches only text drawn straight
   into an output's swapchain buffer: cached layers and plane slots draw
   grayscale. See [Fonts and text](#fonts-and-text).
-- **Font settings are not published**: no portal font key, no `Gtk/FontName`
-  or `Xft/Antialias` in XSETTINGS, so applications do not follow Otto's font.
+- **Font settings are published once**: the font and rendering keys (see
+  [Fonts and text](#fonts-and-text)) are not re-announced when an output's
+  subpixel layout changes, and GTK3 outside a sandbox reads dconf rather than
+  the portal, so it sees only the XSETTINGS copy under Xwayland.
 - **No text scaling factor**: text size follows the output scale only, so
   enlarging text means enlarging everything.

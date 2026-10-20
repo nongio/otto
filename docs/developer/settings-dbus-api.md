@@ -89,6 +89,7 @@ GetAccentColor()           → (ddd)     accent as sRGB in 0.0..=1.0
 
 GetSoundTheme()            → s         sound theme name, empty to auto-detect
 GetLocales()               → as        preferred locales, most preferred first
+GetFontSettings()          → a{ss}     UI font and text rendering, by GNOME key
 
 ListOutputs()              → aa{sv}    every output, physical and virtual
 SetOutputProfile(connector: s, width: u, height: u,
@@ -121,6 +122,14 @@ decides for itself.
 language from here rather than from `LANG`, so changing *Preferred languages*
 moves the whole desktop and not just the compositor. Sandboxed third-party
 applications still read the environment, which this does not touch.
+
+`GetFontSettings` is keyed by the names the portal serves under
+`org.gnome.desktop.interface`: `font-name` (`font_family` at body size, in
+Pango points), `font-antialiasing`, `font-hinting` and `font-rgba-order`. It
+is not a setting: the rendering is fontconfig's and the subpixel order the
+outputs', so the compositor works it out on its own thread, the same values it
+sends Xwayland as XSETTINGS. See
+[xdg-specifications.md](xdg-specifications.md#fonts-and-text).
 
 ### Outputs
 

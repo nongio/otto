@@ -137,6 +137,84 @@ impl TextRendering {
     }
 }
 
+/// A rendering as the desktop publishes it to toolkits that rasterise their
+/// own text: XSETTINGS for X11 clients, `org.gnome.desktop.interface` on the
+/// Settings portal for GTK and Qt.
+///
+/// The subpixel order is the screen's, which the caller resolves (an
+/// output's layout, else fontconfig's `rgba`); it goes out only where Otto
+/// itself would draw subpixel text, so a desktop with `rgba = none` reads as
+/// grayscale whatever the panel reports.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PublishedRendering {
+    /// `Xft/Antialias`: 1 to antialias.
+    pub xft_antialias: i32,
+    /// `Xft/Hinting`: 1 to hint.
+    pub xft_hinting: i32,
+    /// `Xft/HintStyle`: `hintnone`, `hintslight`, `hintmedium` or `hintfull`.
+    pub xft_hint_style: &'static str,
+    /// `Xft/RGBA`: `none`, `rgb`, `bgr`, `vrgb` or `vbgr`.
+    pub xft_rgba: &'static str,
+    /// `font-antialiasing`: `none`, `grayscale` or `rgba`.
+    pub antialiasing: &'static str,
+    /// `font-hinting`: `none`, `slight`, `medium` or `full`.
+    pub hinting: &'static str,
+    /// `font-rgba-order`: `rgb`, `bgr`, `vrgb` or `vbgr`. The key has no
+    /// "none" (that is `font-antialiasing`'s job), so an unknown order is
+    /// GNOME's default, `rgb`.
+    pub rgba_order: &'static str,
+}
+
+impl TextRendering {
+    /// These settings as they are published, on a screen whose subpixel
+    /// order is `rgba` (`None` when nothing knows it).
+    pub fn published(&self, rgba: Option<FontconfigRgba>) -> PublishedRendering {
+        let order = match (self.edging, rgba) {
+            (Edging::SubpixelAntiAlias, Some(order)) if order != FontconfigRgba::None => {
+                Some(order)
+            }
+            _ => None,
+        };
+        let order_name = |order: FontconfigRgba| match order {
+            FontconfigRgba::Rgb => "rgb",
+            FontconfigRgba::Bgr => "bgr",
+            FontconfigRgba::Vrgb => "vrgb",
+            FontconfigRgba::Vbgr => "vbgr",
+            FontconfigRgba::None => "none",
+        };
+        let (xft_hint_style, hinting) = match self.hinting {
+            FontHinting::None => ("hintnone", "none"),
+            FontHinting::Slight => ("hintslight", "slight"),
+            FontHinting::Normal => ("hintmedium", "medium"),
+            FontHinting::Full => ("hintfull", "full"),
+        };
+        PublishedRendering {
+            xft_antialias: (self.edging != Edging::Alias) as i32,
+            xft_hinting: (self.hinting != FontHinting::None) as i32,
+            xft_hint_style,
+            xft_rgba: order.map_or("none", order_name),
+            antialiasing: match (self.edging, order) {
+                (Edging::Alias, _) => "none",
+                (_, Some(_)) => "rgba",
+                _ => "grayscale",
+            },
+            hinting,
+            rgba_order: order.map_or("rgb", order_name),
+        }
+    }
+}
+
+/// A Pango font description, `"<family> <size>"`, for text `size_px` logical
+/// pixels tall.
+///
+/// Pango sizes are points, read at the 96 DPI Otto publishes before scaling,
+/// so Otto's 13 px body text is `"Inter 9.75"`: a GTK label set in it comes
+/// out the same height as Otto's own.
+pub fn font_name(family: &str, size_px: f32) -> String {
+    let points = (size_px * 72.0 / 96.0 * 100.0).round() / 100.0;
+    format!("{family} {points}")
+}
+
 /// The rendering properties fontconfig reported, `None` where it set none.
 #[derive(Debug, Default)]
 struct Values {
@@ -233,6 +311,98 @@ fn query(family: &str) -> Option<Values> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// What X11 and portal clients are told mirrors what Otto draws: a
+    /// subpixel order only where Otto would draw subpixel text.
+    #[test]
+    fn publishes_what_otto_draws() {
+        use FontconfigRgba::*;
+        let rendering = |values: Values| TextRendering::from_fontconfig(&values);
+        let cases = [
+            // fontconfig's default, on a panel with a known order.
+            (
+                rendering(Values::default()),
+                Some(Bgr),
+                (1, 1, "hintslight", "bgr", "rgba", "slight", "bgr"),
+            ),
+            // The order unknown everywhere: grayscale, GNOME's default order.
+            (
+                rendering(Values::default()),
+                Option::None,
+                (1, 1, "hintslight", "none", "grayscale", "slight", "rgb"),
+            ),
+            // The screen has no subpixels.
+            (
+                rendering(Values::default()),
+                Some(None),
+                (1, 1, "hintslight", "none", "grayscale", "slight", "rgb"),
+            ),
+            // `rgba = none` in fonts.conf wins over the panel's layout.
+            (
+                rendering(Values {
+                    rgba: Some(FC_RGBA_NONE),
+                    ..Values::default()
+                }),
+                Some(Vrgb),
+                (1, 1, "hintslight", "none", "grayscale", "slight", "rgb"),
+            ),
+            (
+                rendering(Values {
+                    hint_style: Some(3),
+                    ..Values::default()
+                }),
+                Some(Vbgr),
+                (1, 1, "hintfull", "vbgr", "rgba", "full", "vbgr"),
+            ),
+            (
+                rendering(Values {
+                    hint_style: Some(FC_HINT_MEDIUM),
+                    ..Values::default()
+                }),
+                Some(Rgb),
+                (1, 1, "hintmedium", "rgb", "rgba", "medium", "rgb"),
+            ),
+            (
+                rendering(Values {
+                    hinting: Some(false),
+                    ..Values::default()
+                }),
+                Some(Rgb),
+                (1, 0, "hintnone", "rgb", "rgba", "none", "rgb"),
+            ),
+            (
+                rendering(Values {
+                    antialias: Some(false),
+                    ..Values::default()
+                }),
+                Some(Rgb),
+                (0, 1, "hintslight", "none", "none", "slight", "rgb"),
+            ),
+        ];
+        for (rendering, rgba, expected) in cases {
+            let p = rendering.published(rgba);
+            assert_eq!(
+                (
+                    p.xft_antialias,
+                    p.xft_hinting,
+                    p.xft_hint_style,
+                    p.xft_rgba,
+                    p.antialiasing,
+                    p.hinting,
+                    p.rgba_order
+                ),
+                expected,
+                "{rendering:?} on {rgba:?}"
+            );
+        }
+    }
+
+    /// Pango reads points at 96 DPI; Otto's sizes are logical pixels.
+    #[test]
+    fn font_name_is_in_points() {
+        assert_eq!(font_name("Inter", 13.0), "Inter 9.75");
+        assert_eq!(font_name("Noto Sans", 16.0), "Noto Sans 12");
+    }
 
     /// The user's fontconfig answer, not a hardcoded rendering, is what text
     /// is drawn with.
