@@ -218,7 +218,7 @@ impl Browser {
                 if !self
                     .photos
                     .shown(width, height)
-                    .contains(skia_safe::Point::new(x, y))
+                    .contains(otto_kit::skia::Point::new(x, y))
                 {
                     return None;
                 }

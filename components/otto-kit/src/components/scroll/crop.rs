@@ -79,6 +79,8 @@ pub(crate) fn crop(content: Size, extent: Rect, window: Rect, scale: f32) -> Opt
     if source_right <= source_left || source_bottom <= source_top {
         return None;
     }
+    let (source_left, source_right) = wire_span(source_left, source_right, content.width);
+    let (source_top, source_bottom) = wire_span(source_top, source_bottom, content.height);
 
     Some(Crop {
         position: (left as i32, top as i32),
@@ -87,34 +89,95 @@ pub(crate) fn crop(content: Size, extent: Rect, window: Rect, scale: f32) -> Opt
     })
 }
 
-/// Crop `surface` to `window` and say what of it shows, and where.
+/// The narrowest source span the protocol can carry, with room to spare.
 ///
-/// The arguments are [`crop`]'s. A surface the window does not reach is
-/// unmapped, and `None` comes back; a caller showing it again later has to
-/// draw it, since only a buffer maps it. Otherwise the viewport is set for
-/// the surface's next commit and the crop comes back, for the caller to place
-/// the surface at its position. Without `wp_viewporter` nothing is cropped:
-/// the crop that comes back is the whole surface, where it stands.
+/// A viewport source goes out as `wl_fixed`, in 1/256 of a point, truncated,
+/// and a compositor ends the client for a source of zero width or height. A
+/// sliver of a stretched surface gets that thin: one point of a one-point fill
+/// spread over 360 is 1/360 of its pixel. Two units leave a margin for the
+/// rounding of `f32` subtraction.
+const MIN_SOURCE_SPAN: f32 = 2.0 / 256.0;
+
+/// `start..end` widened inward to [`MIN_SOURCE_SPAN`], staying in `0..len`.
+///
+/// Only a stretched surface's source gets this thin, and there a sliver of a
+/// buffer point looks the same as a little more of it.
+fn wire_span(start: f32, end: f32, len: f32) -> (f32, f32) {
+    if end - start >= MIN_SOURCE_SPAN {
+        return (start, end);
+    }
+    let start = (end - MIN_SOURCE_SPAN).max(0.0);
+    (start, (start + MIN_SOURCE_SPAN).min(len))
+}
+
+/// What [`show`] asks of a surface: a viewport over its buffer, a place in
+/// its parent, and leaving the screen. [`SubsurfaceSurface`] is the one that
+/// reaches the compositor.
+pub(crate) trait Placeable {
+    /// See [`SubsurfaceSurface::set_view`].
+    fn set_view(&mut self, view: Option<(Rect, (i32, i32))>) -> bool;
+    /// See [`SubsurfaceSurface::set_position`].
+    fn set_position(&self, x: i32, y: i32);
+    /// See [`SubsurfaceSurface::unmap`].
+    fn unmap(&self);
+}
+
+impl Placeable for SubsurfaceSurface {
+    fn set_view(&mut self, view: Option<(Rect, (i32, i32))>) -> bool {
+        SubsurfaceSurface::set_view(self, view)
+    }
+
+    fn set_position(&self, x: i32, y: i32) {
+        SubsurfaceSurface::set_position(self, x, y);
+    }
+
+    fn unmap(&self) {
+        SubsurfaceSurface::unmap(self);
+    }
+}
+
+/// Crop `surface` to `window`, put it where the crop says, and say what of it
+/// shows.
+///
+/// `content`, `extent`, `window` and `scale` are [`crop`]'s; `parent_origin`
+/// is where the surface's parent starts, in the coordinates of `extent` and
+/// `window`. A surface the window does not reach is unmapped, and `None`
+/// comes back; a caller showing it again later has to draw it, since only a
+/// buffer maps it. Otherwise the viewport and the position are sent, and the
+/// caller commits the surface (a paint or a bare commit) and then its parent.
+///
+/// Both are sent before that commit. The protocol makes a position the
+/// parent's state, but Smithay compositors, Otto among them, take it with the
+/// surface's own next commit: a position sent after the paint that maps a
+/// surface leaves it where it was until it next changes.
+///
+/// Without `wp_viewporter` nothing is cropped: the crop that comes back is
+/// the whole surface, where it stands.
 pub(crate) fn show(
-    surface: &mut SubsurfaceSurface,
+    surface: &mut impl Placeable,
     content: Size,
     extent: Rect,
     window: Rect,
     scale: f32,
+    parent_origin: (i32, i32),
 ) -> Option<Crop> {
-    let Some(shown) = crop(content, extent, window, scale) else {
+    let Some(mut shown) = crop(content, extent, window, scale) else {
         surface.unmap();
         return None;
     };
     let view = (!shown.is_whole(content)).then_some((shown.source, shown.destination));
-    if surface.set_view(view) {
-        return Some(shown);
+    if !surface.set_view(view) {
+        shown = Crop {
+            position: (extent.left.round() as i32, extent.top.round() as i32),
+            source: Rect::from_size(content),
+            destination: (content.width as i32, content.height as i32),
+        };
     }
-    Some(Crop {
-        position: (extent.left.round() as i32, extent.top.round() as i32),
-        source: Rect::from_size(content),
-        destination: (content.width as i32, content.height as i32),
-    })
+    surface.set_position(
+        shown.position.0 - parent_origin.0,
+        shown.position.1 - parent_origin.1,
+    );
+    Some(shown)
 }
 
 #[cfg(test)]
@@ -267,5 +330,71 @@ mod tests {
             ),
             None
         );
+    }
+
+    #[test]
+    fn a_sliver_of_a_stretched_fill_still_reaches_the_wire() {
+        // One point of a one-point fill spread over 360: its source is
+        // 1/360 of the pixel, which wl_fixed would send as zero.
+        let wire = |points: f32| (f64::from(points) * 256.0) as i32;
+        let crop = crop(
+            Size::new(1.0, 1.0),
+            Rect::from_xywh(-359.4995, 0.0, 360.0, 300.0),
+            Rect::from_xywh(0.0, 0.0, 360.0, 300.0),
+            1.0,
+        )
+        .unwrap();
+        assert_eq!(crop.destination, (1, 300));
+        assert!(wire(crop.source.width()) > 0, "{:?}", crop.source);
+        assert!(wire(crop.source.height()) > 0, "{:?}", crop.source);
+        assert!(crop.source.left >= 0.0 && crop.source.right <= 1.0);
+    }
+
+    /// A surface on a compositor that takes a subsurface's position with the
+    /// surface's own commit, as Smithay does.
+    #[derive(Default)]
+    struct Surface {
+        sent: std::cell::Cell<Option<(i32, i32)>>,
+        placed: Option<(i32, i32)>,
+    }
+
+    impl Surface {
+        fn commit(&mut self) {
+            if let Some(position) = self.sent.take() {
+                self.placed = Some(position);
+            }
+        }
+    }
+
+    impl Placeable for Surface {
+        fn set_view(&mut self, _view: Option<(Rect, (i32, i32))>) -> bool {
+            true
+        }
+
+        fn set_position(&self, x: i32, y: i32) {
+            self.sent.set(Some((x, y)));
+        }
+
+        fn unmap(&self) {}
+    }
+
+    #[test]
+    fn a_shown_surface_lands_with_its_own_next_commit() {
+        // A highlight in a pane whose clip starts 30 points into the window:
+        // its paint is the commit that maps it, and nothing commits it again
+        // until the selection moves.
+        let mut surface = Surface::default();
+        let shown = show(
+            &mut surface,
+            Size::new(1.0, 1.0),
+            Rect::from_xywh(46.0, 6.0, 40.0, 40.0),
+            WINDOW,
+            2.0,
+            (30, 0),
+        )
+        .unwrap();
+        surface.commit();
+        assert_eq!(shown.position, (46, 6));
+        assert_eq!(surface.placed, Some((16, 6)));
     }
 }

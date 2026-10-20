@@ -19,10 +19,6 @@ wayland-protocols-misc = { workspace = true, features = ["client"] }
 memfd.workspace = true
 xkbcommon.workspace = true
 
-[dependencies.skia-safe]
-workspace = true
-features = ["gl", "textlayout", "svg", "skottie"]
-
 [lints]
 workspace = true
 

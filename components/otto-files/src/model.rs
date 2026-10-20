@@ -13,7 +13,7 @@ use std::time::SystemTime;
 use otto_kit::components::scroll::ScrollView;
 use otto_kit::filetype::{self, Kind};
 use otto_kit::fs::{copy_entry, first_free_name, move_entry, move_entry_replacing, unique_name};
-use skia_safe::Rect;
+use otto_kit::skia::Rect;
 
 /// One entry in a directory.
 ///
@@ -789,9 +789,7 @@ pub fn places_with(config: &crate::places_config::SidebarConfig) -> Vec<Place> {
         });
     }
 
-    // `user-dirs.dirs` is `XDG_DESKTOP_DIR="$HOME/Desktop"` per line. Parsed
-    // here rather than by a crate: it is five lines of shell-ish assignment.
-    let configured = user_dirs(&home);
+    let configured = otto_kit::xdg::user_dirs();
 
     const WANTED: &[(Builtin, &str, &str, &str, &str)] = &[
         (
@@ -938,22 +936,6 @@ pub fn arrange(places: Vec<Place>, order: &[crate::places_config::PlaceKey]) -> 
         arranged.insert(index.min(arranged.len()), place);
     }
     arranged
-}
-
-/// The folder `user-dirs.dirs` names for `key` (`XDG_DESKTOP_DIR`, say), if
-/// it names one.
-pub(crate) fn user_dir(home: &Path, key: &str) -> Option<PathBuf> {
-    user_dirs(home)
-        .into_iter()
-        .find(|(k, _)| k == key)
-        .map(|(_, path)| path)
-}
-
-fn user_dirs(home: &Path) -> Vec<(String, PathBuf)> {
-    otto_kit::xdg::config_home()
-        .and_then(|config| std::fs::read_to_string(config.join("user-dirs.dirs")).ok())
-        .map(|text| otto_kit::xdg::parse_user_dirs(&text, home))
-        .unwrap_or_default()
 }
 
 /// A path written the way a person would say it: `~/Documents` rather than

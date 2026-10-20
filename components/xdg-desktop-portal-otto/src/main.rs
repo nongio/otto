@@ -7,7 +7,6 @@ use anyhow::Result;
 use futures_util::StreamExt;
 use tokio::signal;
 use tracing::info;
-use tracing_subscriber::EnvFilter;
 use zbus::fdo::{DBusProxy, RequestNameFlags, RequestNameReply};
 
 use xdg_desktop_portal_otto::otto_client::OttoClient;
@@ -21,7 +20,7 @@ const DBUS_NAME: &str = "org.freedesktop.impl.portal.desktop.otto";
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    init_tracing();
+    otto_foundations::logging::init("info");
 
     let connection = zbus::connection::Builder::session()?.build().await?;
 
@@ -108,9 +107,4 @@ async fn main() -> Result<()> {
             }
         }
     }
-}
-
-fn init_tracing() {
-    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
-    tracing_subscriber::fmt().with_env_filter(env_filter).init();
 }

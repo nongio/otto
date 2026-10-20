@@ -11,8 +11,8 @@ description = "Video playback for Otto apps: a sandboxed GStreamer worker and th
 #
 # The *library* is what an application embeds: a `Player` handle that runs the
 # worker, a frame the app draws, and a transport bar drawn the way every other
-# otto-kit control is. It links otto-kit and skia — which the host already has
-# — and nothing else. GStreamer never enters an application binary.
+# otto-kit control is. It links otto-kit, which the host already has, and
+# nothing else. GStreamer never enters an application binary.
 #
 # The *worker* binary is where GStreamer lives. It is spawned per playback,
 # sandboxed, and talks to the host over pipes and one shared frame buffer.
@@ -38,10 +38,6 @@ tracing.workspace = true
 
 gstreamer = { workspace = true, optional = true }
 gstreamer-app = { workspace = true, optional = true }
-
-[dependencies.skia-safe]
-workspace = true
-features = ["gl", "textlayout", "svg", "skottie"]
 
 [lints]
 workspace = true

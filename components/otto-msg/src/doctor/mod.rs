@@ -162,7 +162,7 @@ fn run(options: &Options) -> Result<(), String> {
     let mut sections = sections::gather(&sources);
     let redactor = Redactor::new(
         home.map(|h| h.to_string_lossy().into_owned()),
-        user_name(),
+        otto_foundations::user::login_name(),
         host_name(),
     );
     let mut redact = options.redact;
@@ -233,13 +233,6 @@ fn usual_config_files(home: Option<&Path>) -> Vec<PathBuf> {
         }
     }
     files
-}
-
-/// The login name, from the environment.
-fn user_name() -> Option<String> {
-    ["USER", "LOGNAME"]
-        .into_iter()
-        .find_map(|var| std::env::var(var).ok().filter(|v| !v.is_empty()))
 }
 
 /// The host name, as the kernel has it.

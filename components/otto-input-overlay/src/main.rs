@@ -249,13 +249,13 @@ fn open_device(path: &str) -> Result<File, String> {
 }
 
 /// A hex color: `#rrggbb`, `#rrggbbaa`, `#rgb`, or the same without the `#`.
-fn parse_hex_color(spec: &str) -> Option<skia_safe::Color> {
+fn parse_hex_color(spec: &str) -> Option<otto_kit::skia::Color> {
     otto_kit::color::parse_hex_lenient(spec)
 }
 
 /// An Otto theme token, e.g. `accent` or `material-selection-focused`
 /// (`_` and `-` are interchangeable, case-insensitive).
-fn theme_color(theme: &Theme, name: &str) -> Option<skia_safe::Color> {
+fn theme_color(theme: &Theme, name: &str) -> Option<otto_kit::skia::Color> {
     let key = name.to_lowercase().replace('_', "-");
     Some(match key.as_str() {
         "accent" => theme.accent,
@@ -280,7 +280,7 @@ fn theme_color(theme: &Theme, name: &str) -> Option<skia_safe::Color> {
     })
 }
 
-fn parse_color(spec: &str, theme: &Theme) -> Result<skia_safe::Color, String> {
+fn parse_color(spec: &str, theme: &Theme) -> Result<otto_kit::skia::Color, String> {
     parse_hex_color(spec)
         .or_else(|| theme_color(theme, spec))
         .ok_or_else(|| format!("unknown color `{spec}` — not a hex code or an otto-kit theme name"))
@@ -515,9 +515,9 @@ struct InputOverlay {
     color_specs: Vec<String>,
     /// Resolved the same way; `None` means "use the default panel color".
     bg_spec: Option<String>,
-    palette: Vec<skia_safe::Color>,
+    palette: Vec<otto_kit::skia::Color>,
     /// `None` draws no panel behind the fingers.
-    background: Option<skia_safe::Color>,
+    background: Option<otto_kit::skia::Color>,
     contacts: HashMap<i32, Contact>,
     /// Slot most recently selected by `ABS_MT_SLOT`; every following
     /// per-axis event until the next slot change belongs to it.
@@ -647,12 +647,12 @@ impl InputOverlay {
         let (width, height) = panel.surface.dimensions();
         let (width, height) = (width as f32, height as f32);
         panel.surface.draw(|canvas| {
-            canvas.clear(skia_safe::Color::TRANSPARENT);
+            canvas.clear(otto_kit::skia::Color::TRANSPARENT);
             if !self.touches_on {
                 return;
             }
-            let bounds = skia_safe::RRect::new_rect_xy(
-                skia_safe::Rect::from_wh(width, height),
+            let bounds = otto_kit::skia::RRect::new_rect_xy(
+                otto_kit::skia::Rect::from_wh(width, height),
                 CORNER_RADIUS,
                 CORNER_RADIUS,
             );
@@ -669,14 +669,17 @@ impl InputOverlay {
                 let r = self.radius + (contact.pressure as f32 / 8.0).clamp(0.0, self.radius);
 
                 let color = self.palette[slot.rem_euclid(self.palette.len() as i32) as usize];
-                let mut fill = skia_safe::Paint::new(skia_safe::Color4f::from(color), None);
+                let mut fill =
+                    otto_kit::skia::Paint::new(otto_kit::skia::Color4f::from(color), None);
                 fill.set_anti_alias(true);
                 canvas.draw_circle((px, py), r, &fill);
 
-                let mut ring =
-                    skia_safe::Paint::new(skia_safe::Color4f::new(1.0, 1.0, 1.0, 0.5), None);
+                let mut ring = otto_kit::skia::Paint::new(
+                    otto_kit::skia::Color4f::new(1.0, 1.0, 1.0, 0.5),
+                    None,
+                );
                 ring.set_anti_alias(true);
-                ring.set_style(skia_safe::paint::Style::Stroke);
+                ring.set_style(otto_kit::skia::paint::Style::Stroke);
                 ring.set_stroke_width(1.5);
                 canvas.draw_circle((px, py), r, &ring);
             }
@@ -691,12 +694,12 @@ impl InputOverlay {
         let (width, height) = panel.surface.dimensions();
         let (width, height) = (width as f32, height as f32);
         panel.surface.draw(|canvas| {
-            canvas.clear(skia_safe::Color::TRANSPARENT);
+            canvas.clear(otto_kit::skia::Color::TRANSPARENT);
             if !self.keys_on {
                 return;
             }
-            let bounds = skia_safe::RRect::new_rect_xy(
-                skia_safe::Rect::from_wh(width, height),
+            let bounds = otto_kit::skia::RRect::new_rect_xy(
+                otto_kit::skia::Rect::from_wh(width, height),
                 CORNER_RADIUS,
                 CORNER_RADIUS,
             );
@@ -727,7 +730,7 @@ impl InputOverlay {
             let (_, metrics) = font.metrics();
             let baseline = height / 2.0 - (metrics.ascent + metrics.descent) / 2.0;
             let mut paint =
-                skia_safe::Paint::new(skia_safe::Color4f::new(1.0, 1.0, 1.0, 1.0), None);
+                otto_kit::skia::Paint::new(otto_kit::skia::Color4f::new(1.0, 1.0, 1.0, 1.0), None);
             paint.set_anti_alias(true);
             draw_runs(
                 canvas,
@@ -740,16 +743,21 @@ impl InputOverlay {
     }
 }
 
-const DEFAULT_BACKGROUND: skia_safe::Color = skia_safe::Color::from_argb(0x80, 0, 0, 0);
+const DEFAULT_BACKGROUND: otto_kit::skia::Color = otto_kit::skia::Color::from_argb(0x80, 0, 0, 0);
 
-fn draw_panel(canvas: &skia_safe::Canvas, bounds: skia_safe::RRect, color: skia_safe::Color) {
-    let mut fill = skia_safe::Paint::new(skia_safe::Color4f::from(color), None);
+fn draw_panel(
+    canvas: &otto_kit::skia::Canvas,
+    bounds: otto_kit::skia::RRect,
+    color: otto_kit::skia::Color,
+) {
+    let mut fill = otto_kit::skia::Paint::new(otto_kit::skia::Color4f::from(color), None);
     fill.set_anti_alias(true);
     canvas.draw_rrect(bounds, &fill);
 
-    let mut outline = skia_safe::Paint::new(skia_safe::Color4f::new(1.0, 1.0, 1.0, 0.25), None);
+    let mut outline =
+        otto_kit::skia::Paint::new(otto_kit::skia::Color4f::new(1.0, 1.0, 1.0, 0.25), None);
     outline.set_anti_alias(true);
-    outline.set_style(skia_safe::paint::Style::Stroke);
+    outline.set_style(otto_kit::skia::paint::Style::Stroke);
     outline.set_stroke_width(1.0);
     canvas.draw_rrect(bounds.with_inset((0.5, 0.5)), &outline);
 }
@@ -794,7 +802,7 @@ impl App for InputOverlay {
         // Nothing is drawn on the parent itself; it needs a buffer to be
         // mapped at all.
         parent.draw(|canvas| {
-            canvas.clear(skia_safe::Color::TRANSPARENT);
+            canvas.clear(otto_kit::skia::Color::TRANSPARENT);
         });
         let output = (width, height);
         if self.output.is_none() {

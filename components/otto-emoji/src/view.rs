@@ -23,12 +23,12 @@ use layers::prelude::*;
 use layers::types::{Color as LayerColor, Point as LayerPoint, Size as LayerSize};
 use otto_kit::components::scroll::RowLayout;
 use otto_kit::components::text_input::{TextInput, TextInputStyle};
-use otto_kit::theme::Theme;
-use otto_kit::typography::{get_font, get_font_with_fallback, styles};
-use skia_safe::shaper::TextBlobBuilderRunHandler;
-use skia_safe::{
+use otto_kit::skia::shaper::TextBlobBuilderRunHandler;
+use otto_kit::skia::{
     Canvas, Color, Color4f, Font, FontMgr, FontStyle, Image, Paint, Rect, SamplingOptions, Shaper,
 };
+use otto_kit::theme::Theme;
+use otto_kit::typography::{get_font, get_font_with_fallback, styles};
 
 use crate::data::{Tone, GROUPS};
 
@@ -176,6 +176,16 @@ impl Layout {
         let width = self.row_width(pane, row)?;
         let first = self.panes.get(pane)?.first;
         Some(first + row * COLUMNS + column.min(width - 1))
+    }
+
+    /// The selection once the pan rests on `pane`: kept while it is in that
+    /// pane, otherwise the pane's first cell, so the footer and Enter always
+    /// mean something on screen.
+    pub fn selection_on_pane(&self, selected: Option<usize>, pane: usize) -> Option<usize> {
+        match selected.and_then(|cell| self.place(cell)) {
+            Some((in_pane, _, _)) if in_pane == pane => selected,
+            _ => self.cell_in(pane, 0, 0),
+        }
     }
 
     /// A cell's rectangle inside its own pane, before any scrolling.
@@ -480,7 +490,7 @@ pub fn tone_at(x: f32) -> Option<Tone> {
 struct Atlas {
     font_mgr: FontMgr,
     shaper: Shaper,
-    typeface: Option<skia_safe::Typeface>,
+    typeface: Option<otto_kit::skia::Typeface>,
     images: HashMap<(String, u32), Image>,
     /// Physical pixels per point, so the rasters are crisp on the output
     /// they are for.
@@ -539,8 +549,8 @@ impl Atlas {
         // comes out as four people and a white flag as a box and a flag.
         let bytes = text.len();
         let mut fonts = Shaper::new_trivial_font_run_iterator(&font, bytes);
-        let mut bidi = skia_safe::shapers::primitive::trivial_bidi_run_iterator(0, bytes);
-        let mut script = skia_safe::shapers::primitive::trivial_script_run_iterator(0, bytes);
+        let mut bidi = otto_kit::skia::shapers::primitive::trivial_bidi_run_iterator(0, bytes);
+        let mut script = otto_kit::skia::shapers::primitive::trivial_script_run_iterator(0, bytes);
         let mut language = Shaper::new_trivial_language_run_iterator("und", bytes);
         self.shaper.shape_with_iterators(
             text,
@@ -553,7 +563,7 @@ impl Atlas {
         );
         let blob = handler.make_blob()?;
 
-        let mut surface = skia_safe::surfaces::raster_n32_premul((side, side))?;
+        let mut surface = otto_kit::skia::surfaces::raster_n32_premul((side, side))?;
         let canvas = surface.canvas();
         canvas.clear(Color::TRANSPARENT);
         // The run handler lays the text out as a line — the baseline is
@@ -742,7 +752,7 @@ impl Palette {
                     &image,
                     None,
                     dst,
-                    SamplingOptions::from(skia_safe::FilterMode::Linear),
+                    SamplingOptions::from(otto_kit::skia::FilterMode::Linear),
                     &paint,
                 );
             }
@@ -907,7 +917,7 @@ impl Palette {
                         icon,
                         None,
                         Rect::from_xywh(x, y, side, side),
-                        SamplingOptions::from(skia_safe::FilterMode::Linear),
+                        SamplingOptions::from(otto_kit::skia::FilterMode::Linear),
                         &paint,
                     );
                 }
@@ -981,7 +991,7 @@ impl Palette {
                     if *swatch == tone {
                         let mut stroke = Paint::new(Color4f::from(ring), None);
                         stroke.set_anti_alias(true);
-                        stroke.set_style(skia_safe::PaintStyle::Stroke);
+                        stroke.set_style(otto_kit::skia::PaintStyle::Stroke);
                         stroke.set_stroke_width(2.0);
                         canvas.draw_circle((cx, cy), SWATCH / 2.0 + 2.5, &stroke);
                     }
@@ -1046,6 +1056,16 @@ mod tests {
             first += count;
         }
         Layout::new(panes)
+    }
+
+    #[test]
+    fn a_pan_that_leaves_the_selection_behind_selects_the_first_cell() {
+        let layout = layout_of(&[16, 30, 5]);
+        // The last recent pick, then a swipe to the next pane.
+        assert_eq!(layout.selection_on_pane(Some(15), 1), Some(16));
+        // A selection in the pane the pan rests on stays.
+        assert_eq!(layout.selection_on_pane(Some(20), 1), Some(20));
+        assert_eq!(layout.selection_on_pane(None, 2), Some(46));
     }
 
     #[test]

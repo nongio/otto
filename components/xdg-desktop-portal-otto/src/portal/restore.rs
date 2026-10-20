@@ -135,27 +135,15 @@ pub fn program_display_name(program: &str) -> String {
 
 /// The `Name=` of a desktop entry whose `Exec=` runs `program`.
 fn desktop_entry_name_for(text: &str, program: &str) -> Option<String> {
-    let mut in_entry = false;
-    let (mut name, mut runs) = (None, false);
-    for line in text.lines().map(str::trim) {
-        if line.starts_with('[') {
-            in_entry = line == "[Desktop Entry]";
-            continue;
-        }
-        if !in_entry {
-            continue;
-        }
-        if let Some(value) = line.strip_prefix("Name=") {
-            name = Some(value.to_string());
-        } else if let Some(value) = line.strip_prefix("Exec=") {
-            runs = value
-                .split_whitespace()
-                .find(|word| !word.contains('=') && *word != "env")
-                .and_then(|word| word.rsplit('/').next())
-                == Some(program);
-        }
-    }
-    name.filter(|name| runs && !name.is_empty())
+    use otto_foundations::desktop_file::value;
+    let runs = value(text, "Exec")?
+        .split_whitespace()
+        .find(|word| !word.contains('=') && *word != "env")
+        .and_then(|word| word.rsplit('/').next())
+        == Some(program);
+    value(text, "Name")
+        .filter(|name| runs && !name.is_empty())
+        .map(str::to_string)
 }
 
 /// Peel any number of variant wrappers off a value.

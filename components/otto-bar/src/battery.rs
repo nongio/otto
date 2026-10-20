@@ -6,8 +6,8 @@
 //! configuration file's business, not this module's.
 
 use otto_kit::prelude::*;
+use otto_kit::skia::{Canvas, Color, Paint, PathBuilder, RRect, Rect, TextBlob};
 use otto_kit::typography;
-use skia_safe::{Canvas, Color, Paint, PathBuilder, RRect, Rect, TextBlob};
 
 use crate::config::{battery_config, BatteryVisibility, PercentagePosition};
 use crate::power::{self, Battery};
@@ -44,15 +44,15 @@ fn percentage_text(battery: &Battery) -> String {
     format!("{}%", battery.percentage.round() as i64)
 }
 
-fn percentage_font() -> skia_safe::Font {
+fn percentage_font() -> otto_kit::skia::Font {
     // Smaller than the clock: it sits inside a 13pt glyph, and at the clock's
     // size three digits do not fit between the terminals.
     typography::get_font_with_fallback(
         "Inter",
-        skia_safe::FontStyle::new(
-            skia_safe::font_style::Weight::SEMI_BOLD,
-            skia_safe::font_style::Width::NORMAL,
-            skia_safe::font_style::Slant::Upright,
+        otto_kit::skia::FontStyle::new(
+            otto_kit::skia::font_style::Weight::SEMI_BOLD,
+            otto_kit::skia::font_style::Width::NORMAL,
+            otto_kit::skia::font_style::Slant::Upright,
         ),
         9.0,
     )
@@ -129,7 +129,7 @@ pub fn draw(canvas: &Canvas, x: f32, height: f32, theme: &Theme) -> f32 {
     // a full-strength border competes with the fill it is meant to frame.
     let mut outline = Paint::default();
     outline.set_anti_alias(true);
-    outline.set_style(skia_safe::paint::Style::Stroke);
+    outline.set_style(otto_kit::skia::paint::Style::Stroke);
     outline.set_stroke_width(STROKE);
     outline.set_color(with_alpha(theme.text_primary, 0.55));
     canvas.draw_round_rect(body, radius, radius, &outline);
@@ -233,7 +233,7 @@ impl Mark {
 fn draw_percentage_inside(
     canvas: &Canvas,
     text: &str,
-    font: &skia_safe::Font,
+    font: &otto_kit::skia::Font,
     x: f32,
     body: Rect,
     theme: &Theme,
@@ -250,7 +250,7 @@ fn draw_percentage_inside(
     // colour and half over the blur is the one case plain text fails.
     let mut halo = Paint::default();
     halo.set_anti_alias(true);
-    halo.set_style(skia_safe::paint::Style::Stroke);
+    halo.set_style(otto_kit::skia::paint::Style::Stroke);
     halo.set_stroke_width(2.0);
     halo.set_color(with_alpha(contrast_against(theme.text_primary), 0.45));
 
@@ -281,7 +281,7 @@ fn draw_bolt(canvas: &Canvas, cx: f32, body: Rect, theme: &Theme) {
     // is: the bolt crosses the boundary between fill and empty track.
     let mut halo = Paint::default();
     halo.set_anti_alias(true);
-    halo.set_style(skia_safe::paint::Style::Stroke);
+    halo.set_style(otto_kit::skia::paint::Style::Stroke);
     halo.set_stroke_width(1.6);
     halo.set_color(with_alpha(contrast_against(theme.text_primary), 0.55));
     canvas.draw_path(&path, &halo);
@@ -336,7 +336,7 @@ fn draw_plug(canvas: &Canvas, cx: f32, body: Rect, theme: &Theme) {
     // The same halo as the bolt, for the same reason.
     let mut halo = Paint::default();
     halo.set_anti_alias(true);
-    halo.set_style(skia_safe::paint::Style::Stroke);
+    halo.set_style(otto_kit::skia::paint::Style::Stroke);
     halo.set_stroke_width(1.6);
     halo.set_color(with_alpha(contrast_against(theme.text_primary), 0.55));
     canvas.draw_path(&path, &halo);

@@ -6,42 +6,9 @@
 use std::collections::HashMap;
 use std::convert::TryFrom;
 
+use otto_kit::dbus::dbusmenu::DBusMenuProxy;
 use zbus::zvariant::{OwnedValue, Value};
-use zbus::{proxy, Connection};
-
-// ---------------------------------------------------------------------------
-// DBusMenu D-Bus proxy
-// ---------------------------------------------------------------------------
-
-#[proxy(interface = "com.canonical.dbusmenu")]
-#[allow(clippy::type_complexity)]
-pub(crate) trait DBusMenu {
-    /// Check if a menu item is about to show (allows app to update it).
-    fn about_to_show(&self, id: i32) -> zbus::Result<bool>;
-
-    /// Send an event to a menu item (e.g. "clicked").
-    fn event(&self, id: i32, event_id: &str, data: &Value<'_>, timestamp: u32) -> zbus::Result<()>;
-
-    /// Get the menu layout tree.
-    /// Returns (revision, layout) where layout is (id, properties, children).
-    #[allow(clippy::type_complexity)]
-    fn get_layout(
-        &self,
-        parent_id: i32,
-        recursion_depth: i32,
-        property_names: &[&str],
-    ) -> zbus::Result<(u32, (i32, HashMap<String, OwnedValue>, Vec<OwnedValue>))>;
-
-    #[zbus(signal)]
-    fn layout_updated(&self, revision: u32, parent: i32) -> zbus::Result<()>;
-
-    #[zbus(signal)]
-    fn items_properties_updated(
-        &self,
-        updated_props: Vec<(i32, HashMap<String, OwnedValue>)>,
-        removed_props: Vec<(i32, Vec<String>)>,
-    ) -> zbus::Result<()>;
-}
+use zbus::Connection;
 
 // ---------------------------------------------------------------------------
 // Menu data model

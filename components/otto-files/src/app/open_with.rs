@@ -287,8 +287,8 @@ pub(super) fn open_error_text(err: &mime_apps::OpenError) -> String {
 }
 
 /// The chooser's own window, in its own coordinates: the window is the card.
-pub(super) fn open_with_sheet() -> skia_safe::Rect {
-    skia_safe::Rect::from_wh(view::OPEN_WITH_W, view::OPEN_WITH_H)
+pub(super) fn open_with_sheet() -> otto_kit::skia::Rect {
+    otto_kit::skia::Rect::from_wh(view::OPEN_WITH_W, view::OPEN_WITH_H)
 }
 
 impl OpenWithSession {

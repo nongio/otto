@@ -128,7 +128,8 @@ impl FilesWindow {
                 // Surface-local already: the compositor reports positions
                 // against the surface the pointer is over. Everything derived
                 // from `panel` below is in that same space.
-                let point = skia_safe::Point::new(event.position.0 as f32, event.position.1 as f32);
+                let point =
+                    otto_kit::skia::Point::new(event.position.0 as f32, event.position.1 as f32);
                 let over = view::peek_close_rect(panel)
                     .with_outset((4.0, 4.0))
                     .contains(point);

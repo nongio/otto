@@ -17,8 +17,8 @@ use otto_kit::components::titlebar::{WindowControl, WindowControlsState};
 use otto_kit::components::window::resize;
 use otto_kit::dnd::DndAction;
 use otto_kit::prelude::*;
+use otto_kit::skia::Contains;
 use otto_kit::CursorShape;
-use skia_safe::Contains;
 use smithay_client_toolkit::reexports::protocols::xdg::shell::client::xdg_positioner;
 use smithay_client_toolkit::seat::keyboard::KeyEvent;
 use smithay_client_toolkit::seat::pointer::PointerEventKind;
@@ -87,7 +87,7 @@ type DragItems = (DragPicture, (f32, f32), (f32, f32));
 
 /// A drawing handed over as a value: the preview's picture, built by the view
 /// and replayed onto the drag surface.
-type BoxedPainter = Box<dyn Fn(&skia_safe::Canvas, f32, f32) + Send + Sync>;
+type BoxedPainter = Box<dyn Fn(&otto_kit::skia::Canvas, f32, f32) + Send + Sync>;
 
 /// The picture a drag lifts off the window.
 ///
@@ -159,8 +159,8 @@ struct Marquee {
 impl Marquee {
     /// The band in content coordinates, normalised so dragging up and left
     /// gives the same rectangle as dragging down and right.
-    fn rect(&self) -> skia_safe::Rect {
-        skia_safe::Rect::from_ltrb(
+    fn rect(&self) -> otto_kit::skia::Rect {
+        otto_kit::skia::Rect::from_ltrb(
             self.anchor.0.min(self.cursor.0),
             self.anchor.1.min(self.cursor.1),
             self.anchor.0.max(self.cursor.0),
@@ -172,7 +172,7 @@ impl Marquee {
 /// Is `(x, y)` inside a pane's own area, rather than the header, the sidebar
 /// or the status strip around it? A click on nothing only means "nothing" when
 /// it lands where the entries are.
-fn hit_content(area: skia_safe::Rect, x: f32, y: f32) -> bool {
+fn hit_content(area: otto_kit::skia::Rect, x: f32, y: f32) -> bool {
     x >= area.left && x <= area.right && y >= area.top && y <= area.bottom
 }
 
@@ -844,7 +844,7 @@ struct Browser {
     /// two different coordinate systems. Whichever handler saw the pointer
     /// records the panel *it* was hit-testing against, so a pinch can work in
     /// that space without having to know which handler it came from.
-    peek_focus: Option<(skia_safe::Point, Rect)>,
+    peek_focus: Option<(otto_kit::skia::Point, Rect)>,
     /// A drag of the panel by its title strip in progress: the point the
     /// press was reported at, and where the card was in the window then.
     ///
@@ -1028,7 +1028,7 @@ struct PreviewPaneState {
     /// rebuilt every frame.
     text: Option<ocrcache::Status>,
     /// The picture's main colours, for the Photos info panel's swatches.
-    palette: Vec<skia_safe::Color>,
+    palette: Vec<otto_kit::skia::Color>,
     /// What the camera wrote down about the picture, read with the decode.
     camera: Option<crate::camera::Shot>,
 }
@@ -1504,7 +1504,7 @@ fn info_pointer(
     point: (f32, f32),
 ) -> bool {
     let (x, y) = point;
-    let point = skia_safe::Point::new(x, y);
+    let point = otto_kit::skia::Point::new(x, y);
     let over_close = view::info_close_rect(sheet)
         .with_outset((6.0, 6.0))
         .contains(point);

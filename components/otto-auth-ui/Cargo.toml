@@ -28,10 +28,6 @@ zbus.workspace = true
 # the greeter, which talks to greetd rather than PAM, does not link libpam.
 pam = ["dep:libc"]
 
-[dependencies.skia-safe]
-workspace = true
-features = ["gl", "textlayout", "svg", "skottie"]
-
 [dev-dependencies]
 laye-rs.workspace = true
 

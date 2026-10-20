@@ -7,13 +7,13 @@ How it works: [otto-kit](../../docs/developer/otto-kit.md).
 - **Layer:** toolkit. Used by the compositor, every kit crate (`otto-md-kit`, `otto-media-kit`, `otto-auth-ui`, `otto-peek`, `otto-agents-kit`) and every toolkit app.
 
 ## Dependencies
-- **Internal:** `otto-foundations` (re-exported as `otto_kit::xdg`, `otto_kit::uri`, `otto_kit::matching`) and `otto-dbus` (the `org.otto.*` proxies, re-exported as `otto_kit::dbus`).
+- **Internal:** `otto-foundations` (re-exported as `otto_kit::xdg`, `otto_kit::uri`, `otto_kit::matching`, `otto_kit::desktop_file`, `otto_kit::user`, `otto_kit::logging`) and `otto-dbus` (every D-Bus client proxy, re-exported as `otto_kit::dbus`; `portal_settings.rs` uses its Settings portal proxy).
 - **External:** `smithay-client-toolkit` and `wayland-client`; `skia-safe` (gl, textlayout, svg, skottie), re-exported as `otto_kit::skia`; `laye-rs` for the retained scene graph; EGL, loaded at run time. From the compositor it needs `zwlr_layer_shell_v1`, `ext_session_lock_v1`, fractional scale, `zwp_text_input_v3`, pointer gestures and Otto's own protocols. It follows the `org.freedesktop.portal.Settings` portal for colour scheme, accent and locale, puts up file dialogs through the portal's `FileChooser`, and serves accessibility through AccessKit over AT-SPI. The `dictation` feature adds PipeWire capture and an HTTP speech-to-text client.
 
 ## Develop
 - `cargo build -p otto-kit`; `cargo run -p otto-kit --example simple_app`. `examples/` (one per component or surface pattern) is the practical reference.
 - Against a dev compositor: `cargo run -- --winit &`, then `WAYLAND_DISPLAY=wayland-1 cargo run -p otto-kit --example form_controls_gallery`.
-- `RUST_LOG` through `logging::init`. `OTTO_COLOR_SCHEME` (light/dark fallback), `OTTO_SOLAR_ICONS` (the glyph set) and `OTTO_KIT_BACKDROP=effect|none` change what an app draws.
+- `RUST_LOG` through `logging::init` (otto-foundations' setup: stderr, else the app's default filter). `OTTO_COLOR_SCHEME` (light/dark fallback), `OTTO_SOLAR_ICONS` (the glyph set) and `OTTO_KIT_BACKDROP=effect|none` change what an app draws.
 - Tests: `cargo test -p otto-kit`. Each icon-theme test in `tests/` is its own binary on purpose: the icon lookup reads the XDG directories once. `cargo bench -p otto-kit --bench pane_paint` measures pane painting.
 - The `testing` feature exposes `otto_kit::testing::TestClient`, the SHM-only client the compositor's `headless` tests drive.
 

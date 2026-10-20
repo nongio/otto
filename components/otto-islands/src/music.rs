@@ -14,11 +14,11 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use otto_kit::skia::{Canvas, Color, Data, Image, Paint, RRect, Rect};
 use otto_kit::typography::{ellipsize, TextStyle};
 use otto_kit::utils::extract_accent_color;
 use otto_kit::utils::focus_watcher::{self, FocusedApp};
 use otto_kit::AppContext;
-use skia_safe::{Canvas, Color, Data, Image, Paint, RRect, Rect};
 
 use crate::audio_route::{self, AudioStreams, Player, Route};
 use crate::audio_viz::{self, BarAnimator, BarStyle, LevelMeter, BAR_COUNT};
@@ -347,13 +347,13 @@ impl MusicActivityRenderer {
             canvas.save();
             canvas.clip_rrect(
                 RRect::new_rect_xy(dst, r, r),
-                skia_safe::ClipOp::Intersect,
+                otto_kit::skia::ClipOp::Intersect,
                 true,
             );
             let src = Rect::from_xywh(0.0, 0.0, art.width() as f32, art.height() as f32);
             canvas.draw_image_rect(
                 art,
-                Some((&src, skia_safe::canvas::SrcRectConstraint::Strict)),
+                Some((&src, otto_kit::skia::canvas::SrcRectConstraint::Strict)),
                 dst,
                 &Paint::default(),
             );
@@ -395,7 +395,7 @@ impl MusicActivityRenderer {
             canvas.draw_rect(Rect::from_xywh(lx, ty, bar_w, bar_h), &paint);
             canvas.draw_rect(Rect::from_xywh(rx, ty, bar_w, bar_h), &paint);
         } else {
-            let mut b = skia_safe::PathBuilder::new();
+            let mut b = otto_kit::skia::PathBuilder::new();
             let h = size * 0.85;
             let w = h * 0.866;
             b.move_to((cx - w / 2.0, cy - h / 2.0));
@@ -415,7 +415,7 @@ impl MusicActivityRenderer {
         let w = h * 0.866;
         let bar_w = size * 0.18;
         let tx = cx + bar_w / 2.0;
-        let mut b = skia_safe::PathBuilder::new();
+        let mut b = otto_kit::skia::PathBuilder::new();
         b.move_to((tx, cy - h / 2.0));
         b.line_to((tx - w, cy));
         b.line_to((tx, cy + h / 2.0));
@@ -436,7 +436,7 @@ impl MusicActivityRenderer {
         let w = h * 0.866;
         let bar_w = size * 0.18;
         let tx = cx - bar_w / 2.0;
-        let mut b = skia_safe::PathBuilder::new();
+        let mut b = otto_kit::skia::PathBuilder::new();
         b.move_to((tx, cy - h / 2.0));
         b.line_to((tx + w, cy));
         b.line_to((tx, cy + h / 2.0));
@@ -878,7 +878,7 @@ fn window_titled_after_track(info: &PlaybackInfo, title: &str) -> bool {
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn font(size: f32) -> skia_safe::Font {
+fn font(size: f32) -> otto_kit::skia::Font {
     TextStyle {
         family: "Inter",
         weight: 400,
@@ -887,7 +887,7 @@ fn font(size: f32) -> skia_safe::Font {
     .font()
 }
 
-fn font_bold(size: f32) -> skia_safe::Font {
+fn font_bold(size: f32) -> otto_kit::skia::Font {
     TextStyle {
         family: "Inter",
         weight: 600,
@@ -983,7 +983,7 @@ fn is_public_host(url: &str) -> bool {
 
 fn decode_art(bytes: Vec<u8>) -> Option<Image> {
     let data = Data::new_copy(&bytes);
-    let size = skia_safe::Codec::from_data(data.clone())?.dimensions();
+    let size = otto_kit::skia::Codec::from_data(data.clone())?.dimensions();
     if size.width <= 0
         || size.height <= 0
         || size.width > MAX_ART_SIDE
@@ -993,10 +993,10 @@ fn decode_art(bytes: Vec<u8>) -> Option<Image> {
         return None;
     }
     let image = Image::from_encoded(data)?;
-    let mut surface = skia_safe::surfaces::raster_n32_premul((ART_PX, ART_PX))?;
-    let sampling = skia_safe::SamplingOptions::new(
-        skia_safe::FilterMode::Linear,
-        skia_safe::MipmapMode::Linear,
+    let mut surface = otto_kit::skia::surfaces::raster_n32_premul((ART_PX, ART_PX))?;
+    let sampling = otto_kit::skia::SamplingOptions::new(
+        otto_kit::skia::FilterMode::Linear,
+        otto_kit::skia::MipmapMode::Linear,
     );
     // The island shows art in a square; a wide video thumbnail keeps its
     // centre rather than being squashed.
@@ -1009,7 +1009,7 @@ fn decode_art(bytes: Vec<u8>) -> Option<Image> {
     );
     surface.canvas().draw_image_rect_with_sampling_options(
         &image,
-        Some((&crop, skia_safe::canvas::SrcRectConstraint::Strict)),
+        Some((&crop, otto_kit::skia::canvas::SrcRectConstraint::Strict)),
         Rect::from_wh(ART_PX as f32, ART_PX as f32),
         sampling,
         &Paint::default(),
@@ -1215,20 +1215,21 @@ mod tests {
 
     #[test]
     fn oversized_art_is_not_decoded() {
-        let mut surface = skia_safe::surfaces::raster_n32_premul((MAX_ART_SIDE + 1, 1)).unwrap();
+        let mut surface =
+            otto_kit::skia::surfaces::raster_n32_premul((MAX_ART_SIDE + 1, 1)).unwrap();
         let png = surface
             .image_snapshot()
-            .encode(None, skia_safe::EncodedImageFormat::PNG, None)
+            .encode(None, otto_kit::skia::EncodedImageFormat::PNG, None)
             .unwrap();
         assert!(decode_art(png.as_bytes().to_vec()).is_none());
     }
 
     #[test]
     fn art_is_kept_small() {
-        let mut surface = skia_safe::surfaces::raster_n32_premul((1000, 1000)).unwrap();
+        let mut surface = otto_kit::skia::surfaces::raster_n32_premul((1000, 1000)).unwrap();
         let png = surface
             .image_snapshot()
-            .encode(None, skia_safe::EncodedImageFormat::PNG, None)
+            .encode(None, otto_kit::skia::EncodedImageFormat::PNG, None)
             .unwrap();
         let art = decode_art(png.as_bytes().to_vec()).unwrap();
         assert_eq!((art.width(), art.height()), (ART_PX, ART_PX));
@@ -1237,7 +1238,7 @@ mod tests {
     #[test]
     fn wide_art_is_cropped_not_squashed() {
         // Red sides around a blue centre square: a crop shows only blue.
-        let mut surface = skia_safe::surfaces::raster_n32_premul((320, 180)).unwrap();
+        let mut surface = otto_kit::skia::surfaces::raster_n32_premul((320, 180)).unwrap();
         surface.canvas().clear(Color::RED);
         let mut blue = Paint::default();
         blue.set_color(Color::BLUE);
@@ -1246,7 +1247,7 @@ mod tests {
             .draw_rect(Rect::from_xywh(70.0, 0.0, 180.0, 180.0), &blue);
         let png = surface
             .image_snapshot()
-            .encode(None, skia_safe::EncodedImageFormat::PNG, None)
+            .encode(None, otto_kit::skia::EncodedImageFormat::PNG, None)
             .unwrap();
         let art = decode_art(png.as_bytes().to_vec()).unwrap();
         let pixels = art.peek_pixels().unwrap();

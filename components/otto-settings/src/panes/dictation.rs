@@ -25,6 +25,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::SystemTime;
 
+use otto_kit::desktop_file;
 use toml_edit::DocumentMut;
 
 use crate::discovery::Choice;
@@ -468,29 +469,11 @@ fn system_entry() -> Option<String> {
         .find_map(|dir| std::fs::read_to_string(dir.join("autostart").join(AUTOSTART_FILE)).ok())
 }
 
-/// `key`'s value in the `[Desktop Entry]` group of `entry`.
-fn entry_key<'a>(entry: &'a str, key: &str) -> Option<&'a str> {
-    let mut in_group = false;
-    for line in entry.lines() {
-        let line = line.trim();
-        if line.starts_with('[') {
-            in_group = line == "[Desktop Entry]";
-        } else if in_group {
-            if let Some((name, value)) = line.split_once('=') {
-                if name.trim() == key {
-                    return Some(value.trim());
-                }
-            }
-        }
-    }
-    None
-}
-
 /// Whether `entry` starts with the session: not `Hidden`, which the
 /// autostart spec reads as deleted, and not switched off the GNOME way.
 fn entry_starts(entry: &str) -> bool {
-    entry_key(entry, "Hidden") != Some("true")
-        && entry_key(entry, "X-GNOME-Autostart-enabled") != Some("false")
+    desktop_file::value(entry, "Hidden") != Some("true")
+        && desktop_file::value(entry, "X-GNOME-Autostart-enabled") != Some("false")
 }
 
 /// Whether otto-dictate starts at login: the user's entry decides where
@@ -498,45 +481,6 @@ fn entry_starts(entry: &str) -> bool {
 /// system's where there is not.
 fn autostart(user: Option<&str>, system: Option<&str>) -> bool {
     user.or(system).is_some_and(entry_starts)
-}
-
-/// `entry` with `key` set to `value` in its `[Desktop Entry]` group, added at
-/// the group's end when it is not there.
-fn with_entry_key(entry: &str, key: &str, value: &str) -> String {
-    let mut lines: Vec<String> = entry.lines().map(str::to_string).collect();
-    let mut in_group = false;
-    let mut group_end = None;
-    for (index, line) in lines.iter_mut().enumerate() {
-        let trimmed = line.trim();
-        if trimmed.starts_with('[') {
-            in_group = trimmed == "[Desktop Entry]";
-            if in_group {
-                group_end = Some(index + 1);
-            }
-            continue;
-        }
-        if !in_group {
-            continue;
-        }
-        if trimmed
-            .split_once('=')
-            .is_some_and(|(name, _)| name.trim() == key)
-        {
-            *line = format!("{key}={value}");
-            return lines.join("\n") + "\n";
-        }
-        if !trimmed.is_empty() {
-            group_end = Some(index + 1);
-        }
-    }
-    match group_end {
-        Some(at) => lines.insert(at, format!("{key}={value}")),
-        None => {
-            lines.push("[Desktop Entry]".into());
-            lines.push(format!("{key}={value}"));
-        }
-    }
-    lines.join("\n") + "\n"
 }
 
 /// An entry for a user without one, running otto-dictate from where
@@ -547,10 +491,17 @@ fn new_entry(home: Option<&Path>) -> String {
         .filter(|path| path.is_file())
         .map(|path| path.display().to_string())
         .unwrap_or_else(|| "otto-dictate".into());
-    format!(
-        "[Desktop Entry]\nType=Application\nName=Dictation\n\
-         Comment=Speech to text in any text field\nExec={exec}\nNoDisplay=true\n"
-    )
+    [
+        ("Type", "Application"),
+        ("Name", "Dictation"),
+        ("Comment", "Speech to text in any text field"),
+        ("Exec", &exec),
+        ("NoDisplay", "true"),
+    ]
+    .into_iter()
+    .fold(String::new(), |entry, (key, value)| {
+        desktop_file::with_value(&entry, key, value)
+    })
 }
 
 /// The user's entry after turning autostart `on`, given what it says now
@@ -576,8 +527,8 @@ fn autostart_entry(
         (None, None) if on => new_entry(home),
         (None, None) => return None,
     };
-    let entry = with_entry_key(&base, "Hidden", if on { "false" } else { "true" });
-    Some(with_entry_key(
+    let entry = desktop_file::with_value(&base, "Hidden", if on { "false" } else { "true" });
+    Some(desktop_file::with_value(
         &entry,
         "X-GNOME-Autostart-enabled",
         if on { "true" } else { "false" },
@@ -633,16 +584,13 @@ fn language_label(language: &str) -> String {
         .unwrap_or_else(|| language.to_string())
 }
 
-/// The language a dictation would use now: the file's, else the one `LANG`
-/// names, as otto-kit works it out.
+/// The language a dictation would use now: the file's, else the one the
+/// locale names, as otto-kit works it out.
 fn current_language(file: &DictationFile) -> String {
-    file.language.clone().unwrap_or_else(|| {
-        std::env::var("LANG")
-            .ok()
-            .and_then(|lang| lang.get(..2).map(str::to_ascii_lowercase))
-            .filter(|code| code.chars().all(|c| c.is_ascii_lowercase()) && code != "c")
-            .unwrap_or_else(|| AUTO.into())
-    })
+    file.language
+        .clone()
+        .or_else(otto_kit::i18n::env_language)
+        .unwrap_or_else(|| AUTO.into())
 }
 
 /// The choices for one of the pane's pop-ups, or `None` for any other.
@@ -982,10 +930,10 @@ mod tests {
         assert!(!autostart(None, None));
         assert!(autostart(Some(INSTALLED), None));
         assert!(autostart(None, Some(INSTALLED)));
-        let hidden = with_entry_key(INSTALLED, "Hidden", "true");
+        let hidden = desktop_file::with_value(INSTALLED, "Hidden", "true");
         assert!(!autostart(Some(&hidden), Some(INSTALLED)));
         assert!(!autostart(None, Some(&hidden)));
-        let gnome_off = with_entry_key(INSTALLED, "X-GNOME-Autostart-enabled", "false");
+        let gnome_off = desktop_file::with_value(INSTALLED, "X-GNOME-Autostart-enabled", "false");
         assert!(!autostart(Some(&gnome_off), None));
         // A key of the same name in another group is not the entry's.
         assert!(autostart(
@@ -1013,7 +961,7 @@ mod tests {
         assert_eq!(autostart_entry(false, None, None, None), None);
         let made = autostart_entry(true, None, None, None).unwrap();
         assert!(autostart(Some(&made), None));
-        assert_eq!(entry_key(&made, "Exec"), Some("otto-dictate"));
+        assert_eq!(desktop_file::value(&made, "Exec"), Some("otto-dictate"));
     }
 
     #[test]

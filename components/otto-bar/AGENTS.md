@@ -5,7 +5,7 @@ The top menu bar: the focused app's global menu on the left, and tray icons, the
 - **Layer:** app. Used by nothing (an app).
 
 ## Dependencies
-- **Internal:** `otto-kit` for the app runner, menus, drawing and i18n, and for the `org.otto.*` proxies it re-exports from `otto-dbus` as `otto_kit::dbus`.
+- **Internal:** `otto-kit` for the app runner, menus, drawing and i18n, and for the D-Bus proxies it re-exports from `otto-dbus` as `otto_kit::dbus` (Otto's own, UPower, StatusNotifierItem, dbusmenu).
 - **External:** `zbus` on tokio for the session bus. Calls `org.otto.Shell1` (focused window, input devices, commands), `org.otto.Settings` (the `topbar.*` settings, followed through `Changed`), `org.otto.Dialog1` on otto-islands (the log out question) and UPower, with sysfs as the fallback. Serves `org.kde.StatusNotifierWatcher` (tray) and `com.canonical.AppMenu.Registrar` (menus of GTK and X11 Qt apps); Wayland Qt apps report their menu to the compositor over `org_kde_kwin_appmenu`, and the bar reads it from `org.otto.Shell1`. Needs `wlr-layer-shell`.
 
 ## Develop

@@ -274,8 +274,8 @@ fn the_info_panel_copies_a_swatch() {
     let pane = browser.preview.as_mut().expect("a decode was asked for");
     assert_eq!(pane.path, path);
     pane.palette = vec![
-        skia_safe::Color::from_rgb(0xF2, 0x84, 0x5C),
-        skia_safe::Color::from_rgb(0x20, 0x20, 0x20),
+        otto_kit::skia::Color::from_rgb(0xF2, 0x84, 0x5C),
+        otto_kit::skia::Color::from_rgb(0x20, 0x20, 0x20),
     ];
 
     let panel = browser

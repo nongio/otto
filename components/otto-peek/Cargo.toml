@@ -35,9 +35,5 @@ serde = { workspace = true, features = ["derive"] }
 toml = { workspace = true, features = ["default"] }
 
 
-[dependencies.skia-safe]
-workspace = true
-features = ["gl", "textlayout", "svg", "skottie"]
-
 [lints]
 workspace = true

@@ -94,7 +94,7 @@ pub fn thumbnail(
     path: &std::path::Path,
     modified: Option<std::time::SystemTime>,
     size: thumbcache::Size,
-) -> Option<skia_safe::Image> {
+) -> Option<otto_kit::skia::Image> {
     thumbcache::lookup(path, modified, size).or_else(|| generate_thumbnail(path, size))
 }
 
@@ -106,7 +106,7 @@ pub fn thumbnail(
 pub fn generate_thumbnail(
     path: &std::path::Path,
     size: thumbcache::Size,
-) -> Option<skia_safe::Image> {
+) -> Option<otto_kit::skia::Image> {
     // The same sandboxed decoder Peek uses, asked for a thumbnail-sized
     // picture rather than a panel-sized one. Untrusted bytes are parsed in the
     // worker, never here.

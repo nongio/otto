@@ -12,7 +12,6 @@ publish = false
 anyhow.workspace = true
 tokio = { workspace = true, features = ["macros", "process", "rt-multi-thread", "signal", "sync", "time"] }
 tracing.workspace = true
-tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
 zbus.workspace = true
 futures-util.workspace = true
 otto-dbus = { path = "../otto-dbus" }

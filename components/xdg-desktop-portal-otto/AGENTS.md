@@ -7,7 +7,7 @@ How it works: [xdg-desktop-portal-otto](../../docs/developer/xdg-desktop-portal-
 - **Layer:** app. Used by nothing (an app).
 
 ## Dependencies
-- **Internal:** `otto-dbus` (proxies for `org.otto.ScreenCast` and `org.otto.Settings` in the compositor, `org.otto.Dialog1` in otto-islands, `org.otto.FilePicker1` in otto-files), `otto-foundations` (XDG directories, `file://` URIs).
+- **Internal:** `otto-dbus` (proxies for `org.otto.ScreenCast` and `org.otto.Settings` in the compositor, `org.otto.Dialog1` in otto-islands, `org.otto.FilePicker1` in otto-files, and the other desktops' `org.freedesktop.impl.portal.Access` backends the dialog falls back to), `otto-foundations` (XDG directories, `file://` URIs, desktop entry keys, logging setup).
 - **External:** the `xdg-desktop-portal` frontend, xdg-permission-store (remembered screen shares), `grim` for screenshots. Built on zbus and tokio.
 
 ## Develop

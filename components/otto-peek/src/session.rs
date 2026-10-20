@@ -29,9 +29,9 @@ use crate::decode::Request;
 use crate::opening;
 use otto_kit::components::scroll::{Axis, ScrollState, ScrollView};
 use otto_kit::preview::{self, Page, Pixels, Preview, Word, WordSelection, Zoom};
+use otto_kit::skia::{Contains, Rect};
 use otto_media_kit::transport::TransportHit;
 use otto_media_kit::{Frame, Options, Playback, Player, State};
-use skia_safe::{Contains, Rect};
 
 /// The title strip along the top of the panel: the file's name, and the
 /// close button. The preview's content starts below it, so neither ever
@@ -196,7 +196,7 @@ impl Video {
     /// was taken.
     pub fn pointer(&mut self, kind: VideoPointer, x: f32, y: f32, content: Rect) -> bool {
         let layout = otto_media_kit::view::transport_layout(content);
-        let point = skia_safe::Point::new(x, y);
+        let point = otto_kit::skia::Point::new(x, y);
         let state = self.player.state();
         let seek_to = |fraction: f32| state.duration.map(|duration| duration.mul_f32(fraction));
         match kind {

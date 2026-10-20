@@ -37,7 +37,7 @@ fn main() {
     if let Some(frame) = frame {
         let image = frame.to_image().expect("frame wraps");
         let png = image
-            .encode(None, skia_safe::EncodedImageFormat::PNG, None)
+            .encode(None, otto_kit::skia::EncodedImageFormat::PNG, None)
             .unwrap();
         let out = std::env::var("PROBE_PNG").unwrap_or_else(|_| "/tmp/otto-media-probe.png".into());
         std::fs::write(&out, png.as_bytes()).unwrap();
