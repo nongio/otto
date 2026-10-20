@@ -189,21 +189,45 @@ once for both channels:
 | XSETTINGS (`apply_xwayland_xsettings`) | `Xft/Antialias` (0/1), `Xft/Hinting` (0/1), `Xft/HintStyle` (`hintnone`…`hintfull`), `Xft/RGBA` (`none`, `rgb`, `bgr`, `vrgb`, `vbgr`), `Gtk/FontName` |
 | Settings portal, `org.gnome.desktop.interface` | `font-name`, `font-antialiasing` (`none`, `grayscale`, `rgba`), `font-hinting` (`none`…`full`), `font-rgba-order` (`rgb` when unknown: the key has no "none"), `font-rendering` (always `manual`) |
 
-GTK 4 on Wayland reads these from the portal, and since 4.16 it ignores the
-hinting, antialiasing and order keys unless `font-rendering` is `manual`: in
-its default, `automatic`, it picks its own. The portal adds `manual` to the
-compositor's keys for that reason. GTK 3 on Wayland reads
-`org.gnome.desktop.interface` from GSettings (dconf) instead, so a session of
-Otto's own (the udev backend, never a nested one) writes the same five keys
-there at startup with `gsettings`, only where they differ
-(`src/gnome_interface.rs`). libadwaita outside a sandbox likewise takes the
-colour scheme from GSettings' `color-scheme`, not the portal, so the same
-module writes `prefer-dark` or `default` there at startup and whenever
-`theme_scheme` changes. Qt 6 on Wayland (Qt Widgets, measured at scale 1.5
-and 1) draws the same pixels whatever hint style or antialiasing fontconfig
-names, though it loads the configuration, and the KDE platform theme's
-`kdeglobals` changed nothing either; why is not established, and Otto has
-nothing it publishes that Qt follows.
+Who reads which channel, and whether the hint style then shows in their
+pixels (measured with GTK 3.24.52, GTK 4.22, Qt 6.11 and Chromium, each
+started with a fontconfig forcing one style):
+
+| Application | Font and colour scheme | Rasterisation | Hint styles differ? |
+|-------------|------------------------|---------------|---------------------|
+| Otto, otto-kit apps | config | fontconfig | yes; medium draws as full (FreeType's one target for both) |
+| GTK 4 on Wayland | Settings portal | portal keys, with `font-rendering` `manual` | yes |
+| GTK 3 on Wayland, unsandboxed | GSettings, which Otto writes | GSettings | in grayscale yes; with `rgba` antialiasing cairo hints every style alike |
+| GTK 3 sandboxed, or `GTK_USE_PORTAL=1` | Settings portal | the same keys from the portal | as above |
+| libadwaita (colour scheme) | GSettings `color-scheme` | — | — |
+| Qt 6 on Wayland | its `gtk3` platform theme, which Otto names (so GSettings) | fontconfig | only at device pixel ratio 1 |
+| Chromium, Electron | GTK 3 (GSettings) | fontconfig | yes |
+| X11 clients under Xwayland | XSETTINGS | XSETTINGS `Xft/*` | Qt: only at 96 DPI |
+
+GTK 4 reads the portal, and since 4.16 it ignores the hinting, antialiasing
+and order keys unless `font-rendering` is `manual`: in its default,
+`automatic`, it picks its own. The portal adds `manual` to the compositor's
+keys for that reason. GTK 3 on Wayland reads `org.gnome.desktop.interface`
+from GSettings (dconf) instead, so a session of Otto's own (the udev backend,
+never a nested one) writes the same five keys there at startup with
+`gsettings`, only where they differ (`src/gnome_interface.rs`). libadwaita
+outside a sandbox likewise takes the colour scheme from GSettings'
+`color-scheme`, not the portal, so the same module writes `prefer-dark` or
+`default` there at startup and whenever `theme_scheme` changes.
+
+Qt chooses a platform theme by `XDG_CURRENT_DESKTOP`, and for a name it does
+not know, `otto` among them, it falls back to its generic theme: `Sans Serif
+9`, no colour scheme. So Otto names Qt's own `gtk3` theme in
+`QT_QPA_PLATFORMTHEME` for everything it spawns and for the session's
+services, unless the variable is already set (`src/qt_platform_theme.rs`);
+that theme takes the font (as `Inter 9`: it keeps whole points) and the
+colour scheme from what Otto wrote to GSettings, the scheme live. Hinting
+and antialiasing Qt reads from fontconfig itself, like Otto, with one rule of
+its own (`qfontconfigdatabase.cpp`, `isDprScaling`): at a device pixel ratio
+other than 1 every font is drawn unhinted and antialiased whatever fontconfig
+says, so on a scaled output Qt text never follows the hint style, under
+Wayland or at a scaled `Xft/DPI` under Xwayland alike. Chromium takes its
+rasterisation from fontconfig too, and its font from GTK 3.
 
 The portal does not link otto-kit or fontconfig: it asks the compositor
 (`org.otto.Settings.GetFontSettings`, see
@@ -258,7 +282,10 @@ directly and only consults the portal under `GTK_USE_PORTAL=1`.
   [Fonts and text](#fonts-and-text).
 - **Font settings are published once**: the font and rendering keys (see
   [Fonts and text](#fonts-and-text)) are not re-announced when an output's
-  subpixel layout changes, and GTK3 outside a sandbox reads dconf rather than
-  the portal, so it sees only the XSETTINGS copy under Xwayland.
+  subpixel layout changes, and the GSettings copy GTK 3 and Qt read is
+  written at startup only.
+- **Qt text on a scaled output is unhinted**: Qt's own rule at a device pixel
+  ratio other than 1, which no setting Otto publishes reaches (see
+  [Fonts and text](#fonts-and-text)).
 - **No text scaling factor**: text size follows the output scale only, so
   enlarging text means enlarging everything.

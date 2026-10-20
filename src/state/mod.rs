@@ -788,6 +788,10 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         // The settings schema says which settings reach this kind of session.
         crate::settings::set_backend(backend_data.backend_name());
 
+        // Qt applications take their font and colour scheme from a platform
+        // theme Otto names, before anything is spawned to inherit it.
+        let qt_platform_theme = crate::qt_platform_theme::apply();
+
         let clock = Clock::new();
 
         // init wayland clients
@@ -850,6 +854,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                 assignments.push(crate::export_tiling_decoration());
                 assignments.push(crate::export_maximize_button());
                 assignments.push(crate::export_color_scheme());
+                assignments.extend(qt_platform_theme.clone());
                 let args: Vec<&str> = assignments.iter().map(String::as_str).collect();
 
                 let mut systemctl = vec!["--user", "set-environment"];

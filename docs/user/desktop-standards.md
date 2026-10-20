@@ -96,10 +96,13 @@ With that scope, three things worth knowing:
 - Hinting and antialiasing follow your fontconfig settings (`hintstyle`,
   `hinting`, `antialias`, `rgba`), in Otto's chrome as in your applications.
 - Otto tells applications its font and how it draws text, the way it tells
-  them its light/dark mode: GTK 4 and Qt apps read them from the desktop
-  portal, X11 apps from XSETTINGS. The interface font they get is Otto's
-  `font_family` at Otto's body size. GTK 3 apps outside a sandbox read their
-  own settings instead, so set the font for those as you normally would.
+  them its light/dark mode: GTK 4 apps read them from the desktop portal,
+  GTK 3 apps (and Chromium and Electron, which use GTK 3) from GNOME's
+  settings store, which Otto fills, Qt apps through Qt's GTK platform theme,
+  which Otto selects unless `QT_QPA_PLATFORMTHEME` is already set, and X11
+  apps from XSETTINGS. The interface font they get is Otto's `font_family`
+  at Otto's body size. One exception is Qt's own: on a scaled display it
+  draws text unhinted whatever the hinting, under any desktop.
 
 ## Files, trash and thumbnails
 

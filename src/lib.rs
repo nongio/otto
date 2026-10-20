@@ -67,6 +67,7 @@ mod workspaces;
 mod config;
 mod gnome_interface;
 mod gsettings;
+mod qt_platform_theme;
 mod search_index;
 mod theme;
 

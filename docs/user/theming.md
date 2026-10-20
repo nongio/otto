@@ -179,9 +179,10 @@ font_family = "Inter"
 
 The font used by Otto's own UI: dock labels, exposé window titles, the app
 switcher. It is also offered to applications as the interface font, through
-the desktop portal (GTK 4, Qt) and XSETTINGS (X11 apps), along with your
-fontconfig antialiasing and hinting; an application's own font preference,
-where it has one, still wins.
+the desktop portal (GTK 4), GNOME's settings store (GTK 3, and Qt through its
+GTK platform theme) and XSETTINGS (X11 apps), along with your fontconfig
+antialiasing and hinting; an application's own font preference, where it has
+one, still wins.
 Changing it takes effect after restarting Otto.
 
 Otto ships with [Inter](https://rsms.me/inter/) as its default. Any font
