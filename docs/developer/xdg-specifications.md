@@ -199,9 +199,11 @@ there at startup with `gsettings`, only where they differ
 (`src/gnome_interface.rs`). libadwaita outside a sandbox likewise takes the
 colour scheme from GSettings' `color-scheme`, not the portal, so the same
 module writes `prefer-dark` or `default` there at startup and whenever
-`theme_scheme` changes. Qt 6 on Wayland renders text unhinted whatever
-fontconfig, `kdeglobals` or the portal say, so there is nothing to publish
-to it.
+`theme_scheme` changes. Qt 6 on Wayland (Qt Widgets, measured at scale 1.5
+and 1) draws the same pixels whatever hint style or antialiasing fontconfig
+names, though it loads the configuration, and the KDE platform theme's
+`kdeglobals` changed nothing either; why is not established, and Otto has
+nothing it publishes that Qt follows.
 
 The portal does not link otto-kit or fontconfig: it asks the compositor
 (`org.otto.Settings.GetFontSettings`, see
