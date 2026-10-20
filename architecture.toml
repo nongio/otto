@@ -224,6 +224,18 @@ pattern = '"\[Desktop Entry\]'
 allowed_in = ["components/otto-foundations/"]
 reason = "A desktop entry's keys are read and set with otto_foundations::desktop_file (otto_kit::desktop_file), or looked up by app id with otto_kit::desktop_entry. A hand-rolled keyfile loop gets the groups, comments or duplicate keys a little differently each time."
 
+[[source_rule]]
+name = "logging-through-foundations"
+pattern = 'tracing_subscriber::'
+allowed_in = ["components/otto-foundations/", "src/main.rs", "src/session_log.rs"]
+reason = "Every Otto program logs through otto_foundations::logging::init (otto_kit::logging): stderr, RUST_LOG or else the program's default filter. A hand-rolled subscriber drifts: logs on standard output, where `otto-agents acp` speaks its protocol, or a panic when something else installed a subscriber first. The compositor is the exception: src/main.rs also writes the session log file (src/session_log.rs) and flushes it on a panic."
+
+[[source_rule]]
+name = "log-with-tracing"
+pattern = '\blog::(trace|debug|info|warn|error|log)!|\buse log::|extern crate log\b'
+allowed_in = []
+reason = "Otto logs with tracing. The log crate's records still arrive (the subscriber bridges them for dependencies), but its macros carry no spans or fields, and a second facade in the code splits the filters people learn."
+
 # ---------------------------------------------------------------------------
 # Known debt
 # ---------------------------------------------------------------------------

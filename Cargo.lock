@@ -5237,7 +5237,6 @@ dependencies = [
  "tokio-tungstenite 0.29.0",
  "toml 1.1.2+spec-1.1.0",
  "tracing",
- "tracing-subscriber",
  "unic-langid",
  "uuid",
  "zbus",
@@ -5365,7 +5364,6 @@ dependencies = [
  "otto-kit",
  "smithay-client-toolkit 0.19.2",
  "tracing",
- "tracing-subscriber",
  "wayland-client",
  "wayland-protocols-misc",
 ]
@@ -5416,6 +5414,7 @@ name = "otto-foundations"
 version = "1.8.0"
 dependencies = [
  "percent-encoding",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -5489,7 +5488,6 @@ dependencies = [
  "tokio",
  "toml_edit 0.25.12+spec-1.1.0",
  "tracing",
- "tracing-subscriber",
  "unic-langid",
  "ureq",
  "usvg",
@@ -5640,7 +5638,6 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "tracing",
- "tracing-subscriber",
  "wayland-client",
  "wayland-protocols",
  "wayland-protocols-misc",
@@ -10213,7 +10210,6 @@ dependencies = [
  "otto-foundations",
  "tokio",
  "tracing",
- "tracing-subscriber",
  "zbus",
 ]
 

@@ -7,7 +7,7 @@ How it works: [RDP bridge for virtual outputs](../../docs/developer/rdp-virtual-
 - **Layer:** app. Used by nothing (an app).
 
 ## Dependencies
-- **Internal:** `otto-dbus` (the `org.otto.ScreenCast` proxies), `otto-foundations` (the state directory for the TLS certificate).
+- **Internal:** `otto-dbus` (the `org.otto.ScreenCast` proxies), `otto-foundations` (the state directory for the TLS certificate, logging setup).
 - **External:** PipeWire; GStreamer with `pipewiresrc` and a hardware H.264 encoder (`vah264enc` through VA-API, or `nvh264enc`); EGL and GL on a render node for tiled dmabufs. From the compositor: `zwlr_virtual_pointer_v1`, `zwp_virtual_keyboard_v1` and `xdg-output`. It publishes a StatusNotifierItem while someone is watching. The RDP stack is `ironrdp-server` 0.13 with its EGFX, DVC and SVC crates; TLS is rustls.
 - GStreamer raises the toolchain: building otto-rdp needs Rust 1.96, above the workspace minimum.
 

@@ -10,18 +10,20 @@
 //! - [`desktop_file`] reads and edits the `[Desktop Entry]` group of a
 //!   desktop entry file.
 //! - [`user`] names the user the session belongs to.
+//! - [`logging`] sets up `tracing` the same way in every program.
 //!
 //! otto-kit re-exports them all (`otto_kit::xdg`, `otto_kit::uri`,
-//! `otto_kit::matching`, `otto_kit::desktop_file`, `otto_kit::user`), so an
-//! app imports them from the toolkit; a program that does not link the
-//! toolkit (the portal, the agents daemon, otto-search) depends on this crate
-//! directly.
+//! `otto_kit::matching`, `otto_kit::desktop_file`, `otto_kit::user`,
+//! `otto_kit::logging`), so an app imports them from the toolkit; a program
+//! that does not link the toolkit (the portal, the agents daemon, otto-search)
+//! depends on this crate directly.
 
 // A `pub` item nothing outside the crate can reach is an accident: say
 // `pub(crate)` or `pub(super)`, so the public API is what lib.rs exports.
 #![warn(unreachable_pub)]
 
 pub mod desktop_file;
+pub mod logging;
 pub mod matching;
 pub mod uri;
 pub mod user;

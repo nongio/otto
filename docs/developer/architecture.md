@@ -206,6 +206,13 @@ rules today:
   `i18n` or the compositor's `src/locale_env.rs`.
 - `desktop-entry-through-foundations`: a desktop entry's keys are read and
   set with `otto_foundations::desktop_file`.
+- `logging-through-foundations`: `tracing_subscriber` is set up only by
+  `otto_foundations::logging` (stderr, `RUST_LOG` or a default filter). The
+  compositor's `src/main.rs` and `src/session_log.rs` also write the session
+  log file and flush it on a panic, so they set up their own.
+- `log-with-tracing`: code logs with `tracing`, never the `log` crate's
+  macros; dependencies that use `log` reach the same subscriber through its
+  bridge.
 - `wayland-connection-through-kit`: only otto-kit opens an app's Wayland
   connection; otto-rdp, a bridge with no toolkit, opens its own.
 - `dbus-proxies-in-otto-dbus`: a zbus client proxy (`#[zbus::proxy]`) is
