@@ -149,8 +149,10 @@ prompt, so a pass that starts mid-sentence keeps its context.
 
 - The language is `language` in `dictation.toml`: an ISO 639-1 code, or
   `auto` to let the engine detect it.
-- Without one, it is taken from the system locale (`LANG`): `it_IT.UTF-8`
-  means Italian. When `LANG` is unset or `C`, the engine detects the language.
+- Without one, it is taken from the system locale, the first of `LC_ALL`,
+  `LC_MESSAGES`, `LANG` and `LANGUAGE` that names a language:
+  `it_IT.UTF-8` means Italian. When none does (unset, or `C`), the engine
+  detects the language.
 - `OTTO_DICTATE_LANGUAGE` overrides both with an ISO 639-1 code, or `auto`.
 - The language is sent with every pass. Parakeet detects the language itself
   and ignores it.
@@ -204,7 +206,7 @@ url = "http://127.0.0.1:8080/inference"
 - Every key is optional. Each value comes from the first of these that sets
   it: the environment (`OTTO_DICTATE_URL`, `OTTO_DICTATE_LANGUAGE`,
   `OTTO_DICTATE_HOTWORDS_BOOST`), then `dictation.toml`, then the defaults
-  above, with the language from `LANG`.
+  above, with the language from the system locale.
 - The file is read as each dictation starts, in the launcher and in
   otto-dictate alike, so a change applies to the next dictation without
   restarting anything.
@@ -306,7 +308,7 @@ method.
 - Should an unreachable engine be reported to the user, for example in the
   placeholder, rather than only in the logs?
 - Without a language in `dictation.toml`, should it follow Otto's own
-  `locales` setting rather than `LANG`?
+  `locales` setting rather than the locale variables?
 - Should otto-dictate have a default shortcut, and should the standalone
   input method and in-app dictation share one?
 - Should Backspace in the launcher drop the last phrase, as otto-dictate does,

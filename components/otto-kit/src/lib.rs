@@ -58,10 +58,11 @@ pub mod wallpaper;
 pub mod watch;
 pub mod xml;
 
-/// The UI-free base: XDG directories, `file://` URIs and name matching live
-/// in `otto-foundations`, which programs that do not link the toolkit share;
-/// re-exported so apps keep one import path.
-pub use otto_foundations::{matching, uri, xdg};
+/// The UI-free base: XDG directories, `file://` URIs, name matching, desktop
+/// entry text and the login name live in `otto-foundations`, which programs
+/// that do not link the toolkit share; re-exported so apps keep one import
+/// path.
+pub use otto_foundations::{desktop_file, matching, uri, user, xdg};
 
 // Re-export commonly used items
 pub use common::Renderable;

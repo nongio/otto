@@ -206,6 +206,24 @@ pattern = '#\[(zbus::)?(dbus_)?proxy\b'
 allowed_in = ["components/otto-dbus/"]
 reason = "A zbus client proxy is an interface definition, and otto-dbus holds the interface definitions (re-exported as otto_kit::dbus). One proxy per interface keeps every caller on the same contract: a private copy drifts, a method or signature the server never had or no longer has."
 
+[[source_rule]]
+name = "user-dirs-through-foundations"
+pattern = '"user-dirs\.dirs"'
+allowed_in = ["components/otto-foundations/"]
+reason = "The user's named folders are otto_foundations::xdg::user_dirs and user_dir (re-exported as otto_kit::xdg). Reading user-dirs.dirs by hand misses the rules for $HOME and relative paths, or the file's place under $XDG_CONFIG_HOME."
+
+[[source_rule]]
+name = "user-and-locale-through-foundations"
+pattern = 'env::var(_os)?\(\s*"(USER|LOGNAME|LANG|LANGUAGE|LC_ALL|LC_MESSAGES)"'
+allowed_in = ["components/otto-foundations/", "components/otto-kit/src/i18n/", "src/locale_env.rs"]
+reason = "The login name is otto_foundations::user::login_name (otto_kit::user), and the locale is otto_kit::i18n (env_locales, env_language), or src/locale_env.rs in the compositor. A single variable read here and there disagrees with them: USER without LOGNAME, LANG without LC_ALL."
+
+[[source_rule]]
+name = "desktop-entry-through-foundations"
+pattern = '"\[Desktop Entry\]'
+allowed_in = ["components/otto-foundations/"]
+reason = "A desktop entry's keys are read and set with otto_foundations::desktop_file (otto_kit::desktop_file), or looked up by app id with otto_kit::desktop_entry. A hand-rolled keyfile loop gets the groups, comments or duplicate keys a little differently each time."
+
 # ---------------------------------------------------------------------------
 # Known debt
 # ---------------------------------------------------------------------------

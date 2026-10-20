@@ -1274,9 +1274,7 @@ fn denied(err: zbus::Error) -> String {
 /// places a desktop keeps one — what is shown before the bus answers, and all
 /// there is without it.
 fn local_profile() -> Account {
-    let user = std::env::var("USER")
-        .or_else(|_| std::env::var("LOGNAME"))
-        .unwrap_or_default();
+    let user = otto_kit::user::login_name().unwrap_or_default();
     let entry = std::fs::read_to_string("/etc/passwd")
         .ok()
         .and_then(|passwd| {

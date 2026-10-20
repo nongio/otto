@@ -41,7 +41,7 @@ use std::path::{Path, PathBuf};
 use otto_kit::skia::{Contains, Rect};
 use serde::Deserialize;
 
-use crate::model::{self, SortKey};
+use crate::model::SortKey;
 use crate::places_config;
 
 /// The padding the desk leaves around its icons when the config says
@@ -394,7 +394,7 @@ fn default_folder(home: Option<&Path>) -> PathBuf {
     let Some(home) = home else {
         return PathBuf::from("/");
     };
-    model::user_dir(home, "XDG_DESKTOP_DIR").unwrap_or_else(|| home.join("Desktop"))
+    otto_kit::xdg::user_dir("XDG_DESKTOP_DIR").unwrap_or_else(|| home.join("Desktop"))
 }
 
 /// A two-element array read with `parse`, as `size` and `position` are.

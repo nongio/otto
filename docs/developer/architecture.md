@@ -200,6 +200,12 @@ rules today:
 
 - `xdg-dirs-through-foundations`: the XDG base directories are read only in
   `otto_foundations::xdg`.
+- `user-dirs-through-foundations`: so is `user-dirs.dirs`.
+- `user-and-locale-through-foundations`: the login name comes from
+  `otto_foundations::user`, and the locale variables are read by otto-kit's
+  `i18n` or the compositor's `src/locale_env.rs`.
+- `desktop-entry-through-foundations`: a desktop entry's keys are read and
+  set with `otto_foundations::desktop_file`.
 - `wayland-connection-through-kit`: only otto-kit opens an app's Wayland
   connection; otto-rdp, a bridge with no toolkit, opens its own.
 - `dbus-proxies-in-otto-dbus`: a zbus client proxy (`#[zbus::proxy]`) is

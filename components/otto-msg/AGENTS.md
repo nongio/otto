@@ -7,7 +7,7 @@
 - **Layer:** app. Used by nothing (an app); the Otto plugin's skills call it.
 
 ## Dependencies
-- **Internal:** `otto-dbus` (the `org.otto.Shell1` and `org.otto.Compositor` proxies), `otto-foundations` (XDG directories, `tilde`).
+- **Internal:** `otto-dbus` (the `org.otto.Shell1` and `org.otto.Compositor` proxies), `otto-foundations` (XDG directories, `tilde`, the login name).
 - **External:** a running Otto on the session bus for everything but `doctor`, which works without one. Blocking zbus, serde_json, libc (termios, `poll`, `localtime_r`, `getuid`). No terminal UI crate: raw mode, the alternate screen and key parsing are hand-written in `src/doctor/term.rs`. `doctor` runs `journalctl` when Otto logs to the journal, and `wl-copy`, when present, for the clipboard.
 
 ## Develop
