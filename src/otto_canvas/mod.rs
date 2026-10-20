@@ -494,6 +494,15 @@ impl<B: Backend> Otto<B> {
         true
     }
 
+    /// Take a canvas a drag opened back to peeking at [`drag::PEEK_MIN`].
+    fn canvas_back_to_peek(&mut self) {
+        self.canvas.phase = Phase::Peeking;
+        self.canvas.passive = false;
+        // Where a shown column rests, so the move below is not skipped.
+        self.canvas.drag_progress = 1.0;
+        self.canvas_peek_follow(drag::PEEK_MIN, PEEK_TURN_DURATION);
+    }
+
     /// Move a peeking canvas until `visible` of it is on screen, easing over
     /// `duration` seconds: about one look at the pointer, so it glides
     /// rather than steps, or longer for a turn.
@@ -1069,10 +1078,10 @@ impl<B: Backend> Otto<B> {
 
     /// Look at the pointer during a drag. The canvas peeks out on the
     /// output under it, and from the middle of that output on follows it,
-    /// further out the further right it goes: a drop can go here. Turning
-    /// back left takes it in to where it started, and it stops following
-    /// until the pointer heads right as far again.
-    /// Resting in the last stretch of the output opens it either way.
+    /// further out the further right it goes: a drop can go here. Resting
+    /// in the last stretch of the output opens it. Turning back left, while
+    /// it follows or well left of it once open, takes it in to where it
+    /// started, and there it stays unless the pointer goes over it.
     /// Returns whether the drag is still going on.
     fn canvas_drag_tick(&mut self) -> bool {
         if self.canvas.drag.is_none() {
@@ -1090,26 +1099,48 @@ impl<B: Backend> Otto<B> {
             .map(|geo| (f64::from(geo.loc.x), f64::from(geo.size.w)));
         let now = std::time::Instant::now();
         let peeking = matches!(self.canvas.phase, Phase::Peeking);
+        let shown = matches!(self.canvas.phase, Phase::Shown);
+        // Where the column's left edge is now, peeking or open, on the
+        // output the pointer is on.
+        let column_left = self
+            .canvas_column_rect()
+            .filter(|_| output.is_some() && output == self.canvas.output)
+            .map(|rect| rect.loc.x);
+        let over_column = column_left.is_some_and(|left| location.x >= left);
         let Some(session) = self.canvas.drag.as_mut() else {
             return false;
         };
-        let in_open_zone =
-            span.is_some_and(|(left, width)| drag::in_open_zone(location.x, left, width));
+
+        // A canvas the drag opened, left well to the left: back in it goes.
+        if shown
+            && session.opened_canvas
+            && span.zip(column_left).is_some_and(|((_, width), left)| {
+                drag::left_of_open_column(location.x, left, width)
+            })
+        {
+            session.follow.turn_away();
+            self.canvas_back_to_peek();
+            tracing::debug!("canvas taken back in by a drag turning away");
+            return true;
+        }
+
+        let turned_away = session.follow.turned_away();
+        let wants_open = if turned_away {
+            over_column
+        } else {
+            span.is_some_and(|(left, width)| drag::in_open_zone(location.x, left, width))
+        };
         let open = session
             .open_dwell
-            .observe(in_open_zone, now, drag::OPEN_DWELL);
-        let (progress, change) = span.map_or(
-            (drag::PEEK_MIN, drag::FollowChange::None),
-            |(left, width)| session.follow.observe(location.x, left, width),
-        );
+            .observe(wants_open, now, drag::OPEN_DWELL);
+        let (progress, change) = match span {
+            Some((left, width)) if !shown => session.follow.observe(location.x, left, width),
+            _ => (drag::PEEK_MIN, drag::FollowChange::None),
+        };
         let duration = match change {
             drag::FollowChange::None => PEEK_FOLLOW_DURATION,
             drag::FollowChange::TurnedAway => {
                 tracing::debug!("canvas peek turned away");
-                PEEK_TURN_DURATION
-            }
-            drag::FollowChange::Resumed => {
-                tracing::debug!("canvas peek follows again");
                 PEEK_TURN_DURATION
             }
         };
@@ -1118,8 +1149,9 @@ impl<B: Backend> Otto<B> {
             if self.canvas_show_passive() {
                 if let Some(session) = self.canvas.drag.as_mut() {
                     session.opened_canvas = true;
+                    session.follow.come_back();
                 }
-                tracing::debug!("canvas opened by a drag at the edge");
+                tracing::debug!("canvas opened by a drag");
             } else if let Some(session) = self.canvas.drag.as_mut() {
                 // Nothing to show yet: a client may still be adding its item.
                 session.open_dwell.rearm();

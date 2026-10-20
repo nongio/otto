@@ -4,11 +4,11 @@
 //! As soon as a drag starts the canvas peeks out a little, to say a drop can
 //! go there. From the middle of the output on, it follows the pointer
 //! further out the further right the pointer goes ([`PeekFollow`]). Turning
-//! back left takes it in to where it started, and it stops following: the
-//! user does not want it. Heading right again nudges it out, and going on
-//! makes it follow once more. Reaching the last stretch of the output opens
-//! it either way, so an item can take the drop ([`in_open_zone`],
-//! [`EdgeDwell`]). When the drag ends the canvas goes again, unless it was
+//! back left takes it in to where it started, and there it stays: the user
+//! does not want it. Reaching the last stretch of the output opens it, so an
+//! item can take the drop ([`in_open_zone`], [`EdgeDwell`]); once turned
+//! away, only going over the canvas itself does. Leaving an open canvas well
+//! to the left takes it back in the same way ([`left_of_open_column`]). When the drag ends the canvas goes again, unless it was
 //! open before the drag or the drop landed on an item
 //! ([`hide_when_drag_ends`]). A press outside a shown canvas reaches what is
 //! under it, and the canvas hides when that button comes up, unless the
@@ -35,15 +35,11 @@ pub const PEEK_MIN: f64 = 0.1;
 pub const PEEK_MAX: f64 = 1.0;
 
 /// How far the pointer goes back left, as a fraction of the output's width,
-/// before a following canvas takes it as turning away; and how far right
-/// again, after that, before it follows once more. Well past the drift of a
-/// touchpad or a hand correcting its aim.
+/// before the canvas takes it as turning away: from the furthest right it
+/// has been while the canvas follows, or from the column's left edge once
+/// it is open. Well past the drift of a touchpad or a hand correcting its
+/// aim.
 pub const TURN_FRACTION: f64 = 0.08;
-
-/// How much further out than [`PEEK_MIN`] a turned-away canvas comes as the
-/// pointer heads right again, at most, just before it follows once more: a
-/// hint that going on brings it back.
-pub const RESUME_NUDGE: f64 = 0.05;
 
 /// How long a drag rests in the stretch that opens the canvas before it
 /// does. Short, but enough that a drag on its way to an output further
@@ -60,17 +56,21 @@ pub fn in_open_zone(x: f64, output_left: f64, output_width: f64) -> bool {
     x >= output_left + output_width * (1.0 - OPEN_FRACTION)
 }
 
+/// Whether a pointer at `x` has left a canvas a drag opened, its column's
+/// left edge at `column_left`, far enough to the left to take it back in,
+/// on an output `output_width` wide.
+pub fn left_of_open_column(x: f64, column_left: f64, output_width: f64) -> bool {
+    x < column_left - output_width * TURN_FRACTION
+}
+
 /// What a look at the pointer changed about following it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FollowChange {
     /// Nothing: the canvas goes on as it was.
     None,
-    /// The pointer turned back: the canvas goes in to [`PEEK_MIN`] and stops
-    /// following.
+    /// The pointer turned back: the canvas goes in to [`PEEK_MIN`] and stays
+    /// there.
     TurnedAway,
-    /// The pointer headed right again after turning back: the canvas follows
-    /// once more.
-    Resumed,
 }
 
 /// How far out a peeking canvas is as the pointer moves.
@@ -78,17 +78,17 @@ pub enum FollowChange {
 /// [`PEEK_MIN`] left of the middle of the output, growing from there to
 /// [`PEEK_MAX`] where the stretch that opens the canvas starts. The pointer
 /// going back left by [`TURN_FRACTION`] of the output from the furthest right
-/// it has been, past the middle, turns it away: it stays near [`PEEK_MIN`],
-/// nudged out by up to [`RESUME_NUDGE`] as the pointer heads right again,
-/// and follows once more when the pointer has gone as far right as it went
-/// back.
+/// it has been, past the middle, turns it away: from then on it stays at
+/// [`PEEK_MIN`], wherever the pointer goes, until [`come_back`] says the
+/// canvas opened again.
+///
+/// [`come_back`]: PeekFollow::come_back
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct PeekFollow {
     /// The furthest right the pointer has been while followed.
     furthest: Option<f64>,
-    /// The furthest left the pointer has been since it turned away, while
-    /// turned away.
-    lowest: Option<f64>,
+    /// The pointer turned back, and the canvas has not opened since.
+    turned_away: bool,
 }
 
 impl PeekFollow {
@@ -96,38 +96,35 @@ impl PeekFollow {
     /// output whose left edge is at `output_left` and `output_width` wide,
     /// and what changed.
     pub fn observe(&mut self, x: f64, output_left: f64, output_width: f64) -> (f64, FollowChange) {
+        if self.turned_away {
+            return (PEEK_MIN, FollowChange::None);
+        }
         let from = output_left + output_width * FOLLOW_FROM;
         let to = output_left + output_width * (1.0 - OPEN_FRACTION);
-        let turn = output_width * TURN_FRACTION;
         let depth = ((x - from) / (to - from).max(1.0)).clamp(0.0, 1.0);
-        let following = PEEK_MIN + (PEEK_MAX - PEEK_MIN) * depth;
-
-        if let Some(lowest) = self.lowest {
-            let lowest = lowest.min(x);
-            let back = x - lowest;
-            if back >= turn && following > PEEK_MIN {
-                self.lowest = None;
-                self.furthest = Some(x);
-                return (following, FollowChange::Resumed);
-            }
-            self.lowest = Some(lowest);
-            let nudge = PEEK_MIN + RESUME_NUDGE * (back / turn).clamp(0.0, 1.0);
-            return (nudge, FollowChange::None);
-        }
-
         let furthest = self.furthest.map_or(x, |f| f.max(x));
-        if furthest > from && furthest - x >= turn {
-            self.furthest = None;
-            self.lowest = Some(x);
+        if furthest > from && furthest - x >= output_width * TURN_FRACTION {
+            self.turn_away();
             return (PEEK_MIN, FollowChange::TurnedAway);
         }
         self.furthest = Some(furthest);
-        (following, FollowChange::None)
+        (PEEK_MIN + (PEEK_MAX - PEEK_MIN) * depth, FollowChange::None)
     }
 
-    /// Whether the pointer has turned away and not headed back since.
+    /// The canvas was taken back in: it stays at [`PEEK_MIN`].
+    pub fn turn_away(&mut self) {
+        self.turned_away = true;
+        self.furthest = None;
+    }
+
+    /// The canvas opened again: following starts over.
+    pub fn come_back(&mut self) {
+        *self = Self::default();
+    }
+
+    /// Whether the pointer turned back and the canvas has not opened since.
     pub fn turned_away(&self) -> bool {
-        self.lowest.is_some()
+        self.turned_away
     }
 }
 
@@ -248,18 +245,32 @@ mod tests {
     }
 
     #[test]
-    fn heading_right_again_nudges_then_follows_once_more() {
+    fn a_turned_away_canvas_stays_in_until_it_comes_back() {
         let mut follow = PeekFollow::default();
-        let low = OPEN - 11.0 - TURN;
         follow.observe(OPEN - 10.0, LEFT, WIDTH);
-        follow.observe(low, LEFT, WIDTH);
-        let (nudged, change) = follow.observe(low + TURN / 2.0, LEFT, WIDTH);
-        assert_eq!(change, FollowChange::None);
-        assert!(nudged > PEEK_MIN && nudged <= PEEK_MIN + RESUME_NUDGE);
-        let (back, change) = follow.observe(low + TURN + 1.0, LEFT, WIDTH);
-        assert_eq!(change, FollowChange::Resumed);
-        assert!(back > PEEK_MIN + RESUME_NUDGE);
+        follow.observe(OPEN - 11.0 - TURN, LEFT, WIDTH);
+        let none = FollowChange::None;
+        assert_eq!(follow.observe(OPEN, LEFT, WIDTH), (PEEK_MIN, none));
+        assert_eq!(follow.observe(LEFT + WIDTH, LEFT, WIDTH), (PEEK_MIN, none));
+        follow.come_back();
         assert!(!follow.turned_away());
+        assert_eq!(follow.observe(OPEN, LEFT, WIDTH), (PEEK_MAX, none));
+    }
+
+    #[test]
+    fn leaving_an_open_column_well_to_the_left_takes_it_back_in() {
+        let column_left = LEFT + WIDTH - 412.0;
+        assert!(!left_of_open_column(column_left + 10.0, column_left, WIDTH));
+        assert!(!left_of_open_column(
+            column_left - TURN / 2.0,
+            column_left,
+            WIDTH
+        ));
+        assert!(left_of_open_column(
+            column_left - TURN - 1.0,
+            column_left,
+            WIDTH
+        ));
     }
 
     #[test]

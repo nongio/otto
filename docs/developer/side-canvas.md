@@ -267,16 +267,19 @@ tenth, of the output's width), `PeekFollow` (how much of the column is on
 screen: `PEEK_MIN` 0.1 up to the middle of the output, `FOLLOW_FROM`,
 growing to `PEEK_MAX` 1.0 where the open zone starts; `TurnedAway` once
 the pointer goes `TURN_FRACTION` of the output left of its furthest past
-the middle, then up to `RESUME_NUDGE` more as it heads right, and
-`Resumed` when it has gone as far right again), `EdgeDwell` (fires once
+the middle, after which it stays at `PEEK_MIN` until `come_back`),
+`left_of_open_column` (the pointer `TURN_FRACTION` of the output left of an
+open column), `EdgeDwell` (fires once
 per rest of a given wait, `OPEN_DWELL`, 150 ms), `hide_when_drag_ends` and
 `hide_on_release`. `mod.rs` applies them in `canvas_drag_tick`, called
 when the drag starts and then every `POLL`: a hidden canvas is put in
 `Phase::Peeking` (`canvas_peek`, retried until an item exists), which
 follows the pointer (`canvas_peek_follow`, eased over
 `PEEK_FOLLOW_DURATION`, or `PEEK_TURN_DURATION` on a turn) and moves to the
-pointer's output; a rest in the open zone opens it (`canvas_show_passive`).
-The amounts on screen become progress through
+pointer's output; a rest in the open zone opens it (`canvas_show_passive`),
+or, once turned away, a rest over the column (`canvas_column_rect`). A
+canvas the drag opened goes back to peeking (`canvas_back_to_peek`) when
+the pointer is `left_of_open_column`. The amounts on screen become progress through
 `ColumnGeometry::progress_showing`, which counts from the output's edge
 rather than from the hidden position a bleed past it.
 

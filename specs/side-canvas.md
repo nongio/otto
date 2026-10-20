@@ -213,12 +213,15 @@ one swipe away and out of the way the rest of the time.
   it where the last tenth of the output starts: a drag heading there finds
   the canvas out. A peeking canvas takes no presses.
 - The pointer turning back left by 8% of the output's width while the
-  canvas follows it takes it in to a tenth again (eased over 0.3 s), and it
-  stops following. Heading right again nudges it out a little more, up to
-  15%, and going right as far as it went back makes it follow once more.
+  canvas follows it takes it in to a tenth again (eased over 0.3 s), and
+  there it stays, wherever the pointer goes, unless the pointer goes over
+  the peeking canvas.
 - The pointer resting in the last tenth of the output for 150 ms opens the
-  canvas, turned back or not, as an item's `show` does: passive, without
-  moving the keyboard. Once open it stays open for the rest of the drag.
+  canvas, as an item's `show` does: passive, without moving the keyboard.
+  Once turned back, the pointer has to rest over the canvas itself instead.
+- A canvas the drag opened goes back to peeking a tenth, in the same way,
+  when the pointer leaves it 8% of the output's width to the left of the
+  column; over the column, or just past its edge, it stays open.
 - Neither happens while the session is locked or during exposé, and only if
   an item exists; a client may add one on `drag_started` for this. The peek
   is tried again on every look at the pointer until one does, and a rest in
@@ -341,10 +344,9 @@ are read the next time the column is laid out.
   way. Following from the middle shows that going right brings it out, and
   has it all the way out by the time the pointer reaches the edge. Turning
   back is the user saying they do not want it, so it goes back to the first
-  step, as an undo, and stops following; it has to be a clear move, not a
-  hand correcting its aim. The nudge as the pointer heads right again says
-  the undo can itself be undone, and going on does it. Going all the way to
-  the edge is always a clear enough ask to open it. The short rest there
+  step, as an undo, open or not, and stays there; it has to be a clear move,
+  not a hand correcting its aim. The tenth that still shows is how to undo
+  the undo: going over it says the user wants it after all. The short rest
   keeps a drag on its way to an output further right from opening it.
 - **Drags are announced to everyone.** A client with nothing in the canvas
   may still want the drop (the stash starts one); it cannot add an item for
