@@ -8,6 +8,7 @@ use wayland_client::protocol::wl_surface::WlSurface;
 
 use crate::canvas::CanvasCard;
 use crate::panel::Panel;
+use crate::SurfaceScale;
 
 /// The card on screen, from the first add until it is sent or cancelled.
 #[derive(Debug)]
@@ -24,6 +25,23 @@ impl Card {
         match self {
             Self::Floating(panel) => panel.card(),
             Self::Canvas(card) => card.card(),
+        }
+    }
+
+    /// The card surface's scale, which its buffer is drawn at.
+    pub fn card_scale_mut(&mut self) -> &mut SurfaceScale {
+        match self {
+            Self::Floating(panel) => panel.card_scale_mut(),
+            Self::Canvas(card) => card.card_scale_mut(),
+        }
+    }
+
+    /// The card's preferred scale changed. Its buffer follows in the next
+    /// draw; what the floating card told the compositor in physical pixels
+    /// goes out again now.
+    pub fn rescaled(&mut self) {
+        if let Self::Floating(panel) = self {
+            panel.rescaled();
         }
     }
 

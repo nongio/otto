@@ -29,10 +29,11 @@ use otto_kit::skia::{
     surfaces, AlphaType, Color, ColorType, FontMgr, FontStyle, ImageInfo, Paint, PaintStyle, RRect,
     Rect,
 };
+use otto_kit::surfaces::Scaling;
 use otto_kit::theme::Theme;
 use otto_kit::typography::styles;
 
-use crate::State;
+use crate::{State, SurfaceScale, STAND_IN_SCALE_120};
 
 /// The invitation's height, in logical pixels.
 const HEIGHT: f32 = 72.0;
@@ -59,7 +60,8 @@ pub struct Invite {
     buffer: Option<Buffer>,
     /// The column's width in logical pixels; zero until configured.
     width: i32,
-    scale: i32,
+    /// The surface's scale, which its buffer is drawn at.
+    scale: SurfaceScale,
     /// A drag carrying files is over it.
     hovered: bool,
     /// Files were dropped on it; it stays until the card replaces it.
@@ -73,10 +75,10 @@ impl Invite {
         compositor: &WlCompositor,
         styles: Option<&OttoSurfaceStyleManagerV1>,
         qh: &QueueHandle<State>,
-        scale: i32,
+        scaling: &Scaling,
     ) -> Self {
         let surface = compositor.create_surface(qh, ());
-        surface.set_buffer_scale(scale);
+        let scale = SurfaceScale::new(&surface, scaling, STAND_IN_SCALE_120, qh);
         let item = manager.get_canvas_item(&surface, qh, ());
         item.set_keyboard_interactivity(KeyboardInteractivity::Never);
         item.set_order(crate::canvas::ORDER);
@@ -111,6 +113,14 @@ impl Invite {
         &self.surface
     }
 
+    /// The compositor's preferred scale for the surface arrived; a change is
+    /// drawn at once.
+    pub fn set_preferred_scale(&mut self, scale_120: u32, pool: &mut SlotPool) {
+        if self.scale.set_preferred(scale_120) {
+            self.draw(pool);
+        }
+    }
+
     /// Whether files were dropped on it.
     pub fn dropped(&self) -> bool {
         self.dropped
@@ -142,9 +152,9 @@ impl Invite {
         if self.width <= 0 {
             return;
         }
-        let scale = self.scale as f32;
-        let w = (self.width as f32 * scale) as i32;
-        let h = (HEIGHT * scale) as i32;
+        let frame = self.scale.frame((self.width, HEIGHT as i32));
+        let scale = frame.factor;
+        let (w, h) = frame.size;
         let reusable = self.buffer.as_mut().is_some_and(|buffer| {
             buffer.height() == h && buffer.stride() == w * 4 && buffer.canvas(pool).is_some()
         });
@@ -182,6 +192,7 @@ impl Invite {
         if let Some(style) = self.style {
             style.destroy();
         }
+        self.scale.destroy();
         self.item.destroy();
         self.surface.destroy();
     }
