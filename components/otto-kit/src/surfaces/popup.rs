@@ -153,15 +153,11 @@ impl PopupSurface {
             }
         }
 
-        // Use 2x buffer for HiDPI rendering
-        let buffer_scale = 2;
-        wl_surface.set_buffer_scale(buffer_scale);
-
         // CRITICAL: Commit immediately after grab to trigger configure event
         wl_surface.commit();
 
         // Create Skia surface using shared context
-        let mut core = BaseWaylandSurface::new(wl_surface, width, height, buffer_scale);
+        let mut core = BaseWaylandSurface::new(wl_surface, width, height);
 
         use crate::app_runner::AppContext;
         core.surface_style = AppContext::surface_style_manager()
@@ -289,12 +285,8 @@ impl PopupSurface {
             }
         }
 
-        // Use 2x buffer for HiDPI rendering
-        let buffer_scale = 2;
-        wl_surface.set_buffer_scale(buffer_scale);
-
         // Create Skia surface using shared context
-        let mut core = BaseWaylandSurface::new(wl_surface, width, height, buffer_scale);
+        let mut core = BaseWaylandSurface::new(wl_surface, width, height);
 
         use crate::app_runner::AppContext;
         core.surface_style = AppContext::surface_style_manager()
@@ -399,8 +391,7 @@ impl PopupSurface {
         if !self.base_surface.wl_surface().is_alive() {
             // Create new wl_surface
             let new_surface = compositor.create_surface(qh);
-            new_surface.set_buffer_scale(self.base_surface.buffer_scale);
-            self.base_surface.wl_surface = new_surface.clone();
+            self.base_surface.replace_wl_surface(new_surface.clone());
 
             // Recreate Skia surface using shared context
             self.base_surface.create_skia_surface()?;

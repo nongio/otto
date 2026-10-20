@@ -138,10 +138,6 @@ impl ToplevelSurface {
 
         let wl_surface = window.wl_surface().clone();
 
-        // Use 2x buffer scale for HiDPI rendering
-        let buffer_scale = 2;
-        wl_surface.set_buffer_scale(buffer_scale);
-
         // Create surface style immediately if surface_style_manager is available
         let surface_style =
             surface_style_manager.map(|manager| manager.get_surface_style(&wl_surface, qh, ()));
@@ -156,7 +152,7 @@ impl ToplevelSurface {
         // Commit to trigger initial configure
         wl_surface.commit();
 
-        let mut base_surface = BaseWaylandSurface::new(wl_surface, width, height, buffer_scale);
+        let mut base_surface = BaseWaylandSurface::new(wl_surface, width, height);
         base_surface.surface_style = surface_style;
 
         let toplevel = Self {

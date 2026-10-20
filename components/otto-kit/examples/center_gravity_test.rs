@@ -46,7 +46,7 @@ impl TestApp {
         let (w, h, label) = SIZES[self.current_size];
 
         surface.draw(|canvas| {
-            // Canvas is already 2x-scaled by SkiaSurface::draw()
+            // Canvas is already scaled to the surface's buffer by SkiaSurface::draw()
             // Logical buffer size = LAYER_W x LAYER_H = 480x120
             // We draw centered in this logical space
 

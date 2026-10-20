@@ -171,7 +171,8 @@ impl PlacedSurface {
         let content = Size::new(width as f32, height as f32);
         let extent = Rect::from_xywh(rect.left, rect.top, content.width, content.height);
         let window = self.window.unwrap_or(extent);
-        if crop::show(&mut self.surface, content, extent, window, scale(), (0, 0)).is_none() {
+        let scale = self.scale();
+        if crop::show(&mut self.surface, content, extent, window, scale, (0, 0)).is_none() {
             self.key = None;
             return false;
         }
@@ -242,7 +243,7 @@ impl PlacedSurface {
     pub fn output_frame(&self) -> Option<Rect> {
         let style = self.surface.layer()?;
         let (x, y, width, height) = AppContext::output_frame(&style.id())?;
-        output_rect((x, y, width, height), scale())
+        output_rect((x, y, width, height), self.scale())
     }
 }
 
@@ -254,8 +255,11 @@ impl Drop for PlacedSurface {
     }
 }
 
-fn scale() -> f32 {
-    AppContext::fractional_scale() as f32
+impl PlacedSurface {
+    /// The parent's scale: this surface is on the outputs its parent is on.
+    fn scale(&self) -> f32 {
+        AppContext::surface_scale(&self.surface.parent_surface().id()) as f32
+    }
 }
 
 /// An output frame in physical pixels, in points.

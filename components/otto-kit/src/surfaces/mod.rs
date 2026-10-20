@@ -7,6 +7,10 @@ pub mod session_lock;
 pub mod subsurface;
 pub mod toplevel;
 
+pub use crate::app_runner::surface_scale::{
+    BufferGeometry, BufferScale, Frame, ScaleSync, ScaledBuffer, ScaledSurface, Scaling, View,
+    ViewportState,
+};
 pub use canvas_item::{CanvasItemEvent, CanvasItemSurface, CanvasKeyboardInteractivity};
 pub use common::{apply_hairline_border, BaseWaylandSurface, BufferClaim, SurfaceError};
 pub use dockitem::DockItem;

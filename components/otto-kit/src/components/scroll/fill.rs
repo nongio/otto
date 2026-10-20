@@ -11,6 +11,7 @@
 
 use skia_safe::{Color, Rect, Size};
 use wayland_client::protocol::wl_surface::WlSurface;
+use wayland_client::Proxy;
 
 use crate::app_runner::AppContext;
 use crate::surfaces::{SubsurfaceSurface, SurfaceError};
@@ -151,7 +152,8 @@ impl Fill {
         if self.hidden {
             return false;
         }
-        let scale = AppContext::fractional_scale() as f32;
+        // The parent's: this surface is on the outputs its parent is on.
+        let scale = AppContext::surface_scale(&self.surface.parent_surface().id()) as f32;
         let size = self.buffer_size(rect);
         let paint = self.painted != Some(size) || !self.surface.is_mapped();
         if !paint && self.sent == Some((rect, self.window, scale)) {
