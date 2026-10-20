@@ -189,6 +189,10 @@ pub fn apply_live<B: Backend + 'static>(state: &mut Otto<B>, id: &str) -> Result
         // ones already running even where no portal is answering.
         "theme_scheme" => {
             crate::export_color_scheme();
+            // libadwaita reads it from GSettings, not the portal.
+            crate::gnome_interface::sync_color_scheme(Config::with(|c| {
+                matches!(c.theme_scheme, crate::theme::ThemeScheme::Dark)
+            }));
             crate::theme::publish_accent();
             state.workspaces.rerender_chrome();
             state.refresh_window_decorations();

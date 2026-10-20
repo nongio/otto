@@ -196,7 +196,10 @@ compositor's keys for that reason. GTK 3 on Wayland reads
 `org.gnome.desktop.interface` from GSettings (dconf) instead, so a session of
 Otto's own (the udev backend, never a nested one) writes the same five keys
 there at startup with `gsettings`, only where they differ
-(`src/gnome_interface.rs`). Qt 6 on Wayland renders text unhinted whatever
+(`src/gnome_interface.rs`). libadwaita outside a sandbox likewise takes the
+colour scheme from GSettings' `color-scheme`, not the portal, so the same
+module writes `prefer-dark` or `default` there at startup and whenever
+`theme_scheme` changes. Qt 6 on Wayland renders text unhinted whatever
 fontconfig, `kdeglobals` or the portal say, so there is nothing to publish
 to it.
 
