@@ -9,7 +9,7 @@ where the strongest available tool can check it:
 | Which Otto crate may depend on which (layers) | `architecture.toml` | `cargo run -p otto-arch` |
 | Which compositor module may reach into which | `architecture.toml` | `cargo run -p otto-arch` |
 | Code that has exactly one home (XDG lookups) | `architecture.toml` | `cargo run -p otto-arch` |
-| Which crates may link Smithay, the Wayland server, GStreamer, PipeWire; no OpenSSL; allowed licences and sources; security advisories | `deny.toml` | `cargo deny --workspace check bans licenses sources -D unused-wrapper`, `cargo deny --workspace check advisories` |
+| Which crates may link Smithay, the Wayland server, the Wayland client stack, Skia, GStreamer, PipeWire; no OpenSSL; allowed licences and sources; security advisories | `deny.toml` | `cargo deny --workspace check bans licenses sources -D unused-wrapper`, `cargo deny --workspace check advisories` |
 | APIs nobody calls directly | `clippy.toml` | `cargo clippy` |
 | What a module exposes | the code: `pub(crate)`, sealed traits, newtypes | the compiler |
 
@@ -310,6 +310,8 @@ the portal and agent units, the file browser's icons) need a
   `cargo run -p otto-arch -- --bless` to refresh the graph above, and commit
   both.
 - **New dependency on a banned crate**: add the crate to the ban's
-  `wrappers` in `deny.toml` and explain the design in the review.
+  `wrappers` in `deny.toml` and explain the design in the review. The
+  entries under `# debt` (apps still naming Skia or the Wayland client
+  crates themselves) only shrink: an app gets those from otto-kit.
 - **New rule**: add it, run the checker, and list each existing violation
   under `[[allow]]` with its reason.
