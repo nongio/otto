@@ -195,10 +195,16 @@ switch is a function `SceneElement::with_engine` takes), not read from
 A `[[source_rule]]` is a regular expression that may only match under its
 `allowed_in` paths; it is matched over `src/`, `crates/*/src` and
 `components/*/src`. `#[test]` functions and `#[cfg(test)]` items are skipped,
-since a test that saves and restores the environment is not a lookup. Each
-rule in `architecture.toml` names the one place the pattern lives and why:
-the XDG base directories are read only in `otto_foundations::xdg`, for
-instance, and only otto-kit opens an app's Wayland connection.
+since a test that saves and restores the environment is not a lookup. The
+rules today:
+
+- `xdg-dirs-through-foundations`: the XDG base directories are read only in
+  `otto_foundations::xdg`.
+- `wayland-connection-through-kit`: only otto-kit opens an app's Wayland
+  connection; otto-rdp, a bridge with no toolkit, opens its own.
+- `dbus-proxies-in-otto-dbus`: a zbus client proxy (`#[zbus::proxy]`) is
+  declared only in `otto-dbus`, one per interface, so every caller agrees on
+  the contract. Serving an interface (`#[interface]`) stays with the service.
 
 ## Known debt
 

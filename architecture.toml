@@ -200,6 +200,12 @@ pattern = 'Connection::connect_to_env'
 allowed_in = ["components/otto-kit/", "components/otto-rdp/"]
 reason = "An app's Wayland connection, registry and event loop are otto-kit's AppRunner. A second connection runs outside the toolkit's input, scale and frame pacing. otto-rdp is a headless bridge with no toolkit: it injects input on a connection of its own."
 
+[[source_rule]]
+name = "dbus-proxies-in-otto-dbus"
+pattern = '#\[(zbus::)?(dbus_)?proxy\b'
+allowed_in = ["components/otto-dbus/"]
+reason = "A zbus client proxy is an interface definition, and otto-dbus holds the interface definitions (re-exported as otto_kit::dbus). One proxy per interface keeps every caller on the same contract: a private copy drifts, a method or signature the server never had or no longer has."
+
 # ---------------------------------------------------------------------------
 # Known debt
 # ---------------------------------------------------------------------------

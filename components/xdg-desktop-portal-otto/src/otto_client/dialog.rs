@@ -8,11 +8,12 @@
 
 use std::collections::HashMap;
 
-use zbus::zvariant::{ObjectPath, OwnedValue, Value};
+use zbus::zvariant::{ObjectPath, Value};
 use zbus::Result;
 
 use crate::otto_client::OttoClient;
 pub use otto_dbus::dialog::{DialogProxy, WireChoice};
+use otto_dbus::portal_access::PortalAccessProxy;
 
 /// A choice group in the **standard** `org.freedesktop.impl.portal.Access`
 /// shape: `(group_id, group_label, [(option_id, option_label)], default)`.
@@ -34,32 +35,6 @@ pub const ACCESS_FALLBACK_BACKENDS: &[&str] = &[
     "org.freedesktop.impl.portal.desktop.gnome",
     "org.freedesktop.impl.portal.desktop.kde",
 ];
-
-/// D-Bus proxy for `org.freedesktop.impl.portal.Access`.
-///
-/// No `default_service`: the destination is chosen per call from
-/// [`ACCESS_FALLBACK_BACKENDS`].
-#[zbus::proxy(
-    interface = "org.freedesktop.impl.portal.Access",
-    default_path = "/org/freedesktop/portal/desktop"
-)]
-trait Access {
-    /// Present a dialog and block until the user answers.
-    ///
-    /// `options` carries `modal`, `grant_label`, `deny_label`, `icon` and
-    /// `choices`; `results` carries the selected `choices` back.
-    #[allow(clippy::too_many_arguments)]
-    async fn access_dialog(
-        &self,
-        handle: &ObjectPath<'_>,
-        app_id: &str,
-        parent_window: &str,
-        title: &str,
-        subtitle: &str,
-        body: &str,
-        options: HashMap<&str, Value<'_>>,
-    ) -> Result<(u32, HashMap<String, OwnedValue>)>;
-}
 
 impl OttoClient {
     /// Build a proxy to the dialog renderer.
@@ -90,8 +65,8 @@ impl OttoClient {
 
         let mut last_err = None;
         for service in ACCESS_FALLBACK_BACKENDS {
-            let proxy: AccessProxy<'_> =
-                match AccessProxy::builder(&self.connection).destination(*service) {
+            let proxy: PortalAccessProxy<'_> =
+                match PortalAccessProxy::builder(&self.connection).destination(*service) {
                     Ok(builder) => match builder.build().await {
                         Ok(p) => p,
                         Err(err) => {
