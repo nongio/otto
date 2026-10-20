@@ -87,7 +87,6 @@ flowchart BT
     otto_greeter[otto-greeter]
     otto_lock[otto-lock]
     otto_authorize[otto-authorize]
-    otto_input_overlay[otto-input-overlay]
     otto_dictate[otto-dictate]
     otto_msg[otto-msg]
     otto_agents[otto-agents]
@@ -123,7 +122,6 @@ flowchart BT
   otto_files --> otto_search
   otto_greeter --> otto_auth_ui
   otto_greeter --> otto_kit
-  otto_input_overlay --> otto_kit
   otto_islands --> otto_kit
   otto_kit --> otto_dbus
   otto_kit --> otto_foundations

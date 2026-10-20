@@ -32,7 +32,6 @@ depends on an app.
 | [otto-greeter](otto-greeter.md) | The login screen, backed by greetd |
 | [otto-lock](otto-lock.md) | The screen locker: holds the `ext-session-lock-v1` lock and checks PAM |
 | [otto-authorize](otto-authorize.md) | The polkit authentication agent: the password panel for `pkexec`, system services and protected settings |
-| [otto-input-overlay](otto-input-overlay.md) | On-screen touchpad and key-press overlays for screen recordings |
 | [otto-dictate](otto-dictate.md) | A proof of concept: dictation as a Wayland input method |
 | [otto-msg](otto-msg.md) | The command-line client of `org.otto.Shell1`: commands, the tree as JSON, events; bug reports with `otto-msg doctor` |
 | [otto-agents](otto-agents.md) | The agent service: runs ACP agents and serves them over the Agent Host Protocol |
