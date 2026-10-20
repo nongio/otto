@@ -169,11 +169,12 @@ body {
    display: none;
 }
 
-/* The top bar, drawn the way Otto's own bar is (components/otto-bar):
-   30px tall, 14px from each edge, 13px type, the two-dot mark, the name in
-   bold, then the menus; on the right the status items and the clock, all on
-   one frosted strip. Every fixed or sticky thing on the page sits below it,
-   so its height is a variable.                                             */
+/* The top bar, drawn the way Otto's own bar is (components/otto-bar): two
+   frosted panels held in the top corners, 30px tall with an 8px inner
+   corner, 13px type and 14px from each edge. The left one has the two-dot
+   mark, the name in bold and the menus; the right one the status items and
+   the clock. Between them the page shows through. Every fixed or sticky
+   thing on the page sits below the bar, so its height is a variable.       */
 
 :root {
    --bar-h: 30px;
@@ -212,9 +213,8 @@ body {
    z-index: 300;
    height: var(--bar-h);
    box-sizing: border-box;
-   padding: 0 14px;
    display: flex;
-   align-items: center;
+   align-items: flex-start;
    justify-content: space-between;
    gap: 12px;
    font-family: 'Inter', sans-serif;
@@ -222,11 +222,8 @@ body {
    font-weight: 400;
    line-height: 1;
    color: var(--bar-fg);
-   background: var(--bar-bg);
-   border-bottom: 1px solid var(--bar-edge);
-   -webkit-backdrop-filter: blur(30px) saturate(180%);
-   backdrop-filter: blur(30px) saturate(180%);
    white-space: nowrap;
+   pointer-events: none;
 }
 
 #topbar .bar-menus,
@@ -235,6 +232,24 @@ body {
    align-items: center;
    height: 100%;
    min-width: 0;
+   box-sizing: border-box;
+   pointer-events: auto;
+   background: var(--bar-bg);
+   -webkit-backdrop-filter: blur(30px) saturate(180%);
+   backdrop-filter: blur(30px) saturate(180%);
+   border-bottom: 1px solid var(--bar-edge);
+}
+
+#topbar .bar-menus {
+   padding: 0 10px 0 14px;
+   border-right: 1px solid var(--bar-edge);
+   border-bottom-right-radius: 8px;
+}
+
+#topbar .bar-status {
+   padding: 0 14px 0 10px;
+   border-left: 1px solid var(--bar-edge);
+   border-bottom-left-radius: 8px;
 }
 
 #topbar .bar-status {
