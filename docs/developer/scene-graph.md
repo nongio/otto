@@ -147,7 +147,7 @@ layer gets a draw closure that looks the texture up at paint time:
 layer.set_draw_content(move |canvas, w, h| {
     let tex = crate::textures_storage::get(&draw_wvs.id)?;
     // …place it per contents-gravity, convert buffer damage to layer coords…
-    canvas.draw_image(…);
+    canvas.draw_image_rect_with_sampling_options(…);
     damage   // the closure returns its damage rect
 });
 ```
@@ -314,13 +314,17 @@ positions, sizes, and the cache flags. Every container Otto creates
 sets a `key` (`output_<name>`, `workspaces_<name>`, `background_plane_<name>`,
 `window`, …) so the tree is readable rather than a wall of ids.
 
-Three runtime levers on the plane path, polled about once a second. They exist
+Four runtime levers on the plane path, polled about once a second. They exist
 only in `debug-hooks` builds (`--features dev` includes it):
 
 - `touch /tmp/otto-tint` washes the GPU-composite fallback red, so anything
   that did *not* get a hardware plane is immediately visible.
 - `touch /tmp/otto-no-scanout` disables window promotion, for A/B comparison.
 - `touch /tmp/otto-dump-planes` dumps every plane buffer to PNG once.
+- `touch /tmp/otto-dump-scanout` dumps each output's swapchain buffer, the
+  frame as scanned out, to `~/Pictures/Screenshots/otto_scanout_<output>.png`
+  once. It is the only way to see subpixel text as the output gets it:
+  screencopy re-renders without the output's pixel geometry.
 
 Related: [Rendering](rendering.md) · [Render Loop](render_loop.md) ·
 [DRM Planes](drm_plane.md) · [Exposé](expose.md)

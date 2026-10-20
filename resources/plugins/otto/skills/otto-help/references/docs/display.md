@@ -21,7 +21,10 @@ screen_scale = 1.0
 The global scale factor: `1.0` for a standard-DPI display, `2.0` for HiDPI,
 and fractional values in between (`1.25`, `1.5`) for the awkward middle ground.
 Otto implements `wp-fractional-scale-v1`, so well-behaved clients render crisply
-at fractional scales instead of being upscaled.
+at fractional scales instead of being upscaled. Otto's own apps draw every
+window, panel and menu at the scale of the display it is on, pixel for pixel,
+and follow a change of scale — or a move to a display with another one —
+without being restarted.
 
 To change the scale of a single monitor while the session runs, put the pointer
 on it and use the `ScaleUp` / `ScaleDown`
@@ -59,8 +62,24 @@ position = { x = 2256, y = 0 }
 | `resolution` | Mode to set, in pixels |
 | `refresh_hz` | Refresh rate; combined with `resolution` to pick a mode |
 | `position` | Where the monitor sits in the desktop layout, in logical points |
+| `subpixel` | The panel's subpixel order: `"rgb"`, `"bgr"`, `"vrgb"`, `"vbgr"` or `"none"`. Turns on subpixel text on that monitor |
 
 Every field is optional. Omit `resolution` and Otto picks the preferred mode.
+
+Subpixel text uses a panel's separate red, green and blue stripes to draw
+sharper glyphs. Otto uses it only on a monitor whose stripe order it knows,
+and most monitors do not report theirs. Without `subpixel`, Otto uses what
+the monitor reports, else the `rgba` setting in your fontconfig
+configuration, the one GTK and Qt applications follow, and draws grayscale
+text if neither says, or if `rgba` is `none`. A monitor's own `subpixel` wins
+over both, `none` included. Hinting and
+antialiasing follow fontconfig too (`hintstyle`, `antialias`, `autohint`). Most LCD panels are `"rgb"`; if letters show coloured edges, try
+`"bgr"`. OLED panels, and anything rotated, are best left at `"none"`. The
+setting is read when the monitor is connected, so it takes effect on the next
+login or replug.
+
+You can also set it in the Settings app: **Displays**, select the monitor, then
+**Subpixel text**. Off writes `"none"`, and Automatic removes the key.
 
 The key is the connector name. `"winit"` is a valid key for the windowed
 development backend:
@@ -203,5 +222,4 @@ Colour temperature is handled by external tools over
 - Display mirroring
 - Vertical or grid monitor arrangement
 - Rotation and scale in display profiles
-- A graphical display settings panel
 - Per-monitor wallpaper

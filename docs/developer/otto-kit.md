@@ -224,7 +224,12 @@ Solar name with its glyph in black ink, which callers tint with `SrcIn` as
 they do a theme's symbolic art. `folder` is left to the theme there, since a
 listing asks for it as a file type; `cached_glyph_chain` is the variant for a
 caller that draws every icon as a glyph (Files' sidebar and path bar).
-`exact_icon_in_theme` and `find_icon` stay theme-only.
+`exact_icon_in_theme` and `find_icon` stay theme-only. Whatever the lookup,
+the image is put on a canvas with `icons::draw_icon(canvas, image, dst,
+paint)`, the one place that samples an icon: a 1:1 draw is snapped to whole
+device pixels, anything else sampled linear with mipmaps, so a glyph at a
+fractional scale never lands on half a pixel. The `image-sampling-explicit`
+architecture rule keeps `draw_image` out of everything else.
 
 ## Otto's own protocols
 

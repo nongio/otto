@@ -196,7 +196,7 @@ that looks the client's texture up by id at paint time:
 layer.set_draw_content(move |canvas, w, h| {
     let tex = crate::textures_storage::get(&draw_wvs.id)?;
     // …place per contents-gravity, convert buffer damage to layer coords…
-    canvas.draw_image(…);
+    canvas.draw_image_rect_with_sampling_options(…);
     damage
 });
 ```

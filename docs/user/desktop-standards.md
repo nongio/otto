@@ -78,7 +78,7 @@ application uses, so the font you name in Otto's settings is matched against
 the fonts you have installed, aliases like `sans-serif` work, and rules in
 `~/.config/fontconfig/fonts.conf` are respected when choosing the face.
 
-These limits apply to **Otto's own text only**: the dock, the top bar, window
+All of this is about **Otto's own text**: the dock, the top bar, window
 titlebars, and Otto's applications. Text inside the programs you run is drawn
 by those programs, with their own font stack, before Otto ever sees it: Otto
 composites a finished image and cannot alter how the glyphs in it were

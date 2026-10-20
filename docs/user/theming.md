@@ -313,9 +313,13 @@ locales = ["en_US", "en"]
 directory name exactly. Check with `ls /usr/share/icons/`. Some themes need a
 separate package for their cursor variant.
 
-**Applications ignore light/dark.** They read it from the XDG Settings portal,
-which needs `xdg-desktop-portal` running with Otto selected for
-`org.freedesktop.impl.portal.Settings` in your `portals.conf`. Verify with:
+**Applications ignore light/dark.** GTK 4 apps, Firefox and Chromium read it
+from the XDG Settings portal, which needs `xdg-desktop-portal` running with
+Otto selected for `org.freedesktop.impl.portal.Settings` in your
+`portals.conf`. GTK 3, libadwaita and Qt apps read GNOME's settings store
+instead, which Otto's own session writes; check it with
+`gsettings get org.gnome.desktop.interface color-scheme`, which should say
+`'prefer-dark'` or `'default'`. For the portal, verify with:
 
 ```sh
 gdbus call --session --dest org.freedesktop.portal.Desktop \

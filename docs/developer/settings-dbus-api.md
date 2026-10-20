@@ -158,8 +158,8 @@ displays, so a client turning it on for one must write it off for the others.
 
 `SetOutputSubpixel` writes `displays.named.<connector>.subpixel`: `rgb`,
 `bgr`, `vrgb`, `vbgr` or `none`, and an empty string removes the key, putting
-the display back on automatic (the connector's report, then fontconfig's
-`rgba`, then grayscale). Anything else is refused with `OutOfRange`. It applies
+the display back on automatic (grayscale when fontconfig's `rgba` is `none`;
+else the connector's report, then fontconfig's `rgba`, then grayscale). Anything else is refused with `OutOfRange`. It applies
 when the output is next created, at the next start or replug, because the
 layout is fixed at output creation and clients learn it only then; the running
 configuration is updated too, so a replug this session picks it up.

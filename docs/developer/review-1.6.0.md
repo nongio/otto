@@ -23,7 +23,7 @@ god-objects, and kit widgets the apps never adopted.
   or use `chrono` (already in the workspace). **S** Fixed in #258.
 - [x] **Same hex colour, different colours** *(verified)*. otto-bar reads
   8 digits as `#AARRGGBB` (`components/otto-bar/src/config.rs:180`),
-  otto-input-overlay as `#RRGGBBAA` (`components/otto-input-overlay/src/main.rs:252`),
+  otto-input-overlay (since dropped) as `#RRGGBBAA`,
   otto-auth-ui likewise. Six parsers in total, see §3. **S**
   - *Done: #261 added one `otto_kit::color::parse_hex` (alpha last); otto-bar switched to it too (breaking for 8-digit bar colours) and `parse_hex_argb` is gone.*
 - [x] **otto-bar logs nothing by default** *(verified)*. Fallback filter is

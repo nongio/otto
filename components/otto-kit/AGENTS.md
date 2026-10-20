@@ -8,7 +8,7 @@ How it works: [otto-kit](../../docs/developer/otto-kit.md).
 
 ## Dependencies
 - **Internal:** `otto-foundations` (re-exported as `otto_kit::xdg`, `otto_kit::uri`, `otto_kit::matching`, `otto_kit::desktop_file`, `otto_kit::user`, `otto_kit::logging`) and `otto-dbus` (every D-Bus client proxy, re-exported as `otto_kit::dbus`; `portal_settings.rs` uses its Settings portal proxy).
-- **External:** `smithay-client-toolkit` and `wayland-client`; `skia-safe` (gl, textlayout, svg, skottie), re-exported as `otto_kit::skia`; `laye-rs` for the retained scene graph; EGL, loaded at run time. From the compositor it needs `zwlr_layer_shell_v1`, `ext_session_lock_v1`, fractional scale, `zwp_text_input_v3`, pointer gestures and Otto's own protocols. It follows the `org.freedesktop.portal.Settings` portal for colour scheme, accent and locale, puts up file dialogs through the portal's `FileChooser`, and serves accessibility through AccessKit over AT-SPI. The `dictation` feature adds PipeWire capture and an HTTP speech-to-text client.
+- **External:** `smithay-client-toolkit` and `wayland-client`; `skia-safe` (gl, textlayout, svg, skottie), re-exported as `otto_kit::skia`; `laye-rs` for the retained scene graph; EGL, loaded at run time; `libfontconfig`, queried over FFI in `text_rendering.rs` for how each family is rasterised. From the compositor it needs `zwlr_layer_shell_v1`, `ext_session_lock_v1`, fractional scale, `zwp_text_input_v3`, pointer gestures and Otto's own protocols. It follows the `org.freedesktop.portal.Settings` portal for colour scheme, accent and locale, puts up file dialogs through the portal's `FileChooser`, and serves accessibility through AccessKit over AT-SPI. The `dictation` feature adds PipeWire capture and an HTTP speech-to-text client.
 
 ## Develop
 - `cargo build -p otto-kit`; `cargo run -p otto-kit --example simple_app`. `examples/` (one per component or surface pattern) is the practical reference.
@@ -20,7 +20,7 @@ How it works: [otto-kit](../../docs/developer/otto-kit.md).
 ## Where things are
 - The runtime: `src/app_runner/` (the `App` trait, `AppRunner`, `AppContext`) and `src/surfaces/` (one type per Wayland role).
 - Drawing: `src/rendering/` (EGL, Skia, the lay-rs renderer) and `src/components/` (the widget set).
-- The design system: `theme.rs`, `typography.rs`, `icons.rs`, with the portal watchers sharing `portal_settings.rs`.
+- The design system: `theme.rs`, `typography.rs`, `icons.rs` and `text_rendering.rs` (fontconfig's rendering preferences, applied by the other two), with the portal watchers sharing `portal_settings.rs`.
 - `portal_file_chooser.rs` is the one `org.freedesktop.portal.FileChooser` client: apps build a `Request` and `spawn` it rather than calling the portal themselves.
 - The desktop wallpaper's layout, frame rendering and drawing are `src/wallpaper/`, shared by the compositor and the settings app's preview; `src/utils/resample.rs` is the high-quality CPU resampler it renders with.
 - Otto's own protocols are generated in `src/protocols/`; desktop entries, file types, previews, clipboard, drag and drop, sound and Lottie have their own modules.
