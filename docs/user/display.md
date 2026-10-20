@@ -220,5 +220,4 @@ Colour temperature is handled by external tools over
 - Display mirroring
 - Vertical or grid monitor arrangement
 - Rotation and scale in display profiles
-- A graphical display settings panel
 - Per-monitor wallpaper

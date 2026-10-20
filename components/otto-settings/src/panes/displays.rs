@@ -1,32 +1,19 @@
 //! The displays pane.
 //!
-//! Rows carrying an `id` are bound to `org.otto.Settings`; rows without one
-//! are not wired to the compositor yet.
+//! The rows here are per-output settings, which the compositor's config keeps
+//! under `displays.named.<connector>` (`DisplaysConfig`/`DisplayProfile` in
+//! `src/config/mod.rs`), keyed by connector name: they follow the port, not
+//! the panel, until a display-identity scheme lands
+//! (`docs/developer/settings-dbus-api.md`, "Open" section). They are not
+//! schema settings, so they carry no `id`: the session-local arrangement in
+//! [`crate::model`] is edited, and `save` writes each display's mode,
+//! position and primary flag with `SetOutputProfile`, applied at the next
+//! login. Virtual outputs, which the compositor reads from
+//! `[[virtual_outputs]]` at startup, are not saved.
 //!
-//! Almost everything here is in the second category, and deliberately so.
-//! Resolution, refresh rate, "use as primary", whether a screen is on, and
-//! where its top-left corner sits are all per-output settings — in the
-//! compositor's config they live under `displays.named.<connector>`
-//! (`DisplaysConfig`/`DisplayProfile` in `src/config/mod.rs`), keyed by
-//! connector name. The wire contract
-//! (`docs/developer/settings-dbus-api.md`, "Open" section) explicitly leaves
-//! that identity unresolved: settings are meant to follow the panel, not the
-//! port, and connector names do not survive a display moving to a different
-//! port or a docking-station reshuffle. Inventing an identifier now (e.g.
-//! `displays.named.HDMI-A-1.resolution`) would bake a wire contract we would
-//! have to support forever even after a real display-identity scheme lands,
-//! so those rows stay unbound. The same goes for the virtual outputs, which
-//! the compositor reads from `[[virtual_outputs]]` at startup
-//! (`VirtualOutputConfig` in `src/config/mod.rs`) and serves no setting for
-//! at all.
-//!
-//! What the unbound rows do edit is the session-local arrangement in
-//! [`crate::model`] — see the doc comment there for why that exists rather
-//! than nothing.
-//!
-//! Subpixel text is the exception that does reach the compositor: it is
-//! written with `SetOutputSubpixel` to `displays.named.<connector>.subpixel`,
-//! and read back once at startup with `GetOutputSubpixels`. It applies at the
+//! Subpixel text is written on its own, with `SetOutputSubpixel` to
+//! `displays.named.<connector>.subpixel`, and read back once at startup with
+//! `GetOutputSubpixels`. It applies at the
 //! next login (or when the display is next plugged in): the layout is fixed
 //! when an output is created, and clients only learn it then.
 //!
