@@ -7,6 +7,7 @@ pub mod context;
 mod handlers;
 mod key_repeat;
 mod output_scale;
+mod wheel_steps;
 
 pub use context::{AppContext, CursorImage};
 pub use smithay_client_toolkit::seat::keyboard::Modifiers;
@@ -682,6 +683,7 @@ impl<A: App + 'static> AppRunnerWithType<A> {
             hold_gestures: Vec::new(),
             pinch_gestures: Vec::new(),
             key_repeat: key_repeat::KeyRepeat::default(),
+            wheel_steps: wheel_steps::WheelSteps::default(),
             canvas_drag_mime_types: Vec::new(),
             exit: false,
         };
@@ -903,6 +905,8 @@ pub struct AppData<A: App + 'static> {
     pinch_gestures: Vec<ZwpPointerGesturePinchV1>,
     /// The key being held, repeated at the compositor's rate.
     key_repeat: key_repeat::KeyRepeat,
+    /// Wheel fractions short of a step (`wl_pointer` v8+ sends no steps).
+    wheel_steps: wheel_steps::WheelSteps,
     /// The mime types of the drag the side canvas is announcing, gathered
     /// until its `drag_started`.
     canvas_drag_mime_types: Vec<String>,
@@ -1361,6 +1365,20 @@ impl<A: App + 'static> KeyboardHandler for AppData<A> {
             .on_key_event(&ctx, &event, wl_keyboard::KeyState::Pressed, serial);
     }
 
+    /// `wl_keyboard` v10 lets the compositor send repeats itself. Key repeat
+    /// here is ours ([`Self::press_key`] arms it from the compositor's repeat
+    /// info), and Otto advertises `wl_seat` v9, so a compositor repeat is
+    /// ignored rather than delivered twice.
+    fn repeat_key(
+        &mut self,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+        _keyboard: &wl_keyboard::WlKeyboard,
+        _serial: u32,
+        _event: smithay_client_toolkit::seat::keyboard::KeyEvent,
+    ) {
+    }
+
     fn release_key(
         &mut self,
         _conn: &Connection,
@@ -1398,6 +1416,7 @@ impl<A: App + 'static> KeyboardHandler for AppData<A> {
         _keyboard: &wl_keyboard::WlKeyboard,
         _serial: u32,
         modifiers: Modifiers,
+        _raw_modifiers: smithay_client_toolkit::seat::keyboard::RawModifiers,
         _layout: u32,
     ) {
         AppContext::set_current_modifiers(modifiers);
@@ -1415,6 +1434,9 @@ impl<A: App + 'static> PointerHandler for AppData<A> {
         events: &[PointerEvent],
     ) {
         use smithay_client_toolkit::seat::pointer::PointerEventKind;
+
+        let filled = self.wheel_steps.fill(events);
+        let events = filled.as_deref().unwrap_or(events);
 
         // Track enter serial and lazily create cursor shape device.
         for event in events {
@@ -1588,17 +1610,10 @@ impl<A: App + 'static> Dispatch<ExtSessionLockSurfaceV1, ()> for AppData<A> {
 
 wayland_client::delegate_noop!(@<A: App + 'static> AppData<A>: ignore ExtSessionLockManagerV1);
 
-smithay_client_toolkit::delegate_compositor!(@<A: App> AppData<A>);
-smithay_client_toolkit::delegate_output!(@<A: App + 'static> AppData<A>);
-smithay_client_toolkit::delegate_shm!(@<A: App + 'static> AppData<A>);
-smithay_client_toolkit::delegate_seat!(@<A: App + 'static> AppData<A>);
-smithay_client_toolkit::delegate_keyboard!(@<A: App + 'static> AppData<A>);
-smithay_client_toolkit::delegate_pointer!(@<A: App + 'static> AppData<A>);
-smithay_client_toolkit::delegate_xdg_shell!(@<A: App + 'static> AppData<A>);
-smithay_client_toolkit::delegate_xdg_window!(@<A: App + 'static> AppData<A>);
-smithay_client_toolkit::delegate_xdg_popup!(@<A: App + 'static> AppData<A>);
+// sctk's handler traits (compositor, output, shm, seat, keyboard, pointer,
+// xdg shell, data device) all dispatch through this one blanket impl.
+smithay_client_toolkit::delegate_dispatch2!(@<A: App + 'static> AppData<A>);
 smithay_client_toolkit::delegate_registry!(@<A: App + 'static> AppData<A>);
-smithay_client_toolkit::delegate_data_device!(@<A: App + 'static> AppData<A>);
 
 // -- Clipboard and drag and drop -------------------------------------------
 //

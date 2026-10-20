@@ -110,7 +110,7 @@ impl SubsurfaceSurface {
         qh: &QueueHandle<D>,
     ) -> Result<Self, SurfaceError>
     where
-        D: Dispatch<wl_surface::WlSurface, SurfaceData>
+        D: Dispatch<wl_surface::WlSurface, SurfaceData<()>>
             + Dispatch<wl_subsurface::WlSubsurface, ()>
             + Dispatch<otto_surface_style_v1::OttoSurfaceStyleV1, ()>
             + Dispatch<otto_surface_style_manager_v1::OttoSurfaceStyleManagerV1, ()>
