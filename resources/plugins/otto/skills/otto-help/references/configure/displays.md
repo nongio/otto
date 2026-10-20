@@ -47,6 +47,16 @@ that part unset, so a monitor can be moved without naming a mode. Primary is a
 choice *among* displays — turning it on for one means turning it off for the
 others.
 
+```sh
+# subpixel text for one connector: rgb, bgr, vrgb, vbgr, none, or "" for automatic
+busctl --user call org.otto.Settings /org/otto/Settings org.otto.Settings \
+    SetOutputSubpixel ss eDP-1 bgr
+busctl --user call org.otto.Settings /org/otto/Settings org.otto.Settings GetOutputSubpixels
+```
+
+`SetOutputSubpixel` writes `[displays.named.<connector>] subpixel` and applies
+at the next login or replug: the layout is fixed when the output is created.
+
 The connector is the handle, which is why display settings are not final: a
 monitor moved to another port is, as far as the config knows, another monitor.
 

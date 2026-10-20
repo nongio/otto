@@ -64,6 +64,11 @@ session and are gone at restart. To make them stick, write them under
 Scale is the exception: it is bound, but it is the global `screen_scale`, not a
 per-display value.
 
+**Subpixel text** is per display and is saved: it writes the monitor's
+`subpixel` key under `[displays.named.<connector>]`. Automatic leaves it to the
+monitor and fontconfig; if letters show coloured edges, try BGR. It applies at
+the next login. See [Display configuration](display.md#display-profiles).
+
 ## Renderer
 
 The **Renderer** row in General picks the GPU API Otto draws with: Vulkan, the

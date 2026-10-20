@@ -362,6 +362,91 @@ impl SettingsInterface {
         Ok(settings::Status::PendingRestart.wire_name().to_string())
     }
 
+    /// The subpixel layout each display profile names, by connector.
+    ///
+    /// Only the `displays.named.<connector>` profiles that set `subpixel`
+    /// appear: a connector that is absent is on automatic (the connector's own
+    /// report, then fontconfig's `rgba`, then grayscale). The values are the
+    /// config's spelling: `rgb`, `bgr`, `vrgb`, `vbgr` or `none`.
+    async fn get_output_subpixels(&self) -> HashMap<String, String> {
+        Config::with(|config| {
+            config
+                .displays
+                .named
+                .iter()
+                .filter_map(|(connector, profile)| {
+                    Some((
+                        connector.clone(),
+                        profile.subpixel?.config_name().to_string(),
+                    ))
+                })
+                .collect()
+        })
+    }
+
+    /// Persist one display's subpixel layout, keyed by its connector.
+    ///
+    /// `subpixel` is one of `rgb`, `bgr`, `vrgb`, `vbgr` or `none`; an empty
+    /// string removes the key and puts the display back on automatic. Writes
+    /// `displays.named.<connector>.subpixel`, beside what
+    /// [`set_output_profile`](Self::set_output_profile) writes.
+    ///
+    /// **Takes effect at the next start**, or the next time the display is
+    /// connected: the layout is fixed when an output is created, and Wayland
+    /// clients only learn it then. The running configuration is updated too,
+    /// so a monitor plugged in later this session comes up with it.
+    async fn set_output_subpixel(
+        &self,
+        connector: &str,
+        subpixel: &str,
+    ) -> Result<String, SettingsFault> {
+        if connector.trim().is_empty() {
+            return Err(SettingsFault::OutOfRange(
+                "a display profile needs a connector".to_string(),
+            ));
+        }
+        let layout = match subpixel {
+            "" => None,
+            name => Some(
+                crate::config::DisplaySubpixel::from_config_name(name).ok_or_else(|| {
+                    SettingsFault::OutOfRange(format!(
+                        "`{name}` is not a subpixel layout: rgb, bgr, vrgb, vbgr or none"
+                    ))
+                })?,
+            ),
+        };
+
+        let key = format!("displays.named.{connector}.subpixel");
+        let persisted = match layout {
+            Some(layout) => crate::config::persist_key(
+                &key,
+                &toml::Value::String(layout.config_name().to_string()),
+            ),
+            None => crate::config::forget_key(&key),
+        };
+        persisted
+            .map_err(|reason| SettingsFault::ApplyFailed(format!("could not persist: {reason}")))?;
+
+        Config::update(|config| match layout {
+            Some(layout) => {
+                config
+                    .displays
+                    .named
+                    .entry(connector.to_string())
+                    .or_default()
+                    .subpixel = Some(layout);
+            }
+            None => {
+                if let Some(profile) = config.displays.named.get_mut(connector) {
+                    profile.subpixel = None;
+                }
+            }
+        });
+
+        info!("subpixel layout for {connector} saved; it applies at the next start");
+        Ok(settings::Status::PendingRestart.wire_name().to_string())
+    }
+
     /// Create a virtual output on the running compositor.
     ///
     /// Takes effect immediately — a virtual screen you have to restart for is

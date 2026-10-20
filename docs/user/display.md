@@ -76,6 +76,9 @@ antialiasing follow fontconfig too (`hintstyle`, `antialias`, `autohint`). Most 
 setting is read when the monitor is connected, so it takes effect on the next
 login or replug.
 
+You can also set it in the Settings app: **Displays**, select the monitor, then
+**Subpixel text**. Off writes `"none"`, and Automatic removes the key.
+
 The key is the connector name. `"winit"` is a valid key for the windowed
 development backend:
 

@@ -2331,6 +2331,26 @@ pub enum DisplaySubpixel {
     None,
 }
 
+impl DisplaySubpixel {
+    /// The value as the config file spells it, the same as serde's.
+    pub fn config_name(self) -> &'static str {
+        match self {
+            Self::Rgb => "rgb",
+            Self::Bgr => "bgr",
+            Self::Vrgb => "vrgb",
+            Self::Vbgr => "vbgr",
+            Self::None => "none",
+        }
+    }
+
+    /// The layout `name` spells in the config file, if it spells one.
+    pub fn from_config_name(name: &str) -> Option<Self> {
+        [Self::Rgb, Self::Bgr, Self::Vrgb, Self::Vbgr, Self::None]
+            .into_iter()
+            .find(|layout| layout.config_name() == name)
+    }
+}
+
 impl From<DisplaySubpixel> for smithay::output::Subpixel {
     fn from(subpixel: DisplaySubpixel) -> Self {
         match subpixel {
@@ -2491,6 +2511,25 @@ mod tests {
         let config: Config =
             toml::from_str("[desk]\nenabled = true\n").expect("desk table deserializes");
         assert!(config.desk.enabled);
+    }
+
+    /// What `SetOutputSubpixel` writes is what a display profile reads back.
+    #[test]
+    fn subpixel_names_are_the_config_spelling() {
+        for layout in [
+            DisplaySubpixel::Rgb,
+            DisplaySubpixel::Bgr,
+            DisplaySubpixel::Vrgb,
+            DisplaySubpixel::Vbgr,
+            DisplaySubpixel::None,
+        ] {
+            let name = layout.config_name();
+            let profile: DisplayProfile =
+                toml::from_str(&format!("subpixel = \"{name}\"\n")).expect("profile parses");
+            assert_eq!(profile.subpixel, Some(layout));
+            assert_eq!(DisplaySubpixel::from_config_name(name), Some(layout));
+        }
+        assert_eq!(DisplaySubpixel::from_config_name("RGB"), None);
     }
 
     #[test]

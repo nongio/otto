@@ -610,6 +610,57 @@ pub fn set_output_profile(
     }
 }
 
+/// The subpixel layout each display's profile sets, by connector, as the
+/// compositor reported it at startup and as this app has since written it. A
+/// connector that is absent is on automatic.
+static SUBPIXELS: OnceLock<RwLock<HashMap<String, String>>> = OnceLock::new();
+
+fn subpixels() -> &'static RwLock<HashMap<String, String>> {
+    SUBPIXELS.get_or_init(Default::default)
+}
+
+/// Fetch every display's subpixel layout, once, before the first frame — the
+/// row that shows it is built on the draw path, which must not block.
+pub fn resolve_output_subpixels() {
+    let fetched = CONNECTION
+        .get()
+        .and_then(|c| c.as_ref())
+        .and_then(|connection| connection.get_output_subpixels().ok());
+    if let Some(fetched) = fetched {
+        *subpixels().write().unwrap() = fetched;
+    }
+}
+
+/// The subpixel layout `connector`'s profile sets, in the config's spelling
+/// (`rgb`, `bgr`, `vrgb`, `vbgr` or `none`), or `None` for automatic.
+pub fn output_subpixel(connector: &str) -> Option<String> {
+    subpixels().read().unwrap().get(connector).cloned()
+}
+
+/// Persist `connector`'s subpixel layout; `None` puts it back on automatic.
+/// Applies at the next start — see `SetOutputSubpixel` in the compositor's
+/// settings service.
+pub fn set_output_subpixel(connector: &str, subpixel: Option<&str>) -> SetOutcome {
+    let Some(Some(connection)) = CONNECTION.get() else {
+        return SetOutcome::Failed("not connected to the compositor".into());
+    };
+    match connection.set_output_subpixel(connector, subpixel.unwrap_or("")) {
+        Ok(status) => {
+            let mut held = subpixels().write().unwrap();
+            match subpixel {
+                Some(layout) => held.insert(connector.to_string(), layout.to_string()),
+                None => held.remove(connector),
+            };
+            if status == "pending-restart" {
+                SetOutcome::PendingRestart
+            } else {
+                SetOutcome::Applied
+            }
+        }
+        Err(err) => SetOutcome::Failed(err.to_string()),
+    }
+}
+
 /// Create a virtual display on the running compositor, and persist it so it
 /// comes back next session — see `AddVirtualOutput` in the compositor's
 /// settings service.

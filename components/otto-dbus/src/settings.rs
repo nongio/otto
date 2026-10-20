@@ -77,6 +77,14 @@ pub trait Settings {
         primary: bool,
     ) -> zbus::Result<String>;
 
+    /// The subpixel layout each display profile sets, by connector. A
+    /// connector that is absent is on automatic.
+    fn get_output_subpixels(&self) -> zbus::Result<HashMap<String, String>>;
+
+    /// Store `connector`'s subpixel layout (`rgb`, `bgr`, `vrgb`, `vbgr` or
+    /// `none`); empty removes it. Answers `pending-restart`.
+    fn set_output_subpixel(&self, connector: &str, subpixel: &str) -> zbus::Result<String>;
+
     /// Create a virtual output; answers its PipeWire node id.
     fn add_virtual_output(
         &self,

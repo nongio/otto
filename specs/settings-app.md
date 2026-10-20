@@ -963,6 +963,20 @@ the next start, which the app reports. A modeset made from under a running
 session cannot be undone if the display does not come back, so the confirm
 timeout above has to exist before the live path does.*
 
+A physical display also has a **Subpixel text** pop-up under its refresh rate:
+Automatic, RGB, BGR, Vertical RGB, Vertical BGR and Off. It writes the
+display profile's `subpixel` key (`displays.named.<connector>.subpixel`) with
+`SetOutputSubpixel`: `rgb`, `bgr`, `vrgb`, `vbgr`, or `none` for Off, and
+Automatic removes the key, leaving the connector's own report, then
+fontconfig's `rgba`, then grayscale. The pop-up shows what the profile sets,
+read once at startup with `GetOutputSubpixels`; a value it has no entry for is
+shown as written. Its hint says it sharpens text on LCD panels, to try BGR if
+letters show coloured edges, and that it applies at the next login. That is
+not a placeholder for a live path: an output's subpixel layout is fixed when
+the output is created, and Wayland clients learn it only then. The compositor
+updates its running configuration as well, so a monitor plugged in later in
+the session comes up with the new layout. A virtual display has no such row.
+
 The General pane offers the renderer
 (`rendering.renderer`), in a group of its own above Configuration: Vulkan (the default) or OpenGL, the GPU API a login session draws
 with. It is a restart setting, and its helper text says it applies to the

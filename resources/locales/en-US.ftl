@@ -11,6 +11,7 @@
 settings-accent-colour = Accent color
 settings-colour-scheme = Color scheme
 settings-background-colour = Background color
+settings-display-subpixel-detail = Sharpens text on LCD panels. If letters show colored edges, try BGR. Applies at the next login
 greeter-status-no-match = Fingerprint not recognized
 lock-status-no-match = Fingerprint not recognized
 launcher-ask-cancelled = Canceled

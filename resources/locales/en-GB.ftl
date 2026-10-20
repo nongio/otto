@@ -188,6 +188,13 @@ settings-display-refresh-detail = Hertz — how often the stream is fed a frame
 settings-display-resolution = Resolution
 settings-display-scale = Display scale
 settings-display-scale-detail = Applies at the next login. The desktop does not reflow live
+# Per display: whether text is antialiased along the panel's red, green and blue
+# stripes. BGR is the fix most often needed, so the hint names it.
+settings-display-subpixel = Subpixel text
+settings-display-subpixel-detail = Sharpens text on LCD panels. If letters show coloured edges, try BGR. Applies at the next login
+settings-display-subpixel-vrgb = Vertical RGB
+settings-display-subpixel-vbgr = Vertical BGR
+settings-display-subpixel-off = Off
 settings-renderer = Renderer
 settings-renderer-detail = Applies to the login session. Windowed sessions always use OpenGL. Takes effect after you log in again.
 settings-renderer-no-vulkan-detail = Vulkan isn't available here, so Otto draws with OpenGL.

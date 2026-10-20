@@ -95,6 +95,9 @@ ListOutputs()              → aa{sv}    every output, physical and virtual
 SetOutputProfile(connector: s, width: u, height: u,
                  refresh_hz: d, x: i, y: i,
                  primary: b)           → s   status, always pending-restart
+GetOutputSubpixels()       → a{ss}     subpixel layout each display profile sets
+SetOutputSubpixel(connector: s,
+                  subpixel: s)         → s   status, always pending-restart
 AddVirtualOutput(name: s, width: u, height: u,
                  refresh_hz: d, interactive: b,
                  persist: b)           → u   PipeWire node id
@@ -152,6 +155,16 @@ display does not come back, and that is worse than a restart. A zero width or
 height leaves the resolution unset and a zero rate leaves the refresh unset, so
 moving a display need not name a mode for it. Primary is a choice *among*
 displays, so a client turning it on for one must write it off for the others.
+
+`SetOutputSubpixel` writes `displays.named.<connector>.subpixel`: `rgb`,
+`bgr`, `vrgb`, `vbgr` or `none`, and an empty string removes the key, putting
+the display back on automatic (the connector's report, then fontconfig's
+`rgba`, then grayscale). Anything else is refused with `OutOfRange`. It applies
+when the output is next created, at the next start or replug, because the
+layout is fixed at output creation and clients learn it only then; the running
+configuration is updated too, so a replug this session picks it up.
+`GetOutputSubpixels` answers connector to layout for every named profile that
+sets one, so an absent connector is on automatic.
 
 `AddVirtualOutput` creates a PipeWire-backed output on the running compositor
 and answers with the node id to capture from. It takes effect immediately: a
