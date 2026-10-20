@@ -422,6 +422,15 @@ impl<'a> AppContext<'a> {
         })
     }
 
+    /// What the compositor has said about `output`, once its first `done`
+    /// has landed.
+    pub fn output_info(output: &wl_output::WlOutput) -> Option<OutputInfo> {
+        APP_CONTEXT_PTR.with(|ptr| {
+            let data_ptr = (*ptr.borrow())?;
+            unsafe { &*data_ptr }.output_state.info(output)
+        })
+    }
+
     pub fn compositor_state() -> &'static CompositorState {
         Self::with_global(|ctx| unsafe { &*(ctx.compositor_state_ref() as *const CompositorState) })
     }
