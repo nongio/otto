@@ -11,6 +11,7 @@ use otto_kit::skia::textlayout::{
 use otto_kit::skia::{
     AlphaType, Color, ColorType, FontMgr, FontStyle, ImageInfo, Paint, PathBuilder, RRect, Rect,
 };
+use otto_kit::text_rendering::TextRendering;
 use otto_kit::typography::styles;
 
 /// Everything in logical pixels.
@@ -60,6 +61,7 @@ impl Balloon {
             let mut style = TextStyle::new();
             style.set_font_size(body.size);
             style.set_font_families(&[body.family, "sans-serif"]);
+            TextRendering::for_family(body.family).apply_to_text_style(&mut style);
             style.set_font_style(FontStyle::new(
                 Weight::from(body.weight),
                 Width::NORMAL,

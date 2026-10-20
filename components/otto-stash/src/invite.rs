@@ -30,6 +30,7 @@ use otto_kit::skia::{
     Rect,
 };
 use otto_kit::surfaces::Scaling;
+use otto_kit::text_rendering::TextRendering;
 use otto_kit::theme::Theme;
 use otto_kit::typography::styles;
 
@@ -251,6 +252,7 @@ fn paint(
     let mut text = TextStyle::new();
     text.set_font_size(TEXT_SIZE);
     text.set_font_families(&[styles::BODY.family, "sans-serif"]);
+    TextRendering::for_family(styles::BODY.family).apply_to_text_style(&mut text);
     text.set_font_style(FontStyle::new(
         Weight::from(500),
         Width::NORMAL,
