@@ -79,12 +79,35 @@ pub(crate) fn crop(content: Size, extent: Rect, window: Rect, scale: f32) -> Opt
     if source_right <= source_left || source_bottom <= source_top {
         return None;
     }
+    let (source_left, source_right) = wire_span(source_left, source_right, content.width);
+    let (source_top, source_bottom) = wire_span(source_top, source_bottom, content.height);
 
     Some(Crop {
         position: (left as i32, top as i32),
         source: Rect::from_ltrb(source_left, source_top, source_right, source_bottom),
         destination: ((right - left) as i32, (bottom - top) as i32),
     })
+}
+
+/// The narrowest source span the protocol can carry, with room to spare.
+///
+/// A viewport source goes out as `wl_fixed`, in 1/256 of a point, truncated,
+/// and a compositor ends the client for a source of zero width or height. A
+/// sliver of a stretched surface gets that thin: one point of a one-point fill
+/// spread over 360 is 1/360 of its pixel. Two units leave a margin for the
+/// rounding of `f32` subtraction.
+const MIN_SOURCE_SPAN: f32 = 2.0 / 256.0;
+
+/// `start..end` widened inward to [`MIN_SOURCE_SPAN`], staying in `0..len`.
+///
+/// Only a stretched surface's source gets this thin, and there a sliver of a
+/// buffer point looks the same as a little more of it.
+fn wire_span(start: f32, end: f32, len: f32) -> (f32, f32) {
+    if end - start >= MIN_SOURCE_SPAN {
+        return (start, end);
+    }
+    let start = (end - MIN_SOURCE_SPAN).max(0.0);
+    (start, (start + MIN_SOURCE_SPAN).min(len))
 }
 
 /// Crop `surface` to `window` and say what of it shows, and where.
@@ -267,5 +290,23 @@ mod tests {
             ),
             None
         );
+    }
+
+    #[test]
+    fn a_sliver_of_a_stretched_fill_still_reaches_the_wire() {
+        // One point of a one-point fill spread over 360: its source is
+        // 1/360 of the pixel, which wl_fixed would send as zero.
+        let wire = |points: f32| (f64::from(points) * 256.0) as i32;
+        let crop = crop(
+            Size::new(1.0, 1.0),
+            Rect::from_xywh(-359.4995, 0.0, 360.0, 300.0),
+            Rect::from_xywh(0.0, 0.0, 360.0, 300.0),
+            1.0,
+        )
+        .unwrap();
+        assert_eq!(crop.destination, (1, 300));
+        assert!(wire(crop.source.width()) > 0, "{:?}", crop.source);
+        assert!(wire(crop.source.height()) > 0, "{:?}", crop.source);
+        assert!(crop.source.left >= 0.0 && crop.source.right <= 1.0);
     }
 }
