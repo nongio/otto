@@ -139,17 +139,16 @@ appears at the text cursor, each with a number under it:
 1 2 3 4 5 6 7
 ```
 
-Press the number, or move with the arrow keys and press Return. The letter you
-held is replaced by the one you picked. Escape or a click puts the row away and
-keeps the plain letter, and any other key closes it and types as usual. Hold
-Shift for the capital forms.
-
-A few symbols work the same way: `$` gives € £ ¥ ¢, `-` gives – —, `.` gives
-… · •, `"` and `'` give typographic quotes, and `!` and `?` give ¡ and ¿.
+Press the number, or move with the arrow keys and press Return. The numbers
+are the top row's keys, so on AZERTY they work without Shift. The letter you
+held is replaced by the one you picked. Escape, a click or another window
+taking the focus puts the row away and keeps the plain letter, and any other
+key closes it and types as usual. Hold Shift for the capital forms.
 
 The row follows the character your layout types, not the key's position, so it
-works with any Latin layout. Keys that have no accented forms repeat as before;
-a key that has them no longer repeats while held.
+works with any Latin layout. Keys that have no accented forms, punctuation
+among them, repeat as before; a letter that has them no longer repeats while
+held.
 
 The row only appears in applications that report their text cursor, which
 covers GTK, Qt, Chromium, Firefox and most terminals. In other windows, and

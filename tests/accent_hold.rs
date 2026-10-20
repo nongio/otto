@@ -15,6 +15,7 @@ mod headless_tests {
     const KEY_X: u32 = 45;
     const KEY_RIGHT: u32 = 106;
     const KEY_ESC: u32 = 1;
+    const KEY_1: u32 = 2;
 
     /// Longer than the repeat delay the row waits for.
     const HOLD: Duration = Duration::from_millis(600);
@@ -107,6 +108,74 @@ mod headless_tests {
         );
         handle.wait(Duration::from_millis(300));
         assert!(!row_shown(&handle));
+        handle.stop();
+    }
+
+    #[test]
+    #[serial]
+    fn a_focus_change_closes_the_row_and_digits_go_to_the_new_window() {
+        let (handle, mut app) = start(true);
+
+        handle.key(KEY_E, true);
+        handle.wait(HOLD);
+        handle.key(KEY_E, false);
+        assert!(row_shown(&handle));
+
+        // A new window maps and takes the focus.
+        let mut other = TestClient::connect(&handle.socket_name).expect("connect");
+        let _window = other.create_toplevel("accent-other", 320, 240);
+        handle.wait(Duration::from_millis(150));
+        other.roundtrip().expect("roundtrip");
+        app.roundtrip().expect("roundtrip");
+        assert!(other.state.keyboard_focused, "the new window has the focus");
+        handle.wait(Duration::from_millis(300));
+        assert!(!row_shown(&handle), "the row goes with the focus");
+        other.state.keys.clear();
+
+        handle.key(KEY_1, true);
+        handle.key(KEY_1, false);
+        handle.wait(Duration::from_millis(50));
+        other.roundtrip().expect("roundtrip");
+        app.roundtrip().expect("roundtrip");
+        assert_eq!(
+            other.state.keys,
+            vec![(KEY_1, true), (KEY_1, false)],
+            "the digit reaches the new window as a plain key, not a pick"
+        );
+        assert_eq!(app.state.keys, vec![(KEY_E, true), (KEY_E, false)]);
+        handle.stop();
+    }
+
+    #[test]
+    #[serial]
+    fn releasing_all_keys_ends_the_hold() {
+        let (handle, mut app) = start(true);
+
+        // Leaving for another VT inside the repeat delay: the row must not
+        // be waiting on the way back.
+        handle.key(KEY_E, true);
+        handle.wait(Duration::from_millis(50));
+        handle.with_state(|state| state.release_all_keys());
+        handle.wait(HOLD);
+        app.roundtrip().expect("roundtrip");
+        assert!(!row_shown(&handle), "the hold ended with the keys");
+        assert_eq!(
+            app.state.keys,
+            vec![(KEY_E, true), (KEY_E, false)],
+            "the release the window already had is not sent again"
+        );
+        assert!(
+            handle.query(|state| state.seat.get_keyboard().unwrap().pressed_keys().is_empty()),
+            "the key is no longer down"
+        );
+
+        // And with the row already up.
+        handle.key(KEY_E, true);
+        handle.wait(HOLD);
+        assert!(row_shown(&handle));
+        handle.with_state(|state| state.release_all_keys());
+        handle.wait(Duration::from_millis(300));
+        assert!(!row_shown(&handle), "the row goes with the keys");
         handle.stop();
     }
 
