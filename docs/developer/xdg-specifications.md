@@ -187,7 +187,14 @@ once for both channels:
 | Channel | Keys |
 |---------|------|
 | XSETTINGS (`apply_xwayland_xsettings`) | `Xft/Antialias` (0/1), `Xft/Hinting` (0/1), `Xft/HintStyle` (`hintnone`…`hintfull`), `Xft/RGBA` (`none`, `rgb`, `bgr`, `vrgb`, `vbgr`), `Gtk/FontName` |
-| Settings portal, `org.gnome.desktop.interface` | `font-name`, `font-antialiasing` (`none`, `grayscale`, `rgba`), `font-hinting` (`none`…`full`), `font-rgba-order` (`rgb` when unknown: the key has no "none") |
+| Settings portal, `org.gnome.desktop.interface` | `font-name`, `font-antialiasing` (`none`, `grayscale`, `rgba`), `font-hinting` (`none`…`full`), `font-rgba-order` (`rgb` when unknown: the key has no "none"), `font-rendering` (always `manual`) |
+
+GTK 4 on Wayland reads these from the portal, and since 4.16 it ignores the
+hinting, antialiasing and order keys unless `font-rendering` is `manual`: in
+its default, `automatic`, it picks its own. The portal adds `manual` to the
+compositor's keys for that reason. GTK 3 on Wayland reads
+`org.gnome.desktop.interface` from GSettings (dconf) instead, which Otto does
+not write, and Qt's own platform themes read neither.
 
 The portal does not link otto-kit or fontconfig: it asks the compositor
 (`org.otto.Settings.GetFontSettings`, see

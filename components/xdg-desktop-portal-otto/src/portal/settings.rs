@@ -39,7 +39,20 @@ const FONT_KEYS: &[&str] = &[
     "font-antialiasing",
     "font-hinting",
     "font-rgba-order",
+    "font-rendering",
 ];
+
+/// The compositor's font settings, with `font-rendering` set to `manual`.
+///
+/// GTK 4.16 and later decide hinting and antialiasing for themselves unless
+/// `font-rendering` is `manual`: left at its default, `automatic`, a GTK 4
+/// window ignores `font-hinting`, `font-antialiasing` and `font-rgba-order`
+/// and its text never follows what Otto publishes. The keys this portal
+/// serves are the desktop's choice, so it says to use them.
+fn with_manual_rendering(mut fonts: HashMap<String, String>) -> HashMap<String, String> {
+    fonts.insert("font-rendering".to_string(), "manual".to_string());
+    fonts
+}
 
 /// The GNOME `button-layout` string for Otto's controls: the buttons before
 /// the colon go at the leading edge, those after it at the trailing one.
@@ -271,10 +284,11 @@ impl SettingsPortal {
     /// The UI font and text rendering, keyed by their `INTERFACE` names.
     async fn read_font_settings(&self) -> fdo::Result<HashMap<String, String>> {
         let proxy = self.get_settings_proxy().await?;
-        proxy.get_font_settings().await.map_err(|err| {
+        let fonts = proxy.get_font_settings().await.map_err(|err| {
             error!(?err, "Failed to read font settings from compositor");
             fdo::Error::Failed(format!("Failed to read font settings: {err}"))
-        })
+        })?;
+        Ok(with_manual_rendering(fonts))
     }
 
     /// Reads one setting from the compositor by its Otto identifier, as the
