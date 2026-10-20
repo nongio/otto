@@ -13,7 +13,7 @@
 
 use std::any::Any;
 
-use layers::skia::gpu::DirectContext;
+use layers::skia::{gpu::DirectContext, PixelGeometry};
 use smithay::backend::{
     allocator::{dmabuf::Dmabuf, format::FormatSet, gbm::GbmDevice},
     drm::{DrmDeviceFd, DrmNode},
@@ -182,6 +182,15 @@ pub trait SkiaDeviceRenderer {
 
     /// Makes the plane buffers rendered this frame safe to scan out.
     fn flush_planes(&mut self);
+
+    /// Sets the subpixel layout of the targets bound and rendered from now
+    /// on, which turns subpixel text on for them (see
+    /// [`crate::renderer::skia_surface::surface_props`]).
+    ///
+    /// The backend sets an output's layout around that output's frame and
+    /// puts [`PixelGeometry::Unknown`] back after it, so screencast and
+    /// offscreen targets never inherit it. Plane slots never take it.
+    fn set_target_pixel_geometry(&mut self, pixel_geometry: PixelGeometry);
 }
 
 impl SkiaDeviceRenderer for SkiaRenderer {
@@ -213,6 +222,10 @@ impl SkiaDeviceRenderer for SkiaRenderer {
 
     fn flush_planes(&mut self) {
         self.flush_planes_for_scanout();
+    }
+
+    fn set_target_pixel_geometry(&mut self, pixel_geometry: PixelGeometry) {
+        self.set_target_pixel_geometry(pixel_geometry);
     }
 }
 
@@ -297,7 +310,7 @@ pub use vulkan::VulkanApi;
 mod vulkan {
     use std::any::Any;
 
-    use layers::skia::gpu::DirectContext;
+    use layers::skia::{gpu::DirectContext, PixelGeometry};
     use smithay::backend::{
         allocator::{dmabuf::Dmabuf, format::FormatSet, gbm::GbmDevice},
         drm::{DrmDeviceFd, DrmNode, NodeType},
@@ -344,6 +357,10 @@ mod vulkan {
 
         fn flush_planes(&mut self) {
             self.flush_planes_for_scanout();
+        }
+
+        fn set_target_pixel_geometry(&mut self, pixel_geometry: PixelGeometry) {
+            self.set_target_pixel_geometry(pixel_geometry);
         }
     }
 

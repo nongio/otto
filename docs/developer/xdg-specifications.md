@@ -149,14 +149,18 @@ rather than a change Otto can make alone. It also needs an answer to which
 output's geometry a cached picture composited to two panels should use. See
 the pixel-geometry note below.
 
-**The `BGRH` hardcode.** `crates/otto-render/src/renderer/skia_surface.rs` builds both main
-surfaces with `PixelGeometry::BGRH` and the comment "for font rendering
-optimisations", while `src/udev/device.rs` reads the connector's real subpixel
-layout into the `Output` and nothing ever reads it back. Given the paragraph
-above, this constant governs only text drawn straight into the main render
-target, so it is closer to dead code than to a rendering bug. It is
-misleading as written all the same, and the correct per-output value is
-already sitting there unused.
+**Per-output pixel geometry.** An output's subpixel layout is the display
+profile's `subpixel` key, else what the connector reports (`src/udev/device.rs`),
+and lands in the `Output`'s physical properties, so clients read the same value
+from `wl_output`. Around each output's frame the udev backend hands it to the
+renderer (`SkiaDeviceRenderer::set_target_pixel_geometry`), which declares it
+on that output's swapchain buffers and nothing else: plane slots, screencast
+and offscreen targets keep `PixelGeometry::Unknown`, because they are blended
+after Otto draws them and per-channel coverage does not survive a single-alpha
+blend. `surface_props` in `crates/otto-render/src/renderer/skia_surface.rs`
+carries the reasoning. Most connectors report `Unknown`, so without the
+profile key text stays grayscale. With plane decomposition on, chrome renders
+into plane slots, so this reaches only what falls back to the swapchain.
 
 **What Otto does not publish.** The Settings portal carries no font key, and
 XSETTINGS publishes only the scaling ones (`Xft/DPI`,
