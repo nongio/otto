@@ -452,7 +452,6 @@ const OWN_TESTS: &[&str] = &[
 const BIN_TESTS: &[&str] = &[
     "otto-bar",
     "otto-greeter",
-    "otto-input-overlay",
     "otto-islands",
     "otto-lock",
     "otto-msg",

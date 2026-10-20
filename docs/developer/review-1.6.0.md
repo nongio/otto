@@ -122,9 +122,10 @@ otto-kit, so the portal and otto-agents need not link Skia): `xdg`, `dbus`,
 - [ ] **`toplevels`**: three zwlr-foreign-toplevel trackers
   (`otto-kit/src/utils/focus_watcher.rs`, `otto-launcher/src/windows.rs`,
   `otto-emoji/src/target.rs`). **S–M**
-- [ ] **`tray`**: StatusNotifierItem + dbusmenu written twice
+- [x] **`tray`**: StatusNotifierItem + dbusmenu written twice
   (`otto-rdp/src/indicator.rs`, `otto-input-overlay/src/indicator.rs`, 161
   matching lines). Feature-gated module, or `ksni`. **S**
+  - *Moot: otto-input-overlay was dropped, so otto-rdp holds the only copy.*
 - [ ] **Desktop entries / Exec expansion**: four implementations
   (`src/shell/element.rs:515`, launcher `apps.rs`, kit `mime_apps.rs:636-764`,
   fde's `parse_exec`); greeter hand-parses sessions (`otto-greeter/src/session.rs:114`). **S–M**

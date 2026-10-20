@@ -99,7 +99,6 @@ crates = [
     "otto-greeter",
     "otto-lock",
     "otto-authorize",
-    "otto-input-overlay",
     "otto-dictate",
     "otto-msg",
     "otto-agents",
