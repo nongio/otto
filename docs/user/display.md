@@ -65,8 +65,10 @@ Every field is optional. Omit `resolution` and Otto picks the preferred mode.
 
 Subpixel text uses a panel's separate red, green and blue stripes to draw
 sharper glyphs. Otto uses it only on a monitor whose stripe order it knows,
-and most monitors do not report theirs, so text is grayscale until you set
-`subpixel`. Most LCD panels are `"rgb"`; if letters show coloured edges, try
+and most monitors do not report theirs. Without `subpixel`, Otto falls back to
+the `rgba` setting in your fontconfig configuration, the one GTK and Qt
+applications follow, and draws grayscale text if that is unset. Hinting and
+antialiasing follow fontconfig too (`hintstyle`, `antialias`, `autohint`). Most LCD panels are `"rgb"`; if letters show coloured edges, try
 `"bgr"`. OLED panels, and anything rotated, are best left at `"none"`. The
 setting is read when the monitor is connected, so it takes effect on the next
 login or replug.
