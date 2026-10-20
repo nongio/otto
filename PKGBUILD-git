@@ -110,6 +110,10 @@ prepare() {
 build() {
     cd "$startdir"
     local _pkg
+    # Reported by org.otto.Compositor.DebugInfo, so a bug report names the
+    # exact build.
+    OTTO_GIT_COMMIT="$(git rev-parse --short HEAD 2>/dev/null || true)"
+    export OTTO_GIT_COMMIT
     cargo build --frozen --release -p otto "${_otto_features[@]}"
     for _pkg in otto-bar otto-islands otto-lock otto-authorize otto-greeter \
             xdg-desktop-portal-otto otto-rdp otto-settings otto-files otto-launcher \

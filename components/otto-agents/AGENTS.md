@@ -7,7 +7,7 @@ How it works: [Agents](../../docs/developer/agents.md).
 - **Layer:** app. Used by nothing (an app); clients reach it over AHP through `otto-agents-client`.
 
 ## Dependencies
-- **Internal:** `otto-agents-client` (transport, socket path and URIs shared with every client), `otto-dbus` (the `dialog` proxy for permission prompts and agents' questions), `otto-foundations` (XDG directories).
+- **Internal:** `otto-agents-client` (transport, socket path and URIs shared with every client), `otto-dbus` (the `dialog` proxy for permission prompts and agents' questions), `otto-foundations` (XDG directories, logging setup).
 - **External:** `ahp`, `ahp-types` and `ahp-ws` (wire types, reference client) and `agent-client-protocol` (talking to agents) define the design; `tokio` runs it. `zbus` is outbound only, to `otto-islands`, which shows dialogs; without it a permission request is denied. At run time it needs the agent commands named in `agents.toml`; the default Claude agent runs through `npx`, so it needs Node.js and a Claude login.
 
 ## Develop

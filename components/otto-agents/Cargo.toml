@@ -34,7 +34,6 @@ tokio = { workspace = true, features = ["io-util", "macros", "net", "process", "
 tokio-tungstenite = { workspace = true, features = ["default"] }
 toml = { workspace = true, features = ["default"] }
 tracing.workspace = true
-tracing-subscriber = { workspace = true, features = ["env-filter"] }
 unic-langid.workspace = true
 uuid = { workspace = true, features = ["v4"] }
 # Outbound only: Otto's dialog renderer (otto-islands) for permission prompts.

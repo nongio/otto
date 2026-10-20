@@ -542,6 +542,8 @@ impl<BackendData: Backend> Otto<BackendData> {
 
             keyboard.set_focus(self, None, serial);
         }
+        // Smithay does not call `focus_changed` for no focus.
+        self.reset_accent_hold();
         // No window has focus now (an empty workspace, the last window
         // closing): say so, or a bar following `window` events keeps showing
         // the window that had it.

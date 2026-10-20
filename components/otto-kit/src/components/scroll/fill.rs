@@ -163,12 +163,12 @@ impl Fill {
         }
         let content = Size::new(size.0 as f32, size.1 as f32);
         let window = self.window.unwrap_or(rect);
-        // The crop is set before the paint, so it goes out with the buffer
-        // it fits.
-        let Some(shown) = crop::show(&mut self.surface, content, rect, window, scale) else {
+        // The crop and the position are set before the paint, so they go out
+        // with the buffer they fit.
+        if crop::show(&mut self.surface, content, rect, window, scale, (0, 0)).is_none() {
             self.painted = None;
             return true;
-        };
+        }
         if paint {
             self.painted = Some(size);
             let radius = self.radius;
@@ -187,8 +187,6 @@ impl Fill {
         } else {
             self.surface.commit();
         }
-        self.surface
-            .set_position(shown.position.0, shown.position.1);
         self.surface.commit_parent();
         true
     }

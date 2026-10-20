@@ -67,6 +67,7 @@ impl Browser {
             place_shifts_at: None,
             marquee: None,
             drop_target: None,
+            drag_copies: false,
             peek: None,
             preview: None,
             preview_generation_seed: 0,

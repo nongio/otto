@@ -288,6 +288,25 @@ pub fn env_locales() -> Vec<String> {
     out
 }
 
+/// The language the environment prefers, as its lowercase subtag: `it` for
+/// `LANG=it_IT.UTF-8`. `None` when no locale variable names one, `C` and
+/// `POSIX` included.
+///
+/// Unlike [`current_locale`] this is not limited to the languages Otto has a
+/// catalogue for: it is what the person speaks, for things such as dictation.
+pub fn env_language() -> Option<String> {
+    language_of(&env_locales())
+}
+
+/// The language subtag of the first of `locales` that has one.
+fn language_of(locales: &[String]) -> Option<String> {
+    locales.iter().find_map(|tag| {
+        let language = tag.split('-').next()?.to_ascii_lowercase();
+        (!language.is_empty() && language.chars().all(|c| c.is_ascii_lowercase()))
+            .then_some(language)
+    })
+}
+
 /// The locale actually in use — the first one in the resolved chain that had a
 /// catalogue, as a BCP 47 tag.
 pub fn current_locale() -> String {
@@ -547,6 +566,18 @@ macro_rules! t_owned {
 mod tests {
     use super::*;
     use std::collections::HashMap;
+
+    #[test]
+    fn the_preferred_language_is_the_first_tags_subtag() {
+        let tags = |tags: &[&str]| tags.iter().flat_map(|t| expand(t)).collect::<Vec<_>>();
+        assert_eq!(language_of(&tags(&["it_IT.UTF-8"])).as_deref(), Some("it"));
+        assert_eq!(
+            language_of(&tags(&["C", "pt_BR.UTF-8"])).as_deref(),
+            Some("pt")
+        );
+        assert_eq!(language_of(&tags(&["C.UTF-8"])), None);
+        assert_eq!(language_of(&[]), None);
+    }
 
     #[test]
     fn expands_posix_tags() {

@@ -325,7 +325,7 @@ impl Browser {
 
     /// Whether the pointer at `point` is over a recognised word, so the
     /// cursor can say the picture has text to select.
-    pub(super) fn peek_over_word(&self, point: skia_safe::Point, panel: Rect) -> bool {
+    pub(super) fn peek_over_word(&self, point: otto_kit::skia::Point, panel: Rect) -> bool {
         let content = peek::content_rect(panel);
         self.peek
             .as_ref()
@@ -333,7 +333,7 @@ impl Browser {
     }
 
     /// Whether the pointer at `point` is over a link in a Markdown preview.
-    fn peek_over_link(&self, point: skia_safe::Point, panel: Rect) -> bool {
+    fn peek_over_link(&self, point: otto_kit::skia::Point, panel: Rect) -> bool {
         let content = peek::content_rect(panel);
         self.peek
             .as_ref()
@@ -343,7 +343,7 @@ impl Browser {
     /// Show the hand over a link, the text beam over a word and the arrow
     /// elsewhere, changing the shape only when the pointer crosses between
     /// them.
-    pub(super) fn sync_peek_cursor(&mut self, point: skia_safe::Point, panel: Rect) {
+    pub(super) fn sync_peek_cursor(&mut self, point: otto_kit::skia::Point, panel: Rect) {
         let shape = if self.peek_over_link(point, panel) {
             CursorShape::Pointer
         } else if self.peek_over_word(point, panel) {
@@ -399,7 +399,7 @@ impl Browser {
     /// the display instead, which is what the expand button does — the strip
     /// is the panel's titlebar, and a titlebar answers a double-click that
     /// way.
-    pub(super) fn peek_grip(&mut self, point: skia_safe::Point, panel: Rect) -> bool {
+    pub(super) fn peek_grip(&mut self, point: otto_kit::skia::Point, panel: Rect) -> bool {
         if self.peek.is_none() || !view::peek_grip_rect(panel).contains(point) {
             return false;
         }
@@ -439,7 +439,7 @@ impl Browser {
     /// moving relative to *that* is what makes a drag run away — the pointer
     /// reports far more often than the window paints, and the card's own
     /// movement feeds back into the next measurement.
-    pub(super) fn drag_peek_to(&mut self, point: skia_safe::Point) {
+    pub(super) fn drag_peek_to(&mut self, point: otto_kit::skia::Point) {
         let Some(((grab_x, grab_y), (origin_x, origin_y))) = self.peek_drag else {
             return;
         };
@@ -531,7 +531,7 @@ impl Browser {
     /// A pinch carries no position of its own — only how far its focal point
     /// has drifted since it began — so the only way to zoom about the fingers
     /// is to have kept the last place the pointer was seen.
-    pub(super) fn peek_focus(&mut self, point: skia_safe::Point, panel: Rect) {
+    pub(super) fn peek_focus(&mut self, point: otto_kit::skia::Point, panel: Rect) {
         self.peek_focus = Some((point, panel));
     }
 
@@ -604,7 +604,7 @@ impl Browser {
     pub(super) fn peek_pan_pointer(
         &mut self,
         kind: PeekPointer,
-        point: skia_safe::Point,
+        point: otto_kit::skia::Point,
         panel: Rect,
     ) -> bool {
         let content = peek::content_rect(panel);

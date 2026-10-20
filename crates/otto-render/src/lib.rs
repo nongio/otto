@@ -11,6 +11,7 @@
 //! - [`textures_storage`], [`render_phase_stats`] and [`debug_hooks`]: the
 //!   texture cache, per-phase frame timings and the file-driven debug toggles
 //!   the render path polls.
+//! - [`renderer_info`]: the graphics API and driver the session draws with.
 //!
 //! Nothing here knows about windows, workspaces, input or configuration: the
 //! compositor (`otto`) decides what is on screen and hands it over, and
@@ -26,5 +27,6 @@ pub mod drawing;
 pub mod render_elements;
 pub mod render_phase_stats;
 pub mod renderer;
+pub mod renderer_info;
 pub mod skia_renderer;
 pub mod textures_storage;

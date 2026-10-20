@@ -1,7 +1,7 @@
 use otto_kit::components::menu_bar::{MenuBarIcon, MenuBarRenderer, MenuBarState, MenuBarStyle};
 use otto_kit::prelude::*;
+use otto_kit::skia::{Canvas, Paint, TextBlob};
 use otto_kit::typography;
-use skia_safe::{Canvas, Paint, TextBlob};
 
 use crate::clock::Clock;
 use crate::config::*;
@@ -63,9 +63,9 @@ const BATTERY_PILL_PADDING: f32 = 5.0;
 /// enough to read as selected, sheer enough that the blur still shows through
 /// and the label stays white.
 struct HighlightColors {
-    hover: skia_safe::Color,
-    active: skia_safe::Color,
-    on_active: skia_safe::Color,
+    hover: otto_kit::skia::Color,
+    active: otto_kit::skia::Color,
+    on_active: otto_kit::skia::Color,
 }
 
 fn highlight_colors() -> HighlightColors {
@@ -75,15 +75,15 @@ fn highlight_colors() -> HighlightColors {
     );
     if dark {
         HighlightColors {
-            hover: skia_safe::Color::from_argb(0x1A, 255, 255, 255),
-            active: skia_safe::Color::from_argb(0x40, 255, 255, 255),
-            on_active: skia_safe::Color::from_argb(0xF2, 255, 255, 255),
+            hover: otto_kit::skia::Color::from_argb(0x1A, 255, 255, 255),
+            active: otto_kit::skia::Color::from_argb(0x40, 255, 255, 255),
+            on_active: otto_kit::skia::Color::from_argb(0xF2, 255, 255, 255),
         }
     } else {
         HighlightColors {
-            hover: skia_safe::Color::from_argb(30, 0, 0, 0),
-            active: skia_safe::Color::from_argb(80, 0, 0, 0),
-            on_active: skia_safe::Color::WHITE,
+            hover: otto_kit::skia::Color::from_argb(30, 0, 0, 0),
+            active: otto_kit::skia::Color::from_argb(80, 0, 0, 0),
+            on_active: otto_kit::skia::Color::WHITE,
         }
     }
 }
@@ -98,7 +98,7 @@ fn tray_menu_style() -> MenuBarStyle {
         item_spacing: 0.0,
         icon_size: TRAY_ICON_SIZE,
         icon_text_gap: 0.0,
-        background_color: skia_safe::Color::TRANSPARENT,
+        background_color: otto_kit::skia::Color::TRANSPARENT,
         text_color: theme.text_primary,
         text_active_color: hl.on_active,
         hover_color: hl.hover,
@@ -106,7 +106,7 @@ fn tray_menu_style() -> MenuBarStyle {
         icon_tint: theme.text_primary,
         icon_active_tint: hl.on_active,
         font_size: 13.0,
-        font_weight: skia_safe::font_style::Weight::SEMI_BOLD,
+        font_weight: otto_kit::skia::font_style::Weight::SEMI_BOLD,
         first_item_font_weight: None,
         item_corner_radius: 4.0,
     }
@@ -122,7 +122,7 @@ fn left_menu_style() -> MenuBarStyle {
         item_spacing: 0.0,
         icon_size: 16.0,
         icon_text_gap: 6.0,
-        background_color: skia_safe::Color::TRANSPARENT,
+        background_color: otto_kit::skia::Color::TRANSPARENT,
         text_color: theme.text_primary,
         text_active_color: hl.on_active,
         hover_color: hl.hover,
@@ -131,8 +131,8 @@ fn left_menu_style() -> MenuBarStyle {
         icon_active_tint: hl.on_active,
         font_size: 13.0,
         // The menu titles; the application's name ahead of them is bold.
-        font_weight: skia_safe::font_style::Weight::MEDIUM,
-        first_item_font_weight: Some(skia_safe::font_style::Weight::BOLD),
+        font_weight: otto_kit::skia::font_style::Weight::MEDIUM,
+        first_item_font_weight: Some(otto_kit::skia::font_style::Weight::BOLD),
         item_corner_radius: 4.0,
     }
 }
@@ -316,7 +316,7 @@ impl LeftPanel {
             pill.set_color(hl.active);
             let radius = self.style.item_corner_radius;
             canvas.draw_round_rect(
-                skia_safe::Rect::from_xywh(x, y, w, h),
+                otto_kit::skia::Rect::from_xywh(x, y, w, h),
                 radius,
                 radius,
                 &pill,
@@ -417,7 +417,7 @@ impl RightPanel {
             paint.set_anti_alias(true);
             paint.set_color(hl.active);
             let (px, py, pw, ph) = self.battery_pill_rect().unwrap_or_default();
-            let pill = skia_safe::Rect::from_xywh(px, py, pw, ph);
+            let pill = otto_kit::skia::Rect::from_xywh(px, py, pw, ph);
             let radius = self.tray_style.item_corner_radius;
             canvas.draw_round_rect(pill, radius, radius, &paint);
 
@@ -437,7 +437,7 @@ impl RightPanel {
                 let (px, py, pw, ph) = self.keyboard_pill_rect().unwrap_or_default();
                 let radius = self.tray_style.item_corner_radius;
                 canvas.draw_round_rect(
-                    skia_safe::Rect::from_xywh(px, py, pw, ph),
+                    otto_kit::skia::Rect::from_xywh(px, py, pw, ph),
                     radius,
                     radius,
                     &paint,
@@ -666,7 +666,7 @@ fn packed_width<const N: usize>(widths: [f32; N]) -> f32 {
 }
 
 /// Vertically center text using cap-height.
-fn baseline_y(height: f32, font: &skia_safe::Font) -> f32 {
+fn baseline_y(height: f32, font: &otto_kit::skia::Font) -> f32 {
     let (_, metrics) = font.metrics();
     (height + metrics.cap_height) / 2.0
 }

@@ -9,7 +9,7 @@ where the strongest available tool can check it:
 | Which Otto crate may depend on which (layers) | `architecture.toml` | `cargo run -p otto-arch` |
 | Which compositor module may reach into which | `architecture.toml` | `cargo run -p otto-arch` |
 | Code that has exactly one home (XDG lookups) | `architecture.toml` | `cargo run -p otto-arch` |
-| Which crates may link Smithay, the Wayland server, GStreamer, PipeWire; no OpenSSL; allowed licences and sources; security advisories | `deny.toml` | `cargo deny --workspace check bans licenses sources -D unused-wrapper`, `cargo deny --workspace check advisories` |
+| Which crates may link Smithay, the Wayland server, the Wayland client stack, Skia, GStreamer, PipeWire; no OpenSSL; allowed licences and sources; security advisories | `deny.toml` | `cargo deny --workspace check bans licenses sources -D unused-wrapper`, `cargo deny --workspace check advisories` |
 | APIs nobody calls directly | `clippy.toml` | `cargo clippy` |
 | What a module exposes | the code: `pub(crate)`, sealed traits, newtypes | the compiler |
 
@@ -135,6 +135,7 @@ flowchart BT
   otto_md_kit --> otto_kit
   otto_media_kit --> otto_kit
   otto_msg --> otto_dbus
+  otto_msg --> otto_foundations
   otto_pdf --> otto_foundations
   otto_peek --> otto_kit
   otto_peek --> otto_md_kit
@@ -194,9 +195,29 @@ switch is a function `SceneElement::with_engine` takes), not read from
 A `[[source_rule]]` is a regular expression that may only match under its
 `allowed_in` paths; it is matched over `src/`, `crates/*/src` and
 `components/*/src`. `#[test]` functions and `#[cfg(test)]` items are skipped,
-since a test that saves and restores the environment is not a lookup. Today
-there is one rule: the XDG base directories are read only in
-`otto_foundations::xdg`.
+since a test that saves and restores the environment is not a lookup. The
+rules today:
+
+- `xdg-dirs-through-foundations`: the XDG base directories are read only in
+  `otto_foundations::xdg`.
+- `user-dirs-through-foundations`: so is `user-dirs.dirs`.
+- `user-and-locale-through-foundations`: the login name comes from
+  `otto_foundations::user`, and the locale variables are read by otto-kit's
+  `i18n` or the compositor's `src/locale_env.rs`.
+- `desktop-entry-through-foundations`: a desktop entry's keys are read and
+  set with `otto_foundations::desktop_file`.
+- `logging-through-foundations`: `tracing_subscriber` is set up only by
+  `otto_foundations::logging` (stderr, `RUST_LOG` or a default filter). The
+  compositor's `src/main.rs` and `src/session_log.rs` also write the session
+  log file and flush it on a panic, so they set up their own.
+- `log-with-tracing`: code logs with `tracing`, never the `log` crate's
+  macros; dependencies that use `log` reach the same subscriber through its
+  bridge.
+- `wayland-connection-through-kit`: only otto-kit opens an app's Wayland
+  connection; otto-rdp, a bridge with no toolkit, opens its own.
+- `dbus-proxies-in-otto-dbus`: a zbus client proxy (`#[zbus::proxy]`) is
+  declared only in `otto-dbus`, one per interface, so every caller agrees on
+  the contract. Serving an interface (`#[interface]`) stays with the service.
 
 ## Known debt
 
@@ -309,6 +330,8 @@ the portal and agent units, the file browser's icons) need a
   `cargo run -p otto-arch -- --bless` to refresh the graph above, and commit
   both.
 - **New dependency on a banned crate**: add the crate to the ban's
-  `wrappers` in `deny.toml` and explain the design in the review.
+  `wrappers` in `deny.toml` and explain the design in the review. The
+  entries under `# debt` (apps still naming Skia or the Wayland client
+  crates themselves) only shrink: an app gets those from otto-kit.
 - **New rule**: add it, run the checker, and list each existing violation
   under `[[allow]]` with its reason.

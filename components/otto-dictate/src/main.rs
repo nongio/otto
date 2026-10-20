@@ -92,12 +92,7 @@ const KEY_KP_ENTER: u32 = 96;
 const MODIFIER_KEYS: [u32; 9] = [29, 97, 42, 54, 56, 100, 125, 126, 58];
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "otto_dictate=info".into()),
-        )
-        .init();
+    otto_kit::logging::init("otto_dictate=info");
 
     if std::env::args().nth(1).as_deref() == Some("toggle") {
         let mut stream = UnixStream::connect(socket_path()?)?;

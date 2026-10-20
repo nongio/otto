@@ -8,7 +8,7 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 
-use skia_safe::Image;
+use otto_kit::skia::Image;
 
 /// The icons shown, in order. Each entry is a fallback chain: themes disagree
 /// about which name a thing has, and a slot that resolves to nothing simply
@@ -104,15 +104,15 @@ fn cursor_image(bytes: &[u8], px: i32) -> Option<Image> {
     // XCursor pixels are premultiplied ARGB words, which little-endian byte
     // order makes BGRA — the same reading the compositor's cursor path takes
     // when it hands them to a buffer as `Argb8888`.
-    let info = skia_safe::ImageInfo::new(
+    let info = otto_kit::skia::ImageInfo::new(
         (w, h),
-        skia_safe::ColorType::BGRA8888,
-        skia_safe::AlphaType::Premul,
+        otto_kit::skia::ColorType::BGRA8888,
+        otto_kit::skia::AlphaType::Premul,
         None,
     );
-    skia_safe::images::raster_from_data(
+    otto_kit::skia::images::raster_from_data(
         &info,
-        skia_safe::Data::new_copy(&best.pixels_rgba),
+        otto_kit::skia::Data::new_copy(&best.pixels_rgba),
         (w * 4) as usize,
     )
 }

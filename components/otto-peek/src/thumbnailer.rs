@@ -11,7 +11,7 @@ use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 use std::sync::mpsc;
 
-use skia_safe::Image;
+use otto_kit::skia::Image;
 
 use crate::thumbcache::Size;
 

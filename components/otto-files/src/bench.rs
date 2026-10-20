@@ -179,8 +179,8 @@ fn bench_row_build() {
 #[ignore = "benchmark"]
 fn bench_text_shaping() {
     use crate::view;
+    use otto_kit::skia::{surfaces, Color, Paint, PictureRecorder, Rect};
     use otto_kit::typography::styles;
-    use skia_safe::{surfaces, Color, Paint, PictureRecorder, Rect};
 
     println!("\n=== 4. list rows: immediate re-shape vs. cached picture ===");
     println!("  both sides rasterise the same 40 rows into the same surface;");
@@ -191,23 +191,24 @@ fn bench_text_shaping() {
     let font = styles::BODY_MEDIUM.font();
     let mut surface = surfaces::raster_n32_premul((900, 1000)).unwrap();
 
-    let draw_row = |canvas: &skia_safe::Canvas, i: usize, e: &Entry, font: &skia_safe::Font| {
-        let mut paint = Paint::default();
-        paint.set_anti_alias(true);
-        paint.set_color(Color::BLACK);
-        let y = 20.0 + i as f32 * 24.0;
-        let name = view::ellipsize(font, &e.name, 320.0);
-        canvas.draw_str(&name, (14.0, y), font, &paint);
-        let size_text = if e.is_dir {
-            "--".to_string()
-        } else {
-            e.size.map(model::format_size).unwrap_or_default()
+    let draw_row =
+        |canvas: &otto_kit::skia::Canvas, i: usize, e: &Entry, font: &otto_kit::skia::Font| {
+            let mut paint = Paint::default();
+            paint.set_anti_alias(true);
+            paint.set_color(Color::BLACK);
+            let y = 20.0 + i as f32 * 24.0;
+            let name = view::ellipsize(font, &e.name, 320.0);
+            canvas.draw_str(&name, (14.0, y), font, &paint);
+            let size_text = if e.is_dir {
+                "--".to_string()
+            } else {
+                e.size.map(model::format_size).unwrap_or_default()
+            };
+            canvas.draw_str(&size_text, (400.0, y), font, &paint);
+            canvas.draw_str(e.kind_label(), (520.0, y), font, &paint);
+            let when = e.modified.map(model::format_time).unwrap_or_default();
+            canvas.draw_str(&when, (680.0, y), font, &paint);
         };
-        canvas.draw_str(&size_text, (400.0, y), font, &paint);
-        canvas.draw_str(e.kind_label(), (520.0, y), font, &paint);
-        let when = e.modified.map(model::format_time).unwrap_or_default();
-        canvas.draw_str(&when, (680.0, y), font, &paint);
-    };
 
     let immediate = bench("shape + format + rasterise 40 rows", 200, || {
         let canvas = surface.canvas();
@@ -337,7 +338,7 @@ struct BenchRow {
 fn resolve_rows(
     band: &[&Entry],
     first: usize,
-    font: &skia_safe::Font,
+    font: &otto_kit::skia::Font,
     band_relative: bool,
 ) -> Vec<BenchRow> {
     band.iter()
@@ -362,12 +363,12 @@ fn resolve_rows(
 }
 
 fn paint_rows(
-    canvas: &skia_safe::Canvas,
+    canvas: &otto_kit::skia::Canvas,
     rows: &[BenchRow],
-    font: &skia_safe::Font,
-    icon: &skia_safe::Image,
+    font: &otto_kit::skia::Font,
+    icon: &otto_kit::skia::Image,
 ) {
-    use skia_safe::{Color, Paint, RRect, Rect};
+    use otto_kit::skia::{Color, Paint, RRect, Rect};
     let mut paint = Paint::default();
     paint.set_anti_alias(true);
     for row in rows {
@@ -391,8 +392,8 @@ fn paint_rows(
     }
 }
 
-fn bench_icon() -> skia_safe::Image {
-    use skia_safe::{surfaces, Color, Paint, Rect};
+fn bench_icon() -> otto_kit::skia::Image {
+    use otto_kit::skia::{surfaces, Color, Paint, Rect};
     let mut s = surfaces::raster_n32_premul((16, 16)).unwrap();
     let mut p = Paint::default();
     p.set_color(Color::from_argb(255, 90, 150, 240));
@@ -410,13 +411,13 @@ fn rows_visible() -> usize {
 
 /// Immediate mode: re-resolve and re-draw every visible row, every frame.
 fn scroll_immediate(
-    surface: &mut skia_safe::Surface,
+    surface: &mut otto_kit::skia::Surface,
     sorted: &[&Entry],
-    font: &skia_safe::Font,
-    icon: &skia_safe::Image,
-    present: &mut dyn FnMut(&mut skia_safe::Surface),
+    font: &otto_kit::skia::Font,
+    icon: &otto_kit::skia::Image,
+    present: &mut dyn FnMut(&mut otto_kit::skia::Surface),
 ) -> Duration {
-    use skia_safe::Color;
+    use otto_kit::skia::Color;
     let rows_visible = rows_visible();
     let mut offset = 0.0f32;
     let start = Instant::now();
@@ -442,18 +443,18 @@ fn scroll_immediate(
 /// when the scroll leaves the recorded band.
 #[allow(clippy::too_many_arguments)]
 fn scroll_layers(
-    surface: &mut skia_safe::Surface,
+    surface: &mut otto_kit::skia::Surface,
     sorted: &[&Entry],
-    font: &skia_safe::Font,
-    icon: &skia_safe::Image,
+    font: &otto_kit::skia::Font,
+    icon: &otto_kit::skia::Image,
     overscan: usize,
     image_cached: bool,
     frozen: bool,
-    present: &mut dyn FnMut(&mut skia_safe::Surface),
+    present: &mut dyn FnMut(&mut otto_kit::skia::Surface),
 ) -> (Duration, usize) {
     use layers::prelude::*;
     use layers::types::{Point as LayerPoint, Size as LayerSize};
-    use skia_safe::Color;
+    use otto_kit::skia::Color;
 
     let rows_visible = rows_visible();
     let engine = Engine::create(PANE_W, PANE_H);
@@ -494,9 +495,9 @@ fn scroll_layers(
             let icon = icon.clone();
             let font = font.clone();
             strip.set_size(LayerSize::points(PANE_W, (hi - lo) as f32 * ROW_H), None);
-            strip.set_draw_content(move |canvas: &skia_safe::Canvas, w: f32, h: f32| {
+            strip.set_draw_content(move |canvas: &otto_kit::skia::Canvas, w: f32, h: f32| {
                 paint_rows(canvas, &rows, &font, &icon);
-                skia_safe::Rect::from_wh(w, h)
+                otto_kit::skia::Rect::from_wh(w, h)
             });
             recorded = Some((lo, hi));
             rerecords += 1;
@@ -521,12 +522,12 @@ fn scroll_layers(
 
 /// Run every arm against one surface and print the table.
 fn compare_arms(
-    surface: &mut skia_safe::Surface,
+    surface: &mut otto_kit::skia::Surface,
     sorted: &[&Entry],
-    font: &skia_safe::Font,
-    icon: &skia_safe::Image,
+    font: &otto_kit::skia::Font,
+    icon: &otto_kit::skia::Image,
     floor: Duration,
-    present: &mut dyn FnMut(&mut skia_safe::Surface),
+    present: &mut dyn FnMut(&mut otto_kit::skia::Surface),
 ) {
     let rows_visible = rows_visible();
     println!(
@@ -612,8 +613,8 @@ fn compare_arms(
 #[test]
 #[ignore = "benchmark"]
 fn bench_layers_vs_immediate() {
+    use otto_kit::skia::surfaces;
     use otto_kit::typography::styles;
-    use skia_safe::surfaces;
 
     let all = entries(5_000);
     let sorted = visible_uncounted(&all, false, SortKey::Name, true);
@@ -648,8 +649,8 @@ fn bench_layers_vs_immediate() {
 /// Field order matters: the EGL surface must die before the `WlEglSurface`.
 #[cfg(test)]
 struct EglWindow {
-    skia_surface: skia_safe::Surface,
-    context: skia_safe::gpu::DirectContext,
+    skia_surface: otto_kit::skia::Surface,
+    context: otto_kit::skia::gpu::DirectContext,
     egl: khronos_egl::DynamicInstance<khronos_egl::EGL1_4>,
     display: khronos_egl::Display,
     egl_surface: khronos_egl::Surface,
@@ -750,28 +751,32 @@ impl EglWindow {
             // vblank that an unmapped surface would never get anyway.
             egl.swap_interval(display, 0).ok();
 
-            let interface = skia_safe::gpu::gl::Interface::new_load_with(|name| {
+            let interface = otto_kit::skia::gpu::gl::Interface::new_load_with(|name| {
                 egl.get_proc_address(name)
                     .map(|p| p as *const std::ffi::c_void)
                     .unwrap_or(std::ptr::null())
             })
             .ok_or("skia gl interface")?;
-            let mut skia_context = skia_safe::gpu::direct_contexts::make_gl(interface, None)
+            let mut skia_context = otto_kit::skia::gpu::direct_contexts::make_gl(interface, None)
                 .ok_or("direct context")?;
 
-            let fb_info = skia_safe::gpu::gl::FramebufferInfo {
+            let fb_info = otto_kit::skia::gpu::gl::FramebufferInfo {
                 // A window-backed EGL surface renders to framebuffer 0.
                 fboid: 0,
-                format: skia_safe::gpu::gl::Format::RGBA8.into(),
-                protected: skia_safe::gpu::Protected::No,
+                format: otto_kit::skia::gpu::gl::Format::RGBA8.into(),
+                protected: otto_kit::skia::gpu::Protected::No,
             };
-            let target =
-                skia_safe::gpu::backend_render_targets::make_gl((width, height), 0, 8, fb_info);
-            let skia_surface = skia_safe::gpu::surfaces::wrap_backend_render_target(
+            let target = otto_kit::skia::gpu::backend_render_targets::make_gl(
+                (width, height),
+                0,
+                8,
+                fb_info,
+            );
+            let skia_surface = otto_kit::skia::gpu::surfaces::wrap_backend_render_target(
                 &mut skia_context,
                 &target,
-                skia_safe::gpu::SurfaceOrigin::BottomLeft,
-                skia_safe::ColorType::RGBA8888,
+                otto_kit::skia::gpu::SurfaceOrigin::BottomLeft,
+                otto_kit::skia::ColorType::RGBA8888,
                 None,
                 None,
             )
@@ -792,9 +797,9 @@ impl EglWindow {
 
     /// End a frame the way the app does — flush the recorded work to the GPU
     /// and wait for it, so a frame's cost is the work and not the queueing.
-    fn present(&mut self, surface: &mut skia_safe::Surface) {
+    fn present(&mut self, surface: &mut otto_kit::skia::Surface) {
         self.context
-            .flush_and_submit_surface(surface, skia_safe::gpu::SyncCpu::Yes);
+            .flush_and_submit_surface(surface, otto_kit::skia::gpu::SyncCpu::Yes);
         self.egl.swap_buffers(self.display, self.egl_surface).ok();
     }
 }
@@ -822,15 +827,15 @@ fn bench_layers_vs_immediate_egl() {
         let mut s = window.skia_surface.clone();
         let start = Instant::now();
         for _ in 0..FRAMES {
-            s.canvas().clear(skia_safe::Color::WHITE);
+            s.canvas().clear(otto_kit::skia::Color::WHITE);
             window
                 .context
-                .flush_and_submit_surface(&mut s, skia_safe::gpu::SyncCpu::Yes);
+                .flush_and_submit_surface(&mut s, otto_kit::skia::gpu::SyncCpu::Yes);
         }
         let flush_only = start.elapsed() / FRAMES as u32;
         let start = Instant::now();
         for _ in 0..FRAMES {
-            s.canvas().clear(skia_safe::Color::WHITE);
+            s.canvas().clear(otto_kit::skia::Color::WHITE);
             window.present(&mut s);
         }
         let with_swap = start.elapsed() / FRAMES as u32;
@@ -854,7 +859,7 @@ fn bench_layers_vs_immediate_egl() {
     // and keep the window for presenting.
     let mut surface = window.skia_surface.clone();
     let window_ptr: *mut EglWindow = &mut window;
-    let mut present = move |s: &mut skia_safe::Surface| {
+    let mut present = move |s: &mut otto_kit::skia::Surface| {
         // Safe in practice: `present` is only called from the arms below, on
         // this thread, and nothing else touches the window while they run.
         unsafe { (*window_ptr).present(s) };

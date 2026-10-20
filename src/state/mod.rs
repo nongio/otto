@@ -220,6 +220,9 @@ pub struct Otto<BackendData: Backend + 'static> {
     pub exclusive_zones: HashMap<String, ExclusiveZones>,
     /// A refit of zoned windows is waiting for the dock to come to rest.
     pub dock_refit_pending: bool,
+    /// What the last `otto::summary` log line described; see
+    /// [`Otto::log_session_summary_if_changed`].
+    pub session_summary_key: Option<u64>,
     /// Whether the fullscreen chrome is currently held visible for a modal
     /// overlay layer surface (a portal Access dialog, say). Fullscreen hides
     /// the layer-shell top/overlay layers and scans the window out directly,
@@ -346,6 +349,11 @@ pub struct Otto<BackendData: Backend + 'static> {
     pub xwayland_shell_state: xwayland_shell::XWaylandShellState,
 
     pub dnd_icon: Option<WlSurface>,
+    /// A pointer drag-and-drop grab is in progress. A modifier pressed or
+    /// released during one re-sends the pointer's motion, so the target
+    /// answers again and the action follows the keys without the pointer
+    /// having to move; see `keyboard_key_to_action`.
+    pub dnd_active: bool,
     /// Every surface a drag icon has had a layer built for, so the next drag
     /// can sweep them whether or not those surfaces are still alive.
     pub dnd_layer_ids: Vec<ObjectId>,
@@ -1146,6 +1154,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             layer_surfaces: HashMap::new(),
             exclusive_zones: HashMap::new(),
             dock_refit_pending: false,
+            session_summary_key: None,
             modal_overlay_shown: false,
             compositor_state,
             data_device_state,
@@ -1196,6 +1205,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             pending_screencopy_frames: Vec::new(),
             virtual_pointer_manager_state,
             dnd_icon: None,
+            dnd_active: false,
             dnd_layer_ids: Vec::new(),
             pending_dnd_cleanup: None,
             pending_raise: None,
@@ -1670,7 +1680,8 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         } else if action == DndAction::Move {
             CursorImageStatus::Named(CursorIcon::Move)
         } else if action == DndAction::Ask {
-            CursorImageStatus::Named(CursorIcon::Help)
+            // Ask carries a link; see `choose_dnd_action`.
+            CursorImageStatus::Named(CursorIcon::Alias)
         } else {
             // No action the target will take — say so, rather than saying
             // nothing. Hiding the cursor here left the user dragging with no

@@ -149,7 +149,7 @@ impl Browser {
         if self.picker.is_some() || self.path_entry.is_some() || self.desk {
             return false;
         }
-        view::index_notice_rect(self.size.0).contains(skia_safe::Point::new(x, y))
+        view::index_notice_rect(self.size.0).contains(otto_kit::skia::Point::new(x, y))
             && self.passing_subtitle().is_none()
             && self.index_notice().is_some()
     }

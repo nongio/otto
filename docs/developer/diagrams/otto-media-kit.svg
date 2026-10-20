@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 312" width="760" height="312" role="img" aria-label="otto-media-kit: the host library spawns otto-media-worker, sends commands on stdin, reads events on stdout, passes the media file on fd 3 and reads frames from a shared ring on fd 4">
+  <style>
+    text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
+    .box  { fill: #f6f8fa; stroke: #8b949e; stroke-width: 1.4; }
+    .acc  { fill: #ddf4ff; stroke: #218bff; stroke-width: 1.4; }
+    .grp  { fill: none; stroke: #8b949e; stroke-width: 1.2; stroke-dasharray: 5 4; }
+    .t    { fill: #1f2328; font-size: 13px; }
+    .tb   { fill: #1f2328; font-size: 13px; font-weight: 600; }
+    .tm   { fill: #656d76; font-size: 11px; }
+    .ln   { stroke: #8b949e; stroke-width: 1.4; fill: none; marker-end: url(#ah); }
+    @media (prefers-color-scheme: dark) {
+      .box { fill: #161b22; stroke: #6e7681; }
+      .acc { fill: #10243b; stroke: #388bfd; }
+      .grp { stroke: #6e7681; }
+      .t, .tb { fill: #e6edf3; }
+      .tm  { fill: #9198a1; }
+      .ln  { stroke: #8b949e; }
+    }
+  </style>
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#8b949e"/>
+    </marker>
+  </defs>
+
+  <text class="tb" x="26" y="28">host process</text>
+  <text class="tb" x="466" y="28">otto-media-worker</text>
+  <rect class="grp" x="16" y="38" width="290" height="262" rx="10"/>
+  <rect class="grp" x="456" y="38" width="290" height="262" rx="10"/>
+  <text class="tm" x="30" y="58">otto-files, otto-peek, otto-preview</text>
+  <text class="tm" x="470" y="58">found next to the host or on PATH</text>
+
+  <rect class="acc" x="30" y="68" width="262" height="136" rx="6"/>
+  <text class="tb" x="44" y="92">player.rs</text>
+  <text class="tm" x="44" y="112">Player: spawns the worker, sends</text>
+  <text class="tm" x="44" y="128">commands, reads events, copies</text>
+  <text class="tm" x="44" y="144">each frame out of the ring</text>
+  <text class="tm" x="44" y="186">protocol.rs: the shared grammar</text>
+  <rect class="acc" x="30" y="216" width="262" height="48" rx="6"/>
+  <text class="tb" x="44" y="236">view.rs, transport.rs</text>
+  <text class="tm" x="44" y="254">frame fitted above the controls</text>
+  <path class="ln" d="M161 204 V214"/>
+  <text class="tm" x="30" y="288">library, no GStreamer in its link</text>
+
+  <rect class="acc" x="470" y="68" width="262" height="76" rx="6"/>
+  <text class="tb" x="484" y="92">playbin3</text>
+  <text class="tm" x="484" y="112">opens file:///proc/self/fd/3</text>
+  <text class="tm" x="484" y="128">commands in, events out</text>
+  <rect class="acc" x="470" y="156" width="262" height="48" rx="6"/>
+  <text class="tb" x="484" y="176">video-sink</text>
+  <text class="tm" x="484" y="194">videoconvert, videoscale, appsink</text>
+  <path class="ln" d="M601 144 V154"/>
+  <rect class="box" x="470" y="216" width="262" height="48" rx="6"/>
+  <text class="tb" x="484" y="236">contain()</text>
+  <text class="tm" x="484" y="254">no_new_privs, rlimits, unshare</text>
+  <text class="tm" x="470" y="288">GStreamer is linked only here</text>
+
+  <text class="tm" x="322" y="80">stdin: commands</text>
+  <path class="ln" d="M292 86 H468"/>
+  <text class="tm" x="322" y="106">stdout: events</text>
+  <path class="ln" d="M470 112 H294"/>
+  <text class="tm" x="322" y="130">fd 3: the media file</text>
+  <path class="ln" d="M292 136 H468"/>
+  <text class="tm" x="322" y="174">fd 4: frame ring</text>
+  <path class="ln" d="M470 180 H294"/>
+  <text class="tm" x="322" y="196">memfd, three slots</text>
+</svg>

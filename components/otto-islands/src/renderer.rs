@@ -1,9 +1,9 @@
 use crate::activity::{Activity, NotificationAction};
 use otto_kit::icons::named_icon_sized;
 use otto_kit::protocols::otto_surface_style_v1::{BlendMode, ClipMode, ContentsGravity};
+use otto_kit::skia::{Canvas, Color, Paint, RRect, Rect};
 use otto_kit::typography::TextStyle;
 use otto_kit::AppContext;
-use skia_safe::{Canvas, Color, Paint, RRect, Rect};
 
 // ---------------------------------------------------------------------------
 // Constants (from spec)
@@ -91,14 +91,14 @@ pub fn draw_progress_ring(canvas: &Canvas, cx: f32, cy: f32, radius: f32, progre
 
     let mut track = Paint::default();
     track.set_anti_alias(true);
-    track.set_style(skia_safe::paint::Style::Stroke);
+    track.set_style(otto_kit::skia::paint::Style::Stroke);
     track.set_stroke_width(RING_STROKE);
     track.set_color(Color::from_argb(60, 255, 255, 255));
     canvas.draw_oval(oval, &track);
 
     let mut arc = track.clone();
     arc.set_color(Color::WHITE);
-    arc.set_stroke_cap(skia_safe::paint::Cap::Round);
+    arc.set_stroke_cap(otto_kit::skia::paint::Cap::Round);
     canvas.draw_arc(
         oval,
         -90.0,
@@ -376,13 +376,13 @@ fn draw_app_icon(canvas: &Canvas, icon_name: &str, x: f32, y: f32, size: f32) {
             canvas.save();
             canvas.clip_rrect(
                 RRect::new_rect_xy(dst, r, r),
-                skia_safe::ClipOp::Intersect,
+                otto_kit::skia::ClipOp::Intersect,
                 true,
             );
             let src = Rect::from_xywh(0.0, 0.0, icon.width() as f32, icon.height() as f32);
             canvas.draw_image_rect(
                 &icon,
-                Some((&src, skia_safe::canvas::SrcRectConstraint::Strict)),
+                Some((&src, otto_kit::skia::canvas::SrcRectConstraint::Strict)),
                 dst,
                 &Paint::default(),
             );
@@ -397,7 +397,7 @@ fn draw_envelope(canvas: &Canvas, x: f32, y: f32, size: f32) {
     let mut paint = Paint::default();
     paint.set_anti_alias(true);
     paint.set_color(Color::from_argb(200, 255, 255, 255));
-    paint.set_style(skia_safe::paint::Style::Stroke);
+    paint.set_style(otto_kit::skia::paint::Style::Stroke);
     paint.set_stroke_width(1.2);
 
     let w = size;
@@ -405,7 +405,7 @@ fn draw_envelope(canvas: &Canvas, x: f32, y: f32, size: f32) {
     let oy = y + (size - h) / 2.0;
     canvas.draw_rect(Rect::from_xywh(x, oy, w, h), &paint);
 
-    let mut b = skia_safe::PathBuilder::new();
+    let mut b = otto_kit::skia::PathBuilder::new();
     b.move_to((x, oy));
     b.line_to((x + w / 2.0, oy + h * 0.55));
     b.line_to((x + w, oy));
@@ -446,7 +446,7 @@ pub fn action_button_rects(
     rects
 }
 
-fn body_font() -> skia_safe::Font {
+fn body_font() -> otto_kit::skia::Font {
     TextStyle {
         family: "Inter",
         weight: 400,
@@ -467,7 +467,7 @@ fn card_text_column(w: f32) -> (f32, f32) {
 /// than the column are broken mid-word rather than overflowing.
 pub(crate) fn wrap_text(
     text: &str,
-    font: &skia_safe::Font,
+    font: &otto_kit::skia::Font,
     max_width: f32,
     max_lines: usize,
 ) -> Vec<String> {
@@ -566,7 +566,7 @@ pub fn card_action_rects(
     action_button_rects(actions, text_x, max_w, action_row_y(body, has_progress, w))
 }
 
-fn truncate_text(text: &str, font: &skia_safe::Font, max_width: f32) -> String {
+fn truncate_text(text: &str, font: &otto_kit::skia::Font, max_width: f32) -> String {
     let (width, _) = font.measure_str(text, None);
     if width <= max_width {
         return text.to_string();

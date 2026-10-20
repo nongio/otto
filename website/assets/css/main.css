@@ -125,9 +125,9 @@ body {
    #TableOfContents > ul {
       position: -webkit-sticky;
       position: sticky;
-      top: 0;
+      top: var(--bar-h);
       padding: calc(1.7em *0.5) 0;
-      height: 100vh;
+      height: calc(100vh - var(--bar-h));
       box-sizing: border-box;
       overflow: auto;
    }
@@ -169,42 +169,231 @@ body {
    display: none;
 }
 
-/* Search, GitHub and the theme toggle share one fixed row in the corner, so
-   adding a tool doesn't mean recomputing the others' offsets. */
-#site-tools {
-   position: fixed;
-   top: 0;
-   right: 0;
-   z-index: 300;
-   display: flex;
-   align-items: center;
+/* The top bar, drawn the way Otto's own bar is (components/otto-bar): two
+   frosted panels held in the top corners, 30px tall with an 8px inner
+   corner, 13px type and 14px from each edge. The left one has the two-dot
+   mark, the name in bold and the menus; the right one the status items and
+   the clock. Between them the page shows through. Every fixed or sticky
+   thing on the page sits below the bar, so its height is a variable.       */
+
+:root {
+   --bar-h: 30px;
+   --bar-fg: rgba(0, 0, 0, 0.85);
+   --bar-bg: rgba(246, 246, 246, 0.72);
+   --bar-edge: rgba(0, 0, 0, 0.08);
+   --bar-pill: rgba(0, 0, 0, 0.09);
+   --bar-accent: rgb(10, 132, 255);
 }
 
-#repo-link,
-#theme-toggle {
-   padding: calc(1.7em * 0.5) 1.7em;
+@media (prefers-color-scheme: dark) {
+   :root:not([data-theme="light"]) {
+      --bar-fg: rgba(255, 255, 255, 0.9);
+      --bar-bg: rgba(30, 30, 32, 0.62);
+      --bar-edge: rgba(255, 255, 255, 0.08);
+      --bar-pill: rgba(255, 255, 255, 0.14);
+   }
+}
+
+:root[data-theme="dark"] {
+   --bar-fg: rgba(255, 255, 255, 0.9);
+   --bar-bg: rgba(30, 30, 32, 0.62);
+   --bar-edge: rgba(255, 255, 255, 0.08);
+   --bar-pill: rgba(255, 255, 255, 0.14);
+}
+
+body {
+   padding-top: var(--bar-h);
+}
+
+#topbar {
+   position: fixed;
+   top: 0;
+   left: 0;
+   right: 0;
+   z-index: 300;
+   height: var(--bar-h);
+   box-sizing: border-box;
+   display: flex;
+   align-items: flex-start;
+   justify-content: space-between;
+   gap: 12px;
+   font-family: 'Inter', sans-serif;
+   font-size: 13px;
+   font-weight: 400;
+   line-height: 1;
+   color: var(--bar-fg);
+   white-space: nowrap;
+   pointer-events: none;
+}
+
+#topbar .bar-menus,
+#topbar .bar-status {
+   display: flex;
+   align-items: center;
+   height: 100%;
+   min-width: 0;
+   box-sizing: border-box;
+   pointer-events: auto;
+   background: var(--bar-bg);
+   -webkit-backdrop-filter: blur(30px) saturate(180%);
+   backdrop-filter: blur(30px) saturate(180%);
+   border-bottom: 1px solid var(--bar-edge);
+}
+
+#topbar .bar-menus {
+   padding: 0 10px 0 14px;
+   border-right: 1px solid var(--bar-edge);
+   border-bottom-right-radius: 8px;
+}
+
+#topbar .bar-status {
+   padding: 0 14px 0 10px;
+   border-left: 1px solid var(--bar-edge);
+   border-bottom-left-radius: 8px;
+}
+
+#topbar .bar-status {
+   gap: 4px;
+}
+
+/* Menu titles and status items share one hit shape: a 22px pill that only
+   shows while hovered, focused or, for the page's own section, current. */
+#topbar a,
+#topbar button {
+   display: inline-flex;
+   align-items: center;
+   height: 22px;
+   padding: 0 8px;
    border: none;
+   border-radius: 6px;
    background: none;
    color: inherit;
-   font-family: inherit;
-   font-size: 0.85rem;
-   text-decoration: underline;
-   opacity: 0.5;
+   font: inherit;
+   text-decoration: none;
    cursor: pointer;
 }
 
-#theme-toggle:hover,
-#theme-toggle:focus,
-#repo-link:hover,
-#repo-link:focus {
-   opacity: 1;
+#topbar a:hover,
+#topbar button:hover,
+#topbar a:focus-visible,
+#topbar button:focus-visible,
+#topbar .bar-menu.active {
+   background: var(--bar-pill);
+   color: inherit;
+   text-decoration: none;
+   outline: none;
+}
+
+#topbar a:focus:not(:focus-visible),
+#topbar button:focus:not(:focus-visible) {
+   color: inherit;
+   background: none;
+}
+
+#topbar .bar-menu.active:focus:not(:focus-visible) {
+   background: var(--bar-pill);
+}
+
+/* Two dots, 6.5px across with their centres 11px apart. */
+#topbar .bar-logo {
+   gap: 4.5px;
+   padding: 0 7px;
+   margin-left: -7px;
+}
+
+#topbar .bar-logo span {
+   width: 6.5px;
+   height: 6.5px;
+   border-radius: 50%;
+   background: currentColor;
+}
+
+#topbar .bar-name {
+   font-weight: 600;
+}
+
+#topbar .bar-icon {
+   padding: 0 6px;
+}
+
+#topbar .bar-icon svg {
+   width: 15px;
+   height: 15px;
+}
+
+/* Search reads as a field waiting to be typed in: the label faint, the
+   shortcut at the far end, inside the same pill as the other items. */
+#search-button {
+   gap: 6px;
+   margin-right: 4px;
+   box-shadow: inset 0 0 0 1px var(--bar-edge);
+   background: var(--bar-pill);
+}
+
+#search-button .lens {
+   width: 13px;
+   height: 13px;
+   flex: none;
+}
+
+#search-button .label {
+   opacity: 0.6;
+   padding-right: 28px;
+}
+
+#search-button .keys {
+   display: flex;
+   gap: 3px;
+}
+
+#search-button .key {
+   padding: 1px 4px;
+   border: 1px solid currentColor;
+   border-radius: 4px;
+   font-size: 10px;
+   line-height: 1.2;
+   opacity: 0.55;
+}
+
+#bar-clock {
+   margin-left: 8px;
+   font-variant-numeric: tabular-nums;
+   white-space: pre;
+}
+
+/* Below the page heading's full-width layout the extra menus and the clock
+   go first, then the search label: the bar keeps the mark, the name, the two
+   guides and the icons. */
+@media (max-width: 1100px) {
+   #bar-clock {
+      display: none;
+   }
 }
 
 @media (max-width: 900px) {
-   /* Sits above the full-width "Contents" bar on mobile instead of
-      overlapping it. */
-   #site-tools {
-      top: 2.5em;
+   #topbar .bar-extra,
+   #search-button .label,
+   #search-button .keys {
+      display: none;
+   }
+   #search-button {
+      background: none;
+      box-shadow: none;
+      margin-right: 0;
+      padding: 0 6px;
+   }
+   #search-button .lens {
+      width: 15px;
+      height: 15px;
+   }
+}
+
+@media (max-width: 480px) {
+   #topbar .bar-name {
+      display: none;
+   }
+   #topbar .bar-menu {
+      padding: 0 6px;
    }
 }
 
@@ -216,7 +405,7 @@ body {
       display: inline-block;
       width: 100%;
       position: fixed;
-      top: 0;
+      top: var(--bar-h);
       left: 0;
       right: 0;
       text-align: right;
@@ -232,6 +421,7 @@ body {
    #TableOfContents {
       display: none;
       position: fixed;
+      top: var(--bar-h);
       overflow: scroll;
       padding: calc(1.7em *0.5) 0 1.7em;
    }
@@ -733,56 +923,6 @@ main img[src*="/diagrams/"] {
    constants (components/otto-launcher/src/view.rs and
    components/otto-agents-kit/src/rows.rs), in px rather than points, so
    the two read as the same object.                                         */
-
-#search-button {
-   display: flex;
-   align-items: center;
-   gap: 0.5em;
-   margin: calc(1.7em * 0.5) 0;
-   padding: 0.35em 0.6em 0.35em 0.7em;
-   border: 1px solid currentColor;
-   border-radius: 999px;
-   background: none;
-   color: inherit;
-   font-family: inherit;
-   font-size: 0.85rem;
-   line-height: 1.4;
-   opacity: 0.5;
-   cursor: pointer;
-}
-
-#search-button:hover,
-#search-button:focus {
-   opacity: 1;
-}
-
-#search-button .lens {
-   width: 1.05em;
-   height: 1.05em;
-   flex: none;
-}
-
-/* Reads as a field waiting to be typed in, so the label is placeholder-faint
-   and the shortcut sits at the far end where a field's affordances go. */
-#search-button .label {
-   opacity: 0.75;
-   padding-right: 2.5em;
-}
-
-#search-button .keys {
-   display: flex;
-   gap: 0.25em;
-}
-
-#search-button .key {
-   display: inline-block;
-   padding: 0.05em 0.35em;
-   border: 1px solid currentColor;
-   border-radius: 4px;
-   font-size: 0.85em;
-   line-height: 1.4;
-   opacity: 0.8;
-}
 
 #search-dialog {
    width: 720px;

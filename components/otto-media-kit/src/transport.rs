@@ -10,9 +10,9 @@ use std::time::Duration;
 
 use otto_kit::common::Renderable;
 use otto_kit::components::label::Label;
+use otto_kit::skia::{Canvas, Color, Contains, Paint, PathBuilder, Point, RRect, Rect};
 use otto_kit::theme::Theme;
 use otto_kit::typography::styles;
-use skia_safe::{Canvas, Color, Contains, Paint, PathBuilder, Point, RRect, Rect};
 
 /// The bar's height. Room for a control a finger can hit and a track a
 /// pointer can.
@@ -235,9 +235,9 @@ pub fn draw(canvas: &Canvas, layout: &TransportLayout, state: &TransportState, t
     canvas.draw_path(&speaker.detach(), &paint);
     let mut stroke = Paint::default();
     stroke.set_anti_alias(true);
-    stroke.set_style(skia_safe::paint::Style::Stroke);
+    stroke.set_style(otto_kit::skia::paint::Style::Stroke);
     stroke.set_stroke_width(2.0);
-    stroke.set_stroke_cap(skia_safe::PaintCap::Round);
+    stroke.set_stroke_cap(otto_kit::skia::PaintCap::Round);
     if state.muted {
         stroke.set_color(ink);
         canvas.draw_line((cx + 5.0, cy - 4.0), (cx + 12.0, cy + 4.0), &stroke);

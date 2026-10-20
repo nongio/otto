@@ -5,8 +5,8 @@
 //! frame somewhere else, or no transport, uses [`Frame::to_image`] and
 //! [`transport`] directly.
 
+use otto_kit::skia::{Canvas, Color, Image, Paint, Rect};
 use otto_kit::theme::Theme;
-use skia_safe::{Canvas, Color, Image, Paint, Rect};
 
 use crate::player::{Frame, Playback, Player, State};
 use crate::transport::{self, TransportLayout, TransportState};
@@ -109,9 +109,9 @@ pub fn draw_frame(
         });
     if let Some((image, size)) = picture {
         let dest = picture_rect(bounds, size);
-        let sampling = skia_safe::SamplingOptions::new(
-            skia_safe::FilterMode::Linear,
-            skia_safe::MipmapMode::Linear,
+        let sampling = otto_kit::skia::SamplingOptions::new(
+            otto_kit::skia::FilterMode::Linear,
+            otto_kit::skia::MipmapMode::Linear,
         );
         canvas.draw_image_rect_with_sampling_options(&image, None, dest, sampling, &paint);
     }

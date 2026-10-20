@@ -5,7 +5,7 @@ A proof of concept: dictation as a Wayland input method. It runs for the whole s
 - **Layer:** app. Used by nothing (an app).
 
 ## Dependencies
-- **Internal:** `otto-kit` with its `dictation` feature, for microphone capture (PipeWire), the engine client (`ureq`), word agreement and the equaliser bars; also Skia text and the XDG runtime dir. The launcher reaches the same code through `otto-agents-kit`.
+- **Internal:** `otto-kit` with its `dictation` feature, for microphone capture (PipeWire), the engine client (`ureq`), word agreement and the equaliser bars; also Skia text, the XDG runtime dir and the logging setup. The launcher reaches the same code through `otto-agents-kit`.
 - **External:**
   - `zwp_input_method_v2`, with its keyboard grab and input popup surface, from the compositor (through `wayland-protocols-misc`). It works in any app that supports text input.
   - A speech-to-text server answering whisper.cpp's `/inference` API on `http://127.0.0.1:8080/inference`. `engines/` holds three (Parakeet, Whisper, CrispASR), each a systemd user unit, one at a time.

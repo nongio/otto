@@ -21,8 +21,8 @@ use std::sync::Arc;
 
 use otto_kit::components::scroll::ScrollContent;
 use otto_kit::preview::document;
+use otto_kit::skia::{Canvas, Rect};
 use otto_kit::CursorShape;
-use skia_safe::{Canvas, Rect};
 use smithay_client_toolkit::seat::keyboard::Keysym;
 
 use crate::chat::{input, Ask, Note, Status, Step};

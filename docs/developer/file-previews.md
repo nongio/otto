@@ -179,7 +179,7 @@ to `sandbox.rs`.
 | `text/plain`, or a subclass of it | `text::read` | Refuses a NUL in the first 4 KiB; reads UTF-8 (BOM removed) or falls back to Latin-1 | 8 MiB, 4000 lines, 2000 bytes per line |
 | anything else | `media::generic` | Card with the kind and size | — |
 
-The only dependencies are `skia-safe`, `libc` and `otto-kit`: there is no image
+The only dependencies are `libc` and `otto-kit` (Skia included): there is no image
 crate, PDF library, archive crate or syntax highlighter. That is a deliberate
 choice. PDF rasterisers are run as programs rather than linked, so a new format
 can often be supported by adding a command to a table.

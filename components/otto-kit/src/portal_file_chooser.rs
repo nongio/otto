@@ -12,19 +12,25 @@
 //! blocks for as long as the dialog is up, minutes if the user browses, so an
 //! app calls [`Request::spawn`] instead: the dialog runs on a thread of its
 //! own, the answer is handed to a closure there, and the run loop is woken
-//! afterwards whatever the answer was.
+//! afterwards whatever the answer was. `spawn` hands back a [`Cancel`], which
+//! takes the dialog down again when the window that asked goes first.
 //!
 //! Every request carries a handle token of its own. The frontend derives the
 //! request's object path from the caller's unique bus name and that token, so
 //! the answer is listened for before the call and cannot be missed, and two
-//! dialogs asked one after the other never share an answer.
+//! dialogs asked one after the other never share an answer. A frontend that
+//! returns some other handle is followed to it. The wait also ends when the
+//! frontend leaves the bus, which would otherwise leave it waiting forever.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Arc;
 
-use zbus::blocking::Connection;
+use futures_util::StreamExt;
+use tokio::sync::Notify;
 use zbus::zvariant::{OwnedObjectPath, OwnedValue, Value};
+use zbus::Connection;
 
 const PORTAL_NAME: &str = "org.freedesktop.portal.Desktop";
 const PORTAL_PATH: &str = "/org/freedesktop/portal/desktop";
@@ -57,10 +63,44 @@ pub enum Outcome {
     /// The user chose something: absolute local paths, in the order the
     /// portal gave them. Never empty.
     Chosen(Vec<PathBuf>),
-    /// The user cancelled, or the request ended without an answer.
+    /// The user cancelled, or the app withdrew the dialog through [`Cancel`].
     Dismissed,
-    /// The request never got as far as a dialog, or its answer was unusable.
+    /// The request never got as far as a dialog, the portal ended it without
+    /// an answer, or its answer was unusable.
     Failed(String),
+}
+
+/// Takes down a dialog [`Request::spawn`] put up: the portal is asked to
+/// close the request, and the answer handed over is [`Outcome::Dismissed`].
+///
+/// Dropping it does nothing; the dialog stays until it is answered. Cancelling
+/// a dialog that has already been answered does nothing either.
+#[derive(Debug, Clone, Default)]
+pub struct Cancel(Arc<CancelState>);
+
+#[derive(Debug, Default)]
+struct CancelState {
+    cancelled: AtomicBool,
+    /// Wakes the dialog's thread. Keeps its permit when nobody waits yet, so
+    /// a cancel that lands before the wait begins is not lost.
+    wake: Notify,
+}
+
+impl Cancel {
+    /// Take the dialog down. Returns at once: the dialog's thread asks the
+    /// portal to close the request.
+    pub fn cancel(&self) {
+        self.0.cancelled.store(true, Ordering::Relaxed);
+        self.0.wake.notify_one();
+    }
+
+    fn is_cancelled(&self) -> bool {
+        self.0.cancelled.load(Ordering::Relaxed)
+    }
+
+    async fn cancelled(&self) {
+        self.0.wake.notified().await;
+    }
 }
 
 /// Which of the portal's methods a request calls.
@@ -152,68 +192,137 @@ impl Request {
     /// `on_answer` there, then wake the run loop: for every outcome, so a
     /// cancelled or failed dialog is noticed as promptly as a chosen file.
     ///
+    /// The [`Cancel`] it returns takes the dialog down, for when the window
+    /// that asked closes first.
+    ///
     /// # Errors
     ///
     /// When the thread cannot be started; `on_answer` is then never called.
-    pub fn spawn(self, on_answer: impl FnOnce(Outcome) + Send + 'static) -> std::io::Result<()> {
+    pub fn spawn(
+        self,
+        on_answer: impl FnOnce(Outcome) + Send + 'static,
+    ) -> std::io::Result<Cancel> {
+        let cancel = Cancel::default();
+        let watched = cancel.clone();
         std::thread::Builder::new()
             .name("file-chooser".into())
             .spawn(move || {
-                on_answer(self.ask());
+                on_answer(self.ask_until(&watched));
                 crate::app_runner::AppContext::request_wakeup();
             })
-            .map(drop)
+            .map(|_| cancel)
     }
 
     /// Put the dialog up and block until it is answered.
     ///
     /// There is no timeout on purpose: the user may reasonably take minutes,
     /// and a timeout would leave the dialog on screen answering to nobody.
-    /// Never call this on the thread that draws; see [`Request::spawn`].
+    /// Never call this on the thread that draws, nor inside an async
+    /// runtime; see [`Request::spawn`].
     pub fn ask(self) -> Outcome {
-        let connection = match Connection::session() {
+        self.ask_until(&Cancel::default())
+    }
+
+    /// [`Request::ask`], given up when `cancel` fires.
+    fn ask_until(self, cancel: &Cancel) -> Outcome {
+        if cancel.is_cancelled() {
+            return Outcome::Dismissed;
+        }
+        // A runtime of the dialog's own, alive for exactly as long as the
+        // dialog: the connection's tasks run on it while it waits.
+        let runtime = match tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        {
+            Ok(runtime) => runtime,
+            Err(err) => return Outcome::Failed(format!("no runtime for the dialog: {err}")),
+        };
+        runtime.block_on(self.ask_async(cancel))
+    }
+
+    async fn ask_async(self, cancel: &Cancel) -> Outcome {
+        let connection = match Connection::session().await {
             Ok(connection) => connection,
             Err(err) => return Outcome::Failed(format!("no session bus: {err}")),
         };
         let Some(unique) = connection.unique_name().map(|name| name.to_string()) else {
             return Outcome::Failed("no unique bus name".into());
         };
+        // Watched from before the call, so a portal that dies while it is
+        // being asked is not missed either.
+        let mut owner_changes = match portal_owner_changes(&connection).await {
+            Ok(changes) => changes,
+            Err(err) => return Outcome::Failed(format!("cannot watch the portal: {err}")),
+        };
         let token = next_token();
-        let path = request_path(&unique, &token);
-        let request =
-            match zbus::blocking::Proxy::new(&connection, PORTAL_NAME, path.as_str(), REQUEST) {
-                Ok(proxy) => proxy,
-                Err(err) => return Outcome::Failed(format!("cannot watch the request: {err}")),
-            };
-        let mut responses = match request.receive_signal("Response") {
-            Ok(signals) => signals,
-            Err(err) => return Outcome::Failed(format!("cannot subscribe to Response: {err}")),
+        let mut path = request_path(&unique, &token);
+        let mut responses = match responses_at(&connection, &path).await {
+            Ok(responses) => responses,
+            Err(err) => return Outcome::Failed(format!("cannot watch the request: {err}")),
         };
         let portal =
-            match zbus::blocking::Proxy::new(&connection, PORTAL_NAME, PORTAL_PATH, FILE_CHOOSER) {
+            match zbus::Proxy::new(&connection, PORTAL_NAME, PORTAL_PATH, FILE_CHOOSER).await {
                 Ok(proxy) => proxy,
                 Err(err) => return Outcome::Failed(format!("no portal: {err}")),
             };
 
         let method = self.method.name();
         let options = self.options(token);
-        // The returned handle is discarded: it is the path derived above,
-        // already listened on. Owned, because a borrowed `ObjectPath` cannot
-        // outlive the reply it was deserialised from.
-        let handle: zbus::Result<OwnedObjectPath> = portal.call(
-            method,
-            &(self.parent.as_str(), self.title.as_str(), options),
-        );
-        if let Err(err) = handle {
-            return Outcome::Failed(format!("{method} failed: {err}"));
+        // Owned, because a borrowed `ObjectPath` cannot outlive the reply it
+        // was deserialised from.
+        let handle: zbus::Result<OwnedObjectPath> = portal
+            .call(
+                method,
+                &(self.parent.as_str(), self.title.as_str(), options),
+            )
+            .await;
+        let handle = match handle {
+            Ok(handle) => handle,
+            Err(err) => return Outcome::Failed(format!("{method} failed: {err}")),
+        };
+        // A frontend that ignores the handle token picks the path itself, and
+        // answers there. An answer sent before this second subscription is
+        // lost, which nothing on this side can prevent.
+        if handle.as_str() != path {
+            path = handle.as_str().to_owned();
+            responses = match responses_at(&connection, &path).await {
+                Ok(responses) => responses,
+                Err(err) => return Outcome::Failed(format!("cannot watch the request: {err}")),
+            };
         }
 
-        let Some(message) = responses.next() else {
-            return Outcome::Failed("the portal closed without answering".into());
-        };
-        match message.body().deserialize() {
-            Ok((response, results)) => outcome(response, &results),
-            Err(err) => Outcome::Failed(format!("malformed Response: {err}")),
+        loop {
+            tokio::select! {
+                message = responses.next() => {
+                    let Some(message) = message else {
+                        return Outcome::Failed("the portal closed without answering".into());
+                    };
+                    return match message.body().deserialize() {
+                        Ok((response, results)) => outcome(response, &results),
+                        Err(err) => Outcome::Failed(format!("malformed Response: {err}")),
+                    };
+                }
+                change = owner_changes.next() => {
+                    let Some(change) = change else {
+                        return Outcome::Failed("lost track of the portal".into());
+                    };
+                    // The portal gaining an owner (activated by the call) is
+                    // no news; losing it is the end of the request.
+                    let lost = change
+                        .args()
+                        .map(|args| args.new_owner().is_none())
+                        .unwrap_or(false);
+                    if lost {
+                        return Outcome::Failed(
+                            "the portal left the bus without answering".into(),
+                        );
+                    }
+                }
+                () = cancel.cancelled() => {
+                    close_request(&connection, &path).await;
+                    return Outcome::Dismissed;
+                }
+            }
         }
     }
 
@@ -235,6 +344,38 @@ impl Request {
             options.insert("current_folder", Value::from(folder_bytes(folder)));
         }
         options
+    }
+}
+
+/// The `Response` signals of the request at `path`.
+async fn responses_at(
+    connection: &Connection,
+    path: &str,
+) -> zbus::Result<zbus::proxy::SignalStream<'static>> {
+    zbus::Proxy::new_owned(connection.clone(), PORTAL_NAME, path.to_owned(), REQUEST)
+        .await?
+        .receive_signal("Response")
+        .await
+}
+
+/// Changes of who owns the portal's bus name.
+async fn portal_owner_changes(
+    connection: &Connection,
+) -> zbus::Result<zbus::fdo::NameOwnerChangedStream> {
+    zbus::fdo::DBusProxy::new(connection)
+        .await?
+        .receive_name_owner_changed_with_args(&[(0, PORTAL_NAME)])
+        .await
+}
+
+/// Ask the portal to close the request at `path`, which takes its dialog
+/// down. The portal sends no `Response` for a closed request.
+async fn close_request(connection: &Connection, path: &str) {
+    let closed = connection
+        .call_method(Some(PORTAL_NAME), path, Some(REQUEST), "Close", &())
+        .await;
+    if let Err(err) = closed {
+        tracing::warn!(%err, path, "could not close the file dialog's request");
     }
 }
 
@@ -267,8 +408,13 @@ fn folder_bytes(folder: &Path) -> Vec<u8> {
 
 /// What a `Response` signal's `(response, results)` amount to.
 fn outcome(response: u32, results: &HashMap<String, OwnedValue>) -> Outcome {
-    if response != 0 {
-        return Outcome::Dismissed;
+    match response {
+        0 => {}
+        1 => return Outcome::Dismissed,
+        // `2` is the request ending some other way: the picker unreachable
+        // or dead, the request refused. Not the user's choice.
+        2 => return Outcome::Failed("the portal ended the request".into()),
+        other => return Outcome::Failed(format!("unknown portal response {other}")),
     }
     let uris = results
         .get("uris")
@@ -295,6 +441,25 @@ mod tests {
         let uris: Vec<String> = uris.iter().map(|uri| (*uri).to_owned()).collect();
         let value = OwnedValue::try_from(Value::from(uris)).unwrap();
         HashMap::from([("uris".to_owned(), value)])
+    }
+
+    #[test]
+    fn a_dialog_cancelled_before_it_is_asked_is_never_put_up() {
+        let cancel = Cancel::default();
+        cancel.cancel();
+        assert_eq!(
+            Request::open_file("Open").ask_until(&cancel),
+            Outcome::Dismissed
+        );
+    }
+
+    #[tokio::test]
+    async fn a_cancel_before_the_wait_is_not_lost() {
+        let cancel = Cancel::default();
+        cancel.clone().cancel();
+        tokio::time::timeout(std::time::Duration::from_secs(1), cancel.cancelled())
+            .await
+            .expect("the stored cancel wakes the wait");
     }
 
     #[test]
@@ -331,7 +496,8 @@ mod tests {
     #[test]
     fn a_cancelled_or_unusable_answer_is_not_a_choice() {
         assert_eq!(outcome(1, &results(&["file:///a"])), Outcome::Dismissed);
-        assert_eq!(outcome(2, &HashMap::new()), Outcome::Dismissed);
+        assert!(matches!(outcome(2, &HashMap::new()), Outcome::Failed(_)));
+        assert!(matches!(outcome(3, &HashMap::new()), Outcome::Failed(_)));
         assert!(matches!(
             outcome(0, &results(&["https://example.com/a"])),
             Outcome::Failed(_)

@@ -138,7 +138,7 @@ impl Browser {
                 .photos_info_wants_preview()
                 .then(|| self.photos_info_stage())
                 .flatten()
-                .filter(|stage| stage.contains(skia_safe::Point::new(x, y)));
+                .filter(|stage| stage.contains(otto_kit::skia::Point::new(x, y)));
         }
         let (width, height) = (self.size.0, self.content_h());
         let panel = view::preview_pane_rect(
@@ -162,7 +162,7 @@ impl Browser {
             return None;
         }
         visible
-            .contains(skia_safe::Point::new(x, y))
+            .contains(otto_kit::skia::Point::new(x, y))
             // The picture may start off the left edge; the drag image is the
             // whole picture, so the anchor is measured from the *stage*.
             .then_some(stage)
@@ -172,7 +172,7 @@ impl Browser {
     /// the column is showing.
     pub(super) fn preview_drag_picture(
         &self,
-    ) -> Option<impl Fn(&skia_safe::Canvas, f32, f32) + Send + Sync + 'static> {
+    ) -> Option<impl Fn(&otto_kit::skia::Canvas, f32, f32) + Send + Sync + 'static> {
         let entry = self.selected_entry()?;
         let data = view::PreviewData {
             name: entry.name.as_str(),
@@ -415,9 +415,9 @@ impl Browser {
         // the hit test has to measure against the same rect — otherwise the
         // play button answers for a band of empty column above it.
         let content = view::preview_video_box(stage, video.snapshot().aspect());
-        let over_picture = content.contains(skia_safe::Point::new(x, y))
+        let over_picture = content.contains(otto_kit::skia::Point::new(x, y))
             && otto_media_kit::view::transport_layout(content)
-                .hit(skia_safe::Point::new(x, y))
+                .hit(otto_kit::skia::Point::new(x, y))
                 .is_none();
         // A second press on the picture opens the video, the way a second
         // click on its row does. The first one has played or paused it;

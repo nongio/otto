@@ -1,0 +1,69 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 264" width="760" height="264" role="img" aria-label="otto-agents-client: linked by the service, otto-agents-kit and otto-preview; its transport, session and uri modules reach the service socket over the AHP crates and otto-foundations">
+  <style>
+    text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
+    .box  { fill: #f6f8fa; stroke: #8b949e; stroke-width: 1.4; }
+    .acc  { fill: #ddf4ff; stroke: #218bff; stroke-width: 1.4; }
+    .grp  { fill: none; stroke: #8b949e; stroke-width: 1.2; stroke-dasharray: 5 4; }
+    .t    { fill: #1f2328; font-size: 13px; }
+    .tb   { fill: #1f2328; font-size: 13px; font-weight: 600; }
+    .tm   { fill: #656d76; font-size: 11px; }
+    .ln   { stroke: #8b949e; stroke-width: 1.4; fill: none; marker-end: url(#ah); }
+    @media (prefers-color-scheme: dark) {
+      .box { fill: #161b22; stroke: #6e7681; }
+      .acc { fill: #10243b; stroke: #388bfd; }
+      .grp { stroke: #6e7681; }
+      .t, .tb { fill: #e6edf3; }
+      .tm  { fill: #9198a1; }
+      .ln  { stroke: #8b949e; }
+    }
+  </style>
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#8b949e"/>
+    </marker>
+  </defs>
+
+  <text class="tb" x="16" y="28">Linked by</text>
+  <text class="tb" x="486" y="28">Reaches and builds on</text>
+
+  <rect class="box" x="16" y="52" width="180" height="44" rx="6"/>
+  <text class="t" x="28" y="70">otto-agents</text>
+  <text class="tm" x="28" y="86">the service itself</text>
+  <rect class="box" x="16" y="116" width="180" height="44" rx="6"/>
+  <text class="t" x="28" y="134">otto-agents-kit</text>
+  <text class="tm" x="28" y="150">launcher, canvas, Studio</text>
+  <rect class="box" x="16" y="180" width="180" height="44" rx="6"/>
+  <text class="t" x="28" y="198">otto-preview</text>
+  <text class="tm" x="28" y="214">Studio's chat</text>
+  <path class="ln" d="M196 74 H224"/>
+  <path class="ln" d="M196 138 H224"/>
+  <path class="ln" d="M196 202 H224"/>
+
+  <rect class="box" x="226" y="40" width="220" height="208" rx="8"/>
+  <text class="tb" x="240" y="62">otto-agents-client</text>
+  <rect class="acc" x="240" y="74" width="192" height="52" rx="6"/>
+  <text class="tb" x="252" y="95">transport</text>
+  <text class="tm" x="252" y="112">connect, default_url, socket_path</text>
+  <rect class="acc" x="240" y="134" width="192" height="48" rx="6"/>
+  <text class="tb" x="252" y="154">session</text>
+  <text class="tm" x="252" y="170">ahp-session:/ URIs, find</text>
+  <rect class="acc" x="240" y="190" width="192" height="48" rx="6"/>
+  <text class="tb" x="252" y="210">uri</text>
+  <text class="tm" x="252" y="226">file:// URIs and paths</text>
+
+  <rect class="box" x="486" y="52" width="260" height="56" rx="6"/>
+  <text class="t" x="498" y="72">otto-agents serve</text>
+  <text class="tm" x="498" y="88">unix://$XDG_RUNTIME_DIR/otto-agents/</text>
+  <text class="tm" x="498" y="101">agents.sock, or ws:// in development</text>
+  <path class="ln" d="M432 92 H484"/>
+
+  <rect class="box" x="486" y="130" width="260" height="44" rx="6"/>
+  <text class="t" x="498" y="148">ahp, ahp-types, ahp-ws</text>
+  <text class="tm" x="498" y="164">AHP client, wire types, framing</text>
+  <path class="ln" d="M446 152 H484"/>
+
+  <rect class="box" x="486" y="194" width="260" height="44" rx="6"/>
+  <text class="t" x="498" y="212">otto-foundations</text>
+  <text class="tm" x="498" y="228">runtime_dir, file URI escaping</text>
+  <path class="ln" d="M432 214 H484"/>
+</svg>

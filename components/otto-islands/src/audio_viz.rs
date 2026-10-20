@@ -7,7 +7,7 @@
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-use skia_safe::{Canvas, Color, Paint, RRect, Rect};
+use otto_kit::skia::{Canvas, Color, Paint, RRect, Rect};
 
 /// Number of bars an animator tracks, one per frequency band. Every bar style
 /// draws from these.
@@ -460,7 +460,7 @@ pub fn draw_bars(
 /// Draw the "playing on another device" glyph, a screen with waves coming
 /// off its corner, as big as fits centred in `rect`.
 pub fn draw_elsewhere_glyph(canvas: &Canvas, rect: Rect, colour: Color) {
-    use skia_safe::{PaintStyle, PathBuilder, Point};
+    use otto_kit::skia::{PaintStyle, PathBuilder, Point};
 
     // Drawn on a 24-unit grid.
     let size = rect.width().min(rect.height());
@@ -485,8 +485,8 @@ pub fn draw_elsewhere_glyph(canvas: &Canvas, rect: Rect, colour: Color) {
     paint.set_color(Color::from_argb(220, colour.r(), colour.g(), colour.b()));
     paint.set_style(PaintStyle::Stroke);
     paint.set_stroke_width(2.0 * unit);
-    paint.set_stroke_cap(skia_safe::paint::Cap::Round);
-    paint.set_stroke_join(skia_safe::paint::Join::Round);
+    paint.set_stroke_cap(otto_kit::skia::paint::Cap::Round);
+    paint.set_stroke_join(otto_kit::skia::paint::Join::Round);
 
     // The screen, open at the bottom-left where the waves are.
     let mut frame = PathBuilder::new();

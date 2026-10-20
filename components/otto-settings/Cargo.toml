@@ -22,9 +22,5 @@ zeroize.workspace = true
 # `unstable-locales` gives the day and month names in the user's language.
 chrono = { workspace = true, features = ["clock", "unstable-locales"] }
 
-[dependencies.skia-safe]
-workspace = true
-features = ["gl", "textlayout", "svg"]
-
 [lints]
 workspace = true

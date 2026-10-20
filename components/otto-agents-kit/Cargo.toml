@@ -21,10 +21,6 @@ tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
 tracing.workspace = true
 uuid = { workspace = true, features = ["v4"] }
 
-[dependencies.skia-safe]
-workspace = true
-features = ["gl", "textlayout", "svg", "skottie"]
-
 [features]
 # Ctrl+D dictation into a host's field. It brings in the microphone and
 # the engine's client, so hosts with no chat field leave it off.

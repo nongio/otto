@@ -1,7 +1,7 @@
 use super::typeahead_tests::browser_over;
 use super::*;
 
-use skia_safe::Point;
+use otto_kit::skia::Point;
 
 /// A browser with a panel up, placed where the test says, and the display it
 /// may be dragged around. Both are what the render path would have written

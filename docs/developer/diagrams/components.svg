@@ -1,0 +1,118 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 736" width="760" height="736" role="img" aria-label="Every Otto workspace crate, grouped by the architecture layer it belongs to: apps over kits over the toolkit over services over the foundation, with the compositor, its render stack and the repository tooling beside them">
+  <style>
+    text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
+    .box  { fill: #f6f8fa; stroke: #8b949e; stroke-width: 1.4; }
+    .acc  { fill: #ddf4ff; stroke: #218bff; stroke-width: 1.4; }
+    .grp  { fill: none; stroke: #8b949e; stroke-width: 1.2; stroke-dasharray: 5 4; }
+    .t    { fill: #1f2328; font-size: 13px; }
+    .tb   { fill: #1f2328; font-size: 13px; font-weight: 600; }
+    .tm   { fill: #656d76; font-size: 11px; }
+    .ln   { stroke: #8b949e; stroke-width: 1.4; fill: none; marker-end: url(#ah); }
+    @media (prefers-color-scheme: dark) {
+      .box { fill: #161b22; stroke: #6e7681; }
+      .acc { fill: #10243b; stroke: #388bfd; }
+      .grp { stroke: #6e7681; }
+      .t, .tb { fill: #e6edf3; }
+      .tm  { fill: #9198a1; }
+      .ln  { stroke: #8b949e; }
+    }
+  </style>
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#8b949e"/>
+    </marker>
+  </defs>
+
+
+<text class="tb" x="16" y="26">Otto workspace crates by layer</text>
+<rect class="acc" x="440" y="13" width="14" height="14" rx="3"/><text class="tm" x="460" y="24">library</text>
+<rect class="box" x="520" y="13" width="14" height="14" rx="3"/><text class="tm" x="540" y="24">program</text>
+<rect class="grp" x="10" y="54" width="740" height="168" rx="8"/>
+<text class="tb" x="22" y="81">app</text>
+<text class="tm" x="22" y="97">programs: nothing links them</text>
+<rect class="box" x="176" y="66" width="79" height="30" rx="6"/>
+<text class="t" x="215.5" y="86" text-anchor="middle">otto-bar</text>
+<rect class="box" x="263" y="66" width="108" height="30" rx="6"/>
+<text class="t" x="317.0" y="86" text-anchor="middle">otto-islands</text>
+<rect class="box" x="379" y="66" width="115" height="30" rx="6"/>
+<text class="t" x="436.5" y="86" text-anchor="middle">otto-launcher</text>
+<rect class="box" x="502" y="66" width="94" height="30" rx="6"/>
+<text class="t" x="549.0" y="86" text-anchor="middle">otto-emoji</text>
+<rect class="box" x="604" y="66" width="115" height="30" rx="6"/>
+<text class="t" x="661.5" y="86" text-anchor="middle">otto-settings</text>
+<rect class="box" x="176" y="104" width="94" height="30" rx="6"/>
+<text class="t" x="223.0" y="124" text-anchor="middle">otto-files</text>
+<rect class="box" x="278" y="104" width="108" height="30" rx="6"/>
+<text class="t" x="332.0" y="124" text-anchor="middle">otto-preview</text>
+<rect class="box" x="394" y="104" width="94" height="30" rx="6"/>
+<text class="t" x="441.0" y="124" text-anchor="middle">otto-stash</text>
+<rect class="box" x="496" y="104" width="101" height="30" rx="6"/>
+<text class="t" x="546.5" y="124" text-anchor="middle">otto-canvas</text>
+<rect class="box" x="605" y="104" width="108" height="30" rx="6"/>
+<text class="t" x="659.0" y="124" text-anchor="middle">otto-greeter</text>
+<rect class="box" x="176" y="142" width="86" height="30" rx="6"/>
+<text class="t" x="219.0" y="162" text-anchor="middle">otto-lock</text>
+<rect class="box" x="270" y="142" width="122" height="30" rx="6"/>
+<text class="t" x="331.0" y="162" text-anchor="middle">otto-authorize</text>
+<rect class="box" x="400" y="142" width="151" height="30" rx="6"/>
+<text class="t" x="475.5" y="162" text-anchor="middle">otto-input-overlay</text>
+<rect class="box" x="559" y="142" width="108" height="30" rx="6"/>
+<text class="t" x="613.0" y="162" text-anchor="middle">otto-dictate</text>
+<rect class="box" x="176" y="180" width="79" height="30" rx="6"/>
+<text class="t" x="215.5" y="200" text-anchor="middle">otto-msg</text>
+<rect class="box" x="263" y="180" width="101" height="30" rx="6"/>
+<text class="t" x="313.5" y="200" text-anchor="middle">otto-agents</text>
+<rect class="box" x="372" y="180" width="79" height="30" rx="6"/>
+<text class="t" x="411.5" y="200" text-anchor="middle">otto-rdp</text>
+<rect class="box" x="459" y="180" width="187" height="30" rx="6"/>
+<text class="t" x="552.5" y="200" text-anchor="middle">xdg-desktop-portal-otto</text>
+<rect class="grp" x="10" y="232" width="740" height="92" rx="8"/>
+<text class="tb" x="22" y="259">kit</text>
+<text class="tm" x="22" y="275">features shared by apps</text>
+<rect class="acc" x="176" y="244" width="101" height="30" rx="6"/>
+<text class="t" x="226.5" y="264" text-anchor="middle">otto-md-kit</text>
+<rect class="acc" x="285" y="244" width="122" height="30" rx="6"/>
+<text class="t" x="346.0" y="264" text-anchor="middle">otto-media-kit</text>
+<rect class="acc" x="415" y="244" width="108" height="30" rx="6"/>
+<text class="t" x="469.0" y="264" text-anchor="middle">otto-auth-ui</text>
+<rect class="acc" x="531" y="244" width="86" height="30" rx="6"/>
+<text class="t" x="574.0" y="264" text-anchor="middle">otto-peek</text>
+<rect class="acc" x="176" y="282" width="130" height="30" rx="6"/>
+<text class="t" x="241.0" y="302" text-anchor="middle">otto-agents-kit</text>
+<rect class="grp" x="10" y="334" width="740" height="54" rx="8"/>
+<text class="tb" x="22" y="361">toolkit</text>
+<text class="tm" x="22" y="377">windows, drawing, widgets</text>
+<rect class="acc" x="176" y="346" width="79" height="30" rx="6"/>
+<text class="t" x="215.5" y="366" text-anchor="middle">otto-kit</text>
+<rect class="grp" x="10" y="398" width="740" height="54" rx="8"/>
+<text class="tb" x="22" y="425">service</text>
+<text class="tm" x="22" y="441">system services, no UI</text>
+<rect class="acc" x="176" y="410" width="101" height="30" rx="6"/>
+<text class="t" x="226.5" y="430" text-anchor="middle">otto-search</text>
+<rect class="acc" x="285" y="410" width="151" height="30" rx="6"/>
+<text class="t" x="360.5" y="430" text-anchor="middle">otto-agents-client</text>
+<rect class="acc" x="444" y="410" width="79" height="30" rx="6"/>
+<text class="t" x="483.5" y="430" text-anchor="middle">otto-pdf</text>
+<rect class="grp" x="10" y="462" width="740" height="54" rx="8"/>
+<text class="tb" x="22" y="489">foundation</text>
+<text class="tm" x="22" y="505">pure std, D-Bus proxies</text>
+<rect class="acc" x="176" y="474" width="137" height="30" rx="6"/>
+<text class="t" x="244.5" y="494" text-anchor="middle">otto-foundations</text>
+<rect class="acc" x="321" y="474" width="86" height="30" rx="6"/>
+<text class="t" x="364.0" y="494" text-anchor="middle">otto-dbus</text>
+<rect class="grp" x="10" y="540" width="740" height="54" rx="8"/>
+<text class="tb" x="22" y="567">compositor</text>
+<text class="tm" x="22" y="583">the otto binary</text>
+<rect class="box" x="176" y="552" width="50" height="30" rx="6"/>
+<text class="t" x="201.0" y="572" text-anchor="middle">otto</text>
+<rect class="grp" x="10" y="604" width="740" height="54" rx="8"/>
+<text class="tb" x="22" y="631">compositor-core</text>
+<text class="tm" x="22" y="647">split out of it</text>
+<rect class="acc" x="176" y="616" width="101" height="30" rx="6"/>
+<text class="t" x="226.5" y="636" text-anchor="middle">otto-render</text>
+<rect class="grp" x="10" y="668" width="740" height="54" rx="8"/>
+<text class="tb" x="22" y="695">tools</text>
+<text class="tm" x="22" y="711">repository tooling</text>
+<rect class="box" x="176" y="680" width="86" height="30" rx="6"/>
+<text class="t" x="219.0" y="700" text-anchor="middle">otto-arch</text>
+</svg>

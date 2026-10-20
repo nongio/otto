@@ -1,4 +1,7 @@
-# The Portal Backend
+# xdg-desktop-portal-otto
+
+**User guide:** [Screen Sharing](../user/screen-sharing.md), [Privacy](../user/privacy.md)\
+**Specs:** [Screenshare](../../specs/screenshare.md), [File Picker](../../specs/file-picker.md), [Portal Access Dialog](../../specs/portal-access-dialog.md)
 
 Apps that want something only the desktop can give them (a screen to share, a
 file to open, the dark-mode preference, a screenshot) ask xdg-desktop-portal.
@@ -89,7 +92,9 @@ pending method answers "cancelled" wherever it was.
 The other interfaces are shorter versions of the same shape:
 
 - **Access** forwards the dialog to otto-islands field for field and returns
-  the user's choices.
+  the user's choices. The dialog is named after the request
+  (`PresentAccessWithCookie`), so closing the request withdraws it; the
+  Screenshot confirmation and the ScreenCast source picker work the same way.
 - **FileChooser** unpacks the options into the typed `org.otto.FilePicker1`
   request, lets otto-files run the dialog, and packs the URIs back. Closing
   the request forwards to the picker, so a dialog whose app has gone does not

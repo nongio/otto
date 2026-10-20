@@ -112,8 +112,12 @@ impl ScreenCastPortal {
     /// picker carries a "Remember for <app>" checkbox, ticked to start with
     /// (islands words it; the group's label is the app's name). The answer
     /// says whether it was still ticked.
+    ///
+    /// `request` is the portal request asking, which names the dialog so it
+    /// is withdrawn if the frontend closes the request.
     async fn pick_source(
         &self,
+        request: &str,
         app_id: &str,
         remember_for: Option<String>,
         outputs: &[String],
@@ -169,9 +173,9 @@ impl ScreenCastPortal {
 
         // Native renderer first — it's the only one that shows app icons.
         let native = async {
-            let proxy = self.sc_client.dialog_proxy().await?;
-            proxy
-                .present_access(
+            self.sc_client
+                .present_access_for(
+                    request,
                     app_id,
                     title,
                     &subtitle,
@@ -497,7 +501,7 @@ impl ScreenCastPortal {
 
             if available_outputs.is_empty() && available_windows.is_empty() {
                 warn!(session = %session_handle, "No sources available for screencast");
-                return Ok((3, HashMap::new()));
+                return Ok((2, HashMap::new()));
             }
 
             if multiple {
@@ -564,6 +568,7 @@ impl ScreenCastPortal {
             };
             let (selection, remember) = match self
                 .pick_source(
+                    request_handle.as_str(),
                     &app_id,
                     remember_for,
                     &available_outputs,

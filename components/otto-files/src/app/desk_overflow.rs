@@ -24,7 +24,7 @@ use smithay_client_toolkit::seat::pointer::PointerEvent;
 use super::listing_pointer::{After, PointerAt};
 use super::*;
 use crate::desk::{Overflow, OverflowTile};
-use skia_safe::Point;
+use otto_kit::skia::Point;
 
 /// How long the overflow panel takes to grow out of its tile.
 ///

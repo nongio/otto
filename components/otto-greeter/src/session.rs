@@ -115,49 +115,28 @@ pub fn default_index(sessions: &[Session]) -> usize {
 /// takes no arguments.
 fn parse_desktop_entry(path: &Path) -> Option<Session> {
     let content = std::fs::read_to_string(path).ok()?;
+    let value = |key: &str| otto_kit::desktop_file::value(&content, key);
 
-    let mut in_entry = false;
-    let mut name = None;
-    let mut exec = None;
-    let mut try_exec = None;
-    let mut hidden = false;
-
-    for line in content.lines() {
-        let line = line.trim();
-        if line.starts_with('[') {
-            in_entry = line == "[Desktop Entry]";
-            continue;
-        }
-        if !in_entry {
-            continue;
-        }
-        let Some((key, value)) = line.split_once('=') else {
-            continue;
-        };
-        // Only the unlocalised keys — the greeter has no locale of its own.
-        match key.trim() {
-            "Name" => name = Some(value.trim().to_string()),
-            "Exec" => exec = Some(value.trim().to_string()),
-            "TryExec" => try_exec = Some(value.trim().to_string()),
-            "Hidden" | "NoDisplay" => hidden |= value.trim() == "true",
-            _ => {}
-        }
-    }
+    // Only the unlocalised keys — the greeter has no locale of its own.
+    let name = value("Name");
+    let exec = value("Exec");
+    let try_exec = value("TryExec");
+    let hidden = value("Hidden") == Some("true") || value("NoDisplay") == Some("true");
 
     if hidden {
         return None;
     }
     if let Some(program) = try_exec.filter(|p| !p.is_empty()) {
-        if !otto_kit::mime_apps::program_exists(&program) {
+        if !otto_kit::mime_apps::program_exists(program) {
             tracing::debug!(?path, program, "Skipping session, TryExec not found");
             return None;
         }
     }
 
-    let command = otto_kit::mime_apps::exec_argv(&exec?)?;
+    let command = otto_kit::mime_apps::exec_argv(exec?)?;
 
     Some(Session {
-        name: name.unwrap_or_else(|| command[0].clone()),
+        name: name.map_or_else(|| command[0].clone(), str::to_string),
         command,
     })
 }

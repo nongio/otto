@@ -101,7 +101,7 @@ pub fn recognise(pixels: &Pixels, command: &str, languages: &str) -> Vec<Word> {
 
 fn encode_png(pixels: &Pixels) -> Option<Vec<u8>> {
     let image = pixels.to_image()?;
-    let data = image.encode(None, skia_safe::EncodedImageFormat::PNG, None)?;
+    let data = image.encode(None, otto_kit::skia::EncodedImageFormat::PNG, None)?;
     Some(data.as_bytes().to_vec())
 }
 

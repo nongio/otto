@@ -47,9 +47,9 @@ use otto_kit::components::titlebar::{WindowControl, WindowControlsState};
 use otto_kit::components::window::resize;
 use otto_kit::prelude::*;
 use otto_kit::protocols::otto_surface_style_v1;
+use otto_kit::skia::Contains;
 use otto_kit::CursorShape;
 use panes::{agents, displays, keyboard};
-use skia_safe::Contains;
 use smithay_client_toolkit::reexports::client::protocol::{wl_keyboard, wl_surface};
 use smithay_client_toolkit::reexports::client::Proxy;
 use smithay_client_toolkit::seat::keyboard::KeyEvent;
@@ -543,7 +543,7 @@ impl ScrollContent for PaneContent<'_> {
         self.revision
     }
 
-    fn paint(&self, canvas: &skia_safe::Canvas, band: Rect) {
+    fn paint(&self, canvas: &otto_kit::skia::Canvas, band: Rect) {
         self.settings.render_content(canvas, band);
     }
 }
@@ -1449,7 +1449,7 @@ fn press_search(
     if panes::account::sheet().is_some() {
         return false;
     }
-    let point = skia_safe::Point::new(x, y);
+    let point = otto_kit::skia::Point::new(x, y);
     let mut search = search.lock().unwrap();
 
     if let Some(panel) = search.panel(size.0, size.1) {
@@ -2474,7 +2474,7 @@ impl App for SettingsApp {
                             .lock()
                             .unwrap()
                             .panel(win_w, win_h)
-                            .is_some_and(|panel| panel.contains(skia_safe::Point::new(x, y)));
+                            .is_some_and(|panel| panel.contains(otto_kit::skia::Point::new(x, y)));
                         if panes::account::sheet().is_none() && !over_list {
                             handle_wheel(&pane, vertical);
                         }
@@ -2560,7 +2560,7 @@ impl App for SettingsApp {
                 // and what the popups anchor against.
                 let (x, y) = event.position;
                 let (x, y) = (x as f32, y as f32);
-                let point = skia_safe::Point::new(x, y);
+                let point = otto_kit::skia::Point::new(x, y);
 
                 match &event.kind {
                     PointerEventKind::Press { serial, .. } => {

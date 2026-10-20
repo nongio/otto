@@ -1,0 +1,94 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 336" width="760" height="336" role="img" aria-label="otto-stash: shortcuts, Files and Ask reach org.otto.Stash1; the Wayland loop gathers selections, files and regions into a card in the side canvas or a balloon, and send opens the launcher">
+  <style>
+    text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
+    .box  { fill: #f6f8fa; stroke: #8b949e; stroke-width: 1.4; }
+    .acc  { fill: #ddf4ff; stroke: #218bff; stroke-width: 1.4; }
+    .grp  { fill: none; stroke: #8b949e; stroke-width: 1.2; stroke-dasharray: 5 4; }
+    .t    { fill: #1f2328; font-size: 13px; }
+    .tb   { fill: #1f2328; font-size: 13px; font-weight: 600; }
+    .tm   { fill: #656d76; font-size: 11px; }
+    .ln   { stroke: #8b949e; stroke-width: 1.4; fill: none; marker-end: url(#ah); }
+    @media (prefers-color-scheme: dark) {
+      .box { fill: #161b22; stroke: #6e7681; }
+      .acc { fill: #10243b; stroke: #388bfd; }
+      .grp { stroke: #6e7681; }
+      .t, .tb { fill: #e6edf3; }
+      .tm  { fill: #9198a1; }
+      .ln  { stroke: #8b949e; }
+    }
+  </style>
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#8b949e"/>
+    </marker>
+  </defs>
+
+  <text class="tb" x="16" y="28">Callers on the bus</text>
+  <text class="tb" x="216" y="28">otto-stash, one instance</text>
+  <text class="tb" x="586" y="28">Talks to</text>
+  <rect class="grp" x="206" y="38" width="360" height="282" rx="10"/>
+
+  <rect class="box" x="16" y="52" width="170" height="44" rx="6"/>
+  <text class="t" x="28" y="70">shortcuts</text>
+  <text class="tm" x="28" y="86">otto-stash add, send, …</text>
+  <rect class="box" x="16" y="112" width="170" height="44" rx="6"/>
+  <text class="t" x="28" y="130">otto-files</text>
+  <text class="tm" x="28" y="146">Add to Stash: AddFile</text>
+  <rect class="box" x="16" y="172" width="170" height="44" rx="6"/>
+  <text class="t" x="28" y="190">Ask, in the launcher</text>
+  <text class="tm" x="28" y="206">Hold, Items, Changed</text>
+  <path class="ln" d="M186 74 H218"/>
+  <path class="ln" d="M186 134 L218 88"/>
+  <path class="ln" marker-start="url(#ah)" d="M188 192 L218 102"/>
+
+  <rect class="box" x="16" y="250" width="170" height="52" rx="6"/>
+  <text class="t" x="28" y="270">otto-launcher --ask</text>
+  <text class="tm" x="28" y="288">started by send</text>
+  <path class="ln" d="M220 196 H200 V276 H188"/>
+
+  <rect class="acc" x="220" y="52" width="150" height="60" rx="6"/>
+  <text class="tb" x="232" y="76">org.otto.Stash1</text>
+  <text class="tm" x="232" y="94">zbus on a tokio thread</text>
+
+  <rect class="acc" x="220" y="150" width="150" height="60" rx="6"/>
+  <text class="tb" x="232" y="174">Wayland loop</text>
+  <text class="tm" x="232" y="192">calloop, main thread</text>
+  <path class="ln" d="M295 112 V148"/>
+  <text class="tm" x="236" y="134">commands</text>
+
+  <rect class="acc" x="390" y="52" width="152" height="60" rx="6"/>
+  <text class="tb" x="402" y="76">card</text>
+  <text class="tm" x="402" y="94">canvas item or balloon</text>
+  <path class="ln" d="M360 150 V131 H466 V114"/>
+
+  <rect class="box" x="390" y="150" width="152" height="76" rx="6"/>
+  <text class="tb" x="402" y="172">sources</text>
+  <text class="tm" x="402" y="190">field selection, primary</text>
+  <text class="tm" x="402" y="204">selection, dropped files,</text>
+  <text class="tm" x="402" y="218">region, Files selection</text>
+  <path class="ln" d="M390 188 H372"/>
+
+  <rect class="box" x="220" y="250" width="150" height="52" rx="6"/>
+  <text class="t" x="232" y="271">Request</text>
+  <text class="tm" x="232" y="288">what is stashed, in order</text>
+  <path class="ln" d="M295 210 V248"/>
+
+  <rect class="box" x="586" y="52" width="160" height="76" rx="6"/>
+  <text class="tb" x="598" y="74">compositor</text>
+  <text class="tm" x="598" y="92">input method v2,</text>
+  <text class="tm" x="598" y="106">data-control, layer shell,</text>
+  <text class="tm" x="598" y="120">otto-canvas-v1</text>
+  <path class="ln" d="M542 82 H584"/>
+  <path class="ln" d="M600 128 V168 H544"/>
+
+  <rect class="box" x="586" y="186" width="160" height="60" rx="6"/>
+  <text class="t" x="598" y="208">otto-files, slurp, grim</text>
+  <text class="tm" x="598" y="226">selected files,</text>
+  <text class="tm" x="598" y="239">a screen region</text>
+  <path class="ln" d="M584 212 H544"/>
+
+  <rect class="box" x="586" y="264" width="160" height="56" rx="6"/>
+  <text class="t" x="598" y="286">thumbnail worker</text>
+  <text class="tm" x="598" y="304">otto-peek, same binary</text>
+  <path class="ln" d="M584 292 H380 V204 H372"/>
+</svg>

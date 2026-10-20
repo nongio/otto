@@ -182,8 +182,8 @@ fn parse_line(line: &str) -> Option<Entry> {
 /// contents, read only for an entry.
 fn entry_for_file(path: &Path, text: Option<&str>) -> Option<Entry> {
     if path.extension().is_some_and(|ext| ext == "desktop") {
-        let exec = desktop_exec(text?)?;
-        let mut argv = otto_kit::mime_apps::exec_argv(&exec)?.into_iter();
+        let exec = otto_kit::desktop_file::value(text?, "Exec")?;
+        let mut argv = otto_kit::mime_apps::exec_argv(exec)?.into_iter();
         return Some(Entry {
             cmd: argv.next()?,
             args: argv.collect(),
@@ -195,23 +195,6 @@ fn entry_for_file(path: &Path, text: Option<&str>) -> Option<Entry> {
         args: Vec::new(),
         enabled: true,
     })
-}
-
-/// The `Exec=` value of an entry's `[Desktop Entry]` group.
-fn desktop_exec(text: &str) -> Option<String> {
-    let mut in_entry = false;
-    for line in text.lines().map(str::trim) {
-        if line.starts_with('[') {
-            in_entry = line == "[Desktop Entry]";
-        } else if in_entry {
-            if let Some(exec) = line.strip_prefix("Exec").map(str::trim_start) {
-                if let Some(exec) = exec.strip_prefix('=') {
-                    return Some(exec.trim().to_string());
-                }
-            }
-        }
-    }
-    None
 }
 
 /// Whether `path` is a file that may be run.

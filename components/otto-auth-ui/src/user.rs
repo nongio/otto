@@ -57,10 +57,7 @@ impl User {
     /// The user this process is running as — the subject of a lock screen,
     /// where there is nothing to type a name into.
     pub fn current() -> Option<Self> {
-        let name = std::env::var("USER")
-            .or_else(|_| std::env::var("LOGNAME"))
-            .ok()?;
-        (!name.is_empty()).then(|| Self::lookup(&name))
+        otto_kit::user::login_name().map(|name| Self::lookup(&name))
     }
 
     /// The account a login screen should offer before anyone has said who they

@@ -194,6 +194,48 @@ pattern = 'env::var(_os)?\(\s*"(HOME|XDG_(CONFIG|DATA|STATE|CACHE)_HOME|XDG_RUNT
 allowed_in = ["components/otto-foundations/"]
 reason = "The XDG base directories, with their fallbacks, are otto_foundations::xdg (re-exported as otto_kit::xdg). A hand-rolled lookup drifts: a missing fallback, or a relative path the spec says to ignore."
 
+[[source_rule]]
+name = "wayland-connection-through-kit"
+pattern = 'Connection::connect_to_env'
+allowed_in = ["components/otto-kit/", "components/otto-rdp/"]
+reason = "An app's Wayland connection, registry and event loop are otto-kit's AppRunner. A second connection runs outside the toolkit's input, scale and frame pacing. otto-rdp is a headless bridge with no toolkit: it injects input on a connection of its own."
+
+[[source_rule]]
+name = "dbus-proxies-in-otto-dbus"
+pattern = '#\[(zbus::)?(dbus_)?proxy\b'
+allowed_in = ["components/otto-dbus/"]
+reason = "A zbus client proxy is an interface definition, and otto-dbus holds the interface definitions (re-exported as otto_kit::dbus). One proxy per interface keeps every caller on the same contract: a private copy drifts, a method or signature the server never had or no longer has."
+
+[[source_rule]]
+name = "user-dirs-through-foundations"
+pattern = '"user-dirs\.dirs"'
+allowed_in = ["components/otto-foundations/"]
+reason = "The user's named folders are otto_foundations::xdg::user_dirs and user_dir (re-exported as otto_kit::xdg). Reading user-dirs.dirs by hand misses the rules for $HOME and relative paths, or the file's place under $XDG_CONFIG_HOME."
+
+[[source_rule]]
+name = "user-and-locale-through-foundations"
+pattern = 'env::var(_os)?\(\s*"(USER|LOGNAME|LANG|LANGUAGE|LC_ALL|LC_MESSAGES)"'
+allowed_in = ["components/otto-foundations/", "components/otto-kit/src/i18n/", "src/locale_env.rs"]
+reason = "The login name is otto_foundations::user::login_name (otto_kit::user), and the locale is otto_kit::i18n (env_locales, env_language), or src/locale_env.rs in the compositor. A single variable read here and there disagrees with them: USER without LOGNAME, LANG without LC_ALL."
+
+[[source_rule]]
+name = "desktop-entry-through-foundations"
+pattern = '"\[Desktop Entry\]'
+allowed_in = ["components/otto-foundations/"]
+reason = "A desktop entry's keys are read and set with otto_foundations::desktop_file (otto_kit::desktop_file), or looked up by app id with otto_kit::desktop_entry. A hand-rolled keyfile loop gets the groups, comments or duplicate keys a little differently each time."
+
+[[source_rule]]
+name = "logging-through-foundations"
+pattern = 'tracing_subscriber::'
+allowed_in = ["components/otto-foundations/", "src/main.rs", "src/session_log.rs"]
+reason = "Every Otto program logs through otto_foundations::logging::init (otto_kit::logging): stderr, RUST_LOG or else the program's default filter. A hand-rolled subscriber drifts: logs on standard output, where `otto-agents acp` speaks its protocol, or a panic when something else installed a subscriber first. The compositor is the exception: src/main.rs also writes the session log file (src/session_log.rs) and flushes it on a panic."
+
+[[source_rule]]
+name = "log-with-tracing"
+pattern = '\blog::(trace|debug|info|warn|error|log)!|\buse log::|extern crate log\b'
+allowed_in = []
+reason = "Otto logs with tracing. The log crate's records still arrive (the subscriber bridges them for dependencies), but its macros carry no spans or fields, and a second facade in the code splits the filters people learn."
+
 # ---------------------------------------------------------------------------
 # Known debt
 # ---------------------------------------------------------------------------
@@ -201,6 +243,17 @@ reason = "The XDG base directories, with their fallbacks, are otto_foundations::
 # Crates: none.
 
 # Compositor modules: none.
+
+[[allow]]
+rule = "wayland-connection-through-kit"
+reason = "otto-stash and otto-dictate run their own event loop rather than AppRunner. otto-emoji (virtual keyboard, toplevel list) and otto-launcher (toplevel list) open side connections because AppRunner dispatches only otto-kit's own protocols and an app cannot add one."
+files = [
+    { path = "components/otto-dictate/src/main.rs", count = 1 },
+    { path = "components/otto-emoji/src/target.rs", count = 1 },
+    { path = "components/otto-emoji/src/typing.rs", count = 2 },
+    { path = "components/otto-launcher/src/windows.rs", count = 1 },
+    { path = "components/otto-stash/src/main.rs", count = 1 },
+]
 
 # ---------------------------------------------------------------------------
 # What a change reaches

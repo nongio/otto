@@ -1,5 +1,7 @@
 # otto-media-kit
 
+**Specs:** [Peek](../../specs/peek.md)
+
 Video playback for Otto applications, kept out of otto-kit on purpose: a
 media stack is more code than the toolkit it would be bolted onto, and it
 links GStreamer, which no application binary should.
@@ -7,6 +9,8 @@ links GStreamer, which no application binary should.
 The user-facing behaviour is specified in
 [specs/peek.md](../../specs/peek.md#video-playback); this page is
 about the pieces.
+
+![otto-media-kit: the host library drives otto-media-worker over stdin and stdout, hands it the file on fd 3 and reads frames from a ring on fd 4](diagrams/otto-media-kit.svg)
 
 ## Two halves
 

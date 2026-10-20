@@ -137,10 +137,15 @@ impl Engine {
     /// 1. The environment: `OTTO_DICTATE_URL`, `OTTO_DICTATE_LANGUAGE`,
     ///    `OTTO_DICTATE_HOTWORDS_BOOST`.
     /// 2. `$XDG_CONFIG_HOME/otto/dictation.toml` (see [`Config`]).
-    /// 3. The defaults: `http://127.0.0.1:8080/inference`, the language of
-    ///    `LANG`, a boost of 4.
+    /// 3. The defaults: `http://127.0.0.1:8080/inference`, the language the
+    ///    locale variables name (see [`crate::i18n::env_language`]), a boost
+    ///    of 4.
     pub fn from_config() -> Self {
-        Self::resolve(&Config::load(), |key| std::env::var(key).ok())
+        Self::resolve(
+            &Config::load(),
+            |key| std::env::var(key).ok(),
+            crate::i18n::env_language(),
+        )
     }
 
     /// The engine the environment names, or the local server, ignoring
@@ -148,23 +153,34 @@ impl Engine {
     ///
     /// - `OTTO_DICTATE_URL`: the server's `/inference` endpoint (default
     ///   `http://127.0.0.1:8080/inference`).
-    /// - `OTTO_DICTATE_LANGUAGE`: an ISO 639-1 code or `auto` (default: from
-    ///   `LANG`).
+    /// - `OTTO_DICTATE_LANGUAGE`: an ISO 639-1 code or `auto` (default: the
+    ///   language the locale variables name).
     /// - `OTTO_DICTATE_HOTWORDS_BOOST`: how much hotwords are favoured
     ///   (default 4).
     pub fn from_env() -> Self {
-        Self::resolve(&Config::default(), |key| std::env::var(key).ok())
+        Self::resolve(
+            &Config::default(),
+            |key| std::env::var(key).ok(),
+            crate::i18n::env_language(),
+        )
     }
 
     /// The engine `config` describes, each value looked up in `env` first.
-    fn resolve(config: &Config, env: impl Fn(&str) -> Option<String>) -> Self {
+    /// `system_language` is the locale's language, `None` to let the engine
+    /// detect it.
+    fn resolve(
+        config: &Config,
+        env: impl Fn(&str) -> Option<String>,
+        system_language: Option<String>,
+    ) -> Self {
         Self {
             url: env("OTTO_DICTATE_URL")
                 .or_else(|| config.url.clone())
                 .unwrap_or_else(|| DEFAULT_URL.into()),
             language: env("OTTO_DICTATE_LANGUAGE")
                 .or_else(|| config.language.clone())
-                .unwrap_or_else(|| system_language(env("LANG"))),
+                .or(system_language)
+                .unwrap_or_else(|| "auto".into()),
             hotwords_boost: env("OTTO_DICTATE_HOTWORDS_BOOST")
                 .and_then(|boost| boost.parse().ok())
                 .or(config.hotwords_boost)
@@ -215,13 +231,6 @@ impl Engine {
             .or_else(|| parse_json_words(&text))
             .ok_or(TranscribeError::Response)
     }
-}
-
-/// `LANG=it_IT.UTF-8` → `it`; `auto` when it is unset or `C`.
-fn system_language(lang: Option<String>) -> String {
-    lang.and_then(|lang| lang.get(..2).map(str::to_ascii_lowercase))
-        .filter(|code| code.chars().all(|c| c.is_ascii_lowercase()) && code != "c")
-        .unwrap_or_else(|| "auto".into())
 }
 
 /// The words of a WebVTT answer. Each cue gives a segment's start and end;
@@ -493,7 +502,7 @@ mod tests {
             url: Some("http://file/inference".into()),
         };
 
-        let engine = Engine::resolve(&file, env(&[("LANG", "it_IT.UTF-8")]));
+        let engine = Engine::resolve(&file, env(&[]), Some("it".into()));
         assert_eq!(engine.url, "http://file/inference");
         assert_eq!(engine.language, "de");
         assert_eq!(engine.hotwords_boost, 6.0);
@@ -505,21 +514,19 @@ mod tests {
                 ("OTTO_DICTATE_LANGUAGE", "auto"),
                 ("OTTO_DICTATE_HOTWORDS_BOOST", "2"),
             ]),
+            Some("it".into()),
         );
         assert_eq!(engine.url, "http://env/inference");
         assert_eq!(engine.language, "auto");
         assert_eq!(engine.hotwords_boost, 2.0);
 
-        let engine = Engine::resolve(&Config::default(), env(&[("LANG", "it_IT.UTF-8")]));
+        let engine = Engine::resolve(&Config::default(), env(&[]), Some("it".into()));
         assert_eq!(engine.url, DEFAULT_URL);
         assert_eq!(engine.language, "it");
         assert_eq!(engine.hotwords_boost, DEFAULT_HOTWORDS_BOOST);
-        // No usable LANG lets the engine detect the language.
-        let language = |vars: &'static [(&'static str, &'static str)]| {
-            Engine::resolve(&Config::default(), env(vars)).language
-        };
-        assert_eq!(language(&[]), "auto");
-        assert_eq!(language(&[("LANG", "C")]), "auto");
+        // No language from the locale lets the engine detect it.
+        let engine = Engine::resolve(&Config::default(), env(&[]), None);
+        assert_eq!(engine.language, "auto");
     }
 
     #[test]

@@ -16,6 +16,7 @@ pub mod background_effect;
 #[cfg(any(feature = "udev", feature = "xwayland", feature = "headless"))]
 pub mod cursor;
 pub mod debug_gesture;
+pub mod debug_info;
 pub mod desk;
 pub mod desktop_widget;
 pub mod focus;
@@ -35,6 +36,7 @@ pub mod render;
 pub mod render_metrics;
 pub mod sandbox;
 pub mod screenshare;
+pub mod session_log;
 pub mod settings;
 pub mod settings_service;
 pub mod shell;
@@ -57,8 +59,8 @@ pub use state::{CalloopData, ClientState, Otto};
 // window management. Re-exported under its old paths: the rest of the
 // compositor names `crate::renderer::…`, `crate::skia_renderer::…` as before.
 pub use otto_render::{
-    debug_hooks, drawing, render_elements, render_phase_stats, renderer, skia_renderer,
-    textures_storage,
+    debug_hooks, drawing, render_elements, render_phase_stats, renderer, renderer_info,
+    skia_renderer, textures_storage,
 };
 mod workspaces;
 

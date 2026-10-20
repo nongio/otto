@@ -7,8 +7,8 @@
 //! as the way to see a preview without a session.
 
 use otto_kit::preview::{self, Preview};
+use otto_kit::skia::{Canvas, Color, Paint, Rect};
 use otto_kit::theme::Theme;
-use skia_safe::{Canvas, Color, Paint, Rect};
 
 /// The card's chrome: the header a window draws around the content.
 ///
@@ -27,7 +27,7 @@ pub fn to_png(
     dark: bool,
 ) -> Option<Vec<u8>> {
     let theme = if dark { Theme::dark() } else { Theme::light() };
-    let mut surface = skia_safe::surfaces::raster_n32_premul((width, height))?;
+    let mut surface = otto_kit::skia::surfaces::raster_n32_premul((width, height))?;
     let canvas = surface.canvas();
 
     draw_card(
@@ -41,7 +41,7 @@ pub fn to_png(
     );
 
     let image = surface.image_snapshot();
-    let data = image.encode(None, skia_safe::EncodedImageFormat::PNG, None)?;
+    let data = image.encode(None, otto_kit::skia::EncodedImageFormat::PNG, None)?;
     Some(data.as_bytes().to_vec())
 }
 
@@ -105,7 +105,7 @@ fn draw_card(
 /// free of the icon cache, and therefore of any runtime — the compositor
 /// resolves icons differently from an application, and neither dependency
 /// belongs in the draw path.
-fn resolve_icon(name: &str, size: i32) -> Option<skia_safe::Image> {
+fn resolve_icon(name: &str, size: i32) -> Option<otto_kit::skia::Image> {
     // `cached_icon_chain`, not `cached_file_icon` — the latter takes a *file
     // path*, and handing it an icon *name* silently resolves nothing. The chain
     // lookup also never reads `AppContext`, so it works from a bare canvas.
@@ -135,7 +135,7 @@ pub fn opening_filmstrip(
     let height = (cell_h * rows) as i32;
 
     let theme = if dark { Theme::dark() } else { Theme::light() };
-    let mut surface = skia_safe::surfaces::raster_n32_premul((width, height))?;
+    let mut surface = otto_kit::skia::surfaces::raster_n32_premul((width, height))?;
     let canvas = surface.canvas();
     canvas.clear(if dark {
         Color::from_argb(0xFF, 0x14, 0x14, 0x16)
@@ -191,7 +191,7 @@ pub fn opening_filmstrip(
     }
 
     let image = surface.image_snapshot();
-    let data = image.encode(None, skia_safe::EncodedImageFormat::PNG, None)?;
+    let data = image.encode(None, otto_kit::skia::EncodedImageFormat::PNG, None)?;
     Some(data.as_bytes().to_vec())
 }
 

@@ -145,10 +145,13 @@ plain, near-opaque background of its own.
   name, as in Files.
 - With nothing stashed yet (an add that found nothing selected), the card
   says "Select something, then add it".
-- Under the items, "Send to Ask" and the shortcut that opens Ask, when one is
-  bound: the shortcut bound to Ask, or failing that the one bound to
-  `otto-stash send`. The shortcut is looked up each time the card opens, so a
-  rebound key shows. With no such shortcut, the line is left out.
+- Under the items, whenever something is stashed, a **Send to Ask** button:
+  a pill in the accent. Clicking it (pressed and released on it) does what
+  `otto-stash send` does; it darkens while held. Sending, either way, asks
+  the side canvas to hide: the stash is in Ask now. To its right, the shortcut that opens Ask, when one is bound: the
+  shortcut bound to Ask, or failing that the one bound to `otto-stash send`.
+  The shortcut is looked up each time the card opens, so a rebound key
+  shows. With no such shortcut, or no room for it, only the button shows.
 - The card grows with its items up to a limit, past which the items scroll
   between the title and the footer. In the side canvas the limit is the
   card's share of the column's height, so the panels under it keep theirs

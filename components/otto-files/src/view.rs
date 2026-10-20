@@ -15,7 +15,7 @@ use otto_kit::components::titlebar::{
 use otto_kit::controls_side::ControlsSide;
 use otto_kit::icons;
 use otto_kit::prelude::*;
-use skia_safe::{ClipOp, Contains, Paint, PathBuilder, Point, RRect};
+use otto_kit::skia::{ClipOp, Contains, Paint, PathBuilder, Point, RRect};
 use std::sync::atomic::{AtomicU32, AtomicU8, Ordering};
 
 use crate::model::{self, Column, Entry, Place, SearchScope, SortKey};
@@ -371,7 +371,7 @@ fn draw_desk_edit(canvas: &Canvas, theme: &Theme, surface: Rect, edit: DeskEdit)
 
     // Inset by half the stroke, so the whole line sits on the panel and none
     // of it is cut off at the edge of the screen.
-    paint.set_style(skia_safe::PaintStyle::Stroke);
+    paint.set_style(otto_kit::skia::PaintStyle::Stroke);
     paint.set_stroke_width(1.5);
     paint.set_color(accent(theme));
     let outline = panel.with_inset((0.75, 0.75));
@@ -384,8 +384,8 @@ fn draw_desk_edit(canvas: &Canvas, theme: &Theme, surface: Rect, edit: DeskEdit)
     // lifts it off any wallpaper, then the white shape itself.
     let shadow = |paint: &mut Paint| {
         paint.set_color(Color::from_argb(0x60, 0, 0, 0));
-        paint.set_mask_filter(skia_safe::MaskFilter::blur(
-            skia_safe::BlurStyle::Normal,
+        paint.set_mask_filter(otto_kit::skia::MaskFilter::blur(
+            otto_kit::skia::BlurStyle::Normal,
             2.0,
             None,
         ));
@@ -412,10 +412,10 @@ fn draw_desk_edit(canvas: &Canvas, theme: &Theme, surface: Rect, edit: DeskEdit)
             builder.quad_to(Point::new(x, y), Point::new(x, y + sy * r));
             builder.line_to(Point::new(x, y + sy * arm));
             let path = builder.detach();
-            paint.set_style(skia_safe::PaintStyle::Stroke);
+            paint.set_style(otto_kit::skia::PaintStyle::Stroke);
             paint.set_stroke_width(DESK_EDIT_BRACKET_THICKNESS);
-            paint.set_stroke_cap(skia_safe::paint::Cap::Round);
-            paint.set_stroke_join(skia_safe::paint::Join::Round);
+            paint.set_stroke_cap(otto_kit::skia::paint::Cap::Round);
+            paint.set_stroke_join(otto_kit::skia::paint::Join::Round);
             for pass in [shadow, face] {
                 pass(&mut paint);
                 canvas.draw_path(&path, &paint);
@@ -432,7 +432,7 @@ fn draw_desk_edit(canvas: &Canvas, theme: &Theme, surface: Rect, edit: DeskEdit)
             let y = y.clamp(surface.top + h / 2.0, surface.bottom - h / 2.0);
             let pill = Rect::from_xywh(x - w / 2.0, y - h / 2.0, w, h);
             let rrect = RRect::new_rect_xy(pill, w.min(h) / 2.0, w.min(h) / 2.0);
-            paint.set_style(skia_safe::PaintStyle::Fill);
+            paint.set_style(otto_kit::skia::PaintStyle::Fill);
             for pass in [shadow, face] {
                 pass(&mut paint);
                 canvas.draw_rrect(rrect, &paint);
@@ -1025,7 +1025,7 @@ pub fn content_viewport(width: f32, height: f32, mode: ViewMode) -> Rect {
 // cannot drift apart.
 
 use otto_kit::components::scroll::{GridLayout, GridSection as KitGridSection, RowLayout};
-use skia_safe::Size;
+use otto_kit::skia::Size;
 
 /// The height of a section heading, including the air above and below it.
 pub const GRID_HEADER_H: f32 = 34.0;
@@ -1495,7 +1495,7 @@ fn tile_badge_text(count: usize) -> String {
 /// left end of its baseline. Centred on the glyphs' own bounds rather than
 /// the line box, since digits have no descender and a line box centres them
 /// visibly high.
-fn tile_badge_origin(font: &skia_safe::Font, text: &str, cx: f32, cy: f32) -> Point {
+fn tile_badge_origin(font: &otto_kit::skia::Font, text: &str, cx: f32, cy: f32) -> Point {
     let (_, ink) = font.measure_str(text, None);
     Point::new(cx - ink.center_x(), cy - ink.center_y())
 }
@@ -1515,7 +1515,7 @@ fn draw_tile_badge(canvas: &Canvas, theme: &Theme, icon: Rect, count: usize) {
     );
     let mut paint = Paint::default();
     paint.set_anti_alias(true);
-    paint.set_image_filter(skia_safe::image_filters::drop_shadow(
+    paint.set_image_filter(otto_kit::skia::image_filters::drop_shadow(
         (0.0, 1.0),
         (2.0, 2.0),
         Color::from_argb(90, 0, 0, 0),
@@ -1563,7 +1563,7 @@ pub fn draw_overflow_panel(canvas: &Canvas, f: &Frame, scroll: &ScrollState) {
     canvas.draw_rrect(rrect, &ground);
     let mut edge = Paint::default();
     edge.set_anti_alias(true);
-    edge.set_style(skia_safe::paint::Style::Stroke);
+    edge.set_style(otto_kit::skia::paint::Style::Stroke);
     edge.set_stroke_width(1.0);
     edge.set_color(Color::from_argb(60, 255, 255, 255));
     canvas.draw_rrect(rrect.with_inset((0.5, 0.5)), &edge);
@@ -2454,7 +2454,7 @@ fn draw_photos_info(canvas: &Canvas, f: &Frame, data: &PhotosInfoData<'_>) {
             canvas.draw_oval(disc, &fill);
             let mut edge = Paint::default();
             edge.set_anti_alias(true);
-            edge.set_style(skia_safe::paint::Style::Stroke);
+            edge.set_style(otto_kit::skia::paint::Style::Stroke);
             edge.set_stroke_width(1.0);
             edge.set_color(theme.fill_secondary);
             canvas.draw_oval(disc.with_inset((0.5, 0.5)), &edge);
@@ -2709,8 +2709,8 @@ fn draw_info_stage(
         &image,
         None,
         fitted,
-        skia_safe::sampling_options::SamplingOptions::from(
-            skia_safe::sampling_options::CubicResampler::mitchell(),
+        otto_kit::skia::sampling_options::SamplingOptions::from(
+            otto_kit::skia::sampling_options::CubicResampler::mitchell(),
         ),
         &Paint::default(),
     );
@@ -2767,10 +2767,10 @@ fn draw_turn_glyph(canvas: &Canvas, origin: Point, turn: crate::orient::Turn, in
 
     let mut stroke = Paint::default();
     stroke.set_anti_alias(true);
-    stroke.set_style(skia_safe::paint::Style::Stroke);
+    stroke.set_style(otto_kit::skia::paint::Style::Stroke);
     stroke.set_stroke_width(1.3);
-    stroke.set_stroke_cap(skia_safe::paint::Cap::Round);
-    stroke.set_stroke_join(skia_safe::paint::Join::Round);
+    stroke.set_stroke_cap(otto_kit::skia::paint::Cap::Round);
+    stroke.set_stroke_join(otto_kit::skia::paint::Join::Round);
     stroke.set_color(ink);
 
     canvas.save();
@@ -2783,7 +2783,7 @@ fn draw_turn_glyph(canvas: &Canvas, origin: Point, turn: crate::orient::Turn, in
         }
         // x and y exchanged: the horizontal flip, on its side.
         Turn::FlipVertical => {
-            canvas.concat(&skia_safe::Matrix::new_all(
+            canvas.concat(&otto_kit::skia::Matrix::new_all(
                 0.0, 1.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
             ));
         }
@@ -2816,13 +2816,13 @@ fn draw_turn_glyph(canvas: &Canvas, origin: Point, turn: crate::orient::Turn, in
             };
             let original = triangle(6.5, 1.5);
             let mut fill = stroke.clone();
-            fill.set_style(skia_safe::paint::Style::StrokeAndFill);
+            fill.set_style(otto_kit::skia::paint::Style::StrokeAndFill);
             canvas.draw_path(&original, &fill);
             canvas.draw_path(&triangle(9.5, 14.5), &stroke);
 
             let mut axis = stroke.clone();
             axis.set_stroke_width(1.0);
-            axis.set_path_effect(skia_safe::PathEffect::dash(&[1.5, 2.0], 0.0));
+            axis.set_path_effect(otto_kit::skia::PathEffect::dash(&[1.5, 2.0], 0.0));
             canvas.draw_line((8.0, 1.5), (8.0, 14.5), &axis);
         }
     }
@@ -2839,8 +2839,8 @@ fn draw_picture_shadow(canvas: &Canvas, picture: Rect) {
     let mut paint = Paint::default();
     paint.set_anti_alias(true);
     paint.set_color(Color::from_argb(0x55, 0, 0, 0));
-    paint.set_mask_filter(skia_safe::MaskFilter::blur(
-        skia_safe::BlurStyle::Normal,
+    paint.set_mask_filter(otto_kit::skia::MaskFilter::blur(
+        otto_kit::skia::BlurStyle::Normal,
         PICTURE_SHADOW_BLUR,
         None,
     ));
@@ -2922,7 +2922,7 @@ fn draw_photos_controls(canvas: &Canvas, f: &Frame, controls: PhotosControls) {
         );
         let mut glyph = Paint::default();
         glyph.set_anti_alias(true);
-        glyph.set_style(skia_safe::paint::Style::Stroke);
+        glyph.set_style(otto_kit::skia::paint::Style::Stroke);
         glyph.set_stroke_width(1.2);
         glyph.set_color(theme.text_secondary);
         let cy = track.center_y();
@@ -3308,7 +3308,7 @@ fn draw_drop_highlight(canvas: &Canvas, f: &Frame) {
         paint.set_color(accent_light(f.theme));
         let radius = rect.height() / 2.0;
         canvas.draw_rrect(RRect::new_rect_xy(rect, radius, radius), &paint);
-        paint.set_style(skia_safe::paint::Style::Stroke);
+        paint.set_style(otto_kit::skia::paint::Style::Stroke);
         paint.set_stroke_width(2.0);
         canvas.draw_circle(Point::new(rect.left, rect.center_y()), 3.5, &paint);
         return;
@@ -3329,7 +3329,7 @@ fn draw_drop_highlight(canvas: &Canvas, f: &Frame) {
     // over a pane it tints a whole column of rows to point at one target.
     let mut ring = Paint::default();
     ring.set_anti_alias(true);
-    ring.set_style(skia_safe::paint::Style::Stroke);
+    ring.set_style(otto_kit::skia::paint::Style::Stroke);
     // Inset by half the stroke: a centred stroke on the rect's own edge would
     // spill a pixel outside it, over the neighbouring row.
     ring.set_stroke_width(2.0);
@@ -3407,7 +3407,7 @@ pub const DRAG_IMAGE_H: f32 = 36.0;
 #[derive(Clone)]
 pub struct DragItem {
     pub entry: Entry,
-    pub thumb: Option<skia_safe::Image>,
+    pub thumb: Option<otto_kit::skia::Image>,
     /// Top-left of this item's picture at the moment the drag began, relative
     /// to the drag image's own origin.
     pub start: (f32, f32),
@@ -3494,7 +3494,7 @@ fn draw_drag_entry(
     theme: &Theme,
     mode: ViewMode,
     entry: &Entry,
-    thumb: Option<&skia_safe::Image>,
+    thumb: Option<&otto_kit::skia::Image>,
 ) {
     let mut paint = Paint::default();
     paint.set_anti_alias(true);
@@ -3506,36 +3506,25 @@ fn draw_drag_entry(
         ViewMode::Grid | ViewMode::Photos => {
             let cell = Rect::from_wh(cell_w(), cell_h());
             let icon_top = cell.top + 8.0;
+            let icon_box = Rect::from_xywh(
+                cell.center_x() - grid_icon() / 2.0,
+                icon_top,
+                grid_icon(),
+                grid_icon(),
+            );
             if let Some(image) = thumb {
-                draw_thumbnail(
-                    canvas,
-                    image,
-                    Rect::from_xywh(
-                        cell.center_x() - grid_icon() / 2.0,
-                        icon_top,
-                        grid_icon(),
-                        grid_icon(),
-                    ),
-                    false,
-                );
+                draw_thumbnail(canvas, image, icon_box, false);
             } else {
                 let chain = entry.icon_chain();
                 let refs: Vec<&str> = chain.iter().map(String::as_str).collect();
                 if let Some(image) =
                     icons::cached_icon_chain_at(&refs, grid_icon() as i32, icons::FULL_COLOUR_SIZE)
                 {
-                    canvas.draw_image_rect(
-                        &image,
-                        None,
-                        Rect::from_xywh(
-                            cell.center_x() - grid_icon() / 2.0,
-                            icon_top,
-                            grid_icon(),
-                            grid_icon(),
-                        ),
-                        &Paint::default(),
-                    );
+                    canvas.draw_image_rect(&image, None, icon_box, &Paint::default());
                 }
+            }
+            if entry.is_symlink {
+                draw_link_badge(canvas, icon_box, false);
             }
 
             // The caption on its pill, the way a selected cell wears it.
@@ -3924,7 +3913,7 @@ fn draw_path_bar(canvas: &Canvas, f: &Frame) {
         };
 
         if f.path_crumb_hover == Some(index) {
-            paint.set_style(skia_safe::paint::Style::Fill);
+            paint.set_style(otto_kit::skia::paint::Style::Fill);
             paint.set_color(theme.material_highlight);
             let pad = Rect::from_ltrb(rect.left - 5.0, rect.top, rect.right + 5.0, rect.bottom);
             canvas.draw_rrect(RRect::new_rect_xy(pad, 5.0, 5.0), &paint);
@@ -3946,9 +3935,9 @@ fn draw_path_bar(canvas: &Canvas, f: &Frame) {
             // author chose, which is rarely one that survives both colour
             // schemes.
             let mut icon_paint = Paint::default();
-            icon_paint.set_color_filter(skia_safe::color_filters::blend(
+            icon_paint.set_color_filter(otto_kit::skia::color_filters::blend(
                 tone,
-                skia_safe::BlendMode::SrcIn,
+                otto_kit::skia::BlendMode::SrcIn,
             ));
             canvas.draw_image_rect(&image, None, dst, &icon_paint);
         }
@@ -3981,10 +3970,10 @@ fn draw_path_bar(canvas: &Canvas, f: &Frame) {
 fn draw_crumb_chevron(canvas: &Canvas, cx: f32, cy: f32, theme: &Theme) {
     let mut paint = Paint::default();
     paint.set_anti_alias(true);
-    paint.set_style(skia_safe::paint::Style::Stroke);
+    paint.set_style(otto_kit::skia::paint::Style::Stroke);
     paint.set_stroke_width(1.2);
-    paint.set_stroke_cap(skia_safe::paint::Cap::Round);
-    paint.set_stroke_join(skia_safe::paint::Join::Round);
+    paint.set_stroke_cap(otto_kit::skia::paint::Cap::Round);
+    paint.set_stroke_join(otto_kit::skia::paint::Join::Round);
     paint.set_color(theme.text_tertiary);
 
     let mut path = PathBuilder::new();
@@ -4131,7 +4120,7 @@ fn draw_name_row(canvas: &Canvas, f: &Frame, footer: &FooterData<'_>, window_h: 
     paint.set_anti_alias(true);
     paint.set_color(content_ground());
     canvas.draw_rrect(RRect::new_rect_xy(field, 6.0, 6.0), &paint);
-    paint.set_style(skia_safe::paint::Style::Stroke);
+    paint.set_style(otto_kit::skia::paint::Style::Stroke);
     paint.set_stroke_width(1.0);
     paint.set_color(theme.fill_tertiary);
     canvas.draw_rrect(RRect::new_rect_xy(field, 6.0, 6.0), &paint);
@@ -4720,7 +4709,7 @@ impl Frame<'_> {
     }
 
     /// The thumbnail to draw for an entry, if one is ready.
-    fn thumbnail(&self, entry: &Entry) -> Option<&skia_safe::Image> {
+    fn thumbnail(&self, entry: &Entry) -> Option<&otto_kit::skia::Image> {
         self.thumbs?.image(&entry.path, entry.modified)
     }
 }
@@ -5340,7 +5329,7 @@ pub(crate) fn draw_palette_rows(
             mark_paint.set_anti_alias(true);
             mark_paint.set_color(if excluded { dim } else { strong });
             if excluded {
-                mark_paint.set_style(skia_safe::PaintStyle::Stroke);
+                mark_paint.set_style(otto_kit::skia::PaintStyle::Stroke);
                 mark_paint.set_stroke_width(1.5);
                 canvas.draw_circle(mark, 3.5, &mark_paint);
             } else {
@@ -5741,7 +5730,7 @@ fn stroke_image_frame(
     }
     let mut paint = Paint::default();
     paint.set_anti_alias(true);
-    paint.set_style(skia_safe::paint::Style::Stroke);
+    paint.set_style(otto_kit::skia::paint::Style::Stroke);
     paint.set_stroke_width(1.0);
     paint.set_color(theme.fill_primary);
     // Inset by half the stroke so the line lands *on* the picture's edge
@@ -5966,9 +5955,9 @@ fn draw_place_content(canvas: &Canvas, theme: &Theme, place: &Place, rect: Rect,
         // the theme authored it in. Either way SrcIn gives it the tone
         // once, keeping its alpha, the way a symbolic icon is drawn.
         let mut paint = Paint::default();
-        paint.set_color_filter(skia_safe::color_filters::blend(
+        paint.set_color_filter(otto_kit::skia::color_filters::blend(
             tone,
-            skia_safe::BlendMode::SrcIn,
+            otto_kit::skia::BlendMode::SrcIn,
         ));
         canvas.draw_image_rect(&image, None, dst, &paint);
     }
@@ -5990,7 +5979,7 @@ fn draw_place_content(canvas: &Canvas, theme: &Theme, place: &Place, rect: Rect,
 fn draw_place_ghost(canvas: &Canvas, theme: &Theme, place: &Place, rect: Rect) {
     let mut card = Paint::default();
     card.set_anti_alias(true);
-    card.set_image_filter(skia_safe::image_filters::drop_shadow(
+    card.set_image_filter(otto_kit::skia::image_filters::drop_shadow(
         (0.0, 2.0),
         (4.0, 4.0),
         Color::from_argb(70, 0, 0, 0),
@@ -6078,7 +6067,7 @@ fn draw_path_field(canvas: &Canvas, f: &Frame) {
     paint.set_anti_alias(true);
     paint.set_color(content_ground());
     canvas.draw_rrect(RRect::new_rect_xy(field, 6.0, 6.0), &paint);
-    paint.set_style(skia_safe::paint::Style::Stroke);
+    paint.set_style(otto_kit::skia::paint::Style::Stroke);
     paint.set_stroke_width(1.0);
     paint.set_color(accent(f.theme));
     canvas.draw_rrect(RRect::new_rect_xy(field, 6.0, 6.0), &paint);
@@ -6106,7 +6095,7 @@ pub fn draw_search_band(canvas: &Canvas, f: &Frame) {
     // what says "type here" on a band that is itself chrome.
     paint.set_color(theme.fill_quaternary);
     canvas.draw_rrect(RRect::new_rect_xy(field, 8.0, 8.0), &paint);
-    paint.set_style(skia_safe::paint::Style::Stroke);
+    paint.set_style(otto_kit::skia::paint::Style::Stroke);
     paint.set_stroke_width(1.0);
     // The accent ring means "the keys are coming here", so it follows the
     // keyboard rather than the strip: click a file and the ring goes quiet
@@ -6117,7 +6106,7 @@ pub fn draw_search_band(canvas: &Canvas, f: &Frame) {
         theme.fill_tertiary
     });
     canvas.draw_rrect(RRect::new_rect_xy(field, 8.0, 8.0), &paint);
-    paint.set_style(skia_safe::paint::Style::Fill);
+    paint.set_style(otto_kit::skia::paint::Style::Fill);
 
     // The magnifier: a circle and a stub of a handle, drawn rather than
     // fetched, so it cannot go missing on a sparse icon theme.
@@ -6125,9 +6114,9 @@ pub fn draw_search_band(canvas: &Canvas, f: &Frame) {
     let cy = field.center_y();
     let mut glass = Paint::default();
     glass.set_anti_alias(true);
-    glass.set_style(skia_safe::paint::Style::Stroke);
+    glass.set_style(otto_kit::skia::paint::Style::Stroke);
     glass.set_stroke_width(1.3);
-    glass.set_stroke_cap(skia_safe::paint::Cap::Round);
+    glass.set_stroke_cap(otto_kit::skia::paint::Cap::Round);
     glass.set_color(theme.text_tertiary);
     canvas.draw_circle((cx - 0.5, cy - 1.0), 4.5, &glass);
     canvas.draw_line(
@@ -6187,7 +6176,7 @@ pub fn draw_search_band(canvas: &Canvas, f: &Frame) {
     }
 
     paint.set_color(theme.fill_tertiary);
-    paint.set_style(skia_safe::paint::Style::Stroke);
+    paint.set_style(otto_kit::skia::paint::Style::Stroke);
     paint.set_stroke_width(1.0);
     canvas.draw_line(
         Point::new(band.left, band.bottom),
@@ -6240,10 +6229,10 @@ fn draw_location_button(canvas: &Canvas, f: &Frame) {
     let mut glyph = Paint::default();
     glyph.set_anti_alias(true);
     glyph.set_color(theme.text_secondary);
-    glyph.set_style(skia_safe::paint::Style::Stroke);
+    glyph.set_style(otto_kit::skia::paint::Style::Stroke);
     glyph.set_stroke_width(1.6);
-    glyph.set_stroke_cap(skia_safe::paint::Cap::Round);
-    glyph.set_stroke_join(skia_safe::paint::Join::Round);
+    glyph.set_stroke_cap(otto_kit::skia::paint::Cap::Round);
+    glyph.set_stroke_join(otto_kit::skia::paint::Join::Round);
     let button = new_folder_rect(f.width);
     paint.set_color(theme.fill_tertiary);
     canvas.draw_rrect(RRect::new_rect_xy(button, NAV_RADIUS, NAV_RADIUS), &paint);
@@ -6256,7 +6245,7 @@ fn draw_location_button(canvas: &Canvas, f: &Frame) {
         theme.text_secondary,
     ) {
         // A folder: tab on the top left, body below it, a plus inside.
-        let mut folder = skia_safe::PathBuilder::new();
+        let mut folder = otto_kit::skia::PathBuilder::new();
         folder.move_to((bx - 8.0, by + 5.5));
         folder.line_to((bx - 8.0, by - 5.5));
         folder.line_to((bx - 3.5, by - 5.5));
@@ -6265,7 +6254,7 @@ fn draw_location_button(canvas: &Canvas, f: &Frame) {
         folder.line_to((bx + 8.0, by + 5.5));
         folder.close();
         canvas.draw_path(&folder.detach(), &glyph);
-        let mut plus = skia_safe::PathBuilder::new();
+        let mut plus = otto_kit::skia::PathBuilder::new();
         plus.move_to((bx, by - 1.0));
         plus.line_to((bx, by + 4.0));
         plus.move_to((bx - 2.5, by + 1.5));
@@ -6599,7 +6588,7 @@ fn draw_photos(canvas: &Canvas, f: &Frame) {
                 cut: f.cut.iter().any(|path| path == &entry.path),
             };
             if f.photos.kind_at(index) == Some(SectionKind::Folders) {
-                let pictures: Option<Vec<Option<&skia_safe::Image>>> = f
+                let pictures: Option<Vec<Option<&otto_kit::skia::Image>>> = f
                     .photo_folders
                     .and_then(|folders| folders.images(entry))
                     .map(|images| {
@@ -6709,7 +6698,7 @@ pub fn draw_photo_tile(
     entry: &Entry,
     tile: Rect,
     state: PhotoTileState,
-    thumb: Option<&skia_safe::Image>,
+    thumb: Option<&otto_kit::skia::Image>,
 ) {
     if tile.is_empty() {
         return;
@@ -6738,11 +6727,11 @@ pub fn draw_photo_tile(
                 image,
                 Some((
                     &cover_crop(image, tile),
-                    skia_safe::canvas::SrcRectConstraint::Fast,
+                    otto_kit::skia::canvas::SrcRectConstraint::Fast,
                 )),
                 tile,
-                skia_safe::sampling_options::SamplingOptions::from(
-                    skia_safe::sampling_options::CubicResampler::mitchell(),
+                otto_kit::skia::sampling_options::SamplingOptions::from(
+                    otto_kit::skia::sampling_options::CubicResampler::mitchell(),
                 ),
                 &paint,
             );
@@ -6784,7 +6773,7 @@ fn draw_play_badge(canvas: &Canvas, tile: Rect, cut: bool) {
 
     let mut ring = Paint::default();
     ring.set_anti_alias(true);
-    ring.set_style(skia_safe::paint::Style::Stroke);
+    ring.set_style(otto_kit::skia::paint::Style::Stroke);
     ring.set_stroke_width(1.5);
     ring.set_color(Color::from_argb((200.0 * fade) as u8, 255, 255, 255));
     canvas.draw_circle((cx, cy), radius, &ring);
@@ -6818,7 +6807,7 @@ pub fn draw_folder_card(
     entry: &Entry,
     cell: Rect,
     state: PhotoTileState,
-    pictures: Option<&[Option<&skia_safe::Image>]>,
+    pictures: Option<&[Option<&otto_kit::skia::Image>]>,
     renaming: bool,
 ) {
     let mosaic = Rect::from_xywh(cell.left, cell.top, cell.width(), FOLDER_MOSAIC_H);
@@ -6850,11 +6839,11 @@ pub fn draw_folder_card(
                             image,
                             Some((
                                 &cover_crop(image, slot),
-                                skia_safe::canvas::SrcRectConstraint::Fast,
+                                otto_kit::skia::canvas::SrcRectConstraint::Fast,
                             )),
                             slot,
-                            skia_safe::sampling_options::SamplingOptions::from(
-                                skia_safe::sampling_options::CubicResampler::mitchell(),
+                            otto_kit::skia::sampling_options::SamplingOptions::from(
+                                otto_kit::skia::sampling_options::CubicResampler::mitchell(),
                             ),
                             &paint,
                         );
@@ -6982,7 +6971,7 @@ fn folder_mosaic(mosaic: Rect, count: usize) -> Vec<Rect> {
 
 /// The part of `image` that fills `tile` without distorting: its centre, cut
 /// to the tile's proportions.
-fn cover_crop(image: &skia_safe::Image, tile: Rect) -> Rect {
+fn cover_crop(image: &otto_kit::skia::Image, tile: Rect) -> Rect {
     let (w, h) = (image.width() as f32, image.height() as f32);
     let tile_aspect = tile.width() / tile.height().max(1.0);
     if w / h.max(1.0) > tile_aspect {
@@ -7001,7 +6990,7 @@ fn draw_photo_card(
     theme: &Theme,
     entry: &Entry,
     tile: Rect,
-    thumb: Option<&skia_safe::Image>,
+    thumb: Option<&otto_kit::skia::Image>,
     cut: bool,
 ) {
     let edge = (tile.width().min(tile.height()) * 0.42).min(DEFAULT_GRID_ICON * 1.5);
@@ -7027,6 +7016,9 @@ fn draw_photo_card(
             }
         }
     }
+    if entry.is_symlink {
+        draw_link_badge(canvas, icon, cut);
+    }
     let style = styles::FOOTNOTE;
     let name = ellipsize(&style.font(), &entry.name, tile.width() - 16.0);
     Label::new(name)
@@ -7051,14 +7043,14 @@ fn draw_photo_caption(canvas: &Canvas, entry: &Entry, tile: Rect) {
         tile.bottom,
     );
     let colors = [Color::from_argb(0, 0, 0, 0), Color::from_argb(150, 0, 0, 0)];
-    if let Some(shader) = skia_safe::gradient_shader::linear(
+    if let Some(shader) = otto_kit::skia::gradient_shader::linear(
         (
             Point::new(shade.left, shade.top),
             Point::new(shade.left, shade.bottom),
         ),
         &colors[..],
         None,
-        skia_safe::TileMode::Clamp,
+        otto_kit::skia::TileMode::Clamp,
         None,
         None,
     ) {
@@ -7081,7 +7073,7 @@ fn draw_photo_selection(canvas: &Canvas, theme: &Theme, tile: Rect, radius: f32)
     let accent = accent(theme);
     let mut ring = Paint::default();
     ring.set_anti_alias(true);
-    ring.set_style(skia_safe::paint::Style::Stroke);
+    ring.set_style(otto_kit::skia::paint::Style::Stroke);
 
     ring.set_stroke_width(3.0);
     ring.set_color(accent);
@@ -7161,7 +7153,7 @@ pub fn draw_marquee(canvas: &Canvas, theme: &Theme, band: Rect) {
     canvas.draw_rrect(RRect::new_rect_xy(band, 2.0, 2.0), &paint);
 
     paint.set_color(accent.with_a(140));
-    paint.set_style(skia_safe::paint::Style::Stroke);
+    paint.set_style(otto_kit::skia::paint::Style::Stroke);
     paint.set_stroke_width(1.0);
     canvas.draw_rrect(
         RRect::new_rect_xy(band.with_inset((0.5, 0.5)), 2.0, 2.0),
@@ -7180,7 +7172,7 @@ pub fn draw_grid_cell(
     cell: Rect,
     selected: bool,
     renaming: bool,
-    thumb: Option<&skia_safe::Image>,
+    thumb: Option<&otto_kit::skia::Image>,
 ) {
     draw_grid_cell_with(canvas, theme, entry, cell, selected, renaming, thumb, None)
 }
@@ -7200,7 +7192,7 @@ pub fn draw_grid_cell_with(
     cell: Rect,
     selected: bool,
     renaming: bool,
-    thumb: Option<&skia_safe::Image>,
+    thumb: Option<&otto_kit::skia::Image>,
     subline: Option<&str>,
 ) {
     let mut paint = Paint::default();
@@ -7239,7 +7231,7 @@ fn draw_grid_icon(
     canvas: &Canvas,
     entry: &Entry,
     box_rect: Rect,
-    thumb: Option<&skia_safe::Image>,
+    thumb: Option<&otto_kit::skia::Image>,
 ) {
     // A contact shadow lifts the icon off its ground and gives a pale icon on
     // a light ground the edge it would otherwise lack. The wallpaper under the
@@ -7251,7 +7243,7 @@ fn draw_grid_icon(
         PANE_ICON_SHADOW
     };
     let mut layer = Paint::default();
-    layer.set_image_filter(skia_safe::image_filters::drop_shadow(
+    layer.set_image_filter(otto_kit::skia::image_filters::drop_shadow(
         (0.0, drop),
         (blur, blur),
         Color::from_argb(alpha, 0, 0, 0),
@@ -7260,11 +7252,14 @@ fn draw_grid_icon(
         None,
     ));
     canvas.save_layer(
-        &skia_safe::canvas::SaveLayerRec::default()
+        &otto_kit::skia::canvas::SaveLayerRec::default()
             .bounds(&box_rect.with_outset((12.0, 12.0)))
             .paint(&layer),
     );
     draw_grid_icon_face(canvas, entry, box_rect, thumb);
+    if entry.is_symlink {
+        draw_link_badge(canvas, box_rect, false);
+    }
     canvas.restore();
 }
 
@@ -7277,7 +7272,7 @@ fn draw_grid_icon_face(
     canvas: &Canvas,
     entry: &Entry,
     box_rect: Rect,
-    thumb: Option<&skia_safe::Image>,
+    thumb: Option<&otto_kit::skia::Image>,
 ) {
     if let Some(image) = thumb {
         draw_thumbnail(canvas, image, box_rect, false);
@@ -7372,7 +7367,7 @@ fn draw_grid_caption(
             GRID_LABEL_LINE * 3.0,
         );
         let mut layer = Paint::default();
-        layer.set_image_filter(skia_safe::image_filters::drop_shadow(
+        layer.set_image_filter(otto_kit::skia::image_filters::drop_shadow(
             (0.0, 1.0),
             (1.5, 1.5),
             Color::from_argb(150, 0, 0, 0),
@@ -7381,7 +7376,7 @@ fn draw_grid_caption(
             None,
         ));
         canvas.save_layer(
-            &skia_safe::canvas::SaveLayerRec::default()
+            &otto_kit::skia::canvas::SaveLayerRec::default()
                 .bounds(&bounds)
                 .paint(&layer),
         );
@@ -7866,14 +7861,20 @@ fn draw_entry_icon(
     left: f32,
     center_y: f32,
     cut: bool,
-    thumb: Option<&skia_safe::Image>,
+    thumb: Option<&otto_kit::skia::Image>,
 ) {
     let box_rect = Rect::from_xywh(left, center_y - ICON_SIZE / 2.0, ICON_SIZE, ICON_SIZE);
     if let Some(image) = thumb {
         draw_thumbnail(canvas, image, box_rect, cut);
-        return;
+    } else {
+        draw_entry_icon_face(canvas, entry, box_rect, cut);
     }
+    if entry.is_symlink {
+        draw_link_badge(canvas, box_rect, cut);
+    }
+}
 
+fn draw_entry_icon_face(canvas: &Canvas, entry: &Entry, box_rect: Rect, cut: bool) {
     let chain = entry.icon_chain();
     let refs: Vec<&str> = chain.iter().map(String::as_str).collect();
     if let Some(image) =
@@ -7888,6 +7889,81 @@ fn draw_entry_icon(
         }
         canvas.draw_image_rect(&image, None, dst, &paint);
     }
+}
+
+/// The freedesktop emblem a symbolic link wears, from the icon theme.
+const LINK_EMBLEM: &str = "emblem-symbolic-link";
+
+/// The mark a symbolic link wears in the icon's bottom-left corner: the icon
+/// theme's [`LINK_EMBLEM`], so a link looks the way the rest of the desktop
+/// marks one. A theme without it gets [`draw_link_badge_card`] instead.
+///
+/// Sized off the icon it sits on, so the 18pt list icon and a large desk icon
+/// carry the same mark at their own scale, but never so small it stops
+/// reading as one. A cut link is dimmed with its icon.
+pub(crate) fn draw_link_badge(canvas: &Canvas, icon: Rect, cut: bool) {
+    let side = (icon.width().min(icon.height()) * 0.36).max(8.0);
+    let corner = Rect::from_xywh(icon.left, icon.bottom - side, side, side);
+    // Looked up at the badge's own size: themes draw emblems for small sizes
+    // (MacTahoe has only 16 and 22), and rasterised at device pixels so a
+    // vector emblem stays sharp on a scaled output.
+    let emblem = icons::cached_icon_chain_at(&[LINK_EMBLEM], device_px(canvas, side), side as i32);
+    match emblem {
+        Some(image) => {
+            let mut paint = Paint::default();
+            paint.set_anti_alias(true);
+            if cut {
+                paint.set_alpha(110);
+            }
+            canvas.draw_image_rect(&image, None, corner, &paint);
+        }
+        None => draw_link_badge_card(canvas, corner, cut),
+    }
+}
+
+/// A curved arrow on a small white card filling `card`, the way an alias has
+/// always looked: the link badge for an icon theme with no link emblem.
+fn draw_link_badge_card(canvas: &Canvas, card: Rect, cut: bool) {
+    let side = card.width();
+    let radius = side * 0.22;
+    let fade = if cut { 0.45 } else { 1.0 };
+    let alpha = |a: f32| (a * fade) as u8;
+
+    let mut fill = Paint::default();
+    fill.set_anti_alias(true);
+    fill.set_color(Color::from_argb(alpha(250.0), 255, 255, 255));
+    canvas.draw_rrect(RRect::new_rect_xy(card, radius, radius), &fill);
+
+    // The card's own edge, so it does not melt into a white icon behind it.
+    let mut edge = Paint::default();
+    edge.set_anti_alias(true);
+    edge.set_style(otto_kit::skia::paint::Style::Stroke);
+    edge.set_stroke_width((side * 0.035).max(0.75));
+    edge.set_color(Color::from_argb(alpha(70.0), 0, 0, 0));
+    canvas.draw_rrect(RRect::new_rect_xy(card, radius, radius), &edge);
+
+    // The arrow: a shaft that rises from the bottom-left and curves over to
+    // the right, ending in an open head pointing up and right.
+    let mut ink = Paint::default();
+    ink.set_anti_alias(true);
+    ink.set_style(otto_kit::skia::paint::Style::Stroke);
+    ink.set_stroke_width((side * 0.13).max(1.1));
+    ink.set_stroke_cap(otto_kit::skia::paint::Cap::Round);
+    ink.set_stroke_join(otto_kit::skia::paint::Join::Round);
+    ink.set_color(Color::from_argb(alpha(235.0), 0, 0, 0));
+
+    let at = |x: f32, y: f32| Point::new(card.left + side * x, card.top + side * y);
+    let tip = at(0.74, 0.28);
+    let mut shaft = PathBuilder::new();
+    shaft.move_to(at(0.30, 0.76));
+    shaft.quad_to(at(0.30, 0.34), tip);
+    canvas.draw_path(&shaft.detach(), &ink);
+
+    let mut head = PathBuilder::new();
+    head.move_to(at(0.50, 0.24));
+    head.line_to(tip);
+    head.line_to(at(0.64, 0.50));
+    canvas.draw_path(&head.detach(), &ink);
 }
 
 /// A thumbnail, fitted into the box an icon would have had, with rounded
@@ -7905,7 +7981,12 @@ fn draw_entry_icon(
 /// background reads as a hole. A single low-contrast edge is enough to close
 /// it, and is cheaper than the drop shadow the same problem is usually solved
 /// with.
-pub(crate) fn draw_thumbnail(canvas: &Canvas, image: &skia_safe::Image, box_rect: Rect, cut: bool) {
+pub(crate) fn draw_thumbnail(
+    canvas: &Canvas,
+    image: &otto_kit::skia::Image,
+    box_rect: Rect,
+    cut: bool,
+) {
     let (w, h) = (image.width() as f32, image.height() as f32);
     if w <= 0.0 || h <= 0.0 {
         return;
@@ -7959,7 +8040,7 @@ fn thumbnail_radius(dst: Rect) -> f32 {
 pub fn draw_cursor_ring(canvas: &Canvas, theme: &Theme, rect: Rect, inset: f32) {
     let mut paint = Paint::default();
     paint.set_anti_alias(true);
-    paint.set_style(skia_safe::paint::Style::Stroke);
+    paint.set_style(otto_kit::skia::paint::Style::Stroke);
     paint.set_stroke_width(1.5);
     paint.set_color(theme.material_selection_focused);
     canvas.draw_rrect(
@@ -8028,9 +8109,9 @@ fn draw_close_dot(canvas: &Canvas, close: Rect, hovered: bool) {
     if hovered {
         let mut glyph = Paint::default();
         glyph.set_anti_alias(true);
-        glyph.set_style(skia_safe::paint::Style::Stroke);
+        glyph.set_style(otto_kit::skia::paint::Style::Stroke);
         glyph.set_stroke_width((close.width() * 0.09).max(1.0));
-        glyph.set_stroke_cap(skia_safe::PaintCap::Round);
+        glyph.set_stroke_cap(otto_kit::skia::PaintCap::Round);
         glyph.set_color(Color::from_argb(0xB0, 0x00, 0x00, 0x00));
         let r = close.width() * 0.22;
         let (cx, cy) = (close.center_x(), close.center_y());
@@ -8051,9 +8132,9 @@ fn draw_checkbox(canvas: &Canvas, box_rect: Rect, on: bool, theme: &Theme) {
     canvas.draw_rrect(RRect::new_rect_xy(box_rect, 4.0, 4.0), &paint);
     if on {
         paint.set_color(Color::WHITE);
-        paint.set_style(skia_safe::paint::Style::Stroke);
+        paint.set_style(otto_kit::skia::paint::Style::Stroke);
         paint.set_stroke_width(1.8);
-        paint.set_stroke_cap(skia_safe::paint::Cap::Round);
+        paint.set_stroke_cap(otto_kit::skia::paint::Cap::Round);
         let mut builder = PathBuilder::new();
         builder.move_to(Point::new(box_rect.left + 3.5, box_rect.center_y()));
         builder.line_to(Point::new(box_rect.center_x() - 0.5, box_rect.bottom - 4.0));
@@ -8124,7 +8205,7 @@ fn info_label_width() -> f32 {
 /// they cannot run out of the sheet however wide the headers get — a checkbox
 /// drawn outside the panel cannot be clicked.
 fn perm_metrics(sheet: Rect) -> (f32, f32) {
-    let widest = |font: &skia_safe::Font, keys: [&str; 3]| {
+    let widest = |font: &otto_kit::skia::Font, keys: [&str; 3]| {
         keys.iter()
             .map(|key| font.measure_str(otto_kit::t!(key), None).0)
             .fold(0.0f32, f32::max)
@@ -8280,9 +8361,9 @@ fn draw_peek_close(canvas: &Canvas, theme: &Theme, panel: Rect, hovered: bool, o
     // a bare dot in a corner with no group around it does not say "close".
     let mut glyph = Paint::default();
     glyph.set_anti_alias(true);
-    glyph.set_style(skia_safe::paint::Style::Stroke);
+    glyph.set_style(otto_kit::skia::paint::Style::Stroke);
     glyph.set_stroke_width(1.5);
-    glyph.set_stroke_cap(skia_safe::PaintCap::Round);
+    glyph.set_stroke_cap(otto_kit::skia::PaintCap::Round);
     glyph.set_color(fade(theme.text_secondary, opacity));
     let r = close.width() * 0.24;
     canvas.draw_line(
@@ -8324,10 +8405,10 @@ fn draw_peek_expand(
 
     let mut glyph = Paint::default();
     glyph.set_anti_alias(true);
-    glyph.set_style(skia_safe::paint::Style::Stroke);
+    glyph.set_style(otto_kit::skia::paint::Style::Stroke);
     glyph.set_stroke_width(1.5);
-    glyph.set_stroke_cap(skia_safe::PaintCap::Round);
-    glyph.set_stroke_join(skia_safe::PaintJoin::Round);
+    glyph.set_stroke_cap(otto_kit::skia::PaintCap::Round);
+    glyph.set_stroke_join(otto_kit::skia::PaintJoin::Round);
     glyph.set_color(fade(theme.text_secondary, opacity));
 
     // Two arrows on the rising diagonal. The shaft runs from near the centre
@@ -8431,7 +8512,7 @@ pub fn draw_peek(canvas: &Canvas, f: &Frame, session: &otto_peek::session::Sessi
 
     let mut edge = Paint::default();
     edge.set_anti_alias(true);
-    edge.set_style(skia_safe::paint::Style::Stroke);
+    edge.set_style(otto_kit::skia::paint::Style::Stroke);
     edge.set_stroke_width(1.0);
     edge.set_color(f.theme.fill_tertiary);
     canvas.draw_rrect(RRect::new_rect_xy(panel, 12.0, 12.0), &edge);
@@ -8908,8 +8989,8 @@ fn draw_preview_open_pulse(canvas: &Canvas, f: &Frame, entry: &Entry, stage: Rec
                 image,
                 None,
                 grown,
-                skia_safe::sampling_options::SamplingOptions::from(
-                    skia_safe::sampling_options::CubicResampler::mitchell(),
+                otto_kit::skia::sampling_options::SamplingOptions::from(
+                    otto_kit::skia::sampling_options::CubicResampler::mitchell(),
                 ),
                 &Paint::default(),
             );
@@ -9341,7 +9422,7 @@ pub fn open_with_hit(
 }
 
 /// An application's icon: its `Icon=` is a theme name or a file.
-fn app_icon(icon_name: Option<&str>, size: i32) -> Option<skia_safe::Image> {
+fn app_icon(icon_name: Option<&str>, size: i32) -> Option<otto_kit::skia::Image> {
     match icon_name {
         Some(path) if path.starts_with('/') => icons::cached_file_icon(path, size),
         Some(name) => icons::cached_icon_chain(&[name, "application-x-executable"], size),
@@ -9389,16 +9470,16 @@ pub fn draw_open_with(canvas: &Canvas, theme: &Theme, sheet: Rect, data: &OpenWi
     let field = open_with_search_rect(sheet);
     paint.set_color(theme.fill_quaternary);
     canvas.draw_rrect(RRect::new_rect_xy(field, 8.0, 8.0), &paint);
-    paint.set_style(skia_safe::paint::Style::Stroke);
+    paint.set_style(otto_kit::skia::paint::Style::Stroke);
     paint.set_stroke_width(1.0);
     paint.set_color(accent(theme));
     canvas.draw_rrect(RRect::new_rect_xy(field, 8.0, 8.0), &paint);
-    paint.set_style(skia_safe::paint::Style::Fill);
+    paint.set_style(otto_kit::skia::paint::Style::Fill);
     let mut glass = Paint::default();
     glass.set_anti_alias(true);
-    glass.set_style(skia_safe::paint::Style::Stroke);
+    glass.set_style(otto_kit::skia::paint::Style::Stroke);
     glass.set_stroke_width(1.3);
-    glass.set_stroke_cap(skia_safe::paint::Cap::Round);
+    glass.set_stroke_cap(otto_kit::skia::paint::Cap::Round);
     glass.set_color(theme.text_tertiary);
     let (gx, gy) = (field.left + 14.0, field.center_y());
     canvas.draw_circle((gx - 0.5, gy - 1.0), 4.5, &glass);
@@ -9482,9 +9563,9 @@ pub fn draw_open_with(canvas: &Canvas, theme: &Theme, sheet: Rect, data: &OpenWi
                     } else {
                         theme.text_secondary
                     });
-                    chevron.set_style(skia_safe::paint::Style::Stroke);
+                    chevron.set_style(otto_kit::skia::paint::Style::Stroke);
                     chevron.set_stroke_width(1.6);
-                    chevron.set_stroke_cap(skia_safe::paint::Cap::Round);
+                    chevron.set_stroke_cap(otto_kit::skia::paint::Cap::Round);
                     let (cx, cy) = (rect.left + 20.0, rect.center_y());
                     let mut path = PathBuilder::new();
                     if *open {
@@ -9611,7 +9692,7 @@ mod fit_tests {
     ];
 
     /// The widest of `keys` in `locale`, measured in `font`.
-    fn widest(locale: &str, font: &skia_safe::Font, keys: &[&str]) -> (f32, String) {
+    fn widest(locale: &str, font: &otto_kit::skia::Font, keys: &[&str]) -> (f32, String) {
         let catalogue = catalogue(locale);
         keys.iter()
             .filter_map(|key| catalogue.get(*key))
@@ -10430,7 +10511,7 @@ mod geometry_tests {
         }
         // The close dot is the exception: it is *in* the strip, and is
         // hit-tested before the drag.
-        assert!(strip.contains(skia_safe::Point::new(
+        assert!(strip.contains(otto_kit::skia::Point::new(
             info_close_rect(sheet).center_x(),
             info_close_rect(sheet).center_y()
         )));
@@ -10440,17 +10521,17 @@ mod geometry_tests {
     use otto_kit::filetype::Kind;
 
     /// A solid-red image of the given shape, standing in for a thumbnail.
-    fn red_image(w: i32, h: i32) -> skia_safe::Image {
-        let info = skia_safe::ImageInfo::new(
+    fn red_image(w: i32, h: i32) -> otto_kit::skia::Image {
+        let info = otto_kit::skia::ImageInfo::new(
             (w, h),
-            skia_safe::ColorType::RGBA8888,
-            skia_safe::AlphaType::Premul,
+            otto_kit::skia::ColorType::RGBA8888,
+            otto_kit::skia::AlphaType::Premul,
             None,
         );
         let pixels: Vec<u8> = (0..w * h).flat_map(|_| [255u8, 0, 0, 255]).collect();
-        skia_safe::images::raster_from_data(
+        otto_kit::skia::images::raster_from_data(
             &info,
-            skia_safe::Data::new_copy(&pixels),
+            otto_kit::skia::Data::new_copy(&pixels),
             w as usize * 4,
         )
         .expect("raster image")
@@ -10458,22 +10539,23 @@ mod geometry_tests {
 
     /// Draw one grid cell into a bitmap and hand back the pixels, so a test
     /// can ask what actually landed rather than what was meant to.
-    fn grid_cell_pixels(thumb: Option<&skia_safe::Image>) -> (skia_safe::Surface, Rect) {
+    fn grid_cell_pixels(thumb: Option<&otto_kit::skia::Image>) -> (otto_kit::skia::Surface, Rect) {
         let cell = Rect::from_xywh(0.0, 0.0, cell_w(), cell_h());
         let mut surface =
-            skia_safe::surfaces::raster_n32_premul((cell_w() as i32, cell_h() as i32)).unwrap();
+            otto_kit::skia::surfaces::raster_n32_premul((cell_w() as i32, cell_h() as i32))
+                .unwrap();
         let theme = Theme::light();
         let entry = &entries(1)[0];
-        surface.canvas().clear(skia_safe::Color::WHITE);
+        surface.canvas().clear(otto_kit::skia::Color::WHITE);
         draw_grid_cell(surface.canvas(), &theme, entry, cell, false, false, thumb);
         (surface, cell)
     }
 
-    fn pixel_at(surface: &mut skia_safe::Surface, x: i32, y: i32) -> (u8, u8, u8) {
-        let info = skia_safe::ImageInfo::new(
+    fn pixel_at(surface: &mut otto_kit::skia::Surface, x: i32, y: i32) -> (u8, u8, u8) {
+        let info = otto_kit::skia::ImageInfo::new(
             (1, 1),
-            skia_safe::ColorType::RGBA8888,
-            skia_safe::AlphaType::Unpremul,
+            otto_kit::skia::ColorType::RGBA8888,
+            otto_kit::skia::AlphaType::Unpremul,
             None,
         );
         let mut px = [0u8; 4];
@@ -10483,7 +10565,7 @@ mod geometry_tests {
                 &mut px,
                 4,
                 (x, y),
-                skia_safe::image::CachingHint::Allow
+                otto_kit::skia::image::CachingHint::Allow
             ),
             "reading pixel at {x},{y}"
         );
@@ -10513,8 +10595,8 @@ mod geometry_tests {
     #[test]
     fn a_thumbnail_has_rounded_corners() {
         let image = red_image(64, 64);
-        let mut surface = skia_safe::surfaces::raster_n32_premul((64, 64)).unwrap();
-        surface.canvas().clear(skia_safe::Color::WHITE);
+        let mut surface = otto_kit::skia::surfaces::raster_n32_premul((64, 64)).unwrap();
+        surface.canvas().clear(otto_kit::skia::Color::WHITE);
         let box_rect = Rect::from_xywh(0.0, 0.0, 64.0, 64.0);
         draw_thumbnail(surface.canvas(), &image, box_rect, false);
 
@@ -10857,7 +10939,7 @@ mod geometry_tests {
 
     /// The grid drawn with a desk overflow tile over `count` entries into a
     /// transparent surface 1100 by 700 points.
-    fn draw_stacked_grid(count: usize) -> (skia_safe::Surface, DeskOverflow, Rect) {
+    fn draw_stacked_grid(count: usize) -> (otto_kit::skia::Surface, DeskOverflow, Rect) {
         let owned = entries(count);
         let theme = Theme::light();
         let area = content_viewport(1100.0, 700.0, ViewMode::Grid);
@@ -10871,18 +10953,18 @@ mod geometry_tests {
         .expect("a tile");
         let mut frame = test_frame(&theme, ViewMode::Grid, vec![pane(&owned, None, 0.0)], 700.0);
         frame.desk_overflow = Some(overflow);
-        let mut surface = skia_safe::surfaces::raster_n32_premul((1100, 700)).unwrap();
+        let mut surface = otto_kit::skia::surfaces::raster_n32_premul((1100, 700)).unwrap();
         surface.canvas().clear(Color::TRANSPARENT);
         draw_grid(surface.canvas(), &frame);
         (surface, overflow, area)
     }
 
-    fn pixel(surface: &mut skia_safe::Surface, x: f32, y: f32) -> Color {
+    fn pixel(surface: &mut otto_kit::skia::Surface, x: f32, y: f32) -> Color {
         let image = surface.image_snapshot();
-        let info = skia_safe::ImageInfo::new(
+        let info = otto_kit::skia::ImageInfo::new(
             (1, 1),
-            skia_safe::ColorType::RGBA8888,
-            skia_safe::AlphaType::Unpremul,
+            otto_kit::skia::ColorType::RGBA8888,
+            otto_kit::skia::AlphaType::Unpremul,
             None,
         );
         let mut bytes = [0u8; 4];
@@ -10891,7 +10973,7 @@ mod geometry_tests {
             &mut bytes,
             4,
             (x as i32, y as i32),
-            skia_safe::image::CachingHint::Allow,
+            otto_kit::skia::image::CachingHint::Allow,
         ));
         Color::from_argb(bytes[3], bytes[0], bytes[1], bytes[2])
     }
@@ -10965,7 +11047,7 @@ mod geometry_tests {
             let mut frame =
                 test_frame(&theme, ViewMode::Grid, vec![pane(&owned, None, 0.0)], 700.0);
             frame.desk_overflow = Some(overflow);
-            let mut surface = skia_safe::surfaces::raster_n32_premul((1100, 700)).unwrap();
+            let mut surface = otto_kit::skia::surfaces::raster_n32_premul((1100, 700)).unwrap();
             surface.canvas().clear(Color::TRANSPARENT);
             draw_grid(surface.canvas(), &frame);
             surface
@@ -11000,7 +11082,7 @@ mod geometry_tests {
         frame.desk_overflow = Some(overflow);
         let mut scroll = ScrollState::new(panel.rect);
         scroll.set_content_length(panel.content_h);
-        let mut surface = skia_safe::surfaces::raster_n32_premul((1100, 700)).unwrap();
+        let mut surface = otto_kit::skia::surfaces::raster_n32_premul((1100, 700)).unwrap();
         surface.canvas().clear(Color::TRANSPARENT);
         draw_overflow_panel(surface.canvas(), &frame, &scroll);
         let ground = pixel(&mut surface, panel.rect.left + 4.0, panel.rect.center_y());
@@ -11020,7 +11102,7 @@ mod geometry_tests {
         let theme = Theme::light();
         let frame = test_frame(&theme, ViewMode::List, vec![data], height);
 
-        let mut recorder = skia_safe::PictureRecorder::new();
+        let mut recorder = otto_kit::skia::PictureRecorder::new();
         let canvas = recorder.begin_recording(Rect::from_wh(1100.0, height), false);
         draw_list(canvas, &frame);
         recorder

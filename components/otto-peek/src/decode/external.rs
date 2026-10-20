@@ -20,7 +20,7 @@ use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::process::{Command, Stdio};
 
-use skia_safe::{Codec, Data};
+use otto_kit::skia::{Codec, Data};
 
 use crate::payload::Pixels;
 
@@ -140,8 +140,8 @@ pub(super) fn decode_png(png: &[u8]) -> Option<Pixels> {
     let mut codec = Codec::from_data(Data::new_copy(png))?;
     let info = codec
         .info()
-        .with_color_type(skia_safe::ColorType::RGBA8888)
-        .with_alpha_type(skia_safe::AlphaType::Premul);
+        .with_color_type(otto_kit::skia::ColorType::RGBA8888)
+        .with_alpha_type(otto_kit::skia::AlphaType::Premul);
     let dimensions = codec.dimensions();
     let image = codec.get_image(info, None).ok()?;
     super::image::to_pixels(&image, dimensions)

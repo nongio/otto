@@ -13,19 +13,9 @@
 
 use std::sync::mpsc::{Receiver, TryRecvError};
 
-use crate::PowerAction;
+use otto_kit::dbus::login1::Login1ManagerProxyBlocking;
 
-#[zbus::proxy(
-    interface = "org.freedesktop.login1.Manager",
-    default_service = "org.freedesktop.login1",
-    default_path = "/org/freedesktop/login1",
-    gen_async = false
-)]
-trait Login1Manager {
-    fn power_off(&self, interactive: bool) -> zbus::Result<()>;
-    fn reboot(&self, interactive: bool) -> zbus::Result<()>;
-    fn suspend(&self, interactive: bool) -> zbus::Result<()>;
-}
+use crate::PowerAction;
 
 /// Why logind did not do what was asked.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -109,7 +99,7 @@ fn call(action: PowerAction) -> Result<(), PowerError> {
         PowerError::Failed(err.to_string())
     };
     let connection = zbus::blocking::Connection::system().map_err(failed)?;
-    let manager = Login1ManagerProxy::new(&connection).map_err(failed)?;
+    let manager = Login1ManagerProxyBlocking::new(&connection).map_err(failed)?;
     let result = match action {
         PowerAction::Suspend => manager.suspend(true),
         PowerAction::Restart => manager.reboot(true),

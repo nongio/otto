@@ -192,7 +192,7 @@ impl Browser {
         if self.mode != ViewMode::Photos || self.trash || self.picker.is_some() {
             return None;
         }
-        let point = skia_safe::Point::new(x, y);
+        let point = otto_kit::skia::Point::new(x, y);
         if self.photos.has_panel(self.size.0, self.content_h()) {
             let panel = self.photos.panel_rect(self.size.0, self.content_h());
             if panel.contains(point) {
@@ -204,7 +204,7 @@ impl Browser {
             return Some(after);
         }
         let rect = view::photos_group_rect(self.size.0);
-        if rect.contains(skia_safe::Point::new(x, y)) {
+        if rect.contains(otto_kit::skia::Point::new(x, y)) {
             return Some(listing_pointer::After::GroupMenu { rect, serial });
         }
         None
@@ -602,7 +602,7 @@ impl Browser {
             return None;
         }
         let panel = self.photos.panel_rect(self.size.0, self.content_h());
-        if !panel.contains(skia_safe::Point::new(x, y)) {
+        if !panel.contains(otto_kit::skia::Point::new(x, y)) {
             return None;
         }
         self.photos_info_data()
@@ -695,7 +695,7 @@ impl Browser {
             return None;
         }
         let panel = self.photos.panel_rect(self.size.0, self.content_h());
-        if !panel.contains(skia_safe::Point::new(x, y)) {
+        if !panel.contains(otto_kit::skia::Point::new(x, y)) {
             return None;
         }
         self.photos_info_data()

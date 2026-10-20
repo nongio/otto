@@ -180,7 +180,7 @@ pub(super) fn render(file: &mut File, request: &Request) -> PreviewPayload {
                 .map(|(width, height)| Page::blank(*width, *height))
                 .collect();
             otto_kit::preview::page_raster_width(
-                skia_safe::Rect::from_wh(box_width as f32, box_height as f32),
+                otto_kit::skia::Rect::from_wh(box_width as f32, box_height as f32),
                 &strip,
                 (page as usize).saturating_sub(1),
             )

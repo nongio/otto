@@ -9,7 +9,7 @@
 
 use std::fs::File;
 
-use skia_safe::{Codec, Data, ISize, ImageInfo};
+use otto_kit::skia::{Codec, Data, ISize, ImageInfo};
 
 use crate::payload;
 use crate::payload::{Pixels, PreviewPayload};
@@ -260,8 +260,8 @@ fn decoded(bytes: &[u8], request: &Request) -> PreviewPayload {
     let info = codec
         .info()
         .with_dimensions(scaled)
-        .with_color_type(skia_safe::ColorType::RGBA8888)
-        .with_alpha_type(skia_safe::AlphaType::Premul);
+        .with_color_type(otto_kit::skia::ColorType::RGBA8888)
+        .with_alpha_type(otto_kit::skia::AlphaType::Premul);
 
     let image = match codec.get_image(info, None) {
         Ok(image) => image,
@@ -333,8 +333,8 @@ fn animation(codec: &mut Codec, intrinsic: ISize, shown: ISize) -> Option<Previe
     let info = codec
         .info()
         .with_dimensions(intrinsic)
-        .with_color_type(skia_safe::ColorType::RGBA8888)
-        .with_alpha_type(skia_safe::AlphaType::Premul);
+        .with_color_type(otto_kit::skia::ColorType::RGBA8888)
+        .with_alpha_type(otto_kit::skia::AlphaType::Premul);
     let row_bytes = intrinsic.width as usize * 4;
     let mut composited = vec![0u8; row_bytes.checked_mul(intrinsic.height as usize)?];
 
@@ -343,7 +343,7 @@ fn animation(codec: &mut Codec, intrinsic: ISize, shown: ISize) -> Option<Previe
     let mut held: Option<usize> = None;
     for index in 0..count {
         let frame = codec.get_frame_info(index)?;
-        let options = skia_safe::codec::Options {
+        let options = otto_kit::skia::codec::Options {
             frame_index: index,
             // Only when the buffer already holds exactly the frame this one
             // is drawn over; otherwise Skia decodes the chain itself.
@@ -353,7 +353,8 @@ fn animation(codec: &mut Codec, intrinsic: ISize, shown: ISize) -> Option<Previe
         let result =
             codec.get_pixels_with_options(&info, &mut composited, row_bytes, Some(&options));
         match result {
-            skia_safe::codec::Result::Success | skia_safe::codec::Result::IncompleteInput => {}
+            otto_kit::skia::codec::Result::Success
+            | otto_kit::skia::codec::Result::IncompleteInput => {}
             // A truncated or broken animation still has whatever it managed
             // before the bad frame; one frame is not an animation, so that
             // falls back to the still path.
@@ -374,9 +375,9 @@ fn animation(codec: &mut Codec, intrinsic: ISize, shown: ISize) -> Option<Previe
             continue;
         }
 
-        let image = skia_safe::images::raster_from_data(
+        let image = otto_kit::skia::images::raster_from_data(
             &info,
-            skia_safe::Data::new_copy(&composited),
+            otto_kit::skia::Data::new_copy(&composited),
             row_bytes,
         )?;
         let frame_pixels = to_pixels_at(&image, intrinsic, size)?;
@@ -505,16 +506,16 @@ pub(super) fn svg(file: &mut File, request: &Request) -> PreviewPayload {
     // close, so the drawing gets a provider that refuses everything external
     // and offers fonts only. The network namespace already forbids the remote
     // case; this forbids the local one at the same time.
-    let Ok(mut dom) = skia_safe::svg::Dom::from_bytes(&bytes, SealedResources) else {
+    let Ok(mut dom) = otto_kit::skia::svg::Dom::from_bytes(&bytes, SealedResources) else {
         return payload::unavailable(otto_kit::t_owned!("peek-error-drawing-parse"));
     };
 
     let width = request.width.clamp(1, 8192) as i32;
     let height = request.height.clamp(1, 8192) as i32;
-    let Some(mut surface) = skia_safe::surfaces::raster_n32_premul((width, height)) else {
+    let Some(mut surface) = otto_kit::skia::surfaces::raster_n32_premul((width, height)) else {
         return payload::unavailable(otto_kit::t_owned!("peek-error-drawing-surface"));
     };
-    dom.set_container_size(skia_safe::Size::new(width as f32, height as f32));
+    dom.set_container_size(otto_kit::skia::Size::new(width as f32, height as f32));
     dom.render(surface.canvas());
 
     let image = surface.image_snapshot();
@@ -540,17 +541,17 @@ pub(super) fn svg(file: &mut File, request: &Request) -> PreviewPayload {
 #[derive(Debug)]
 struct SealedResources;
 
-impl skia_safe::resources::ResourceProvider for SealedResources {
-    fn load(&self, _resource_path: &str, _resource_name: &str) -> Option<skia_safe::Data> {
+impl otto_kit::skia::resources::ResourceProvider for SealedResources {
+    fn load(&self, _resource_path: &str, _resource_name: &str) -> Option<otto_kit::skia::Data> {
         None
     }
 
-    fn load_typeface(&self, _name: &str, _url: &str) -> Option<skia_safe::Typeface> {
+    fn load_typeface(&self, _name: &str, _url: &str) -> Option<otto_kit::skia::Typeface> {
         None
     }
 
-    fn font_mgr(&self) -> skia_safe::FontMgr {
-        skia_safe::FontMgr::default()
+    fn font_mgr(&self) -> otto_kit::skia::FontMgr {
+        otto_kit::skia::FontMgr::default()
     }
 }
 
@@ -626,18 +627,18 @@ fn too_large(intrinsic: ISize, request: &Request) -> PreviewPayload {
 
 /// Copy a decoded image out into a plain premultiplied RGBA buffer, which is
 /// all the wire format and the drawing side know about.
-pub(crate) fn to_pixels(image: &skia_safe::Image, intrinsic: ISize) -> Option<Pixels> {
+pub(crate) fn to_pixels(image: &otto_kit::skia::Image, intrinsic: ISize) -> Option<Pixels> {
     to_pixels_at(image, intrinsic, image.dimensions())
 }
 
 /// Read `image` back at `size`, resampling on the way when the two differ.
-fn to_pixels_at(image: &skia_safe::Image, intrinsic: ISize, size: ISize) -> Option<Pixels> {
+fn to_pixels_at(image: &otto_kit::skia::Image, intrinsic: ISize, size: ISize) -> Option<Pixels> {
     let width = size.width.max(0) as u32;
     let height = size.height.max(0) as u32;
     let info = ImageInfo::new(
         (width as i32, height as i32),
-        skia_safe::ColorType::RGBA8888,
-        skia_safe::AlphaType::Premul,
+        otto_kit::skia::ColorType::RGBA8888,
+        otto_kit::skia::AlphaType::Premul,
         None,
     );
     let row_bytes = width as usize * 4;
@@ -648,17 +649,17 @@ fn to_pixels_at(image: &skia_safe::Image, intrinsic: ISize, size: ISize) -> Opti
             &mut data,
             row_bytes,
             (0, 0),
-            skia_safe::image::CachingHint::Disallow,
+            otto_kit::skia::image::CachingHint::Disallow,
         )
     } else {
-        let target = skia_safe::Pixmap::new(&info, &mut data, row_bytes)?;
+        let target = otto_kit::skia::Pixmap::new(&info, &mut data, row_bytes)?;
         image.scale_pixels(
             &target,
-            skia_safe::SamplingOptions::new(
-                skia_safe::FilterMode::Linear,
-                skia_safe::MipmapMode::Linear,
+            otto_kit::skia::SamplingOptions::new(
+                otto_kit::skia::FilterMode::Linear,
+                otto_kit::skia::MipmapMode::Linear,
             ),
-            skia_safe::image::CachingHint::Disallow,
+            otto_kit::skia::image::CachingHint::Disallow,
         )
     };
     read.then_some(Pixels {
@@ -705,11 +706,11 @@ mod tests {
     /// one would come back whole however small the request.
     #[test]
     fn a_png_asked_for_small_comes_back_small() {
-        let mut surface = skia_safe::surfaces::raster_n32_premul((1200, 900)).unwrap();
-        surface.canvas().clear(skia_safe::Color::RED);
+        let mut surface = otto_kit::skia::surfaces::raster_n32_premul((1200, 900)).unwrap();
+        surface.canvas().clear(otto_kit::skia::Color::RED);
         let png = surface
             .image_snapshot()
-            .encode(None, skia_safe::EncodedImageFormat::PNG, 100)
+            .encode(None, otto_kit::skia::EncodedImageFormat::PNG, 100)
             .unwrap();
         let path = std::env::temp_dir().join(format!("otto-peek-fit-{}.png", std::process::id()));
         std::fs::write(&path, png.as_bytes()).unwrap();

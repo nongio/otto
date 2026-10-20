@@ -38,10 +38,10 @@
 
 use std::path::{Path, PathBuf};
 
+use otto_kit::skia::{Contains, Rect};
 use serde::Deserialize;
-use skia_safe::{Contains, Rect};
 
-use crate::model::{self, SortKey};
+use crate::model::SortKey;
 use crate::places_config;
 
 /// The padding the desk leaves around its icons when the config says
@@ -394,7 +394,7 @@ fn default_folder(home: Option<&Path>) -> PathBuf {
     let Some(home) = home else {
         return PathBuf::from("/");
     };
-    model::user_dir(home, "XDG_DESKTOP_DIR").unwrap_or_else(|| home.join("Desktop"))
+    otto_kit::xdg::user_dir("XDG_DESKTOP_DIR").unwrap_or_else(|| home.join("Desktop"))
 }
 
 /// A two-element array read with `parse`, as `size` and `position` are.
@@ -581,7 +581,7 @@ impl OverflowPanel {
     /// Which of `items` is under (`x`, `y`), scrolled by `scroll`. `None`
     /// outside the panel, and on its padding or an empty cell.
     pub fn index_at(&self, x: f32, y: f32, items: usize, scroll: f32) -> Option<usize> {
-        if !self.rect.contains(skia_safe::Point::new(x, y)) {
+        if !self.rect.contains(otto_kit::skia::Point::new(x, y)) {
             return None;
         }
         let dx = x - self.rect.left - PANEL_PAD;
@@ -716,7 +716,7 @@ pub fn grip_at(panel: Rect, x: f32, y: f32) -> Option<Grip> {
             (1, _) => Grip::Right,
             (_, -1) => Grip::Top,
             (_, 1) => Grip::Bottom,
-            _ if panel.contains(skia_safe::Point::new(x, y)) => Grip::Move,
+            _ if panel.contains(otto_kit::skia::Point::new(x, y)) => Grip::Move,
             _ => return None,
         },
     )

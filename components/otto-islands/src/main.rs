@@ -17,9 +17,9 @@ use std::time::Duration;
 
 use otto_kit::accessibility::{A11yTree, Action, ActionRequest, Role};
 use otto_kit::protocols::otto_surface_style_v1::{ClipMode, ContentsGravity};
+use otto_kit::skia::Rect;
 use otto_kit::surfaces::{LayerShellSurface, SubsurfaceSurface};
 use otto_kit::{App, AppContext, AppRunner, ObjectId};
-use skia_safe::Rect;
 use smithay_client_toolkit::compositor::Region;
 use smithay_client_toolkit::seat::pointer::{PointerEvent, PointerEventKind};
 use wayland_client::protocol::wl_keyboard::KeyState;
@@ -309,7 +309,7 @@ impl IslandApp {
         let cy = BAR_HEIGHT / 2.0;
         set_size_and_position(&surface, MINI_H, MINI_H, cx, cy);
         surface.draw(|canvas| {
-            canvas.clear(skia_safe::Color::TRANSPARENT);
+            canvas.clear(otto_kit::skia::Color::TRANSPARENT);
         });
         Some(surface)
     }
@@ -727,7 +727,7 @@ impl IslandApp {
                             &activity.icon,
                             &activity.title,
                             activity.progress,
-                            skia_safe::Color::WHITE,
+                            otto_kit::skia::Color::WHITE,
                             w,
                             h,
                         );
@@ -1256,7 +1256,7 @@ impl IslandApp {
             surface.place_above(island.surface.wl_surface());
         }
         surface.draw(|canvas| {
-            canvas.clear(skia_safe::Color::TRANSPARENT);
+            canvas.clear(otto_kit::skia::Color::TRANSPARENT);
         });
         let picks = dialog::Picks::new(&view.choices);
         tracing::info!(id = view.id, app_id = %view.app_id, title = %view.title, modal = view.modal, "dialog shown");
@@ -1762,7 +1762,7 @@ impl IslandApp {
                 let (eq_w, eq_h, _, _) = music::MusicActivityRenderer::eq_layout(mode, w, h);
                 let buf_w = music::EQ_BUF_W as f32;
                 let buf_h = music::EQ_BUF_H as f32;
-                let bars = skia_safe::Rect::from_xywh(
+                let bars = otto_kit::skia::Rect::from_xywh(
                     (buf_w - eq_w) / 2.0,
                     (buf_h - eq_h) / 2.0,
                     eq_w,
@@ -1775,7 +1775,7 @@ impl IslandApp {
                     visualiser.surface.base_surface().add_frame_damage(&[bars]);
                 }
                 visualiser.surface.draw(|canvas| {
-                    canvas.clear(skia_safe::Color::TRANSPARENT);
+                    canvas.clear(otto_kit::skia::Color::TRANSPARENT);
                     canvas.save();
                     canvas.translate((bars.left, bars.top));
                     mr.draw_eq_only(canvas, mode, eq_w, eq_h);
@@ -1841,7 +1841,7 @@ impl App for IslandApp {
         // dialog's lower rows and its buttons go dead.
         if let Some(layer) = &self.layer_surface {
             layer.draw(|canvas| {
-                canvas.clear(skia_safe::Color::TRANSPARENT);
+                canvas.clear(otto_kit::skia::Color::TRANSPARENT);
             });
         }
         let first = !self.surfaces_ready;

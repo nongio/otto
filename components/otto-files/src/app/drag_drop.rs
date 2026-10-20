@@ -2,6 +2,34 @@
 
 use super::*;
 
+/// What a drop does with the files it carries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum DropOp {
+    Move,
+    Copy,
+    /// Leave the files where they are and make a symbolic link to each.
+    Link,
+}
+
+impl DropOp {
+    /// The drop the negotiated action asks for.
+    ///
+    /// `wl_data_device` has no link action, so a link travels as `Ask`: the
+    /// compositor selects it when Ctrl+Shift is held, the same chord that
+    /// makes a link in every other Linux file manager. Anything that is not
+    /// plainly a move is a copy, so a source that only offered a copy never
+    /// has its files moved.
+    pub(super) fn from_action(action: DndAction) -> Self {
+        if action.contains(DndAction::Ask) {
+            Self::Link
+        } else if action.contains(DndAction::Move) {
+            Self::Move
+        } else {
+            Self::Copy
+        }
+    }
+}
+
 impl Browser {
     /// Whether this window does drag and drop at all.
     ///
@@ -65,7 +93,7 @@ impl Browser {
 
         if let Some((depth, index)) = self.entry_at(x, y) {
             if let Some(entry) = self.visible(depth).get(index) {
-                if entry.is_dir && !Self::is_a_move_home(&entry.path) {
+                if entry.is_dir && !self.is_a_move_home(&entry.path) {
                     return Some(DropTarget::Entry {
                         depth,
                         index,
@@ -81,7 +109,7 @@ impl Browser {
         }
         let depth = self.pane_under(x, y);
         let path = self.columns[depth].path.clone();
-        if Self::is_a_move_home(&path) {
+        if self.is_a_move_home(&path) {
             return None;
         }
         Some(DropTarget::Pane { depth, path })
@@ -92,36 +120,38 @@ impl Browser {
     ///
     /// Such a drop has nothing to do, and a target that lights up to say it
     /// will do nothing is worse than no target at all: the answer is a
-    /// dismissal — no outline, a cursor that says the drop is refused, and the
-    /// icon flying home to where it was picked up.
+    /// dismissal — no outline, the plain pointer (nothing is wrong, there is
+    /// just nothing to do), and the icon flying home to where it was picked
+    /// up.
     ///
     /// A *copy* onto the same directory is a real request — that is how a
-    /// duplicate is made — so this only speaks for a move. The test is
-    /// "not a copy" rather than "is a move" so it stays put once we refuse:
-    /// refusing clears the negotiated action, and an `is_move` test would then
-    /// accept again on the next motion and flicker between the two.
-    pub(super) fn is_a_move_home(dest: &Path) -> bool {
-        use otto_kit::dnd;
-
-        // Someone else's drag: we do not know where those files live, and the
-        // source is the one that would have to answer this anyway. Asked first
-        // because it reads our own payload, while `selected_action` needs a
-        // live `AppContext` there is no reason to require of a target test.
-        let Some(paths) = dnd::own_files() else {
-            return false;
-        };
-        if paths.is_empty() || paths.iter().any(|path| path.parent() != Some(dest)) {
-            return false;
-        }
-        !dnd::selected_action().contains(DndAction::Copy)
+    /// duplicate is made — and so is a link, so this only speaks for a move:
+    /// it holds until the compositor has settled on one of those
+    /// ([`Browser::drag_copies`]). Over the files' own folder the drag is
+    /// accepted for a copy or a link only, with no preference, so the
+    /// compositor settles on one when Ctrl or Ctrl+Shift asks for it and on
+    /// nothing otherwise — see `hover_drag`.
+    pub(super) fn is_a_move_home(&self, dest: &Path) -> bool {
+        Self::is_home(dest) && !self.drag_copies
     }
 
-    /// Put `paths` into the current drop target, moving them or copying them.
+    /// Is a drag of our own carrying files that all live in `dest`?
+    pub(super) fn is_home(dest: &Path) -> bool {
+        // Someone else's drag: we do not know where those files live, and the
+        // source is the one that would have to answer this anyway.
+        let Some(paths) = otto_kit::dnd::own_files() else {
+            return false;
+        };
+        !paths.is_empty() && paths.iter().all(|path| path.parent() == Some(dest))
+    }
+
+    /// Put `paths` into the current drop target, moving them, copying them or
+    /// linking to them.
     ///
     /// Runs on the UI thread, like [`Browser::paste`], and inherits the same
     /// caveat: fine for a deliberate gesture on a known set of files, and due
     /// to move to the worker pool with the rest of the file operations.
-    pub(super) fn apply_drop(&mut self, paths: Vec<PathBuf>, move_them: bool) {
+    pub(super) fn apply_drop(&mut self, paths: Vec<PathBuf>, op: DropOp) {
         let Some(target) = self.drop_target.take() else {
             return;
         };
@@ -145,6 +175,17 @@ impl Browser {
             self.reload_all();
             return;
         }
+
+        if op == DropOp::Link {
+            let result = model::link(&paths, &dest);
+            let summary = result.summary();
+            self.status = (!summary.is_empty()).then_some(summary);
+            Self::play_op_sound(&result);
+            self.record_undo(otto_kit::t!("files-undo-link"), result.changes);
+            self.reload_all();
+            return;
+        }
+        let move_them = op == DropOp::Move;
 
         // Files dragged back into the directory they already live in: a move
         // there is a no-op, and doing it through `paste` would rename them
