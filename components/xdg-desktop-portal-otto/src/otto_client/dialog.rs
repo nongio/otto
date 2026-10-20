@@ -8,11 +8,57 @@
 
 use std::collections::HashMap;
 
-use zbus::zvariant::{ObjectPath, OwnedValue, Value};
+use zbus::zvariant::{ObjectPath, Value};
 use zbus::Result;
 
 use crate::otto_client::OttoClient;
 pub use otto_dbus::dialog::{DialogProxy, WireChoice};
+use otto_dbus::portal_access::PortalAccessProxy;
+
+/// Withdraws the dialog it names when dropped while still armed: the call
+/// that put the dialog up was abandoned before its answer.
+struct Withdraw {
+    connection: zbus::Connection,
+    app_id: String,
+    cookie: String,
+    armed: bool,
+}
+
+impl Withdraw {
+    /// The dialog was answered; there is nothing to take down.
+    fn disarm(mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for Withdraw {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        // Dropped from inside the abandoned call: the withdrawal cannot be
+        // awaited here, so it runs on its own.
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            tracing::warn!(cookie = %self.cookie, "no runtime to withdraw the dialog on");
+            return;
+        };
+        let connection = self.connection.clone();
+        let (app_id, cookie) = (
+            std::mem::take(&mut self.app_id),
+            std::mem::take(&mut self.cookie),
+        );
+        runtime.spawn(async move {
+            let withdrawn = match DialogProxy::new(&connection).await {
+                Ok(proxy) => proxy.withdraw(&app_id, &cookie).await,
+                Err(err) => Err(err),
+            };
+            match withdrawn {
+                Ok(found) => tracing::info!(%cookie, found, "dialog withdrawn"),
+                Err(err) => tracing::warn!(?err, %cookie, "withdrawing the dialog failed"),
+            }
+        });
+    }
+}
 
 /// A choice group in the **standard** `org.freedesktop.impl.portal.Access`
 /// shape: `(group_id, group_label, [(option_id, option_label)], default)`.
@@ -35,36 +81,77 @@ pub const ACCESS_FALLBACK_BACKENDS: &[&str] = &[
     "org.freedesktop.impl.portal.desktop.kde",
 ];
 
-/// D-Bus proxy for `org.freedesktop.impl.portal.Access`.
-///
-/// No `default_service`: the destination is chosen per call from
-/// [`ACCESS_FALLBACK_BACKENDS`].
-#[zbus::proxy(
-    interface = "org.freedesktop.impl.portal.Access",
-    default_path = "/org/freedesktop/portal/desktop"
-)]
-trait Access {
-    /// Present a dialog and block until the user answers.
-    ///
-    /// `options` carries `modal`, `grant_label`, `deny_label`, `icon` and
-    /// `choices`; `results` carries the selected `choices` back.
-    #[allow(clippy::too_many_arguments)]
-    async fn access_dialog(
-        &self,
-        handle: &ObjectPath<'_>,
-        app_id: &str,
-        parent_window: &str,
-        title: &str,
-        subtitle: &str,
-        body: &str,
-        options: HashMap<&str, Value<'_>>,
-    ) -> Result<(u32, HashMap<String, OwnedValue>)>;
-}
-
 impl OttoClient {
     /// Build a proxy to the dialog renderer.
     pub async fn dialog_proxy(&self) -> Result<DialogProxy<'_>> {
         DialogProxy::new(&self.connection).await
+    }
+
+    /// Present an access dialog through otto-islands on behalf of the portal
+    /// request at `request`, which names the dialog.
+    ///
+    /// Dropped before the answer, which is what happens to the pending method
+    /// when the frontend closes the request, the dialog is withdrawn rather
+    /// than left on screen for an app that no longer waits. An otto-islands
+    /// too old to take a cookie is asked through `PresentAccess`, without
+    /// that.
+    #[allow(clippy::too_many_arguments)] // mirrors PresentAccess 1:1
+    pub async fn present_access_for(
+        &self,
+        request: &str,
+        app_id: &str,
+        title: &str,
+        subtitle: &str,
+        body: &str,
+        icon: &str,
+        grant_label: &str,
+        deny_label: &str,
+        modal: bool,
+        choices: Vec<WireChoice>,
+    ) -> Result<(u32, Vec<(String, String)>)> {
+        let proxy = self.dialog_proxy().await?;
+        let pending = Withdraw {
+            connection: self.connection.clone(),
+            app_id: app_id.to_owned(),
+            cookie: request.to_owned(),
+            armed: true,
+        };
+        let answer = proxy
+            .present_access_with_cookie(
+                app_id,
+                request,
+                title,
+                subtitle,
+                body,
+                icon,
+                grant_label,
+                deny_label,
+                modal,
+                choices.clone(),
+            )
+            .await;
+        pending.disarm();
+        match answer {
+            Err(zbus::Error::MethodError(name, _, _))
+                if name.as_str() == "org.freedesktop.DBus.Error.UnknownMethod" =>
+            {
+                tracing::debug!("otto-islands takes no cookie; the dialog cannot be withdrawn");
+                proxy
+                    .present_access(
+                        app_id,
+                        title,
+                        subtitle,
+                        body,
+                        icon,
+                        grant_label,
+                        deny_label,
+                        modal,
+                        choices,
+                    )
+                    .await
+            }
+            answer => answer,
+        }
     }
 
     /// Present a dialog through the first reachable standard Access backend.
@@ -90,8 +177,8 @@ impl OttoClient {
 
         let mut last_err = None;
         for service in ACCESS_FALLBACK_BACKENDS {
-            let proxy: AccessProxy<'_> =
-                match AccessProxy::builder(&self.connection).destination(*service) {
+            let proxy: PortalAccessProxy<'_> =
+                match PortalAccessProxy::builder(&self.connection).destination(*service) {
                     Ok(builder) => match builder.build().await {
                         Ok(p) => p,
                         Err(err) => {
@@ -141,5 +228,165 @@ impl OttoClient {
 
         Err(last_err
             .unwrap_or_else(|| zbus::Error::Failure("no Access backend available".to_string())))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::{BufRead, BufReader};
+    use std::process::{Child, Command, Stdio};
+    use std::time::Duration;
+
+    use tokio::sync::mpsc;
+
+    use super::*;
+
+    /// A private bus, so the test needs no session and touches nobody's.
+    fn private_bus() -> Option<(Child, String)> {
+        let mut daemon = Command::new("dbus-daemon")
+            .args(["--session", "--nofork", "--print-address=1"])
+            .stdout(Stdio::piped())
+            .spawn()
+            .ok()?;
+        let mut address = String::new();
+        BufReader::new(daemon.stdout.take()?)
+            .read_line(&mut address)
+            .ok()?;
+        Some((daemon, address.trim().to_owned()))
+    }
+
+    async fn connect(address: &str) -> zbus::Connection {
+        zbus::connection::Builder::address(address)
+            .unwrap()
+            .build()
+            .await
+            .unwrap()
+    }
+
+    /// otto-islands, as far as the dialog goes: it never answers, and
+    /// reports each withdrawal.
+    struct Islands {
+        withdrawn: mpsc::UnboundedSender<(String, String)>,
+    }
+
+    #[zbus::interface(name = "org.otto.Dialog1")]
+    impl Islands {
+        #[allow(clippy::too_many_arguments)]
+        async fn present_access_with_cookie(
+            &self,
+            _app_id: &str,
+            _cookie: &str,
+            _title: &str,
+            _subtitle: &str,
+            _body: &str,
+            _icon: &str,
+            _grant_label: &str,
+            _deny_label: &str,
+            _modal: bool,
+            _choices: Vec<WireChoice>,
+        ) -> (u32, Vec<(String, String)>) {
+            std::future::pending().await
+        }
+
+        async fn withdraw(&self, app_id: &str, cookie: &str) -> bool {
+            self.withdrawn
+                .send((app_id.to_owned(), cookie.to_owned()))
+                .unwrap();
+            true
+        }
+    }
+
+    /// An otto-islands from before cookies: `PresentAccess` only.
+    struct OldIslands;
+
+    #[zbus::interface(name = "org.otto.Dialog1")]
+    impl OldIslands {
+        #[allow(clippy::too_many_arguments)]
+        async fn present_access(
+            &self,
+            _app_id: &str,
+            _title: &str,
+            _subtitle: &str,
+            _body: &str,
+            _icon: &str,
+            _grant_label: &str,
+            _deny_label: &str,
+            _modal: bool,
+            _choices: Vec<WireChoice>,
+        ) -> (u32, Vec<(String, String)>) {
+            (0, Vec::new())
+        }
+    }
+
+    async fn ask(client: &OttoClient) -> Result<(u32, Vec<(String, String)>)> {
+        client
+            .present_access_for(
+                "/org/freedesktop/portal/desktop/request/1_2/t",
+                "org.example.App",
+                "Title",
+                "",
+                "",
+                "",
+                "",
+                "",
+                true,
+                Vec::new(),
+            )
+            .await
+    }
+
+    #[tokio::test]
+    async fn an_abandoned_dialog_is_withdrawn_by_its_request() {
+        let Some((mut daemon, address)) = private_bus() else {
+            eprintln!("no dbus-daemon; skipping");
+            return;
+        };
+        let (withdrawn, mut withdrawals) = mpsc::unbounded_channel();
+        let _islands = zbus::connection::Builder::address(address.as_str())
+            .unwrap()
+            .name(otto_dbus::dialog::SERVICE)
+            .unwrap()
+            .serve_at(otto_dbus::dialog::PATH, Islands { withdrawn })
+            .unwrap()
+            .build()
+            .await
+            .unwrap();
+        let client = OttoClient {
+            connection: connect(&address).await,
+        };
+
+        // The frontend closing the request drops the pending call.
+        let abandoned = tokio::time::timeout(Duration::from_millis(300), ask(&client)).await;
+        assert!(abandoned.is_err(), "the dialog never answers");
+
+        let (app_id, cookie) = tokio::time::timeout(Duration::from_secs(5), withdrawals.recv())
+            .await
+            .expect("the dialog was withdrawn")
+            .unwrap();
+        assert_eq!(app_id, "org.example.App");
+        assert_eq!(cookie, "/org/freedesktop/portal/desktop/request/1_2/t");
+        let _ = daemon.kill();
+    }
+
+    #[tokio::test]
+    async fn an_islands_without_cookies_is_asked_the_old_way() {
+        let Some((mut daemon, address)) = private_bus() else {
+            eprintln!("no dbus-daemon; skipping");
+            return;
+        };
+        let _islands = zbus::connection::Builder::address(address.as_str())
+            .unwrap()
+            .name(otto_dbus::dialog::SERVICE)
+            .unwrap()
+            .serve_at(otto_dbus::dialog::PATH, OldIslands)
+            .unwrap()
+            .build()
+            .await
+            .unwrap();
+        let client = OttoClient {
+            connection: connect(&address).await,
+        };
+        assert_eq!(ask(&client).await.unwrap(), (0, Vec::new()));
+        let _ = daemon.kill();
     }
 }

@@ -3,7 +3,7 @@
 //! Useful for iterating on layout without a compositor session, and for
 //! comparing light against dark side by side.
 
-use skia_safe::{surfaces, Color, EncodedImageFormat, Paint, Rect};
+use otto_kit::skia::{surfaces, Color, EncodedImageFormat, Paint, Rect};
 
 use otto_kit::components::item_list::rows::RowIcons;
 use otto_kit::theme::Theme;

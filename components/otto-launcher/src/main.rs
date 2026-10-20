@@ -23,12 +23,12 @@ use otto_kit::focus::FocusId;
 use otto_kit::frosted::Frosted;
 use otto_kit::protocols::otto_surface_style_v1::{BlendMode, ClipMode, ContentsGravity};
 use otto_kit::protocols::otto_timing_function_v1::Preset;
+use otto_kit::skia::Rect;
 use otto_kit::surfaces::{LayerShellSurface, SubsurfaceSurface};
 use otto_kit::CursorShape;
 use otto_kit::{App, AppContext, AppRunner, ObjectId};
 use otto_peek::thumbcache::Size;
 use otto_peek::thumbnailer::Thumbnailer;
-use skia_safe::Rect;
 use smithay_client_toolkit::compositor::Region;
 use smithay_client_toolkit::seat::keyboard::{KeyEvent, Keysym};
 use smithay_client_toolkit::seat::pointer::{PointerEvent, PointerEventKind};
@@ -590,7 +590,7 @@ impl Launcher {
     /// scroll.
     fn list_row_at(&self, x: f32, y: f32) -> Option<usize> {
         let list = self.list.as_ref()?;
-        let point = skia_safe::Point::new(x, y);
+        let point = otto_kit::skia::Point::new(x, y);
         if !list.contains(point) {
             return None;
         }
@@ -1511,7 +1511,7 @@ impl Launcher {
         // the bar re-blurred under a card that never touches them.
         if !self.parent_painted {
             surface.draw(|canvas| {
-                canvas.clear(skia_safe::Color::TRANSPARENT);
+                canvas.clear(otto_kit::skia::Color::TRANSPARENT);
             });
             self.parent_painted = true;
         }
@@ -1545,7 +1545,7 @@ impl Launcher {
             card.draw(|canvas| {
                 // Transparent, not the card's colour: what shows through is
                 // the frosted material the compositor put underneath.
-                canvas.clear(skia_safe::Color::TRANSPARENT);
+                canvas.clear(otto_kit::skia::Color::TRANSPARENT);
                 base.render_layer_node(canvas);
             });
             let took = drew_at.elapsed();
@@ -1573,7 +1573,7 @@ impl ScrollContent for Rows<'_> {
         self.revision
     }
 
-    fn paint(&self, canvas: &skia_safe::Canvas, band: Rect) {
+    fn paint(&self, canvas: &otto_kit::skia::Canvas, band: Rect) {
         self.palette
             .paint_rows(canvas, band, self.items, self.labels);
     }
@@ -1625,8 +1625,8 @@ const CARD_MIN_ALPHA: u8 = 0xD8;
 /// blur behind it even a faint desktop showing through fights the text.
 const CARD_UNFROSTED_MIN_ALPHA: u8 = 0xF6;
 
-fn at_least_opaque(colour: skia_safe::Color, min_alpha: u8) -> skia_safe::Color {
-    skia_safe::Color::from_argb(
+fn at_least_opaque(colour: otto_kit::skia::Color, min_alpha: u8) -> otto_kit::skia::Color {
+    otto_kit::skia::Color::from_argb(
         colour.a().max(min_alpha),
         colour.r(),
         colour.g(),
@@ -1663,7 +1663,7 @@ fn apply_card_colour(card: &SubsurfaceSurface, tint: Option<Frosted>) {
             at_least_opaque(AppContext::current_theme().material_popup, min_alpha)
         }
     };
-    let colour = skia_safe::Color4f::from(colour);
+    let colour = otto_kit::skia::Color4f::from(colour);
     style.set_background_color(
         colour.r as f64,
         colour.g as f64,
@@ -2182,10 +2182,10 @@ impl App for Launcher {
                 PointerEventKind::Motion { .. } if on_card => {
                     self.follow_pointer = true;
                     if let Some(list) = self.list.as_mut() {
-                        list.pointer_motion(skia_safe::Point::new(x, y));
+                        list.pointer_motion(otto_kit::skia::Point::new(x, y));
                     }
                     if let Some(log) = self.log_pane.as_mut() {
-                        log.pointer_motion(skia_safe::Point::new(x, y));
+                        log.pointer_motion(otto_kit::skia::Point::new(x, y));
                     }
                     if let Some(row) = self.list_row_at(x, y) {
                         self.selected = row;
@@ -2209,7 +2209,7 @@ impl App for Launcher {
                 // the row that comes under the pointer is the one selected.
                 PointerEventKind::Axis { vertical, .. } if on_card => {
                     self.engaged = true;
-                    let point = skia_safe::Point::new(x, y);
+                    let point = otto_kit::skia::Point::new(x, y);
                     let delta = vertical.absolute as f32;
                     let over_log = self
                         .log_pane

@@ -95,10 +95,10 @@ pub struct BatteryConfig {
     /// Glyph size in logical points, excluding the cap.
     pub width: f32,
     pub height: f32,
-    pub color_normal: skia_safe::Color,
-    pub color_low: skia_safe::Color,
-    pub color_critical: skia_safe::Color,
-    pub color_charging: skia_safe::Color,
+    pub color_normal: otto_kit::skia::Color,
+    pub color_low: otto_kit::skia::Color,
+    pub color_critical: otto_kit::skia::Color,
+    pub color_charging: otto_kit::skia::Color,
     /// Seconds between battery readings.
     pub update_interval: u64,
     /// Whether clicking opens the power menu.
@@ -128,10 +128,10 @@ impl Default for BatteryConfig {
             height: 13.0,
             // Not taken from the theme: a battery's colours mean charge, not
             // brand, and an accent-coloured battery says nothing about level.
-            color_normal: skia_safe::Color::from_rgb(0x34, 0xC7, 0x59),
-            color_low: skia_safe::Color::from_rgb(0xFF, 0x9F, 0x0A),
-            color_critical: skia_safe::Color::from_rgb(0xFF, 0x3B, 0x30),
-            color_charging: skia_safe::Color::from_rgb(0x34, 0xC7, 0x59),
+            color_normal: otto_kit::skia::Color::from_rgb(0x34, 0xC7, 0x59),
+            color_low: otto_kit::skia::Color::from_rgb(0xFF, 0x9F, 0x0A),
+            color_critical: otto_kit::skia::Color::from_rgb(0xFF, 0x3B, 0x30),
+            color_charging: otto_kit::skia::Color::from_rgb(0x34, 0xC7, 0x59),
             update_interval: 10,
             menu: true,
             show_battery_info: true,
@@ -188,7 +188,7 @@ pub fn battery_config() -> &'static BatteryConfig {
 /// Parse `#RGB`, `#RRGGBB` or `#RRGGBBAA`, alpha last like every other
 /// colour setting on the desktop. Returns None for anything else, so a typo
 /// leaves the default colour rather than painting the glyph black.
-fn parse_color(raw: &str) -> Option<skia_safe::Color> {
+fn parse_color(raw: &str) -> Option<otto_kit::skia::Color> {
     otto_kit::color::parse_hex(raw)
 }
 

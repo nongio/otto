@@ -282,7 +282,7 @@ impl Browser {
             card.right,
             card.top + view::PALETTE_FIELD_H,
         )
-        .contains(skia_safe::Point::new(x, y))
+        .contains(otto_kit::skia::Point::new(x, y))
     }
 
     /// A press at `(x, y)` in window points, while the palette is up.
@@ -336,7 +336,7 @@ impl Browser {
             return;
         }
         let card = self.palette_card();
-        if !card.contains(skia_safe::Point::new(x, y)) {
+        if !card.contains(otto_kit::skia::Point::new(x, y)) {
             self.close_palette();
         }
         self.dirty = true;
@@ -360,7 +360,7 @@ impl Browser {
     /// notched wheel steps.
     pub(super) fn palette_wheel(&mut self, x: f32, y: f32, dy: f32, stop: bool, discrete: bool) {
         let card = self.palette_card();
-        if !card.contains(skia_safe::Point::new(x, y)) {
+        if !card.contains(otto_kit::skia::Point::new(x, y)) {
             return;
         }
         let _ = self.palette_layout();
@@ -429,7 +429,7 @@ impl Browser {
     /// deliberately does not hold. Records where the caret ended up, since on
     /// its own surface this runs outside the window's draw and so outside the
     /// chain that reports it.
-    pub(super) fn paint_palette_field(&mut self, canvas: &skia_safe::Canvas) {
+    pub(super) fn paint_palette_field(&mut self, canvas: &otto_kit::skia::Canvas) {
         let width = self.size.0;
         let field = view::palette_field_rect(width);
         let prompt = self.palette.as_ref().and_then(|p| p.prompt());
@@ -700,7 +700,7 @@ impl Browser {
         let view_rows = Self::palette_view_rows(&rows);
         let (x, y) = (x - self.palette_offset.0, y - self.palette_offset.1);
         let viewport = self.palette_scroll.state.viewport();
-        if !viewport.contains(skia_safe::Point::new(x, y)) {
+        if !viewport.contains(otto_kit::skia::Point::new(x, y)) {
             return None;
         }
         view::palette_row_at(x, y + self.palette_scroll.offset(), self.size.0, &view_rows)

@@ -186,7 +186,7 @@ fn set_folders(folders: Vec<String>) {
 /// `~` and `$HOME` are the home folder, a path under either is joined to it,
 /// and a `&` keyword is the folder `user-dirs.dirs` names for it. `None` for a
 /// keyword that names nothing.
-fn expand(entry: &str, home: &Path, dirs: &str) -> Option<PathBuf> {
+fn expand(entry: &str, home: &Path, dirs: &[(String, PathBuf)]) -> Option<PathBuf> {
     if entry == "~" || entry == "$HOME" {
         return Some(home.to_path_buf());
     }
@@ -197,7 +197,7 @@ fn expand(entry: &str, home: &Path, dirs: &str) -> Option<PathBuf> {
         return Some(home.join(rest));
     }
     if let Some(keyword) = entry.strip_prefix('&') {
-        return xdg_variable(keyword).and_then(|variable| user_dir(dirs, variable, home));
+        return xdg_variable(keyword).and_then(|variable| user_dir(dirs, variable));
     }
     Some(PathBuf::from(entry))
 }
@@ -220,7 +220,7 @@ fn with_folder(
     folders: &[String],
     path: &Path,
     home: &Path,
-    dirs: &str,
+    dirs: &[(String, PathBuf)],
 ) -> Result<Vec<String>, Added> {
     let entry = entry_for(path, home);
     for existing in folders {
@@ -295,7 +295,7 @@ fn add_folder() {
         let (Some(path), Some(folders)) = (path, folders()) else {
             return;
         };
-        let outcome = match with_folder(&folders, &path, &home(), &user_dirs_file()) {
+        let outcome = match with_folder(&folders, &path, &home(), &otto_kit::xdg::user_dirs()) {
             Ok(next) => {
                 set_folders(next);
                 None
@@ -423,19 +423,10 @@ fn xdg_variable(keyword: &str) -> Option<&'static str> {
     })
 }
 
-/// The folder `variable` names in the text of a `user-dirs.dirs` file,
-/// `$HOME` expanded.
-fn user_dir(dirs: &str, variable: &str, home: &Path) -> Option<PathBuf> {
-    otto_kit::xdg::parse_user_dirs(dirs, home)
-        .into_iter()
-        .find_map(|(key, path)| (key == variable).then_some(path))
-}
-
-/// The `user-dirs.dirs` file, empty when there is none.
-fn user_dirs_file() -> String {
-    otto_kit::xdg::config_home()
-        .and_then(|config| std::fs::read_to_string(config.join("user-dirs.dirs")).ok())
-        .unwrap_or_default()
+/// The folder `variable` names among the `user-dirs.dirs` entries `dirs`.
+fn user_dir(dirs: &[(String, PathBuf)], variable: &str) -> Option<PathBuf> {
+    dirs.iter()
+        .find_map(|(key, path)| (key == variable).then(|| path.clone()))
 }
 
 /// One entry of LocalSearch's folder lists as the pane names it.
@@ -443,12 +434,12 @@ fn user_dirs_file() -> String {
 /// `$HOME` is Home, a `&` keyword is the folder it stands for by its own name
 /// (Desktop, Downloads), and anything under the home folder is written from
 /// `~`.
-fn folder_name(entry: &str, home: &Path, dirs: &str) -> String {
+fn folder_name(entry: &str, home: &Path, dirs: &[(String, PathBuf)]) -> String {
     if entry == "~" || entry == "$HOME" || Path::new(entry) == home {
         return otto_kit::t_owned!("settings-search-folder-home");
     }
     if let Some(keyword) = entry.strip_prefix('&') {
-        let found = xdg_variable(keyword).and_then(|variable| user_dir(dirs, variable, home));
+        let found = xdg_variable(keyword).and_then(|variable| user_dir(dirs, variable));
         return match found.as_deref().and_then(Path::file_name) {
             Some(name) => name.to_string_lossy().into_owned(),
             None => keyword.to_string(),
@@ -525,7 +516,7 @@ fn status_row(snapshot: &Snapshot) -> Row {
 /// One row per configured folder, each with its "−", then Add Folder.
 fn folder_rows(folders: &[String], added: Option<&Added>) -> Vec<Row> {
     let home = home();
-    let dirs = user_dirs_file();
+    let dirs = otto_kit::xdg::user_dirs();
     let mut rows: Vec<Row> = folders
         .iter()
         .map(|entry| {
@@ -622,23 +613,28 @@ mod tests {
         items.iter().map(|s| s.to_string()).collect()
     }
 
-    const DIRS: &str = "XDG_DESKTOP_DIR=\"$HOME/Scrivania\"\n\
-                        XDG_MUSIC_DIR=\"/srv/music\"\n";
+    /// The `user-dirs.dirs` entries of the tests' `/home/ada`.
+    fn dirs() -> Vec<(String, PathBuf)> {
+        otto_kit::xdg::parse_user_dirs(
+            "XDG_DESKTOP_DIR=\"$HOME/Scrivania\"\nXDG_MUSIC_DIR=\"/srv/music\"\n",
+            Path::new("/home/ada"),
+        )
+    }
 
     #[test]
     fn a_new_folder_is_added_from_home() {
         let home = Path::new("/home/ada");
         let folders = strings(&["/mnt/data"]);
         assert_eq!(
-            with_folder(&folders, Path::new("/home/ada/My Notes"), home, DIRS),
+            with_folder(&folders, Path::new("/home/ada/My Notes"), home, &dirs()),
             Ok(strings(&["/mnt/data", "~/My Notes"]))
         );
         assert_eq!(
-            with_folder(&folders, home, home, DIRS),
+            with_folder(&folders, home, home, &dirs()),
             Ok(strings(&["/mnt/data", "~"]))
         );
         assert_eq!(
-            with_folder(&[], Path::new("/srv/Ürün"), home, DIRS),
+            with_folder(&[], Path::new("/srv/Ürün"), home, &dirs()),
             Ok(strings(&["/srv/Ürün"]))
         );
     }
@@ -648,11 +644,11 @@ mod tests {
         let home = Path::new("/home/ada");
         let folders = strings(&["~/src", "&MUSIC"]);
         assert_eq!(
-            with_folder(&folders, Path::new("/home/ada/src"), home, DIRS),
+            with_folder(&folders, Path::new("/home/ada/src"), home, &dirs()),
             Err(Added::Duplicate("~/src".into()))
         );
         assert_eq!(
-            with_folder(&folders, Path::new("/srv/music"), home, DIRS),
+            with_folder(&folders, Path::new("/srv/music"), home, &dirs()),
             Err(Added::Duplicate("/srv/music".into()))
         );
     }
@@ -665,7 +661,7 @@ mod tests {
                 &strings(&["~"]),
                 Path::new("/home/ada/src/otto"),
                 home,
-                DIRS
+                &dirs()
             ),
             Err(Added::Covered("~/src/otto".into(), "Home".into()))
         );
@@ -674,7 +670,7 @@ mod tests {
                 &strings(&["&DESKTOP"]),
                 Path::new("/home/ada/Scrivania/tmp"),
                 home,
-                DIRS
+                &dirs()
             ),
             Err(Added::Covered("~/Scrivania/tmp".into(), "Scrivania".into()))
         );
@@ -684,7 +680,7 @@ mod tests {
                 &strings(&["~/src"]),
                 Path::new("/home/ada/srcs"),
                 home,
-                DIRS
+                &dirs()
             ),
             Ok(strings(&["~/src", "~/srcs"]))
         );
@@ -745,6 +741,7 @@ mod tests {
                     XDG_DESKTOP_DIR=\"$HOME/Scrivania\"\n\
                     XDG_DOWNLOAD_DIR=\"$HOME/Downloads\"\n\
                     XDG_MUSIC_DIR=\"/srv/music\"\n";
+        let dirs = &otto_kit::xdg::parse_user_dirs(dirs, home);
         assert_eq!(folder_name("&DESKTOP", home, dirs), "Scrivania");
         assert_eq!(folder_name("&DOWNLOAD", home, dirs), "Downloads");
         assert_eq!(folder_name("&MUSIC", home, dirs), "music");

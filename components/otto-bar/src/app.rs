@@ -1,4 +1,5 @@
 use otto_kit::accessibility::{A11yTree, Action, ActionRequest, Role};
+use otto_kit::skia::Rect;
 use otto_kit::{
     components::context_menu::{ContextMenu, MenuRefresh},
     components::menu_item::{MenuItem as KitMenuItem, MenuItemIcon},
@@ -6,7 +7,6 @@ use otto_kit::{
     surfaces::LayerShellSurface,
     App, AppContext, ObjectId,
 };
-use skia_safe::Rect;
 use smithay_client_toolkit::{
     seat::pointer::{PointerEvent, PointerEventKind},
     shell::xdg::window::WindowConfigure,
@@ -164,7 +164,7 @@ impl TopBarApp {
         };
         let left = &self.left;
         surface.draw(|canvas| {
-            canvas.clear(skia_safe::Color::TRANSPARENT);
+            canvas.clear(otto_kit::skia::Color::TRANSPARENT);
             left.draw(canvas);
         });
         surface.base_surface().wl_surface().commit();
@@ -176,7 +176,7 @@ impl TopBarApp {
         };
         let right = &self.right;
         surface.draw(|canvas| {
-            canvas.clear(skia_safe::Color::TRANSPARENT);
+            canvas.clear(otto_kit::skia::Color::TRANSPARENT);
             right.draw(canvas);
         });
         surface.base_surface().wl_surface().commit();
@@ -189,7 +189,8 @@ impl TopBarApp {
 
         let theme = AppContext::current_theme();
         // Frosted while the desktop frosts its chrome; filled in otherwise.
-        let c = skia_safe::Color4f::from(otto_kit::frosting::bar_material(theme.material_medium));
+        let c =
+            otto_kit::skia::Color4f::from(otto_kit::frosting::bar_material(theme.material_medium));
         style.set_background_color(c.r as f64, c.g as f64, c.b as f64, c.a as f64);
         style.set_blend_mode(if otto_kit::frosting::enabled() {
             BlendMode::BackgroundBlur

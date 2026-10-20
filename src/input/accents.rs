@@ -12,8 +12,12 @@
 //!
 //! Which key it was is read from the keysym the layout produces, not from
 //! the key's position, so the row follows the active layout. A key whose
-//! character has no forms (anything outside the table below, every
-//! non-Latin script among them) repeats as it always did.
+//! character has no forms (anything outside the table below: punctuation,
+//! which editors and drawn rules repeat, and every non-Latin script) repeats
+//! as it always did.
+//!
+//! The hold belongs to the press and the window that took it: losing the
+//! keyboard focus, or the keys (a VT switch), ends it and puts the row away.
 //!
 //! The row is only offered where the focused application reports a caret
 //! through text-input-v3. That is where text is typed, and it keeps a game
@@ -74,13 +78,6 @@ fn lower_forms(c: char) -> Option<&'static str> {
         'u' => "ûüùúūů",
         'y' => "ÿý",
         'z' => "žźż",
-        '!' => "¡",
-        '?' => "¿",
-        '$' => "€£¥¢",
-        '-' => "–—",
-        '.' => "…·•",
-        '"' => "“”„«»",
-        '\'' => "‘’‚‹›",
         _ => return None,
     })
 }
@@ -111,6 +108,32 @@ struct Placement {
     caret_px: (f32, f32, f32, f32),
     output_px: (f32, f32),
     scale: f32,
+}
+
+impl<BackendData: Backend> Otto<BackendData> {
+    /// End the hold and put the row away, for when the press it belongs to
+    /// can no longer be followed: the focus moved, or the keys were lost.
+    ///
+    /// Returns the key whose release the application already had, if any.
+    pub(crate) fn reset_accent_hold(&mut self) -> Option<Keycode> {
+        self.cancel_accent_timer();
+        self.accent.starting = None;
+        self.close_accent_row();
+        self.accent.held.take()
+    }
+
+    /// Close the row without picking, as a click elsewhere does.
+    pub(crate) fn close_accent_row(&mut self) {
+        if self.accent.row.take().is_some() {
+            self.workspaces.accent_picker.hide();
+        }
+    }
+
+    fn cancel_accent_timer(&mut self) {
+        if let Some(token) = self.accent.timer.take() {
+            self.handle.remove(token);
+        }
+    }
 }
 
 impl<BackendData: Backend + 'static> Otto<BackendData> {
@@ -161,7 +184,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                     return Some(FilterResult::Intercept(KeyAction::None));
                 }
                 Keysym::Return | Keysym::KP_Enter => selected,
-                _ => digit(keysym)
+                _ => digit(keycode, keysym)
                     .filter(|d| (1..=count).contains(d))
                     .map(|d| d - 1),
             };
@@ -199,7 +222,9 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         if !delivered {
             return;
         }
-        let keyboard = self.seat.get_keyboard().unwrap();
+        let Some(keyboard) = self.seat.get_keyboard() else {
+            return;
+        };
         keyboard.input_forward(
             self,
             keycode,
@@ -223,19 +248,6 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             }) {
             Ok(token) => self.accent.timer = Some(token),
             Err(err) => warn!(err = %err.error, "could not time the accent hold"),
-        }
-    }
-
-    /// Close the row without picking, as a click elsewhere does.
-    pub(crate) fn close_accent_row(&mut self) {
-        if self.accent.row.take().is_some() {
-            self.workspaces.accent_picker.hide();
-        }
-    }
-
-    fn cancel_accent_timer(&mut self) {
-        if let Some(token) = self.accent.timer.take() {
-            self.handle.remove(token);
         }
     }
 
@@ -330,7 +342,11 @@ fn typist_program() -> String {
 }
 
 /// The number a digit key stands for, on the top row or the keypad.
-fn digit(keysym: Keysym) -> Option<usize> {
+///
+/// The digit the layout types comes first. Failing that, the top row counts
+/// by position (evdev `KEY_1`..`KEY_9`), since AZERTY types `&`, `é`, … there
+/// without Shift.
+fn digit(keycode: Keycode, keysym: Keysym) -> Option<usize> {
     let raw = keysym.raw();
     if (Keysym::_1.raw()..=Keysym::_9.raw()).contains(&raw) {
         return Some((raw - Keysym::_0.raw()) as usize);
@@ -338,7 +354,9 @@ fn digit(keysym: Keysym) -> Option<usize> {
     if (Keysym::KP_1.raw()..=Keysym::KP_9.raw()).contains(&raw) {
         return Some((raw - Keysym::KP_0.raw()) as usize);
     }
-    None
+    // xkb keycodes are evdev codes plus 8; KEY_1 is evdev 2.
+    let evdev = keycode.raw().checked_sub(8)?;
+    (2..=10).contains(&evdev).then(|| evdev as usize - 1)
 }
 
 #[cfg(test)]
@@ -360,11 +378,48 @@ mod tests {
         assert_eq!(forms('S'), Some(vec!['Ś', 'Š']));
     }
 
+    /// An xkb keycode from an evdev one.
+    fn key(evdev: u32) -> Keycode {
+        Keycode::new(evdev + 8)
+    }
+
+    // evdev codes.
+    const KEY_1: u32 = 2;
+    const KEY_2: u32 = 3;
+    const KEY_9: u32 = 10;
+    const KEY_0: u32 = 11;
+    const KEY_A: u32 = 30;
+    const KEY_KP8: u32 = 72;
+
     #[test]
     fn digits_from_both_rows() {
-        assert_eq!(digit(Keysym::_1), Some(1));
-        assert_eq!(digit(Keysym::KP_8), Some(8));
-        assert_eq!(digit(Keysym::_0), None);
-        assert_eq!(digit(Keysym::a), None);
+        assert_eq!(digit(key(KEY_1), Keysym::_1), Some(1));
+        assert_eq!(digit(key(KEY_KP8), Keysym::KP_8), Some(8));
+        assert_eq!(digit(key(KEY_0), Keysym::_0), None);
+        assert_eq!(digit(key(KEY_A), Keysym::a), None);
+    }
+
+    #[test]
+    fn top_row_counts_by_position_on_any_layout() {
+        // AZERTY, unshifted.
+        assert_eq!(digit(key(KEY_1), Keysym::ampersand), Some(1));
+        assert_eq!(digit(key(KEY_2), Keysym::eacute), Some(2));
+        assert_eq!(digit(key(KEY_9), Keysym::ccedilla), Some(9));
+        assert_eq!(digit(key(KEY_0), Keysym::agrave), None);
+        // The keypad without Num Lock is not a digit.
+        assert_eq!(digit(key(KEY_KP8), Keysym::KP_Up), None);
+    }
+
+    #[test]
+    fn the_digit_the_layout_types_wins_over_position() {
+        // A layout that types 3 on the key in the 1 position.
+        assert_eq!(digit(key(KEY_1), Keysym::_3), Some(3));
+    }
+
+    #[test]
+    fn punctuation_keeps_repeating() {
+        for c in ['-', '.', '\'', '"', '!', '?', '$'] {
+            assert!(forms(c).is_none(), "{c:?} has no forms");
+        }
     }
 }

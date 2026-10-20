@@ -23,10 +23,6 @@ smithay-client-toolkit = { workspace = true, features = ["calloop", "xkbcommon"]
 wayland-protocols-wlr = { workspace = true, features = ["client"] }
 freedesktop-desktop-entry.workspace = true
 
-[dependencies.skia-safe]
-workspace = true
-features = ["gl", "textlayout", "svg", "skottie"]
-
 [lints]
 workspace = true
 

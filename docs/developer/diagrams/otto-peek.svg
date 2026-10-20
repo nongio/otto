@@ -1,0 +1,88 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 350" width="760" height="350" role="img" aria-label="otto-peek: inside the host process a Session draws previews and asks spawn for decodes, which run in a sandboxed decode worker that may run rasterisers or tesseract; video plays in otto-media-worker">
+  <style>
+    text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
+    .box  { fill: #f6f8fa; stroke: #8b949e; stroke-width: 1.4; }
+    .acc  { fill: #ddf4ff; stroke: #218bff; stroke-width: 1.4; }
+    .grp  { fill: none; stroke: #8b949e; stroke-width: 1.2; stroke-dasharray: 5 4; }
+    .t    { fill: #1f2328; font-size: 13px; }
+    .tb   { fill: #1f2328; font-size: 13px; font-weight: 600; }
+    .tm   { fill: #656d76; font-size: 11px; }
+    .ln   { stroke: #8b949e; stroke-width: 1.4; fill: none; marker-end: url(#ah); }
+    @media (prefers-color-scheme: dark) {
+      .box { fill: #161b22; stroke: #6e7681; }
+      .acc { fill: #10243b; stroke: #388bfd; }
+      .grp { stroke: #6e7681; }
+      .t, .tb { fill: #e6edf3; }
+      .tm  { fill: #9198a1; }
+      .ln  { stroke: #8b949e; }
+    }
+  </style>
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#8b949e"/>
+    </marker>
+  </defs>
+
+
+  <text class="tb" x="16" y="28">host process</text>
+  <text class="tb" x="400" y="28">decode worker</text>
+  <text class="tb" x="604" y="28">programs</text>
+  <rect class="grp" x="16" y="40" width="320" height="296" rx="10"/>
+  <text class="tm" x="28" y="326">otto-files, otto-preview, otto-launcher, otto-stash</text>
+
+  <rect class="box" x="28" y="60" width="136" height="56" rx="6"/>
+  <text class="t" x="40" y="82">thumbnails</text>
+  <text class="tm" x="40" y="100">Thumbnailer thread</text>
+  <path class="ln" d="M164 88 H178"/>
+
+  <rect class="acc" x="180" y="60" width="144" height="56" rx="6"/>
+  <text class="tb" x="192" y="82">spawn</text>
+  <text class="tm" x="192" y="100">payload validated</text>
+
+  <rect class="box" x="180" y="155" width="144" height="56" rx="6"/>
+  <text class="t" x="192" y="177">decode cache</text>
+  <text class="tm" x="192" y="195">recent decodes</text>
+  <path class="ln" d="M252 155 V118"/>
+
+  <rect class="acc" x="180" y="250" width="144" height="64" rx="6"/>
+  <text class="tb" x="192" y="272">Session</text>
+  <text class="tm" x="192" y="290">zoom, pan, pages,</text>
+  <text class="tm" x="192" y="305">selection, playback</text>
+  <path class="ln" d="M252 250 V213"/>
+
+  <rect class="box" x="28" y="258" width="136" height="48" rx="6"/>
+  <text class="t" x="40" y="278">draw</text>
+  <text class="tm" x="40" y="295">content and badge</text>
+  <path class="ln" d="M180 282 H166"/>
+
+  <rect class="grp" x="400" y="40" width="180" height="170" rx="10"/>
+  <rect class="acc" x="414" y="56" width="152" height="60" rx="6"/>
+  <text class="tb" x="426" y="78">decoders</text>
+  <text class="tm" x="426" y="96">one per content type,</text>
+  <text class="tm" x="426" y="110">one fd, no path</text>
+  <rect class="box" x="414" y="136" width="152" height="60" rx="6"/>
+  <text class="t" x="426" y="158">sandbox</text>
+  <text class="tm" x="426" y="176">rlimits, no network,</text>
+  <text class="tm" x="426" y="190">no new privileges</text>
+
+  <path class="ln" d="M324 76 H398"/>
+  <text class="tm" x="350" y="70">fd 3</text>
+  <path class="ln" d="M398 104 H326"/>
+  <text class="tm" x="344" y="119">stdout</text>
+
+  <rect class="box" x="604" y="52" width="148" height="60" rx="6"/>
+  <text class="t" x="616" y="74">rasterisers</text>
+  <text class="tm" x="616" y="92">pdftoppm, ffmpeg,</text>
+  <text class="tm" x="616" y="106">vipsthumbnail, magick</text>
+  <path class="ln" d="M566 82 H602"/>
+  <rect class="box" x="604" y="132" width="148" height="44" rx="6"/>
+  <text class="t" x="616" y="150">tesseract</text>
+  <text class="tm" x="616" y="166">text in pictures</text>
+  <path class="ln" d="M566 106 L602 150"/>
+
+  <rect class="box" x="604" y="258" width="148" height="48" rx="6"/>
+  <text class="t" x="616" y="278">otto-media-worker</text>
+  <text class="tm" x="616" y="295">GStreamer playback</text>
+  <path class="ln" d="M324 282 H602"/>
+  <text class="tm" x="410" y="274">video, via otto-media-kit</text>
+</svg>

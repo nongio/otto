@@ -31,23 +31,9 @@ use std::sync::OnceLock;
 use std::time::Duration;
 
 use futures_util::StreamExt as _;
+use otto_dbus::portal_settings::{PortalSettingsProxy, SettingChanged, SettingChangedStream};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use zbus::zvariant::{OwnedValue, Value};
-
-/// `org.freedesktop.portal.Settings`, the frontend interface every toolkit
-/// reads desktop settings from.
-#[zbus::proxy(
-    interface = "org.freedesktop.portal.Settings",
-    default_service = "org.freedesktop.portal.Desktop",
-    default_path = "/org/freedesktop/portal/desktop",
-    gen_blocking = false
-)]
-trait Settings {
-    fn read(&self, namespace: &str, key: &str) -> zbus::Result<OwnedValue>;
-
-    #[zbus(signal)]
-    fn setting_changed(&self, namespace: &str, key: &str, value: Value<'_>) -> zbus::Result<()>;
-}
 
 /// What a watcher is told: the namespace, the key and the value, still
 /// wrapped in whatever variants the portal put round it.
@@ -239,9 +225,9 @@ fn call(name: &str, handler: &mut Handler, namespace: &str, key: &str, value: Va
     }
 }
 
-async fn connect() -> zbus::Result<SettingsProxy<'static>> {
+async fn connect() -> zbus::Result<PortalSettingsProxy<'static>> {
     let connection = zbus::Connection::session().await?;
-    SettingsProxy::new(&connection).await
+    PortalSettingsProxy::new(&connection).await
 }
 
 /// The next change, or never when there is no stream to read.

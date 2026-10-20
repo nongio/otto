@@ -36,7 +36,6 @@ pub mod icon_theme;
 pub mod icons;
 pub mod input;
 pub mod key_capture;
-pub mod logging;
 pub mod lottie;
 pub mod maximize_button;
 pub mod mime_apps;
@@ -58,10 +57,11 @@ pub mod wallpaper;
 pub mod watch;
 pub mod xml;
 
-/// The UI-free base: XDG directories, `file://` URIs and name matching live
-/// in `otto-foundations`, which programs that do not link the toolkit share;
+/// The UI-free base: XDG directories, `file://` URIs, name matching, desktop
+/// entry text, the login name and the logging setup live in
+/// `otto-foundations`, which programs that do not link the toolkit share;
 /// re-exported so apps keep one import path.
-pub use otto_foundations::{matching, uri, xdg};
+pub use otto_foundations::{desktop_file, logging, matching, uri, user, xdg};
 
 // Re-export commonly used items
 pub use common::Renderable;

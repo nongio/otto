@@ -18,4 +18,8 @@ pub trait Compositor {
 
     /// Bring `app_id`'s window forward; whether there was one.
     fn focus_app(&self, app_id: &str) -> zbus::Result<bool>;
+
+    /// Version, backend, renderer and outputs for a bug report, as a JSON
+    /// object (see `docs/developer/compositor-dbus-api.md`).
+    fn debug_info(&self) -> zbus::Result<String>;
 }

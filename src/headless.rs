@@ -1258,6 +1258,11 @@ impl HeadlessHandle {
         self.query(|state| state.outputs_json())
     }
 
+    /// `org.otto.Compositor.DebugInfo`: version, backend, renderer, outputs.
+    pub fn debug_info_json(&self) -> serde_json::Value {
+        self.query(|state| state.debug_info_json())
+    }
+
     /// `GetInputs`, in sway's shape: the keyboard and its layouts.
     pub fn inputs_json(&self) -> serde_json::Value {
         self.query(|state| state.inputs_json())
@@ -2199,6 +2204,7 @@ fn run_headless_loop(
             // left dirty; a no-op flag read when nothing changed.
             state.flush_tiling_relayout();
             state.flush_dock_reserved_change();
+            state.log_session_summary_if_changed();
             state.popups.cleanup();
             send_frames(&mut state);
             display_handle.flush_clients().unwrap();

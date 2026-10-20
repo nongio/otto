@@ -14,7 +14,7 @@ use std::sync::{LazyLock, Mutex};
 use futures_util::StreamExt;
 use otto_kit::dbus::shell::ShellProxy;
 use otto_kit::prelude::*;
-use skia_safe::{Canvas, Paint, RRect, Rect, TextBlob};
+use otto_kit::skia::{Canvas, Paint, RRect, Rect, TextBlob};
 use zbus::Connection;
 
 /// The layouts as the compositor last reported them.
@@ -219,13 +219,13 @@ const CAP_MIN_WIDTH: f32 = 24.0;
 const CAP_RADIUS: f32 = 3.5;
 const CAP_STROKE: f32 = 1.2;
 
-fn font() -> skia_safe::Font {
+fn font() -> otto_kit::skia::Font {
     otto_kit::typography::get_font_with_fallback(
         "Inter",
-        skia_safe::FontStyle::new(
-            skia_safe::font_style::Weight::SEMI_BOLD,
-            skia_safe::font_style::Width::NORMAL,
-            skia_safe::font_style::Slant::Upright,
+        otto_kit::skia::FontStyle::new(
+            otto_kit::skia::font_style::Weight::SEMI_BOLD,
+            otto_kit::skia::font_style::Width::NORMAL,
+            otto_kit::skia::font_style::Slant::Upright,
         ),
         10.0,
     )
@@ -242,7 +242,7 @@ pub fn width() -> f32 {
 }
 
 /// Draw the keycap at `x`, vertically centred in a bar `height` tall.
-pub fn draw(canvas: &Canvas, x: f32, height: f32, color: skia_safe::Color) {
+pub fn draw(canvas: &Canvas, x: f32, height: f32, color: otto_kit::skia::Color) {
     let w = width();
     if w <= 0.0 {
         return;
@@ -259,7 +259,7 @@ pub fn draw(canvas: &Canvas, x: f32, height: f32, color: skia_safe::Color) {
 
     let mut stroke = Paint::default();
     stroke.set_anti_alias(true);
-    stroke.set_style(skia_safe::paint::Style::Stroke);
+    stroke.set_style(otto_kit::skia::paint::Style::Stroke);
     stroke.set_stroke_width(CAP_STROKE);
     stroke.set_color(color);
     canvas.draw_rrect(RRect::new_rect_xy(cap, CAP_RADIUS, CAP_RADIUS), &stroke);

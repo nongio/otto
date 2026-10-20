@@ -175,7 +175,7 @@ fn main() {
 }
 
 fn render(panel: &mut Panel, engine: &std::sync::Arc<Engine>, view: &View, path: &Path) {
-    let mut surface = skia_safe::surfaces::raster_n32_premul((WIDTH, HEIGHT))
+    let mut surface = otto_kit::skia::surfaces::raster_n32_premul((WIDTH, HEIGHT))
         .expect("cannot create the raster surface");
 
     panel.update(view);
@@ -199,7 +199,7 @@ fn render(panel: &mut Panel, engine: &std::sync::Arc<Engine>, view: &View, path:
 
     let image = surface.image_snapshot();
     let data = image
-        .encode(None, skia_safe::EncodedImageFormat::PNG, 100)
+        .encode(None, otto_kit::skia::EncodedImageFormat::PNG, 100)
         .expect("cannot encode the preview");
     std::fs::write(path, data.as_bytes()).expect("cannot write the preview");
 }

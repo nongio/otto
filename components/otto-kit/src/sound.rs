@@ -297,6 +297,17 @@ fn as_string(value: zbus::zvariant::Value<'_>) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Mutex, MutexGuard};
+
+    /// The theme, extra directories and cache are process-wide, and tests run
+    /// in parallel: a test that sets any of them holds this for its duration.
+    static GLOBALS: Mutex<()> = Mutex::new(());
+
+    fn globals() -> MutexGuard<'static, ()> {
+        GLOBALS
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
 
     /// The lookup has to survive a name nothing has, and say so by returning
     /// nothing rather than by picking something arbitrary.
@@ -312,6 +323,7 @@ mod tests {
     /// it useful for a bundled sound that replaces a themed one.
     #[test]
     fn an_extra_directory_is_searched_first() {
+        let _globals = globals();
         let dir = std::env::temp_dir().join(format!("otto-kit-sound-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("temp dir");
         let bundled = dir.join("bell.oga");
@@ -330,6 +342,7 @@ mod tests {
     /// signal would otherwise throw the lookups away over and over.
     #[test]
     fn setting_the_theme_it_already_has_is_not_a_change() {
+        let _globals = globals();
         set_theme(Some("freedesktop".to_string()));
         CACHE
             .write()

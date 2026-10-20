@@ -23,7 +23,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
-use skia_safe as skia;
+use otto_kit::skia;
 
 use crate::thumbcache;
 

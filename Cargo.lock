@@ -5202,7 +5202,6 @@ dependencies = [
  "tokio-tungstenite 0.29.0",
  "toml 1.1.2+spec-1.1.0",
  "tracing",
- "tracing-subscriber",
  "unic-langid",
  "uuid",
  "zbus",
@@ -5232,7 +5231,6 @@ dependencies = [
  "otto-kit",
  "otto-md-kit",
  "serde_json",
- "skia-safe",
  "smithay-client-toolkit",
  "tempfile",
  "tokio",
@@ -5265,7 +5263,6 @@ dependencies = [
  "libc",
  "otto-kit",
  "serde",
- "skia-safe",
  "taffy",
  "toml 1.1.2+spec-1.1.0",
  "tracing",
@@ -5296,7 +5293,6 @@ dependencies = [
  "futures-util",
  "otto-kit",
  "serde_json",
- "skia-safe",
  "smithay-client-toolkit",
  "tokio",
  "toml 1.1.2+spec-1.1.0",
@@ -5333,7 +5329,6 @@ dependencies = [
  "otto-kit",
  "smithay-client-toolkit",
  "tracing",
- "tracing-subscriber",
  "wayland-client",
  "wayland-protocols-misc",
 ]
@@ -5345,7 +5340,6 @@ dependencies = [
  "laye-rs",
  "memfd",
  "otto-kit",
- "skia-safe",
  "smithay-client-toolkit",
  "taffy",
  "tracing",
@@ -5370,7 +5364,6 @@ dependencies = [
  "otto-search",
  "serde",
  "serde_json",
- "skia-safe",
  "smithay-client-toolkit",
  "tokio",
  "toml 1.1.2+spec-1.1.0",
@@ -5386,6 +5379,7 @@ name = "otto-foundations"
 version = "1.8.0"
 dependencies = [
  "percent-encoding",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -5410,7 +5404,6 @@ dependencies = [
  "futures-util",
  "libc",
  "otto-kit",
- "skia-safe",
  "smithay-client-toolkit",
  "tokio",
  "wayland-protocols-wlr",
@@ -5424,7 +5417,6 @@ dependencies = [
  "otto-kit",
  "pipewire",
  "serde_json",
- "skia-safe",
  "smithay-client-toolkit",
  "tokio",
  "tracing",
@@ -5461,7 +5453,6 @@ dependencies = [
  "tokio",
  "toml_edit 0.25.12+spec-1.1.0",
  "tracing",
- "tracing-subscriber",
  "unic-langid",
  "ureq",
  "usvg",
@@ -5484,7 +5475,6 @@ dependencies = [
  "otto-kit",
  "otto-peek",
  "serde_json",
- "skia-safe",
  "smithay-client-toolkit",
  "taffy",
  "tempfile",
@@ -5523,7 +5513,6 @@ dependencies = [
  "gstreamer-app",
  "libc",
  "otto-kit",
- "skia-safe",
  "tracing",
 ]
 
@@ -5531,8 +5520,11 @@ dependencies = [
 name = "otto-msg"
 version = "1.8.0"
 dependencies = [
+ "libc",
  "otto-dbus",
+ "otto-foundations",
  "serde_json",
+ "tempfile",
  "zbus",
 ]
 
@@ -5559,7 +5551,6 @@ dependencies = [
  "otto-media-kit",
  "png 0.18.1",
  "serde",
- "skia-safe",
  "tokio",
  "toml 1.1.2+spec-1.1.0",
  "tracing",
@@ -5612,7 +5603,6 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "tracing",
- "tracing-subscriber",
  "wayland-client",
  "wayland-protocols",
  "wayland-protocols-misc",
@@ -5656,7 +5646,6 @@ dependencies = [
  "serde",
  "serde_json",
  "sha-crypt",
- "skia-safe",
  "smithay-client-toolkit",
  "toml_edit 0.25.12+spec-1.1.0",
  "xcursor",
@@ -10161,7 +10150,6 @@ dependencies = [
  "otto-foundations",
  "tokio",
  "tracing",
- "tracing-subscriber",
  "zbus",
 ]
 

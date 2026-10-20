@@ -1,10 +1,11 @@
 //! The "Ask about…" card: what is stashed, as Ask shows attachments, under
-//! a title and over the shortcut that sends them to Ask.
+//! a title and over the button that sends them to Ask, with its shortcut.
 
 // Rust guideline compliant 2026-02-21
 
 use otto_kit::color_scheme::current_color_scheme;
 use otto_kit::components::attachments::{self, AttachmentList, Options, HOVER_PAD};
+use otto_kit::components::push_button::{self, PushButton, Role};
 use otto_kit::components::scroll::ScrollView;
 use otto_kit::skia::font_style::{Slant, Weight, Width};
 use otto_kit::skia::textlayout::{
@@ -38,6 +39,8 @@ pub const RADIUS: f32 = 20.0;
 const UNFROSTED_MIN_ALPHA: u8 = 0xF6;
 /// The shortest the items' viewport gets, however little room there is.
 const MIN_VIEW_H: f32 = 48.0;
+/// What the send button says.
+const SEND_LABEL: &str = "Send to Ask";
 
 /// What a press on the card does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -46,6 +49,8 @@ pub enum Hit {
     Remove(usize),
     /// Throw the whole stash away.
     Clear,
+    /// Send everything stashed to Ask.
+    Send,
 }
 
 /// Draws the card.
@@ -64,6 +69,9 @@ pub struct Balloon {
 pub struct Layout {
     /// The title and the shortcut, fixed at the top and the bottom.
     fixed: Vec<(Paragraph, Point)>,
+    /// The button that sends the stash to Ask, when there is something to
+    /// send.
+    send: Option<Rect>,
     /// The items, scrolled within `viewport`; `None` when there are none.
     items: Option<attachments::Layout>,
     /// Where the items show on the card.
@@ -105,6 +113,12 @@ impl Layout {
             .is_some_and(|c| (c.left..c.right).contains(&x) && (c.top..c.bottom).contains(&y))
         {
             return Some(Hit::Clear);
+        }
+        if self
+            .send
+            .is_some_and(|s| (s.left..s.right).contains(&x) && (s.top..s.bottom).contains(&y))
+        {
+            return Some(Hit::Send);
         }
         let (items, x, y) = self.on_items(x, y, offset)?;
         items.remove_at(x, y).map(Hit::Remove)
@@ -162,7 +176,7 @@ impl Balloon {
 
     /// Lay the card out for `stash`, `width` wide and no taller than
     /// `max_height`: past that the items scroll between the title and the
-    /// send shortcut. The item at `leaving.0` is on its way out, as much of
+    /// send button. The item at `leaving.0` is on its way out, as much of
     /// it left as `leaving.1` says.
     pub fn layout(
         &mut self,
@@ -237,10 +251,10 @@ impl Balloon {
             fixed.push((hint, Point::new(PAD, head_h + HOVER_PAD)));
         }
 
-        // The shortcut that sends, under the items.
-        let hint = self.send_shortcut.clone().filter(|_| !items.is_empty());
-        let foot_h = if hint.is_some() {
-            GAP - HOVER_PAD + 18.0 + PAD
+        // The button that sends, under the items, and its shortcut.
+        let sends = !items.is_empty();
+        let foot_h = if sends {
+            GAP - HOVER_PAD + push_button::HEIGHT + PAD
         } else {
             PAD - HOVER_PAD
         };
@@ -249,21 +263,23 @@ impl Balloon {
             .max(MIN_VIEW_H)
             .floor();
         let viewport = Rect::from_xywh(0.0, head_h, width, view_h);
-        if let Some(keys) = hint {
+        let mut send = None;
+        if sends {
             let y = viewport.bottom + GAP - HOVER_PAD;
-            let label = self.line(
-                "Send to Ask",
-                &style(11.0, 16.0, 400, secondary, false),
-                inner,
-            );
-            fixed.push((label, Point::new(PAD, y + 1.0)));
-            let keys = self.line(&keys, &style(11.5, 18.0, 500, primary, true), inner);
-            let x = PAD + inner - keys.max_intrinsic_width().ceil();
-            fixed.push((keys, Point::new(x, y)));
+            let button_w = push_button::width(SEND_LABEL).min(inner);
+            send = Some(Rect::from_xywh(PAD, y, button_w, push_button::HEIGHT));
+            if let Some(keys) = self.send_shortcut.as_deref() {
+                let keys = self.line(keys, &style(11.5, 18.0, 500, secondary, true), inner);
+                let x = PAD + inner - keys.max_intrinsic_width().ceil();
+                if x > PAD + button_w + COUNT_GAP {
+                    fixed.push((keys, Point::new(x, y + (push_button::HEIGHT - 18.0) / 2.0)));
+                }
+            }
         }
 
         Layout {
             fixed,
+            send,
             items: list,
             viewport,
             clear,
@@ -286,12 +302,14 @@ impl Balloon {
 
     /// Draw `layout` into `pixels`, an ARGB8888 buffer of `width` × `height`
     /// pixels at `scale` pixels per logical pixel, with the items scrolled
-    /// as `scroll` has them.
+    /// as `scroll` has them and `held` the button held down, if any.
+    #[allow(clippy::too_many_arguments)]
     pub fn draw(
         &self,
         layout: &Layout,
         scroll: &ScrollView,
         hovered: Option<usize>,
+        held: Option<Hit>,
         pixels: &mut [u8],
         (width, height): (i32, i32),
         scale: f32,
@@ -339,6 +357,12 @@ impl Balloon {
         for (paragraph, at) in &layout.fixed {
             paragraph.paint(canvas, *at);
         }
+        if let Some(rect) = layout.send {
+            let button = PushButton::new(Role::Default)
+                .pill(true)
+                .pressed(held == Some(Hit::Send));
+            push_button::draw(canvas, rect, SEND_LABEL, button, &self.theme);
+        }
         if let Some(items) = layout.items.as_ref() {
             scroll.render(canvas, &self.theme, |canvas, _| {
                 canvas.save();
@@ -383,6 +407,20 @@ mod tests {
             empty.hit(PAD + INNER_W - 4.0, PAD + TITLE_LINE_H / 2.0, 0.0),
             None
         );
+    }
+
+    #[test]
+    fn the_send_button_sits_under_the_items_whenever_there_is_something_to_send() {
+        let mut balloon = Balloon::default();
+        let mut stash = Stash::default();
+        stash.add(Item::Text("one".into()));
+        let layout = balloon.layout(&stash, None, (WIDTH, 800.0));
+        let below = layout.viewport.bottom + GAP - HOVER_PAD + push_button::HEIGHT / 2.0;
+        assert_eq!(layout.hit(PAD + 10.0, below, 0.0), Some(Hit::Send));
+        assert!(layout.height >= below + push_button::HEIGHT / 2.0 + PAD);
+        let empty = balloon.layout(&Stash::default(), None, (WIDTH, 800.0));
+        let below = empty.viewport.bottom + GAP - HOVER_PAD + push_button::HEIGHT / 2.0;
+        assert_eq!(empty.hit(PAD + 10.0, below, 0.0), None);
     }
 
     #[test]

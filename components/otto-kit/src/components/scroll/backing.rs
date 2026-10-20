@@ -28,8 +28,9 @@
 //! [`crop`](super::crop). That part is the viewport itself, or less of it when
 //! the pane sits inside another one that shows only some of it: a host says
 //! so with [`ScrollSurfaces::set_clip_rect`]. A surface with nothing left to
-//! show is unmapped. Positions are whole points and parent state, so a move
-//! lands with the parent's commit; the fraction a scroll stands at is in the
+//! show is unmapped. Positions are whole points, sent before the surface's
+//! own commit and followed by the parent's, since compositors disagree on
+//! which of the two applies them; the fraction a scroll stands at is in the
 //! band's source rect.
 //!
 //! A pane can hold other panes instead of painting content: see
@@ -110,8 +111,12 @@ pub struct ScrollSurfaces {
     /// Thumb thickness and length its buffer was last painted at, so it is
     /// only redrawn when it changes shape rather than every time it moves.
     thumb_size: (f32, f32),
-    /// The scroll offset the band was last placed for.
+    /// The scroll offset the band was last placed for, forgotten whenever it
+    /// has to be placed again.
     last_band_offset: Option<f32>,
+    /// The scroll offset the band stands at on screen, kept until it is
+    /// placed again: what [`Self::shown_content`] reports.
+    shown_offset: Option<f32>,
     /// The content coordinate, along the axis, of the band surface's first
     /// shown point; see [`Self::band_origin`].
     band_local_origin: f32,
@@ -239,6 +244,7 @@ impl ScrollSurfaces {
             background,
             thumb_size: (0.0, 0.0),
             last_band_offset: None,
+            shown_offset: None,
             band_local_origin: 0.0,
             last_input_window: None,
             last_thumb_rect: None,
@@ -350,8 +356,14 @@ impl ScrollSurfaces {
     /// panes are placed in. Hand it to each of them through
     /// [`Self::set_clip_rect`] after a sync, so they crop to what the
     /// container shows. `None` while it shows nothing.
+    ///
+    /// It is where the band stands, which trails the scroll while a move
+    /// waits for the last one to be presented (see [`Self::waiting`]). A crop
+    /// worked out from the scroll's own offset runs ahead of the content by
+    /// that much: a pan would show the panes' crops shifted off the container
+    /// by a frame's travel.
     pub fn shown_content(&self) -> Option<Rect> {
-        let offset = self.last_band_offset?;
+        let offset = self.shown_offset?;
         let window = self.window()?;
         Some(match self.axis {
             Axis::Vertical => window.with_offset((0.0, offset)),
@@ -665,8 +677,8 @@ impl ScrollSurfaces {
     }
 
     /// Forget where the band, the scrollbar and the input region were placed,
-    /// so the next sync places them again: after the clip moved its origin,
-    /// every child's position inside it is stale.
+    /// so the next sync places them again: after the clip's origin or window
+    /// changed, every child's crop and position inside it is stale.
     fn forget_placement(&mut self) {
         self.last_band_offset = None;
         self.last_input_window = None;
@@ -702,10 +714,34 @@ impl ScrollSurfaces {
         let content = Size::new(width as f32, height as f32);
         let extent = Rect::from_wh(self.viewport.width(), self.viewport.height());
         let scale = self.scale();
-        let Some(shown) = crop::show(&mut self.clip, content, extent, window, scale) else {
+        let parent_origin = (-(self.viewport.left as i32), -(self.viewport.top as i32));
+        let Some(shown) = crop::show(
+            &mut self.clip,
+            content,
+            extent,
+            window,
+            scale,
+            parent_origin,
+        ) else {
             self.clip_origin = None;
             return;
         };
+        // Everything inside is cropped to the window and placed from the
+        // clip's origin, so a change in either leaves every child stale. The
+        // band is cropped again here, to go out with the clip: left for the
+        // next sync, a pane panning into view would show only the sliver it
+        // first showed, and one panning out would spill past its window,
+        // until the band next moved.
+        let band_offset = self.last_band_offset;
+        self.clip_origin = Some(shown.position);
+        self.forget_placement();
+        if let Some(offset) = band_offset.filter(|_| !self.container) {
+            if self.place_band(offset) {
+                self.band_surface.commit();
+                self.last_band_offset = Some(offset);
+                self.shown_offset = Some(offset);
+            }
+        }
         if paint {
             let background = self.background;
             self.clip.draw(|canvas| {
@@ -714,16 +750,7 @@ impl ScrollSurfaces {
         } else {
             self.clip.commit();
         }
-        let origin = shown.position;
-        self.clip.set_position(
-            self.viewport.left as i32 + origin.0,
-            self.viewport.top as i32 + origin.1,
-        );
         self.clip.commit_parent();
-        if self.clip_origin != Some(origin) {
-            self.clip_origin = Some(origin);
-            self.forget_placement();
-        }
     }
 
     /// Where the whole band stands in pane coordinates for `offset`.
@@ -735,8 +762,8 @@ impl ScrollSurfaces {
     }
 
     /// Crop the band to the window for `offset` and put it there, as pending
-    /// state: the crop lands with the band's next commit, the position with
-    /// the clip's. Returns whether there was anywhere to put it.
+    /// state for the band's next commit and the clip's after it. Returns
+    /// whether there was anywhere to put it.
     fn place_band(&mut self, offset: f32) -> bool {
         let (Some(window), Some(origin)) = (self.window(), self.clip_origin) else {
             return false;
@@ -745,7 +772,14 @@ impl ScrollSurfaces {
         let content = Size::new(width as f32, height as f32);
         let extent = self.band_extent(offset);
         let scale = self.scale();
-        let Some(shown) = crop::show(&mut self.band_surface, content, extent, window, scale) else {
+        let Some(shown) = crop::show(
+            &mut self.band_surface,
+            content,
+            extent,
+            window,
+            scale,
+            origin,
+        ) else {
             return false;
         };
         // The band's first shown point, in content coordinates.
@@ -754,8 +788,6 @@ impl ScrollSurfaces {
                 Axis::Vertical => shown.source.top,
                 Axis::Horizontal => shown.source.left,
             };
-        self.band_surface
-            .set_position(shown.position.0 - origin.0, shown.position.1 - origin.1);
         true
     }
 
@@ -786,6 +818,7 @@ impl ScrollSurfaces {
             canvas.restore();
         });
         self.last_band_offset = Some(offset);
+        self.shown_offset = Some(offset);
     }
 
     /// A container's band: the whole content, as a transparent pixel stretched
@@ -821,6 +854,7 @@ impl ScrollSurfaces {
             return false;
         };
         self.last_band_offset = Some(offset);
+        self.shown_offset = Some(offset);
 
         let placed = if self.container {
             // Whole and uncropped: only its position moves, in whole points.
@@ -991,10 +1025,7 @@ impl ScrollSurfaces {
         let (width, height) = self.thumb.dimensions();
         let content = Size::new(width as f32, height as f32);
         let scale = self.scale();
-        if let Some(shown) = crop::show(&mut self.thumb, content, extent, window, scale) {
-            self.thumb
-                .set_position(shown.position.0 - origin.0, shown.position.1 - origin.1);
-        }
+        crop::show(&mut self.thumb, content, extent, window, scale, origin);
         true
     }
 

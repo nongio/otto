@@ -820,6 +820,18 @@ impl CompositorInterface {
             .map_err(|e| zbus::fdo::Error::Failed(format!("channel send failed: {e}")))?;
         Ok(true)
     }
+
+    /// What a bug report needs: version, backend, renderer and outputs.
+    ///
+    /// A JSON object; the shape is in `docs/developer/compositor-dbus-api.md`.
+    async fn debug_info(&self) -> zbus::fdo::Result<String> {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.compositor_tx
+            .send(CompositorCommand::GetDebugInfo { response_tx: tx })
+            .map_err(|e| zbus::fdo::Error::Failed(format!("channel send failed: {e}")))?;
+        rx.await
+            .map_err(|e| zbus::fdo::Error::Failed(format!("no reply from the compositor: {e}")))
+    }
 }
 
 /// A session, and its streams, answer only the connection that created it.

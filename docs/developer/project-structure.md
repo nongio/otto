@@ -88,7 +88,7 @@ applications share:
 | `otto-greeter` | Login screen, backed by greetd |
 | `otto-auth-ui` | The password panel shared by the greeter and the lock screen |
 | `otto-input-overlay` | On-screen touchpad and key-press overlays, for screen recordings |
-| `otto-msg` | Drives the compositor from a script, the way `i3-msg` and `swaymsg` do |
+| `otto-msg` | Drives the compositor from a script, the way `i3-msg` and `swaymsg` do, and writes bug reports (`otto-msg doctor`) |
 | `otto-search` | File search over the desktop's index: the query language, shared by Files, and the `otto-search` command |
 | `otto-agents` | Runs ACP agents and serves them over the Agent Host Protocol |
 | `otto-foundations` | Library: the UI-free base, XDG directories, `file://` URIs and name matching; see [otto-foundations.md](otto-foundations.md) |

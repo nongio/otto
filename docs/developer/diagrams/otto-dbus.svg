@@ -1,0 +1,81 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 320" width="760" height="320" role="img" aria-label="otto-dbus: one typed client proxy per org.otto interface, linked by apps, the portal, otto-agents, otto-rdp and otto-msg, and served by the compositor, otto-islands, otto-files and otto-stash">
+  <style>
+    text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
+    .box  { fill: #f6f8fa; stroke: #8b949e; stroke-width: 1.4; }
+    .acc  { fill: #ddf4ff; stroke: #218bff; stroke-width: 1.4; }
+    .grp  { fill: none; stroke: #8b949e; stroke-width: 1.2; stroke-dasharray: 5 4; }
+    .t    { fill: #1f2328; font-size: 13px; }
+    .tb   { fill: #1f2328; font-size: 13px; font-weight: 600; }
+    .tm   { fill: #656d76; font-size: 11px; }
+    .ln   { stroke: #8b949e; stroke-width: 1.4; fill: none; marker-end: url(#ah); }
+    @media (prefers-color-scheme: dark) {
+      .box { fill: #161b22; stroke: #6e7681; }
+      .acc { fill: #10243b; stroke: #388bfd; }
+      .grp { stroke: #6e7681; }
+      .t, .tb { fill: #e6edf3; }
+      .tm  { fill: #9198a1; }
+      .ln  { stroke: #8b949e; }
+    }
+  </style>
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#8b949e"/>
+    </marker>
+  </defs>
+
+  <text class="tb" x="16" y="28">Callers</text>
+  <text class="tb" x="226" y="28">otto-dbus</text>
+  <text class="tb" x="516" y="28">Served on the session bus</text>
+
+  <rect class="box" x="16" y="52" width="170" height="44" rx="6"/>
+  <text class="t" x="28" y="70">toolkit apps</text>
+  <text class="tm" x="28" y="86">otto_kit::dbus</text>
+  <rect class="box" x="16" y="104" width="170" height="44" rx="6"/>
+  <text class="t" x="28" y="122">portal backend</text>
+  <text class="tm" x="28" y="138">xdg-desktop-portal-otto</text>
+  <rect class="box" x="16" y="156" width="170" height="44" rx="6"/>
+  <text class="t" x="28" y="174">otto-agents</text>
+  <text class="tm" x="28" y="190">agent service</text>
+  <rect class="box" x="16" y="208" width="170" height="44" rx="6"/>
+  <text class="t" x="28" y="226">otto-rdp</text>
+  <text class="tm" x="28" y="242">ScreenCast proxies</text>
+  <rect class="box" x="16" y="260" width="170" height="44" rx="6"/>
+  <text class="t" x="28" y="278">otto-msg</text>
+  <text class="tm" x="28" y="294">Shell1, blocking</text>
+
+  <path class="ln" d="M186 74 H224"/>
+  <path class="ln" d="M186 126 H224"/>
+  <path class="ln" d="M186 178 H224"/>
+  <path class="ln" d="M186 230 H224"/>
+  <path class="ln" d="M186 282 H224"/>
+
+  <rect class="acc" x="226" y="52" width="250" height="252" rx="6"/>
+  <text class="tb" x="242" y="78">one proxy per interface</text>
+  <text class="tm" x="242" y="102">#[zbus::proxy] traits, each with</text>
+  <text class="tm" x="242" y="118">an async and a blocking proxy</text>
+  <text class="tm" x="242" y="146">SERVICE and PATH per module</text>
+  <text class="tm" x="242" y="174">wire tuple types</text>
+  <text class="tm" x="242" y="190">(WireChoice, WireRequest, ...)</text>
+  <text class="tm" x="242" y="218">no UI, no runtime of its own:</text>
+  <text class="tm" x="242" y="234">zbus from the workspace</text>
+  <text class="tm" x="242" y="270">foundation layer</text>
+
+  <path class="ln" d="M476 87 H514"/>
+  <path class="ln" d="M476 160 H514"/>
+  <path class="ln" d="M476 224 H514"/>
+  <path class="ln" d="M476 285 H514"/>
+
+  <rect class="box" x="516" y="52" width="230" height="70" rx="6"/>
+  <text class="tb" x="530" y="74">compositor</text>
+  <text class="tm" x="530" y="92">Settings, Shell1,</text>
+  <text class="tm" x="530" y="108">ScreenCast, Compositor</text>
+  <rect class="box" x="516" y="134" width="230" height="52" rx="6"/>
+  <text class="tb" x="530" y="156">otto-islands</text>
+  <text class="tm" x="530" y="174">Dialog1, Island1</text>
+  <rect class="box" x="516" y="198" width="230" height="52" rx="6"/>
+  <text class="tb" x="530" y="220">otto-files</text>
+  <text class="tm" x="530" y="238">FilePicker1, Files1, Desk1</text>
+  <rect class="box" x="516" y="262" width="230" height="46" rx="6"/>
+  <text class="tb" x="530" y="282">otto-stash</text>
+  <text class="tm" x="530" y="298">Stash1</text>
+</svg>

@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 256" width="760" height="256" role="img" aria-label="otto-md-kit: Peek's decode worker and the agents' chat log hand Markdown text to the parser, whose blocks the toolkit's document renderer draws">
+  <style>
+    text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
+    .box  { fill: #f6f8fa; stroke: #8b949e; stroke-width: 1.4; }
+    .acc  { fill: #ddf4ff; stroke: #218bff; stroke-width: 1.4; }
+    .grp  { fill: none; stroke: #8b949e; stroke-width: 1.2; stroke-dasharray: 5 4; }
+    .t    { fill: #1f2328; font-size: 13px; }
+    .tb   { fill: #1f2328; font-size: 13px; font-weight: 600; }
+    .tm   { fill: #656d76; font-size: 11px; }
+    .ln   { stroke: #8b949e; stroke-width: 1.4; fill: none; marker-end: url(#ah); }
+    @media (prefers-color-scheme: dark) {
+      .box { fill: #161b22; stroke: #6e7681; }
+      .acc { fill: #10243b; stroke: #388bfd; }
+      .grp { stroke: #6e7681; }
+      .t, .tb { fill: #e6edf3; }
+      .tm  { fill: #9198a1; }
+      .ln  { stroke: #8b949e; }
+    }
+  </style>
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#8b949e"/>
+    </marker>
+  </defs>
+
+
+  <text class="tb" x="16" y="28">Callers</text>
+  <text class="tb" x="246" y="28">otto-md-kit</text>
+  <text class="tb" x="546" y="28">otto-kit</text>
+
+  <rect class="box" x="16" y="56" width="200" height="44" rx="6"/>
+  <text class="t" x="28" y="74">otto-peek</text>
+  <text class="tm" x="28" y="90">decode worker, sandboxed</text>
+  <rect class="box" x="16" y="176" width="200" height="44" rx="6"/>
+  <text class="t" x="28" y="194">otto-agents-kit</text>
+  <text class="tm" x="28" y="210">chat transcript and log</text>
+
+  <rect class="acc" x="246" y="48" width="260" height="48" rx="6"/>
+  <text class="tb" x="260" y="68">source_text</text>
+  <text class="tm" x="260" y="85">refuse binary, decode, drop the BOM</text>
+  <rect class="acc" x="246" y="120" width="260" height="48" rx="6"/>
+  <text class="tb" x="260" y="140">parse_capped (block.rs)</text>
+  <text class="tm" x="260" y="157">headings, lists, quotes, code, rules</text>
+  <rect class="acc" x="246" y="192" width="260" height="48" rx="6"/>
+  <text class="tb" x="260" y="212">inline (inline.rs)</text>
+  <text class="tm" x="260" y="229">emphasis, code, links</text>
+
+  <path class="ln" d="M216 78 L244 72"/>
+  <path class="ln" d="M376 96 V118"/>
+  <path class="ln" d="M216 198 L244 152"/>
+  <path class="ln" d="M376 168 V190"/>
+
+  <rect class="box" x="546" y="112" width="200" height="64" rx="6"/>
+  <text class="tb" x="560" y="134">blocks</text>
+  <text class="tm" x="560" y="151">Heading, Paragraph, Item,</text>
+  <text class="tm" x="560" y="166">Quote, Code, Rule</text>
+  <path class="ln" d="M506 144 H544"/>
+
+  <rect class="box" x="546" y="196" width="200" height="44" rx="6"/>
+  <text class="t" x="560" y="214">document renderer</text>
+  <text class="tm" x="560" y="230">otto_kit::preview::document</text>
+  <path class="ln" d="M646 176 V194"/>
+</svg>

@@ -57,6 +57,7 @@ declare -A PAGE_TITLE=(
     [privacy]="Privacy in Otto - What Apps Were Allowed"
     [remote-desktop]="Remote Desktop for Otto - RDP and Virtual Outputs"
     [troubleshooting]="Troubleshooting Otto - Logs and Common Failures"
+    [bug-reports]="Reporting a Bug in Otto - otto-msg doctor"
     [credits]="Credits - Wallpapers, Icons and Fonts in Otto's Screenshots"
     [dev/readme]="Otto Developer Guide - Architecture Overview"
     [dev/project-structure]="Otto Project Structure - Crates and Building"
@@ -80,8 +81,10 @@ declare -A PAGE_TITLE=(
     [dev/scroll-pane]="Otto Scroll Panes - Scrolling by Moving Surfaces"
     [dev/tiling-plan]="Otto Tiling - What Is Built and What Is Planned"
     [dev/otto-kit-roadmap]="otto-kit Roadmap - UI Toolkit Gap Analysis"
+    [dev/otto-kit-library]="otto-kit Library - Every Component, Pictured"
     [dev/surface-style-protocol]="Surface Style Protocol"
     [dev/screenshot-plan]="Screenshot Portal Plan (Not Implemented)"
+    [dev/search-next-plan]="Search Next - Requirements for Otto's File Search"
     [dev/airplay-screenshare]="AirPlay Screencast Exploration in Otto"
     [tiling]="Tiling in Otto - Tiled Workspaces on Wayland"
     [files-command-palette]="Otto Files Command Palette - Run Any Command"
@@ -102,6 +105,28 @@ declare -A PAGE_TITLE=(
     [dev/agents]="Otto Agents - Coding Agents Behind the Launcher"
     [dev/accessibility]="Otto Accessibility Internals - AT-SPI and Key Grabs"
     [dev/debug-action-hook]="Otto Debug Action Hook - Drive Actions From a Script"
+    [dev/components]="Otto Components - Every Crate by Layer"
+    [dev/otto-msg]="otto-msg - Drive the Compositor from a Script"
+    [dev/otto-rdp]="otto-rdp - The RDP Bridge for an Output"
+    [dev/otto-auth-ui]="otto-auth-ui - The Shared Password Panel"
+    [dev/otto-authorize]="otto-authorize - The Session's polkit Agent"
+    [dev/otto-lock]="otto-lock - The Screen Locker"
+    [dev/otto-greeter]="otto-greeter - The Login Screen"
+    [dev/otto-agents]="otto-agents - The Agent Service"
+    [dev/otto-agents-client]="otto-agents-client - The Wire to the Agent Service"
+    [dev/otto-agents-kit]="otto-agents-kit - Shared Parts of the Agent UIs"
+    [dev/otto-canvas]="otto-canvas - The Agents Panel in the Side Canvas"
+    [dev/otto-stash]="otto-stash - Collecting Things to Ask About"
+    [dev/otto-bar]="otto-bar - The Top Menu Bar"
+    [dev/otto-settings]="otto-settings - The Settings App"
+    [dev/otto-emoji]="otto-emoji - The Emoji Picker"
+    [dev/otto-input-overlay]="otto-input-overlay - Touchpad and Key Overlays"
+    [dev/otto-dictate]="otto-dictate - Dictation as an Input Method"
+    [dev/otto-md-kit]="otto-md-kit - Markdown Read as a Document"
+    [dev/otto-pdf]="otto-pdf - Editing PDFs in Place Through PDFium"
+    [dev/otto-peek]="otto-peek - The Space-Bar Preview, Embedded"
+    [dev/otto-preview]="otto-preview - Studio, One File in a Window"
+    [dev/otto-search]="otto-search - One Query Language Over the File Index"
 )
 
 declare -A PAGE_DESC=(
@@ -139,6 +164,7 @@ declare -A PAGE_DESC=(
     [privacy]="See and take back what apps were allowed to do in Otto, remember a screen share, and when Otto asks for your password."
     [remote-desktop]="Serve an Otto session over RDP with otto-rdp, create virtual outputs, and connect from Windows, macOS or mobile clients."
     [troubleshooting]="Find Otto's logs, diagnose the most common startup and rendering failures, and gather what a useful bug report needs."
+    [bug-reports]="Write a bug report with otto-msg doctor: gather the system, graphics, screens, configuration and session logs, choose and preview what to share, redact personal details, and attach one file."
     [credits]="Who made the wallpapers, icons and fonts you see in Otto's screenshots, and the licences they are used under."
     [dev/readme]="How Otto is built: Smithay for Wayland, Skia for drawing, and a retained lay-rs scene graph - plus where to start reading the source."
     [dev/project-structure]="Where everything lives in the Otto repository, what each Cargo feature flag turns on, and how to build the workspace."
@@ -161,8 +187,10 @@ declare -A PAGE_DESC=(
     [dev/remote-desktop-indicator]="The sharing indicator otto-rdp publishes while a remote client is watching the session, and how the compositor draws it."
     [dev/scroll-pane]="Scrolling an otto-kit application at display rate by moving subsurfaces instead of repainting, and the layouts that go with it."
     [dev/tiling-plan]="Otto's tiling window management: the tree, the command language, decorations and drag behaviour — what is built, and what is still planned."
+    [dev/otto-kit-library]="Every UI component in otto-kit with a picture of it, what it is for, how it is driven and which crates use it."
     [dev/otto-kit-roadmap]="What Otto's UI toolkit provides today, what is still missing, and the planned direction. Partially built - read it as a plan."
     [dev/surface-style-protocol]="otto-surface-style-unstable-v1: how a client styles and animates its own surface through the compositor's scene graph, and why the protocol looks the way it does."
+    [dev/search-next-plan]="Requirements for reworking Otto's file search into one local service that finds files by meaning, words and filters.. A draft."
     [dev/screenshot-plan]="A design for screenshot support through the desktop portal. Not implemented - a proposal rather than documentation."
     [dev/airplay-screenshare]="Notes from validating AirPlay as a screencast target for Otto. An exploration, not a shipped feature."
     [tiling]="Switch any Otto workspace between stacking and tiling: build a layout from the keyboard or the pointer, set gaps and tile decorations, and drive it from scripts."
@@ -184,6 +212,28 @@ declare -A PAGE_DESC=(
     [dev/agents]="How Otto runs coding agents: the otto-agents service, the Agent Host and Agent Client protocols, the launcher as a client, and where a permission question goes."
     [dev/accessibility]="How Otto exposes an AT-SPI tree through AccessKit, and the key grabs a screen reader needs from the compositor."
     [dev/debug-action-hook]="Trigger any builtin Otto shortcut action from a script through $OTTO_ACTION_FILE, for testing and automation."
+    [dev/components]="Every crate in the Otto workspace, grouped by architecture layer, each linked to a page that explains how it is built."
+    [dev/otto-msg]="How otto-msg drives Otto from a script: i3-syntax commands, the window tree and workspaces as JSON, and events, over the compositor's org.otto.Shell1 D-Bus service."
+    [dev/otto-rdp]="How otto-rdp serves an Otto output over RDP: PipeWire capture, GPU H.264 through GStreamer, ironrdp-server, and remote input through virtual pointer and keyboard."
+    [dev/otto-auth-ui]="How Otto draws one password panel for the login screen, the lock screen and the polkit dialog, with PAM and logind calls kept off the drawing thread."
+    [dev/otto-authorize]="How Otto's polkit agent works: polkitd's requests on a GLib thread, the password dialog on a layer-shell overlay, and polkit's own helper checking the answer."
+    [dev/otto-lock]="How Otto's screen locker works: started by the compositor, it takes the lock with ext-session-lock-v1, draws a panel per output and unlocks only on PAM's word."
+    [dev/otto-greeter]="How Otto's login screen works: greetd runs Otto in login mode, the greeter relays greetd's PAM conversation over its socket, and greetd starts the session."
+    [dev/otto-agents]="How Otto runs coding agents: otto-agents serves ACP agent sessions to every client over the Agent Host Protocol on a Unix socket, with its modules and commands."
+    [dev/otto-agents-client]="How Otto's agent UIs reach otto-agents: the socket and its URLs, the AHP transport over a Unix socket, session URIs and file URIs, shared by service and clients."
+    [dev/otto-agents-kit]="How Otto's agent UIs share code: the session feed, the Ask chat and its log, list keys and dictation, run in each host on a connection thread that wakes its loop."
+    [dev/otto-canvas]="How Otto's side canvas lists agent sessions: otto-canvas places one item through otto-canvas-v1, connects only while shown and hands work to the launcher."
+    [dev/otto-stash]="How Otto's stash works: one process gathers selections, files and screen regions into a card, serves org.otto.Stash1, and hands everything to Ask."
+    [dev/otto-bar]="How Otto's top bar works: three layer surfaces, the tray watcher and app-menu registrar it serves, and the watchers that follow the compositor, settings and power."
+    [dev/otto-settings]="How Otto's Settings app works: a settings store filled from org.otto.Settings, and panes that reach AccountsService, pactl, the permission store, LocalSearch and TOML files."
+    [dev/otto-emoji]="How Otto's emoji picker works: a short-lived card on an overlay layer surface, then the pick typed through a virtual keyboard, pasted or copied to the window that had focus."
+    [dev/otto-input-overlay]="How Otto's input overlay works: touchpad fingers and key presses read from evdev, drawn on subsurfaces of an overlay layer surface, toggled from a tray applet."
+    [dev/otto-dictate]="How Otto's dictation proof of concept works: a Wayland input method fed by a toggle socket and PipeWire capture, with recognition from a local speech server."
+    [dev/otto-md-kit]="How Otto reads Markdown as a document: a small parser that turns untrusted text into the toolkit's blocks, for Peek's sandboxed worker and the agents' chat."
+    [dev/otto-pdf]="How Otto fills PDF forms and marks them up: PDFium loaded at run time, one thread that owns it, page coordinates, and atomic saves over the file."
+    [dev/otto-peek]="How Otto's Peek preview is built: a session hosts embed, a sandboxed decode worker that is the host re-executed, external rasterisers, and shared thumbnails."
+    [dev/otto-preview]="How Studio (otto-preview) works: one instance on org.otto.Preview1, a Peek session in a window, PDF editing via otto-pdf, and an agent chat with MCP tools."
+    [dev/otto-search]="How Otto's file search library works: a query language parsed into a plan, SPARQL sent to LocalSearch over D-Bus, and results rechecked against the disk."
 )
 
 # Pages with a screenshot worth using as the social-card image.
@@ -264,6 +314,7 @@ USER_FILES=(
     "user/accessibility.md"
     "user/scripting.md"
     "user/troubleshooting.md"
+    "user/bug-reports.md"
     "user/credits.md"
 )
 
@@ -347,6 +398,7 @@ DEVELOPER_FILES=(
     "developer/scene-graph.md"
     "developer/layers.md"
     "developer/otto-kit.md"
+    "developer/otto-kit-library.md"
     "developer/scroll-pane.md"
     "developer/file-previews.md"
     "developer/file-icons.md"
@@ -364,6 +416,7 @@ DEVELOPER_FILES=(
     "developer/color-scheme-setting.md"
     "developer/settings-dbus-api.md"
     "developer/shell-dbus-api.md"
+    "developer/compositor-dbus-api.md"
     "developer/rdp-virtual-output.md"
     "developer/remote-desktop-indicator.md"
     "developer/agents.md"
@@ -374,6 +427,7 @@ DEVELOPER_FILES=(
     "developer/surface-style-protocol.md"
     "developer/screenshot-plan.md"
     "developer/tiling-plan.md"
+    "developer/search-next-plan.md"
     "developer/airplay-screenshare.md"
     "developer/permissions.md"
     "developer/vulkan-renderer-plan.md"
@@ -384,6 +438,28 @@ DEVELOPER_FILES=(
     "developer/otto-launcher.md"
     "developer/otto-islands.md"
     "developer/xdg-desktop-portal-otto.md"
+    "developer/components.md"
+    "developer/otto-msg.md"
+    "developer/otto-rdp.md"
+    "developer/otto-auth-ui.md"
+    "developer/otto-authorize.md"
+    "developer/otto-lock.md"
+    "developer/otto-greeter.md"
+    "developer/otto-agents.md"
+    "developer/otto-agents-client.md"
+    "developer/otto-agents-kit.md"
+    "developer/otto-canvas.md"
+    "developer/otto-stash.md"
+    "developer/otto-bar.md"
+    "developer/otto-settings.md"
+    "developer/otto-emoji.md"
+    "developer/otto-input-overlay.md"
+    "developer/otto-dictate.md"
+    "developer/otto-md-kit.md"
+    "developer/otto-pdf.md"
+    "developer/otto-peek.md"
+    "developer/otto-preview.md"
+    "developer/otto-search.md"
 )
 
 echo "Building Developer Guide..."
@@ -423,6 +499,7 @@ done
 perl -i -pe '
     s{\]\(README\.md\)}{](/developer/)}gi;
     s{\]\(diagrams/([A-Za-z0-9_-]+\.svg)\)}{](/diagrams/$1)}g;
+    s{\]\(images/([A-Za-z0-9_./-]+\.png)\)}{](/developer-images/$1)}g;
     s{\]\(\.\./user/README\.md\)}{](/)}gi;
     s{\]\(\.\./user/([A-Za-z0-9_-]+)\.md#([^)]+)\)}{"](/" . lc($1) . "/#$2)"}ge;
     s{\]\(\.\./user/([A-Za-z0-9_-]+)\.md\)}{"](/" . lc($1) . "/)"}ge;
@@ -439,6 +516,20 @@ DIAGRAM_SRC="$DOCS_DIR/developer/diagrams"
 if [ -d "$DIAGRAM_SRC" ]; then
     mkdir -p "$SCRIPT_DIR/assets/diagrams"
     cp "$DIAGRAM_SRC"/*.svg "$SCRIPT_DIR/assets/diagrams/" 2>/dev/null
+fi
+
+# Pictures in docs/developer/images/ (the otto-kit library's, one folder per
+# set) are referenced as /developer-images/<path>.png above, kept apart from
+# the user guide's /images/ so the two sets cannot collide.
+DEV_IMAGE_SRC="$DOCS_DIR/developer/images"
+if [ -d "$DEV_IMAGE_SRC" ]; then
+    DEV_IMAGE_OUT="$SCRIPT_DIR/assets/developer-images"
+    rm -rf "$DEV_IMAGE_OUT"
+    find "$DEV_IMAGE_SRC" -name '*.png' | while read -r src; do
+        rel="${src#"$DEV_IMAGE_SRC"/}"
+        mkdir -p "$DEV_IMAGE_OUT/$(dirname "$rel")"
+        cp "$src" "$DEV_IMAGE_OUT/$rel"
+    done
 fi
 
 echo "✓ Built User Guide: $OUTPUT_DIR/_index.md"

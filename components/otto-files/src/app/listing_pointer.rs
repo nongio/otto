@@ -177,7 +177,7 @@ impl Browser {
                         view::photos_rename_rect(width, height, &self.photos, scroll, index)
                     }
                 };
-                if rect.contains(skia_safe::Point::new(x, y)) {
+                if rect.contains(otto_kit::skia::Point::new(x, y)) {
                     if let Some(session) = self.rename.as_mut() {
                         session.input.on_pointer_down(x - rect.left, 1, shift);
                     }
@@ -206,7 +206,7 @@ impl Browser {
             let panel = self
                 .peek_panel
                 .unwrap_or_else(|| self.peek_fallback_panel());
-            let point = skia_safe::Point::new(x, y);
+            let point = otto_kit::skia::Point::new(x, y);
             let over_close = view::peek_close_rect(panel)
                 .with_outset((4.0, 4.0))
                 .contains(point);
@@ -357,7 +357,7 @@ impl Browser {
         if matches!(event.kind, PointerEventKind::Press { button, .. } if button != BTN_RIGHT)
             && self.search.is_some()
         {
-            let point = skia_safe::Point::new(x, y);
+            let point = otto_kit::skia::Point::new(x, y);
             let field = view::search_field_rect(width);
             if field.contains(point) {
                 if let Some(input) = self.search.as_mut() {
@@ -406,7 +406,7 @@ impl Browser {
             && matches!(event.kind, PointerEventKind::Press { button, .. } if button != BTN_RIGHT)
         {
             let field = view::path_field_rect(width);
-            if field.contains(skia_safe::Point::new(x, y)) {
+            if field.contains(otto_kit::skia::Point::new(x, y)) {
                 if let Some(input) = self.path_entry.as_mut() {
                     input.on_pointer_down(x - field.left, 1, shift);
                 }
@@ -430,7 +430,7 @@ impl Browser {
             && matches!(event.kind, PointerEventKind::Press { button, .. } if button != BTN_RIGHT)
         {
             let field = view::footer_name_rect(width, self.size.1);
-            if field.contains(skia_safe::Point::new(x, y)) {
+            if field.contains(otto_kit::skia::Point::new(x, y)) {
                 if let Some(input) = self.save_name.as_mut() {
                     input.on_pointer_down(x - field.left, 1, shift);
                 }
@@ -499,7 +499,7 @@ impl Browser {
         // file area's bottom is.
         if self.path_bar_h() > 0.0 {
             let bar = view::path_bar_rect(width, self.size.1, self.footer_h());
-            let inside = bar.contains(skia_safe::Point::new(x, y));
+            let inside = bar.contains(otto_kit::skia::Point::new(x, y));
 
             match event.kind {
                 PointerEventKind::Motion { .. } => {

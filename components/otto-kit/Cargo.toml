@@ -23,7 +23,6 @@ wayland-backend.workspace = true
 gl.workspace = true
 khronos-egl = { workspace = true, features = ["dynamic"] }
 tracing.workspace = true
-tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
 tokio = { workspace = true, features = ["full"] }
 zbus.workspace = true
 futures-util.workspace = true

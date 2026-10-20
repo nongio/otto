@@ -296,7 +296,9 @@ undo entry says so rather than quietly disappearing.
 
 **Drag and drop** works within a window, between windows, and in and out of
 other applications. Dragging a picture into a browser upload field or a chat
-window does what you expect.
+window does what you expect. A drop moves files by default; hold `Ctrl` to copy
+them instead, or `Ctrl+Shift` to leave them where they are and make a link to
+each. The cursor shows which one you will get before you let go.
 
 ## Peek
 

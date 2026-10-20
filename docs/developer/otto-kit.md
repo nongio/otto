@@ -1,5 +1,8 @@
 # otto-kit
 
+**User guide:** [Theming](../user/theming.md)\
+**Specs:** [Window Decorations](../../specs/window-decorations.md), [otto-kit Window Focus](../../specs/otto-kit-window-focus.md), [Accessibility](../../specs/accessibility.md), [Background Effect](../../specs/background-effect.md), [Localisation](../../specs/localisation.md)
+
 `components/otto-kit/` is the crate every Otto application is built on, and the
 one the compositor draws its own chrome with. It is a Wayland client runtime,
 a Skia drawing layer, a widget set and a design system in one crate.
@@ -20,6 +23,8 @@ must be drawable from a bare `&Canvas`**, with no connection, no event loop and
 no ownership of a surface. A component that needs to be told about a click
 takes a state struct the caller owns and hands events to; it never subscribes
 to anything itself.
+
+![otto-kit: client apps use the runtime and the drawing half, the compositor only the drawing half](diagrams/otto-kit.svg)
 
 ## Layout
 
@@ -155,14 +160,8 @@ each returning a response describing what changed. `TextInput` is the model;
 the form controls, scroll view, dropdown, slider and context menu all follow
 it.
 
-| Group | Components |
-|-------|-----------|
-| Text and images | `Label`, `Icon` |
-| Containers | `Frame`, `Stack`, `Toolbar`, `ScrollView` |
-| Controls | `Button`, `Toggle`, `Slider`, `TextInput`, `dropdown`, `color_picker` |
-| Collections | `ListLayout`, `SourceListLayout` |
-| Menus | `MenuBarRenderer`, `ContextMenu`, `MenuItem` |
-| Window chrome | `Titlebar`, `WindowControl`, `WindowDecoration`, `SharingIndicator`, `Window` |
+Every component, with a picture of it, its shape and the crates that use it,
+is in the [otto-kit library](otto-kit-library.md).
 
 `WindowDecoration` (which builds a `Titlebar`), `WindowControl` and
 `ContextMenuRenderer` are the ones the compositor draws directly, so a change

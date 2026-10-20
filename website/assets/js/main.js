@@ -4,8 +4,27 @@ window.addEventListener('DOMContentLoaded', () => {
     addParentHeadingAttribute();
     startNavObservation();
     initThemeToggle();
+    initBarClock();
 
 });
+
+// The top bar's clock, written the way Otto's bar writes it: the weekday,
+// the date and the time, in the reader's own locale.
+function initBarClock() {
+    var clock = document.querySelector('#bar-clock');
+    if (!clock) return;
+    var date = new Intl.DateTimeFormat(undefined, { weekday: 'long', day: 'numeric', month: 'long' });
+    var time = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit' });
+
+    function tick() {
+        var now = new Date();
+        clock.textContent = date.format(now) + '  ' + time.format(now);
+        clock.dateTime = now.toISOString();
+        // Wake on the next minute, not on a fixed interval that drifts.
+        setTimeout(tick, 60000 - (now.getSeconds() * 1000 + now.getMilliseconds()) + 50);
+    }
+    tick();
+}
 
 // The stored override (if any) is already applied to <html> by the
 // inline script in <head>, before first paint. This just wires up the
@@ -21,8 +40,10 @@ function initThemeToggle() {
     }
 
     function render() {
-        // Label is the theme a click will switch TO.
-        button.textContent = currentTheme() === 'dark' ? 'Light' : 'Dark';
+        // The label names the theme a click switches to.
+        var next = currentTheme() === 'dark' ? 'light' : 'dark';
+        button.setAttribute('aria-label', 'Switch to ' + next + ' mode');
+        button.title = 'Switch to ' + next + ' mode';
     }
 
     button.addEventListener('click', () => {

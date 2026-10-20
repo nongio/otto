@@ -38,7 +38,7 @@
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use skia_safe as skia;
+use otto_kit::skia;
 
 /// The name this application records its failures under. Only ever used for
 /// the `fail/` subdirectory: a marker written by somebody else is about

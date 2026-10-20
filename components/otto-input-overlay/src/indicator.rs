@@ -264,30 +264,30 @@ async fn register(conn: &Connection, name: &str) {
 fn touchpad_icon(size: i32) -> (i32, i32, Vec<u8>) {
     let n = size as usize;
     let mut data = vec![0u8; n * n * 4];
-    let Some(mut surface) = skia_safe::surfaces::raster_n32_premul((size, size)) else {
+    let Some(mut surface) = otto_kit::skia::surfaces::raster_n32_premul((size, size)) else {
         return (size, size, data);
     };
     let s = size as f32 / 22.0;
     let canvas = surface.canvas();
-    canvas.clear(skia_safe::Color::TRANSPARENT);
+    canvas.clear(otto_kit::skia::Color::TRANSPARENT);
     // Mid gray reads on both a light and a dark bar.
-    let color = skia_safe::Color4f::new(0.55, 0.55, 0.58, 1.0);
+    let color = otto_kit::skia::Color4f::new(0.55, 0.55, 0.58, 1.0);
 
-    let mut stroke = skia_safe::Paint::new(color, None);
+    let mut stroke = otto_kit::skia::Paint::new(color, None);
     stroke.set_anti_alias(true);
-    stroke.set_style(skia_safe::paint::Style::Stroke);
+    stroke.set_style(otto_kit::skia::paint::Style::Stroke);
     stroke.set_stroke_width(1.6 * s);
-    let pad = skia_safe::Rect::from_ltrb(3.0 * s, 5.0 * s, 19.0 * s, 17.0 * s);
+    let pad = otto_kit::skia::Rect::from_ltrb(3.0 * s, 5.0 * s, 19.0 * s, 17.0 * s);
     canvas.draw_round_rect(pad, 2.5 * s, 2.5 * s, &stroke);
 
-    let mut fill = skia_safe::Paint::new(color, None);
+    let mut fill = otto_kit::skia::Paint::new(color, None);
     fill.set_anti_alias(true);
     canvas.draw_circle((9.0 * s, 10.5 * s), 2.2 * s, &fill);
 
-    let info = skia_safe::ImageInfo::new(
+    let info = otto_kit::skia::ImageInfo::new(
         (size, size),
-        skia_safe::ColorType::RGBA8888,
-        skia_safe::AlphaType::Unpremul,
+        otto_kit::skia::ColorType::RGBA8888,
+        otto_kit::skia::AlphaType::Unpremul,
         None,
     );
     let mut rgba = vec![0u8; n * n * 4];

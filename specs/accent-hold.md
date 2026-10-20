@@ -5,7 +5,7 @@
 
 ## Summary
 
-Holding a key whose character has accented or related forms shows those forms in a row at the text cursor; picking one replaces the character the key typed. It is how accented letters and a few typographic symbols are typed without a dead key, Compose or a second layout.
+Holding a key whose character has accented or related forms shows those forms in a row at the text cursor; picking one replaces the character the key typed. It is how accented letters are typed without a dead key, Compose or a second layout.
 
 ## Goals
 
@@ -19,7 +19,7 @@ Holding a key whose character has accented or related forms shows those forms in
 - Per-language ordering of the forms (one table for every layout).
 - Non-Latin scripts, dead keys, Compose, input methods.
 - Picking with the pointer.
-- Keys outside the table: they keep repeating.
+- Keys outside the table: they keep repeating. Punctuation is left out of it, so a held `-` still draws a rule and editor motions (`.`, `$`, …) still repeat.
 
 ## Behavior
 
@@ -27,13 +27,14 @@ Holding a key whose character has accented or related forms shows those forms in
 - **Press of an eligible key:** the application receives the press and, immediately after, a release. The character is typed once and never auto-repeats. The real release, when it comes, is not delivered.
 - **Hold:** if the key is still down after the repeat delay (`keyboard_repeat_delay`, at least 200 ms) and no other key was pressed meanwhile, the row appears above the caret, centred on it, kept on screen, and below the caret when there is no room above. No form is selected.
 - **While the row is up:**
-  - `1`–`9` (top row or keypad) picks the form with that number, if there is one.
+  - `1`–`9` picks the form with that number, if there is one: a key that types that digit (top row or keypad), or else the top-row key in that position (evdev `KEY_1`–`KEY_9`), so AZERTY picks without Shift.
   - Left/Right moves the selection; Return picks the selected form, or with nothing selected closes the row and is delivered.
   - Escape closes the row and is not delivered.
   - Modifier keys leave the row up.
   - Any other key closes the row and is handled as usual (it may start a new hold).
   - A pointer button press closes the row.
   - None of the keys the row handles reach the application, press or release.
+- **End of the hold:** a keyboard focus change (another window mapping, a click elsewhere, the focus going to no window) or losing the keys (`release_all_keys`: a VT switch, the host window losing focus) ends the hold: the row closes, the pending timer is cancelled, and the key is no longer held. A digit typed after a focus change goes to the newly focused window untouched. The held key's release, already sent, is not sent again when the keys are released.
 - **Pick:** the row closes, and the application receives Backspace followed by the picked character, typed through a virtual keyboard with a keymap of its own (`otto-emoji --replace`).
 - **Upper case:** a held upper-case letter offers the upper-case forms; a form with no single upper-case letter (ß) is left out.
 

@@ -17,8 +17,8 @@ use otto_kit::components::titlebar::{WindowControl, WindowControlsState};
 use otto_kit::components::window::resize;
 use otto_kit::dnd::DndAction;
 use otto_kit::prelude::*;
+use otto_kit::skia::Contains;
 use otto_kit::CursorShape;
-use skia_safe::Contains;
 use smithay_client_toolkit::reexports::protocols::xdg::shell::client::xdg_positioner;
 use smithay_client_toolkit::seat::keyboard::KeyEvent;
 use smithay_client_toolkit::seat::pointer::PointerEventKind;
@@ -31,6 +31,7 @@ use wayland_client::protocol::{wl_keyboard, wl_surface};
 /// button.
 const BTN_RIGHT: u32 = 0x111;
 
+use drag_drop::DropOp;
 use listing_pointer::{After, DragStart, MenuAt};
 use model::{Column, Entry, Place, SortKey};
 use view::ViewMode;
@@ -86,7 +87,7 @@ type DragItems = (DragPicture, (f32, f32), (f32, f32));
 
 /// A drawing handed over as a value: the preview's picture, built by the view
 /// and replayed onto the drag surface.
-type BoxedPainter = Box<dyn Fn(&skia_safe::Canvas, f32, f32) + Send + Sync>;
+type BoxedPainter = Box<dyn Fn(&otto_kit::skia::Canvas, f32, f32) + Send + Sync>;
 
 /// The picture a drag lifts off the window.
 ///
@@ -158,8 +159,8 @@ struct Marquee {
 impl Marquee {
     /// The band in content coordinates, normalised so dragging up and left
     /// gives the same rectangle as dragging down and right.
-    fn rect(&self) -> skia_safe::Rect {
-        skia_safe::Rect::from_ltrb(
+    fn rect(&self) -> otto_kit::skia::Rect {
+        otto_kit::skia::Rect::from_ltrb(
             self.anchor.0.min(self.cursor.0),
             self.anchor.1.min(self.cursor.1),
             self.anchor.0.max(self.cursor.0),
@@ -171,7 +172,7 @@ impl Marquee {
 /// Is `(x, y)` inside a pane's own area, rather than the header, the sidebar
 /// or the status strip around it? A click on nothing only means "nothing" when
 /// it lands where the entries are.
-fn hit_content(area: skia_safe::Rect, x: f32, y: f32) -> bool {
+fn hit_content(area: otto_kit::skia::Rect, x: f32, y: f32) -> bool {
     x >= area.left && x <= area.right && y >= area.top && y <= area.bottom
 }
 
@@ -201,6 +202,14 @@ enum DropTarget {
 }
 
 impl DropTarget {
+    /// Would a move here put our own drag's files back in the folder they
+    /// are already in? A desk slot never does: dropping an icon on another
+    /// spot of its own desk is how free placement moves it, and it takes a
+    /// plain drag like any other target.
+    fn is_move_home(&self) -> bool {
+        !matches!(self, Self::Slot { .. }) && self.path().is_some_and(|path| Browser::is_home(path))
+    }
+
     /// The directory the drop lands in, if it puts files anywhere.
     fn path(&self) -> Option<&PathBuf> {
         match self {
@@ -233,8 +242,21 @@ fn hover_drag(state: &Arc<Mutex<Browser>>, x: f32, y: f32) {
     use otto_kit::dnd;
 
     let mut browser = state.browse();
+    browser.drag_copies = dnd::selected_action().intersects(DndAction::Copy | DndAction::Ask);
     let target = browser.drop_target_at(x, y);
     let mime = dnd::first_offered(clipboard::file_mime_preference());
+
+    // Where the drop would land if a move home were not refused: over the
+    // files' own folder a copy or a link is still worth taking.
+    let home = target.as_ref().map_or_else(
+        || {
+            let copies = std::mem::replace(&mut browser.drag_copies, true);
+            let open = browser.drop_target_at(x, y);
+            browser.drag_copies = copies;
+            open.is_some_and(|open| open.is_move_home())
+        },
+        DropTarget::is_move_home,
+    );
 
     match (&target, mime) {
         // Adding a folder to the sidebar leaves it where it is. A copy is the
@@ -243,12 +265,21 @@ fn hover_drag(state: &Arc<Mutex<Browser>>, x: f32, y: f32) {
         (Some(DropTarget::PlaceGap { .. }), Some(mime)) => {
             dnd::accept(Some(&mime), DndAction::Copy, DndAction::Copy)
         }
+        // A copy or a link, and no preference: the compositor settles on one
+        // only when Ctrl or Ctrl+Shift asks for it, and on nothing otherwise,
+        // which is the dismissal a move home gets.
+        (_, Some(mime)) if home => dnd::accept(
+            Some(&mime),
+            DndAction::Copy | DndAction::Ask,
+            DndAction::empty(),
+        ),
         (Some(_), Some(mime)) => dnd::accept(
             Some(&mime),
-            DndAction::Copy | DndAction::Move,
-            // Move by default, copy on request — what every other file manager
-            // does. The compositor still has the last word, and a source that
-            // only offers a copy gets one.
+            // Ask is how a link is asked for; see `DropOp::from_action`.
+            DndAction::Copy | DndAction::Move | DndAction::Ask,
+            // Move by default, copy or link on request — what every other
+            // file manager does. The compositor still has the last word, and a
+            // source that only offers a copy gets one.
             DndAction::Move,
         ),
         // Over nothing that takes files, or a drag carrying none.
@@ -381,6 +412,12 @@ struct Browser {
     /// Where a drag now over the window would drop. Drawn outlined, and read
     /// again when the drop arrives.
     drop_target: Option<DropTarget>,
+    /// The compositor has settled on a copy or a link for the drag now over
+    /// the window, so a drop back where the files already are has something
+    /// to do. Taken from the negotiated action rather than our own keyboard,
+    /// which a drag started from an unfocused window does not have; see
+    /// [`Browser::is_a_move_home`].
+    drag_copies: bool,
     /// The last operation's outcome, shown in the header until the next action.
     status: Option<String>,
     /// The file operation running on a worker thread, if there is one. See
@@ -807,7 +844,7 @@ struct Browser {
     /// two different coordinate systems. Whichever handler saw the pointer
     /// records the panel *it* was hit-testing against, so a pinch can work in
     /// that space without having to know which handler it came from.
-    peek_focus: Option<(skia_safe::Point, Rect)>,
+    peek_focus: Option<(otto_kit::skia::Point, Rect)>,
     /// A drag of the panel by its title strip in progress: the point the
     /// press was reported at, and where the card was in the window then.
     ///
@@ -991,7 +1028,7 @@ struct PreviewPaneState {
     /// rebuilt every frame.
     text: Option<ocrcache::Status>,
     /// The picture's main colours, for the Photos info panel's swatches.
-    palette: Vec<skia_safe::Color>,
+    palette: Vec<otto_kit::skia::Color>,
     /// What the camera wrote down about the picture, read with the decode.
     camera: Option<crate::camera::Shot>,
 }
@@ -1467,7 +1504,7 @@ fn info_pointer(
     point: (f32, f32),
 ) -> bool {
     let (x, y) = point;
-    let point = skia_safe::Point::new(x, y);
+    let point = otto_kit::skia::Point::new(x, y);
     let over_close = view::info_close_rect(sheet)
         .with_outset((6.0, 6.0))
         .contains(point);

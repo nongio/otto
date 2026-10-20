@@ -11,9 +11,10 @@ use std::sync::{Arc, LazyLock, Mutex};
 use otto_kit::AppContext;
 
 use futures_util::StreamExt;
+use otto_kit::dbus::status_notifier_item::StatusNotifierItemProxy;
 use zbus::proxy::CacheProperties;
 use zbus::zvariant::{OwnedValue, Value};
-use zbus::{interface, object_server::SignalEmitter, proxy, Connection};
+use zbus::{interface, object_server::SignalEmitter, Connection};
 
 /// Global shared tray state readable from the draw loop.
 static TRAY_STATE: LazyLock<TrayState> = LazyLock::new(|| Arc::new(Mutex::new(Vec::new())));
@@ -430,53 +431,6 @@ impl WatcherService {
 }
 
 // ---------------------------------------------------------------------------
-// StatusNotifierItem D-Bus proxy (to talk to tray apps)
-// ---------------------------------------------------------------------------
-
-#[proxy(
-    interface = "org.kde.StatusNotifierItem",
-    default_path = "/StatusNotifierItem"
-)]
-trait StatusNotifierItem {
-    #[zbus(property)]
-    fn icon_name(&self) -> zbus::Result<String>;
-
-    #[zbus(property)]
-    fn icon_pixmap(&self) -> zbus::Result<Vec<(i32, i32, Vec<u8>)>>;
-
-    #[zbus(property)]
-    fn icon_theme_path(&self) -> zbus::Result<String>;
-
-    #[zbus(property, name = "ToolTip")]
-    fn tool_tip(&self) -> zbus::Result<OwnedValue>;
-
-    #[zbus(property)]
-    fn status(&self) -> zbus::Result<String>;
-
-    #[zbus(property)]
-    fn title(&self) -> zbus::Result<String>;
-
-    #[zbus(property)]
-    fn id(&self) -> zbus::Result<String>;
-
-    #[zbus(property, name = "Menu")]
-    fn menu(&self) -> zbus::Result<zbus::zvariant::OwnedObjectPath>;
-
-    fn activate(&self, x: i32, y: i32) -> zbus::Result<()>;
-    fn context_menu(&self, x: i32, y: i32) -> zbus::Result<()>;
-    fn secondary_activate(&self, x: i32, y: i32) -> zbus::Result<()>;
-
-    #[zbus(signal)]
-    fn new_icon(&self) -> zbus::Result<()>;
-
-    #[zbus(signal)]
-    fn new_status(&self, status: &str) -> zbus::Result<()>;
-
-    #[zbus(signal)]
-    fn new_tool_tip(&self) -> zbus::Result<()>;
-}
-
-// ---------------------------------------------------------------------------
 // Watcher main loop
 // ---------------------------------------------------------------------------
 
@@ -522,22 +476,7 @@ async fn run_watcher() -> Result<(), zbus::Error> {
 
 /// Watch for D-Bus name owner changes to remove items when their owner disconnects.
 async fn monitor_disconnects(conn: Connection, items_map: ItemsMap, state: TrayState) {
-    #[proxy(
-        interface = "org.freedesktop.DBus",
-        default_service = "org.freedesktop.DBus",
-        default_path = "/org/freedesktop/DBus"
-    )]
-    trait DBus {
-        #[zbus(signal)]
-        fn name_owner_changed(
-            &self,
-            name: &str,
-            old_owner: &str,
-            new_owner: &str,
-        ) -> zbus::Result<()>;
-    }
-
-    let Ok(proxy) = DBusProxy::new(&conn).await else {
+    let Ok(proxy) = zbus::fdo::DBusProxy::new(&conn).await else {
         tracing::warn!("failed to create DBus proxy for disconnect monitoring");
         return;
     };
@@ -550,14 +489,14 @@ async fn monitor_disconnects(conn: Connection, items_map: ItemsMap, state: TrayS
         let Ok(args) = signal.args() else { continue };
 
         // A name vanished (new_owner is empty)
-        if !args.new_owner.is_empty() {
+        if args.new_owner.is_some() {
             continue;
         }
 
         // Both locks held together: see `ItemsMap`. Dropping the entries
         // stops their watchers.
         let mut map = items_map.lock().unwrap();
-        if remove_owner(&mut map, args.name) {
+        if remove_owner(&mut map, args.name.as_str()) {
             state
                 .lock()
                 .unwrap()
@@ -812,7 +751,8 @@ async fn watch_menu_signals(
 ) {
     use futures_util::FutureExt;
 
-    let Ok(builder) = crate::dbusmenu::DBusMenuProxy::builder(conn).destination(service) else {
+    let Ok(builder) = otto_kit::dbus::dbusmenu::DBusMenuProxy::builder(conn).destination(service)
+    else {
         return;
     };
     let Ok(builder) = builder.path(menu_path) else {
@@ -998,7 +938,7 @@ fn argb_network_to_native(data: &[u8]) -> Vec<u8> {
         let g = chunk[2];
         let b = chunk[3];
         // Skia ColorType::RGBA_8888 (or we can use BGRA on little-endian)
-        // Store as BGRA for skia_safe::ColorType::BGRA8888
+        // Store as BGRA for otto_kit::skia::ColorType::BGRA8888
         out.extend_from_slice(&[b, g, r, a]);
     }
     out

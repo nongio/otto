@@ -51,51 +51,33 @@ impl ScreenshotPortal {
         info!(?app_id, "Screenshot requested");
 
         // Exported for the length of the call so the frontend can close it
-        // when the app withdraws.
-        let request = Request::new(handle.clone());
-        let cancellation = request.cancellation();
-        let exported = object_server
-            .at(handle.clone(), request)
-            .await
-            .unwrap_or_else(|err| {
-                warn!(?err, %handle, "could not export the request object");
-                false
-            });
-
-        let result = cancellation
-            .run(self.take(&app_id, &options))
-            .await
-            .unwrap_or_else(|| {
-                info!(?app_id, "Screenshot request closed by the frontend");
-                (1, HashMap::new())
-            });
-
-        if exported {
-            if let Err(err) = object_server.remove::<Request, _>(&handle).await {
-                warn!(?err, %handle, "could not remove the request object");
-            }
-        }
-        result
+        // when the app withdraws; the confirmation comes down with it.
+        Request::serve(
+            object_server,
+            &handle,
+            self.take(&handle, &app_id, &options),
+        )
+        .await
+        .unwrap_or_else(|| {
+            info!(?app_id, "Screenshot request closed by the frontend");
+            (1, HashMap::new())
+        })
     }
 }
 
 impl ScreenshotPortal {
     async fn take(
         &self,
+        handle: &OwnedObjectPath,
         app_id: &str,
         options: &HashMap<String, OwnedValue>,
     ) -> (u32, HashMap<String, OwnedValue>) {
         if needs_confirmation(options) {
-            let proxy = match self.client.dialog_proxy().await {
-                Ok(p) => p,
-                Err(err) => {
-                    warn!(?err, "no dialog renderer available; denying screenshot");
-                    return (1, HashMap::new());
-                }
-            };
             let body = format!("{app_id} wants to take a screenshot of your screen.");
-            match proxy
-                .present_access(
+            match self
+                .client
+                .present_access_for(
+                    handle.as_str(),
                     app_id,
                     "Take Screenshot",
                     "",
@@ -111,7 +93,7 @@ impl ScreenshotPortal {
                 Ok((0, _)) => {}
                 Ok((response, _)) => return (response.max(1), HashMap::new()),
                 Err(err) => {
-                    warn!(?err, "dialog renderer call failed; denying screenshot");
+                    warn!(?err, "no dialog renderer answered; denying screenshot");
                     return (1, HashMap::new());
                 }
             }

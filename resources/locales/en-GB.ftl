@@ -879,6 +879,7 @@ files-nothing-to-undo = Nothing to undo
 files-undid = Undid { $label }
 files-undo-move = Move
 files-undo-copy = Copy
+files-undo-link = Make Link
 files-undo-delete = Delete
 files-undo-new-folder-with-selection = New Folder with Selection
 files-undo-rename = Rename

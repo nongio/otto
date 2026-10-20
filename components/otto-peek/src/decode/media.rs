@@ -14,7 +14,7 @@ use std::fs::{File, Metadata};
 use std::io::{Read, Seek, SeekFrom};
 
 use otto_kit::filetype;
-use skia_safe::{Codec, Data};
+use otto_kit::skia::{Codec, Data};
 
 use crate::payload::{Fact, Pixels, PreviewPayload};
 
@@ -350,8 +350,8 @@ fn decode_cover(bytes: &[u8]) -> Option<Pixels> {
     let info = codec
         .info()
         .with_dimensions(scaled)
-        .with_color_type(skia_safe::ColorType::RGBA8888)
-        .with_alpha_type(skia_safe::AlphaType::Premul);
+        .with_color_type(otto_kit::skia::ColorType::RGBA8888)
+        .with_alpha_type(otto_kit::skia::AlphaType::Premul);
     let image = codec.get_image(info, None).ok()?;
     super::image::to_pixels(&image, intrinsic)
 }

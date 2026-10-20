@@ -37,18 +37,22 @@ pub struct Frame {
 impl Frame {
     /// The frame as a Skia image. Copies once; the image outlives the borrow
     /// in every caller.
-    pub fn to_image(&self) -> Option<skia_safe::Image> {
-        let info = skia_safe::ImageInfo::new(
+    pub fn to_image(&self) -> Option<otto_kit::skia::Image> {
+        let info = otto_kit::skia::ImageInfo::new(
             (self.width as i32, self.height as i32),
-            skia_safe::ColorType::RGB888x,
-            skia_safe::AlphaType::Opaque,
+            otto_kit::skia::ColorType::RGB888x,
+            otto_kit::skia::AlphaType::Opaque,
             None,
         );
         let row_bytes = self.width as usize * protocol::BYTES_PER_PIXEL as usize;
         if self.data.len() != row_bytes * self.height as usize {
             return None;
         }
-        skia_safe::images::raster_from_data(&info, skia_safe::Data::new_copy(&self.data), row_bytes)
+        otto_kit::skia::images::raster_from_data(
+            &info,
+            otto_kit::skia::Data::new_copy(&self.data),
+            row_bytes,
+        )
     }
 }
 

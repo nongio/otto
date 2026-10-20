@@ -168,7 +168,10 @@ impl SubsurfaceSurface {
     /// pointer positions has to keep this in step with the style.
     ///
     /// Subsurface position is part of the parent's state: it takes effect when
-    /// the parent commits, even for a desynchronised subsurface.
+    /// the parent commits, even for a desynchronised subsurface. Smithay
+    /// compositors, Otto among them, take it with this surface's own next
+    /// commit instead, so a position meant to land now is sent before this
+    /// surface commits, and the parent commits after.
     pub fn set_position(&self, x: i32, y: i32) {
         if let Some(ref sub) = self.subsurface {
             sub.set_position(x, y);

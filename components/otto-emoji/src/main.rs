@@ -23,9 +23,9 @@ use otto_kit::components::text_input::{
 use otto_kit::focus::FocusId;
 use otto_kit::protocols::otto_surface_style_v1::{BeakEdge, BlendMode, ClipMode, ContentsGravity};
 use otto_kit::protocols::otto_timing_function_v1::Preset;
+use otto_kit::skia::{Point, Rect};
 use otto_kit::surfaces::{LayerShellSurface, SubsurfaceSurface};
 use otto_kit::{App, AppContext, AppRunner, ObjectId};
-use skia_safe::{Point, Rect};
 use smithay_client_toolkit::compositor::Region;
 use smithay_client_toolkit::seat::keyboard::{KeyEvent, Keysym};
 use smithay_client_toolkit::seat::pointer::{PointerEvent, PointerEventKind};
@@ -461,8 +461,11 @@ impl Picker {
         // rather than scrolling on its own.
         let pan = self.pan.offset();
         busy |= stack.update_container_at(self.layout.content_width(), pan, &theme);
-        // What of the stack the card shows, which each pane crops itself to.
-        let stack_shown = stack.visible();
+        // What of the stack the card shows, which each pane crops itself to:
+        // where the stack stands, which trails the pan while its last move is
+        // on its way to the screen.
+        let stack_shown = stack.shown().unwrap_or_else(|| stack.visible());
+        let at = stack_shown.left;
 
         let selected = self
             .selected
@@ -470,7 +473,7 @@ impl Picker {
         for (index, pane) in self.panes.iter_mut().enumerate() {
             let origin = Layout::pane_origin(index);
             let shown =
-                index < self.layout.pane_count() && origin + CARD_W > pan && origin < pan + CARD_W;
+                index < self.layout.pane_count() && origin + CARD_W > at && origin < at + CARD_W;
             busy |= pane.set_hidden(!shown);
             if !shown {
                 continue;
@@ -921,12 +924,12 @@ impl Picker {
         };
         self.painted_at = Some(Instant::now());
         surface.draw(|canvas| {
-            canvas.clear(skia_safe::Color::TRANSPARENT);
+            canvas.clear(otto_kit::skia::Color::TRANSPARENT);
         });
         if let Some(card) = self.card.as_ref() {
             let base = card.base_surface();
             card.draw(|canvas| {
-                canvas.clear(skia_safe::Color::TRANSPARENT);
+                canvas.clear(otto_kit::skia::Color::TRANSPARENT);
                 base.render_layer_node(canvas);
             });
         }
@@ -983,7 +986,7 @@ impl ScrollContent for PaneCells<'_> {
         self.revision
     }
 
-    fn paint(&self, canvas: &skia_safe::Canvas, band: Rect) {
+    fn paint(&self, canvas: &otto_kit::skia::Canvas, band: Rect) {
         self.palette
             .paint_cells(canvas, band, self.cells, self.layout, self.pane);
     }
@@ -1024,8 +1027,8 @@ enum Curve {
 /// launcher's floor, for the same reason: small things on a busy desktop.
 const CARD_MIN_ALPHA: u8 = 0xD8;
 
-fn at_least_opaque(colour: skia_safe::Color, min_alpha: u8) -> skia_safe::Color {
-    skia_safe::Color::from_argb(
+fn at_least_opaque(colour: otto_kit::skia::Color, min_alpha: u8) -> otto_kit::skia::Color {
+    otto_kit::skia::Color::from_argb(
         colour.a().max(min_alpha),
         colour.r(),
         colour.g(),
@@ -1038,7 +1041,7 @@ fn apply_card_colour(card: &SubsurfaceSurface) {
         tracing::warn!("no otto-surface-style; the card will not be frosted");
         return;
     };
-    let colour = skia_safe::Color4f::from(otto_kit::frosting::material(at_least_opaque(
+    let colour = otto_kit::skia::Color4f::from(otto_kit::frosting::material(at_least_opaque(
         AppContext::current_theme().material_popup,
         CARD_MIN_ALPHA,
     )));
@@ -1569,6 +1572,14 @@ impl App for Picker {
         // a stalled vertical gesture is released here — so neither can leave
         // the picker painting for ever.
         self.pan.tick(now);
+        // A swipe leaves the selection alone while it runs; once it rests on
+        // another pane, the selection moves into it.
+        if !self.pan.is_busy() && !self.cells.is_empty() {
+            let selected = self
+                .layout
+                .selection_on_pane(self.selected, self.current_pane());
+            self.select(selected);
+        }
         // The tab marker is the card's: it moves only when the pane does.
         if self.current_pane() != self.shown_pane {
             self.shown_pane = self.current_pane();

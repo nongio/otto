@@ -19,41 +19,12 @@ use zbus::{interface, ObjectServer};
 
 use crate::otto_client::file_picker::{WireChoice, WireFilter, WireRequest};
 use crate::otto_client::OttoClient;
+use crate::portal::Request;
 
 /// Mode values of the picker's wire contract.
 const MODE_OPEN: u32 = 0;
 const MODE_SAVE: u32 = 1;
 const MODE_SAVE_FILES: u32 = 2;
-
-/// The request object the frontend calls `Close` on when the requesting
-/// application withdraws — because it exited, or because the user closed the
-/// window that asked.
-///
-/// Unlike the portal's shared [`Request`](crate::portal::Request), which only
-/// cancels the pending call, this one forwards: without it a dialog whose
-/// application has gone stays on screen until somebody dismisses it by hand.
-struct FileChooserRequest {
-    client: OttoClient,
-    handle: String,
-}
-
-#[interface(name = "org.freedesktop.impl.portal.Request")]
-impl FileChooserRequest {
-    async fn close(&self) {
-        info!(handle = %self.handle, "FileChooser request withdrawn");
-        match self.client.file_picker_proxy().await {
-            // Activating the picker just to tell it to close a request it
-            // never received would be absurd, but the proxy is cheap and the
-            // call is a no-op against an unknown handle.
-            Ok(proxy) => {
-                if let Err(err) = proxy.close(&self.handle).await {
-                    warn!(?err, handle = %self.handle, "withdrawing the request failed");
-                }
-            }
-            Err(err) => warn!(?err, "file picker unreachable while withdrawing"),
-        }
-    }
-}
 
 pub struct FileChooserPortal {
     client: OttoClient,
@@ -76,34 +47,31 @@ impl FileChooserPortal {
         request: WireRequest,
     ) -> (u32, HashMap<String, OwnedValue>) {
         let handle = request.1.clone();
-
-        // Exported before the call, removed after it: the window is only
-        // withdrawable while it is up.
-        let withdrawable = object_server
-            .at(
-                path.clone(),
-                FileChooserRequest {
-                    client: self.client.clone(),
-                    handle: handle.clone(),
-                },
-            )
-            .await
-            .unwrap_or_else(|err| {
-                warn!(?err, %handle, "could not export the request object");
-                false
-            });
-
-        let result = self.present_inner(request).await;
-
-        if withdrawable {
-            if let Err(err) = object_server
-                .remove::<FileChooserRequest, _>(path.clone())
-                .await
-            {
-                warn!(?err, %handle, "could not remove the request object");
+        match Request::serve(object_server, path, self.present_inner(request)).await {
+            Some(result) => result,
+            None => {
+                // The frontend closed the request: the requesting application
+                // withdrew, because it exited or the window that asked was
+                // closed. Without forwarding it the picker's window stays up
+                // until somebody dismisses it by hand.
+                info!(%handle, "FileChooser request withdrawn");
+                self.withdraw(&handle).await;
+                (2, HashMap::new())
             }
         }
-        result
+    }
+
+    /// Tell the picker to take down the window for `handle`. A no-op against
+    /// a handle it does not know.
+    async fn withdraw(&self, handle: &str) {
+        match self.client.file_picker_proxy().await {
+            Ok(proxy) => {
+                if let Err(err) = proxy.close(handle).await {
+                    warn!(?err, %handle, "withdrawing the request failed");
+                }
+            }
+            Err(err) => warn!(?err, "file picker unreachable while withdrawing"),
+        }
     }
 
     async fn present_inner(&self, request: WireRequest) -> (u32, HashMap<String, OwnedValue>) {
@@ -240,7 +208,7 @@ fn build_request(
         string_opt(&options, "current_name").unwrap_or_default(),
         path_opt(&options, "current_folder").unwrap_or_default(),
         path_opt(&options, "current_file").unwrap_or_default(),
-        strings_opt(&options, "files"),
+        files_opt(&options, "files"),
         filters_opt(&options, "filters"),
         // `current_filter` arrives as a whole filter; only its label
         // identifies it.
@@ -275,11 +243,28 @@ fn bool_opt(options: &HashMap<String, OwnedValue>, key: &str) -> Option<bool> {
     options.get(key).and_then(|v| bool::try_from(v).ok())
 }
 
-fn strings_opt(options: &HashMap<String, OwnedValue>, key: &str) -> Vec<String> {
-    options
+/// The save-multiple `files` option, which the portal sends as `aay`: one
+/// NUL-terminated byte string per name, like a path option.
+///
+/// Each trailing NUL is stripped. One name that is not UTF-8 empties the whole
+/// list rather than shortening it: the picker then refuses the request as
+/// malformed, where a list missing a name would have the application believe
+/// a file was written that was not.
+fn files_opt(options: &HashMap<String, OwnedValue>, key: &str) -> Vec<String> {
+    let Some(names) = options
         .get(key)
         .and_then(|v| v.try_clone().ok())
-        .and_then(|v| Vec::<String>::try_from(v).ok())
+        .and_then(|v| Vec::<Vec<u8>>::try_from(v).ok())
+    else {
+        return Vec::new();
+    };
+    names
+        .into_iter()
+        .map(|bytes| {
+            let bytes = bytes.strip_suffix(&[0]).unwrap_or(&bytes);
+            String::from_utf8(bytes.to_vec()).ok()
+        })
+        .collect::<Option<Vec<_>>>()
         .unwrap_or_default()
 }
 
@@ -360,6 +345,29 @@ mod tests {
             Value::from(b"/tmp/\xff\0".to_vec()),
         )]);
         assert!(path_opt(&opts, "current_folder").is_none());
+    }
+
+    #[test]
+    fn the_files_to_save_arrive_as_byte_strings() {
+        let files: Vec<Vec<u8>> = vec![b"a.txt\0".to_vec(), b"b c.png\0".to_vec()];
+        let value = Value::from(files);
+        assert_eq!(value.value_signature().to_string(), "aay");
+        let request = build_request(
+            MODE_SAVE_FILES,
+            OwnedObjectPath::try_from("/org/freedesktop/portal/desktop/request/x/1").unwrap(),
+            String::new(),
+            String::new(),
+            String::new(),
+            options(vec![("files", value)]),
+        );
+        assert_eq!(request.12, vec!["a.txt".to_string(), "b c.png".to_string()]);
+    }
+
+    #[test]
+    fn one_non_utf8_name_empties_the_files_to_save() {
+        let files: Vec<Vec<u8>> = vec![b"a.txt\0".to_vec(), b"\xff\0".to_vec()];
+        let opts = options(vec![("files", Value::from(files))]);
+        assert!(files_opt(&opts, "files").is_empty());
     }
 
     #[test]

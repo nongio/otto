@@ -8,7 +8,6 @@ use otto_agents::dialog::Islands;
 use otto_agents::server::Listen;
 use otto_agents::store::Store;
 use otto_agents::{Server, cli, client, config, facade};
-use tracing_subscriber::EnvFilter;
 
 #[derive(Parser)]
 #[command(version, about = "Otto's agent service, over the Agent Host Protocol")]
@@ -187,13 +186,9 @@ async fn main() -> anyhow::Result<()> {
     // Every subcommand, not just `serve`: a `plugins install` that cannot read
     // something says so through `tracing` like everything else, and `RUST_LOG`
     // is how anyone would think to ask for it.
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
-        )
-        // Standard output is `otto-agents acp`'s protocol stream.
-        .with_writer(std::io::stderr)
-        .init();
+    // Logs go to stderr: standard output is `otto-agents acp`'s protocol
+    // stream.
+    otto_foundations::logging::init("info");
     match command {
         Command::Serve(args) => serve(args).await,
         Command::Sessions { url } => cli::list_sessions(&url).await,

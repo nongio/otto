@@ -104,7 +104,7 @@ impl OverflowSurface {
         let size = self.overlay.dimensions();
         if self.ground != Some(size) {
             self.overlay.draw(|canvas| {
-                canvas.clear(skia_safe::Color::TRANSPARENT);
+                canvas.clear(otto_kit::skia::Color::TRANSPARENT);
             });
             self.ground = Some(size);
         }
@@ -274,7 +274,7 @@ impl FilesWindow {
             style.set_opacity(shown.opacity() as f64);
         }
         let paint = card.paint(key, |canvas| {
-            canvas.clear(skia_safe::Color::TRANSPARENT);
+            canvas.clear(otto_kit::skia::Color::TRANSPARENT);
             canvas.save();
             canvas.scale((scale, scale));
             canvas.translate((-resting.left, -resting.top));
@@ -399,7 +399,7 @@ impl FilesWindow {
 /// Paint the panel at rest in the desk's coordinates: its ground, its
 /// items, its bar, and a rename's field when one of its items is being
 /// renamed.
-fn paint_panel(browser: &mut Browser, canvas: &skia_safe::Canvas, shown: OverflowShown) {
+fn paint_panel(browser: &mut Browser, canvas: &otto_kit::skia::Canvas, shown: OverflowShown) {
     let theme = browser.theme();
     let title = browser.title();
     if let Some(scroll) = browser.overflow_scroll() {

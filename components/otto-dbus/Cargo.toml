@@ -5,7 +5,7 @@ authors.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Typed D-Bus client proxies for Otto's own org.otto.* interfaces."
+description = "Typed D-Bus client proxies for every interface Otto calls."
 
 [dependencies]
 zbus.workspace = true

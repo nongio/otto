@@ -18,8 +18,9 @@ use std::time::Duration;
 use otto_kit::AppContext;
 
 use futures_util::StreamExt;
+use otto_kit::dbus::upower::UPowerDeviceProxy;
 use zbus::zvariant::OwnedValue;
-use zbus::{proxy, Connection};
+use zbus::Connection;
 
 use crate::config::{battery_config, ProfileEntry};
 
@@ -245,29 +246,6 @@ fn available_governors() -> Vec<String> {
 // ---------------------------------------------------------------------------
 // UPower
 // ---------------------------------------------------------------------------
-
-/// The aggregate device: one battery's worth of numbers however many cells
-/// the machine actually has, and the only device present on a desktop.
-#[proxy(
-    interface = "org.freedesktop.UPower.Device",
-    default_service = "org.freedesktop.UPower",
-    default_path = "/org/freedesktop/UPower/devices/DisplayDevice"
-)]
-trait UPowerDevice {
-    #[zbus(property)]
-    fn percentage(&self) -> zbus::Result<f64>;
-    #[zbus(property)]
-    fn state(&self) -> zbus::Result<u32>;
-    #[zbus(property)]
-    fn time_to_empty(&self) -> zbus::Result<i64>;
-    #[zbus(property)]
-    fn time_to_full(&self) -> zbus::Result<i64>;
-    #[zbus(property)]
-    fn is_present(&self) -> zbus::Result<bool>;
-    /// 2 is a battery; a desktop's DisplayDevice reports 0 (unknown).
-    #[zbus(property, name = "Type")]
-    fn device_type(&self) -> zbus::Result<u32>;
-}
 
 async fn read_upower(proxy: &UPowerDeviceProxy<'_>) -> Option<Battery> {
     let device_type = proxy.device_type().await.ok()?;

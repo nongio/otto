@@ -5,7 +5,7 @@ The password panel Otto shows when it needs to know who is at the keyboard: the 
 - **Layer:** kit. Used by `otto-greeter`, `otto-lock` and `otto-authorize`.
 
 ## Dependencies
-- **Internal:** `otto-kit` for typography, theme colours, components, the Lottie player, i18n and the XDG config paths.
+- **Internal:** `otto-kit` for typography, theme colours, components, the Lottie player, i18n, the XDG config paths and the logind proxy (`otto_kit::dbus::login1`).
 - **External:** `laye-rs` and `taffy` lay out the panel; Skia (with `svg` and `skottie`) draws it. libpam only with the `pam` feature, off by default so the greeter does not link it. logind on the system bus through `zbus` for suspend, restart and shut down (polkit decides). `zeroize` wipes typed secrets. It reads `/etc/passwd`, the usual avatar locations, and Otto's `config.toml` for wallpaper, colours and font.
 
 ## Develop

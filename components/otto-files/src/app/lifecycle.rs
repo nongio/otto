@@ -27,7 +27,7 @@ impl FilesWindow {
         // header and the content area each carry their own material, and two
         // of the three are translucent so the compositor's blur reads through
         // them. Anything painted here would sit between that blur and them.
-        window.set_background(skia_safe::Color::TRANSPARENT);
+        window.set_background(otto_kit::skia::Color::TRANSPARENT);
 
         // Name the window after its desktop entry, so the dock and the app
         // switcher find `otto-files.desktop` — and its file-manager icon —
@@ -754,6 +754,12 @@ impl FilesWindow {
             .is_some_and(|main| main.id() == surface.id());
         if !on_peek && !on_window {
             return;
+        }
+        // No key is held for us once the keyboard is elsewhere. A modifier
+        // still down as focus left is never released to us, and would
+        // otherwise turn the next plain click into a Ctrl+click.
+        if on_window {
+            *self.modifiers.lock().unwrap() = Modifiers::default();
         }
         // A panel that is nothing but a place to type has no reason to stay up
         // once the typing would land elsewhere.

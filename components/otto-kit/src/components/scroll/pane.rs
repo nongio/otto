@@ -144,7 +144,7 @@ impl ScrollPane {
     ///
     /// A pane nested in a [`Self::container`] crops itself to what the
     /// container shows: no compositor clips a subsurface to its parent. Hand
-    /// it the container's [`Self::visible`] after each update. Returns
+    /// it the container's [`Self::shown`] after each update. Returns
     /// whether that changed anything.
     pub fn set_clip_rect(&mut self, rect: Option<Rect>) -> bool {
         self.surfaces.set_clip_rect(rect)
@@ -189,6 +189,15 @@ impl ScrollPane {
             Axis::Vertical => Rect::from_xywh(0.0, offset, w, h),
             Axis::Horizontal => Rect::from_xywh(offset, 0.0, w, h),
         }
+    }
+
+    /// The part of a [`Self::container`]'s content on screen, in content
+    /// coordinates: where its band stands, which trails [`Self::visible`]
+    /// while a move waits for the last one to be presented. What panes inside
+    /// it crop to through [`Self::set_clip_rect`]. `None` until the band is
+    /// placed, or while nothing of it shows.
+    pub fn shown(&self) -> Option<Rect> {
+        self.surfaces.shown_content()
     }
 
     /// Whether `point`, in the parent's coordinates, is over the pane.

@@ -4,10 +4,11 @@ use std::future::Future;
 use std::sync::Arc;
 
 use tokio::sync::Notify;
-use tracing::info;
+use tracing::{info, warn};
 use zbus::fdo;
 use zbus::interface;
 use zbus::zvariant::OwnedObjectPath;
+use zbus::ObjectServer;
 
 /// Represents a pending portal request.
 ///
@@ -33,6 +34,38 @@ impl Request {
     /// The handle the pending method waits on.
     pub fn cancellation(&self) -> Cancellation {
         self.cancel.clone()
+    }
+
+    /// Run `work` for the request at `path`, with the request object exported
+    /// there for as long as it runs: `None` when the frontend closes the
+    /// request first, and `work` is dropped where it stood.
+    ///
+    /// Whatever `work` has put up on screen must come down when it is
+    /// dropped; the dialog helpers in `otto_client` withdraw theirs.
+    ///
+    /// A request that cannot be exported still runs, only without a way to
+    /// close it.
+    pub async fn serve<R>(
+        object_server: &ObjectServer,
+        path: &OwnedObjectPath,
+        work: impl Future<Output = R>,
+    ) -> Option<R> {
+        let request = Self::new(path.clone());
+        let cancellation = request.cancellation();
+        let exported = object_server
+            .at(path.clone(), request)
+            .await
+            .unwrap_or_else(|err| {
+                warn!(?err, request = %path, "could not export the request object");
+                false
+            });
+        let result = cancellation.run(work).await;
+        if exported {
+            if let Err(err) = object_server.remove::<Self, _>(path).await {
+                warn!(?err, request = %path, "could not remove the request object");
+            }
+        }
+        result
     }
 }
 

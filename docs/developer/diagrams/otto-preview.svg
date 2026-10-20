@@ -1,0 +1,87 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 316" width="760" height="316" role="img" aria-label="otto-preview (Studio): later starts and the agent's MCP server reach the running instance over org.otto.Preview1; the window draws a Peek session, PDF edits go through the edit queue to otto-pdf, and the chat talks to otto-agents">
+  <style>
+    text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
+    .box  { fill: #f6f8fa; stroke: #8b949e; stroke-width: 1.4; }
+    .acc  { fill: #ddf4ff; stroke: #218bff; stroke-width: 1.4; }
+    .grp  { fill: none; stroke: #8b949e; stroke-width: 1.2; stroke-dasharray: 5 4; }
+    .t    { fill: #1f2328; font-size: 13px; }
+    .tb   { fill: #1f2328; font-size: 13px; font-weight: 600; }
+    .tm   { fill: #656d76; font-size: 11px; }
+    .ln   { stroke: #8b949e; stroke-width: 1.4; fill: none; marker-end: url(#ah); }
+    @media (prefers-color-scheme: dark) {
+      .box { fill: #161b22; stroke: #6e7681; }
+      .acc { fill: #10243b; stroke: #388bfd; }
+      .grp { stroke: #6e7681; }
+      .t, .tb { fill: #e6edf3; }
+      .tm  { fill: #9198a1; }
+      .ln  { stroke: #8b949e; }
+    }
+  </style>
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#8b949e"/>
+    </marker>
+  </defs>
+
+
+  <text class="tb" x="16" y="28">Callers</text>
+  <text class="tb" x="216" y="28">otto-preview process (Studio)</text>
+  <text class="tb" x="576" y="28">Around it</text>
+  <rect class="grp" x="206" y="40" width="346" height="262" rx="10"/>
+
+  <rect class="box" x="16" y="56" width="170" height="44" rx="6"/>
+  <text class="t" x="28" y="74">a later start</text>
+  <text class="tm" x="28" y="90">otto-preview FILE</text>
+  <rect class="box" x="16" y="118" width="170" height="44" rx="6"/>
+  <text class="t" x="28" y="136">otto-preview --mcp</text>
+  <text class="tm" x="28" y="152">an agent's tools, stdio</text>
+  <rect class="box" x="16" y="232" width="170" height="44" rx="6"/>
+  <text class="t" x="28" y="250">otto-agents</text>
+  <text class="tm" x="28" y="266">sessions, starts the agent</text>
+  <path class="ln" d="M101 232 V164"/>
+
+  <rect class="acc" x="222" y="56" width="150" height="56" rx="6"/>
+  <text class="tb" x="234" y="78">instance</text>
+  <text class="tm" x="234" y="96">org.otto.Preview1</text>
+  <path class="ln" d="M186 78 L220 80"/>
+  <path class="ln" d="M186 140 L220 100"/>
+
+  <rect class="box" x="222" y="230" width="150" height="48" rx="6"/>
+  <text class="t" x="234" y="250">chat</text>
+  <text class="tm" x="234" y="267">otto-agents-kit</text>
+  <path class="ln" style="marker-start: url(#ah)" d="M188 254 H220"/>
+
+  <rect class="acc" x="392" y="56" width="146" height="64" rx="6"/>
+  <text class="tb" x="404" y="78">window</text>
+  <text class="tm" x="404" y="96">chrome, marks,</text>
+  <text class="tm" x="404" y="111">Peek Session</text>
+  <path class="ln" d="M372 84 H390"/>
+
+  <rect class="box" x="392" y="152" width="146" height="48" rx="6"/>
+  <text class="t" x="404" y="172">edit queue</text>
+  <text class="tm" x="404" y="189">one edit at a time</text>
+  <path class="ln" d="M465 120 V150"/>
+
+  <rect class="box" x="392" y="230" width="146" height="48" rx="6"/>
+  <text class="t" x="404" y="250">otto-pdf</text>
+  <text class="tm" x="404" y="267">PDFium thread</text>
+  <path class="ln" d="M465 200 V228"/>
+
+  <rect class="box" x="576" y="56" width="170" height="44" rx="6"/>
+  <text class="t" x="588" y="74">compositor</text>
+  <text class="tm" x="588" y="90">xdg-shell, activation</text>
+  <rect class="box" x="576" y="122" width="170" height="44" rx="6"/>
+  <text class="t" x="588" y="140">decode worker</text>
+  <text class="tm" x="588" y="156">otto-peek, sandboxed</text>
+  <rect class="box" x="576" y="188" width="170" height="44" rx="6"/>
+  <text class="t" x="588" y="206">portal FileChooser</text>
+  <text class="tm" x="588" y="222">open, Save As</text>
+  <rect class="box" x="576" y="254" width="170" height="44" rx="6"/>
+  <text class="t" x="588" y="272">the file</text>
+  <text class="tm" x="588" y="288">watched, saved over</text>
+
+  <path class="ln" d="M538 76 H574"/>
+  <path class="ln" d="M538 96 L574 140"/>
+  <path class="ln" d="M538 114 L574 204"/>
+  <path class="ln" d="M538 262 L574 274"/>
+</svg>

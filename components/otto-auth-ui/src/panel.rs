@@ -23,11 +23,11 @@ use layers::prelude::*;
 use layers::types::{BlendMode, Color as LayerColor, Point as LayerPoint, Size as LayerSize};
 use otto_kit::components::avatar;
 use otto_kit::lottie::LottiePlayer;
-use otto_kit::typography::get_font_with_fallback;
-use skia_safe::{
+use otto_kit::skia::{
     canvas::SrcRectConstraint, Canvas, Color, Color4f, Data, Font, FontStyle, Image, Paint,
     PaintStyle, Point, RRect, Rect, SamplingOptions,
 };
+use otto_kit::typography::get_font_with_fallback;
 
 use crate::{Appearance, User};
 
@@ -1174,7 +1174,7 @@ impl Panel {
         if self.dialog
             && self
                 .cancel_hitbox
-                .is_some_and(|rect| skia_safe::Contains::contains(&rect, point))
+                .is_some_and(|rect| otto_kit::skia::Contains::contains(&rect, point))
         {
             return Some(Action::Cancel);
         }
@@ -1183,19 +1183,19 @@ impl Panel {
         if self.password_offered
             && self
                 .password_hitbox
-                .is_some_and(|rect| skia_safe::Contains::contains(&rect, point))
+                .is_some_and(|rect| otto_kit::skia::Contains::contains(&rect, point))
         {
             return Some(Action::UsePassword);
         }
         if self
             .session_hitbox
-            .is_some_and(|rect| skia_safe::Contains::contains(&rect, point))
+            .is_some_and(|rect| otto_kit::skia::Contains::contains(&rect, point))
         {
             return Some(Action::CycleSession);
         }
         self.power_hitboxes
             .iter()
-            .find(|(_, rect)| skia_safe::Contains::contains(rect, point))
+            .find(|(_, rect)| otto_kit::skia::Contains::contains(rect, point))
             .map(|(action, _)| Action::Power(*action))
     }
 
@@ -1230,7 +1230,7 @@ fn draw_wallpaper(
                     canvas,
                     image,
                     layout,
-                    skia_safe::Color4f::from(background),
+                    otto_kit::skia::Color4f::from(background),
                     Rect::from_wh(width, height),
                 );
                 // Wallpapers are not chosen for text contrast, so darken the
@@ -1243,14 +1243,14 @@ fn draw_wallpaper(
                 // No wallpaper: a vertical wash from the configured background
                 // colour, so the card still has something to sit against.
                 let mut paint = Paint::default();
-                paint.set_shader(skia_safe::gradient_shader::linear(
+                paint.set_shader(otto_kit::skia::gradient_shader::linear(
                     (Point::new(0.0, 0.0), Point::new(0.0, height)),
-                    skia_safe::gradient_shader::GradientShaderColors::Colors(&[
+                    otto_kit::skia::gradient_shader::GradientShaderColors::Colors(&[
                         lighten(background, 0.18),
                         darken(background, 0.45),
                     ]),
                     None,
-                    skia_safe::TileMode::Clamp,
+                    otto_kit::skia::TileMode::Clamp,
                     None,
                     None,
                 ));
@@ -1305,14 +1305,14 @@ fn draw_avatar(
                 }
                 None => {
                     let mut paint = Paint::default();
-                    paint.set_shader(skia_safe::gradient_shader::linear(
+                    paint.set_shader(otto_kit::skia::gradient_shader::linear(
                         (Point::new(0.0, 0.0), Point::new(w, h)),
-                        skia_safe::gradient_shader::GradientShaderColors::Colors(&[
+                        otto_kit::skia::gradient_shader::GradientShaderColors::Colors(&[
                             lighten(accent, 0.25),
                             darken(accent, 0.25),
                         ]),
                         None,
-                        skia_safe::TileMode::Clamp,
+                        otto_kit::skia::TileMode::Clamp,
                         None,
                         None,
                     ));
@@ -1618,7 +1618,7 @@ fn draw_power_icon(action: PowerAction) -> impl Fn(&Canvas, f32, f32) -> Rect + 
         paint.set_anti_alias(true);
         paint.set_style(PaintStyle::Stroke);
         paint.set_stroke_width(1.6);
-        paint.set_stroke_cap(skia_safe::PaintCap::Round);
+        paint.set_stroke_cap(otto_kit::skia::PaintCap::Round);
         paint.set_color(Color::from_argb(235, 255, 255, 255));
 
         let radius = 7.5;
@@ -1644,7 +1644,7 @@ fn draw_power_icon(action: PowerAction) -> impl Fn(&Canvas, f32, f32) -> Rect + 
             PowerAction::Restart => {
                 canvas.draw_arc(arc, -70.0, 320.0, false, &paint);
                 let tip = Point::new(center.x + 1.0, center.y - radius);
-                let head = skia_safe::Path::polygon(
+                let head = otto_kit::skia::Path::polygon(
                     &[
                         tip,
                         Point::new(tip.x - 5.5, tip.y - 3.5),
@@ -1659,13 +1659,13 @@ fn draw_power_icon(action: PowerAction) -> impl Fn(&Canvas, f32, f32) -> Rect + 
             }
             // A crescent: one disc with a second cut out of it.
             PowerAction::Suspend => {
-                let moon = skia_safe::Path::circle(center, radius, None);
-                let bite = skia_safe::Path::circle(
+                let moon = otto_kit::skia::Path::circle(center, radius, None);
+                let bite = otto_kit::skia::Path::circle(
                     Point::new(center.x + 5.0, center.y - 4.5),
                     radius,
                     None,
                 );
-                if let Some(crescent) = moon.op(&bite, skia_safe::PathOp::Difference) {
+                if let Some(crescent) = moon.op(&bite, otto_kit::skia::PathOp::Difference) {
                     paint.set_style(PaintStyle::Fill);
                     canvas.draw_path(&crescent, &paint);
                 }
@@ -2169,19 +2169,19 @@ mod tests {
     /// scene — drawing the node on its own would need its transform rebuilt by
     /// hand, and the point is what actually reaches the screen.
     fn mark_pixels(panel: &Panel) -> Vec<u8> {
-        let mut scene = skia_safe::surfaces::raster_n32_premul((1440, 960)).unwrap();
+        let mut scene = otto_kit::skia::surfaces::raster_n32_premul((1440, 960)).unwrap();
         draw_scene(scene.canvas(), panel.engine.scene(), panel.root.id());
 
         let at = panel.fingerprint.render_bounds_transformed();
         let snapshot = scene.image_snapshot();
-        let mut crop = skia_safe::surfaces::raster_n32_premul((
+        let mut crop = otto_kit::skia::surfaces::raster_n32_premul((
             at.width().ceil() as i32,
             at.height().ceil() as i32,
         ))
         .unwrap();
         crop.canvas().draw_image_rect(
             &snapshot,
-            Some((&at, skia_safe::canvas::SrcRectConstraint::Fast)),
+            Some((&at, otto_kit::skia::canvas::SrcRectConstraint::Fast)),
             Rect::from_wh(at.width(), at.height()),
             &Paint::default(),
         );
@@ -2263,10 +2263,10 @@ mod tests {
 #[cfg(test)]
 mod status_wrap_tests {
     use super::{wrap_reason, wrap_status, STATUS_H, STATUS_LINE_H};
-    use skia_safe::{Font, Paint};
+    use otto_kit::skia::{Font, Paint};
 
     fn font() -> Font {
-        super::get_font_with_fallback("Inter", skia_safe::FontStyle::normal(), 13.0)
+        super::get_font_with_fallback("Inter", otto_kit::skia::FontStyle::normal(), 13.0)
     }
 
     /// A dialog's reason never runs off the card, even with a path in it.

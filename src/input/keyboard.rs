@@ -305,8 +305,19 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         &mut self,
         evt: B::KeyboardKeyEvent,
     ) -> KeyAction {
+        let before = self.seat.get_keyboard().map(|k| k.modifier_state());
         let action = self.key_to_action::<B>(evt);
         self.note_active_layout();
+        // The drag's action is settled when the target answers a motion, and
+        // a key pressed with the pointer held still sends none: Ctrl, then
+        // Shift, would leave the copy cursor up over a drop that is about to
+        // make a link. Sending the motion again has the target answer, and
+        // `choose_dnd_action` read the keys as they are now.
+        let after = self.seat.get_keyboard().map(|k| k.modifier_state());
+        if self.dnd_active && after != before {
+            tracing::debug!(?after, "modifiers changed mid-drag, re-sending motion");
+            self.restore_pointer_focus();
+        }
         action
     }
 
@@ -701,15 +712,23 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
     /// before we left stays latched forever and silently arms every
     /// modifier-gated interaction (window-drag tiling, shortcuts).
     pub fn release_all_keys(&mut self) {
+        // A held accent key would open its row while we are away. Its release
+        // already reached the application, so it is not sent twice.
+        let accent_held = self.reset_accent_hold();
         let keyboard = self.seat.get_keyboard().unwrap();
         for keycode in keyboard.pressed_keys() {
+            let filter = if Some(keycode) == accent_held {
+                FilterResult::Intercept(false)
+            } else {
+                FilterResult::Forward
+            };
             keyboard.input(
                 self,
                 keycode,
                 KeyState::Released,
                 SCOUNTER.next_serial(),
                 InputTime::from_millis(0),
-                |_, _, _| FilterResult::Forward::<bool>,
+                move |_, _, _| filter,
             );
         }
         self.current_modifiers = keyboard.modifier_state();

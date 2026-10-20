@@ -14,8 +14,8 @@
 
 use otto_kit::components::text_input::TextInput;
 use otto_kit::prelude::*;
+use otto_kit::skia::{BlurStyle, ClipOp, Contains, MaskFilter, PaintStyle, Point, RRect};
 use otto_kit::typography::styles;
-use skia_safe::{BlurStyle, ClipOp, Contains, MaskFilter, PaintStyle, Point, RRect};
 
 use crate::panes::account::SheetView;
 use crate::widgets;

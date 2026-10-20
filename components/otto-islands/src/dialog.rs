@@ -22,9 +22,9 @@
 
 use otto_kit::icons::named_icon_sized;
 use otto_kit::protocols::otto_surface_style_v1::{BlendMode, ClipMode, ContentsGravity};
+use otto_kit::skia::{Canvas, Color, Paint, RRect, Rect};
 use otto_kit::typography::TextStyle;
 use otto_kit::SubsurfaceSurface;
-use skia_safe::{Canvas, Color, Paint, RRect, Rect};
 use std::time::{Duration, Instant};
 
 use tokio::sync::oneshot;
@@ -639,7 +639,7 @@ pub fn split_option_label(label: &str) -> (&str, &str) {
 
 /// Wrap `text` to `max_w`, keeping the caller's own line breaks, over at most
 /// `max_lines` lines. Blank lines are kept as paragraph breaks.
-fn wrap(text: &str, f: &skia_safe::Font, max_w: f32, max_lines: usize) -> Vec<String> {
+fn wrap(text: &str, f: &otto_kit::skia::Font, max_w: f32, max_lines: usize) -> Vec<String> {
     let mut lines: Vec<String> = Vec::new();
     for paragraph in text.lines() {
         if lines.len() >= max_lines {
@@ -1003,7 +1003,7 @@ pub fn dialog_layout(view: &DialogView, page: usize) -> DialogLayout {
 
 /// The question a group asks is the panel's largest text when the title is
 /// only a handle; under a headline title it stays a supporting label.
-fn question_font(handle_title: bool) -> skia_safe::Font {
+fn question_font(handle_title: bool) -> otto_kit::skia::Font {
     if handle_title {
         font(QUESTION_SIZE, 600)
     } else {
@@ -1254,7 +1254,7 @@ pub fn reveal(layout: &DialogLayout, row: usize, scroll: f32) -> f32 {
 // Drawing
 // ---------------------------------------------------------------------------
 
-fn font(size: f32, weight: i32) -> skia_safe::Font {
+fn font(size: f32, weight: i32) -> otto_kit::skia::Font {
     TextStyle {
         family: "Inter",
         weight,
@@ -1268,7 +1268,7 @@ fn font(size: f32, weight: i32) -> skia_safe::Font {
 /// Button labels are arbitrary and can be longer than the button — without
 /// this they run off its rounded edge. Walks back by character (not byte) so
 /// multi-byte text can't be split mid-codepoint.
-fn ellipsize(text: &str, f: &skia_safe::Font, max_w: f32) -> String {
+fn ellipsize(text: &str, f: &otto_kit::skia::Font, max_w: f32) -> String {
     if f.measure_str(text, None).0 <= max_w {
         return text.to_string();
     }
@@ -1297,7 +1297,7 @@ fn draw_text_centered_clamped(
     text: &str,
     cx: f32,
     baseline_y: f32,
-    f: &skia_safe::Font,
+    f: &otto_kit::skia::Font,
     color: Color,
     max_w: f32,
 ) {
@@ -1309,7 +1309,7 @@ fn draw_text_centered(
     text: &str,
     cx: f32,
     baseline_y: f32,
-    f: &skia_safe::Font,
+    f: &otto_kit::skia::Font,
     color: Color,
 ) {
     let mut paint = Paint::default();
@@ -1326,7 +1326,7 @@ fn draw_lines_centered(
     cx: f32,
     top: f32,
     line_h: f32,
-    f: &skia_safe::Font,
+    f: &otto_kit::skia::Font,
     color: Color,
 ) {
     for (i, line) in lines.iter().enumerate() {
@@ -1342,7 +1342,7 @@ fn draw_lines(
     x: f32,
     top: f32,
     line_h: f32,
-    f: &skia_safe::Font,
+    f: &otto_kit::skia::Font,
     color: Color,
 ) {
     let mut paint = Paint::default();
@@ -1392,7 +1392,7 @@ pub fn draw_dialog(
 
     // Scrollable content: clipped to the viewport, shifted by the scroll.
     canvas.save();
-    canvas.clip_rect(layout.viewport, skia_safe::ClipOp::Intersect, true);
+    canvas.clip_rect(layout.viewport, otto_kit::skia::ClipOp::Intersect, true);
     canvas.translate((0.0, -scroll.clamp(0.0, layout.max_scroll())));
 
     // The mark, centred on its own line at the top.
@@ -1538,7 +1538,7 @@ pub fn draw_dialog(
             let mut ring = Paint::default();
             ring.set_anti_alias(true);
             ring.set_color(accent);
-            ring.set_style(skia_safe::paint::Style::Stroke);
+            ring.set_style(otto_kit::skia::paint::Style::Stroke);
             ring.set_stroke_width(2.0);
             let outer = rect.with_outset((FOCUS_RING_OUTSET, FOCUS_RING_OUTSET));
             let r = OPTION_RADIUS + FOCUS_RING_OUTSET;
@@ -1668,7 +1668,7 @@ pub fn draw_dialog(
             let mut ring = Paint::default();
             ring.set_anti_alias(true);
             ring.set_color(accent);
-            ring.set_style(skia_safe::paint::Style::Stroke);
+            ring.set_style(otto_kit::skia::paint::Style::Stroke);
             ring.set_stroke_width(2.0);
             let outer = rect.with_outset((FOCUS_RING_OUTSET, FOCUS_RING_OUTSET));
             let r = BTN_RADIUS + FOCUS_RING_OUTSET;
@@ -1706,19 +1706,19 @@ fn draw_check_row(
         let mut tick = Paint::default();
         tick.set_anti_alias(true);
         tick.set_color(Color::WHITE);
-        tick.set_style(skia_safe::paint::Style::Stroke);
+        tick.set_style(otto_kit::skia::paint::Style::Stroke);
         tick.set_stroke_width(2.0);
-        tick.set_stroke_cap(skia_safe::paint::Cap::Round);
-        tick.set_stroke_join(skia_safe::paint::Join::Round);
+        tick.set_stroke_cap(otto_kit::skia::paint::Cap::Round);
+        tick.set_stroke_join(otto_kit::skia::paint::Join::Round);
         let (x, y, s) = (the_box.left, the_box.top, size);
-        let mut path = skia_safe::PathBuilder::new();
+        let mut path = otto_kit::skia::PathBuilder::new();
         path.move_to((x + s * 0.26, y + s * 0.52));
         path.line_to((x + s * 0.44, y + s * 0.70));
         path.line_to((x + s * 0.76, y + s * 0.32));
         canvas.draw_path(&path.detach(), &tick);
     } else {
         paint.set_color(border);
-        paint.set_style(skia_safe::paint::Style::Stroke);
+        paint.set_style(otto_kit::skia::paint::Style::Stroke);
         paint.set_stroke_width(1.5);
         canvas.draw_rrect(
             RRect::new_rect_xy(the_box.with_inset((0.75, 0.75)), 5.0, 5.0),
@@ -1747,7 +1747,7 @@ fn draw_ring(canvas: &Canvas, rect: Rect, radius: f32, color: Color) {
     let mut ring = Paint::default();
     ring.set_anti_alias(true);
     ring.set_color(color);
-    ring.set_style(skia_safe::paint::Style::Stroke);
+    ring.set_style(otto_kit::skia::paint::Style::Stroke);
     ring.set_stroke_width(2.0);
     let outer = rect.with_outset((FOCUS_RING_OUTSET, FOCUS_RING_OUTSET));
     let r = radius + FOCUS_RING_OUTSET;
@@ -1779,13 +1779,13 @@ fn draw_icon(canvas: &Canvas, icon_name: &str, x: f32, y: f32, size: f32) {
         canvas.save();
         canvas.clip_rrect(
             RRect::new_rect_xy(dst, r, r),
-            skia_safe::ClipOp::Intersect,
+            otto_kit::skia::ClipOp::Intersect,
             true,
         );
         let src = Rect::from_xywh(0.0, 0.0, icon.width() as f32, icon.height() as f32);
         canvas.draw_image_rect(
             &icon,
-            Some((&src, skia_safe::canvas::SrcRectConstraint::Strict)),
+            Some((&src, otto_kit::skia::canvas::SrcRectConstraint::Strict)),
             dst,
             &Paint::default(),
         );
@@ -2547,7 +2547,7 @@ mod tests {
             (total_w * scale).ceil() as i32,
             (max_h * scale).ceil() as i32,
         );
-        let mut surface = skia_safe::surfaces::raster_n32_premul((w, h)).expect("surface");
+        let mut surface = otto_kit::skia::surfaces::raster_n32_premul((w, h)).expect("surface");
         let canvas = surface.canvas();
         canvas.clear(Color::from_rgb(0x60, 0x68, 0x70));
         canvas.scale((scale, scale));
@@ -2569,7 +2569,7 @@ mod tests {
         }
         let image = surface.image_snapshot();
         let data = image
-            .encode(None, skia_safe::EncodedImageFormat::PNG, None)
+            .encode(None, otto_kit::skia::EncodedImageFormat::PNG, None)
             .expect("png");
         std::fs::write(path, data.as_bytes()).expect("write png");
     }

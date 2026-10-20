@@ -62,7 +62,7 @@ All three backend methods carry the same leading arguments:
 | `session_handle` | `o` | IN | Object path of the `org.freedesktop.impl.portal.Session` this request applies to |
 | `app_id` | `s` | IN | Desktop application ID making the request |
 | `options` | `a{sv}` | IN | Method-specific vardict of options |
-| `response` | `u` | OUT | `0` success, `1` cancelled, `2` denied, `3` failure (higher values reserved) |
+| `response` | `u` | OUT | `0` success, `1` cancelled, `2` ended in any other way (denied or failed); no other value is defined |
 | `results` | `a{sv}` | OUT | Method-specific results |
 
 ### `CreateSession(handle, session_handle, app_id, options)`
