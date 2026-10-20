@@ -164,8 +164,9 @@ Two things fall out of that indirection:
   rect on equal footing. Unlike the return value, those also mark followers as
   needing paint.
 
-Buffer pixels are not physical pixels (a client painting at buffer scale 2 on
-a 1.5× output hands over a 60 px buffer for 45 physical px), so the closure
+Buffer pixels are not always physical pixels (a client painting at buffer
+scale 2 on a 1.5× output hands over a 60 px buffer for 45 physical px; otto-kit
+clients draw at the preferred scale and match them 1:1), so the closure
 also bridges that ratio, and honours the viewport crop (`phy_src`) rather than
 the raw texture size. Chrome, among others, reuses oversized GPU allocations.
 

@@ -241,7 +241,8 @@ markers. A miss is remembered only in memory, as `State::Absent`.
 
 **Sizes.** `Size::for_box(edge, scale)` rounds up to a 128/256/512/1024
 bucket. The box edge is 64 pt in grid and 18 pt in list and column views.
-`AppContext::scale_factor()` is an integer, so a fractional scale is truncated.
+`AppContext::scale_factor()` is an integer, the drawing surface's scale rounded
+up, so a fractional scale asks for the next whole one.
 
 **Back on the UI thread.** `Store::finish` bumps `epoch` when a picture lands,
 and the worker calls `request_wakeup`. The Miller pane picture keys include

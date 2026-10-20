@@ -187,12 +187,13 @@ snapping.
 - Multi-output positions are computed from each output's geometry scaled by its
   own fractional scale. This is exact for a single output and correct for
   side-by-side outputs at a shared scale; mixed-scale layouts are untested.
-- **A client's scale is latched at startup.** `AppContext::fractional_scale`
-  keeps the compositor's opening `preferred_scale` and ignores every later one,
-  because a surface fixes its buffer scale when it is created and never
-  re-rasters. Letting the geometry follow a live scale change would resize the
-  layer under pixels that stayed put. A scale change lands on the next client
-  restart, matching how the compositor-side chrome already treats it.
+- **A client's scale follows the surface.** Every otto-kit surface renders at
+  its own `preferred_scale` and re-rasters when it changes: a new scale resizes
+  the buffer on the surface's next draw, and `App::on_scale_changed` tells the
+  app to make that draw and to re-send what it gave the compositor in physical
+  pixels. Geometry for a surface comes from `AppContext::surface_scale`;
+  `AppContext::fractional_scale` answers for code with no surface in hand, and
+  on a mixed-scale setup is only the scale most recently moved to.
 
 ## Rationale
 

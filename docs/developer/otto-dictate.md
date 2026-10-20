@@ -32,10 +32,12 @@ otto-kit's `dictation` module, shared with the launcher's dictation.
 **One loop.** A calloop event loop on a plain `wayland-client` connection,
 without otto-kit's app runner. It binds `zwp_input_method_manager_v2` for
 the seat, `wl_compositor` and `wl_shm`, and draws the balloon in software into
-shared-memory buffers at scale 2. Three sources feed the loop: the Wayland
-queue, a channel from the toggle socket, and a channel of recognition
-results. A timer, faster while listening, steps the equaliser, redraws the
-balloon and sends the next recognition pass when one is due.
+shared-memory buffers at the scale the compositor prefers for the popup
+(`wp_fractional_scale_v1`, shown 1:1 through a `wp_viewport`; 2x until it
+says), using otto-kit's `surfaces::ScaledSurface`. Three sources feed the
+loop: the Wayland queue, a channel from the toggle socket, and a channel of
+recognition results. A timer, faster while listening, steps the equaliser,
+redraws the balloon and sends the next recognition pass when one is due.
 
 **The toggle.** `otto-dictate toggle` connects to `otto-dictate.sock` in the
 user's runtime directory and writes one line. A thread accepts connections
