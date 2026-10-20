@@ -66,22 +66,7 @@ deny = [
     # The apps under "debt" still name these crates themselves; each leaves
     # its list when it moves onto otto-kit, and -D unused-wrapper makes sure
     # it does. A new app never joins a list.
-    { crate = "skia-safe", wrappers = [
-        "otto-kit",
-        "laye-rs",
-        # debt
-        "otto-agents-kit",
-        "otto-auth-ui",
-        "otto-bar",
-        "otto-emoji",
-        "otto-files",
-        "otto-input-overlay",
-        "otto-islands",
-        "otto-launcher",
-        "otto-media-kit",
-        "otto-peek",
-        "otto-settings",
-    ], reason = "draw with otto_kit::skia" },
+    { crate = "skia-safe", wrappers = ["otto-kit", "laye-rs"], reason = "draw with otto_kit::skia" },
     { crate = "smithay-client-toolkit", wrappers = [
         "otto-kit",
         "winit-wayland",

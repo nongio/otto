@@ -13,10 +13,10 @@ use std::path::{Path, PathBuf};
 
 use otto_kit::components::attachments::{AttachmentList, Options as AttachmentOptions, HOVER_PAD};
 use otto_kit::preview::document;
+use otto_kit::skia::font_style::{Slant, Weight, Width};
+use otto_kit::skia::{Canvas, Color, Color4f, Font, FontStyle, Image, Paint, Rect};
 use otto_kit::theme::Theme;
 use otto_kit::typography::{draw_runs, get_font_with_fallback, measure_runs, styles};
-use skia_safe::font_style::{Slant, Weight, Width};
-use skia_safe::{Canvas, Color, Color4f, Font, FontStyle, Image, Paint, Rect};
 
 use crate::chat::transcript::Attachment;
 use crate::log::selection::Span;
@@ -107,7 +107,7 @@ impl LogPainter {
         }
         let decoded = std::fs::read(path)
             .ok()
-            .and_then(|bytes| Image::from_encoded(skia_safe::Data::new_copy(&bytes)))
+            .and_then(|bytes| Image::from_encoded(otto_kit::skia::Data::new_copy(&bytes)))
             .and_then(|image| image.make_raster_image(None, None));
         self.pictures
             .borrow_mut()
@@ -149,7 +149,7 @@ impl LogPainter {
     }
 
     /// Hand in the thumbnail of `path`, or that it has none.
-    pub fn set_thumbnail(&self, path: &std::path::Path, image: Option<skia_safe::Image>) {
+    pub fn set_thumbnail(&self, path: &std::path::Path, image: Option<otto_kit::skia::Image>) {
         self.attachments.borrow_mut().set_thumbnail(path, image);
     }
 
@@ -528,7 +528,7 @@ impl LogPainter {
                     // rather than drawn rounded: the picture's own edge pixels
                     // must not bleed past the corner.
                     canvas.clip_rrect(
-                        skia_safe::RRect::new_rect_xy(box_, radius, radius),
+                        otto_kit::skia::RRect::new_rect_xy(box_, radius, radius),
                         None,
                         true,
                     );
@@ -545,7 +545,7 @@ impl LogPainter {
                     // of the card still reads as a picture.
                     let mut edge = Paint::new(Color4f::from(theme.hairline), None);
                     edge.set_anti_alias(true);
-                    edge.set_style(skia_safe::paint::Style::Stroke);
+                    edge.set_style(otto_kit::skia::paint::Style::Stroke);
                     edge.set_stroke_width(1.0);
                     canvas.draw_round_rect(box_, radius, radius, &edge);
                 }
@@ -835,7 +835,7 @@ mod tests {
                 assert_eq!(&spans[caret.span].text, &span.text, "at width {width}");
             }
             // And it paints at that width, every band of it.
-            let mut surface = skia_safe::surfaces::raster_n32_premul((
+            let mut surface = otto_kit::skia::surfaces::raster_n32_premul((
                 (width + INSET * 2.0) as i32,
                 crate::log::length(lines).ceil() as i32 + 1,
             ))

@@ -24,8 +24,8 @@ use otto_kit::components::item_list::rows::{
 };
 use otto_kit::components::text_input::{TextInput, TextInputStyle};
 use otto_kit::prelude::*;
+use otto_kit::skia::{BlurStyle, Contains, MaskFilter, PaintStyle, Point, RRect};
 use otto_kit::typography::styles;
-use skia_safe::{BlurStyle, Contains, MaskFilter, PaintStyle, Point, RRect};
 
 use crate::glyphs;
 use crate::model::{Control, Pane};
@@ -628,7 +628,7 @@ pub fn paint_panel(
     canvas.draw_rrect(card, &hairline);
 
     canvas.save();
-    canvas.clip_rrect(card, skia_safe::ClipOp::Intersect, true);
+    canvas.clip_rrect(card, otto_kit::skia::ClipOp::Intersect, true);
 
     if search.results.is_empty() {
         let message = otto_kit::t_owned!("settings-sidebar-search-none", query = search.query());

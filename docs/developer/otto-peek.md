@@ -76,7 +76,7 @@ of `main`. Without it the worker would start a second copy of the host.
 
 otto-peek depends on `otto-kit` for the preview vocabulary and drawing,
 [otto-md-kit](otto-md-kit.md) for Markdown, `otto-media-kit` without its
-default features for playback, and `skia-safe` for image codecs and SVG.
+default features for playback; image codecs and SVG come from Skia, through `otto_kit::skia`.
 
 ## The `otto-peek` binary
 

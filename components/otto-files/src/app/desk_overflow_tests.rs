@@ -1,6 +1,6 @@
 use super::*;
 use crate::desk::{DeskConfig, Overflow};
-use skia_safe::Point;
+use otto_kit::skia::Point;
 
 /// A folder of `count` files, swept up on drop.
 struct Folder(PathBuf);

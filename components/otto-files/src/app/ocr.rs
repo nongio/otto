@@ -12,7 +12,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 
-use skia_safe::Rect;
+use otto_kit::skia::Rect;
 
 use super::*;
 

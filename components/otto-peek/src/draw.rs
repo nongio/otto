@@ -7,8 +7,8 @@
 
 use otto_kit::components::scroll::ScrollRenderer;
 use otto_kit::icons;
+use otto_kit::skia::{Canvas, Rect};
 use otto_kit::theme::Theme;
-use skia_safe::{Canvas, Rect};
 
 use crate::session::Session;
 

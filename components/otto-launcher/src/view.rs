@@ -31,8 +31,8 @@ use std::sync::Arc;
 use layers::prelude::*;
 use layers::types::{Color as LayerColor, Point as LayerPoint, Size as LayerSize};
 use otto_kit::components::text_input::TextInput;
+use otto_kit::skia::{Canvas, Color, Color4f, Font, FontStyle, Paint, Rect};
 use otto_kit::typography::{get_font_with_fallback, styles};
-use skia_safe::{Canvas, Color, Color4f, Font, FontStyle, Paint, Rect};
 
 use otto_agents_kit::item::Item;
 use otto_agents_kit::rows::{

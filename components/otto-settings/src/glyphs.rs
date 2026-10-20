@@ -5,7 +5,7 @@
 //! isn't installed: one stroke weight, one 16pt box, rounded caps.
 
 use otto_kit::prelude::*;
-use skia_safe::{paint::Cap, paint::Join, PaintStyle, PathBuilder, Point, RRect};
+use otto_kit::skia::{paint::Cap, paint::Join, PaintStyle, PathBuilder, Point, RRect};
 
 /// Draw `name` centred on (`cx`, `cy`) at `size` points.
 pub fn draw(canvas: &Canvas, name: &str, cx: f32, cy: f32, size: f32, color: Color) {
@@ -214,7 +214,11 @@ fn agent(canvas: &Canvas, paint: &Paint) {
 /// The Otto mark: two dots side by side, inside a rounded square.
 fn about(canvas: &Canvas, paint: &Paint) {
     canvas.draw_rrect(
-        RRect::new_rect_xy(skia_safe::Rect::from_xywh(-7.0, -7.0, 14.0, 14.0), 3.5, 3.5),
+        RRect::new_rect_xy(
+            otto_kit::skia::Rect::from_xywh(-7.0, -7.0, 14.0, 14.0),
+            3.5,
+            3.5,
+        ),
         paint,
     );
     let mut fill = paint.clone();
@@ -254,7 +258,7 @@ fn draw_solar(canvas: &Canvas, name: &str, cx: f32, cy: f32, size: f32, color: C
         return false;
     };
     let half = size / 2.0;
-    let dst = skia_safe::Rect::from_ltrb(cx - half, cy - half, cx + half, cy + half);
+    let dst = otto_kit::skia::Rect::from_ltrb(cx - half, cy - half, cx + half, cy + half);
     canvas.draw_image_rect(&image, None, dst, &Paint::default());
     true
 }

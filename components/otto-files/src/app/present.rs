@@ -479,7 +479,7 @@ impl FilesWindow {
         window.set_max_size(view::INFO_W as u32, view::INFO_H as u32);
         // The card paints its own ground, and the compositor rounds and
         // shadows the surface around it.
-        window.set_background(skia_safe::Color::TRANSPARENT);
+        window.set_background(otto_kit::skia::Color::TRANSPARENT);
         if let Some(surface) = window.surface() {
             // The window's own app_id: this is another window of the file
             // manager, not another application, and the dock and the app
@@ -563,7 +563,7 @@ impl FilesWindow {
         .ok()?;
         window.set_min_size(view::OPEN_WITH_W as u32, view::OPEN_WITH_H as u32);
         window.set_max_size(view::OPEN_WITH_W as u32, view::OPEN_WITH_H as u32);
-        window.set_background(skia_safe::Color::TRANSPARENT);
+        window.set_background(otto_kit::skia::Color::TRANSPARENT);
         if let Some(surface) = window.surface() {
             surface.xdg_window().set_app_id(app_id().to_string());
             // The chooser answers for the browser's selection, so it stays

@@ -169,7 +169,7 @@ impl Browser {
 
     /// The band as it should be drawn: window coordinates, or `None` when no
     /// band is out.
-    pub(super) fn marquee_band(&self) -> Option<skia_safe::Rect> {
+    pub(super) fn marquee_band(&self) -> Option<otto_kit::skia::Rect> {
         let marquee = self.marquee.as_ref()?;
         let scroll = self.columns.get(marquee.depth)?.scroll.offset();
         let mut band = marquee.rect();

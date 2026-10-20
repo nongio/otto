@@ -5,8 +5,8 @@
 //! Preview on its window's content, so it lives with the session both embed.
 
 use otto_kit::icons;
+use otto_kit::skia::{Canvas, Color, Paint, Point, Rect};
 use otto_kit::theme::Theme;
-use skia_safe::{Canvas, Color, Paint, Point, Rect};
 
 /// The badge that says the picture's text has been recognised and can be
 /// selected, in the panel's bottom-right corner.
@@ -89,9 +89,9 @@ fn draw_peek_badge(
         // Symbolic art recoloured to the theme's text tone, as the sidebar
         // does for its own glyphs.
         let mut tint = Paint::default();
-        tint.set_color_filter(skia_safe::color_filters::blend(
+        tint.set_color_filter(otto_kit::skia::color_filters::blend(
             fade(theme.text_secondary, opacity),
-            skia_safe::BlendMode::SrcIn,
+            otto_kit::skia::BlendMode::SrcIn,
         ));
         canvas.draw_image_rect(&image, None, dst, &tint);
     } else {
@@ -104,9 +104,9 @@ fn draw_peek_badge(
 fn draw_text_fallback(canvas: &Canvas, theme: &Theme, dst: Rect, centre: Point, opacity: f32) {
     let mut stroke = Paint::default();
     stroke.set_anti_alias(true);
-    stroke.set_style(skia_safe::paint::Style::Stroke);
+    stroke.set_style(otto_kit::skia::paint::Style::Stroke);
     stroke.set_stroke_width(1.5);
-    stroke.set_stroke_cap(skia_safe::PaintCap::Round);
+    stroke.set_stroke_cap(otto_kit::skia::PaintCap::Round);
     stroke.set_color(fade(theme.text_secondary, opacity));
     canvas.draw_line(
         (dst.left + 2.0, dst.top + 2.0),
@@ -153,16 +153,18 @@ mod tests {
     /// the badge's own square, which is all either state touches.
     fn badge_pixels(draw: impl FnOnce(&Canvas, &Theme, Rect)) -> Vec<u8> {
         let panel = Rect::from_wh(200.0, 200.0);
-        let mut surface =
-            skia_safe::surfaces::raster_n32_premul((panel.width() as i32, panel.height() as i32))
-                .unwrap();
-        surface.canvas().clear(skia_safe::Color::TRANSPARENT);
+        let mut surface = otto_kit::skia::surfaces::raster_n32_premul((
+            panel.width() as i32,
+            panel.height() as i32,
+        ))
+        .unwrap();
+        surface.canvas().clear(otto_kit::skia::Color::TRANSPARENT);
         let theme = Theme::light();
         draw(surface.canvas(), &theme, panel);
 
         let badge = badge_rect(panel);
         let image = surface.image_snapshot();
-        let info = skia_safe::ImageInfo::new_n32_premul(
+        let info = otto_kit::skia::ImageInfo::new_n32_premul(
             (badge.width() as i32, badge.height() as i32),
             None,
         );
@@ -173,7 +175,7 @@ mod tests {
             &mut out,
             row,
             (badge.left as i32, badge.top as i32),
-            skia_safe::image::CachingHint::Allow,
+            otto_kit::skia::image::CachingHint::Allow,
         ));
         out
     }

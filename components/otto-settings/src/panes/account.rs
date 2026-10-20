@@ -1349,33 +1349,33 @@ fn scratch_face(user: &str) -> Option<PathBuf> {
 fn write_face(source: &Path, face: &Path) -> Result<PathBuf, String> {
     let unreadable = || otto_kit::t!("settings-account-picture-unreadable").to_string();
     let bytes = std::fs::read(source).map_err(|_| unreadable())?;
-    let image =
-        skia_safe::Image::from_encoded(skia_safe::Data::new_copy(&bytes)).ok_or_else(unreadable)?;
+    let image = otto_kit::skia::Image::from_encoded(otto_kit::skia::Data::new_copy(&bytes))
+        .ok_or_else(unreadable)?;
 
     let side = image.width().min(image.height());
-    let crop = skia_safe::Rect::from_xywh(
+    let crop = otto_kit::skia::Rect::from_xywh(
         ((image.width() - side) / 2) as f32,
         ((image.height() - side) / 2) as f32,
         side as f32,
         side as f32,
     );
-    let mut surface =
-        skia_safe::surfaces::raster_n32_premul((PICTURE_PX, PICTURE_PX)).ok_or_else(unreadable)?;
-    let mut paint = skia_safe::Paint::default();
+    let mut surface = otto_kit::skia::surfaces::raster_n32_premul((PICTURE_PX, PICTURE_PX))
+        .ok_or_else(unreadable)?;
+    let mut paint = otto_kit::skia::Paint::default();
     paint.set_anti_alias(true);
     surface.canvas().draw_image_rect_with_sampling_options(
         &image,
-        Some((&crop, skia_safe::canvas::SrcRectConstraint::Fast)),
-        skia_safe::Rect::from_wh(PICTURE_PX as f32, PICTURE_PX as f32),
-        skia_safe::SamplingOptions::new(
-            skia_safe::FilterMode::Linear,
-            skia_safe::MipmapMode::Linear,
+        Some((&crop, otto_kit::skia::canvas::SrcRectConstraint::Fast)),
+        otto_kit::skia::Rect::from_wh(PICTURE_PX as f32, PICTURE_PX as f32),
+        otto_kit::skia::SamplingOptions::new(
+            otto_kit::skia::FilterMode::Linear,
+            otto_kit::skia::MipmapMode::Linear,
         ),
         &paint,
     );
     let png = surface
         .image_snapshot()
-        .encode(None, skia_safe::EncodedImageFormat::PNG, 100)
+        .encode(None, otto_kit::skia::EncodedImageFormat::PNG, 100)
         .ok_or_else(unreadable)?;
 
     // Written beside it and renamed over it, so a reader never finds half an

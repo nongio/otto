@@ -13,7 +13,7 @@ use std::time::SystemTime;
 use otto_kit::components::scroll::ScrollView;
 use otto_kit::filetype::{self, Kind};
 use otto_kit::fs::{copy_entry, first_free_name, move_entry, move_entry_replacing, unique_name};
-use skia_safe::Rect;
+use otto_kit::skia::Rect;
 
 /// One entry in a directory.
 ///

@@ -795,22 +795,22 @@ mod tests {
     }
 
     fn png(width: i32, height: i32) -> Vec<u8> {
-        let mut surface = skia_safe::surfaces::raster_n32_premul((width, height)).unwrap();
-        surface.canvas().clear(skia_safe::Color::RED);
+        let mut surface = otto_kit::skia::surfaces::raster_n32_premul((width, height)).unwrap();
+        surface.canvas().clear(otto_kit::skia::Color::RED);
         surface
             .image_snapshot()
-            .encode(None, skia_safe::EncodedImageFormat::PNG, None)
+            .encode(None, otto_kit::skia::EncodedImageFormat::PNG, None)
             .unwrap()
             .as_bytes()
             .to_vec()
     }
 
     fn jpeg(width: i32, height: i32) -> Vec<u8> {
-        let mut surface = skia_safe::surfaces::raster_n32_premul((width, height)).unwrap();
-        surface.canvas().clear(skia_safe::Color::BLUE);
+        let mut surface = otto_kit::skia::surfaces::raster_n32_premul((width, height)).unwrap();
+        surface.canvas().clear(otto_kit::skia::Color::BLUE);
         surface
             .image_snapshot()
-            .encode(None, skia_safe::EncodedImageFormat::JPEG, 80)
+            .encode(None, otto_kit::skia::EncodedImageFormat::JPEG, 80)
             .unwrap()
             .as_bytes()
             .to_vec()

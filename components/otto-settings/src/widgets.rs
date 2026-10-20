@@ -5,7 +5,7 @@
 //! before any of them is wired to the compositor.
 
 use otto_kit::prelude::*;
-use skia_safe::{BlurStyle, ClipOp, MaskFilter, PaintStyle, PathEffect, Point, RRect};
+use otto_kit::skia::{BlurStyle, ClipOp, MaskFilter, PaintStyle, PathEffect, Point, RRect};
 
 /// Trailing-edge control width, so labels can be laid out against it.
 pub const TOGGLE_W: f32 = 40.0;
@@ -211,10 +211,10 @@ pub fn checkbox(canvas: &Canvas, rect: Rect, checked: bool, theme: &Theme) {
     }
     canvas.draw_rrect(rrect, &fill(theme.accent));
     let mut tick = stroke(Color::WHITE, 2.0);
-    tick.set_stroke_cap(skia_safe::paint::Cap::Round);
-    tick.set_stroke_join(skia_safe::paint::Join::Round);
+    tick.set_stroke_cap(otto_kit::skia::paint::Cap::Round);
+    tick.set_stroke_join(otto_kit::skia::paint::Join::Round);
     let (x, y, s) = (rect.left, rect.top, rect.width());
-    let mut path = skia_safe::PathBuilder::new();
+    let mut path = otto_kit::skia::PathBuilder::new();
     path.move_to(Point::new(x + s * 0.26, y + s * 0.52));
     path.line_to(Point::new(x + s * 0.43, y + s * 0.69));
     path.line_to(Point::new(x + s * 0.75, y + s * 0.33));
@@ -353,7 +353,7 @@ const FILE_FIELD_W: f32 = 196.0;
 /// Pressed is one step further up the same fill scale the button already
 /// stands on, rather than a colour of its own: it then reads as pressed in
 /// both colour schemes, and against whatever the row sits on.
-fn button_fill(pressed: bool, theme: &Theme) -> skia_safe::Color {
+fn button_fill(pressed: bool, theme: &Theme) -> otto_kit::skia::Color {
     if pressed {
         theme.fill_secondary
     } else {
@@ -477,7 +477,7 @@ pub fn line_button(canvas: &Canvas, rect: Rect, plus: bool, pressed: bool, theme
     canvas.draw_rrect(rrect, &stroke(theme.fill_secondary, 1.0));
 
     let mut paint = stroke(theme.text_primary, 1.6);
-    paint.set_stroke_cap(skia_safe::paint::Cap::Round);
+    paint.set_stroke_cap(otto_kit::skia::paint::Cap::Round);
     let (cx, cy) = (rect.center_x(), rect.center_y());
     let arm = 5.0;
     canvas.draw_line(Point::new(cx - arm, cy), Point::new(cx + arm, cy), &paint);
@@ -502,7 +502,7 @@ pub fn record_button(canvas: &Canvas, rect: Rect, listening: bool, pressed: bool
                 1.5,
                 1.5,
             ),
-            &fill(skia_safe::Color::WHITE),
+            &fill(otto_kit::skia::Color::WHITE),
         );
     } else {
         canvas.draw_rrect(rrect, &fill(button_fill(pressed, theme)));
@@ -644,7 +644,7 @@ pub fn preview_remove(canvas: &Canvas, rect: Rect, pressed: bool) {
     );
 
     let mut cross = stroke(Color::WHITE, 1.6);
-    cross.set_stroke_cap(skia_safe::paint::Cap::Round);
+    cross.set_stroke_cap(otto_kit::skia::paint::Cap::Round);
     let arm = radius * 0.36;
     canvas.draw_line(
         Point::new(cx - arm, cy - arm),

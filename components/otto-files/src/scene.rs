@@ -26,9 +26,9 @@ use layers::types::{Color as LayerColor, Point as LayerPoint, Size as LayerSize}
 use otto_kit::components::scroll::RowLayout;
 use otto_kit::icons;
 use otto_kit::prelude::*;
+use otto_kit::skia::{Canvas, Color, Image, Paint, Point, Rect};
 use otto_kit::theme::Theme;
 use otto_kit::typography::styles;
-use skia_safe::{Canvas, Color, Image, Paint, Point, Rect};
 
 use crate::view::{self, Frame, PaneData, RunEnds, ViewMode};
 
@@ -220,7 +220,7 @@ impl Scene {
         // [`view::opaque`]. Where the compositor has no blur to offer at all,
         // the panels take a solid shade of their own rather than the white of
         // the content they frame.
-        let fill = |color: skia_safe::Color| {
+        let fill = |color: otto_kit::skia::Color| {
             paint_color(if f.blurred {
                 color
             } else if otto_kit::backdrop::blur_available() {
@@ -490,11 +490,11 @@ impl Row {
             paint.set_anti_alias(true);
             paint.set_color(self.detail_color);
             paint.set_stroke_width(1.4);
-            paint.set_style(skia_safe::paint::Style::Stroke);
-            paint.set_stroke_cap(skia_safe::paint::Cap::Round);
+            paint.set_style(otto_kit::skia::paint::Style::Stroke);
+            paint.set_stroke_cap(otto_kit::skia::paint::Cap::Round);
             let x = width - 18.0;
             let cy = rect.center_y();
-            let mut builder = skia_safe::PathBuilder::new();
+            let mut builder = otto_kit::skia::PathBuilder::new();
             builder.move_to(Point::new(x, cy - 3.5));
             builder.line_to(Point::new(x + 3.5, cy));
             builder.line_to(Point::new(x, cy + 3.5));
@@ -603,16 +603,16 @@ mod tests {
     use otto_kit::filetype::Kind;
 
     fn red_image(w: i32, h: i32) -> Image {
-        let info = skia_safe::ImageInfo::new(
+        let info = otto_kit::skia::ImageInfo::new(
             (w, h),
-            skia_safe::ColorType::RGBA8888,
-            skia_safe::AlphaType::Premul,
+            otto_kit::skia::ColorType::RGBA8888,
+            otto_kit::skia::AlphaType::Premul,
             None,
         );
         let pixels: Vec<u8> = (0..w * h).flat_map(|_| [255u8, 0, 0, 255]).collect();
-        skia_safe::images::raster_from_data(
+        otto_kit::skia::images::raster_from_data(
             &info,
-            skia_safe::Data::new_copy(&pixels),
+            otto_kit::skia::Data::new_copy(&pixels),
             w as usize * 4,
         )
         .expect("raster image")
@@ -743,14 +743,14 @@ mod tests {
 
         // And it must actually be painted: draw the row and look for red where
         // the icon box is.
-        let mut surface = skia_safe::surfaces::raster_n32_premul((240, 40)).unwrap();
-        surface.canvas().clear(skia_safe::Color::WHITE);
+        let mut surface = otto_kit::skia::surfaces::raster_n32_premul((240, 40)).unwrap();
+        surface.canvas().clear(otto_kit::skia::Color::WHITE);
         rows[0].draw(surface.canvas(), &theme, 240.0);
 
-        let info = skia_safe::ImageInfo::new(
+        let info = otto_kit::skia::ImageInfo::new(
             (1, 1),
-            skia_safe::ColorType::RGBA8888,
-            skia_safe::AlphaType::Unpremul,
+            otto_kit::skia::ColorType::RGBA8888,
+            otto_kit::skia::AlphaType::Unpremul,
             None,
         );
         let mut px = [0u8; 4];
@@ -761,7 +761,7 @@ mod tests {
             &mut px,
             4,
             (x, y),
-            skia_safe::image::CachingHint::Allow
+            otto_kit::skia::image::CachingHint::Allow
         ));
         assert!(
             px[0] > 200 && px[1] < 60 && px[2] < 60,

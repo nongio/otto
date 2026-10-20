@@ -10,7 +10,7 @@ use otto_kit::components::titlebar::{
 };
 use otto_kit::controls_side::ControlsSide;
 use otto_kit::prelude::*;
-use skia_safe::{ClipOp, Contains, PathEffect, Point, RRect};
+use otto_kit::skia::{ClipOp, Contains, PathEffect, Point, RRect};
 
 use crate::glyphs;
 use crate::model::{self, Control, Pane, Row};
@@ -845,9 +845,9 @@ struct PaneLayout<'a> {
 ///
 /// One entry per path chosen this session, which is bounded by how many times
 /// somebody opens the file picker; nothing here needs eviction.
-fn preview_image(path: &str) -> Option<skia_safe::Image> {
+fn preview_image(path: &str) -> Option<otto_kit::skia::Image> {
     thread_local! {
-        static CACHE: std::cell::RefCell<HashMap<String, Option<skia_safe::Image>>> =
+        static CACHE: std::cell::RefCell<HashMap<String, Option<otto_kit::skia::Image>>> =
             std::cell::RefCell::new(HashMap::new());
     }
 
@@ -867,9 +867,9 @@ fn preview_image(path: &str) -> Option<skia_safe::Image> {
 }
 
 /// Read `path` and decode it, scaled down to something a thumbnail needs.
-fn decode_preview(path: &str) -> Option<skia_safe::Image> {
+fn decode_preview(path: &str) -> Option<otto_kit::skia::Image> {
     let bytes = std::fs::read(path).ok()?;
-    let full = skia_safe::Image::from_encoded(skia_safe::Data::new_copy(&bytes))?;
+    let full = otto_kit::skia::Image::from_encoded(otto_kit::skia::Data::new_copy(&bytes))?;
 
     // Scaled to twice the drawn size, so the thumbnail is still sharp on a
     // 2x output without carrying the whole wallpaper around in memory.
@@ -882,8 +882,8 @@ fn decode_preview(path: &str) -> Option<skia_safe::Image> {
         (full.width() as f32 * scale).round() as i32,
         (full.height() as f32 * scale).round() as i32,
     );
-    let info = skia_safe::ImageInfo::new_n32_premul((w, h), None);
-    let mut surface = skia_safe::surfaces::raster(&info, None, None)?;
+    let info = otto_kit::skia::ImageInfo::new_n32_premul((w, h), None);
+    let mut surface = otto_kit::skia::surfaces::raster(&info, None, None)?;
     // A wallpaper is shrunk by a large factor here, which is exactly where
     // Skia's default nearest-neighbour sampling turns fine detail into
     // stair-steps and shimmer.
@@ -2228,7 +2228,7 @@ impl Settings {
                 );
                 let mut border = Paint::default();
                 border.set_anti_alias(true);
-                border.set_style(skia_safe::PaintStyle::Stroke);
+                border.set_style(otto_kit::skia::PaintStyle::Stroke);
                 border.set_stroke_width(1.0);
                 border.set_color(self.theme.fill_tertiary);
                 canvas.draw_rrect(rrect, &border);
@@ -2557,7 +2557,7 @@ impl Settings {
         // A hairline keeps a pale image from bleeding into the card behind it.
         let mut border = Paint::default();
         border.set_anti_alias(true);
-        border.set_style(skia_safe::PaintStyle::Stroke);
+        border.set_style(otto_kit::skia::PaintStyle::Stroke);
         border.set_stroke_width(1.0);
         border.set_color(self.theme.fill_secondary);
         canvas.draw_rrect(rrect, &border);
@@ -2647,7 +2647,7 @@ impl Settings {
         // reason: a white card on a white group needs an edge.
         let mut border = Paint::default();
         border.set_anti_alias(true);
-        border.set_style(skia_safe::PaintStyle::Stroke);
+        border.set_style(otto_kit::skia::PaintStyle::Stroke);
         border.set_stroke_width(1.0);
         border.set_color(self.theme.fill_secondary);
         canvas.draw_rrect(rrect, &border);
@@ -3149,8 +3149,8 @@ impl Settings {
         let mut shadow = Paint::default();
         shadow.set_anti_alias(true);
         shadow.set_color(self.theme.shadow);
-        shadow.set_mask_filter(skia_safe::MaskFilter::blur(
-            skia_safe::BlurStyle::Normal,
+        shadow.set_mask_filter(otto_kit::skia::MaskFilter::blur(
+            otto_kit::skia::BlurStyle::Normal,
             8.0,
             false,
         ));
@@ -3269,7 +3269,7 @@ impl Settings {
             // stroke and the caption carries the rest.
             let mut border = Paint::default();
             border.set_anti_alias(true);
-            border.set_style(skia_safe::PaintStyle::Stroke);
+            border.set_style(otto_kit::skia::PaintStyle::Stroke);
             border.set_stroke_width(if index == selected { 2.0 } else { 1.0 });
             border.set_color(if index == selected {
                 self.theme.accent
@@ -3343,8 +3343,8 @@ pub fn render_on_desktop(canvas: &Canvas, settings: &Settings, x: f32, y: f32) {
     let mut shadow = Paint::default();
     shadow.set_anti_alias(true);
     shadow.set_color(Color::from_argb(0x59, 0, 0, 0));
-    shadow.set_mask_filter(skia_safe::MaskFilter::blur(
-        skia_safe::BlurStyle::Normal,
+    shadow.set_mask_filter(otto_kit::skia::MaskFilter::blur(
+        otto_kit::skia::BlurStyle::Normal,
         18.0,
         false,
     ));
@@ -3361,7 +3361,7 @@ pub fn render_on_desktop(canvas: &Canvas, settings: &Settings, x: f32, y: f32) {
     // Hairline edge so the window reads as separate from the wallpaper.
     let mut edge = Paint::default();
     edge.set_anti_alias(true);
-    edge.set_style(skia_safe::PaintStyle::Stroke);
+    edge.set_style(otto_kit::skia::PaintStyle::Stroke);
     edge.set_stroke_width(1.0);
     edge.set_color(Color::from_argb(0x2E, 0xFF, 0xFF, 0xFF));
     canvas.draw_rrect(rrect, &edge);
@@ -3370,7 +3370,7 @@ pub fn render_on_desktop(canvas: &Canvas, settings: &Settings, x: f32, y: f32) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use skia_safe::PictureRecorder;
+    use otto_kit::skia::PictureRecorder;
 
     /// The pane with the most content, so there is something to scroll past.
     fn tallest_pane() -> Settings {
@@ -3397,15 +3397,17 @@ mod tests {
 
     /// The pixel at window-local `(x, y)` after `draw` has painted a window.
     fn pixel_at(settings: &Settings, draw: impl FnOnce(&Canvas), x: i32, y: i32) -> [u8; 4] {
-        let mut surface =
-            skia_safe::surfaces::raster_n32_premul((settings.width as i32, settings.height as i32))
-                .expect("raster surface");
+        let mut surface = otto_kit::skia::surfaces::raster_n32_premul((
+            settings.width as i32,
+            settings.height as i32,
+        ))
+        .expect("raster surface");
         surface.canvas().clear(Color::TRANSPARENT);
         draw(surface.canvas());
-        let info = skia_safe::ImageInfo::new(
+        let info = otto_kit::skia::ImageInfo::new(
             (1, 1),
-            skia_safe::ColorType::RGBA8888,
-            skia_safe::AlphaType::Premul,
+            otto_kit::skia::ColorType::RGBA8888,
+            otto_kit::skia::AlphaType::Premul,
             None,
         );
         let mut pixel = [0u8; 4];

@@ -12,8 +12,8 @@ use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
+use otto_kit::skia;
 use otto_kit::wallpaper::{self, FrameStyle, Layout, Mode, Source};
-use skia_safe as skia;
 
 use crate::settings_client::{self, Value};
 

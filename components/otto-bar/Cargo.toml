@@ -12,7 +12,6 @@ path = "src/main.rs"
 
 [dependencies]
 otto-kit = { path = "../otto-kit" }
-skia-safe = { workspace = true, features = ["gl", "textlayout"] }
 wayland-client.workspace = true
 wayland-protocols = { workspace = true, features = ["client"] }
 wayland-protocols-wlr = { workspace = true, features = ["client"] }

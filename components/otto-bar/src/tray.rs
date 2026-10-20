@@ -998,7 +998,7 @@ fn argb_network_to_native(data: &[u8]) -> Vec<u8> {
         let g = chunk[2];
         let b = chunk[3];
         // Skia ColorType::RGBA_8888 (or we can use BGRA on little-endian)
-        // Store as BGRA for skia_safe::ColorType::BGRA8888
+        // Store as BGRA for otto_kit::skia::ColorType::BGRA8888
         out.extend_from_slice(&[b, g, r, a]);
     }
     out

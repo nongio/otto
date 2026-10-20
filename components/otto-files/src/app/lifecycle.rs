@@ -27,7 +27,7 @@ impl FilesWindow {
         // header and the content area each carry their own material, and two
         // of the three are translucent so the compositor's blur reads through
         // them. Anything painted here would sit between that blur and them.
-        window.set_background(skia_safe::Color::TRANSPARENT);
+        window.set_background(otto_kit::skia::Color::TRANSPARENT);
 
         // Name the window after its desktop entry, so the dock and the app
         // switcher find `otto-files.desktop` — and its file-manager icon —

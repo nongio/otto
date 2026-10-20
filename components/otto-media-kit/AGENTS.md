@@ -8,7 +8,7 @@ How it works: [otto-media-kit](../../docs/developer/otto-media-kit.md).
 
 ## Dependencies
 - **Internal:** `otto-kit`, for the theme and the draw and hit-test conventions the view and transport bar follow.
-- **External:** GStreamer and its decoder plugins, in the worker only (feature `worker`, on by default). `deny.toml` lets only this crate and `otto-rdp` wrap GStreamer. The library draws with `skia-safe`.
+- **External:** GStreamer and its decoder plugins, in the worker only (feature `worker`, on by default). `deny.toml` lets only this crate and `otto-rdp` wrap GStreamer. The library draws with `otto_kit::skia`.
 
 ## Develop
 - Tests: `cargo test -p otto-media-kit` covers the protocol parsers, the transport layout and the view.

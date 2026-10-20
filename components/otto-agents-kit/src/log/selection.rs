@@ -16,8 +16,8 @@
 //! under the pointer and the two ends of the selection are ever measured, so
 //! laying the log out again stays as cheap as it was before any of this.
 
+use otto_kit::skia::{Font, Rect};
 use otto_kit::typography::{measure_runs, offset_at};
-use skia_safe::{Font, Rect};
 
 /// One run of text in the log, as it was painted.
 #[derive(Clone, Debug)]
@@ -298,8 +298,8 @@ pub fn rects(spans: &[Span], selection: Selection) -> Vec<Rect> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use otto_kit::skia::FontStyle;
     use otto_kit::typography::{get_font_with_fallback, styles};
-    use skia_safe::FontStyle;
 
     /// Spans one line apart, each the width its text measures, so the
     /// geometry here is the geometry the log paints.

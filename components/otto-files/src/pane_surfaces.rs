@@ -34,11 +34,11 @@ use otto_kit::app_runner::AppContext;
 use otto_kit::components::scroll::{Axis, Fill, Paint, PlacedSurface, ScrollSurfaces};
 use otto_kit::prelude::*;
 use otto_kit::protocols::otto_surface_style_v1::OttoSurfaceStyleV1;
+use otto_kit::skia::{Color, Rect};
 use otto_kit::surfaces::layer_shell::{Anchor, KeyboardInteractivity, Layer};
 use otto_kit::surfaces::LayerShellSurface;
 use otto_kit::theme::Theme;
 use otto_kit::typography::styles;
-use skia_safe::{Color, Rect};
 use wayland_client::backend::ObjectId;
 use wayland_client::protocol::wl_surface::WlSurface;
 
@@ -322,7 +322,7 @@ impl PaneSurfaces {
                 viewport.height(),
             );
             if depth >= self.columns.len() {
-                match ScrollSurfaces::new(&band, rect, skia_safe::Color::TRANSPARENT) {
+                match ScrollSurfaces::new(&band, rect, otto_kit::skia::Color::TRANSPARENT) {
                     Ok(mut surfaces) => {
                         surfaces.set_input_passthrough();
                         self.columns.push(ColumnPane {
@@ -532,7 +532,7 @@ impl PaneSurfaces {
         theme: &otto_kit::theme::Theme,
         (width, height): (f32, f32),
         palette: Option<&PaletteFrame>,
-        paint_field: impl FnOnce(&skia_safe::Canvas),
+        paint_field: impl FnOnce(&otto_kit::skia::Canvas),
     ) -> bool {
         let Some(palette) = palette else {
             // Asked afresh on the next open: the window may have been moved
@@ -590,7 +590,7 @@ impl PaneSurfaces {
             let shift = (-palette.resting.left, -palette.resting.top);
             let data = palette.data();
             let paint = pane.paint(palette.card_key(), |canvas| {
-                canvas.clear(skia_safe::Color::TRANSPARENT);
+                canvas.clear(otto_kit::skia::Color::TRANSPARENT);
                 canvas.save();
                 canvas.translate(shift);
                 view::draw_palette(canvas, theme, width, &data);
@@ -716,7 +716,7 @@ impl PaneSurfaces {
         // Painted once per size: there is nothing on it, but a surface with no
         // buffer is not mapped and takes no input.
         let paint = pane.paint(0, |canvas| {
-            canvas.clear(skia_safe::Color::TRANSPARENT);
+            canvas.clear(otto_kit::skia::Color::TRANSPARENT);
         });
         painted |= self.painted(paint);
         painted
@@ -856,7 +856,7 @@ impl PaneSurfaces {
         let key = peek_key(panel, generation, session);
         let origin = (rect.left, rect.top);
         let paint = pane.paint(key, |canvas| {
-            canvas.clear(skia_safe::Color::TRANSPARENT);
+            canvas.clear(otto_kit::skia::Color::TRANSPARENT);
             canvas.save();
             canvas.translate((-origin.0, -origin.1));
             view::draw_peek(canvas, f, session, resting);
@@ -1046,7 +1046,7 @@ impl PaneSurfaces {
                 .poster
                 .as_ref()
                 .and_then(otto_kit::preview::Pixels::to_image);
-            canvas.clear(skia_safe::Color::TRANSPARENT);
+            canvas.clear(otto_kit::skia::Color::TRANSPARENT);
             canvas.save();
             canvas.translate((-origin.0, -origin.1));
             otto_media_kit::view::draw_frame(
@@ -1242,7 +1242,7 @@ impl PeekOverlay {
             return false;
         }
         self.layer.draw(|canvas| {
-            canvas.clear(skia_safe::Color::TRANSPARENT);
+            canvas.clear(otto_kit::skia::Color::TRANSPARENT);
         });
         self.ground = Some(size);
         true

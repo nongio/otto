@@ -8,8 +8,8 @@
 use std::path::PathBuf;
 
 use otto_kit::color::parse_hex;
+use otto_kit::skia::Color;
 use serde::Deserialize;
-use skia_safe::Color;
 
 /// The subset of Otto's config that affects how the panel looks.
 #[derive(Debug, Clone)]

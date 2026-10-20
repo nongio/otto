@@ -58,13 +58,13 @@ fn main() {
         }
 
         let mut surface =
-            skia_safe::surfaces::raster_n32_premul((CARD_W as i32, MAX_CARD_H as i32))
+            otto_kit::skia::surfaces::raster_n32_premul((CARD_W as i32, MAX_CARD_H as i32))
                 .expect("cannot create the raster surface");
         // Stand in for the compositor's frosted material.
         surface.canvas().clear(if dark {
-            skia_safe::Color::from_argb(255, 34, 34, 38)
+            otto_kit::skia::Color::from_argb(255, 34, 34, 38)
         } else {
-            skia_safe::Color::from_argb(255, 240, 240, 244)
+            otto_kit::skia::Color::from_argb(255, 240, 240, 244)
         });
         layers::prelude::draw_scene(surface.canvas(), engine.scene(), palette.card_layer().id());
 
@@ -76,11 +76,11 @@ fn main() {
             canvas.save();
             canvas.clip_rect(list, None, None);
             canvas.translate((list.left, list.top));
-            let mut wash = skia_safe::Paint::default();
+            let mut wash = otto_kit::skia::Paint::default();
             wash.set_anti_alias(true);
             wash.set_color(palette.highlight_color());
             canvas.draw_rrect(
-                skia_safe::RRect::new_rect_xy(
+                otto_kit::skia::RRect::new_rect_xy(
                     Palette::highlight_rect(0),
                     HIGHLIGHT_RADIUS,
                     HIGHLIGHT_RADIUS,
@@ -89,7 +89,7 @@ fn main() {
             );
             palette.paint_rows(
                 canvas,
-                skia_safe::Rect::from_wh(list.width(), list.height()),
+                otto_kit::skia::Rect::from_wh(list.width(), list.height()),
                 &shown,
                 &labels,
             );
@@ -104,7 +104,7 @@ fn main() {
         let path = out_dir.join(format!("{name}.png"));
         let image = surface.image_snapshot();
         let data = image
-            .encode(None, skia_safe::EncodedImageFormat::PNG, 100)
+            .encode(None, otto_kit::skia::EncodedImageFormat::PNG, 100)
             .expect("cannot encode the preview");
         std::fs::write(&path, data.as_bytes()).expect("cannot write the preview");
         println!("{} ({} matches)", path.display(), matches.len());
