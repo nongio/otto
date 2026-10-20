@@ -15,7 +15,6 @@
 // Rust guideline compliant 2026-02-21
 
 use std::path::Path;
-use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
@@ -88,7 +87,7 @@ fn push(config: &SearchConfig, explicit: impl Fn(&str) -> bool, home: &Path) {
 
 /// Read `key`, and write what `edit` makes of it when that is `Some`.
 fn update(key: &str, edit: impl FnOnce(&str) -> Option<String>) {
-    let Some(current) = gsettings(&["get", SCHEMA, key]) else {
+    let Some(current) = crate::gsettings::run(&["get", SCHEMA, key]) else {
         if !MISSING_LOGGED.swap(true, Ordering::Relaxed) {
             tracing::debug!("LocalSearch's settings are not installed; [search] is not applied");
         }
@@ -97,18 +96,9 @@ fn update(key: &str, edit: impl FnOnce(&str) -> Option<String>) {
     let Some(text) = edit(&current) else {
         return;
     };
-    if gsettings(&["set", SCHEMA, key, &text]).is_none() {
+    if crate::gsettings::run(&["set", SCHEMA, key, &text]).is_none() {
         tracing::warn!("Could not set LocalSearch's {key} to {text}");
     }
-}
-
-/// Run `gsettings`, returning what it printed when it succeeded.
-fn gsettings(args: &[&str]) -> Option<String> {
-    let output = Command::new("gsettings").args(args).output().ok()?;
-    output
-        .status
-        .success()
-        .then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
 /// The configured folders as LocalSearch spells them: `~` as `$HOME`, a path

@@ -193,8 +193,12 @@ GTK 4 on Wayland reads these from the portal, and since 4.16 it ignores the
 hinting, antialiasing and order keys unless `font-rendering` is `manual`: in
 its default, `automatic`, it picks its own. The portal adds `manual` to the
 compositor's keys for that reason. GTK 3 on Wayland reads
-`org.gnome.desktop.interface` from GSettings (dconf) instead, which Otto does
-not write, and Qt's own platform themes read neither.
+`org.gnome.desktop.interface` from GSettings (dconf) instead, so a session of
+Otto's own (the udev backend, never a nested one) writes the same five keys
+there at startup with `gsettings`, only where they differ
+(`src/gnome_interface.rs`). Qt 6 on Wayland renders text unhinted whatever
+fontconfig, `kdeglobals` or the portal say, so there is nothing to publish
+to it.
 
 The portal does not link otto-kit or fontconfig: it asks the compositor
 (`org.otto.Settings.GetFontSettings`, see
