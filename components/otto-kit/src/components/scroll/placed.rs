@@ -10,7 +10,8 @@
 //! - **A move lands with the parent.** A subsurface's position is its
 //!   parent's state, applied when the parent commits, so a move commits the
 //!   parent. Without that the surface stays where it was created until
-//!   something else happens to commit the parent.
+//!   something else happens to commit the parent. Smithay compositors take it
+//!   with the surface's own commit instead, so it is sent before that too.
 //! - **Hidden is off the screen and out of the pointer's way.** It is
 //!   unmapped, and painted again when it comes back.
 //!
@@ -170,17 +171,15 @@ impl PlacedSurface {
         let content = Size::new(width as f32, height as f32);
         let extent = Rect::from_xywh(rect.left, rect.top, content.width, content.height);
         let window = self.window.unwrap_or(extent);
-        let Some(shown) = crop::show(&mut self.surface, content, extent, window, scale()) else {
+        if crop::show(&mut self.surface, content, extent, window, scale(), (0, 0)).is_none() {
             self.key = None;
             return false;
-        };
+        }
         if !self.surface.is_mapped() {
             self.key = None;
         } else if commit {
             self.surface.commit();
         }
-        self.surface
-            .set_position(shown.position.0, shown.position.1);
         self.surface.commit_parent();
         true
     }

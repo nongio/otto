@@ -28,8 +28,9 @@
 //! [`crop`](super::crop). That part is the viewport itself, or less of it when
 //! the pane sits inside another one that shows only some of it: a host says
 //! so with [`ScrollSurfaces::set_clip_rect`]. A surface with nothing left to
-//! show is unmapped. Positions are whole points and parent state, so a move
-//! lands with the parent's commit; the fraction a scroll stands at is in the
+//! show is unmapped. Positions are whole points, sent before the surface's
+//! own commit and followed by the parent's, since compositors disagree on
+//! which of the two applies them; the fraction a scroll stands at is in the
 //! band's source rect.
 //!
 //! A pane can hold other panes instead of painting content: see
@@ -702,7 +703,15 @@ impl ScrollSurfaces {
         let content = Size::new(width as f32, height as f32);
         let extent = Rect::from_wh(self.viewport.width(), self.viewport.height());
         let scale = self.scale();
-        let Some(shown) = crop::show(&mut self.clip, content, extent, window, scale) else {
+        let parent_origin = (-(self.viewport.left as i32), -(self.viewport.top as i32));
+        let Some(shown) = crop::show(
+            &mut self.clip,
+            content,
+            extent,
+            window,
+            scale,
+            parent_origin,
+        ) else {
             self.clip_origin = None;
             return;
         };
@@ -715,10 +724,6 @@ impl ScrollSurfaces {
             self.clip.commit();
         }
         let origin = shown.position;
-        self.clip.set_position(
-            self.viewport.left as i32 + origin.0,
-            self.viewport.top as i32 + origin.1,
-        );
         self.clip.commit_parent();
         if self.clip_origin != Some(origin) {
             self.clip_origin = Some(origin);
@@ -735,8 +740,8 @@ impl ScrollSurfaces {
     }
 
     /// Crop the band to the window for `offset` and put it there, as pending
-    /// state: the crop lands with the band's next commit, the position with
-    /// the clip's. Returns whether there was anywhere to put it.
+    /// state for the band's next commit and the clip's after it. Returns
+    /// whether there was anywhere to put it.
     fn place_band(&mut self, offset: f32) -> bool {
         let (Some(window), Some(origin)) = (self.window(), self.clip_origin) else {
             return false;
@@ -745,7 +750,14 @@ impl ScrollSurfaces {
         let content = Size::new(width as f32, height as f32);
         let extent = self.band_extent(offset);
         let scale = self.scale();
-        let Some(shown) = crop::show(&mut self.band_surface, content, extent, window, scale) else {
+        let Some(shown) = crop::show(
+            &mut self.band_surface,
+            content,
+            extent,
+            window,
+            scale,
+            origin,
+        ) else {
             return false;
         };
         // The band's first shown point, in content coordinates.
@@ -754,8 +766,6 @@ impl ScrollSurfaces {
                 Axis::Vertical => shown.source.top,
                 Axis::Horizontal => shown.source.left,
             };
-        self.band_surface
-            .set_position(shown.position.0 - origin.0, shown.position.1 - origin.1);
         true
     }
 
@@ -991,10 +1001,7 @@ impl ScrollSurfaces {
         let (width, height) = self.thumb.dimensions();
         let content = Size::new(width as f32, height as f32);
         let scale = self.scale();
-        if let Some(shown) = crop::show(&mut self.thumb, content, extent, window, scale) {
-            self.thumb
-                .set_position(shown.position.0 - origin.0, shown.position.1 - origin.1);
-        }
+        crop::show(&mut self.thumb, content, extent, window, scale, origin);
         true
     }
 

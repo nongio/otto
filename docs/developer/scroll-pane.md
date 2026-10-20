@@ -78,7 +78,10 @@ viewport cannot be empty, and painted again when it comes back.
   at goes into the source rect, snapped to the output's pixel grid.
 - A crop is sent before the paint whose buffer it fits: a source rect
   committed over a buffer it does not lie inside is a protocol error.
-- A position is the parent's state, so a move commits the parent.
+- A position is the parent's state, so a move commits the parent. It is
+  sent before the surface's own commit too: Smithay compositors, Otto among
+  them, apply it with that commit rather than the parent's, so a position
+  sent after the paint that maps a surface waits for its next change.
 - Hiding unmaps. Opacity 0 leaves a surface on screen wherever the style
   protocol is missing.
 - A pane nested in a container is not clipped by it: the host hands each
