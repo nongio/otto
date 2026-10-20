@@ -12,7 +12,6 @@ otto-kit = { path = "../otto-kit", features = ["dictation"] }
 smithay-client-toolkit = { workspace = true, features = ["calloop"] }
 tracing.workspace = true
 wayland-client.workspace = true
-wayland-protocols = { workspace = true, features = ["client", "staging"] }
 wayland-protocols-misc = { workspace = true, features = ["client"] }
 
 [lints]

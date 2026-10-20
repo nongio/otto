@@ -57,14 +57,11 @@ use wayland_protocols_misc::zwp_input_method_v2::client::{
 };
 
 use otto_kit::dictation::{join, Agreement, Bars, Capture, Engine, Word, SAMPLE_RATE, WINDOW};
+use otto_kit::surfaces::scaling_protocols::{
+    wp_fractional_scale_v1, WpFractionalScaleManagerV1, WpFractionalScaleV1, WpViewport,
+    WpViewporter,
+};
 use otto_kit::surfaces::Scaling;
-use wayland_protocols::wp::fractional_scale::v1::client::{
-    wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1,
-    wp_fractional_scale_v1::{self, WpFractionalScaleV1},
-};
-use wayland_protocols::wp::viewporter::client::{
-    wp_viewport::WpViewport, wp_viewporter::WpViewporter,
-};
 
 use crate::balloon::Balloon;
 
