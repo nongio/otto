@@ -6,7 +6,9 @@ use std::rc::Rc;
 use wayland_client::{protocol::wl_surface, Proxy};
 use wayland_protocols::wp::fractional_scale::v1::client::wp_fractional_scale_v1::WpFractionalScaleV1;
 
-use crate::app_runner::surface_scale::{self, BufferGeometry, ScaleSync, ScaledBuffer, View};
+use crate::app_runner::surface_scale::{
+    self, BufferGeometry, BufferScale, ScaleSync, ScaledBuffer, View,
+};
 
 // Re-export sc-layer protocol for convenience
 pub(super) use crate::protocols::{otto_surface_style_manager_v1, otto_surface_style_v1};
@@ -318,6 +320,41 @@ impl BaseWaylandSurface {
         AppContext::surface_scale(&self.wl_surface.id())
     }
 
+    /// The subpixel layout the buffer's pixels land on, for text to be
+    /// rendered for: the layout of the one output the surface is on, turned
+    /// with that output's transform.
+    ///
+    /// Only when the buffer is shown pixel for pixel — at the surface's own
+    /// scale, not the next whole one a compositor without a viewporter
+    /// shrinks, and with no crop stretching it — since subpixel text
+    /// resampled by the compositor fringes. A surface across two outputs, on
+    /// none yet, or on one that has not described itself gets `Unknown`:
+    /// greyscale text. Re-evaluated every draw, so it follows the surface to
+    /// another output on the next frame it paints there.
+    fn pixel_geometry(&self, applied: BufferGeometry) -> skia_safe::PixelGeometry {
+        use skia_safe::PixelGeometry;
+        use smithay_client_toolkit::compositor::SurfaceData;
+
+        let wanted_120 = surface_scale::surface_scale_120(&self.wl_surface.id());
+        let one_to_one = match applied.scale {
+            BufferScale::Integer(n) => n.max(0) as u32 * 120 == wanted_120,
+            BufferScale::Fractional(s) => s == wanted_120,
+        } && self.scale.crop.get().is_none();
+        if !one_to_one {
+            return PixelGeometry::Unknown;
+        }
+        let Some(data) = self.wl_surface.data::<SurfaceData>() else {
+            return PixelGeometry::Unknown;
+        };
+        let mut outputs = data.outputs();
+        let (Some(output), None) = (outputs.next(), outputs.next()) else {
+            return PixelGeometry::Unknown;
+        };
+        AppContext::output_info(&output).map_or(PixelGeometry::Unknown, |info| {
+            crate::rendering::pixel_geometry(info.subpixel, info.transform)
+        })
+    }
+
     /// Mark every layer this surface draws as needing a repaint, so the next
     /// draw re-records their content — and rasterises their icons and images
     /// again — at the surface's new scale.
@@ -429,6 +466,7 @@ impl BaseWaylandSurface {
         let _drawing = surface_scale::DrawingScope::enter(surface_scale::surface_scale_120(
             &self.wl_surface.id(),
         ));
+        surface.set_pixel_geometry(self.pixel_geometry(applied));
 
         AppContext::skia_context(|ctx| {
             // Draw custom content

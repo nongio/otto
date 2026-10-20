@@ -1,7 +1,11 @@
 use skia_safe::Canvas;
 use std::cell::RefCell;
 use std::rc::Rc;
-use wayland_client::{backend::ObjectId, protocol::wl_surface, Proxy};
+use wayland_client::{
+    backend::ObjectId,
+    protocol::{wl_output, wl_surface},
+    Proxy,
+};
 
 use crate::app_runner::AppContext;
 
@@ -41,6 +45,56 @@ pub struct SkiaSurface {
     surface_id: ObjectId,
     // Cached Skia surface for zero-overhead drawing (hot path)
     cached_surface: Rc<RefCell<Option<skia_safe::Surface>>>,
+    // The subpixel layout text is rendered for; see `set_pixel_geometry`.
+    pixel_geometry: std::cell::Cell<skia_safe::PixelGeometry>,
+}
+
+/// The subpixel layout to render text for, in a buffer's own orientation, on
+/// an output whose panel reports `subpixel` and which shows its content with
+/// `transform`.
+///
+/// `wl_output.subpixel` describes the panel; a rotated or flipped output turns
+/// the buffer relative to it. At 90° the buffer's rows run along the panel's
+/// columns, so a horizontal RGB panel is a vertical one to the buffer; at
+/// 180° the order reverses; the flipped transforms mirror the buffer's x axis
+/// first. A layout nothing can be said about is `Unknown`, which renders
+/// greyscale text — never wrong, only less sharp.
+pub(crate) fn pixel_geometry(
+    subpixel: wl_output::Subpixel,
+    transform: wl_output::Transform,
+) -> skia_safe::PixelGeometry {
+    use skia_safe::PixelGeometry;
+    use wl_output::{Subpixel, Transform};
+
+    // The panel's layout: along its x axis or its y axis, and whether red
+    // comes first (left, or top).
+    let (panel_horizontal, panel_rgb) = match subpixel {
+        Subpixel::HorizontalRgb => (true, true),
+        Subpixel::HorizontalBgr => (true, false),
+        Subpixel::VerticalRgb => (false, true),
+        Subpixel::VerticalBgr => (false, false),
+        _ => return PixelGeometry::Unknown,
+    };
+    // Which of the buffer's axes runs along the panel's x axis and along its
+    // y axis, and whether each runs backwards.
+    let (along_x, along_y) = match transform {
+        Transform::Normal => ((true, false), (false, false)),
+        Transform::_90 => ((false, false), (true, true)),
+        Transform::_180 => ((true, true), (false, true)),
+        Transform::_270 => ((false, true), (true, false)),
+        Transform::Flipped => ((true, true), (false, false)),
+        Transform::Flipped90 => ((false, false), (true, false)),
+        Transform::Flipped180 => ((true, false), (false, true)),
+        Transform::Flipped270 => ((false, true), (true, true)),
+        _ => return PixelGeometry::Unknown,
+    };
+    let (buffer_horizontal, reversed) = if panel_horizontal { along_x } else { along_y };
+    match (buffer_horizontal, panel_rgb != reversed) {
+        (true, true) => PixelGeometry::RGBH,
+        (true, false) => PixelGeometry::BGRH,
+        (false, true) => PixelGeometry::RGBV,
+        (false, false) => PixelGeometry::BGRV,
+    }
 }
 
 impl SkiaSurface {
@@ -69,6 +123,16 @@ impl SkiaSurface {
         Self {
             surface_id,
             cached_surface: Rc::new(RefCell::new(None)),
+            pixel_geometry: std::cell::Cell::new(skia_safe::PixelGeometry::Unknown),
+        }
+    }
+
+    /// Render text for `geometry`, the subpixel layout the buffer's pixels
+    /// land on — `Unknown` for greyscale text. Skia fixes it when a surface is
+    /// wrapped, so a change wraps the render target again on the next draw.
+    pub fn set_pixel_geometry(&self, geometry: skia_safe::PixelGeometry) {
+        if self.pixel_geometry.replace(geometry) != geometry {
+            *self.cached_surface.borrow_mut() = None;
         }
     }
 
@@ -193,6 +257,12 @@ impl SkiaSurface {
                     fb_info,
                 );
 
+                // The subpixel layout is the surface's, so Skia can render
+                // LCD text for it; `Unknown` keeps text greyscale.
+                let props = skia_safe::SurfaceProps::new(
+                    skia_safe::SurfacePropsFlags::default(),
+                    self.pixel_geometry.get(),
+                );
                 *self.cached_surface.borrow_mut() =
                     skia_safe::gpu::surfaces::wrap_backend_render_target(
                         ctx.skia_context(),
@@ -200,7 +270,7 @@ impl SkiaSurface {
                         skia_safe::gpu::SurfaceOrigin::BottomLeft,
                         skia_safe::ColorType::RGBA8888,
                         None,
-                        None,
+                        Some(&props),
                     );
             }
         });
@@ -306,5 +376,84 @@ impl Drop for SkiaSurface {
         // Clean up EGL resources from HashMap
         AppContext::remove_egl_resources(&self.surface_id);
         AppContext::forget_focus_ring(&self.surface_id);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use skia_safe::PixelGeometry;
+    use wl_output::{Subpixel, Transform};
+
+    /// Text rendered for the wrong layout fringes in colour, so each
+    /// transform has to land a panel's stripes where they really are in the
+    /// buffer: a portrait output turns horizontal stripes vertical, and the
+    /// direction it turns decides which colour comes first.
+    #[test]
+    fn subpixel_layout_follows_the_output_transform() {
+        let cases = [
+            (
+                Subpixel::HorizontalRgb,
+                Transform::Normal,
+                PixelGeometry::RGBH,
+            ),
+            (
+                Subpixel::HorizontalBgr,
+                Transform::Normal,
+                PixelGeometry::BGRH,
+            ),
+            (
+                Subpixel::VerticalRgb,
+                Transform::Normal,
+                PixelGeometry::RGBV,
+            ),
+            (Subpixel::HorizontalRgb, Transform::_90, PixelGeometry::RGBV),
+            (
+                Subpixel::HorizontalRgb,
+                Transform::_180,
+                PixelGeometry::BGRH,
+            ),
+            (
+                Subpixel::HorizontalRgb,
+                Transform::_270,
+                PixelGeometry::BGRV,
+            ),
+            (Subpixel::VerticalRgb, Transform::_90, PixelGeometry::BGRH),
+            (Subpixel::VerticalRgb, Transform::_270, PixelGeometry::RGBH),
+            (
+                Subpixel::HorizontalRgb,
+                Transform::Flipped,
+                PixelGeometry::BGRH,
+            ),
+            (
+                Subpixel::HorizontalRgb,
+                Transform::Flipped90,
+                PixelGeometry::RGBV,
+            ),
+            (
+                Subpixel::HorizontalRgb,
+                Transform::Flipped180,
+                PixelGeometry::RGBH,
+            ),
+            (
+                Subpixel::HorizontalRgb,
+                Transform::Flipped270,
+                PixelGeometry::BGRV,
+            ),
+            (
+                Subpixel::VerticalRgb,
+                Transform::Flipped90,
+                PixelGeometry::RGBH,
+            ),
+            (Subpixel::Unknown, Transform::Normal, PixelGeometry::Unknown),
+            (Subpixel::None, Transform::_90, PixelGeometry::Unknown),
+        ];
+        for (subpixel, transform, expected) in cases {
+            assert_eq!(
+                pixel_geometry(subpixel, transform),
+                expected,
+                "{subpixel:?} under {transform:?}"
+            );
+        }
     }
 }
