@@ -106,6 +106,12 @@ pub enum ThemeScheme {
     Dark,
 }
 
+/// Whether the configured scheme is the dark one, as the configuration
+/// stands now.
+pub fn is_dark() -> bool {
+    Config::with(|c| matches!(c.theme_scheme, ThemeScheme::Dark))
+}
+
 /// The otto-kit palette matching the compositor's configured scheme.
 ///
 /// Toolkit widgets the compositor draws itself — dock menus, the workspace

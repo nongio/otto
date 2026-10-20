@@ -569,10 +569,7 @@ pub fn run_udev<A: RendererApi>() {
     // GSettings, not from the portal or XSETTINGS. Only a session of Otto's
     // own writes them: a nested Otto would overwrite the desktop it runs
     // inside.
-    crate::gnome_interface::sync_session(
-        &state.font_settings(),
-        crate::config::Config::with(|c| matches!(c.theme_scheme, crate::theme::ThemeScheme::Dark)),
-    );
+    crate::gnome_interface::sync_session(&state.font_settings());
 
     /*
      * Start the screenshare D-Bus service

@@ -2638,7 +2638,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             height: window.decoration_height() as f32,
             title: window.xdg_title(),
             active: is_focused,
-            dark: Config::with(|c| matches!(c.theme_scheme, crate::theme::ThemeScheme::Dark)),
+            dark: crate::theme::is_dark(),
             // A fullscreen window, or a maximized one spanning the output's
             // full width, sits flush against the screen edges, so its frame
             // (and with it the bar) squares off. A maximized window that

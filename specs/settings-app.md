@@ -967,7 +967,8 @@ A physical display also has a **Subpixel text** pop-up under its refresh rate:
 Automatic, RGB, BGR, Vertical RGB, Vertical BGR and Off. It writes the
 display profile's `subpixel` key (`displays.named.<connector>.subpixel`) with
 `SetOutputSubpixel`: `rgb`, `bgr`, `vrgb`, `vbgr`, or `none` for Off, and
-Automatic removes the key, leaving the connector's own report, then
+Automatic removes the key, leaving grayscale when fontconfig's `rgba` is
+`none` (the user's own switch), else the connector's own report, then
 fontconfig's `rgba`, then grayscale. The pop-up shows what the profile sets,
 read once at startup with `GetOutputSubpixels`; a value it has no entry for is
 shown as written. Its hint says it sharpens text on LCD panels, to try BGR if

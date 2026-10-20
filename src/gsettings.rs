@@ -16,9 +16,19 @@ pub(crate) fn run(args: &[&str]) -> Option<String> {
 }
 
 /// `text` as a GVariant string literal, the form `gsettings set` parses and
-/// `gsettings get` prints a string or enum value in.
+/// `gsettings get` prints a string or enum value in: single quotes, or
+/// double quotes for a string with an apostrophe and no double quote, as
+/// GVariant prints it, so that what `get` answers compares equal.
 pub(crate) fn quoted(text: &str) -> String {
-    format!("'{}'", text.replace('\\', "\\\\").replace('\'', "\\'"))
+    let quote = if text.contains('\'') && !text.contains('"') {
+        '"'
+    } else {
+        '\''
+    };
+    let escaped = text
+        .replace('\\', "\\\\")
+        .replace(quote, &format!("\\{quote}"));
+    format!("{quote}{escaped}{quote}")
 }
 
 #[cfg(test)]
@@ -29,7 +39,8 @@ mod tests {
     fn strings_are_gvariant_literals() {
         assert_eq!(quoted("slight"), "'slight'");
         assert_eq!(quoted("Inter 9.75"), "'Inter 9.75'");
-        assert_eq!(quoted("Ryan's Sans"), r"'Ryan\'s Sans'");
+        assert_eq!(quoted("Ryan's Sans"), r#""Ryan's Sans""#);
+        assert_eq!(quoted(r#"a 'b' "c""#), r#"'a \'b\' "c"'"#);
         assert_eq!(quoted(r"a\b"), r"'a\\b'");
     }
 }
