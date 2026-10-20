@@ -636,10 +636,8 @@ fn font_for(base: TextStyle, span: SpanStyle) -> Font {
         Slant::Upright
     };
     let style = skia_safe::FontStyle::new(Weight::from(weight), Width::NORMAL, slant);
-    let mut font = crate::typography::get_font_with_fallback(family, style, size);
-    font.set_subpixel(true);
-    font.set_edging(skia_safe::font::Edging::SubpixelAntiAlias);
-    font
+    // The font cache applies the family's rendering settings.
+    crate::typography::get_font_with_fallback(family, style, size)
 }
 
 // ---------------------------------------------------------------------------

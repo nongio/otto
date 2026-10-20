@@ -75,7 +75,7 @@ same protocols the compositor serves.
 | [XDG Desktop Portal](https://flatpak.github.io/xdg-desktop-portal/docs/) | Backend. `org.freedesktop.impl.portal.{ScreenCast, Settings, Access, Screenshot, FileChooser}`, registered in `otto.portal` | `components/xdg-desktop-portal-otto/src/portal/` |
 | [XDG user directories](https://www.freedesktop.org/wiki/Software/xdg-user-dirs/) | Read. `user-dirs.dirs` supplies the Files sidebar's Desktop, Downloads, Documents… places, and the portal's screenshot folder | `components/otto-foundations/src/xdg.rs` (`user_dirs`), used by `components/otto-files/src/model.rs` |
 | [Cursor theme (Xcursor)](https://www.freedesktop.org/wiki/Specifications/cursor-spec/) | Read. `XCURSOR_THEME` / `XCURSOR_SIZE`, loaded per named cursor and scale | `src/cursor.rs` |
-| [Fontconfig](https://www.freedesktop.org/wiki/Software/fontconfig/) | Read, indirectly. Skia's `FontMgr` on Linux is the fontconfig-backed one, so family lookup, aliases (`sans-serif`) and the user's `fonts.conf` resolve normally; see [Fonts and text](#fonts-and-text) for what is *not* honoured | `components/otto-kit/src/typography.rs`, `src/utils/font_cache.rs` |
+| [Fontconfig](https://www.freedesktop.org/wiki/Software/fontconfig/) | Read, indirectly. Skia's `FontMgr` on Linux is the fontconfig-backed one, so family lookup, aliases (`sans-serif`) and the user's `fonts.conf` resolve normally; rendering preferences (`antialias`, `hinting`, `hintstyle`, `autohint`, `rgba`) are read per family; see [Fonts and text](#fonts-and-text) | `components/otto-kit/src/text_rendering.rs`, `typography.rs`, `src/utils/font_cache.rs` |
 
 ### Fonts and text
 
@@ -106,30 +106,24 @@ the otto-kit applications, which are separate Wayland clients but draw through
 `otto_kit::typography` rather than a toolkit. That share is small today and
 grows with each first-party app.
 
-**What is not honoured.** Every font construction site in `typography.rs` and
-`src/utils/font_cache.rs` hardcodes `set_subpixel(true)` and
-`Edging::SubpixelAntiAlias`, and nothing reads fontconfig's `antialias`,
-`hinting`, `hintstyle`, `rgba` or `lcdfilter`. Two separate consequences, and
-they need untangling before either is worked on:
+**How it is rasterised.** `otto_kit::text_rendering` asks fontconfig the way
+Pango and Chromium do (substitute the pattern, then match, so rules targeting
+either apply) and maps `antialias`, `hinting`, `hintstyle`, `autohint` and
+`rgba` onto every `Font` the font caches build and every paragraph
+`TextStyle` the theme hands out. Subpixel glyph positioning is kept to no and
+slight hinting, since medium and full fit stems to the pixel grid. The answer
+is cached per family for the process, so a `fonts.conf` change applies from
+the next login. `lcdfilter` is not applied: Skia filters LCD glyphs with its
+own default and has no per-font control.
 
-*Hinting is live and ignores your config.* Hinting is a `Font` property applied
-at glyph rasterization, independent of the surface, so it takes effect, but
-Otto never calls `Font::set_hinting`, so glyphs are hinted to Skia's default
-rather than to the user's `hintstyle`. This is the part a fontconfig read would
-actually fix, and it is self-contained.
-
-*Subpixel AA is requested and then silently dropped.* LCD text requires the
-target surface to declare a pixel geometry, and the offscreen surfaces lay-rs
-caches layer content into declare none: `gpu::surfaces::render_target(…, None,
-…)` in `layers/src/drawing/scene.rs`, `canvas.new_surface(&info, None)` in
-`drawing/layer.rs`, and `PixelGeometry::Unknown` in `renderer/skia_fbo.rs`.
-They are `AlphaType::Premul` besides, which is the other condition under which
-Skia declines LCD text. So in the retained path (which is nearly all chrome)
-the `SubpixelAntiAlias` request falls back to grayscale regardless of what the
-font asked for.
-
-That second one is the user-visible one: **subpixel antialiasing is effectively
-unavailable in Otto's chrome, on any display, with no setting that enables it.**
+`rgba = none` turns subpixel text off everywhere. Any other answer only
+*requests* it, and the surface decides: Skia draws per-channel coverage only
+into a surface that declares a pixel geometry, and the offscreen surfaces
+lay-rs caches layer content into declare none (`gpu::surfaces::render_target(…,
+None, …)` in `layers/src/drawing/scene.rs`). Those draw grayscale, which is
+right for them: they are composited afterwards, and per-channel coverage
+blended through one alpha shows as colour fringes. Where geometry is declared
+is covered under *Per-output pixel geometry* below.
 
 The sharpest case is the server-side titlebar, and it is worth understanding
 before dismissing the whole area as cosmetic. Otto defaults to server-side
@@ -205,10 +199,10 @@ directly and only consults the portal under `GTK_USE_PORTAL=1`.
   the can is empty. There is no D-Bus trash service.
 - **`mimeapps.list`** is read only: Otto never writes a default association
   back.
-- **Font rendering preferences**: fontconfig resolves *which* face is used but
-  not *how* it is rasterised: hinting ignores the user's `hintstyle`, and
-  subpixel antialiasing is unavailable in the retained path regardless of what
-  is configured. See [Fonts and text](#fonts-and-text).
+- **Subpixel text in composited layers**: fontconfig's rendering preferences
+  are honoured, but subpixel antialiasing reaches only text drawn straight
+  into an output's swapchain buffer: cached layers and plane slots draw
+  grayscale. See [Fonts and text](#fonts-and-text).
 - **Font settings are not published**: no portal font key, no `Gtk/FontName`
   or `Xft/Antialias` in XSETTINGS, so applications do not follow Otto's font.
 - **No text scaling factor**: text size follows the output scale only, so

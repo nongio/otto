@@ -272,6 +272,8 @@ fn style(size: f32, line_h: f32, color: Color) -> TextStyle {
     let mut style = TextStyle::new();
     style.set_font_size(size);
     style.set_font_families(&[styles::BODY.family, "sans-serif"]);
+    crate::text_rendering::TextRendering::for_family(styles::BODY.family)
+        .apply_to_text_style(&mut style);
     style.set_font_style(FontStyle::new(
         Weight::from(400),
         Width::NORMAL,

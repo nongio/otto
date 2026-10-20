@@ -48,6 +48,7 @@ pub mod protocols;
 pub mod rendering;
 pub mod sound;
 pub mod surfaces;
+pub mod text_rendering;
 pub mod theme;
 pub mod tile_decoration;
 pub mod trash;
