@@ -2305,6 +2305,42 @@ pub struct DisplayProfile {
     pub refresh_hz: Option<f64>,
     #[serde(default)]
     pub position: Option<DisplayPosition>,
+    /// The panel's subpixel layout, for when the connector does not report
+    /// it (most do not) or reports it wrong.
+    #[serde(default)]
+    pub subpixel: Option<DisplaySubpixel>,
+}
+
+/// Subpixel layout of a panel, named as fontconfig's `rgba` names it.
+///
+/// It decides whether text is drawn with subpixel antialiasing on that
+/// display, by Otto and by the clients it tells through `wl_output`.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum DisplaySubpixel {
+    /// Red, green, blue, left to right.
+    Rgb,
+    /// Blue, green, red, left to right.
+    Bgr,
+    /// Red, green, blue, top to bottom.
+    Vrgb,
+    /// Blue, green, red, top to bottom.
+    Vbgr,
+    /// No subpixels to address (an OLED with another layout, a projector):
+    /// grayscale text.
+    None,
+}
+
+impl From<DisplaySubpixel> for smithay::output::Subpixel {
+    fn from(subpixel: DisplaySubpixel) -> Self {
+        match subpixel {
+            DisplaySubpixel::Rgb => Self::HorizontalRgb,
+            DisplaySubpixel::Bgr => Self::HorizontalBgr,
+            DisplaySubpixel::Vrgb => Self::VerticalRgb,
+            DisplaySubpixel::Vbgr => Self::VerticalBgr,
+            DisplaySubpixel::None => Self::None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

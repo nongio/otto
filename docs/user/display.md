@@ -59,8 +59,17 @@ position = { x = 2256, y = 0 }
 | `resolution` | Mode to set, in pixels |
 | `refresh_hz` | Refresh rate; combined with `resolution` to pick a mode |
 | `position` | Where the monitor sits in the desktop layout, in logical points |
+| `subpixel` | The panel's subpixel order: `"rgb"`, `"bgr"`, `"vrgb"`, `"vbgr"` or `"none"`. Turns on subpixel text on that monitor |
 
 Every field is optional. Omit `resolution` and Otto picks the preferred mode.
+
+Subpixel text uses a panel's separate red, green and blue stripes to draw
+sharper glyphs. Otto uses it only on a monitor whose stripe order it knows,
+and most monitors do not report theirs, so text is grayscale until you set
+`subpixel`. Most LCD panels are `"rgb"`; if letters show coloured edges, try
+`"bgr"`. OLED panels, and anything rotated, are best left at `"none"`. The
+setting is read when the monitor is connected, so it takes effect on the next
+login or replug.
 
 The key is the connector name. `"winit"` is a valid key for the windowed
 development backend:

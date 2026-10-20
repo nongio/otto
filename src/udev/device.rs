@@ -414,15 +414,20 @@ impl<A: RendererApi> Otto<UdevData<A>> {
             }
         };
 
-        let subpixel = match connector.subpixel() {
-            SubPixel::Unknown => Subpixel::Unknown,
-            SubPixel::None => Subpixel::None,
-            SubPixel::NotImplemented => Subpixel::Unknown,
-            SubPixel::HorizontalRgb => Subpixel::HorizontalRgb,
-            SubPixel::HorizontalBgr => Subpixel::HorizontalBgr,
-            SubPixel::VerticalRgb => Subpixel::VerticalRgb,
-            SubPixel::VerticalBgr => Subpixel::VerticalBgr,
-            _ => Subpixel::Unknown,
+        // The display's own setting wins: most connectors report nothing, and
+        // a few report the wrong layout.
+        let subpixel = match config_profile.as_ref().and_then(|profile| profile.subpixel) {
+            Some(subpixel) => subpixel.into(),
+            None => match connector.subpixel() {
+                SubPixel::Unknown => Subpixel::Unknown,
+                SubPixel::None => Subpixel::None,
+                SubPixel::NotImplemented => Subpixel::Unknown,
+                SubPixel::HorizontalRgb => Subpixel::HorizontalRgb,
+                SubPixel::HorizontalBgr => Subpixel::HorizontalBgr,
+                SubPixel::VerticalRgb => Subpixel::VerticalRgb,
+                SubPixel::VerticalBgr => Subpixel::VerticalBgr,
+                _ => Subpixel::Unknown,
+            },
         };
         let (phys_w, phys_h) = connector.size().unwrap_or((0, 0));
 

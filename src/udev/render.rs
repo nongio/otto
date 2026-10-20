@@ -3019,9 +3019,21 @@ pub(super) fn render_output_frame<'a, A: RendererApi>(
     crate::render_phase_stats::record_plane_sync(plane_sync_t.elapsed());
 
     let render_frame_t = std::time::Instant::now();
+    // Only this output's swapchain buffer is drawn with its subpixel layout:
+    // it is opaque by the time it is shown. Plane slots, rendered above, are
+    // blended by the display engine and keep grayscale text.
+    renderer
+        .as_mut()
+        .set_target_pixel_geometry(crate::renderer::skia_surface::pixel_geometry_for(
+            output.physical_properties().subpixel,
+        ));
     let render_frame_result = surface
         .compositor
-        .render_frame(renderer, &output_elements, clear_color, frame_flags)
+        .render_frame(renderer, &output_elements, clear_color, frame_flags);
+    renderer
+        .as_mut()
+        .set_target_pixel_geometry(layers::skia::PixelGeometry::Unknown);
+    let render_frame_result = render_frame_result
         .map_err(|err| match err {
             smithay::backend::drm::compositor::RenderFrameError::PrepareFrame(err) => err.into(),
             smithay::backend::drm::compositor::RenderFrameError::RenderFrame(

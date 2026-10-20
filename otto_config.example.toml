@@ -204,6 +204,7 @@ args = []
 # resolution = { width = 2256, height = 1504 }
 # refresh_hz = 60.0
 # position = { x = 0, y = 0 }
+# subpixel = "rgb"   # panel stripe order, for subpixel text: rgb, bgr, vrgb, vbgr, none
 #
 # Generic profiles match a pattern, and apply to every connector that fits:
 # [[displays.generic]]
