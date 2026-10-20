@@ -87,11 +87,12 @@ you spend most of your time reading.
 
 With that scope, three things worth knowing:
 
-- Otto's chrome draws with grayscale antialiasing, and there is currently no
-  way to turn subpixel (LCD) antialiasing on for it. On a HiDPI display this is
-  what you would probably pick anyway. On a 1080p display Otto's own dock, bar
-  and window titles will look a little lighter and softer than the applications
-  running above them.
+- Otto's chrome draws with grayscale antialiasing unless it knows the
+  monitor's subpixel order: set `subpixel` in the monitor's display profile
+  (see [Display](display.md)) or `rgba` in fontconfig, and window titles, the
+  dock's tooltips and menus, the app switcher and exposé draw subpixel text on
+  that monitor. On a HiDPI display grayscale is what you would probably pick
+  anyway.
 - Hinting and antialiasing follow your fontconfig settings (`hintstyle`,
   `hinting`, `antialias`, `rgba`), in Otto's chrome as in your applications.
 - Otto tells applications its font and how it draws text, the way it tells

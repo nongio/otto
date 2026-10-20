@@ -118,30 +118,27 @@ own default and has no per-font control.
 
 `rgba = none` turns subpixel text off everywhere. Any other answer only
 *requests* it, and the surface decides: Skia draws per-channel coverage only
-into a surface that declares a pixel geometry, and the offscreen surfaces
-lay-rs caches layer content into declare none (`gpu::surfaces::render_target(…,
-None, …)` in `layers/src/drawing/scene.rs`). Those draw grayscale, which is
-right for them: they are composited afterwards, and per-channel coverage
-blended through one alpha shows as colour fringes. Where geometry is declared
-is covered under *Per-output pixel geometry* below.
+into a surface that declares a pixel geometry, and only an opaque one may,
+since per-channel coverage blended through one alpha shows as colour fringes.
+Where geometry is declared is covered under *Per-output pixel geometry* below.
 
-The sharpest case is the server-side titlebar, and it is worth understanding
-before dismissing the whole area as cosmetic. Otto defaults to server-side
-decorations, so most windows get a title Otto rasterises: `Titlebar` →
-`Label` → `styles::BODY_EMPHASIZED` in
-`components/otto-kit/src/components/titlebar/decoration.rs`, into a cached
-layer surface, hence grayscale. A GTK client with client-side decorations draws
-its headerbar title through its own stack, hinted and subpixel per the user's
-fontconfig. The two then sit side by side on one desktop, same position, same
-role, same glyph sizes, a controlled comparison the user cannot avoid looking
-at. Glyph count is not what makes this visible; adjacency is.
-On a HiDPI panel that is close to what you would choose anyway, and is what
-GNOME defaults to; on a 1080p panel it reads as lighter, softer text than the
-applications running above it. Enabling it means threading `SurfaceProps`
-through lay-rs's cached-surface creation, which is upstream work in the engine
-rather than a change Otto can make alone. It also needs an answer to which
-output's geometry a cached picture composited to two panels should use. See
-the pixel-geometry note below.
+Compositor chrome is drawn through lay-rs, and its text gets the output's
+layout wherever it lands on that output's buffer:
+
+- **Recorded content** (a layer's draw closure, kept as a picture) is
+  rasterised when it is played back, with the target's layout. The
+  server-side titlebar — `Titlebar` → `Label` → `styles::BODY_EMPHASIZED` in
+  `components/otto-kit/src/components/titlebar/decoration.rs`, the text that
+  sits right beside a GTK headerbar drawn subpixel by the client — the dock's
+  tooltips and menu, the app switcher, exposé's title plates and the
+  workspace selector all take this path.
+- **Fades** are groups, which Skia draws greyscale. lay-rs's `save_fade`
+  starts the group from the target when the target declares a layout (and is
+  therefore opaque) and keeps the layout, so text does not change weight
+  when a menu or a window finishes fading in. A frosted layer's fade group
+  already starts from the target and keeps it too.
+- **Image-cached layers** are rasterised into transparent offscreens and stay
+  greyscale: dock badges and the workspace selector's thumbnails.
 
 **Per-output pixel geometry.** An output's subpixel layout is the display
 profile's `subpixel` key, else what the connector reports (`src/udev/device.rs`),
@@ -153,8 +150,11 @@ and offscreen targets keep `PixelGeometry::Unknown`, because they are blended
 after Otto draws them and per-channel coverage does not survive a single-alpha
 blend. `surface_props` in `crates/otto-render/src/renderer/skia_surface.rs`
 carries the reasoning. Most connectors report `Unknown`, so without the
-profile key text stays grayscale. With plane decomposition on, chrome renders
-into plane slots, so this reaches only what falls back to the swapchain.
+profile key text stays grayscale. The Vulkan renderer, the default, draws
+everything into the swapchain. The GL renderer with plane decomposition on
+draws chrome into plane slots, which stay greyscale: a slot is transparent
+wherever nothing is drawn and the display engine blends it with one alpha,
+so only what falls back to the swapchain gets the layout there.
 
 otto-kit apps read the same layout from `wl_output` and draw subpixel text
 only on a surface that is opaque all over — its opaque region, set with
@@ -230,10 +230,10 @@ directly and only consults the portal under `GTK_USE_PORTAL=1`.
   the can is empty. There is no D-Bus trash service.
 - **`mimeapps.list`** is read only: Otto never writes a default association
   back.
-- **Subpixel text in composited layers**: fontconfig's rendering preferences
-  are honoured, but subpixel antialiasing reaches only text drawn straight
-  into an output's swapchain buffer: cached layers and plane slots draw
-  grayscale. See [Fonts and text](#fonts-and-text).
+- **Subpixel text in plane slots and cached layers**: compositor chrome gets
+  the output's subpixel layout on the output's own buffer, but GL plane slots
+  and lay-rs image-cached layers are transparent and draw greyscale. See
+  [Fonts and text](#fonts-and-text).
 - **Font settings are published once**: the font and rendering keys (see
   [Fonts and text](#fonts-and-text)) are not re-announced when an output's
   subpixel layout changes, and GTK3 outside a sandbox reads dconf rather than
