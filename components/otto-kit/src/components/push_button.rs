@@ -45,6 +45,9 @@ pub struct PushButton {
     /// Held down with the pointer over it.
     pub pressed: bool,
     pub enabled: bool,
+    /// Ends fully rounded, a pill, for a button that stands on its own
+    /// rather than in a dialog's row.
+    pub pill: bool,
 }
 
 impl PushButton {
@@ -54,6 +57,7 @@ impl PushButton {
             role,
             pressed: false,
             enabled: true,
+            pill: false,
         }
     }
 
@@ -64,6 +68,11 @@ impl PushButton {
 
     pub fn enabled(mut self, enabled: bool) -> Self {
         self.enabled = enabled;
+        self
+    }
+
+    pub fn pill(mut self, pill: bool) -> Self {
+        self.pill = pill;
         self
     }
 }
@@ -90,7 +99,12 @@ pub fn draw(canvas: &Canvas, rect: Rect, label: &str, button: PushButton, theme:
         (false, false) => theme.fill_tertiary,
         (false, true) => theme.fill_secondary,
     };
-    let rrect = RRect::new_rect_xy(rect, RADIUS, RADIUS);
+    let radius = if button.pill {
+        rect.height() / 2.0
+    } else {
+        RADIUS
+    };
+    let rrect = RRect::new_rect_xy(rect, radius, radius);
     let mut paint = Paint::default();
     paint.set_anti_alias(true);
     paint.set_color(ground);
