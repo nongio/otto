@@ -95,13 +95,29 @@ use crate::panel::{Panel, Shell};
 use crate::primary::Primary;
 use crate::request::{Item, Stash, Surrounding};
 use otto_kit::components::attachments::ICON_SIZE;
+use otto_kit::surfaces::Scaling;
 use otto_peek::thumbcache::Size;
 use otto_peek::thumbnailer::Thumbnailer;
+use wayland_protocols::wp::fractional_scale::v1::client::{
+    wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1,
+    wp_fractional_scale_v1::{self, WpFractionalScaleV1},
+};
+use wayland_protocols::wp::viewporter::client::{
+    wp_viewport::WpViewport, wp_viewporter::WpViewporter,
+};
 
 /// Initial size of the balloon's buffer pool; it grows with the balloon.
 const POOL_BYTES: usize = 512 * 256 * 4;
-/// Balloon buffers are drawn at this scale, so they stay sharp on HiDPI.
-const BALLOON_SCALE: i32 = 2;
+/// One of the stash's surfaces, drawn at the scale the compositor prefers for
+/// it and shown pixel for pixel.
+type SurfaceScale = otto_kit::surfaces::ScaledSurface<State>;
+/// What a surface is drawn at until the compositor says, in 120ths: 2x, sharp
+/// on a HiDPI display and only oversampled on any other, for the frame or so
+/// before the preferred scale arrives.
+const STAND_IN_SCALE_120: u32 = 240;
+/// Pixels per point thumbnails are made at. They are made once, for whichever
+/// display the card is on, so at the scale HiDPI ones need.
+const THUMBNAIL_SCALE: f32 = 2.0;
 /// Linux's code for the left mouse button (`BTN_LEFT`).
 const BTN_LEFT: u32 = 0x110;
 /// The most primary-selection text stashed at once; the rest is dropped.
@@ -179,6 +195,13 @@ fn serve(runtime: &tokio::runtime::Runtime) -> anyhow::Result<()> {
             .context("the compositor has no wlr-layer-shell")?,
         // Optional: without it the card draws its own plain background.
         style: globals.bind(&qh, 1..=5, ()).ok(),
+        // Optional: without them the buffers are drawn at a stand-in scale
+        // (`STAND_IN_SCALE_120`), or at the next whole one, for the
+        // compositor to shrink.
+        scaling: Scaling {
+            fractional: globals.bind(&qh, 1..=1, ()).ok(),
+            viewporter: globals.bind(&qh, 1..=1, ()).ok(),
+        },
     };
     // The card follows the desktop's colour scheme and accent.
     otto_kit::color_scheme::spawn_color_scheme_watcher();
@@ -215,7 +238,7 @@ fn serve(runtime: &tokio::runtime::Runtime) -> anyhow::Result<()> {
         })
         .map_err(|error| anyhow::anyhow!("cannot watch the command channel: {error}"))?;
     // Files on the card show their thumbnails, as in Files.
-    let thumbnailer = Thumbnailer::new(Size::for_box(ICON_SIZE, BALLOON_SCALE as f32))
+    let thumbnailer = Thumbnailer::new(Size::for_box(ICON_SIZE, THUMBNAIL_SCALE))
         .context("cannot start making thumbnails")?;
     let made = Generic::new(thumbnailer.wake_handle()?, Interest::READ, Mode::Level);
     handle
@@ -707,7 +730,7 @@ impl State {
             &self.shell.compositor,
             self.shell.style.as_ref(),
             &self.qh,
-            BALLOON_SCALE,
+            &self.shell.scaling,
         ));
     }
 
@@ -799,9 +822,9 @@ impl State {
                     &self.shell.compositor,
                     self.shell.style.as_ref(),
                     &self.qh,
-                    BALLOON_SCALE,
+                    &self.shell.scaling,
                 ))),
-                None => Card::Floating(Box::new(Panel::new(&self.shell, &self.qh, BALLOON_SCALE))),
+                None => Card::Floating(Box::new(Panel::new(&self.shell, &self.qh))),
             };
             // Asked each time the card opens, so a rebound shortcut shows.
             self.balloon.send_shortcut = self.runtime.block_on(dbus::send_shortcut());
@@ -846,9 +869,13 @@ impl State {
             (layout.width as i32, layout.height as i32),
             self.leaving.is_some(),
         );
-        let scale = BALLOON_SCALE as f32;
-        let w = (layout.width * scale) as i32;
-        let h = (panel.buffer_height(layout.height) * scale) as i32;
+        let logical = (
+            layout.width as i32,
+            panel.buffer_height(layout.height).ceil() as i32,
+        );
+        let frame = panel.card_scale_mut().frame(logical);
+        let scale = frame.factor;
+        let (w, h) = frame.size;
         // Reuse the buffer when it is the right size and the compositor has
         // released it; otherwise take a fresh one from the pool.
         let reusable = self.buffer.as_mut().is_some_and(|b| {
@@ -1346,6 +1373,38 @@ impl Dispatch<OttoCanvasItemV1, ()> for State {
         }
     }
 }
+
+/// A surface's preferred scale. The card is redrawn at a new one, the
+/// invitation draws itself; the scale itself is kept by each surface.
+impl Dispatch<WpFractionalScaleV1, wl_surface::WlSurface> for State {
+    fn event(
+        state: &mut Self,
+        _: &WpFractionalScaleV1,
+        event: wp_fractional_scale_v1::Event,
+        surface: &wl_surface::WlSurface,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        let wp_fractional_scale_v1::Event::PreferredScale { scale } = event else {
+            return;
+        };
+        if let Some(invite) = state.invite.as_mut().filter(|i| i.surface() == surface) {
+            invite.set_preferred_scale(scale, &mut state.pool);
+            return;
+        }
+        let Some(card) = state.panel.as_mut().filter(|c| c.card() == surface) else {
+            return;
+        };
+        if card.card_scale_mut().set_preferred(scale) {
+            card.rescaled();
+            state.draw_panel();
+        }
+    }
+}
+
+delegate_noop!(State: ignore WpFractionalScaleManagerV1);
+delegate_noop!(State: ignore WpViewporter);
+delegate_noop!(State: ignore WpViewport);
 
 impl Dispatch<wl_callback::WlCallback, ()> for State {
     fn event(

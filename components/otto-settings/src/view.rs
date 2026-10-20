@@ -121,11 +121,14 @@ const INTRO_GAP: f32 = 14.0;
 /// and below it. The width follows the image's own aspect, capped at
 /// [`PREVIEW_W`] — a wallpaper is worth seeing in its own shape.
 const PREVIEW_H: f32 = 108.0;
-/// The kit paints every surface into a buffer twice the logical size (see
-/// `SkiaSurface::draw`), so a box measured in points covers twice that many
-/// device pixels — which is the space [`otto_kit::utils::icon_sampling`]
-/// compares a source image against.
-const BUFFER_SCALE: f32 = 2.0;
+/// Buffer pixels per point on the surface being drawn. The kit paints every
+/// surface at its own scale, so a box measured in points covers this many
+/// device pixels a side — which is the space
+/// [`otto_kit::utils::icon_sampling`] compares a source image against, and
+/// the size a picture has to be to be drawn 1:1.
+fn buffer_scale() -> f32 {
+    otto_kit::app_runner::AppContext::fractional_scale() as f32
+}
 
 const PREVIEW_W: f32 = 192.0;
 const PREVIEW_GAP: f32 = 10.0;
@@ -871,9 +874,10 @@ fn decode_preview(path: &str) -> Option<skia_safe::Image> {
     let bytes = std::fs::read(path).ok()?;
     let full = skia_safe::Image::from_encoded(skia_safe::Data::new_copy(&bytes))?;
 
-    // Scaled to twice the drawn size, so the thumbnail is still sharp on a
-    // 2x output without carrying the whole wallpaper around in memory.
-    let target = PREVIEW_W.max(PREVIEW_H) * 2.0;
+    // Scaled to the drawn size at the display's scale (rounded up), so the
+    // thumbnail is sharp without carrying the whole wallpaper around in
+    // memory.
+    let target = PREVIEW_W.max(PREVIEW_H) * otto_kit::AppContext::scale_factor() as f32;
     let scale = (target / full.width().max(full.height()) as f32).min(1.0);
     if scale >= 1.0 {
         return Some(full);
@@ -2487,8 +2491,8 @@ impl Settings {
             match crate::wallpaper_preview::frame(
                 path,
                 (
-                    (box_rect.width() * BUFFER_SCALE).round() as i32,
-                    (box_rect.height() * BUFFER_SCALE).round() as i32,
+                    (box_rect.width() * buffer_scale()).round() as i32,
+                    (box_rect.height() * buffer_scale()).round() as i32,
                 ),
             ) {
                 crate::wallpaper_preview::Preview::Ready(image) => Some(image),
@@ -2523,8 +2527,8 @@ impl Settings {
                     otto_kit::utils::icon_sampling(
                         (image.width(), image.height()),
                         (
-                            box_rect.width() * BUFFER_SCALE,
-                            box_rect.height() * BUFFER_SCALE,
+                            box_rect.width() * buffer_scale(),
+                            box_rect.height() * buffer_scale(),
                         ),
                     ),
                     &paint,
@@ -2592,11 +2596,11 @@ impl Settings {
         cx: f32,
         y: f32,
     ) {
-        // Sourced at twice the drawn size, the way every icon in this toolkit
-        // is: a 36pt slot filled by a 36px raster is soft on a 2x output, and
-        // an icon that only exists at 24px would otherwise be drawn smaller
-        // than the one beside it.
-        let px = (SWATCH_ICON * 2.0) as i32;
+        // Sourced at the drawn size times the surface's scale, rounded up,
+        // the way every icon in this toolkit is: a 36pt slot filled by a 36px
+        // raster is soft on a 2x output, and an icon that only exists at 24px
+        // would otherwise be drawn smaller than the one beside it.
+        let px = SWATCH_ICON as i32 * otto_kit::AppContext::scale_factor();
         let images = match kind {
             ThemeSwatch::Icons => crate::theme_preview::icon_theme_images(theme, px),
             ThemeSwatch::Cursors => crate::theme_preview::cursor_theme_images(theme, px),
@@ -2637,7 +2641,7 @@ impl Settings {
                 dst,
                 otto_kit::utils::icon_sampling(
                     (image.width(), image.height()),
-                    (w * BUFFER_SCALE, h * BUFFER_SCALE),
+                    (w * buffer_scale(), h * buffer_scale()),
                 ),
                 &paint,
             );

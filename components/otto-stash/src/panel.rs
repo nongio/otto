@@ -26,9 +26,10 @@ use otto_kit::protocols::{
     otto_surface_style_v1::{BlendMode, ClipMode, ContentsGravity, OttoSurfaceStyleV1},
     otto_timing_function_v1::Preset,
 };
+use otto_kit::surfaces::Scaling;
 use otto_kit::theme::Theme;
 
-use crate::State;
+use crate::{State, SurfaceScale, STAND_IN_SCALE_120};
 
 /// Where the card first sits: this far in from the output's top-right
 /// corner, in logical pixels.
@@ -55,6 +56,8 @@ pub struct Shell {
     pub subcompositor: WlSubcompositor,
     pub layer_shell: ZwlrLayerShellV1,
     pub style: Option<OttoSurfaceStyleManagerV1>,
+    /// What scales the card's buffer to its display.
+    pub scaling: Scaling,
 }
 
 /// The balloon on screen, from the first add until it is sent or cancelled.
@@ -76,8 +79,9 @@ pub struct Panel {
     style: Option<OttoSurfaceStyleV1>,
     /// Makes the transactions the card's changes of size spring in.
     styles: Option<OttoSurfaceStyleManagerV1>,
-    /// Pixels per logical pixel, for the style's physical-pixel geometry.
-    scale: f64,
+    /// The card's scale: its buffer's, and the one the style's
+    /// physical-pixel geometry is in.
+    card_scale: SurfaceScale,
     /// The output's size in logical pixels; zero until configured.
     output: (i32, i32),
     /// The card's size and top-left corner on the output, in logical pixels.
@@ -92,7 +96,7 @@ pub struct Panel {
 impl Panel {
     /// Maps nothing yet: the card appears once the compositor has sized the
     /// overlay and the card has been drawn.
-    pub fn new(shell: &Shell, qh: &QueueHandle<State>, scale: i32) -> Self {
+    pub fn new(shell: &Shell, qh: &QueueHandle<State>) -> Self {
         let parent = shell.compositor.create_surface(qh, ());
         let layer = shell.layer_shell.get_layer_surface(
             &parent,
@@ -111,7 +115,7 @@ impl Panel {
         parent.commit();
 
         let card = shell.compositor.create_surface(qh, ());
-        card.set_buffer_scale(scale);
+        let card_scale = SurfaceScale::new(&card, &shell.scaling, STAND_IN_SCALE_120, qh);
         // The pointer arrives on the parent, under the card.
         card.set_input_region(Some(&empty));
         empty.destroy();
@@ -141,7 +145,7 @@ impl Panel {
             subsurface,
             style,
             styles: shell.style.clone(),
-            scale: f64::from(scale),
+            card_scale,
             output: (0, 0),
             card_size: (0, 0),
             card_at: None,
@@ -153,6 +157,17 @@ impl Panel {
     /// The surface the card is drawn on.
     pub fn card(&self) -> &WlSurface {
         &self.card
+    }
+
+    /// The card's scale.
+    pub fn card_scale_mut(&mut self) -> &mut SurfaceScale {
+        &mut self.card_scale
+    }
+
+    /// The card's preferred scale changed: the style's geometry, in physical
+    /// pixels, goes out again at the new one.
+    pub fn rescaled(&mut self) {
+        self.place();
     }
 
     /// Whether `surface` is the one that takes the balloon's pointer.
@@ -300,7 +315,7 @@ impl Panel {
         self.card_at = Some(at);
         self.subsurface.set_position(at.0, at.1);
         if let Some(style) = self.style.as_ref() {
-            let s = self.scale;
+            let s = self.card_scale.scale();
             style.set_position(f64::from(at.0) * s, f64::from(at.1) * s);
             style.set_size(f64::from(card_w) * s, f64::from(card_h) * s);
         }
@@ -333,6 +348,7 @@ impl Panel {
         if let Some(style) = self.style {
             style.destroy();
         }
+        self.card_scale.destroy();
         self.subsurface.destroy();
         self.card.destroy();
         self.layer.destroy();

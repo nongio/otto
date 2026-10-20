@@ -13,6 +13,7 @@ smithay-client-toolkit = { workspace = true, features = ["calloop"] }
 tracing.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 wayland-client.workspace = true
+wayland-protocols = { workspace = true, features = ["client", "staging"] }
 wayland-protocols-misc = { workspace = true, features = ["client"] }
 
 [lints]
