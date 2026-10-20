@@ -307,7 +307,7 @@ fn draw_icon_button(
         };
         match icons::solar_icon(name, glyph_px, style, color) {
             Some(image) => {
-                canvas.draw_image_rect(&image, None, dst, &Paint::default());
+                icons::draw_icon(canvas, &image, dst, &Paint::default());
             }
             // Crossed out while the marks are hidden, which is when it is down.
             None if tool == Tool::ShowMarks => draw_eye_glyph(canvas, dst, color, pressed),
@@ -324,7 +324,7 @@ fn draw_icon_button(
                 color,
                 BlendMode::SrcIn,
             ));
-            canvas.draw_image_rect(&image, None, dst, &tint);
+            icons::draw_icon(canvas, &image, dst, &tint);
         }
         None => draw_fallback_glyph(canvas, dst, tool, color),
     }

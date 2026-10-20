@@ -940,7 +940,7 @@ fn draw_attachments(canvas: &Canvas, theme: &Theme) {
 fn draw_glyph(canvas: &Canvas, name: &str, rect: Rect, color: Color) {
     let px = (rect.width() * SCALE).round() as i32;
     if let Some(image) = solar_icon(name, px, SolarStyle::Linear, color) {
-        canvas.draw_image_rect(&image, None, rect, &Paint::default());
+        otto_kit::icons::draw_icon(canvas, &image, rect, &Paint::default());
     }
 }
 

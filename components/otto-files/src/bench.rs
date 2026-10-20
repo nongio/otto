@@ -377,9 +377,9 @@ fn paint_rows(
             paint.set_color(Color::from_argb(255, 60, 120, 220));
             canvas.draw_rrect(RRect::new_rect_xy(rect, 6.0, 6.0), &paint);
         }
-        canvas.draw_image_rect(
+        otto_kit::icons::draw_icon(
+            canvas,
             icon,
-            None,
             Rect::from_xywh(14.0, rect.center_y() - 8.0, 16.0, 16.0),
             &paint,
         );

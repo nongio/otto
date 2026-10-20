@@ -43,18 +43,11 @@ impl DockApp {
                     let x = (w - icon_size) / 2.0;
                     let y = (h - icon_size) / 2.0;
 
-                    let src_rect = skia_safe::Rect::from_xywh(
-                        0.0,
-                        0.0,
-                        image.width() as f32,
-                        image.height() as f32,
-                    );
                     let dst_rect = skia_safe::Rect::from_xywh(x, y, icon_size, icon_size);
                     let white = skia_safe::Color4f::new(1.0, 1.0, 1.0, 1.0);
-                    canvas.draw_image_rect(
-                        image,
-                        Some((&src_rect, skia_safe::canvas::SrcRectConstraint::Fast)),
-                        // dst_rect,
+                    otto_kit::icons::draw_icon(
+                        canvas,
+                        &image,
                         dst_rect,
                         &skia_safe::Paint::new(white, None),
                     );

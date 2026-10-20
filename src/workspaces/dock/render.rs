@@ -610,9 +610,9 @@ pub fn draw_icon_image(
             );
             shadow_paint.set_image_filter(shadow_filter);
 
-            canvas.draw_image_rect(
+            otto_kit::icons::draw_icon(
+                canvas,
                 image,
-                None,
                 layers::skia::Rect::from_xywh(icon_x, icon_y, icon_size, icon_size),
                 &shadow_paint,
             );

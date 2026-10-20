@@ -85,7 +85,9 @@ fn draw_peek_badge(
 
     let glyph = 12.0;
     let dst = Rect::from_xywh(centre.x - glyph / 2.0, centre.y - glyph / 2.0, glyph, glyph);
-    if let Some(image) = icons::cached_icon_chain(names, glyph as i32) {
+    // Rasterised in device pixels so it lands 1:1 on a scaled output.
+    let scale = canvas.local_to_device_as_3x3().scale_x().abs().max(1.0);
+    if let Some(image) = icons::cached_icon_chain(names, (glyph * scale).round() as i32) {
         // Symbolic art recoloured to the theme's text tone, as the sidebar
         // does for its own glyphs.
         let mut tint = Paint::default();
@@ -93,7 +95,7 @@ fn draw_peek_badge(
             fade(theme.text_secondary, opacity),
             otto_kit::skia::BlendMode::SrcIn,
         ));
-        canvas.draw_image_rect(&image, None, dst, &tint);
+        icons::draw_icon(canvas, &image, dst, &tint);
     } else {
         fallback(canvas, theme, dst, centre, opacity);
     }

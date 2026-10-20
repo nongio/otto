@@ -1958,7 +1958,7 @@ fn draw_solar_glyph(canvas: &Canvas, name: &str, rect: Rect, color: Color, bold:
         return false;
     };
     let dst = Rect::from_xywh(rect.center_x() - 8.0, rect.center_y() - 8.0, 16.0, 16.0);
-    canvas.draw_image_rect(&image, None, dst, &Paint::default());
+    otto_kit::icons::draw_icon(canvas, &image, dst, &Paint::default());
     true
 }
 
