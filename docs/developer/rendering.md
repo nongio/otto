@@ -132,7 +132,13 @@ size through a `wp_viewport`, or a plain `buffer_scale = n` at a whole scale.
 Either way the buffer reaches the output 1:1, which is what makes hinted and
 subpixel text worth drawing. A new preferred scale resizes the buffer on the
 surface's next draw (`BaseWaylandSurface::sync_scale`) and repaints its whole
-layer tree; the app hears about it through `App::on_scale_changed`.
+layer tree; the app hears about it through `App::on_scale_changed`. The
+buffer scale and viewport describing a buffer of a new size go out only
+with that buffer (`ScaledBuffer::flush`, from the draw, just before the
+swap attaches it): the compositor checks them against the buffer a commit
+carries, and a crop or a move committed without a repaint in between
+would otherwise land state for a buffer that is not there yet, which kills
+the client.
 
 Because the buffer is shown 1:1, a kit window renders subpixel (LCD) text for
 the panel under it: the Skia surface is wrapped with the `PixelGeometry` of the
