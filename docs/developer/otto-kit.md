@@ -93,6 +93,19 @@ component deep in a view tree needs the scale or the theme without being handed
 a context reference through every layer above it. The `*_ref` methods exist for
 the paths that do have a context.
 
+The scale is per surface. Each surface is drawn at the `preferred_scale` the
+compositor sends for it (`AppContext::surface_scale`), which follows it from
+display to display: its buffer is `round(logical × scale)` pixels, shown 1:1
+through a `wp_viewport` at a fractional scale, and the canvas a draw closure
+gets is already scaled, so it works in points. When a surface's scale moves,
+its next draw resizes the buffer and repaints its layer tree, and
+`App::on_scale_changed` (by default handled as a theme change) tells the app
+to make that draw. `AppContext::fractional_scale()` is for code with no
+surface in hand: inside a draw it is the drawing surface's scale.
+`AppContext::scale_factor()` rounds that up to the whole number icons and
+images are rasterised at. A client that paints its own `wl_shm` buffers gets
+the same sums from `surfaces::ScaledSurface`.
+
 ## Surfaces
 
 One type per role, all implementing `BaseWaylandSurface`:

@@ -21,7 +21,10 @@ screen_scale = 1.0
 The global scale factor: `1.0` for a standard-DPI display, `2.0` for HiDPI,
 and fractional values in between (`1.25`, `1.5`) for the awkward middle ground.
 Otto implements `wp-fractional-scale-v1`, so well-behaved clients render crisply
-at fractional scales instead of being upscaled.
+at fractional scales instead of being upscaled. Otto's own apps draw every
+window, panel and menu at the scale of the display it is on, pixel for pixel,
+and follow a change of scale — or a move to a display with another one —
+without being restarted.
 
 To change the scale of a single monitor while the session runs, put the pointer
 on it and use the `ScaleUp` / `ScaleDown`
