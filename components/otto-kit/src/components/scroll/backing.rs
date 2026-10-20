@@ -666,8 +666,8 @@ impl ScrollSurfaces {
     }
 
     /// Forget where the band, the scrollbar and the input region were placed,
-    /// so the next sync places them again: after the clip moved its origin,
-    /// every child's position inside it is stale.
+    /// so the next sync places them again: after the clip's origin or window
+    /// changed, every child's crop and position inside it is stale.
     fn forget_placement(&mut self) {
         self.last_band_offset = None;
         self.last_input_window = None;
@@ -715,6 +715,21 @@ impl ScrollSurfaces {
             self.clip_origin = None;
             return;
         };
+        // Everything inside is cropped to the window and placed from the
+        // clip's origin, so a change in either leaves every child stale. The
+        // band is cropped again here, to go out with the clip: left for the
+        // next sync, a pane panning into view would show only the sliver it
+        // first showed, and one panning out would spill past its window,
+        // until the band next moved.
+        let band_offset = self.last_band_offset;
+        self.clip_origin = Some(shown.position);
+        self.forget_placement();
+        if let Some(offset) = band_offset.filter(|_| !self.container) {
+            if self.place_band(offset) {
+                self.band_surface.commit();
+                self.last_band_offset = Some(offset);
+            }
+        }
         if paint {
             let background = self.background;
             self.clip.draw(|canvas| {
@@ -723,12 +738,7 @@ impl ScrollSurfaces {
         } else {
             self.clip.commit();
         }
-        let origin = shown.position;
         self.clip.commit_parent();
-        if self.clip_origin != Some(origin) {
-            self.clip_origin = Some(origin);
-            self.forget_placement();
-        }
     }
 
     /// Where the whole band stands in pane coordinates for `offset`.
