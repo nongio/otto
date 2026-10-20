@@ -358,7 +358,9 @@ impl Balloon {
             paragraph.paint(canvas, *at);
         }
         if let Some(rect) = layout.send {
-            let button = PushButton::new(Role::Default).pressed(held == Some(Hit::Send));
+            let button = PushButton::new(Role::Default)
+                .pill(true)
+                .pressed(held == Some(Hit::Send));
             push_button::draw(canvas, rect, SEND_LABEL, button, &self.theme);
         }
         if let Some(items) = layout.items.as_ref() {

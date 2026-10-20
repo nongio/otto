@@ -437,9 +437,12 @@ impl State {
                 }
             }
             // Ask shows what is stashed as it opens, as it does when opened
-            // any other way.
+            // any other way. The canvas goes: the stash is in Ask now.
             Command::Send => {
                 if self.stash.is_some() {
+                    if let Some(Card::Canvas(card)) = self.panel.as_ref() {
+                        card.dismiss();
+                    }
                     self.open_ask();
                 }
             }
