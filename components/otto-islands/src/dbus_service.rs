@@ -407,6 +407,41 @@ impl DialogService {
         .await
     }
 
+    /// `PresentAccess`, with the dialog named by `cookie` so the caller can
+    /// [`withdraw`](Self::withdraw) it. The portal names each dialog it puts
+    /// up after its request, and withdraws it when the request is closed.
+    #[allow(clippy::too_many_arguments)]
+    async fn present_access_with_cookie(
+        &self,
+        app_id: &str,
+        cookie: &str,
+        title: &str,
+        subtitle: &str,
+        body: &str,
+        icon: &str,
+        grant_label: &str,
+        deny_label: &str,
+        modal: bool,
+        choices: Vec<WireChoice>,
+    ) -> (u32, Vec<(String, String)>) {
+        self.present(
+            DialogKind::Access,
+            app_id,
+            cookie,
+            title,
+            subtitle,
+            body,
+            icon,
+            grant_label,
+            deny_label,
+            "",
+            modal,
+            choice_groups(choices),
+            QuestionStyle::default(),
+        )
+        .await
+    }
+
     /// Present a question: the `PresentAccess` dialog, plus an optional open
     /// button that hands the question off to another app.
     ///

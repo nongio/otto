@@ -111,6 +111,15 @@ A request carries:
   the dialog, and the pending call resolves with `response = 2`.
 - If the renderer disappears while a request is pending, the broker resolves the
   pending call with `response = 2`.
+- To be withdrawable a dialog needs a name. `otto-portal` asks otto-islands
+  through `org.otto.Dialog1.PresentAccessWithCookie`, the `PresentAccess`
+  arguments with a `cookie` after `app_id`, and uses the freedesktop request
+  handle as the cookie. It exports a Request object at that handle for every
+  call that puts a dialog up (Access, Screenshot, ScreenCast `SelectSources`),
+  and when the frontend closes the request it calls `Withdraw(app_id, cookie)`.
+  The dialog comes down at once. An otto-islands without
+  `PresentAccessWithCookie` is asked through `PresentAccess`, and its dialog
+  cannot be withdrawn.
 
 ### Mapping the four launch cases
 

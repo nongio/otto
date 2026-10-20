@@ -55,8 +55,8 @@ captures.
   `Request` object path.
 - Results are delivered asynchronously via
   `org.freedesktop.portal.Request::Response`.
-- `response` codes: `0` success, `1` cancelled, `2` denied, `3` failure (higher
-  values reserved).
+- `response` codes: `0` success, `1` cancelled, `2` ended in any other
+  way (denied or failed). No other value is defined.
 
 ## Methods
 

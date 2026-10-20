@@ -165,7 +165,8 @@ documented in `docs/developer/screenshare.md`.
 - On every call the portal asks the compositor for the current sources: `ListOutputs` when
   monitors are allowed, `ListWindows` when windows are allowed. A `ListWindows` failure
   (e.g. an older compositor) degrades to an empty window list rather than failing the call.
-- If both lists are empty, the portal returns response `3` (no sources).
+- If both lists are empty, the portal returns response `2` (no sources;
+  `Request.Response` defines only `0`, `1` and `2`).
 - The portal then presents a **single radio list** containing every allowed source: each
   output (labelled `Entire screen` when there is exactly one, else `Screen — <connector>`),
   followed by each window (labelled by title, falling back to app_id, with app_id as the

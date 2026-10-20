@@ -203,7 +203,7 @@ The request tuple, in order:
 | `current_name` | `s` | proposed file name (save) |
 | `current_folder` | `s` | absolute path to start in; empty means "decide" |
 | `current_file` | `s` | absolute path of the file being re-saved |
-| `files` | `as` | save-multiple: the names to be written |
+| `files` | `as` | save-multiple: the names to be written (the portal's `aay`, decoded) |
 | `filters` | `a(sa(us))` | `(label, [(kind, pattern)])`, `kind` `0` glob, `1` MIME |
 | `current_filter` | `s` | label of the filter to preselect |
 | `choices` | `a(ssa(ss)s)` | `(id, label, [(option_id, option_label)], default)` |
@@ -230,6 +230,10 @@ The portal's job is mechanical and must not lose information:
   NUL-terminated byte strings. The portal strips the trailing NUL and passes the
   path through; a non-absolute or non-UTF-8 path is dropped rather than
   rejected, and the picker falls back as if it were absent.
+- `files` (save-multiple) arrives as `aay`, one NUL-terminated byte string per
+  name. Each NUL is stripped; a single non-UTF-8 name empties the list, so the
+  picker refuses the request as malformed rather than writing fewer files than
+  the application asked for.
 - `filters` and `choices` pass through unchanged in shape.
 - `multiple`, `directory`, `modal`, `accept_label`, `current_name` pass through;
   absent options take the defaults in the table above.
