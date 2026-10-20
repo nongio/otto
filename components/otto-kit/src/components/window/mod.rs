@@ -493,6 +493,16 @@ impl Window {
         }
         surface.set_opaque_region(Some(&region));
         region.destroy();
+        let (width, height) = self.dimensions();
+        let whole = skia_safe::Rect::from_iwh(width, height);
+        crate::app_runner::AppContext::set_surface_opaque(
+            &wayland_client::Proxy::id(&surface),
+            width > 0
+                && height > 0
+                && rects
+                    .iter()
+                    .any(|rect| skia_safe::Contains::contains(rect, whole)),
+        );
         surface.commit();
     }
 

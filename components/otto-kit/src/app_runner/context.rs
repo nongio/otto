@@ -161,6 +161,9 @@ thread_local! {
     /// The last `output_frame` a style surface was told, keyed by the style
     /// object. See [`AppContext::output_frame`].
     static OUTPUT_FRAMES: RefCell<HashMap<ObjectId, (f32, f32, f32, f32)>> = RefCell::new(HashMap::new());
+    /// Surfaces whose opaque region covers all of them. See
+    /// [`AppContext::surface_is_opaque`].
+    static OPAQUE_SURFACES: RefCell<HashSet<ObjectId>> = RefCell::new(HashSet::new());
     /// The output each surface most recently entered, keyed by the surface.
     /// See [`AppContext::surface_output`].
     static SURFACE_OUTPUTS: RefCell<HashMap<ObjectId, wl_output::WlOutput>> = RefCell::new(HashMap::new());
@@ -1656,6 +1659,26 @@ impl<'a> AppContext<'a> {
         })
     }
 
+    /// Whether the surface told the compositor every pixel it paints is
+    /// opaque. Only such a surface gets subpixel text: a pixel has one alpha
+    /// on the way to the screen, and text whose red, green and blue cover
+    /// different amounts of it fringes wherever what is under it shows
+    /// through.
+    pub(crate) fn surface_is_opaque(surface_id: &ObjectId) -> bool {
+        OPAQUE_SURFACES.with(|surfaces| surfaces.borrow().contains(surface_id))
+    }
+
+    pub(crate) fn set_surface_opaque(surface_id: &ObjectId, opaque: bool) {
+        OPAQUE_SURFACES.with(|surfaces| {
+            let mut surfaces = surfaces.borrow_mut();
+            if opaque {
+                surfaces.insert(surface_id.clone());
+            } else {
+                surfaces.remove(surface_id);
+            }
+        });
+    }
+
     /// The compositor answered the surface's frame request.
     pub(crate) fn clear_frame_in_flight(surface_id: &ObjectId) {
         FRAMES_REQUESTED.with(|surfaces| {
@@ -1697,6 +1720,11 @@ impl<'a> AppContext<'a> {
         let _ = SURFACE_OUTPUTS.try_with(|outputs| {
             if let Ok(mut outputs) = outputs.try_borrow_mut() {
                 outputs.remove(surface_id);
+            }
+        });
+        let _ = OPAQUE_SURFACES.try_with(|surfaces| {
+            if let Ok(mut surfaces) = surfaces.try_borrow_mut() {
+                surfaces.remove(surface_id);
             }
         });
         super::surface_scale::forget(surface_id);

@@ -327,7 +327,9 @@ impl BaseWaylandSurface {
     /// Only when the buffer is shown pixel for pixel — at the surface's own
     /// scale, not the next whole one a compositor without a viewporter
     /// shrinks, and with no crop stretching it — since subpixel text
-    /// resampled by the compositor fringes. A surface across two outputs, on
+    /// resampled by the compositor fringes — and only on a surface whose
+    /// opaque region covers all of it ([`AppContext::surface_is_opaque`]),
+    /// since text on what shows through fringes too. A surface across two outputs, on
     /// none yet, or on one that has not described itself gets `Unknown`:
     /// greyscale text. Re-evaluated every draw, so it follows the surface to
     /// another output on the next frame it paints there.
@@ -340,7 +342,7 @@ impl BaseWaylandSurface {
             BufferScale::Integer(n) => n.max(0) as u32 * 120 == wanted_120,
             BufferScale::Fractional(s) => s == wanted_120,
         } && self.scale.crop.get().is_none();
-        if !one_to_one {
+        if !one_to_one || !AppContext::surface_is_opaque(&self.wl_surface.id()) {
             return PixelGeometry::Unknown;
         }
         let Some(data) = self.wl_surface.data::<SurfaceData>() else {

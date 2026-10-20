@@ -156,6 +156,13 @@ carries the reasoning. Most connectors report `Unknown`, so without the
 profile key text stays grayscale. With plane decomposition on, chrome renders
 into plane slots, so this reaches only what falls back to the swapchain.
 
+otto-kit apps read the same layout from `wl_output` and draw subpixel text
+only on a surface that is opaque all over — its opaque region, set with
+`Window::set_opaque_region`, covers the whole surface — shown pixel for pixel
+on one output (`BaseWaylandSurface::pixel_geometry`). A pixel reaches the
+compositor with one alpha, so on a frosted sidebar or a translucent bar the
+per-channel coverage would fringe; every such surface draws grayscale.
+
 **What Otto does not publish.** The Settings portal carries no font key, and
 XSETTINGS publishes only the scaling ones (`Xft/DPI`,
 `Gdk/WindowScalingFactor`, `Gdk/UnscaledDPI`; see `apply_xwayland_xsettings`
