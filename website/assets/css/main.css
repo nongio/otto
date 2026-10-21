@@ -1,18 +1,6 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap');
 @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@300;400&display=swap');
-
-@font-face {
-   font-family: 'Otto-Mono'; 
-   font-style: normal; 
-   font-weight: 400; 
-   src: url(https://fonts.clig.dev/iAWriterMonoS-Regular.woff2) format('woff2');
-}
-@font-face {
-   font-family: 'Otto-Mono'; 
-   font-style: normal; 
-   font-weight: 600; 
-   src: url(https://fonts.clig.dev/iAWriterMonoS-Bold.woff2) format('woff2');
-}
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&display=swap');
 
 * {
    font-family: inherit;
@@ -728,7 +716,8 @@ h2+p, h3+p {
 }
 
 code {
-   font-family: 'Otto-Mono';
+   font-family: 'JetBrains Mono', ui-monospace, 'DejaVu Sans Mono', monospace;
+   font-size: 0.9em;
    padding: 0 0.25em;
    /* A config key or a flag inside a sentence has nowhere to break, so on a
       phone one of them widens the whole page. Let them break mid-token; the
@@ -736,26 +725,123 @@ code {
    overflow-wrap: anywhere;
 }
 
+/* Code blocks are drawn as a terminal: a dark pane in both themes, with a
+   bar on top that main.js fills with the block's name and a copy button.
+   The background overrides the highlighter's inline colour. */
 pre {
    display: block;
    position: relative;
    width: 100%;
    box-sizing: border-box;
    margin: 2rem auto;
-   padding: 2.5em 2px 2px;
-   font-size: 14px;
-   line-height: 1.8;
-   color: white;
-   border-radius: 7px;
+   padding: 36px 0 0;
+   font-size: 15px;
+   line-height: 1.65;
+   color: rgb(230,230,230);
+   background: rgb(22,22,24)!important;
+   border-radius: 10px;
    border: 1px solid;
+   overflow: hidden;
 }
 
 pre code {
+   --term-pad: 1.4em;
    display: block;
    overflow-x: auto;
-   padding: 3em 3rem;
-   border-radius: 1px 1px 5px 5px;
+   overflow-wrap: normal;
+   padding: 1.1em var(--term-pad) 1.3em;
+   scrollbar-color: rgba(255,255,255,0.25) transparent;
+   font-size: inherit;
    font-weight: 400;
+   color: inherit;
+   background: none!important;
+   border-top: 1px solid rgba(255,255,255,0.08);
+}
+
+.term-bar {
+   position: absolute;
+   top: 0;
+   left: 0;
+   right: 0;
+   height: 36px;
+   display: flex;
+   align-items: center;
+   gap: 10px;
+   padding: 0 8px 0 21px;
+   font-family: 'Inter', sans-serif;
+   font-size: 12px;
+   line-height: 1;
+   color: rgba(255,255,255,0.55);
+   background: rgb(34,34,37);
+   user-select: none;
+}
+
+.term-title {
+   letter-spacing: 0.02em;
+}
+
+/* Lines reach the pane's edges so a hovered one lights up full width. */
+pre code > span {
+   margin: 0 calc(-1 * var(--term-pad));
+   padding: 0 var(--term-pad);
+}
+
+pre code > .term-hover {
+   background: rgba(255,255,255,0.07);
+   cursor: pointer;
+}
+
+/* One copy button per block, moved by main.js to the hovered line. */
+.term-copy {
+   position: absolute;
+   right: 6px;
+   display: none;
+   align-items: center;
+   justify-content: center;
+   padding: 0;
+   color: rgba(255,255,255,0.65);
+   background: rgb(44,44,48);
+   border: none;
+   border-radius: 5px;
+   cursor: pointer;
+}
+
+.term-copy.shown {
+   display: flex;
+}
+
+.term-copy:hover {
+   color: rgb(255,255,255);
+}
+
+.term-copy svg {
+   width: 66%;
+   height: 66%;
+}
+
+/* The prompt is drawn, not written, so selecting or copying a block never
+   picks it up. */
+pre code .term-cmd::before {
+   content: '$ ';
+   color: rgb(255,255,255);
+   font-weight: 600;
+   user-select: none;
+}
+
+pre code .term-comment {
+   color: rgba(255,255,255,0.45);
+}
+
+/* The root font size follows the viewport, so the terminal is sized in px
+   and only steps down on a phone, where every column counts. */
+@media (max-width: 600px) {
+   pre {
+      font-size: 13px;
+   }
+   pre code {
+      --term-pad: 1.1em;
+      padding: 1em var(--term-pad) 1.1em;
+   }
 }
 
 pre code strong {
@@ -811,10 +897,6 @@ code {
 pre {
    border-color: rgb(0,0,0);
 }
-pre code {
-   color: rgb(255,255,255);
-   background: rgb(0,0,0);
-}
 @media (prefers-color-scheme: dark) {
    body {
       color: rgba(230,230,230,1);
@@ -831,9 +913,6 @@ pre code {
    }
    pre {
       border-color: rgba(126,126,126, 0.4);
-   }
-   pre code {
-      background: rgba(126,126,126, 0.4);
    }
 }
 
@@ -858,9 +937,6 @@ pre code {
 :root[data-theme="dark"] pre {
    border-color: rgba(126,126,126, 0.4);
 }
-:root[data-theme="dark"] pre code {
-   background: rgba(126,126,126, 0.4);
-}
 
 :root[data-theme="light"] body {
    color: rgba(0,0,0,1);
@@ -877,9 +953,6 @@ pre code {
 }
 :root[data-theme="light"] pre {
    border-color: rgb(0,0,0);
-}
-:root[data-theme="light"] pre code {
-   background: rgb(0,0,0);
 }
 
 a:focus, button:focus {

@@ -5,8 +5,144 @@ window.addEventListener('DOMContentLoaded', () => {
     startNavObservation();
     initThemeToggle();
     initBarClock();
+    initCodeBlocks();
 
 });
+
+var SHELL_LANGS = ['sh', 'bash', 'shell', 'zsh', 'console'];
+
+// Solar "copy" and "copy-check", linear (@solar-icons/static 2.3.2).
+var SOLAR_COPY_PATHS =
+    '<path d="M6 11C6 8.17157 6 6.75736 6.87868 5.87868C7.75736 5 9.17157 5 12 5H15C17.8284 5 19.2426 5 20.1213 5.87868C21 6.75736 21 8.17157 21 11V16C21 18.8284 21 20.2426 20.1213 21.1213C19.2426 22 17.8284 22 15 22H12C9.17157 22 7.75736 22 6.87868 21.1213C6 20.2426 6 18.8284 6 16V11Z"/>' +
+    '<path d="M6 19C4.34315 19 3 17.6569 3 16V10C3 6.22876 3 4.34315 4.17157 3.17157C5.34315 2 7.22876 2 11 2H15C16.6569 2 18 3.34315 18 5"/>';
+var SOLAR_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">';
+var COPY_ICON = SOLAR_SVG + SOLAR_COPY_PATHS + '</svg>';
+var COPIED_ICON = SOLAR_SVG + SOLAR_COPY_PATHS + '<path d="M10.25 13.9875L12.1071 15.9375L16.75 11.0625"/></svg>';
+
+// Every code block gets a terminal bar with its name, and a copy button on
+// the first line of whatever the pointer is over. A shell command copies
+// whole, with its continuation lines and heredoc; a script copies whole from
+// any line; anything else copies the hovered line.
+function initCodeBlocks() {
+    document.querySelectorAll('main pre > code').forEach(code => {
+        var pre = code.parentElement;
+        var lang = (code.dataset.lang || '').toLowerCase();
+        var shell = SHELL_LANGS.indexOf(lang) !== -1;
+
+        var bar = document.createElement('span');
+        bar.className = 'term-bar';
+        var title = document.createElement('span');
+        title.className = 'term-title';
+        title.textContent = shell ? 'Terminal' : lang;
+        bar.append(title);
+        pre.prepend(bar);
+
+        splitLines(code);
+        var groupOf = new Map();
+        lineGroups(code, shell).forEach(group => group.forEach(line => groupOf.set(line, group)));
+
+        var copy = document.createElement('button');
+        copy.className = 'term-copy';
+        copy.type = 'button';
+        copy.setAttribute('aria-label', 'Copy');
+        copy.title = 'Copy';
+        copy.innerHTML = COPY_ICON;
+        pre.append(copy);
+
+        var current = null;
+        function show(group) {
+            if (group === current) return;
+            if (current) current.forEach(l => l.classList.remove('term-hover'));
+            current = group;
+            copy.classList.toggle('shown', !!group);
+            if (!group) return;
+            group.forEach(l => l.classList.add('term-hover'));
+            // One button per command, on its first line and never taller
+            // than a line.
+            var box = group[0].getBoundingClientRect();
+            copy.style.top = (box.top - pre.getBoundingClientRect().top - pre.clientTop) + 'px';
+            copy.style.height = copy.style.width = box.height + 'px';
+            copy.innerHTML = COPY_ICON;
+        }
+
+        code.addEventListener('mouseover', e => {
+            var line = e.target.closest('code > span');
+            if (line && line.parentElement === code) show(groupOf.get(line) || null);
+        });
+        pre.addEventListener('mouseleave', () => show(null));
+
+        function copyCurrent() {
+            if (!current) return;
+            // textContent, not innerText: the highlighter's lines are flex
+            // boxes, which innerText would double-space, and the drawn
+            // prompt stays out of it.
+            var text = current.map(l => l.textContent).join('').replace(/\n+$/, '');
+            navigator.clipboard.writeText(text).then(() => { copy.innerHTML = COPIED_ICON; });
+        }
+        copy.addEventListener('click', copyCurrent);
+        // A click on the line copies it too; a drag that selects text does not.
+        code.addEventListener('click', () => {
+            if (window.getSelection().isCollapsed) copyCurrent();
+        });
+    });
+}
+
+// The highlighter writes one child span per line; a block it left alone
+// (no language) is plain text, so give it the same shape.
+function splitLines(code) {
+    if (code.children.length) return;
+    var text = code.textContent;
+    code.textContent = '';
+    text.split(/(?<=\n)/).forEach(part => {
+        var line = document.createElement('span');
+        line.style.display = 'block';
+        line.textContent = part;
+        code.append(line);
+    });
+}
+
+// The lines one copy takes, per hovered line. Shell blocks also get a
+// prompt on each line a reader would type: not on comments, continuation
+// lines, heredoc bodies or indented lines, and not at all on a block that
+// is a script rather than a list of commands.
+function lineGroups(code, shell) {
+    var lines = Array.from(code.children);
+    var texts = lines.map(line => line.textContent.replace(/\n$/, ''));
+    var filled = lines.filter((line, i) => texts[i].trim());
+    if (!shell) return filled.map(line => [line]);
+    var script = texts.some(t => /^(#!|(while|for|if|case|until|function)\b|\w+\(\)\s*\{)/.test(t));
+    if (script) return [filled];
+
+    var groups = [];
+    var current = null;
+    var heredoc = null;
+    var continued = false;
+    texts.forEach((text, i) => {
+        var line = lines[i];
+        if (heredoc) {
+            if (current) current.push(line);
+            if (text.trim() === heredoc) heredoc = null;
+            continued = false;
+            return;
+        }
+        if (/^\s*#/.test(text)) {
+            line.classList.add('term-comment');
+            current = null;
+        } else if (continued && current) {
+            current.push(line);
+        } else if (/^\S/.test(text)) {
+            line.classList.add('term-cmd');
+            current = [line];
+            groups.push(current);
+        } else {
+            current = null;
+        }
+        var here = text.match(/<<-?\s*['"]?(\w+)['"]?/);
+        if (here) heredoc = here[1];
+        continued = /\\$/.test(text);
+    });
+    return groups;
+}
 
 // The top bar's clock, written the way Otto's bar writes it: the weekday,
 // the date and the time, in the reader's own locale.
