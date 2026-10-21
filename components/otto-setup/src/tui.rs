@@ -46,13 +46,17 @@ impl Page {
 
     fn intro(self) -> &'static str {
         match self {
-            Page::Agents => " Which agents do you want to set up? Enter shows what one needs.",
-            Page::Requirements => {
-                " What the agents need, and what is optional. Enter shows what to do."
-            }
-            Page::Review => {
-                " What is there, and what Apply does. Enter shows how, or what a step runs."
-            }
+            Page::Agents => " Which agents should Otto use? Enter shows what each one needs.",
+            Page::Requirements => " What the agents need to run. Enter shows how to install each.",
+            Page::Review => " What setup found, and what Apply will change. Enter shows details.",
+        }
+    }
+
+    /// The status line a page starts with.
+    fn hint(self) -> &'static str {
+        match self {
+            Page::Review => "Nothing changes until you press Apply.",
+            _ => "Nothing changes until you press Apply on Review. Tab for the next page.",
         }
     }
 
@@ -128,7 +132,7 @@ pub fn run(facts: Facts) -> io::Result<()> {
         page: Page::Agents,
         cursor: 0,
         view: View::Welcome { cursor: 0 },
-        status: "Nothing changes until you apply. Tab for the next page.".into(),
+        status: Page::Agents.hint().into(),
     };
     let mut drawn_size = None;
     let mut dirty = true;
@@ -177,6 +181,21 @@ impl App {
         }
     }
 
+    /// What the user has to fix by hand: a required program missing, or a
+    /// skill whose name something of theirs has taken.
+    fn to_fix(&self) -> usize {
+        let node = usize::from(self.facts.node_version.is_none());
+        let adapters = plan::adapters(&self.facts, &self.choices)
+            .iter()
+            .filter(|(_, state)| *state == plan::Adapter::Missing)
+            .count();
+        let skills = plan::needed_skills(&self.facts, &self.choices)
+            .iter()
+            .filter(|s| s.in_the_way())
+            .count();
+        node + adapters + skills
+    }
+
     fn todo(&self) -> usize {
         self.steps.iter().filter(|s| s.state == State::Todo).count()
     }
@@ -194,14 +213,17 @@ impl App {
         self.replan();
         let failed = self.outcomes.iter().any(|o| !o.ok);
         self.status = if failed {
-            "Something did not work: open it for what it printed.".into()
+            "A step did not work. Enter shows what it printed.".into()
         } else {
-            "Done. Try it: run otto-ask. Settings › Agents has the rest.".into()
+            "Done. Try it in Ask, or run otto-ask. Settings › Agents has the rest.".into()
         };
         self.view = View::Results { cursor: 0 };
     }
 
     fn go(&mut self, page: Page) {
+        if Page::ALL.iter().any(|p| p.hint() == self.status) {
+            self.status = page.hint().into();
+        }
         if page != self.page {
             self.page = page;
             self.cursor = 0;
@@ -309,13 +331,11 @@ impl App {
         match row {
             Row::Harness(harness) => match plan::readiness(&self.facts, harness) {
                 Readiness::Configured => {
-                    self.status =
-                        "Already in your agent list. Settings › Agents changes or removes it."
-                            .into();
+                    self.status = "Already added. Settings › Agents changes or removes it.".into();
                 }
                 Readiness::Missing(missing) => {
                     self.status = format!(
-                        "{} missing. Enter shows how to install it.",
+                        "Needs {}. Enter shows how to install it.",
                         missing.join(", ")
                     );
                 }
@@ -328,7 +348,7 @@ impl App {
                             && plan::studio(&self.facts, &self.choices) != Studio::Ready
                         {
                             self.choices.studio = false;
-                            self.status = "Studio runs on Claude Code: unticked it too.".into();
+                            self.status = "Studio needs Claude Code, so it is unticked too.".into();
                         }
                     } else {
                         picks.push(harness);
@@ -343,7 +363,7 @@ impl App {
                     self.choices.otto = !self.choices.otto;
                     self.replan();
                 } else {
-                    self.status = "Otto's plugin is missing. Enter says more.".into();
+                    self.status = "Otto's agent files are missing. Enter shows more.".into();
                 }
             }
             Row::Studio => self.toggle_studio(),
@@ -361,10 +381,10 @@ impl App {
                 }
             },
             Row::Node | Row::Adapters | Row::CcConnect => {
-                self.status = "Setup does not install software. Enter shows how.".into();
+                self.status = "Setup does not install programs. Enter shows the commands.".into();
             }
             Row::Skills | Row::Profiles => {
-                self.status = "Apply takes care of it. Enter shows how, and how to check.".into();
+                self.status = "Apply does this. Enter shows the details.".into();
             }
             Row::Step(_) | Row::Apply => {}
         }
@@ -377,7 +397,7 @@ impl App {
         }
         match plan::studio(&self.facts, &self.choices) {
             Studio::Unavailable => {
-                self.status = "Otto's plugin has no Studio. Enter says more.".into();
+                self.status = "Studio's files are missing. Enter shows more.".into();
             }
             Studio::Ready => self.choices.studio = true,
             Studio::NeedsClaude => {
@@ -387,11 +407,11 @@ impl App {
                 ) {
                     self.choices.picks.insert(0, Harness::Claude);
                     self.choices.studio = true;
-                    self.status = "Studio runs on Claude Code: ticked it too.".into();
+                    self.status = "Studio needs Claude Code, so it is ticked too.".into();
                     self.replan();
                 } else {
                     self.status =
-                        "Studio runs on Claude Code, which is not installed: Enter on it shows how."
+                        "Studio needs Claude Code, which is not installed. Enter on Claude Code shows how."
                             .into();
                 }
             }
@@ -400,7 +420,7 @@ impl App {
 
     fn try_apply(&mut self) -> Flow {
         if self.todo() == 0 {
-            self.status = "Nothing to do.".into();
+            self.status = "Nothing to apply.".into();
             return Flow::Continue;
         }
         Flow::Apply
@@ -435,7 +455,7 @@ impl App {
             Row::Otto => "Otto".into(),
             Row::Studio => "Studio".into(),
             Row::Node => "Node.js".into(),
-            Row::Adapters => "ACP adapters".into(),
+            Row::Adapters => "Agent adapters".into(),
             Row::Bridge => "Chat bridge".into(),
             Row::CcConnect => "cc-connect".into(),
             Row::Skills => "Otto's skills".into(),
@@ -465,10 +485,12 @@ impl App {
 
     fn header(&self, cols: usize, crumb: Option<&str>) -> String {
         let todo = self.todo();
-        let right = if todo == 0 {
-            (GREEN, "all set ".to_owned())
-        } else {
-            (YELLOW, format!("{todo} to do "))
+        let fix = self.to_fix();
+        let right = match (fix, todo) {
+            (0, 0) => (GREEN, "nothing to apply ".to_owned()),
+            (0, todo) => (YELLOW, format!("{todo} to apply ")),
+            (fix, 0) => (RED, format!("{fix} to fix ")),
+            (fix, todo) => (RED, format!("{fix} to fix · {todo} to apply ")),
         };
         // The pages are the agents' for now, the one topic.
         let crumb = match (self.view, crumb) {
@@ -484,7 +506,7 @@ impl App {
             self.header(cols, None),
             otto_term_kit::rule(cols),
             String::new(),
-            plain_styled(cols, BOLD, " Welcome to Otto."),
+            plain_styled(cols, BOLD, " Set up Otto"),
             String::new(),
         ];
         lines.extend(WELCOME.lines().map(|line| plain(cols, &format!(" {line}"))));
@@ -506,7 +528,7 @@ impl App {
         while lines.len() + 1 < rows {
             lines.push(String::new());
         }
-        lines.push(plain_styled(cols, DIM, " ↑↓ move  enter set up  q quit"));
+        lines.push(plain_styled(cols, DIM, " ↑↓ move  enter choose  q quit"));
         lines
     }
 
@@ -540,11 +562,11 @@ impl App {
         let items = self.rows();
         for (i, row) in items.iter().enumerate() {
             let heading = match (self.page, row) {
-                (_, Row::Otto) => Some(" Otto in your agents"),
+                (_, Row::Otto) => Some(" Also set up"),
                 (Page::Requirements, Row::Node) => Some(" Required"),
                 (Page::Requirements, Row::Bridge) => Some(" Optional"),
-                (Page::Review, Row::Node) => Some(" Checks"),
-                (Page::Review, Row::Step(0)) => Some(" Steps"),
+                (Page::Review, Row::Node) => Some(" Found"),
+                (Page::Review, Row::Step(0)) => Some(" Apply will"),
                 _ => None,
             };
             if let Some(heading) = heading {
@@ -567,9 +589,9 @@ impl App {
             lines.push(String::new());
         }
         let help = match self.page {
-            Page::Agents => " ↑↓ move  space tick  enter what it needs  tab next  q quit",
-            Page::Requirements => " ↑↓ move  space tick  enter what to do  tab next  q quit",
-            Page::Review => " ↑↓ move  enter how-to or preview  a apply  tab back  q quit",
+            Page::Agents => " ↑↓ move  space tick  enter details  tab next  q quit",
+            Page::Requirements => " ↑↓ move  space tick  enter details  tab next  q quit",
+            Page::Review => " ↑↓ move  enter details  a apply  tab back  q quit",
         };
         let mut help = help.to_owned();
         if !self.outcomes.is_empty() {
@@ -586,7 +608,7 @@ impl App {
         let title = self.row_title(row);
         let (mark, mark_style, note, note_style): (&str, &str, String, &str) = match row {
             Row::Harness(harness) => match plan::readiness(&self.facts, harness) {
-                Readiness::Configured => ("[✓]", GREEN, "in your agent list".into(), DIM),
+                Readiness::Configured => ("[x]", GREEN, "already added".into(), DIM),
                 Readiness::Ready(path) => {
                     let mark = if self.choices.picks.contains(&harness) {
                         "[x]"
@@ -605,39 +627,36 @@ impl App {
                     (
                         mark,
                         GREEN,
-                        "answers in Ask as Otto, knowing your desktop".into(),
+                        "agents answer as Otto and know your desktop".into(),
                         DIM,
                     )
                 } else {
-                    ("[ ]", DIM, "Otto's plugin not found".into(), YELLOW)
+                    ("[ ]", DIM, "Otto's agent files are missing".into(), YELLOW)
                 }
             }
             Row::Studio => {
                 let mark = if self.choices.studio { "[x]" } else { "[ ]" };
                 match plan::studio(&self.facts, &self.choices) {
-                    Studio::Unavailable => ("[ ]", DIM, "not in Otto's plugin".into(), YELLOW),
+                    Studio::Unavailable => {
+                        ("[ ]", DIM, "Studio's files are missing".into(), YELLOW)
+                    }
                     Studio::Ready => (
                         mark,
                         GREEN,
-                        "works on the file open in Studio, from its chat".into(),
+                        "chat about and edit the file open in Studio".into(),
                         DIM,
                     ),
                     Studio::NeedsClaude => (
                         mark,
                         GREEN,
-                        "works on the file open in Studio · needs Claude Code".into(),
+                        "chat about the file open in Studio · needs Claude Code".into(),
                         YELLOW,
                     ),
                 }
             }
             Row::Node => match &self.facts.node_version {
-                Some(version) => (
-                    " ✓ ",
-                    GREEN,
-                    format!("{version} · npx {}", self.found("npx")),
-                    DIM,
-                ),
-                None => (" ✗ ", RED, "not installed · enter for how".into(), RED),
+                Some(version) => (" ✓ ", GREEN, format!("{version}, with npm and npx"), DIM),
+                None => (" ✗ ", RED, "not installed · Enter for how".into(), RED),
             },
             Row::Adapters => {
                 let adapters = plan::adapters(&self.facts, &self.choices);
@@ -655,25 +674,29 @@ impl App {
                     (
                         " ✗ ",
                         RED,
-                        format!("missing {} · enter for how", missing.join(", ")),
+                        format!("missing {} · Enter for how", missing.join(", ")),
                         RED,
                     )
                 } else {
-                    let mut parts: Vec<String> = named(plan::Adapter::Installed)
-                        .into_iter()
-                        .map(str::to_owned)
+                    let mut parts = Vec::new();
+                    let installed = named(plan::Adapter::Installed);
+                    if !installed.is_empty() {
+                        parts.push(format!("{} installed", installed.join(", ")));
+                    }
+                    let downloaded: Vec<&str> = adapters
+                        .iter()
+                        .filter(|(_, state)| *state == plan::Adapter::Npx)
+                        .filter_map(|(h, _)| h.name())
                         .collect();
-                    parts.extend(
-                        named(plan::Adapter::Npx)
-                            .into_iter()
-                            .map(|bin| format!("{bin} via npx")),
-                    );
-                    (" ✓ ", GREEN, parts.join(", "), DIM)
+                    if !downloaded.is_empty() {
+                        parts.push(format!("{} download theirs", downloaded.join(", ")));
+                    }
+                    (" ✓ ", GREEN, parts.join(" · "), DIM)
                 }
             }
             Row::Bridge => match plan::bridge(&self.facts) {
                 Bridge::Running => (
-                    "[✓]",
+                    "[x]",
                     GREEN,
                     "message your agents from Telegram · running".into(),
                     DIM,
@@ -681,25 +704,25 @@ impl App {
                 Bridge::Off | Bridge::Ready => {
                     let mark = if self.choices.bridge { "[x]" } else { "[ ]" };
                     let note = if plan::bridge(&self.facts) == Bridge::Off {
-                        "message your agents from Telegram · set up, off"
+                        "message your agents from Telegram · set up, turned off"
                     } else {
-                        "message your agents from Telegram · ready"
+                        "message your agents from Telegram · ready to turn on"
                     };
                     (mark, GREEN, note.into(), DIM)
                 }
                 Bridge::Missing(_) => (
                     "[ ]",
                     DIM,
-                    "message your agents from Telegram · enter to set it up".into(),
+                    "message your agents from Telegram · Enter to set it up".into(),
                     DIM,
                 ),
                 Bridge::Unavailable(why) => ("[ ]", DIM, why.into(), DIM),
             },
             Row::CcConnect => match self.facts.found.get("cc-connect") {
-                Some(path) => (
+                Some(_) => (
                     " ✓ ",
                     GREEN,
-                    format!("{} · for the chat bridge", self.facts.shown(path)),
+                    "installed · for the chat bridge".to_owned(),
                     DIM,
                 ),
                 None => (
@@ -720,13 +743,13 @@ impl App {
                         .join(", ")
                 };
                 if self.facts.plugins.is_none() {
-                    (" ✗ ", RED, "otto-agents cannot say · enter".into(), RED)
+                    (" ✗ ", RED, "otto-agents did not answer · Enter".into(), RED)
                 } else if skills.iter().any(|s| s.in_the_way()) {
                     (
                         " ✗ ",
                         RED,
                         format!(
-                            "{}: something of yours is in the way · enter",
+                            "{}: a file of yours has its name · Enter",
                             names(crate::plugins::Skill::in_the_way)
                         ),
                         RED,
@@ -748,34 +771,32 @@ impl App {
                     let mut v: Vec<&str> = profiles
                         .iter()
                         .filter(|r| !r.current())
-                        .map(|r| r.vendor.as_str())
+                        .map(|r| guide::vendor_name(&r.vendor))
                         .collect();
                     v.dedup();
                     v
                 };
                 if !self.choices.otto {
-                    (
-                        " ✓ ",
-                        GREEN,
-                        "none: the new agents are the plain harness".into(),
-                        DIM,
-                    )
+                    (" ✓ ", GREEN, "none: Otto is unticked".into(), DIM)
                 } else if profiles.is_empty() {
+                    (" ✓ ", GREEN, "none needed for Claude Code".into(), DIM)
+                } else if behind.is_empty() {
+                    let mut v: Vec<&str> = profiles
+                        .iter()
+                        .map(|r| guide::vendor_name(&r.vendor))
+                        .collect();
+                    v.dedup();
                     (
                         " ✓ ",
                         GREEN,
-                        "none needed: Claude Code reads Otto's plugin".into(),
+                        format!("up to date for {}", v.join(", ")),
                         DIM,
                     )
-                } else if behind.is_empty() {
-                    let mut v: Vec<&str> = profiles.iter().map(|r| r.vendor.as_str()).collect();
-                    v.dedup();
-                    (" ✓ ", GREEN, format!("current for {}", v.join(", ")), DIM)
                 } else {
                     (
                         " ● ",
                         YELLOW,
-                        format!("Apply writes {}", behind.join(", ")),
+                        format!("Apply writes the copies for {}", behind.join(", ")),
                         YELLOW,
                     )
                 }
@@ -809,13 +830,6 @@ impl App {
             line.fill(REVERSE);
         }
         line.finish()
-    }
-
-    fn found(&self, program: &str) -> String {
-        self.facts
-            .found
-            .get(program)
-            .map_or_else(|| "missing".to_owned(), |p| self.facts.shown(p))
     }
 
     fn results_lines(&self, cursor: usize, cols: usize, rows: usize) -> Vec<String> {
@@ -890,18 +904,18 @@ impl App {
 /// What the welcome says: what setup is for, what it does and leaves to
 /// the user, and where the rest of the configuration lives.
 const WELCOME: &str = "\
-This helps you configure Otto. It bootstraps what a part of Otto needs
-from your system: it finds what is installed, sets up what it can, and
-explains what it cannot do for you, such as installing a program or
-signing in. Nothing changes until you apply.
+Some parts of Otto rely on programs on your system. Setup finds what
+is installed, sets up what it can, and shows the commands for the
+rest, such as installing a program or signing in. Nothing changes
+until you press Apply.
 
-For the finer configuration, there is Settings.";
+Everything else is in Settings.";
 
 /// What setup can set up, as a title and a line on what it is. More
 /// dependencies come here as setup grows.
 const TOPICS: [(&str, &str); 1] = [(
     "Otto Agents",
-    "the agents behind Ask and Sessions, used from Otto itself",
+    "AI agents that answer in Ask and run your Sessions",
 )];
 
 /// One line of instructions, styled by what it is (see `guide.rs`): a step

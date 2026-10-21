@@ -30,20 +30,20 @@ A welcome comes first: setup configures Otto by bootstrapping what a part of it 
   - *in your agent list*: it cannot be ticked;
   - *ready*: its own program, and its adapter or `npx` to run the adapter with, are on the user's PATH; it can be ticked;
   - *needs …*: names what is missing; ticking it says to open the instructions, which give the npm package (or, for Hermes, its own installer), the adapter, and how to sign in.
-- **Otto in your agents.** Two boxes for Otto's own plugin, never the user's: *Otto*, ticked, makes the agents added now answer as Otto; unticked, they are the plain harness. *Studio* is Studio's chat, which runs only on Claude Code: ticking it ticks Claude Code when it is ready, and without Claude Code it says so. Settings › Agents changes an agent later.
+- **Also set up.** Two boxes for Otto's own plugin, never the user's: *Otto*, ticked, makes the agents added now answer as Otto; unticked, they are the plain harness. *Studio* is Studio's chat, which runs only on Claude Code: ticking it ticks Claude Code when it is ready, and without Claude Code it says so. Settings › Agents changes an agent later.
 - **Initial ticks.** With no agent list at all, every ready harness is ticked. With a list, none is. Otto is ticked when its plugin is there, and Studio when a Claude Code agent is there or ticked.
 - **Requirements.** Required: Node.js (its version, or how to install it with the system's package manager or nvm) and the ACP adapters of the agents there are or are being added (each installed, fetched with `npx`, or missing, with how to install it). Optional: the chat bridge, to message the agents from Telegram: running, set up but off, ready (cc-connect and its configuration found), or the steps still missing (install cc-connect; make a Telegram bot; write its configuration, given with the paths filled in). Only the bridge can be ticked, and only when ready or off.
 - **Review checks**, for the agents there are or are being added: Node.js, their ACP adapters, cc-connect, Otto's skills (linked, to link, or something of the user's in the way) and each harness's profile of Otto's agent (current, or to write), the last two read from `otto-agents plugins status`.
 - **Instructions always.** Every row's instructions give the full steps with the exact commands, those already done marked so.
 - **Programs already installed are used.** A new agent on a harness whose adapter is installed starts the adapter, not `npx`.
 - **Steps**, in order, each done, to do, or blocked with why:
-  1. *Agent list*: adds one agent per ticked harness to the user's `agents.toml`, written the way Settings › Agents writes a new agent, with the chosen instructions and `permissions = "ask"`; and, when the bridge is ticked and ready, a `[bridge]` that runs cc-connect with its configuration by full path. Comments and unknown keys are kept. When the agents came from the system file, its list is copied in first. Ids are unique. A file that does not parse blocks the step and nothing is written to it.
-  2. *Service PATH*, and *Bridge PATH* when the bridge runs or will: when a program a unit starts (an agent's command; Node for `npx`, the adapters and an npm-installed cc-connect) is on the user's PATH but not the unit's, adds the folders, through a drop-in of setup's own, on top of the PATH the unit has now; then reloads the user manager.
+  1. *Agents*: adds one agent per ticked harness to the user's `agents.toml`, written the way Settings › Agents writes a new agent, with the chosen instructions and `permissions = "ask"`; and, when the bridge is ticked and ready, a `[bridge]` that runs cc-connect with its configuration by full path. Comments and unknown keys are kept. When the agents came from the system file, its list is copied in first. Ids are unique. A file that does not parse blocks the step and nothing is written to it.
+  2. *Program paths*, and *Bridge paths* when the bridge runs or will: when a program a unit starts (an agent's command; Node for `npx`, the adapters and an npm-installed cc-connect) is on the user's PATH but not the unit's, adds the folders, through a drop-in of setup's own, on top of the PATH the unit has now; then reloads the user manager.
   3. *Hermes profile*: when a Hermes agent is added with instructions and the profile named after them does not exist, creates it.
-  4. *Otto's knowledge*: runs `otto-agents plugins install` when a skill is to link, a selected harness's profile is stale or missing, or anything else changes.
+  4. *Teach the agents*: runs `otto-agents plugins install` when a skill is to link, a selected harness's profile is stale or missing, or anything else changes.
   5. *Agent service*, and *Chat bridge* when ticked or running: enables and starts the unit when it is not; restarts it when it is running and a step it reads at startup changed; otherwise done.
 - **Apply** runs the steps that are to do, in order, stops at the first that fails, then runs `otto-agents doctor` (retrying briefly while the service comes up) and shows each result, with what it printed.
-- **Header.** Shows how many steps are left, or "all set".
+- **Header.** Shows what is left: "N to fix" for what the user must do by hand (a required program missing, a skill name taken), "N to apply" for steps, or "nothing to apply".
 - **Without a terminal**, or with `--check`, it prints the harnesses, Otto and Studio, the requirements, the bridge and the steps, and exits 1 when something is left to do. `--apply` applies with the initial choices, without asking.
 
 ## Constraints & Edge Cases
@@ -53,6 +53,8 @@ A welcome comes first: setup configures Otto by bootstrapping what a part of it 
 - A drop-in the user wrote (including `override.conf`) is never written or removed.
 - A command written as a full path needs no PATH and is not checked.
 - The interface restores the terminal on exit and on a panic.
+
+- **Words.** No jargon on screen: agents, not harnesses; adapters, with ACP spelled out once; Otto's agent files, not plugins; "added", not the agent list; "name taken", not "in the way". Every step says who does it, and commands stand on their own lines.
 
 ## Rationale
 

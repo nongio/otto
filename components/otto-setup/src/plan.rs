@@ -389,7 +389,7 @@ pub fn steps(facts: &Facts, choices: &Choices) -> Vec<Step> {
         programs.push("node");
     }
     steps.push(path_step(
-        "Service PATH",
+        "Program paths",
         facts,
         &facts.agents_unit,
         programs,
@@ -400,7 +400,7 @@ pub fn steps(facts: &Facts, choices: &Choices) -> Vec<Step> {
             programs.push("node");
         }
         steps.push(path_step(
-            "Bridge PATH",
+            "Bridge paths",
             facts,
             &facts.bridge_unit,
             programs,
@@ -441,19 +441,19 @@ fn is_node_script(program: &str) -> bool {
 }
 
 fn config_step(facts: &Facts, choices: &Choices, adding: &[Harness], set_bridge: bool) -> Step {
-    let title = "Agent list";
+    let title = "Agents";
     let shown = facts.shown(&facts.config_path);
     if let Some(error) = &facts.config_error {
         return Step {
             detail: error.clone(),
-            ..Step::blocked(title, format!("cannot read it: fix {shown} first"))
+            ..Step::blocked(title, format!("{shown} cannot be read: fix it first"))
         };
     }
     if adding.is_empty() && !set_bridge {
         return match facts.configured.len() {
-            0 => Step::blocked(title, "nothing picked: tick an agent on the Agents page"),
-            1 => Step::done(title, format!("1 agent in {shown}")),
-            n => Step::done(title, format!("{n} agents in {shown}")),
+            0 => Step::blocked(title, "no agent ticked: tick one on the Agents page"),
+            1 => Step::done(title, "1 agent added".to_owned()),
+            n => Step::done(title, format!("{n} agents added")),
         };
     }
     let mut what = Vec::new();
@@ -461,14 +461,20 @@ fn config_step(facts: &Facts, choices: &Choices, adding: &[Harness], set_bridge:
         what.push(format!("add {}", names(adding)));
     }
     if set_bridge {
-        what.push("set the chat bridge".to_owned());
+        what.push("turn on the chat bridge".to_owned());
     }
     match render_config(facts, choices, adding, set_bridge) {
         Ok(text) => Step {
             title,
             state: State::Todo,
-            summary: format!("{} in {shown}", what.join(", ")),
-            detail: text.clone(),
+            summary: what.join(", "),
+            detail: format!(
+                "Writes {shown}:\n{}",
+                text.lines()
+                    .map(|line| format!("│ {line}"))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            ),
             actions: vec![Action::Write {
                 path: facts.config_path.clone(),
                 text,
@@ -476,7 +482,7 @@ fn config_step(facts: &Facts, choices: &Choices, adding: &[Harness], set_bridge:
         },
         Err(error) => Step {
             detail: error,
-            ..Step::blocked(title, format!("cannot update {shown}"))
+            ..Step::blocked(title, format!("{shown} cannot be updated"))
         },
     }
 }
@@ -590,11 +596,13 @@ fn path_step(
     unit: &UnitFacts,
     mut programs: Vec<&str>,
 ) -> Step {
+    let noun = if unit.name == crate::probe::BRIDGE_SERVICE {
+        "bridge"
+    } else {
+        "service"
+    };
     let Some(service_path) = &unit.path else {
-        return Step::done(
-            title,
-            "no systemd user manager: it runs with your session's PATH",
-        );
+        return Step::done(title, "no systemd user session: uses your session's paths");
     };
     programs.sort_unstable();
     programs.dedup();
@@ -615,7 +623,7 @@ fn path_step(
         }
     }
     if missing_dirs.is_empty() {
-        return Step::done(title, "finds everything it runs");
+        return Step::done(title, format!("the {noun} finds every program"));
     }
     let full: Vec<PathBuf> = missing_dirs.iter().chain(service_path).cloned().collect();
     let joined = std::env::join_paths(&full)
@@ -632,13 +640,17 @@ fn path_step(
         title,
         state: State::Todo,
         summary: format!(
-            "{} not on its PATH: add {}",
+            "{noun} cannot find {}: add {}",
             missing_programs.join(", "),
             shown_dirs.join(", ")
         ),
         detail: format!(
-            "{}\n\n{text}\nthen: systemctl --user daemon-reload",
-            facts.shown(&unit.dropin)
+            "Writes {}:\n{}\nThen:\n$ systemctl --user daemon-reload",
+            facts.shown(&unit.dropin),
+            text.lines()
+                .map(|line| format!("│ {line}"))
+                .collect::<Vec<_>>()
+                .join("\n")
         ),
         actions: vec![
             Action::Write {
@@ -653,13 +665,13 @@ fn path_step(
 fn hermes_step(facts: &Facts, persona: &str) -> Step {
     let title = "Hermes profile";
     if facts.hermes_profiles.iter().any(|p| p == persona) {
-        return Step::done(title, format!("~/.hermes/profiles/{persona} exists"));
+        return Step::done(title, "already created".to_owned());
     }
     Step {
         title,
         state: State::Todo,
-        summary: format!("create the {persona} profile Hermes runs the agent in"),
-        detail: format!("hermes profile create {persona}"),
+        summary: format!("create the {persona} profile in Hermes"),
+        detail: format!("$ hermes profile create {persona}"),
         actions: vec![Action::run(&["hermes", "profile", "create", persona])],
     }
 }
@@ -668,20 +680,24 @@ fn hermes_step(facts: &Facts, persona: &str) -> Step {
 /// or rendering behind, or any other change, since a new agent needs its
 /// rendering.
 fn plugins_step(facts: &Facts, needed: bool) -> Step {
-    let title = "Otto's knowledge";
+    let title = "Teach the agents";
     if !facts.found.contains_key("otto-agents") {
         return Step::blocked(title, "otto-agents is not installed");
     }
     if !needed {
-        return Step::done(title, "skills and agent profiles up to date");
+        return Step::done(title, "up to date");
     }
     Step {
         title,
         state: State::Todo,
-        summary: "link the skills and write Otto's instructions for each agent".into(),
-        detail: "otto-agents plugins install\n\n\
-                 Links the desktop's skills into ~/.agents/skills and writes the\n\
-                 Otto instructions in each harness's dialect. Safe to run again:\n\
+        summary: "link Otto's skills and write each agent's copy".into(),
+        detail: "$ otto-agents plugins install
+
+\
+                 Links Otto's skills into ~/.agents/skills and writes Otto's
+\
+                 instructions in the format each agent reads. Safe to run again:
+\
                  it only writes what changed."
             .into(),
         actions: vec![Action::run(&["otto-agents", "plugins", "install"])],
@@ -692,7 +708,7 @@ fn plugins_step(facts: &Facts, needed: bool) -> Step {
 fn unit_step(title: &'static str, unit: &UnitFacts, wanted: bool, changed: bool) -> Step {
     match unit.state {
         Unit::Unmanaged => {
-            Step::blocked(title, "no systemd user manager: start it in your session")
+            Step::blocked(title, "no systemd user session: start otto-agents yourself")
         }
         Unit::Missing => Step::blocked(title, format!("{} is not installed", unit.name)),
         Unit::Loaded {
@@ -707,7 +723,7 @@ fn unit_step(title: &'static str, unit: &UnitFacts, wanted: bool, changed: bool)
                 what.push("start at login");
             }
             if active {
-                what.push("restart to read the changes");
+                what.push("restart to pick up the changes");
                 actions.push(Action::run(&["systemctl", "--user", "restart", unit.name]));
             } else {
                 what.push("start now");
@@ -721,7 +737,7 @@ fn unit_step(title: &'static str, unit: &UnitFacts, wanted: bool, changed: bool)
             let detail = actions
                 .iter()
                 .filter_map(|action| match action {
-                    Action::Run { args } => Some(args.join(" ")),
+                    Action::Run { args } => Some(format!("$ {}", args.join(" "))),
                     Action::Write { .. } => None,
                 })
                 .collect::<Vec<_>>()
@@ -841,7 +857,7 @@ pub(crate) mod tests {
         let steps = steps(&facts, &choices);
         let knowledge = steps
             .iter()
-            .find(|s| s.title == "Otto's knowledge")
+            .find(|s| s.title == "Teach the agents")
             .unwrap();
         assert_eq!(knowledge.state, State::Todo);
     }
@@ -941,7 +957,7 @@ pub(crate) mod tests {
     fn adds_the_folders_the_service_cannot_see() {
         let facts = facts();
         let steps = steps(&facts, &Choices::initial(&facts));
-        let path = steps.iter().find(|s| s.title == "Service PATH").unwrap();
+        let path = steps.iter().find(|s| s.title == "Program paths").unwrap();
         assert_eq!(path.state, State::Todo);
         let Action::Write { text, .. } = &path.actions[0] else {
             panic!("expected a write");
@@ -1001,7 +1017,7 @@ pub(crate) mod tests {
         };
         assert!(text.contains("command = \"/home/u/.local/bin/cc-connect\""));
         assert!(text.contains("\"--config\", \"/home/u/.cc-connect/config.toml\""));
-        let path = steps.iter().find(|s| s.title == "Bridge PATH").unwrap();
+        let path = steps.iter().find(|s| s.title == "Bridge paths").unwrap();
         assert_eq!(path.state, State::Todo);
         let service = steps.iter().find(|s| s.title == "Chat bridge").unwrap();
         assert_eq!(service.state, State::Todo);
