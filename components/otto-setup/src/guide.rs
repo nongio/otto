@@ -272,7 +272,8 @@ pub fn adapters(facts: &Facts) -> String {
 }
 
 /// Otto's skills: linked where agents look for them, or what is in the way.
-pub fn skills(facts: &Facts) -> String {
+/// The bridge's own are optional while the bridge is off.
+pub fn skills(facts: &Facts, choices: &plan::Choices) -> String {
     let mut out = vec![
         "# Otto's skills".to_owned(),
         String::new(),
@@ -281,19 +282,29 @@ pub fn skills(facts: &Facts) -> String {
         "where every harness looks for skills.".to_owned(),
         String::new(),
     ];
-    let skills = plan::skills(facts);
     if facts.plugins.is_none() {
         out.push("  ✗ otto-agents could not say: is it installed?".to_owned());
     }
-    for skill in skills {
-        let mark = if skill.linked() { "✓" } else { "✗" };
+    for skill in plan::skills(facts) {
+        let needed = plan::skill_needed(facts, choices, skill);
+        let mark = match (skill.linked(), needed) {
+            (true, _) => "✓",
+            (false, true) => "✗",
+            (false, false) => "·",
+        };
+        let note = if needed {
+            ""
+        } else {
+            "  optional, for the chat bridge"
+        };
         out.push(format!(
-            "  {mark} {:<18}{:<12}{}",
+            "  {mark} {:<18}{:<12}{}{note}",
             skill.name, skill.state, skill.path
         ));
     }
     out.push(String::new());
-    let blocked: Vec<&Skill> = skills.iter().filter(|s| s.in_the_way()).collect();
+    let skills = plan::needed_skills(facts, choices);
+    let blocked: Vec<&&Skill> = skills.iter().filter(|s| s.in_the_way()).collect();
     let mut n = 0;
     if !blocked.is_empty() {
         n += 1;
@@ -305,7 +316,7 @@ pub fn skills(facts: &Facts) -> String {
         }
         out.push(String::new());
     }
-    let linked = !skills.is_empty() && skills.iter().all(Skill::linked);
+    let linked = !skills.is_empty() && skills.iter().all(|s| s.linked());
     n += 1;
     out.push(step(n, "Link the skills", Who::Setup, linked));
     out.push("Apply runs:".into());

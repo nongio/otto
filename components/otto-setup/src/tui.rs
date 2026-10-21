@@ -415,7 +415,7 @@ impl App {
             Row::Node => guide::node(&self.facts),
             Row::Adapters => guide::adapters(&self.facts),
             Row::Bridge | Row::CcConnect => guide::bridge(&self.facts),
-            Row::Skills => guide::skills(&self.facts),
+            Row::Skills => guide::skills(&self.facts, &self.choices),
             Row::Profiles => guide::profiles(&self.facts, &self.choices),
             Row::Step(index) => {
                 let step = &self.steps[index];
@@ -710,7 +710,7 @@ impl App {
                 ),
             },
             Row::Skills => {
-                let skills = plan::skills(&self.facts);
+                let skills = plan::needed_skills(&self.facts, &self.choices);
                 let names = |pick: fn(&crate::plugins::Skill) -> bool| -> String {
                     skills
                         .iter()
@@ -721,7 +721,7 @@ impl App {
                 };
                 if self.facts.plugins.is_none() {
                     (" ✗ ", RED, "otto-agents cannot say · enter".into(), RED)
-                } else if skills.iter().any(crate::plugins::Skill::in_the_way) {
+                } else if skills.iter().any(|s| s.in_the_way()) {
                     (
                         " ✗ ",
                         RED,
@@ -731,7 +731,7 @@ impl App {
                         ),
                         RED,
                     )
-                } else if skills.iter().all(crate::plugins::Skill::linked) {
+                } else if skills.iter().all(|s| s.linked()) {
                     (" ✓ ", GREEN, format!("{} linked", names(|_| true)), DIM)
                 } else {
                     (

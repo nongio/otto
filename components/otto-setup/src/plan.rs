@@ -199,6 +199,30 @@ pub fn skills(facts: &Facts) -> &[Skill] {
     facts.plugins.as_ref().map_or(&[], |status| &status.skills)
 }
 
+/// Skills only the chat bridge uses: sending to the phone goes through
+/// cc-connect.
+pub const BRIDGE_SKILLS: [&str; 1] = ["send-to-phone"];
+
+/// Whether `skill` matters with these choices: every skill, but the
+/// bridge's only when the bridge runs or is being turned on.
+pub fn skill_needed(facts: &Facts, choices: &Choices, skill: &Skill) -> bool {
+    !BRIDGE_SKILLS.contains(&skill.name.as_str()) || bridge_on(facts, choices)
+}
+
+/// The skills that matter with these choices.
+pub fn needed_skills<'a>(facts: &'a Facts, choices: &Choices) -> Vec<&'a Skill> {
+    skills(facts)
+        .iter()
+        .filter(|s| skill_needed(facts, choices, s))
+        .collect()
+}
+
+/// Whether the chat bridge runs, or will once applied.
+pub fn bridge_on(facts: &Facts, choices: &Choices) -> bool {
+    let state = bridge(facts);
+    state == Bridge::Running || choices.bridge && matches!(state, Bridge::Ready | Bridge::Off)
+}
+
 /// The renderings of Otto's agent for the selected harnesses. Claude Code
 /// reads the plugin itself and has none. Empty when the agents are plain.
 pub fn profiles<'a>(facts: &'a Facts, choices: &Choices) -> Vec<&'a Render> {
@@ -219,7 +243,9 @@ pub fn profiles<'a>(facts: &'a Facts, choices: &Choices) -> Vec<&'a Render> {
 /// choices: a skill to link, or a rendering to write. A skill something
 /// else is in the way of is left to the user.
 pub fn plugins_behind(facts: &Facts, choices: &Choices) -> bool {
-    skills(facts).iter().any(|s| !s.linked() && !s.in_the_way())
+    needed_skills(facts, choices)
+        .iter()
+        .any(|s| !s.linked() && !s.in_the_way())
         || profiles(facts, choices)
             .iter()
             .any(|r| !r.current() && r.state != "skipped")
@@ -336,8 +362,7 @@ pub fn steps(facts: &Facts, choices: &Choices) -> Vec<Step> {
         .collect();
     let bridge_state = bridge(facts);
     let set_bridge = choices.bridge && bridge_state == Bridge::Ready;
-    let bridge_on = choices.bridge && matches!(bridge_state, Bridge::Ready | Bridge::Off)
-        || bridge_state == Bridge::Running;
+    let bridge_on = bridge_on(facts, choices);
 
     let mut steps = vec![config_step(facts, choices, &adding, set_bridge)];
 
@@ -819,6 +844,24 @@ pub(crate) mod tests {
             .find(|s| s.title == "Otto's knowledge")
             .unwrap();
         assert_eq!(knowledge.state, State::Todo);
+    }
+
+    #[test]
+    fn send_to_phone_matters_only_with_the_bridge() {
+        let mut facts = facts();
+        facts.plugins = Some(plugins::parse(
+            "otto 1.0.0  /usr/share/otto/plugins/otto\n  \
+             otto-help                linked      ~/.agents/skills/otto-help\n  \
+             send-to-phone            not linked  ~/.agents/skills/send-to-phone\n",
+        ));
+        let mut choices = Choices::initial(&facts);
+        assert!(!plugins_behind(&facts, &choices));
+        facts
+            .found
+            .insert("cc-connect".into(), PathBuf::from("/usr/bin/cc-connect"));
+        facts.cc_config_exists = true;
+        choices.bridge = true;
+        assert!(plugins_behind(&facts, &choices));
     }
 
     #[test]
