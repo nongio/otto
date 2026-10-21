@@ -1,14 +1,19 @@
-//! What setup would do: from the [`Facts`] and the harnesses picked, the
+//! What setup would do: from the [`Facts`] and the user's [`Choices`], the
 //! steps to run and, for each, exactly what it writes or runs.
+//!
+//! Setup does the simple, local part of setting up: it writes Otto's own
+//! files and turns Otto's units on. Installing software, signing in and
+//! making bot accounts are the user's, and setup says how (`crate::guide`).
+//! What is already installed is used as it is.
 
 // Rust guideline compliant 2026-02-21
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use otto_agents_client::harness::{self, Harness};
 use toml_edit::{value, DocumentMut, Item, Table};
 
-use crate::probe::{Facts, Unit, SERVICE};
+use crate::probe::{Facts, Unit, UnitFacts};
 
 /// The harnesses setup offers, in the order it lists them.
 pub const HARNESSES: [Harness; 5] = [
@@ -19,25 +24,79 @@ pub const HARNESSES: [Harness; 5] = [
     Harness::Pi,
 ];
 
+/// What the user picked.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Choices {
+    /// Harnesses to add an agent for.
+    pub picks: Vec<Harness>,
+    /// The instructions new agents run as; empty for the harness's own.
+    pub persona: String,
+    /// Whether to turn the chat bridge on.
+    pub bridge: bool,
+}
+
+impl Choices {
+    /// What is ticked to begin with: every ready harness when the agent
+    /// list is empty, since Otto has nothing of the user's yet, and none
+    /// otherwise, since the user has already chosen; Otto's instructions;
+    /// the bridge off.
+    pub fn initial(facts: &Facts) -> Self {
+        let picks = if facts.configured.is_empty() {
+            HARNESSES
+                .into_iter()
+                .filter(|h| matches!(readiness(facts, *h), Readiness::Ready(_)))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let persona = if facts.instructions.iter().any(|n| n == harness::OTTO) {
+            harness::OTTO.to_owned()
+        } else {
+            facts.instructions.first().cloned().unwrap_or_default()
+        };
+        Self {
+            picks,
+            persona,
+            bridge: false,
+        }
+    }
+
+    /// The instructions to choose from, in order; the empty name is the
+    /// harness's own.
+    pub fn personas(facts: &Facts) -> Vec<String> {
+        facts
+            .instructions
+            .iter()
+            .cloned()
+            .chain(std::iter::once(String::new()))
+            .collect()
+    }
+}
+
 /// Where a harness stands.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Readiness {
     /// Already in the agent list.
     Configured,
-    /// Installed, with what it was found as.
-    Installed(PathBuf),
-    /// Something it needs is not on the PATH.
-    Missing(&'static str),
+    /// Everything it needs is installed; its own program is here.
+    Ready(PathBuf),
+    /// These programs are missing; the guide says how to get them.
+    Missing(Vec<&'static str>),
 }
 
-/// The programs a harness needs on the PATH, its own last.
-pub fn needs(harness: Harness) -> Vec<&'static str> {
-    let adapter = match harness {
-        // The adapters are npm packages `npx` runs.
-        Harness::Claude | Harness::Codex => Some("npx"),
-        _ => None,
-    };
-    adapter.into_iter().chain(harness.program()).collect()
+/// The programs `harness` is missing on the user's PATH: its own, and the
+/// adapter or `npx` to run the adapter with.
+pub fn missing(facts: &Facts, harness: Harness) -> Vec<&'static str> {
+    let has = |name: &str| facts.found.contains_key(name);
+    let mut missing: Vec<&'static str> =
+        harness.program().filter(|p| !has(p)).into_iter().collect();
+    match (harness, harness.adapter()) {
+        // pi only runs through its adapter.
+        (Harness::Pi, Some(adapter)) if !has(adapter.bin) => missing.push(adapter.bin),
+        (_, Some(adapter)) if !has(adapter.bin) && !has("npx") => missing.push("npx"),
+        _ => {}
+    }
+    missing
 }
 
 /// Where `harness` stands on this machine.
@@ -45,28 +104,64 @@ pub fn readiness(facts: &Facts, harness: Harness) -> Readiness {
     if facts.configured.contains(&harness) {
         return Readiness::Configured;
     }
-    let needs = needs(harness);
-    if let Some(missing) = needs.iter().find(|name| !facts.found.contains_key(**name)) {
+    let missing = missing(facts, harness);
+    if !missing.is_empty() {
         return Readiness::Missing(missing);
     }
-    let own = needs
-        .last()
-        .and_then(|name| facts.found.get(*name))
-        .cloned();
-    Readiness::Installed(own.unwrap_or_default())
+    let own = harness
+        .program()
+        .and_then(|p| facts.found.get(p))
+        .cloned()
+        .unwrap_or_default();
+    Readiness::Ready(own)
 }
 
-/// The harnesses ticked to begin with: every installed one, when the list is
-/// empty and so Otto has nothing of the user's yet; none otherwise, since the
-/// user has already chosen.
-pub fn initial_picks(facts: &Facts) -> Vec<Harness> {
-    if !facts.configured.is_empty() {
-        return Vec::new();
+/// The command a new agent on `harness` starts: its installed adapter when
+/// there is one, so nothing is fetched at every start, else the preset.
+pub fn command(facts: &Facts, harness: Harness, persona: &str) -> Vec<String> {
+    match harness.adapter() {
+        Some(adapter) if facts.found.contains_key(adapter.bin) => vec![adapter.bin.to_owned()],
+        _ => harness.command(persona),
     }
-    HARNESSES
-        .into_iter()
-        .filter(|h| matches!(readiness(facts, *h), Readiness::Installed(_)))
-        .collect()
+}
+
+/// Where the chat bridge stands.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Bridge {
+    /// No bridge unit to run it with.
+    Unavailable(&'static str),
+    /// `[bridge]` is set and its unit runs.
+    Running,
+    /// `[bridge]` is set but its unit is off.
+    Off,
+    /// cc-connect and its configuration are there; setup can turn it on.
+    Ready,
+    /// Something the user sets up is missing; the guide says how.
+    Missing(Vec<&'static str>),
+}
+
+/// Where the chat bridge stands on this machine.
+pub fn bridge(facts: &Facts) -> Bridge {
+    match facts.bridge_unit.state {
+        Unit::Unmanaged => return Bridge::Unavailable("no systemd user manager"),
+        Unit::Missing => return Bridge::Unavailable("otto-agents-bridge.service is not installed"),
+        Unit::Loaded { active, .. } if facts.bridge_command.is_some() => {
+            return if active { Bridge::Running } else { Bridge::Off };
+        }
+        Unit::Loaded { .. } => {}
+    }
+    let mut missing = Vec::new();
+    if !facts.found.contains_key("cc-connect") {
+        missing.push("cc-connect");
+    }
+    if !facts.cc_config_exists {
+        missing.push("its configuration");
+    }
+    if missing.is_empty() {
+        Bridge::Ready
+    } else {
+        Bridge::Missing(missing)
+    }
 }
 
 /// What a step does.
@@ -112,63 +207,139 @@ pub struct Step {
     pub actions: Vec<Action>,
 }
 
-/// The steps for the harnesses `picks` (those already configured are skipped).
-pub fn steps(facts: &Facts, picks: &[Harness]) -> Vec<Step> {
-    let adding: Vec<Harness> = picks
+impl Step {
+    fn done(title: &'static str, summary: impl Into<String>) -> Self {
+        Self {
+            title,
+            state: State::Done,
+            summary: summary.into(),
+            detail: String::new(),
+            actions: Vec::new(),
+        }
+    }
+
+    fn blocked(title: &'static str, summary: impl Into<String>) -> Self {
+        Self {
+            state: State::Blocked,
+            ..Self::done(title, summary)
+        }
+    }
+}
+
+/// The steps for `choices`.
+pub fn steps(facts: &Facts, choices: &Choices) -> Vec<Step> {
+    let adding: Vec<Harness> = choices
+        .picks
         .iter()
         .copied()
-        .filter(|h| !facts.configured.contains(h))
+        .filter(|h| matches!(readiness(facts, *h), Readiness::Ready(_)))
         .collect();
-    let mut steps = vec![config_step(facts, &adding)];
-    steps.push(path_step(facts, &adding));
-    if adding.contains(&Harness::Hermes) || facts.configured.contains(&Harness::Hermes) {
-        steps.push(hermes_step(facts));
+    let bridge_state = bridge(facts);
+    let set_bridge = choices.bridge && bridge_state == Bridge::Ready;
+    let bridge_on = choices.bridge && matches!(bridge_state, Bridge::Ready | Bridge::Off)
+        || bridge_state == Bridge::Running;
+
+    let mut steps = vec![config_step(facts, choices, &adding, set_bridge)];
+
+    // What the agent service starts: each agent's command, as listed and as
+    // about to be added. A harness's own CLI (`claude --resume`) runs in the
+    // user's terminal, not here.
+    let new_commands: Vec<String> = adding
+        .iter()
+        .filter_map(|h| command(facts, *h, &choices.persona).into_iter().next())
+        .collect();
+    let commands: Vec<&str> = facts
+        .commands
+        .iter()
+        .chain(&new_commands)
+        .map(String::as_str)
+        .collect();
+    let mut programs: Vec<&str> = commands
+        .iter()
+        .copied()
+        .filter(|p| !p.contains('/'))
+        .collect();
+    // npx and the ACP adapters are Node scripts: `#!/usr/bin/env node`.
+    if commands.iter().any(|p| is_node_script(p)) {
+        programs.push("node");
     }
-    // A change the service reads at startup; the plugins are read by the
+    steps.push(path_step(
+        "Service PATH",
+        facts,
+        &facts.agents_unit,
+        programs,
+    ));
+    if bridge_on {
+        let mut programs = Vec::new();
+        if facts.cc_connect_node {
+            programs.push("node");
+        }
+        steps.push(path_step(
+            "Bridge PATH",
+            facts,
+            &facts.bridge_unit,
+            programs,
+        ));
+    }
+
+    // Hermes runs an agent in the profile named after its instructions; one
+    // that runs as itself uses its default profile.
+    if adding.contains(&Harness::Hermes) && !choices.persona.is_empty() {
+        steps.push(hermes_step(facts, &choices.persona));
+    }
+    // A change the services read at startup; the plugins are read by the
     // agents themselves, so they need no restart.
     let changed = steps.iter().any(|step| step.state == State::Todo);
     steps.push(plugins_step(facts, changed));
-    steps.push(service_step(facts, changed));
+    steps.push(unit_step(
+        "Agent service",
+        &facts.agents_unit,
+        true,
+        changed,
+    ));
+    if bridge_on {
+        steps.push(unit_step("Chat bridge", &facts.bridge_unit, true, changed));
+    }
     steps
 }
 
-fn config_step(facts: &Facts, adding: &[Harness]) -> Step {
+/// Whether `program` is one of the Node scripts agents run through.
+fn is_node_script(program: &str) -> bool {
+    let name = Path::new(program)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(program);
+    name == "npx" || name.ends_with("-acp")
+}
+
+fn config_step(facts: &Facts, choices: &Choices, adding: &[Harness], set_bridge: bool) -> Step {
+    let title = "Agent list";
     let shown = facts.shown(&facts.config_path);
     if let Some(error) = &facts.config_error {
         return Step {
-            title: "Agent list",
-            state: State::Blocked,
-            summary: format!("cannot read it: fix {shown} first"),
             detail: error.clone(),
-            actions: Vec::new(),
+            ..Step::blocked(title, format!("cannot read it: fix {shown} first"))
         };
     }
-    if adding.is_empty() {
-        let summary = if facts.configured.is_empty() {
-            "nothing picked: tick an agent above".to_owned()
-        } else {
-            match facts.configured.len() {
-                1 => format!("1 agent in {shown}"),
-                n => format!("{n} agents in {shown}"),
-            }
-        };
-        return Step {
-            title: "Agent list",
-            state: if facts.configured.is_empty() {
-                State::Blocked
-            } else {
-                State::Done
-            },
-            summary,
-            detail: facts.user_config.clone(),
-            actions: Vec::new(),
+    if adding.is_empty() && !set_bridge {
+        return match facts.configured.len() {
+            0 => Step::blocked(title, "nothing picked: tick an agent on the Agents page"),
+            1 => Step::done(title, format!("1 agent in {shown}")),
+            n => Step::done(title, format!("{n} agents in {shown}")),
         };
     }
-    match render_config(facts, adding) {
+    let mut what = Vec::new();
+    if !adding.is_empty() {
+        what.push(format!("add {}", names(adding)));
+    }
+    if set_bridge {
+        what.push("set the chat bridge".to_owned());
+    }
+    match render_config(facts, choices, adding, set_bridge) {
         Ok(text) => Step {
-            title: "Agent list",
+            title,
             state: State::Todo,
-            summary: format!("add {} to {shown}", names(adding)),
+            summary: format!("{} in {shown}", what.join(", ")),
             detail: text.clone(),
             actions: vec![Action::Write {
                 path: facts.config_path.clone(),
@@ -176,21 +347,24 @@ fn config_step(facts: &Facts, adding: &[Harness]) -> Step {
             }],
         },
         Err(error) => Step {
-            title: "Agent list",
-            state: State::Blocked,
-            summary: format!("cannot update {shown}"),
             detail: error,
-            actions: Vec::new(),
+            ..Step::blocked(title, format!("cannot update {shown}"))
         },
     }
 }
 
-/// The user's `agents.toml` with an agent for each of `adding` appended.
+/// The user's `agents.toml` with an agent for each of `adding` appended,
+/// and the bridge set when `set_bridge`.
 ///
 /// Edited with `toml_edit`, so comments and keys setup does not know stay as
 /// they were. When the agents came from the system file, its list is copied
 /// in first: a user file that lists agents replaces the system's whole.
-pub fn render_config(facts: &Facts, adding: &[Harness]) -> Result<String, String> {
+pub fn render_config(
+    facts: &Facts,
+    choices: &Choices,
+    adding: &[Harness],
+    set_bridge: bool,
+) -> Result<String, String> {
     let mut doc = facts
         .user_config
         .parse::<DocumentMut>()
@@ -200,6 +374,24 @@ pub fn render_config(facts: &Facts, adding: &[Harness]) -> Result<String, String
             "# The agents Otto runs, one [[agents]] block each. Settings › Agents\n\
              # edits them too; docs/user/agents.md has every key.\n\n",
         );
+    }
+    if set_bridge {
+        let cc_connect = facts
+            .found
+            .get("cc-connect")
+            .ok_or("cc-connect is not installed")?;
+        let mut bridge = Table::new();
+        // Full paths: the unit does not get the shell's PATH.
+        bridge.insert("command", value(cc_connect.display().to_string()));
+        harness::set_list(
+            &mut bridge,
+            "args",
+            &["--config".to_owned(), facts.cc_config.display().to_string()],
+        );
+        doc.insert("bridge", Item::Table(bridge));
+    }
+    if adding.is_empty() {
+        return Ok(doc.to_string());
     }
     let listed = doc
         .get("agents")
@@ -233,7 +425,7 @@ pub fn render_config(facts: &Facts, adding: &[Harness]) -> Result<String, String
         let mut table = Table::new();
         table.insert("id", value(&id));
         table.insert("name", value(harness.name().unwrap_or(harness.id())));
-        let command = harness.command(harness::OTTO);
+        let command = command(facts, harness, &choices.persona);
         if let Some((program, args)) = command.split_first() {
             table.insert("command", value(program));
             harness::set_list(&mut table, "args", args);
@@ -241,7 +433,7 @@ pub fn render_config(facts: &Facts, adding: &[Harness]) -> Result<String, String
         // The same as an agent added in Settings: one the user is about to
         // try should ask rather than refuse.
         table.insert("permissions", value("ask"));
-        harness.write(&mut table, harness::OTTO, &home);
+        harness.write(&mut table, &choices.persona, &home);
         list.push(table);
     }
     Ok(doc.to_string())
@@ -261,36 +453,21 @@ fn unique(base: &str, taken: &[String]) -> String {
         .unwrap_or_else(|| base.to_owned())
 }
 
-fn path_step(facts: &Facts, adding: &[Harness]) -> Step {
-    let title = "Service PATH";
-    let Some(service_path) = &facts.service_path else {
-        return Step {
+/// Adds to `unit`'s PATH the folders it needs for `programs` that the
+/// shell finds but the unit does not. A program the shell has not got
+/// either is for the guide, not this step.
+fn path_step(
+    title: &'static str,
+    facts: &Facts,
+    unit: &UnitFacts,
+    mut programs: Vec<&str>,
+) -> Step {
+    let Some(service_path) = &unit.path else {
+        return Step::done(
             title,
-            state: State::Done,
-            summary: "no systemd user manager: agents run with your session's PATH".into(),
-            detail: String::new(),
-            actions: Vec::new(),
-        };
+            "no systemd user manager: it runs with your session's PATH",
+        );
     };
-    // What the service starts: each agent's command, as listed and as about
-    // to be added. A harness's own CLI (`claude --resume`) runs in the user's
-    // terminal, not here. A program the shell has not got either is the
-    // harness row's problem, not this step's; a full path needs no PATH.
-    let new_commands: Vec<String> = adding
-        .iter()
-        .filter_map(|h| h.command(harness::OTTO).into_iter().next())
-        .collect();
-    let mut programs: Vec<&str> = facts
-        .commands
-        .iter()
-        .chain(&new_commands)
-        .map(String::as_str)
-        .filter(|program| !program.contains('/'))
-        .collect();
-    if programs.contains(&"npx") {
-        // npx is a Node script: `#!/usr/bin/env node`.
-        programs.push("node");
-    }
     programs.sort_unstable();
     programs.dedup();
     let mut missing_dirs: Vec<PathBuf> = Vec::new();
@@ -299,7 +476,7 @@ fn path_step(facts: &Facts, adding: &[Harness]) -> Step {
         let Some(found) = facts.found.get(program) else {
             continue;
         };
-        if facts.service_found.contains_key(program) {
+        if unit.found.contains_key(program) {
             continue;
         }
         missing_programs.push(program);
@@ -309,23 +486,16 @@ fn path_step(facts: &Facts, adding: &[Harness]) -> Step {
             }
         }
     }
-    let dropin = facts.shown(&facts.dropin_path);
     if missing_dirs.is_empty() {
-        return Step {
-            title,
-            state: State::Done,
-            summary: "the service finds every agent".into(),
-            detail: facts.dropin.clone().unwrap_or_default(),
-            actions: Vec::new(),
-        };
+        return Step::done(title, "finds everything it runs");
     }
     let full: Vec<PathBuf> = missing_dirs.iter().chain(service_path).cloned().collect();
     let joined = std::env::join_paths(&full)
         .map(|p| p.to_string_lossy().into_owned())
         .unwrap_or_default();
     let text = format!(
-        "# Written by otto-setup. The service does not get your login shell's\n\
-         # PATH, so the folders the agents live in are added here.\n\
+        "# Written by otto-setup. The unit does not get your login shell's\n\
+         # PATH, so the folders the programs it runs live in are added here.\n\
          [Service]\n\
          Environment=\"PATH={joined}\"\n"
     );
@@ -334,14 +504,17 @@ fn path_step(facts: &Facts, adding: &[Harness]) -> Step {
         title,
         state: State::Todo,
         summary: format!(
-            "{} not found by the service: add {}",
+            "{} not on its PATH: add {}",
             missing_programs.join(", "),
             shown_dirs.join(", ")
         ),
-        detail: format!("{dropin}\n\n{text}\nthen: systemctl --user daemon-reload"),
+        detail: format!(
+            "{}\n\n{text}\nthen: systemctl --user daemon-reload",
+            facts.shown(&unit.dropin)
+        ),
         actions: vec![
             Action::Write {
-                path: facts.dropin_path.clone(),
+                path: unit.dropin.clone(),
                 text,
             },
             Action::run(&["systemctl", "--user", "daemon-reload"]),
@@ -349,46 +522,31 @@ fn path_step(facts: &Facts, adding: &[Harness]) -> Step {
     }
 }
 
-fn hermes_step(facts: &Facts) -> Step {
+fn hermes_step(facts: &Facts, persona: &str) -> Step {
     let title = "Hermes profile";
-    if facts.hermes_profile {
-        return Step {
-            title,
-            state: State::Done,
-            summary: format!("~/.hermes/profiles/{} exists", harness::OTTO),
-            detail: String::new(),
-            actions: Vec::new(),
-        };
+    if facts.hermes_profiles.iter().any(|p| p == persona) {
+        return Step::done(title, format!("~/.hermes/profiles/{persona} exists"));
     }
     Step {
         title,
         state: State::Todo,
-        summary: format!("create the {} profile Hermes runs Otto in", harness::OTTO),
-        detail: format!("hermes profile create {}", harness::OTTO),
-        actions: vec![Action::run(&["hermes", "profile", "create", harness::OTTO])],
+        summary: format!("create the {persona} profile Hermes runs the agent in"),
+        detail: format!("hermes profile create {persona}"),
+        actions: vec![Action::run(&["hermes", "profile", "create", persona])],
     }
 }
 
 fn plugins_step(facts: &Facts, changed: bool) -> Step {
     let title = "Otto's knowledge";
     if !facts.found.contains_key("otto-agents") {
-        return Step {
-            title,
-            state: State::Blocked,
-            summary: "otto-agents is not installed".into(),
-            detail: String::new(),
-            actions: Vec::new(),
-        };
+        return Step::blocked(title, "otto-agents is not installed");
     }
     // Run again with any change: a new agent needs its rendering.
     if facts.skills_linked && !changed {
-        return Step {
+        return Step::done(
             title,
-            state: State::Done,
-            summary: "skills linked; `otto-agents plugins status` has the details".into(),
-            detail: String::new(),
-            actions: Vec::new(),
-        };
+            "skills linked; `otto-agents plugins status` has the details",
+        );
     }
     Step {
         title,
@@ -403,33 +561,18 @@ fn plugins_step(facts: &Facts, changed: bool) -> Step {
     }
 }
 
-fn service_step(facts: &Facts, changed: bool) -> Step {
-    let title = "Agent service";
-    match facts.unit {
-        Unit::Unmanaged => Step {
-            title,
-            state: State::Blocked,
-            summary: "no systemd user manager: run `otto-agents serve` in your session".into(),
-            detail: String::new(),
-            actions: Vec::new(),
-        },
-        Unit::Missing => Step {
-            title,
-            state: State::Blocked,
-            summary: format!("{SERVICE} is not installed"),
-            detail: String::new(),
-            actions: Vec::new(),
-        },
+/// Starts `unit` at login and now, or restarts it to read a change.
+fn unit_step(title: &'static str, unit: &UnitFacts, wanted: bool, changed: bool) -> Step {
+    match unit.state {
+        Unit::Unmanaged => {
+            Step::blocked(title, "no systemd user manager: start it in your session")
+        }
+        Unit::Missing => Step::blocked(title, format!("{} is not installed", unit.name)),
         Unit::Loaded {
             enabled: true,
             active: true,
-        } if !changed => Step {
-            title,
-            state: State::Done,
-            summary: "running, and starts at login".into(),
-            detail: String::new(),
-            actions: Vec::new(),
-        },
+        } if !changed => Step::done(title, "running, and starts at login"),
+        Unit::Loaded { .. } if !wanted => Step::done(title, "off"),
         Unit::Loaded { enabled, active } => {
             let mut actions = Vec::new();
             let mut what = Vec::new();
@@ -438,14 +581,14 @@ fn service_step(facts: &Facts, changed: bool) -> Step {
             }
             if active {
                 what.push("restart to read the changes");
-                actions.push(Action::run(&["systemctl", "--user", "restart", SERVICE]));
+                actions.push(Action::run(&["systemctl", "--user", "restart", unit.name]));
             } else {
                 what.push("start now");
             }
             if !enabled || !active {
                 actions.insert(
                     0,
-                    Action::run(&["systemctl", "--user", "enable", "--now", SERVICE]),
+                    Action::run(&["systemctl", "--user", "enable", "--now", unit.name]),
                 );
             }
             let detail = actions
@@ -477,12 +620,28 @@ fn names(harnesses: &[Harness]) -> String {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
-    use crate::probe::Unit;
+    use crate::probe::{Unit, UnitFacts};
     use std::collections::BTreeMap;
 
-    fn facts() -> Facts {
+    fn unit(name: &'static str) -> UnitFacts {
+        UnitFacts {
+            name,
+            state: Unit::Loaded {
+                enabled: false,
+                active: false,
+            },
+            path: Some(vec![PathBuf::from("/usr/bin")]),
+            found: BTreeMap::new(),
+            dropin: PathBuf::from(format!(
+                "/home/u/.config/systemd/user/{name}.d/otto-setup.conf"
+            )),
+        }
+    }
+
+    /// A machine with Node under nvm, Claude Code and OpenCode installed.
+    pub(crate) fn facts() -> Facts {
         let nvm = PathBuf::from("/home/u/.nvm/bin");
         let local = PathBuf::from("/home/u/.local/bin");
         let mut found = BTreeMap::new();
@@ -502,48 +661,77 @@ mod tests {
             config_error: None,
             configured: Vec::new(),
             commands: Vec::new(),
+            bridge_command: None,
             found,
-            service_path: Some(vec![PathBuf::from("/usr/bin")]),
-            service_found: BTreeMap::new(),
-            dropin_path: PathBuf::from(
-                "/home/u/.config/systemd/user/otto-agents.service.d/path.conf",
-            ),
-            dropin: None,
-            unit: Unit::Loaded {
-                enabled: false,
-                active: false,
-            },
-            hermes_profile: false,
+            node_version: Some("v24.7.0".into()),
+            package_manager: Some("pacman"),
+            instructions: vec!["otto".into(), "reviewer".into()],
+            agents_unit: unit("otto-agents.service"),
+            bridge_unit: unit("otto-agents-bridge.service"),
+            hermes_profiles: Vec::new(),
             skills_linked: false,
+            cc_config: PathBuf::from("/home/u/.cc-connect/config.toml"),
+            cc_config_exists: false,
+            cc_connect_node: false,
         }
     }
 
     #[test]
-    fn a_fresh_machine_picks_what_is_installed() {
+    fn a_fresh_machine_picks_what_is_ready() {
         let facts = facts();
-        assert_eq!(initial_picks(&facts), [Harness::Claude, Harness::OpenCode]);
+        let choices = Choices::initial(&facts);
+        assert_eq!(choices.picks, [Harness::Claude, Harness::OpenCode]);
+        assert_eq!(choices.persona, "otto");
         assert_eq!(
-            readiness(&facts, Harness::Codex),
-            Readiness::Missing("codex")
+            readiness(&facts, Harness::Pi),
+            Readiness::Missing(vec!["pi", "pi-acp"])
         );
         let mut configured = facts.clone();
         configured.configured = vec![Harness::OpenCode];
-        assert!(initial_picks(&configured).is_empty());
+        assert!(Choices::initial(&configured).picks.is_empty());
+    }
+
+    #[test]
+    fn npx_is_only_needed_without_the_adapter() {
+        let mut facts = facts();
+        facts.found.remove("npx");
+        assert_eq!(missing(&facts, Harness::Claude), ["npx"]);
+        facts.found.insert(
+            "claude-agent-acp".into(),
+            PathBuf::from("/home/u/.local/bin/claude-agent-acp"),
+        );
+        assert!(missing(&facts, Harness::Claude).is_empty());
+        assert_eq!(
+            command(&facts, Harness::Claude, "otto"),
+            ["claude-agent-acp"]
+        );
     }
 
     #[test]
     fn adds_an_agent_the_way_settings_does() {
         let mut facts = facts();
         facts.user_config = "# mine\nidle_timeout = 0\n".into();
-        let text = render_config(&facts, &[Harness::Claude]).unwrap();
+        let choices = Choices::initial(&facts);
+        let text = render_config(&facts, &choices, &[Harness::Claude], false).unwrap();
         assert!(text.starts_with("# mine\nidle_timeout = 0\n"));
         let doc: DocumentMut = text.parse().unwrap();
         let agent = &doc["agents"][0];
         assert_eq!(agent["id"].as_str(), Some("claude"));
         assert_eq!(agent["command"].as_str(), Some("npx"));
         assert_eq!(agent["agent"].as_str(), Some("otto"));
-        assert_eq!(agent["skills"].as_str(), Some("claude"));
         assert_eq!(agent["permissions"].as_str(), Some("ask"));
+    }
+
+    #[test]
+    fn the_harness_can_run_as_itself() {
+        let facts = facts();
+        let choices = Choices {
+            persona: String::new(),
+            ..Choices::initial(&facts)
+        };
+        let text = render_config(&facts, &choices, &[Harness::Claude], false).unwrap();
+        let doc: DocumentMut = text.parse().unwrap();
+        assert!(doc["agents"][0].get("agent").is_none());
     }
 
     #[test]
@@ -552,7 +740,8 @@ mod tests {
         facts.system_config = Some(
             "[[agents]]\nid = \"claude\"\nname = \"Work\"\ncommand = \"/opt/claude-acp\"\n".into(),
         );
-        let text = render_config(&facts, &[Harness::Claude]).unwrap();
+        let choices = Choices::initial(&facts);
+        let text = render_config(&facts, &choices, &[Harness::Claude], false).unwrap();
         let doc: DocumentMut = text.parse().unwrap();
         let ids: Vec<_> = doc["agents"]
             .as_array_of_tables()
@@ -566,14 +755,14 @@ mod tests {
     #[test]
     fn adds_the_folders_the_service_cannot_see() {
         let facts = facts();
-        let steps = steps(&facts, &[Harness::Claude]);
+        let steps = steps(&facts, &Choices::initial(&facts));
         let path = steps.iter().find(|s| s.title == "Service PATH").unwrap();
         assert_eq!(path.state, State::Todo);
         let Action::Write { text, .. } = &path.actions[0] else {
             panic!("expected a write");
         };
-        assert!(text.contains("Environment=\"PATH=/home/u/.nvm/bin:/usr/bin\""));
-        let service = steps.last().unwrap();
+        assert!(text.contains("Environment=\"PATH=/home/u/.nvm/bin:/home/u/.local/bin:/usr/bin\""));
+        let service = steps.iter().find(|s| s.title == "Agent service").unwrap();
         assert_eq!(
             service.actions,
             [Action::run(&[
@@ -581,23 +770,56 @@ mod tests {
                 "--user",
                 "enable",
                 "--now",
-                SERVICE
+                "otto-agents.service"
             ])]
         );
+        assert!(steps.iter().all(|s| s.title != "Chat bridge"));
     }
 
     #[test]
-    fn a_running_service_restarts_only_for_a_change() {
+    fn a_set_up_machine_has_nothing_to_do() {
         let mut facts = facts();
         facts.configured = vec![Harness::Claude, Harness::OpenCode];
         facts.commands = vec!["npx".into(), "opencode".into()];
-        facts.service_found = facts.found.clone();
+        facts.agents_unit.found = facts.found.clone();
         facts.skills_linked = true;
-        facts.unit = Unit::Loaded {
+        facts.agents_unit.state = Unit::Loaded {
             enabled: true,
             active: true,
         };
-        let steps = steps(&facts, &[]);
+        let steps = steps(&facts, &Choices::initial(&facts));
         assert!(steps.iter().all(|s| s.state != State::Todo), "{steps:#?}");
+    }
+
+    #[test]
+    fn the_bridge_is_turned_on_only_when_its_parts_are_there() {
+        let mut facts = facts();
+        assert_eq!(
+            bridge(&facts),
+            Bridge::Missing(vec!["cc-connect", "its configuration"])
+        );
+        facts.found.insert(
+            "cc-connect".into(),
+            PathBuf::from("/home/u/.local/bin/cc-connect"),
+        );
+        facts.cc_config_exists = true;
+        facts.cc_connect_node = true;
+        assert_eq!(bridge(&facts), Bridge::Ready);
+        let choices = Choices {
+            bridge: true,
+            picks: Vec::new(),
+            ..Choices::initial(&facts)
+        };
+        let steps = steps(&facts, &choices);
+        let config = &steps[0];
+        let Action::Write { text, .. } = &config.actions[0] else {
+            panic!("expected a write");
+        };
+        assert!(text.contains("command = \"/home/u/.local/bin/cc-connect\""));
+        assert!(text.contains("\"--config\", \"/home/u/.cc-connect/config.toml\""));
+        let path = steps.iter().find(|s| s.title == "Bridge PATH").unwrap();
+        assert_eq!(path.state, State::Todo);
+        let service = steps.iter().find(|s| s.title == "Chat bridge").unwrap();
+        assert_eq!(service.state, State::Todo);
     }
 }

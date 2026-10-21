@@ -29,10 +29,8 @@ use toml_edit::{value, ArrayOfTables, DocumentMut, Item, Table};
 
 use crate::model::{group, untitled, Control, Pane, Row};
 
-mod instructions;
-
-use instructions::Instructions;
 use otto_agents_client::harness::{self, Harness};
+use otto_agents_client::instructions::{self, Instructions};
 
 /// The permission policies `agents.toml` accepts, in the order the pop-up
 /// offers them. `deny` is what an agent gets when the key is unset.

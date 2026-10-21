@@ -14,6 +14,7 @@
 #![warn(unreachable_pub)]
 
 pub mod harness;
+pub mod instructions;
 pub mod session;
 pub mod transport;
 pub mod uri;

@@ -26,6 +26,14 @@ pub enum Key {
     Up,
     /// Arrow down.
     Down,
+    /// Arrow left.
+    Left,
+    /// Arrow right.
+    Right,
+    /// Tab.
+    Tab,
+    /// Shift+Tab.
+    BackTab,
     /// Page Up.
     PageUp,
     /// Page Down.
@@ -195,6 +203,7 @@ fn parse_keys(bytes: &[u8]) -> Vec<Key> {
         let key = match b {
             b'\r' | b'\n' => Some(Key::Enter),
             0x03 => Some(Key::Interrupt),
+            b'\t' => Some(Key::Tab),
             0x20..=0x7e => Some(Key::Char(char::from(b))),
             _ => None,
         };
@@ -221,6 +230,9 @@ fn parse_escape(bytes: &[u8]) -> (Option<Key>, usize) {
             let key = match &bytes[2..=end] {
                 b"A" => Some(Key::Up),
                 b"B" => Some(Key::Down),
+                b"C" => Some(Key::Right),
+                b"D" => Some(Key::Left),
+                b"Z" => Some(Key::BackTab),
                 b"H" | b"1~" | b"7~" => Some(Key::Home),
                 b"F" | b"4~" | b"8~" => Some(Key::End),
                 b"5~" => Some(Key::PageUp),
@@ -282,5 +294,13 @@ mod tests {
     fn a_lone_escape_is_escape_and_unknown_sequences_are_skipped() {
         assert_eq!(parse_keys(b"\x1b"), [Key::Esc]);
         assert_eq!(parse_keys(b"\x1b[1;5Cq"), [Key::Char('q')]);
+    }
+
+    #[test]
+    fn parses_sideways_keys_and_tabs() {
+        assert_eq!(
+            parse_keys(b"\x1b[D\x1b[C\t\x1b[Z"),
+            [Key::Left, Key::Right, Key::Tab, Key::BackTab]
+        );
     }
 }

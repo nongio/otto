@@ -12,7 +12,16 @@
 
 use toml_edit::{Array, InlineTable, Item, Table, Value, value};
 
-/// A harness the pane knows how to set up.
+/// An npm package and the program it installs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Package {
+    /// The package's name on npm.
+    pub npm: &'static str,
+    /// The program it puts on the PATH.
+    pub bin: &'static str,
+}
+
+/// A harness Otto knows how to set up.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Harness {
     Claude,
@@ -74,6 +83,32 @@ impl Harness {
         }
     }
 
+    /// The npm package of the harness's own program, for those that ship on
+    /// npm.
+    pub fn package(self) -> Option<Package> {
+        let (npm, bin) = match self {
+            Harness::Claude => ("@anthropic-ai/claude-code", "claude"),
+            Harness::Codex => ("@openai/codex", "codex"),
+            Harness::OpenCode => ("opencode-ai", "opencode"),
+            Harness::Pi => ("@earendil-works/pi-coding-agent", "pi"),
+            _ => return None,
+        };
+        Some(Package { npm, bin })
+    }
+
+    /// The ACP adapter that stands between the service and the harness, for
+    /// those that do not speak ACP themselves. Claude Code and Codex run it
+    /// through `npx` unless it is installed; pi needs it installed.
+    pub fn adapter(self) -> Option<Package> {
+        let (npm, bin) = match self {
+            Harness::Claude => ("@agentclientprotocol/claude-agent-acp", "claude-agent-acp"),
+            Harness::Codex => ("@agentclientprotocol/codex-acp", "codex-acp"),
+            Harness::Pi => ("pi-acp", "pi-acp"),
+            _ => return None,
+        };
+        Some(Package { npm, bin })
+    }
+
     /// The harness's own program, the one the user installs and logs in
     /// with. Claude Code and Codex run through an adapter `npx` fetches, but
     /// sign in, and enter sessions, with their own CLI.
@@ -83,7 +118,7 @@ impl Harness {
             Harness::Codex => Some("codex"),
             Harness::OpenCode => Some("opencode"),
             Harness::Hermes => Some("hermes"),
-            Harness::Pi => Some("pi-acp"),
+            Harness::Pi => Some("pi"),
             Harness::Custom => None,
         }
     }
@@ -113,8 +148,10 @@ impl Harness {
     /// Empty for [`Harness::Custom`], which has none of its own.
     pub fn command(self, persona: &str) -> Vec<String> {
         let words: &[&str] = match self {
-            Harness::Claude => &["npx", "-y", "@agentclientprotocol/claude-agent-acp@latest"],
-            Harness::Codex => &["npx", "-y", "@agentclientprotocol/codex-acp@latest"],
+            Harness::Claude | Harness::Codex => {
+                let adapter = self.adapter().map(|a| a.npm).unwrap_or_default();
+                return vec!["npx".into(), "-y".into(), format!("{adapter}@latest")];
+            }
             Harness::OpenCode => &["opencode", "acp"],
             // The profile is named after the agent, and holds its rendering.
             // Without one, Hermes runs on its default profile.
