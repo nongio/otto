@@ -13,6 +13,9 @@ use std::path::{Path, PathBuf};
 use otto_agents_client::harness::{self, Harness};
 use toml_edit::{value, DocumentMut, Item, Table};
 
+#[cfg(test)]
+use crate::plugins;
+use crate::plugins::{Render, Skill};
 use crate::probe::{Facts, Unit, UnitFacts};
 
 /// The harnesses setup offers, in the order it lists them.
@@ -29,8 +32,11 @@ pub const HARNESSES: [Harness; 5] = [
 pub struct Choices {
     /// Harnesses to add an agent for.
     pub picks: Vec<Harness>,
-    /// The instructions new agents run as; empty for the harness's own.
-    pub persona: String,
+    /// Whether the agents added answer as Otto, rather than as the plain
+    /// harness.
+    pub otto: bool,
+    /// Whether Studio's chat should work: it needs a Claude Code agent.
+    pub studio: bool,
     /// Whether to turn the chat bridge on.
     pub bridge: bool,
 }
@@ -38,8 +44,8 @@ pub struct Choices {
 impl Choices {
     /// What is ticked to begin with: every ready harness when the agent
     /// list is empty, since Otto has nothing of the user's yet, and none
-    /// otherwise, since the user has already chosen; Otto's instructions;
-    /// the bridge off.
+    /// otherwise, since the user has already chosen; Otto, and Studio when
+    /// it can work; the bridge off.
     pub fn initial(facts: &Facts) -> Self {
         let picks = if facts.configured.is_empty() {
             HARNESSES
@@ -49,27 +55,52 @@ impl Choices {
         } else {
             Vec::new()
         };
-        let persona = if facts.instructions.iter().any(|n| n == harness::OTTO) {
-            harness::OTTO.to_owned()
-        } else {
-            facts.instructions.first().cloned().unwrap_or_default()
-        };
-        Self {
+        let mut choices = Self {
             picks,
-            persona,
+            otto: facts.instructions.iter().any(|n| n == harness::OTTO),
+            studio: false,
             bridge: false,
-        }
+        };
+        choices.studio = studio(facts, &choices) == Studio::Ready;
+        choices
     }
 
-    /// The instructions to choose from, in order; the empty name is the
-    /// harness's own.
-    pub fn personas(facts: &Facts) -> Vec<String> {
-        facts
-            .instructions
-            .iter()
-            .cloned()
-            .chain(std::iter::once(String::new()))
-            .collect()
+    /// The plugin agent new agents run as: Otto's, or none for the plain
+    /// harness.
+    pub fn persona(&self) -> &'static str {
+        if self.otto {
+            harness::OTTO
+        } else {
+            ""
+        }
+    }
+}
+
+/// The plugin agent Studio's chat runs as, in Otto's plugin.
+pub const STUDIO: &str = "studio";
+
+/// Where Studio's chat stands. Studio asks for its plugin agent on every
+/// session it opens, and only Claude Code runs a plugin agent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Studio {
+    /// Otto's plugin has no Studio agent.
+    Unavailable,
+    /// A Claude Code agent is in the list, or ticked.
+    Ready,
+    /// No Claude Code agent: it has to be ticked, or installed first.
+    NeedsClaude,
+}
+
+/// Where Studio's chat stands with `choices`.
+pub fn studio(facts: &Facts, choices: &Choices) -> Studio {
+    if !facts.instructions.iter().any(|n| n == STUDIO) {
+        Studio::Unavailable
+    } else if facts.configured.contains(&Harness::Claude)
+        || choices.picks.contains(&Harness::Claude)
+    {
+        Studio::Ready
+    } else {
+        Studio::NeedsClaude
     }
 }
 
@@ -123,6 +154,75 @@ pub fn command(facts: &Facts, harness: Harness, persona: &str) -> Vec<String> {
         Some(adapter) if facts.found.contains_key(adapter.bin) => vec![adapter.bin.to_owned()],
         _ => harness.command(persona),
     }
+}
+
+/// How an agent reaches its ACP adapter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Adapter {
+    /// Installed: it starts at once.
+    Installed,
+    /// Fetched by `npx` at every start.
+    Npx,
+    /// Neither: the agent cannot start.
+    Missing,
+}
+
+/// The ACP adapter of each agent there is or is being added, for the
+/// harnesses that need one, in the list's order.
+pub fn adapters(facts: &Facts, choices: &Choices) -> Vec<(Harness, Adapter)> {
+    selected(facts, choices)
+        .into_iter()
+        .filter_map(|harness| {
+            let adapter = harness.adapter()?;
+            let state = if facts.found.contains_key(adapter.bin) {
+                Adapter::Installed
+            } else if harness != Harness::Pi && facts.found.contains_key("npx") {
+                Adapter::Npx
+            } else {
+                Adapter::Missing
+            };
+            Some((harness, state))
+        })
+        .collect()
+}
+
+/// The harnesses there are or are being added, in the list's order.
+pub fn selected(facts: &Facts, choices: &Choices) -> Vec<Harness> {
+    HARNESSES
+        .into_iter()
+        .filter(|h| facts.configured.contains(h) || choices.picks.contains(h))
+        .collect()
+}
+
+/// Otto's skills, as `otto-agents plugins status` reports them.
+pub fn skills(facts: &Facts) -> &[Skill] {
+    facts.plugins.as_ref().map_or(&[], |status| &status.skills)
+}
+
+/// The renderings of Otto's agent for the selected harnesses. Claude Code
+/// reads the plugin itself and has none. Empty when the agents are plain.
+pub fn profiles<'a>(facts: &'a Facts, choices: &Choices) -> Vec<&'a Render> {
+    let Some(status) = &facts.plugins else {
+        return Vec::new();
+    };
+    if !choices.otto {
+        return Vec::new();
+    }
+    selected(facts, choices)
+        .into_iter()
+        .filter(|h| *h != Harness::Claude)
+        .flat_map(|h| status.renders_of(h.id(), harness::OTTO).collect::<Vec<_>>())
+        .collect()
+}
+
+/// Whether `otto-agents plugins install` has something to do for these
+/// choices: a skill to link, or a rendering to write. A skill something
+/// else is in the way of is left to the user.
+pub fn plugins_behind(facts: &Facts, choices: &Choices) -> bool {
+    skills(facts).iter().any(|s| !s.linked() && !s.in_the_way())
+        || profiles(facts, choices)
+            .iter()
+            .any(|r| !r.current() && r.state != "skipped")
 }
 
 /// Where the chat bridge stands.
@@ -246,7 +346,7 @@ pub fn steps(facts: &Facts, choices: &Choices) -> Vec<Step> {
     // user's terminal, not here.
     let new_commands: Vec<String> = adding
         .iter()
-        .filter_map(|h| command(facts, *h, &choices.persona).into_iter().next())
+        .filter_map(|h| command(facts, *h, choices.persona()).into_iter().next())
         .collect();
     let commands: Vec<&str> = facts
         .commands
@@ -284,13 +384,16 @@ pub fn steps(facts: &Facts, choices: &Choices) -> Vec<Step> {
 
     // Hermes runs an agent in the profile named after its instructions; one
     // that runs as itself uses its default profile.
-    if adding.contains(&Harness::Hermes) && !choices.persona.is_empty() {
-        steps.push(hermes_step(facts, &choices.persona));
+    if adding.contains(&Harness::Hermes) && choices.otto {
+        steps.push(hermes_step(facts, choices.persona()));
     }
     // A change the services read at startup; the plugins are read by the
     // agents themselves, so they need no restart.
     let changed = steps.iter().any(|step| step.state == State::Todo);
-    steps.push(plugins_step(facts, changed));
+    steps.push(plugins_step(
+        facts,
+        changed || plugins_behind(facts, choices),
+    ));
     steps.push(unit_step(
         "Agent service",
         &facts.agents_unit,
@@ -425,7 +528,7 @@ pub fn render_config(
         let mut table = Table::new();
         table.insert("id", value(&id));
         table.insert("name", value(harness.name().unwrap_or(harness.id())));
-        let command = command(facts, harness, &choices.persona);
+        let command = command(facts, harness, choices.persona());
         if let Some((program, args)) = command.split_first() {
             table.insert("command", value(program));
             harness::set_list(&mut table, "args", args);
@@ -433,7 +536,7 @@ pub fn render_config(
         // The same as an agent added in Settings: one the user is about to
         // try should ask rather than refuse.
         table.insert("permissions", value("ask"));
-        harness.write(&mut table, &choices.persona, &home);
+        harness.write(&mut table, choices.persona(), &home);
         list.push(table);
     }
     Ok(doc.to_string())
@@ -536,17 +639,16 @@ fn hermes_step(facts: &Facts, persona: &str) -> Step {
     }
 }
 
-fn plugins_step(facts: &Facts, changed: bool) -> Step {
+/// Runs `otto-agents plugins install` when it has something to do: a skill
+/// or rendering behind, or any other change, since a new agent needs its
+/// rendering.
+fn plugins_step(facts: &Facts, needed: bool) -> Step {
     let title = "Otto's knowledge";
     if !facts.found.contains_key("otto-agents") {
         return Step::blocked(title, "otto-agents is not installed");
     }
-    // Run again with any change: a new agent needs its rendering.
-    if facts.skills_linked && !changed {
-        return Step::done(
-            title,
-            "skills linked; `otto-agents plugins status` has the details",
-        );
+    if !needed {
+        return Step::done(title, "skills and agent profiles up to date");
     }
     Step {
         title,
@@ -669,7 +771,7 @@ pub(crate) mod tests {
             agents_unit: unit("otto-agents.service"),
             bridge_unit: unit("otto-agents-bridge.service"),
             hermes_profiles: Vec::new(),
-            skills_linked: false,
+            plugins: Some(plugins::Status::default()),
             cc_config: PathBuf::from("/home/u/.cc-connect/config.toml"),
             cc_config_exists: false,
             cc_connect_node: false,
@@ -681,7 +783,8 @@ pub(crate) mod tests {
         let facts = facts();
         let choices = Choices::initial(&facts);
         assert_eq!(choices.picks, [Harness::Claude, Harness::OpenCode]);
-        assert_eq!(choices.persona, "otto");
+        assert_eq!(choices.persona(), "otto");
+        assert!(!choices.studio, "no Studio in the made-up plugin");
         assert_eq!(
             readiness(&facts, Harness::Pi),
             Readiness::Missing(vec!["pi", "pi-acp"])
@@ -689,6 +792,45 @@ pub(crate) mod tests {
         let mut configured = facts.clone();
         configured.configured = vec![Harness::OpenCode];
         assert!(Choices::initial(&configured).picks.is_empty());
+    }
+
+    #[test]
+    fn stale_profiles_of_the_selected_harnesses_are_written() {
+        let mut facts = facts();
+        facts.configured = vec![Harness::Claude];
+        facts.commands = vec!["npx".into()];
+        facts.agents_unit.found = facts.found.clone();
+        facts.agents_unit.state = Unit::Loaded {
+            enabled: true,
+            active: true,
+        };
+        facts.plugins = Some(plugins::parse(
+            "opencode  stale      ~/.config/opencode/agents/otto.md\n\
+             codex     not there  ~/.local/share/otto/agents/codex/otto.md\n",
+        ));
+        let mut choices = Choices::initial(&facts);
+        // Codex is not selected, OpenCode is not either: nothing to write.
+        assert!(!plugins_behind(&facts, &choices));
+        choices.picks = vec![Harness::OpenCode];
+        assert!(plugins_behind(&facts, &choices));
+        let steps = steps(&facts, &choices);
+        let knowledge = steps
+            .iter()
+            .find(|s| s.title == "Otto's knowledge")
+            .unwrap();
+        assert_eq!(knowledge.state, State::Todo);
+    }
+
+    #[test]
+    fn studio_needs_a_claude_code_agent() {
+        let mut facts = facts();
+        facts.instructions.push(STUDIO.into());
+        let mut choices = Choices::initial(&facts);
+        assert!(choices.studio);
+        choices.picks.retain(|h| *h != Harness::Claude);
+        assert_eq!(studio(&facts, &choices), Studio::NeedsClaude);
+        facts.configured = vec![Harness::Claude];
+        assert_eq!(studio(&facts, &choices), Studio::Ready);
     }
 
     #[test]
@@ -726,7 +868,7 @@ pub(crate) mod tests {
     fn the_harness_can_run_as_itself() {
         let facts = facts();
         let choices = Choices {
-            persona: String::new(),
+            otto: false,
             ..Choices::initial(&facts)
         };
         let text = render_config(&facts, &choices, &[Harness::Claude], false).unwrap();
@@ -782,7 +924,6 @@ pub(crate) mod tests {
         facts.configured = vec![Harness::Claude, Harness::OpenCode];
         facts.commands = vec!["npx".into(), "opencode".into()];
         facts.agents_unit.found = facts.found.clone();
-        facts.skills_linked = true;
         facts.agents_unit.state = Unit::Loaded {
             enabled: true,
             active: true,

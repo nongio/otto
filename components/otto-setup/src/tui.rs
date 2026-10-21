@@ -1,5 +1,5 @@
 //! The interactive setup: a welcome that says what it is for, then three
-//! pages: the agents to add and who they are, the extras (Node.js, the ACP adapters, the chat bridge), and the
+//! pages: the agents to add and who they are, what they require (Node.js, the ACP adapters) and the optional chat bridge, and the
 //! steps that follow with Apply. Every row opens its instructions, or a
 //! preview of exactly what it will write or run.
 //!
@@ -10,13 +10,13 @@
 
 use std::io;
 
-use otto_agents_client::harness::Harness;
+use otto_agents_client::harness::{self, Harness};
 use otto_term_kit::style::{BOLD, DIM, GREEN, RED, REVERSE, YELLOW};
 use otto_term_kit::{printable, Key, Spans, Terminal};
 
 use crate::apply::{self, Outcome};
 use crate::guide;
-use crate::plan::{self, Bridge, Choices, Readiness, State, Step, HARNESSES};
+use crate::plan::{self, Bridge, Choices, Readiness, State, Step, Studio, HARNESSES};
 use crate::probe::Facts;
 
 /// How often the loop wakes without input to notice a resize.
@@ -29,26 +29,30 @@ const TITLE_WIDTH: usize = 18;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Page {
     Agents,
-    Extras,
+    Requirements,
     Review,
 }
 
 impl Page {
-    const ALL: [Page; 3] = [Page::Agents, Page::Extras, Page::Review];
+    const ALL: [Page; 3] = [Page::Agents, Page::Requirements, Page::Review];
 
     fn title(self) -> &'static str {
         match self {
             Page::Agents => "Agents",
-            Page::Extras => "Extras",
+            Page::Requirements => "Requirements",
             Page::Review => "Review",
         }
     }
 
     fn intro(self) -> &'static str {
         match self {
-            Page::Agents => " Which agents do you want to set up? Enter shows how to install one.",
-            Page::Extras => " What the agents can use. Enter shows what is there and what to do.",
-            Page::Review => " What Apply does. Enter shows exactly what a step writes or runs.",
+            Page::Agents => " Which agents do you want to set up? Enter shows what one needs.",
+            Page::Requirements => {
+                " What the agents need, and what is optional. Enter shows what to do."
+            }
+            Page::Review => {
+                " What is there, and what Apply does. Enter shows how, or what a step runs."
+            }
         }
     }
 
@@ -62,10 +66,14 @@ impl Page {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Row {
     Harness(Harness),
-    Instructions,
+    Otto,
+    Studio,
     Node,
     Adapters,
     Bridge,
+    CcConnect,
+    Skills,
+    Profiles,
     Step(usize),
     Apply,
 }
@@ -152,13 +160,20 @@ impl App {
             Page::Agents => HARNESSES
                 .into_iter()
                 .map(Row::Harness)
-                .chain([Row::Instructions])
+                .chain([Row::Otto, Row::Studio])
                 .collect(),
-            Page::Extras => vec![Row::Node, Row::Adapters, Row::Bridge],
-            Page::Review => (0..self.steps.len())
-                .map(Row::Step)
-                .chain([Row::Apply])
-                .collect(),
+            Page::Requirements => vec![Row::Node, Row::Adapters, Row::Bridge],
+            Page::Review => [
+                Row::Node,
+                Row::Adapters,
+                Row::CcConnect,
+                Row::Skills,
+                Row::Profiles,
+            ]
+            .into_iter()
+            .chain((0..self.steps.len()).map(Row::Step))
+            .chain([Row::Apply])
+            .collect(),
         }
     }
 
@@ -270,9 +285,6 @@ impl App {
             Key::Down | Key::Char('j') => self.cursor = (self.cursor + 1).min(last),
             Key::Home | Key::Char('g') => self.cursor = 0,
             Key::End | Key::Char('G') => self.cursor = last,
-            Key::Left | Key::Right if row == Row::Instructions => {
-                self.cycle_persona(if key == Key::Left { -1 } else { 1 });
-            }
             Key::Tab | Key::Right => self.go(self.page.step(1)),
             Key::BackTab | Key::Left if self.page == Page::Agents => {
                 self.view = View::Welcome { cursor: 0 }
@@ -281,7 +293,6 @@ impl App {
             Key::Char(' ') | Key::Char('x') => self.toggle(row),
             Key::Enter | Key::Char('v') => match row {
                 Row::Apply => return self.try_apply(),
-                Row::Instructions if key == Key::Enter => self.cycle_persona(1),
                 _ => self.view = View::Text { row, scroll: 0 },
             },
             Key::Char('a') => return self.try_apply(),
@@ -292,17 +303,6 @@ impl App {
             _ => {}
         }
         Flow::Continue
-    }
-
-    fn cycle_persona(&mut self, by: isize) {
-        let personas = Choices::personas(&self.facts);
-        let at = personas
-            .iter()
-            .position(|p| *p == self.choices.persona)
-            .unwrap_or(0) as isize;
-        let len = personas.len() as isize;
-        self.choices.persona = personas[(at + by).rem_euclid(len) as usize].clone();
-        self.replan();
     }
 
     fn toggle(&mut self, row: Row) {
@@ -323,6 +323,13 @@ impl App {
                     let picks = &mut self.choices.picks;
                     if let Some(at) = picks.iter().position(|h| *h == harness) {
                         picks.remove(at);
+                        if harness == Harness::Claude
+                            && self.choices.studio
+                            && plan::studio(&self.facts, &self.choices) != Studio::Ready
+                        {
+                            self.choices.studio = false;
+                            self.status = "Studio runs on Claude Code: unticked it too.".into();
+                        }
                     } else {
                         picks.push(harness);
                         // Keep the list order, so the file does too.
@@ -331,7 +338,15 @@ impl App {
                     self.replan();
                 }
             },
-            Row::Instructions => self.cycle_persona(1),
+            Row::Otto => {
+                if self.facts.instructions.iter().any(|n| n == harness::OTTO) {
+                    self.choices.otto = !self.choices.otto;
+                    self.replan();
+                } else {
+                    self.status = "Otto's plugin is missing. Enter says more.".into();
+                }
+            }
+            Row::Studio => self.toggle_studio(),
             Row::Bridge => match plan::bridge(&self.facts) {
                 Bridge::Ready | Bridge::Off => {
                     self.choices.bridge = !self.choices.bridge;
@@ -345,10 +360,41 @@ impl App {
                     self.status = "Not set up yet. Enter shows the steps.".into();
                 }
             },
-            Row::Node | Row::Adapters => {
+            Row::Node | Row::Adapters | Row::CcConnect => {
                 self.status = "Setup does not install software. Enter shows how.".into();
             }
+            Row::Skills | Row::Profiles => {
+                self.status = "Apply takes care of it. Enter shows how, and how to check.".into();
+            }
             Row::Step(_) | Row::Apply => {}
+        }
+    }
+
+    fn toggle_studio(&mut self) {
+        if self.choices.studio {
+            self.choices.studio = false;
+            return;
+        }
+        match plan::studio(&self.facts, &self.choices) {
+            Studio::Unavailable => {
+                self.status = "Otto's plugin has no Studio. Enter says more.".into();
+            }
+            Studio::Ready => self.choices.studio = true,
+            Studio::NeedsClaude => {
+                if matches!(
+                    plan::readiness(&self.facts, Harness::Claude),
+                    Readiness::Ready(_)
+                ) {
+                    self.choices.picks.insert(0, Harness::Claude);
+                    self.choices.studio = true;
+                    self.status = "Studio runs on Claude Code: ticked it too.".into();
+                    self.replan();
+                } else {
+                    self.status =
+                        "Studio runs on Claude Code, which is not installed: Enter on it shows how."
+                            .into();
+                }
+            }
         }
     }
 
@@ -364,10 +410,13 @@ impl App {
     fn text(&self, row: Row) -> String {
         match row {
             Row::Harness(harness) => guide::harness(&self.facts, harness),
-            Row::Instructions => guide::instructions(&self.facts, &self.choices.persona),
+            Row::Otto => guide::otto(&self.facts),
+            Row::Studio => guide::studio(&self.facts, &self.choices),
             Row::Node => guide::node(&self.facts),
             Row::Adapters => guide::adapters(&self.facts),
-            Row::Bridge => guide::bridge(&self.facts),
+            Row::Bridge | Row::CcConnect => guide::bridge(&self.facts),
+            Row::Skills => guide::skills(&self.facts),
+            Row::Profiles => guide::profiles(&self.facts, &self.choices),
             Row::Step(index) => {
                 let step = &self.steps[index];
                 if step.detail.is_empty() {
@@ -383,10 +432,14 @@ impl App {
     fn row_title(&self, row: Row) -> String {
         match row {
             Row::Harness(h) => h.name().unwrap_or_default().to_owned(),
-            Row::Instructions => "Instructions".into(),
+            Row::Otto => "Otto".into(),
+            Row::Studio => "Studio".into(),
             Row::Node => "Node.js".into(),
             Row::Adapters => "ACP adapters".into(),
             Row::Bridge => "Chat bridge".into(),
+            Row::CcConnect => "cc-connect".into(),
+            Row::Skills => "Otto's skills".into(),
+            Row::Profiles => "Agent profiles".into(),
             Row::Step(index) => self.steps[index].title.into(),
             Row::Apply => "Apply".into(),
         }
@@ -486,20 +539,37 @@ impl App {
         ];
         let items = self.rows();
         for (i, row) in items.iter().enumerate() {
-            if *row == Row::Instructions || *row == Row::Apply {
+            let heading = match (self.page, row) {
+                (_, Row::Otto) => Some(" Otto in your agents"),
+                (Page::Requirements, Row::Node) => Some(" Required"),
+                (Page::Requirements, Row::Bridge) => Some(" Optional"),
+                (Page::Review, Row::Node) => Some(" Checks"),
+                (Page::Review, Row::Step(0)) => Some(" Steps"),
+                _ => None,
+            };
+            if let Some(heading) = heading {
+                if i > 0 {
+                    lines.push(String::new());
+                }
+                lines.push(plain_styled(cols, BOLD, heading));
+            }
+            if *row == Row::Apply {
                 lines.push(String::new());
             }
             lines.push(self.row_line(*row, self.cursor == i, cols));
         }
-        lines.push(String::new());
+        // On a short terminal the gap goes first, so the help line stays.
+        if lines.len() + 3 <= rows {
+            lines.push(String::new());
+        }
         lines.push(plain(cols, &format!(" {}", self.status)));
         while lines.len() + 1 < rows {
             lines.push(String::new());
         }
         let help = match self.page {
-            Page::Agents => " ↑↓ move  space tick  ←→ instructions  enter how-to  tab next  q quit",
-            Page::Extras => " ↑↓ move  space tick  enter what to do  tab next  q quit",
-            Page::Review => " ↑↓ move  enter preview  a apply  tab back  q quit",
+            Page::Agents => " ↑↓ move  space tick  enter what it needs  tab next  q quit",
+            Page::Requirements => " ↑↓ move  space tick  enter what to do  tab next  q quit",
+            Page::Review => " ↑↓ move  enter how-to or preview  a apply  tab back  q quit",
         };
         let mut help = help.to_owned();
         if !self.outcomes.is_empty() {
@@ -529,15 +599,37 @@ impl App {
                     ("[ ]", DIM, format!("needs {}", missing.join(", ")), YELLOW)
                 }
             },
-            Row::Instructions => (
-                " ⇄ ",
-                "",
-                format!(
-                    "‹ {} ›  for the agents added now",
-                    guide::persona_label(&self.choices.persona)
-                ),
-                "",
-            ),
+            Row::Otto => {
+                let mark = if self.choices.otto { "[x]" } else { "[ ]" };
+                if self.facts.instructions.iter().any(|n| n == harness::OTTO) {
+                    (
+                        mark,
+                        GREEN,
+                        "answers in Ask as Otto, knowing your desktop".into(),
+                        DIM,
+                    )
+                } else {
+                    ("[ ]", DIM, "Otto's plugin not found".into(), YELLOW)
+                }
+            }
+            Row::Studio => {
+                let mark = if self.choices.studio { "[x]" } else { "[ ]" };
+                match plan::studio(&self.facts, &self.choices) {
+                    Studio::Unavailable => ("[ ]", DIM, "not in Otto's plugin".into(), YELLOW),
+                    Studio::Ready => (
+                        mark,
+                        GREEN,
+                        "works on the file open in Studio, from its chat".into(),
+                        DIM,
+                    ),
+                    Studio::NeedsClaude => (
+                        mark,
+                        GREEN,
+                        "works on the file open in Studio · needs Claude Code".into(),
+                        YELLOW,
+                    ),
+                }
+            }
             Row::Node => match &self.facts.node_version {
                 Some(version) => (
                     " ✓ ",
@@ -545,52 +637,149 @@ impl App {
                     format!("{version} · npx {}", self.found("npx")),
                     DIM,
                 ),
-                None => (
-                    " ✗ ",
-                    YELLOW,
-                    "not installed · enter for how".into(),
-                    YELLOW,
-                ),
+                None => (" ✗ ", RED, "not installed · enter for how".into(), RED),
             },
             Row::Adapters => {
-                let adapters: Vec<_> = HARNESSES.iter().filter_map(|h| h.adapter()).collect();
-                let have: Vec<&str> = adapters
-                    .iter()
-                    .filter(|a| self.facts.found.contains_key(a.bin))
-                    .map(|a| a.bin)
-                    .collect();
-                if have.len() == adapters.len() {
-                    (" ✓ ", GREEN, "all installed".into(), DIM)
-                } else if have.is_empty() {
+                let adapters = plan::adapters(&self.facts, &self.choices);
+                let named = |want: plan::Adapter| -> Vec<&str> {
+                    adapters
+                        .iter()
+                        .filter(|(_, state)| *state == want)
+                        .filter_map(|(h, _)| h.adapter().map(|a| a.bin))
+                        .collect()
+                };
+                let missing = named(plan::Adapter::Missing);
+                if adapters.is_empty() {
+                    (" ✓ ", GREEN, "none of your agents needs one".into(), DIM)
+                } else if !missing.is_empty() {
                     (
-                        " · ",
-                        DIM,
-                        "none installed: Claude Code and Codex use npx".into(),
-                        DIM,
+                        " ✗ ",
+                        RED,
+                        format!("missing {} · enter for how", missing.join(", ")),
+                        RED,
                     )
                 } else {
-                    (" · ", DIM, format!("installed: {}", have.join(", ")), DIM)
+                    let mut parts: Vec<String> = named(plan::Adapter::Installed)
+                        .into_iter()
+                        .map(str::to_owned)
+                        .collect();
+                    parts.extend(
+                        named(plan::Adapter::Npx)
+                            .into_iter()
+                            .map(|bin| format!("{bin} via npx")),
+                    );
+                    (" ✓ ", GREEN, parts.join(", "), DIM)
                 }
             }
             Row::Bridge => match plan::bridge(&self.facts) {
-                Bridge::Running => ("[✓]", GREEN, "running".into(), DIM),
+                Bridge::Running => (
+                    "[✓]",
+                    GREEN,
+                    "message your agents from Telegram · running".into(),
+                    DIM,
+                ),
                 Bridge::Off | Bridge::Ready => {
                     let mark = if self.choices.bridge { "[x]" } else { "[ ]" };
                     let note = if plan::bridge(&self.facts) == Bridge::Off {
-                        "set up, off: tick to start it"
+                        "message your agents from Telegram · set up, off"
                     } else {
-                        "cc-connect ready: tick to turn it on"
+                        "message your agents from Telegram · ready"
                     };
                     (mark, GREEN, note.into(), DIM)
                 }
-                Bridge::Missing(missing) => (
+                Bridge::Missing(_) => (
                     "[ ]",
                     DIM,
-                    format!("needs {} · enter for how", missing.join(", ")),
-                    YELLOW,
+                    "message your agents from Telegram · enter to set it up".into(),
+                    DIM,
                 ),
                 Bridge::Unavailable(why) => ("[ ]", DIM, why.into(), DIM),
             },
+            Row::CcConnect => match self.facts.found.get("cc-connect") {
+                Some(path) => (
+                    " ✓ ",
+                    GREEN,
+                    format!("{} · for the chat bridge", self.facts.shown(path)),
+                    DIM,
+                ),
+                None => (
+                    " · ",
+                    DIM,
+                    "not installed · optional, for the chat bridge".into(),
+                    DIM,
+                ),
+            },
+            Row::Skills => {
+                let skills = plan::skills(&self.facts);
+                let names = |pick: fn(&crate::plugins::Skill) -> bool| -> String {
+                    skills
+                        .iter()
+                        .filter(|s| pick(s))
+                        .map(|s| s.name.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                };
+                if self.facts.plugins.is_none() {
+                    (" ✗ ", RED, "otto-agents cannot say · enter".into(), RED)
+                } else if skills.iter().any(crate::plugins::Skill::in_the_way) {
+                    (
+                        " ✗ ",
+                        RED,
+                        format!(
+                            "{}: something of yours is in the way · enter",
+                            names(crate::plugins::Skill::in_the_way)
+                        ),
+                        RED,
+                    )
+                } else if skills.iter().all(crate::plugins::Skill::linked) {
+                    (" ✓ ", GREEN, format!("{} linked", names(|_| true)), DIM)
+                } else {
+                    (
+                        " ● ",
+                        YELLOW,
+                        format!("Apply links {}", names(|s| !s.linked())),
+                        YELLOW,
+                    )
+                }
+            }
+            Row::Profiles => {
+                let profiles = plan::profiles(&self.facts, &self.choices);
+                let behind: Vec<&str> = {
+                    let mut v: Vec<&str> = profiles
+                        .iter()
+                        .filter(|r| !r.current())
+                        .map(|r| r.vendor.as_str())
+                        .collect();
+                    v.dedup();
+                    v
+                };
+                if !self.choices.otto {
+                    (
+                        " ✓ ",
+                        GREEN,
+                        "none: the new agents are the plain harness".into(),
+                        DIM,
+                    )
+                } else if profiles.is_empty() {
+                    (
+                        " ✓ ",
+                        GREEN,
+                        "none needed: Claude Code reads Otto's plugin".into(),
+                        DIM,
+                    )
+                } else if behind.is_empty() {
+                    let mut v: Vec<&str> = profiles.iter().map(|r| r.vendor.as_str()).collect();
+                    v.dedup();
+                    (" ✓ ", GREEN, format!("current for {}", v.join(", ")), DIM)
+                } else {
+                    (
+                        " ● ",
+                        YELLOW,
+                        format!("Apply writes {}", behind.join(", ")),
+                        YELLOW,
+                    )
+                }
+            }
             Row::Step(index) => {
                 let step = &self.steps[index];
                 let (glyph, style) = match step.state {

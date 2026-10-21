@@ -6,6 +6,7 @@
 use otto_agents_client::harness::{self, Harness};
 
 use crate::plan::{self, Bridge, Readiness};
+use crate::plugins::Skill;
 use crate::probe::Facts;
 
 /// A line on where `program` was found, or that it was not.
@@ -58,7 +59,7 @@ pub fn harness(facts: &Facts, harness: Harness) -> String {
         (_, Some(package)) => {
             out.push(format!("  npm install -g {}", package.npm));
             if !facts.found.contains_key("npm") {
-                out.push("npm comes with Node.js: see Node.js on the Extras page.".into());
+                out.push("npm comes with Node.js: see Node.js on the Requirements page.".into());
             }
         }
         (_, None) => {}
@@ -101,43 +102,73 @@ pub fn harness(facts: &Facts, harness: Harness) -> String {
     out.join("\n")
 }
 
-/// What the instruction choice means, and the sets there are.
-pub fn instructions(facts: &Facts, persona: &str) -> String {
+/// What ticking Otto does.
+pub fn otto(facts: &Facts) -> String {
     let mut out = vec![
-        "# Instructions".to_owned(),
+        "# Otto".to_owned(),
         String::new(),
-        "Who the new agents are. With Otto's, an agent answers as Otto and".to_owned(),
-        "knows the desktop: its skills, its settings, its documentation. With".to_owned(),
-        "the harness's own, it is the plain harness.".to_owned(),
+        "Ticked, the agents setup adds answer as Otto: in Ask they know your".to_owned(),
+        "desktop, its settings and its documentation, and can change things for".to_owned(),
+        "you. Unticked, they are the plain harness (Claude Code, Codex, …).".to_owned(),
         String::new(),
-        "Only agents setup adds now get this; Settings › Agents changes it for".to_owned(),
-        "any agent later.".to_owned(),
-        String::new(),
+        "Agents already in your list keep what they have; Settings › Agents".to_owned(),
+        "changes it.".to_owned(),
     ];
-    for name in plan::Choices::personas(facts) {
-        let mark = if name == persona { "▸" } else { " " };
-        out.push(format!("  {mark} {}", persona_label(&name)));
-    }
-    if facts.instructions.is_empty() {
+    if !facts.instructions.iter().any(|n| n == harness::OTTO) {
         out.push(String::new());
-        out.push("No plugin with instructions was found: is Otto's plugin installed".into());
-        out.push("(/usr/share/otto/plugins/otto)?".into());
+        out.push("Otto's plugin was not found (/usr/share/otto/plugins/otto): reinstall".into());
+        out.push("Otto's package.".into());
     }
     out.join("\n")
 }
 
-/// How an instruction set is named in the interface.
-pub fn persona_label(name: &str) -> String {
-    match name {
-        "" => "the harness's own".to_owned(),
-        harness::OTTO => "Otto".to_owned(),
-        other => other.to_owned(),
+/// What Studio needs.
+pub fn studio(facts: &Facts, choices: &plan::Choices) -> String {
+    let mut out = vec![
+        "# Studio".to_owned(),
+        String::new(),
+        "Studio opens a file (a picture, a PDF, a Markdown document) with a".to_owned(),
+        "chat beside it, and the agent there works on that one file. It runs".to_owned(),
+        "on Claude Code, so a Claude Code agent has to be in your list.".to_owned(),
+        String::new(),
+    ];
+    match plan::studio(facts, choices) {
+        plan::Studio::Unavailable => {
+            out.push("Otto's plugin has no Studio here: reinstall Otto's package.".into());
+        }
+        plan::Studio::Ready if facts.configured.contains(&Harness::Claude) => {
+            out.push("  ✓ Claude Code agent   in your agent list".into());
+        }
+        plan::Studio::Ready => out.push("  ✓ Claude Code agent   added by setup".into()),
+        plan::Studio::NeedsClaude => {
+            out.push("  ✗ Claude Code agent   none".into());
+            out.push(String::new());
+            out.push("Tick Claude Code above; if it is not installed, its row shows how.".into());
+        }
+    }
+    out.push(String::new());
+    out.push("Nothing else: the Review page's `otto-agents plugins install` gives".into());
+    out.push("Claude Code the Studio instructions.".into());
+    out.join("\n")
+}
+
+/// A heading marked done when `done`, so the instructions stay whole even
+/// for what is already there.
+fn step(n: usize, text: &str, done: bool) -> String {
+    if done {
+        format!("# {n}. {text}  (done)")
+    } else {
+        format!("# {n}. {text}")
     }
 }
 
-/// Node.js: where it is, or how to install it.
+/// Node.js: where it is, and how to install it.
 pub fn node(facts: &Facts) -> String {
-    let mut out = vec!["# Node.js".to_owned(), String::new()];
+    let mut out = vec![
+        "# Node.js".to_owned(),
+        String::new(),
+        "Required.".to_owned(),
+    ];
     out.push("Claude Code and Codex reach Otto through ACP adapters written for".to_owned());
     out.push("Node.js, and pi and cc-connect install with npm.".to_owned());
     out.push(String::new());
@@ -145,11 +176,12 @@ pub fn node(facts: &Facts) -> String {
         out.push(found(facts, program));
     }
     out.push(String::new());
-    if let Some(version) = &facts.node_version {
-        out.push(format!("Installed: {version}. Nothing to do."));
-        return out.join("\n");
-    }
-    out.push("# Install".to_owned());
+    out.push(match &facts.node_version {
+        Some(version) => format!("Installed: {version}."),
+        None => "Not installed.".to_owned(),
+    });
+    out.push(String::new());
+    out.push(step(1, "Install", facts.node_version.is_some()));
     match node_install(facts) {
         Some(command) => out.push(format!("  {command}")),
         None => out.push("  from your distribution's packages, or nodejs.org".to_owned()),
@@ -157,49 +189,132 @@ pub fn node(facts: &Facts) -> String {
     out.push(String::new());
     out.push("Or, to keep it in your home folder, nvm (github.com/nvm-sh/nvm).".to_owned());
     out.push("Setup then adds nvm's folder to the agent service's PATH.".to_owned());
+    out.push(String::new());
+    out.push(step(2, "Check", facts.node_version.is_some()));
+    out.push("  node --version".to_owned());
     out.join("\n")
 }
 
-/// The ACP adapters: which are installed, and how to install the rest.
+/// The ACP adapters: which are installed, and how to install them.
 pub fn adapters(facts: &Facts) -> String {
     let mut out = vec![
         "# ACP adapters".to_owned(),
         String::new(),
-        "Claude Code, Codex and pi do not speak ACP, the protocol Otto talks to".to_owned(),
-        "agents in; an adapter stands between. Installed, it starts at once and".to_owned(),
-        "new agents use it. Not installed, Claude Code and Codex fetch it with".to_owned(),
-        "npx at every start; pi needs it installed.".to_owned(),
+        "Required. Claude Code, Codex and pi do not speak ACP, the protocol".to_owned(),
+        "Otto talks to agents in; an adapter stands between, and without it the".to_owned(),
+        "agent does not start. Installed, it starts at once and new agents use".to_owned(),
+        "it. Not installed, Claude Code and Codex fetch it with npx at every".to_owned(),
+        "start; pi needs it installed.".to_owned(),
         String::new(),
     ];
-    let mut missing = Vec::new();
+    let mut all = Vec::new();
     for harness in plan::HARNESSES {
         if let Some(adapter) = harness.adapter() {
             out.push(found(facts, adapter.bin));
-            if !facts.found.contains_key(adapter.bin) {
-                missing.push(adapter.npm);
-            }
+            all.push(adapter.npm);
         }
     }
     out.push(String::new());
-    if missing.is_empty() {
-        out.push("All installed. Nothing to do.".to_owned());
-    } else {
-        out.push("# Install".to_owned());
-        out.push(format!("  npm install -g {}", missing.join(" ")));
-        out.push(String::new());
-        out.push("Agents already in your list keep their command: point them at the".to_owned());
-        out.push("adapter in Settings › Agents if you want them to use it.".to_owned());
-    }
+    let installed = plan::HARNESSES
+        .iter()
+        .filter_map(|h| h.adapter())
+        .all(|a| facts.found.contains_key(a.bin));
+    out.push(step(1, "Install the ones your agents need", installed));
+    out.push(format!("  npm install -g {}", all.join(" ")));
+    out.push(String::new());
+    out.push(step(2, "Check", installed));
+    out.push("  otto-setup --check".to_owned());
+    out.push(String::new());
+    out.push("Agents already in your list keep their command: point them at the".to_owned());
+    out.push("adapter in Settings › Agents if you want them to use it.".to_owned());
     out.join("\n")
 }
 
-/// The chat bridge: what is there, and the steps that are the user's.
+/// Otto's skills: linked where agents look for them, or what is in the way.
+pub fn skills(facts: &Facts) -> String {
+    let mut out = vec![
+        "# Otto's skills".to_owned(),
+        String::new(),
+        "What the agents know about the desktop: how to change a setting, send".to_owned(),
+        "a file to your phone, and so on. They are linked into ~/.agents/skills,".to_owned(),
+        "where every harness looks for skills.".to_owned(),
+        String::new(),
+    ];
+    let skills = plan::skills(facts);
+    if facts.plugins.is_none() {
+        out.push("  otto-agents could not say: is it installed?".to_owned());
+    }
+    for skill in skills {
+        let mark = if skill.linked() { "✓" } else { "✗" };
+        out.push(format!(
+            "  {mark} {:<18}{:<12}{}",
+            skill.name, skill.state, skill.path
+        ));
+    }
+    out.push(String::new());
+    let linked = !skills.is_empty() && skills.iter().all(Skill::linked);
+    out.push(step(1, "Link them", linked));
+    out.push("  otto-agents plugins install".to_owned());
+    out.push("Apply runs it for you.".to_owned());
+    out.push(String::new());
+    let in_the_way = skills.iter().any(Skill::in_the_way);
+    out.push(step(2, "Move aside what is in the way", !in_the_way));
+    out.push("A skill \"in the way\" has a file or folder of yours where its link".to_owned());
+    out.push("goes; the installer leaves it alone. Move it aside, for example".to_owned());
+    out.push("  mv ~/.agents/skills/otto-help ~/.agents/skills/otto-help.mine".to_owned());
+    out.push("then link again.".to_owned());
+    out.push(String::new());
+    out.push(step(3, "Check", linked));
+    out.push("  otto-agents plugins status".to_owned());
+    out.join("\n")
+}
+
+/// Each selected harness's copy of Otto's agent.
+pub fn profiles(facts: &Facts, choices: &plan::Choices) -> String {
+    let mut out = vec![
+        "# Agent profiles".to_owned(),
+        String::new(),
+        "Every harness but Claude Code reads Otto's agent from a copy in its".to_owned(),
+        "own format and place: OpenCode's agents folder, Codex's config, pi's".to_owned(),
+        "wrapper, Hermes's profile. Claude Code reads the plugin itself.".to_owned(),
+        String::new(),
+    ];
+    let profiles = plan::profiles(facts, choices);
+    if !choices.otto {
+        out.push("  Otto is unticked: the new agents are the plain harness.".to_owned());
+    } else if profiles.is_empty() {
+        out.push("  ✓ none needed for the agents you selected".to_owned());
+    }
+    for render in &profiles {
+        let mark = if render.current() { "✓" } else { "✗" };
+        out.push(format!(
+            "  {mark} {:<10}{:<11}{}",
+            render.vendor, render.state, render.path
+        ));
+    }
+    out.push(String::new());
+    let current = profiles.iter().all(|r| r.current());
+    out.push(step(1, "Write them", current));
+    out.push("  otto-agents plugins install".to_owned());
+    out.push("Apply runs it for you.".to_owned());
+    out.push(String::new());
+    let skipped = profiles.iter().any(|r| r.state == "skipped");
+    out.push(step(2, "Make Hermes's profile", !skipped));
+    out.push(format!("  hermes profile create {}", harness::OTTO));
+    out.push("Apply runs it for you when you add a Hermes agent.".to_owned());
+    out.push(String::new());
+    out.push(step(3, "Check", current));
+    out.push("  otto-agents plugins status".to_owned());
+    out.join("\n")
+}
+
+/// The chat bridge: what is there, and every step, those done marked so.
 pub fn bridge(facts: &Facts) -> String {
     let mut out = vec![
         "# Chat bridge".to_owned(),
         String::new(),
-        "Talk to Otto's agents from a chat app, Telegram for one, through".to_owned(),
-        "cc-connect. Permission requests are still answered at the desk.".to_owned(),
+        "Optional. Message your agents from Telegram, or another chat app,".to_owned(),
+        "through cc-connect. Permission requests are still answered at the desk.".to_owned(),
         String::new(),
         found(facts, "cc-connect"),
     ];
@@ -213,57 +328,46 @@ pub fn bridge(facts: &Facts) -> String {
         out.push(format!("  ✓ {:<18}{command}", "[bridge]"));
     }
     out.push(String::new());
-    match plan::bridge(facts) {
-        Bridge::Unavailable(why) => out.push(format!("Not available: {why}.")),
-        Bridge::Running => {
-            out.push("Running. Settings › Agents › Chat bridge turns it off.".into())
-        }
-        Bridge::Off => {
-            out.push("Set up, but off. Tick it to start it now and at every login.".into())
-        }
-        Bridge::Ready => {
-            out.push("Ready. Tick it and setup points [bridge] in agents.toml at".into());
-            out.push("cc-connect with your configuration, and starts the bridge.".into());
-        }
-        Bridge::Missing(_) => {
-            // Only the steps still to do, numbered as they come.
-            let mut n = 0;
-            let mut heading = |out: &mut Vec<String>, text: &str| {
-                n += 1;
-                out.push(format!("# {n}. {text}"));
-            };
-            if !facts.found.contains_key("cc-connect") {
-                heading(&mut out, "Install cc-connect");
-                out.push("  npm install -g cc-connect".into());
-                out.push(String::new());
-            }
-            if !facts.cc_config_exists {
-                heading(&mut out, "Make a Telegram bot");
-                out.push("In Telegram, send /newbot to @BotFather and keep the token it".into());
-                out.push("gives you. Ask @userinfobot for your numeric user ID.".into());
-                out.push(String::new());
-                heading(&mut out, &format!("Write {config}"));
-                out.push("Readable by you alone (chmod 600): it holds the token.".into());
-                out.push(String::new());
-                let otto_agents = facts.found.get("otto-agents").map_or_else(
-                    || "/usr/bin/otto-agents".to_owned(),
-                    |p| p.display().to_string(),
-                );
-                let text = CC_CONFIG
-                    .replace("<home>", &facts.home.display().to_string())
-                    .replace("<the path of otto-agents>", &otto_agents);
-                for line in text.lines() {
-                    out.push(format!("  {line}"));
-                }
-                out.push(String::new());
-                out.push("  mkdir -p ~/.local/state/otto/remote".into());
-                out.push(String::new());
-            }
-            out.push("Then run otto-setup again and tick the bridge. Who can reach the".into());
-            out.push("agents, and what the phone may do: components/otto-agents/docs/".into());
-            out.push("cc-connect.md, in Otto's source.".into());
-        }
+    out.push(match plan::bridge(facts) {
+        Bridge::Unavailable(why) => format!("Not available: {why}."),
+        Bridge::Running => "Running. Settings › Agents › Chat bridge turns it off.".into(),
+        Bridge::Off => "Set up, but off. Tick it to start it now and at every login.".into(),
+        Bridge::Ready => "Ready. Tick it, and setup points [bridge] in agents.toml at \
+                          cc-connect and starts the bridge."
+            .into(),
+        Bridge::Missing(_) => "Not set up yet. The steps:".into(),
+    });
+    out.push(String::new());
+    let has_cc = facts.found.contains_key("cc-connect");
+    out.push(step(1, "Install cc-connect", has_cc));
+    out.push("  npm install -g cc-connect".into());
+    out.push(String::new());
+    out.push(step(2, "Make a Telegram bot", facts.cc_config_exists));
+    out.push("In Telegram, send /newbot to @BotFather and keep the token it".into());
+    out.push("gives you. Ask @userinfobot for your numeric user ID.".into());
+    out.push(String::new());
+    out.push(step(3, &format!("Write {config}"), facts.cc_config_exists));
+    out.push("Readable by you alone (chmod 600): it holds the token.".into());
+    out.push(String::new());
+    let otto_agents = facts.found.get("otto-agents").map_or_else(
+        || "/usr/bin/otto-agents".to_owned(),
+        |p| p.display().to_string(),
+    );
+    let text = CC_CONFIG
+        .replace("<home>", &facts.home.display().to_string())
+        .replace("<the path of otto-agents>", &otto_agents);
+    for line in text.lines() {
+        out.push(format!("  {line}"));
     }
+    out.push(String::new());
+    out.push("  mkdir -p ~/.local/state/otto/remote".into());
+    out.push(String::new());
+    let on = matches!(plan::bridge(facts), Bridge::Running);
+    out.push(step(4, "Turn it on", on));
+    out.push("Tick the bridge here and apply, or Settings › Agents › Chat bridge.".into());
+    out.push(String::new());
+    out.push("Who can reach the agents, and what the phone may do:".into());
+    out.push("components/otto-agents/docs/cc-connect.md, in Otto's source.".into());
     out.join("\n")
 }
 

@@ -13,6 +13,8 @@ use std::process::Command;
 use otto_agents_client::harness::Harness;
 use otto_agents_client::instructions;
 use otto_foundations::xdg;
+
+use crate::plugins;
 use toml_edit::{DocumentMut, Item};
 
 /// The systemd user unit that runs the agents.
@@ -102,9 +104,9 @@ pub struct Facts {
     /// The Hermes profiles there are. Hermes runs an agent in the profile
     /// named after its instructions.
     pub hermes_profiles: Vec<String>,
-    /// Whether Otto's help skill is linked where agents look for skills,
-    /// the sign `otto-agents plugins install` has run.
-    pub skills_linked: bool,
+    /// What `otto-agents plugins status` says of Otto's skills and each
+    /// harness's rendering of the plugin agents; `None` when it cannot run.
+    pub plugins: Option<plugins::Status>,
     /// cc-connect's configuration.
     pub cc_config: PathBuf,
     /// Whether it exists.
@@ -192,7 +194,7 @@ impl Facts {
                 .filter(|entry| entry.path().is_dir())
                 .filter_map(|entry| entry.file_name().into_string().ok())
                 .collect(),
-            skills_linked: home.join(".agents/skills/otto-help").exists(),
+            plugins: plugins::Status::read(),
             cc_config_exists: cc_config.is_file(),
             cc_config,
             cc_connect_node,

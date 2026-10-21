@@ -13,6 +13,7 @@
 mod apply;
 mod guide;
 mod plan;
+mod plugins;
 mod probe;
 mod tui;
 
@@ -117,29 +118,66 @@ fn check(facts: &Facts) -> ExitCode {
         };
         println!("  {name:<14}{line}");
     }
-    println!(
-        "  {:<14}{}",
-        "Instructions",
-        guide::persona_label(&choices.persona)
-    );
-    println!("\nExtras");
+    let yes = |on: bool| if on { "yes" } else { "no" };
+    println!("  {:<14}{}", "Otto", yes(choices.otto));
+    let studio = match plan::studio(facts, &choices) {
+        plan::Studio::Ready => "ready",
+        plan::Studio::NeedsClaude => "needs a Claude Code agent",
+        plan::Studio::Unavailable => "not in Otto's plugin",
+    };
+    println!("  {:<14}{studio}", "Studio");
+    println!("\nRequired");
     let node = facts
         .node_version
         .clone()
         .unwrap_or_else(|| "not installed".to_owned());
     println!("  {:<14}{node}", "Node.js");
-    let adapters: Vec<&str> = plan::HARNESSES
-        .iter()
-        .filter_map(|h| h.adapter())
-        .filter(|a| facts.found.contains_key(a.bin))
-        .map(|a| a.bin)
+    let adapters: Vec<String> = plan::adapters(facts, &choices)
+        .into_iter()
+        .filter_map(|(harness, state)| {
+            let bin = harness.adapter()?.bin;
+            Some(match state {
+                plan::Adapter::Installed => bin.to_owned(),
+                plan::Adapter::Npx => format!("{bin} via npx"),
+                plan::Adapter::Missing => format!("{bin} missing"),
+            })
+        })
         .collect();
     let adapters = if adapters.is_empty() {
-        "none installed".to_owned()
+        "none needed".to_owned()
     } else {
         adapters.join(", ")
     };
     println!("  {:<14}{adapters}", "ACP adapters");
+    let skills = plan::skills(facts);
+    let skills = if facts.plugins.is_none() {
+        "otto-agents cannot say".to_owned()
+    } else {
+        skills
+            .iter()
+            .map(|s| format!("{} {}", s.name, s.state))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    println!("  {:<14}{skills}", "Otto's skills");
+    // One entry per harness: a profile can be several files.
+    let mut profiles: Vec<String> = plan::profiles(facts, &choices)
+        .iter()
+        .map(|r| format!("{} {}", r.vendor, r.state))
+        .collect();
+    profiles.dedup();
+    let profiles = if profiles.is_empty() {
+        "none needed".to_owned()
+    } else {
+        profiles.join(", ")
+    };
+    println!("  {:<14}{profiles}", "Profiles");
+    println!("\nOptional");
+    let cc = facts
+        .found
+        .get("cc-connect")
+        .map_or_else(|| "not installed".to_owned(), |p| facts.shown(p));
+    println!("  {:<14}{cc}", "cc-connect");
     let bridge = match plan::bridge(facts) {
         Bridge::Running => "running".to_owned(),
         Bridge::Off => "set up, off".to_owned(),
