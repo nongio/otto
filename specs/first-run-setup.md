@@ -24,7 +24,7 @@
 
 ## Behavior
 
-Three pages, switched with Tab (and ← →): Agents, Extras, Review. Every row opens its instructions: what is there, with where it was found, and the commands to run for what is not.
+A welcome comes first: setup configures Otto by bootstrapping what a part of it needs, explains what it cannot do, and leaves the finer configuration to Settings. It asks what to set up; for now the one choice is the Otto Agents, which answer in Ask and run Sessions and are used from Otto itself, and more dependencies can join that list later. Choosing it opens three pages, switched with Tab (and ← →): Agents ("Which agents do you want to set up?"), Extras, Review. Every row opens its instructions: what is there, with where it was found, and the commands to run for what is not.
 
 - **Agents.** Claude Code, Codex, OpenCode, Hermes and pi are each one of:
   - *in your agent list*: it cannot be ticked;

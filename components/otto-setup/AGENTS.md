@@ -1,6 +1,6 @@
 # otto-setup
 
-`otto-setup` sets Otto up the first time, from a terminal. It starts with the agents, on three pages:
+`otto-setup` configures Otto the first time, from a terminal. It bootstraps the requirements; Settings has the detailed configuration. A welcome says that and asks what to set up; for now the one choice is the Otto Agents, which answer in Ask and run Sessions, and it opens three pages:
 
 - **Agents:** the harnesses (Claude Code, Codex, OpenCode, Hermes, pi), each shown as in the agent list, ready, or what it is missing. The user ticks the ready ones and picks the instructions new agents run as: Otto's, another plugin's, or the harness's own.
 - **Extras:** Node.js, the ACP adapters and the chat bridge (cc-connect), each with where it was found.
@@ -30,6 +30,7 @@ Every row opens its instructions: what is there, and the exact commands to run f
 ## Rules
 - Setup installs nothing. No package manager, no `npm install`, no downloads, no `sudo`: it runs only Otto's own commands and `systemctl --user`. For what is missing it shows the commands in the instructions.
 - What is installed is used as it is: an adapter already on the PATH is what new agents start, rather than `npx`; an existing cc-connect configuration and `[bridge]` are kept.
+- The welcome lists the topics (`TOPICS` in `tui.rs`); a new dependency to set up is a new topic with its own pages, not more rows on the agents' pages.
 - Nothing is written before Apply, and the preview shows exactly what Apply writes or runs.
 - Setup only adds. It never removes or changes an agent the user already has, and never writes over a file it cannot parse. Changing or removing agents is Settings › Agents' job.
 - The PATH goes into a drop-in of its own, `<unit>.d/otto-setup.conf`, never `override.conf` (what `systemctl --user edit` writes) or another file of the user's. Its PATH is built on the one the unit has now, so it only adds.

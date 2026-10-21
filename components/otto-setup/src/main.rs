@@ -24,12 +24,13 @@ use crate::probe::Facts;
 const USAGE: &str = "\
 Usage: otto-setup [agents] [options]
 
-Set Otto up the first time. `agents` (the default, and for now the only
-topic) picks the agents Otto runs and who they are, writes them into
-agents.toml, makes sure the agent service finds them, and starts it; it can
-turn the chat bridge on too. It installs nothing: for what is missing (Node.js,
-a harness, an ACP adapter, cc-connect) it says what to run. Nothing changes
-until you apply.
+Configure Otto the first time. For now it sets up the agents (`agents`, the
+default and only topic), which answer in Ask and run your Sessions: it picks
+the agents Otto runs and who they are, writes them into agents.toml, makes
+sure the agent service finds them, and starts it; it can turn the chat bridge
+on too. It bootstraps the requirements and installs nothing: for what is
+missing (Node.js, a harness, an ACP adapter, cc-connect) it says what to run.
+Nothing changes until you apply. Settings › Agents has the rest.
 
 Options:
       --check    print what is set up and what is left, and exit 1 when

@@ -1,5 +1,5 @@
-//! The interactive setup, on three pages: the agents to add and who they
-//! are, the extras (Node.js, the ACP adapters, the chat bridge), and the
+//! The interactive setup: a welcome that says what it is for, then three
+//! pages: the agents to add and who they are, the extras (Node.js, the ACP adapters, the chat bridge), and the
 //! steps that follow with Apply. Every row opens its instructions, or a
 //! preview of exactly what it will write or run.
 //!
@@ -46,7 +46,7 @@ impl Page {
 
     fn intro(self) -> &'static str {
         match self {
-            Page::Agents => " Tick the agents Otto should run. Enter shows how to install one.",
+            Page::Agents => " Which agents do you want to set up? Enter shows how to install one.",
             Page::Extras => " What the agents can use. Enter shows what is there and what to do.",
             Page::Review => " What Apply does. Enter shows exactly what a step writes or runs.",
         }
@@ -73,6 +73,8 @@ enum Row {
 /// What is on screen.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum View {
+    /// What setup is for, and the topics to set up; `cursor` is a topic.
+    Welcome { cursor: usize },
     /// A page of rows.
     List,
     /// A row's text, scrolled down by `scroll` lines.
@@ -117,7 +119,7 @@ pub fn run(facts: Facts) -> io::Result<()> {
         outcomes: Vec::new(),
         page: Page::Agents,
         cursor: 0,
-        view: View::List,
+        view: View::Welcome { cursor: 0 },
         status: "Nothing changes until you apply. Tab for the next page.".into(),
     };
     let mut drawn_size = None;
@@ -179,7 +181,7 @@ impl App {
         self.status = if failed {
             "Something did not work: open it for what it printed.".into()
         } else {
-            "Done. Try it: run otto-ask, or bind it to a key.".into()
+            "Done. Try it: run otto-ask. Settings › Agents has the rest.".into()
         };
         self.view = View::Results { cursor: 0 };
     }
@@ -197,6 +199,25 @@ impl App {
         }
         let page = rows.saturating_sub(4).max(1);
         match self.view {
+            View::Welcome { cursor } => {
+                let last = TOPICS.len() - 1;
+                match key {
+                    Key::Up | Key::Char('k') => {
+                        self.view = View::Welcome {
+                            cursor: cursor.saturating_sub(1),
+                        }
+                    }
+                    Key::Down | Key::Char('j') => {
+                        self.view = View::Welcome {
+                            cursor: (cursor + 1).min(last),
+                        }
+                    }
+                    // One topic so far: the agents' pages.
+                    Key::Enter | Key::Tab | Key::Right | Key::Char(' ') => self.view = View::List,
+                    Key::Esc | Key::Char('q') => return Flow::Quit,
+                    _ => {}
+                }
+            }
             View::List => return self.handle_list(key),
             View::Text { row, scroll } => {
                 let total = self.text(row).lines().count();
@@ -253,6 +274,9 @@ impl App {
                 self.cycle_persona(if key == Key::Left { -1 } else { 1 });
             }
             Key::Tab | Key::Right => self.go(self.page.step(1)),
+            Key::BackTab | Key::Left if self.page == Page::Agents => {
+                self.view = View::Welcome { cursor: 0 }
+            }
             Key::BackTab | Key::Left => self.go(self.page.step(-1)),
             Key::Char(' ') | Key::Char('x') => self.toggle(row),
             Key::Enter | Key::Char('v') => match row {
@@ -370,6 +394,7 @@ impl App {
 
     fn frame(&self, (cols, rows): (usize, usize)) -> String {
         let lines = match self.view {
+            View::Welcome { cursor } => self.welcome_lines(cursor, cols, rows),
             View::List => self.list_lines(cols, rows),
             View::Text { row, scroll } => {
                 let content: Vec<String> = self.text(row).lines().map(printable).collect();
@@ -392,7 +417,44 @@ impl App {
         } else {
             (YELLOW, format!("{todo} to do "))
         };
-        otto_term_kit::header(cols, "setup", crumb, Some((right.0, &right.1)))
+        // The pages are the agents' for now, the one topic.
+        let crumb = match (self.view, crumb) {
+            (View::Welcome { .. }, _) => None,
+            (_, None) => Some(TOPICS[0].0.to_owned()),
+            (_, Some(crumb)) => Some(format!("{}  ›  {crumb}", TOPICS[0].0)),
+        };
+        otto_term_kit::header(cols, "setup", crumb.as_deref(), Some((right.0, &right.1)))
+    }
+
+    fn welcome_lines(&self, cursor: usize, cols: usize, rows: usize) -> Vec<String> {
+        let mut lines = vec![
+            self.header(cols, None),
+            otto_term_kit::rule(cols),
+            String::new(),
+            plain_styled(cols, BOLD, " Welcome to Otto."),
+            String::new(),
+        ];
+        lines.extend(WELCOME.lines().map(|line| plain(cols, &format!(" {line}"))));
+        lines.push(String::new());
+        lines.push(plain_styled(cols, BOLD, " What do you want to set up?"));
+        lines.push(String::new());
+        for (i, (title, note)) in TOPICS.iter().enumerate() {
+            let selected = cursor == i;
+            let base = if selected { REVERSE } else { "" };
+            let mut line = Spans::new(cols);
+            line.push(base, if selected { " ▸ " } else { "   " });
+            line.push(&format!("{base}{BOLD}"), &format!("{title:<TITLE_WIDTH$}"));
+            line.push(&format!("{base}{DIM}"), &format!(" {note}"));
+            if selected {
+                line.fill(REVERSE);
+            }
+            lines.push(line.finish());
+        }
+        while lines.len() + 1 < rows {
+            lines.push(String::new());
+        }
+        lines.push(plain_styled(cols, DIM, " ↑↓ move  enter set up  q quit"));
+        lines
     }
 
     /// The page tabs, the current one highlighted.
@@ -639,6 +701,23 @@ impl App {
         lines
     }
 }
+
+/// What the welcome says: what setup is for, what it does and leaves to
+/// the user, and where the rest of the configuration lives.
+const WELCOME: &str = "\
+This helps you configure Otto. It bootstraps what a part of Otto needs
+from your system: it finds what is installed, sets up what it can, and
+explains what it cannot do for you, such as installing a program or
+signing in. Nothing changes until you apply.
+
+For the finer configuration, there is Settings.";
+
+/// What setup can set up, as a title and a line on what it is. More
+/// dependencies come here as setup grows.
+const TOPICS: [(&str, &str); 1] = [(
+    "Otto Agents",
+    "the agents behind Ask and Sessions, used from Otto itself",
+)];
 
 /// The new scroll position after `key`, or `None` to go back.
 fn scrolled(key: Key, scroll: usize, page: usize, total: usize) -> Option<usize> {
