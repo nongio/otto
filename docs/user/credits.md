@@ -33,7 +33,7 @@ Wikimedia Commons into `~/Videos` by hand.
 |------|--------|---------|
 | [Fluent icon theme](https://github.com/vinceliuice/Fluent-icon-theme) | vinceliuice | GPL-3.0 |
 | [MacTahoe icon theme and cursors](https://github.com/vinceliuice/MacTahoe-icon-theme) (ships with Otto as `Otto-MacTahoe`) | vinceliuice | GPL-3.0 |
-| [Solar icon set](https://www.figma.com/community/file/1166831539721848736), the glyphs on Otto's own toolbars, menus and sidebars (ships with Otto in `/usr/share/otto/icons/solar`; packaged by [solar-icons](https://github.com/saoudi-h/solar-icons)) | 480 Design | CC BY 4.0 |
+| [Solar icon set](https://www.figma.com/community/file/1166831539721848736), the glyphs on Otto's own toolbars, menus and sidebars and this site's copy button (ships with Otto in `/usr/share/otto/icons/solar`; packaged by [solar-icons](https://github.com/saoudi-h/solar-icons)) | 480 Design | CC BY 4.0 |
 | [WhiteSur cursors](https://github.com/vinceliuice/WhiteSur-cursors) | vinceliuice | GPL-3.0 |
 | [Papirus](https://github.com/PapirusDevelopmentTeam/papirus-icon-theme) | Papirus Development Team | GPL-3.0 |
 | [Adwaita](https://gitlab.gnome.org/GNOME/adwaita-icon-theme) | The GNOME Project | CC BY-SA 3.0 / LGPL-3.0 |
@@ -43,6 +43,7 @@ Wikimedia Commons into `~/Videos` by hand.
 | Name | Author | Licence |
 |------|--------|---------|
 | [Inter](https://rsms.me/inter/) | Rasmus Andersson | SIL Open Font License 1.1 |
+| [JetBrains Mono](https://www.jetbrains.com/lp/mono/), the code on this site | JetBrains | SIL Open Font License 1.1 |
 
 ## Applications in the screenshots
 
