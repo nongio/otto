@@ -23,7 +23,7 @@ Every row opens its instructions: what is there, and always the full steps with 
 - `src/main.rs`: options, and `--check` / `--apply` without the interface.
 - `src/probe.rs`: reading the machine into `Facts`: the agent lists and the bridge, where each program is on the shell's PATH and on each unit's, Node's version, the units' state, the Hermes profiles, cc-connect's configuration.
 - `src/plan.rs`: readiness, the steps from the facts and the `Choices`, and the `agents.toml` they write. Pure: no files, no processes.
-- `src/guide.rs`: the instructions each row opens.
+- `src/guide.rs`: the instructions each row opens, marked line by line so the interface can style them: `#you`/`#setup`/`#done` steps (who does it), `$ ` commands (one per line, nothing else on it), `│ ` file contents, the rest prose.
 - `src/plugins.rs`: `otto-agents plugins status` read into Otto's skills and each harness's renderings.
 - `src/apply.rs`: running the steps in order, stopping at the first that fails, then the check.
 - `src/tui.rs`: the interface.

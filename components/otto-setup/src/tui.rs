@@ -11,7 +11,7 @@
 use std::io;
 
 use otto_agents_client::harness::{self, Harness};
-use otto_term_kit::style::{BOLD, DIM, GREEN, RED, REVERSE, YELLOW};
+use otto_term_kit::style::{BOLD, CYAN, DIM, GREEN, RED, REVERSE, YELLOW};
 use otto_term_kit::{printable, Key, Spans, Terminal};
 
 use crate::apply::{self, Outcome};
@@ -872,11 +872,7 @@ impl App {
         let mut lines = vec![self.header(cols, Some(crumb)), otto_term_kit::rule(cols)];
         let page = rows.saturating_sub(3).max(1);
         for text in content.iter().skip(scroll).take(page) {
-            let (style, text) = match text.strip_prefix("# ") {
-                Some(heading) => (BOLD, heading),
-                None => ("", text.as_str()),
-            };
-            lines.push(plain_styled(cols, style, &format!(" {text}")));
+            lines.push(text_line(cols, text));
         }
         while lines.len() + 1 < rows {
             lines.push(String::new());
@@ -907,6 +903,36 @@ const TOPICS: [(&str, &str); 1] = [(
     "Otto Agents",
     "the agents behind Ask and Sessions, used from Otto itself",
 )];
+
+/// One line of instructions, styled by what it is (see `guide.rs`): a step
+/// says who does it, a command stands out to copy, a file's contents sit
+/// behind a gutter.
+fn text_line(cols: usize, text: &str) -> String {
+    let mut line = Spans::new(cols);
+    let steps = [
+        ("#you ", YELLOW, "you run this"),
+        ("#setup ", CYAN, "setup does this on Apply"),
+        ("#done ", GREEN, "done"),
+    ];
+    if let Some((title, style, who)) = steps
+        .iter()
+        .find_map(|(tag, style, who)| Some((text.strip_prefix(tag)?, *style, *who)))
+    {
+        line.push(BOLD, &format!(" {title}"));
+        line.push(style, &format!("  · {who}"));
+    } else if let Some(heading) = text.strip_prefix("# ") {
+        line.push(BOLD, &format!(" {heading}"));
+    } else if let Some(command) = text.strip_prefix("$ ") {
+        line.push(DIM, "   $ ");
+        line.push(&format!("{BOLD}{CYAN}"), command);
+    } else if let Some(contents) = text.strip_prefix("│ ") {
+        line.push(DIM, "   │ ");
+        line.push("", contents);
+    } else {
+        line.push("", &format!(" {text}"));
+    }
+    line.finish()
+}
 
 /// The new scroll position after `key`, or `None` to go back.
 fn scrolled(key: Key, scroll: usize, page: usize, total: usize) -> Option<usize> {
