@@ -21,8 +21,10 @@ use otto_kit::protocols::{
     otto_surface_style_v1::OttoSurfaceStyleV1,
 };
 
+use otto_kit::surfaces::Scaling;
+
 use crate::panel::MAX_CARD_HEIGHT;
-use crate::State;
+use crate::{State, SurfaceScale, STAND_IN_SCALE_120};
 
 /// The first `otto-canvas-v1` version with `show`, `set_order` and the
 /// `never` keyboard interactivity, all of which the card needs.
@@ -42,6 +44,8 @@ pub const ORDER: i32 = -100;
 pub struct CanvasCard {
     item: OttoCanvasItemV1,
     card: WlSurface,
+    /// The card's scale, which its buffer is drawn at.
+    card_scale: SurfaceScale,
     style: Option<OttoSurfaceStyleV1>,
     /// The column's width in logical pixels; zero until configured.
     width: i32,
@@ -66,10 +70,10 @@ impl CanvasCard {
         compositor: &WlCompositor,
         styles: Option<&OttoSurfaceStyleManagerV1>,
         qh: &QueueHandle<State>,
-        scale: i32,
+        scaling: &Scaling,
     ) -> Self {
         let card = compositor.create_surface(qh, ());
-        card.set_buffer_scale(scale);
+        let card_scale = SurfaceScale::new(&card, scaling, STAND_IN_SCALE_120, qh);
         let item = manager.get_canvas_item(&card, qh, ());
         // The app keeps the keyboard, and with it its selection and caret.
         item.set_keyboard_interactivity(KeyboardInteractivity::Never);
@@ -82,6 +86,7 @@ impl CanvasCard {
         Self {
             item,
             card,
+            card_scale,
             style,
             width: 0,
             shown: false,
@@ -100,6 +105,11 @@ impl CanvasCard {
     /// The surface the card is drawn on, which also takes its pointer.
     pub fn card(&self) -> &WlSurface {
         &self.card
+    }
+
+    /// The card's scale.
+    pub fn card_scale_mut(&mut self) -> &mut SurfaceScale {
+        &mut self.card_scale
     }
 
     /// Acknowledge the column's width.
@@ -201,6 +211,7 @@ impl CanvasCard {
         if let Some(style) = self.style {
             style.destroy();
         }
+        self.card_scale.destroy();
         self.item.destroy();
         self.card.destroy();
     }

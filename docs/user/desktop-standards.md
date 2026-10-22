@@ -78,27 +78,31 @@ application uses, so the font you name in Otto's settings is matched against
 the fonts you have installed, aliases like `sans-serif` work, and rules in
 `~/.config/fontconfig/fonts.conf` are respected when choosing the face.
 
-These limits apply to **Otto's own text only**: the dock, the top bar, window
+All of this is about **Otto's own text**: the dock, the top bar, window
 titlebars, and Otto's applications. Text inside the programs you run is drawn
 by those programs, with their own font stack, before Otto ever sees it: Otto
 composites a finished image and cannot alter how the glyphs in it were
 rasterised. Your fontconfig settings are already fully in effect for the text
 you spend most of your time reading.
 
-With that scope, three limits worth knowing:
+With that scope, three things worth knowing:
 
-- Otto's chrome draws with grayscale antialiasing, and there is currently no
-  way to turn subpixel (LCD) antialiasing on for it. On a HiDPI display this is
-  what you would probably pick anyway. On a 1080p display Otto's own dock, bar
-  and window titles will look a little lighter and softer than the applications
-  running above them.
-- Hinting does not follow your fontconfig settings. If you have set a
-  `hintstyle` in `fonts.conf`, applications will follow it and Otto's chrome
-  will not.
-- Otto's font choice applies to Otto. It is not published to applications the
-  way its light/dark mode and accent color are, so set the interface font for
-  GTK and Qt apps as you normally would. Otto does not override it, and does
-  not set it either.
+- Otto's chrome draws with grayscale antialiasing unless it knows the
+  monitor's subpixel order: set `subpixel` in the monitor's display profile
+  (see [Display](display.md)) or `rgba` in fontconfig, and window titles, the
+  dock's tooltips and menus, the app switcher and exposé draw subpixel text on
+  that monitor. On a HiDPI display grayscale is what you would probably pick
+  anyway.
+- Hinting and antialiasing follow your fontconfig settings (`hintstyle`,
+  `hinting`, `antialias`, `rgba`), in Otto's chrome as in your applications.
+- Otto tells applications its font and how it draws text, the way it tells
+  them its light/dark mode: GTK 4 apps read them from the desktop portal,
+  GTK 3 apps (and Chromium and Electron, which use GTK 3) from GNOME's
+  settings store, which Otto fills, Qt apps through Qt's GTK platform theme,
+  which Otto selects unless `QT_QPA_PLATFORMTHEME` is already set, and X11
+  apps from XSETTINGS. The interface font they get is Otto's `font_family`
+  at Otto's body size. One exception is Qt's own: on a scaled display it
+  draws text unhinted whatever the hinting, under any desktop.
 
 ## Files, trash and thumbnails
 

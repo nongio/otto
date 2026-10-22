@@ -87,7 +87,6 @@ flowchart BT
     otto_greeter[otto-greeter]
     otto_lock[otto-lock]
     otto_authorize[otto-authorize]
-    otto_input_overlay[otto-input-overlay]
     otto_dictate[otto-dictate]
     otto_msg[otto-msg]
     otto_agents[otto-agents]
@@ -123,7 +122,6 @@ flowchart BT
   otto_files --> otto_search
   otto_greeter --> otto_auth_ui
   otto_greeter --> otto_kit
-  otto_input_overlay --> otto_kit
   otto_islands --> otto_kit
   otto_kit --> otto_dbus
   otto_kit --> otto_foundations
@@ -215,6 +213,11 @@ rules today:
   bridge.
 - `wayland-connection-through-kit`: only otto-kit opens an app's Wayland
   connection; otto-rdp, a bridge with no toolkit, opens its own.
+- `image-sampling-explicit`: no plain `draw_image`/`draw_image_rect`, whose
+  nearest sampling is right only for a 1:1 copy on whole device pixels.
+  Icons go through `otto_kit::icons::draw_icon`; everything else names its
+  sampling (`*_with_sampling_options`), `SamplingOptions::default()` for a
+  deliberate 1:1 copy.
 - `dbus-proxies-in-otto-dbus`: a zbus client proxy (`#[zbus::proxy]`) is
   declared only in `otto-dbus`, one per interface, so every caller agrees on
   the contract. Serving an interface (`#[interface]`) stays with the service.

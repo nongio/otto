@@ -591,8 +591,83 @@ pub fn svg_image_from_bytes(svg_data: &[u8], size: skia::ISize) -> Option<skia::
     )
 }
 
+// ---------------------------------------------------------------------------
+// Drawing
+// ---------------------------------------------------------------------------
+
+/// Draw the icon `image` into `dst`, in the canvas's own units.
+///
+/// An icon rasterised for the canvas's scale — `dst` covering as many device
+/// pixels as the image has — is put on whole device pixels and copied 1:1;
+/// any other is resampled linearly. Skia's default sampling, nearest, is
+/// right only for a 1:1 copy that lands on whole pixels: at a fractional
+/// scale half the points fall between two pixels, and a copy sampled there
+/// doubles one column and drops the next, breaking thin strokes apart.
+pub fn draw_icon(canvas: &skia::Canvas, image: &skia::Image, dst: skia::Rect, paint: &skia::Paint) {
+    let size = (image.width() as f32, image.height() as f32);
+    match one_to_one(&canvas.local_to_device_as_3x3(), dst, size) {
+        Some(snapped) => {
+            canvas.draw_image_rect(image, None, snapped, paint);
+        }
+        None => {
+            canvas.draw_image_rect_with_sampling_options(
+                image,
+                None,
+                dst,
+                skia::SamplingOptions::new(skia::FilterMode::Linear, skia::MipmapMode::Linear),
+                paint,
+            );
+        }
+    }
+}
+
+/// `dst` moved onto whole device pixels, when `matrix` maps it onto an
+/// image of `size` pixels 1:1 — to within the half pixel a size rounded to
+/// whole pixels is off by. `None` for any other mapping.
+fn one_to_one(matrix: &skia::Matrix, dst: skia::Rect, size: (f32, f32)) -> Option<skia::Rect> {
+    if !matrix.is_scale_translate() {
+        return None;
+    }
+    let (device, _) = matrix.map_rect(dst);
+    if (device.width() - size.0).abs() > 0.5 || (device.height() - size.1).abs() > 0.5 {
+        return None;
+    }
+    let snapped = skia::Rect::from_xywh(
+        (device.center_x() - size.0 / 2.0).round(),
+        (device.center_y() - size.1 / 2.0).round(),
+        size.0,
+        size.1,
+    );
+    Some(matrix.invert()?.map_rect(snapped).0)
+}
+
 #[cfg(test)]
 mod tests {
+    use skia_safe as skia;
+
+    /// The 1:1 case at 1.5x: a 16-point icon at x = 9 lands on device
+    /// x = 13.5, between two pixels, and is moved onto a whole one, its
+    /// size kept.
+    #[test]
+    fn a_one_to_one_icon_lands_on_whole_pixels() {
+        let matrix = skia::Matrix::scale((1.5, 1.5));
+        let dst = skia::Rect::from_xywh(9.0, 9.0, 16.0, 16.0);
+        let snapped = super::one_to_one(&matrix, dst, (24.0, 24.0)).unwrap();
+        let (device, _) = matrix.map_rect(snapped);
+        assert!((device.left - device.left.round()).abs() < 1e-4);
+        assert!((device.top - device.top.round()).abs() < 1e-4);
+        assert!((device.width() - 24.0).abs() < 1e-4);
+    }
+
+    /// An icon drawn bigger or smaller than its pixels is resampled where
+    /// it is, not moved.
+    #[test]
+    fn a_resampled_icon_is_not_moved() {
+        let matrix = skia::Matrix::scale((1.5, 1.5));
+        let dst = skia::Rect::from_xywh(9.0, 9.0, 16.0, 16.0);
+        assert_eq!(super::one_to_one(&matrix, dst, (16.0, 16.0)), None);
+    }
+
     /// The distinction `cached_icon_chain` depends on: an exact lookup must
     /// report a miss, where `find_icon_in_theme` deliberately substitutes a
     /// generic icon. Without this, the first name in a fallback chain always

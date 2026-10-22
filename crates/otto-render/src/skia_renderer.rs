@@ -61,6 +61,10 @@ pub struct SkiaRenderer {
     pub(crate) gl: ffi::Gles2,
 
     target_renderer: HashMap<SkiaTarget, SkiaSurface>,
+    /// Subpixel layout the target rendered next is scanned out with, set by
+    /// the backend around an output's frame (see
+    /// [`crate::renderer::active::SkiaDeviceRenderer::set_target_pixel_geometry`]).
+    target_pixel_geometry: skia::PixelGeometry,
     /// Public so the screenshare blit (`renderer/mod.rs`) can snapshot and
     /// restore it — leaving it pointed at the screencast dmabuf corrupts the
     /// next DRM fence export.
@@ -146,6 +150,7 @@ impl From<GlesRenderer> for SkiaRenderer {
             gl,
             gl_renderer,
             target_renderer: HashMap::new(),
+            target_pixel_geometry: skia::PixelGeometry::Unknown,
             buffers: HashMap::new(),
             current_target: None,
             context,
@@ -290,6 +295,7 @@ impl SkiaRenderer {
             gl_renderer,
             gl,
             target_renderer: HashMap::new(),
+            target_pixel_geometry: skia::PixelGeometry::Unknown,
             buffers: HashMap::new(),
             current_target: None,
             context,
@@ -444,6 +450,11 @@ impl SkiaRenderer {
     /// so the KMS commit waits for the writes instead of the CPU.
     pub fn note_scanout_write(&mut self, dmabuf: &smithay::backend::allocator::dmabuf::Dmabuf) {
         self.scanout_writes.push(dmabuf.clone());
+    }
+
+    /// Sets the subpixel layout of the targets rendered from now on.
+    pub fn set_target_pixel_geometry(&mut self, pixel_geometry: skia::PixelGeometry) {
+        self.target_pixel_geometry = pixel_geometry;
     }
 
     /// Submit the pending GPU work and attach its fence to every dmabuf in
@@ -961,6 +972,16 @@ impl Renderer for SkiaRenderer {
         let current_target = self.current_target.as_ref().unwrap();
         let buffer = self.buffers.get(current_target).unwrap();
 
+        let pixel_geometry = self.target_pixel_geometry;
+        // A surface's props are fixed when it is made, so a target last
+        // drawn with another layout is wrapped again.
+        if self
+            .target_renderer
+            .get(current_target)
+            .is_some_and(|surface| surface.pixel_geometry() != pixel_geometry)
+        {
+            self.target_renderer.remove(current_target);
+        }
         self.target_renderer
             .entry(current_target.clone())
             .or_insert_with(|| {
@@ -1006,6 +1027,7 @@ impl Renderer for SkiaRenderer {
                     context,
                     buffer.origin,
                     skia_gl_format.into(),
+                    pixel_geometry,
                 )
                 // SkiaSurface::new_with_texture(
                 //     output_size.w,

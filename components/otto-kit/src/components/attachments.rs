@@ -59,8 +59,11 @@ const TEXT_LINES: usize = 3;
 const PEEK_BYTES: u64 = 4096;
 /// Pictures larger than this aren't decoded for a preview.
 const PICTURE_MAX_BYTES: u64 = 40 << 20;
-/// Previews are kept at this many pixels per point.
-const PREVIEW_SCALE: f32 = 2.0;
+/// How many pixels per point previews are kept at: the display's, rounded up,
+/// which is also the scale a region captured from the screen comes in at.
+fn preview_scale() -> f32 {
+    crate::app_runner::AppContext::scale_factor() as f32
+}
 /// The widest a list is expected to be, for sizing previews.
 const PREVIEW_MAX_W: f32 = 480.0;
 
@@ -272,6 +275,8 @@ fn style(size: f32, line_h: f32, color: Color) -> TextStyle {
     let mut style = TextStyle::new();
     style.set_font_size(size);
     style.set_font_families(&[styles::BODY.family, "sans-serif"]);
+    crate::text_rendering::TextRendering::for_family(styles::BODY.family)
+        .apply_to_text_style(&mut style);
     style.set_font_style(FontStyle::new(
         Weight::from(400),
         Width::NORMAL,
@@ -323,9 +328,10 @@ fn file_name(path: &Path) -> String {
 /// How big a picture `w` × `h` pixels shows, at most `max_w` × `max_h`
 /// points: in its own shape, and no bigger than it was captured. A tiny one
 /// is enlarged to [`PICTURE_MIN_H`], and only a strip too thin or too narrow
-/// to hold a remove button loses its shape, cropped to fit.
-fn picture_size(w: f32, h: f32, max_w: f32, max_h: f32) -> (f32, f32) {
-    let (w, h) = (w / PREVIEW_SCALE, h / PREVIEW_SCALE);
+/// to hold a remove button loses its shape, cropped to fit. `scale` is the
+/// picture's pixels per point.
+fn picture_size(w: f32, h: f32, max_w: f32, max_h: f32, scale: f32) -> (f32, f32) {
+    let (w, h) = (w / scale, h / scale);
     let mut factor = (max_w / w).min(max_h / h).min(1.0);
     if h * factor < PICTURE_MIN_H {
         factor = (PICTURE_MIN_H / h).min(max_w / w);
@@ -379,8 +385,8 @@ impl Preview {
                 preview.picture = decoded.map(|image| {
                     shrink(
                         &image,
-                        PREVIEW_MAX_W * PREVIEW_SCALE,
-                        PICTURE_MAX_H * PREVIEW_SCALE,
+                        PREVIEW_MAX_W * preview_scale(),
+                        PICTURE_MAX_H * preview_scale(),
                     )
                 });
             }
@@ -409,7 +415,7 @@ impl Preview {
             None => (vec![Kind::Other.generic_icon().to_owned()], Kind::Other),
         };
         let names: Vec<&str> = names.iter().map(String::as_str).collect();
-        let size = (ICON_SIZE * PREVIEW_SCALE) as i32;
+        let size = (ICON_SIZE * preview_scale()) as i32;
         preview.icon = icons::cached_icon_chain_at(&names, size, icons::FULL_COLOUR_SIZE);
         preview.kind = Some(kind.label());
         if is_dir {
@@ -480,6 +486,7 @@ impl Placing<'_> {
             image.height() as f32,
             self.width,
             max_h,
+            preview_scale(),
         );
         let rect = Rect::from_xywh(0.0, y, width, height);
         self.pieces.push(Piece::Picture {
@@ -826,10 +833,10 @@ fn paint(canvas: &Canvas, pieces: &[Piece]) {
                 if w <= 0.0 || h <= 0.0 {
                     continue;
                 }
-                // Kept at PREVIEW_SCALE pixels per point.
+                // Kept at `preview_scale` pixels per point.
                 let scale = (rect.width() / w)
                     .min(rect.height() / h)
-                    .min(PREVIEW_SCALE.recip());
+                    .min(preview_scale().recip());
                 let (dst_w, dst_h) = (w * scale, h * scale);
                 let dst = Rect::from_xywh(
                     rect.center_x() - dst_w / 2.0,
@@ -1015,15 +1022,24 @@ mod tests {
     #[test]
     fn a_picture_keeps_its_shape() {
         // Captured at twice the scale: 1600 × 900 pixels is 800 × 450 points.
-        assert_eq!(picture_size(1600.0, 900.0, 320.0, 220.0), (320.0, 180.0));
+        assert_eq!(
+            picture_size(1600.0, 900.0, 320.0, 220.0, 2.0),
+            (320.0, 180.0)
+        );
         // Tall ones are held to the height and narrow instead.
-        assert_eq!(picture_size(900.0, 1600.0, 320.0, 220.0), (124.0, 220.0));
+        assert_eq!(
+            picture_size(900.0, 1600.0, 320.0, 220.0, 2.0),
+            (124.0, 220.0)
+        );
         // Small ones are not enlarged.
-        assert_eq!(picture_size(400.0, 300.0, 320.0, 220.0), (200.0, 150.0));
+        assert_eq!(
+            picture_size(400.0, 300.0, 320.0, 220.0, 2.0),
+            (200.0, 150.0)
+        );
         // A tiny one grows to a size that still shows.
-        assert_eq!(picture_size(40.0, 20.0, 320.0, 220.0), (120.0, 60.0));
+        assert_eq!(picture_size(40.0, 20.0, 320.0, 220.0, 2.0), (120.0, 60.0));
         // A thin strip keeps enough height to be seen, cropped.
-        assert_eq!(picture_size(4000.0, 40.0, 320.0, 220.0), (320.0, 60.0));
+        assert_eq!(picture_size(4000.0, 40.0, 320.0, 220.0, 2.0), (320.0, 60.0));
     }
 
     #[test]

@@ -736,6 +736,7 @@ pub fn get_paragraph_for_text(text: &str, font_size: f32) -> skia::textlayout::P
     let foreground_paint = skia::Paint::new(skia::Color4f::new(0.1, 0.1, 0.1, 0.9), None);
     text_style.set_foreground_paint(&foreground_paint);
     let ff = Config::with(|c| c.font_family.clone());
+    otto_kit::text_rendering::TextRendering::for_family(&ff).apply_to_text_style(&mut text_style);
     text_style.set_font_families(&[ff]);
 
     let mut paragraph_style = skia::textlayout::ParagraphStyle::new();

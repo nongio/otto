@@ -5,6 +5,7 @@
 use smithay::backend::renderer::element::RenderElementStates;
 
 use super::types::SurfaceData;
+use crate::renderer::active::SkiaDeviceRenderer;
 
 /// Once per second: refresh the /tmp debug toggles into atomics (so the hot
 /// path never stat()s files) and log how each plane element was realized.
@@ -131,6 +132,46 @@ fn realization_summary(
         states.states.len(),
         all.join(" | "),
     )
+}
+
+/// Debug: `touch /tmp/otto-dump-scanout` saves the buffer `output`'s frame was
+/// just rendered into — what the primary plane scans out — to
+/// `~/Pictures/Screenshots/otto_scanout_<output>.png`, once.
+///
+/// Screencopy draws the scene again into a capture buffer of its own, with no
+/// subpixel layout, so a screenshot cannot show what the panel is given; this
+/// is those pixels. The Vulkan renderer draws everything here, there being no
+/// planes. A frame scanned out straight from a client buffer has no render
+/// target to read, and is skipped.
+pub(super) fn maybe_dump_scanout<R: SkiaDeviceRenderer + ?Sized>(
+    renderer: &mut R,
+    output: &str,
+    composited: bool,
+) {
+    if !composited || !crate::debug_hooks::toggle("/tmp/otto-dump-scanout") {
+        return;
+    }
+    let _ = std::fs::remove_file("/tmp/otto-dump-scanout");
+    let Some((image, geometry)) = renderer.read_current_frame() else {
+        tracing::warn!(target: "otto::planes", "dump_scanout: the frame could not be read back");
+        return;
+    };
+    let home = otto_kit::xdg::home().unwrap_or_else(|| "/tmp".into());
+    let dir = format!("{}/Pictures/Screenshots", home.display());
+    let _ = std::fs::create_dir_all(&dir);
+    let path = format!("{dir}/otto_scanout_{output}.png");
+    match image.encode(None, layers::skia::EncodedImageFormat::PNG, None) {
+        Some(data) => match std::fs::write(&path, data.as_bytes()) {
+            Ok(()) => tracing::info!(
+                target: "otto::planes",
+                "scanout {}x{} ({geometry:?}) dumped to {path}",
+                image.width(),
+                image.height()
+            ),
+            Err(e) => tracing::warn!(target: "otto::planes", "dump_scanout write failed: {e}"),
+        },
+        None => tracing::warn!(target: "otto::planes", "dump_scanout: encode failed"),
+    }
 }
 
 /// Debug: dump every plane buffer to PNG when requested

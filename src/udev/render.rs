@@ -3019,22 +3019,34 @@ pub(super) fn render_output_frame<'a, A: RendererApi>(
     crate::render_phase_stats::record_plane_sync(plane_sync_t.elapsed());
 
     let render_frame_t = std::time::Instant::now();
-    let render_frame_result = surface
-        .compositor
-        .render_frame(renderer, &output_elements, clear_color, frame_flags)
-        .map_err(|err| match err {
-            smithay::backend::drm::compositor::RenderFrameError::PrepareFrame(err) => err.into(),
-            smithay::backend::drm::compositor::RenderFrameError::RenderFrame(
-                smithay::backend::renderer::damage::Error::Rendering(err),
-            ) => err.into(),
-            other => {
-                tracing::error!("Unexpected render frame error: {:?}", other);
-                SwapBuffersError::ContextLost(Box::new(std::io::Error::other(format!(
-                    "Render frame error: {:?}",
-                    other
-                ))))
-            }
-        })?;
+    // Only this output's swapchain buffer is drawn with its subpixel layout:
+    // it is opaque by the time it is shown. Plane slots, rendered above, are
+    // blended by the display engine and keep grayscale text.
+    renderer
+        .as_mut()
+        .set_target_pixel_geometry(crate::renderer::skia_surface::pixel_geometry_for(
+            output.physical_properties().subpixel,
+        ));
+    let render_frame_result =
+        surface
+            .compositor
+            .render_frame(renderer, &output_elements, clear_color, frame_flags);
+    renderer
+        .as_mut()
+        .set_target_pixel_geometry(layers::skia::PixelGeometry::Unknown);
+    let render_frame_result = render_frame_result.map_err(|err| match err {
+        smithay::backend::drm::compositor::RenderFrameError::PrepareFrame(err) => err.into(),
+        smithay::backend::drm::compositor::RenderFrameError::RenderFrame(
+            smithay::backend::renderer::damage::Error::Rendering(err),
+        ) => err.into(),
+        other => {
+            tracing::error!("Unexpected render frame error: {:?}", other);
+            SwapBuffersError::ContextLost(Box::new(std::io::Error::other(format!(
+                "Render frame error: {:?}",
+                other
+            ))))
+        }
+    })?;
     crate::render_phase_stats::record_render_frame(render_frame_t.elapsed());
 
     // Diagnostic (`touch /tmp/otto-probe-black`): what each submitted frame
@@ -3055,6 +3067,15 @@ pub(super) fn render_output_frame<'a, A: RendererApi>(
             render_frame_result.is_empty
         );
     }
+
+    super::debug::maybe_dump_scanout(
+        renderer.as_mut(),
+        &output.name(),
+        matches!(
+            render_frame_result.primary_element,
+            smithay::backend::drm::compositor::PrimaryPlaneElement::Swapchain(_)
+        ) && !render_frame_result.is_empty,
+    );
 
     #[cfg(feature = "renderer_sync")]
     {

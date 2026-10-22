@@ -178,7 +178,12 @@ font_family = "Inter"
 ```
 
 The font used by Otto's own UI: dock labels, exposé window titles, the app
-switcher. Applications use their own font settings; this does not change them.
+switcher. It is also offered to applications as the interface font, through
+the desktop portal (GTK 4), GNOME's settings store (GTK 3, and Qt through its
+GTK platform theme) and XSETTINGS (X11 apps), along with your fontconfig
+antialiasing and hinting; an application's own font preference, where it has
+one, still wins.
+Changing it takes effect after restarting Otto.
 
 Otto ships with [Inter](https://rsms.me/inter/) as its default. Any font
 installed on the system works.
@@ -308,9 +313,13 @@ locales = ["en_US", "en"]
 directory name exactly. Check with `ls /usr/share/icons/`. Some themes need a
 separate package for their cursor variant.
 
-**Applications ignore light/dark.** They read it from the XDG Settings portal,
-which needs `xdg-desktop-portal` running with Otto selected for
-`org.freedesktop.impl.portal.Settings` in your `portals.conf`. Verify with:
+**Applications ignore light/dark.** GTK 4 apps, Firefox and Chromium read it
+from the XDG Settings portal, which needs `xdg-desktop-portal` running with
+Otto selected for `org.freedesktop.impl.portal.Settings` in your
+`portals.conf`. GTK 3, libadwaita and Qt apps read GNOME's settings store
+instead, which Otto's own session writes; check it with
+`gsettings get org.gnome.desktop.interface color-scheme`, which should say
+`'prefer-dark'` or `'default'`. For the portal, verify with:
 
 ```sh
 gdbus call --session --dest org.freedesktop.portal.Desktop \

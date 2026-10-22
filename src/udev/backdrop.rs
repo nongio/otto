@@ -146,10 +146,21 @@ fn blur_image(
         canvas.clear(layers::skia::Color4f::new(0.0, 0.0, 0.0, 1.0));
         match regions {
             None => {
-                canvas.draw_image(image, (0, 0), Some(&blurred_paint(None)?));
+                canvas.draw_image_with_sampling_options(
+                    image,
+                    (0, 0),
+                    layers::skia::SamplingOptions::default(),
+                    Some(&blurred_paint(None)?),
+                );
             }
             Some(regions) => {
-                canvas.draw_image(image, (0, 0), None);
+                // The backdrop at its own size: a 1:1 copy.
+                canvas.draw_image_with_sampling_options(
+                    image,
+                    (0, 0),
+                    layers::skia::SamplingOptions::default(),
+                    None,
+                );
                 let bounds =
                     layers::skia::Rect::from_wh(image.width() as f32, image.height() as f32);
                 // Each region is a filter graph and a GPU pass of its own, and
@@ -174,7 +185,12 @@ fn blur_image(
                     let paint = blurred_paint(Some(crop))?;
                     canvas.save();
                     canvas.clip_rect(region, None, None);
-                    canvas.draw_image(image, (0, 0), Some(&paint));
+                    canvas.draw_image_with_sampling_options(
+                        image,
+                        (0, 0),
+                        layers::skia::SamplingOptions::default(),
+                        Some(&paint),
+                    );
                     canvas.restore();
                 }
             }

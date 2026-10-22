@@ -268,10 +268,6 @@ impl LayerShellSurface {
             (),
         );
 
-        // Use 2x buffer scale for HiDPI rendering
-        let buffer_scale = 2;
-        wl_surface.set_buffer_scale(buffer_scale);
-
         // Create sc_layer immediately if sc_layer_shell is available
         let surface_style = surface_style.map(|shell| shell.get_surface_style(&wl_surface, qh, ()));
         // A layer surface is a window as far as the desktop's coordinates are
@@ -292,8 +288,7 @@ impl LayerShellSurface {
         // Commit to trigger initial configure
         wl_surface.commit();
 
-        let mut core =
-            BaseWaylandSurface::new(wl_surface, width as i32, height as i32, buffer_scale);
+        let mut core = BaseWaylandSurface::new(wl_surface, width as i32, height as i32);
         core.surface_style = surface_style;
 
         let inner = LayerShellSurfaceInner {

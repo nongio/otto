@@ -149,7 +149,8 @@ test binary of its own because the lookup crate reads the XDG directories once.
 Entry icons are rasterised at the logical size, with no output scale applied:
 a grid icon is 64 px in a 64 pt box on a 2× output. Only `named_icon_sized`
 reads the scale factor, and only to pick a theme directory. Thumbnail buckets
-do take the scale, as an integer, so a fractional scale truncates.
+do take the scale, as an integer — `AppContext::scale_factor()`, the surface's
+scale rounded up, so 1.5× asks for 2× thumbnails.
 
 ## The thumbnail that replaces it
 

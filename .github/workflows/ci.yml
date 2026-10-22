@@ -119,7 +119,7 @@ jobs:
           packaging=true
           clippy_args=--workspace --exclude otto --exclude otto-render --exclude otto-rdp --exclude xdg-desktop-portal-otto --exclude submenu-gtk
           test_lib_args=--workspace --exclude otto-files --exclude otto --exclude otto-render
-          test_bins_args=-p otto-bar -p otto-greeter -p otto-input-overlay -p otto-islands -p otto-lock -p otto-msg -p otto-preview -p otto-settings -p otto-stash -p otto-launcher -p otto-search
+          test_bins_args=-p otto-bar -p otto-greeter -p otto-islands -p otto-lock -p otto-msg -p otto-preview -p otto-settings -p otto-stash -p otto-launcher -p otto-search
           EVERYTHING
           fi
 

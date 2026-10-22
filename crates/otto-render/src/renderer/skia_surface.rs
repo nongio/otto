@@ -36,6 +36,9 @@ impl SkiaSurface {
     /// - `context`: Optional existing GPU context to share (creates new if None)
     /// - `origin`: Coordinate system origin (TopLeft or BottomLeft)
     /// - `gl_internal_format`: OpenGL internal format constant
+    /// - `pixel_geometry`: Subpixel layout of the panel the framebuffer is
+    ///   scanned out to; see [`surface_props`]
+    #[allow(clippy::too_many_arguments)]
     pub fn new_with_fbo(
         width: impl Into<i32>,
         height: impl Into<i32>,
@@ -46,6 +49,7 @@ impl SkiaSurface {
         context: Option<&skia::gpu::DirectContext>,
         origin: skia::gpu::SurfaceOrigin,
         gl_internal_format: u32,
+        pixel_geometry: skia::PixelGeometry,
     ) -> Self {
         let fb_info = {
             skia::gpu::gl::FramebufferInfo {
@@ -74,10 +78,7 @@ impl SkiaSurface {
             origin,
             color_type,
             None,
-            Some(&skia::SurfaceProps::new(
-                Default::default(),
-                skia::PixelGeometry::BGRH, // for font rendering optimisations
-            )),
+            Some(&surface_props(pixel_geometry)),
         )
         .unwrap();
 
@@ -101,6 +102,9 @@ impl SkiaSurface {
     /// # Safety
     ///
     /// The texture ID must be valid and compatible with the current GL context.
+    ///
+    /// The surface declares no subpixel layout: textures back plane slots,
+    /// which are blended by the display engine (see [`surface_props`]).
     pub fn new_with_texture(
         width: impl Into<i32>,
         height: impl Into<i32>,
@@ -146,10 +150,7 @@ impl SkiaSurface {
             sample_cnt,
             color_type,
             None,
-            Some(&skia::SurfaceProps::new(
-                Default::default(),
-                skia::PixelGeometry::BGRH, // for font rendering optimisations
-            )),
+            Some(&surface_props(skia::PixelGeometry::Unknown)),
         )
         .unwrap();
 
@@ -159,8 +160,45 @@ impl SkiaSurface {
         }
     }
 
+    /// Subpixel layout the surface was created with.
+    pub fn pixel_geometry(&self) -> skia::PixelGeometry {
+        self.surface.props().pixel_geometry()
+    }
+
     /// Returns a clone of the underlying Skia surface.
     pub fn surface(&self) -> skia::Surface {
         self.surface.clone()
+    }
+}
+
+/// Surface properties for a render target with `pixel_geometry`.
+///
+/// The geometry is what turns subpixel (LCD) text on: Skia draws glyphs with
+/// per-channel coverage only into a surface that declares one. That is only
+/// correct where the pixels under the text are opaque by the time the target
+/// is shown, which holds for an output's primary framebuffer and nothing
+/// else the renderer draws into: plane slots and offscreen buffers are
+/// blended afterwards, by the display engine or by a later draw, and a
+/// per-channel coverage blended through a single alpha shows as colour
+/// fringes. Those pass [`skia::PixelGeometry::Unknown`], which draws
+/// grayscale text.
+pub fn surface_props(pixel_geometry: skia::PixelGeometry) -> skia::SurfaceProps {
+    skia::SurfaceProps::new(Default::default(), pixel_geometry)
+}
+
+/// Skia's name for a panel's subpixel layout.
+///
+/// `subpixel` is in the panel's native orientation, which is the orientation
+/// of the buffers it scans out: the output transform is applied while they
+/// are drawn. A rotated canvas draws grayscale text by itself, since Skia
+/// keeps subpixel glyphs to axis-aligned matrices.
+pub fn pixel_geometry_for(subpixel: smithay::output::Subpixel) -> skia::PixelGeometry {
+    use smithay::output::Subpixel;
+    match subpixel {
+        Subpixel::HorizontalRgb => skia::PixelGeometry::RGBH,
+        Subpixel::HorizontalBgr => skia::PixelGeometry::BGRH,
+        Subpixel::VerticalRgb => skia::PixelGeometry::RGBV,
+        Subpixel::VerticalBgr => skia::PixelGeometry::BGRV,
+        Subpixel::None | Subpixel::Unknown => skia::PixelGeometry::Unknown,
     }
 }

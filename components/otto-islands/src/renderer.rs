@@ -1,5 +1,5 @@
 use crate::activity::{Activity, NotificationAction};
-use otto_kit::icons::named_icon_sized;
+use otto_kit::icons::{self, named_icon_sized};
 use otto_kit::protocols::otto_surface_style_v1::{BlendMode, ClipMode, ContentsGravity};
 use otto_kit::skia::{Canvas, Color, Paint, RRect, Rect};
 use otto_kit::typography::TextStyle;
@@ -370,7 +370,9 @@ pub fn draw_card(canvas: &Canvas, activity: &Activity, w: f32, h: f32) {
 
 fn draw_app_icon(canvas: &Canvas, icon_name: &str, x: f32, y: f32, size: f32) {
     if !icon_name.is_empty() {
-        if let Some(icon) = named_icon_sized(icon_name, size as i32) {
+        // Rasterised in device pixels so it lands 1:1 on a scaled output.
+        let scale = canvas.local_to_device_as_3x3().scale_x().abs().max(1.0);
+        if let Some(icon) = named_icon_sized(icon_name, (size * scale).round() as i32) {
             let dst = Rect::from_xywh(x, y, size, size);
             let r = size * 0.18;
             canvas.save();
@@ -379,13 +381,7 @@ fn draw_app_icon(canvas: &Canvas, icon_name: &str, x: f32, y: f32, size: f32) {
                 otto_kit::skia::ClipOp::Intersect,
                 true,
             );
-            let src = Rect::from_xywh(0.0, 0.0, icon.width() as f32, icon.height() as f32);
-            canvas.draw_image_rect(
-                &icon,
-                Some((&src, otto_kit::skia::canvas::SrcRectConstraint::Strict)),
-                dst,
-                &Paint::default(),
-            );
+            icons::draw_icon(canvas, &icon, dst, &Paint::default());
             canvas.restore();
             return;
         }

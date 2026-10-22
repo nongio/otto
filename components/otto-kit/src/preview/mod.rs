@@ -1207,6 +1207,8 @@ fn draw_rows(
     canvas.save();
     canvas.clip_rect(geometry.content, None, false);
 
+    // Icons are rasterised in device pixels so they land 1:1.
+    let scale = canvas.local_to_device_as_3x3().scale_x().abs().max(1.0);
     for (index, rect) in geometry.row_rects.iter().enumerate() {
         let Some(row) = rows.get(first_row + index) else {
             break;
@@ -1219,11 +1221,11 @@ fn draw_rows(
 
         let icon_size = 16;
         let mut text_left = rect.left;
-        if let Some(icon) = resolve_icon(&row.icon, icon_size) {
+        if let Some(icon) = resolve_icon(&row.icon, (icon_size as f32 * scale).round() as i32) {
             let top = rect.top + (ROW_HEIGHT - icon_size as f32) / 2.0;
-            canvas.draw_image_rect(
+            crate::icons::draw_icon(
+                canvas,
                 &icon,
-                None,
                 Rect::from_xywh(rect.left, top, icon_size as f32, icon_size as f32),
                 &image_paint,
             );

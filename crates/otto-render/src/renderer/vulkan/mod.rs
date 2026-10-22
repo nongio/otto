@@ -70,11 +70,11 @@ use smithay::{
 
 use self::{
     format::{skia_format, ycbcr_conversion, SkiaFormat, FOURCCS},
-    retire::{retire, Graveyard, RetiredHandle},
+    retire::{retire, Graveyard, RetireQueue, RetiredHandle},
     sync::{SyncFdSupport, SyncPool},
     texture::{TargetKind, TextureBacking, TextureMemory},
 };
-use crate::renderer::SkiaSurface;
+use crate::renderer::{skia_surface::surface_props, SkiaSurface};
 
 /// Device extensions the renderer needs, all of them passed on to Skia.
 const DEVICE_EXTENSIONS: [&CStr; 6] = [
@@ -232,6 +232,10 @@ pub struct SkiaVkRenderer {
     sampled: Vec<(std::sync::Weak<TextureBacking>, gpu::BackendTexture)>,
     /// Dmabufs wrapped as render targets.
     target_cache: HashMap<WeakDmabuf, SkiaVkTarget>,
+    /// Subpixel layout the dmabufs bound from now on are scanned out with,
+    /// set by the backend around an output's frame (see
+    /// [`crate::renderer::active::SkiaDeviceRenderer::set_target_pixel_geometry`]).
+    target_pixel_geometry: skia::PixelGeometry,
     /// Dmabufs the device cannot render into, so they are not retried every frame.
     refused_targets: HashSet<WeakDmabuf>,
     /// The target last bound or rendered to; the screenshare blit reads it.
@@ -345,6 +349,7 @@ impl SkiaVkRenderer {
             dmabuf_cache: HashMap::new(),
             sampled: Vec::new(),
             target_cache: HashMap::new(),
+            target_pixel_geometry: skia::PixelGeometry::Unknown,
             refused_targets: HashSet::new(),
             current_target: None,
             plane_releases: PlaneImageQueue::default(),
@@ -372,6 +377,27 @@ impl SkiaVkRenderer {
         self.current_target
             .as_ref()
             .map(|target| &target.skia_surface)
+    }
+
+    /// The target last rendered to, read back into memory, with the subpixel
+    /// layout it was drawn for. Like [`ExportMem::copy_framebuffer`] it hands
+    /// a dmabuf target back to the foreign queue family afterwards, so the
+    /// buffer still scans out.
+    pub fn read_current_frame(&mut self) -> Option<(skia::Image, skia::PixelGeometry)> {
+        let target = self.current_target.clone()?;
+        let geometry = target.skia_surface.pixel_geometry();
+        let mut surface = target.skia_surface.surface.clone();
+        let info = skia::ImageInfo::new_n32_premul((surface.width(), surface.height()), None);
+        let row_bytes = info.min_row_bytes();
+        let mut data = vec![0u8; row_bytes * surface.height().max(0) as usize];
+        let read = surface.read_pixels(&info, &mut data, row_bytes, (0, 0));
+        self.flush_target(&target);
+        self.ctx().submit(None);
+        if !read {
+            return None;
+        }
+        let image = skia::images::raster_from_data(&info, skia::Data::new_copy(&data), row_bytes)?;
+        Some((image, geometry))
     }
 
     /// Waits for `sync` on the GPU if it can be imported, on the CPU otherwise.
@@ -469,15 +495,14 @@ impl SkiaVkRenderer {
             if !weak.is_gone() {
                 return true;
             }
-            if let TargetKind::Dmabuf(image) = &target.kind {
-                retire(
-                    &queue,
-                    RetiredHandle::Surface(target.skia_surface.surface.clone()),
-                    Box::new(image.clone()),
-                );
-            }
+            retire_target(&queue, target);
             false
         });
+    }
+
+    /// Sets the subpixel layout of the dmabufs bound from now on.
+    pub fn set_target_pixel_geometry(&mut self, pixel_geometry: skia::PixelGeometry) {
+        self.target_pixel_geometry = pixel_geometry;
     }
 
     /// Blocks until every plane surface rendered this frame is written, and
@@ -507,8 +532,12 @@ impl SkiaVkRenderer {
         drop(released);
     }
 
-    /// Wraps `dmabuf` as a Skia render target.
-    fn wrap_dmabuf_target(&mut self, dmabuf: &Dmabuf) -> Result<SkiaVkTarget, SkiaVkError> {
+    /// Wraps `dmabuf` as a Skia render target with `pixel_geometry`.
+    fn wrap_dmabuf_target(
+        &mut self,
+        dmabuf: &Dmabuf,
+        pixel_geometry: skia::PixelGeometry,
+    ) -> Result<SkiaVkTarget, SkiaVkError> {
         let code = dmabuf.format().code;
         let fmt = skia_format(code).ok_or(SkiaVkError::UnsupportedFormat(code))?;
         let image = VulkanImage::new_from_dmabuf(&self.device, dmabuf, TARGET_USAGE)?;
@@ -527,7 +556,7 @@ impl SkiaVkRenderer {
             gpu::SurfaceOrigin::TopLeft,
             fmt.color_type,
             None,
-            Some(&surface_props()),
+            Some(&surface_props(pixel_geometry)),
         )
         .ok_or(SkiaVkError::Wrap)?;
         Ok(SkiaVkTarget {
@@ -541,7 +570,14 @@ impl SkiaVkRenderer {
     }
 
     /// Returns the cached render target of `dmabuf`, wrapping it on first use.
-    fn dmabuf_target(&mut self, dmabuf: &Dmabuf) -> Result<SkiaVkTarget, SkiaVkError> {
+    ///
+    /// With `pixel_geometry`, a target cached with another layout is wrapped
+    /// again; with `None`, as a blit destination, any cached one will do.
+    fn dmabuf_target(
+        &mut self,
+        dmabuf: &Dmabuf,
+        pixel_geometry: Option<skia::PixelGeometry>,
+    ) -> Result<SkiaVkTarget, SkiaVkError> {
         // Evict first: a new buffer can reuse a dead buffer's address, which
         // would otherwise alias its stale entry.
         self.evict_dead_targets();
@@ -549,12 +585,19 @@ impl SkiaVkRenderer {
 
         let key = dmabuf.weak();
         if let Some(target) = self.target_cache.get(&key) {
-            return Ok(target.clone());
+            let surface = &target.skia_surface;
+            if pixel_geometry.is_none_or(|geometry| surface.pixel_geometry() == geometry) {
+                return Ok(target.clone());
+            }
+            if let Some(stale) = self.target_cache.remove(&key) {
+                retire_target(&self.graveyard.queue(), &stale);
+            }
         }
         if self.refused_targets.contains(&key) {
             return Err(SkiaVkError::RefusedTarget);
         }
-        match self.wrap_dmabuf_target(dmabuf) {
+        let pixel_geometry = pixel_geometry.unwrap_or(skia::PixelGeometry::Unknown);
+        match self.wrap_dmabuf_target(dmabuf, pixel_geometry) {
             Ok(target) => {
                 self.target_cache.insert(key, target.clone());
                 Ok(target)
@@ -797,7 +840,7 @@ impl SkiaVkRenderer {
         dst: Rectangle<i32, Physical>,
     ) -> Result<(), SkiaVkError> {
         let source = self.current_target.clone().ok_or(SkiaVkError::NoTarget)?;
-        let target = self.dmabuf_target(dst_dmabuf)?;
+        let target = self.dmabuf_target(dst_dmabuf, None)?;
         self.copy_between(&source, &target, src, dst, TextureFilter::Linear)?;
         let sync = self.submit_target(&target)?;
         let attached = sync
@@ -822,7 +865,7 @@ impl SkiaVkRenderer {
         &mut self,
         dmabuf: &Dmabuf,
     ) -> Result<(SkiaSurface, PlaneTextureRelease), SkiaVkError> {
-        let target = self.wrap_dmabuf_target(dmabuf)?;
+        let target = self.wrap_dmabuf_target(dmabuf, skia::PixelGeometry::Unknown)?;
         let TargetKind::Dmabuf(image) = target.kind else {
             return Err(SkiaVkError::Wrap);
         };
@@ -945,9 +988,15 @@ fn image_info(
     }
 }
 
-/// Surface properties matching the GL renderer's.
-fn surface_props() -> skia::SurfaceProps {
-    skia::SurfaceProps::new(Default::default(), skia::PixelGeometry::BGRH)
+/// Retires `target`'s surface and image once the GPU is done with them.
+fn retire_target(queue: &RetireQueue, target: &SkiaVkTarget) {
+    if let TargetKind::Dmabuf(image) = &target.kind {
+        retire(
+            queue,
+            RetiredHandle::Surface(target.skia_surface.surface.clone()),
+            Box::new(image.clone()),
+        );
+    }
 }
 
 /// Writes `region` of `data` (rows of `stride` bytes) into `surface`.
@@ -1195,7 +1244,7 @@ impl ExportMem for SkiaVkRenderer {
 
 impl Bind<Dmabuf> for SkiaVkRenderer {
     fn bind(&mut self, dmabuf: &mut Dmabuf) -> Result<SkiaVkTarget, Self::Error> {
-        let target = self.dmabuf_target(dmabuf)?;
+        let target = self.dmabuf_target(dmabuf, Some(self.target_pixel_geometry))?;
         self.current_target = Some(target.clone());
         Ok(target)
     }
@@ -1222,7 +1271,7 @@ impl Offscreen<SkiaVkTarget> for SkiaVkRenderer {
             &fmt.image_info(size.w, size.h),
             None,
             gpu::SurfaceOrigin::TopLeft,
-            Some(&surface_props()),
+            Some(&surface_props(skia::PixelGeometry::Unknown)),
             false,
             None,
         )

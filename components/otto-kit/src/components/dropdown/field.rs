@@ -187,7 +187,7 @@ pub fn draw_with_icon(
         if disabled {
             paint.set_alpha_f(0.5);
         }
-        canvas.draw_image_rect(image, None, dst, &paint);
+        crate::icons::draw_icon(canvas, image, dst, &paint);
         text_x += ICON_SIZE + ICON_GAP;
     }
     Label::new(label)
@@ -234,7 +234,7 @@ pub fn draw_indicator(canvas: &Canvas, center: Point, placement: Placement, colo
             center.x + half,
             center.y + half,
         );
-        canvas.draw_image_rect(&image, None, dst, &Paint::default());
+        crate::icons::draw_icon(canvas, &image, dst, &Paint::default());
         return;
     }
     draw_chevrons(canvas, center, placement, color);

@@ -125,6 +125,30 @@ Clients that are not fractional-scale aware hand over an integer-scaled buffer
 (a 2x buffer on a 1.65x output, `scale = 0.825`) and take the bicubic path.
 That is a real resample and there is nothing to snap away.
 
+otto-kit clients are fractional-scale aware. Every kit surface is drawn at
+the `preferred_scale` the compositor sends for it: a buffer
+`round(logical × scale)` pixels at `buffer_scale = 1`, shown at its logical
+size through a `wp_viewport`, or a plain `buffer_scale = n` at a whole scale.
+Either way the buffer reaches the output 1:1, which is what makes hinted and
+subpixel text worth drawing. A new preferred scale resizes the buffer on the
+surface's next draw (`BaseWaylandSurface::sync_scale`) and repaints its whole
+layer tree; the app hears about it through `App::on_scale_changed`. The
+buffer scale and viewport describing a buffer of a new size go out only
+with that buffer (`ScaledBuffer::flush`, from the draw, just before the
+swap attaches it): the compositor checks them against the buffer a commit
+carries, and a crop or a move committed without a repaint in between
+would otherwise land state for a buffer that is not there yet, which kills
+the client.
+
+Because the buffer is shown 1:1, a kit window renders subpixel (LCD) text for
+the panel under it: the Skia surface is wrapped with the `PixelGeometry` of the
+one output the surface is on, from `wl_output.subpixel` turned by the output's
+transform (a 90° output makes horizontal stripes vertical; 180° reverses
+them). A surface on two outputs, on one that reports no layout, cropped or
+stretched by a viewport, or drawn at a whole scale a compositor without
+`wp_viewporter` shrinks gets `Unknown`, which is greyscale text. It is checked
+on every draw and the surface re-wrapped when it changes.
+
 ### Sizes, not just origins
 
 An origin on the grid is only half of a box. A size reaches a layer the same

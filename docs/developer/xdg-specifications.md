@@ -75,7 +75,7 @@ same protocols the compositor serves.
 | [XDG Desktop Portal](https://flatpak.github.io/xdg-desktop-portal/docs/) | Backend. `org.freedesktop.impl.portal.{ScreenCast, Settings, Access, Screenshot, FileChooser}`, registered in `otto.portal` | `components/xdg-desktop-portal-otto/src/portal/` |
 | [XDG user directories](https://www.freedesktop.org/wiki/Software/xdg-user-dirs/) | Read. `user-dirs.dirs` supplies the Files sidebar's Desktop, Downloads, Documents… places, and the portal's screenshot folder | `components/otto-foundations/src/xdg.rs` (`user_dirs`), used by `components/otto-files/src/model.rs` |
 | [Cursor theme (Xcursor)](https://www.freedesktop.org/wiki/Specifications/cursor-spec/) | Read. `XCURSOR_THEME` / `XCURSOR_SIZE`, loaded per named cursor and scale | `src/cursor.rs` |
-| [Fontconfig](https://www.freedesktop.org/wiki/Software/fontconfig/) | Read, indirectly. Skia's `FontMgr` on Linux is the fontconfig-backed one, so family lookup, aliases (`sans-serif`) and the user's `fonts.conf` resolve normally; see [Fonts and text](#fonts-and-text) for what is *not* honoured | `components/otto-kit/src/typography.rs`, `src/utils/font_cache.rs` |
+| [Fontconfig](https://www.freedesktop.org/wiki/Software/fontconfig/) | Read, indirectly. Skia's `FontMgr` on Linux is the fontconfig-backed one, so family lookup, aliases (`sans-serif`) and the user's `fonts.conf` resolve normally; rendering preferences (`antialias`, `hinting`, `hintstyle`, `autohint`, `rgba`) are read per family; see [Fonts and text](#fonts-and-text) | `components/otto-kit/src/text_rendering.rs`, `typography.rs`, `src/utils/font_cache.rs` |
 
 ### Fonts and text
 
@@ -106,72 +106,147 @@ the otto-kit applications, which are separate Wayland clients but draw through
 `otto_kit::typography` rather than a toolkit. That share is small today and
 grows with each first-party app.
 
-**What is not honoured.** Every font construction site in `typography.rs` and
-`src/utils/font_cache.rs` hardcodes `set_subpixel(true)` and
-`Edging::SubpixelAntiAlias`, and nothing reads fontconfig's `antialias`,
-`hinting`, `hintstyle`, `rgba` or `lcdfilter`. Two separate consequences, and
-they need untangling before either is worked on:
+**How it is rasterised.** `otto_kit::text_rendering` asks fontconfig the way
+Pango and Chromium do (substitute the pattern, then match, so rules targeting
+either apply) and maps `antialias`, `hinting`, `hintstyle`, `autohint` and
+`rgba` onto every `Font` the font caches build and every paragraph
+`TextStyle` the theme hands out. Subpixel glyph positioning is kept to no and
+slight hinting, since medium and full fit stems to the pixel grid. The answer
+is cached per family for the process, so a `fonts.conf` change applies from
+the next login. `lcdfilter` is not applied: Skia filters LCD glyphs with its
+own default and has no per-font control.
 
-*Hinting is live and ignores your config.* Hinting is a `Font` property applied
-at glyph rasterization, independent of the surface, so it takes effect, but
-Otto never calls `Font::set_hinting`, so glyphs are hinted to Skia's default
-rather than to the user's `hintstyle`. This is the part a fontconfig read would
-actually fix, and it is self-contained.
+Every antialiased font *requests* subpixel text, and the surface decides:
+fontconfig's `rgba` takes part in which outputs declare a layout (below), not
+in the font, so `rgba = none` still turns it off except on a display set up
+for it. Skia draws per-channel coverage only
+into a surface that declares a pixel geometry, and only an opaque one may,
+since per-channel coverage blended through one alpha shows as colour fringes.
+Where geometry is declared is covered under *Per-output pixel geometry* below.
 
-*Subpixel AA is requested and then silently dropped.* LCD text requires the
-target surface to declare a pixel geometry, and the offscreen surfaces lay-rs
-caches layer content into declare none: `gpu::surfaces::render_target(…, None,
-…)` in `layers/src/drawing/scene.rs`, `canvas.new_surface(&info, None)` in
-`drawing/layer.rs`, and `PixelGeometry::Unknown` in `renderer/skia_fbo.rs`.
-They are `AlphaType::Premul` besides, which is the other condition under which
-Skia declines LCD text. So in the retained path (which is nearly all chrome)
-the `SubpixelAntiAlias` request falls back to grayscale regardless of what the
-font asked for.
+Compositor chrome is drawn through lay-rs, and its text gets the output's
+layout wherever it lands on that output's buffer:
 
-That second one is the user-visible one: **subpixel antialiasing is effectively
-unavailable in Otto's chrome, on any display, with no setting that enables it.**
+- **Recorded content** (a layer's draw closure, kept as a picture) is
+  rasterised when it is played back, with the target's layout. The
+  server-side titlebar — `Titlebar` → `Label` → `styles::BODY_EMPHASIZED` in
+  `components/otto-kit/src/components/titlebar/decoration.rs`, the text that
+  sits right beside a GTK headerbar drawn subpixel by the client — the dock's
+  tooltips and menu, the app switcher, exposé's title plates and the
+  workspace selector all take this path.
+- **Fades** are groups, which Skia draws greyscale. lay-rs's `save_fade`
+  starts the group from the target when the target declares a layout (and is
+  therefore opaque) and keeps the layout, so text does not change weight
+  when a menu or a window finishes fading in. A frosted layer's fade group
+  already starts from the target and keeps it too.
+- **Image-cached layers** are rasterised into transparent offscreens and stay
+  greyscale: dock badges and the workspace selector's thumbnails.
 
-The sharpest case is the server-side titlebar, and it is worth understanding
-before dismissing the whole area as cosmetic. Otto defaults to server-side
-decorations, so most windows get a title Otto rasterises: `Titlebar` →
-`Label` → `styles::BODY_EMPHASIZED` in
-`components/otto-kit/src/components/titlebar/decoration.rs`, into a cached
-layer surface, hence grayscale. A GTK client with client-side decorations draws
-its headerbar title through its own stack, hinted and subpixel per the user's
-fontconfig. The two then sit side by side on one desktop, same position, same
-role, same glyph sizes, a controlled comparison the user cannot avoid looking
-at. Glyph count is not what makes this visible; adjacency is.
-On a HiDPI panel that is close to what you would choose anyway, and is what
-GNOME defaults to; on a 1080p panel it reads as lighter, softer text than the
-applications running above it. Enabling it means threading `SurfaceProps`
-through lay-rs's cached-surface creation, which is upstream work in the engine
-rather than a change Otto can make alone. It also needs an answer to which
-output's geometry a cached picture composited to two panels should use. See
-the pixel-geometry note below.
+**Per-output pixel geometry.** An output's subpixel layout is the display
+profile's `subpixel` key (the Settings app's Displays pane writes it); else
+none when fontconfig's `rgba` is `none`, the user's own switch; else what the
+connector reports; else fontconfig's `rgba` (`src/udev/device.rs`). It lands
+in the `Output`'s physical properties, so clients read the same value
+from `wl_output`. Around each output's frame the udev backend hands it to the
+renderer (`SkiaDeviceRenderer::set_target_pixel_geometry`), which declares it
+on that output's swapchain buffers and nothing else: plane slots, screencast
+and offscreen targets keep `PixelGeometry::Unknown`, because they are blended
+after Otto draws them and per-channel coverage does not survive a single-alpha
+blend. `surface_props` in `crates/otto-render/src/renderer/skia_surface.rs`
+carries the reasoning. Most connectors report `Unknown`, so without the
+profile key text stays grayscale. The Vulkan renderer, the default, draws
+everything into the swapchain. The GL renderer with plane decomposition on
+draws chrome into plane slots, which stay greyscale: a slot is transparent
+wherever nothing is drawn and the display engine blends it with one alpha,
+so only what falls back to the swapchain gets the layout there.
 
-**The `BGRH` hardcode.** `crates/otto-render/src/renderer/skia_surface.rs` builds both main
-surfaces with `PixelGeometry::BGRH` and the comment "for font rendering
-optimisations", while `src/udev/device.rs` reads the connector's real subpixel
-layout into the `Output` and nothing ever reads it back. Given the paragraph
-above, this constant governs only text drawn straight into the main render
-target, so it is closer to dead code than to a rendering bug. It is
-misleading as written all the same, and the correct per-output value is
-already sitting there unused.
+otto-kit apps read the same layout from `wl_output` and draw subpixel text
+only on a surface that is opaque all over — its opaque region, set with
+`Window::set_opaque_region`, covers the whole surface — shown pixel for pixel
+on one output (`BaseWaylandSurface::pixel_geometry`). A pixel reaches the
+compositor with one alpha, so on a frosted sidebar or a translucent bar the
+per-channel coverage would fringe; every such surface draws grayscale.
 
-**What Otto does not publish.** The Settings portal carries no font key, and
-XSETTINGS publishes only the scaling ones (`Xft/DPI`,
-`Gdk/WindowScalingFactor`, `Gdk/UnscaledDPI`; see `apply_xwayland_xsettings`
-in `src/state/mod.rs`). Other desktops publish `font-name` and
-`text-scaling-factor` under `org.gnome.desktop.interface`, and `Gtk/FontName`
-plus the `Xft/*` rendering keys over XSETTINGS. Otto's font choice therefore
-stops at Otto's own chrome.
+**What Otto publishes.** Otto's UI font and its text rendering go out to the
+toolkits that rasterise their own text, so GTK, Qt and X11 applications draw
+like Otto beside them. `Otto::font_settings` in `src/state/mod.rs` builds them
+once for both channels:
+
+- the font is `font_family` at `styles::BODY` size, as a Pango description in
+  points at 96 DPI (`otto_kit::text_rendering::font_name`): Otto's 13 px body
+  text is `Inter 9.75`, the same height in a GTK label as in Otto's chrome;
+- the rendering is `TextRendering::system()`, fontconfig's answer with no
+  family named, mapped by `TextRendering::published`;
+- the subpixel order is the outputs' when every output that knows its layout
+  names the same one (X11 has one screen, the portal one value), else
+  fontconfig's `rgba`. It goes out only where Otto itself would draw subpixel
+  text: outputs with no layout (`rgba = none` in `fonts.conf` gives them none
+  unless a display's own setting says otherwise), or no known order at all,
+  publish grayscale.
+
+| Channel | Keys |
+|---------|------|
+| XSETTINGS (`apply_xwayland_xsettings`) | `Xft/Antialias` (0/1), `Xft/Hinting` (0/1), `Xft/HintStyle` (`hintnone`…`hintfull`), `Xft/RGBA` (`none`, `rgb`, `bgr`, `vrgb`, `vbgr`), `Gtk/FontName` |
+| Settings portal, `org.gnome.desktop.interface` | `font-name`, `font-antialiasing` (`none`, `grayscale`, `rgba`), `font-hinting` (`none`…`full`), `font-rgba-order` (`rgb` when unknown: the key has no "none"), `font-rendering` (always `manual`) |
+
+Who reads which channel, and whether the hint style then shows in their
+pixels (measured with GTK 3.24.52, GTK 4.22, Qt 6.11 and Chromium, each
+started with a fontconfig forcing one style):
+
+| Application | Font and colour scheme | Rasterisation | Hint styles differ? |
+|-------------|------------------------|---------------|---------------------|
+| Otto, otto-kit apps | config | fontconfig | yes; medium draws as full (FreeType's one target for both) |
+| GTK 4 on Wayland | Settings portal | portal keys, with `font-rendering` `manual` | yes |
+| GTK 3 on Wayland, unsandboxed | GSettings, which Otto writes | GSettings | in grayscale yes; with `rgba` antialiasing cairo hints every style alike |
+| GTK 3 sandboxed, or `GTK_USE_PORTAL=1` | Settings portal | the same keys from the portal | as above |
+| libadwaita (colour scheme) | GSettings `color-scheme` | — | — |
+| Qt 6 on Wayland | its `gtk3` platform theme, which Otto names (so GSettings) | fontconfig | only at device pixel ratio 1 |
+| Chromium, Electron | GTK 3 (GSettings) | fontconfig | yes |
+| X11 clients under Xwayland | XSETTINGS | XSETTINGS `Xft/*` | Qt: only at 96 DPI |
+
+GTK 4 reads the portal, and since 4.16 it ignores the hinting, antialiasing
+and order keys unless `font-rendering` is `manual`: in its default,
+`automatic`, it picks its own. The portal adds `manual` to the compositor's
+keys for that reason. GTK 3 on Wayland reads `org.gnome.desktop.interface`
+from GSettings (dconf) instead, so a session of Otto's own (the udev backend,
+never a nested one) writes the same five keys there at startup with
+`gsettings`, only where they differ (`src/gnome_interface.rs`). libadwaita
+outside a sandbox likewise takes the colour scheme from GSettings'
+`color-scheme`, not the portal, so the same module writes `prefer-dark` or
+`default` there at startup and whenever `theme_scheme` changes.
+
+Qt chooses a platform theme by `XDG_CURRENT_DESKTOP`, and for a name it does
+not know, `otto` among them, it falls back to its generic theme: `Sans Serif
+9`, no colour scheme. So Otto names Qt's own `gtk3` theme in
+`QT_QPA_PLATFORMTHEME` for everything it spawns and for the session's
+services, unless the variable is already set (`src/qt_platform_theme.rs`);
+that theme takes the font (as `Inter 9`: it keeps whole points) and the
+colour scheme from what Otto wrote to GSettings, the scheme live. Hinting
+and antialiasing Qt reads from fontconfig itself, like Otto, with one rule of
+its own (`qfontconfigdatabase.cpp`, `isDprScaling`): at a device pixel ratio
+other than 1 every font is drawn unhinted and antialiased whatever fontconfig
+says, so on a scaled output Qt text never follows the hint style, under
+Wayland or at a scaled `Xft/DPI` under Xwayland alike. Chromium takes its
+rasterisation from fontconfig too, and its font from GTK 3.
+
+The portal does not link otto-kit or fontconfig: it asks the compositor
+(`org.otto.Settings.GetFontSettings`, see
+[settings-dbus-api.md](settings-dbus-api.md)), which works the values out on
+its own thread because the subpixel order comes from the outputs. None of
+these is relayed live: `font_family` needs a restart, the fontconfig answer is
+cached for the process, and an output plugged in later does not re-publish
+the order. XSETTINGS is re-sent whenever the scale is.
+
+Other desktops also publish `text-scaling-factor`; Otto does not (see Known
+gaps).
 
 ### Portal namespaces
 
 The Settings portal publishes `org.freedesktop.appearance` (`color-scheme`,
 `accent-color`, `icon-theme`), which is how GTK and Qt applications learn
 Otto's light/dark state. Keys with no portal-standard home go out under
-`org.gnome.desktop.sound` (sound theme) and Otto's own `org.otto.desktop`
+`org.gnome.desktop.sound` (sound theme), `org.gnome.desktop.interface` (font
+and text rendering, see [Fonts and text](#fonts-and-text)) and Otto's own `org.otto.desktop`
 namespace rather than being invented inside the freedesktop one. See
 [Color Scheme](color-scheme-setting.md).
 
@@ -201,11 +276,16 @@ directly and only consults the portal under `GTK_USE_PORTAL=1`.
   the can is empty. There is no D-Bus trash service.
 - **`mimeapps.list`** is read only: Otto never writes a default association
   back.
-- **Font rendering preferences**: fontconfig resolves *which* face is used but
-  not *how* it is rasterised: hinting ignores the user's `hintstyle`, and
-  subpixel antialiasing is unavailable in the retained path regardless of what
-  is configured. See [Fonts and text](#fonts-and-text).
-- **Font settings are not published**: no portal font key, no `Gtk/FontName`
-  or `Xft/Antialias` in XSETTINGS, so applications do not follow Otto's font.
+- **Subpixel text in plane slots and cached layers**: compositor chrome gets
+  the output's subpixel layout on the output's own buffer, but GL plane slots
+  and lay-rs image-cached layers are transparent and draw greyscale. See
+  [Fonts and text](#fonts-and-text).
+- **Font settings are published once**: the font and rendering keys (see
+  [Fonts and text](#fonts-and-text)) are not re-announced when an output's
+  subpixel layout changes, and the GSettings copy GTK 3 and Qt read is
+  written at startup only.
+- **Qt text on a scaled output is unhinted**: Qt's own rule at a device pixel
+  ratio other than 1, which no setting Otto publishes reaches (see
+  [Fonts and text](#fonts-and-text)).
 - **No text scaling factor**: text size follows the output scale only, so
   enlarging text means enlarging everything.

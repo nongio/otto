@@ -7,7 +7,7 @@ use wayland_client::{
     Dispatch,
 };
 
-use crate::rendering::SkiaSurface;
+use crate::surfaces::BaseWaylandSurface;
 
 use super::Layer;
 // Re-export sc-layer protocol from menu component
@@ -20,11 +20,12 @@ use crate::protocols::{otto_surface_style_manager_v1, otto_surface_style_v1};
 pub struct LayerSurface {
     pub wl_surface: wl_surface::WlSurface,
     pub subsurface: wl_subsurface::WlSubsurface,
-    pub skia_surface: Option<SkiaSurface>,
+    /// The buffer and its scale, which follows the compositor's preferred
+    /// scale for the surface like every other otto-kit surface's.
+    surface: BaseWaylandSurface,
     pub layer: Layer,
     pub width: i32,
     pub height: i32,
-    _buffer_scale: i32,
     x: i32,
     y: i32,
     configured: bool,
@@ -70,25 +71,18 @@ impl LayerSurface {
         subsurface.set_position(x, y);
         subsurface.set_desync();
 
-        // Use 2x buffer for HiDPI rendering
-        let buffer_scale = 2;
-        wl_surface.set_buffer_scale(buffer_scale);
-
         // Create Skia surface using shared context
         use crate::app_runner::AppContext;
-        let skia_surface = AppContext::skia_context(|ctx| {
-            ctx.create_surface(&wl_surface, width * buffer_scale, height * buffer_scale)
-        })
-        .ok_or("SkiaContext not initialized")??;
+        let mut surface = BaseWaylandSurface::new(wl_surface.clone(), width, height);
+        surface.create_skia_surface()?;
 
         let mut layer_surface = Self {
             wl_surface: wl_surface.clone(),
             subsurface,
-            skia_surface: Some(skia_surface),
+            surface,
             layer,
             width,
             height,
-            _buffer_scale: buffer_scale,
             x,
             y,
             configured: false,
@@ -112,17 +106,8 @@ impl LayerSurface {
 
     /// Render the layer content
     pub fn render(&mut self) {
-        use crate::app_runner::AppContext;
-
-        if let Some(surface) = &mut self.skia_surface {
-            AppContext::skia_context(|ctx| {
-                surface.draw(ctx, |canvas| {
-                    self.layer.render(canvas);
-                });
-                surface.swap_buffers(ctx);
-                surface.commit();
-            });
-        }
+        let layer = &mut self.layer;
+        self.surface.draw(|canvas| layer.render(canvas));
     }
 
     /// Update the position of the subsurface
@@ -134,28 +119,11 @@ impl LayerSurface {
 
     /// Resize the subsurface
     pub fn resize(&mut self, width: i32, height: i32) {
-        use crate::app_runner::AppContext;
-
         if self.width != width || self.height != height {
             self.width = width;
             self.height = height;
-
-            // Recreate Skia surface with new dimensions using shared context
-            let buffer_scale = 2;
-
-            if let Some(new_surface) = AppContext::skia_context(|ctx| {
-                ctx.create_surface(
-                    &self.wl_surface,
-                    width * buffer_scale,
-                    height * buffer_scale,
-                )
-                .ok()
-            })
-            .flatten()
-            {
-                self.skia_surface = Some(new_surface);
-                self.render();
-            }
+            self.surface.resize(width, height);
+            self.render();
         }
     }
 

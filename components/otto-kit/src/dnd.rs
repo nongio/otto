@@ -262,17 +262,8 @@ impl DragIcon {
         let qh = AppContext::queue_handle();
         let wl_surface = compositor.create_surface(qh);
 
-        // Same 2x buffer every other otto-kit surface uses for HiDPI.
-        let buffer_scale = 2;
-        wl_surface.set_buffer_scale(buffer_scale);
-
         Some(Self {
-            surface: crate::surfaces::BaseWaylandSurface::new(
-                wl_surface,
-                width,
-                height,
-                buffer_scale,
-            ),
+            surface: crate::surfaces::BaseWaylandSurface::new(wl_surface, width, height),
             size: (width as f32, height as f32),
         })
     }

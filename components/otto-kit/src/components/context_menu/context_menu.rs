@@ -1556,7 +1556,7 @@ impl ContextMenu {
         // NOT get scaled here — it has to agree with the rounding the
         // renderer paints into the buffer, and scaling it makes the bar's
         // menus visibly rounder than the dock's.
-        let scale = crate::app_runner::context::AppContext::fractional_scale();
+        let scale = popup.base_surface().scale();
         let shadow = style.theme.shadow;
         scene_surface.set_corner_radius(style.corner_radius as f64);
         scene_surface.set_masks_to_bounds(ClipMode::Enabled);

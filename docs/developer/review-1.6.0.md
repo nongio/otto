@@ -23,7 +23,7 @@ god-objects, and kit widgets the apps never adopted.
   or use `chrono` (already in the workspace). **S** Fixed in #258.
 - [x] **Same hex colour, different colours** *(verified)*. otto-bar reads
   8 digits as `#AARRGGBB` (`components/otto-bar/src/config.rs:180`),
-  otto-input-overlay as `#RRGGBBAA` (`components/otto-input-overlay/src/main.rs:252`),
+  otto-input-overlay (since dropped) as `#RRGGBBAA`,
   otto-auth-ui likewise. Six parsers in total, see §3. **S**
   - *Done: #261 added one `otto_kit::color::parse_hex` (alpha last); otto-bar switched to it too (breaking for 8-digit bar colours) and `parse_hex_argb` is gone.*
 - [x] **otto-bar logs nothing by default** *(verified)*. Fallback filter is
@@ -124,9 +124,10 @@ otto-kit, so the portal and otto-agents need not link Skia): `xdg`, `dbus`,
 - [ ] **`toplevels`**: three zwlr-foreign-toplevel trackers
   (`otto-kit/src/utils/focus_watcher.rs`, `otto-launcher/src/windows.rs`,
   `otto-emoji/src/target.rs`). **S–M**
-- [ ] **`tray`**: StatusNotifierItem + dbusmenu written twice
+- [x] **`tray`**: StatusNotifierItem + dbusmenu written twice
   (`otto-rdp/src/indicator.rs`, `otto-input-overlay/src/indicator.rs`, 161
   matching lines). Feature-gated module, or `ksni`. **S**
+  - *Moot: otto-input-overlay was dropped, so otto-rdp holds the only copy.*
 - [ ] **Desktop entries / Exec expansion**: four implementations
   (`src/shell/element.rs:515`, launcher `apps.rs`, kit `mime_apps.rs:636-764`,
   fde's `parse_exec`); greeter hand-parses sessions (`otto-greeter/src/session.rs:114`). **S–M**

@@ -117,6 +117,10 @@ pub enum CompositorCommand {
         session_id: String,
         cursor_mode: u32,
     },
+    /// Otto's UI font and text rendering, as other toolkits are told them.
+    FontSettings {
+        response_tx: tokio::sync::oneshot::Sender<crate::state::FontSettings>,
+    },
     /// List available outputs for screen casting.
     ListOutputs {
         response_tx: tokio::sync::oneshot::Sender<Vec<OutputInfo>>,
@@ -499,6 +503,9 @@ pub fn handle_screenshare_command<B: crate::state::Backend + 'static>(
                 .collect();
             tracing::info!("Returning {} outputs", outputs.len());
             let _ = response_tx.send(outputs);
+        }
+        CompositorCommand::FontSettings { response_tx } => {
+            let _ = response_tx.send(state.font_settings());
         }
         CompositorCommand::ListWindows { response_tx } => {
             let windows: Vec<WindowInfo> = state

@@ -147,7 +147,7 @@ layer gets a draw closure that looks the texture up at paint time:
 layer.set_draw_content(move |canvas, w, h| {
     let tex = crate::textures_storage::get(&draw_wvs.id)?;
     // …place it per contents-gravity, convert buffer damage to layer coords…
-    canvas.draw_image(…);
+    canvas.draw_image_rect_with_sampling_options(…);
     damage   // the closure returns its damage rect
 });
 ```
@@ -164,8 +164,9 @@ Two things fall out of that indirection:
   rect on equal footing. Unlike the return value, those also mark followers as
   needing paint.
 
-Buffer pixels are not physical pixels (a client painting at buffer scale 2 on
-a 1.5× output hands over a 60 px buffer for 45 physical px), so the closure
+Buffer pixels are not always physical pixels (a client painting at buffer
+scale 2 on a 1.5× output hands over a 60 px buffer for 45 physical px; otto-kit
+clients draw at the preferred scale and match them 1:1), so the closure
 also bridges that ratio, and honours the viewport crop (`phy_src`) rather than
 the raw texture size. Chrome, among others, reuses oversized GPU allocations.
 
@@ -313,13 +314,17 @@ positions, sizes, and the cache flags. Every container Otto creates
 sets a `key` (`output_<name>`, `workspaces_<name>`, `background_plane_<name>`,
 `window`, …) so the tree is readable rather than a wall of ids.
 
-Three runtime levers on the plane path, polled about once a second. They exist
+Four runtime levers on the plane path, polled about once a second. They exist
 only in `debug-hooks` builds (`--features dev` includes it):
 
 - `touch /tmp/otto-tint` washes the GPU-composite fallback red, so anything
   that did *not* get a hardware plane is immediately visible.
 - `touch /tmp/otto-no-scanout` disables window promotion, for A/B comparison.
 - `touch /tmp/otto-dump-planes` dumps every plane buffer to PNG once.
+- `touch /tmp/otto-dump-scanout` dumps each output's swapchain buffer, the
+  frame as scanned out, to `~/Pictures/Screenshots/otto_scanout_<output>.png`
+  once. It is the only way to see subpixel text as the output gets it:
+  screencopy re-renders without the output's pixel geometry.
 
 Related: [Rendering](rendering.md) · [Render Loop](render_loop.md) ·
 [DRM Planes](drm_plane.md) · [Exposé](expose.md)

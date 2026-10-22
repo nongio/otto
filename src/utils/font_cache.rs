@@ -3,6 +3,8 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 
+use otto_kit::text_rendering::TextRendering;
+
 #[allow(unused)]
 pub struct FontCache {
     pub font_collection: layers::skia::textlayout::FontCollection,
@@ -14,7 +16,7 @@ pub struct FontCache {
 }
 
 impl FontCache {
-    /// Create a Font with subpixel rendering and antialiasing enabled
+    /// Create a Font rendered as fontconfig configures `family`
     pub fn make_font(
         &self,
         family: impl AsRef<str>,
@@ -32,8 +34,7 @@ impl FontCache {
             style,
         );
         let mut font = layers::skia::Font::from_typeface(typeface, size);
-        font.set_subpixel(true);
-        font.set_edging(layers::skia::font::Edging::SubpixelAntiAlias);
+        TextRendering::for_family(family.as_ref()).apply_to_font(&mut font);
         Some(font)
     }
 
@@ -125,8 +126,7 @@ impl FontCache {
         let typeface =
             otto_kit::typography::covering_typeface(&self.font_mgr, typeface, "sans-serif", style);
         let mut font = layers::skia::Font::from_typeface(typeface, size);
-        font.set_subpixel(true);
-        font.set_edging(layers::skia::font::Edging::SubpixelAntiAlias);
+        TextRendering::for_family("sans-serif").apply_to_font(&mut font);
         font
     }
 }

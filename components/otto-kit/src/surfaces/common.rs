@@ -1,8 +1,14 @@
 use layers::prelude::taffy;
 use layers::types::Size;
+use std::cell::{Cell, RefCell};
 use std::fmt;
 use std::rc::Rc;
 use wayland_client::{protocol::wl_surface, Proxy};
+use wayland_protocols::wp::fractional_scale::v1::client::wp_fractional_scale_v1::WpFractionalScaleV1;
+
+use crate::app_runner::surface_scale::{
+    self, BufferGeometry, BufferScale, ScaleSync, ScaledBuffer, View,
+};
 
 // Re-export sc-layer protocol for convenience
 pub(super) use crate::protocols::{otto_surface_style_manager_v1, otto_surface_style_v1};
@@ -47,7 +53,9 @@ pub struct BaseWaylandSurface {
     pub(super) surface_style: Option<otto_surface_style_v1::OttoSurfaceStyleV1>,
     pub(super) width: i32,
     pub(super) height: i32,
-    pub(super) buffer_scale: i32,
+    // The scale the buffer is drawn at, and the protocol objects that carry
+    // it. Shared, like the damage below: every clone is the same surface.
+    scale: Rc<ScaleState>,
     // not sure this is needed
     pub(super) dirty: std::sync::Arc<std::sync::atomic::AtomicBool>,
     // Optional layer node for layers engine rendering
@@ -59,6 +67,50 @@ pub struct BaseWaylandSurface {
     // The style geometry the next draw's buffer is claimed at; see
     // `claim_with_next_buffer`. Shared for the same reason as `frame_damage`.
     pub(super) next_buffer_claim: Rc<std::cell::Cell<Option<BufferClaim>>>,
+}
+
+/// How a surface's buffer carries its scale: what the compositor is told, and
+/// the objects it is told through.
+struct ScaleState {
+    /// Its `wp_fractional_scale_v1`, through which the compositor says which
+    /// scale it prefers for this surface. The events land in
+    /// [`surface_scale`]; the object is only held.
+    fractional: RefCell<Option<WpFractionalScaleV1>>,
+    /// The buffer scale and the `wp_viewport` (made the first time the
+    /// surface needs one: to show a fractional buffer at its logical size, or
+    /// to crop), and what they were last set to.
+    buffer: RefCell<ScaledBuffer>,
+    /// The crop asked for with [`BaseWaylandSurface::set_crop`].
+    crop: Cell<Option<View>>,
+}
+
+impl ScaleState {
+    fn new(wl_surface: &wl_surface::WlSurface) -> Self {
+        Self {
+            fractional: RefCell::new(track_scale(wl_surface)),
+            buffer: RefCell::new(ScaledBuffer::new(wl_surface)),
+            crop: Cell::new(None),
+        }
+    }
+
+    fn geometry(&self) -> Option<BufferGeometry> {
+        self.buffer.borrow().geometry()
+    }
+}
+
+impl Drop for ScaleState {
+    fn drop(&mut self) {
+        if let Some(fractional) = self.fractional.take().filter(|f| f.is_alive()) {
+            fractional.destroy();
+        }
+    }
+}
+
+/// Ask for `wl_surface`'s preferred scale, when the compositor can say.
+fn track_scale(wl_surface: &wl_surface::WlSurface) -> Option<WpFractionalScaleV1> {
+    AppContext::fractional_scale_manager().map(|manager| {
+        manager.get_fractional_scale(wl_surface, AppContext::queue_handle(), wl_surface.clone())
+    })
 }
 
 /// A surface-style size, and optionally a position, in pixels, for the
@@ -81,12 +133,11 @@ pub(super) enum FrameDamage {
 
 impl BaseWaylandSurface {
     /// Create a new surface core
-    pub fn new(
-        wl_surface: wl_surface::WlSurface,
-        width: i32,
-        height: i32,
-        buffer_scale: i32,
-    ) -> Self {
+    ///
+    /// The buffer is drawn at the scale the compositor prefers for this
+    /// surface (see [`AppContext::surface_scale`]), and follows it when it
+    /// changes; nothing about the scale is the caller's to set.
+    pub fn new(wl_surface: wl_surface::WlSurface, width: i32, height: i32) -> Self {
         let layer_node = AppContext::layers_engine().map(|engine| {
             let l = engine.new_layer();
             // Every surface's root node is its own origin: it is drawn into
@@ -109,18 +160,13 @@ impl BaseWaylandSurface {
         });
         let surface_style = AppContext::surface_style_manager()
             .map(|manager| manager.get_surface_style(&wl_surface, AppContext::queue_handle(), ()));
-        // Learn the output's fractional scale. Buffers stay at the integer
-        // `buffer_scale`, but geometry sent to the compositor in physical
-        // pixels needs the real fraction — see `AppContext::fractional_scale`.
-        if let Some(manager) = AppContext::fractional_scale_manager() {
-            let _ = manager.get_fractional_scale(&wl_surface, AppContext::queue_handle(), ());
-        }
+        let scale = Rc::new(ScaleState::new(&wl_surface));
         Self {
             wl_surface,
             skia_surface: None,
             width,
             height,
-            buffer_scale,
+            scale,
             surface_style,
             layer_node,
             dirty: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
@@ -134,12 +180,14 @@ impl BaseWaylandSurface {
         use crate::app_runner::AppContext;
         use crate::rendering::SkiaContext;
 
+        // A new buffer: whatever was sent before described the old one.
+        self.skia_surface = None;
+        self.scale.buffer.borrow_mut().reset();
+        self.sync_scale();
+        let (buffer_width, buffer_height) = self.buffer_size();
+
         let surface = AppContext::skia_context(|ctx| {
-            ctx.create_surface(
-                &self.wl_surface,
-                self.width * self.buffer_scale,
-                self.height * self.buffer_scale,
-            )
+            ctx.create_surface(&self.wl_surface, buffer_width, buffer_height)
         });
 
         if let Some(result) = surface {
@@ -156,8 +204,8 @@ impl BaseWaylandSurface {
             let (new_ctx, new_surface) = SkiaContext::new(
                 AppContext::display_ptr(),
                 &self.wl_surface,
-                self.width * self.buffer_scale,
-                self.height * self.buffer_scale,
+                buffer_width,
+                buffer_height,
             )
             .map_err(|e| SurfaceError::SkiaError(e.to_string()))?;
 
@@ -175,7 +223,8 @@ impl BaseWaylandSurface {
     /// move only one axis — or neither — so without this a window being
     /// dragged by one edge threw away and rebuilt the Skia render target of
     /// every surface whose size had not changed, which measured in
-    /// milliseconds apiece.
+    /// milliseconds apiece. A change of *scale* at the same size is not this
+    /// method's to catch: the next draw does, in [`Self::sync_scale`].
     pub fn resize(&mut self, width: i32, height: i32) {
         if self.width == width && self.height == height {
             return;
@@ -183,10 +232,9 @@ impl BaseWaylandSurface {
         self.width = width;
         self.height = height;
 
-        // Resize existing Skia surface in-place (resizes EGL window, invalidates cache)
-        if let Some(skia) = &self.skia_surface {
-            skia.resize(width * self.buffer_scale, height * self.buffer_scale);
-        }
+        // Resizes the existing Skia surface in place (the EGL window on the
+        // next draw), and re-sends the viewport for the new size.
+        self.sync_scale();
 
         // Update layer node size if using layers engine
         if let Some(layer) = &self.layer_node {
@@ -195,6 +243,132 @@ impl BaseWaylandSurface {
                 None,
             );
             layer.engine.update(0.0);
+        }
+    }
+
+    /// Bring the buffer in line with the surface's scale, logical size and
+    /// crop: the buffer scale, the viewport and the buffer's size, each sent
+    /// only if it moved.
+    ///
+    /// Called from every draw, which is how a new preferred scale reaches the
+    /// buffer — the scale is the compositor's to change at any time, and the
+    /// next frame is the first one that can show it. Everything here is
+    /// surface state, so it lands with the commit that frame's swap makes,
+    /// together with the buffer it describes.
+    fn sync_scale(&self) -> ScaleSync {
+        let sync = self.scale.buffer.borrow_mut().sync(
+            surface_scale::surface_scale_120(&self.wl_surface.id()),
+            (self.width, self.height),
+            self.scale.crop.get(),
+            AppContext::viewporter(),
+            AppContext::queue_handle(),
+        );
+        if sync.buffer {
+            if let (Some(skia), Some(geometry)) = (&self.skia_surface, self.scale.geometry()) {
+                skia.resize(geometry.buffer.0, geometry.buffer.1);
+            }
+        }
+        sync
+    }
+
+    /// Show `crop`'s source, a rect in the surface's own points, at its
+    /// destination size in points; `None` shows the whole surface again.
+    /// Surface state, landing with the surface's next commit.
+    ///
+    /// Returns `false` when the compositor has no `wp_viewporter`, in which
+    /// case nothing is sent.
+    pub(super) fn set_crop(&self, crop: Option<View>) -> bool {
+        if AppContext::viewporter().is_none() {
+            return crop.is_none();
+        }
+        self.scale.crop.set(crop);
+        self.sync_scale();
+        true
+    }
+
+    /// Move onto a new `wl_surface` — a popup shown again after its surface
+    /// was destroyed. The old surface's scale objects go with it; the new one
+    /// asks for its own preferred scale, and starts at the stand-in.
+    pub(super) fn replace_wl_surface(&mut self, wl_surface: wl_surface::WlSurface) {
+        AppContext::forget_surface(&self.wl_surface.id());
+        if let Some(fractional) = self.scale.fractional.take().filter(|f| f.is_alive()) {
+            fractional.destroy();
+        }
+        // Dropping the old one destroys its viewport.
+        *self.scale.buffer.borrow_mut() = ScaledBuffer::new(&wl_surface);
+        *self.scale.fractional.borrow_mut() = track_scale(&wl_surface);
+        self.wl_surface = wl_surface;
+    }
+
+    /// The buffer's size in pixels, at the scale it was last given.
+    pub fn buffer_size(&self) -> (i32, i32) {
+        self.scale
+            .geometry()
+            .map_or((self.width, self.height), |g| g.buffer)
+    }
+
+    /// Buffer pixels per logical point, as the buffer was last given it. The
+    /// factor the canvas is scaled by, and the one a point measured on this
+    /// surface is worth in pixels on screen.
+    pub fn buffer_scale(&self) -> f32 {
+        self.scale.geometry().map_or(1.0, |g| g.scale.factor())
+    }
+
+    /// The scale the compositor prefers for this surface: see
+    /// [`AppContext::surface_scale`].
+    pub fn scale(&self) -> f64 {
+        AppContext::surface_scale(&self.wl_surface.id())
+    }
+
+    /// The subpixel layout the buffer's pixels land on, for text to be
+    /// rendered for: the layout of the one output the surface is on, turned
+    /// with that output's transform.
+    ///
+    /// Only when the buffer is shown pixel for pixel — at the surface's own
+    /// scale, not the next whole one a compositor without a viewporter
+    /// shrinks, and with no crop stretching it — since subpixel text
+    /// resampled by the compositor fringes — and only on a surface whose
+    /// opaque region covers all of it ([`AppContext::surface_is_opaque`]),
+    /// since text on what shows through fringes too. A surface across two outputs, on
+    /// none yet, or on one that has not described itself gets `Unknown`:
+    /// greyscale text. Re-evaluated every draw, so it follows the surface to
+    /// another output on the next frame it paints there.
+    fn pixel_geometry(&self, applied: BufferGeometry) -> skia_safe::PixelGeometry {
+        use skia_safe::PixelGeometry;
+        use smithay_client_toolkit::compositor::SurfaceData;
+
+        let wanted_120 = surface_scale::surface_scale_120(&self.wl_surface.id());
+        let one_to_one = match applied.scale {
+            BufferScale::Integer(n) => n.max(0) as u32 * 120 == wanted_120,
+            BufferScale::Fractional(s) => s == wanted_120,
+        } && self.scale.crop.get().is_none();
+        if !one_to_one || !AppContext::surface_is_opaque(&self.wl_surface.id()) {
+            return PixelGeometry::Unknown;
+        }
+        let Some(data) = self.wl_surface.data::<SurfaceData<()>>() else {
+            return PixelGeometry::Unknown;
+        };
+        let mut outputs = data.outputs();
+        let (Some(output), None) = (outputs.next(), outputs.next()) else {
+            return PixelGeometry::Unknown;
+        };
+        AppContext::output_info(&output).map_or(PixelGeometry::Unknown, |info| {
+            crate::rendering::pixel_geometry(info.subpixel, info.transform)
+        })
+    }
+
+    /// Mark every layer this surface draws as needing a repaint, so the next
+    /// draw re-records their content — and rasterises their icons and images
+    /// again — at the surface's new scale.
+    fn repaint_layer_tree(&self) {
+        let (Some(layer), Some(engine)) = (&self.layer_node, AppContext::layers_engine()) else {
+            return;
+        };
+        // Descendants include the root itself.
+        for node in engine.node_descendants(&layer.id()) {
+            if let Some(layer) = engine.get_layer(&node) {
+                layer.redraw();
+            }
         }
     }
 
@@ -277,9 +451,34 @@ impl BaseWaylandSurface {
             return;
         };
 
+        // A new scale (or size) the compositor asked for since the last frame
+        // reaches the buffer here, with nothing of the old buffer kept.
+        let sync = self.sync_scale();
+        if sync.scale {
+            self.repaint_layer_tree();
+        }
+        if sync.buffer || sync.scale {
+            self.mark_frame_damage_all();
+        }
+        let Some(applied) = self.scale.geometry() else {
+            return;
+        };
+        // The swap below attaches a buffer of `applied`'s size: now the
+        // scale and viewport describing it can go out with it.
+        self.scale
+            .buffer
+            .borrow_mut()
+            .flush(AppContext::viewporter(), AppContext::queue_handle());
+        // Components rasterising from `AppContext::scale_factor` in here
+        // answer for this surface.
+        let _drawing = surface_scale::DrawingScope::enter(surface_scale::surface_scale_120(
+            &self.wl_surface.id(),
+        ));
+        surface.set_pixel_geometry(self.pixel_geometry(applied));
+
         AppContext::skia_context(|ctx| {
             // Draw custom content
-            surface.draw(ctx, |canvas| {
+            surface.draw(ctx, applied.scale.factor(), |canvas| {
                 draw_fn(canvas);
             });
 
@@ -309,16 +508,22 @@ impl BaseWaylandSurface {
             // frame goes out with the swap instead of the whole buffer.
             match self.frame_damage.borrow_mut().take() {
                 Some(FrameDamage::Rects(rects)) => {
-                    let scale = self.buffer_scale.max(1) as f32;
+                    let scale = applied.scale.factor();
+                    let bounds = skia_safe::IRect::from_wh(applied.buffer.0, applied.buffer.1);
                     let rects: Vec<skia_safe::IRect> = rects
                         .iter()
-                        .map(|r| {
-                            // Rounded outwards, so a fractional edge is still covered.
-                            skia_safe::IRect::from_ltrb(
-                                (r.left * scale).floor() as i32,
-                                (r.top * scale).floor() as i32,
-                                (r.right * scale).ceil() as i32,
-                                (r.bottom * scale).ceil() as i32,
+                        .filter_map(|r| {
+                            // Rounded outwards, so a fractional edge is still
+                            // covered, and kept inside the buffer, which a
+                            // rounded-up edge at a fractional scale can leave.
+                            skia_safe::IRect::intersect(
+                                &skia_safe::IRect::from_ltrb(
+                                    (r.left * scale).floor() as i32,
+                                    (r.top * scale).floor() as i32,
+                                    (r.right * scale).ceil() as i32,
+                                    (r.bottom * scale).ceil() as i32,
+                                ),
+                                &bounds,
                             )
                         })
                         .collect();

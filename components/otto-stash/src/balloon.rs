@@ -15,6 +15,7 @@ use otto_kit::skia::{
     surfaces, AlphaType, Color, ColorType, FontMgr, FontStyle, ImageInfo, Paint, PaintStyle, Point,
     RRect, Rect,
 };
+use otto_kit::text_rendering::TextRendering;
 use otto_kit::theme::Theme;
 use otto_kit::typography::styles;
 
@@ -143,11 +144,17 @@ impl Default for Balloon {
 fn style(size: f32, line_h: f32, weight: i32, color: Color, mono: bool) -> TextStyle {
     let mut style = TextStyle::new();
     style.set_font_size(size);
+    let family = if mono {
+        "monospace"
+    } else {
+        styles::BODY.family
+    };
     if mono {
         style.set_font_families(&["monospace"]);
     } else {
         style.set_font_families(&[styles::BODY.family, "sans-serif"]);
     }
+    TextRendering::for_family(family).apply_to_text_style(&mut style);
     style.set_font_style(FontStyle::new(
         Weight::from(weight),
         Width::NORMAL,

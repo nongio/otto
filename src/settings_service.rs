@@ -112,6 +112,40 @@ impl SettingsInterface {
         Config::with(|config| config.locales.clone())
     }
 
+    /// Otto's UI font and text rendering, keyed by their
+    /// `org.gnome.desktop.interface` names: `font-name`, `font-antialiasing`,
+    /// `font-hinting` and `font-rgba-order`.
+    ///
+    /// Not settings: the rendering is fontconfig's and the subpixel order the
+    /// outputs', so it is worked out on the compositor thread. The portal
+    /// serves it to GTK and Qt; XSETTINGS carries the same to X11 clients.
+    async fn get_font_settings(&self) -> Result<HashMap<String, String>, SettingsFault> {
+        let (response_tx, response_rx) = oneshot::channel();
+        self.compositor_tx
+            .send(CompositorCommand::FontSettings { response_tx })
+            .map_err(|err| {
+                SettingsFault::ApplyFailed(format!("compositor is not listening: {err}"))
+            })?;
+        let fonts = response_rx
+            .await
+            .map_err(|_| SettingsFault::ApplyFailed("compositor did not answer".to_string()))?;
+        Ok(HashMap::from([
+            ("font-name".to_string(), fonts.name),
+            (
+                "font-antialiasing".to_string(),
+                fonts.rendering.antialiasing.to_string(),
+            ),
+            (
+                "font-hinting".to_string(),
+                fonts.rendering.hinting.to_string(),
+            ),
+            (
+                "font-rgba-order".to_string(),
+                fonts.rendering.rgba_order.to_string(),
+            ),
+        ]))
+    }
+
     /// The schema: one dictionary per setting. Clients ignore keys they do not
     /// know, so the schema can grow without breaking them.
     async fn describe(&self) -> Vec<HashMap<String, OwnedValue>> {
@@ -325,6 +359,91 @@ impl SettingsInterface {
         }
 
         info!("display profile for {connector} saved; it applies at the next start");
+        Ok(settings::Status::PendingRestart.wire_name().to_string())
+    }
+
+    /// The subpixel layout each display profile names, by connector.
+    ///
+    /// Only the `displays.named.<connector>` profiles that set `subpixel`
+    /// appear: a connector that is absent is on automatic (the connector's own
+    /// report, then fontconfig's `rgba`, then grayscale). The values are the
+    /// config's spelling: `rgb`, `bgr`, `vrgb`, `vbgr` or `none`.
+    async fn get_output_subpixels(&self) -> HashMap<String, String> {
+        Config::with(|config| {
+            config
+                .displays
+                .named
+                .iter()
+                .filter_map(|(connector, profile)| {
+                    Some((
+                        connector.clone(),
+                        profile.subpixel?.config_name().to_string(),
+                    ))
+                })
+                .collect()
+        })
+    }
+
+    /// Persist one display's subpixel layout, keyed by its connector.
+    ///
+    /// `subpixel` is one of `rgb`, `bgr`, `vrgb`, `vbgr` or `none`; an empty
+    /// string removes the key and puts the display back on automatic. Writes
+    /// `displays.named.<connector>.subpixel`, beside what
+    /// [`set_output_profile`](Self::set_output_profile) writes.
+    ///
+    /// **Takes effect at the next start**, or the next time the display is
+    /// connected: the layout is fixed when an output is created, and Wayland
+    /// clients only learn it then. The running configuration is updated too,
+    /// so a monitor plugged in later this session comes up with it.
+    async fn set_output_subpixel(
+        &self,
+        connector: &str,
+        subpixel: &str,
+    ) -> Result<String, SettingsFault> {
+        if connector.trim().is_empty() {
+            return Err(SettingsFault::OutOfRange(
+                "a display profile needs a connector".to_string(),
+            ));
+        }
+        let layout = match subpixel {
+            "" => None,
+            name => Some(
+                crate::config::DisplaySubpixel::from_config_name(name).ok_or_else(|| {
+                    SettingsFault::OutOfRange(format!(
+                        "`{name}` is not a subpixel layout: rgb, bgr, vrgb, vbgr or none"
+                    ))
+                })?,
+            ),
+        };
+
+        let key = format!("displays.named.{connector}.subpixel");
+        let persisted = match layout {
+            Some(layout) => crate::config::persist_key(
+                &key,
+                &toml::Value::String(layout.config_name().to_string()),
+            ),
+            None => crate::config::forget_key(&key),
+        };
+        persisted
+            .map_err(|reason| SettingsFault::ApplyFailed(format!("could not persist: {reason}")))?;
+
+        Config::update(|config| match layout {
+            Some(layout) => {
+                config
+                    .displays
+                    .named
+                    .entry(connector.to_string())
+                    .or_default()
+                    .subpixel = Some(layout);
+            }
+            None => {
+                if let Some(profile) = config.displays.named.get_mut(connector) {
+                    profile.subpixel = None;
+                }
+            }
+        });
+
+        info!("subpixel layout for {connector} saved; it applies at the next start");
         Ok(settings::Status::PendingRestart.wire_name().to_string())
     }
 

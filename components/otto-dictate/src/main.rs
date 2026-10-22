@@ -56,13 +56,23 @@ use wayland_protocols_misc::zwp_input_method_v2::client::{
 };
 
 use otto_kit::dictation::{join, Agreement, Bars, Capture, Engine, Word, SAMPLE_RATE, WINDOW};
+use otto_kit::surfaces::scaling_protocols::{
+    wp_fractional_scale_v1, WpFractionalScaleManagerV1, WpFractionalScaleV1, WpViewport,
+    WpViewporter,
+};
+use otto_kit::surfaces::Scaling;
 
 use crate::balloon::Balloon;
 
 /// Initial size of the popup's buffer pool; it grows with the balloon.
 const POOL_BYTES: usize = 512 * 256 * 4;
-/// Popup buffers are drawn at this scale, so they stay sharp on HiDPI.
-const POPUP_SCALE: i32 = 2;
+/// The popup's surface, drawn at the scale the compositor prefers for it and
+/// shown pixel for pixel.
+type SurfaceScale = otto_kit::surfaces::ScaledSurface<State>;
+/// What the popup is drawn at until the compositor says, in 120ths: 2x, sharp
+/// on a HiDPI display and only oversampled on any other, for the frame or so
+/// before the preferred scale arrives.
+const STAND_IN_SCALE_120: u32 = 240;
 /// Frame interval while listening (~24 fps).
 const FRAME: Duration = Duration::from_millis(42);
 /// Timer interval while idle; only bounds how soon the first frame appears.
@@ -111,6 +121,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let compositor: wl_compositor::WlCompositor = globals.bind(&qh, 1..=4, ())?;
     let seat: wl_seat::WlSeat = globals.bind(&qh, 1..=7, ())?;
     let manager: ZwpInputMethodManagerV2 = globals.bind(&qh, 1..=1, ())?;
+    // Optional: without them the popup is drawn at the stand-in scale, or at
+    // the next whole one, for the compositor to shrink.
+    let scaling = Scaling {
+        fractional: globals.bind(&qh, 1..=1, ()).ok(),
+        viewporter: globals.bind(&qh, 1..=1, ()).ok(),
+    };
     let input_method = manager.get_input_method(&seat, &qh, ());
 
     let mut event_loop: EventLoop<State> = EventLoop::try_new()?;
@@ -146,6 +162,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         seat,
         retry_at: None,
         compositor,
+        scaling,
         popup: None,
         grab: None,
         pending: Field::default(),
@@ -289,10 +306,12 @@ struct State {
     /// When to ask for the input method again, after it was unavailable.
     retry_at: Option<Instant>,
     compositor: wl_compositor::WlCompositor,
+    /// What scales the popup's buffer to its display.
+    scaling: Scaling,
     /// The equaliser's surface, while listening. It is destroyed when the
     /// dictation ends rather than hidden, because Otto keeps showing an
     /// input popup whose buffer is removed.
-    popup: Option<(wl_surface::WlSurface, ZwpInputPopupSurfaceV2)>,
+    popup: Option<(wl_surface::WlSurface, ZwpInputPopupSurfaceV2, SurfaceScale)>,
     /// The keyboard, while listening.
     grab: Option<ZwpInputMethodKeyboardGrabV2>,
     /// The field as announced, applied on the next `done`.
@@ -348,11 +367,11 @@ impl State {
         });
         self.grab = Some(self.input_method.grab_keyboard(&self.qh, ()));
         let surface = self.compositor.create_surface(&self.qh, ());
-        surface.set_buffer_scale(POPUP_SCALE);
+        let scale = SurfaceScale::new(&surface, &self.scaling, STAND_IN_SCALE_120, &self.qh);
         let popup = self
             .input_method
             .get_input_popup_surface(&surface, &self.qh, ());
-        self.popup = Some((surface, popup));
+        self.popup = Some((surface, popup, scale));
     }
 
     /// Stop capturing; the final pass commits what is left.
@@ -548,9 +567,12 @@ impl State {
             return;
         };
         let layout = self.balloon.layout(&listening.text(), &listening.tentative);
-        let scale = POPUP_SCALE as f32;
-        let w = (layout.width * scale) as i32;
-        let h = (layout.height * scale) as i32;
+        let Some((_, _, surface_scale)) = self.popup.as_mut() else {
+            return;
+        };
+        let frame = surface_scale.frame((layout.width.ceil() as i32, layout.height.ceil() as i32));
+        let scale = frame.factor;
+        let (w, h) = frame.size;
         // Reuse the buffer when it is the right size and the compositor has
         // released it; otherwise take a fresh one from the pool.
         let reusable = self.buffer.as_mut().is_some_and(|b| {
@@ -568,7 +590,8 @@ impl State {
                 }
             }
         }
-        let (Some(buffer), Some((surface, _))) = (self.buffer.as_mut(), self.popup.as_ref()) else {
+        let (Some(buffer), Some((surface, _, _))) = (self.buffer.as_mut(), self.popup.as_ref())
+        else {
             return;
         };
         let Some(canvas) = buffer.canvas(&mut self.pool) else {
@@ -583,8 +606,9 @@ impl State {
     }
 
     fn close_popup(&mut self) {
-        if let Some((surface, popup)) = self.popup.take() {
+        if let Some((surface, popup, scale)) = self.popup.take() {
             popup.destroy();
+            scale.destroy();
             surface.destroy();
         }
     }
@@ -702,6 +726,29 @@ impl ShmHandler for State {
 }
 
 smithay_client_toolkit::delegate_dispatch2!(State);
+/// The popup's preferred scale. It is redrawn every frame while it is up, so
+/// a new scale needs nothing more than keeping.
+impl Dispatch<WpFractionalScaleV1, wl_surface::WlSurface> for State {
+    fn event(
+        state: &mut Self,
+        _: &WpFractionalScaleV1,
+        event: wp_fractional_scale_v1::Event,
+        surface: &wl_surface::WlSurface,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        let wp_fractional_scale_v1::Event::PreferredScale { scale } = event else {
+            return;
+        };
+        if let Some((_, _, surface_scale)) = state.popup.as_mut().filter(|(s, _, _)| s == surface) {
+            surface_scale.set_preferred(scale);
+        }
+    }
+}
+
+delegate_noop!(State: ignore WpFractionalScaleManagerV1);
+delegate_noop!(State: ignore WpViewporter);
+delegate_noop!(State: ignore WpViewport);
 delegate_noop!(State: ignore wl_compositor::WlCompositor);
 delegate_noop!(State: ignore wl_surface::WlSurface);
 delegate_noop!(State: ignore wl_seat::WlSeat);

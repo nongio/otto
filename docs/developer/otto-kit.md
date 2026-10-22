@@ -93,6 +93,19 @@ component deep in a view tree needs the scale or the theme without being handed
 a context reference through every layer above it. The `*_ref` methods exist for
 the paths that do have a context.
 
+The scale is per surface. Each surface is drawn at the `preferred_scale` the
+compositor sends for it (`AppContext::surface_scale`), which follows it from
+display to display: its buffer is `round(logical × scale)` pixels, shown 1:1
+through a `wp_viewport` at a fractional scale, and the canvas a draw closure
+gets is already scaled, so it works in points. When a surface's scale moves,
+its next draw resizes the buffer and repaints its layer tree, and
+`App::on_scale_changed` (by default handled as a theme change) tells the app
+to make that draw. `AppContext::fractional_scale()` is for code with no
+surface in hand: inside a draw it is the drawing surface's scale.
+`AppContext::scale_factor()` rounds that up to the whole number icons and
+images are rasterised at. A client that paints its own `wl_shm` buffers gets
+the same sums from `surfaces::ScaledSurface`.
+
 ## Surfaces
 
 One type per role, all implementing `BaseWaylandSurface`:
@@ -211,7 +224,12 @@ Solar name with its glyph in black ink, which callers tint with `SrcIn` as
 they do a theme's symbolic art. `folder` is left to the theme there, since a
 listing asks for it as a file type; `cached_glyph_chain` is the variant for a
 caller that draws every icon as a glyph (Files' sidebar and path bar).
-`exact_icon_in_theme` and `find_icon` stay theme-only.
+`exact_icon_in_theme` and `find_icon` stay theme-only. Whatever the lookup,
+the image is put on a canvas with `icons::draw_icon(canvas, image, dst,
+paint)`, the one place that samples an icon: a 1:1 draw is snapped to whole
+device pixels, anything else sampled linear with mipmaps, so a glyph at a
+fractional scale never lands on half a pixel. The `image-sampling-explicit`
+architecture rule keeps `draw_image` out of everything else.
 
 ## Otto's own protocols
 

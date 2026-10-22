@@ -89,11 +89,15 @@ GetAccentColor()           → (ddd)     accent as sRGB in 0.0..=1.0
 
 GetSoundTheme()            → s         sound theme name, empty to auto-detect
 GetLocales()               → as        preferred locales, most preferred first
+GetFontSettings()          → a{ss}     UI font and text rendering, by GNOME key
 
 ListOutputs()              → aa{sv}    every output, physical and virtual
 SetOutputProfile(connector: s, width: u, height: u,
                  refresh_hz: d, x: i, y: i,
                  primary: b)           → s   status, always pending-restart
+GetOutputSubpixels()       → a{ss}     subpixel layout each display profile sets
+SetOutputSubpixel(connector: s,
+                  subpixel: s)         → s   status, always pending-restart
 AddVirtualOutput(name: s, width: u, height: u,
                  refresh_hz: d, interactive: b,
                  persist: b)           → u   PipeWire node id
@@ -122,6 +126,14 @@ language from here rather than from `LANG`, so changing *Preferred languages*
 moves the whole desktop and not just the compositor. Sandboxed third-party
 applications still read the environment, which this does not touch.
 
+`GetFontSettings` is keyed by the names the portal serves under
+`org.gnome.desktop.interface`: `font-name` (`font_family` at body size, in
+Pango points), `font-antialiasing`, `font-hinting` and `font-rgba-order`. It
+is not a setting: the rendering is fontconfig's and the subpixel order the
+outputs', so the compositor works it out on its own thread, the same values it
+sends Xwayland as XSETTINGS. See
+[xdg-specifications.md](xdg-specifications.md#fonts-and-text).
+
 ### Outputs
 
 Outputs are deliberately **not** settings. The schema is a table fixed at
@@ -143,6 +155,16 @@ display does not come back, and that is worse than a restart. A zero width or
 height leaves the resolution unset and a zero rate leaves the refresh unset, so
 moving a display need not name a mode for it. Primary is a choice *among*
 displays, so a client turning it on for one must write it off for the others.
+
+`SetOutputSubpixel` writes `displays.named.<connector>.subpixel`: `rgb`,
+`bgr`, `vrgb`, `vbgr` or `none`, and an empty string removes the key, putting
+the display back on automatic (grayscale when fontconfig's `rgba` is `none`;
+else the connector's report, then fontconfig's `rgba`, then grayscale). Anything else is refused with `OutOfRange`. It applies
+when the output is next created, at the next start or replug, because the
+layout is fixed at output creation and clients learn it only then; the running
+configuration is updated too, so a replug this session picks it up.
+`GetOutputSubpixels` answers connector to layout for every named profile that
+sets one, so an absent connector is on automatic.
 
 `AddVirtualOutput` creates a PipeWire-backed output on the running compositor
 and answers with the node id to capture from. It takes effect immediately: a

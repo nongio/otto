@@ -135,7 +135,7 @@ pub fn draw(
                             center.x + half,
                             center.y + half,
                         );
-                        canvas.draw_image_rect(&image, None, dst, &Paint::default());
+                        icons::draw_icon(canvas, &image, dst, &Paint::default());
                     }
                     None => {
                         if let Some(fallback) = fallback {

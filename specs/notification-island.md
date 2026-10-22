@@ -152,7 +152,7 @@ No opacity manipulation. All elements are always fully visible.
 
 Content is drawn with Skia into each subsurface's buffer. Before each draw the buffer is **resized to exactly the mode's content size** (`draw_content`), and content is drawn from the origin; the compositor spring-animates the visual bounds over the retained buffer. `SLOT_BUF_W` x `SLOT_BUF_H` is only the size a subsurface is created at, before its first draw.
 
-Geometry pushed to `otto-surface-style-v1` is in **physical pixels** and must use the real output scale (`AppContext::fractional_scale()`), not the client's fixed 2x raster buffer scale.
+Geometry pushed to `otto-surface-style-v1` is in **physical pixels** and must use the surface's own scale (`AppContext::surface_scale(&surface.id())`), which is also the scale its buffer is rasterised at, and be sent again when `App::on_scale_changed` reports a new one.
 
 Rendering is fully retained-mode — the client never pushes frames continuously:
 

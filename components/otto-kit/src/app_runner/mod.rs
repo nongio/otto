@@ -7,6 +7,7 @@ pub mod context;
 mod handlers;
 mod key_repeat;
 mod output_scale;
+pub(crate) mod surface_scale;
 mod wheel_steps;
 
 pub use context::{AppContext, CursorImage};
@@ -201,6 +202,29 @@ pub trait App {
     /// asking for a frame, which nothing else will do while the app is idle.
     fn on_theme_changed(&mut self, _ctx: &AppContext) {
         // Default: do nothing
+    }
+
+    /// The scale `surface` is drawn at moved: it went to an output of another
+    /// scale, or its output's scale was changed. `scale` is the new one, as
+    /// [`AppContext::surface_scale`] now reports it.
+    ///
+    /// The surface itself needs nothing: its next draw resizes the buffer to
+    /// the new scale and repaints its layer tree, so every icon rasterised in
+    /// it is rasterised again. What the app has to do is *make* that draw —
+    /// nothing else will while it is idle — re-raster anything it cached
+    /// itself at the old scale, and re-send geometry it gave the compositor in
+    /// physical pixels.
+    ///
+    /// That is the work a theme change already asks for, so by default this
+    /// is handled as one: an app that repaints on [`App::on_theme_changed`]
+    /// follows a scale change without doing anything more.
+    fn on_scale_changed(
+        &mut self,
+        ctx: &AppContext,
+        _surface: &wl_surface::WlSurface,
+        _scale: f64,
+    ) {
+        self.on_theme_changed(ctx);
     }
 
     /// Fingers came to rest on the touchpad without scrolling
@@ -425,6 +449,9 @@ impl App for DefaultApp {
     fn on_theme_changed(&mut self, ctx: &AppContext) {
         self.inner.on_theme_changed(ctx)
     }
+    fn on_scale_changed(&mut self, ctx: &AppContext, surface: &wl_surface::WlSurface, scale: f64) {
+        self.inner.on_scale_changed(ctx, surface, scale)
+    }
     fn on_pointer_hold_begin(&mut self, ctx: &AppContext, fingers: u32) {
         self.inner.on_pointer_hold_begin(ctx, fingers)
     }
@@ -606,8 +633,10 @@ impl<A: App + 'static> AppRunnerWithType<A> {
         let xdg_activation: Option<XdgActivationV1> = globals.bind(&qh, 1..=1, ()).ok();
         let fractional_scale_manager: Option<wayland_protocols::wp::fractional_scale::v1::client::wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1> =
             globals.bind(&qh, 1..=1, ()).ok();
-        // The crop a scroll pane clips its content with, and the stretch a
-        // flat fill takes its size from.
+        surface_scale::set_fractional_manager(fractional_scale_manager.is_some());
+        // The crop a scroll pane clips its content with, the stretch a flat
+        // fill takes its size from, and how a buffer drawn at a fractional
+        // scale is shown at its surface's logical size.
         let viewporter: Option<
             wayland_protocols::wp::viewporter::client::wp_viewporter::WpViewporter,
         > = globals.bind(&qh, 1..=1, ()).ok();
@@ -919,11 +948,16 @@ impl<A: App + 'static> CompositorHandler for AppData<A> {
         &mut self,
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
-        _surface: &wl_surface::WlSurface,
+        surface: &wl_surface::WlSurface,
         new_factor: i32,
     ) {
+        use wayland_client::Proxy;
         tracing::debug!("scale_factor_changed: {new_factor}");
-        AppContext::set_scale_factor(new_factor);
+        // Moves the surface only while it has no preferred fractional scale:
+        // once that has arrived, this integer is a rounded-up copy of it.
+        if let Some(scale_120) = AppContext::note_integer_scale(&surface.id(), new_factor) {
+            self.scale_changed(surface, scale_120);
+        }
     }
     fn frame(
         &mut self,
@@ -2233,25 +2267,44 @@ impl<A: App + 'static> Dispatch<otto_dock_item_v1::OttoDockItemV1, ()> for AppDa
     }
 }
 
+/// Each surface's `wp_fractional_scale_v1` carries the surface it is about, so
+/// a preferred scale lands on that surface alone.
 impl<A: App + 'static>
     Dispatch<
         wayland_protocols::wp::fractional_scale::v1::client::wp_fractional_scale_v1::WpFractionalScaleV1,
-        (),
+        wl_surface::WlSurface,
     > for AppData<A>
 {
     fn event(
-        _state: &mut Self,
+        state: &mut Self,
         _proxy: &wayland_protocols::wp::fractional_scale::v1::client::wp_fractional_scale_v1::WpFractionalScaleV1,
         event: wayland_protocols::wp::fractional_scale::v1::client::wp_fractional_scale_v1::Event,
-        _data: &(),
+        surface: &wl_surface::WlSurface,
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
     ) {
+        use wayland_client::Proxy;
         use wayland_protocols::wp::fractional_scale::v1::client::wp_fractional_scale_v1::Event;
         if let Event::PreferredScale { scale } = event {
-            tracing::debug!("preferred fractional scale: {}", scale as f64 / 120.0);
-            AppContext::set_fractional_scale_120(scale);
+            if let Some(scale_120) = AppContext::note_preferred_scale_120(&surface.id(), scale) {
+                tracing::debug!(
+                    "surface {} preferred scale: {}",
+                    surface.id(),
+                    scale_120 as f64 / 120.0
+                );
+                state.scale_changed(surface, scale_120);
+            }
         }
+    }
+}
+
+impl<A: App + 'static> AppData<A> {
+    /// `surface`'s scale moved to `scale_120`. The surface catches up in its
+    /// next draw; the app is told so that it makes one.
+    fn scale_changed(&mut self, surface: &wl_surface::WlSurface, scale_120: u32) {
+        let ctx = AppContext::new(&self.context_data);
+        self.app
+            .on_scale_changed(&ctx, surface, scale_120 as f64 / 120.0);
     }
 }
 

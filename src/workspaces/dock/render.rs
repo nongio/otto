@@ -421,7 +421,12 @@ pub fn setup_label(new_layer: &Layer, label_text: String, position: DockPosition
     let text_padding_v = 7.0 * scale;
     let safe_margin = 50.0 * scale;
     // The text box, without the arrow that sticks out of one of its edges.
-    let body_width = text_bounds.width() + text_padding_h * 2.0;
+    // Whole pixels: the text measures a fractional width (glyphs sit at
+    // fractional positions under slight hinting), and the layout rounds a
+    // fractional size to whichever pixel edge the layer's position lands
+    // on, so the same balloon would come out a pixel wider on one dock edge
+    // than another.
+    let body_width = text_bounds.width().ceil() + text_padding_h * 2.0;
     let body_height = text_size + text_padding_v * 2.0;
     let arrow = match position {
         DockPosition::Bottom => BalloonArrow::Bottom,
@@ -610,9 +615,9 @@ pub fn draw_icon_image(
             );
             shadow_paint.set_image_filter(shadow_filter);
 
-            canvas.draw_image_rect(
+            otto_kit::icons::draw_icon(
+                canvas,
                 image,
-                None,
                 layers::skia::Rect::from_xywh(icon_x, icon_y, icon_size, icon_size),
                 &shadow_paint,
             );

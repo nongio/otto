@@ -1,28 +1,21 @@
 //! The displays pane.
 //!
-//! Rows carrying an `id` are bound to `org.otto.Settings`; rows without one
-//! are not wired to the compositor yet.
+//! The rows here are per-output settings, which the compositor's config keeps
+//! under `displays.named.<connector>` (`DisplaysConfig`/`DisplayProfile` in
+//! `src/config/mod.rs`), keyed by connector name: they follow the port, not
+//! the panel, until a display-identity scheme lands
+//! (`docs/developer/settings-dbus-api.md`, "Open" section). They are not
+//! schema settings, so they carry no `id`: the session-local arrangement in
+//! [`crate::model`] is edited, and `save` writes each display's mode,
+//! position and primary flag with `SetOutputProfile`, applied at the next
+//! login. Virtual outputs, which the compositor reads from
+//! `[[virtual_outputs]]` at startup, are not saved.
 //!
-//! Almost everything here is in the second category, and deliberately so.
-//! Resolution, refresh rate, "use as primary", whether a screen is on, and
-//! where its top-left corner sits are all per-output settings — in the
-//! compositor's config they live under `displays.named.<connector>`
-//! (`DisplaysConfig`/`DisplayProfile` in `src/config/mod.rs`), keyed by
-//! connector name. The wire contract
-//! (`docs/developer/settings-dbus-api.md`, "Open" section) explicitly leaves
-//! that identity unresolved: settings are meant to follow the panel, not the
-//! port, and connector names do not survive a display moving to a different
-//! port or a docking-station reshuffle. Inventing an identifier now (e.g.
-//! `displays.named.HDMI-A-1.resolution`) would bake a wire contract we would
-//! have to support forever even after a real display-identity scheme lands,
-//! so those rows stay unbound. The same goes for the virtual outputs, which
-//! the compositor reads from `[[virtual_outputs]]` at startup
-//! (`VirtualOutputConfig` in `src/config/mod.rs`) and serves no setting for
-//! at all.
-//!
-//! What the unbound rows do edit is the session-local arrangement in
-//! [`crate::model`] — see the doc comment there for why that exists rather
-//! than nothing.
+//! Subpixel text is written on its own, with `SetOutputSubpixel` to
+//! `displays.named.<connector>.subpixel`, and read back once at startup with
+//! `GetOutputSubpixels`. It applies at the
+//! next login (or when the display is next plugged in): the layout is fixed
+//! when an output is created, and clients only learn it then.
 //!
 //! Scale is a global, not a per-display setting: the only scale Otto has is
 //! the top-level `screen_scale` (`DisplayProfile` carries no per-output field,
@@ -103,10 +96,50 @@ fn virtual_buttons() -> &'static [&'static str] {
 /// same way a shortcut line's action pop-up is routed to `panes::keyboard`.
 pub const RESOLUTION_ID: &str = "display.resolution";
 pub const REFRESH_ID: &str = "display.refresh";
+/// The subpixel-text pop-up. Routed the same way, and written with
+/// `SetOutputSubpixel` rather than `Set`: like the mode, it is a per-display
+/// key (`displays.named.<connector>.subpixel`), not a schema setting.
+pub const SUBPIXEL_ID: &str = "display.subpixel";
 
 /// The pop-up rows this pane owns, for the menu pool built at startup.
 pub fn slot_ids() -> &'static [&'static str] {
-    &[RESOLUTION_ID, REFRESH_ID]
+    &[RESOLUTION_ID, REFRESH_ID, SUBPIXEL_ID]
+}
+
+/// The subpixel-text pop-up's entries, each with the value it writes to the
+/// display's `subpixel` key. `None` removes the key: automatic is the
+/// connector's own report, then fontconfig's `rgba`, then grayscale.
+///
+/// RGB and BGR are not translated: they name the order of the stripes, and
+/// they are what the panel's spec sheet and fontconfig call them.
+fn subpixel_choices() -> [(&'static str, Option<&'static str>); 6] {
+    [
+        (otto_kit::t!("settings-choice-automatic"), None),
+        ("RGB", Some("rgb")),
+        ("BGR", Some("bgr")),
+        (otto_kit::t!("settings-display-subpixel-vrgb"), Some("vrgb")),
+        (otto_kit::t!("settings-display-subpixel-vbgr"), Some("vbgr")),
+        (otto_kit::t!("settings-display-subpixel-off"), Some("none")),
+    ]
+}
+
+/// The value the pop-up entry labelled `label` writes, or `None` if no entry
+/// has that label.
+fn subpixel_value(label: &str) -> Option<Option<&'static str>> {
+    subpixel_choices()
+        .into_iter()
+        .find(|(choice, _)| *choice == label)
+        .map(|(_, value)| value)
+}
+
+/// The pop-up entry for a stored value. One the pane does not know — written
+/// by hand, say — shows as itself rather than as a choice it is not.
+fn subpixel_label(value: Option<&str>) -> String {
+    subpixel_choices()
+        .into_iter()
+        .find(|(_, choice)| *choice == value)
+        .map(|(label, _)| label.to_string())
+        .unwrap_or_else(|| value.unwrap_or_default().to_string())
 }
 
 /// The choices `id`'s pop-up offers, or `None` if `id` is not one of ours.
@@ -119,6 +152,12 @@ pub fn menu_choices(id: &str) -> Option<Vec<String>> {
     match id {
         RESOLUTION_ID => Some(selected.resolutions()),
         REFRESH_ID => Some(selected.refresh_rates()),
+        SUBPIXEL_ID => Some(
+            subpixel_choices()
+                .into_iter()
+                .map(|(label, _)| label.to_string())
+                .collect(),
+        ),
         _ => None,
     }
 }
@@ -128,9 +167,40 @@ pub fn choose(id: &str, value: &str) {
     match id {
         RESOLUTION_ID => model::set_selected_resolution(value),
         REFRESH_ID => model::set_selected_refresh(value),
+        SUBPIXEL_ID => {
+            save_subpixel(value);
+            return;
+        }
         _ => return,
     }
     save_selected();
+}
+
+/// Write the selected display's subpixel layout, picked by its pop-up label.
+///
+/// Its own call rather than part of [`save`]: the rest of the profile is
+/// written from the arrangement, which knows nothing of the layout, and a
+/// mode change should not have to restate it.
+fn save_subpixel(label: &str) {
+    let Some(value) = subpixel_value(label) else {
+        return;
+    };
+    let outputs = model::outputs();
+    let Some(selected) = outputs.get(model::selected_output()) else {
+        return;
+    };
+    if selected.is_virtual() {
+        return;
+    }
+    match crate::settings_client::set_output_subpixel(&selected.name, value) {
+        crate::settings_client::SetOutcome::Failed(why) => {
+            eprintln!("{}: {why}", selected.name);
+        }
+        _ => println!(
+            "{}: subpixel layout saved, takes effect at the next login",
+            selected.name
+        ),
+    }
 }
 
 /// Write the selected display's profile to the configuration.
@@ -305,6 +375,14 @@ fn mode_rows(selected: &model::Output) -> Vec<Row> {
             Control::Select(mode.map(|m| m.refresh()).unwrap_or_default()),
         )
         .id(REFRESH_ID),
+        Row::new(
+            otto_kit::t!("settings-display-subpixel"),
+            Control::Select(subpixel_label(
+                crate::settings_client::output_subpixel(&selected.name).as_deref(),
+            )),
+        )
+        .id(SUBPIXEL_ID)
+        .detail(otto_kit::t!("settings-display-subpixel-detail")),
     ]
 }
 
@@ -366,5 +444,35 @@ pub fn press(row: &str, button: &str) {
             eprintln!("displays: only a virtual display can be removed");
         }
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Automatic is the absence of the key, and Off is the config's `none` —
+    /// the two entries whose label is not the value they write.
+    #[test]
+    fn subpixel_entries_write_the_config_spelling() {
+        assert_eq!(
+            subpixel_value(otto_kit::t!("settings-choice-automatic")),
+            Some(None)
+        );
+        assert_eq!(
+            subpixel_value(otto_kit::t!("settings-display-subpixel-off")),
+            Some(Some("none"))
+        );
+        assert_eq!(subpixel_value("BGR"), Some(Some("bgr")));
+        assert_eq!(subpixel_value("not an entry"), None);
+    }
+
+    /// A stored value shows as the entry that writes it, so picking what the
+    /// pop-up already shows changes nothing.
+    #[test]
+    fn a_stored_subpixel_shows_as_its_entry() {
+        for (label, value) in subpixel_choices() {
+            assert_eq!(subpixel_label(value), label);
+        }
     }
 }

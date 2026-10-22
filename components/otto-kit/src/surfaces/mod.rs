@@ -7,6 +7,22 @@ pub mod session_lock;
 pub mod subsurface;
 pub mod toplevel;
 
+pub use crate::app_runner::surface_scale::{
+    BufferGeometry, BufferScale, Frame, ScaleSync, ScaledBuffer, ScaledSurface, Scaling, View,
+    ViewportState,
+};
+/// The protocols a [`Scaling`] binds and a [`ScaledSurface`] speaks, for an
+/// app that binds its own globals and dispatches their events (the
+/// `wayland-protocols` crate itself is otto-kit's to link).
+pub mod scaling_protocols {
+    pub use wayland_protocols::wp::fractional_scale::v1::client::{
+        wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1,
+        wp_fractional_scale_v1::{self, WpFractionalScaleV1},
+    };
+    pub use wayland_protocols::wp::viewporter::client::{
+        wp_viewport::WpViewport, wp_viewporter::WpViewporter,
+    };
+}
 pub use canvas_item::{CanvasItemEvent, CanvasItemSurface, CanvasKeyboardInteractivity};
 pub use common::{apply_hairline_border, BaseWaylandSurface, BufferClaim, SurfaceError};
 pub use dockitem::DockItem;

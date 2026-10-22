@@ -13,11 +13,12 @@ pub fn text_style_with_size_and_weight(
     size: f32,
     weight: layers::skia::font_style::Weight,
 ) -> layers::skia::textlayout::TextStyle {
-    let scale = Config::with(|c| c.screen_scale);
+    let (scale, family) = Config::with(|c| (c.screen_scale, c.font_family.clone()));
     let mut ts = TextStyle::new();
     ts.set_font_size(size * scale as f32);
     let fs = FontStyle::new(weight, Width::NORMAL, Slant::Upright);
     ts.set_font_style(fs);
+    otto_kit::text_rendering::TextRendering::for_family(&family).apply_to_text_style(&mut ts);
     ts
 }
 
@@ -103,6 +104,12 @@ pub mod text_styles;
 pub enum ThemeScheme {
     Light,
     Dark,
+}
+
+/// Whether the configured scheme is the dark one, as the configuration
+/// stands now.
+pub fn is_dark() -> bool {
+    Config::with(|c| matches!(c.theme_scheme, ThemeScheme::Dark))
 }
 
 /// The otto-kit palette matching the compositor's configured scheme.

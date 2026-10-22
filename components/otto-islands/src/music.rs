@@ -351,10 +351,14 @@ impl MusicActivityRenderer {
                 true,
             );
             let src = Rect::from_xywh(0.0, 0.0, art.width() as f32, art.height() as f32);
-            canvas.draw_image_rect(
+            canvas.draw_image_rect_with_sampling_options(
                 art,
                 Some((&src, otto_kit::skia::canvas::SrcRectConstraint::Strict)),
                 dst,
+                otto_kit::skia::SamplingOptions::new(
+                    otto_kit::skia::FilterMode::Linear,
+                    otto_kit::skia::MipmapMode::Linear,
+                ),
                 &Paint::default(),
             );
             canvas.restore();

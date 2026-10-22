@@ -52,17 +52,19 @@ those — a badge you can catch lying is a badge you stop reading.
 The Displays pane probes the outputs that are actually connected, so the modes
 listed are the ones your monitor reports, not a guess.
 
-**Nothing here is persisted yet.** Resolution, refresh rate, primary display, on
-or off, and arrangement are all deliberately unbound: they are per-output
-settings, and Otto has no display-identity scheme that survives a monitor moving
-to a different port or a dock reshuffle, so inventing a wire contract keyed on
-connector name now would have to be supported forever. Your changes apply to the
-session and are gone at restart. To make them stick, write them under
-`[displays.named.<connector>]` in the config file. See
-[Display configuration](display.md).
+Resolution, refresh rate, the primary display, arrangement and subpixel text
+are saved under `[displays.named.<connector>]` in the config file and take
+effect at the next login. They follow the connector the monitor is plugged
+into, not the monitor itself, so a monitor moved to another port starts from
+its defaults there. See [Display configuration](display.md).
 
 Scale is the exception: it is bound, but it is the global `screen_scale`, not a
 per-display value.
+
+**Subpixel text** is per display and is saved: it writes the monitor's
+`subpixel` key under `[displays.named.<connector>]`. Automatic leaves it to the
+monitor and fontconfig; if letters show coloured edges, try BGR. It applies at
+the next login. See [Display configuration](display.md#display-profiles).
 
 ## Renderer
 

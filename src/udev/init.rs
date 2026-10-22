@@ -565,6 +565,12 @@ pub fn run_udev<A: RendererApi>() {
     #[cfg(feature = "xwayland")]
     state.start_xwayland();
 
+    // GTK 3 reads its font settings, and libadwaita its colour scheme, from
+    // GSettings, not from the portal or XSETTINGS. Only a session of Otto's
+    // own writes them: a nested Otto would overwrite the desktop it runs
+    // inside.
+    crate::gnome_interface::sync_session(&state.font_settings());
+
     /*
      * Start the screenshare D-Bus service
      */

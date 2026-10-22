@@ -2305,6 +2305,62 @@ pub struct DisplayProfile {
     pub refresh_hz: Option<f64>,
     #[serde(default)]
     pub position: Option<DisplayPosition>,
+    /// The panel's subpixel layout, for when the connector does not report
+    /// it (most do not) or reports it wrong.
+    #[serde(default)]
+    pub subpixel: Option<DisplaySubpixel>,
+}
+
+/// Subpixel layout of a panel, named as fontconfig's `rgba` names it.
+///
+/// It decides whether text is drawn with subpixel antialiasing on that
+/// display, by Otto and by the clients it tells through `wl_output`.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum DisplaySubpixel {
+    /// Red, green, blue, left to right.
+    Rgb,
+    /// Blue, green, red, left to right.
+    Bgr,
+    /// Red, green, blue, top to bottom.
+    Vrgb,
+    /// Blue, green, red, top to bottom.
+    Vbgr,
+    /// No subpixels to address (an OLED with another layout, a projector):
+    /// grayscale text.
+    None,
+}
+
+impl DisplaySubpixel {
+    /// The value as the config file spells it, the same as serde's.
+    pub fn config_name(self) -> &'static str {
+        match self {
+            Self::Rgb => "rgb",
+            Self::Bgr => "bgr",
+            Self::Vrgb => "vrgb",
+            Self::Vbgr => "vbgr",
+            Self::None => "none",
+        }
+    }
+
+    /// The layout `name` spells in the config file, if it spells one.
+    pub fn from_config_name(name: &str) -> Option<Self> {
+        [Self::Rgb, Self::Bgr, Self::Vrgb, Self::Vbgr, Self::None]
+            .into_iter()
+            .find(|layout| layout.config_name() == name)
+    }
+}
+
+impl From<DisplaySubpixel> for smithay::output::Subpixel {
+    fn from(subpixel: DisplaySubpixel) -> Self {
+        match subpixel {
+            DisplaySubpixel::Rgb => Self::HorizontalRgb,
+            DisplaySubpixel::Bgr => Self::HorizontalBgr,
+            DisplaySubpixel::Vrgb => Self::VerticalRgb,
+            DisplaySubpixel::Vbgr => Self::VerticalBgr,
+            DisplaySubpixel::None => Self::None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -2455,6 +2511,25 @@ mod tests {
         let config: Config =
             toml::from_str("[desk]\nenabled = true\n").expect("desk table deserializes");
         assert!(config.desk.enabled);
+    }
+
+    /// What `SetOutputSubpixel` writes is what a display profile reads back.
+    #[test]
+    fn subpixel_names_are_the_config_spelling() {
+        for layout in [
+            DisplaySubpixel::Rgb,
+            DisplaySubpixel::Bgr,
+            DisplaySubpixel::Vrgb,
+            DisplaySubpixel::Vbgr,
+            DisplaySubpixel::None,
+        ] {
+            let name = layout.config_name();
+            let profile: DisplayProfile =
+                toml::from_str(&format!("subpixel = \"{name}\"\n")).expect("profile parses");
+            assert_eq!(profile.subpixel, Some(layout));
+            assert_eq!(DisplaySubpixel::from_config_name(name), Some(layout));
+        }
+        assert_eq!(DisplaySubpixel::from_config_name("RGB"), None);
     }
 
     #[test]

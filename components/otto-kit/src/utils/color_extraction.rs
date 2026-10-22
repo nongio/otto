@@ -176,10 +176,12 @@ fn sample_pixels(image: &Image) -> Vec<(u8, u8, u8)> {
 
     let src = skia_safe::Rect::from_iwh(iw, ih);
     let dst = skia_safe::Rect::from_iwh(sample_w, sample_h);
-    surface.canvas().draw_image_rect(
+    // Nearest: picks real pixels of the image to count, never blends of them.
+    surface.canvas().draw_image_rect_with_sampling_options(
         image,
         Some((&src, skia_safe::canvas::SrcRectConstraint::Strict)),
         dst,
+        skia_safe::SamplingOptions::default(),
         &skia_safe::Paint::default(),
     );
 

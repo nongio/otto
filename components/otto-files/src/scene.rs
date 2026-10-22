@@ -471,7 +471,7 @@ impl Row {
             if self.cut {
                 paint.set_alpha(110);
             }
-            canvas.draw_image_rect(image, None, icon_box, &paint);
+            icons::draw_icon(canvas, image, icon_box, &paint);
         }
         if self.link {
             view::draw_link_badge(canvas, icon_box, self.cut);

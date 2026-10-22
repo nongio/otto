@@ -4279,7 +4279,7 @@ dependencies = [
 [[package]]
 name = "laye-rs"
 version = "1.18.2"
-source = "git+https://github.com/nongio/layers?tag=v1.18.2#744fb23948cce807cfe13e41583b68d056b7d387"
+source = "git+https://github.com/nongio/layers?rev=46dcd9ebb2613d8bf303a97176f8e9cdfc7813ca#46dcd9ebb2613d8bf303a97176f8e9cdfc7813ca"
 dependencies = [
  "bezier_easing",
  "bitflags 1.3.2",
@@ -4313,7 +4313,7 @@ dependencies = [
 [[package]]
 name = "layers-debug-server"
 version = "0.3.0"
-source = "git+https://github.com/nongio/layers?tag=v1.18.2#744fb23948cce807cfe13e41583b68d056b7d387"
+source = "git+https://github.com/nongio/layers?rev=46dcd9ebb2613d8bf303a97176f8e9cdfc7813ca#46dcd9ebb2613d8bf303a97176f8e9cdfc7813ca"
 dependencies = [
  "futures",
  "serde",
@@ -5395,19 +5395,6 @@ dependencies = [
  "wayland-client",
  "wayland-protocols-wlr",
  "zeroize",
-]
-
-[[package]]
-name = "otto-input-overlay"
-version = "1.8.0"
-dependencies = [
- "futures-util",
- "libc",
- "otto-kit",
- "smithay-client-toolkit",
- "tokio",
- "wayland-protocols-wlr",
- "zbus",
 ]
 
 [[package]]

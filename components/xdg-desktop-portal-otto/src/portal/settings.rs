@@ -31,6 +31,29 @@ const OTTO_DESKTOP_KEYS: &[(&str, &str)] = &[
 const WM_PREFERENCES: &str = "org.gnome.desktop.wm.preferences";
 const BUTTON_LAYOUT: &str = "button-layout";
 
+/// Where GTK 4 and Qt's GNOME theme read the UI font and how text is
+/// rasterised, when their own settings backend is not GNOME's.
+const INTERFACE: &str = "org.gnome.desktop.interface";
+const FONT_KEYS: &[&str] = &[
+    "font-name",
+    "font-antialiasing",
+    "font-hinting",
+    "font-rgba-order",
+    "font-rendering",
+];
+
+/// The compositor's font settings, with `font-rendering` set to `manual`.
+///
+/// GTK 4.16 and later decide hinting and antialiasing for themselves unless
+/// `font-rendering` is `manual`: left at its default, `automatic`, a GTK 4
+/// window ignores `font-hinting`, `font-antialiasing` and `font-rgba-order`
+/// and its text never follows what Otto publishes. The keys this portal
+/// serves are the desktop's choice, so it says to use them.
+fn with_manual_rendering(mut fonts: HashMap<String, String>) -> HashMap<String, String> {
+    fonts.insert("font-rendering".to_string(), "manual".to_string());
+    fonts
+}
+
 /// The GNOME `button-layout` string for Otto's controls: the buttons before
 /// the colon go at the leading edge, those after it at the trailing one.
 ///
@@ -135,6 +158,20 @@ impl SettingsPortal {
             Err(err) => debug!(?err, "compositor has no window controls side"),
         }
 
+        // Otto's font and text rendering, so text in GTK and Qt windows is
+        // drawn the way Otto draws its own.
+        match self.read_font_settings().await {
+            Ok(fonts) => {
+                let interface = fonts
+                    .into_iter()
+                    .filter(|(key, _)| FONT_KEYS.contains(&key.as_str()))
+                    .map(|(key, value)| (key, Value::from(value).try_into().unwrap()))
+                    .collect();
+                namespaces.insert(INTERFACE.to_string(), interface);
+            }
+            Err(err) => debug!(?err, "compositor has no font settings"),
+        }
+
         Ok(namespaces)
     }
 
@@ -165,6 +202,16 @@ impl SettingsPortal {
                 Ok(Value::from(sound_theme).try_into().unwrap())
             }
             (WM_PREFERENCES, BUTTON_LAYOUT) => self.read_button_layout().await,
+            (INTERFACE, key) if FONT_KEYS.contains(&key) => {
+                let value = self
+                    .read_font_settings()
+                    .await?
+                    .remove(key)
+                    .ok_or_else(|| {
+                        fdo::Error::Failed(format!("Unknown setting: {namespace}.{key}"))
+                    })?;
+                Ok(Value::from(value).try_into().unwrap())
+            }
             _ => Err(fdo::Error::Failed(format!(
                 "Unknown setting: {}.{}",
                 namespace, key
@@ -232,6 +279,16 @@ impl SettingsPortal {
             error!(?err, "Failed to read locales from compositor");
             fdo::Error::Failed(format!("Failed to read locales: {err}"))
         })
+    }
+
+    /// The UI font and text rendering, keyed by their `INTERFACE` names.
+    async fn read_font_settings(&self) -> fdo::Result<HashMap<String, String>> {
+        let proxy = self.get_settings_proxy().await?;
+        let fonts = proxy.get_font_settings().await.map_err(|err| {
+            error!(?err, "Failed to read font settings from compositor");
+            fdo::Error::Failed(format!("Failed to read font settings: {err}"))
+        })?;
+        Ok(with_manual_rendering(fonts))
     }
 
     /// Reads one setting from the compositor by its Otto identifier, as the

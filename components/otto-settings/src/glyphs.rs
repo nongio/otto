@@ -259,6 +259,6 @@ fn draw_solar(canvas: &Canvas, name: &str, cx: f32, cy: f32, size: f32, color: C
     };
     let half = size / 2.0;
     let dst = otto_kit::skia::Rect::from_ltrb(cx - half, cy - half, cx + half, cy + half);
-    canvas.draw_image_rect(&image, None, dst, &Paint::default());
+    otto_kit::icons::draw_icon(canvas, &image, dst, &Paint::default());
     true
 }

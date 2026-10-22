@@ -47,14 +47,12 @@ impl DockItem {
             + 'static,
     {
         let wl_surface = compositor.create_surface(qh);
-        // Create a new Wayland surface        // Use 2x buffer scale for HiDPI rendering
-        let buffer_scale = 2;
-        wl_surface.set_buffer_scale(buffer_scale);
+        // Create a new Wayland surface
 
         // Commit to trigger initial configure
         wl_surface.commit();
 
-        let mut core = BaseWaylandSurface::new(wl_surface.clone(), width, height, buffer_scale);
+        let mut core = BaseWaylandSurface::new(wl_surface.clone(), width, height);
 
         core.create_skia_surface()?;
 

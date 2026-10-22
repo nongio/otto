@@ -66,6 +66,20 @@ pub(super) fn sync_scene_size_to_outputs(
     }
 }
 
+/// The subpixel layout fontconfig's `rgba` names, for a panel that reports
+/// none of its own.
+fn fontconfig_subpixel() -> Subpixel {
+    use otto_kit::text_rendering::{FontconfigRgba, TextRendering};
+    match TextRendering::system().rgba {
+        Some(FontconfigRgba::Rgb) => Subpixel::HorizontalRgb,
+        Some(FontconfigRgba::Bgr) => Subpixel::HorizontalBgr,
+        Some(FontconfigRgba::Vrgb) => Subpixel::VerticalRgb,
+        Some(FontconfigRgba::Vbgr) => Subpixel::VerticalBgr,
+        Some(FontconfigRgba::None) => Subpixel::None,
+        None => Subpixel::Unknown,
+    }
+}
+
 impl<A: RendererApi> Otto<UdevData<A>> {
     /// Handles addition of a new DRM device
     pub(super) fn device_added(
@@ -414,15 +428,24 @@ impl<A: RendererApi> Otto<UdevData<A>> {
             }
         };
 
-        let subpixel = match connector.subpixel() {
-            SubPixel::Unknown => Subpixel::Unknown,
-            SubPixel::None => Subpixel::None,
-            SubPixel::NotImplemented => Subpixel::Unknown,
-            SubPixel::HorizontalRgb => Subpixel::HorizontalRgb,
-            SubPixel::HorizontalBgr => Subpixel::HorizontalBgr,
-            SubPixel::VerticalRgb => Subpixel::VerticalRgb,
-            SubPixel::VerticalBgr => Subpixel::VerticalBgr,
-            _ => Subpixel::Unknown,
+        // The display's own setting wins: most connectors report nothing, and
+        // a few report the wrong layout. Then fontconfig's desktop-wide
+        // `rgba`, which is where other desktops keep it: as `none` it is the
+        // user turning subpixel text off, which only the display's setting
+        // overrides; any other value stands in for a connector that reports
+        // nothing.
+        let fontconfig = fontconfig_subpixel();
+        let subpixel = match config_profile.as_ref().and_then(|profile| profile.subpixel) {
+            Some(subpixel) => subpixel.into(),
+            None if fontconfig == Subpixel::None => Subpixel::None,
+            None => match connector.subpixel() {
+                SubPixel::None => Subpixel::None,
+                SubPixel::HorizontalRgb => Subpixel::HorizontalRgb,
+                SubPixel::HorizontalBgr => Subpixel::HorizontalBgr,
+                SubPixel::VerticalRgb => Subpixel::VerticalRgb,
+                SubPixel::VerticalBgr => Subpixel::VerticalBgr,
+                _ => fontconfig,
+            },
         };
         let (phys_w, phys_h) = connector.size().unwrap_or((0, 0));
 

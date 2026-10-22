@@ -1,4 +1,6 @@
 use skia_safe::{self as skia, Font, FontMgr, FontStyle};
+
+use crate::text_rendering::TextRendering;
 use std::cell::RefCell;
 
 /// Cache key that doesn't rely on FontStyle being Hash/Eq
@@ -60,8 +62,7 @@ impl FontCache {
         let typeface = self.font_mgr.match_family_style(family, style)?;
         let typeface = self.covering(typeface, family, style);
         let mut font = Font::from_typeface(typeface, size);
-        font.set_subpixel(true);
-        font.set_edging(skia::font::Edging::SubpixelAntiAlias);
+        TextRendering::for_family(family).apply_to_font(&mut font);
 
         // Cache it
         self.cache.borrow_mut().insert(key, font.clone());
@@ -97,8 +98,7 @@ impl FontCache {
             c as skia::Unichar,
         )?;
         let mut found = Font::from_typeface(replacement, size);
-        found.set_subpixel(true);
-        found.set_edging(skia::font::Edging::SubpixelAntiAlias);
+        TextRendering::for_family(&typeface.family_name()).apply_to_font(&mut found);
         self.cache.borrow_mut().insert(key, found.clone());
         Some(found)
     }
@@ -510,8 +510,7 @@ impl FontCache {
             .expect("Failed to create default typeface");
         let typeface = self.covering(typeface, "sans-serif", style);
         let mut font = Font::from_typeface(typeface, size);
-        font.set_subpixel(true);
-        font.set_edging(skia::font::Edging::SubpixelAntiAlias);
+        TextRendering::for_family("sans-serif").apply_to_font(&mut font);
         font
     }
 }
@@ -657,10 +656,8 @@ impl TextStyle {
         use skia::font_style::{Slant, Weight, Width};
         let weight = Weight::from(self.weight);
         let style = FontStyle::new(weight, Width::NORMAL, Slant::Upright);
-        let mut font = get_font_with_fallback(self.family, style, self.size * scale);
-        font.set_subpixel(true);
-        font.set_edging(skia::font::Edging::SubpixelAntiAlias);
-        font
+        // The font cache applies the family's rendering settings.
+        get_font_with_fallback(self.family, style, self.size * scale)
     }
 }
 

@@ -265,8 +265,9 @@ another device". No capture stream is open then. A paused track keeps what it sh
   panel overlaps the island.
 - **Configuration:** none. Every dimension and timeout is compiled in.
 - **Scaling:** layout is in logical pixels; geometry pushed to the surface-style
-  protocol is physical and must use `AppContext::fractional_scale()`, not the
-  fixed 2x raster buffer scale.
+  protocol is physical and must use the surface's own scale
+  (`AppContext::surface_scale`), the one its buffer is rasterised at, and be
+  re-sent when it changes.
 - **D-Bus name collision:** a second instance fails to claim `org.otto.Island` —
   single instance by design.
 - **Fullscreen windows:** the island is on the Overlay layer. Behaviour with

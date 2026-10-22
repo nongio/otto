@@ -763,6 +763,14 @@ smithay::reexports::wayland_server::delegate_dispatch!(@<BackendData: Backend + 
     smithay::reexports::wayland_protocols_wlr::screencopy::v1::server::zwlr_screencopy_frame_v1::ZwlrScreencopyFrameV1: screencopy::ScreencopyFrameData
 ] => screencopy::ScreencopyManagerState);
 
+/// Otto's UI font and text rendering, as other toolkits are told them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FontSettings {
+    /// A Pango font description: the configured family at body size.
+    pub name: String,
+    pub rendering: otto_kit::text_rendering::PublishedRendering,
+}
+
 impl<BackendData: Backend + 'static> Otto<BackendData> {
     pub fn init(
         display: Display<Otto<BackendData>>,
@@ -779,6 +787,10 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
 
         // The settings schema says which settings reach this kind of session.
         crate::settings::set_backend(backend_data.backend_name());
+
+        // Qt applications take their font and colour scheme from a platform
+        // theme Otto names, before anything is spawned to inherit it.
+        let qt_platform_theme = crate::qt_platform_theme::apply();
 
         let clock = Clock::new();
 
@@ -842,6 +854,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                 assignments.push(crate::export_tiling_decoration());
                 assignments.push(crate::export_maximize_button());
                 assignments.push(crate::export_color_scheme());
+                assignments.extend(qt_platform_theme.clone());
                 let args: Vec<&str> = assignments.iter().map(String::as_str).collect();
 
                 let mut systemctl = vec!["--user", "set-environment"];
@@ -1593,6 +1606,35 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             .unwrap_or(1.0)
     }
 
+    /// Otto's text rendering as it is published to toolkits that rasterise
+    /// their own: XSETTINGS for X11 clients, the Settings portal for the rest.
+    ///
+    /// The rendering is fontconfig's, as Otto draws with it. The subpixel
+    /// order is the outputs' when they all name the same one (X11 has one
+    /// screen and the portal one value), else fontconfig's `rgba`.
+    pub fn font_settings(&self) -> FontSettings {
+        use otto_kit::text_rendering::{self, FontconfigRgba, TextRendering};
+        use smithay::output::Subpixel;
+        let rendering = TextRendering::system();
+        let mut layouts = self.workspaces.outputs().filter_map(|output| {
+            match output.physical_properties().subpixel {
+                Subpixel::HorizontalRgb => Some(FontconfigRgba::Rgb),
+                Subpixel::HorizontalBgr => Some(FontconfigRgba::Bgr),
+                Subpixel::VerticalRgb => Some(FontconfigRgba::Vrgb),
+                Subpixel::VerticalBgr => Some(FontconfigRgba::Vbgr),
+                Subpixel::None => Some(FontconfigRgba::None),
+                _ => None,
+            }
+        });
+        let first = layouts.next();
+        let outputs_agree = first.filter(|first| layouts.all(|layout| layout == *first));
+        let family = Config::with(|c| c.font_family.clone());
+        FontSettings {
+            name: text_rendering::font_name(&family, otto_kit::typography::styles::BODY.size),
+            rendering: rendering.published(outputs_agree.or(rendering.rgba)),
+        }
+    }
+
     /// Apply the primary output's integer scale to the given XWayland client's
     /// `client_scale`. See `start_xwayland` for why this yields a native-resolution
     /// X screen.
@@ -1631,6 +1673,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         use smithay::xwayland::xwm::settings::Value;
         let scale = self.xwayland_target_scale();
         let (cursor_theme, cursor_size) = Config::with(|c| (c.cursor_theme.clone(), c.cursor_size));
+        let fonts = self.font_settings();
         let Some(wm) = self.xwm.as_mut() else { return };
         let settings = [
             (
@@ -1658,6 +1701,25 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                 "Gtk/CursorThemeSize".to_string(),
                 Value::Integer((cursor_size as f64 * scale) as i32),
             ),
+            // How Otto rasterises text, so Xft, GTK and Chromium draw theirs
+            // the same way beside it (see `font_settings`).
+            (
+                "Xft/Antialias".to_string(),
+                Value::Integer(fonts.rendering.xft_antialias),
+            ),
+            (
+                "Xft/Hinting".to_string(),
+                Value::Integer(fonts.rendering.xft_hinting),
+            ),
+            (
+                "Xft/HintStyle".to_string(),
+                Value::String(fonts.rendering.xft_hint_style.to_string()),
+            ),
+            (
+                "Xft/RGBA".to_string(),
+                Value::String(fonts.rendering.xft_rgba.to_string()),
+            ),
+            ("Gtk/FontName".to_string(), Value::String(fonts.name)),
         ];
         match wm.set_xsettings(settings.into_iter()) {
             Ok(()) => tracing::info!(scale, "published XWayland XSETTINGS scale"),
@@ -2576,7 +2638,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             height: window.decoration_height() as f32,
             title: window.xdg_title(),
             active: is_focused,
-            dark: Config::with(|c| matches!(c.theme_scheme, crate::theme::ThemeScheme::Dark)),
+            dark: crate::theme::is_dark(),
             // A fullscreen window, or a maximized one spanning the output's
             // full width, sits flush against the screen edges, so its frame
             // (and with it the bar) squares off. A maximized window that

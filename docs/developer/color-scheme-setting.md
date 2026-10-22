@@ -33,8 +33,13 @@ a number:
 | `1` | prefer dark |
 | `2` | prefer light |
 
-GTK4 and Qt6 apps query this automatically. So does Firefox, and Chromium via
-its portal integration.
+GTK4 apps query this automatically. So does Firefox, and Chromium via its
+portal integration. GTK 3, libadwaita outside a sandbox and Qt 6 (through
+Qt's `gtk3` platform theme, which Otto names in `QT_QPA_PLATFORMTHEME`) read
+GSettings' `org.gnome.desktop.interface color-scheme` instead, so a session of
+Otto's own writes `prefer-dark` or `default` there at startup and on every
+change (`src/gnome_interface.rs`, see [XDG
+specifications](xdg-specifications.md#fonts-and-text)).
 
 ## The chain
 
@@ -43,6 +48,8 @@ App  →  org.freedesktop.portal.Settings          (xdg-desktop-portal)
      →  org.freedesktop.impl.portal.Settings     (xdg-desktop-portal-otto)
      →  org.otto.Settings                        (the compositor)
      →  theme_scheme in the config
+
+GTK 3, libadwaita, Qt  →  GSettings color-scheme  ←  gnome_interface::sync_color_scheme
 ```
 
 **Compositor service**: `src/settings_service.rs` registers `org.otto.Settings`
@@ -100,14 +107,15 @@ different colour under the other scheme.
 otto-kit apps pick these up through the watchers in `color_scheme.rs`,
 `accent.rs` and `icon_theme.rs`, started by `AppRunner`.
 
-### The other three namespaces
+### The other four namespaces
 
-Appearance is the namespace this page is about, but the backend serves four,
+Appearance is the namespace this page is about, but the backend serves five,
 because most of what Otto has to say has no freedesktop key:
 
 | Namespace | Keys |
 | --------- | ---- |
 | `org.gnome.desktop.sound` | `theme-name`, the one GTK and libcanberra already read |
+| `org.gnome.desktop.interface` | `font-name`, `font-antialiasing`, `font-hinting`, `font-rgba-order`, `font-rendering`: Otto's font and text rendering, which GTK 4 reads (see [XDG specifications](xdg-specifications.md#fonts-and-text)) |
 | `org.otto.desktop` | `locales`, `rounded-corners`, `frosting`, `window-controls-side`, `maximize-button`, `tiling-decoration` |
 | `org.gnome.desktop.wm.preferences` | `button-layout`, which is where GTK (and so Chrome, Firefox and every libadwaita app drawing its own titlebar) looks for which end the window buttons go at |
 

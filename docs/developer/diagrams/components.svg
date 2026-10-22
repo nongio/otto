@@ -54,10 +54,8 @@
 <text class="t" x="219.0" y="162" text-anchor="middle">otto-lock</text>
 <rect class="box" x="270" y="142" width="122" height="30" rx="6"/>
 <text class="t" x="331.0" y="162" text-anchor="middle">otto-authorize</text>
-<rect class="box" x="400" y="142" width="151" height="30" rx="6"/>
-<text class="t" x="475.5" y="162" text-anchor="middle">otto-input-overlay</text>
-<rect class="box" x="559" y="142" width="108" height="30" rx="6"/>
-<text class="t" x="613.0" y="162" text-anchor="middle">otto-dictate</text>
+<rect class="box" x="400" y="142" width="108" height="30" rx="6"/>
+<text class="t" x="454.0" y="162" text-anchor="middle">otto-dictate</text>
 <rect class="box" x="176" y="180" width="79" height="30" rx="6"/>
 <text class="t" x="215.5" y="200" text-anchor="middle">otto-msg</text>
 <rect class="box" x="263" y="180" width="101" height="30" rx="6"/>
