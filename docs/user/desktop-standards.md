@@ -9,8 +9,9 @@ below list what is supported today; if something isn't listed, assume it
 isn't there yet.
 
 Developers looking for where each one lives in the source want
-[XDG specifications](../developer/xdg-specifications.md) and
-[Wayland protocols](../developer/wayland.md).
+[XDG specifications](../developer/xdg-specifications.md),
+[Wayland protocols](../developer/wayland.md) and
+[Text rendering](../developer/text-rendering.md).
 
 ## How we see the Linux desktop
 
@@ -50,10 +51,10 @@ is listed under [What is not supported](#what-is-not-supported).
 | [Notifications](https://specifications.freedesktop.org/notification-spec/latest/) | Otto is the notification server: `notify-send` and every app's notifications work, with actions and icons | [Dynamic Island](dynamic-island.md) |
 | [Desktop portal](https://flatpak.github.io/xdg-desktop-portal/docs/) | Otto's own backend: screen sharing, screenshots, file dialogs, appearance settings and permission prompts, for browsers, OBS and Flatpak apps | [Screen Sharing](screen-sharing.md) |
 | [StatusNotifierItem](https://www.freedesktop.org/wiki/Specifications/StatusNotifierItem/) | Tray icons in the top bar, with their menus (DBusMenu) | [Top Bar](topbar.md) |
-| Global menu (`com.canonical.AppMenu`, KDE appmenu) | Apps that export their menu bar show it in the top bar | [Top Bar](topbar.md) |
+| Global menu (`com.canonical.AppMenu`) | Apps that export their menu bar show it in the top bar | [Top Bar](topbar.md) |
 | [MPRIS](https://specifications.freedesktop.org/mpris-spec/latest/) | Any media player shows in the Dynamic Island and follows the media keys | [Audio](audio.md) |
 | [AT-SPI](https://www.freedesktop.org/wiki/Accessibility/AT-SPI2/) | Screen readers read Otto's chrome and Otto's apps | [Accessibility](accessibility.md) |
-| Fontconfig | Font names, aliases and your `fonts.conf` rendering rules; see [Fonts and text](#fonts-and-text) | [Theming](theming.md) |
+| Fontconfig | Font names, aliases and your `fonts.conf` rendering rules; see [Fonts and text](#fonts-and-text) | [Theming](theming.md#fonts) |
 
 ### System services Otto uses
 
@@ -69,33 +70,21 @@ is listed under [What is not supported](#what-is-not-supported).
 
 ## Fonts and text
 
-Fonts are resolved through fontconfig, like every other Linux application:
-the font you name in Settings is matched against what is installed, aliases
-like `sans-serif` work, and `~/.config/fontconfig/fonts.conf` is respected.
+Fonts go through fontconfig, like every other Linux application: the font you
+pick is matched against what is installed, and your `fonts.conf` rules for
+hinting and antialiasing apply to Otto's own text. Choosing the font is in
+[Theming](theming.md#fonts); subpixel text, per monitor, is in
+[Display](display.md#display-profiles). Text inside other programs is drawn
+by those programs; Otto tells them its font and settings so they match:
 
-Hinting and antialiasing follow fontconfig (`antialias`, `hinting`,
-`hintstyle`, `autohint`, `rgba`) in Otto's own text: the dock, the top bar,
-titlebars and Otto's apps. Text inside other programs is drawn by those
-programs, before Otto sees it; Otto composites the finished image.
-
-**Subpixel text** is per monitor: set it in **Settings → Displays → Subpixel
-text**, or with `subpixel` in the display profile. Automatic uses what the
-monitor reports, else fontconfig's `rgba`, and draws grayscale when neither
-says or when `rgba` is `none`. Details in [Display](display.md).
-
-Otto also tells other toolkits its font and how it draws text, so they look
-like Otto beside it:
-
-| Apps | Get Otto's font and settings from | Follows hinting? |
-|------|-----------------------------------|------------------|
+| Apps | Get Otto's font and settings from | Follows your hint style? |
+|------|-----------------------------------|--------------------------|
 | Otto and Otto's apps | Otto's configuration and fontconfig | yes |
 | GTK 4 | the desktop portal | yes |
-| GTK 3, Chromium, Electron | GNOME's settings store, which Otto fills at login | yes |
+| GTK 3 | GNOME's settings store, which Otto fills at login | with grayscale text; with subpixel text every style looks alike |
+| Chromium, Electron | GNOME's settings store and fontconfig | yes |
 | Qt | Qt's GTK theme, which Otto selects unless `QT_QPA_PLATFORMTHEME` is set | only on an unscaled display (Qt's own rule) |
-| X11 apps (Xwayland) | XSETTINGS | yes |
-
-Changing the font needs a restart; a `fonts.conf` change applies from the
-next login.
+| X11 apps (Xwayland) | XSETTINGS | yes; Qt apps only at 96 DPI |
 
 ## Wayland protocols
 
@@ -113,6 +102,7 @@ read the screen or type for you.
 | `xdg-foreign` | A dialog attaching to another app's window (portal file dialogs) | |
 | `xdg-dialog` | Marking a dialog modal | Modal dialogs float when tiling |
 | `xwayland-shell`, Xwayland keyboard grab | X11 apps | |
+| KDE appmenu | Qt and KDE apps' menus in the top bar | See [Top Bar](topbar.md) |
 | `ext-background-effect` | Blur behind translucent terminals and panels | The whole window is frosted, not a region |
 
 ### Display and scaling
@@ -182,10 +172,9 @@ read the screen or type for you.
 | Writing thumbnails to the shared cache | Thumbnails other file managers made are used; Otto's own are not saved for others |
 | Startup notification (busy cursor while an app starts) | None |
 | `org.freedesktop.FileManager1` ("Show in folder" from other apps) | Open the folder in Files |
-| Third-party lock screens | Use Otto's lock screen |
 | Text scaling | Text follows the display scale; scale the display to make text bigger |
 | Pushing font changes live to GTK 3 and Qt apps | Restart the app after changing fonts |
 | `ext-idle-notify` (idle daemons like `swayidle`) | Use Otto's [Power Management](power-management.md) |
 | `wlr-output-management` (`wlr-randr`, `kanshi`) | Set displays in Settings or the [display profiles](display.md) |
 | `ext-image-copy-capture` | Use `wlr-screencopy` tools or the portal |
-| `tearing-control`, `content-type`, `color-management`, `single-pixel-buffer`, `alpha-modifier`, `fifo`, `commit-timing`, `xdg-system-bell`, `xdg-toplevel-icon` | Apps fall back to their default behaviour |
+| Other newer protocols (`tearing-control`, `color-management`, `xdg-system-bell`, `xdg-toplevel-icon`, …) | Apps fall back to their default behaviour. The full list is in [Wayland protocols](../developer/wayland.md#not-served) |

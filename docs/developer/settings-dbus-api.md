@@ -132,7 +132,7 @@ Pango points), `font-antialiasing`, `font-hinting` and `font-rgba-order`. It
 is not a setting: the rendering is fontconfig's and the subpixel order the
 outputs', so the compositor works it out on its own thread, the same values it
 sends Xwayland as XSETTINGS. See
-[xdg-specifications.md](xdg-specifications.md#fonts-and-text).
+[Text rendering](text-rendering.md#what-otto-publishes).
 
 ### Outputs
 

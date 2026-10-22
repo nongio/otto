@@ -3,7 +3,8 @@
 > What each protocol means to a user is in
 > [Open standards](../user/desktop-standards.md#wayland-protocols).
 > The freedesktop/XDG file and D-Bus standards around them are in
-> [XDG specifications](xdg-specifications.md).
+> [XDG specifications](xdg-specifications.md). This page owns every protocol,
+> the `xdg_*` ones included.
 
 Otto follows Smithay's "one big compositor state" architecture: nearly all
 protocol state and every handler hangs off a single struct, `Otto<BackendData>`.
@@ -28,7 +29,7 @@ clients tagged through `wp_security_context_v1` (`src/sandbox.rs`).
 | `zxdg_output_manager_v1` | 3 | all | `OutputManagerState::new_with_xdg_output` |
 | `xdg_wm_base` | 7 | all | `XdgShellHandler` in `src/shell/xdg.rs` |
 | `zxdg_decoration_manager_v1`, `org_kde_kwin_server_decoration_manager` | 1, 1 | all | `src/state/xdg_decoration_handler.rs` |
-| `xdg_wm_dialog_v1` | 1 | all; the modal hint floats a parentless window when tiling | `src/shell/tiling.rs` |
+| `xdg_wm_dialog_v1` | 1 | all; the modal hint floats a parentless window when tiling | `XdgDialogHandler` in `src/state/mod.rs`, read in `src/shell/tiling.rs` |
 | `xdg_activation_v1` | 1 | all; tokens need a fresh input serial, 10 s | `src/state/xdg_activation_handler.rs` |
 | `zxdg_exporter_v2`, `zxdg_importer_v2` | 1 | all | `XdgForeignHandler` in `src/state/mod.rs` |
 | `zwlr_layer_shell_v1` | 5 | unsandboxed | `src/shell/layer.rs`, `src/shell/mod.rs` |

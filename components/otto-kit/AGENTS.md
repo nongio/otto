@@ -35,5 +35,5 @@ How it works: [otto-kit](../../docs/developer/otto-kit.md).
 
 ## See also
 - [otto-kit roadmap](../../docs/developer/otto-kit-roadmap.md), [Scroll panes](../../docs/developer/scroll-pane.md), [Accessibility](../../docs/developer/accessibility.md).
-- [Surface style protocol](../../docs/developer/surface-style-protocol.md), [Color scheme](../../docs/developer/color-scheme-setting.md), [File icons](../../docs/developer/file-icons.md), [Scene graph](../../docs/developer/scene-graph.md).
+- [Surface style protocol](../../docs/developer/surface-style-protocol.md), [Color scheme](../../docs/developer/color-scheme-setting.md), [File icons](../../docs/developer/file-icons.md), [Scene graph](../../docs/developer/scene-graph.md), [Text rendering](../../docs/developer/text-rendering.md).
 - [otto-foundations](../otto-foundations/AGENTS.md), [otto-dbus](../otto-dbus/AGENTS.md).
