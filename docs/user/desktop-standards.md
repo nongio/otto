@@ -92,6 +92,15 @@ These are the protocols applications use to talk to Otto. "Trusted apps"
 means not offered to sandboxed apps (Flatpak), which cannot list windows,
 read the screen or type for you.
 
+### Core
+
+| Protocol | What it is for | Notes |
+|----------|----------------|-------|
+| `wl_compositor`, `wl_subcompositor` | Surfaces and their sub-parts: every Wayland app | |
+| `wl_shm` | Apps drawing on the CPU (shared-memory buffers) | |
+| `wl_seat` | Keyboard, mouse and touchpad input | |
+| `wl_drm` | GPU buffers for older Mesa and EGL apps | |
+
 ### Windows
 
 | Protocol | What it is for | Notes |
