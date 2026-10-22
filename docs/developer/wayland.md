@@ -1,7 +1,7 @@
 # Wayland protocols
 
 > What each protocol means to a user is in
-> [Standards](../user/desktop-standards.md#wayland-protocols).
+> [Open standards](../user/desktop-standards.md#wayland-protocols).
 > The freedesktop/XDG file and D-Bus standards around them are in
 > [XDG specifications](xdg-specifications.md).
 

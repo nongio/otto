@@ -1,4 +1,4 @@
-# Standards
+# Open standards
 
 Otto keeps your desktop in the standard places. It reads applications, icon
 themes, file associations, the trash and the thumbnail cache from where the
