@@ -90,7 +90,9 @@ by those programs; Otto tells them its font and settings so they match:
 
 These are the protocols applications use to talk to Otto. "Trusted apps"
 means not offered to sandboxed apps (Flatpak), which cannot list windows,
-read the screen or type for you.
+read the screen or type for you. The exact version of each protocol, and the
+code that serves it, is in the developer guide's
+[Wayland protocols](../developer/wayland.md#supported-protocols).
 
 ### Core
 
