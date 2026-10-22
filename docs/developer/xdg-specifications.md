@@ -1,10 +1,15 @@
 # XDG specifications
 
-Otto is not a desktop unto itself: it reads the same `.desktop` files, icon
-themes, MIME database and trash can that every other Linux desktop uses, and it
-speaks the same protocols to clients. This page is the inventory: which
-freedesktop.org/XDG specification Otto implements, on which side of it, and
-where the code lives.
+This page is the inventory of the freedesktop.org/XDG specifications and
+`xdg_*` protocols Otto implements. For each one it lists which side Otto takes
+(producer or consumer of the files, server or client of the protocol), how
+complete the support is, and where the code lives. What this means to a user
+is [Desktop standards](../user/desktop-standards.md).
+
+Why Otto keeps its state in the standard locations, even where a private
+format would be less work, is argued once in
+[How we see the Linux desktop](../user/desktop-standards.md#how-we-see-the-linux-desktop).
+The gaps at the bottom of this page are measured against it.
 
 Two families are covered:
 
@@ -17,33 +22,6 @@ Two families are covered:
 Protocols outside the XDG namespace (`wlr-*`, `ext-*`, `wp-*`, Otto's own) are
 listed in [Wayland Protocols](wayland.md), not here.
 
-## Why the coverage is this wide
-
-Otto owns a lot of the desktop itself: file manager, notification display,
-tray host, portal backend, launcher. The temptation in that position is to
-keep the state somewhere convenient for Otto. The rule here is the opposite:
-**anything a user could reasonably expect to configure or share with the rest
-of the system goes in the standard location, in the standard format, even when
-a private one would be less work.**
-
-Two properties are what that buys, and they are worth the extra implementation:
-
-- **Substitutability.** A user must be able to replace any one piece of Otto
-  without replacing Otto. That only holds if the seams are the standard ones:
-  a shared trash means another file manager is a drop-in; an
-  `org.freedesktop.Notifications` server means `dunst` can take over; layer
-  shell means a third-party bar works. It cuts the other way too: Otto's dock
-  and bar have to be as replaceable as anything else on the desktop.
-- **No relearning.** The user already knows Linux. Their default browser is in
-  `mimeapps.list`, their autostart is a `.desktop` file, their icons are in
-  `~/.icons`. Otto's settings surface should be an easier path to those same
-  places, not a second source of truth beside them. That is why, where Otto
-  writes a value at all, it writes it where the rest of the system reads it.
-
-The gaps at the bottom of this page are read against that rule: the
-`mimeapps.list` one matters not because the spec is unimplemented but because
-it is the one place Otto asks the user to leave and use another tool.
-
 ## XDG Wayland protocols
 
 | Protocol | Role | Implementation |
@@ -51,9 +29,9 @@ it is the one place Otto asks the user to leave and use another tool.
 | [`xdg_shell`](https://wayland.app/protocols/xdg-shell) | Server. Toplevels and popups, the main window protocol | `XdgShellHandler` in `src/shell/xdg.rs`; state in `src/state/mod.rs` |
 | [`xdg-decoration-unstable-v1`](https://wayland.app/protocols/xdg-decoration-unstable-v1) | Server. Negotiates server- vs client-side decorations | `src/state/xdg_decoration_handler.rs` (alongside the KDE `org_kde_kwin_server_decoration` equivalent) |
 | [`xdg-activation-v1`](https://wayland.app/protocols/xdg-activation-v1) | Server. Focus transfer between clients | `src/state/xdg_activation_handler.rs` |
-| [`xdg-foreign-unstable-v2`](https://wayland.app/protocols/xdg-foreign-unstable-v2) | Server. Exporting a surface so another client can parent to it | `delegate_xdg_foreign!` in `src/state/mod.rs` |
+| [`xdg-foreign-unstable-v2`](https://wayland.app/protocols/xdg-foreign-unstable-v2) | Server. Exporting a surface so another client can parent to it | `XdgForeignHandler` in `src/state/mod.rs` |
 | [`xdg-output-unstable-v1`](https://wayland.app/protocols/xdg-output-unstable-v1) | Server. Logical output geometry for clients | `OutputManagerState::new_with_xdg_output` in `src/state/mod.rs` |
-| [`xdg-dialog-v1`](https://wayland.app/protocols/xdg-dialog-v1) | Server. The global is served so clients can mark a toplevel modal; nothing reads the hint | `delegate_xdg_dialog!` in `src/state/mod.rs` |
+| [`xdg-dialog-v1`](https://wayland.app/protocols/xdg-dialog-v1) | Server. Clients mark a toplevel modal; tiling floats a modal parentless window | `XdgDialogHandler` in `src/state/mod.rs`, read in `src/shell/tiling.rs` |
 
 Otto's own applications sit on the client side of these through `otto-kit`
 (`components/otto-kit/src/components/window/`), so the toolkit exercises the
@@ -65,13 +43,13 @@ same protocols the compositor serves.
 |---------------|------|----------------|
 | [Base Directory](https://specifications.freedesktop.org/basedir-spec/latest/) | Read + write. `XDG_CONFIG_HOME`, `XDG_CONFIG_DIRS`, `XDG_DATA_HOME`, `XDG_DATA_DIRS`, `XDG_CACHE_HOME` are honoured everywhere paths are resolved | `src/config/mod.rs` (config layering), and every consumer below |
 | [Desktop Entry](https://specifications.freedesktop.org/desktop-entry-spec/latest/) | Read. `Name`, `Icon`, `Exec`, `Categories`, `StartupWMClass`, and `[Desktop Action …]` groups; the dock's right-click menu is an entry's own `Actions=` | `components/otto-kit/src/desktop_entry.rs`, `src/workspaces/apps_info.rs`, `components/otto-launcher/` |
-| [Desktop Entry — associations (`mimeapps.list`)](https://specifications.freedesktop.org/mime-apps-spec/latest/) | Read. Resolves the default application for a MIME type, following the standard search order | `src/config/default_apps.rs` |
+| [Desktop Entry — associations (`mimeapps.list`)](https://specifications.freedesktop.org/mime-apps-spec/latest/) | Read + write. Resolves the default application for a MIME type, following the standard search order. Files' Open With, with *Always use this app*, writes `[Default Applications]` and `[Added Associations]` in `$XDG_CONFIG_HOME/mimeapps.list` | `src/config/default_apps.rs`, `components/otto-kit/src/mime_apps.rs` (`set_default`), `components/otto-files/src/app/open_with.rs` |
 | [Shared MIME-info](https://specifications.freedesktop.org/shared-mime-info-spec/latest/) | Read. `mime/globs2` and `mime/subclasses` from every XDG data dir, with the spec's glob precedence; content sniffing on top | `components/otto-kit/src/filetype/` (`db.rs`, `glob.rs`) |
 | [Icon Theme](https://specifications.freedesktop.org/icon-theme-spec/latest/) | Read. Theme lookup with `hicolor` fallback, SVG and raster | `components/otto-kit/src/icons.rs`, `src/utils/mod.rs`, via the `freedesktop-icons` crate |
 | [Trash](https://specifications.freedesktop.org/trash-spec/latest/) | Read + write. The home trash `$XDG_DATA_HOME/Trash/{files,info}` with a `.trashinfo` sidecar (`Path`, `DeletionDate`), which is what makes Put Back work, and what makes Otto's trash the same trash as Nautilus's or Dolphin's. The sidecar is created first with `O_EXCL` to reserve the name. Files on another filesystem go to that filesystem's `$topdir/.Trash/$uid` (sticky, not a symlink) or `$topdir/.Trash-$uid`, with `Path` relative to `$topdir`; the home trash is the fallback. Trashed folders get a `directorysizes` line (skipped past 10 000 entries). The topdir is the longest mount point above the file in `/proc/self/mountinfo`. A topdir can is used only when it is a real directory owned by the user, not group- or other-writable, with `files/`, `info/` and `directorysizes` real and the user's too, and a shared `.Trash` sticky and root's or the user's (otherwise the next can, finally the home trash); trashing, deleting, Put Back from a topdir can (renamed, never copied, through `O_NOFOLLOW` folders), sidecar and `directorysizes` reads (regular files, size-capped, `O_NONBLOCK`) and the `directorysizes` temporary (`O_EXCL`, `0600`) work from `O_NOFOLLOW` directory descriptors; listing and watching a can go by path, read-only. A topdir sidecar's `Path=` must be relative with no `..` for Put Back. The Trash window, Empty Trash and the dock list the home can plus the checked topdir cans of every mounted filesystem (`/proc/self/mountinfo`, pseudo-filesystems, autofs, network filesystems and FUSE daemons left out; one can seen through two mounts listed once); the dock watches them with inotify off the compositor thread, and the mount table with `poll`, to draw a full bin; the Trash window watches every can's `files/` | `components/otto-kit/src/trash.rs` (trashing, cans), `components/otto-files/src/model.rs` (listing, restore, delete), `src/workspaces/trash.rs` (dock state) |
-| [Thumbnail Managing Standard](https://specifications.freedesktop.org/thumbnail-spec/latest/) | Read. `$XDG_CACHE_HOME/thumbnails/<size>/<md5 of URI>.png`, validated by the `Thumb::MTime` PNG text chunk, honouring failure markers under `thumbnails/fail/otto-files/`. Otto writes nothing into the cache. Implemented directly, no dependency | `components/otto-files/src/thumbcache.rs` |
+| [Thumbnail Managing Standard](https://specifications.freedesktop.org/thumbnail-spec/latest/) | Read. `$XDG_CACHE_HOME/thumbnails/<size>/<md5 of URI>.png`, validated by the `Thumb::MTime` PNG text chunk, honouring failure markers under `thumbnails/fail/otto-files/`. Otto writes nothing into the cache. Implemented directly, no dependency | `components/otto-peek/src/thumbcache.rs` |
 | [Autostart](https://specifications.freedesktop.org/autostart-spec/latest/) | Read. `$XDG_CONFIG_DIRS/autostart` then `$XDG_CONFIG_HOME/autostart`, user entries overriding system ones by filename. Gated on `xdg_autostart` in the config | `Otto::launch_xdg_autostart` in `src/input/actions.rs` |
-| [Desktop Notifications](https://specifications.freedesktop.org/notification-spec/latest/) | Server. `org.freedesktop.Notifications`: `Notify`, `CloseNotification`, `ActionInvoked`, capabilities `body`, `body-markup`, `actions`, `persistence`, `icon-static`, `action-icons`. Notifications are drawn by the Dynamic Island | `components/otto-islands/src/notifications.rs` |
+| [Desktop Notifications](https://specifications.freedesktop.org/notification-spec/latest/) | Server, spec 1.2. `org.freedesktop.Notifications`: `Notify`, `CloseNotification`, `ActionInvoked`, capabilities `body`, `body-markup`, `actions`, `persistence`, `icon-static`, `action-icons`. Notifications are drawn by the Dynamic Island | `components/otto-islands/src/notifications.rs`, per-app permission in `notification_permission.rs` |
 | [XDG Desktop Portal](https://flatpak.github.io/xdg-desktop-portal/docs/) | Backend. `org.freedesktop.impl.portal.{ScreenCast, Settings, Access, Screenshot, FileChooser}`, registered in `otto.portal` | `components/xdg-desktop-portal-otto/src/portal/` |
 | [XDG user directories](https://www.freedesktop.org/wiki/Software/xdg-user-dirs/) | Read. `user-dirs.dirs` supplies the Files sidebar's Desktop, Downloads, Documents… places, and the portal's screenshot folder | `components/otto-foundations/src/xdg.rs` (`user_dirs`), used by `components/otto-files/src/model.rs` |
 | [Cursor theme (Xcursor)](https://www.freedesktop.org/wiki/Specifications/cursor-spec/) | Read. `XCURSOR_THEME` / `XCURSOR_SIZE`, loaded per named cursor and scale | `src/cursor.rs` |
@@ -109,8 +87,9 @@ grows with each first-party app.
 **How it is rasterised.** `otto_kit::text_rendering` asks fontconfig the way
 Pango and Chromium do (substitute the pattern, then match, so rules targeting
 either apply) and maps `antialias`, `hinting`, `hintstyle`, `autohint` and
-`rgba` onto every `Font` the font caches build and every paragraph
-`TextStyle` the theme hands out. Subpixel glyph positioning is kept to no and
+`rgba` onto every `Font` the font caches build, and all of them but
+`autohint` onto every paragraph `TextStyle` the theme hands out (Skia's
+`TextStyle` has no force-autohint switch, so paragraph text ignores it). Subpixel glyph positioning is kept to no and
 slight hinting, since medium and full fit stems to the pixel grid. The answer
 is cached per family for the process, so a `fonts.conf` change applies from
 the next login. `lcdfilter` is not applied: Skia filters LCD glyphs with its
@@ -210,7 +189,8 @@ and order keys unless `font-rendering` is `manual`: in its default,
 keys for that reason. GTK 3 on Wayland reads `org.gnome.desktop.interface`
 from GSettings (dconf) instead, so a session of Otto's own (the udev backend,
 never a nested one) writes the same five keys there at startup with
-`gsettings`, only where they differ (`src/gnome_interface.rs`). libadwaita
+`gsettings`, only where they differ (`src/gnome_interface.rs`). A key the
+installed schema lacks is skipped: `font-rendering` exists from GNOME 47. libadwaita
 outside a sandbox likewise takes the colour scheme from GSettings'
 `color-scheme`, not the portal, so the same module writes `prefer-dark` or
 `default` there at startup and whenever `theme_scheme` changes.
@@ -232,10 +212,14 @@ rasterisation from fontconfig too, and its font from GTK 3.
 The portal does not link otto-kit or fontconfig: it asks the compositor
 (`org.otto.Settings.GetFontSettings`, see
 [settings-dbus-api.md](settings-dbus-api.md)), which works the values out on
-its own thread because the subpixel order comes from the outputs. None of
-these is relayed live: `font_family` needs a restart, the fontconfig answer is
-cached for the process, and an output plugged in later does not re-publish
-the order. XSETTINGS is re-sent whenever the scale is.
+its own thread because the subpixel order comes from the outputs. The
+values are worked out afresh on every portal read and every XSETTINGS send,
+so a client that asks later gets the current outputs' order, but no change
+is ever pushed: the portal emits no `SettingChanged` for the font keys, and
+GSettings is written once, at startup. `font_family` needs a restart and the
+fontconfig answer is cached for the process either way. XSETTINGS goes out
+when Xwayland is ready, when the scale changes and when the cursor theme or
+size does.
 
 Other desktops also publish `text-scaling-factor`; Otto does not (see Known
 gaps).
@@ -258,12 +242,24 @@ Otto's are. GTK4 reads the Settings portal by default and follows it live.
 GTK3 outside a sandbox — Chrome's default toolkit among them — reads dconf
 directly and only consults the portal under `GTK_USE_PORTAL=1`.
 
-## Adjacent standards (not freedesktop-hosted)
+## D-Bus services and other standards
 
 | Standard | Role | Implementation |
 |----------|------|----------------|
 | [StatusNotifierItem / `StatusNotifierWatcher`](https://www.freedesktop.org/wiki/Specifications/StatusNotifierItem/) | Host. The top bar's system tray registers as the watcher and tracks items | `components/otto-bar/src/tray.rs` |
-| [DBusMenu](https://github.com/AyatanaIndicators/libdbusmenu) | Client. Menus for tray items that expose no `ContextMenu` method | `components/otto-bar/src/dbusmenu.rs` |
+| [DBusMenu](https://github.com/AyatanaIndicators/libdbusmenu) | Client: menus for tray items that expose no `ContextMenu` method. Server: an otto-kit app's menu bar, and `otto-rdp`'s indicator | `components/otto-bar/src/dbusmenu.rs`, `components/otto-kit/src/app_menu.rs`, `components/otto-rdp/src/indicator.rs` |
+| Global menu: `com.canonical.AppMenu.Registrar`, KDE `org_kde_kwin_appmenu` | Server. The top bar shows the focused app's exported menu | `components/otto-bar/src/appmenu.rs`, `src/state/kde_appmenu.rs` |
+| [Sound Theme](https://specifications.freedesktop.org/sound-theme-spec/latest/) | Read. `sound_theme` names the theme; event sounds are looked up by name with fallback | `components/otto-kit/src/sound.rs`, `src/audio/sound_player.rs` |
+| [MPRIS](https://specifications.freedesktop.org/mpris-spec/latest/) | Client. Media keys and the Dynamic Island's player | `src/audio/media_control.rs`, `components/otto-islands/src/mpris.rs` |
+| AT-SPI, `org.freedesktop.a11y` | Server. Chrome and otto-kit apps are AT-SPI apps through AccessKit; the compositor serves `KeyboardMonitor` and `PointerLocator` | `src/a11y/`, `components/otto-kit/src/accessibility/` |
+| XDG portal `PermissionStore` | Client. Remembered screencast and notification choices | `components/xdg-desktop-portal-otto/src/portal/remembered.rs` |
+| systemd-logind | Client. Lock, `PrepareForSleep` with a delay inhibitor, power actions; seat access through libseat | `src/lock.rs`, `components/otto-dbus/src/login1.rs` |
+| UPower, power-profiles-daemon | Client. Battery and power mode in the top bar | `components/otto-dbus/src/upower.rs`, `components/otto-bar/src/power.rs` |
+| polkit | Authentication agent (`libpolkit-agent-1`), supervised by the compositor; the compositor is also an `Authority` client | `components/otto-authorize/src/polkit/`, `src/polkit_agent.rs`, `src/settings_service.rs` |
+| AccountsService | Client. Name, picture and password | `components/otto-settings/src/panes/account.rs`, `components/otto-auth-ui/src/user.rs` |
+| greetd | Client. The login greeter | `components/otto-greeter/src/greetd.rs` |
+| PipeWire | Producer (screencast streams) and client (volume, visualiser, RDP capture) | `src/screenshare/pipewire_stream.rs`, `src/audio/volume.rs` |
+| LocalSearch (Tracker 3) | Client over SPARQL; the compositor sets its miner's GSettings | `components/otto-search/`, `src/search_index.rs` |
 
 ## Known gaps
 
@@ -274,16 +270,23 @@ directly and only consults the portal under `GTK_USE_PORTAL=1`.
   entries, but Otto does not emit startup-notification IDs of its own.
 - **Trash** is implemented by `otto-files`; the compositor only reads whether
   the can is empty. There is no D-Bus trash service.
-- **`mimeapps.list`** is read only: Otto never writes a default association
-  back.
+- **Thumbnails are read only**: Otto uses the shared cache but never adds
+  to it.
+- **No `org.freedesktop.FileManager1`**: other apps' "Show in folder" does
+  not reach Files.
 - **Subpixel text in plane slots and cached layers**: compositor chrome gets
   the output's subpixel layout on the output's own buffer, but GL plane slots
   and lay-rs image-cached layers are transparent and draw greyscale. See
   [Fonts and text](#fonts-and-text).
-- **Font settings are published once**: the font and rendering keys (see
-  [Fonts and text](#fonts-and-text)) are not re-announced when an output's
-  subpixel layout changes, and the GSettings copy GTK 3 and Qt read is
-  written at startup only.
+- **Font settings are not pushed**: the font and rendering keys (see
+  [Fonts and text](#fonts-and-text)) are current whenever a client reads
+  them, but no change signal goes out when an output's subpixel layout
+  changes, and the GSettings copy GTK 3 and Qt read is written at startup
+  only.
+- **No subpixel text on winit or x11**: those backends report no layout for
+  their output, so only a login session (udev) draws subpixel text.
+- **Chrome ignores output rotation for subpixel**: otto-kit apps turn the
+  order with the output transform, the compositor's own chrome does not.
 - **Qt text on a scaled output is unhinted**: Qt's own rule at a device pixel
   ratio other than 1, which no setting Otto publishes reaches (see
   [Fonts and text](#fonts-and-text)).

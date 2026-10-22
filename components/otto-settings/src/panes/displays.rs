@@ -107,8 +107,9 @@ pub fn slot_ids() -> &'static [&'static str] {
 }
 
 /// The subpixel-text pop-up's entries, each with the value it writes to the
-/// display's `subpixel` key. `None` removes the key: automatic is the
-/// connector's own report, then fontconfig's `rgba`, then grayscale.
+/// display's `subpixel` key. `None` removes the key: automatic is grayscale
+/// when fontconfig's `rgba` is `none`, else the connector's own report, then
+/// fontconfig's `rgba`, then grayscale.
 ///
 /// RGB and BGR are not translated: they name the order of the stripes, and
 /// they are what the panel's spec sheet and fontconfig call them.

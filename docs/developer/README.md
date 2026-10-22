@@ -23,7 +23,7 @@ is the place to start.
 | [Architecture Rules](architecture.md) | Crate layers and module boundaries, and how CI checks them |
 | [Rendering](rendering.md) | Scene graph → render elements → Skia → screen |
 | [Render Loop](render_loop.md) | When Otto wakes up, when it renders, damage tracking |
-| [Wayland Protocols](wayland.md) | The one-big-state pattern and how to find any protocol handler |
+| [Wayland Protocols](wayland.md) | Every global Otto serves, with version, availability and handler, and how dispatch is wired |
 | [XDG Specifications](xdg-specifications.md) | Every freedesktop/XDG standard Otto implements, and where |
 | [The Scene Graph](scene-graph.md) | The layer tree: how it is shaped, how surfaces enter it, how subtrees become KMS planes |
 | [Layers](layers.md) | The unit the tree is made of: properties, content closures, transactions, caching, damage |

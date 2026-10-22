@@ -1,164 +1,191 @@
-# Desktop standards
+# Desktop standards and protocols
 
-Otto is a new desktop, but it is not a separate world. It reads the same
-application entries, icon themes, MIME database, trash can and thumbnail cache
-that GNOME, KDE Plasma and COSMIC use, so what you already have on the machine
-keeps working, and what Otto does is visible to those desktops too.
+Otto keeps your desktop in the standard places. It reads applications, icon
+themes, file associations, the trash and the thumbnail cache from where the
+freedesktop.org (XDG) specifications put them, and it serves the shared
+Wayland protocols, so the apps, themes and tools you already use keep working
+and what Otto writes stays readable by the rest of the system. The tables
+below list what is supported today; if something isn't listed, assume it
+isn't there yet.
 
-## Why it works this way
+Developers looking for where each one lives in the source want
+[XDG specifications](../developer/xdg-specifications.md) and
+[Wayland protocols](../developer/wayland.md).
 
-Otto's own surface is meant to be easy: things are a click away, in one place,
-with sensible defaults, and you should rarely have to go looking for a config
-file to get through a day.
+## How we see the Linux desktop
 
-That is the front of the desktop, not a replacement for the system underneath
-it. Otto stores what it manages in the places the freedesktop.org (XDG)
-standards say it belongs, and reads what other software puts there. Two things
-follow, and both are the point:
+Otto tries to make the everyday easy: things a click away, in one place, with
+sensible defaults. That ease sits on top of the system, not in place of it.
+Otto keeps what it manages in the places the freedesktop.org (XDG) standards
+name, and reads what other software puts there.
 
-- **You already know where things live.** Your default browser is still
-  `mimeapps.list`. Autostart is still a `.desktop` file in
-  `~/.config/autostart`. Icon themes are still `~/.icons`. Everything you have
-  learned about configuring a Linux desktop applies here unchanged, and so does
-  every script and dotfile repository built on it. Otto's settings are a
-  friendlier way in, never the only way in.
-- **You can swap parts out.** The trash is the shared trash, so another file
-  manager is a drop-in. Notifications, the tray, the screen-sharing portal and
-  the panel protocols are the standard ones, so a third-party bar, launcher,
-  wallpaper tool or notification daemon can take over from Otto's, and Otto's
-  can serve applications that have never heard of it. Nothing here is a private
-  format that locks the rest of the system out.
+- **Nothing to relearn.** Otto reads your default applications from
+  `mimeapps.list`, starts what is in `~/.config/autostart`, and picks up icon
+  themes from `~/.icons`. What you know about configuring Linux, and the
+  dotfiles you keep, still applies.
+- **Any part can be swapped.** The trash is the shared trash, so another file
+  manager drops in. Notifications, the tray, the desktop portal and layer shell
+  are the standard interfaces, so another notification daemon, bar or launcher
+  can take over from Otto's. Otto's own parts serve apps that have never heard
+  of it.
 
-Convenience that costs you portability is a bad trade. Otto tries not to make
-it.
+We will not trade portability for convenience. Where Otto falls short, the gap
+is listed under [What is not supported](#what-is-not-supported).
 
-This page is the short version of what that means in practice. Developers
-looking for the file-by-file inventory want
-[XDG specifications](../developer/xdg-specifications.md).
+## Desktop specifications
 
-## Applications
+| Standard | What it means in Otto | More |
+|----------|-----------------------|------|
+| [Base Directory](https://specifications.freedesktop.org/basedir-spec/latest/) | Config, data, cache and state go under the `XDG_*` directories; Otto's log is `~/.local/state/otto/otto.log` | [Configuration](configuration.md) |
+| [Desktop Entry](https://specifications.freedesktop.org/desktop-entry-spec/latest/) | Every installed `.desktop` app shows in the Launcher and can be pinned; an entry's `Actions=` are its right-click menu in the Dock | [Launcher](launcher.md), [Dock](dock.md) |
+| [MIME applications](https://specifications.freedesktop.org/mime-apps-spec/latest/) (`mimeapps.list`) | Default apps are read from it, the same file `xdg-mime default` writes. Files' **Open With… → Always use this app** writes the choice back there | [Files](files.md) |
+| [Shared MIME-info](https://specifications.freedesktop.org/shared-mime-info-spec/latest/) | File types and their icons match the rest of the system. Install `shared-mime-info` if types look generic | [Files](files.md) |
+| [Icon Theme](https://specifications.freedesktop.org/icon-theme-spec/latest/) | Any theme in `~/.icons`, `~/.local/share/icons` or `/usr/share/icons` | [Theming](theming.md) |
+| [Cursor themes](https://www.freedesktop.org/wiki/Specifications/cursor-spec/) (Xcursor) | Any installed cursor theme and size | [Theming](theming.md) |
+| [Sound Theme](https://specifications.freedesktop.org/sound-theme-spec/latest/) | System sounds come from the selected sound theme | [Audio](audio.md) |
+| [Trash](https://specifications.freedesktop.org/trash-spec/latest/) | The shared trash, on your home and on other drives: what another file manager deleted can be put back from Otto, and the other way round | [Files](files.md) |
+| [Thumbnails](https://specifications.freedesktop.org/thumbnail-spec/latest/) | Thumbnails another file manager already made under `~/.cache/thumbnails` load instantly. Otto reads the cache; it does not add to it | [Files](files.md) |
+| [XDG user directories](https://www.freedesktop.org/wiki/Software/xdg-user-dirs/) | Desktop, Downloads, Documents… in the Files sidebar, and the screenshot folder, are where `user-dirs.dirs` says | [Files](files.md) |
+| [Autostart](https://specifications.freedesktop.org/autostart-spec/latest/) | Entries in `/etc/xdg/autostart` and `~/.config/autostart` start with the session; can be turned off | [Autostart](autostart.md) |
+| [Notifications](https://specifications.freedesktop.org/notification-spec/latest/) | Otto is the notification server: `notify-send` and every app's notifications work, with actions and icons | [Dynamic Island](dynamic-island.md) |
+| [Desktop portal](https://flatpak.github.io/xdg-desktop-portal/docs/) | Otto's own backend: screen sharing, screenshots, file dialogs, appearance settings and permission prompts, for browsers, OBS and Flatpak apps | [Screen Sharing](screen-sharing.md) |
+| [StatusNotifierItem](https://www.freedesktop.org/wiki/Specifications/StatusNotifierItem/) | Tray icons in the top bar, with their menus (DBusMenu) | [Top Bar](topbar.md) |
+| Global menu (`com.canonical.AppMenu`, KDE appmenu) | Apps that export their menu bar show it in the top bar | [Top Bar](topbar.md) |
+| [MPRIS](https://specifications.freedesktop.org/mpris-spec/latest/) | Any media player shows in the Dynamic Island and follows the media keys | [Audio](audio.md) |
+| [AT-SPI](https://www.freedesktop.org/wiki/Accessibility/AT-SPI2/) | Screen readers read Otto's chrome and Otto's apps | [Accessibility](accessibility.md) |
+| Fontconfig | Font names, aliases and your `fonts.conf` rendering rules; see [Fonts and text](#fonts-and-text) | [Theming](theming.md) |
 
-Otto finds applications through their
-[`.desktop` entries](https://specifications.freedesktop.org/desktop-entry-spec/latest/)
-in the standard locations. Anything installed by your package manager, Flatpak
-or by hand under `~/.local/share/applications` shows up in the
-[Launcher](launcher.md) and can be pinned to the [Dock](dock.md), with no
-Otto-specific registration.
+### System services Otto uses
 
-An entry's own actions are its menu: if a `.desktop` file declares
-`Actions=NewWindow;NewPrivateWindow`, right-clicking that app in the dock
-offers them.
+| Service | What for |
+|---------|----------|
+| systemd-logind | Session, lock on suspend, power actions |
+| UPower, power-profiles-daemon | Battery and power mode in the top bar |
+| polkit | Otto is the authentication agent: password prompts for admin actions |
+| AccountsService | Your name and picture, changing your password in Settings |
+| PipeWire | Screen sharing streams, audio volume and the audio visualiser |
+| greetd | The login screen |
+| LocalSearch (Tracker) | File search |
 
-**Default applications** come from
-[`mimeapps.list`](https://specifications.freedesktop.org/mime-apps-spec/latest/),
-the same file `xdg-mime default` writes. Set your browser or editor there, or
-with any desktop's settings app, and Otto opens files with it. Otto reads this
-file; it never rewrites it.
+## Fonts and text
 
-**File types** are recognised through the
-[shared MIME database](https://specifications.freedesktop.org/shared-mime-info-spec/latest/),
-so the Kind column and icons in [Files](files.md) agree with the rest of the
-system. Install `shared-mime-info` if types look generic.
+Fonts are resolved through fontconfig, like every other Linux application:
+the font you name in Settings is matched against what is installed, aliases
+like `sans-serif` work, and `~/.config/fontconfig/fonts.conf` is respected.
 
-## Look and feel
+Hinting and antialiasing follow fontconfig (`antialias`, `hinting`,
+`hintstyle`, `autohint`, `rgba`) in Otto's own text: the dock, the top bar,
+titlebars and Otto's apps. Text inside other programs is drawn by those
+programs, before Otto sees it; Otto composites the finished image.
 
-**Icon themes** follow the
-[Icon Theme specification](https://specifications.freedesktop.org/icon-theme-spec/latest/):
-any theme in `~/.icons` or `/usr/share/icons` can be selected: Papirus, Adwaita,
-anything else. **Cursors** are standard Xcursor themes. Both are set in
-[Theming](theming.md).
+**Subpixel text** is per monitor: set it in **Settings → Displays → Subpixel
+text**, or with `subpixel` in the display profile. Automatic uses what the
+monitor reports, else fontconfig's `rgba`, and draws grayscale when neither
+says or when `rgba` is `none`. Details in [Display](display.md).
 
-Otto also *publishes* its appearance to applications, over the Settings
-portal's `org.freedesktop.appearance` namespace: GTK and Qt apps follow Otto's
-light/dark mode, accent color and icon theme without any per-toolkit
-configuration.
+Otto also tells other toolkits its font and how it draws text, so they look
+like Otto beside it:
 
-**Fonts** are resolved through fontconfig, the same system every other Linux
-application uses, so the font you name in Otto's settings is matched against
-the fonts you have installed, aliases like `sans-serif` work, and rules in
-`~/.config/fontconfig/fonts.conf` are respected when choosing the face.
+| Apps | Get Otto's font and settings from | Follows hinting? |
+|------|-----------------------------------|------------------|
+| Otto and Otto's apps | Otto's configuration and fontconfig | yes |
+| GTK 4 | the desktop portal | yes |
+| GTK 3, Chromium, Electron | GNOME's settings store, which Otto fills at login | yes |
+| Qt | Qt's GTK theme, which Otto selects unless `QT_QPA_PLATFORMTHEME` is set | only on an unscaled display (Qt's own rule) |
+| X11 apps (Xwayland) | XSETTINGS | yes |
 
-All of this is about **Otto's own text**: the dock, the top bar, window
-titlebars, and Otto's applications. Text inside the programs you run is drawn
-by those programs, with their own font stack, before Otto ever sees it: Otto
-composites a finished image and cannot alter how the glyphs in it were
-rasterised. Your fontconfig settings are already fully in effect for the text
-you spend most of your time reading.
+Changing the font needs a restart; a `fonts.conf` change applies from the
+next login.
 
-With that scope, three things worth knowing:
+## Wayland protocols
 
-- Otto's chrome draws with grayscale antialiasing unless it knows the
-  monitor's subpixel order: set `subpixel` in the monitor's display profile
-  (see [Display](display.md)) or `rgba` in fontconfig, and window titles, the
-  dock's tooltips and menus, the app switcher and exposé draw subpixel text on
-  that monitor. On a HiDPI display grayscale is what you would probably pick
-  anyway.
-- Hinting and antialiasing follow your fontconfig settings (`hintstyle`,
-  `hinting`, `antialias`, `rgba`), in Otto's chrome as in your applications.
-- Otto tells applications its font and how it draws text, the way it tells
-  them its light/dark mode: GTK 4 apps read them from the desktop portal,
-  GTK 3 apps (and Chromium and Electron, which use GTK 3) from GNOME's
-  settings store, which Otto fills, Qt apps through Qt's GTK platform theme,
-  which Otto selects unless `QT_QPA_PLATFORMTHEME` is already set, and X11
-  apps from XSETTINGS. The interface font they get is Otto's `font_family`
-  at Otto's body size. One exception is Qt's own: on a scaled display it
-  draws text unhinted whatever the hinting, under any desktop.
+These are the protocols applications use to talk to Otto. "Trusted apps"
+means not offered to sandboxed apps (Flatpak), which cannot list windows,
+read the screen or type for you.
 
-## Files, trash and thumbnails
+### Windows
 
-The **trash** is the
-[freedesktop trash can](https://specifications.freedesktop.org/trash-spec/latest/)
-at `~/.local/share/Trash` — the same one every other file manager uses. Things
-Nautilus or Dolphin deleted appear in Otto's Trash window and can be put back
-from it, and vice versa. The dock's bin icon fills when there is something in
-it.
+| Protocol | What it is for | Notes |
+|----------|----------------|-------|
+| `xdg-shell` | Windows and popups: every Wayland app | |
+| `xdg-decoration`, KDE server decoration | Lets an app ask Otto to draw its titlebar, or draw its own | |
+| `xdg-activation` | An app handing focus to another (clicking a link opens the browser in front) | Only right after a click or key press |
+| `xdg-foreign` | A dialog attaching to another app's window (portal file dialogs) | |
+| `xdg-dialog` | Marking a dialog modal | Modal dialogs float when tiling |
+| `xwayland-shell`, Xwayland keyboard grab | X11 apps | |
+| `ext-background-effect` | Blur behind translucent terminals and panels | The whole window is frosted, not a region |
 
-**Thumbnails** use the
-[shared thumbnail cache](https://specifications.freedesktop.org/thumbnail-spec/latest/)
-under `~/.cache/thumbnails`. Pictures another file manager has already
-thumbnailed load instantly in Otto, and the ones Otto generates are there for
-the next program. See [Files](files.md).
+### Display and scaling
 
-The Files sidebar reads your **XDG user directories** (`user-dirs.dirs`), so
-Desktop, Downloads and Documents point where your locale and setup say they do.
+| Protocol | What it is for | Notes |
+|----------|----------------|-------|
+| `wl_output`, `xdg-output` | Monitor size, position, scale and subpixel order | |
+| `fractional-scale` | Sharp apps at scales like 1.25 or 1.5 | |
+| `viewporter` | Apps cropping and scaling their own buffers | |
+| `presentation-time` | Accurate frame timing for video and games | Login session only |
+| `linux-dmabuf` | GPU buffers, no copies | |
+| `linux-drm-syncobj` | Explicit GPU sync, which some drivers need for smooth frames | Login session, when the GPU supports it |
+| `drm-lease` | VR headsets taking over a display | Login session only |
+| `cursor-shape` | Apps naming a cursor instead of drawing it, so it matches your theme | |
+| `wlr-gamma-control` | Colour temperature tools (`gammastep`, `wlsunset`) | Trusted apps, login session only. See [Night Shift](night-shift.md) |
 
-## Session
+### Input
 
-**Autostart.** Otto runs `.desktop` entries from `/etc/xdg/autostart` and
-`~/.config/autostart` per the
-[Autostart specification](https://specifications.freedesktop.org/autostart-spec/latest/),
-so tray applets, sync clients and input methods start as they would elsewhere.
-It can be turned off in favour of Otto's own `exec_once`; see
-[Autostart](autostart.md).
+| Protocol | What it is for | Notes |
+|----------|----------------|-------|
+| `pointer-gestures` | Touchpad swipe, pinch and hold in apps | Login session only. See [Gestures](gestures.md) |
+| `relative-pointer`, `pointer-constraints` | Mouse look in games, locking the pointer | Relative motion in the login session only |
+| `tablet` | Drawing tablets and pens | |
+| `keyboard-shortcuts-inhibit` | Remote desktop and VM apps getting every key | Trusted apps; lock and VT switch still work |
+| `text-input-v3`, `input-method-v2` | Input methods (IME) and dictation | Input methods are trusted apps |
+| `virtual-keyboard`, `wlr-virtual-pointer` | Tools that type or move the pointer (emoji picker, remote desktop) | Trusted apps |
 
-**Notifications.** Otto is an `org.freedesktop.Notifications` server, so
-`notify-send` and any application that sends notifications works. They are
-drawn by the [Dynamic Island](dynamic-island.md), with actions and inline icons.
+### Clipboard
 
-**Screen sharing, screenshots and file dialogs** go through
-[xdg-desktop-portal](https://flatpak.github.io/xdg-desktop-portal/docs/):
-Otto ships its own backend, which is what lets browsers, OBS, Flatpak apps and
-sandboxed applications capture the screen and open files. Setup is in
-[Screen Sharing](screen-sharing.md).
+| Protocol | What it is for | Notes |
+|----------|----------------|-------|
+| `wl_data_device` | Copy, paste, drag and drop | |
+| `primary-selection` | Middle-click paste | |
+| `wlr-data-control`, `ext-data-control` | Clipboard managers and `wl-copy`/`wl-paste` | Trusted apps. See [Clipboard](clipboard.md) |
 
-**System tray.** The top bar hosts StatusNotifierItem tray icons, the same
-ones Plasma shows, including their DBusMenu menus. See [Top Bar](topbar.md).
+### Panels, taskbars and capture
 
-## Windows
+| Protocol | What it is for | Notes |
+|----------|----------------|-------|
+| `wlr-layer-shell` | Bars, docks, launchers, wallpapers, widgets | Trusted apps. See [Desktop Widgets](desktop-widgets.md) |
+| `ext-foreign-toplevel-list` | Listing open windows | Trusted apps |
+| `wlr-foreign-toplevel-management` | Taskbars that activate, minimise, maximise or close windows | Trusted apps |
+| `wlr-screencopy` | Screenshot and recording tools (`grim`, `wf-recorder`, `wl-mirror`) | Trusted apps. Screen sharing goes through the portal |
 
-Applications talk to Otto over the standard Wayland shell protocols
-(`xdg-shell` and friends), plus `wlr-layer-shell` for panels and widgets, so
-third-party bars, launchers and wallpaper tools written for other Wayland
-compositors run on Otto. [Desktop Widgets](desktop-widgets.md) covers running
-them.
+### Session and security
+
+| Protocol | What it is for | Notes |
+|----------|----------------|-------|
+| `ext-session-lock` | The lock screen | Only Otto's own [Lock Screen](lock-screen.md): `swaylock` and similar cannot lock |
+| `idle-inhibit` | Video players keeping the screen awake | |
+| `security-context` | Flatpak marking its apps as sandboxed | |
+
+### Otto's own
+
+| Protocol | What it is for |
+|----------|----------------|
+| `otto-surface-style` | Otto's apps shaping and animating their windows (corners, shadows, blur) |
+| `otto-dock` | Apps adding items to the Dock |
+| `otto-canvas` | Items on the [Side Canvas](side-canvas.md) |
+| `otto-text-cursor` | Pickers (emoji) opening beside the text cursor |
 
 ## What is not supported
 
-- **Recent files** (`recently-used.xbel`): Otto neither reads nor writes the
-  recent-documents list.
-- **Setting** default applications from inside Otto: `mimeapps.list` is read
-  only, so change defaults with `xdg-mime` or another desktop's settings app.
-- **Text scaling**: there is no separate text size control; text follows the
-  display scale, so making text bigger means scaling the whole display.
-- **Font rendering settings**: see the note under
-  [Look and feel](#look-and-feel).
+| Missing | What to do instead |
+|---------|--------------------|
+| Recent files (`recently-used.xbel`) | Files' Recent place lists recently changed files in your folders, not what other apps opened |
+| Writing thumbnails to the shared cache | Thumbnails other file managers made are used; Otto's own are not saved for others |
+| Startup notification (busy cursor while an app starts) | None |
+| `org.freedesktop.FileManager1` ("Show in folder" from other apps) | Open the folder in Files |
+| Third-party lock screens | Use Otto's lock screen |
+| Text scaling | Text follows the display scale; scale the display to make text bigger |
+| Pushing font changes live to GTK 3 and Qt apps | Restart the app after changing fonts |
+| `ext-idle-notify` (idle daemons like `swayidle`) | Use Otto's [Power Management](power-management.md) |
+| `wlr-output-management` (`wlr-randr`, `kanshi`) | Set displays in Settings or the [display profiles](display.md) |
+| `ext-image-copy-capture` | Use `wlr-screencopy` tools or the portal |
+| `tearing-control`, `content-type`, `color-management`, `single-pixel-buffer`, `alpha-modifier`, `fifo`, `commit-timing`, `xdg-system-bell`, `xdg-toplevel-icon` | Apps fall back to their default behaviour |
