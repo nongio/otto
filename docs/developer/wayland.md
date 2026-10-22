@@ -14,74 +14,74 @@ makes the rest of the codebase navigable.
 ## Supported protocols
 
 Versions are the ones the global advertises. Otto's Smithay is the nongio fork
-pinned in `Cargo.toml`. **Unsandboxed** means the global is hidden from
-clients tagged through `wp_security_context_v1` (`src/sandbox.rs`).
+pinned in `Cargo.toml`. Which globals are restricted, and to whom, is under
+[Availability](#availability).
 
 ### Core and shells
 
-| Global | v | Availability | Implementation |
-|--------|---|--------------|----------------|
-| `wl_compositor`, `wl_subcompositor` | 5, 1 | all | `CompositorHandler` in `src/shell/mod.rs` |
-| `wl_shm` | 2 | all; the mandatory ARGB8888/XRGB8888 only | `src/state/mod.rs` |
-| `wl_seat` | 9 | all | `src/state/seat_handler.rs` |
-| `wl_data_device_manager` | 3 | all | `src/state/data_device_handler.rs`, `dnd_grab_handler.rs` |
-| `wl_output` | 4 | all, one per output (virtual outputs too) | `src/udev/device.rs`, `src/winit.rs`, `src/x11.rs`, `src/screenshare/mod.rs` |
-| `zxdg_output_manager_v1` | 3 | all | `OutputManagerState::new_with_xdg_output` |
-| `xdg_wm_base` | 7 | all | `XdgShellHandler` in `src/shell/xdg.rs` |
-| `zxdg_decoration_manager_v1`, `org_kde_kwin_server_decoration_manager` | 1, 1 | all | `src/state/xdg_decoration_handler.rs` |
-| `xdg_wm_dialog_v1` | 1 | all; the modal hint floats a parentless window when tiling | `XdgDialogHandler` in `src/state/mod.rs`, read in `src/shell/tiling.rs` |
-| `xdg_activation_v1` | 1 | all; tokens need a fresh input serial, 10 s | `src/state/xdg_activation_handler.rs` |
-| `zxdg_exporter_v2`, `zxdg_importer_v2` | 1 | all | `XdgForeignHandler` in `src/state/mod.rs` |
-| `zwlr_layer_shell_v1` | 5 | unsandboxed | `src/shell/layer.rs`, `src/shell/mod.rs` |
-| `xwayland_shell_v1`, `zwp_xwayland_keyboard_grab_manager_v1` | 1, 1 | `xwayland` feature (default) | `src/state/xwayland_handler.rs`, `src/shell/x11.rs` |
-| `ext_background_effect_manager_v1` | 1 | all; the region only switches blur on, the whole surface frosts | `src/background_effect.rs`, see [specs/background-effect.md](../../specs/background-effect.md) |
-| `org_kde_kwin_appmenu_manager` | 2 | all | `src/state/kde_appmenu.rs` |
+| Global | v | Implementation |
+|--------|---|----------------|
+| `wl_compositor`, `wl_subcompositor` | 5, 1 | `CompositorHandler` in `src/shell/mod.rs` |
+| `wl_shm` | 2 | `src/state/mod.rs` |
+| `wl_seat` | 9 | `src/state/seat_handler.rs` |
+| `wl_data_device_manager` | 3 | `src/state/data_device_handler.rs`, `dnd_grab_handler.rs` |
+| `wl_output` | 4 | `src/udev/device.rs`, `src/winit.rs`, `src/x11.rs`, `src/screenshare/mod.rs` |
+| `zxdg_output_manager_v1` | 3 | `OutputManagerState::new_with_xdg_output` |
+| `xdg_wm_base` | 7 | `XdgShellHandler` in `src/shell/xdg.rs` |
+| `zxdg_decoration_manager_v1`, `org_kde_kwin_server_decoration_manager` | 1, 1 | `src/state/xdg_decoration_handler.rs` |
+| `xdg_wm_dialog_v1` | 1 | `XdgDialogHandler` in `src/state/mod.rs`, read in `src/shell/tiling.rs` |
+| `xdg_activation_v1` | 1 | `src/state/xdg_activation_handler.rs` |
+| `zxdg_exporter_v2`, `zxdg_importer_v2` | 1 | `XdgForeignHandler` in `src/state/mod.rs` |
+| `zwlr_layer_shell_v1` | 5 | `src/shell/layer.rs`, `src/shell/mod.rs` |
+| `xwayland_shell_v1`, `zwp_xwayland_keyboard_grab_manager_v1` | 1, 1 | `src/state/xwayland_handler.rs`, `src/shell/x11.rs` |
+| `ext_background_effect_manager_v1` | 1 | `src/background_effect.rs`, see [specs/background-effect.md](../../specs/background-effect.md) |
+| `org_kde_kwin_appmenu_manager` | 2 | `src/state/kde_appmenu.rs` |
 
 ### Buffers, timing and scaling
 
-| Global | v | Availability | Implementation |
-|--------|---|--------------|----------------|
-| `zwp_linux_dmabuf_v1` | 6 (3 without feedback, always 3 headless) | per backend | `DmabufHandler` in `src/udev/`, `src/winit.rs`, `src/x11.rs` |
-| `wl_drm` | — | per backend (`bind_wl_display`), legacy Mesa EGL | `src/udev/init.rs`, `src/winit.rs`, `src/x11.rs` |
-| `wp_linux_drm_syncobj_manager_v1` | 1 | udev, when the GPU supports syncobj eventfd | `src/udev/init.rs`, `src/udev/mod.rs` |
-| `wp_drm_lease_device_v1` | 1 | udev, one per DRM node | `src/udev/device.rs`, `src/udev/mod.rs` |
-| `wp_presentation` | 2 | all; feedback is sent on udev only | `post_repaint` / `take_presentation_feedback`, `src/udev/render.rs` |
-| `wp_fractional_scale_manager_v1` | 1 | all | `src/state/fractional_scale_handler.rs` |
-| `wp_viewporter` | 1 | all | `src/state/mod.rs` |
-| `wp_cursor_shape_manager_v1` | 2 | all | `src/state/mod.rs` |
+| Global | v | Implementation |
+|--------|---|----------------|
+| `zwp_linux_dmabuf_v1` | 6 (3 without feedback, always 3 headless) | `DmabufHandler` in `src/udev/`, `src/winit.rs`, `src/x11.rs` |
+| `wl_drm` | — | `src/udev/init.rs`, `src/winit.rs`, `src/x11.rs` |
+| `wp_linux_drm_syncobj_manager_v1` | 1 | `src/udev/init.rs`, `src/udev/mod.rs` |
+| `wp_drm_lease_device_v1` | 1 | `src/udev/device.rs`, `src/udev/mod.rs` |
+| `wp_presentation` | 2 | `post_repaint` / `take_presentation_feedback`, `src/udev/render.rs` |
+| `wp_fractional_scale_manager_v1` | 1 | `src/state/fractional_scale_handler.rs` |
+| `wp_viewporter` | 1 | `src/state/mod.rs` |
+| `wp_cursor_shape_manager_v1` | 2 | `src/state/mod.rs` |
 
 ### Input
 
-| Global | v | Availability | Implementation |
-|--------|---|--------------|----------------|
-| `zwp_relative_pointer_manager_v1` | 1 | udev (`HAS_RELATIVE_MOTION`) | `src/input/pointer.rs` |
-| `zwp_pointer_gestures_v1` | 3 | udev (`HAS_GESTURES`) | `src/input/gestures.rs` |
-| `zwp_pointer_constraints_v1` | 1 | all | `src/state/input_method_handler.rs`, `src/input/pointer.rs` |
-| `zwp_tablet_manager_v2` | 1 | all; events from libinput (udev) | `src/input/tablet.rs` |
-| `zwp_keyboard_shortcuts_inhibit_manager_v1` | 1 | unsandboxed; every request granted, lock and VT switch still fire | `src/state/mod.rs`, `survives_shortcut_inhibition` in `src/input/keyboard.rs` |
-| `zwp_text_input_manager_v3` | 1 | all | `src/state/mod.rs` |
-| `zwp_input_method_manager_v2` | 1 | unsandboxed | `src/state/input_method_handler.rs` |
-| `zwp_virtual_keyboard_manager_v1` | 1 | unsandboxed | `src/state/mod.rs` |
-| `zwlr_virtual_pointer_manager_v1` | 2 | unsandboxed; hand-rolled | `src/state/virtual_pointer.rs` |
+| Global | v | Implementation |
+|--------|---|----------------|
+| `zwp_relative_pointer_manager_v1` | 1 | `src/input/pointer.rs` |
+| `zwp_pointer_gestures_v1` | 3 | `src/input/gestures.rs` |
+| `zwp_pointer_constraints_v1` | 1 | `src/state/input_method_handler.rs`, `src/input/pointer.rs` |
+| `zwp_tablet_manager_v2` | 1 | `src/input/tablet.rs` |
+| `zwp_keyboard_shortcuts_inhibit_manager_v1` | 1 | `src/state/mod.rs`, `survives_shortcut_inhibition` in `src/input/keyboard.rs` |
+| `zwp_text_input_manager_v3` | 1 | `src/state/mod.rs` |
+| `zwp_input_method_manager_v2` | 1 | `src/state/input_method_handler.rs` |
+| `zwp_virtual_keyboard_manager_v1` | 1 | `src/state/mod.rs` |
+| `zwlr_virtual_pointer_manager_v1` | 2 | `src/state/virtual_pointer.rs` |
 
 ### Selection
 
-| Global | v | Availability | Implementation |
-|--------|---|--------------|----------------|
-| `zwp_primary_selection_device_manager_v1` | 1 | all | `src/state/selection_handler.rs` |
-| `zwlr_data_control_manager_v1`, `ext_data_control_manager_v1` | 2, 1 | unsandboxed | `src/state/data_device_handler.rs` |
+| Global | v | Implementation |
+|--------|---|----------------|
+| `zwp_primary_selection_device_manager_v1` | 1 | `src/state/selection_handler.rs` |
+| `zwlr_data_control_manager_v1`, `ext_data_control_manager_v1` | 2, 1 | `src/state/data_device_handler.rs` |
 
 ### Session, windows, capture
 
-| Global | v | Availability | Implementation |
-|--------|---|--------------|----------------|
-| `ext_session_lock_manager_v1` | 1 | only the locker Otto spawned (`ClientState::is_otto_locker`) | `src/state/session_lock_handler.rs`, `src/lock.rs` |
-| `zwp_idle_inhibit_manager_v1` | 1 | all | `src/state/mod.rs`, checked in `src/lock.rs` |
-| `wp_security_context_manager_v1` | 1 | all | `src/state/security_context_handler.rs`, `src/sandbox.rs` |
-| `ext_foreign_toplevel_list_v1` | 1 | unsandboxed | `src/state/foreign_toplevel_list_handler.rs` |
-| `zwlr_foreign_toplevel_manager_v1` | 3 | unsandboxed; hand-rolled over `wayland_protocols_wlr`; `set_rectangle` and the fullscreen output are ignored | `src/state/wlr_foreign_toplevel.rs`, see [foreign-toplevel.md](foreign-toplevel.md) |
-| `zwlr_screencopy_manager_v1` | 3 | unsandboxed; shm and dmabuf; `copy_with_damage` copies without `damage` events | `src/state/screencopy.rs` |
-| `zwlr_gamma_control_manager_v1` | 1 | unsandboxed; fails without DRM (gamma size 0) | `src/state/gamma_control.rs`, `src/udev/gamma.rs` |
+| Global | v | Implementation |
+|--------|---|----------------|
+| `ext_session_lock_manager_v1` | 1 | `src/state/session_lock_handler.rs`, `src/lock.rs` |
+| `zwp_idle_inhibit_manager_v1` | 1 | `src/state/mod.rs`, checked in `src/lock.rs` |
+| `wp_security_context_manager_v1` | 1 | `src/state/security_context_handler.rs`, `src/sandbox.rs` |
+| `ext_foreign_toplevel_list_v1` | 1 | `src/state/foreign_toplevel_list_handler.rs` |
+| `zwlr_foreign_toplevel_manager_v1` | 3 | `src/state/wlr_foreign_toplevel.rs`, see [foreign-toplevel.md](foreign-toplevel.md) |
+| `zwlr_screencopy_manager_v1` | 3 | `src/state/screencopy.rs` |
+| `zwlr_gamma_control_manager_v1` | 1 | `src/state/gamma_control.rs`, `src/udev/gamma.rs` |
 
 ### Otto's own
 
@@ -91,6 +91,34 @@ clients tagged through `wp_security_context_v1` (`src/sandbox.rs`).
 | `otto_dock_manager_v1` | 1 | `src/otto_dock/` |
 | `otto_canvas_manager_v1` | 5 | `src/otto_canvas/` |
 | `otto_text_cursor_manager_v1` | 1 | `src/text_cursor/`; `unavailable` is a normal answer |
+
+### Availability
+
+Every global above is offered to every client on every backend, except:
+
+- **Hidden from sandboxed clients** (tagged through `wp_security_context_v1`,
+  `src/sandbox.rs`): layer shell, keyboard shortcuts inhibit, input method,
+  virtual keyboard and pointer, both data controls, both foreign toplevel
+  lists, screencopy and gamma control.
+- **Only Otto's own locker**: `ext_session_lock_manager_v1`
+  (`ClientState::is_otto_locker`), so `swaylock` and the like cannot lock.
+- **udev only**: relative pointer (`HAS_RELATIVE_MOTION`), pointer gestures
+  (`HAS_GESTURES`), DRM syncobj (when the GPU supports syncobj eventfd) and
+  DRM lease (one per node). `wp_presentation` is everywhere but sends feedback
+  on udev only; tablet events come from libinput, so udev too; gamma control
+  fails without DRM.
+- **Per backend**: `zwp_linux_dmabuf_v1` (v6, v3 without feedback and always
+  v3 headless), `wl_drm` and `wl_output`.
+- **`xwayland` feature** (on by default): `xwayland_shell_v1` and the
+  Xwayland keyboard grab.
+
+Behaviour worth knowing: `wl_shm` offers only the mandatory ARGB8888 and
+XRGB8888; xdg-activation tokens need a fresh input serial and expire after
+10 s; the xdg-dialog modal hint floats a parentless window when tiling;
+background effect blurs the whole surface, whatever the region; keyboard
+shortcuts inhibit grants every request, but lock and VT switch still fire;
+wlr foreign toplevel ignores `set_rectangle` and the fullscreen output;
+screencopy treats `copy_with_damage` as a plain copy.
 
 ### Not served
 
