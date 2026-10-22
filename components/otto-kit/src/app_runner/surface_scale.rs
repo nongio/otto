@@ -282,7 +282,9 @@ impl ViewportState {
     /// pixels at `buffer_scale = 1`, so the source is mapped through the
     /// buffer's own size rather than the scale — exact at the far edge, where
     /// `logical × scale` can round past the buffer — and clamped to it, since
-    /// a source that leaves the buffer is a protocol error.
+    /// a source that leaves the buffer is a protocol error. So is an empty
+    /// one: a crop that is empty, or past the buffer's edge because the
+    /// layout is ahead of the buffer drawn for it, keeps one buffer pixel.
     pub fn for_surface(
         scale: BufferScale,
         logical: (i32, i32),
@@ -298,13 +300,15 @@ impl ViewportState {
                 },
             };
         };
-        // Surface-local extent of the buffer, and points to that space.
-        let (extent, per_point) = match scale {
+        // Surface-local extent of the buffer, points to that space, and one
+        // buffer pixel in it.
+        let (extent, per_point, pixel) = match scale {
             BufferScale::Integer(n) => {
                 let n = f64::from(n.max(1));
                 (
                     (f64::from(buffer.0) / n, f64::from(buffer.1) / n),
                     (1.0, 1.0),
+                    1.0 / n,
                 )
             }
             BufferScale::Fractional(_) => (
@@ -313,17 +317,35 @@ impl ViewportState {
                     f64::from(buffer.0) / f64::from(logical.0.max(1)),
                     f64::from(buffer.1) / f64::from(logical.1.max(1)),
                 ),
+                1.0,
             ),
         };
-        let left = (f64::from(source.left) * per_point.0).clamp(0.0, extent.0);
-        let top = (f64::from(source.top) * per_point.1).clamp(0.0, extent.1);
-        let right = (f64::from(source.right) * per_point.0).clamp(left, extent.0);
-        let bottom = (f64::from(source.bottom) * per_point.1).clamp(top, extent.1);
+        let (left, width) = clamp_span(
+            f64::from(source.left) * per_point.0,
+            f64::from(source.right) * per_point.0,
+            extent.0,
+            pixel,
+        );
+        let (top, height) = clamp_span(
+            f64::from(source.top) * per_point.1,
+            f64::from(source.bottom) * per_point.1,
+            extent.1,
+            pixel,
+        );
         Self {
-            source: Some((left, top, right - left, bottom - top)),
+            source: Some((left, top, width, height)),
             destination: Some((dest_w.max(1), dest_h.max(1))),
         }
     }
+}
+
+/// `start..end` clamped to `0..extent` and at least `pixel` long, as
+/// `(start, length)`.
+fn clamp_span(start: f64, end: f64, extent: f64, pixel: f64) -> (f64, f64) {
+    let pixel = pixel.min(extent);
+    let start = start.clamp(0.0, extent - pixel);
+    let end = end.clamp(start + pixel, extent);
+    (start, end - start)
 }
 
 /// The buffer geometry a surface was last given.
@@ -804,5 +826,34 @@ mod tests {
         assert!((y - 10.0 * 41.0 / 33.0).abs() < 1e-9);
         assert_eq!(y + h, 41.0);
         assert_eq!(fractional.destination, Some((80, 20)));
+    }
+
+    /// A crop past the buffer's edge, or an empty one, still sends a source
+    /// with a size: a zero-size source is a protocol error that disconnects
+    /// the client.
+    #[test]
+    fn crop_outside_the_buffer_keeps_a_pixel() {
+        let past = (
+            skia_safe::Rect::from_ltrb(120.0, 60.0, 180.0, 90.0),
+            (60, 30),
+        );
+        let empty = (skia_safe::Rect::from_ltrb(10.0, 10.0, 10.0, 10.0), (0, 0));
+
+        let integer =
+            ViewportState::for_surface(BufferScale::Integer(2), (100, 50), (200, 100), Some(past));
+        assert_eq!(integer.source, Some((99.5, 49.5, 0.5, 0.5)));
+
+        for crop in [past, empty] {
+            let (x, y, w, h) = ViewportState::for_surface(
+                BufferScale::Fractional(150),
+                (100, 50),
+                (125, 63),
+                Some(crop),
+            )
+            .source
+            .unwrap();
+            assert!(w >= 1.0 && h >= 1.0, "{crop:?}: {w}x{h}");
+            assert!(x >= 0.0 && x + w <= 125.0 && y >= 0.0 && y + h <= 63.0);
+        }
     }
 }
