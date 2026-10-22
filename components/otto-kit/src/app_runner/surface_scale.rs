@@ -240,15 +240,17 @@ impl BufferScale {
     /// The buffer size, in pixels, for a surface `logical` points big.
     ///
     /// A fractional size rounds to the nearest pixel, which is the size the
-    /// compositor's own rounding of `logical × scale` lands on.
+    /// compositor's own rounding of `logical × scale` lands on. Never empty:
+    /// a surface laid out to nothing still gets a pixel, so a crop of it has
+    /// a buffer to stay inside.
     pub fn buffer_size(self, (width, height): (i32, i32)) -> (i32, i32) {
         match self {
-            Self::Integer(n) => (width * n, height * n),
+            Self::Integer(n) => (width.max(1) * n, height.max(1) * n),
             Self::Fractional(s) => {
                 let s = f64::from(s) / 120.0;
                 (
-                    (f64::from(width) * s).round() as i32,
-                    (f64::from(height) * s).round() as i32,
+                    ((f64::from(width) * s).round() as i32).max(1),
+                    ((f64::from(height) * s).round() as i32).max(1),
                 )
             }
         }
@@ -842,6 +844,14 @@ mod tests {
         let integer =
             ViewportState::for_surface(BufferScale::Integer(2), (100, 50), (200, 100), Some(past));
         assert_eq!(integer.source, Some((99.5, 49.5, 0.5, 0.5)));
+
+        // A pane laid out to no height, cropped to nothing.
+        let collapsed = BufferScale::Fractional(210);
+        let buffer = collapsed.buffer_size((260, 0));
+        let (_, _, w, h) = ViewportState::for_surface(collapsed, (260, 0), buffer, Some(empty))
+            .source
+            .unwrap();
+        assert!(w > 0.0 && h > 0.0, "collapsed: {w}x{h}");
 
         for crop in [past, empty] {
             let (x, y, w, h) = ViewportState::for_surface(
