@@ -675,6 +675,19 @@ main th {
    font-weight: 600;
 }
 
+/* The protocol tables share their columns (global, version, code), so they
+   line up from one section to the next. */
+main[data-page="wayland"] table {
+   display: table;
+   table-layout: fixed;
+   width: 100%;
+}
+main[data-page="wayland"] th:nth-child(1) { width: 42%; }
+main[data-page="wayland"] th:nth-child(2) { width: 3.5em; }
+main[data-page="wayland"] td {
+   overflow-wrap: anywhere;
+}
+
 main table a {
    font-weight: 600;
 }

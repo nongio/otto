@@ -20,7 +20,8 @@
          result is a piece of the page rather than its table of contents. The
          back link is inside the h1, which Pagefind reads as the result's
          title, so it is ignored rather than prefixed to every result. */}}
-    <main data-pagefind-body>
+    {{/* data-page names the page, for the few rules one page needs. */}}
+    <main data-pagefind-body data-page="{{ .File.BaseFileName }}">
         <h1><a class="back-home" data-pagefind-ignore href="{{ $up.RelPermalink }}">&larr; {{ $up.Title }}</a><span class="page-title">{{ .Title }}</span></h1>
         {{ .Content }}
     </main>

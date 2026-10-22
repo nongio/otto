@@ -41,7 +41,7 @@ pinned in `Cargo.toml`. Which globals are restricted, and to whom, is under
 
 | Global | v | Implementation |
 |--------|---|----------------|
-| `zwp_linux_dmabuf_v1` | 6 (3 without feedback, always 3 headless) | `DmabufHandler` in `src/udev/`, `src/winit.rs`, `src/x11.rs` |
+| `zwp_linux_dmabuf_v1` | 6 | `DmabufHandler` in `src/udev/`, `src/winit.rs`, `src/x11.rs` |
 | `wl_drm` | — | `src/udev/init.rs`, `src/winit.rs`, `src/x11.rs` |
 | `wp_linux_drm_syncobj_manager_v1` | 1 | `src/udev/init.rs`, `src/udev/mod.rs` |
 | `wp_drm_lease_device_v1` | 1 | `src/udev/device.rs`, `src/udev/mod.rs` |
