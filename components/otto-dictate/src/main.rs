@@ -37,7 +37,6 @@ use std::path::PathBuf;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use smithay_client_toolkit::delegate_shm;
 use smithay_client_toolkit::reexports::calloop::channel::{self, Channel, Sender};
 use smithay_client_toolkit::reexports::calloop::timer::{TimeoutAction, Timer};
 use smithay_client_toolkit::reexports::calloop::EventLoop;
@@ -726,7 +725,7 @@ impl ShmHandler for State {
     }
 }
 
-delegate_shm!(State);
+smithay_client_toolkit::delegate_dispatch2!(State);
 /// The popup's preferred scale. It is redrawn every frame while it is up, so
 /// a new scale needs nothing more than keeping.
 impl Dispatch<WpFractionalScaleV1, wl_surface::WlSurface> for State {

@@ -345,7 +345,7 @@ impl BaseWaylandSurface {
         if !one_to_one || !AppContext::surface_is_opaque(&self.wl_surface.id()) {
             return PixelGeometry::Unknown;
         }
-        let Some(data) = self.wl_surface.data::<SurfaceData>() else {
+        let Some(data) = self.wl_surface.data::<SurfaceData<()>>() else {
             return PixelGeometry::Unknown;
         };
         let mut outputs = data.outputs();

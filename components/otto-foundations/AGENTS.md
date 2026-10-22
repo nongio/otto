@@ -1,10 +1,10 @@
 # otto-foundations
 
-The small rules several Otto programs have to agree on: where the XDG directories are, how a path becomes a `file://` URI and back, how typed text is scored against a name, how a desktop entry's keys are read and set, what the login name is, and how a program sets up its logging. No UI, no async runtime, no D-Bus.
+The small rules several Otto programs have to agree on: where the XDG directories are, how a path becomes a `file://` URI and back, how typed text is scored against a name, how a config file is replaced without a reader seeing half of it, how a desktop entry's keys are read and set, what the login name is, and how a program sets up its logging. No UI, no async runtime, no D-Bus.
 
 How it works: [otto-foundations](../../docs/developer/otto-foundations.md).
 
-- **Layer:** foundation. Used by `otto-kit` (re-exported as `otto_kit::xdg`, `otto_kit::uri`, `otto_kit::matching`, `otto_kit::desktop_file`, `otto_kit::user`, `otto_kit::logging`), and directly by crates that do not link the toolkit: `otto-search`, `otto-agents-client`, `otto-agents`, `xdg-desktop-portal-otto`, `otto-pdf`, `otto-rdp`, `otto-msg` and `otto-render`.
+- **Layer:** foundation. Used by `otto-kit` (re-exported as `otto_kit::xdg`, `otto_kit::uri`, `otto_kit::matching`, `otto_kit::fs::write_atomically`, `otto_kit::desktop_file`, `otto_kit::user`, `otto_kit::logging`), and directly by crates that do not link the toolkit: `otto-search`, `otto-agents-client`, `otto-agents`, `xdg-desktop-portal-otto`, `otto-pdf`, `otto-rdp`, `otto-msg` and `otto-render`.
 
 ## Dependencies
 - **Internal:** none.
@@ -18,6 +18,7 @@ How it works: [otto-foundations](../../docs/developer/otto-foundations.md).
 - `xdg`: the base directories, `home`, Otto's config paths, `user-dirs.dirs`, and the `~/…` spelling of a path (`tilde`).
 - `uri`: `file://` URIs over a path's bytes, with a lenient and a strict decoder.
 - `matching`: subsequence scoring for typed queries, shared by the launcher, every toolkit list and file search.
+- `fs`: `write_atomically`, the one way Otto replaces a config or state file: written beside, synced, renamed over.
 - `desktop_file`: the `[Desktop Entry]` group of a desktop entry's text, read (`value`, `entries`) and edited in place (`with_value`). Looking an app up by id is otto-kit's `desktop_entry`, not this.
 - `user`: the login name (`login_name`).
 - `logging`: `init(default_filter)`, the `tracing` setup every Otto program calls first thing in `main`.
@@ -29,6 +30,7 @@ How it works: [otto-foundations](../../docs/developer/otto-foundations.md).
 - `login_name` is `$USER`, then `$LOGNAME`; an empty value counts as unset.
 - `logging::init` writes to stderr, never standard output (`otto-agents acp` speaks its protocol there). `RUST_LOG` wins when it parses, else the default filter applies; a second call keeps the first subscriber.
 - `decode_path` treats a `%` that is not followed by two hex digits as a literal `%`, because file names contain them. `try_decode_path` returns `None` for one; use it on a wire where both ends are Otto's. Neither decoder takes a sign as a hex digit, so `%+f` is not an escape.
+- `write_atomically` writes through a symlink to its target, so the link survives, and keeps the old file's permissions and owner. The temporary file is made fresh with `O_EXCL` and removed when anything fails. Write config and state files with it, not with `fs::write` or a hand-rolled temp-and-rename.
 - A helper belongs here when a program that does not link otto-kit needs it, and it needs only the standard library (`logging` and its `tracing-subscriber` are the exception). A helper that draws, talks D-Bus or needs a runtime belongs in otto-kit, otto-dbus or the crate that uses it.
 
 ## See also

@@ -49,6 +49,23 @@ pub trait Dialog {
         choices: Vec<WireChoice>,
     ) -> zbus::Result<(u32, Vec<(String, String)>)>;
 
+    /// [`present_access`](Self::present_access), named by `cookie` for
+    /// [`withdraw`](Self::withdraw). The portal passes its request handle.
+    #[allow(clippy::too_many_arguments)]
+    fn present_access_with_cookie(
+        &self,
+        app_id: &str,
+        cookie: &str,
+        title: &str,
+        subtitle: &str,
+        body: &str,
+        icon: &str,
+        grant_label: &str,
+        deny_label: &str,
+        modal: bool,
+        choices: Vec<WireChoice>,
+    ) -> zbus::Result<(u32, Vec<(String, String)>)>;
+
     /// [`present_access`](Self::present_access) plus an open button. An
     /// empty `grant_label` or `open_label` hides that button.
     #[allow(clippy::too_many_arguments)]

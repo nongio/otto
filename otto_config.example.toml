@@ -289,9 +289,9 @@ scroll_speed = 1.0
 # xkb_switch_layout next` does the same from a script.
 # show_layout_in_bar = true
 #
-# Holding a letter that has accented forms (a, e, n, o, …) or a few symbols
-# ($ - . " ' ! ?) shows the forms in a row at the text cursor instead of
-# repeating the key: press the number under one, or the arrows and Return.
+# Holding a letter that has accented forms (a, e, n, o, …) shows the forms
+# in a row at the text cursor instead of repeating the key: press the number
+# under one, or the arrows and Return.
 # Only in apps that report their text cursor. On by default.
 # press_and_hold_accents = false
 

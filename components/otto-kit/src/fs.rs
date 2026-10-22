@@ -13,6 +13,10 @@ use std::path::{Path, PathBuf};
 use rustix::fs::{self as rfs, AtFlags, RenameFlags};
 use rustix::io::Errno;
 
+/// Replacing a file in one step lives in `otto-foundations`, for programs
+/// that do not link the toolkit; re-exported so apps keep one import path.
+pub use otto_foundations::fs::write_atomically;
+
 /// What a move says when the name it was going to take is taken.
 pub const NAME_TAKEN: &str = "something is already there";
 

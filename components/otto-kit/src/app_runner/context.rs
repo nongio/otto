@@ -3,7 +3,7 @@
 use super::{App, AppData};
 use crate::protocols::otto_surface_style_manager_v1;
 use smithay_client_toolkit::{
-    compositor::CompositorState,
+    compositor::{CompositorState, FrameCallbackData},
     output::{OutputInfo, OutputState},
     seat::SeatState,
     shell::xdg::{window::WindowConfigure, XdgShell},
@@ -1035,7 +1035,7 @@ impl<'a> AppContext<'a> {
         let qh_clone = queue_handle.clone();
         FRAME_REQUEST_FN.with(|frame_fn| {
             *frame_fn.borrow_mut() = Some(Box::new(move |surface: &wl_surface::WlSurface| {
-                surface.frame(&qh_clone, surface.clone());
+                surface.frame(&qh_clone, FrameCallbackData(surface.clone()));
             }));
         });
     }

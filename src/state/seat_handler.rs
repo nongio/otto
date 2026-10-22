@@ -105,6 +105,10 @@ impl<BackendData: Backend> SeatHandler for Otto<BackendData> {
         set_data_device_focus(dh, seat, focus.clone());
         set_primary_focus(dh, seat, focus);
 
+        // An accent row picks into the window it came up over, never the
+        // one taking the focus. Smithay only calls this on a real change.
+        self.reset_accent_hold();
+
         self.update_toplevel_activation(target);
     }
 

@@ -28,9 +28,10 @@ one swipe away and out of the way the rest of the time.
   a click outside it.
 - A client can bring the canvas out when it has something new to show,
   without taking the keyboard from the app the user is working in.
-- Something dragged from any app can be dropped on an item: a drag resting at
-  the right edge opens the canvas, and a drag started beside an open canvas
-  does not close it.
+- Something dragged from any app can be dropped on an item: the canvas
+  peeks out as soon as a drag starts to say a drop can go there, comes out
+  further as the drag goes right, and opens at the edge. A drag started
+  beside an open canvas does not close it.
 
 ## Non-Goals
 
@@ -205,13 +206,26 @@ one swipe away and out of the way the rest of the time.
 - Every drag and drop operation is announced to every manager (version 4)
   with `drag_mime_type` events and `drag_started`, and its end with
   `drag_ended`, whether it was dropped or cancelled.
-- While a drag goes on, the pointer resting within the canvas width of the
-  right edge of an output for 250 ms opens the canvas there, as an item's `show`
-  does: passive, without moving the keyboard, and not while the session is
-  locked or during exposé. It opens only if an item exists by then; a client
-  may add one on `drag_started` for this. A rest that finds no item keeps
-  trying while the pointer stays at the edge. Leaving the edge and coming
-  back starts a new rest.
+- As soon as a drag starts, the canvas peeks out on the output under the
+  pointer, with a tenth of the column on screen, and goes with the pointer
+  to another output. From the middle of that output on, it follows the
+  pointer, more of it on screen the further right the pointer goes, all of
+  it where the last tenth of the output starts: a drag heading there finds
+  the canvas out. A peeking canvas takes no presses.
+- The pointer turning back left by 8% of the output's width while the
+  canvas follows it takes it in to a tenth again (eased over 0.3 s), and
+  there it stays, wherever the pointer goes, unless the pointer goes over
+  the peeking canvas.
+- The pointer resting in the last tenth of the output for 150 ms opens the
+  canvas, as an item's `show` does: passive, without moving the keyboard.
+  Once turned back, the pointer has to rest over the canvas itself instead.
+- A canvas the drag opened goes back to peeking a tenth, in the same way,
+  when the pointer leaves it 8% of the output's width to the left of the
+  column; over the column, or just past its edge, it stays open.
+- Neither happens while the session is locked or during exposé, and only if
+  an item exists; a client may add one on `drag_started` for this. The peek
+  is tried again on every look at the pointer until one does, and a rest in
+  the last tenth that finds no item keeps trying while the pointer stays.
 - Items take the drop through `wl_data_device` like any other surface.
 - When the drag ends, a canvas that the drag opened hides again, unless the
   drop landed on an item. A canvas that was already open when the drag
@@ -323,9 +337,17 @@ are read the next time the column is laid out.
   item. Hiding on release rather than on press, and not at all when the
   press started a drag, is what makes that drop possible. A plain click
   outside still closes the canvas.
-- **Rest at the edge to open.** A drag cannot swipe or press a shortcut, and
-  the right edge is where the canvas lives. The pause keeps a drag on its way
-  to an output further right from opening it.
+- **Peek at once, follow, open at the edge.** A drag cannot swipe or press
+  a shortcut, and the right edge is where the canvas lives. Peeking as soon
+  as a drag starts tells the user a drop can go there before they have to
+  look for it; it covers little, so a drag meant for a window is not in its
+  way. Following from the middle shows that going right brings it out, and
+  has it all the way out by the time the pointer reaches the edge. Turning
+  back is the user saying they do not want it, so it goes back to the first
+  step, as an undo, open or not, and stays there; it has to be a clear move,
+  not a hand correcting its aim. The tenth that still shows is how to undo
+  the undo: going over it says the user wants it after all. The short rest
+  keeps a drag on its way to an output further right from opening it.
 - **Drags are announced to everyone.** A client with nothing in the canvas
   may still want the drop (the stash starts one); it cannot add an item for
   it unless it knows a drag is on. The mime types let it add one only for

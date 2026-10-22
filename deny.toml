@@ -171,7 +171,6 @@ deny = [
         "calloop-wayland-source",
         "gbm",
         "smithay",
-        "smithay-client-toolkit",
         "wayland-client",
         "wayland-csd-frame",
         "wayland-egl",

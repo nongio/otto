@@ -151,10 +151,18 @@ browser's own.
 - **Free**: each icon has a slot on an invisible grid of cell-sized slots. A
   dropped icon snaps to the nearest free slot, so icons never overlap. New
   files take the first free slot in grid order, and keep it. When a file
-  goes away, its slot is freed. A renamed file keeps its slot. Positions are
-  kept by file name as a column and a row in
-  `~/.local/state/otto/desk.toml` (`[positions]`, `"name" = [col, row]`),
-  never in the folder itself; per output once there is a surface per output.
+  goes away, its slot is freed. A hidden file keeps its slot while hidden
+  files are not shown. A folder that cannot be read, or has gone, frees
+  nothing: its slots come back with it. A renamed file keeps its slot.
+  Positions are kept per folder, by file name, as a column and a row in
+  `~/.local/state/otto/desk.toml` (`[folders."<folder>".positions]`,
+  `"name" = [col, row]`), never in the folder itself; per output once there
+  is a surface per output. Changing `folder` shows the new folder's layout
+  and keeps the old one's for when the desk comes back to it. A file from
+  before layouts were kept per folder (a bare `[positions]`) is taken up by
+  the first folder shown, and written back under it. The file is replaced
+  in one step, through a symlink to its target, and one that does not
+  parse is left alone rather than written over.
   Switching to free placement for the first time keeps the icons where the
   grid had them.
 - Under free placement the keyboard's Left and Right walk the icons in

@@ -280,3 +280,86 @@ fn down_skips_empty_rows() {
     let back = browser.desk_free_vertical(false).unwrap();
     assert!(back == start || back == index_of(&browser, "file-001.txt"));
 }
+
+/// Re-read the desk's folder and wait for the listing to land.
+fn reread(browser: &mut Browser) {
+    let epoch = browser.columns[0].epoch;
+    browser.columns[0].reload();
+    for _ in 0..500 {
+        if browser.columns[0].poll() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    assert_ne!(browser.columns[0].epoch, epoch, "re-read never arrived");
+    browser.sync_scroll_metrics();
+}
+
+fn saved_names(browser: &Browser) -> Vec<String> {
+    let places = browser.desk_placement.places.as_ref().expect("places read");
+    let mut names: Vec<String> = places.positions.keys().cloned().collect();
+    names.sort();
+    names
+}
+
+/// A folder that cannot be read lists nothing, and that must not read as
+/// every file going away: the saved places stay.
+#[test]
+fn a_failed_read_keeps_the_places() {
+    let (mut browser, folder) = desk(3, Overflow::Scroll);
+    let area = area(&browser);
+    let far = view::grid_slot_rect(area, 10, 0.0);
+    drag(&mut browser, &folder, &["file-000.txt"], far.left, far.top);
+    let before = saved_names(&browser);
+    assert_eq!(before.len(), 3);
+
+    std::fs::remove_dir_all(&folder.0).unwrap();
+    reread(&mut browser);
+    assert!(browser.columns[0].snapshot.error.is_some());
+    assert_eq!(saved_names(&browser), before);
+
+    // Back again, every icon is where it was.
+    std::fs::create_dir_all(&folder.0).unwrap();
+    for i in 0..3 {
+        std::fs::write(folder.0.join(format!("file-{i:03}.txt")), b"x").unwrap();
+    }
+    reread(&mut browser);
+    assert_eq!(rect_of(&browser, "file-000.txt"), far);
+}
+
+/// A hidden file is still in the folder: hiding it keeps its place.
+#[test]
+fn a_hidden_file_keeps_its_place() {
+    let (mut browser, folder) = desk(2, Overflow::Scroll);
+    std::fs::write(folder.0.join(".secret"), b"x").unwrap();
+    browser.show_hidden = true;
+    reread(&mut browser);
+    assert!(saved_names(&browser).contains(&".secret".to_owned()));
+
+    browser.show_hidden = false;
+    browser.sync_scroll_metrics();
+    assert!(browser
+        .visible(0)
+        .iter()
+        .all(|entry| entry.name != ".secret"));
+    assert!(saved_names(&browser).contains(&".secret".to_owned()));
+}
+
+/// Pointing the desk at another folder reads that folder's places rather
+/// than pruning the first folder's down to nothing.
+#[test]
+fn another_folder_reads_its_own_places() {
+    let (mut browser, first) = desk(3, Overflow::Scroll);
+    assert_eq!(browser.desk_placement.folder.as_ref(), Some(&first.0));
+    let second = Folder::holding(1);
+    browser.go_to(&second.0);
+    for _ in 0..500 {
+        if browser.columns[0].poll() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    browser.sync_scroll_metrics();
+    assert_eq!(browser.desk_placement.folder.as_ref(), Some(&second.0));
+    assert_eq!(saved_names(&browser), ["file-000.txt"]);
+}

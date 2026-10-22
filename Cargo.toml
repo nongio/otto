@@ -258,7 +258,7 @@ serde_json = "1"
 # Pinned to the release laye-rs builds against: skia-safe links the native Skia
 # library, so a build can only ever hold one copy of it.
 skia-safe = "=0.93"
-smithay-client-toolkit = { version = "0.19", default-features = false }
+smithay-client-toolkit = { version = "0.21", default-features = false }
 # The Wayland server library. The compositor and its render stack
 # (otto-render) link the same fork, so it is declared once; lean here, each
 # member turns on the backends it uses.

@@ -46,7 +46,6 @@ use std::time::{Duration, Instant};
 
 use anyhow::Context;
 use otto_kit::clipboard::URI_LIST;
-use smithay_client_toolkit::delegate_shm;
 use smithay_client_toolkit::reexports::calloop::channel;
 use smithay_client_toolkit::reexports::calloop::generic::Generic;
 use smithay_client_toolkit::reexports::calloop::timer::{TimeoutAction, Timer};
@@ -460,9 +459,12 @@ impl State {
                 }
             }
             // Ask shows what is stashed as it opens, as it does when opened
-            // any other way.
+            // any other way. The canvas goes: the stash is in Ask now.
             Command::Send => {
                 if self.stash.is_some() {
+                    if let Some(Card::Canvas(card)) = self.panel.as_ref() {
+                        card.dismiss();
+                    }
                     self.open_ask();
                 }
             }
@@ -903,6 +905,7 @@ impl State {
             layout,
             &self.scroll,
             self.hovered_item,
+            self.pressed,
             canvas,
             (w, h),
             scale,
@@ -1014,6 +1017,7 @@ impl State {
                 self.refresh();
             }
             Hit::Clear => self.on_command(Command::Cancel),
+            Hit::Send => self.on_command(Command::Send),
         }
     }
 
@@ -1223,6 +1227,9 @@ impl Dispatch<wl_pointer::WlPointer, ()> for State {
                     // A press on a button clicks it, one on the scrollbar
                     // scrolls, and anywhere else drags the card.
                     state.pressed = state.hit_at_pointer();
+                    if state.pressed == Some(Hit::Send) {
+                        state.draw_panel();
+                    }
                     let on_card = state.panel.as_ref().and_then(Card::pointer_on_card);
                     let on_thumb = on_card
                         .is_some_and(|(x, y)| state.scroll.on_pointer_down(x as f32, y as f32));
@@ -1242,6 +1249,9 @@ impl Dispatch<wl_pointer::WlPointer, ()> for State {
                     let pressed = state.pressed.take();
                     if let Some(hit) = pressed.filter(|&hit| state.hit_at_pointer() == Some(hit)) {
                         state.on_click(hit);
+                    } else if pressed == Some(Hit::Send) {
+                        // Slid off before letting go: no longer held.
+                        state.draw_panel();
                     }
                     // Clicked, not dragged: the card is where it was.
                     let origin = state.panel.as_ref().map(Card::card_origin);
@@ -1254,7 +1264,9 @@ impl Dispatch<wl_pointer::WlPointer, ()> for State {
             },
             wl_pointer::Event::Leave { .. } => {
                 panel.pointer_left();
-                state.pressed = None;
+                if state.pressed.take() == Some(Hit::Send) {
+                    state.draw_panel();
+                }
                 state.scroll.on_pointer_up();
                 state.scroll.on_pointer_leave();
                 state.pressed_item = None;
@@ -1285,7 +1297,7 @@ impl ShmHandler for State {
     }
 }
 
-delegate_shm!(State);
+smithay_client_toolkit::delegate_dispatch2!(State);
 delegate_noop!(State: ignore wl_compositor::WlCompositor);
 delegate_noop!(State: ignore wl_surface::WlSurface);
 delegate_noop!(State: ignore wl_seat::WlSeat);

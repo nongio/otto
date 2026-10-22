@@ -141,6 +141,10 @@ pre {
    margin: 14pt;
 }
 
+.term-bar {
+   display: none;
+}
+
 pre code {
    display: block;
    padding: 1.4em;

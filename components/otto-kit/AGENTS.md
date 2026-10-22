@@ -7,7 +7,7 @@ How it works: [otto-kit](../../docs/developer/otto-kit.md).
 - **Layer:** toolkit. Used by the compositor, every kit crate (`otto-md-kit`, `otto-media-kit`, `otto-auth-ui`, `otto-peek`, `otto-agents-kit`) and every toolkit app.
 
 ## Dependencies
-- **Internal:** `otto-foundations` (re-exported as `otto_kit::xdg`, `otto_kit::uri`, `otto_kit::matching`, `otto_kit::desktop_file`, `otto_kit::user`, `otto_kit::logging`) and `otto-dbus` (every D-Bus client proxy, re-exported as `otto_kit::dbus`; `portal_settings.rs` uses its Settings portal proxy).
+- **Internal:** `otto-foundations` (re-exported as `otto_kit::xdg`, `otto_kit::uri`, `otto_kit::matching`, `write_atomically` as `otto_kit::fs::write_atomically`, `otto_kit::desktop_file`, `otto_kit::user`, `otto_kit::logging`) and `otto-dbus` (every D-Bus client proxy, re-exported as `otto_kit::dbus`; `portal_settings.rs` uses its Settings portal proxy).
 - **External:** `smithay-client-toolkit` and `wayland-client`; `skia-safe` (gl, textlayout, svg, skottie), re-exported as `otto_kit::skia`; `laye-rs` for the retained scene graph; EGL, loaded at run time; `libfontconfig`, queried over FFI in `text_rendering.rs` for how each family is rasterised. From the compositor it needs `zwlr_layer_shell_v1`, `ext_session_lock_v1`, fractional scale, `zwp_text_input_v3`, pointer gestures and Otto's own protocols. It follows the `org.freedesktop.portal.Settings` portal for colour scheme, accent and locale, puts up file dialogs through the portal's `FileChooser`, and serves accessibility through AccessKit over AT-SPI. The `dictation` feature adds PipeWire capture and an HTTP speech-to-text client.
 
 ## Develop

@@ -110,7 +110,7 @@ impl ToplevelSurface {
         qh: &QueueHandle<D>,
     ) -> Result<Self, SurfaceError>
     where
-        D: Dispatch<wl_surface::WlSurface, SurfaceData>
+        D: Dispatch<wl_surface::WlSurface, SurfaceData<()>>
             + Dispatch<xdg_surface::XdgSurface, WindowData>
             + Dispatch<xdg_toplevel::XdgToplevel, WindowData>
             + Dispatch<zxdg_toplevel_decoration_v1::ZxdgToplevelDecorationV1, WindowData>

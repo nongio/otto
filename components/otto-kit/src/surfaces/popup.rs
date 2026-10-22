@@ -125,7 +125,7 @@ impl PopupSurface {
         qh: &QueueHandle<D>,
     ) -> Result<Self, SurfaceError>
     where
-        D: Dispatch<wl_surface::WlSurface, SurfaceData>
+        D: Dispatch<wl_surface::WlSurface, SurfaceData<()>>
             + Dispatch<xdg_surface::XdgSurface, PopupData>
             + Dispatch<xdg_popup::XdgPopup, PopupData>
             + Dispatch<otto_surface_style_v1::OttoSurfaceStyleV1, ()>
@@ -223,7 +223,7 @@ impl PopupSurface {
         qh: &QueueHandle<D>,
     ) -> Result<Self, SurfaceError>
     where
-        D: Dispatch<wl_surface::WlSurface, SurfaceData>
+        D: Dispatch<wl_surface::WlSurface, SurfaceData<()>>
             + Dispatch<xdg_surface::XdgSurface, PopupData>
             + Dispatch<xdg_popup::XdgPopup, PopupData>
             + Dispatch<otto_surface_style_v1::OttoSurfaceStyleV1, ()>
@@ -255,7 +255,7 @@ impl PopupSurface {
         grab_serial: Option<u32>,
     ) -> Result<Self, SurfaceError>
     where
-        D: Dispatch<wl_surface::WlSurface, SurfaceData>
+        D: Dispatch<wl_surface::WlSurface, SurfaceData<()>>
             + Dispatch<xdg_surface::XdgSurface, PopupData>
             + Dispatch<xdg_popup::XdgPopup, PopupData>
             + Dispatch<otto_surface_style_v1::OttoSurfaceStyleV1, ()>
@@ -377,7 +377,7 @@ impl PopupSurface {
         qh: &QueueHandle<D>,
     ) -> Result<(), SurfaceError>
     where
-        D: Dispatch<wl_surface::WlSurface, SurfaceData>
+        D: Dispatch<wl_surface::WlSurface, SurfaceData<()>>
             + Dispatch<xdg_surface::XdgSurface, PopupData>
             + Dispatch<xdg_popup::XdgPopup, PopupData>
             + 'static,

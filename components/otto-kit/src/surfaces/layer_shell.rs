@@ -208,7 +208,7 @@ impl LayerShellSurface {
         qh: &QueueHandle<D>,
     ) -> Result<Self, SurfaceError>
     where
-        D: Dispatch<wl_surface::WlSurface, SurfaceData>
+        D: Dispatch<wl_surface::WlSurface, SurfaceData<()>>
             + Dispatch<ZwlrLayerSurfaceV1, ()>
             + Dispatch<otto_surface_style_v1::OttoSurfaceStyleV1, ()>
             + Dispatch<otto_surface_style_manager_v1::OttoSurfaceStyleManagerV1, ()>
@@ -249,7 +249,7 @@ impl LayerShellSurface {
         qh: &QueueHandle<D>,
     ) -> Result<Self, SurfaceError>
     where
-        D: Dispatch<wl_surface::WlSurface, SurfaceData>
+        D: Dispatch<wl_surface::WlSurface, SurfaceData<()>>
             + Dispatch<ZwlrLayerSurfaceV1, ()>
             + Dispatch<otto_surface_style_v1::OttoSurfaceStyleV1, ()>
             + Dispatch<otto_surface_style_manager_v1::OttoSurfaceStyleManagerV1, ()>
