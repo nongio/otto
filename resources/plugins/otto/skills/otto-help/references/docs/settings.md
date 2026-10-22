@@ -64,7 +64,7 @@ per-display value.
 **Subpixel text** is per display and is saved: it writes the monitor's
 `subpixel` key under `[displays.named.<connector>]`. Automatic leaves it to the
 monitor and fontconfig; if letters show coloured edges, try BGR. It applies at
-the next login. See [Display configuration](display.md#display-profiles).
+the next login, or when that monitor is next plugged in. See [Display configuration](display.md#display-profiles).
 
 ## Renderer
 

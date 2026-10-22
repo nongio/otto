@@ -73,10 +73,13 @@ the monitor reports, else the `rgba` setting in your fontconfig
 configuration, the one GTK and Qt applications follow, and draws grayscale
 text if neither says, or if `rgba` is `none`. A monitor's own `subpixel` wins
 over both, `none` included. Hinting and
-antialiasing follow fontconfig too (`hintstyle`, `antialias`, `autohint`). Most LCD panels are `"rgb"`; if letters show coloured edges, try
-`"bgr"`. OLED panels, and anything rotated, are best left at `"none"`. The
+antialiasing follow fontconfig too (`antialias`, `hinting`, `hintstyle`,
+`autohint`). Most LCD panels are `"rgb"`; if letters show coloured edges, try
+`"bgr"`. OLED panels, and anything rotated, are best left at `"none"`: Otto's
+own chrome does not turn the order with the screen's rotation. The
 setting is read when the monitor is connected, so it takes effect on the next
-login or replug.
+login or replug. Subpixel text is a login-session feature: a windowed session
+(`otto --winit`, `--x11`) always draws grayscale.
 
 You can also set it in the Settings app: **Displays**, select the monitor, then
 **Subpixel text**. Off writes `"none"`, and Automatic removes the key.

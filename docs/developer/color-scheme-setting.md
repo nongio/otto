@@ -38,8 +38,8 @@ portal integration. GTK 3, libadwaita outside a sandbox and Qt 6 (through
 Qt's `gtk3` platform theme, which Otto names in `QT_QPA_PLATFORMTHEME`) read
 GSettings' `org.gnome.desktop.interface color-scheme` instead, so a session of
 Otto's own writes `prefer-dark` or `default` there at startup and on every
-change (`src/gnome_interface.rs`, see [XDG
-specifications](xdg-specifications.md#fonts-and-text)).
+change (`src/gnome_interface.rs`, see
+[Text rendering](text-rendering.md#what-otto-publishes)).
 
 ## The chain
 
@@ -115,9 +115,9 @@ because most of what Otto has to say has no freedesktop key:
 | Namespace | Keys |
 | --------- | ---- |
 | `org.gnome.desktop.sound` | `theme-name`, the one GTK and libcanberra already read |
-| `org.gnome.desktop.interface` | `font-name`, `font-antialiasing`, `font-hinting`, `font-rgba-order`, `font-rendering`: Otto's font and text rendering, which GTK 4 reads (see [XDG specifications](xdg-specifications.md#fonts-and-text)) |
+| `org.gnome.desktop.interface` | `font-name`, `font-antialiasing`, `font-hinting`, `font-rgba-order`, `font-rendering`: Otto's font and text rendering, which GTK 4 reads (see [Text rendering](text-rendering.md#what-otto-publishes)) |
 | `org.otto.desktop` | `locales`, `rounded-corners`, `frosting`, `window-controls-side`, `maximize-button`, `tiling-decoration` |
-| `org.gnome.desktop.wm.preferences` | `button-layout`, which is where GTK (and so Chrome, Firefox and every libadwaita app drawing its own titlebar) looks for which end the window buttons go at |
+| `org.gnome.desktop.wm.preferences` | `button-layout` (`close,minimize:` on the left, `:minimize,close` on the right, with `maximize` when the zoom button is shown): where a toolkit drawing its own titlebar puts the window buttons. GTK 4 and sandboxed apps follow it live; GTK 3 outside a sandbox, Chrome among them, reads dconf instead, which Otto does not write |
 
 The `org.otto.desktop` keys are Otto's own, and they are there because they
 have to reach Otto's own windows **live**. They are seeded from the

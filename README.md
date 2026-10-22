@@ -78,9 +78,9 @@ Plane scanout is mostly tested on Intel GPUs. If elements go missing or flicker 
 - Display mirroring
 - Scroll acceleration
 
-### Supported protocols
+### Standards and protocols
 
-The full list is in [Wayland protocols](./docs/developer/wayland.md#supported-protocols). Otto adds two of its own: [`otto-surface-style-unstable-v1`](protocols/otto-surface-style-unstable-v1.xml) (experimental: clients drive layer geometry, blur and shadow with compositor-side springs; the top bar and dynamic island use it) and [`otto-dock-v1`](protocols/otto-dock-v1.xml).
+Otto reads and writes the freedesktop.org (XDG) standards (desktop entries, icon themes, MIME defaults, the trash, autostart, notifications, the desktop portal) and serves the shared Wayland protocols, so existing apps, themes and tools keep working. Every one, with what it is for, is in [Open standards](https://nongio.github.io/otto/desktop-standards/); versions and code are in [Wayland protocols](https://nongio.github.io/otto/developer/wayland/) and [XDG specifications](https://nongio.github.io/otto/developer/xdg-specifications/). Otto adds four protocols of its own: [`otto-surface-style-unstable-v1`](protocols/otto-surface-style-unstable-v1.xml) (experimental: clients drive layer geometry, blur and shadow with compositor-side springs; the top bar and dynamic island use it), [`otto-dock-v1`](protocols/otto-dock-v1.xml), [`otto-canvas-v1`](protocols/otto-canvas-v1.xml) and [`otto-text-cursor-v1`](protocols/otto-text-cursor-v1.xml).
 
 ## Configuration
 

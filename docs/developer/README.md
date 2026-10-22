@@ -23,8 +23,9 @@ is the place to start.
 | [Architecture Rules](architecture.md) | Crate layers and module boundaries, and how CI checks them |
 | [Rendering](rendering.md) | Scene graph → render elements → Skia → screen |
 | [Render Loop](render_loop.md) | When Otto wakes up, when it renders, damage tracking |
-| [Wayland Protocols](wayland.md) | The one-big-state pattern and how to find any protocol handler |
-| [XDG Specifications](xdg-specifications.md) | Every freedesktop/XDG standard Otto implements, and where |
+| [Wayland Protocols](wayland.md) | Every protocol Otto serves, `xdg_*` included, with version, availability and handler, and how dispatch is wired |
+| [XDG Specifications](xdg-specifications.md) | The freedesktop/XDG file and D-Bus standards and system services Otto uses, and where |
+| [Text Rendering](text-rendering.md) | How Otto rasterises its own text, per-output subpixel layout, and the font settings it publishes to GTK, Qt and X11 |
 | [The Scene Graph](scene-graph.md) | The layer tree: how it is shaped, how surfaces enter it, how subtrees become KMS planes |
 | [Layers](layers.md) | The unit the tree is made of: properties, content closures, transactions, caching, damage |
 | [Components](components.md) | Every workspace crate by layer, each with a page and an architecture diagram |
@@ -58,7 +59,7 @@ is the place to start.
 | [The Dynamic Island](otto-islands.md) | Notifications, live activities and the system dialog |
 | [The Portal Backend](xdg-desktop-portal-otto.md) | How sandboxed apps reach screen sharing, screenshots, files and settings |
 | [Accessibility](accessibility.md) | Key grabs for screen readers, and the shell and kit apps on AT-SPI |
-| [Color Scheme](color-scheme-setting.md) | How apps learn whether Otto is in light or dark mode, and the accent colour |
+| [Color Scheme](color-scheme-setting.md) | How apps learn whether Otto is in light or dark mode and the accent colour, and every Settings portal namespace |
 | [Settings D-Bus API](settings-dbus-api.md) | The `org.otto.Settings` wire contract |
 | [Shell D-Bus API](shell-dbus-api.md) | The `org.otto.Shell1` wire contract: i3-syntax commands, the tree as JSON, `otto-msg` |
 | [otto-dbus](otto-dbus.md) | The one client proxy per `org.otto.*` interface, and where a new one goes |
