@@ -526,6 +526,18 @@ main {
    }
 }
 
+@media (min-width: 901px) {
+   /* The content column is 75% of the window, which on a wide screen is
+      lines far past a readable measure and tables a screen across. Prose
+      keeps to a reading width; tables and code blocks get a little more. */
+   main section > :is(p, ul, ol, h2, h3, h4, h5, h6, blockquote) {
+      max-width: 42em;
+   }
+   main section > :is(table, pre, figure) {
+      max-width: 56em;
+   }
+}
+
 main > section:first-child > h1 {
    position: relative;
    height: 75vh;

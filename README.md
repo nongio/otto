@@ -80,7 +80,7 @@ Plane scanout is mostly tested on Intel GPUs. If elements go missing or flicker 
 
 ### Supported protocols
 
-The full list, with what each one is for, is in [Desktop standards and protocols](./docs/user/desktop-standards.md#wayland-protocols); versions and handlers are in [Wayland protocols](./docs/developer/wayland.md#supported-protocols). Otto adds four of its own: [`otto-surface-style-unstable-v1`](protocols/otto-surface-style-unstable-v1.xml) (experimental: clients drive layer geometry, blur and shadow with compositor-side springs; the top bar and dynamic island use it), [`otto-dock-v1`](protocols/otto-dock-v1.xml), [`otto-canvas-v1`](protocols/otto-canvas-v1.xml) and [`otto-text-cursor-v1`](protocols/otto-text-cursor-v1.xml).
+The full list, with what each one is for, is in [Standards](./docs/user/desktop-standards.md#wayland-protocols); versions and handlers are in [Wayland protocols](./docs/developer/wayland.md#supported-protocols). Otto adds four of its own: [`otto-surface-style-unstable-v1`](protocols/otto-surface-style-unstable-v1.xml) (experimental: clients drive layer geometry, blur and shadow with compositor-side springs; the top bar and dynamic island use it), [`otto-dock-v1`](protocols/otto-dock-v1.xml), [`otto-canvas-v1`](protocols/otto-canvas-v1.xml) and [`otto-text-cursor-v1`](protocols/otto-text-cursor-v1.xml).
 
 ## Configuration
 
