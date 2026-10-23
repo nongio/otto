@@ -75,5 +75,6 @@ A welcome comes first: setup configures Otto by bootstrapping what a part of it 
 ## Open Questions
 
 - Should setup detect whether a harness is logged in, and how, without running it?
+- Setup writes no `model`. pi then uses the default from `~/.pi/agent/settings.json` or what `/login` set up; should the instructions say so, or should setup ask for a model when none is set?
 - Should agents already in the list that run through `npx` be offered the installed adapter?
 - Further topics: displays, autostart, the bridge.

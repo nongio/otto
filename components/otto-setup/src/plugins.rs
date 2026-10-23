@@ -149,8 +149,8 @@ fn render_line(line: &str) -> Option<Render> {
         .into_iter()
         .find(|state| rest.starts_with(state))?;
     let path = rest[state.len()..].trim().to_owned();
-    // The agent is the file's name: `otto.md`, `otto.json`, `otto-pi`, or
-    // the profile a `SOUL.md` sits in.
+    // The agent is the file's name: `otto.md`, `otto.json`, `otto-pi`,
+    // `otto.question.ts`, or the profile a `SOUL.md` sits in.
     let mut parts = path.rsplit('/');
     let file = parts.next().unwrap_or_default();
     let agent = if file == "SOUL.md" {
@@ -186,6 +186,7 @@ skipped hermes: no ~/.hermes/profiles/nora: `hermes profile create nora` makes t
 hermes    stale      ~/.hermes/profiles/otto/SOUL.md
 codex     not there  ~/.local/share/otto/agents/codex/otto.json
 pi        current    ~/.local/share/otto/agents/pi/otto-pi
+pi        stale      ~/.local/share/otto/agents/pi/otto.question.ts
 Run `otto-agents plugins install` to write them.
 ";
 
@@ -217,6 +218,8 @@ Run `otto-agents plugins install` to write them.
         assert_eq!(of("hermes", "otto"), ["stale"]);
         assert_eq!(of("hermes", "nora"), ["skipped"]);
         assert_eq!(of("codex", "otto"), ["not there"]);
-        assert_eq!(of("pi", "otto"), ["current"]);
+        // pi has several files per agent: the wrapper and its extension.
+        assert_eq!(of("pi", "otto"), ["current", "stale"]);
+        assert!(status.renders_of("pi", "question").next().is_none());
     }
 }
