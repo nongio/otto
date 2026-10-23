@@ -59,12 +59,6 @@ pub fn unavailable(reason: impl Into<String>) -> PreviewPayload {
     }
 }
 
-/// Give a payload the file's icon, unless it already brought one.
-///
-/// Stamped in one place rather than by each decoder because it is the same
-/// answer for all of them, and because the interesting case is the payload no
-/// decoder produced: a worker that died or overran still comes back as a card
-/// with the file's icon on it rather than as a bare line of text.
 /// Whether a payload describes a video — one a host with a player can play.
 ///
 /// Read off the icon chain the worker stamped from the type it *sniffed*: a
@@ -74,14 +68,32 @@ pub fn unavailable(reason: impl Into<String>) -> PreviewPayload {
 /// file's extension, so a `.mp4` full of something else is never handed to a
 /// demuxer by the previewer.
 pub fn is_video(payload: &PreviewPayload) -> bool {
+    first_icon_is(payload, "video-")
+}
+
+/// Whether a payload describes a song or any other sound a player can play.
+///
+/// Read off the sniffed icon chain, for the reasons [`is_video`] gives.
+pub fn is_audio(payload: &PreviewPayload) -> bool {
+    first_icon_is(payload, "audio-")
+}
+
+fn first_icon_is(payload: &PreviewPayload, kind: &str) -> bool {
+    let generic = format!("{kind}x-generic");
     match payload {
         PreviewPayload::Card { icon, .. } => icon
             .first()
-            .is_some_and(|name| name.starts_with("video-") && name != "video-x-generic"),
+            .is_some_and(|name| name.starts_with(kind) && *name != generic),
         _ => false,
     }
 }
 
+/// Give a payload the file's icon, unless it already brought one.
+///
+/// Stamped in one place rather than by each decoder because it is the same
+/// answer for all of them, and because the interesting case is the payload no
+/// decoder produced: a worker that died or overran still comes back as a card
+/// with the file's icon on it rather than as a bare line of text.
 pub fn with_icon(payload: PreviewPayload, chain: Vec<String>) -> PreviewPayload {
     match payload {
         PreviewPayload::Card {
@@ -726,6 +738,22 @@ pub fn decode(bytes: &[u8]) -> Option<PreviewPayload> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_sniffed_song_is_audio_and_not_video() {
+        let card = |icon: &str| PreviewPayload::Card {
+            title: String::new(),
+            subtitle: String::new(),
+            facts: Vec::new(),
+            hero: None,
+            icon: vec![icon.to_string(), "audio-x-generic".to_string()],
+        };
+        assert!(is_audio(&card("audio-mpeg")));
+        assert!(!is_video(&card("audio-mpeg")));
+        // A type nobody named more precisely is not handed to a demuxer.
+        assert!(!is_audio(&card("audio-x-generic")));
+        assert!(is_video(&card("video-mp4")));
+    }
 
     /// A document travels as its geometry, the pixels of whichever page was
     /// rasterised, and one list of words for the whole strip.

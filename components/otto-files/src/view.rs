@@ -5571,9 +5571,39 @@ fn draw_preview_stage(
     icon_chain: &[String],
     first_row: usize,
 ) {
+    // A song shows what the column shows for any card, its cover art or
+    // the file's icon, with the transport along the foot of the stage. It
+    // has no frames, so it is drawn here rather than on the video's
+    // subsurface, which `pane_surfaces::sync_preview_video` keeps hidden
+    // for it. A player that failed leaves the stage as it was.
+    if let Some(song) = video
+        .filter(|video| video.audio && video.state.playback != otto_media_kit::Playback::Failed)
+    {
+        draw_preview_stage(
+            canvas,
+            theme,
+            otto_media_kit::view::stage_rect(stage),
+            decoded,
+            None,
+            false,
+            icon_chain,
+            first_row,
+        );
+        otto_media_kit::view::draw_transport(
+            canvas,
+            stage,
+            &song.state,
+            otto_media_kit::view::Interaction {
+                scrubbing: song.scrubbing,
+                transport_opacity: 1.0,
+            },
+            theme,
+        );
+        return;
+    }
     // A video plays in the stage, transport and all, the same view Quick
     // View draws in its panel. The card the decoder produced is its poster.
-    if let Some(video) = video {
+    if let Some(video) = video.filter(|video| !video.audio) {
         // On its own subsurface the player draws itself; the scene layer
         // leaves the stage to the column's ground so it is not re-recorded on
         // every frame. See `pane_surfaces::sync_preview_video`.

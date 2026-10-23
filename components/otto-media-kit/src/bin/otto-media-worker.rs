@@ -71,6 +71,7 @@ impl Ring {
 fn main() {
     let mut max_width = 1920u32;
     let mut max_height = 1080u32;
+    let mut video = true;
     let mut arguments = std::env::args().skip(1);
     while let Some(argument) = arguments.next() {
         match argument.as_str() {
@@ -86,6 +87,7 @@ fn main() {
                     .and_then(|v| v.parse().ok())
                     .unwrap_or(max_height)
             }
+            "--no-video" => video = false,
             _ => {}
         }
     }
@@ -119,6 +121,7 @@ fn main() {
     let pipeline = match build(
         max_width,
         max_height,
+        video,
         Arc::clone(&events),
         Arc::clone(&ring),
     ) {
@@ -184,15 +187,15 @@ fn main() {
             }
             MessageView::AsyncDone(_) | MessageView::DurationChanged(_) => {
                 // The duration is often only known once prerolled, and
-                // sometimes only later than that.
+                // sometimes only later than that. A stream with no picture
+                // is announced as 0 × 0: the ring stays empty and the host
+                // still learns the duration.
                 let (width, height) = ring.lock().unwrap().size;
-                if width > 0 {
-                    events.send(Event::Ready {
-                        width,
-                        height,
-                        duration: duration_of(&pipeline),
-                    });
-                }
+                events.send(Event::Ready {
+                    width,
+                    height,
+                    duration: duration_of(&pipeline),
+                });
                 if let Some(position) = pipeline.query_position::<gst::ClockTime>() {
                     events.send(Event::Position(Duration::from_nanos(position.nseconds())));
                 }
@@ -209,10 +212,12 @@ fn duration_of(pipeline: &gst::Element) -> Option<Duration> {
 }
 
 /// `playbin3` with our own video sink: convert and scale into RGBx no larger
-/// than the host asked for, then hand each frame to the ring.
+/// than the host asked for, then hand each frame to the ring. Without
+/// `video` only the sound is played, and the ring is never written.
 fn build(
     max_width: u32,
     max_height: u32,
+    video: bool,
     events: Arc<Events>,
     ring: Arc<Mutex<Ring>>,
 ) -> Result<gst::Element, String> {
@@ -256,6 +261,11 @@ fn build(
     );
 
     playbin.set_property("video-sink", &sink);
+    if !video {
+        // Sound only: a demuxer that offers a song's cover art as an image
+        // stream would otherwise have it decoded into the ring for nothing.
+        playbin.set_property_from_str("flags", "audio+soft-volume");
+    }
     playbin.set_property("uri", format!("file:///proc/self/fd/{FILE_FD}"));
     Ok(playbin)
 }

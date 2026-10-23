@@ -954,9 +954,13 @@ impl PaneSurfaces {
                 .and_then(|selection| selection.key())
                 .hash(&mut hasher);
             // A video painted here re-records on every frame of it; on its own
-            // surface it is none of this one's business.
-            if !data.video_on_surface {
-                data.video.map(peek::Video::key).hash(&mut hasher);
+            // surface it is none of this one's business. A song is always
+            // painted here: it has no frames to put on a surface.
+            if let Some(video) = data
+                .video
+                .filter(|video| !data.video_on_surface || video.audio)
+            {
+                video.key().hash(&mut hasher);
             }
             view::is_dark().hash(&mut hasher);
             hash_rect(Rect::from_wh(rect.width(), rect.height())).hash(&mut hasher);
@@ -1007,7 +1011,8 @@ impl PaneSurfaces {
         };
 
         let snapshot = video.snapshot();
-        // Held hidden until the worker has said what shape the video is. The
+        // Held hidden until the worker has said what shape the video is, and
+        // for good for a song, which the column's own layer draws. The
         // box is sized from the aspect, so showing before it is known would
         // put a full-height surface up and then resize it to the real box a
         // frame later — a visible snap. The dark column ground stands in for
