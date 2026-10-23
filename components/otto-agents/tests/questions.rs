@@ -599,6 +599,26 @@ async fn with_nobody_watching_the_dialog_answers() {
     assert_eq!(outcome(&chat), ("allow".into(), "completed"));
 }
 
+/// A dialog that offered the agent's answers to pick from answers with the
+/// one picked; a pick that would refuse what was granted is not taken.
+#[tokio::test]
+async fn the_answer_picked_in_the_dialog_reaches_the_agent() {
+    for (pick, answered) in [("allow_always", "allow_always"), ("reject", "allow")] {
+        let dialog = FakeDialog::replying(Reply::Granted(vec![(
+            otto_agents::dialog::CHOICE_GROUP.into(),
+            pick.into(),
+        )]));
+        let Harness { client, .. } = connect(Arc::clone(&dialog)).await;
+        let chat_uri = ready_chat(&client).await;
+
+        start_turn(&client, &chat_uri, "run the tests").await;
+        dialog.wait_shown().await;
+        let (mut chat, mut events) = watch(&client, &chat_uri).await;
+        until(&mut chat, &mut events, |chat| !chat.turns.is_empty()).await;
+        assert_eq!(outcome(&chat), (answered.into(), "completed"), "{pick}");
+    }
+}
+
 #[tokio::test]
 async fn a_client_that_stops_watching_hands_the_question_to_the_dialog() {
     let dialog = FakeDialog::answering(false);

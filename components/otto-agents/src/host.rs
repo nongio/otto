@@ -930,13 +930,18 @@ impl Host {
                     // question comes back rather than waiting on nobody.
                     host.escalate_after(grace, &session_uri, &tool_call_id);
                 }
-                Reply::Granted(_) => {
+                Reply::Granted(picks) => {
+                    let picked = picks
+                        .into_iter()
+                        .find(|(group, _)| group == dialog::CHOICE_GROUP)
+                        .map(|(_, option)| option);
                     host.lock()
-                        .answer_from_dialog(&session_uri, &tool_call_id, true)
+                        .answer_from_dialog(&session_uri, &tool_call_id, true, picked)
                 }
-                Reply::Denied => host
-                    .lock()
-                    .answer_from_dialog(&session_uri, &tool_call_id, false),
+                Reply::Denied => {
+                    host.lock()
+                        .answer_from_dialog(&session_uri, &tool_call_id, false, None)
+                }
                 // Taken down, or never shown: not an answer. A client watching
                 // the chat can still give one; with nobody watching, the
                 // request is denied rather than left waiting on nobody.
@@ -944,7 +949,7 @@ impl Host {
                     let mut state = host.lock();
                     state.unescalate(&session_uri, &tool_call_id);
                     if !state.session_watched(&session_uri) {
-                        state.answer_from_dialog(&session_uri, &tool_call_id, false);
+                        state.answer_from_dialog(&session_uri, &tool_call_id, false, None);
                     }
                 }
             }
@@ -1705,8 +1710,16 @@ impl HostState {
     }
 
     /// Answers a question with what the user said in a dialog, unless it has
-    /// been answered already.
-    fn answer_from_dialog(&mut self, session_uri: &str, tool_call_id: &str, granted: bool) {
+    /// been answered already. `picked` is the option picked among the agent's
+    /// answers, when the dialog offered a choice; without one, the narrowest
+    /// option of the decision is taken.
+    fn answer_from_dialog(
+        &mut self,
+        session_uri: &str,
+        tool_call_id: &str,
+        granted: bool,
+        picked: Option<String>,
+    ) {
         // The dialog answered, so it has closed itself: nothing to take down.
         if let Some(pending) = self
             .sessions
@@ -1732,8 +1745,17 @@ impl HostState {
             edited_tool_input: None,
             user_suggestion: None,
             reason_message: None,
-            selected_option_id: dialog::default_option(&pending.options, Some(granted), false)
-                .map(|option| option.id.clone()),
+            selected_option_id: picked
+                .filter(|id| {
+                    pending
+                        .options
+                        .iter()
+                        .any(|option| option.id == *id && option.allow() == granted)
+                })
+                .or_else(|| {
+                    dialog::default_option(&pending.options, Some(granted), false)
+                        .map(|option| option.id.clone())
+                }),
         };
         self.confirm(session_uri, &chat_uri, action, None);
         self.sync_summaries(session_uri);
