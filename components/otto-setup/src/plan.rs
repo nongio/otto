@@ -251,6 +251,38 @@ pub fn plugins_behind(facts: &Facts, choices: &Choices) -> bool {
             .any(|r| !r.current() && r.state != "skipped")
 }
 
+/// The oldest Node.js the adapters run on: the Claude Code adapter asks
+/// for 22, the others for less.
+pub const NODE_MIN: u32 = 22;
+
+/// Where Node.js stands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Node {
+    /// Not installed.
+    Missing,
+    /// Installed, but this major version is below [`NODE_MIN`].
+    TooOld(u32),
+    /// New enough.
+    Ok,
+}
+
+/// Where Node.js stands, from `node --version` (`v22.1.0`). A version
+/// that does not parse counts as new enough: the user can see it.
+pub fn node(facts: &Facts) -> Node {
+    let Some(version) = &facts.node_version else {
+        return Node::Missing;
+    };
+    let major = version
+        .trim_start_matches('v')
+        .split('.')
+        .next()
+        .and_then(|m| m.parse::<u32>().ok());
+    match major {
+        Some(major) if major < NODE_MIN => Node::TooOld(major),
+        _ => Node::Ok,
+    }
+}
+
 /// Where the chat bridge stands.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Bridge {
@@ -878,6 +910,16 @@ pub(crate) mod tests {
         facts.cc_config_exists = true;
         choices.bridge = true;
         assert!(plugins_behind(&facts, &choices));
+    }
+
+    #[test]
+    fn an_old_node_is_flagged() {
+        let mut facts = facts();
+        assert_eq!(node(&facts), Node::Ok);
+        facts.node_version = Some("v18.19.1".into());
+        assert_eq!(node(&facts), Node::TooOld(18));
+        facts.node_version = None;
+        assert_eq!(node(&facts), Node::Missing);
     }
 
     #[test]

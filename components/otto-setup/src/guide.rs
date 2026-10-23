@@ -238,7 +238,16 @@ pub fn node(facts: &Facts) -> String {
         out.push(found(facts, program));
     }
     out.push(String::new());
-    let have = facts.node_version.is_some();
+    let state = plan::node(facts);
+    let have = state == plan::Node::Ok;
+    if let plan::Node::TooOld(major) = state {
+        out.push(format!(
+            "Installed, but v{major} is too old: the Claude Code adapter needs {}",
+            plan::NODE_MIN
+        ));
+        out.push("or newer.".into());
+        out.push(String::new());
+    }
     out.push(step(1, "Install Node.js", Who::You, have));
     match node_install(facts) {
         Some(command) => out.push(cmd(command)),
@@ -246,8 +255,17 @@ pub fn node(facts: &Facts) -> String {
             out.push("Install it from your distribution's packages, or from nodejs.org.".into())
         }
     }
+    if facts.package_manager == Some("apt") {
+        out.push(format!(
+            "Debian and Ubuntu's own nodejs package is often older than {}; if",
+            plan::NODE_MIN
+        ));
+        out.push("so, use nvm below, or NodeSource (nodesource.com).".into());
+    }
     out.push("Or install it in your home folder with nvm (github.com/nvm-sh/nvm);".into());
-    out.push("setup then makes sure Otto's agent service can find it.".into());
+    out.push("setup then makes sure Otto's agent service can find it. After".into());
+    out.push("installing nvm:".into());
+    out.push(cmd(format!("nvm install {}", plan::NODE_MIN)));
     out.push(String::new());
     out.push(step(2, "Check", Who::You, have));
     out.push(cmd("node --version"));

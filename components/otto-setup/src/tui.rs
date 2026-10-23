@@ -184,7 +184,7 @@ impl App {
     /// What the user has to fix by hand: a required program missing, or a
     /// skill whose name something of theirs has taken.
     fn to_fix(&self) -> usize {
-        let node = usize::from(self.facts.node_version.is_none());
+        let node = usize::from(plan::node(&self.facts) != plan::Node::Ok);
         let adapters = plan::adapters(&self.facts, &self.choices)
             .iter()
             .filter(|(_, state)| *state == plan::Adapter::Missing)
@@ -654,9 +654,21 @@ impl App {
                     ),
                 }
             }
-            Row::Node => match &self.facts.node_version {
-                Some(version) => (" ✓ ", GREEN, format!("{version}, with npm and npx"), DIM),
-                None => (" ✗ ", RED, "not installed · Enter for how".into(), RED),
+            Row::Node => match plan::node(&self.facts) {
+                plan::Node::Ok => {
+                    let version = self.facts.node_version.as_deref().unwrap_or_default();
+                    (" ✓ ", GREEN, format!("{version}, with npm and npx"), DIM)
+                }
+                plan::Node::TooOld(major) => (
+                    " ✗ ",
+                    RED,
+                    format!(
+                        "v{major} is too old: needs {} or newer · Enter for how",
+                        plan::NODE_MIN
+                    ),
+                    RED,
+                ),
+                plan::Node::Missing => (" ✗ ", RED, "not installed · Enter for how".into(), RED),
             },
             Row::Adapters => {
                 let adapters = plan::adapters(&self.facts, &self.choices);

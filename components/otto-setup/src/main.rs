@@ -131,10 +131,13 @@ fn check(facts: &Facts) -> ExitCode {
     };
     println!("  {:<16}{studio}", "Studio");
     println!("\nRequirements");
-    let node = facts
-        .node_version
-        .clone()
-        .unwrap_or_else(|| "not installed".to_owned());
+    let node = match plan::node(facts) {
+        plan::Node::Missing => "not installed".to_owned(),
+        plan::Node::TooOld(major) => {
+            format!("v{major} is too old: needs {} or newer", plan::NODE_MIN)
+        }
+        plan::Node::Ok => facts.node_version.clone().unwrap_or_default(),
+    };
     println!("  {:<16}{node}", "Node.js");
     let adapters: Vec<String> = plan::adapters(facts, &choices)
         .into_iter()
