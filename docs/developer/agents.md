@@ -612,7 +612,7 @@ table, as checked against the versions installed when this was written:
 | OpenCode | 1.18.31 | `~/.config/opencode/agents/otto.md` | frontmatter `description`, `mode: primary` | `env = { OPENCODE_CONFIG_CONTENT = '{"default_agent":"otto"}' }` |
 | Hermes | 0.16.0 | `~/.hermes/profiles/otto/SOUL.md` | plain: the identity slot of its prompt | `args = ["-p", "otto", "acp"]` (the profile is named after the agent) |
 | Codex | codex-acp 1.12.0 | `~/.local/share/otto/agents/codex/otto.md` and `otto.json` | plain, plus a `CODEX_CONFIG` object | `env = { CODEX_CONFIG = "{file:~/.local/share/otto/agents/codex/otto.json}" }` |
-| pi | 1.4.0, pi-acp 0.0.34 | `~/.local/share/otto/agents/pi/otto.md`, `question.ts`, an extension, and `otto-pi`, a wrapper | plain | `env = { PI_ACP_PI_COMMAND = "~/.local/share/otto/agents/pi/otto-pi" }` (an absolute path) |
+| pi | 1.4.0, pi-acp 0.0.34 | `~/.local/share/otto/agents/pi/otto.md`, `otto.question.ts`, an extension, and `otto-pi`, a wrapper | plain | `env = { PI_ACP_PI_COMMAND = "~/.local/share/otto/agents/pi/otto-pi" }` (an absolute path) |
 
 What was verified, and what was not:
 
@@ -648,7 +648,7 @@ What was verified, and what was not:
   --append-system-prompt`; the wrapper under `--mode rpc` was checked
   through the service.
 
-  The wrapper also loads `question.ts` with `-e`: a `question` tool that asks
+  The wrapper also loads `<name>.question.ts` with `-e`: a `question` tool that asks
   with pi's `ctx.ui.select`. Under `--mode rpc` that is an
   `extension_ui_request`, and pi-acp sends it as an ACP permission request
   whose options are the answers, every one `allow_once`. Two options of one

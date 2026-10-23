@@ -50,9 +50,11 @@
 //!   `--append-system-prompt <file>` adds a file to the default prompt
 //!   (`SYSTEM.md` would replace it), and `-e <file>` loads an extension. So
 //!   three files are rendered under the data directory: the instructions,
-//!   `question.ts`, an extension with a `question` tool, and a short `otto-pi`
-//!   wrapper that adds both flags and hands over to `pi`; the agent's `env`
-//!   points `PI_ACP_PI_COMMAND` at the wrapper. The tool asks with pi's
+//!   `<name>.question.ts`, an extension with a `question` tool, and a short
+//!   `<name>-pi` wrapper that adds both flags and hands over to `pi`; the
+//!   agent's `env` points `PI_ACP_PI_COMMAND` at the wrapper. Each agent gets
+//!   its own copy of the extension, so every rendered file belongs to one
+//!   agent, as `plugins status` lists them. The tool asks with pi's
 //!   `ctx.ui.select`, which pi-acp sends as a permission request whose
 //!   options are the answers, every one an "allow once"
 //!   ([`crate::dialog::is_choice`]). `~/.pi/agent/AGENTS.md` would reach pi
@@ -187,7 +189,7 @@ impl Vendor {
             Vendor::Pi => {
                 let dir = home.rendered_dir(self);
                 let instructions = dir.join(format!("{}.md", agent.name));
-                let question = dir.join("question.ts");
+                let question = dir.join(format!("{}.question.ts", agent.name));
                 let wrapper = format!(
                     "#!/bin/sh\n# {MARKER} {source}; edits are overwritten\n\
                      # pi-acp spawns this in place of `pi` (PI_ACP_PI_COMMAND) and passes its\n\
@@ -561,7 +563,10 @@ mod tests {
                 .text
                 .starts_with("#!/bin/sh\n# rendered by otto-agents from ")
         );
-        assert_eq!(pi[2].path, home.data.join("otto/agents/pi/question.ts"));
+        assert_eq!(
+            pi[2].path,
+            home.data.join("otto/agents/pi/otto.question.ts")
+        );
         assert!(pi[2].text.starts_with("// rendered by otto-agents from "));
         assert!(pi[2].text.contains("name: \"question\""));
         assert!(pi[1].text.ends_with(&format!(
@@ -629,7 +634,7 @@ mod tests {
         // pi wrapper only names the file and the question tool is the
         // service's own, so both stay.
         agent.body.push_str("\n- No emoji.");
-        let question = home.data.join("otto/agents/pi/question.ts");
+        let question = home.data.join("otto/agents/pi/otto.question.ts");
         let is_wrapper = |target: &Target| target.path == wrapper || target.path == question;
         assert!(status(&[&agent], &home, None).iter().all(|t| t.state
             == if is_wrapper(t) {
