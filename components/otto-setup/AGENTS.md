@@ -18,6 +18,7 @@ Every row opens its instructions: what is there, and always the full steps with 
 - `cargo run -p otto-setup -- --check` prints what is there and what is left, without a terminal interface; it exits 1 when something is left to do.
 - The interface needs a terminal on stdin and stdout. Drive it in a pseudo-terminal (Python's `pty`). Apply acts on the real user manager: with a fake `HOME` the files land in the fake home, but `systemctl --user` still reaches the real units.
 - Tests: `cargo test -p otto-setup`. The plan is tested against made-up machines (`plan.rs`), the readers against `systemctl` output and agent files (`probe.rs`).
+- On a clean machine: `scripts/test-otto-setup.sh` builds otto-setup and otto-agents, copies them into a clean Debian-family image (`ubuntu:24.04`; `OTTO_SETUP_BASE` picks another) and runs the scenarios in `tests/clean-machine/check.sh` there: nothing installed, the distribution's too-old Node.js, a stand-in `claude` that `--apply` writes down. `screen.py` beside it drives the interface in a pseudo-terminal and prints the screen; `check.sh` greps it. There is no systemd in the image, so the service steps are not run and the check at the end fails, which the apply scenario expects.
 
 ## Where things are
 - `src/main.rs`: options, and `--check` / `--apply` without the interface.

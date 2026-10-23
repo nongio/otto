@@ -115,6 +115,17 @@ PLAYER=ffplay ./scripts/test-screenshare.sh eDP-1
 PLAYER=none ./scripts/test-screenshare.sh eDP-1
 ```
 
+### `test-otto-setup.sh`
+Run `otto-setup` on a clean Debian-family image (Ubuntu 24.04 by default)
+and check what it says when nothing is installed, when the distribution's
+Node.js is too old, and when an agent is ready to add. Needs docker or
+podman. The scenarios are in `components/otto-setup/tests/clean-machine/`.
+
+```bash
+scripts/test-otto-setup.sh
+OTTO_SETUP_BASE=debian:trixie scripts/test-otto-setup.sh
+```
+
 ### `test-login-mode.sh`
 Test Otto's login mode (`otto --login`) and the otto-greeter client.
 See [`specs/login-mode.md`](../specs/login-mode.md).

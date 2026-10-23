@@ -54,6 +54,8 @@ A welcome comes first: setup configures Otto by bootstrapping what a part of it 
 - A command written as a full path needs no PATH and is not checked.
 - The interface restores the terminal on exit and on a panic.
 
+- Node.js older than 22 (what Debian and Ubuntu's own `nodejs` package is): shown as something to fix, since the Claude Code adapter needs 22 or newer; the instructions say so and give the nvm command.
+
 - **Words.** No jargon on screen: agents, not harnesses; adapters, with ACP spelled out once; Otto's agent files, not plugins; "added", not the agent list; "name taken", not "in the way". Every step says who does it, and commands stand on their own lines.
 
 ## Rationale
@@ -64,6 +66,11 @@ A welcome comes first: setup configures Otto by bootstrapping what a part of it 
 - *A drop-in of its own.* `systemctl edit` writes `override.conf`, and users write their own files; setup must never overwrite them. Building on the PATH the unit has now means the drop-in only adds.
 - *The harness's own CLI is not checked against the service's PATH.* `claude --resume` and the like run in the user's terminal; the service only starts each agent's command.
 - *The same terminal interface as `otto-msg doctor`.* Otto's command-line tools should look like one family; both are built on `otto-term-kit`.
+
+## Testing
+
+- The plan against made-up machines and the readers against captured output: `cargo test -p otto-setup`.
+- On a clean machine: `scripts/test-otto-setup.sh` runs the binaries on a clean Ubuntu or Debian image and checks the screens and `--check`/`--apply` output for nothing installed, the distribution's too-old Node.js, and an agent ready to add (`components/otto-setup/tests/clean-machine/`).
 
 ## Open Questions
 
