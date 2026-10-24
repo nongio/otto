@@ -65,8 +65,23 @@ fresh)
     expect "pi missing"           "pi              needs pi" <<<"$out"
     expect "cc-connect missing"   "cc-connect      not installed" <<<"$out"
 
+    echo "== fresh: dictation --check =="
+    rc 1 otto-setup dictation --check
+    out=$(otto-setup dictation --check 2>&1)
+    # No systemd in the image: the files alone say it is not installed.
+    expect "no engine"          "Parakeet        not installed: missing its server and model" <<<"$out"
+    expect "no server"          "Speech server   nothing at 127.0.0.1:8080" <<<"$out"
+    expect "no otto-dictate"    "Other fields    otto-dictate not installed" <<<"$out"
+    expect "no engine blocks"   "[!!  ] Speech server      no engine is installed yet" <<<"$out"
+
     echo "== fresh: screens =="
-    expect "welcome names the topic" "Otto Agents" < <(screen)
+    expect "welcome names the topics" "Otto Agents" < <(screen)
+    expect "welcome lists dictation"  "Dictation" < <(screen)
+    page=$(screen down enter)
+    expect "engines not installed" "Parakeet          not installed, Enter for how" <<<"$page"
+    page=$(screen down enter enter)
+    expect "apt build tools"       '$ sudo apt install build-essential cmake git' <<<"$page"
+    expect "clone the source"      '$ git clone https://github.com/nongio/otto ~/otto' <<<"$page"
     page=$(screen enter tab)
     expect "Node.js row"            "Node.js           not installed · Enter for how" <<<"$page"
     expect "header counts the fix"  "to fix" <<<"$page"

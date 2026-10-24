@@ -332,7 +332,7 @@ pub enum Action {
 }
 
 impl Action {
-    fn run(args: &[&str]) -> Self {
+    pub(crate) fn run(args: &[&str]) -> Self {
         Action::Run {
             args: args.iter().map(|arg| (*arg).to_owned()).collect(),
         }
@@ -366,7 +366,7 @@ pub struct Step {
 }
 
 impl Step {
-    fn done(title: &'static str, summary: impl Into<String>) -> Self {
+    pub(crate) fn done(title: &'static str, summary: impl Into<String>) -> Self {
         Self {
             title,
             state: State::Done,
@@ -376,7 +376,7 @@ impl Step {
         }
     }
 
-    fn blocked(title: &'static str, summary: impl Into<String>) -> Self {
+    pub(crate) fn blocked(title: &'static str, summary: impl Into<String>) -> Self {
         Self {
             state: State::Blocked,
             ..Self::done(title, summary)
