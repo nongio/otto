@@ -5,7 +5,7 @@
 
 ## Summary
 
-`otto-setup` is a terminal program that takes a new user through what Otto cannot do for itself on first run. It starts with the agents: Ask works only once an agent is configured, the agent service can find it, Otto's skills are linked and the service is running, and today each of those is a manual step.
+`otto-setup` is a terminal program that takes a new user through what Otto cannot do for itself on first run. It has two topics. The agents: Ask works only once an agent is configured, the agent service can find it, Otto's skills are linked and the service is running, and today each of those is a manual step. Dictation: speech is recognised by a local speech server that is not packaged, and dictating in every field needs otto-dictate started at login and a key bound to it.
 
 ## Goals
 
@@ -20,11 +20,14 @@
 - Installing software of any kind, or running a package manager, `npm` or `sudo`. Setup explains; the user installs.
 - Signing in to a harness, or making a chat bot. Otto runs what the user has; it does not manage accounts or keys.
 - Changing or removing agents the user already has. That is Settings › Agents.
-- Setup of anything but the agents, for now. The command takes a topic (`agents`) so more can follow.
+- Building a speech engine, or downloading a model. `install.sh` in Otto's source does; setup points at it.
+- Setup of anything but the agents and dictation, for now. The command takes a topic (`agents`, `dictation`) so more can follow.
 
 ## Behavior
 
-A welcome comes first: setup configures Otto by bootstrapping what a part of it needs, explains what it cannot do, and leaves the finer configuration to Settings. It asks what to set up; for now the one choice is the Otto Agents, which answer in Ask and run Sessions and are used from Otto itself, and more dependencies can join that list later. Choosing it opens three pages, switched with Tab (and ← →): Agents ("Which agents do you want to set up?"), Requirements, Review. Every row opens its instructions: what is there, with where it was found, and the commands to run for what is not.
+A welcome comes first: setup configures Otto by bootstrapping what a part of it needs, explains what it cannot do, and leaves the finer configuration to Settings. It asks what to set up: the Otto Agents, which answer in Ask and run Sessions, or Dictation, speaking into the launcher, the Ask chat and any text field; more dependencies can join that list later. Choosing one opens three pages, switched with Tab (and ← →): what to set up (Agents, or Engine), Requirements, Review. Every row opens its instructions: what is there, with where it was found, and the commands to run for what is not.
+
+### Agents
 
 - **Agents.** Claude Code, Codex, OpenCode, Hermes and pi are each one of:
   - *in your agent list*: it cannot be ticked;
@@ -44,7 +47,23 @@ A welcome comes first: setup configures Otto by bootstrapping what a part of it 
   5. *Agent service*, and *Chat bridge* when ticked or running: enables and starts the unit when it is not; restarts it when it is running and a step it reads at startup changed; otherwise done.
 - **Apply** runs the steps that are to do, in order, stops at the first that fails, then runs `otto-agents doctor` (retrying briefly while the service comes up) and shows each result, with what it printed.
 - **Header.** Shows what is left: "N to fix" for what the user must do by hand (a required program missing, a skill name taken), "N to apply" for steps, or "nothing to apply".
-- **Without a terminal**, or with `--check`, it prints the harnesses, Otto and Studio, the requirements, the bridge and the steps, and exits 1 when something is left to do. `--apply` applies with the initial choices, without asking.
+- **Without a terminal**, or with `--check`, it prints the harnesses, Otto and Studio, the requirements, the bridge and the steps, and exits 1 when something is left to do: a step to do, or one blocked on something the user must do first. `--apply` applies with the initial choices, without asking.
+
+### Dictation
+
+`otto-setup dictation`, or Dictation on the welcome. The engines live where `components/otto-dictate/engines/install.sh` puts them (`~/.local/share/otto-voice-poc`, units in `~/.config/systemd/user`); setup never builds or downloads one.
+
+- **Engine.** Parakeet (the default), Whisper and CrispASR, one picked with Space, radio-style. Each is *installed* (its server program and model are there and systemd knows its unit), *running*, or *not installed*, naming what is missing; only an installed one can be picked. The instructions give the build tools for the system's package manager (and rustup where the distribution's Rust is old), `git clone` of Otto's source when no checkout is found (the one setup was built from, or `~/otto`, `~/dev/otto`, `~/src/otto`, `~/code/otto`, `~/projects/otto`), the `install.sh <engine>` command with the checkout's path, and that Apply picks it and starts it.
+- **Initial pick.** The engine `dictation.toml` names when it is installed, else the one running, else the one enabled, else the first installed; none when none is installed.
+- **Requirements.** Required: the microphone (PipeWire installed and running, by its socket in the runtime directory) and a GPU driver (a Vulkan loader manifest in `/usr/share/vulkan/icd.d`, `/etc/vulkan/icd.d` or `/usr/local/share/vulkan/icd.d`), each with the install command for the system's package manager. To install an engine: the build tools `install.sh` needs (git, cmake, a C++ compiler, glslc, cargo) and a checkout of Otto's source, not needed once an engine is installed. Optional: *Other fields*, otto-dictate, the dictation in every text field: not installed, installed, or starting at login; a box when installed and not yet started at login. Its instructions give `cargo install` from the checkout, that Apply writes the autostart entry, and the `[keyboard_shortcuts]` line to bind a key, found when `config.toml` binds one to otto-dictate.
+- **Review checks**: the speech server (the engine running, and whether anything answers at `127.0.0.1:8080`; something answering with no engine running is called out, not touched), the microphone, the GPU driver, otto-dictate.
+- **Steps**, in order:
+  1. *Settings file*: writes `engine = "<id>"` into `~/.config/otto/dictation.toml`, keeping its other keys and comments; done when it says so already; blocked when the file does not parse or no engine is installed.
+  2. *Speech server*: `systemctl --user disable` for the other engines' units that are enabled, then `enable --now` for the picked one; done when it is running and enabled; blocked when it is not installed or there is no user manager.
+  3. *Dictation at login*, when otto-dictate is ticked or already starts at login: writes `~/.config/autostart/otto-dictate.desktop`, switching the user's own entry (or a copy of the system's) back on with `Hidden=false` and `X-GNOME-Autostart-enabled=true`, or a new entry running otto-dictate where it was found. Blocked when otto-dictate is not installed.
+- **Apply** ends by knocking on `127.0.0.1:8080` for up to 30 seconds, since an engine loads its model before it listens, and says whether it answers.
+- **Header.** "N to fix" counts no engine installed, PipeWire missing, no Vulkan driver.
+- **`--check`** prints the engines, the server, the requirements, otto-dictate and its shortcut, and the steps; `--apply` applies the initial pick.
 
 ## Constraints & Edge Cases
 
@@ -70,7 +89,7 @@ A welcome comes first: setup configures Otto by bootstrapping what a part of it 
 ## Testing
 
 - The plan against made-up machines and the readers against captured output: `cargo test -p otto-setup`.
-- On a clean machine: `scripts/test-otto-setup.sh` runs the binaries on a clean Ubuntu or Debian image and checks the screens and `--check`/`--apply` output for nothing installed, the distribution's too-old Node.js, and an agent ready to add (`components/otto-setup/tests/clean-machine/`).
+- On a clean machine: `scripts/test-otto-setup.sh` runs the binaries on a clean Ubuntu or Debian image and checks the screens and `--check`/`--apply` output for nothing installed (both topics), the distribution's too-old Node.js, and an agent ready to add (`components/otto-setup/tests/clean-machine/`).
 
 ## Open Questions
 
