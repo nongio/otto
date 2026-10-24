@@ -128,6 +128,21 @@ pub fn draw_frame(
             .render(canvas);
     }
 
+    draw_transport(canvas, bounds, state, interaction, theme);
+}
+
+/// Paint only the transport, along the foot of `bounds`.
+///
+/// For a stream with no picture, a song: the host draws what stands for it
+/// in [`stage_rect`] and this under it. The hit test is the same
+/// [`transport_layout`] of the same `bounds`.
+pub fn draw_transport(
+    canvas: &Canvas,
+    bounds: Rect,
+    state: &State,
+    interaction: Interaction,
+    theme: &Theme,
+) {
     let layout = transport::layout(bounds);
     transport::draw(
         canvas,

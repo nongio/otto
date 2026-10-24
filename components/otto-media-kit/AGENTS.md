@@ -1,6 +1,6 @@
 # otto-media-kit
 
-Video playback for Otto apps, kept out of otto-kit: a `Player` and its view in the library, and GStreamer in the sandboxed `otto-media-worker` binary built from the same crate. The host talks to the worker over a pipe (commands on stdin, events on stdout) and a shared-memory frame ring.
+Video and audio playback for Otto apps, kept out of otto-kit: a `Player` and its view in the library, and GStreamer in the sandboxed `otto-media-worker` binary built from the same crate. The host talks to the worker over a pipe (commands on stdin, events on stdout) and a shared-memory frame ring.
 
 How it works: [otto-media-kit](../../docs/developer/otto-media-kit.md).
 
@@ -12,7 +12,7 @@ How it works: [otto-media-kit](../../docs/developer/otto-media-kit.md).
 
 ## Develop
 - Tests: `cargo test -p otto-media-kit` covers the protocol parsers, the transport layout and the view.
-- `cargo run -p otto-media-kit --example probe -- FILE` plays four seconds with no display, seeks to 1 s around the two-second mark, and writes the last frame as a PNG (`PROBE_PNG`, default `/tmp/otto-media-probe.png`). Examples land in `target/<profile>/examples/`, away from the worker, so build it (`cargo build -p otto-media-kit --bin otto-media-worker`) and point `OTTO_MEDIA_WORKER` at it.
+- `cargo run -p otto-media-kit --example probe -- FILE` plays four seconds with no display, seeks to 1 s around the two-second mark, and writes the last frame as a PNG (`PROBE_PNG`, default `/tmp/otto-media-probe.png`). `PROBE_NO_VIDEO=1` opens it sound only, as Peek does a song. Examples land in `target/<profile>/examples/`, away from the worker, so build it (`cargo build -p otto-media-kit --bin otto-media-worker`) and point `OTTO_MEDIA_WORKER` at it.
 - `OTTO_MEDIA_TRACE=1` lets the worker's stderr through and adds GStreamer's debug string to error events. `GST_DEBUG=3` works as usual.
 
 ## Where things are

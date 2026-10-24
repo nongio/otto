@@ -48,10 +48,9 @@ network.
   application".
 - File management: rename, delete, move, copy, permissions. That is the
   browser's job.
-- Audio playback. Audio shows a card with its tags and cover art; a PCM
-  decoder and an output path are a later stage. Video *is* played — see
-  [Video playback](#video-playback) — but by a separate media crate, never by
-  the previewer or the toolkit.
+- Decoding sound or video in the previewer or the toolkit. Songs and videos
+  *are* played (see [Video playback](#video-playback) and
+  [Audio playback](#audio-playback)), but by a separate media crate.
 - HTML, EPUB, and anything else whose faithful rendering implies a browser
   engine. This is a permanent exclusion, not a deferral.
 - Out-of-tree previewer plug-ins. The seam for new content types is in-tree; a
@@ -383,7 +382,7 @@ the table is arranged around not compromising them.
 | Directory | Full: entry count, total size, a grid of child icons and image thumbnails | Nothing |
 | Lottie animation | Full, played | Skottie — already enabled and already used by otto-kit |
 | Archive — zip, uncompressed tar | Listing only: names, sizes, dates, entry count | Nothing (see below) |
-| Audio | Metadata card: title/artist/album/duration, plus embedded cover art | Tag parsing by hand; PCM decode deferred |
+| Audio | Played, with the same transport as a video along the foot of its metadata card: title/artist/album, plus embedded cover art. The card alone where playback is unavailable | Tags by hand in the decoder; playback by `otto-media-kit`'s worker, sound only — see [Audio playback](#audio-playback) |
 | Video | Played, with a transport: play/pause, scrub, clock, mute. The card underneath (dimensions, duration, kind, and a poster frame as its artwork) is the poster until the first frame, and the whole preview where playback is unavailable. The poster frame is also the file's thumbnail in a listing | `otto-media-kit`'s worker, a separate binary — see [Video playback](#video-playback). Poster: `ffmpegthumbnailer`, else `ffmpeg`, exec'd in the worker over the file's descriptor — see `decode/external.rs` |
 | HEIC, AVIF | Full, as a picture, at the size asked for; the file's own dimensions are read from its `ispe` boxes so a zoom asks for more | `vipsthumbnail`, else `magick`, exec'd in the worker — libheif underneath either way, nothing linked |
 | Camera RAW | Not previewed — shown as an unsupported card naming the type, under the file's icon | Deferred |
@@ -565,10 +564,9 @@ Decoders Otto genuinely lacks, with candidates and their cost:
   pure-Rust HEVC decoder; `libheif-rs` links libheif and libde265, and HEVC is
   patent-encumbered enough that some distributions ship it separately. Running
   the libheif a distribution already has keeps both out of the build.
-- **Audio playback and waveforms.** Needs a PCM decoder (`symphonia` is the
-  pure-Rust candidate, one crate per codec family) plus an output path. Deferred
-  wholesale; v1 deliberately gets most of the value from tags and cover art,
-  which need neither.
+- **Audio playback** — *built,* through the video player's worker (see
+  [Audio playback](#audio-playback)). **Waveforms** remain deferred: they need
+  the whole file decoded to PCM, which a previewer should not do.
 - **Syntax highlighting.** `syntect` brings a regex engine and megabytes of
   syntax definitions; `tree-sitter` brings a crate per language. **Recommendation
   when this is built:** a hand-written token scanner covering strings, comments,
@@ -655,12 +653,35 @@ with the session. The worker is found next to the host's own executable, on
 `PATH`, or wherever `OTTO_MEDIA_WORKER` points; without it, a video previews
 as its card exactly as before, and the reason is in the log.
 
-**What this does not do.** Audio-only playback, subtitles, playback rate,
+**What this does not do.** Subtitles, playback rate,
 fullscreen from the transport (the panel has its own expand button, which
 fills the display), picture-in-picture, and any frame path other than a CPU
 copy — a
 dmabuf ring is the obvious next step for 4K, and the protocol leaves room for
 it without changing the host side.
+
+### Audio playback
+
+A song plays through the same player as a video, by the same seam. The
+decode worker sniffs `audio/*` and produces the metadata card it always did,
+stamped with the `audio-…` icon chain; `otto_peek::payload::is_audio` reads
+that off the decoded payload, as `is_video` does for video, and a player is
+attached. The host asks the worker for sound only (`Options::video` off,
+`--no-video` on the worker's command line, which sets `playbin`'s flags to
+audio), so cover art a demuxer offers as an image stream is never decoded.
+A stream with no picture is announced `ready 0 0 <duration>`: the ring stays
+empty and the state has a duration and no size.
+
+**In the panel.** The card stays up, cover art and tags, in the space above
+the transport, and the transport runs along the foot of the content exactly
+as it does under a video. A click on the card toggles play and pause. It
+autoplays when the panel opens, like a video. A player that fails leaves the
+card as it was, with no transport.
+
+**In the docked preview column.** The stage shows what it shows for any
+card, the cover art or the file's icon, with the transport along its foot,
+and it opens paused. The song is drawn by the column's own layer rather than
+on the video's subsurface: it has no frames to put there.
 
 ### The previewer seam
 

@@ -1,14 +1,15 @@
 //! A [`Session`]'s content, drawn the same in every host.
 //!
 //! Files draws it inside the Peek panel and Studio (otto-preview) under its
-//! window's chrome. Both paint the same layers in the same order: the video or
-//! the preview, the picture edges, the word selection, the pan's bars, then
+//! window's chrome. Both paint the same layers in the same order: the video,
+//! the song's card over its transport, or the preview, the picture edges, the word selection, the pan's bars, then
 //! the text-recognition badge. The chrome around it stays with each host.
 
 use otto_kit::components::scroll::ScrollRenderer;
 use otto_kit::icons;
 use otto_kit::skia::{Canvas, Rect};
 use otto_kit::theme::Theme;
+use otto_media_kit::Playback;
 
 use crate::session::Session;
 
@@ -26,7 +27,34 @@ pub fn content(
 ) {
     canvas.save();
     canvas.clip_rect(content, None, true);
-    if let Some(video) = &session.video {
+    let video = session.video.as_ref();
+    // A song keeps its card, tags and cover art, with the transport along
+    // its foot. A player that failed leaves the card as it was.
+    let song = video.filter(|video| video.audio);
+    let playing_song = song.filter(|video| video.player.state().playback != Playback::Failed);
+    if let Some(song) = playing_song {
+        otto_kit::preview::draw(
+            canvas,
+            otto_media_kit::view::stage_rect(content),
+            &session.preview,
+            theme,
+            session.first_row,
+            session.zoom,
+            &|name: &str, size: i32| {
+                icons::cached_icon_chain_at(&[name], size, icons::FULL_COLOUR_SIZE)
+            },
+        );
+        otto_media_kit::view::draw_transport(
+            canvas,
+            content,
+            &song.player.state(),
+            otto_media_kit::view::Interaction {
+                scrubbing: song.scrubbing,
+                transport_opacity: 1.0,
+            },
+            theme,
+        );
+    } else if let Some(video) = video.filter(|video| !video.audio) {
         // A playing video takes the card's place. The card's artwork is the
         // poster until the first frame lands; with none, the stage is dark.
         let poster = video

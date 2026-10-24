@@ -42,7 +42,10 @@ frame size: a 4 KiB header then three slots of tightly packed RGBx. A `frame`
 event names the slot, the sequence number and the presentation time; the
 host copies the slot out on its event thread before the worker is back to it
 two frames later. `ready` carries the size and duration and may repeat — the
-duration is often only known after preroll.
+duration is often only known after preroll. A stream with no picture is
+`ready 0 0 …`, and its ring is never written. A host that only wants the
+sound, a song, opens with `Options::video` off; the worker then gets
+`--no-video` and plays with `playbin`'s flags set to audio only.
 
 The pipeline is `playbin3` (or `playbin` where `playbin3` is missing) with
 `video-sink` set to `videoconvert ! videoscale ! capsfilter ! appsink`, the

@@ -81,11 +81,14 @@ impl Pan {
     }
 }
 
-/// A video being played inside a session.
+/// A video or a song being played inside a session.
 pub struct Video {
     pub player: Player,
     /// The card's own artwork, drawn until the first frame arrives.
     pub poster: Option<Pixels>,
+    /// A song: no frame ever arrives, and the card stays up above the
+    /// transport rather than giving way to a picture.
+    pub audio: bool,
     /// A drag along the scrubber in progress, as a fraction of the duration.
     pub scrubbing: Option<f32>,
     /// Whether the video was playing when the drag began, so it resumes
@@ -102,14 +105,20 @@ pub struct VideoSnapshot {
     pub scrubbing: Option<f32>,
     /// The poster, carried only until the first frame makes it moot.
     pub poster: Option<Pixels>,
+    /// See [`Video::audio`].
+    pub audio: bool,
 }
 
 impl VideoSnapshot {
     /// The video's width over its height, once anything has said what that
     /// is — the frame first, then the stream's announced size, then the
     /// poster. `None` until the worker has answered, when the caller fills
-    /// the space it has and corrects on the next frame.
+    /// the space it has and corrects on the next frame, and always for a
+    /// song, which has no picture to fit and takes the space it is given.
     pub fn aspect(&self) -> Option<f32> {
+        if self.audio {
+            return None;
+        }
         let (w, h) = self
             .frame
             .as_ref()
@@ -121,11 +130,12 @@ impl VideoSnapshot {
 }
 
 impl Video {
-    /// Start playing `path`, if the decoded `preview` says it is a video
-    /// and a player can be started.
+    /// Start playing `path`, if the decoded `preview` says it is a video or
+    /// a song and a player can be started.
     ///
-    /// Only for a preview [`crate::payload::is_video`] vouches for:
-    /// the sandboxed decoder read the bytes and said video, which is the one
+    /// Only for a preview [`crate::payload::is_video`] or
+    /// [`crate::payload::is_audio`] vouches for: the sandboxed decoder read
+    /// the bytes and said video or audio, which is the one
     /// opinion that counts before a demuxer is handed the file. A worker
     /// that cannot be found or started leaves the card as it was, and says
     /// why in the log rather than on the panel — the card is a complete
@@ -136,9 +146,14 @@ impl Video {
         options: Options,
         wake: impl Fn() + Send + Sync + 'static,
     ) -> Option<Video> {
-        if !crate::payload::is_video(preview) {
+        let audio = crate::payload::is_audio(preview);
+        if !audio && !crate::payload::is_video(preview) {
             return None;
         }
+        let options = Options {
+            video: !audio,
+            ..options
+        };
         match Player::open(path, options, wake) {
             Ok(player) => {
                 let poster = match preview {
@@ -148,12 +163,13 @@ impl Video {
                 Some(Video {
                     player,
                     poster,
+                    audio,
                     scrubbing: None,
                     resume: false,
                 })
             }
             Err(err) => {
-                tracing::info!("no video playback for {}: {err}", path.display());
+                tracing::info!("no playback for {}: {err}", path.display());
                 None
             }
         }
@@ -189,6 +205,7 @@ impl Video {
             frame,
             state: self.player.state(),
             scrubbing: self.scrubbing,
+            audio: self.audio,
         }
     }
 
@@ -269,6 +286,7 @@ pub fn video_options(panel: Rect, scale: f32, autoplay: bool) -> Options {
         max_width: ((panel.width() * scale) as u32).clamp(64, 3840),
         max_height: ((panel.height() * scale) as u32).clamp(64, 2160),
         autoplay,
+        video: true,
     }
 }
 
@@ -308,10 +326,10 @@ pub struct Session {
     /// When the exit started, once it has. A closing session is no longer the
     /// window's open preview — it is only still on screen, going home.
     pub closing: Option<Instant>,
-    /// A playback, when the file is a video and a player could be started.
-    /// The card in `preview` stays underneath it: its artwork is the poster
-    /// until the first frame lands, and it is what is shown again if the
-    /// player fails.
+    /// A playback, when the file is a video or a song and a player could be
+    /// started. The card in `preview` stays underneath it: its artwork is
+    /// the poster until the first frame lands, a song's card stays up above
+    /// the transport, and it is what is shown again if the player fails.
     pub video: Option<Video>,
     /// Whether the panel fills the space it is centred in — the display or
     /// the window — rather than taking its usual share of it. Toggled by the
@@ -437,8 +455,8 @@ impl Session {
         self.expanded = !self.expanded;
     }
 
-    /// Start playing `path` in this session, if the preview is a video and
-    /// a player can be started. See [`Video::open`].
+    /// Start playing `path` in this session, if the preview is a video or a
+    /// song and a player can be started. See [`Video::open`].
     pub fn attach_video(
         &mut self,
         path: &Path,

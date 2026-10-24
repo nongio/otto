@@ -103,7 +103,8 @@ pub enum Event {
     /// The stream is known: frame size as it will arrive in the ring, and
     /// the duration when the container declares one. The ring has been sized
     /// for these dimensions by the time this is sent. Sent again if the
-    /// stream changes size mid-way, which re-sizes the ring.
+    /// stream changes size mid-way, which re-sizes the ring. A stream with
+    /// no picture, a song, is ready at 0 × 0 and never sends a frame.
     Ready {
         width: u32,
         height: u32,
@@ -215,6 +216,11 @@ mod tests {
                 width: 1,
                 height: 1,
                 duration: None,
+            },
+            Event::Ready {
+                width: 0,
+                height: 0,
+                duration: Some(Duration::from_secs(215)),
             },
             Event::Frame {
                 slot: 2,

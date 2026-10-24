@@ -72,7 +72,8 @@ pub enum Playback {
 #[derive(Debug, Clone)]
 pub struct State {
     pub playback: Playback,
-    /// Frame size as it arrives, after the worker's own scaling.
+    /// Frame size as it arrives, after the worker's own scaling. `None` until
+    /// the stream is known, and for good when it has no picture.
     pub size: Option<(u32, u32)>,
     pub duration: Option<Duration>,
     /// The last position the worker reported, and when. Read it through
@@ -138,11 +139,14 @@ pub struct Player {
 /// pixels: it scales the video down to fit, keeping its aspect, and never
 /// scales up. `autoplay` starts playing as soon as the stream is ready; off,
 /// the first frame is shown and playback waits for [`Player::play`].
+/// `video` off plays the sound alone, for a song whose artwork the host
+/// already draws.
 #[derive(Debug, Clone, Copy)]
 pub struct Options {
     pub max_width: u32,
     pub max_height: u32,
     pub autoplay: bool,
+    pub video: bool,
 }
 
 impl Default for Options {
@@ -151,6 +155,7 @@ impl Default for Options {
             max_width: 1920,
             max_height: 1080,
             autoplay: true,
+            video: true,
         }
     }
 }
@@ -193,6 +198,7 @@ impl Player {
             .arg(options.max_width.to_string())
             .arg("--max-height")
             .arg(options.max_height.to_string())
+            .args((!options.video).then_some("--no-video"))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(if std::env::var_os("OTTO_MEDIA_TRACE").is_some() {
@@ -339,9 +345,14 @@ fn read_events(stdout: std::process::ChildStdout, ring: File, shared: Arc<Shared
                 duration,
             } => {
                 size = (width, height);
-                mapping = Mapping::new(&ring, protocol::ring_bytes(width, height)).ok();
+                // A stream with no picture leaves the ring empty, and the
+                // state without a size.
+                let picture = width > 0 && height > 0;
+                mapping = picture
+                    .then(|| Mapping::new(&ring, protocol::ring_bytes(width, height)).ok())
+                    .flatten();
                 let mut state = shared.state.lock().unwrap();
-                state.size = Some((width, height));
+                state.size = picture.then_some((width, height));
                 state.duration = duration;
                 if state.playback == Playback::Loading {
                     state.playback = Playback::Paused;
