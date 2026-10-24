@@ -133,6 +133,13 @@ A request carries:
   the outputs eligible for the RDP session.
 - **AirPlay receiver selection** — choice group `receiver`, options are the
   discovered receivers (id = service identifier, label = friendly name).
+- **An agent's answers to pick from** — a permission request whose options
+  include two of one kind (pi's `select`, through pi-acp, sends every answer
+  as `allow_once`). otto-agents asks it through `PresentQuestions` with one
+  single-select group `option` holding the granting options, and empty grant
+  and deny labels, so the dialog's own words answer and skip.
+  `results["option"]` is the option id sent back; skipping takes the agent's
+  refusing option, or cancels when it offered none.
 
 ## Constraints & Edge Cases
 

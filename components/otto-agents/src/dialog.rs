@@ -341,6 +341,21 @@ fn option_word(options: &[PermissionOption], approve: bool) -> String {
     i18n::t(key, None)
 }
 
+/// The choice group a [`prompt_for`] dialog asks an agent's answers in; its
+/// pick is the option id to answer with.
+pub const CHOICE_GROUP: &str = "option";
+
+/// Whether the agent offered answers to pick from rather than a grant and a
+/// refusal: two options of the same kind, which only their labels tell
+/// apart. pi's `select` reaches ACP this way through pi-acp, every answer an
+/// "allow once".
+pub fn is_choice(options: &[PermissionOption]) -> bool {
+    options
+        .iter()
+        .enumerate()
+        .any(|(i, option)| options[..i].iter().any(|other| other.kind == option.kind))
+}
+
 /// The plugin agent that is the desktop itself, by the `name` in its agent
 /// file. `agents.toml` runs a session as it with `agent = "otto"`.
 const OTTO: &str = "otto";
@@ -415,6 +430,33 @@ pub fn prompt_for(
     } else {
         format!("{}\n{where_}", said.join(" — "))
     };
+    if is_choice(&request.options) {
+        // Answers the agent named, picked from in the dialog. The buttons are
+        // the dialog's own words for answering and skipping; skipping takes
+        // the agent's refusing option, when it offered one.
+        let choices: Vec<(String, String)> = request
+            .options
+            .iter()
+            .filter(|option| allows(*option))
+            .map(|option| (option.option_id.to_string(), one_line(&option.name)))
+            .collect();
+        let default = default_option(&request.options, Some(true), false)
+            .map(|option| option.option_id.to_string())
+            .unwrap_or_default();
+        return Prompt {
+            title,
+            subtitle: one_line(fields.title.as_deref().unwrap_or_default()),
+            body,
+            icon: icon.unwrap_or("dialog-question").into(),
+            choices: vec![Choice {
+                id: CHOICE_GROUP.into(),
+                options: choices,
+                default,
+                ..Choice::default()
+            }],
+            ..Prompt::default()
+        };
+    }
     Prompt {
         title,
         subtitle: one_line(fields.title.as_deref().unwrap_or_default()),
@@ -700,11 +742,6 @@ impl Prompter for Islands {
     }
 
     fn ask(&self, prompt: Prompt) -> Pin<Box<dyn Future<Output = Reply> + Send + '_>> {
-        // The renderer returns no picks without a grant button to submit them.
-        debug_assert!(
-            prompt.choices.is_empty() || !prompt.grant.is_empty(),
-            "choice groups need a grant label"
-        );
         Box::pin(async move {
             let Some(connection) = self.connection().await else {
                 return Reply::Unavailable;
@@ -1060,6 +1097,40 @@ mod tests {
         assert_eq!(selected(&answer(&request, true)).as_deref(), Some("go"));
         assert_eq!(selected(&answer(&request, false)), None);
         assert_eq!(prompt_for("A", None, Path::new("/"), &request).deny, "");
+    }
+
+    /// pi's `select`, as pi-acp sends it: every answer an "allow once", told
+    /// apart only by its label. The dialog asks them as a choice, in the
+    /// dialog's own words for answering; a grant and a refusal stay buttons.
+    #[test]
+    fn answers_of_one_kind_are_asked_as_a_choice() {
+        let select = vec![
+            PermissionOption::new("choice-0", "Rebase", PermissionOptionKind::AllowOnce),
+            PermissionOption::new("choice-1", "Merge", PermissionOptionKind::AllowOnce),
+        ];
+        assert!(is_choice(&select));
+        assert!(!is_choice(&claude_options()));
+        let confirm = vec![
+            PermissionOption::new("yes", "Yes", PermissionOptionKind::AllowOnce),
+            PermissionOption::new("no", "No", PermissionOptionKind::RejectOnce),
+        ];
+        assert!(!is_choice(&confirm));
+
+        let prompt = prompt_for("pi", None, Path::new("/"), &request(select));
+        assert_eq!((prompt.grant.as_str(), prompt.deny.as_str()), ("", ""));
+        assert_eq!(prompt.subtitle, "cargo test");
+        let [group] = prompt.choices.as_slice() else {
+            panic!("one choice group: {:?}", prompt.choices);
+        };
+        assert_eq!(group.id, CHOICE_GROUP);
+        assert_eq!(group.default, "choice-0");
+        assert_eq!(
+            group.options,
+            [
+                ("choice-0".to_owned(), "Rebase".to_owned()),
+                ("choice-1".to_owned(), "Merge".to_owned()),
+            ]
+        );
     }
 
     fn choice(id: &str, multi: bool) -> Choice {

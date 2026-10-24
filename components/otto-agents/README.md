@@ -38,7 +38,7 @@ cargo run -p otto-agents -- acp --agent claude         # be one ACP agent on std
   folder = "~/dev"       # optional: where this agent's sessions start; it is the reach the agent gets
   skills = "claude"      # optional: Claude loads Otto's skills as a plugin
   agent = "otto"         # optional: run as the plugin's `otto` agent (needs skills = "claude")
-  config = { collaboration_mode = "plan" }  # optional: the agent's own session options
+  config = { collaboration_mode = "plan" }  # optional: the agent's own session options, e.g. pi's thought_level = "high"
   ```
 
 - **Skills and the Otto agent.** Otto's skills (`/usr/share/otto/plugins/otto`)

@@ -101,14 +101,16 @@ before you pick one. This is what each was checked to do here:
 | **Codex** | from `~/.agents/skills` | yes | yes, as a dialog you answer | three: ask for approval, approve for me, full access | yes | yes |
 | **Hermes** | from `~/.agents/skills` | yes | in prose, in the conversation | three: default, accept edits, don't ask | yes | no; set it in Hermes' own profile |
 | **OpenCode** | from `~/.agents/skills` | yes | in prose, in the conversation | none offered | yes | yes, as `provider/model` |
-| **pi** | from `~/.agents/skills` | yes | in prose, in the conversation | six, but they set reasoning effort, not permissions | yes | yes, as `provider/model` |
+| **pi** | from `~/.agents/skills` | yes | yes, as a dialog you answer, picking from the answers it offers | six, but they set reasoning effort, not permissions | yes | yes, as `provider/model` |
 
 A few notes on the awkward cells:
 
 - **Asks you questions.** An agent that can ask properly gets a dialog with the
   choices in it, and Otto waits. One that cannot just writes the question into
   the conversation and carries on guessing, so you only see it when you look.
-  Codex needs its plan mode for this, which Otto turns on for you.
+  Codex needs its plan mode for this, which Otto turns on for you. pi gets a
+  `question` tool from `otto-agents plugins install`; it can offer answers to
+  pick from, but not a box to type your own.
 
   You do not have to keep Ask open waiting for it. Close the window and the
   request carries on; when the agent needs you, the question arrives on the
@@ -144,9 +146,11 @@ is not, and shows as its name instead.
 - **Claude Code** is the most complete here: it asks real questions, has the
   most modes, and takes Otto's skills as a plugin.
 - **Codex** is close behind, and asks questions too.
-- **Hermes**, **OpenCode** and **pi** work and know about Otto, but they
-  cannot stop to ask you a question. Watch the conversation rather than
-  waiting for a dialog.
+- **pi** asks questions as well, as long as the answers can be picked from a
+  list.
+- **Hermes** and **OpenCode** work and know about Otto, but they cannot stop
+  to ask you a question. Watch the conversation rather than waiting for a
+  dialog.
 
 Whichever you pick, `default_agent` in `agents.toml` says which one a request
 goes to when you do not choose.

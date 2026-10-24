@@ -612,7 +612,7 @@ table, as checked against the versions installed when this was written:
 | OpenCode | 1.18.31 | `~/.config/opencode/agents/otto.md` | frontmatter `description`, `mode: primary` | `env = { OPENCODE_CONFIG_CONTENT = '{"default_agent":"otto"}' }` |
 | Hermes | 0.16.0 | `~/.hermes/profiles/otto/SOUL.md` | plain: the identity slot of its prompt | `args = ["-p", "otto", "acp"]` (the profile is named after the agent) |
 | Codex | codex-acp 1.12.0 | `~/.local/share/otto/agents/codex/otto.md` and `otto.json` | plain, plus a `CODEX_CONFIG` object | `env = { CODEX_CONFIG = "{file:~/.local/share/otto/agents/codex/otto.json}" }` |
-| pi | 0.85.1, pi-acp 0.0.33 | `~/.local/share/otto/agents/pi/otto.md` and `otto-pi`, a wrapper | plain | `env = { PI_ACP_PI_COMMAND = "~/.local/share/otto/agents/pi/otto-pi" }` (an absolute path) |
+| pi | 1.4.0, pi-acp 0.0.34 | `~/.local/share/otto/agents/pi/otto.md`, `otto.question.ts`, an extension, and `otto-pi`, a wrapper | plain | `env = { PI_ACP_PI_COMMAND = "~/.local/share/otto/agents/pi/otto-pi" }` (an absolute path) |
 
 What was verified, and what was not:
 
@@ -647,6 +647,18 @@ What was verified, and what was not:
   `~/.pi/agent/APPEND_SYSTEM.md`, for that process. Verified with `pi -p
   --append-system-prompt`; the wrapper under `--mode rpc` was checked
   through the service.
+
+  The wrapper also loads `<name>.question.ts` with `-e`: a `question` tool that asks
+  with pi's `ctx.ui.select`. Under `--mode rpc` that is an
+  `extension_ui_request`, and pi-acp sends it as an ACP permission request
+  whose options are the answers, every one `allow_once`. Two options of one
+  kind are told apart only by their labels, so `dialog::is_choice` has the
+  island ask them as a choice instead of an Allow and a Reject, and the pick
+  goes back as the selected option. pi-acp cancels `input` and `editor`
+  requests, so the tool offers no free-text answer. pi-acp also offers pi's
+  thinking level as the `thought_level` session option, which `config` in
+  the agent's block sets. Verified with a scripted model over pi's RPC
+  stdio on pi 1.4.0 and 0.85.1, and over pi-acp 0.0.34's ACP stdio.
 
 Every rendered file carries a marker, `rendered by otto-agents from
 <source>`. A file without it is somebody else's and is left alone in both

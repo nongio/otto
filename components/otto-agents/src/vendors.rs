@@ -44,15 +44,22 @@
 //!   every project. Verified over codex-acp's stdio; the archived
 //!   `@zed-industries/codex-acp` took `-c key=value` instead and bundled a
 //!   Codex too old for current models.
-//! - **pi 0.85.1, through pi-acp 0.0.33.** pi-acp spawns `pi --mode rpc` and
+//! - **pi 1.4.0, through pi-acp 0.0.34.** pi-acp spawns `pi --mode rpc` and
 //!   drops its own arguments, but passes its environment on, and
 //!   `PI_ACP_PI_COMMAND` names the executable it spawns. pi's
 //!   `--append-system-prompt <file>` adds a file to the default prompt
-//!   (`SYSTEM.md` would replace it). So two files are rendered under the data
-//!   directory: the instructions, and a short `otto-pi` wrapper that adds
-//!   the flag and hands over to `pi`; the agent's `env` points
-//!   `PI_ACP_PI_COMMAND` at the wrapper. `~/.pi/agent/AGENTS.md` would reach
-//!   pi in a terminal too. Verified with `pi -p --append-system-prompt`.
+//!   (`SYSTEM.md` would replace it), and `-e <file>` loads an extension. So
+//!   three files are rendered under the data directory: the instructions,
+//!   `<name>.question.ts`, an extension with a `question` tool, and a short
+//!   `<name>-pi` wrapper that adds both flags and hands over to `pi`; the
+//!   agent's `env` points `PI_ACP_PI_COMMAND` at the wrapper. Each agent gets
+//!   its own copy of the extension, so every rendered file belongs to one
+//!   agent, as `plugins status` lists them. The tool asks with pi's
+//!   `ctx.ui.select`, which pi-acp sends as a permission request whose
+//!   options are the answers, every one an "allow once"
+//!   ([`crate::dialog::is_choice`]). `~/.pi/agent/AGENTS.md` would reach pi
+//!   in a terminal too. Verified with `pi -p --append-system-prompt`, and the
+//!   tool over pi-acp's stdio with a scripted model, on pi 1.4.0 and 0.85.1.
 //!
 //! Every rendered file carries a marker line, [`MARKER`], naming the source
 //! it came from. A file without it is somebody else's and is left alone in
@@ -63,6 +70,11 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use crate::skills::AgentFile;
+
+/// pi's `question` tool, which the `otto-pi` wrapper loads with `-e`: pi
+/// asks through its extension UI, and pi-acp brings that to Otto as a
+/// permission request whose options are the answers.
+const PI_QUESTION: &str = include_str!("../assets/pi-question.ts");
 
 /// What every rendered file says about itself, followed by the source path.
 pub const MARKER: &str = "rendered by otto-agents from";
@@ -177,12 +189,15 @@ impl Vendor {
             Vendor::Pi => {
                 let dir = home.rendered_dir(self);
                 let instructions = dir.join(format!("{}.md", agent.name));
+                let question = dir.join(format!("{}.question.ts", agent.name));
                 let wrapper = format!(
                     "#!/bin/sh\n# {MARKER} {source}; edits are overwritten\n\
                      # pi-acp spawns this in place of `pi` (PI_ACP_PI_COMMAND) and passes its\n\
-                     # own arguments; this adds the agent's instructions and hands over.\n\
-                     exec pi --append-system-prompt {} \"$@\"\n",
-                    shell_word(&instructions)
+                     # own arguments; this adds the agent's instructions and the question\n\
+                     # tool, and hands over.\n\
+                     exec pi --append-system-prompt {} -e {} \"$@\"\n",
+                    shell_word(&instructions),
+                    shell_word(&question)
                 );
                 vec![
                     Rendered {
@@ -194,6 +209,13 @@ impl Vendor {
                         path: dir.join(format!("{}-pi", agent.name)),
                         text: wrapper,
                         executable: true,
+                    },
+                    Rendered {
+                        path: question,
+                        text: format!(
+                            "// {MARKER} its own pi extension; edits are overwritten\n{PI_QUESTION}"
+                        ),
+                        executable: false,
                     },
                 ]
             }
@@ -531,7 +553,7 @@ mod tests {
         assert_eq!(config["developer_instructions"], plain);
 
         let pi = Vendor::Pi.files(&home, &agent);
-        assert_eq!(pi.len(), 2);
+        assert_eq!(pi.len(), 3);
         assert_eq!(pi[0].path, home.data.join("otto/agents/pi/otto.md"));
         assert_eq!(pi[0].text, plain);
         assert_eq!(pi[1].path, home.data.join("otto/agents/pi/otto-pi"));
@@ -541,9 +563,16 @@ mod tests {
                 .text
                 .starts_with("#!/bin/sh\n# rendered by otto-agents from ")
         );
+        assert_eq!(
+            pi[2].path,
+            home.data.join("otto/agents/pi/otto.question.ts")
+        );
+        assert!(pi[2].text.starts_with("// rendered by otto-agents from "));
+        assert!(pi[2].text.contains("name: \"question\""));
         assert!(pi[1].text.ends_with(&format!(
-            "exec pi --append-system-prompt '{}' \"$@\"\n",
-            pi[0].path.display()
+            "exec pi --append-system-prompt '{}' -e '{}' \"$@\"\n",
+            pi[0].path.display(),
+            pi[2].path.display()
         )));
     }
 
@@ -567,7 +596,7 @@ mod tests {
         let mut agent = agent(&home.root);
 
         let before = status(&[&agent], &home, None);
-        assert_eq!(before.len(), 6);
+        assert_eq!(before.len(), 7);
         assert!(before.iter().all(|target| target.state == State::Absent));
 
         let first = install(&[&agent], &home, None).unwrap();
@@ -602,9 +631,11 @@ mod tests {
         );
 
         // The source moved on: every file that carries the body follows; the
-        // pi wrapper only names the file, so it stays.
+        // pi wrapper only names the file and the question tool is the
+        // service's own, so both stay.
         agent.body.push_str("\n- No emoji.");
-        let is_wrapper = |target: &Target| target.path == wrapper;
+        let question = home.data.join("otto/agents/pi/otto.question.ts");
+        let is_wrapper = |target: &Target| target.path == wrapper || target.path == question;
         assert!(status(&[&agent], &home, None).iter().all(|t| t.state
             == if is_wrapper(t) {
                 State::Current
@@ -714,7 +745,7 @@ mod tests {
         let (_dir, home) = home_with_harnesses();
         let agent = agent(&home.root);
         let installed = install(&[&agent], &home, Some(Vendor::Pi)).unwrap();
-        assert_eq!(installed.len(), 2);
+        assert_eq!(installed.len(), 3);
         assert!(installed.iter().all(|t| t.vendor == Vendor::Pi));
         assert!(!home.config.join("opencode/agents/otto.md").exists());
         assert_eq!(Vendor::from_id("codex"), Some(Vendor::Codex));
