@@ -118,7 +118,7 @@ build() {
     for _pkg in otto-bar otto-islands otto-lock otto-authorize otto-greeter \
             xdg-desktop-portal-otto otto-rdp otto-settings otto-files otto-launcher \
             otto-emoji otto-stash otto-canvas otto-peek otto-preview otto-media-kit \
-            otto-msg otto-search otto-agents; do
+            otto-msg otto-setup otto-search otto-agents; do
         cargo build --frozen --release -p "$_pkg"
     done
 }
@@ -145,6 +145,7 @@ package() {
     install -Dm755 target/release/otto-peek "$pkgdir/usr/bin/otto-peek"
     install -Dm755 target/release/otto-preview "$pkgdir/usr/bin/otto-preview"
     install -Dm755 target/release/otto-msg "$pkgdir/usr/bin/otto-msg"
+    install -Dm755 target/release/otto-setup "$pkgdir/usr/bin/otto-setup"
     install -Dm755 target/release/otto-search "$pkgdir/usr/bin/otto-search"
     install -Dm755 target/release/otto-agents "$pkgdir/usr/bin/otto-agents"
     # Aliases: the launcher opens in ask or agents mode under these names.

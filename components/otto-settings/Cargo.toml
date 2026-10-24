@@ -9,6 +9,7 @@ description = "Settings application for Otto — see specs/settings-app.md"
 
 [dependencies]
 otto-kit = { path = "../otto-kit" }
+otto-agents-client = { path = "../otto-agents-client" }
 otto-search = { path = "../otto-search" }
 smithay-client-toolkit = { workspace = true, features = ["calloop", "xkbcommon"] }
 zbus.workspace = true

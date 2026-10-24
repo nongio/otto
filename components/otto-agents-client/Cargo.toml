@@ -15,6 +15,7 @@ ahp-ws.workspace = true
 futures-util.workspace = true
 otto-foundations = { path = "../otto-foundations" }
 serde_json.workspace = true
+toml_edit.workspace = true
 tokio = { workspace = true, features = ["io-util", "net"] }
 tokio-tungstenite = { workspace = true, features = ["handshake"] }
 

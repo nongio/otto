@@ -88,12 +88,14 @@ applications share:
 | `otto-greeter` | Login screen, backed by greetd |
 | `otto-auth-ui` | The password panel shared by the greeter and the lock screen |
 | `otto-msg` | Drives the compositor from a script, the way `i3-msg` and `swaymsg` do, and writes bug reports (`otto-msg doctor`) |
+| `otto-setup` | Sets Otto up the first time from a terminal, starting with the agents |
 | `otto-search` | File search over the desktop's index: the query language, shared by Files, and the `otto-search` command |
 | `otto-agents` | Runs ACP agents and serves them over the Agent Host Protocol |
 | `otto-foundations` | Library: the UI-free base, XDG directories, `file://` URIs and name matching; see [otto-foundations.md](otto-foundations.md) |
-| `otto-agents-client` | Library: talking to `otto-agents`, its socket, session URIs and file URIs |
+| `otto-agents-client` | Library: talking to `otto-agents`, its socket, session URIs and file URIs, and the harness presets |
 | `otto-media-kit` | Library: video playback for Otto apps; a sandboxed GStreamer worker plus the player view that draws its frames |
 | `otto-md-kit` | Library: Markdown parsed into the toolkit's block vocabulary |
+| `otto-term-kit` | Library: the terminal interfaces of `otto-msg doctor` and `otto-setup` |
 | `otto-rdp` | Serves a virtual output over RDP; see [rdp-virtual-output.md](rdp-virtual-output.md) |
 | `xdg-desktop-portal-otto` | Portal backend: screencast, screenshot, settings, access dialogs, file chooser |
 

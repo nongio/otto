@@ -6,13 +6,15 @@
 //! had lost a fallback the other kept. Neither crate could see the other's
 //! version, so nothing failed until a folder meant two different things.
 //!
-//! It is deliberately a leaf: the AHP crates and a socket, nothing of the
-//! service's own. That is what lets the launcher depend on it.
+//! It is deliberately a leaf: the AHP crates, a socket and the shape of an
+//! agent's block in `agents.toml`, nothing of the service's own. That is what lets the launcher depend on it.
 
 // A `pub` item nothing outside the crate can reach is an accident: say
 // `pub(crate)` or `pub(super)`, so the public API is what lib.rs exports.
 #![warn(unreachable_pub)]
 
+pub mod harness;
+pub mod instructions;
 pub mod session;
 pub mod transport;
 pub mod uri;

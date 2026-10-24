@@ -5219,6 +5219,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "tokio-tungstenite 0.29.0",
+ "toml_edit 0.25.12+spec-1.1.0",
 ]
 
 [[package]]
@@ -5510,6 +5511,7 @@ dependencies = [
  "libc",
  "otto-dbus",
  "otto-foundations",
+ "otto-term-kit",
  "serde_json",
  "tempfile",
  "zbus",
@@ -5628,6 +5630,7 @@ name = "otto-settings"
 version = "1.8.0"
 dependencies = [
  "chrono",
+ "otto-agents-client",
  "otto-kit",
  "otto-search",
  "serde",
@@ -5638,6 +5641,18 @@ dependencies = [
  "xcursor",
  "zbus",
  "zeroize",
+]
+
+[[package]]
+name = "otto-setup"
+version = "1.8.0"
+dependencies = [
+ "libc",
+ "otto-agents-client",
+ "otto-foundations",
+ "otto-term-kit",
+ "tempfile",
+ "toml_edit 0.25.12+spec-1.1.0",
 ]
 
 [[package]]
@@ -5656,6 +5671,13 @@ dependencies = [
  "wayland-protocols-misc",
  "wayland-protocols-wlr",
  "zbus",
+]
+
+[[package]]
+name = "otto-term-kit"
+version = "1.8.0"
+dependencies = [
+ "libc",
 ]
 
 [[package]]

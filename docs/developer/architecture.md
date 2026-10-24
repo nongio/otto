@@ -73,6 +73,7 @@ flowchart BT
     otto_auth_ui[otto-auth-ui]
     otto_peek[otto-peek]
     otto_agents_kit[otto-agents-kit]
+    otto_term_kit[otto-term-kit]
   end
   subgraph app["app"]
     otto_bar[otto-bar]
@@ -89,6 +90,7 @@ flowchart BT
     otto_authorize[otto-authorize]
     otto_dictate[otto-dictate]
     otto_msg[otto-msg]
+    otto_setup[otto-setup]
     otto_agents[otto-agents]
     otto_rdp[otto-rdp]
     xdg_desktop_portal_otto[xdg-desktop-portal-otto]
@@ -134,6 +136,7 @@ flowchart BT
   otto_media_kit --> otto_kit
   otto_msg --> otto_dbus
   otto_msg --> otto_foundations
+  otto_msg --> otto_term_kit
   otto_pdf --> otto_foundations
   otto_peek --> otto_kit
   otto_peek --> otto_md_kit
@@ -148,8 +151,12 @@ flowchart BT
   otto_rdp --> otto_foundations
   otto_render --> otto_foundations
   otto_search --> otto_foundations
+  otto_settings --> otto_agents_client
   otto_settings --> otto_kit
   otto_settings --> otto_search
+  otto_setup --> otto_agents_client
+  otto_setup --> otto_foundations
+  otto_setup --> otto_term_kit
   otto_stash --> otto_kit
   otto_stash --> otto_peek
   xdg_desktop_portal_otto --> otto_dbus

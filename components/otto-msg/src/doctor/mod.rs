@@ -13,7 +13,6 @@ mod redact;
 mod report;
 mod sections;
 mod summary;
-mod term;
 mod tui;
 
 use std::io::Write as _;
@@ -175,11 +174,11 @@ fn run(options: &Options) -> Result<(), String> {
     };
     let when = Timestamp::now();
 
-    if options.print || !term::is_tty(libc::STDOUT_FILENO) {
+    if options.print || !otto_term_kit::is_tty(libc::STDOUT_FILENO) {
         print!("{}", report::render(&sections, redaction(redact), when));
         return Ok(());
     }
-    if term::is_tty(libc::STDIN_FILENO) {
+    if otto_term_kit::is_tty(libc::STDIN_FILENO) {
         let outcome = tui::run(&mut sections, &redactor, &mut redact)
             .map_err(|e| format!("terminal: {e}"))?;
         if outcome == tui::Outcome::Quit {

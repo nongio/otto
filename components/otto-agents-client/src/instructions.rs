@@ -4,7 +4,10 @@
 //! `$XDG_DATA_HOME/otto/plugins/` first, then the packaged ones under
 //! `/usr/share/otto/plugins/`, a user plugin shadowing a packaged one of the
 //! same name. Each plugin's `agents/*.md` is one set of instructions, known by
-//! the `name` in its frontmatter.
+//! the `name` in its frontmatter. Settings › Agents and `otto-setup` both
+//! offer them.
+
+// Rust guideline compliant 2026-02-21
 
 use std::path::{Path, PathBuf};
 
@@ -13,12 +16,13 @@ use std::path::{Path, PathBuf};
 pub struct Instructions {
     /// The `name` in its frontmatter, which is what an agent block names.
     pub name: String,
+    /// The agent file.
     pub path: PathBuf,
 }
 
 /// Where plugins are looked for, most important first.
 fn plugin_dirs() -> Vec<PathBuf> {
-    otto_kit::xdg::data_home()
+    otto_foundations::xdg::data_home()
         .map(|dir| dir.join("otto/plugins"))
         .into_iter()
         .chain([PathBuf::from("/usr/share/otto/plugins")])
@@ -93,7 +97,7 @@ mod tests {
     #[test]
     fn a_user_plugin_shadows_a_packaged_one() {
         let root =
-            std::env::temp_dir().join(format!("otto-settings-plugins-{}", std::process::id()));
+            std::env::temp_dir().join(format!("otto-agents-client-plugins-{}", std::process::id()));
         let write = |path: &str, text: &str| {
             let path = root.join(path);
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
