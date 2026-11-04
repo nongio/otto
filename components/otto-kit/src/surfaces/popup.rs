@@ -390,8 +390,10 @@ impl PopupSurface {
         self.configured = false;
     }
 
-    /// Show the popup by recreating it with the same positioner
-    /// This recreates the popup on the existing wl_surface
+    /// Show the popup again with the given positioner.
+    ///
+    /// After [`PopupSurface::close`] the old `wl_surface` is gone, so this
+    /// builds a new one with its own Skia surface.
     pub fn show<D>(
         &mut self,
         parent_surface: &xdg_surface::XdgSurface,
