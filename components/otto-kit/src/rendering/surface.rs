@@ -164,8 +164,11 @@ impl SkiaSurface {
             self.initialize_skia_surface(ctx);
         }
 
-        // Make this surface's EGL context current before each draw
-        AppContext::with_egl_resources(&self.surface_id, |res| unsafe {
+        // Make this surface's EGL context current before each draw. Once the
+        // surface's resources are gone (its owner tore it down while this
+        // handle was still held) there is nothing of its own to draw into,
+        // and the cached Skia surface would paint whatever is current.
+        let made_current = AppContext::with_egl_resources(&self.surface_id, |res| unsafe {
             let egl = khronos_egl::DynamicInstance::<khronos_egl::EGL1_4>::load_required().unwrap();
             egl.make_current(
                 ctx.egl_display(),
@@ -175,6 +178,9 @@ impl SkiaSurface {
             )
             .ok();
         });
+        if made_current.is_none() {
+            return;
+        }
 
         // Hot path: direct access to cached surface, zero lookup overhead
         if let Some(ref mut skia_surface) = *self.cached_surface.borrow_mut() {
