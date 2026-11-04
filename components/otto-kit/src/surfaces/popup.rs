@@ -354,20 +354,46 @@ impl PopupSurface {
         self.popup.as_ref().map(|p| p.xdg_surface())
     }
 
-    /// Close the popup (hides it but keeps surface and Skia context)
-    /// Use this to hide the popup without losing the EGL context
+    /// Close the popup, destroying its surfaces.
+    ///
+    /// [`PopupSurface::show`] builds a new `wl_surface` and EGL surface the
+    /// next time it is called.
     pub fn close(&mut self) {
-        // Destroy the wl_surface to fully reset for next show()
-        self.base_surface.wl_surface().destroy();
+        self.tear_down();
+    }
 
-        // Drop the popup - this will destroy xdg_popup and xdg_surface
+    /// Destroy everything the popup is drawn on, the EGL surface first.
+    ///
+    /// The EGL surface and its `wl_egl_window` must go while the `wl_surface`
+    /// they were made on is still alive. NVIDIA's EGL only unhooks itself from
+    /// the `wl_egl_window` when it can still read that `wl_surface`; with the
+    /// surface gone first, `wl_egl_window_destroy` calls back into an EGL
+    /// surface that has already been freed. The resources are removed by id,
+    /// not left to the last `Rc<SkiaSurface>`, so a clone held elsewhere
+    /// cannot keep them past the `wl_surface` either.
+    ///
+    /// Safe to call more than once.
+    fn tear_down(&mut self) {
+        use crate::app_runner::AppContext;
+
+        let surface_id = self.base_surface.wl_surface.id();
+        drop(self.base_surface.take_skia_surface());
+        AppContext::remove_egl_resources(&surface_id);
+        self.base_surface.take_surface_style();
+        // Dropping sctk's popup destroys the xdg_popup, the xdg_surface and
+        // the wl_surface.
         self.popup.take();
-        self.base_surface.surface_style.take();
+        AppContext::forget_surface(&surface_id);
+        if self.base_surface.wl_surface.is_alive() {
+            self.base_surface.wl_surface.destroy();
+        }
         self.configured = false;
     }
 
-    /// Show the popup by recreating it with the same positioner
-    /// This recreates the popup on the existing wl_surface
+    /// Show the popup again with the given positioner.
+    ///
+    /// After [`PopupSurface::close`] the old `wl_surface` is gone, so this
+    /// builds a new one with its own Skia surface.
     pub fn show<D>(
         &mut self,
         parent_surface: &xdg_surface::XdgSurface,
@@ -420,23 +446,7 @@ impl PopupSurface {
 
     /// Destroy the popup completely
     pub fn destroy(&mut self) {
-        // Clean up Skia/EGL resources first
-        if let Some(skia_surface) = self.base_surface.skia_surface.take() {
-            // Drop the Rc, which will trigger SkiaSurface::Drop if it's the last reference
-            drop(skia_surface);
-        }
-
-        // Clean up sc_layer
-        self.base_surface.surface_style.take();
-
-        // Destroy Wayland objects
-        if let Some(popup) = self.popup.take() {
-            popup.xdg_popup().destroy();
-            self.configured = false;
-        }
-
-        // Destroy wl_surface to fully reset
-        self.base_surface.wl_surface.destroy();
+        self.tear_down();
 
         // Flush the connection to ensure compositor processes the destruction immediately
         // This is critical for maintaining proper popup hierarchy destruction order
@@ -493,9 +503,6 @@ impl PopupSurface {
 
 impl Drop for PopupSurface {
     fn drop(&mut self) {
-        // Just drop the popup - let Rust handle the cleanup chain
-        // The Popup's Drop will clean up xdg_popup and xdg_surface
-        // The wl_surface, SkiaContext, and SkiaSurface have their own Drop impls
-        self.popup.take();
+        self.tear_down();
     }
 }

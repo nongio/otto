@@ -409,12 +409,11 @@ impl BaseWaylandSurface {
         true
     }
 
-    /// Take the Skia surface, so the caller can drop it — and with it the EGL
-    /// resources — before destroying the `wl_surface` underneath.
+    /// Take the Skia surface, so the caller can drop it, and with it the EGL
+    /// resources, before destroying the `wl_surface` underneath.
     ///
-    /// Surface types that own an xdg role do this inside their own `destroy`;
-    /// this is for the ones that have no role of their own to tear down, such
-    /// as a drag icon.
+    /// Every surface type's teardown starts here: the EGL surface and its
+    /// `wl_egl_window` have to go while the `wl_surface` is still alive.
     pub fn take_skia_surface(&mut self) -> Option<Rc<SkiaSurface>> {
         self.skia_surface.take()
     }
