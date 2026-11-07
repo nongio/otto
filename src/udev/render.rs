@@ -264,7 +264,7 @@ impl<A: RendererApi> Otto<UdevData<A>> {
             // have no reliable estimate for the copy duration, so we fire
             // immediately and accept the slightly-wider timing window.
             let is_multi_gpu = self.backend_data.primary_gpu != surface.render_node;
-            let timer = if is_multi_gpu {
+            let timer = if is_multi_gpu || draw_asap() {
                 Timer::immediate()
             } else {
                 // output_refresh is in millihertz (mHz); convert to µs/frame.
@@ -1835,7 +1835,11 @@ impl<A: RendererApi> Otto<UdevData<A>> {
                 .map(|s| s.avg_render_time_us)
                 .unwrap_or(2000.0);
             let delay_us = (frame_period_us - avg_us * 2.0).max(1000.0);
-            let timer = Timer::from_duration(Duration::from_micros(delay_us as u64));
+            let timer = if draw_asap() {
+                Timer::immediate()
+            } else {
+                Timer::from_duration(Duration::from_micros(delay_us as u64))
+            };
             self.handle
                 .insert_source(timer, move |_, _, data| {
                     data.render(node, Some(crtc));
@@ -3200,4 +3204,12 @@ pub(super) fn initial_render<A: RendererApi>(
     surface.compositor.reset_buffers();
 
     Ok(())
+}
+
+/// EXPERIMENT (#411): while `/tmp/otto-draw-asap` exists, draw right after the
+/// VBlank instead of at `period − 2×avg_cpu_render`. That deadline only counts
+/// CPU time, so at 120 Hz a frame with more than ~2 ms of GPU work misses the
+/// next VBlank and the output settles at half rate.
+fn draw_asap() -> bool {
+    crate::debug_hooks::toggle("/tmp/otto-draw-asap")
 }
