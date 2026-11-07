@@ -2462,6 +2462,7 @@ impl Workspaces {
             }
             if let (true, Some(transaction)) = (transition.is_some(), selector_transaction) {
                 window_selector_view_ref.set_position((0.0, 0.0), None);
+                let selector_layers_at_finish = selector_layers.clone();
                 let is_animating_ref = self.is_animating.clone();
                 // Set here rather than next to `is_animating` above so the flag
                 // can only ever be raised together with the `on_finish` that
@@ -2523,7 +2524,16 @@ impl Workspaces {
                         }
                         // Popups only come back once expose is fully closed.
                         popup_overlay_layer.set_hidden(show_all);
-                        // workspace_selector_view stays visible (positioned off-screen when closed)
+                        // The selector strip parks off-screen when closed, but
+                        // off-screen is not hidden: its desktop thumbnails
+                        // mirror every workspace, and a mirror under a visible
+                        // parent re-records its whole subtree — every window,
+                        // titlebar blur included — on each commit of any
+                        // window. Hide the strip; the next open un-hides it
+                        // before it slides in (`set_hidden(false)` above).
+                        for layer in &selector_layers_at_finish {
+                            layer.set_hidden(!show_all);
+                        }
                         // Restore workspace content layers when closing expose
                         for wl in &all_workspaces_layers {
                             wl.set_hidden(show_all);

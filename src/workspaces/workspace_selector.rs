@@ -402,6 +402,10 @@ impl WorkspaceSelectorView {
         layer.set_pointer_events(false);
         layer.set_position((0.0, -400.0), None);
         layer.set_opacity(1.0_f32, None);
+        // Hidden until exposé slides it in: parked off-screen it would still
+        // be a visible parent, and its desktop thumbnails would mirror every
+        // workspace on every window commit (see `expose_show_all_apply`).
+        layer.set_hidden(true);
         view.set_layer(layer.clone());
 
         let drop_targets = Arc::new(RwLock::new(Vec::new()));
