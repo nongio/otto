@@ -5,9 +5,10 @@
 //! is typed without delay and the application, which repeats keys itself,
 //! sees a tap. If the key is still down once the repeat delay has passed, a
 //! row of the letter's forms appears at the caret, each with a number. A
-//! number, or the arrows and Return, picks one: `otto-emoji --replace`
-//! presses Backspace and types the choice through a virtual keyboard of its
-//! own, so the choice arrives whatever the keyboard layout. Escape closes the
+//! number, or the arrows and Return, picks one: Otto presses Backspace on
+//! the seat keyboard and `otto-emoji --insert` types the choice through a
+//! virtual keyboard of its own, so the choice arrives whatever the keyboard
+//! layout. Escape closes the
 //! row, and any other key closes it and goes through as usual.
 //!
 //! Which key it was is read from the keysym the layout produces, not from
@@ -40,6 +41,9 @@ use crate::{config::Config, input::KeyAction, state::Backend, Otto};
 
 /// The program that types the choice.
 const TYPIST: &str = "otto-emoji";
+
+/// Backspace's evdev code, the same key on every layout.
+const KEY_BACKSPACE: u32 = 14;
 
 /// The accented forms of `c`, most used first. Upper case follows from lower
 /// case; a form with no single upper-case letter (ß) is left out.
@@ -92,6 +96,8 @@ pub struct AccentState {
     timer: Option<RegistrationToken>,
     /// A press the filter let through that starts a hold once delivered.
     starting: Option<(Keycode, char)>,
+    /// The form picked inside the filter, typed once the filter is done.
+    picked: Option<char>,
     row: Option<Row>,
 }
 
@@ -215,6 +221,9 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
     /// After a key went through the filter: if its press started a hold and
     /// reached the application, send its release now and wait for the row.
     pub(crate) fn accent_key_delivered(&mut self, delivered: bool, time: InputTime) {
+        if let Some(choice) = self.accent.picked.take() {
+            self.type_accent(choice, time);
+        }
         let Some((keycode, character)) = self.accent.starting.take() else {
             return;
         };
@@ -288,9 +297,31 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             return;
         };
         self.close_accent_row();
+        self.accent.picked = Some(choice);
+    }
+
+    /// Swap the letter the held key typed for `choice`.
+    ///
+    /// Backspace goes out on the seat keyboard, decoded with the keymap the
+    /// application already has: GTK 3 drops a Backspace that arrives with a
+    /// keymap switch, as it would if the typist pressed it. The typist then
+    /// types the form, which needs a keymap of its own.
+    fn type_accent(&mut self, choice: char, time: InputTime) {
+        if let Some(keyboard) = self.seat.get_keyboard() {
+            for state in [KeyState::Pressed, KeyState::Released] {
+                keyboard.input_forward(
+                    self,
+                    Keycode::new(KEY_BACKSPACE + 8),
+                    state,
+                    SCOUNTER.next_serial(),
+                    time,
+                    false,
+                );
+            }
+        }
         let program = typist_program();
         debug!(%choice, %program, "replacing the held letter");
-        let mut command = self.program_command(&program, &["--replace".into(), choice.to_string()]);
+        let mut command = self.program_command(&program, &["--insert".into(), choice.to_string()]);
         match command.spawn() {
             Ok(child) => crate::input::actions::reap_in_background(&program, child),
             Err(err) => warn!(%program, %err, "could not type the accent"),
