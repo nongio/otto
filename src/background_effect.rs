@@ -347,6 +347,11 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             (shape, size)
         });
         let shape = clamp_to_surface(shape, surface_size);
+        // Frosting off turns the desktop's own blur off; a client's requested
+        // blur is the same material and the same GPU cost, so it follows the
+        // setting. The region is still remembered by the protocol state and
+        // applies again on the surface's next commit once frosting is on.
+        let shape = if crate::theme::frosting() { shape } else { None };
         let applied = self.background_effects.get(&surface_id).copied();
         // Compared as a shape, not as a flag: a client that moves or resizes
         // the region it wants frosted (a candidate panel growing a row) keeps

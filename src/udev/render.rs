@@ -1835,11 +1835,7 @@ impl<A: RendererApi> Otto<UdevData<A>> {
                 .map(|s| s.avg_render_time_us)
                 .unwrap_or(2000.0);
             let delay_us = (frame_period_us - avg_us * 2.0).max(1000.0);
-            let timer = if draw_asap() {
-                Timer::immediate()
-            } else {
-                Timer::from_duration(Duration::from_micros(delay_us as u64))
-            };
+            let timer = Timer::from_duration(Duration::from_micros(delay_us as u64));
             self.handle
                 .insert_source(timer, move |_, _, data| {
                     data.render(node, Some(crtc));
