@@ -77,6 +77,11 @@ ask for the pixels behind its surface to be blurred, without using Otto's own
 - A surface that also carries an `otto_surface_style_v1` `BackgroundBlur` keeps
   blurring when its background-effect region is removed; the style owns the
   blur too.
+- With `frosting = false` the protocol stays available and the region is still
+  tracked, but no blur is applied: the client's frost is the same material and
+  the same GPU work as the desktop's own, so it follows the same switch. The
+  window then keeps its raw-buffer plane eligibility. Turning frosting back on
+  applies the region again on the surface's next commit.
 
 ## Constraints & Edge Cases
 
