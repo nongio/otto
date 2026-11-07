@@ -18,9 +18,9 @@ Questions and feedback: [Discord](https://discord.gg/Mp7cBfaACD) or Matrix [`#ot
 
 *A fresh install, set up before you touch anything.*
 
-![Files in the Photos view, pictures grouped by day with an info panel](./assets/press/release-1.6.0/06-photos-view.jpg)
+![Files in the icon view: a folder of classic car photos shown as thumbnails, each with a soft shadow](./assets/press/release-1.9.0/01-files-cars.jpg)
 
-*[Files](https://nongio.github.io/otto/files/), with pictures laid out by day.*
+*[Files](https://nongio.github.io/otto/files/), a folder of photos as thumbnails.*
 
 ![The side canvas open on the right, with files to ask about and a list of agent sessions](./assets/press/release-1.6.0/04-side-canvas.jpg)
 
