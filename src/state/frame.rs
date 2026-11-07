@@ -51,7 +51,7 @@ pub struct SurfaceDmabufFeedback<'a> {
 }
 
 /// How fast each surface on an output is given frame callbacks this frame.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct FramePacing {
     /// Throttle tier of every mapped window, keyed by window id. A window
     /// missing from the map is paced at full rate.
@@ -139,6 +139,11 @@ pub enum Presentation {
 /// With [`Presentation::Immediate`] the feedback is presented here and `None`
 /// is returned; with [`Presentation::OnPageFlip`] it is returned (when
 /// `rendered`) for the caller to queue with the frame.
+///
+/// `send_callbacks` false skips the `wl_callback`s: the udev loop sends them
+/// from its VBlank handler instead ([`send_frame_callbacks`]), and here only
+/// when no page flip is coming to do it.
+#[allow(clippy::too_many_arguments)]
 pub fn frame_done(
     output: &Output,
     render_element_states: &RenderElementStates,
@@ -148,6 +153,7 @@ pub fn frame_done(
     pacing: &FramePacing,
     rendered: bool,
     presentation: Presentation,
+    send_callbacks: bool,
 ) -> Option<OutputPresentationFeedback> {
     post_repaint(
         output,
@@ -156,12 +162,14 @@ pub fn frame_done(
         dmabuf_feedback,
         time,
         pacing,
+        send_callbacks,
     );
 
     if !rendered {
         return None;
     }
-    let mut feedback = take_presentation_feedback(output, window_elements, render_element_states);
+    let mut feedback =
+        take_presentation_feedback(output, window_elements, render_element_states, pacing);
     match presentation {
         Presentation::OnPageFlip => Some(feedback),
         Presentation::Immediate => {
@@ -188,6 +196,146 @@ fn nominal_refresh(output: &Output) -> Refresh {
         .unwrap_or(Refresh::Unknown)
 }
 
+/// Send every window and layer surface on `output` its (throttled) frame
+/// callback, and nothing else.
+///
+/// The udev loop calls this from the VBlank handler, as early in the frame
+/// period as a client can be told to paint. The compositor itself renders
+/// late (see `docs/developer/render_loop.md`), so a client woken at render
+/// time would have only the compositor's own budget left to produce the next
+/// buffer: a GTK window spending 4 ms on the GPU missed one VBlank in six at
+/// 120 Hz. Woken at VBlank it has the whole period minus that budget.
+#[profiling::function]
+pub fn send_frame_callbacks(
+    output: &Output,
+    window_elements: &[&WindowElement],
+    time: impl Into<Duration>,
+    pacing: &FramePacing,
+    log: &mut FrameCallbackLog,
+) {
+    let time = time.into();
+    let map = smithay::desktop::layer_map_for_output(output);
+    log.retain(|id, _| {
+        window_elements.iter().any(|w| w.id() == *id)
+            || map.layers().any(|l| l.wl_surface().id() == *id)
+    });
+    for window in window_elements {
+        let throttle = pacing
+            .windows
+            .get(&window.id())
+            .map(|s| s.throttle())
+            .unwrap_or(Duration::ZERO);
+        window.send_frame(output, time, Some(throttle), |_, _| Some(output.clone()));
+        log.insert(window.id(), time);
+    }
+    for layer_surface in map.layers() {
+        layer_surface.send_frame(
+            output,
+            time,
+            Some(layer_throttle(pacing, layer_surface)),
+            surface_primary_scanout_output,
+        );
+        log.insert(layer_surface.wl_surface().id(), time);
+    }
+}
+
+/// When each toplevel or layer surface (by its root `wl_surface` id) was
+/// last offered its frame callbacks. See [`frame_callback_on_commit`].
+pub type FrameCallbackLog = HashMap<ObjectId, Duration>;
+
+/// A commit that arrives after this frame's VBlank send: give the surface
+/// its frame callback now if it has gone most of a period without one.
+///
+/// A client's buffer commit is held back until the buffer's GPU work is
+/// done (`add_blocker` in the shell). A client that needs most of the period
+/// to render lands its commit after the VBlank handler has already sent the
+/// callbacks, so with VBlank sends alone it would get its callback one whole
+/// VBlank later and lock to half the refresh rate (GTK at 120 Hz: 60 fps).
+/// Sending on the applied commit lets it pipeline: it starts the next frame
+/// while the compositor is still to compose this one. The gap keeps every
+/// client on the VBlank cadence: only a surface that has already waited a
+/// whole period (its commit just missed this VBlank's send) is served here;
+/// anything sooner waits for the next VBlank. A shorter gap let a client
+/// cycle faster than the refresh, two of its frames then met one compose
+/// and the next compose found none: dropped frames, not extra ones.
+pub fn frame_callback_on_commit<B: crate::state::Backend>(
+    state: &mut crate::state::Otto<B>,
+    surface: &smithay::reexports::wayland_server::protocol::wl_surface::WlSurface,
+) {
+    use smithay::wayland::compositor::get_parent;
+    let mut root = surface.clone();
+    while let Some(parent) = get_parent(&root) {
+        root = parent;
+    }
+    let outputs: Vec<Output> = state.workspaces.outputs().cloned().collect();
+    let Some(first) = outputs.first() else {
+        return;
+    };
+    let now: Duration = state.clock.now().into();
+    let period = first
+        .current_mode()
+        .map(|mode| Duration::from_nanos(1_000_000_000_000 / mode.refresh as u64))
+        .unwrap_or(Duration::from_micros(16_667));
+    // Just under a period: the VBlank handler runs a little after the VBlank
+    // itself, and a commit applied in that sliver has waited one full period.
+    let min_gap = period.mul_f32(0.95);
+    let key = root.id();
+    if let Some(last) = state.frame_callback_log.get(&key).copied() {
+        if now.saturating_sub(last) < min_gap {
+            // Too soon: the VBlank cadence (the handler, or its tick when
+            // no flip happened) delivers this one.
+            return;
+        }
+    }
+    send_frame_callbacks_to(state, &key, now);
+}
+
+/// Send the frame callbacks of one toplevel or layer surface (by root id)
+/// on every output, and log the time.
+fn send_frame_callbacks_to<B: crate::state::Backend>(
+    state: &mut crate::state::Otto<B>,
+    key: &ObjectId,
+    now: Duration,
+) {
+    let outputs: Vec<Output> = state.workspaces.outputs().cloned().collect();
+    if let Some(window) = state.workspaces.get_window_for_surface(key).cloned() {
+        state.frame_callback_log.insert(key.clone(), now);
+        for output in &outputs {
+            window.send_frame(output, now, None, |_, _| Some(output.clone()));
+        }
+        return;
+    }
+    for output in &outputs {
+        let map = smithay::desktop::layer_map_for_output(output);
+        let layer = map
+            .layers()
+            .find(|layer| layer.wl_surface().id() == *key)
+            .cloned();
+        if let Some(layer) = layer {
+            state.frame_callback_log.insert(key.clone(), now);
+            layer.send_frame(output, now, None, surface_primary_scanout_output);
+            return;
+        }
+    }
+}
+
+/// Background/bottom surfaces hidden behind a window get the same 2 Hz
+/// trickle as an occluded window (see `occluded_layer_surface_ids`);
+/// everything else paints at full rate.
+fn layer_throttle(
+    pacing: &FramePacing,
+    layer_surface: &smithay::desktop::LayerSurface,
+) -> Duration {
+    if pacing
+        .occluded_layers
+        .contains(&layer_surface.wl_surface().id())
+    {
+        WindowThrottleState::Occluded.throttle()
+    } else {
+        Duration::ZERO
+    }
+}
+
 #[profiling::function]
 fn post_repaint(
     output: &Output,
@@ -196,6 +344,7 @@ fn post_repaint(
     dmabuf_feedback: Option<SurfaceDmabufFeedback<'_>>,
     time: impl Into<Duration>,
     pacing: &FramePacing,
+    send_callbacks: bool,
 ) {
     let time = time.into();
     let default_throttle = Duration::ZERO;
@@ -221,12 +370,14 @@ fn post_repaint(
         // Per-window throttle based on user-visibility classification. Missing
         // entries (should be rare) fall through to full-rate, matching the
         // previous behaviour.
-        let throttle = pacing
-            .windows
-            .get(&window.id())
-            .map(|s| s.throttle())
-            .unwrap_or(default_throttle);
-        window.send_frame(output, time, Some(throttle), |_, _| Some(output.clone()));
+        if send_callbacks {
+            let throttle = pacing
+                .windows
+                .get(&window.id())
+                .map(|s| s.throttle())
+                .unwrap_or(default_throttle);
+            window.send_frame(output, time, Some(throttle), |_, _| Some(output.clone()));
+        }
         // Send frame to all windows since we're processing all workspaces
         if let Some(dmabuf_feedback) = dmabuf_feedback {
             window.send_dmabuf_feedback(output, surface_primary_scanout_output, |surface, _| {
@@ -258,23 +409,14 @@ fn post_repaint(
             }
         });
 
-        // Background/bottom surfaces hidden behind a window get the same 2 Hz
-        // trickle as an occluded window (see `occluded_layer_surface_ids`);
-        // everything else paints at full rate.
-        let layer_throttle = if pacing
-            .occluded_layers
-            .contains(&layer_surface.wl_surface().id())
-        {
-            WindowThrottleState::Occluded.throttle()
-        } else {
-            Duration::ZERO
-        };
-        layer_surface.send_frame(
-            output,
-            time,
-            Some(layer_throttle),
-            surface_primary_scanout_output,
-        );
+        if send_callbacks {
+            layer_surface.send_frame(
+                output,
+                time,
+                Some(layer_throttle(pacing, layer_surface)),
+                surface_primary_scanout_output,
+            );
+        }
         if let Some(dmabuf_feedback) = dmabuf_feedback {
             layer_surface.send_dmabuf_feedback(
                 output,
@@ -297,14 +439,34 @@ fn take_presentation_feedback(
     output: &Output,
     window_elements: &[&WindowElement],
     render_element_states: &RenderElementStates,
+    pacing: &FramePacing,
 ) -> OutputPresentationFeedback {
     let mut output_presentation_feedback = OutputPresentationFeedback::new(output);
 
     window_elements.iter().for_each(|window| {
-        // Process all windows since we're handling all workspaces
+        // Windows are composited through the scene, not as per-surface
+        // render elements, so `render_element_states` never names their
+        // surfaces and the surface's primary scanout output is never set.
+        // Smithay only takes feedback for a surface on its primary output;
+        // asking it would leave every window's feedback behind to be
+        // `discarded` on the next commit, and a client that never hears
+        // `presented` cannot pace itself to the display. A window the user
+        // can see was presented by this flip; one that is occluded,
+        // minimized or on another workspace was not.
+        let shown = pacing.windows.get(&window.id()).is_none_or(|tier| {
+            !matches!(
+                tier,
+                WindowThrottleState::Occluded
+                    | WindowThrottleState::Minimized
+                    | WindowThrottleState::HiddenWorkspace
+            )
+        });
+        if !shown {
+            return;
+        }
         window.take_presentation_feedback(
             &mut output_presentation_feedback,
-            surface_primary_scanout_output,
+            |_, _| Some(output.clone()),
             |surface, _| {
                 surface_presentation_feedback_flags_from_states(
                     surface,

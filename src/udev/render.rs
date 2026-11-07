@@ -20,7 +20,9 @@ use crate::{
     render_elements::output_render_elements::OutputRenderElements,
     render_elements::workspace_render_elements::WorkspaceRenderElements,
     shell::{WindowElement, WindowRenderElement},
-    state::frame::{frame_done, FramePacing, Presentation, SurfaceDmabufFeedback},
+    state::frame::{
+        frame_done, send_frame_callbacks, FramePacing, Presentation, SurfaceDmabufFeedback,
+    },
 };
 
 use smithay::{
@@ -198,6 +200,81 @@ impl<A: RendererApi> Otto<UdevData<A>> {
                     }
                 }
             };
+
+        // Frame callbacks go out here, at VBlank, not at render time: the
+        // draw is deferred to the end of the period (`deadline_us`), and a
+        // client woken then has only the compositor's budget left to paint
+        // its next buffer before the following draw. Woken now it has the
+        // rest of the period. The tiers are the ones the last pass classified.
+        if schedule_render {
+            let pacing = surface.last_frame_pacing.clone().unwrap_or_default();
+            let windows: Vec<&WindowElement> = self.workspaces.spaces_elements().collect();
+            send_frame_callbacks(
+                &output,
+                &windows,
+                self.clock.now(),
+                &pacing,
+                &mut self.frame_callback_log,
+            );
+            // This handler only runs when a flip completes. A VBlank with
+            // nothing flipped still has to pace the clients (a commit that
+            // missed this period's compose must not wait two periods for
+            // its callback), so tick at the VBlank cadence for a couple of
+            // periods, or until the next real VBlank takes over. Only while
+            // the compositor itself composes every period: when it cannot
+            // keep up (five windows at 7 ms of GPU each) a tick would have
+            // clients render frames the next compose supersedes, and they
+            // are better paced by the flips alone.
+            let armed = surface.last_vblank;
+            let period = Duration::from_micros(surface.frame_period_us.max(1000.0) as u64);
+            if let Some(vblank) = armed {
+                use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
+                let tick_output = output.clone();
+                let mut ticks_left = 2u32;
+                let _ = self.handle.insert_source(
+                    Timer::from_deadline(vblank + period),
+                    move |_, _, otto: &mut Otto<UdevData<A>>| {
+                        let Some((pacing, need_us)) = otto
+                            .backend_data
+                            .backends
+                            .get(&dev_id)
+                            .and_then(|dev| dev.surfaces.get(&crtc))
+                            .filter(|surface| surface.last_vblank == armed)
+                            .map(|surface| {
+                                (
+                                    surface.last_frame_pacing.clone().unwrap_or_default(),
+                                    surface.avg_render_time_us + surface.avg_gpu_time_us,
+                                )
+                            })
+                        else {
+                            return TimeoutAction::Drop;
+                        };
+                        // Keeping up means a compose fits comfortably in a
+                        // period. The compose interval itself is no signal:
+                        // at 60 fps it reads as "behind" because the client
+                        // is at 60, and that would hold it there.
+                        let keeping_up = need_us < period.as_micros() as f32 * 0.6;
+                        if keeping_up {
+                            let windows: Vec<&WindowElement> =
+                                otto.workspaces.spaces_elements().collect();
+                            send_frame_callbacks(
+                                &tick_output,
+                                &windows,
+                                otto.clock.now(),
+                                &pacing,
+                                &mut otto.frame_callback_log,
+                            );
+                        }
+                        ticks_left -= 1;
+                        if ticks_left == 0 {
+                            TimeoutAction::Drop
+                        } else {
+                            TimeoutAction::ToDuration(period)
+                        }
+                    },
+                );
+            }
+        }
 
         if schedule_render {
             let output_refresh = match output.current_mode() {
@@ -980,6 +1057,8 @@ impl<A: RendererApi> Otto<UdevData<A>> {
             true,
             &captured_ids,
         );
+        // The VBlank handler sends the frame callbacks with these tiers.
+        surface.last_frame_pacing = Some(frame_pacing.clone());
 
         // ── Shadow-only / direct scanout window selection ─────────────────────
         //
@@ -1413,6 +1492,10 @@ impl<A: RendererApi> Otto<UdevData<A>> {
             Ok(outcome) => {
                 if outcome.rendered {
                     // Frame was submitted — VBlank callback will drive the next render.
+                    // Clients paced off their commits may be given their next
+                    // callback now that this compose has taken their buffer.
+                    self.prev_compose = self.last_compose;
+                    self.last_compose = self.clock.now().into();
                     false
                 } else {
                     // No damage — defer idle decision to after borrow is released.
@@ -3162,6 +3245,10 @@ pub(super) fn render_output_frame<'a, A: RendererApi>(
         frame_pacing,
         rendered,
         Presentation::OnPageFlip,
+        // A rendered frame is queued for a page flip, and its VBlank sends
+        // the callbacks (`frame_finish`). Nothing rendered means no VBlank
+        // is coming, so the clients waiting on a callback get it now.
+        !rendered,
     );
 
     if rendered {

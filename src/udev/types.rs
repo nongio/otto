@@ -177,6 +177,9 @@ pub struct SurfaceData {
     /// been consumed by another output's render before this surface gets
     /// its turn, and skipping here would leave the display black.
     pub(super) has_rendered_once: bool,
+    /// The throttle tiers the last render pass classified, reused by the
+    /// VBlank handler to send frame callbacks without re-running occlusion.
+    pub(super) last_frame_pacing: Option<crate::state::frame::FramePacing>,
     /// Debug: whether this surface already honoured the current
     /// `/tmp/otto-full-redraw` trigger (reset when the file is removed).
     pub(super) full_redraw_done: bool,

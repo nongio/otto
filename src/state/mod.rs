@@ -301,6 +301,14 @@ pub struct Otto<BackendData: Backend + 'static> {
     /// click-to-focus desktop delivers a scroll to a `Secondary` window and
     /// then feeds it frames at 30 Hz while the user watches it move.
     pub pointer_interaction: Option<(ObjectId, std::time::Instant)>,
+    /// When each surface was last offered its frame callbacks; see
+    /// [`frame::frame_callback_on_commit`].
+    pub frame_callback_log: frame::FrameCallbackLog,
+    /// When the last two render passes composed the scene (clock time).
+    /// Their spacing says whether the compositor is keeping up with the
+    /// refresh, which decides whether clients are paced ahead of a flip.
+    pub last_compose: std::time::Duration,
+    pub prev_compose: std::time::Duration,
     pub output_manager_state: OutputManagerState,
     pub primary_selection_state: PrimarySelectionState,
     pub data_control_state: DataControlState,
@@ -1176,6 +1184,9 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             idle_inhibit_manager_state,
             idle_inhibitors: HashSet::new(),
             pointer_interaction: None,
+            frame_callback_log: Default::default(),
+            last_compose: std::time::Duration::ZERO,
+            prev_compose: std::time::Duration::ZERO,
             lock_state: crate::lock::LockState::Unlocked,
             lock_surfaces: Default::default(),
             lock_previous_focus: None,

@@ -692,6 +692,7 @@ impl<A: RendererApi> Otto<UdevData<A>> {
                 seen_redraw_gen: 0,
                 continuous_frames: false,
                 has_rendered_once: false,
+                last_frame_pacing: None,
                 full_redraw_done: false,
                 rendered_damage_gen: 0,
                 cursor_was_in_output: false,

@@ -34,9 +34,35 @@ sends a message on a calloop channel, waking the loop even if it is currently
 blocked on a long timeout.
 
 **Frame bookkeeping.** After a successful render, `post_repaint` /
-`take_presentation_feedback` emit `wl_callback` done events and
-`wp_presentation` feedback, with timestamps from the shared `Clock<Monotonic>`
-so they line up with input event timestamps.
+`take_presentation_feedback` send dmabuf feedback and collect the
+`wp_presentation` feedback of every window the user can see (windows are
+composited through the scene, not as per-surface render elements, so the
+feedback is taken for the visible tiers rather than by Smithay's primary
+scanout output, which the scene path never sets). Timestamps come from the
+shared `Clock<Monotonic>` so they line up with input event timestamps.
+
+**Frame callbacks** (`wl_callback`) are not sent at render time on the udev
+backend. Rendering late means a client woken at render time has only the
+compositor's own budget left to produce its next buffer; a GTK window that
+spends 7 ms of an 8.3 ms period on a frame missed one VBlank in six. They go
+out from the VBlank handler instead (`send_frame_callbacks`), so a client has
+the whole period minus the compositor's budget. Two more paths keep the
+cadence when that alone would not:
+
+- A client's commit is held back until its buffer's GPU work is done
+  (`add_blocker`), so a slow client's commit lands *after* the VBlank send and
+  would wait a whole extra period. `frame_callback_on_commit` sends the
+  callback as the commit is applied, but only once the surface has gone 95 %
+  of a period without one: anything sooner stays on the VBlank cadence, so no
+  client cycles faster than the refresh and has its frames superseded.
+- The VBlank handler only runs when a flip completes. For a couple of periods
+  after each flip a timer ticks at the VBlank cadence and sends the callbacks
+  of VBlanks with nothing flipped, while the compositor's own CPU+GPU need is
+  under 60 % of the period. When it is not (five windows at 7 ms of GPU each),
+  pacing clients ahead of a flip would only have them render frames the next
+  compose supersedes, so they are paced by the flips alone.
+
+The winit and x11 backends keep sending callbacks right after the render.
 
 **Damage tracking.** Each backend feeds `render_output` a damage tracker, and
 the heavy path is short-circuited when there is no new scene damage, no
