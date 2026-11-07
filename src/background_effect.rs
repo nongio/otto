@@ -351,7 +351,11 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         // blur is the same material and the same GPU cost, so it follows the
         // setting. The region is still remembered by the protocol state and
         // applies again on the surface's next commit once frosting is on.
-        let shape = if crate::theme::frosting() { shape } else { None };
+        let shape = if crate::theme::frosting() {
+            shape
+        } else {
+            None
+        };
         let applied = self.background_effects.get(&surface_id).copied();
         // Compared as a shape, not as a flag: a client that moves or resizes
         // the region it wants frosted (a candidate panel growing a row) keeps

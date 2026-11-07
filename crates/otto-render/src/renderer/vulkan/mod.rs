@@ -190,9 +190,9 @@ type PlaneImageQueue = Arc<Mutex<Vec<VulkanImage>>>;
 
 /// Keeps a plane slot's `VkImage` alive while its Skia surface renders into it.
 ///
-/// Dropping it queues the image; the renderer destroys it on the next
-/// [`SkiaVkRenderer::flush_planes_for_scanout`], after the GPU has finished
-/// every use of it.
+/// Dropping it queues the image; the next
+/// [`SkiaVkRenderer::flush_planes_for_scanout`] retires it into the graveyard,
+/// which destroys it once the GPU has completed the frame submitted then.
 pub struct PlaneTextureRelease {
     image: Option<VulkanImage>,
     queue: PlaneImageQueue,
@@ -241,6 +241,12 @@ pub struct SkiaVkRenderer {
     /// The target last bound or rendered to; the screenshare blit reads it.
     current_target: Option<SkiaVkTarget>,
     plane_releases: PlaneImageQueue,
+    /// Plane dmabufs rendered into this frame; `flush_planes_for_scanout`
+    /// attaches the frame's fence to them (see [`Self::note_scanout_write`]).
+    scanout_writes: Vec<Dmabuf>,
+    /// The kernel refused a write fence once, so every plane flush waits on
+    /// the CPU instead of retrying the ioctl per frame.
+    scanout_fences_unsupported: bool,
     /// Memory of dropped textures and targets, destroyed once the GPU is done with it.
     graveyard: Graveyard,
     upscale_filter: TextureFilter,
@@ -353,6 +359,8 @@ impl SkiaVkRenderer {
             refused_targets: HashSet::new(),
             current_target: None,
             plane_releases: PlaneImageQueue::default(),
+            scanout_writes: Vec::new(),
+            scanout_fences_unsupported: false,
             graveyard: Graveyard::default(),
             upscale_filter: TextureFilter::Linear,
             downscale_filter: TextureFilter::Linear,
@@ -505,23 +513,103 @@ impl SkiaVkRenderer {
         self.target_pixel_geometry = pixel_geometry;
     }
 
-    /// Blocks until every plane surface rendered this frame is written, and
-    /// frees the images of plane slots dropped since the last call.
+    /// Records that `dmabuf` was rendered into for scanout this frame.
+    ///
+    /// [`Self::flush_planes_for_scanout`] attaches the frame's fence to it,
+    /// so the KMS commit waits for the writes instead of the CPU.
+    pub fn note_scanout_write(&mut self, dmabuf: &Dmabuf) {
+        self.scanout_writes.push(dmabuf.clone());
+    }
+
+    /// Submits every plane surface rendered this frame, makes the KMS commit
+    /// wait for those writes, and retires the images of plane slots dropped
+    /// since the last call.
+    ///
+    /// The frame's sync file goes onto each written dmabuf as a write fence,
+    /// which the atomic commit honours through implicit sync, so the thread
+    /// is back in the event loop while the GPU draws. The CPU blocks only
+    /// when a sync file cannot be made or attached (no `SYNC_FD` export, a
+    /// kernel before 6.0, or the `/tmp/otto-plane-cpu-sync` A/B toggle).
     ///
     /// Call once per frame, after the last plane render and before handing
     /// the buffers to the DRM compositor.
     pub fn flush_planes_for_scanout(&mut self) {
         self.ctx().flush(None);
         self.release_sampled();
-        self.ctx().submit(gpu::SyncCpu::Yes);
-        self.release_plane_textures();
+        self.ctx().submit(None);
+        let writes = std::mem::take(&mut self.scanout_writes);
+        self.sync_scanout_writes(&writes);
+        self.retire_plane_textures();
         self.reap();
+    }
+
+    /// Fences `writes` with everything submitted so far, waiting on the CPU
+    /// when the fence cannot reach the buffers.
+    ///
+    /// Always signals a frame serial, even without writes: the graveyard
+    /// dates retired memory by it (see [`Self::reap`]). Without writes there
+    /// is nothing for KMS to wait for, so nothing waits — unless the A/B
+    /// toggle asks for the old full wait.
+    fn sync_scanout_writes(&mut self, writes: &[Dmabuf]) {
+        let cpu_sync_forced = crate::debug_hooks::toggle("/tmp/otto-plane-cpu-sync");
+        let fence_wanted =
+            !writes.is_empty() && !self.scanout_fences_unsupported && !cpu_sync_forced;
+        let sync = match self.sync_pool.signal(&self.device, self.sync_fd) {
+            // No `SYNC_FD` export: `signal` already waited for the queue.
+            Ok(None) => return,
+            Ok(Some(sync)) => sync,
+            Err(err) => {
+                tracing::warn!(
+                    ?err,
+                    "signalling the plane flush failed, waiting for the queue"
+                );
+                // SAFETY: the queue belongs to `device` and is only used from this thread.
+                if let Err(err) = unsafe { self.device.vk().queue_wait_idle(*self.device.queue()) }
+                {
+                    tracing::warn!(?err, "waiting for the Vulkan queue failed");
+                }
+                return;
+            }
+        };
+        if fence_wanted {
+            let attached = writes
+                .iter()
+                .all(|dmabuf| sync::attach_write_fence(dmabuf, sync.fd()).is_ok());
+            if attached {
+                return;
+            }
+            self.scanout_fences_unsupported = true;
+            tracing::warn!(
+                "cannot attach write fences to plane buffers; plane flushes wait on the CPU"
+            );
+        } else if writes.is_empty() && !cpu_sync_forced {
+            return;
+        }
+        if smithay::backend::renderer::sync::Fence::wait(&sync).is_err() {
+            tracing::warn!("waiting for the plane flush was interrupted");
+        }
+    }
+
+    /// Hands the images of plane slots dropped since the last call to the
+    /// graveyard, which destroys each once the GPU completes the frame
+    /// submitted now — the last one that could have drawn into it.
+    fn retire_plane_textures(&mut self) {
+        let released = std::mem::take(
+            &mut *self
+                .plane_releases
+                .lock()
+                .unwrap_or_else(|e| e.into_inner()),
+        );
+        let queue = self.graveyard.queue();
+        for image in released {
+            retire(&queue, RetiredHandle::Released, Box::new(image));
+        }
     }
 
     /// Destroys the images of plane slots dropped since the last call.
     ///
-    /// Only call once the GPU is done with them, as
-    /// [`Self::flush_planes_for_scanout`] makes sure.
+    /// Only for the renderer's drop, once the device is idle; a frame uses
+    /// [`Self::retire_plane_textures`].
     fn release_plane_textures(&mut self) {
         let released = std::mem::take(
             &mut *self
