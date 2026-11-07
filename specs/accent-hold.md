@@ -35,7 +35,7 @@ Holding a key whose character has accented or related forms shows those forms in
   - A pointer button press closes the row.
   - None of the keys the row handles reach the application, press or release.
 - **End of the hold:** a keyboard focus change (another window mapping, a click elsewhere, the focus going to no window) or losing the keys (`release_all_keys`: a VT switch, the host window losing focus) ends the hold: the row closes, the pending timer is cancelled, and the key is no longer held. A digit typed after a focus change goes to the newly focused window untouched. The held key's release, already sent, is not sent again when the keys are released.
-- **Pick:** the row closes, and the application receives Backspace followed by the picked character, typed through a virtual keyboard with a keymap of its own (`otto-emoji --replace`).
+- **Pick:** the row closes, the compositor sends Backspace on the seat keyboard, and the picked character follows, typed through a virtual keyboard with a keymap of its own (`otto-emoji --insert`).
 - **Upper case:** a held upper-case letter offers the upper-case forms; a form with no single upper-case letter (ß) is left out.
 
 ## Constraints & Edge Cases
@@ -43,7 +43,7 @@ Holding a key whose character has accented or related forms shows those forms in
 - Applications repeat keys themselves from `wl_keyboard.repeat_info`, so the compositor cannot cancel a repeat already started: the early release is what stops it.
 - Applications with no caret (games, X11 applications, terminals without text-input) get the key untouched, so a held key still repeats or moves a character.
 - The caret must belong to the surface with keyboard focus and lie on the primary output, where the overlay is drawn.
-- Backspace is sent on evdev 14, which every layout and Chromium's fixed key table read as Backspace; the character goes on a printable keycode with a `U+XXXX` keysym, which Chromium honours for characters in the Basic Multilingual Plane (every form in the table is).
+- Backspace is sent on evdev 14, which every layout and Chromium's fixed key table read as Backspace, and on the keymap the application already has: GTK 3 ignores a Backspace that arrives together with a keymap switch, so the typist must not press it. The character goes on a printable keycode with a `U+XXXX` keysym, which Chromium honours for characters in the Basic Multilingual Plane (every form in the table is).
 
 ## Rationale
 

@@ -16,6 +16,7 @@ mod headless_tests {
     const KEY_RIGHT: u32 = 106;
     const KEY_ESC: u32 = 1;
     const KEY_1: u32 = 2;
+    const KEY_BACKSPACE: u32 = 14;
 
     /// Longer than the repeat delay the row waits for.
     const HOLD: Duration = Duration::from_millis(600);
@@ -85,6 +86,49 @@ mod headless_tests {
 
         handle.wait(Duration::from_millis(300));
         assert!(!row_shown(&handle), "Escape puts the row away");
+        handle.stop();
+    }
+
+    /// Picking a form erases the letter with a Backspace on the window's
+    /// own keymap. GTK 3 ignores a Backspace that comes with a keymap switch,
+    /// so it must not wait for the typist's keymap.
+    #[test]
+    #[serial]
+    fn picking_erases_the_letter_on_the_windows_keymap() {
+        let (handle, mut app) = start(true);
+        // No typist on PATH: what the window gets is the compositor's alone.
+        let path = std::env::var_os("PATH");
+        std::env::set_var("PATH", "/nonexistent");
+        app.roundtrip().expect("roundtrip");
+        let keymaps = app.state.keymaps.len();
+
+        handle.key(KEY_E, true);
+        handle.wait(HOLD);
+        handle.key(KEY_E, false);
+        assert!(row_shown(&handle));
+        handle.key(KEY_1, true);
+        handle.key(KEY_1, false);
+        handle.wait(Duration::from_millis(50));
+        app.roundtrip().expect("roundtrip");
+
+        if let Some(path) = path {
+            std::env::set_var("PATH", path);
+        }
+        assert_eq!(
+            app.state.keys,
+            vec![
+                (KEY_E, true),
+                (KEY_E, false),
+                (KEY_BACKSPACE, true),
+                (KEY_BACKSPACE, false)
+            ],
+            "the pick sends Backspace, and the digit itself stays with the row"
+        );
+        assert_eq!(
+            app.state.keymaps.len(),
+            keymaps,
+            "the Backspace is decoded with the keymap the window already has"
+        );
         handle.stop();
     }
 
