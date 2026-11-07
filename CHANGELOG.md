@@ -2,6 +2,36 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.9.0] - 2026-11-07
+
+### 🚀 Features
+
+- *(files)* Edit the sidebar in place (#385)
+- Otto-msg doctor bug-report helper (#386)
+- *(files)* Make links with Ctrl+Shift drag (#387)
+- *(canvas)* Peek and follow during a drag; stash Send to Ask button (#395)
+- *(agents)* Pi asks questions as a choice (#405)
+- *(peek)* Play audio files (#404)
+- *(setup)* Otto-setup, first run for the agents (#406)
+- *(fonts)* Fontconfig, subpixel layouts and toolkit settings (#400)
+
+### 🐛 Bug Fixes
+
+- Portal request round-trip (#393)
+- *(input)* End the accent hold with the press (#390)
+- *(files)* Keep desk positions; atomic config writes (#392)
+- *(kit)* Never send a zero-size viewport source (#403)
+- *(kit)* Free a popup's EGL surface before its wl_surface (#408)
+- *(kit)* Keep apps on otto-kit: architecture rules and scroll fixes (#396)
+
+### 📚 Documentation
+
+- A developer page per component (#389)
+- *(site)* A top bar like Otto's own (#394)
+- Search next plan (#370)
+- *(site)* Code blocks drawn as a terminal (#401)
+- One page for standards and protocols (#402)
+
 ## [1.8.0] - 2026-10-18
 
 ### 🚀 Features
