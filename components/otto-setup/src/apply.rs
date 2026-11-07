@@ -1,14 +1,26 @@
-//! Running the plan: each step's writes and commands, in order, then
-//! `otto-agents doctor` to say whether it worked.
+//! Running the plan: each step's writes and commands, in order, then a
+//! check to say whether it worked: `otto-agents doctor` for the agents, a
+//! knock on the speech server's door for dictation.
 
 // Rust guideline compliant 2026-02-21
 
 use std::io::Write as _;
+use std::net::TcpStream;
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
+use crate::dictation;
 use crate::plan::{Action, State, Step};
+
+/// The check that ends a run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Check {
+    /// `otto-agents doctor`.
+    Agents,
+    /// Whether the speech server answers.
+    SpeechServer,
+}
 
 /// How one step went.
 #[derive(Debug, Clone)]
@@ -28,7 +40,7 @@ const CHECK_WAIT: Duration = Duration::from_millis(500);
 
 /// Runs the steps still to do, stopping at the first that fails: the later
 /// ones build on it. Then runs the check, if anything ran.
-pub fn run(steps: &[Step]) -> Vec<Outcome> {
+pub fn run(steps: &[Step], check: Check) -> Vec<Outcome> {
     let mut outcomes = Vec::new();
     for step in steps.iter().filter(|step| step.state == State::Todo) {
         let mut log = String::new();
@@ -42,8 +54,44 @@ pub fn run(steps: &[Step]) -> Vec<Outcome> {
             return outcomes;
         }
     }
-    outcomes.push(check());
+    outcomes.push(match check {
+        Check::Agents => doctor(),
+        Check::SpeechServer => speech_server(),
+    });
     outcomes
+}
+
+/// How long the speech server gets to load its model and open its port.
+const SERVER_TRIES: u32 = 30;
+const SERVER_WAIT: Duration = Duration::from_secs(1);
+
+/// Whether something answers at the speech server's address, tried while
+/// a server that was just started loads its model.
+fn speech_server() -> Outcome {
+    for attempt in 0..SERVER_TRIES {
+        if attempt > 0 {
+            std::thread::sleep(SERVER_WAIT);
+        }
+        if TcpStream::connect_timeout(&dictation::SERVER, Duration::from_millis(300)).is_ok() {
+            return Outcome {
+                title: "Check",
+                ok: true,
+                log: format!(
+                    "The speech server answers at {}. Try Ctrl+D in the launcher.\n",
+                    dictation::SERVER
+                ),
+            };
+        }
+    }
+    Outcome {
+        title: "Check",
+        ok: false,
+        log: format!(
+            "Nothing answers at {} after {} seconds. The engine may still be loading its model, or did not start:\n$ systemctl --user status otto-stt-*\n$ journalctl --user -u otto-stt-* -e\n",
+            dictation::SERVER,
+            SERVER_TRIES
+        ),
+    }
 }
 
 /// Does `action`, saying what happened in `log`.
@@ -87,7 +135,7 @@ fn perform(action: &Action, log: &mut String) -> bool {
 }
 
 /// `otto-agents doctor`, tried a few times while the service comes up.
-fn check() -> Outcome {
+fn doctor() -> Outcome {
     let mut last = String::new();
     for attempt in 0..CHECK_TRIES {
         if attempt > 0 {

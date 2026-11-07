@@ -164,7 +164,11 @@ environment variables still win over the file.
   it the one that starts at login.
 - **Speech server** says whether that server is running, with **Start** or
   **Restart**. "Not installed" means the engine hasn't been set up yet:
-  `components/otto-dictate/engines/install.sh <engine>` does it.
+  `components/otto-dictate/engines/install.sh <engine>` does it. Setting
+  dictation up the first time is easier from a terminal: `otto-setup
+  dictation` checks the microphone, the GPU driver and the build tools, shows
+  the exact commands for what is missing, and once an engine is installed
+  picks it, starts it and turns on dictation at login.
 - **Language** is the language you speak, or **Automatic** to let the engine
   tell. Parakeet and CrispASR always detect it themselves.
 - **Hotword boost** appears with CrispASR: how strongly it favours the names

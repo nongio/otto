@@ -1,7 +1,8 @@
-//! The interactive setup: a welcome that says what it is for, then three
-//! pages: the agents to add and who they are, what they require (Node.js, the ACP adapters) and the optional chat bridge, and the
-//! steps that follow with Apply. Every row opens its instructions, or a
-//! preview of exactly what it will write or run.
+//! The interactive setup: a welcome that says what it is for and lists the
+//! topics, then three pages for the topic chosen: what to set up (the
+//! agents, or the engine), what it requires, and the steps that follow with
+//! Apply. Every row opens its instructions, or a preview of exactly what it
+//! will write or run.
 //!
 //! The look and the terminal are `otto-term-kit`'s, shared with
 //! `otto-msg doctor`.
@@ -14,7 +15,9 @@ use otto_agents_client::harness::{self, Harness};
 use otto_term_kit::style::{BOLD, CYAN, DIM, GREEN, RED, REVERSE, YELLOW};
 use otto_term_kit::{printable, Key, Spans, Terminal};
 
-use crate::apply::{self, Outcome};
+use crate::apply::{self, Check, Outcome};
+use crate::dictation::{self, Dictate, Engine, Status, ENGINES};
+use crate::dictation_guide;
 use crate::guide;
 use crate::plan::{self, Bridge, Choices, Readiness, State, Step, Studio, HARNESSES};
 use crate::probe::Facts;
@@ -25,30 +28,82 @@ const RESIZE_POLL_MS: i32 = 250;
 /// Width of the title column.
 const TITLE_WIDTH: usize = 18;
 
-/// The pages, in order.
+/// What setup can set up.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Topic {
+    Agents,
+    Dictation,
+}
+
+/// The topics, as the welcome lists them: a title and a line on what each
+/// is. More dependencies come here as setup grows.
+const TOPICS: [(Topic, &str, &str); 2] = [
+    (
+        Topic::Agents,
+        "Otto Agents",
+        "AI agents that answer in Ask and run your Sessions",
+    ),
+    (
+        Topic::Dictation,
+        "Dictation",
+        "speak into the launcher, the Ask chat and any text field",
+    ),
+];
+
+impl Topic {
+    fn title(self) -> &'static str {
+        TOPICS
+            .iter()
+            .find(|(topic, ..)| *topic == self)
+            .map_or("", |(_, title, _)| title)
+    }
+
+    fn index(self) -> usize {
+        TOPICS
+            .iter()
+            .position(|(topic, ..)| *topic == self)
+            .unwrap_or(0)
+    }
+}
+
+/// The pages, in order: the same three for every topic.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Page {
-    Agents,
+    /// What to set up: the agents, or the engine.
+    Pick,
     Requirements,
     Review,
 }
 
 impl Page {
-    const ALL: [Page; 3] = [Page::Agents, Page::Requirements, Page::Review];
+    const ALL: [Page; 3] = [Page::Pick, Page::Requirements, Page::Review];
 
-    fn title(self) -> &'static str {
-        match self {
-            Page::Agents => "Agents",
-            Page::Requirements => "Requirements",
-            Page::Review => "Review",
+    fn title(self, topic: Topic) -> &'static str {
+        match (self, topic) {
+            (Page::Pick, Topic::Agents) => "Agents",
+            (Page::Pick, Topic::Dictation) => "Engine",
+            (Page::Requirements, _) => "Requirements",
+            (Page::Review, _) => "Review",
         }
     }
 
-    fn intro(self) -> &'static str {
-        match self {
-            Page::Agents => " Which agents should Otto use? Enter shows what each one needs.",
-            Page::Requirements => " What the agents need to run. Enter shows how to install each.",
-            Page::Review => " What setup found, and what Apply will change. Enter shows details.",
+    fn intro(self, topic: Topic) -> &'static str {
+        match (self, topic) {
+            (Page::Pick, Topic::Agents) => {
+                " Which agents should Otto use? Enter shows what each one needs."
+            }
+            (Page::Pick, Topic::Dictation) => {
+                " Which engine should recognise your speech? Enter shows how to install each."
+            }
+            (Page::Requirements, Topic::Agents) => {
+                " What the agents need to run. Enter shows how to install each."
+            }
+            (Page::Requirements, Topic::Dictation) => {
+                " What dictation needs to run. Enter shows how to install each."
+            }
+            (Page::Review, _) => {
+                " What setup found, and what Apply will change. Enter shows details."
+            }
         }
     }
 
@@ -69,6 +124,7 @@ impl Page {
 /// One row of a page.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Row {
+    // The agents.
     Harness(Harness),
     Otto,
     Studio,
@@ -78,6 +134,14 @@ enum Row {
     CcConnect,
     Skills,
     Profiles,
+    // Dictation.
+    Engine(Engine),
+    Server,
+    Microphone,
+    Vulkan,
+    Tools,
+    Dictate,
+    // Both.
     Step(usize),
     Apply,
 }
@@ -98,8 +162,11 @@ enum View {
 }
 
 struct App {
+    topic: Topic,
     facts: Facts,
     choices: Choices,
+    dict: dictation::Facts,
+    dict_choices: dictation::Choices,
     steps: Vec<Step>,
     outcomes: Vec<Outcome>,
     page: Page,
@@ -120,20 +187,24 @@ enum Flow {
 /// # Errors
 ///
 /// Fails when the terminal cannot be set up, read or written.
-pub fn run(facts: Facts) -> io::Result<()> {
+pub fn run(facts: Facts, dict: dictation::Facts) -> io::Result<()> {
     let mut terminal = Terminal::enter()?;
     let choices = Choices::initial(&facts);
-    let steps = plan::steps(&facts, &choices);
+    let dict_choices = dictation::Choices::initial(&dict);
     let mut app = App {
+        topic: Topic::Agents,
         facts,
         choices,
-        steps,
+        dict,
+        dict_choices,
+        steps: Vec::new(),
         outcomes: Vec::new(),
-        page: Page::Agents,
+        page: Page::Pick,
         cursor: 0,
         view: View::Welcome { cursor: 0 },
-        status: Page::Agents.hint().into(),
+        status: Page::Pick.hint().into(),
     };
+    app.replan();
     let mut drawn_size = None;
     let mut dirty = true;
     loop {
@@ -160,14 +231,15 @@ pub fn run(facts: Facts) -> io::Result<()> {
 
 impl App {
     fn rows(&self) -> Vec<Row> {
-        match self.page {
-            Page::Agents => HARNESSES
+        let steps = (0..self.steps.len()).map(Row::Step);
+        match (self.topic, self.page) {
+            (Topic::Agents, Page::Pick) => HARNESSES
                 .into_iter()
                 .map(Row::Harness)
                 .chain([Row::Otto, Row::Studio])
                 .collect(),
-            Page::Requirements => vec![Row::Node, Row::Adapters, Row::Bridge],
-            Page::Review => [
+            (Topic::Agents, Page::Requirements) => vec![Row::Node, Row::Adapters, Row::Bridge],
+            (Topic::Agents, Page::Review) => [
                 Row::Node,
                 Row::Adapters,
                 Row::CcConnect,
@@ -175,25 +247,41 @@ impl App {
                 Row::Profiles,
             ]
             .into_iter()
-            .chain((0..self.steps.len()).map(Row::Step))
+            .chain(steps)
             .chain([Row::Apply])
             .collect(),
+            (Topic::Dictation, Page::Pick) => ENGINES.into_iter().map(Row::Engine).collect(),
+            (Topic::Dictation, Page::Requirements) => {
+                vec![Row::Microphone, Row::Vulkan, Row::Tools, Row::Dictate]
+            }
+            (Topic::Dictation, Page::Review) => {
+                [Row::Server, Row::Microphone, Row::Vulkan, Row::Dictate]
+                    .into_iter()
+                    .chain(steps)
+                    .chain([Row::Apply])
+                    .collect()
+            }
         }
     }
 
     /// What the user has to fix by hand: a required program missing, or a
     /// skill whose name something of theirs has taken.
     fn to_fix(&self) -> usize {
-        let node = usize::from(plan::node(&self.facts) != plan::Node::Ok);
-        let adapters = plan::adapters(&self.facts, &self.choices)
-            .iter()
-            .filter(|(_, state)| *state == plan::Adapter::Missing)
-            .count();
-        let skills = plan::needed_skills(&self.facts, &self.choices)
-            .iter()
-            .filter(|s| s.in_the_way())
-            .count();
-        node + adapters + skills
+        match self.topic {
+            Topic::Agents => {
+                let node = usize::from(plan::node(&self.facts) != plan::Node::Ok);
+                let adapters = plan::adapters(&self.facts, &self.choices)
+                    .iter()
+                    .filter(|(_, state)| *state == plan::Adapter::Missing)
+                    .count();
+                let skills = plan::needed_skills(&self.facts, &self.choices)
+                    .iter()
+                    .filter(|s| s.in_the_way())
+                    .count();
+                node + adapters + skills
+            }
+            Topic::Dictation => dictation::to_fix(&self.dict),
+        }
     }
 
     fn todo(&self) -> usize {
@@ -201,21 +289,36 @@ impl App {
     }
 
     fn replan(&mut self) {
-        self.steps = plan::steps(&self.facts, &self.choices);
+        self.steps = match self.topic {
+            Topic::Agents => plan::steps(&self.facts, &self.choices),
+            Topic::Dictation => dictation::steps(&self.dict, &self.dict_choices),
+        };
     }
 
     fn apply(&mut self) {
-        self.outcomes = apply::run(&self.steps);
+        let check = match self.topic {
+            Topic::Agents => Check::Agents,
+            Topic::Dictation => Check::SpeechServer,
+        };
+        self.outcomes = apply::run(&self.steps, check);
         self.facts = Facts::read();
+        self.dict = dictation::Facts::read();
         let facts = &self.facts;
         self.choices.picks.retain(|h| !facts.configured.contains(h));
         self.choices.bridge = false;
+        if dictation::dictate(&self.dict) == Dictate::On {
+            self.dict_choices.dictate = false;
+        }
         self.replan();
         let failed = self.outcomes.iter().any(|o| !o.ok);
-        self.status = if failed {
-            "A step did not work. Enter shows what it printed.".into()
-        } else {
-            "Done. Try it in Ask, or run otto-ask. Settings › Agents has the rest.".into()
+        self.status = match (failed, self.topic) {
+            (true, _) => "A step did not work. Enter shows what it printed.".into(),
+            (false, Topic::Agents) => {
+                "Done. Try it in Ask, or run otto-ask. Settings › Agents has the rest.".into()
+            }
+            (false, Topic::Dictation) => {
+                "Done. Try Ctrl+D in the launcher. Settings › Dictation has the rest.".into()
+            }
         };
         self.view = View::Results { cursor: 0 };
     }
@@ -228,6 +331,19 @@ impl App {
             self.page = page;
             self.cursor = 0;
         }
+    }
+
+    /// Opens a topic's pages.
+    fn choose(&mut self, topic: Topic) {
+        if topic != self.topic {
+            self.topic = topic;
+            self.outcomes.clear();
+            self.replan();
+        }
+        self.page = Page::Pick;
+        self.cursor = 0;
+        self.status = Page::Pick.hint().into();
+        self.view = View::List;
     }
 
     fn handle(&mut self, key: Key, (_, rows): (usize, usize)) -> Flow {
@@ -249,8 +365,9 @@ impl App {
                             cursor: (cursor + 1).min(last),
                         }
                     }
-                    // One topic so far: the agents' pages.
-                    Key::Enter | Key::Tab | Key::Right | Key::Char(' ') => self.view = View::List,
+                    Key::Enter | Key::Tab | Key::Right | Key::Char(' ') => {
+                        self.choose(TOPICS[cursor].0);
+                    }
                     Key::Esc | Key::Char('q') => return Flow::Quit,
                     _ => {}
                 }
@@ -308,8 +425,10 @@ impl App {
             Key::Home | Key::Char('g') => self.cursor = 0,
             Key::End | Key::Char('G') => self.cursor = last,
             Key::Tab | Key::Right => self.go(self.page.step(1)),
-            Key::BackTab | Key::Left if self.page == Page::Agents => {
-                self.view = View::Welcome { cursor: 0 }
+            Key::BackTab | Key::Left if self.page == Page::Pick => {
+                self.view = View::Welcome {
+                    cursor: self.topic.index(),
+                }
             }
             Key::BackTab | Key::Left => self.go(self.page.step(-1)),
             Key::Char(' ') | Key::Char('x') => self.toggle(row),
@@ -380,7 +499,38 @@ impl App {
                     self.status = "Not set up yet. Enter shows the steps.".into();
                 }
             },
-            Row::Node | Row::Adapters | Row::CcConnect => {
+            Row::Engine(engine) => match dictation::status(&self.dict, engine) {
+                Status::Running { .. } | Status::Stopped { .. } => {
+                    self.dict_choices.engine = Some(engine);
+                    self.replan();
+                }
+                Status::Missing(_) => {
+                    self.status = format!("{} is not installed. Enter shows how.", engine.name());
+                }
+                Status::Unmanaged => {
+                    self.status = "No systemd user session: start the engine yourself.".into();
+                }
+            },
+            Row::Dictate => match dictation::dictate(&self.dict) {
+                Dictate::NotInstalled => {
+                    self.status = "otto-dictate is not installed. Enter shows how.".into();
+                }
+                Dictate::On => {
+                    self.status =
+                        "Already starts at login. Settings › Dictation turns it off.".into();
+                }
+                Dictate::Off => {
+                    self.dict_choices.dictate = !self.dict_choices.dictate;
+                    self.replan();
+                }
+            },
+            Row::Node
+            | Row::Adapters
+            | Row::CcConnect
+            | Row::Server
+            | Row::Microphone
+            | Row::Vulkan
+            | Row::Tools => {
                 self.status = "Setup does not install programs. Enter shows the commands.".into();
             }
             Row::Skills | Row::Profiles => {
@@ -437,6 +587,12 @@ impl App {
             Row::Bridge | Row::CcConnect => guide::bridge(&self.facts),
             Row::Skills => guide::skills(&self.facts, &self.choices),
             Row::Profiles => guide::profiles(&self.facts, &self.choices),
+            Row::Engine(engine) => dictation_guide::engine(&self.dict, engine),
+            Row::Server => dictation_guide::server(&self.dict),
+            Row::Microphone => dictation_guide::microphone(&self.dict),
+            Row::Vulkan => dictation_guide::vulkan(&self.dict),
+            Row::Tools => dictation_guide::tools(&self.dict),
+            Row::Dictate => dictation_guide::dictate(&self.dict),
             Row::Step(index) => {
                 let step = &self.steps[index];
                 if step.detail.is_empty() {
@@ -460,6 +616,12 @@ impl App {
             Row::CcConnect => "cc-connect".into(),
             Row::Skills => "Otto's skills".into(),
             Row::Profiles => "Agent profiles".into(),
+            Row::Engine(engine) => engine.name().into(),
+            Row::Server => "Speech server".into(),
+            Row::Microphone => "Microphone".into(),
+            Row::Vulkan => "GPU driver".into(),
+            Row::Tools => "Build tools".into(),
+            Row::Dictate => "Other fields".into(),
             Row::Step(index) => self.steps[index].title.into(),
             Row::Apply => "Apply".into(),
         }
@@ -492,13 +654,16 @@ impl App {
             (fix, 0) => (RED, format!("{fix} to fix ")),
             (fix, todo) => (RED, format!("{fix} to fix · {todo} to apply ")),
         };
-        // The pages are the agents' for now, the one topic.
         let crumb = match (self.view, crumb) {
             (View::Welcome { .. }, _) => None,
-            (_, None) => Some(TOPICS[0].0.to_owned()),
-            (_, Some(crumb)) => Some(format!("{}  ›  {crumb}", TOPICS[0].0)),
+            (_, None) => Some(self.topic.title().to_owned()),
+            (_, Some(crumb)) => Some(format!("{}  ›  {crumb}", self.topic.title())),
         };
-        otto_term_kit::header(cols, "setup", crumb.as_deref(), Some((right.0, &right.1)))
+        let right = match self.view {
+            View::Welcome { .. } => None,
+            _ => Some((right.0, right.1.as_str())),
+        };
+        otto_term_kit::header(cols, "setup", crumb.as_deref(), right)
     }
 
     fn welcome_lines(&self, cursor: usize, cols: usize, rows: usize) -> Vec<String> {
@@ -513,7 +678,7 @@ impl App {
         lines.push(String::new());
         lines.push(plain_styled(cols, BOLD, " What do you want to set up?"));
         lines.push(String::new());
-        for (i, (title, note)) in TOPICS.iter().enumerate() {
+        for (i, (_, title, note)) in TOPICS.iter().enumerate() {
             let selected = cursor == i;
             let base = if selected { REVERSE } else { "" };
             let mut line = Spans::new(cols);
@@ -545,9 +710,22 @@ impl App {
             } else {
                 DIM.to_owned()
             };
-            line.push(&style, &format!(" {}. {} ", i + 1, page.title()));
+            line.push(&style, &format!(" {}. {} ", i + 1, page.title(self.topic)));
         }
         line.finish()
+    }
+
+    /// The heading a row starts a group with, if it does.
+    fn heading(&self, row: Row) -> Option<&'static str> {
+        Some(match (self.page, row) {
+            (_, Row::Otto) => " Also set up",
+            (Page::Requirements, Row::Node | Row::Microphone) => " Required",
+            (Page::Requirements, Row::Tools) => " To install an engine",
+            (Page::Requirements, Row::Bridge | Row::Dictate) => " Optional",
+            (Page::Review, Row::Node | Row::Server) => " Found",
+            (Page::Review, Row::Step(0)) => " Apply will",
+            _ => return None,
+        })
     }
 
     fn list_lines(&self, cols: usize, rows: usize) -> Vec<String> {
@@ -556,20 +734,12 @@ impl App {
             otto_term_kit::rule(cols),
             self.tabs(cols),
             String::new(),
-            plain(cols, self.page.intro()),
+            plain(cols, self.page.intro(self.topic)),
             String::new(),
         ];
         let items = self.rows();
         for (i, row) in items.iter().enumerate() {
-            let heading = match (self.page, row) {
-                (_, Row::Otto) => Some(" Also set up"),
-                (Page::Requirements, Row::Node) => Some(" Required"),
-                (Page::Requirements, Row::Bridge) => Some(" Optional"),
-                (Page::Review, Row::Node) => Some(" Found"),
-                (Page::Review, Row::Step(0)) => Some(" Apply will"),
-                _ => None,
-            };
-            if let Some(heading) = heading {
+            if let Some(heading) = self.heading(*row) {
                 if i > 0 {
                     lines.push(String::new());
                 }
@@ -588,10 +758,14 @@ impl App {
         while lines.len() + 1 < rows {
             lines.push(String::new());
         }
-        let help = match self.page {
-            Page::Agents => " ↑↓ move  space tick  enter details  tab next  q quit",
-            Page::Requirements => " ↑↓ move  space tick  enter details  tab next  q quit",
-            Page::Review => " ↑↓ move  enter details  a apply  tab back  q quit",
+        let help = match (self.page, self.topic) {
+            (Page::Pick, Topic::Dictation) => {
+                " ↑↓ move  space pick  enter details  tab next  q quit"
+            }
+            (Page::Pick | Page::Requirements, _) => {
+                " ↑↓ move  space tick  enter details  tab next  q quit"
+            }
+            (Page::Review, _) => " ↑↓ move  enter details  a apply  tab back  q quit",
         };
         let mut help = help.to_owned();
         if !self.outcomes.is_empty() {
@@ -813,6 +987,166 @@ impl App {
                     )
                 }
             }
+            Row::Engine(engine) => {
+                let picked = self.dict_choices.engine == Some(engine);
+                let mark = if picked { "(•)" } else { "( )" };
+                match dictation::status(&self.dict, engine) {
+                    Status::Running { .. } => {
+                        (mark, GREEN, format!("running · {}", engine.about()), DIM)
+                    }
+                    Status::Stopped { .. } => {
+                        (mark, GREEN, format!("installed · {}", engine.about()), DIM)
+                    }
+                    Status::Missing(_) => (
+                        "( )",
+                        DIM,
+                        format!("not installed, Enter for how · {}", engine.about()),
+                        YELLOW,
+                    ),
+                    Status::Unmanaged => ("( )", DIM, "no systemd user session".into(), YELLOW),
+                }
+            }
+            Row::Server => {
+                let installed: Vec<&str> = ENGINES
+                    .into_iter()
+                    .filter(|e| dictation::status(&self.dict, *e).installed())
+                    .map(Engine::name)
+                    .collect();
+                match (dictation::running(&self.dict), self.dict.answering) {
+                    (Some(engine), true) => (
+                        " ✓ ",
+                        GREEN,
+                        format!("{} running and answering", engine.name()),
+                        DIM,
+                    ),
+                    (Some(engine), false) => (
+                        " ● ",
+                        YELLOW,
+                        format!("{} starting: nothing answers yet · Enter", engine.name()),
+                        YELLOW,
+                    ),
+                    (None, true) => (
+                        " ✗ ",
+                        YELLOW,
+                        "something else answers on its port · Enter".into(),
+                        YELLOW,
+                    ),
+                    (None, false) if installed.is_empty() => (
+                        " ✗ ",
+                        RED,
+                        "no engine installed · Enter on an engine for how".into(),
+                        RED,
+                    ),
+                    (None, false) => match self.dict_choices.engine {
+                        Some(engine) => (
+                            " ● ",
+                            YELLOW,
+                            format!("Apply starts {}", engine.name()),
+                            YELLOW,
+                        ),
+                        None => (" ✗ ", RED, "no engine picked".into(), RED),
+                    },
+                }
+            }
+            Row::Microphone => match (&self.dict.pipewire, self.dict.pipewire_running) {
+                (Some(_), true) => (" ✓ ", GREEN, "PipeWire running".into(), DIM),
+                (Some(_), false) => (
+                    " ✗ ",
+                    YELLOW,
+                    "PipeWire is not running in this session · Enter".into(),
+                    YELLOW,
+                ),
+                (None, _) => (
+                    " ✗ ",
+                    RED,
+                    "PipeWire is not installed · Enter for how".into(),
+                    RED,
+                ),
+            },
+            Row::Vulkan => {
+                if self.dict.vulkan {
+                    (" ✓ ", GREEN, "Vulkan driver installed".into(), DIM)
+                } else {
+                    (" ✗ ", RED, "no Vulkan driver · Enter for how".into(), RED)
+                }
+            }
+            Row::Tools => {
+                let missing = self.dict.missing_tools();
+                let any_engine = ENGINES
+                    .into_iter()
+                    .any(|e| dictation::status(&self.dict, e).installed());
+                if missing.is_empty() && self.dict.source.is_some() {
+                    (" ✓ ", GREEN, "all there, with Otto's source".into(), DIM)
+                } else if any_engine {
+                    (" · ", DIM, "not needed: an engine is installed".into(), DIM)
+                } else {
+                    let mut what = missing;
+                    if self.dict.source.is_none() {
+                        what.push("Otto's source");
+                    }
+                    (
+                        " ✗ ",
+                        YELLOW,
+                        format!("missing {} · Enter for how", what.join(", ")),
+                        YELLOW,
+                    )
+                }
+            }
+            Row::Dictate if self.page == Page::Review => match dictation::dictate(&self.dict) {
+                Dictate::On => {
+                    let note = match &self.dict.shortcut {
+                        Some(key) => format!("otto-dictate starts at login · {key} toggles it"),
+                        None => "otto-dictate starts at login · no key bound yet".to_owned(),
+                    };
+                    (" ✓ ", GREEN, note, DIM)
+                }
+                Dictate::Off if self.dict_choices.dictate => (
+                    " ● ",
+                    YELLOW,
+                    "Apply starts otto-dictate at login".into(),
+                    YELLOW,
+                ),
+                Dictate::Off => (
+                    " · ",
+                    DIM,
+                    "otto-dictate installed, not started at login · optional".into(),
+                    DIM,
+                ),
+                Dictate::NotInstalled => (
+                    " · ",
+                    DIM,
+                    "otto-dictate not installed · optional, for other fields".into(),
+                    DIM,
+                ),
+            },
+            Row::Dictate => match dictation::dictate(&self.dict) {
+                Dictate::On => {
+                    let note = match &self.dict.shortcut {
+                        Some(key) => format!("starts at login · {key} toggles it"),
+                        None => "starts at login · no key bound yet, Enter for how".to_owned(),
+                    };
+                    ("[x]", GREEN, note, DIM)
+                }
+                Dictate::Off => {
+                    let mark = if self.dict_choices.dictate {
+                        "[x]"
+                    } else {
+                        "[ ]"
+                    };
+                    (
+                        mark,
+                        GREEN,
+                        "dictate in any text field · installed, start it at login".into(),
+                        DIM,
+                    )
+                }
+                Dictate::NotInstalled => (
+                    "[ ]",
+                    DIM,
+                    "dictate in any text field · Enter for how".into(),
+                    DIM,
+                ),
+            },
             Row::Step(index) => {
                 let step = &self.steps[index];
                 let (glyph, style) = match step.state {
@@ -922,13 +1256,6 @@ rest, such as installing a program or signing in. Nothing changes
 until you press Apply.
 
 Everything else is in Settings.";
-
-/// What setup can set up, as a title and a line on what it is. More
-/// dependencies come here as setup grows.
-const TOPICS: [(&str, &str); 1] = [(
-    "Otto Agents",
-    "AI agents that answer in Ask and run your Sessions",
-)];
 
 /// One line of instructions, styled by what it is (see `guide.rs`): a step
 /// says who does it, a command stands out to copy, a file's contents sit

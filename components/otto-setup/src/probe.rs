@@ -131,18 +131,14 @@ impl Facts {
             .chain(commands.iter().map(String::as_str))
             .filter(|program| !program.contains('/'))
             .collect();
-        let shell_path: Vec<PathBuf> = std::env::var_os("PATH")
-            .map(|paths| std::env::split_paths(&paths).collect())
-            .unwrap_or_default();
+        let shell_path = shell_path();
         let found = found_in(&programs, &shell_path);
         let node_version = found.get("node").and_then(|node| {
             let output = Command::new(node).arg("--version").output().ok()?;
             let text = String::from_utf8_lossy(&output.stdout).trim().to_owned();
             (!text.is_empty()).then_some(text)
         });
-        let package_manager = ["pacman", "apt", "dnf", "zypper"]
-            .into_iter()
-            .find(|name| find(name, &shell_path).is_some());
+        let package_manager = package_manager(&shell_path);
         let unit_facts = |name: &'static str| {
             let path = service_path(name);
             let found = path
@@ -280,8 +276,22 @@ fn found_in(programs: &[&str], dirs: &[PathBuf]) -> BTreeMap<String, PathBuf> {
         .collect()
 }
 
+/// The shell's PATH, as directories.
+pub fn shell_path() -> Vec<PathBuf> {
+    std::env::var_os("PATH")
+        .map(|paths| std::env::split_paths(&paths).collect())
+        .unwrap_or_default()
+}
+
+/// The system's package manager, for the instructions.
+pub fn package_manager(dirs: &[PathBuf]) -> Option<&'static str> {
+    ["pacman", "apt", "dnf", "zypper"]
+        .into_iter()
+        .find(|name| find(name, dirs).is_some())
+}
+
 /// Where `name` is in `dirs`, the first match as a shell would find it.
-fn find(name: &str, dirs: &[PathBuf]) -> Option<PathBuf> {
+pub fn find(name: &str, dirs: &[PathBuf]) -> Option<PathBuf> {
     dirs.iter()
         .map(|dir| dir.join(name))
         .find(|candidate| is_executable(candidate))
@@ -357,7 +367,8 @@ pub fn parse_unit(show: &str) -> Unit {
     }
 }
 
-fn unit(name: &str) -> Unit {
+/// A unit's state, asked of the user manager.
+pub fn unit(name: &str) -> Unit {
     match Command::new("systemctl")
         .args([
             "--user",
