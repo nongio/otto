@@ -148,6 +148,16 @@ pub struct SurfaceData {
     /// Exponential moving average of render time in microseconds.
     /// Used to schedule reschedule timers with proper headroom.
     pub(super) avg_render_time_us: f32,
+    /// Exponential moving average of the GPU time a pass's composite takes
+    /// after it is submitted, in microseconds: from the end of the pass to
+    /// the primary fence signalling. The draw deadline counts it with the
+    /// CPU time (`schedule::draw_delay_us`); zero until a fence was watched.
+    pub(super) avg_gpu_time_us: f32,
+    /// When the last VBlank was acknowledged and how long its period is,
+    /// so a pass asked for while the surface idles can be placed on the
+    /// VBlank rhythm (`schedule::wake_delay_us`).
+    pub(super) last_vblank: Option<std::time::Instant>,
+    pub(super) frame_period_us: f32,
     /// A draw pass is on its way: a deadline timer is inserted, or a frame
     /// is queued and its VBlank decides the next one. While set, nothing
     /// else schedules a pass for this surface — the pending one sees every

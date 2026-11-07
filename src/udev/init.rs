@@ -877,7 +877,7 @@ pub fn run_udev<A: RendererApi>() {
                 }
             }
             for (node, crtc) in kick {
-                state.render(node, Some(crtc));
+                state.render_on_wake(node, crtc);
             }
             // Debug hook: `echo ActionName > $OTTO_ACTION_FILE` executes a
             // builtin shortcut action as if its key was pressed. Shared with

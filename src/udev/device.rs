@@ -685,6 +685,9 @@ impl<A: RendererApi> Otto<UdevData<A>> {
                 #[cfg(feature = "metrics")]
                 render_metrics: Some(self.render_metrics.clone()),
                 avg_render_time_us: 2000.0, // start with 2ms estimate
+                avg_gpu_time_us: 0.0,
+                last_vblank: None,
+                frame_period_us: 0.0,
                 frame_scheduled: false,
                 seen_redraw_gen: 0,
                 continuous_frames: false,

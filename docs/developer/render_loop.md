@@ -128,11 +128,20 @@ This is the production loop, and the only one with real VBlank timing.
 
    - *Phase 1, at VBlank*: tick the scene graph (`scene_element.update()`) and
      cache whether it produced damage.
-   - *Phase 2, at a deadline*: schedule the actual draw for
-     `frame_period − 2 × average_render_time`, clamped to at least 1 ms. The
-     doubled render time is the safety margin for variance; the clamp prevents
-     busy-spinning. Multi-GPU paths need a buffer copy after rendering with no
-     reliable duration estimate, so they fire immediately instead.
+   - *Phase 2, at a deadline*: schedule the actual draw so that the pass —
+     CPU and the GPU composite it submits — is done by the VBlank it aims
+     at, with the time doubled as margin: `n × frame_period − 2 × (average
+     CPU pass + average GPU composite)`, `n` the first number of periods the
+     budget fits, at least 1 ms (`schedule::draw_delay_us`). The GPU term is
+     measured without blocking: each pass exports its primary fence as a
+     sync file and the event loop notes when it becomes readable
+     (`watch_gpu_time`); the estimate rises fast and falls slowly. A budget
+     that fits one period aims at the next VBlank; one that does not (a
+     120 Hz panel with a few ms of composite) aims at every second VBlank
+     and still starts as late as that allows, so the output holds a cadence
+     and clients keep most of a period to paint. Multi-GPU paths need a
+     buffer copy after rendering with no reliable duration estimate, so they
+     fire immediately instead.
 
    The effect is that clients get most of the frame period to paint, and Otto
    composes as late as it safely can.
