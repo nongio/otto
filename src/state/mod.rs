@@ -1102,8 +1102,23 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         let scene_element = SceneElement::with_engine(layers_engine.clone(), || {
             Config::with(|c| c.occlusion_culling)
         });
-        let (workspaces, remove_workspace_receiver, rename_workspace_receiver, wallpaper_receiver) =
-            Workspaces::new(layers_engine.clone(), dh.clone());
+        let (
+            workspaces,
+            remove_workspace_receiver,
+            rename_workspace_receiver,
+            wallpaper_receiver,
+            dock_task_receiver,
+        ) = Workspaces::new(layers_engine.clone(), dh.clone());
+        handle
+            .insert_source(dock_task_receiver, |event, _, otto| {
+                // What the dock's background tasks resolved, applied between
+                // frames rather than racing the one being drawn.
+                if let ChannelEvent::Msg(task) = event {
+                    task(&otto.workspaces.dock);
+                    otto.backend_data.request_redraw();
+                }
+            })
+            .expect("Failed to register the dock channel");
         handle
             .insert_source(wallpaper_receiver, |event, _, otto| {
                 if let ChannelEvent::Msg(done) = event {

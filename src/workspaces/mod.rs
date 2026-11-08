@@ -792,6 +792,7 @@ impl Workspaces {
         RemoveWorkspaceChannel,
         RenameWorkspaceChannel,
         WallpaperChannel,
+        dock::DockTaskChannel,
     ) {
         let model = WorkspacesModel::default();
 
@@ -825,6 +826,7 @@ impl Workspaces {
         let app_icons_manager = Arc::new(AppIconsManager::new(layers_engine.clone()));
 
         let dock = DockView::new(layers_engine.clone(), app_icons_manager.clone());
+        let dock_tasks = dock.main_loop_channel();
         let dock = Arc::new(dock);
         // The greeter owns the whole screen: no dock, no switcher, no expose.
         if !crate::login::is_login_mode() {
@@ -937,6 +939,7 @@ impl Workspaces {
             remove_receiver,
             rename_receiver,
             wallpaper_receiver,
+            dock_tasks,
         )
     }
 

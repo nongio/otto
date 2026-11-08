@@ -8,5 +8,5 @@ pub(crate) use render::{
     badge_size, draw_app_icon, draw_badge, draw_icon_image, draw_progress, icon_color_filter,
     setup_badge_layer, setup_progress_layer,
 };
-pub use view::DockView;
 pub use view::BASE_ICON_SIZE;
+pub use view::{DockTaskChannel, DockView};
