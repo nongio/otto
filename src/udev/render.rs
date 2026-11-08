@@ -354,8 +354,8 @@ impl<A: RendererApi> Otto<UdevData<A>> {
                 // output_refresh is in millihertz (mHz); convert to µs/frame.
                 let frame_period_us = 1_000_000_000f32 / output_refresh as f32;
                 let avg_us = surface.avg_render_time_us;
-                let gpu_us = gpu_estimate_us(surface);
-                let draw_delay_us = deadline_us(frame_period_us, avg_us, gpu_us);
+                let gpu_us = surface.avg_gpu_time_us;
+                let draw_delay_us = super::schedule::draw_delay_us(frame_period_us, avg_us, gpu_us);
                 trace!(
                     draw_delay_us,
                     frame_period_us,
@@ -1932,9 +1932,9 @@ impl<A: RendererApi> Otto<UdevData<A>> {
                 .backends
                 .get(&node)
                 .and_then(|d| d.surfaces.get(&crtc))
-                .map(|s| (s.avg_render_time_us, gpu_estimate_us(s)))
+                .map(|s| (s.avg_render_time_us, s.avg_gpu_time_us))
                 .unwrap_or((2000.0, 0.0));
-            let delay_us = deadline_us(frame_period_us, avg_us, gpu_us);
+            let delay_us = super::schedule::draw_delay_us(frame_period_us, avg_us, gpu_us);
             let delay = Duration::from_micros(delay_us as u64);
             crate::render_phase_stats::record_draw_delay(delay);
             let timer = Timer::from_duration(delay);
@@ -3308,37 +3308,10 @@ pub(super) fn initial_render<A: RendererApi>(
     Ok(())
 }
 
-/// The GPU term of a surface's draw deadline.
-///
-/// A/B (`/tmp/otto-deadline-cpu-only`): leave it out, which is the deadline
-/// as it was before the GPU time was measured — at 120 Hz with a few ms of
-/// composite per frame that halves the output's rate.
-fn gpu_estimate_us(surface: &SurfaceData) -> f32 {
-    if crate::debug_hooks::toggle("/tmp/otto-deadline-cpu-only") {
-        0.0
-    } else {
-        surface.avg_gpu_time_us
-    }
-}
-
-/// The draw deadline after a VBlank.
-///
-/// A/B (`/tmp/otto-deadline-plain`): the single-period formula without the
-/// cadence rule, `period − 2 × (cpu + gpu)` floored at 1 ms.
-fn deadline_us(frame_period_us: f32, avg_cpu_us: f32, avg_gpu_us: f32) -> f32 {
-    if crate::debug_hooks::toggle("/tmp/otto-deadline-plain") {
-        (frame_period_us - 2.0 * (avg_cpu_us + avg_gpu_us)).max(super::schedule::MIN_DRAW_DELAY_US)
-    } else {
-        super::schedule::draw_delay_us(frame_period_us, avg_cpu_us, avg_gpu_us)
-    }
-}
-
 impl<A: RendererApi> Otto<UdevData<A>> {
     /// Runs the pass a wake-up asks for on an idle surface: on the VBlank
     /// rhythm (`schedule::wake_delay_us`) when the surface has seen a VBlank,
     /// right away otherwise.
-    ///
-    /// A/B (`/tmp/otto-wake-immediate`): always right away, as before.
     pub(super) fn render_on_wake(&mut self, node: DrmNode, crtc: crtc::Handle) {
         let timing = self
             .backend_data
@@ -3349,16 +3322,18 @@ impl<A: RendererApi> Otto<UdevData<A>> {
                 let last = s.last_vblank?;
                 (s.frame_period_us > 0.0).then(|| {
                     let since = last.elapsed().as_micros() as f32;
-                    let gpu_us = gpu_estimate_us(s);
-                    let delay = deadline_us(s.frame_period_us, s.avg_render_time_us, gpu_us);
+                    let gpu_us = s.avg_gpu_time_us;
+                    let delay = super::schedule::draw_delay_us(
+                        s.frame_period_us,
+                        s.avg_render_time_us,
+                        gpu_us,
+                    );
                     let budget = super::schedule::draw_budget_us(s.avg_render_time_us, gpu_us);
                     super::schedule::wake_delay_us(since, s.frame_period_us, delay, budget)
                 })
             });
         let wait_us = match timing {
-            Some(wait) if wait > 0.0 && !crate::debug_hooks::toggle("/tmp/otto-wake-immediate") => {
-                wait
-            }
+            Some(wait) if wait > 0.0 => wait,
             _ => {
                 self.render(node, Some(crtc));
                 return;
@@ -3415,13 +3390,8 @@ impl<A: RendererApi> Otto<UdevData<A>> {
                     .and_then(|d| d.surfaces.get_mut(&crtc))
                 {
                     let sample_us = gpu_time.as_micros() as f32;
-                    // A/B (`/tmp/otto-deadline-plain`): the plain mean.
                     surface.avg_gpu_time_us =
-                        if crate::debug_hooks::toggle("/tmp/otto-deadline-plain") {
-                            surface.avg_gpu_time_us * 0.9 + sample_us * 0.1
-                        } else {
-                            super::schedule::gpu_estimate_us(surface.avg_gpu_time_us, sample_us)
-                        };
+                        super::schedule::gpu_estimate_us(surface.avg_gpu_time_us, sample_us);
                 }
                 Ok(PostAction::Remove)
             });

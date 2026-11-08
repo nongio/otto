@@ -244,8 +244,7 @@ left to watch, so they go once the GPU completes the frame submitted then.
 plane draws, signals a sync file after them and attaches it to every plane
 dmabuf rendered this frame (`note_scanout_write`) as a write fence, which the
 atomic commit honours through implicit sync. The CPU waits only when no sync
-file can be exported or attached — then once, and every frame after it — or
-while the `/tmp/otto-plane-cpu-sync` toggle exists, for A/B measurement.
+file can be exported or attached — then once, and every frame after it.
 
 ### Copies and read-back
 

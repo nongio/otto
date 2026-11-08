@@ -487,11 +487,7 @@ impl SceneElement {
         // every frame repainted a whole frosted window under any small
         // animation above it: a 900×995 bench window under a moving test
         // window cost 1.6 ms of GPU per frame.
-        //
-        // A/B (`/tmp/otto-blur-grow`, debug-hooks builds): grow every touching
-        // pass, as before.
         let (dx, dy) = translate.unwrap_or((0.0, 0.0));
-        let grow_always = crate::debug_hooks::toggle("/tmp/otto-blur-grow");
         let shapes_with_inputs: Vec<(layers::engine::NodeRef, layers::skia::IRect, u64, bool)> =
             scene.with_arena(|arena| {
                 arena
@@ -558,9 +554,7 @@ impl SceneElement {
             kept.retain(|node, _| shapes_with_inputs.iter().any(|(n, _, _, _)| n == node));
             shapes_with_inputs
                 .iter()
-                .filter(|(node, _, inputs, keepable)| {
-                    grow_always || !keepable || kept.get(node) != Some(inputs)
-                })
+                .filter(|(node, _, inputs, keepable)| !keepable || kept.get(node) != Some(inputs))
                 .map(|(_, shape, _, _)| *shape)
                 .collect()
         };

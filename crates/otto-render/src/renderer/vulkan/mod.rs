@@ -529,7 +529,7 @@ impl SkiaVkRenderer {
     /// which the atomic commit honours through implicit sync, so the thread
     /// is back in the event loop while the GPU draws. The CPU blocks only
     /// when a sync file cannot be made or attached (no `SYNC_FD` export, a
-    /// kernel before 6.0, or the `/tmp/otto-plane-cpu-sync` A/B toggle).
+    /// kernel before 6.0).
     ///
     /// Call once per frame, after the last plane render and before handing
     /// the buffers to the DRM compositor.
@@ -548,12 +548,9 @@ impl SkiaVkRenderer {
     ///
     /// Always signals a frame serial, even without writes: the graveyard
     /// dates retired memory by it (see [`Self::reap`]). Without writes there
-    /// is nothing for KMS to wait for, so nothing waits — unless the A/B
-    /// toggle asks for the old full wait.
+    /// is nothing for KMS to wait for, so nothing waits.
     fn sync_scanout_writes(&mut self, writes: &[Dmabuf]) {
-        let cpu_sync_forced = crate::debug_hooks::toggle("/tmp/otto-plane-cpu-sync");
-        let fence_wanted =
-            !writes.is_empty() && !self.scanout_fences_unsupported && !cpu_sync_forced;
+        let fence_wanted = !writes.is_empty() && !self.scanout_fences_unsupported;
         let sync = match self.sync_pool.signal(&self.device, self.sync_fd) {
             // No `SYNC_FD` export: `signal` already waited for the queue.
             Ok(None) => return,
@@ -582,7 +579,7 @@ impl SkiaVkRenderer {
             tracing::warn!(
                 "cannot attach write fences to plane buffers; plane flushes wait on the CPU"
             );
-        } else if writes.is_empty() && !cpu_sync_forced {
+        } else if writes.is_empty() {
             return;
         }
         if smithay::backend::renderer::sync::Fence::wait(&sync).is_err() {
