@@ -82,6 +82,17 @@ ask for the pixels behind its surface to be blurred, without using Otto's own
   the same GPU work as the desktop's own, so it follows the same switch. The
   window then keeps its raw-buffer plane eligibility. Turning frosting back on
   applies the region again on the surface's next commit.
+- A toplevel that sets no blur region is frosted anyway, while frosting is on,
+  when it is translucent: it declared an opaque region (`wl_surface`
+  `set_opaque_region`) that covers less than half of its window geometry. The
+  frost covers the window geometry with a 12-point corner radius, and is
+  re-evaluated on every commit, so a window that turns opaque loses it. GTK
+  4.22 has no background-effect support, and without this a GTK window with a
+  see-through background shows a sharp desktop through it.
+- A toplevel that declares no opaque region at all is not frosted by that
+  rule: many opaque clients never declare one, and frosting them would cost a
+  blur pass and their scanout plane for nothing visible. Layer-shell surfaces,
+  subsurfaces and popups are never frosted by it.
 
 ## Constraints & Edge Cases
 

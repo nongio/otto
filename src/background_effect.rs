@@ -21,6 +21,15 @@
 //! entire surface and an empty one nothing: the region is a switch, its
 //! rectangles are not honoured individually. Every client seen so far asks
 //! for the full surface anyway.
+//!
+//! A translucent toplevel that never asks is frosted too, while frosting is
+//! on: one whose declared opaque region covers less than half of its window
+//! geometry ([`translucent_frost_shape`]). GTK 4.22 has no
+//! `ext-background-effect-v1` support, so a GTK window with a see-through
+//! background would otherwise show a sharp desktop through it. A toplevel
+//! that declares no opaque region at all is left alone: plenty of opaque
+//! clients never declare one, and frosting them costs a blur pass and their
+//! scanout plane for nothing to see.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -157,6 +166,45 @@ fn clamp_to_surface(
     // shape may be smaller.
     let radius = radius.clamp(0, clamped.size.w.min(clamped.size.h) / 2);
     Some((clamped, radius))
+}
+
+/// Corner radius of the frost Otto gives a translucent window that did not
+/// ask for one, in logical pixels: GTK's and libadwaita's window rounding.
+const TRANSLUCENT_FROST_RADIUS: i32 = 12;
+
+/// The frost for a toplevel that asked for none: its window `geometry`
+/// when its declared `opaque` region covers less than half of it.
+///
+/// `None` without an opaque region, which says nothing about the content,
+/// and for a window mostly opaque. Rectangles are counted as they come, a
+/// subtracted one taking its overlap back off, which is exact for the
+/// non-overlapping regions toolkits send.
+pub(crate) fn translucent_frost_shape(
+    geometry: Rectangle<i32, Logical>,
+    opaque: Option<&RegionAttributes>,
+) -> Option<(Rectangle<i32, Logical>, i32)> {
+    let opaque = opaque?;
+    let area = |r: Rectangle<i32, Logical>| r.size.w as i64 * r.size.h as i64;
+    let total = area(geometry);
+    if total <= 0 {
+        return None;
+    }
+    let covered: i64 = opaque
+        .rects
+        .iter()
+        .map(|(kind, rect)| {
+            let overlap = rect.intersection(geometry).map(area).unwrap_or(0);
+            match kind {
+                RectangleKind::Add => overlap,
+                RectangleKind::Subtract => -overlap,
+            }
+        })
+        .sum();
+    if covered * 2 >= total {
+        return None;
+    }
+    let radius = TRANSLUCENT_FROST_RADIUS.min(geometry.size.w.min(geometry.size.h) / 2);
+    Some((geometry, radius))
 }
 
 /// Per-surface marker: the protocol allows one effect object per surface and
@@ -346,6 +394,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                 .and_then(|data| data.lock().unwrap().view().map(|view| view.dst));
             (shape, size)
         });
+        let shape = shape.or_else(|| self.translucent_toplevel_frost(surface));
         let shape = clamp_to_surface(shape, surface_size);
         // Frosting off turns the desktop's own blur off; a client's requested
         // blur is the same material and the same GPU cost, so it follows the
@@ -411,6 +460,33 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         if let Some(window) = self.workspaces.get_window_for_surface(&surface_id).cloned() {
             self.update_window_view(&window);
         }
+    }
+
+    /// The frost a translucent toplevel gets without asking (see
+    /// [`translucent_frost_shape`]): only the root surface of a mapped
+    /// toplevel, never a layer-shell surface, subsurface or popup, which
+    /// sit over their own parent rather than over the desktop.
+    fn translucent_toplevel_frost(
+        &self,
+        surface: &WlSurface,
+    ) -> Option<(Rectangle<i32, Logical>, i32)> {
+        self.workspaces.get_window_for_surface(&surface.id())?;
+        with_states(surface, |states| {
+            let geometry = states
+                .cached_state
+                .get::<smithay::wayland::shell::xdg::SurfaceCachedState>()
+                .current()
+                .geometry;
+            let size = states
+                .data_map
+                .get::<RendererSurfaceStateUserData>()
+                .and_then(|data| data.lock().unwrap().view().map(|view| view.dst));
+            let geometry = geometry.or_else(|| size.map(Rectangle::from_size))?;
+            let mut attributes = states
+                .cached_state
+                .get::<smithay::wayland::compositor::SurfaceAttributes>();
+            translucent_frost_shape(geometry, attributes.current().opaque_region.as_ref())
+        })
     }
 
     /// Forget a destroyed surface's blur.
@@ -564,5 +640,44 @@ mod tests {
         ]);
         let (bounds, _) = state.blur_shape().unwrap();
         assert_eq!(bounds, rect(10, 10, 50, 20));
+    }
+
+    fn opaque(rects: Vec<(RectangleKind, Rectangle<i32, Logical>)>) -> RegionAttributes {
+        RegionAttributes { rects }
+    }
+
+    /// The wayland-compositor-bench window: GTK declares only its Start
+    /// button opaque, so the window is frosted over its geometry.
+    #[test]
+    fn mostly_translucent_window_is_frosted() {
+        let geometry = rect(0, 0, 900, 995);
+        let region = opaque(vec![(RectangleKind::Add, rect(765, 19, 50, 38))]);
+        assert_eq!(
+            translucent_frost_shape(geometry, Some(&region)),
+            Some((geometry, TRANSLUCENT_FROST_RADIUS))
+        );
+        // Nothing opaque at all.
+        assert!(translucent_frost_shape(geometry, Some(&opaque(vec![]))).is_some());
+    }
+
+    /// An opaque window (body declared opaque, corners left out) and one
+    /// that declares nothing are not frosted.
+    #[test]
+    fn opaque_or_undeclared_window_is_left_alone() {
+        let geometry = rect(0, 0, 900, 995);
+        let body = opaque(vec![(RectangleKind::Add, rect(0, 18, 900, 959))]);
+        assert_eq!(translucent_frost_shape(geometry, Some(&body)), None);
+        assert_eq!(translucent_frost_shape(geometry, None), None);
+    }
+
+    /// A subtracted rectangle takes its overlap back off the opaque area.
+    #[test]
+    fn subtracted_opaque_area_does_not_count() {
+        let geometry = rect(0, 0, 100, 100);
+        let region = opaque(vec![
+            (RectangleKind::Add, rect(0, 0, 100, 100)),
+            (RectangleKind::Subtract, rect(0, 0, 100, 60)),
+        ]);
+        assert!(translucent_frost_shape(geometry, Some(&region)).is_some());
     }
 }
