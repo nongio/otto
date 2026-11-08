@@ -41,14 +41,20 @@ next VBlank with little latency.
   applied after the VBlank send, whose surface has had no callback for at
   least 95 % of a period, gets its callback as it is applied. A commit
   applied sooner than that waits for the VBlank cadence.
+- Only a surface the last VBlank send served at full rate is served on
+  commit, and the period is that of the output that served it. A throttled
+  surface keeps its tier's rate; a surface no VBlank has served yet (a new
+  one, or any surface under winit, x11 or headless) waits for the regular
+  path.
 - For two periods after each flip, a timer ticks at the VBlank cadence and
   sends callbacks for a VBlank at which nothing was flipped, provided the
   compositor's own CPU plus GPU need is under 60 % of the period. A real
   VBlank cancels the ticks.
 - At render time callbacks are sent only when nothing was rendered, since no
   flip and so no VBlank handler will follow.
-- Presentation feedback is collected for every window not occluded,
-  minimized or on an inactive workspace, and marked presented when the flip
+- Presentation feedback is collected for every window on the flipping output
+  that is not occluded, minimized or on an inactive workspace, and marked
+  presented when the flip
   completes, with the DRM timestamp and `Vsync | HwClock | HwCompletion`.
 
 ## Constraints & Edge Cases

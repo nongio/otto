@@ -33,7 +33,7 @@ use smithay::{
     output::Output,
     reexports::{
         wayland_protocols::wp::presentation_time::server::wp_presentation_feedback,
-        wayland_server::{backend::ObjectId, Resource},
+        wayland_server::{backend::ObjectId, protocol::wl_surface::WlSurface, Resource},
     },
     utils::{Logical, Monotonic, Rectangle, Time},
     wayland::{
@@ -59,6 +59,10 @@ pub struct FramePacing {
     /// `background`/`bottom` layer surfaces hidden behind a window, given the
     /// occluded trickle (see `window_throttle::occluded_layer_surface_ids`).
     pub occluded_layers: HashSet<ObjectId>,
+    /// Windows shown only on other outputs: this output's flip did not
+    /// present them, so it gives them no `presented` feedback. Empty with a
+    /// single output.
+    pub elsewhere: HashSet<ObjectId>,
 }
 
 impl FramePacing {
@@ -109,9 +113,22 @@ impl FramePacing {
             expose_active,
             &translucent_ids,
         );
+        let elsewhere = if workspaces.outputs().nth(1).is_some() {
+            window_elements
+                .iter()
+                .filter(|window| {
+                    let outputs = workspaces.outputs_for_element(window);
+                    !outputs.is_empty() && !outputs.contains(output)
+                })
+                .map(|window| window.id())
+                .collect()
+        } else {
+            HashSet::new()
+        };
         Self {
             windows,
             occluded_layers,
+            elsewhere,
         }
     }
 }
@@ -214,11 +231,10 @@ pub fn send_frame_callbacks(
     log: &mut FrameCallbackLog,
 ) {
     let time = time.into();
-    let map = smithay::desktop::layer_map_for_output(output);
-    log.retain(|id, _| {
-        window_elements.iter().any(|w| w.id() == *id)
-            || map.layers().any(|l| l.wl_surface().id() == *id)
-    });
+    let period = output_period(output);
+    // Only dead surfaces leave the log: a surface on another output is that
+    // output's to keep.
+    log.retain(|_, send| send.surface.upgrade().is_ok());
     for window in window_elements {
         let throttle = pacing
             .windows
@@ -226,22 +242,76 @@ pub fn send_frame_callbacks(
             .map(|s| s.throttle())
             .unwrap_or(Duration::ZERO);
         window.send_frame(output, time, Some(throttle), |_, _| Some(output.clone()));
-        log.insert(window.id(), time);
+        if let Some(surface) = window.wl_surface() {
+            log.insert(
+                window.id(),
+                FrameCallbackSend::new(&surface, time, period, throttle),
+            );
+        }
     }
+    let map = smithay::desktop::layer_map_for_output(output);
     for layer_surface in map.layers() {
-        layer_surface.send_frame(
-            output,
-            time,
-            Some(layer_throttle(pacing, layer_surface)),
-            surface_primary_scanout_output,
+        let throttle = layer_throttle(pacing, layer_surface);
+        layer_surface.send_frame(output, time, Some(throttle), surface_primary_scanout_output);
+        log.insert(
+            layer_surface.wl_surface().id(),
+            FrameCallbackSend::new(layer_surface.wl_surface(), time, period, throttle),
         );
-        log.insert(layer_surface.wl_surface().id(), time);
     }
 }
 
-/// When each toplevel or layer surface (by its root `wl_surface` id) was
-/// last offered its frame callbacks. See [`frame_callback_on_commit`].
-pub type FrameCallbackLog = HashMap<ObjectId, Duration>;
+/// The refresh period of `output`, 60 Hz when it has no mode.
+fn output_period(output: &Output) -> Duration {
+    output
+        .current_mode()
+        .filter(|mode| mode.refresh > 0)
+        .map(|mode| Duration::from_nanos(1_000_000_000_000 / mode.refresh as u64))
+        .unwrap_or(Duration::from_micros(16_667))
+}
+
+/// The last VBlank-paced frame-callback send to one toplevel or layer
+/// surface. See [`frame_callback_on_commit`].
+#[derive(Debug, Clone)]
+pub struct FrameCallbackSend {
+    /// The root surface, so the entry goes once it is destroyed.
+    surface: smithay::reexports::wayland_server::Weak<WlSurface>,
+    /// When its callbacks were last offered.
+    sent: Duration,
+    /// The refresh period of the output that offered them.
+    period: Duration,
+    /// Whether it is paced at the full refresh rate. A throttled surface
+    /// (secondary, occluded, minimized, on a hidden workspace) keeps its
+    /// tier's rate and is never served on commit.
+    full_rate: bool,
+}
+
+impl FrameCallbackSend {
+    fn new(surface: &WlSurface, sent: Duration, period: Duration, throttle: Duration) -> Self {
+        Self {
+            surface: surface.downgrade(),
+            sent,
+            period,
+            full_rate: throttle.is_zero(),
+        }
+    }
+
+    /// Whether a commit applied at `now` gets its frame callback right away:
+    /// a full-rate surface whose last send is nearly a whole period old.
+    /// Just under a period, as the VBlank handler runs a little after the
+    /// VBlank itself and a commit applied in that sliver has waited one
+    /// full period.
+    fn due_on_commit(&self, now: Duration) -> bool {
+        due_on_commit(self.full_rate, self.sent, self.period, now)
+    }
+}
+
+fn due_on_commit(full_rate: bool, sent: Duration, period: Duration, now: Duration) -> bool {
+    full_rate && now.saturating_sub(sent) >= period.mul_f32(0.95)
+}
+
+/// The last VBlank-paced send to each toplevel or layer surface, by its
+/// root `wl_surface` id. See [`frame_callback_on_commit`].
+pub type FrameCallbackLog = HashMap<ObjectId, FrameCallbackSend>;
 
 /// A commit that arrives after this frame's VBlank send: give the surface
 /// its frame callback now if it has gone most of a period without one.
@@ -260,34 +330,26 @@ pub type FrameCallbackLog = HashMap<ObjectId, Duration>;
 /// and the next compose found none: dropped frames, not extra ones.
 pub fn frame_callback_on_commit<B: crate::state::Backend>(
     state: &mut crate::state::Otto<B>,
-    surface: &smithay::reexports::wayland_server::protocol::wl_surface::WlSurface,
+    surface: &WlSurface,
 ) {
     use smithay::wayland::compositor::get_parent;
     let mut root = surface.clone();
     while let Some(parent) = get_parent(&root) {
         root = parent;
     }
-    let outputs: Vec<Output> = state.workspaces.outputs().cloned().collect();
-    let Some(first) = outputs.first() else {
-        return;
-    };
-    let now: Duration = state.clock.now().into();
-    let period = first
-        .current_mode()
-        .map(|mode| Duration::from_nanos(1_000_000_000_000 / mode.refresh as u64))
-        .unwrap_or(Duration::from_micros(16_667));
-    // Just under a period: the VBlank handler runs a little after the VBlank
-    // itself, and a commit applied in that sliver has waited one full period.
-    let min_gap = period.mul_f32(0.95);
     let key = root.id();
-    if let Some(last) = state.frame_callback_log.get(&key).copied() {
-        if now.saturating_sub(last) < min_gap {
-            // Too soon: the VBlank cadence (the handler, or its tick when
-            // no flip happened) delivers this one.
-            return;
-        }
+    let now: Duration = state.clock.now().into();
+    // No entry: no VBlank send has paced this surface, because it is new
+    // (the next VBlank serves it) or because the backend sends callbacks
+    // after each render instead (winit, x11, headless). Too soon, or a
+    // throttled surface: the VBlank cadence delivers it.
+    let due = state
+        .frame_callback_log
+        .get(&key)
+        .is_some_and(|send| send.due_on_commit(now));
+    if due {
+        send_frame_callbacks_to(state, &key, now);
     }
-    send_frame_callbacks_to(state, &key, now);
 }
 
 /// Send the frame callbacks of one toplevel or layer surface (by root id)
@@ -297,9 +359,11 @@ fn send_frame_callbacks_to<B: crate::state::Backend>(
     key: &ObjectId,
     now: Duration,
 ) {
+    if let Some(send) = state.frame_callback_log.get_mut(key) {
+        send.sent = now;
+    }
     let outputs: Vec<Output> = state.workspaces.outputs().cloned().collect();
     if let Some(window) = state.workspaces.get_window_for_surface(key).cloned() {
-        state.frame_callback_log.insert(key.clone(), now);
         for output in &outputs {
             window.send_frame(output, now, None, |_, _| Some(output.clone()));
         }
@@ -312,7 +376,6 @@ fn send_frame_callbacks_to<B: crate::state::Backend>(
             .find(|layer| layer.wl_surface().id() == *key)
             .cloned();
         if let Some(layer) = layer {
-            state.frame_callback_log.insert(key.clone(), now);
             layer.send_frame(output, now, None, surface_primary_scanout_output);
             return;
         }
@@ -461,7 +524,7 @@ fn take_presentation_feedback(
                     | WindowThrottleState::HiddenWorkspace
             )
         });
-        if !shown {
+        if !shown || pacing.elsewhere.contains(&window.id()) {
             return;
         }
         window.take_presentation_feedback(
@@ -480,4 +543,34 @@ fn take_presentation_feedback(
     // TODO: layer-shell surfaces do not send presentation feedback yet.
 
     output_presentation_feedback
+}
+
+#[cfg(test)]
+mod tests {
+    use super::due_on_commit;
+    use std::time::Duration;
+
+    const AT_120: Duration = Duration::from_nanos(8_333_333);
+    const AT_60: Duration = Duration::from_nanos(16_666_667);
+
+    fn ms(v: f64) -> Duration {
+        Duration::from_secs_f64(v / 1000.0)
+    }
+
+    /// A full-rate surface is served on commit once it has waited nearly a
+    /// whole period of its own output, and not before.
+    #[test]
+    fn commit_send_waits_for_the_surfaces_own_period() {
+        assert!(!due_on_commit(true, ms(0.0), AT_120, ms(7.0)));
+        assert!(due_on_commit(true, ms(0.0), AT_120, ms(8.0)));
+        // The same 8 ms is too soon on a 60 Hz output.
+        assert!(!due_on_commit(true, ms(0.0), AT_60, ms(8.0)));
+        assert!(due_on_commit(true, ms(0.0), AT_60, ms(16.0)));
+    }
+
+    /// A throttled surface keeps its tier's rate however long it waited.
+    #[test]
+    fn throttled_surface_is_never_served_on_commit() {
+        assert!(!due_on_commit(false, ms(0.0), AT_120, ms(500.0)));
+    }
 }

@@ -54,7 +54,12 @@ cadence when that alone would not:
   would wait a whole extra period. `frame_callback_on_commit` sends the
   callback as the commit is applied, but only once the surface has gone 95 %
   of a period without one: anything sooner stays on the VBlank cadence, so no
-  client cycles faster than the refresh and has its frames superseded.
+  client cycles faster than the refresh and has its frames superseded. The
+  period is that of the output whose VBlank last served the surface, and only
+  a surface that VBlank served at full rate qualifies: a throttled one
+  (secondary, occluded, minimized, other workspace) keeps its tier's rate. A
+  surface no VBlank has served yet waits for one, which also leaves the
+  backends without VBlank sends untouched.
 - The VBlank handler only runs when a flip completes. For a couple of periods
   after each flip a timer ticks at the VBlank cadence and sends the callbacks
   of VBlanks with nothing flipped, while the compositor's own CPU+GPU need is

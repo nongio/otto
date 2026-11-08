@@ -1492,10 +1492,6 @@ impl<A: RendererApi> Otto<UdevData<A>> {
             Ok(outcome) => {
                 if outcome.rendered {
                     // Frame was submitted — VBlank callback will drive the next render.
-                    // Clients paced off their commits may be given their next
-                    // callback now that this compose has taken their buffer.
-                    self.prev_compose = self.last_compose;
-                    self.last_compose = self.clock.now().into();
                     false
                 } else {
                     // No damage — defer idle decision to after borrow is released.
