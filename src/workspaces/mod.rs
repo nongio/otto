@@ -1492,6 +1492,13 @@ impl Workspaces {
     }
 
     /// Check if expose mode is currently transitioning (either via gesture or animation)
+    /// Whether an exposé open/close animation is in flight (not a gesture,
+    /// not a workspace scroll), for render paths that redraw per plane.
+    pub fn is_expose_animating(&self) -> bool {
+        self.expose_animating
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
     /// Returns true if we're in the middle of opening or closing expose mode
     pub fn is_expose_transitioning(&self) -> bool {
         let gesture_value = self

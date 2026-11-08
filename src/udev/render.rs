@@ -802,6 +802,12 @@ impl<A: RendererApi> Otto<UdevData<A>> {
                 .workspaces
                 .is_animating
                 .load(std::sync::atomic::Ordering::Relaxed);
+        // The exposé open/close animation raises the same flag, but nothing
+        // scrolls then: the previews move inside the expose plane, which
+        // reports their damage, and the wallpaper and windows planes under it
+        // do not change. Redrawing those two in full every frame cost a
+        // full-output pass each on top of the animation itself.
+        let expose_only = !self.swipe_gesture.is_active() && self.workspaces.is_expose_animating();
 
         // Read before the device/surface borrow below (see `popup_teardown_seen`).
         // Wayland popups live in the overlay plane; the dock's own context menu
@@ -852,14 +858,16 @@ impl<A: RendererApi> Otto<UdevData<A>> {
 
         // Swipe: redraw the scrolling planes every frame (see note above).
         if swipe_active {
-            for el in [
-                &surface.scene_dmabuf_element,
-                &surface.windows_dmabuf_element,
-                &surface.expose_dmabuf_element,
-            ]
-            .into_iter()
-            .flatten()
-            {
+            let scrolling = if expose_only {
+                [None, None, surface.expose_dmabuf_element.as_ref()]
+            } else {
+                [
+                    surface.scene_dmabuf_element.as_ref(),
+                    surface.windows_dmabuf_element.as_ref(),
+                    surface.expose_dmabuf_element.as_ref(),
+                ]
+            };
+            for el in scrolling.into_iter().flatten() {
                 el.request_full_render();
             }
         }
