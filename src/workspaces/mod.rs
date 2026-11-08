@@ -1673,7 +1673,7 @@ impl Workspaces {
         // Each output owns its selector (already parented to its overlay
         // plane). Only visible if expose was already open.
         for ows in self.output_workspaces.values() {
-            ows.workspace_selector.layer.set_hidden(!current_show_all);
+            ows.workspace_selector.set_visible(current_show_all);
         }
 
         // Suppress popups during gesture
@@ -2446,9 +2446,19 @@ impl Workspaces {
                 .values()
                 .map(|ows| ows.workspace_selector.layer.clone())
                 .collect();
+            let selectors: Vec<Arc<WorkspaceSelectorView>> = self
+                .output_workspaces
+                .values()
+                .map(|ows| ows.workspace_selector.clone())
+                .collect();
+            // Shown while exposé is (or is becoming) visible. Closed outright,
+            // with no animation to hide it on finish, it is hidden here, or its
+            // thumbnails would keep mirroring every workspace off-screen.
+            for selector in &selectors {
+                selector.set_visible(show_expose);
+            }
             let mut selector_transaction = None;
             for layer in &selector_layers {
-                layer.set_hidden(false);
                 let tr = layer.set_position(
                     layers::types::Point {
                         x: 0.0,
@@ -2462,7 +2472,7 @@ impl Workspaces {
             }
             if let (true, Some(transaction)) = (transition.is_some(), selector_transaction) {
                 window_selector_view_ref.set_position((0.0, 0.0), None);
-                let selector_layers_at_finish = selector_layers.clone();
+                let selectors_at_finish = selectors.clone();
                 let is_animating_ref = self.is_animating.clone();
                 // Set here rather than next to `is_animating` above so the flag
                 // can only ever be raised together with the `on_finish` that
@@ -2526,13 +2536,13 @@ impl Workspaces {
                         popup_overlay_layer.set_hidden(show_all);
                         // The selector strip parks off-screen when closed, but
                         // off-screen is not hidden: its desktop thumbnails
-                        // mirror every workspace, and a mirror under a visible
-                        // parent re-records its whole subtree — every window,
-                        // titlebar blur included — on each commit of any
-                        // window. Hide the strip; the next open un-hides it
-                        // before it slides in (`set_hidden(false)` above).
-                        for layer in &selector_layers_at_finish {
-                            layer.set_hidden(!show_all);
+                        // mirror every workspace, and a mirror re-records its
+                        // whole subtree — every window, titlebar blur
+                        // included — on each commit of any window. Hide the
+                        // strip and detach its mirrors; the next open shows it
+                        // before it slides in (`set_visible` above).
+                        for selector in &selectors_at_finish {
+                            selector.set_visible(show_all);
                         }
                         // Restore workspace content layers when closing expose
                         for wl in &all_workspaces_layers {
