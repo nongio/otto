@@ -73,6 +73,15 @@ fn hash_rects<'a>(rects: impl IntoIterator<Item = &'a layers::skia::Rect>, extra
 /// stretch — two frames at 60 Hz. See `SceneElement::update`.
 const MAX_ENGINE_STEP_SECS: f32 = 1.0 / 30.0;
 
+/// How far past a frosted shape's rounded-out bounds a pass grown over it
+/// reaches, so it holds the shape as lay-rs rounds it from the canvas matrix.
+const BLUR_SHAPE_PAD_PX: i32 = 2;
+
+/// How many blurred backdrops lay-rs keeps per render thread (its
+/// `BLUR_CACHE_CAPACITY`). Past that many frosted shapes, a kept blur may
+/// have been dropped to make room for another.
+const KEPT_BLURS_MAX: usize = 32;
+
 impl SceneElement {
     pub fn with_engine(engine: Arc<Engine>, occlusion_culling: fn() -> bool) -> Self {
         Self {
@@ -504,7 +513,21 @@ impl SceneElement {
                             return None;
                         }
                         let b = layer.global_transformed_bounds.with_offset((dx, dy));
+                        // Padded: lay-rs keeps a blur only from a pass whose
+                        // clip holds the shape as it rounds it out from the
+                        // canvas matrix, which at a fractional scale can
+                        // reach a pixel past these bounds rounded out. A pass
+                        // grown to the bare bounds then never left a kept
+                        // blur, while it was counted as one: every later pass
+                        // over part of the bar blurred just that part afresh,
+                        // and half the bar came out wrong.
                         let ir: layers::skia::IRect = layers::skia::RoundOut::round_out(&b);
+                        let ir = layers::skia::IRect::from_ltrb(
+                            ir.left - BLUR_SHAPE_PAD_PX,
+                            ir.top - BLUR_SHAPE_PAD_PX,
+                            ir.right + BLUR_SHAPE_PAD_PX,
+                            ir.bottom + BLUR_SHAPE_PAD_PX,
+                        );
                         // What a kept blur of this shape was produced from,
                         // short of what lies beneath it: its place on the
                         // output, its shape and what of it the content
@@ -539,7 +562,25 @@ impl SceneElement {
                         // in a group, or one under an image-cached ancestor,
                         // drawn offscreen — is blurred afresh by every pass
                         // and so always needs the whole shape.
-                        let keepable = layer.premultiplied_opacity >= 1.0
+                        //
+                        // And whatever this element believes, a partial pass
+                        // is left to replay a kept blur only while lay-rs
+                        // says it holds one, blurred at the shape's current
+                        // backdrop generation over this place on the output.
+                        // Anything else that drew the shape on this thread
+                        // (a mirror, a capture), a blur it never kept or one
+                        // it dropped for room, would otherwise have a pass
+                        // over part of the bar blur just that part afresh.
+                        let held =
+                            layers::drawing::kept_blur_rect(NodeRef(id), layer.backdrop_generation)
+                                .is_some_and(|rect| {
+                                    rect.left >= ir.left
+                                        && rect.top >= ir.top
+                                        && rect.right <= ir.right
+                                        && rect.bottom <= ir.bottom
+                                });
+                        let keepable = held
+                            && layer.premultiplied_opacity >= 1.0
                             && !id.ancestors(arena).skip(1).any(|ancestor| {
                                 arena
                                     .get(ancestor)
@@ -608,11 +649,21 @@ impl SceneElement {
                     *rect = clipped;
                 }
             }
+            // Counted as kept only where lay-rs really keeps it: a shape that
+            // reaches past the output never is (lay-rs wants the pass to hold
+            // the whole shape, and passes stop at the output's edge), and
+            // with more frosted shapes than lay-rs keeps blurs for, any of
+            // them may have been dropped since.
             let mut kept = self.kept_blur_inputs.borrow_mut();
-            for (node, shape, inputs, _) in &shapes_with_inputs {
-                let clipped = layers::skia::IRect::intersect(shape, &output_clip).unwrap_or(*shape);
-                if rects.iter().any(|rect| covers(rect, &clipped)) {
-                    kept.insert(*node, *inputs);
+            if shapes_with_inputs.len() > KEPT_BLURS_MAX {
+                kept.clear();
+            } else {
+                for (node, shape, inputs, _) in &shapes_with_inputs {
+                    if !covers(&output_clip, shape) {
+                        kept.remove(node);
+                    } else if rects.iter().any(|rect| covers(rect, shape)) {
+                        kept.insert(*node, *inputs);
+                    }
                 }
             }
         }
