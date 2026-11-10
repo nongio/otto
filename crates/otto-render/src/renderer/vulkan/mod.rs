@@ -228,8 +228,9 @@ pub struct SkiaVkRenderer {
     /// keeps a dropped buffer alive.
     dmabuf_cache: HashMap<WeakDmabuf, VulkanImage>,
     /// Live textures of client dmabufs, handed back to the foreign queue
-    /// family after every submit (see [`Self::release_sampled`]).
-    sampled: Vec<(std::sync::Weak<TextureBacking>, gpu::BackendTexture)>,
+    /// family after every submit (see [`Self::release_sampled`]) and fenced
+    /// for reading by it (see [`Self::fence_sampled_reads`]).
+    sampled: Vec<(std::sync::Weak<TextureBacking>, gpu::BackendTexture, Dmabuf)>,
     /// Dmabufs wrapped as render targets.
     target_cache: HashMap<WeakDmabuf, SkiaVkTarget>,
     /// Subpixel layout the dmabufs bound from now on are scanned out with,
@@ -247,6 +248,10 @@ pub struct SkiaVkRenderer {
     /// The kernel refused a write fence once, so every plane flush waits on
     /// the CPU instead of retrying the ioctl per frame.
     scanout_fences_unsupported: bool,
+    /// Set once attaching a read fence to a client dmabuf failed: from then
+    /// on every frame waits for the GPU on the CPU before the buffers it
+    /// sampled can go back to their clients.
+    read_fences_unsupported: bool,
     /// Memory of dropped textures and targets, destroyed once the GPU is done with it.
     graveyard: Graveyard,
     upscale_filter: TextureFilter,
@@ -361,6 +366,7 @@ impl SkiaVkRenderer {
             plane_releases: PlaneImageQueue::default(),
             scanout_writes: Vec::new(),
             scanout_fences_unsupported: false,
+            read_fences_unsupported: false,
             graveyard: Graveyard::default(),
             upscale_filter: TextureFilter::Linear,
             downscale_filter: TextureFilter::Linear,
@@ -438,7 +444,13 @@ impl SkiaVkRenderer {
         self.release_sampled();
         self.ctx().submit(None);
         let sync = match self.sync_pool.signal(&self.device, self.sync_fd)? {
-            Some(sync) => SyncPoint::from(sync),
+            Some(sync) => {
+                if !self.fence_sampled_reads(sync.fd()) {
+                    let _ = smithay::backend::renderer::sync::Fence::wait(&sync);
+                }
+                SyncPoint::from(sync)
+            }
+            // No `SYNC_FD` export: `signal` already waited for the queue.
             None => SyncPoint::signaled(),
         };
         self.reap();
@@ -481,9 +493,9 @@ impl SkiaVkRenderer {
             vk::QUEUE_FAMILY_FOREIGN_EXT,
         );
         let mut sampled = std::mem::take(&mut self.sampled);
-        sampled.retain(|(backing, _)| backing.strong_count() > 0);
+        sampled.retain(|(backing, _, _)| backing.strong_count() > 0);
         let ctx = self.ctx();
-        for (_, backend) in &sampled {
+        for (_, backend, _) in &sampled {
             ctx.set_backend_texture_state(backend, &state);
         }
         self.sampled = sampled;
@@ -568,23 +580,63 @@ impl SkiaVkRenderer {
                 return;
             }
         };
+        // The client buffers this frame sampled must not be drawn into again
+        // before the GPU is done reading them; the CPU used to wait for the
+        // whole queue here, which made sure of it.
+        let reads_fenced = self.fence_sampled_reads(sync.fd());
         if fence_wanted {
             let attached = writes
                 .iter()
                 .all(|dmabuf| sync::attach_write_fence(dmabuf, sync.fd()).is_ok());
+            if attached && reads_fenced {
+                return;
+            }
             if attached {
+                if smithay::backend::renderer::sync::Fence::wait(&sync).is_err() {
+                    tracing::warn!("waiting for the plane flush was interrupted");
+                }
                 return;
             }
             self.scanout_fences_unsupported = true;
             tracing::warn!(
                 "cannot attach write fences to plane buffers; plane flushes wait on the CPU"
             );
-        } else if writes.is_empty() {
+        } else if writes.is_empty() && reads_fenced {
             return;
         }
         if smithay::backend::renderer::sync::Fence::wait(&sync).is_err() {
             tracing::warn!("waiting for the plane flush was interrupted");
         }
+    }
+
+    /// Makes every live client dmabuf wait, before its client draws into it
+    /// again, for the GPU work `sync_file` stands for — the frame just
+    /// submitted, which may have sampled it.
+    ///
+    /// Vulkan does not tell the kernel it is reading an imported buffer the
+    /// way GL does, so without this a client given its buffer back (a fast
+    /// one, like a browser) can repaint it while the GPU is still sampling
+    /// it, and parts of the window show half of one frame and half of the
+    /// next. Fencing a buffer the client still waits for costs nothing.
+    ///
+    /// Returns `false` when the fence cannot be attached (a kernel before
+    /// 6.0): the caller then waits for the GPU on the CPU instead.
+    fn fence_sampled_reads(&mut self, sync_file: std::os::fd::BorrowedFd<'_>) -> bool {
+        if self.read_fences_unsupported {
+            return false;
+        }
+        let attached = self
+            .sampled
+            .iter()
+            .filter(|(backing, _, _)| backing.strong_count() > 0)
+            .all(|(_, _, dmabuf)| sync::attach_read_fence(dmabuf, sync_file).is_ok());
+        if !attached {
+            self.read_fences_unsupported = true;
+            tracing::warn!(
+                "cannot attach read fences to client buffers; frames wait for the GPU on the CPU"
+            );
+        }
+        attached
     }
 
     /// Hands the images of plane slots dropped since the last call to the
@@ -762,7 +814,8 @@ impl SkiaVkRenderer {
             false,
             self.graveyard.queue(),
         ));
-        self.sampled.push((Arc::downgrade(&backing), backend));
+        self.sampled
+            .push((Arc::downgrade(&backing), backend, dmabuf.clone()));
         Ok(SkiaVkTexture {
             backing,
             image: sk_image,

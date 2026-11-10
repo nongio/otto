@@ -415,19 +415,45 @@ pub(crate) fn attach_write_fence(
     dmabuf: &smithay::backend::allocator::dmabuf::Dmabuf,
     sync_file: std::os::fd::BorrowedFd<'_>,
 ) -> std::io::Result<()> {
+    const DMA_BUF_SYNC_WRITE: u32 = 2;
+    import_sync_file(dmabuf, sync_file, DMA_BUF_SYNC_WRITE)
+}
+
+/// Attaches `sync_file` to `dmabuf` as a read fence.
+///
+/// Vulkan, unlike GL, does not tell the kernel it is reading an imported
+/// buffer. Without this a client that gets its buffer back and draws into it
+/// again (relying on implicit sync, as GL clients do) could overwrite pixels
+/// the GPU has not finished sampling.
+///
+/// # Errors
+///
+/// Returns the ioctl's error; kernels before 6.0 lack it.
+pub(crate) fn attach_read_fence(
+    dmabuf: &smithay::backend::allocator::dmabuf::Dmabuf,
+    sync_file: std::os::fd::BorrowedFd<'_>,
+) -> std::io::Result<()> {
+    const DMA_BUF_SYNC_READ: u32 = 1;
+    import_sync_file(dmabuf, sync_file, DMA_BUF_SYNC_READ)
+}
+
+fn import_sync_file(
+    dmabuf: &smithay::backend::allocator::dmabuf::Dmabuf,
+    sync_file: std::os::fd::BorrowedFd<'_>,
+    flags: u32,
+) -> std::io::Result<()> {
     /// `struct dma_buf_import_sync_file` from `linux/dma-buf.h`.
     #[repr(C)]
     struct ImportSyncFile {
         flags: u32,
         fd: i32,
     }
-    const DMA_BUF_SYNC_WRITE: u32 = 2;
     // _IOW('b', 3, struct dma_buf_import_sync_file)
     const DMA_BUF_IOCTL_IMPORT_SYNC_FILE: libc::c_ulong = 0x4008_6203;
 
     for handle in dmabuf.handles() {
         let mut arg = ImportSyncFile {
-            flags: DMA_BUF_SYNC_WRITE,
+            flags,
             fd: sync_file.as_raw_fd(),
         };
         // SAFETY: `arg` matches the kernel's struct layout and outlives the call.
