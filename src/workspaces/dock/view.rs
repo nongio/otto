@@ -543,7 +543,7 @@ impl DockView {
 
     /// Run `task` on the main loop, or right here while no main loop has asked
     /// for the dock's work (the dock's own unit tests).
-    fn on_main_loop(&self, task: impl FnOnce(&DockView) + Send + 'static) {
+    pub(crate) fn on_main_loop(&self, task: impl FnOnce(&DockView) + Send + 'static) {
         let sender = self.main_loop.0.read().unwrap().clone();
         match sender {
             // Fails only once the main loop is gone, with the compositor.

@@ -3223,8 +3223,10 @@ impl Workspaces {
                     }
 
                     // Re-hide the dock if we revealed it for this minimize.
+                    // On the main loop: it reads the dock's own locks, which
+                    // its updates there take too.
                     if dock_was_hidden {
-                        dock_ref.schedule_autohide();
+                        dock_ref.on_main_loop(|dock| dock.schedule_autohide());
                     }
                 });
             }
