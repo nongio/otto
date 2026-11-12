@@ -62,11 +62,20 @@ close_window() {
   PIDS="$*"
 }
 
-# Otto answers a sync if its loop turns; a hang is a loop that does not, with
-# the main thread asleep on a futex rather than in epoll.
+# A turning loop either waits in epoll or keeps switching; a hang is a main
+# thread asleep anywhere else (a lock, a fence, an ioctl) with no switches
+# for 2 s. Read from /proc: a Wayland request to a stuck Otto would itself
+# get stuck, and wlrctl's toplevel commands wait for more than an answer.
+switches() {
+  awk '/ctxt_switches/ { n += $2 } END { print n }' /proc/$OTTO/task/$OTTO/status 2>/dev/null
+}
 alive() {
-  timeout 5 wlrctl toplevel find app_id:$APP >/dev/null 2>&1
-  [ $? -ne 124 ]
+  case "$(cat /proc/$OTTO/task/$OTTO/wchan 2>/dev/null)" in
+    *epoll*) return 0 ;;
+  esac
+  a=$(switches)
+  sleep 2
+  [ "$a" != "$(switches)" ] || grep -q epoll /proc/$OTTO/task/$OTTO/wchan 2>/dev/null
 }
 
 hang() {
@@ -82,7 +91,6 @@ hang() {
     echo "no cached sudo; from another TTY run:"
     echo "  sudo gdb -p $OTTO -batch -ex 'thread apply all bt 60' > $file"
   fi
-  trap - EXIT
   exit 2
 }
 

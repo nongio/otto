@@ -344,6 +344,9 @@ impl<BackendData: Backend> Dispatch<ZwlrForeignToplevelManagerV1, (), Otto<Backe
             state
                 .wlr_foreign_toplevel_state
                 .unregister_manager(resource);
+            // The protocol's answer to `stop`: no more events. A client waits
+            // for it before it disconnects (wlrctl does, and hangs without it).
+            resource.finished();
         }
     }
 
