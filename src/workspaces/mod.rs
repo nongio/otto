@@ -3110,8 +3110,15 @@ impl Workspaces {
                 let view = view.clone();
                 let drawer = drawer.clone();
                 let inner = inner.clone();
+                // A restore can land at any point of what follows — even
+                // before the task runs — and from then on the window is not
+                // this minimise's to move.
+                let epoch = view.begin_minimize();
 
                 tokio::spawn(async move {
+                    if view.minimize_overtaken(epoch) {
+                        return;
+                    }
                     // Run the genie while the window is STILL in the windows
                     // plane subtree: the destination rect is global scene
                     // coordinates, so the animation squeezes toward the dock
@@ -3134,12 +3141,15 @@ impl Workspaces {
                         dock_position.is_vertical(),
                         dock_position == crate::config::DockPosition::Left,
                     );
-                    let minimize_tr = view.minimize(skia::Rect::from_xywh(
-                        inner_bounds.x(),
-                        inner_bounds.y(),
-                        inner_bounds.width(),
-                        inner_bounds.height(),
-                    ));
+                    let minimize_tr = view.minimize(
+                        skia::Rect::from_xywh(
+                            inner_bounds.x(),
+                            inner_bounds.y(),
+                            inner_bounds.width(),
+                            inner_bounds.height(),
+                        ),
+                        epoch,
+                    );
 
                     // Track the expanding drawer: update the genie destination
                     // while the animation runs, keep the miniwindow fitted
@@ -3180,6 +3190,14 @@ impl Workspaces {
                         }
                     };
                     tokio::join!(minimize_tr, show_fut, layout_fut);
+
+                    // Restored while the genie ran: the window is back on its
+                    // workspace and the drawer is gone. Moving it into the
+                    // drawer now would take it out of the scene — drawn
+                    // nowhere, or left at mini scale on the workspace.
+                    if view.minimize_overtaken(epoch) {
+                        return;
+                    }
 
                     // Genie done — NOW move the (effect-free, hidden) window
                     // layer into the drawer and fit it. From here on it
