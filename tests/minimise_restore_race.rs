@@ -109,4 +109,57 @@ mod minimise_restore_race_tests {
     fn a_restore_after_the_genie_brings_the_window_back_whole() {
         check(SETTLED);
     }
+
+    /// Going fullscreen parks the window above everything for the transition
+    /// and moves it into its fullscreen workspace when the transition ends. A
+    /// window minimised before then is in its dock drawer by that time, and
+    /// stays there.
+    #[test]
+    #[serial]
+    fn a_window_minimised_while_going_fullscreen_stays_in_the_dock() {
+        let handle = HeadlessHandle::start(HeadlessConfig::default());
+        let mut client = TestClient::connect(&handle.socket_name).expect("connect");
+        let toplevel = client.create_toplevel(TITLE, 600, 400);
+        handle.wait(Duration::from_millis(100));
+        client.roundtrip().expect("roundtrip");
+        toplevel.lock().unwrap().commit_frame();
+        client.roundtrip().expect("roundtrip");
+        handle.settle(300);
+        let (_, h0, _, _) = window_state(&handle);
+
+        handle.fullscreen_window(TITLE);
+        let _ = client.roundtrip();
+        for _ in 0..6 {
+            handle.tick(1.0 / 60.0);
+        }
+        handle.minimize_window(TITLE);
+        run_out(&handle);
+
+        let (w, h, hidden, listed) = window_state(&handle);
+        let y = handle.query(|state| {
+            let id = state
+                .workspaces
+                .windows_map
+                .iter()
+                .find(|(_, w)| w.xdg_title() == TITLE)
+                .map(|(id, _)| id.clone())
+                .unwrap();
+            let view = state.workspaces.get_window_view(&id).unwrap();
+            view.window_layer
+                .render_bounds_with_children_transformed()
+                .y()
+        });
+        // The headless output's mode, in physical px, as the bounds are.
+        let screen_h = 1080.0_f32;
+        assert!(
+            listed && !hidden,
+            "the window is minimised and shown in the dock"
+        );
+        assert!(
+            h < h0 / 4.0 && y > screen_h / 2.0,
+            "the mini window ({w}x{h} at y {y}) is not in the dock at the bottom \
+             of the {screen_h}px screen"
+        );
+        handle.stop();
+    }
 }

@@ -908,6 +908,7 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
                 // is keyed separately and always completes, so the reparent
                 // rides on it instead.
                 let fs_window_layer = view.window_layer.clone();
+                let fs_window = window.clone();
                 self.layers_engine.on_animation_finish(
                     animation,
                     move |_: f32| {
@@ -916,7 +917,16 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
                             state.size = Some(geometry.size);
                             state.fullscreen_output = wl_output_ref.clone();
                         });
-                        if let Err(e) = next_workspace_layer.add_sublayer(&fs_window_layer) {
+                        // Minimised during the transition: the window lives
+                        // in its dock drawer now. Moving it to the workspace
+                        // would leave a mini window in the workspace's corner
+                        // and an empty slot in the dock.
+                        if fs_window.is_minimised() {
+                            tracing::debug!(
+                                "fullscreen: minimised mid-transition, left in the dock"
+                            );
+                        } else if let Err(e) = next_workspace_layer.add_sublayer(&fs_window_layer)
+                        {
                             tracing::warn!(
                                 "fullscreen: failed to reparent window to workspace: {e}"
                             );
