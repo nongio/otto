@@ -792,6 +792,7 @@ impl Workspaces {
         RemoveWorkspaceChannel,
         RenameWorkspaceChannel,
         WallpaperChannel,
+        dock::DockTaskChannel,
     ) {
         let model = WorkspacesModel::default();
 
@@ -825,6 +826,7 @@ impl Workspaces {
         let app_icons_manager = Arc::new(AppIconsManager::new(layers_engine.clone()));
 
         let dock = DockView::new(layers_engine.clone(), app_icons_manager.clone());
+        let dock_tasks = dock.main_loop_channel();
         let dock = Arc::new(dock);
         // The greeter owns the whole screen: no dock, no switcher, no expose.
         if !crate::login::is_login_mode() {
@@ -937,6 +939,7 @@ impl Workspaces {
             remove_receiver,
             rename_receiver,
             wallpaper_receiver,
+            dock_tasks,
         )
     }
 
@@ -1492,6 +1495,13 @@ impl Workspaces {
     }
 
     /// Check if expose mode is currently transitioning (either via gesture or animation)
+    /// Whether an exposé open/close animation is in flight (not a gesture,
+    /// not a workspace scroll), for render paths that redraw per plane.
+    pub fn is_expose_animating(&self) -> bool {
+        self.expose_animating
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
     /// Returns true if we're in the middle of opening or closing expose mode
     pub fn is_expose_transitioning(&self) -> bool {
         let gesture_value = self
@@ -1673,7 +1683,7 @@ impl Workspaces {
         // Each output owns its selector (already parented to its overlay
         // plane). Only visible if expose was already open.
         for ows in self.output_workspaces.values() {
-            ows.workspace_selector.layer.set_hidden(!current_show_all);
+            ows.workspace_selector.set_visible(current_show_all);
         }
 
         // Suppress popups during gesture
@@ -2446,9 +2456,19 @@ impl Workspaces {
                 .values()
                 .map(|ows| ows.workspace_selector.layer.clone())
                 .collect();
+            let selectors: Vec<Arc<WorkspaceSelectorView>> = self
+                .output_workspaces
+                .values()
+                .map(|ows| ows.workspace_selector.clone())
+                .collect();
+            // Shown while exposé is (or is becoming) visible. Closed outright,
+            // with no animation to hide it on finish, it is hidden here, or its
+            // thumbnails would keep mirroring every workspace off-screen.
+            for selector in &selectors {
+                selector.set_visible(show_expose);
+            }
             let mut selector_transaction = None;
             for layer in &selector_layers {
-                layer.set_hidden(false);
                 let tr = layer.set_position(
                     layers::types::Point {
                         x: 0.0,
@@ -2462,6 +2482,7 @@ impl Workspaces {
             }
             if let (true, Some(transaction)) = (transition.is_some(), selector_transaction) {
                 window_selector_view_ref.set_position((0.0, 0.0), None);
+                let selectors_at_finish = selectors.clone();
                 let is_animating_ref = self.is_animating.clone();
                 // Set here rather than next to `is_animating` above so the flag
                 // can only ever be raised together with the `on_finish` that
@@ -2523,7 +2544,16 @@ impl Workspaces {
                         }
                         // Popups only come back once expose is fully closed.
                         popup_overlay_layer.set_hidden(show_all);
-                        // workspace_selector_view stays visible (positioned off-screen when closed)
+                        // The selector strip parks off-screen when closed, but
+                        // off-screen is not hidden: its desktop thumbnails
+                        // mirror every workspace, and a mirror re-records its
+                        // whole subtree — every window, titlebar blur
+                        // included — on each commit of any window. Hide the
+                        // strip and detach its mirrors; the next open shows it
+                        // before it slides in (`set_visible` above).
+                        for selector in &selectors_at_finish {
+                            selector.set_visible(show_all);
+                        }
                         // Restore workspace content layers when closing expose
                         for wl in &all_workspaces_layers {
                             wl.set_hidden(show_all);
@@ -3080,8 +3110,15 @@ impl Workspaces {
                 let view = view.clone();
                 let drawer = drawer.clone();
                 let inner = inner.clone();
+                // A restore can land at any point of what follows — even
+                // before the task runs — and from then on the window is not
+                // this minimise's to move.
+                let epoch = view.begin_minimize();
 
                 tokio::spawn(async move {
+                    if view.minimize_overtaken(epoch) {
+                        return;
+                    }
                     // Run the genie while the window is STILL in the windows
                     // plane subtree: the destination rect is global scene
                     // coordinates, so the animation squeezes toward the dock
@@ -3104,12 +3141,15 @@ impl Workspaces {
                         dock_position.is_vertical(),
                         dock_position == crate::config::DockPosition::Left,
                     );
-                    let minimize_tr = view.minimize(skia::Rect::from_xywh(
-                        inner_bounds.x(),
-                        inner_bounds.y(),
-                        inner_bounds.width(),
-                        inner_bounds.height(),
-                    ));
+                    let minimize_tr = view.minimize(
+                        skia::Rect::from_xywh(
+                            inner_bounds.x(),
+                            inner_bounds.y(),
+                            inner_bounds.width(),
+                            inner_bounds.height(),
+                        ),
+                        epoch,
+                    );
 
                     // Track the expanding drawer: update the genie destination
                     // while the animation runs, keep the miniwindow fitted
@@ -3150,6 +3190,14 @@ impl Workspaces {
                         }
                     };
                     tokio::join!(minimize_tr, show_fut, layout_fut);
+
+                    // Restored while the genie ran: the window is back on its
+                    // workspace and the drawer is gone. Moving it into the
+                    // drawer now would take it out of the scene — drawn
+                    // nowhere, or left at mini scale on the workspace.
+                    if view.minimize_overtaken(epoch) {
+                        return;
+                    }
 
                     // Genie done — NOW move the (effect-free, hidden) window
                     // layer into the drawer and fit it. From here on it
@@ -3193,8 +3241,10 @@ impl Workspaces {
                     }
 
                     // Re-hide the dock if we revealed it for this minimize.
+                    // On the main loop: it reads the dock's own locks, which
+                    // its updates there take too.
                     if dock_was_hidden {
-                        dock_ref.schedule_autohide();
+                        dock_ref.on_main_loop(|dock| dock.schedule_autohide());
                     }
                 });
             }

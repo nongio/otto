@@ -344,6 +344,9 @@ impl<BackendData: Backend> Dispatch<ZwlrForeignToplevelManagerV1, (), Otto<Backe
             state
                 .wlr_foreign_toplevel_state
                 .unregister_manager(resource);
+            // The protocol's answer to `stop`: no more events. A client waits
+            // for it before it disconnects (wlrctl does, and hangs without it).
+            resource.finished();
         }
     }
 
@@ -391,9 +394,10 @@ impl<BackendData: Backend>
                 }
             }
             zwlr_foreign_toplevel_handle_v1::Request::SetMinimized => {
+                // The same path as the window's own minimise: it leaves
+                // fullscreen first and hands focus on.
                 if let Some(window) = state.workspaces.get_window_for_surface(&window_id).cloned() {
-                    state.demote_scanout_window(&window);
-                    state.workspaces.minimize_window(&window);
+                    state.minimize_window_element(&window);
                 }
             }
             zwlr_foreign_toplevel_handle_v1::Request::UnsetMinimized => {

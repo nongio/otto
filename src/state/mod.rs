@@ -301,6 +301,9 @@ pub struct Otto<BackendData: Backend + 'static> {
     /// click-to-focus desktop delivers a scroll to a `Secondary` window and
     /// then feeds it frames at 30 Hz while the user watches it move.
     pub pointer_interaction: Option<(ObjectId, std::time::Instant)>,
+    /// When each surface was last offered its frame callbacks; see
+    /// [`frame::frame_callback_on_commit`].
+    pub frame_callback_log: frame::FrameCallbackLog,
     pub output_manager_state: OutputManagerState,
     pub primary_selection_state: PrimarySelectionState,
     pub data_control_state: DataControlState,
@@ -1099,8 +1102,23 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         let scene_element = SceneElement::with_engine(layers_engine.clone(), || {
             Config::with(|c| c.occlusion_culling)
         });
-        let (workspaces, remove_workspace_receiver, rename_workspace_receiver, wallpaper_receiver) =
-            Workspaces::new(layers_engine.clone(), dh.clone());
+        let (
+            workspaces,
+            remove_workspace_receiver,
+            rename_workspace_receiver,
+            wallpaper_receiver,
+            dock_task_receiver,
+        ) = Workspaces::new(layers_engine.clone(), dh.clone());
+        handle
+            .insert_source(dock_task_receiver, |event, _, otto| {
+                // What the dock's background tasks resolved, applied between
+                // frames rather than racing the one being drawn.
+                if let ChannelEvent::Msg(task) = event {
+                    task(&otto.workspaces.dock);
+                    otto.backend_data.request_redraw();
+                }
+            })
+            .expect("Failed to register the dock channel");
         handle
             .insert_source(wallpaper_receiver, |event, _, otto| {
                 if let ChannelEvent::Msg(done) = event {
@@ -1176,6 +1194,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             idle_inhibit_manager_state,
             idle_inhibitors: HashSet::new(),
             pointer_interaction: None,
+            frame_callback_log: Default::default(),
             lock_state: crate::lock::LockState::Unlocked,
             lock_surfaces: Default::default(),
             lock_previous_focus: None,

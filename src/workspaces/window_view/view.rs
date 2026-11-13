@@ -68,6 +68,11 @@ pub struct WindowView {
     /// `unmaximised_rect` holds the pre-snap geometry.
     pub tiled_zone: Option<crate::workspaces::TileZone>,
     pub minimizing_animation: Arc<AtomicBool>,
+    /// Bumped by every minimise and every restore. A minimise's genie runs
+    /// on a task of its own and finishes by moving the window into the dock;
+    /// it holds the value it started with and stops if a restore has moved
+    /// it on since (see [`WindowView::begin_minimize`]).
+    minimize_epoch: Arc<std::sync::atomic::AtomicU64>,
     pub is_unmapped: Arc<AtomicBool>,
     /// The decoration layer is currently drawing a tile's hairline border
     /// rather than a titlebar — see [`WindowView::set_tile_border`].
@@ -166,6 +171,7 @@ impl WindowView {
             unmaximised_rect: smithay::utils::Rectangle::default(),
             tiled_zone: None,
             minimizing_animation: Arc::new(AtomicBool::new(false)),
+            minimize_epoch: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             is_unmapped: Arc::new(AtomicBool::new(false)),
             tile_border: Arc::new(AtomicBool::new(false)),
         }
@@ -386,6 +392,22 @@ impl WindowView {
             .load(std::sync::atomic::Ordering::SeqCst)
     }
 
+    /// Starts a minimise and returns its epoch, which the minimise's steps
+    /// check with [`Self::minimize_overtaken`] before they touch the window.
+    /// Taken on the main loop, when the window is minimised, so a restore
+    /// that comes before the genie's task has even started still counts.
+    pub fn begin_minimize(&self) -> u64 {
+        self.minimize_epoch
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+            + 1
+    }
+
+    /// Whether the window has been restored since the minimise that took
+    /// `epoch` began: that minimise must leave the window alone.
+    pub fn minimize_overtaken(&self, epoch: u64) -> bool {
+        self.minimize_epoch.load(std::sync::atomic::Ordering::SeqCst) != epoch
+    }
+
     pub fn set_is_unmapped(&self, unmapped: bool) {
         self.is_unmapped
             .store(unmapped, std::sync::atomic::Ordering::SeqCst);
@@ -402,7 +424,9 @@ impl WindowView {
             .is_layer_alive(&self.window_layer.id)
     }
 
-    pub fn minimize(&self, to_rect: skia::Rect) -> TransactionRef {
+    /// Plays the genie towards `to_rect`, for the minimise that took `epoch`
+    /// (see [`Self::begin_minimize`]).
+    pub fn minimize(&self, to_rect: skia::Rect, epoch: u64) -> TransactionRef {
         // Image filters only render through the image-cached (offscreen)
         // path in lay-rs — a filter set on a plain layer is ignored. Cache
         // the layer for the duration of the genie; cleared in on_finish.
@@ -432,6 +456,12 @@ impl WindowView {
         let view_ref = self.clone();
         tr.on_finish(
             move |l: &Layer, _| {
+                // Restored meanwhile: the window is back on its workspace and
+                // its restore animation owns the layer — hiding it here would
+                // leave it invisible.
+                if view_ref.minimize_overtaken(epoch) {
+                    return;
+                }
                 if view_ref.is_unmapped() {
                     // Clear on the early-return too: the flag drives the
                     // backend's forced-composite mode, and wedging it `true`
@@ -464,6 +494,9 @@ impl WindowView {
     }
 
     pub fn unminimize(&self, from: skia::Rect) -> TransactionRef {
+        // Any minimise still in flight stops here.
+        self.minimize_epoch
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         self.set_is_minimizing(true);
         // Re-enable the shader and reset the scale before running the animation
         // we need set opacity to 0 first to avoid flickering

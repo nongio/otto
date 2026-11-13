@@ -291,6 +291,11 @@ pub struct WorkspaceSelectorViewState {
     /// previews are drop targets then, not things being pointed at: no close
     /// button may appear and the drop-target darkening must not be cleared.
     window_drag: bool,
+    /// Whether the desktop thumbnails follow their workspaces. Only while
+    /// the strip is shown: a thumbnail is a mirror, and a mirror re-records
+    /// the whole workspace (every window, titlebar blur included) on each
+    /// commit of any window in it, seen or not.
+    mirrors_live: bool,
 }
 
 impl Hash for WorkspaceSelectorViewState {
@@ -303,6 +308,7 @@ impl Hash for WorkspaceSelectorViewState {
         self.removing.hash(state);
         self.drag_ghost.hash(state);
         self.window_drag.hash(state);
+        self.mirrors_live.hash(state);
     }
 }
 
@@ -393,6 +399,7 @@ impl WorkspaceSelectorView {
             removing: Vec::new(),
             drag_ghost: None,
             window_drag: false,
+            mirrors_live: false,
         };
         let view = View::new(
             "workspace_selector_view",
@@ -402,6 +409,10 @@ impl WorkspaceSelectorView {
         layer.set_pointer_events(false);
         layer.set_position((0.0, -400.0), None);
         layer.set_opacity(1.0_f32, None);
+        // Hidden until exposé slides it in: parked off-screen it would still
+        // be a visible parent, and its desktop thumbnails would mirror every
+        // workspace on every window commit (see `expose_show_all_apply`).
+        layer.set_hidden(true);
         view.set_layer(layer.clone());
 
         let drop_targets = Arc::new(RwLock::new(Vec::new()));
@@ -548,6 +559,46 @@ impl WorkspaceSelectorView {
     /// output drives its own selector so previews reflect that output's
     /// content at that output's physical resolution: `workspace_size` is the
     /// output's mode and `scale` its own fractional scale.
+    /// Show or hide the strip, and with it the thumbnails' link to their
+    /// workspaces.
+    ///
+    /// Parked off-screen the strip still counts as shown, and hidden it is
+    /// still a mirror: lay-rs marks a follower for repaint whenever its
+    /// leader changes, wherever the follower sits. So hiding also detaches
+    /// each thumbnail from the workspace it mirrors, and showing rebuilds
+    /// the thumbnails, which attaches and records them afresh.
+    pub fn set_visible(&self, visible: bool) {
+        self.layer.set_hidden(!visible);
+        let mut state = self.view.get_state();
+        if state.mirrors_live == visible {
+            return;
+        }
+        state.mirrors_live = visible;
+        if !visible {
+            let engine = &self.layer.engine;
+            for w in &state.workspaces {
+                let links = [
+                    (
+                        format!("workspace_selector_desktop_bg_mirror_{}", w.index),
+                        w.background_node,
+                    ),
+                    (
+                        format!("workspace_selector_desktop_content_mirror_{}", w.index),
+                        w.workspace_node,
+                    ),
+                ];
+                for (key, leader) in links {
+                    let thumbnail = self.view.layer_by_key(&key);
+                    let leader = leader.and_then(|node| engine.get_layer(&node));
+                    if let (Some(thumbnail), Some(leader)) = (thumbnail, leader) {
+                        leader.remove_follower_node(thumbnail.id());
+                    }
+                }
+            }
+        }
+        self.view.update_state(&state);
+    }
+
     pub fn set_workspaces(
         &self,
         workspaces: &[Arc<WorkspaceView>],
@@ -1189,6 +1240,7 @@ fn render_workspace_selector_view(
     view: &View<WorkspaceSelectorViewState>,
 ) -> LayerTree {
     let workspaces = state.workspaces.clone();
+    let mirrors_live = state.mirrors_live;
 
     // The tallest item, in physical pixels: the strip is sized to it.
     let max_item_height = workspaces.iter().fold(0.0_f32, |max_h, w| {
@@ -1337,7 +1389,7 @@ fn render_workspace_selector_view(
                             })
                             .size((geometry::layer_size(geom.workspace), None))
                             .scale(Point::new(geom.ratio, geom.ratio))
-                            .replicate_node(w.background_node)
+                            .replicate_node(w.background_node.filter(|_| mirrors_live))
                             .picture_cached(true)
                             .image_cache(true)
                             .color_filter(color_filter.clone())
@@ -1361,7 +1413,7 @@ fn render_workspace_selector_view(
                             })
                             .size((geometry::layer_size(geom.workspace), None))
                             .scale(Point::new(geom.ratio, geom.ratio))
-                            .replicate_node(w.workspace_node)
+                            .replicate_node(w.workspace_node.filter(|_| mirrors_live))
                             .picture_cached(true)
                             .image_cache(true)
                             .color_filter(color_filter)

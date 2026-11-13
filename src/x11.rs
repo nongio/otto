@@ -491,6 +491,7 @@ pub fn run_x11() {
                         &pacing,
                         render_output_result.damage.is_some(),
                         Presentation::Immediate,
+                        true,
                     );
 
                     #[cfg(feature = "debug")]

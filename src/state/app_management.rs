@@ -67,13 +67,26 @@ impl<BackendData: Backend> Otto<BackendData> {
         let Some(id) = window.wl_surface().map(|s| s.id()) else {
             return;
         };
+        // A fullscreen window leaves fullscreen first: minimised from its own
+        // fullscreen workspace, it would leave that workspace on screen empty,
+        // with the dock and the bar hidden. Leaving takes the window back to
+        // the workspace it came from, removes the fullscreen one and brings
+        // the chrome back; restoring later brings it back windowed.
+        let was_fullscreen = window.is_fullscreen();
+        if was_fullscreen {
+            self.leave_fullscreen(window);
+        }
         let Some(current_element_geometry) = self.workspaces.element_geometry(window) else {
             return;
         };
 
-        if let Some(mut view) = self.workspaces.get_window_view(&id) {
-            view.unmaximised_rect = current_element_geometry;
-            self.workspaces.set_window_view(&id, view);
+        // The size to restore to. Leaving fullscreen has just restored the
+        // window's own; the geometry now is still the fullscreen one.
+        if !was_fullscreen {
+            if let Some(mut view) = self.workspaces.get_window_view(&id) {
+                view.unmaximised_rect = current_element_geometry;
+                self.workspaces.set_window_view(&id, view);
+            }
         }
 
         // Leave scanout and re-import the current buffer BEFORE the genie
@@ -85,6 +98,29 @@ impl<BackendData: Backend> Otto<BackendData> {
         match next_focus {
             Some(wid) => self.set_keyboard_focus_on_surface(&wid),
             None => self.clear_keyboard_focus(),
+        }
+    }
+
+    /// Takes `window` out of fullscreen the way its client's own request
+    /// does, whichever kind of client it is.
+    fn leave_fullscreen(&mut self, window: &crate::shell::WindowElement) {
+        match window.underlying_surface() {
+            smithay::desktop::WindowSurface::Wayland(toplevel) => {
+                <Self as smithay::wayland::shell::xdg::XdgShellHandler>::unfullscreen_request(
+                    self,
+                    toplevel.clone(),
+                );
+            }
+            #[cfg(feature = "xwayland")]
+            smithay::desktop::WindowSurface::X11(surface) => {
+                if let Some(xwm) = self.xwm.as_ref().map(|xwm| xwm.id()) {
+                    <Self as smithay::xwayland::XwmHandler>::unfullscreen_request(
+                        self,
+                        xwm,
+                        surface.clone(),
+                    );
+                }
+            }
         }
     }
 

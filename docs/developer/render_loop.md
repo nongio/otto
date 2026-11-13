@@ -34,9 +34,40 @@ sends a message on a calloop channel, waking the loop even if it is currently
 blocked on a long timeout.
 
 **Frame bookkeeping.** After a successful render, `post_repaint` /
-`take_presentation_feedback` emit `wl_callback` done events and
-`wp_presentation` feedback, with timestamps from the shared `Clock<Monotonic>`
-so they line up with input event timestamps.
+`take_presentation_feedback` send dmabuf feedback and collect the
+`wp_presentation` feedback of every window the user can see (windows are
+composited through the scene, not as per-surface render elements, so the
+feedback is taken for the visible tiers rather than by Smithay's primary
+scanout output, which the scene path never sets). Timestamps come from the
+shared `Clock<Monotonic>` so they line up with input event timestamps.
+
+**Frame callbacks** (`wl_callback`) are not sent at render time on the udev
+backend. Rendering late means a client woken at render time has only the
+compositor's own budget left to produce its next buffer; a GTK window that
+spends 7 ms of an 8.3 ms period on a frame missed one VBlank in six. They go
+out from the VBlank handler instead (`send_frame_callbacks`), so a client has
+the whole period minus the compositor's budget. Two more paths keep the
+cadence when that alone would not:
+
+- A client's commit is held back until its buffer's GPU work is done
+  (`add_blocker`), so a slow client's commit lands *after* the VBlank send and
+  would wait a whole extra period. `frame_callback_on_commit` sends the
+  callback as the commit is applied, but only once the surface has gone 95 %
+  of a period without one: anything sooner stays on the VBlank cadence, so no
+  client cycles faster than the refresh and has its frames superseded. The
+  period is that of the output whose VBlank last served the surface, and only
+  a surface that VBlank served at full rate qualifies: a throttled one
+  (secondary, occluded, minimized, other workspace) keeps its tier's rate. A
+  surface no VBlank has served yet waits for one, which also leaves the
+  backends without VBlank sends untouched.
+- The VBlank handler only runs when a flip completes. For a couple of periods
+  after each flip a timer ticks at the VBlank cadence and sends the callbacks
+  of VBlanks with nothing flipped, while the compositor's own CPU+GPU need is
+  under 60 % of the period. When it is not (five windows at 7 ms of GPU each),
+  pacing clients ahead of a flip would only have them render frames the next
+  compose supersedes, so they are paced by the flips alone.
+
+The winit and x11 backends keep sending callbacks right after the render.
 
 **Damage tracking.** Each backend feeds `render_output` a damage tracker, and
 the heavy path is short-circuited when there is no new scene damage, no
@@ -128,11 +159,20 @@ This is the production loop, and the only one with real VBlank timing.
 
    - *Phase 1, at VBlank*: tick the scene graph (`scene_element.update()`) and
      cache whether it produced damage.
-   - *Phase 2, at a deadline*: schedule the actual draw for
-     `frame_period − 2 × average_render_time`, clamped to at least 1 ms. The
-     doubled render time is the safety margin for variance; the clamp prevents
-     busy-spinning. Multi-GPU paths need a buffer copy after rendering with no
-     reliable duration estimate, so they fire immediately instead.
+   - *Phase 2, at a deadline*: schedule the actual draw so that the pass —
+     CPU and the GPU composite it submits — is done by the VBlank it aims
+     at, with the time doubled as margin: `n × frame_period − 2 × (average
+     CPU pass + average GPU composite)`, `n` the first number of periods the
+     budget fits, at least 1 ms (`schedule::draw_delay_us`). The GPU term is
+     measured without blocking: each pass exports its primary fence as a
+     sync file and the event loop notes when it becomes readable
+     (`watch_gpu_time`); the estimate rises fast and falls slowly. A budget
+     that fits one period aims at the next VBlank; one that does not (a
+     120 Hz panel with a few ms of composite) aims at every second VBlank
+     and still starts as late as that allows, so the output holds a cadence
+     and clients keep most of a period to paint. Multi-GPU paths need a
+     buffer copy after rendering with no reliable duration estimate, so they
+     fire immediately instead.
 
    The effect is that clients get most of the frame period to paint, and Otto
    composes as late as it safely can.

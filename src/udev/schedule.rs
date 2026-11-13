@@ -50,6 +50,82 @@ pub(super) fn wake_idle_surface(
     !frame_scheduled && (animations_pending || seen_redraw_gen != redraw_gen)
 }
 
+/// The earliest a draw pass starts after a VBlank, in microseconds. Also the
+/// floor that keeps a surface from spinning when nothing fits.
+pub(super) const MIN_DRAW_DELAY_US: f32 = 1_000.0;
+
+/// Microseconds after a VBlank at which the draw pass starts.
+///
+/// The pass is scheduled as late as possible, so clients get most of the
+/// period to paint and input is picked up close to the flip, but it must
+/// still be *done* — CPU pass and the GPU work it submits — before the
+/// VBlank it aims at, or the flip slips. The budget is that time doubled
+/// (at least +1 ms) as the margin for variance.
+///
+/// A budget that fits one period aims at the next VBlank. One that does not
+/// (a 120 Hz panel with a few ms of composite, a GPU shared with busy
+/// clients) aims at the first VBlank it can make — every second one, say —
+/// and still starts as late as that allows. Drawing at the floor instead
+/// would flip whenever the GPU happens to finish, which lands on no
+/// cadence at all and leaves clients, whose callbacks follow the draw,
+/// almost nothing of the period to paint in: measured, that is 48 fps with
+/// a 31 ms p95 against a steady 60.
+pub(super) fn draw_delay_us(frame_period_us: f32, avg_cpu_us: f32, avg_gpu_us: f32) -> f32 {
+    let budget = draw_budget_us(avg_cpu_us, avg_gpu_us);
+    let periods = (budget / frame_period_us).ceil().max(1.0);
+    (periods * frame_period_us - budget).max(MIN_DRAW_DELAY_US)
+}
+
+/// The time a pass is given before the VBlank it aims at: its expected CPU
+/// and GPU time, doubled (at least +1 ms) as the margin for variance.
+pub(super) fn draw_budget_us(avg_cpu_us: f32, avg_gpu_us: f32) -> f32 {
+    let need = avg_cpu_us + avg_gpu_us;
+    need + need.max(MIN_DRAW_DELAY_US)
+}
+
+/// How long an idle surface waits before the pass a wake-up asks for,
+/// `since_vblank_us` after its last VBlank.
+///
+/// VBlanks keep their rhythm while the surface idles, so the pass is placed
+/// where the deadline would have put it: at `draw_delay_us` into the
+/// current period when that is still ahead, right away when the deadline
+/// has passed but the budget still fits before the VBlank, and otherwise
+/// at the next period's deadline. Drawing the moment a commit arrives
+/// instead sends the client its frame callback while the composite is
+/// still on the GPU; the two then slow each other, the client's next
+/// commit lands just after the VBlank, and the output settles at half
+/// rate — measured as a flat 60 on a 120 Hz panel, with the client's
+/// frame costing half as much again.
+pub(super) fn wake_delay_us(
+    since_vblank_us: f32,
+    frame_period_us: f32,
+    draw_delay_us: f32,
+    budget_us: f32,
+) -> f32 {
+    let phase = since_vblank_us.rem_euclid(frame_period_us);
+    if phase <= draw_delay_us {
+        draw_delay_us - phase
+    } else if phase + budget_us <= frame_period_us {
+        0.0
+    } else {
+        frame_period_us - phase + draw_delay_us
+    }
+}
+
+/// The running estimate of a pass's GPU time after a new measurement.
+///
+/// Rises fast and falls slowly: a pass that took longer than expected is
+/// evidence the next may too, and missing a VBlank costs a whole frame,
+/// while a short one is only slowly trusted. The CPU estimate uses a plain
+/// mean, its variance being far lower.
+pub(super) fn gpu_estimate_us(avg_us: f32, sample_us: f32) -> f32 {
+    if sample_us > avg_us {
+        avg_us + (sample_us - avg_us) * 0.5
+    } else {
+        avg_us * 0.9 + sample_us * 0.1
+    }
+}
+
 /// What follows a pass: `(frame_scheduled, reschedule_timer)`.
 ///
 /// A queued frame's VBlank decides what comes next. A pass that drew
@@ -289,5 +365,85 @@ mod tests {
         assert_eq!(after_pass(false, true, false), (false, false));
         assert_eq!(after_pass(false, true, true), (true, true));
         assert_eq!(after_pass(true, false, false), (true, false));
+    }
+
+    /// The draw starts late enough to keep latency low at 60 Hz, fits a
+    /// light frame into one 120 Hz period, and aims a heavy one at every
+    /// second VBlank — late, not at the floor.
+    #[test]
+    fn draw_deadline_counts_the_gpu() {
+        let at_60 = 1_000_000.0 / 60.0;
+        let at_120 = 1_000_000.0 / 120.0;
+        let close = |a: f32, b: f32| (a - b).abs() < 1e-2;
+        // Without a GPU measurement the deadline is the CPU-only one.
+        assert!(close(draw_delay_us(at_60, 1_500.0, 0.0), at_60 - 3_000.0));
+        // 1.5 ms of CPU and 3 ms of GPU: still 7.7 ms of slack at 60 Hz …
+        assert!(close(
+            draw_delay_us(at_60, 1_500.0, 3_000.0),
+            at_60 - 9_000.0
+        ));
+        // … and at 120 Hz a 9 ms budget does not fit one period: aim at the
+        // second VBlank, 7.7 ms in. The CPU-only deadline would have
+        // started 5.3 ms in and slipped every frame.
+        assert!(close(
+            draw_delay_us(at_120, 1_500.0, 3_000.0),
+            2.0 * at_120 - 9_000.0
+        ));
+        assert!(draw_delay_us(at_120, 1_500.0, 0.0) > 5_000.0);
+        // A light 120 Hz frame (0.3 ms CPU, 2 ms GPU) fits one period with
+        // its margin and starts 3.7 ms in.
+        assert!(close(
+            draw_delay_us(at_120, 300.0, 2_000.0),
+            at_120 - 4_600.0
+        ));
+        // Tiny frames still get the 1 ms margin and never dip under the floor.
+        assert!(close(draw_delay_us(at_120, 100.0, 100.0), at_120 - 1_200.0));
+        // A budget that is exactly whole periods would start at the VBlank
+        // itself; the floor keeps it 1 ms in. Heavier budgets just take more
+        // periods and stay at or above the floor.
+        assert_eq!(
+            draw_delay_us(at_120, at_120 / 4.0, at_120 / 4.0),
+            MIN_DRAW_DELAY_US
+        );
+        assert!(draw_delay_us(at_120, 8_000.0, 8_000.0) >= MIN_DRAW_DELAY_US);
+        assert!(draw_delay_us(at_120, 8_000.0, 8_000.0) < at_120);
+    }
+
+    /// A wake-up lands on the period's deadline, goes right away only when
+    /// the budget still fits before the VBlank, and otherwise waits for the
+    /// next deadline.
+    #[test]
+    fn wake_up_keeps_the_vblank_rhythm() {
+        let period = 1_000_000.0 / 120.0;
+        let delay = 3_000.0;
+        let budget = 4_000.0;
+        // 1 ms into the period: wait the remaining 2 ms to the deadline.
+        assert!(close_to(
+            wake_delay_us(1_000.0, period, delay, budget),
+            2_000.0
+        ));
+        // 4 ms in: the deadline passed, 4 ms of budget still fits — go now.
+        assert_eq!(wake_delay_us(4_000.0, period, delay, budget), 0.0);
+        // 6 ms in: too late for this VBlank, aim at the next deadline.
+        assert!(close_to(
+            wake_delay_us(6_000.0, period, delay, budget),
+            period - 6_000.0 + delay
+        ));
+        // A long idle keeps the rhythm: 100 periods plus 1 ms is 1 ms in
+        // (within f32 precision at that magnitude).
+        let after_idle = wake_delay_us(100.0 * period + 1_000.0, period, delay, budget);
+        assert!((after_idle - 2_000.0).abs() < 1.0, "{after_idle}");
+    }
+
+    /// A long pass raises the GPU estimate at once; a short one lowers it slowly.
+    #[test]
+    fn gpu_estimate_rises_fast_and_falls_slowly() {
+        assert_eq!(gpu_estimate_us(2_000.0, 6_000.0), 4_000.0);
+        assert!(close_to(gpu_estimate_us(6_000.0, 2_000.0), 5_600.0));
+        assert!(close_to(gpu_estimate_us(0.0, 0.0), 0.0));
+    }
+
+    fn close_to(a: f32, b: f32) -> bool {
+        (a - b).abs() < 1e-2
     }
 }

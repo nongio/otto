@@ -45,8 +45,28 @@ pub struct SceneElement {
     /// reload takes effect on the next frame. The compositor hands in its
     /// `occlusion_culling` setting; the renderer does not read configuration.
     occlusion_culling: fn() -> bool,
+    /// The blur inputs of each frosted shape when a pass last covered it
+    /// whole. See `draw`: a pass is grown over a shape only when these
+    /// changed since.
+    kept_blur_inputs: Rc<RefCell<std::collections::HashMap<layers::engine::NodeRef, u64>>>,
     #[cfg(feature = "perf-counters")]
     perf_stats: Rc<RefCell<ScenePerfStats>>,
+}
+
+/// Hashes the rectangles that make up a frosted shape's blur inputs; see
+/// `SceneElement::kept_blur_inputs`.
+fn hash_rects<'a>(rects: impl IntoIterator<Item = &'a layers::skia::Rect>, extra: &[f32]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    for r in rects {
+        for v in [r.left, r.top, r.right, r.bottom] {
+            v.to_bits().hash(&mut h);
+        }
+    }
+    for v in extra {
+        v.to_bits().hash(&mut h);
+    }
+    h.finish()
 }
 
 /// Longest step the engine clock advances on the first tick after an idle
@@ -66,6 +86,7 @@ impl SceneElement {
             output_root: None,
             subtree_origin: None,
             occlusion_culling,
+            kept_blur_inputs: Rc::new(RefCell::new(std::collections::HashMap::new())),
             #[cfg(feature = "perf-counters")]
             perf_stats: Rc::new(RefCell::new(ScenePerfStats::new())),
         }
@@ -454,29 +475,89 @@ impl SceneElement {
         // frame's — the shape's own frost among them — so a pass that covers
         // part of the shape blurs frost into frost and leaves a seam where it
         // stopped, and lay-rs keeps a seam-free blurred backdrop only from a
-        // pass that covered the whole shape. Every pass that touches a
-        // `BackgroundBlur` shape is grown to cover it, and passes that then
-        // overlap are merged, so the frost is blurred once, in one piece.
+        // pass that covered the whole shape. Once it has kept one, a partial
+        // pass replays it without a seam, and lay-rs itself lists the whole
+        // shape among the damage when what lies beneath changes. So a pass
+        // that touches a `BackgroundBlur` shape is grown to cover it only
+        // when its kept blur is stale: the shape is new, moved, resized, its
+        // opaque region changed, or damage landed beneath it (lay-rs bumps its
+        // backdrop generation) since a pass last covered it whole — or when
+        // lay-rs cannot keep its blur at all. Passes that then overlap are
+        // merged, so the frost is blurred once, in one piece. Growing it on
+        // every frame repainted a whole frosted window under any small
+        // animation above it: a 900×995 bench window under a moving test
+        // window cost 1.6 ms of GPU per frame.
         let (dx, dy) = translate.unwrap_or((0.0, 0.0));
-        let blur_shapes: Vec<layers::skia::IRect> = scene.with_arena(|arena| {
-            arena
+        let shapes_with_inputs: Vec<(layers::engine::NodeRef, layers::skia::IRect, u64, bool)> =
+            scene.with_arena(|arena| {
+                arena
+                    .iter_node_ids()
+                    .filter_map(|id| {
+                        let node = arena.get(id)?;
+                        if node.is_removed() || node.get().hidden() {
+                            return None;
+                        }
+                        let layer = node.get().render_layer();
+                        if layer.blend_mode != layers::prelude::BlendMode::BackgroundBlur
+                            || layer.premultiplied_opacity <= 0.0
+                        {
+                            return None;
+                        }
+                        let b = layer.global_transformed_bounds.with_offset((dx, dy));
+                        let ir: layers::skia::IRect = layers::skia::RoundOut::round_out(&b);
+                        // What a kept blur of this shape was produced from,
+                        // short of what lies beneath it: its place on the
+                        // output, its shape and what of it the content
+                        // leaves to the frost. lay-rs keys its kept blur on
+                        // the same, and asks for a whole repaint itself when
+                        // the backdrop beneath changes.
+                        let mut rects = vec![b, *layer.rbounds.rect()];
+                        rects.extend(layer.blur_bounds.map(|r| *r.rect()));
+                        rects.extend(layer.opaque_region.iter().copied());
+                        // The backdrop generation is what lay-rs bumps when
+                        // damage lands beneath the shape: the kept blur is
+                        // stale then, and a partial pass would blur part of
+                        // the shape afresh and leave a seam.
+                        let mut extra = vec![
+                            layer.size.width,
+                            layer.size.height,
+                            f32::from_bits(layer.backdrop_generation as u32),
+                            f32::from_bits((layer.backdrop_generation >> 32) as u32),
+                        ];
+                        for corner in [
+                            layers::skia::rrect::Corner::UpperLeft,
+                            layers::skia::rrect::Corner::UpperRight,
+                            layers::skia::rrect::Corner::LowerRight,
+                            layers::skia::rrect::Corner::LowerLeft,
+                        ] {
+                            let radius = layer.rbounds.radii(corner);
+                            extra.push(radius.x);
+                            extra.push(radius.y);
+                        }
+                        let inputs = hash_rects(rects.iter(), &extra);
+                        // A blur lay-rs cannot keep — a fading layer, drawn
+                        // in a group, or one under an image-cached ancestor,
+                        // drawn offscreen — is blurred afresh by every pass
+                        // and so always needs the whole shape.
+                        let keepable = layer.premultiplied_opacity >= 1.0
+                            && !id.ancestors(arena).skip(1).any(|ancestor| {
+                                arena
+                                    .get(ancestor)
+                                    .is_some_and(|n| !n.is_removed() && n.get().is_image_cached())
+                            });
+                        (!ir.is_empty()).then_some((NodeRef(id), ir, inputs, keepable))
+                    })
+                    .collect()
+            });
+        let blur_shapes: Vec<layers::skia::IRect> = {
+            let mut kept = self.kept_blur_inputs.borrow_mut();
+            kept.retain(|node, _| shapes_with_inputs.iter().any(|(n, _, _, _)| n == node));
+            shapes_with_inputs
                 .iter()
-                .filter(|node| !node.is_removed())
-                .map(|node| node.get())
-                .filter(|node| !node.hidden())
-                .map(|node| node.render_layer())
-                .filter(|layer| {
-                    layer.blend_mode == layers::prelude::BlendMode::BackgroundBlur
-                        && layer.premultiplied_opacity > 0.0
-                })
-                .map(|layer| {
-                    let b = layer.global_transformed_bounds.with_offset((dx, dy));
-                    let ir: layers::skia::IRect = layers::skia::RoundOut::round_out(&b);
-                    ir
-                })
-                .filter(|r| !r.is_empty())
+                .filter(|(node, _, inputs, keepable)| !keepable || kept.get(node) != Some(inputs))
+                .map(|(_, shape, _, _)| *shape)
                 .collect()
-        });
+        };
         let hits = |a: &layers::skia::IRect, b: &layers::skia::IRect| {
             a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom
         };
@@ -525,6 +606,13 @@ impl SceneElement {
             for rect in rects.iter_mut() {
                 if let Some(clipped) = layers::skia::IRect::intersect(rect, &output_clip) {
                     *rect = clipped;
+                }
+            }
+            let mut kept = self.kept_blur_inputs.borrow_mut();
+            for (node, shape, inputs, _) in &shapes_with_inputs {
+                let clipped = layers::skia::IRect::intersect(shape, &output_clip).unwrap_or(*shape);
+                if rects.iter().any(|rect| covers(rect, &clipped)) {
+                    kept.insert(*node, *inputs);
                 }
             }
         }

@@ -236,8 +236,15 @@ the Skia handle that reads it. On each submit, `Graveyard::reap`:
    stamping it with the serial of the frame just submitted;
 2. destroys the entry once the GPU has completed that serial.
 
-Plane slot images go through a similar queue (`PlaneTextureRelease`), drained
-in `flush_planes_for_scanout` after a CPU sync.
+Plane slot images go through a small queue of their own (`PlaneTextureRelease`):
+`flush_planes_for_scanout` moves them into the graveyard with no Skia handle
+left to watch, so they go once the GPU completes the frame submitted then.
+
+`flush_planes_for_scanout` itself does not wait for the GPU. It submits the
+plane draws, signals a sync file after them and attaches it to every plane
+dmabuf rendered this frame (`note_scanout_write`) as a write fence, which the
+atomic commit honours through implicit sync. The CPU waits only when no sync
+file can be exported or attached — then once, and every frame after it.
 
 ### Copies and read-back
 
