@@ -394,9 +394,10 @@ impl<BackendData: Backend>
                 }
             }
             zwlr_foreign_toplevel_handle_v1::Request::SetMinimized => {
+                // The same path as the window's own minimise: it leaves
+                // fullscreen first and hands focus on.
                 if let Some(window) = state.workspaces.get_window_for_surface(&window_id).cloned() {
-                    state.demote_scanout_window(&window);
-                    state.workspaces.minimize_window(&window);
+                    state.minimize_window_element(&window);
                 }
             }
             zwlr_foreign_toplevel_handle_v1::Request::UnsetMinimized => {

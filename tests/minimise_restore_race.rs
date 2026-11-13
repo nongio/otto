@@ -110,6 +110,91 @@ mod minimise_restore_race_tests {
         check(SETTLED);
     }
 
+    /// Minimising a fullscreen window leaves fullscreen first: the user is
+    /// back on the workspace the window came from, the fullscreen one is gone,
+    /// and the window, in the dock, comes back windowed when restored.
+    #[test]
+    #[serial]
+    fn minimising_a_fullscreen_window_leaves_fullscreen() {
+        // Settled in fullscreen first, and halfway into it.
+        for frames_in in [usize::MAX, 6] {
+            let handle = HeadlessHandle::start(HeadlessConfig::default());
+            let mut client = TestClient::connect(&handle.socket_name).expect("connect");
+            let toplevel = client.create_toplevel(TITLE, 600, 400);
+            handle.wait(Duration::from_millis(100));
+            client.roundtrip().expect("roundtrip");
+            toplevel.lock().unwrap().commit_frame();
+            client.roundtrip().expect("roundtrip");
+            handle.settle(300);
+            handle.move_window(TITLE, 200, 150);
+            let _ = client.roundtrip();
+            run_out(&handle);
+            let workspaces = || {
+                handle.query(|state| {
+                    let ows = state.workspaces.output_workspaces.values().next().unwrap();
+                    (ows.current_workspace, ows.workspace_views.len())
+                })
+            };
+            let (_, count0) = workspaces();
+            let (w0, h0, _, _) = window_state(&handle);
+
+            handle.fullscreen_window(TITLE);
+            let _ = client.roundtrip();
+            if frames_in == usize::MAX {
+                run_out(&handle);
+                assert!(
+                    handle.window_is_fullscreen(TITLE),
+                    "the window went fullscreen"
+                );
+            } else {
+                for _ in 0..frames_in {
+                    handle.tick(1.0 / 60.0);
+                }
+            }
+            handle.with_state(|state| {
+                let window = state
+                    .workspaces
+                    .windows_map
+                    .values()
+                    .find(|w| w.xdg_title() == TITLE)
+                    .cloned()
+                    .unwrap();
+                state.minimize_window_element(&window);
+            });
+            let _ = client.roundtrip();
+            run_out(&handle);
+
+            let what = if frames_in == usize::MAX {
+                "settled"
+            } else {
+                "mid-transition"
+            };
+            let (current, count) = workspaces();
+            assert_eq!(current, 0, "{what}: back on the window's own workspace");
+            assert_eq!(count, count0, "{what}: the fullscreen workspace is gone");
+            let (_, h, hidden, listed) = window_state(&handle);
+            assert!(
+                listed && !hidden && h < h0 / 4.0,
+                "{what}: the window is in the dock"
+            );
+
+            handle.unminimize_window(TITLE);
+            let _ = client.roundtrip();
+            run_out(&handle);
+            let (w, h, hidden, listed) = window_state(&handle);
+            assert!(!listed && !hidden, "{what}: restored");
+            assert!(
+                !handle.window_is_fullscreen(TITLE),
+                "{what}: restored windowed"
+            );
+            assert!(
+                (w - w0).abs() < 2.0 && (h - h0).abs() < 2.0,
+                "{what}: restored at {w}x{h}, not its own {w0}x{h0}"
+            );
+            handle.stop();
+        }
+    }
+
     /// Going fullscreen parks the window above everything for the transition
     /// and moves it into its fullscreen workspace when the transition ends. A
     /// window minimised before then is in its dock drawer by that time, and
