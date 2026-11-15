@@ -205,12 +205,11 @@ too_many_arguments = "allow"
 # is a one-line change here instead of an edit per component — and no member
 # can drift onto a different revision and pull a second copy into the link.
 #
-# Pinned to main until the next release: pictures kept across scale changes
-# and nested arena reads that no longer deadlock (nongio/layers#32), mirrors
-# that repaint only when their leader changes and refresh when shown (#33),
-# and a layer's opacity applied once (it was squared), with subpixel text kept
-# through fades and frosted fades on an output that declares a layout (#34).
-# Before that, v1.18.2
+# v1.19.0: pictures kept across scale changes and nested arena reads that no
+# longer deadlock (nongio/layers#32), mirrors that repaint only when their
+# leader changes and refresh when shown (#33), and a layer's opacity applied
+# once (it was squared), with subpixel text kept through fades and frosted
+# fades on an output that declares a layout (#34). Before that, v1.18.2
 # (drops the unused puffin_http dependency, #30). v1.18.1
 # (nongio/layers#28, #29, blur fade-in fix): kept blurred backdrops, clipped
 # damage, opaque regions and the Vulkan render target; v1.17.0 (#27) takes the
@@ -222,7 +221,7 @@ too_many_arguments = "allow"
 # For local development point this at the checkout — one edit, whole workspace:
 #   laye-rs = { path = "../layers", features = ["export-taffy"] }
 [workspace.dependencies]
-laye-rs = { git = "https://github.com/nongio/layers", rev = "d29528ff0c1ae796b0eae43ee5c269cc4b0a2c0d", features = [
+laye-rs = { git = "https://github.com/nongio/layers", tag = "v1.19.0", features = [
     "export-taffy",
 ] }
 
