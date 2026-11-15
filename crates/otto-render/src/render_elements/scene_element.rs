@@ -47,11 +47,18 @@ pub struct SceneElement {
     occlusion_culling: fn() -> bool,
     /// The blur inputs of each frosted shape when a pass last covered it
     /// whole. See `draw`: a pass is grown over a shape only when these
-    /// changed since.
-    kept_blur_inputs: Rc<RefCell<std::collections::HashMap<layers::engine::NodeRef, u64>>>,
+    /// changed since. Shared by the per-frame clones so it outlives them,
+    /// and keyed by the clone's `output_root` too: a pass of one plane
+    /// subtree says nothing about the frost another subtree draws.
+    kept_blur_inputs: Rc<RefCell<KeptBlurInputs>>,
     #[cfg(feature = "perf-counters")]
     perf_stats: Rc<RefCell<ScenePerfStats>>,
 }
+
+/// Blur inputs by (element root, frosted shape); see
+/// `SceneElement::kept_blur_inputs`.
+type KeptBlurInputs =
+    std::collections::HashMap<(Option<layers::engine::NodeRef>, layers::engine::NodeRef), u64>;
 
 /// Hashes the rectangles that make up a frosted shape's blur inputs; see
 /// `SceneElement::kept_blur_inputs`.
@@ -86,7 +93,7 @@ impl SceneElement {
             output_root: None,
             subtree_origin: None,
             occlusion_culling,
-            kept_blur_inputs: Rc::new(RefCell::new(std::collections::HashMap::new())),
+            kept_blur_inputs: Rc::new(RefCell::new(KeptBlurInputs::new())),
             #[cfg(feature = "perf-counters")]
             perf_stats: Rc::new(RefCell::new(ScenePerfStats::new())),
         }
@@ -551,10 +558,14 @@ impl SceneElement {
             });
         let blur_shapes: Vec<layers::skia::IRect> = {
             let mut kept = self.kept_blur_inputs.borrow_mut();
-            kept.retain(|node, _| shapes_with_inputs.iter().any(|(n, _, _, _)| n == node));
+            kept.retain(|(root, node), _| {
+                *root != self.output_root || shapes_with_inputs.iter().any(|(n, _, _, _)| n == node)
+            });
             shapes_with_inputs
                 .iter()
-                .filter(|(node, _, inputs, keepable)| !keepable || kept.get(node) != Some(inputs))
+                .filter(|(node, _, inputs, keepable)| {
+                    !keepable || kept.get(&(self.output_root, *node)) != Some(inputs)
+                })
                 .map(|(_, shape, _, _)| *shape)
                 .collect()
         };
@@ -612,7 +623,7 @@ impl SceneElement {
             for (node, shape, inputs, _) in &shapes_with_inputs {
                 let clipped = layers::skia::IRect::intersect(shape, &output_clip).unwrap_or(*shape);
                 if rects.iter().any(|rect| covers(rect, &clipped)) {
-                    kept.insert(*node, *inputs);
+                    kept.insert((self.output_root, *node), *inputs);
                 }
             }
         }
