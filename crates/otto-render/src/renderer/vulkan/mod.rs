@@ -76,6 +76,13 @@ use self::{
 };
 use crate::renderer::{skia_surface::surface_props, SkiaSurface};
 
+/// Skia's resource cache budget: room for exposé's scratch targets on a
+/// large output, so they are reused from frame to frame (see `new`).
+const RESOURCE_CACHE_BYTES: usize = 768 << 20;
+
+/// How long a cached resource may go unused before Skia frees it.
+const RESOURCE_IDLE_RELEASE: std::time::Duration = std::time::Duration::from_secs(10);
+
 /// Device extensions the renderer needs, all of them passed on to Skia.
 const DEVICE_EXTENSIONS: [&CStr; 6] = [
     ash::khr::external_memory_fd::NAME,
@@ -298,7 +305,14 @@ impl SkiaVkRenderer {
             QueueType::Graphics,
             false,
         )?;
-        let context = context::create(phd, &device, &DEVICE_EXTENSIONS, &features)?;
+        let mut context = context::create(phd, &device, &DEVICE_EXTENSIONS, &features)?;
+        // Skia's default budget (256 MiB) is less than an animated exposé
+        // keeps in flight on one 2880×1920 output (about 420 MiB with six
+        // windows): over it, the cache frees its full-screen scratch targets
+        // after every frame and allocates them again on the next — three
+        // 32 MiB GEM objects a frame, ~12 ms of CPU, and the animation at
+        // half rate. Unused resources are handed back in `submit_target`.
+        context.set_resource_cache_limit(RESOURCE_CACHE_BYTES);
 
         // The device lists alpha formats only; an `X` fourcc shares its
         // Vulkan format with its alpha twin, so it is offered alongside.
@@ -454,7 +468,63 @@ impl SkiaVkRenderer {
             None => SyncPoint::signaled(),
         };
         self.reap();
+        // The larger budget is a ceiling, not a reservation: what no frame
+        // has used for a while (an exposé closed, a window gone) goes back.
+        self.ctx()
+            .perform_deferred_cleanup(RESOURCE_IDLE_RELEASE, None);
+        self.debug_gpu_memory();
         Ok(sync)
+    }
+
+    /// The Vulkan twin of the GL renderer's report: `touch /tmp/otto-gpumem`
+    /// logs Skia's resource cache and lay-rs' node surfaces once a second,
+    /// and `echo <MiB> > /tmp/otto-skia-cache-mb` sets the cache budget, for
+    /// telling a cache that churns (frees and reallocates its scratch
+    /// targets every frame) from one that is merely big.
+    fn debug_gpu_memory(&mut self) {
+        if !crate::debug_hooks::ENABLED {
+            return;
+        }
+        if let Some(text) = crate::debug_hooks::take_file("/tmp/otto-skia-cache-mb") {
+            if let Ok(mib) = text.trim().parse::<usize>() {
+                self.ctx().set_resource_cache_limit(mib << 20);
+                tracing::info!(target: "otto::gpumem", "skia cache limit set to {mib} MiB");
+            }
+        }
+        if !crate::debug_hooks::toggle("/tmp/otto-gpumem") {
+            return;
+        }
+        thread_local! {
+            static LAST: std::cell::Cell<Option<std::time::Instant>> = const { std::cell::Cell::new(None) };
+        }
+        let due = LAST.with(|last| {
+            let due = last
+                .get()
+                .is_none_or(|t| t.elapsed() >= std::time::Duration::from_secs(1));
+            if due {
+                last.set(Some(std::time::Instant::now()));
+            }
+            due
+        });
+        if !due {
+            return;
+        }
+        let ctx = self.ctx();
+        let usage = ctx.resource_cache_usage();
+        let purgeable = ctx.resource_cache_purgeable_bytes();
+        let limit = ctx.resource_cache_limit();
+        let (node_surfaces, node_surface_bytes) = layers::drawing::node_surfaces_stats();
+        tracing::info!(
+            target: "otto::gpumem",
+            "skia cache: {} resources, {} MiB used, {} MiB purgeable, {} MiB limit; \
+             lay-rs node surfaces: {node_surfaces}, {} MiB; client imports: {}",
+            usage.resource_count,
+            usage.resource_bytes >> 20,
+            purgeable >> 20,
+            limit >> 20,
+            node_surface_bytes >> 20,
+            self.dmabuf_cache.len(),
+        );
     }
 
     /// Flushes what was drawn into, or read from, `target`.
