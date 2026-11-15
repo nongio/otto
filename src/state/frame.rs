@@ -364,6 +364,13 @@ fn send_frame_callbacks_to<B: crate::state::Backend>(
     }
     let outputs: Vec<Output> = state.workspaces.outputs().cloned().collect();
     if let Some(window) = state.workspaces.get_window_for_surface(key).cloned() {
+        // A window that left every space (minimised) is no longer refreshed
+        // by the VBlank send, so its entry still says full rate. Its tier's
+        // throttle is the VBlank path's to apply: forget it until it maps.
+        if !state.workspaces.spaces_elements().any(|w| w.id() == *key) {
+            state.frame_callback_log.remove(key);
+            return;
+        }
         for output in &outputs {
             window.send_frame(output, now, None, |_, _| Some(output.clone()));
         }
