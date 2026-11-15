@@ -1,0 +1,11 @@
+{{/* Cloudflare Web Analytics: counts page views without cookies or
+     local storage and without fingerprinting the visitor, so it needs no
+     consent banner. The token is the site's public beacon token, set as
+     the CF_BEACON_TOKEN repository variable and handed to Hugo by the
+     Pages workflow. Local builds and `hugo server` leave it out. */}}
+{{ with site.Params.cfBeaconToken }}
+{{ if hugo.IsProduction }}
+<script defer src="https://static.cloudflareinsights.com/beacon.min.js"
+        data-cf-beacon='{"token": "{{ . }}"}'></script>
+{{ end }}
+{{ end }}

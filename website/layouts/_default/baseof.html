@@ -104,5 +104,6 @@
         <script type="module" src="{{ $search.Permalink }}"
                 data-bundle="{{ "pagefind/pagefind.js" | absURL }}"
                 data-base="{{ (urls.Parse (absURL "")).Path }}"></script>
+        {{ partial "analytics.html" . }}
     </body>
 </html>
