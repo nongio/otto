@@ -92,6 +92,8 @@ struct Ui {
     error: Option<String>,
     /// An Apply is on its way.
     applying: bool,
+    /// Why the last VPN import did not take.
+    import_error: Option<String>,
 }
 
 /// Edits to one connection's TCP/IP and DNS, not yet applied.
@@ -111,6 +113,7 @@ static UI: Mutex<Ui> = Mutex::new(Ui {
     draft: None,
     error: None,
     applying: false,
+    import_error: None,
 });
 
 fn ui() -> std::sync::MutexGuard<'static, Ui> {
@@ -136,16 +139,20 @@ fn in_background(name: &str, work: impl FnOnce() + Send + 'static) {
     }
 }
 
-/// Follow NetworkManager for as long as the app runs. Off screen a change
-/// waits for the pane to be shown, which reads anyway.
+/// Follow NetworkManager for as long as the app runs, once the pane has
+/// been shown. Changes cost little (see `otto_network::follow`), and off
+/// screen they only update what the pane shows next.
 fn watch() {
     if WATCHING.swap(true, Ordering::Relaxed) {
         return;
     }
     in_background("network-watch", || {
-        let result = otto_network::blocking::watch(|| {
+        // The snapshot comes with the change: reading again from in here
+        // would start a runtime inside the one `follow` runs on.
+        let result = otto_network::blocking::follow(|snapshot| {
+            *SNAPSHOT.write().unwrap() = Read::Ready(Box::new(snapshot.clone()));
             if SHOWN.load(Ordering::Relaxed) {
-                reload();
+                settings_client::request_redraw();
             }
         });
         if let Err(why) = result {
@@ -511,15 +518,21 @@ pub fn apply(id: &str, value: &Value) -> bool {
         }
         (DNS_SEARCH_ID, Value::Text(text)) => {
             let domains = split_list(text);
+            // Both families: a family that is off ignores its own, and an
+            // IPv6-only connection needs them on IPv6.
             edit(|draft| {
                 draft.v4.dns_search = domains.clone();
-                draft.v6.dns_search = Vec::new();
+                draft.v6.dns_search = domains.clone();
             });
             return true;
         }
         _ => {}
     }
-    if let Some(path) = id.strip_prefix(SAVED_ROW) {
+    if id.starts_with(SAVED_ROW) {
+        let Some(path) = slot_path(id) else {
+            return true;
+        };
+        let path = path.as_str();
         if let Value::Bool(on) = *value {
             if let Read::Ready(snapshot) = &mut *SNAPSHOT.write().unwrap() {
                 if let Some(saved) = snapshot.saved.iter_mut().find(|s| s.path == path) {
@@ -533,7 +546,11 @@ pub fn apply(id: &str, value: &Value) -> bool {
         }
         return true;
     }
-    if let Some(path) = id.strip_prefix(VPN_ROW) {
+    if id.starts_with(VPN_ROW) {
+        let Some(path) = slot_path(id) else {
+            return true;
+        };
+        let path = path.as_str();
         if let Value::Bool(on) = *value {
             let active = match &*SNAPSHOT.read().unwrap() {
                 Read::Ready(snapshot) => snapshot
@@ -601,13 +618,12 @@ pub fn press(row: &str, button: &str) {
     ui().applying = true;
     settings_client::request_redraw();
     in_background("network-apply", move || {
-        let mut result = Ok(());
-        if draft.v4 != saved.ipv4 {
-            result = otto_network::blocking::set_ip_config(&draft.profile, Family::V4, &draft.v4);
-        }
-        if result.is_ok() && draft.v6 != saved.ipv6 {
-            result = otto_network::blocking::set_ip_config(&draft.profile, Family::V6, &draft.v6);
-        }
+        // Both families in one update: neither is saved without the other.
+        let result = if draft.v4 != saved.ipv4 || draft.v6 != saved.ipv6 {
+            otto_network::blocking::set_ip_config(&draft.profile, &draft.v4, &draft.v6)
+        } else {
+            Ok(())
+        };
         {
             let mut ui = ui();
             ui.applying = false;
@@ -660,21 +676,37 @@ fn import_vpn() {
             let Some(path) = path else {
                 return;
             };
-            let Some(kind) = vpn_kind(&path) else {
-                eprintln!("network: {} is not a VPN file", path.display());
-                return;
+            let error = match vpn_kind(&path) {
+                None => Some(otto_kit::t!("settings-network-vpn-import-unknown").to_string()),
+                Some(kind) => {
+                    let output = std::process::Command::new("nmcli")
+                        .args(["connection", "import", "type", kind, "file"])
+                        .arg(&path)
+                        .stdin(std::process::Stdio::null())
+                        .output();
+                    match output {
+                        Ok(output) if output.status.success() => None,
+                        // nmcli says why on its error stream, in the
+                        // person's language: its first line is the reason.
+                        Ok(output) => Some(otto_kit::t_owned!(
+                            "settings-network-vpn-import-failed",
+                            reason = String::from_utf8_lossy(&output.stderr)
+                                .lines()
+                                .find(|line| !line.trim().is_empty())
+                                .unwrap_or_default()
+                                .trim()
+                                .to_string()
+                        )),
+                        Err(_) => {
+                            Some(otto_kit::t!("settings-network-vpn-import-no-nmcli").to_string())
+                        }
+                    }
+                }
             };
-            let status = std::process::Command::new("nmcli")
-                .args(["connection", "import", "type", kind, "file"])
-                .arg(&path)
-                .stdin(std::process::Stdio::null())
-                .stdout(std::process::Stdio::null())
-                .status();
-            match status {
-                Ok(status) if status.success() => {}
-                Ok(status) => eprintln!("network: importing {} failed ({status})", path.display()),
-                Err(why) => eprintln!("network: cannot run nmcli: {why}"),
+            if let Some(error) = &error {
+                eprintln!("network: importing {}: {error}", path.display());
             }
+            ui().import_error = error;
             reload();
         });
     if let Err(err) = spawned {
@@ -684,11 +716,14 @@ fn import_vpn() {
 
 /// A press on a row's Forget.
 pub fn remove(id: &str) {
-    let (path, vpn) = match (id.strip_prefix(SAVED_ROW), id.strip_prefix(VPN_ROW)) {
-        (Some(path), _) => (path, false),
-        (_, Some(path)) => (path, true),
-        _ => return,
+    let vpn = id.starts_with(VPN_ROW);
+    if !vpn && !id.starts_with(SAVED_ROW) {
+        return;
+    }
+    let Some(path) = slot_path(id) else {
+        return;
     };
+    let path = path.as_str();
     if let Read::Ready(snapshot) = &mut *SNAPSHOT.write().unwrap() {
         if vpn {
             snapshot.vpns.retain(|v| v.path != path);
@@ -739,6 +774,48 @@ fn error_text(error: &IpError, family: Family) -> String {
 // Rows
 // ---------------------------------------------------------------------------
 
+/// How many saved networks, and how many VPNs, get rows that can be
+/// switched and forgotten. Rows are named by place (`network.saved.3`), not
+/// by object path: NetworkManager's paths keep counting up as connections
+/// are made again, and a name per path would be a new string each time.
+const SLOTS: usize = 128;
+
+/// The row identifiers for `prefix`, made once.
+fn row_ids(prefix: &'static str) -> &'static [&'static str] {
+    static MADE: OnceLock<Mutex<HashMap<&'static str, &'static [&'static str]>>> = OnceLock::new();
+    let mut made = MADE.get_or_init(Default::default).lock().unwrap();
+    made.entry(prefix).or_insert_with(|| {
+        Vec::leak(
+            (0..SLOTS)
+                .map(|i| &*format!("{prefix}{i}").leak())
+                .collect(),
+        )
+    })
+}
+
+/// Which connection each row identifier names, as the pane was last built.
+static SLOT_PATHS: Mutex<Vec<(&'static str, String)>> = Mutex::new(Vec::new());
+
+/// The identifier for the `index`th row under `prefix`, naming `path`.
+/// `None` past the last slot: that row shows, but cannot be changed.
+fn slot(prefix: &'static str, index: usize, path: &str) -> Option<&'static str> {
+    let id = *row_ids(prefix).get(index)?;
+    let mut paths = SLOT_PATHS.lock().unwrap();
+    paths.retain(|(slot, _)| *slot != id);
+    paths.push((id, path.to_string()));
+    Some(id)
+}
+
+/// The connection a row identifier names.
+fn slot_path(id: &str) -> Option<String> {
+    SLOT_PATHS
+        .lock()
+        .unwrap()
+        .iter()
+        .find(|(slot, _)| *slot == id)
+        .map(|(_, path)| path.clone())
+}
+
 /// `text` as a `&'static str`, kept once however often it is asked for: a
 /// row's label and identifier are static, and the model is rebuilt every
 /// frame.
@@ -775,21 +852,6 @@ fn device_state(kind: DeviceKind, state: DeviceState) -> &'static str {
         (DeviceKind::Wifi, DeviceState::Unavailable) => otto_kit::t!("settings-network-state-off"),
         (_, DeviceState::Failed) => otto_kit::t!("settings-network-state-failed"),
         _ => otto_kit::t!("settings-network-state-disconnected"),
-    }
-}
-
-/// A rate in kbit/s, as the bar writes it.
-fn rate(kbps: u64) -> String {
-    let mbps = kbps / 1000;
-    if mbps >= 1000 {
-        let gbps = mbps as f64 / 1000.0;
-        if (gbps - gbps.round()).abs() < 0.05 {
-            format!("{} Gb/s", gbps.round())
-        } else {
-            format!("{gbps:.1} Gb/s")
-        }
-    } else {
-        format!("{mbps} Mb/s")
     }
 }
 
@@ -842,8 +904,6 @@ fn wifi_groups(snapshot: &Snapshot) -> Vec<Group> {
     groups.push(untitled(vec![
         switch,
         value(otto_kit::t!("settings-network-current"), current),
-        Row::new(otto_kit::t!("settings-show-network"), Control::Toggle(true))
-            .id("topbar.show_network"),
     ]));
 
     // The link, in the detail macOS keeps behind Option-click.
@@ -866,7 +926,7 @@ fn wifi_groups(snapshot: &Snapshot) -> Vec<Group> {
         if let Some(kbps) = wifi.bitrate_kbps {
             rows.push(value(
                 otto_kit::t!("settings-network-link-rate"),
-                rate(u64::from(kbps)),
+                otto_network::format_rate(u64::from(kbps)),
             ));
         }
         rows.push(value(
@@ -924,19 +984,19 @@ fn known_group(snapshot: &Snapshot) -> Group {
     let rows = snapshot
         .saved
         .iter()
-        .map(|saved| {
+        .enumerate()
+        .map(|(index, saved)| {
             let detail = if saved.in_use {
                 otto_kit::t!("settings-network-known-in-use")
             } else {
                 otto_kit::t!("settings-network-known-detail")
             };
-            bound(
-                Row::new(intern(saved.name()), Control::Toggle(saved.autoconnect))
-                    .removable(true)
-                    .remove_label(otto_kit::t!("settings-network-forget"))
-                    .detail(detail),
-                intern(format!("{SAVED_ROW}{}", saved.path)),
-            )
+            let mut row = Row::new(intern(saved.name()), Control::Toggle(saved.autoconnect))
+                .remove_label(otto_kit::t!("settings-network-forget"))
+                .detail(detail);
+            row.id = slot(SAVED_ROW, index, &saved.path);
+            let removable = row.id.is_some();
+            row.removable(removable)
         })
         .collect();
     group(otto_kit::t!("settings-group-network-known"), rows)
@@ -951,7 +1011,10 @@ fn ethernet_groups(snapshot: &Snapshot) -> Vec<Group> {
         .flat_map(|device| {
             let mut state = device_state(device.kind, device.state).to_string();
             if let (DeviceState::Connected, Some(speed)) = (device.state, device.speed_mbps) {
-                state = format!("{state} · {}", rate(u64::from(speed) * 1000));
+                state = format!(
+                    "{state} · {}",
+                    otto_network::format_rate(u64::from(speed) * 1000)
+                );
             }
             let mut rows = vec![Row::new(
                 intern(device.interface.clone()),
@@ -991,7 +1054,10 @@ fn vpn_groups(snapshot: &Snapshot) -> Vec<Group> {
             otto_kit::t!("settings-network-vpn-add"),
             Control::Button(IMPORT.get_or_init(|| [otto_kit::t!("settings-network-vpn-import")])),
         )
-        .detail(otto_kit::t!("settings-network-vpn-add-detail")),
+        .detail(match ui().import_error.clone() {
+            Some(error) => std::borrow::Cow::Owned(error),
+            None => otto_kit::t!("settings-network-vpn-add-detail").into(),
+        }),
         IMPORT_ID,
     );
     if snapshot.vpns.is_empty() {
@@ -1003,28 +1069,40 @@ fn vpn_groups(snapshot: &Snapshot) -> Vec<Group> {
     let rows = snapshot
         .vpns
         .iter()
-        .map(|vpn| {
+        .enumerate()
+        .map(|(index, vpn)| {
             let detail = match vpn.state {
                 LinkState::Connected => otto_kit::t!("settings-network-state-connected"),
                 LinkState::Connecting => otto_kit::t!("settings-network-state-connecting"),
                 LinkState::Idle => otto_kit::t!("settings-network-state-disconnected"),
             };
-            bound(
-                Row::new(
-                    intern(vpn.id.clone()),
-                    Control::Toggle(vpn.state != LinkState::Idle),
-                )
-                .detail(detail)
-                .removable(true)
-                .remove_label(otto_kit::t!("settings-network-forget")),
-                intern(format!("{VPN_ROW}{}", vpn.path)),
+            let mut row = Row::new(
+                intern(vpn.id.clone()),
+                Control::Toggle(vpn.state != LinkState::Idle),
             )
+            .detail(detail)
+            .remove_label(otto_kit::t!("settings-network-forget"));
+            row.id = slot(VPN_ROW, index, &vpn.path);
+            let removable = row.id.is_some();
+            row.removable(removable)
         })
         .collect();
     vec![
         group(otto_kit::t!("settings-group-network-vpn"), rows),
         untitled(vec![import]),
     ]
+}
+
+/// The search domains of both families, each once, IPv4's first: an edit
+/// writes the same list to both.
+fn search_domains(draft: &Draft) -> Vec<String> {
+    let mut domains: Vec<String> = Vec::new();
+    for domain in draft.v4.dns_search.iter().chain(&draft.v6.dns_search) {
+        if !domains.contains(domain) {
+            domains.push(domain.clone());
+        }
+    }
+    domains
 }
 
 /// The TCP/IP and DNS groups for `profile`. `live` is the connection's
@@ -1145,16 +1223,7 @@ fn editor(
         bound(
             Row::new(
                 otto_kit::t!("settings-network-dns-search"),
-                Control::Text(
-                    draft
-                        .v4
-                        .dns_search
-                        .iter()
-                        .chain(draft.v6.dns_search.iter())
-                        .cloned()
-                        .collect::<Vec<_>>()
-                        .join(", "),
-                ),
+                Control::Text(search_domains(&draft).join(", ")),
             )
             .detail(otto_kit::t!("settings-network-dns-search-detail")),
             DNS_SEARCH_ID,
@@ -1292,7 +1361,9 @@ mod tests {
         let group = known_group(&snapshot());
         let row = &group.rows[0];
         assert_eq!(row.label, "Home");
-        assert_eq!(row.id, Some("network.saved./c/7"));
+        // Named by place, and resolved back to the connection it names.
+        assert_eq!(row.id, Some("network.saved.0"));
+        assert_eq!(slot_path("network.saved.0").as_deref(), Some("/c/7"));
         assert!(row.removable);
         assert!(matches!(row.control, Control::Toggle(false)));
     }

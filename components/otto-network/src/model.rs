@@ -139,6 +139,11 @@ pub struct WifiDevice {
     pub last_scan_ms: Option<i64>,
     /// The access point the device is associated with.
     pub active_ap: Option<AccessPoint>,
+    /// Every access point the device sees, before [`group_networks`] folds
+    /// them: what a signal-strength change is applied to.
+    pub access_points: Vec<AccessPoint>,
+    /// The network name in use or coming up, as `networks` was grouped with.
+    pub in_use: Option<(Vec<u8>, LinkState)>,
     /// The link rate in kbit/s, while associated.
     pub bitrate_kbps: Option<u32>,
 }
@@ -151,6 +156,8 @@ impl WifiDevice {
             networks,
             last_scan_ms: None,
             active_ap: None,
+            access_points: Vec::new(),
+            in_use: None,
             bitrate_kbps: None,
         }
     }
@@ -498,6 +505,82 @@ pub fn sort_saved(saved: &mut [SavedNetwork]) {
     });
 }
 
+/// A link rate in kbit/s as a person reads it: "866 Mb/s", "1 Gb/s",
+/// "2.4 Gb/s".
+pub fn format_rate(kbps: u64) -> String {
+    let mbps = kbps / 1000;
+    if mbps < 1000 {
+        return format!("{mbps} Mb/s");
+    }
+    let gbps = mbps as f64 / 1000.0;
+    if (gbps - gbps.round()).abs() < 0.05 {
+        format!("{} Gb/s", gbps.round())
+    } else {
+        format!("{gbps:.1} Gb/s")
+    }
+}
+
+/// What changed, as NetworkManager's signals tell it, gathered over one
+/// burst. It decides how much has to be read again: a scan moving signal
+/// strengths needs no bus call at all, and saved connections are read only
+/// when one of them changed.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Changes {
+    /// Access points whose strength moved, and to what.
+    pub strengths: Vec<(String, u8)>,
+    /// A saved connection was added, removed or changed.
+    pub profiles: bool,
+    /// Anything else: devices, active connections, NetworkManager's own
+    /// state, or NetworkManager joining or leaving the bus.
+    pub other: bool,
+}
+
+impl Changes {
+    /// Fold `more` into this one.
+    pub fn merge(&mut self, more: Changes) {
+        for (path, strength) in more.strengths {
+            match self.strengths.iter_mut().find(|(p, _)| *p == path) {
+                Some(entry) => entry.1 = strength,
+                None => self.strengths.push((path, strength)),
+            }
+        }
+        self.profiles |= more.profiles;
+        self.other |= more.other;
+    }
+
+    /// Whether only signal strengths moved.
+    pub fn only_strengths(&self) -> bool {
+        !self.profiles && !self.other
+    }
+}
+
+impl Snapshot {
+    /// Apply signal-strength changes without reading anything: the access
+    /// points move, the networks are folded again, and the access point in
+    /// use follows.
+    pub fn apply_strengths(&mut self, strengths: &[(String, u8)]) {
+        let saved = self.saved.clone();
+        let Some(wifi) = self.wifi.as_mut() else {
+            return;
+        };
+        for (path, strength) in strengths {
+            if let Some(ap) = wifi.access_points.iter_mut().find(|ap| ap.path == *path) {
+                ap.strength = *strength;
+            }
+            if let Some(ap) = wifi.active_ap.as_mut().filter(|ap| ap.path == *path) {
+                ap.strength = *strength;
+            }
+        }
+        wifi.networks = group_networks(
+            &wifi.access_points,
+            &saved,
+            wifi.in_use
+                .as_ref()
+                .map(|(ssid, state)| (ssid.as_slice(), *state)),
+        );
+    }
+}
+
 /// What the top bar's indicator draws.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Glyph {
@@ -681,6 +764,45 @@ mod tests {
     }
 
     #[test]
+    fn link_rates() {
+        assert_eq!(format_rate(866_000), "866 Mb/s");
+        assert_eq!(format_rate(1_000_000), "1 Gb/s");
+        assert_eq!(format_rate(2_402_000), "2.4 Gb/s");
+    }
+
+    #[test]
+    fn changes_merge_and_strengths_apply_without_a_read() {
+        let mut changes = Changes {
+            strengths: vec![("/ap/1".into(), 10)],
+            ..Changes::default()
+        };
+        changes.merge(Changes {
+            strengths: vec![("/ap/1".into(), 90)],
+            ..Changes::default()
+        });
+        assert_eq!(changes.strengths, [("/ap/1".to_string(), 90)]);
+        assert!(changes.only_strengths());
+        changes.merge(Changes {
+            profiles: true,
+            ..Changes::default()
+        });
+        assert!(!changes.only_strengths());
+
+        let aps = vec![
+            ap("/ap/1", "Home", 30, Security::Personal),
+            ap("/ap/2", "Cafe", 60, Security::Open),
+        ];
+        let mut snapshot = wifi_snapshot(group_networks(&aps, &[], None), DeviceState::Connected);
+        let wifi = snapshot.wifi.as_mut().unwrap();
+        wifi.access_points = aps;
+        assert_eq!(wifi.networks[0].name(), "Cafe");
+        snapshot.apply_strengths(&[("/ap/1".into(), 95)]);
+        let networks = &snapshot.wifi.as_ref().unwrap().networks;
+        assert_eq!(networks[0].name(), "Home");
+        assert_eq!(networks[0].strength, 95);
+    }
+
+    #[test]
     fn bands_and_channels() {
         assert_eq!(Band::from_mhz(2412), Band::Ghz2);
         assert_eq!(channel(2412), 1);
@@ -764,13 +886,7 @@ mod tests {
             wifi_enabled: true,
             wifi_hardware_enabled: true,
             devices: vec![dev.clone()],
-            wifi: Some(WifiDevice {
-                device: dev,
-                networks,
-                last_scan_ms: None,
-                active_ap: None,
-                bitrate_kbps: None,
-            }),
+            wifi: Some(WifiDevice::new(dev, networks)),
             ..Snapshot::default()
         }
     }

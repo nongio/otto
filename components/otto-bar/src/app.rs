@@ -733,19 +733,20 @@ impl TopBarApp {
         }
     }
 
-    /// Open the password dialog for `purpose`, unless one is already up:
-    /// then a menu's request is dropped and the agent's is answered no.
+    /// Open the password dialog for `purpose`. Only called with none up:
+    /// the next question waits in its queue until this one ends.
     fn open_join_dialog(&mut self, purpose: crate::join_dialog::Purpose) {
-        if self.join_dialog.is_some() {
-            if let crate::join_dialog::Purpose::Agent { reply, .. } = purpose {
-                let _ = reply.send(None);
-            }
-            return;
-        }
         self.close_network_menu();
         let mut dialog = crate::join_dialog::JoinDialog::new(purpose);
-        dialog.show();
-        self.join_dialog = Some(dialog);
+        if dialog.show() {
+            self.join_dialog = Some(dialog);
+        } else {
+            // No card: end it as cancelled at once, so an agent's question
+            // is answered rather than left waiting, and the bar's keys are
+            // not held for a dialog nobody can see.
+            let outcome = dialog.finish(false);
+            self.finish_join_dialog(outcome);
+        }
     }
 
     /// The dialog ended: join, answer the agent, or let it go.
@@ -1297,6 +1298,13 @@ impl App for TopBarApp {
     /// The bar, described. Which panel is asked for decides what is in it:
     /// the menus on the left, the tray and the clock on the right.
     fn accessibility(&mut self, _ctx: &AppContext, surface: &ObjectId) -> Option<A11yTree> {
+        if let Some(dialog) = self
+            .join_dialog
+            .as_ref()
+            .filter(|d| d.surface_id().as_ref() == Some(surface))
+        {
+            return Some(dialog.accessibility());
+        }
         let left = self
             .left_surface
             .as_ref()
@@ -1602,7 +1610,7 @@ impl App for TopBarApp {
                 self.open_join_dialog(purpose);
             } else if let Some(ask) = crate::secret_agent::take_ask() {
                 self.open_join_dialog(crate::join_dialog::Purpose::Agent {
-                    path: ask.path,
+                    cancelled: ask.cancelled,
                     request: ask.request,
                     retry: ask.retry,
                     reply: ask.reply,
@@ -1610,11 +1618,7 @@ impl App for TopBarApp {
             }
         }
         // NetworkManager withdrew the question on screen.
-        let withdrawn = self
-            .join_dialog
-            .as_ref()
-            .and_then(|d| d.agent_path())
-            .is_some_and(crate::secret_agent::take_cancelled);
+        let withdrawn = self.join_dialog.as_ref().is_some_and(|d| d.withdrawn());
         if withdrawn {
             if let Some(mut dialog) = self.join_dialog.take() {
                 let outcome = dialog.finish(false);

@@ -54,13 +54,14 @@ The common ground, which Otto adopts:
 - *Join Other Network…* joins a network that does not broadcast its name.
 - Otto is a NetworkManager secret agent. When NetworkManager needs a Wi-Fi password it does not have, Otto asks for it in the same dialog. No other applet is needed.
 - A Network pane in Settings, with a tab each for Wi-Fi, Ethernet and VPN:
-  - the Wi-Fi switch, and whether the indicator is shown in the top bar
+  - the Wi-Fi switch
   - the link: signal, band and channel, link rate, security, access point, hardware address
   - each wired device's state, speed and hardware address
   - TCP/IP for the connection: IPv4 and IPv6 each Automatic, Manual, Link-local, Shared or Off, with addresses and router when manual
   - DNS: whether to also use the network's servers, the servers to ask first, search domains, and the servers in use
   - the saved Wi-Fi networks, each with an auto-join switch and Forget
   - the VPNs, each with a switch to connect and Forget, and Import… for a WireGuard or OpenVPN file
+- Whether the indicator is shown is a switch on the Top bar pane, next to the clock's, so it is there whatever devices the machine has.
 - Everything follows NetworkManager live. A change made with `nmcli`, another applet or the hardware switch shows up without reopening anything.
 
 ## Non-Goals
@@ -121,13 +122,13 @@ The common ground, which Otto adopts:
    - *Password* (masked), with *Show password*, unless the network is open
    - *Cancel* and *Join*. Join is dimmed until the password can be a key of that kind: 8–63 characters or 64 hex digits for WPA2, any for WPA3, 5 or 13 characters or 10 or 26 hex digits for WEP.
 10b. Return joins, Escape cancels, Tab moves between the name and the password.
-10c. Otto registers as a NetworkManager secret agent (`org.otto.bar`) on the system bus, again whenever NetworkManager restarts. For a Wi-Fi personal or WEP key, when NetworkManager allows interaction, it opens the dialog. When NetworkManager says the key it had was refused, the dialog says so. The typed key goes back in the reply and is not stored by Otto. Other secrets, and requests that allow no interaction, are declined at once. A request NetworkManager withdraws closes the dialog. Only one dialog is up at a time, and a second request meanwhile is declined.
+10c. Otto registers as a NetworkManager secret agent (`org.otto.bar`) on the system bus, again whenever NetworkManager restarts. For a Wi-Fi personal or WEP key, when NetworkManager allows interaction, it opens the dialog. When NetworkManager says the key it had was refused, the dialog says so. The typed key goes back in the reply and is not stored by Otto. Other secrets, and requests that allow no interaction, are declined at once. A request NetworkManager withdraws closes the dialog if it is on screen, and is answered no if it is still waiting; a withdrawal belongs to its own request and never closes a later one. Only one dialog is up at a time: a second request waits until the first is answered. A call from anyone but NetworkManager's own bus name is refused.
 
 ### Settings pane
 
 11. The **Network** pane sits after Displays in the sidebar. A segmented control at the top holds a tab for Wi-Fi when there is a Wi-Fi device, for Ethernet when there is a wired one, and for VPN always. It opens on the kind of the connection in use.
 12. **Wi-Fi tab:**
-    - the Wi-Fi switch (dimmed, with a note, when a hardware switch blocks it), the network in use, and *Show network status in the top bar* (`topbar.show_network`)
+    - the Wi-Fi switch (dimmed, with a note, when a hardware switch blocks it) and the network in use
     - **Connection**, while connected:
       - signal in bars, in words and as a percentage
       - band and channel
@@ -147,7 +148,7 @@ The common ground, which Otto adopts:
 16. **DNS group:**
     - *Automatic DNS*: off means only the servers below are asked
     - *DNS servers*: IPv4 and IPv6 together, comma-separated
-    - *Search domains*: a `~` prefix makes a routing-only domain
+    - *Search domains*, saved on both families so they apply on an IPv6-only connection too: a `~` prefix makes a routing-only domain
     - the servers in use
 17. Edits to TCP/IP and DNS are a draft. *Changes* has *Revert* and *Apply*, dimmed while there is nothing to apply. Apply checks the draft first:
     - Manually needs at least one address.
@@ -164,8 +165,9 @@ The common ground, which Otto adopts:
 - **Two Wi-Fi devices.** The first managed one is used, and the Status group lists both.
 - **NetworkManager restarts.** The indicator disappears and comes back once it has rejoined the bus.
 - **Scans.** NetworkManager rate-limits them. A refused scan request is not an error.
-- **Signal noise.** Strength changes are frequent. A burst of property changes is answered with a single re-read about 150 ms later.
-- **Old and new spellings.** IPv4 addresses are read from `address-data`, or the older `addresses`. DNS is read from `dns-data`, or the older `dns`. A write drops the older spelling of what it changes, so NetworkManager cannot prefer a stale copy, and keeps every property it does not edit.
+- **Signal noise.** Strength changes are frequent. A burst of changes is gathered for about 150 ms and answered once, and only as much as it needs is read again: a burst of signal strengths alone is applied from the signals themselves with no read, and saved connections are read again only when one of them changed.
+- **Old and new spellings.** IPv4 addresses are read from `address-data`, or the older `addresses`, and written as `address-data`. DNS is read from `dns-data` (NetworkManager 1.42), or the older `dns`. It is written as `dns-data` where the connection already uses it or an entry needs it (a port, an IPv6 scope such as `%eth0`, or a DNS-over-TLS name such as `#one.one.one.one`), and as `dns` otherwise, which every NetworkManager reads. Each value is written in one spelling only, so neither can shadow the other, and every property not edited is kept.
+- **One update.** IPv4 and IPv6 are saved in a single update and applied once, so one family is never saved without the other.
 - **Secrets on update.** A profile's settings are read without secrets, and an update without secrets keeps the ones NetworkManager stored.
 
 ## Rationale

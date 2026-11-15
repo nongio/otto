@@ -27,6 +27,7 @@ use otto_kit::surfaces::LayerShellSurface;
 use otto_kit::typography::styles;
 use otto_network::{KeyKind, SecretRequest, WifiNetwork};
 use smithay_client_toolkit::seat::keyboard::{KeyEvent, Keysym};
+use wayland_client::Proxy;
 use wayland_protocols_wlr::layer_shell::v1::client::{
     zwlr_layer_shell_v1::Layer, zwlr_layer_surface_v1::KeyboardInteractivity,
 };
@@ -53,8 +54,8 @@ pub enum Purpose {
     /// NetworkManager asked the secret agent. `retry` is set when the
     /// password it had was refused.
     Agent {
-        /// The connection NetworkManager asked about.
-        path: String,
+        /// Set when NetworkManager withdraws the question.
+        cancelled: std::sync::Arc<std::sync::atomic::AtomicBool>,
         request: SecretRequest,
         retry: bool,
         reply: tokio::sync::oneshot::Sender<Option<String>>,
@@ -255,12 +256,13 @@ impl JoinDialog {
         }
     }
 
-    /// The connection NetworkManager asked about, for a dialog the agent
-    /// opened.
-    pub fn agent_path(&self) -> Option<&str> {
+    /// Whether NetworkManager withdrew the question this dialog asks.
+    pub fn withdrawn(&self) -> bool {
         match &self.purpose {
-            Some(Purpose::Agent { path, .. }) => Some(path),
-            _ => None,
+            Some(Purpose::Agent { cancelled, .. }) => {
+                cancelled.load(std::sync::atomic::Ordering::Relaxed)
+            }
+            _ => false,
         }
     }
 
@@ -329,8 +331,10 @@ impl JoinDialog {
             .is_some_and(|s| s.wl_surface() == *surface)
     }
 
-    /// Put the card on screen.
-    pub fn show(&mut self) {
+    /// Put the card on screen. False when the surface could not be made:
+    /// the caller then ends the dialog, so nothing waits on a card nobody
+    /// can see.
+    pub fn show(&mut self) -> bool {
         let layout = self.layout();
         let surface = match LayerShellSurface::with_anchor(
             Layer::Overlay,
@@ -343,7 +347,7 @@ impl JoinDialog {
             Ok(surface) => surface,
             Err(e) => {
                 tracing::warn!("network join dialog: {e}");
-                return;
+                return false;
             }
         };
         surface.set_keyboard_interactivity(KeyboardInteractivity::Exclusive);
@@ -355,8 +359,87 @@ impl JoinDialog {
             style.set_corner_radius(otto_kit::corners::radius(RADIUS) as f64);
             style.set_shadow(0.35, 30.0, 0.0, 10.0, 0.0, 0.0, 0.0);
         }
+        AppContext::enable_accessibility(&surface.wl_surface().id());
         self.surface = Some(surface);
         self.redraw();
+        true
+    }
+
+    /// The card, described: a dialog with its title and question, the
+    /// fields (the password reported as one, never read out), the security
+    /// choices and the buttons.
+    pub fn accessibility(&self) -> otto_kit::accessibility::A11yTree {
+        use otto_kit::accessibility::{A11yTree, Role};
+        use otto_kit::focus::FocusId;
+        let layout = self.layout();
+        let title = self.title();
+        let mut tree = A11yTree::new(title.clone());
+        let card = Rect::from_xywh(0.0, 0.0, WIDTH, layout.height);
+        tree.region(
+            FocusId::new("join-dialog"),
+            card,
+            Role::Dialog,
+            title,
+            |tree| {
+                tree.label(FocusId::new("join-body"), card, self.body());
+                if let Some(rect) = layout.name {
+                    tree.text_field(
+                        FocusId::new("join-name"),
+                        rect,
+                        otto_kit::t!("bar-join-name"),
+                        &self.name.state,
+                        true,
+                    );
+                }
+                if let Some(rect) = layout.security {
+                    for index in 0..SECURITY.len() {
+                        tree.radio(
+                            FocusId::new(format!("join-security-{index}")),
+                            segmented::segment_rect(rect, SECURITY.len(), index),
+                            security_label(index),
+                            index == self.security,
+                            true,
+                        );
+                    }
+                }
+                if let Some(rect) = layout.password {
+                    tree.text_field(
+                        FocusId::new("join-password"),
+                        rect,
+                        otto_kit::t!("bar-join-password"),
+                        &self.password.state,
+                        true,
+                    );
+                }
+                if let Some(rect) = layout.show {
+                    tree.checkbox(
+                        FocusId::new("join-show-password"),
+                        rect,
+                        otto_kit::t!("bar-join-show-password"),
+                        self.show_password,
+                        true,
+                    );
+                }
+                tree.button(
+                    FocusId::new("join-cancel"),
+                    layout.cancel,
+                    otto_kit::t!("bar-join-cancel"),
+                    true,
+                );
+                tree.button(
+                    FocusId::new("join-join"),
+                    layout.join,
+                    otto_kit::t!("bar-join-join"),
+                    self.can_join(),
+                );
+            },
+        );
+        tree
+    }
+
+    /// The card's surface, for the accessibility tree's owner.
+    pub fn surface_id(&self) -> Option<otto_kit::ObjectId> {
+        self.surface.as_ref().map(|s| s.wl_surface().id())
     }
 
     fn resize(&mut self) {
@@ -527,7 +610,9 @@ impl JoinDialog {
             Focus::Name => &mut self.name,
             Focus::Password => &mut self.password,
         };
-        // Copying a password out of the dialog is never wanted.
+        // A copy or cut comes back as `Clipboard`, and the bar has no
+        // clipboard to put it on: nothing typed here, a password above all,
+        // ever leaves the dialog that way, shown or not.
         let response = input.on_key(edit, mods);
         if !matches!(response, TextInputResponse::Ignored) {
             self.redraw();
@@ -590,7 +675,8 @@ impl JoinDialog {
         self.password.set_value(String::new());
         if join {
             Outcome::Join {
-                name: self.name.value().trim().as_bytes().to_vec(),
+                // As typed: a network name may begin or end with a space.
+                name: self.name.value().as_bytes().to_vec(),
                 key: self.key_for(&purpose),
                 password,
                 purpose,

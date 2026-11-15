@@ -17,16 +17,10 @@ use zbus::zvariant::{ObjectPath, OwnedObjectPath, OwnedValue, Value};
 pub const SERVICE: &str = "org.freedesktop.NetworkManager";
 /// The manager's object path.
 pub const PATH: &str = "/org/freedesktop/NetworkManager";
-/// The saved connections' object path.
-pub const SETTINGS_PATH: &str = "/org/freedesktop/NetworkManager/Settings";
-/// The secret agents' registry.
-pub const AGENT_MANAGER_PATH: &str = "/org/freedesktop/NetworkManager/AgentManager";
 /// Where a secret agent serves `org.freedesktop.NetworkManager.SecretAgent`:
-/// NetworkManager calls every registered agent at this path.
+/// NetworkManager calls every registered agent at this path. The interface
+/// is a server's, served by otto-bar, so it has no proxy here.
 pub const SECRET_AGENT_PATH: &str = "/org/freedesktop/NetworkManager/SecretAgent";
-/// The interface a secret agent serves. It is a server interface, served by
-/// whoever answers password requests (otto-bar), so it has no proxy here.
-pub const SECRET_AGENT_INTERFACE: &str = "org.freedesktop.NetworkManager.SecretAgent";
 
 /// A connection's settings as NetworkManager passes them: setting name
 /// (`"connection"`, `"802-11-wireless"`, …) to its properties.
@@ -86,10 +80,6 @@ pub trait NetworkManager {
     /// `3` limited, `4` full.
     #[zbus(property)]
     fn connectivity(&self) -> zbus::Result<u32>;
-
-    /// `NMState`, the overall state.
-    #[zbus(property)]
-    fn state(&self) -> zbus::Result<u32>;
 }
 
 #[zbus::proxy(
@@ -171,10 +161,6 @@ pub trait DeviceWired {
     /// The negotiated speed in Mb/s, `0` when unknown.
     #[zbus(property)]
     fn speed(&self) -> zbus::Result<u32>;
-
-    /// Whether a cable is plugged in and live.
-    #[zbus(property)]
-    fn carrier(&self) -> zbus::Result<bool>;
 }
 
 #[zbus::proxy(
@@ -186,9 +172,6 @@ pub trait AgentManager {
     /// Register the caller as a secret agent under `identifier`, with
     /// `capabilities` (`0x1` VPN hints).
     fn register_with_capabilities(&self, identifier: &str, capabilities: u32) -> zbus::Result<()>;
-
-    /// Stop being asked.
-    fn unregister(&self) -> zbus::Result<()>;
 }
 
 #[zbus::proxy(

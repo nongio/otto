@@ -22,8 +22,8 @@ pub mod profile;
 
 pub use client::{
     activate, connect_hidden, connect_wifi, connect_wifi_with_password, deactivate,
-    disconnect_device, forget, is_running, read, request_scan, set_autoconnect, set_ip_config,
-    set_wifi_enabled, watch,
+    disconnect_device, follow, forget, is_running, read, request_scan, set_autoconnect,
+    set_ip_config, set_wifi_enabled, watch,
 };
 pub use model::*;
 pub use profile::*;

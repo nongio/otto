@@ -181,6 +181,28 @@ fn parse_ip(text: &str, family: Family) -> Option<IpAddr> {
     }
 }
 
+/// The server address in a DNS entry as `dns-data` writes one: an address,
+/// optionally with a port (`1.1.1.1:853`, `[fd00::1]:853`), an IPv6 scope
+/// (`fe80::1%eth0`) and a DNS-over-TLS server name (`1.1.1.1#one.one.one.one`).
+pub fn dns_address(entry: &str, family: Family) -> Option<IpAddr> {
+    let entry = entry.trim();
+    let address = entry.split('#').next()?;
+    if let Some(ip) = parse_ip(address, family) {
+        return Some(ip);
+    }
+    let address = match family {
+        Family::V4 => address.split(':').next()?,
+        Family::V6 => {
+            let unbracketed = match address.strip_prefix('[') {
+                Some(rest) => rest.split(']').next()?,
+                None => address,
+            };
+            unbracketed.split('%').next()?
+        }
+    };
+    parse_ip(address, family)
+}
+
 /// Read an address as a person types it: `192.168.1.20/24`, or without a
 /// prefix, which then gets the family's usual one.
 pub fn parse_address(text: &str, family: Family) -> Result<IpAddress, IpError> {
@@ -227,7 +249,7 @@ impl IpConfig {
             parse_ip(gateway, family).ok_or_else(|| IpError::BadGateway(gateway.clone()))?;
         }
         for server in &self.dns {
-            parse_ip(server, family).ok_or_else(|| IpError::BadDns(server.clone()))?;
+            dns_address(server, family).ok_or_else(|| IpError::BadDns(server.clone()))?;
         }
         for domain in &self.dns_search {
             let fine = domain.trim_start_matches('~').split('.').all(|label| {
@@ -329,9 +351,10 @@ impl IpConfig {
     }
 
     /// Write this configuration into `settings`, over `family`'s setting,
-    /// keeping every property of it this code does not edit. The older
-    /// spellings of what it does edit (`addresses`, `dns-data`) are dropped,
-    /// so NetworkManager cannot prefer a stale copy over the new one.
+    /// keeping every property of it this code does not edit. Each value is
+    /// written in one spelling only (`address-data`, not the older
+    /// `addresses`; `dns-data` or the older `dns`, see below), so
+    /// NetworkManager cannot prefer a stale copy over the new one.
     pub fn write_into(&self, settings: &mut Settings, family: Family) {
         let ip = settings.entry(family.setting().to_string()).or_default();
         let owned = |value: Value<'_>| OwnedValue::try_from(value).expect("plain values");
@@ -362,25 +385,40 @@ impl IpConfig {
             }
         }
 
+        // `dns-data` (NetworkManager 1.42) is the newer spelling and the
+        // only one that holds a port, a scope or a DNS-over-TLS name. It is
+        // written where the connection already uses it, or where an entry
+        // needs it; otherwise the older `dns`, which every NetworkManager
+        // reads. Only one is written, so neither can shadow the other.
+        let plain = |entry: &String| {
+            dns_address(entry, family).is_some_and(|ip| ip.to_string() == entry.trim())
+        };
+        let wants_data = ip.contains_key("dns-data") || !self.dns.iter().all(plain);
         ip.remove("dns-data");
-        match family {
-            Family::V4 => {
-                let raw: Vec<u32> = self
-                    .dns
-                    .iter()
-                    .filter_map(|s| s.parse::<Ipv4Addr>().ok())
-                    .map(|ip| u32::from_ne_bytes(ip.octets()))
-                    .collect();
-                ip.insert("dns".into(), owned(Value::from(raw)));
-            }
-            Family::V6 => {
-                let raw: Vec<Vec<u8>> = self
-                    .dns
-                    .iter()
-                    .filter_map(|s| s.parse::<Ipv6Addr>().ok())
-                    .map(|ip| ip.octets().to_vec())
-                    .collect();
-                ip.insert("dns".into(), owned(Value::from(raw)));
+        ip.remove("dns");
+        if wants_data {
+            let entries: Vec<String> = self.dns.iter().map(|e| e.trim().to_string()).collect();
+            ip.insert("dns-data".into(), owned(Value::from(entries)));
+        } else {
+            match family {
+                Family::V4 => {
+                    let raw: Vec<u32> = self
+                        .dns
+                        .iter()
+                        .filter_map(|s| s.trim().parse::<Ipv4Addr>().ok())
+                        .map(|ip| u32::from_ne_bytes(ip.octets()))
+                        .collect();
+                    ip.insert("dns".into(), owned(Value::from(raw)));
+                }
+                Family::V6 => {
+                    let raw: Vec<Vec<u8>> = self
+                        .dns
+                        .iter()
+                        .filter_map(|s| s.trim().parse::<Ipv6Addr>().ok())
+                        .map(|ip| ip.octets().to_vec())
+                        .collect();
+                    ip.insert("dns".into(), owned(Value::from(raw)));
+                }
             }
         }
         ip.insert(
@@ -519,9 +557,9 @@ impl KeyKind {
             }
             Self::Wep => {
                 security.insert("wep-key0".to_string(), owned(Value::from(password)));
-                // 1 is a key (hex or ASCII), 2 a passphrase hashed into one.
-                let kind: u32 = if self.accepts(password) { 1 } else { 2 };
-                security.insert("wep-key-type".to_string(), owned(Value::from(kind)));
+                // 1: the key itself, hex or ASCII, which is all `accepts`
+                // lets through. (2 would be a passphrase hashed into one.)
+                security.insert("wep-key-type".to_string(), owned(Value::from(1u32)));
             }
         }
         security
@@ -635,7 +673,7 @@ mod tests {
     }
 
     #[test]
-    fn properties_it_does_not_edit_are_kept_and_old_spellings_dropped() {
+    fn properties_it_does_not_edit_are_kept() {
         let mut ip = HashMap::new();
         ip.insert("route-metric".to_string(), owned(Value::from(100i64)));
         ip.insert(
@@ -649,7 +687,52 @@ mod tests {
         );
         manual().write_into(&mut settings, Family::V4);
         assert!(settings["ipv4"].contains_key("route-metric"));
-        assert!(!settings["ipv4"].contains_key("dns-data"));
+        // The connection was on dns-data, so it stays on it.
+        assert!(settings["ipv4"].contains_key("dns-data"));
+        assert!(!settings["ipv4"].contains_key("dns"));
+    }
+
+    #[test]
+    fn dns_entries_with_a_port_a_scope_or_a_tls_name() {
+        assert!(dns_address("1.1.1.1#one.one.one.one", Family::V4).is_some());
+        assert!(dns_address("1.1.1.1:853#one.one.one.one", Family::V4).is_some());
+        assert!(dns_address("fe80::1%eth0", Family::V6).is_some());
+        assert!(dns_address("[2606:4700::1111]:853#cloudflare-dns.com", Family::V6).is_some());
+        assert!(dns_address("one.one", Family::V4).is_none());
+        let tls = IpConfig {
+            dns: vec!["1.1.1.1#one.one.one.one".into()],
+            ..manual()
+        };
+        assert_eq!(tls.validate(Family::V4), Ok(()));
+        // Written as dns-data, since the old field cannot hold the name,
+        // and read back as typed.
+        let mut settings = Settings::new();
+        tls.write_into(&mut settings, Family::V4);
+        assert!(settings["ipv4"].contains_key("dns-data"));
+        assert!(!settings["ipv4"].contains_key("dns"));
+        assert_eq!(
+            IpConfig::from_settings(&settings, Family::V4).dns,
+            ["1.1.1.1#one.one.one.one"]
+        );
+    }
+
+    #[test]
+    fn a_connection_on_dns_data_stays_on_it() {
+        let mut ip = HashMap::new();
+        ip.insert(
+            "dns-data".to_string(),
+            owned(Value::from(vec!["8.8.8.8".to_string()])),
+        );
+        let mut settings = Settings::from([("ipv4".to_string(), ip)]);
+        manual().write_into(&mut settings, Family::V4);
+        assert!(settings["ipv4"].contains_key("dns-data"));
+        assert!(!settings["ipv4"].contains_key("dns"));
+        // A plain one on no dns-data keeps the old field every
+        // NetworkManager reads.
+        let mut fresh = Settings::new();
+        manual().write_into(&mut fresh, Family::V4);
+        assert!(fresh["ipv4"].contains_key("dns"));
+        assert!(!fresh["ipv4"].contains_key("dns-data"));
     }
 
     #[test]

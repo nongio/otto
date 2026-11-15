@@ -233,6 +233,11 @@ impl Ap {
     fn strength(&self) -> u8 {
         self.strength
     }
+    /// Writable here only, so a test can move it the way a scan does.
+    #[zbus(property)]
+    fn set_strength(&mut self, strength: u8) {
+        self.strength = strength;
+    }
     #[zbus(property)]
     fn flags(&self) -> u32 {
         u32::from(self.rsn != 0)
@@ -637,7 +642,8 @@ async fn a_snapshot_and_the_actions_against_a_stand_in() {
         dns_search: Vec::new(),
     };
     let profile = snapshot.saved[0].path.clone();
-    otto_network::set_ip_config(&conn, &profile, otto_network::Family::V4, &manual)
+    let v6 = otto_network::IpConfig::default();
+    otto_network::set_ip_config(&conn, &profile, &manual, &v6)
         .await
         .unwrap();
     // One that does not validate is refused before anything is sent.
@@ -645,11 +651,9 @@ async fn a_snapshot_and_the_actions_against_a_stand_in() {
         addresses: Vec::new(),
         ..manual.clone()
     };
-    assert!(
-        otto_network::set_ip_config(&conn, &profile, otto_network::Family::V4, &broken)
-            .await
-            .is_err()
-    );
+    assert!(otto_network::set_ip_config(&conn, &profile, &broken, &v6)
+        .await
+        .is_err());
 
     otto_network::forget(&conn, &snapshot.saved[0].path)
         .await
@@ -710,7 +714,7 @@ async fn no_networkmanager_is_an_empty_snapshot() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_change_wakes_the_watcher_once() {
+async fn a_change_wakes_the_watcher_once_and_says_what_changed() {
     let Some(bus) = private_bus() else {
         eprintln!("no dbus-daemon: skipped");
         return;
@@ -726,8 +730,8 @@ async fn a_change_wakes_the_watcher_once() {
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
     let watcher = conn.clone();
     tokio::spawn(async move {
-        let _ = otto_network::watch(&watcher, move || {
-            let _ = tx.send(());
+        let _ = otto_network::watch(&watcher, move |changes| {
+            let _ = tx.send(changes);
         })
         .await;
     });
@@ -738,11 +742,73 @@ async fn a_change_wakes_the_watcher_once() {
     for on in [false, true, false] {
         otto_network::set_wifi_enabled(&conn, on).await.unwrap();
     }
-    tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv())
+    let changes = tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv())
         .await
-        .expect("the watcher reported the change")
+        .expect("the watcher reported")
         .unwrap();
+    assert!(changes.other && !changes.profiles);
     // The burst was reported once.
     tokio::time::sleep(std::time::Duration::from_millis(300)).await;
     assert!(rx.try_recv().is_err());
+
+    // A scan moving one access point's signal is a strength, and nothing
+    // more: no read is needed for it.
+    let ap = zbus::fdo::PropertiesProxy::builder(&conn)
+        .destination(NM)
+        .unwrap()
+        .path("/org/freedesktop/NetworkManager/AccessPoint/3")
+        .unwrap()
+        .build()
+        .await
+        .unwrap();
+    ap.set(
+        zbus::names::InterfaceName::try_from("org.freedesktop.NetworkManager.AccessPoint").unwrap(),
+        "Strength",
+        Value::from(12u8),
+    )
+    .await
+    .unwrap();
+    let changes = tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv())
+        .await
+        .expect("the watcher reported")
+        .unwrap();
+    assert_eq!(
+        changes.strengths,
+        [(
+            "/org/freedesktop/NetworkManager/AccessPoint/3".to_string(),
+            12
+        )]
+    );
+    assert!(changes.only_strengths());
+}
+
+/// What the Network pane runs: following on a plain thread with no runtime
+/// of its own. A callback that read from inside the watch's runtime used to
+/// panic here on the first change.
+#[test]
+fn following_on_a_plain_thread_reads_again_on_every_change() {
+    let Some(bus) = private_bus() else {
+        eprintln!("no dbus-daemon: skipped");
+        return;
+    };
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let _server = runtime.block_on(serve(&bus.1, Arc::new(Mutex::new(Calls::default()))));
+    // The blocking calls connect to "the system bus": point it here. No other
+    // test in this file uses the system bus.
+    std::env::set_var("DBUS_SYSTEM_BUS_ADDRESS", &bus.1);
+
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = otto_network::blocking::follow(move |snapshot| {
+            let _ = tx.send(snapshot.wifi_enabled);
+        });
+    });
+    let wait = std::time::Duration::from_secs(5);
+    assert_eq!(rx.recv_timeout(wait), Ok(true), "the first read");
+    otto_network::blocking::set_wifi_enabled(false).unwrap();
+    assert_eq!(
+        rx.recv_timeout(wait),
+        Ok(false),
+        "read again after the change"
+    );
 }

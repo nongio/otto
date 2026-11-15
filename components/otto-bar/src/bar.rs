@@ -421,19 +421,8 @@ impl RightPanel {
         self.draw_clock(canvas, &theme);
 
         if self.battery_active && layout.battery_width > 0.0 {
-            // The tray's pill, down to the colours and the corner: an open
-            // menu looks the same whichever item it belongs to.
-            let hl = highlight_colors();
-            let mut paint = Paint::default();
-            paint.set_anti_alias(true);
-            paint.set_color(hl.active);
-            let (px, py, pw, ph) = self.battery_pill_rect().unwrap_or_default();
-            let pill = otto_kit::skia::Rect::from_xywh(px, py, pw, ph);
-            let radius = self.tray_style.item_corner_radius;
-            canvas.draw_round_rect(pill, radius, radius, &paint);
-
             let mut active_theme = theme.clone();
-            active_theme.text_primary = hl.on_active;
+            active_theme.text_primary = self.draw_pill(canvas, self.battery_pill_rect());
             crate::battery::draw(canvas, layout.battery_x, self.height, &active_theme);
         } else {
             crate::battery::draw(canvas, layout.battery_x, self.height, &theme);
@@ -450,19 +439,7 @@ impl RightPanel {
 
         if layout.keyboard_width > 0.0 {
             let color = if self.keyboard_active {
-                let hl = highlight_colors();
-                let mut paint = Paint::default();
-                paint.set_anti_alias(true);
-                paint.set_color(hl.active);
-                let (px, py, pw, ph) = self.keyboard_pill_rect().unwrap_or_default();
-                let radius = self.tray_style.item_corner_radius;
-                canvas.draw_round_rect(
-                    otto_kit::skia::Rect::from_xywh(px, py, pw, ph),
-                    radius,
-                    radius,
-                    &paint,
-                );
-                hl.on_active
+                self.draw_pill(canvas, self.keyboard_pill_rect())
             } else {
                 theme.text_primary
             };
@@ -534,73 +511,37 @@ impl RightPanel {
     }
 
     /// Whether `x` (in panel coords) is on the battery indicator.
-    ///
-    /// The hit box is the drawn glyph plus half the gap on either side: the
-    /// glyph is 26 points of a 30-point bar, and a click that lands a pixel
-    /// above it is still a click on the battery.
     pub fn battery_at(&self, x: f32) -> bool {
         let layout = self.layout();
-        if layout.battery_width <= 0.0 {
-            return false;
-        }
-        let slack = TRAY_CLOCK_GAP / 2.0;
-        x >= layout.battery_x - slack && x <= layout.battery_x + layout.battery_width + slack
+        slot_at(x, layout.battery_x, layout.battery_width)
     }
 
     /// The battery indicator's bounding box in surface-local coords.
     pub fn battery_rect(&self) -> Option<(f32, f32, f32, f32)> {
         let layout = self.layout();
-        if layout.battery_width <= 0.0 {
-            return None;
-        }
-        Some((layout.battery_x, 0.0, layout.battery_width, self.height))
+        slot_rect(layout.battery_x, layout.battery_width, self.height)
     }
 
-    /// The pill an open power menu draws behind the battery.
-    ///
-    /// The menu hangs from this rect, as a tray menu hangs from its item's
-    /// pill, so both line up with the highlight above them.
+    /// The pill an open power menu draws behind the battery, and hangs from.
     pub fn battery_pill_rect(&self) -> Option<(f32, f32, f32, f32)> {
-        self.battery_rect().map(|(x, y, w, h)| {
-            (
-                x - BATTERY_PILL_PADDING,
-                y,
-                w + BATTERY_PILL_PADDING * 2.0,
-                h,
-            )
-        })
+        self.battery_rect().map(pill_rect)
     }
 
-    /// Whether `x` (in panel coords) is on the keyboard layout indicator,
-    /// with the same slack either side the battery has.
+    /// Whether `x` (in panel coords) is on the keyboard layout indicator.
     pub fn keyboard_at(&self, x: f32) -> bool {
         let layout = self.layout();
-        if layout.keyboard_width <= 0.0 {
-            return false;
-        }
-        let slack = TRAY_CLOCK_GAP / 2.0;
-        x >= layout.keyboard_x - slack && x <= layout.keyboard_x + layout.keyboard_width + slack
+        slot_at(x, layout.keyboard_x, layout.keyboard_width)
     }
 
     /// The keyboard layout indicator's bounding box in surface-local coords.
     pub fn keyboard_rect(&self) -> Option<(f32, f32, f32, f32)> {
         let layout = self.layout();
-        if layout.keyboard_width <= 0.0 {
-            return None;
-        }
-        Some((layout.keyboard_x, 0.0, layout.keyboard_width, self.height))
+        slot_rect(layout.keyboard_x, layout.keyboard_width, self.height)
     }
 
     /// The pill an open layout menu draws behind the keycap, and hangs from.
     pub fn keyboard_pill_rect(&self) -> Option<(f32, f32, f32, f32)> {
-        self.keyboard_rect().map(|(x, y, w, h)| {
-            (
-                x - BATTERY_PILL_PADDING,
-                y,
-                w + BATTERY_PILL_PADDING * 2.0,
-                h,
-            )
-        })
+        self.keyboard_rect().map(pill_rect)
     }
 
     /// The open-menu pill behind an indicator, the tray's down to the
@@ -625,37 +566,22 @@ impl RightPanel {
         hl.on_active
     }
 
-    /// Whether `x` (in panel coords) is on the network indicator, with the
-    /// same slack either side the battery has.
+    /// Whether `x` (in panel coords) is on the network indicator.
     pub fn network_at(&self, x: f32) -> bool {
         let layout = self.layout();
-        if layout.network_width <= 0.0 {
-            return false;
-        }
-        let slack = TRAY_CLOCK_GAP / 2.0;
-        x >= layout.network_x - slack && x <= layout.network_x + layout.network_width + slack
+        slot_at(x, layout.network_x, layout.network_width)
     }
 
     /// The network indicator's bounding box in surface-local coords.
     pub fn network_rect(&self) -> Option<(f32, f32, f32, f32)> {
         let layout = self.layout();
-        if layout.network_width <= 0.0 {
-            return None;
-        }
-        Some((layout.network_x, 0.0, layout.network_width, self.height))
+        slot_rect(layout.network_x, layout.network_width, self.height)
     }
 
     /// The pill an open network menu draws behind the indicator, and hangs
     /// from.
     pub fn network_pill_rect(&self) -> Option<(f32, f32, f32, f32)> {
-        self.network_rect().map(|(x, y, w, h)| {
-            (
-                x - BATTERY_PILL_PADDING,
-                y,
-                w + BATTERY_PILL_PADDING * 2.0,
-                h,
-            )
-        })
+        self.network_rect().map(pill_rect)
     }
 
     pub fn tray_item_at(&self, x: f32) -> Option<usize> {
@@ -713,6 +639,35 @@ impl RightPanel {
         }
         None
     }
+}
+
+/// Whether `x` is on the indicator drawn at `start`, `width` wide: the drawn
+/// glyph plus half the gap on either side, so a click a pixel off the glyph
+/// still lands on it. Nothing is hit while the indicator is hidden.
+fn slot_at(x: f32, start: f32, width: f32) -> bool {
+    if width <= 0.0 {
+        return false;
+    }
+    let slack = TRAY_CLOCK_GAP / 2.0;
+    x >= start - slack && x <= start + width + slack
+}
+
+/// The indicator drawn at `start`, `width` wide, as a rect the full height
+/// of the bar; `None` while it is hidden.
+fn slot_rect(start: f32, width: f32, height: f32) -> Option<(f32, f32, f32, f32)> {
+    (width > 0.0).then_some((start, 0.0, width, height))
+}
+
+/// The open-menu pill around an indicator's rect. A menu hangs from it, as
+/// a tray menu hangs from its item's pill, so both line up with the
+/// highlight above them.
+fn pill_rect((x, y, w, h): (f32, f32, f32, f32)) -> (f32, f32, f32, f32) {
+    (
+        x - BATTERY_PILL_PADDING,
+        y,
+        w + BATTERY_PILL_PADDING * 2.0,
+        h,
+    )
 }
 
 /// Where each of `widths` starts when laid right to left from `right_edge`,

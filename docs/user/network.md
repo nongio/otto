@@ -19,7 +19,7 @@ battery.
 | An empty fan, crossed out | Wi-Fi is off |
 | Dimmed, with an exclamation mark | Connected, but the internet cannot be reached, for example behind a hotel's sign-in page |
 
-It needs NetworkManager and a Wi-Fi or wired device. **Settings → Network →
+It needs NetworkManager and a Wi-Fi or wired device. **Settings → Top bar →
 Show network status in the top bar** turns it off, as does this in the
 configuration file:
 
@@ -74,8 +74,8 @@ those, and one for **VPN**. It opens on the kind of connection you are using.
 
 ### Wi-Fi
 
-The switch, the network in use, and **Show network status in the top bar**.
-While you are connected, **Connection** shows:
+The switch and the network in use. While you are connected, **Connection**
+shows:
 
 - **Signal** in bars, in words and as a percentage
 - **Band** and channel
@@ -117,7 +117,7 @@ DNS:
 
 - **Automatic DNS**: also ask the servers the network offers. Turn it off to ask only yours.
 - **DNS servers**: asked first. IPv4 and IPv6 addresses go in the same field, separated by commas.
-- **Search domains**: added to names that have no dot. A domain written as `~corp.example` is not added to names; it only sends that domain's lookups to this connection's servers. That is what a VPN to an office needs.
+- **Search domains**: added to names that have no dot, on IPv4 and IPv6 alike. A domain written as `~corp.example` is not added to names; it only sends that domain's lookups to this connection's servers. That is what a VPN to an office needs.
 - **Servers in use**: what the connection is asking now.
 
 Changes are not sent as you type. **Apply** checks them first, and says what

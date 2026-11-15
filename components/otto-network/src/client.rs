@@ -64,6 +64,12 @@ fn some_path(path: OwnedObjectPath) -> Option<String> {
 /// Read everything a network UI shows. A NetworkManager that is not running
 /// is an empty snapshot with `running` false, not an error.
 pub async fn read(conn: &Connection) -> zbus::Result<Snapshot> {
+    read_with(conn, None).await
+}
+
+/// [`read`], with the saved connections from an earlier read when none of
+/// them changed since: a `GetSettings` per profile is the dearest part.
+async fn read_with(conn: &Connection, profiles: Option<Vec<Profile>>) -> zbus::Result<Snapshot> {
     if !is_running(conn).await {
         return Ok(Snapshot::default());
     }
@@ -94,7 +100,10 @@ pub async fn read(conn: &Connection) -> zbus::Result<Snapshot> {
     }
 
     // Saved connections.
-    let profiles = read_profiles(conn).await?;
+    let profiles = match profiles {
+        Some(profiles) => profiles,
+        None => read_profiles(conn).await?,
+    };
     let mut saved: Vec<SavedNetwork> = profiles
         .iter()
         .filter(|p| p.kind == ProfileKind::Wifi && !p.hotspot)
@@ -200,6 +209,8 @@ pub async fn read(conn: &Connection) -> zbus::Result<Snapshot> {
             networks,
             last_scan_ms,
             active_ap,
+            access_points,
+            in_use,
             bitrate_kbps,
         });
     }
@@ -493,24 +504,28 @@ pub async fn connect_hidden(
     Ok(())
 }
 
-/// Save `config` as `family`'s configuration on the profile at `profile`,
-/// then apply it to the connection if it is up: in place where
-/// NetworkManager can (`Reapply`), by reconnecting where it cannot.
+/// Save `v4` and `v6` as the IP configuration of the profile at `profile`
+/// in one update, then apply it to the connection if it is up: in place
+/// where NetworkManager can (`Reapply`), by reconnecting where it cannot.
 ///
-/// Refused before anything is sent when the configuration does not
-/// validate, so a half-typed address never reaches the profile.
+/// Refused before anything is sent when either does not validate, so a
+/// half-typed address never reaches the profile, and one family is never
+/// saved without the other.
 pub async fn set_ip_config(
     conn: &Connection,
     profile: &str,
-    family: Family,
-    config: &IpConfig,
+    v4: &IpConfig,
+    v6: &IpConfig,
 ) -> zbus::Result<()> {
-    config
-        .validate(family)
-        .map_err(|e| zbus::Error::Failure(format!("{e:?}")))?;
+    for (family, config) in [(Family::V4, v4), (Family::V6, v6)] {
+        config
+            .validate(family)
+            .map_err(|e| zbus::Error::Failure(format!("{e:?}")))?;
+    }
     let proxy = at!(SettingsConnectionProxy, conn, profile).await?;
     let mut settings = proxy.get_settings().await?;
-    config.write_into(&mut settings, family);
+    v4.write_into(&mut settings, Family::V4);
+    v6.write_into(&mut settings, Family::V6);
     proxy.update(settings).await?;
     reapply(conn, profile).await
 }
@@ -610,34 +625,147 @@ pub async fn set_autoconnect(conn: &Connection, connection: &str, on: bool) -> z
     proxy.update(settings).await
 }
 
-/// Call `changed` whenever NetworkManager's state may have changed: any of
+/// What one of NetworkManager's signals says changed.
+fn classify(message: &zbus::Message) -> Changes {
+    let header = message.header();
+    let path = header.path().map(|p| p.as_str()).unwrap_or_default();
+    let member = header.member().map(|m| m.as_str()).unwrap_or_default();
+    let interface = header.interface().map(|i| i.as_str()).unwrap_or_default();
+
+    if path.starts_with("/org/freedesktop/NetworkManager/Settings") {
+        return Changes {
+            profiles: true,
+            ..Changes::default()
+        };
+    }
+    if member == "PropertiesChanged"
+        && path.starts_with("/org/freedesktop/NetworkManager/AccessPoint/")
+    {
+        // The standard signal names the interface first; NetworkManager's
+        // own, older one carries only the properties.
+        let changed: Option<HashMap<String, OwnedValue>> =
+            if interface == "org.freedesktop.DBus.Properties" {
+                message
+                    .body()
+                    .deserialize::<(String, HashMap<String, OwnedValue>, Vec<String>)>()
+                    .ok()
+                    .map(|(_, changed, _)| changed)
+            } else {
+                message
+                    .body()
+                    .deserialize::<(HashMap<String, OwnedValue>,)>()
+                    .ok()
+                    .map(|(changed,)| changed)
+            };
+        if let Some(changed) = changed {
+            let only_signal = changed
+                .keys()
+                .all(|key| key == "Strength" || key == "LastSeen");
+            if only_signal {
+                let strength = changed.get("Strength").and_then(|v| u8::try_from(v).ok());
+                return Changes {
+                    strengths: strength
+                        .map(|s| vec![(path.to_string(), s)])
+                        .unwrap_or_default(),
+                    ..Changes::default()
+                };
+            }
+        }
+    }
+    Changes {
+        other: true,
+        ..Changes::default()
+    }
+}
+
+/// Call `changed` with what changed whenever NetworkManager signals: any of
 /// its signals, and it joining or leaving the bus. A burst is reported once,
 /// [`SETTLE`] after it starts. Returns when the connection closes.
-pub async fn watch(conn: &Connection, mut changed: impl FnMut()) -> zbus::Result<()> {
+pub async fn watch(conn: &Connection, mut changed: impl FnMut(Changes)) -> zbus::Result<()> {
     let rule = zbus::MatchRule::builder()
         .msg_type(zbus::message::Type::Signal)
         .sender(SERVICE)?
         .build();
     let signals = zbus::MessageStream::for_match_rule(rule, conn, Some(256))
         .await?
-        .map(|_| ());
+        .map(|message| match message {
+            Ok(message) => classify(&message),
+            Err(_) => Changes {
+                other: true,
+                ..Changes::default()
+            },
+        });
+    // NetworkManager coming or going changes everything, its saved
+    // connections included.
     let owners = zbus::fdo::DBusProxy::new(conn)
         .await?
         .receive_name_owner_changed_with_args(&[(0, SERVICE)])
         .await?
-        .map(|_| ());
+        .map(|_| Changes {
+            profiles: true,
+            other: true,
+            ..Changes::default()
+        });
     let mut events = futures_util::stream::select(signals, owners);
 
-    while events.next().await.is_some() {
+    while let Some(first) = events.next().await {
+        let mut burst = first;
         let settle = tokio::time::sleep(SETTLE);
         tokio::pin!(settle);
         loop {
             tokio::select! {
                 _ = &mut settle => break,
-                more = events.next() => if more.is_none() { break },
+                more = events.next() => match more {
+                    Some(more) => burst.merge(more),
+                    None => break,
+                },
             }
         }
-        changed();
+        changed(burst);
     }
+    Ok(())
+}
+
+/// Read NetworkManager, then follow it for as long as the connection lasts,
+/// handing every new snapshot to `on_snapshot`. A burst of changes costs
+/// only what it needs: strengths alone are applied without a bus call, and
+/// saved connections are read again only when one of them changed.
+///
+/// The reads run on the caller's runtime, never inside a callback, so this
+/// is what a plain thread runs through [`crate::blocking::follow`].
+pub async fn follow(conn: &Connection, mut on_snapshot: impl FnMut(&Snapshot)) -> zbus::Result<()> {
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Changes>();
+    let watching = watch(conn, move |changes| {
+        let _ = tx.send(changes);
+    });
+    let reading = async {
+        let mut current = read(conn).await?;
+        on_snapshot(&current);
+        while let Some(mut changes) = rx.recv().await {
+            while let Ok(more) = rx.try_recv() {
+                changes.merge(more);
+            }
+            let next = if changes.only_strengths() {
+                let mut next = current.clone();
+                next.apply_strengths(&changes.strengths);
+                Ok(next)
+            } else {
+                let profiles = (!changes.profiles).then(|| current.profiles.clone());
+                read_with(conn, profiles).await
+            };
+            match next {
+                Ok(next) if next != current => {
+                    current = next;
+                    on_snapshot(&current);
+                }
+                Ok(_) => {}
+                // NetworkManager going away mid-read: the owner change that
+                // comes with it reads again.
+                Err(_) => {}
+            }
+        }
+        Ok::<(), zbus::Error>(())
+    };
+    tokio::try_join!(watching, reading)?;
     Ok(())
 }

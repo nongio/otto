@@ -115,7 +115,7 @@ The Top Bar is a persistent, full-width panel anchored to the top edge of the pr
 
 ### Network (Right Zone)
 
-39a. The network indicator, its menu and the Network pane behind it are specified in [network.md](network.md). It is shown while the `topbar.show_network` setting (Settings, Network, "Show network status in the top bar", on by default) is true and NetworkManager reports a Wi-Fi or Ethernet device; otherwise it takes no room. It opens Settings with `--pane network` through the settings command (`battery.settings_command`).
+39a. The network indicator, its menu and the Network pane behind it are specified in [network.md](network.md). It is shown while the `topbar.show_network` setting (Settings, Top bar, "Show network status in the top bar", on by default) is true and NetworkManager reports a Wi-Fi or Ethernet device; otherwise it takes no room. It opens Settings with `--pane network` through the settings command (`battery.settings_command`).
 
 ### Clock (Right Zone)
 

@@ -103,36 +103,15 @@ async fn follow_network() -> zbus::Result<()> {
             tracing::warn!("network secret agent: {e}");
         }
     });
-    reread(&conn).await;
-    // `watch` hands back a plain callback; the re-read it asks for runs on
-    // the runtime, one at a time, the latest request winning.
-    let (tx, mut rx) = tokio::sync::watch::channel(());
-    let reader = conn.clone();
-    tokio::spawn(async move {
-        while rx.changed().await.is_ok() {
-            reread(&reader).await;
+    otto_network::follow(&conn, |next| {
+        let mut slot = SNAPSHOT.lock().unwrap();
+        if *slot != *next {
+            *slot = next.clone();
+            drop(slot);
+            bump();
         }
-    });
-    otto_network::watch(&conn, move || {
-        let _ = tx.send(());
     })
     .await
-}
-
-async fn reread(conn: &Connection) {
-    let next = match otto_network::read(conn).await {
-        Ok(snapshot) => snapshot,
-        Err(e) => {
-            tracing::debug!("network read failed: {e}");
-            return;
-        }
-    };
-    let mut slot = SNAPSHOT.lock().unwrap();
-    if *slot != next {
-        *slot = next;
-        drop(slot);
-        bump();
-    }
 }
 
 async fn follow_setting() -> zbus::Result<()> {
@@ -404,7 +383,7 @@ pub fn menu_items(snapshot: &Snapshot, settings: bool) -> Vec<KitMenuItem> {
             let label = match (device.state, device.speed_mbps) {
                 (DeviceState::Connected, Some(speed)) => otto_kit::t_owned!(
                     "bar-network-ethernet-connected-speed",
-                    speed = format_speed(u64::from(speed) * 1000)
+                    speed = otto_network::format_rate(u64::from(speed) * 1000)
                 ),
                 (DeviceState::Connected, None) => {
                     otto_kit::t!("bar-network-ethernet-connected").to_string()
@@ -461,21 +440,6 @@ pub fn menu_items(snapshot: &Snapshot, settings: bool) -> Vec<KitMenuItem> {
     items
 }
 
-/// A link rate in kbit/s as a person reads it: "866 Mb/s", "1.2 Gb/s".
-pub fn format_speed(kbps: u64) -> String {
-    let mbps = kbps / 1000;
-    if mbps >= 1000 {
-        let gbps = mbps as f64 / 1000.0;
-        if (gbps - gbps.round()).abs() < 0.05 {
-            format!("{} Gb/s", gbps.round())
-        } else {
-            format!("{gbps:.1} Gb/s")
-        }
-    } else {
-        format!("{mbps} Mb/s")
-    }
-}
-
 /// The line under the connected network: band, channel and link rate, what
 /// macOS hides behind Option-click.
 fn link_detail(wifi: &otto_network::WifiDevice) -> Option<String> {
@@ -492,7 +456,7 @@ fn link_detail(wifi: &otto_network::WifiDevice) -> Option<String> {
         ));
     }
     if let Some(rate) = wifi.bitrate_kbps {
-        parts.push(format_speed(u64::from(rate)));
+        parts.push(otto_network::format_rate(u64::from(rate)));
     }
     if let Some(ip) = wifi
         .device
@@ -832,13 +796,6 @@ mod tests {
         let snapshot = snapshot_with(Vec::new());
         let items = menu_items(&snapshot, false);
         assert!(items.iter().any(|i| i.action_id() == Some("hidden")));
-    }
-
-    #[test]
-    fn link_rates() {
-        assert_eq!(format_speed(866_000), "866 Mb/s");
-        assert_eq!(format_speed(1_000_000), "1 Gb/s");
-        assert_eq!(format_speed(2_402_000), "2.4 Gb/s");
     }
 
     #[test]

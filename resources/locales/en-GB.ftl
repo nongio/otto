@@ -423,6 +423,10 @@ settings-network-vpn-add-detail = A WireGuard .conf or an OpenVPN .ovpn file
 settings-network-vpn-import = Import…
 settings-network-vpn-import-title = Import a VPN
 settings-network-vpn-import-filter = VPN configurations
+settings-network-vpn-import-unknown = Only WireGuard .conf and OpenVPN .ovpn files can be imported
+# $reason is nmcli's own message.
+settings-network-vpn-import-failed = Not imported: { $reason }
+settings-network-vpn-import-no-nmcli = Not imported: nmcli is not installed
 
 ## Settings — Power
 
