@@ -352,10 +352,16 @@ impl<BackendData: Backend> Otto<BackendData> {
             was_open,
             is_open_after
         );
-        if was_open && !is_open_after {
+        // An opening swipe that is undone ends closed too, and its start
+        // already took the keyboard (`enter_expose_focus`) while `show_all`
+        // was still false — so hand focus back whenever exposé ends up shut,
+        // not only when it was open before.
+        if !is_open_after {
             let workspace_index = self.workspaces.get_current_workspace_index();
-            self.workspaces
-                .apply_window_selector_order_to_workspace(workspace_index);
+            if was_open {
+                self.workspaces
+                    .apply_window_selector_order_to_workspace(workspace_index);
+            }
             if let Some(wid) = hovered {
                 tracing::debug!("expose_end_with_velocity_and_focus_top: focused={:?}", wid);
                 self.activate_window(&wid);
