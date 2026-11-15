@@ -1415,7 +1415,15 @@ fn render_workspace_selector_view(
                             .scale(Point::new(geom.ratio, geom.ratio))
                             .replicate_node(w.workspace_node.filter(|_| mirrors_live))
                             .picture_cached(true)
-                            .image_cache(true)
+                            // Cached for the workspaces that are not on
+                            // screen: nothing in them commits, so the
+                            // offscreen copy is painted once and reused. The
+                            // current one changes with every commit of every
+                            // window in it, and a cache there re-renders the
+                            // whole workspace at full size each time only to
+                            // scale it down — drawn straight in, it costs the
+                            // thumbnail's own pixels.
+                            .image_cache(!current)
                             .color_filter(color_filter)
                             .border_corner_radius(BorderRadius::new_single(
                                 otto_kit::corners::radius(20.0 / geom.ratio),
