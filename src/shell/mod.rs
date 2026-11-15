@@ -193,6 +193,9 @@ impl<BackendData: Backend> CompositorHandler for Otto<BackendData> {
 
     fn commit(&mut self, surface: &WlSurface) {
         on_commit_buffer_handler::<Self>(surface);
+        // Held until the frames that read it are done on the GPU, instead of
+        // going back to the client as soon as the next commit replaces it.
+        crate::client_buffers::committed(surface);
         self.backend_data.early_import(surface);
         // A commit landing after this frame's VBlank send (its buffer fence
         // held it back) gets its frame callback now, so the client can start

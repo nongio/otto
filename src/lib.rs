@@ -64,6 +64,7 @@ pub use otto_render::{
 };
 mod workspaces;
 
+mod client_buffers;
 mod config;
 mod gnome_interface;
 mod gsettings;

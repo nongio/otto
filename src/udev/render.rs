@@ -3366,9 +3366,15 @@ impl<A: RendererApi> Otto<UdevData<A>> {
     /// blocking. The time from now to that moment feeds `avg_gpu_time_us`,
     /// which the next deadline counts (see `schedule::draw_delay_us`).
     /// A fence that cannot be exported leaves the average as it was.
+    ///
+    /// The client buffers on screen are held until the fence signals, so a
+    /// buffer a commit replaces meanwhile goes back to its client only once
+    /// this pass is done reading it (see `crate::client_buffers`). Without a
+    /// fence they are let go at once, as before.
     fn watch_gpu_time(&mut self, node: DrmNode, crtc: crtc::Handle) {
         #[cfg(feature = "renderer_sync")]
         {
+            let held = crate::client_buffers::snapshot();
             let fd = self
                 .backend_data
                 .backends
@@ -3380,7 +3386,10 @@ impl<A: RendererApi> Otto<UdevData<A>> {
             };
             let submitted = Instant::now();
             let source = Generic::new(fd, Interest::READ, Mode::Level);
+            let mut held = Some(held);
             let inserted = self.handle.insert_source(source, move |_, _, data| {
+                // The pass is done: what it read can go back to its clients.
+                drop(held.take());
                 let gpu_time = submitted.elapsed();
                 crate::render_phase_stats::record_gpu_time(gpu_time);
                 if let Some(surface) = data
