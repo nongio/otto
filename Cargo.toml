@@ -205,7 +205,11 @@ too_many_arguments = "allow"
 # is a one-line change here instead of an edit per component — and no member
 # can drift onto a different revision and pull a second copy into the link.
 #
-# Pinned to the font-rendering branch until it is released: a layer's opacity
+# Pinned to the otto-412 branch until it is released: font-rendering below,
+# plus pictures kept across scale changes and nested arena reads that no longer
+# deadlock (nongio/layers#32), and mirrors that repaint only when their leader
+# changes and refresh when shown (nongio/layers#33).
+# font-rendering: a layer's opacity
 # applied once (it was squared), and subpixel text kept through fades and
 # frosted fades on an output that declares a layout. Before that, v1.18.2
 # (drops the unused puffin_http dependency, #30). v1.18.1
@@ -219,7 +223,7 @@ too_many_arguments = "allow"
 # For local development point this at the checkout — one edit, whole workspace:
 #   laye-rs = { path = "../layers", features = ["export-taffy"] }
 [workspace.dependencies]
-laye-rs = { git = "https://github.com/nongio/layers", rev = "46dcd9ebb2613d8bf303a97176f8e9cdfc7813ca", features = [
+laye-rs = { git = "https://github.com/nongio/layers", rev = "a25cfb327ade39466103126bd31d8f3d4a5b0388", features = [
     "export-taffy",
 ] }
 
