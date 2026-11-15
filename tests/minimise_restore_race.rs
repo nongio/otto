@@ -418,21 +418,24 @@ mod minimise_restore_race_tests {
                 })
             };
             let before = ows_count();
-            if action == "fullscreen" {
-                handle.fullscreen_window(TITLE);
-            } else {
-                handle.with_state(|state| {
-                    use smithay::wayland::shell::xdg::XdgShellHandler;
-                    let toplevel = state
-                        .workspaces
-                        .windows_map
-                        .values()
-                        .find(|w| w.xdg_title() == TITLE)
-                        .and_then(|w| w.toplevel().cloned())
-                        .unwrap();
+            // Through the windows map, as the foreign-toplevel handler does:
+            // a minimised window is in no space, so `fullscreen_window`,
+            // which looks there, would never send the request at all.
+            handle.with_state(move |state| {
+                use smithay::wayland::shell::xdg::XdgShellHandler;
+                let toplevel = state
+                    .workspaces
+                    .windows_map
+                    .values()
+                    .find(|w| w.xdg_title() == TITLE)
+                    .and_then(|w| w.toplevel().cloned())
+                    .unwrap();
+                if action == "fullscreen" {
+                    state.fullscreen_request(toplevel, None);
+                } else {
                     state.maximize_request(toplevel);
-                });
-            }
+                }
+            });
             let _ = client.roundtrip();
             run_out(&handle);
 

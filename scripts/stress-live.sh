@@ -18,6 +18,11 @@
 # `Ctrl+1/2` workspaces); set STRESS_EXPOSE / STRESS_SWITCH /
 # STRESS_WS_MODS if your config binds others. Keys go to whatever is focused,
 # so leave nothing open that a stray PageUp or Ctrl+Tab would upset.
+#
+# STRESS_SCENE_CHECK=<script> runs that script every 25 actions and once the
+# windows are gone; a non-zero exit (a window layer stranded outside its
+# workspace or dock drawer, read from the scene debugger) stops the run with
+# the windows left as they are, for a look.
 
 DURATION=${1:-300}
 APP=otto-stress-live
@@ -94,6 +99,18 @@ hang() {
   exit 2
 }
 
+scene_check() {
+  [ -n "$STRESS_SCENE_CHECK" ] || return 0
+  out=$("$STRESS_SCENE_CHECK" 2>&1)
+  status=$?
+  echo "$1: $out"
+  if [ $status -eq 1 ]; then
+    echo "STRAY WINDOW LAYER $1 — windows left open for a look"
+    trap - EXIT INT TERM
+    exit 4
+  fi
+}
+
 STEPS=0
 END=$(( $(date +%s) + DURATION ))
 open_window
@@ -117,5 +134,11 @@ while [ "$(date +%s)" -lt "$END" ]; do
   sleep 0.$(rand 3)
   alive || { sleep 5; alive || hang; }
   [ $((STEPS % 50)) -eq 0 ] && echo "$STEPS actions, $(count) windows, otto answering"
+  [ $((STEPS % 25)) -eq 0 ] && scene_check "after $STEPS actions, last: $LAST"
 done
 echo "no hang in ${DURATION}s ($STEPS actions)"
+# The way the run ends — every window killed at once — is a test of its own.
+cleanup
+PIDS=""
+sleep 3
+scene_check "after closing every window"

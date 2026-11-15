@@ -727,6 +727,17 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
                 return;
             };
 
+            // A minimised window stays in its dock drawer: going fullscreen
+            // would park its mini layer above everything, slide it to the
+            // corner and open an empty fullscreen workspace for it.
+            // `wlrctl toplevel fullscreen` asks every matching window,
+            // minimised or not. Declined, the client is told its state is
+            // unchanged.
+            if window.is_minimised() {
+                surface.send_configure();
+                return;
+            }
+
             // Fullscreen on the output the window actually lives on — never
             // yank it to another screen. Fall back to the client-requested
             // output, then to a real output (never a virtual RDP/mirror one —

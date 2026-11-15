@@ -231,6 +231,13 @@ impl<BackendData: Backend> XwmHandler for Otto<BackendData> {
             return;
         };
 
+        // A minimised window stays in its dock drawer (see the xdg-shell
+        // handler); its _NET_WM_STATE is left saying it is not fullscreen.
+        if elem.is_minimised() {
+            let _ = window.set_fullscreen(false);
+            return;
+        }
+
         if elem.is_fullscreen() {
             return;
         }
