@@ -7,6 +7,12 @@ use smithay::backend::renderer::element::RenderElementStates;
 use super::types::SurfaceData;
 use crate::renderer::active::SkiaDeviceRenderer;
 
+/// `touch /tmp/otto-full-damage`: every frame repaints the whole output, the
+/// buffer ages reset after each. A glitch that survives it is not damage
+/// tracking (a region left unpainted) but what is drawn: a client buffer read
+/// while it is rewritten, a texture out of date.
+static FULL_DAMAGE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 /// Once per second: refresh the /tmp debug toggles into atomics (so the hot
 /// path never stat()s files) and log how each plane element was realized.
 /// Call after `render_frame` with the frame's element states.
@@ -30,6 +36,10 @@ pub(super) fn debug_tick(
         .get_or_init(|| Mutex::new(String::new()))
         .lock()
         .unwrap();
+    // Every frame: the next one repaints the whole output.
+    if FULL_DAMAGE.load(std::sync::atomic::Ordering::Relaxed) {
+        surface.compositor.reset_buffer_ages();
+    }
     let changed = *last_summary != summary;
     if last.elapsed() < Duration::from_secs(1) && !changed {
         return;
@@ -74,6 +84,10 @@ fn refresh_debug_toggles(surface: &mut SurfaceData) {
         crate::debug_hooks::toggle("/tmp/otto-no-window-plane"),
         Ordering::Relaxed,
     );
+    let full = crate::debug_hooks::toggle("/tmp/otto-full-damage");
+    if FULL_DAMAGE.swap(full, Ordering::Relaxed) != full {
+        tracing::info!(target: "otto::planes", "full damage {}", if full { "ON" } else { "OFF" });
+    }
     if crate::debug_hooks::toggle("/tmp/otto-dump-planes") {
         let _ = std::fs::remove_file("/tmp/otto-dump-planes");
         DUMP_PLANES.store(true, Ordering::Relaxed);

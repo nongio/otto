@@ -370,9 +370,9 @@ mod vulkan {
             SkiaVkRenderer::read_current_frame(self)
         }
 
-        /// The Vulkan renderer waits for its plane writes on the CPU in
-        /// `flush_planes`, so there is nothing to record per buffer.
-        fn note_scanout_write(&mut self, _dmabuf: &Dmabuf) {}
+        fn note_scanout_write(&mut self, dmabuf: &Dmabuf) {
+            self.note_scanout_write(dmabuf);
+        }
 
         fn flush_planes(&mut self) {
             self.flush_planes_for_scanout();

@@ -231,6 +231,13 @@ impl<BackendData: Backend> XwmHandler for Otto<BackendData> {
             return;
         };
 
+        // A minimised window stays in its dock drawer (see the xdg-shell
+        // handler); its _NET_WM_STATE is left saying it is not fullscreen.
+        if elem.is_minimised() {
+            let _ = window.set_fullscreen(false);
+            return;
+        }
+
         if elem.is_fullscreen() {
             return;
         }
@@ -278,12 +285,15 @@ impl<BackendData: Backend> XwmHandler for Otto<BackendData> {
 
         let output_name = output.name();
         let prev_workspace = elem.get_workspace();
-        let fullscreen_workspace_index = self
+        // The window's own fullscreen workspace, not the one on screen: the
+        // user may have switched away, or another window be going fullscreen.
+        let fullscreen_workspace_index = elem.get_fullscreen_workspace();
+        let on_screen = self
             .workspaces
             .output_workspaces
             .get(&output_name)
-            .map(|ows| ows.current_workspace)
-            .unwrap_or(0);
+            .map(|ows| ows.current_workspace == fullscreen_workspace_index)
+            .unwrap_or(false);
 
         if let Some(workspace) = self
             .workspaces
@@ -312,15 +322,21 @@ impl<BackendData: Backend> XwmHandler for Otto<BackendData> {
             prev_workspace,
             restore_loc,
         );
-        let scroll_transaction = self.workspaces.set_workspace_for_output(
-            &output,
-            prev_workspace,
-            Some(transition.clone()),
-        );
+        let scroll_transaction = if on_screen {
+            self.workspaces.set_workspace_for_output(
+                &output,
+                prev_workspace,
+                Some(transition.clone()),
+            )
+        } else {
+            None
+        };
 
         // Defer fullscreen workspace removal until the scroll animation completes,
         // so the workspace remains visible while scrolling away from it.
-        if let Some(tr) = &scroll_transaction {
+        if fullscreen_workspace_index == prev_workspace || fullscreen_workspace_index == 0 {
+            // Not a workspace of its own: nothing to remove.
+        } else if let Some(tr) = &scroll_transaction {
             self.workspaces.defer_remove_workspace_on_output(
                 &output_name,
                 fullscreen_workspace_index,

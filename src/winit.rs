@@ -734,6 +734,7 @@ pub fn run_winit() {
                             &pacing,
                             has_rendered,
                             Presentation::Immediate,
+                            true,
                         );
 
                         record_frame_result(has_rendered, frame_submitted);

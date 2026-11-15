@@ -194,6 +194,10 @@ impl<BackendData: Backend> CompositorHandler for Otto<BackendData> {
     fn commit(&mut self, surface: &WlSurface) {
         on_commit_buffer_handler::<Self>(surface);
         self.backend_data.early_import(surface);
+        // A commit landing after this frame's VBlank send (its buffer fence
+        // held it back) gets its frame callback now, so the client can start
+        // its next frame instead of idling until the next VBlank.
+        crate::state::frame::frame_callback_on_commit(self, surface);
 
         // A caret moves as its window is typed into and as the window is
         // dragged about, and both arrive here. Costs an empty-vector check

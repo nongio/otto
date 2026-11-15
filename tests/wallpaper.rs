@@ -33,6 +33,7 @@ mod wallpaper_tests {
         let handle = HeadlessHandle::start(HeadlessConfig {
             width: SCREEN.0,
             height: SCREEN.1,
+            ..Default::default()
         });
         // The configuration outlives a session in this process: start every
         // test from the defaults, not from the last test's layout.

@@ -995,7 +995,7 @@ fn vulkan_sampled_dmabuf_returns_to_foreign_queue() {
     let texture = xrgb_dmabuf_alpha_zero(&mut renderer);
     assert_eq!(sample(&mut renderer, &texture)[1], 255, "green is drawn");
 
-    let (_, backend) = renderer.sampled.last().cloned().expect("tracked texture");
+    let (_, backend, _) = renderer.sampled.last().cloned().expect("tracked texture");
     let state = skvk::mutable_texture_states::new_vulkan(
         skvk::ImageLayout::GENERAL,
         vk::QUEUE_FAMILY_FOREIGN_EXT,
@@ -1359,4 +1359,295 @@ fn vulkan_wallpaper_half_pixel_nearest_report() {
     eprintln!(
         "half-pixel nearest, cropped against whole (pixels differing, worst delta): {report:?}"
     );
+}
+
+/// A frosted layer drawn the way the composite path draws it on Vulkan:
+/// frames alternate between two buffers, each repainting only what changed
+/// since that buffer was last drawn, and a pass is grown over the frost only
+/// when what lies beneath it changed. Everywhere else lay-rs replays the
+/// blurred backdrop it kept. Every frame's frost has to match the same scene
+/// drawn whole, from scratch, by a second renderer on a thread of its own
+/// (whose blur cache starts empty).
+#[test]
+#[ignore = "needs a Vulkan GPU"]
+fn vulkan_kept_frost_matches_a_fresh_blur() {
+    use layers::{
+        drawing::render_node_tree,
+        engine::Engine,
+        prelude::taffy,
+        skia,
+        types::{BlendMode, Color, Size},
+    };
+    const S: i32 = 256;
+    let frost_rect = skia::IRect::from_xywh(40, 100, 160, 40);
+    let above_rect = skia::IRect::from_xywh(150, 110, 20, 20);
+    let patch_rect = skia::IRect::from_xywh(20, 90, 80, 60);
+    let whole = skia::IRect::from_wh(S, S);
+    let union = |a: skia::IRect, b: skia::IRect| {
+        skia::IRect::from_ltrb(
+            a.left.min(b.left),
+            a.top.min(b.top),
+            a.right.max(b.right),
+            a.bottom.max(b.bottom),
+        )
+    };
+
+    let absolute = || taffy::Style {
+        position: taffy::Position::Absolute,
+        ..Default::default()
+    };
+    let engine = Engine::create(S as f32, S as f32);
+    let root = engine.new_layer();
+    root.set_layout_style(absolute());
+    root.set_size(Size::points(S as f32, S as f32), None);
+    engine.add_layer(&root).unwrap();
+    let solid =
+        |at: (i32, i32), size: (i32, i32), colour: Color, parent: &layers::prelude::Layer| {
+            let layer = engine.new_layer();
+            layer.set_layout_style(absolute());
+            layer.set_position((at.0 as f32, at.1 as f32), None);
+            layer.set_size(Size::points(size.0 as f32, size.1 as f32), None);
+            layer.set_background_color(colour, None);
+            engine.append_layer(&layer, parent.id).unwrap();
+            layer
+        };
+    let _behind = solid((0, 0), (S, S), Color::new_rgba255(40, 60, 200, 255), &root);
+    // The window: what the frost sits over, and the frost. A mirror of it
+    // (an exposé preview, a thumbnail) draws the frost a second time, on the
+    // same surface, somewhere else.
+    let window = solid((0, 0), (S, 160), Color::new_rgba255(0, 0, 0, 0), &root);
+    let patch = solid(
+        (patch_rect.left, patch_rect.top),
+        (patch_rect.width(), patch_rect.height()),
+        Color::new_rgba255(255, 255, 255, 255),
+        &window,
+    );
+    let frost = solid(
+        (frost_rect.left, frost_rect.top),
+        (frost_rect.width(), frost_rect.height()),
+        Color::new_rgba255(60, 60, 70, 150),
+        &window,
+    );
+    frost.set_blend_mode(BlendMode::BackgroundBlur);
+    // A child of the frost, so its changes repaint over the kept blur.
+    let above = solid(
+        (
+            above_rect.left - frost_rect.left,
+            above_rect.top - frost_rect.top,
+        ),
+        (above_rect.width(), above_rect.height()),
+        Color::new_rgba255(255, 200, 0, 60),
+        &frost,
+    );
+
+    let draw = |canvas: &skia::Canvas, rects: &[skia::IRect], mirror: bool| {
+        let scene = engine.scene();
+        scene.with_arena(|arena| {
+            scene.with_renderable_arena(|renderables| {
+                if mirror {
+                    // Drawn whole, lower down, the way a mirror that is not
+                    // picture-cached replays the window's subtree.
+                    let save = canvas.save();
+                    canvas.clip_irect(skia::IRect::from_xywh(0, 160, S, 96), None);
+                    canvas.translate((0.0, 120.0));
+                    render_node_tree(window.id, arena, renderables, canvas, 1.0, None, None, None);
+                    canvas.restore_to_count(save);
+                }
+                for rect in rects {
+                    let save = canvas.save();
+                    canvas.clip_irect(*rect, None);
+                    let mut region = skia::Region::new();
+                    region.set_rect(*rect);
+                    render_node_tree(
+                        root.id,
+                        arena,
+                        renderables,
+                        canvas,
+                        1.0,
+                        None,
+                        Some(&region),
+                        None,
+                    );
+                    canvas.restore_to_count(save);
+                }
+            })
+        });
+    };
+    let worst_in = |a: &[u8], b: &[u8], rect: skia::IRect| {
+        let mut worst = (0u8, (0, 0));
+        for y in rect.top..rect.bottom {
+            for x in rect.left..rect.right {
+                let i = ((y * S + x) * 4) as usize;
+                for c in 0..3 {
+                    let d = a[i + c].abs_diff(b[i + c]);
+                    if d > worst.0 {
+                        worst = (d, (x, y));
+                    }
+                }
+            }
+        }
+        worst
+    };
+
+    let mut renderer = SkiaVkRenderer::new(&first_physical_device()).expect("renderer");
+    let mut buffers = [
+        renderer
+            .create_buffer(Fourcc::Abgr8888, (S, S).into())
+            .expect("buffer a"),
+        renderer
+            .create_buffer(Fourcc::Abgr8888, (S, S).into())
+            .expect("buffer b"),
+    ];
+    // What each frame changed, for the buffer age.
+    let mut history: Vec<skia::IRect> = Vec::new();
+
+    // What changes in each frame, and whether it lies beneath the frost.
+    let steps: [(&str, bool); 14] = [
+        ("first", true),
+        ("above", false),
+        ("above", false),
+        ("beneath", true),
+        ("above", false),
+        ("above", false),
+        ("beneath", true),
+        ("beneath", true),
+        ("above", false),
+        ("above", false),
+        ("above", false),
+        // A mirror draws the frost too from here on.
+        ("above", false),
+        ("above", false),
+        ("above", false),
+    ];
+    let colours = [
+        Color::new_rgba255(255, 255, 255, 255),
+        Color::new_rgba255(0, 200, 0, 255),
+        Color::new_rgba255(255, 0, 255, 255),
+        Color::new_rgba255(0, 0, 0, 255),
+    ];
+    let mut failures = Vec::new();
+    for (frame_no, (what, beneath)) in steps.iter().enumerate() {
+        let mirrored = frame_no >= 11;
+        let colour = colours[frame_no % colours.len()];
+        let changed = match *what {
+            "first" => whole,
+            "above" => {
+                // Translucent: the frost shows through, so a pass that blurs
+                // it afresh instead of replaying it would show.
+                let mut c = colour;
+                c.a = 0.25;
+                above.set_background_color(c, None);
+                above_rect
+            }
+            _ => {
+                patch.set_background_color(colour, None);
+                patch_rect
+            }
+        };
+        engine.update(0.016);
+        // Grown over the frost when its backdrop changed, as the composite
+        // path does.
+        let this_frame = if *beneath {
+            union(changed, frost_rect)
+        } else {
+            changed
+        };
+        let buffer = frame_no % 2;
+        // Buffer age 2: the other buffer missed the last frame's change. The
+        // first frame of each buffer is drawn whole.
+        let mut rects = vec![this_frame];
+        if frame_no < 2 {
+            rects = vec![whole];
+        } else if let Some(previous) = history.last() {
+            rects.push(*previous);
+        }
+        history.push(this_frame);
+        // Overlapping passes merged, so nothing is painted twice.
+        let mut merged: Vec<skia::IRect> = Vec::new();
+        for rect in rects {
+            let mut rect = rect;
+            let mut i = 0;
+            while i < merged.len() {
+                if skia::IRect::intersects(&merged[i], &rect) {
+                    rect = union(rect, merged.swap_remove(i));
+                } else {
+                    i += 1;
+                }
+            }
+            merged.push(rect);
+        }
+
+        let sync = {
+            let mut frame = renderer
+                .render(&mut buffers[buffer], (S, S).into(), Transform::Normal)
+                .expect("frame");
+            draw(frame.skia_surface.canvas(), &merged, mirrored);
+            frame.finish().expect("finish")
+        };
+        sync.wait().expect("sync");
+        engine.clear_damage();
+        let mapping = renderer
+            .copy_framebuffer(
+                &buffers[buffer],
+                Rectangle::from_size((S, S).into()),
+                Fourcc::Abgr8888,
+            )
+            .expect("copy framebuffer");
+        let got = renderer.map_texture(&mapping).expect("map").to_vec();
+
+        let scene = engine.scene().clone();
+        let root_id = root.id;
+        let reference = std::thread::spawn(move || {
+            let mut renderer = SkiaVkRenderer::new(&first_physical_device()).expect("renderer");
+            let mut target = renderer
+                .create_buffer(Fourcc::Abgr8888, (S, S).into())
+                .expect("reference");
+            let sync = {
+                let mut frame = renderer
+                    .render(&mut target, (S, S).into(), Transform::Normal)
+                    .expect("frame");
+                let canvas = frame.skia_surface.canvas();
+                scene.with_arena(|arena| {
+                    scene.with_renderable_arena(|renderables| {
+                        render_node_tree(
+                            root_id,
+                            arena,
+                            renderables,
+                            canvas,
+                            1.0,
+                            None,
+                            None,
+                            None,
+                        );
+                    })
+                });
+                frame.finish().expect("finish")
+            };
+            sync.wait().expect("sync");
+            // Its kept blurs hold images of this renderer's context.
+            layers::drawing::clear_blur_cache();
+            let mapping = renderer
+                .copy_framebuffer(
+                    &target,
+                    Rectangle::from_size((S, S).into()),
+                    Fourcc::Abgr8888,
+                )
+                .expect("copy framebuffer");
+            renderer.map_texture(&mapping).expect("map").to_vec()
+        })
+        .join()
+        .unwrap();
+
+        let (diff, at) = worst_in(&got, &reference, frost_rect);
+        println!(
+            "frame {frame_no} ({what}, buffer {buffer}, passes {merged:?}): worst {diff} at {at:?}"
+        );
+        if diff > 12 {
+            failures.push(format!(
+                "frame {frame_no} ({what}): off by {diff} at {at:?}"
+            ));
+        }
+    }
+    layers::drawing::clear_blur_cache();
+    assert!(failures.is_empty(), "the frost went wrong: {failures:#?}");
 }

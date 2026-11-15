@@ -95,6 +95,8 @@ impl DmabufHandler for Otto<HeadlessData> {
 pub struct HeadlessConfig {
     pub width: i32,
     pub height: i32,
+    /// The output's scale, in place of the effective `screen_scale` setting.
+    pub scale: Option<f64>,
 }
 
 impl Default for HeadlessConfig {
@@ -102,6 +104,7 @@ impl Default for HeadlessConfig {
         Self {
             width: DEFAULT_WIDTH,
             height: DEFAULT_HEIGHT,
+            scale: None,
         }
     }
 }
@@ -2127,6 +2130,9 @@ fn run_headless_loop(
     );
     let _global = output.create_global::<Otto<HeadlessData>>(&state.display_handle);
 
+    if let Some(scale) = config.scale {
+        crate::config::Config::update(|c| c.screen_scale = scale);
+    }
     let config_screen_scale = crate::config::Config::with(|c| c.screen_scale);
     output.change_current_state(
         Some(mode),

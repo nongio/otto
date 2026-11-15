@@ -245,12 +245,14 @@ impl ContextMenuView {
         self.view.get_state().depth()
     }
 
-    /// Flash the selected item at `depth`/`idx`, then send `label` on the returned receiver.
+    /// Flash the item at `depth`/`idx` — deselect, 50 ms, reselect, 100 ms —
+    /// then close the menu. The caller runs the item's action itself, before
+    /// calling this.
     ///
-    /// Mirrors the client-side pulse: deselect (50 ms) → reselect (100 ms) → send.
-    /// The caller should close the menu and execute the action when the receiver fires.
-    /// Trigger a visual pulse on the selected item, then close the menu.
-    /// The action should be executed immediately by the caller before calling this.
+    /// Only the waiting happens on a tokio task; each step is applied on the
+    /// main loop. Re-rendering the menu and closing it take the scene's and
+    /// the dock's locks, and from another thread they can queue a writer
+    /// between two reads the main loop nests, freezing both.
     pub fn pulse_then_close(
         &self,
         depth: usize,
@@ -259,38 +261,19 @@ impl ContextMenuView {
     ) {
         let view = self.view.clone();
         tokio::spawn(async move {
-            let mut state = view.get_state();
-            state.select_at_depth(depth, None);
-            view.update_state(&state);
-
+            let select = |selected: Option<usize>| {
+                let view = view.clone();
+                move |_: &crate::workspaces::dock::DockView| {
+                    let mut state = view.get_state();
+                    state.select_at_depth(depth, selected);
+                    view.update_state(&state);
+                }
+            };
+            dock.on_main_loop(select(None));
             tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
-
-            let mut state = view.get_state();
-            state.select_at_depth(depth, Some(idx));
-            view.update_state(&state);
-
+            dock.on_main_loop(select(Some(idx)));
             tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-
-            dock.close_context_menu();
-        });
-    }
-
-    /// Trigger a visual pulse on the selected item (fire-and-forget).
-    /// The action should be executed immediately by the caller; this only animates.
-    pub fn pulse(&self, depth: usize, idx: usize) {
-        let view = self.view.clone();
-        tokio::spawn(async move {
-            let mut state = view.get_state();
-            state.select_at_depth(depth, None);
-            view.update_state(&state);
-
-            tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
-
-            let mut state = view.get_state();
-            state.select_at_depth(depth, Some(idx));
-            view.update_state(&state);
-
-            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+            dock.on_main_loop(|dock| dock.close_context_menu());
         });
     }
 }

@@ -298,6 +298,9 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
             }
         }
 
+        // The fullscreen workspace a closing window leaves empty, removed once
+        // the window is unmapped from it (and the output has scrolled away).
+        let mut emptied_fullscreen_workspace = None;
         if let Some(window) = self.workspaces.get_window_for_surface(&id).cloned() {
             if window.is_fullscreen() {
                 // Fullscreen workspaces are per-output: clear the flags on the
@@ -305,12 +308,15 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
                 let fullscreen_workspace = window.get_fullscreen_workspace();
                 if let Some(output) = self.workspaces.output_for_window(&window) {
                     let name = output.name();
+                    let mut is_fullscreen_workspace = false;
                     if let Some(workspace) = self
                         .workspaces
                         .output_workspaces
                         .get(&name)
                         .and_then(|ows| ows.workspace_views.get(fullscreen_workspace).cloned())
                     {
+                        is_fullscreen_workspace =
+                            workspace.get_fullscreen_mode() || workspace.get_fullscreen_animating();
                         workspace.set_fullscreen_mode(false);
                         workspace.set_fullscreen_animating(false);
                         workspace.set_name(None);
@@ -321,10 +327,15 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
                         .get(&name)
                         .map(|ows| ows.current_workspace)
                         .unwrap_or(0);
+                    let mut scroll = None;
                     if current == fullscreen_workspace {
                         let prev_workspace = fullscreen_workspace.saturating_sub(1);
-                        self.workspaces
-                            .set_workspace_for_output(&output, prev_workspace, None);
+                        scroll =
+                            self.workspaces
+                                .set_workspace_for_output(&output, prev_workspace, None);
+                    }
+                    if is_fullscreen_workspace && fullscreen_workspace > 0 {
+                        emptied_fullscreen_workspace = Some((name, fullscreen_workspace, scroll));
                     }
                 }
             }
@@ -333,6 +344,21 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
         // the window can fade out showing its last frame.
         let held = self.hold_surface_tree_textures(toplevel.wl_surface());
         let removed_surface_ids = self.workspaces.unmap_window_fading(&id, held);
+
+        // Leaving fullscreen removes the workspace the window had to itself;
+        // closing it there must too, or an empty workspace with no dock or
+        // bar is left in its place.
+        if let Some((output_name, index, scroll)) = emptied_fullscreen_workspace {
+            match scroll {
+                Some(tr) => {
+                    self.workspaces
+                        .defer_remove_workspace_on_output(&output_name, index, &tr)
+                }
+                None => self
+                    .workspaces
+                    .remove_workspace_from_output(&output_name, index),
+            }
+        }
 
         // Notify foreign toplevel list that this toplevel is closed
         if let Some(handle) = self.foreign_toplevels.remove(&id) {
@@ -701,6 +727,17 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
                 return;
             };
 
+            // A minimised window stays in its dock drawer: going fullscreen
+            // would park its mini layer above everything, slide it to the
+            // corner and open an empty fullscreen workspace for it.
+            // `wlrctl toplevel fullscreen` asks every matching window,
+            // minimised or not. Declined, the client is told its state is
+            // unchanged.
+            if window.is_minimised() {
+                surface.send_configure();
+                return;
+            }
+
             // Fullscreen on the output the window actually lives on — never
             // yank it to another screen. Fall back to the client-requested
             // output, then to a real output (never a virtual RDP/mirror one —
@@ -867,9 +904,15 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
                 let target_height = geometry.size.h as f32;
 
                 let s = surface.clone();
+                let growing = window.clone();
                 self.layers_engine.on_animation_update(
                     animation,
                     move |p: f32| {
+                        // Left fullscreen before getting there: the way out
+                        // sizes the window now.
+                        if !growing.is_fullscreen() {
+                            return;
+                        }
                         let width = current_width.interpolate(&target_width, p) as i32;
                         let height = current_height.interpolate(&target_height, p) as i32;
                         let size = Rectangle::new((0, 0).into(), (width, height).into());
@@ -908,15 +951,31 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
                 // is keyed separately and always completes, so the reparent
                 // rides on it instead.
                 let fs_window_layer = view.window_layer.clone();
+                let fs_window = window.clone();
                 self.layers_engine.on_animation_finish(
                     animation,
                     move |_: f32| {
+                        next_workspace_clone.set_fullscreen_animating(false);
+                        // Left fullscreen before the transition ended (a
+                        // minimise does): the way out has the window, and its
+                        // workspace, now.
+                        if !fs_window.is_fullscreen() {
+                            return;
+                        }
                         surface_clone.with_pending_state(|state| {
                             state.states.set(xdg_toplevel::State::Fullscreen);
                             state.size = Some(geometry.size);
                             state.fullscreen_output = wl_output_ref.clone();
                         });
-                        if let Err(e) = next_workspace_layer.add_sublayer(&fs_window_layer) {
+                        // Minimised during the transition: the window lives
+                        // in its dock drawer now. Moving it to the workspace
+                        // would leave a mini window in the workspace's corner
+                        // and an empty slot in the dock.
+                        if fs_window.is_minimised() {
+                            tracing::debug!(
+                                "fullscreen: minimised mid-transition, left in the dock"
+                            );
+                        } else if let Err(e) = next_workspace_layer.add_sublayer(&fs_window_layer) {
                             tracing::warn!(
                                 "fullscreen: failed to reparent window to workspace: {e}"
                             );
@@ -924,9 +983,6 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
                         // The protocol demands us to always reply with a configure,
                         // regardless of we fulfilled the request or not
                         surface_clone.send_configure();
-
-                        // Clear the fullscreen animating flag now that the animation is complete
-                        next_workspace_clone.set_fullscreen_animating(false);
                     },
                     true,
                 );
@@ -944,13 +1000,19 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
     }
 
     fn unfullscreen_request(&mut self, surface: ToplevelSurface) {
-        if !surface
-            .with_pending_state(|state| state.states.contains(xdg_toplevel::State::Fullscreen))
+        let id = surface.wl_surface().id();
+        // The client is told it is fullscreen only when the transition into
+        // it ends; a window still on its way there is fullscreen all the same.
+        let entering = self
+            .workspaces
+            .get_window_for_surface(&id)
+            .is_some_and(|window| window.is_fullscreen());
+        if !entering
+            && !surface
+                .with_pending_state(|state| state.states.contains(xdg_toplevel::State::Fullscreen))
         {
             return;
         }
-
-        let id = surface.wl_surface().id();
 
         if let Some(mut view) = self.workspaces.get_window_view(&id) {
             let wl_output = surface.with_pending_state(|state| {
@@ -972,6 +1034,9 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
                     self.backend_data.reset_buffers(&output);
                 }
 
+                // The workspace the window has to itself — read before the
+                // flag is cleared, which resets it.
+                let fullscreen_workspace_index = we.get_fullscreen_workspace();
                 we.set_fullscreen(false, 0);
                 // Nothing to restore to means restoring to nothing: the window
                 // would be configured 0x0 and disappear as it left fullscreen.
@@ -1005,13 +1070,17 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
                 if let Some(next_workspace) = next_workspace {
                     let transition = Transition::ease_in_out_quad(1.4);
 
-                    // The fullscreen workspace is this OUTPUT's current one.
-                    let fullscreen_workspace_index = self
+                    // The window's own fullscreen workspace, which is not
+                    // necessarily the one on screen: another window may be
+                    // going fullscreen, or the user may have switched away.
+                    // Taking the current one cleared — and removed — whatever
+                    // workspace was showing instead.
+                    let on_screen = self
                         .workspaces
                         .output_workspaces
                         .get(&output_name)
-                        .map(|ows| ows.current_workspace)
-                        .unwrap_or(0);
+                        .map(|ows| ows.current_workspace == fullscreen_workspace_index)
+                        .unwrap_or(false);
                     let Some(workspace) = self
                         .workspaces
                         .output_workspaces
@@ -1031,15 +1100,25 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
                         restore_index,
                         view.unmaximised_rect.loc,
                     );
-                    let scroll_transaction = self.workspaces.set_workspace_for_output(
-                        &output,
-                        restore_index,
-                        Some(transition.clone()),
-                    );
+                    // Scroll back only from the window's own workspace; the
+                    // user looking at another one stays there.
+                    let scroll_transaction = if on_screen {
+                        self.workspaces.set_workspace_for_output(
+                            &output,
+                            restore_index,
+                            Some(transition.clone()),
+                        )
+                    } else {
+                        None
+                    };
 
                     // Defer fullscreen workspace removal until the scroll animation completes,
                     // so the workspace remains visible while scrolling away from it.
-                    if let Some(tr) = &scroll_transaction {
+                    if fullscreen_workspace_index == restore_index
+                        || fullscreen_workspace_index == 0
+                    {
+                        // Not a workspace of its own: nothing to remove.
+                    } else if let Some(tr) = &scroll_transaction {
                         self.workspaces.defer_remove_workspace_on_output(
                             &output_name,
                             fullscreen_workspace_index,
@@ -1122,13 +1201,22 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
                     // handlers, stranding the window in the overlay plane on
                     // top of everything (including expose).
                     let unfs_window_layer = view.window_layer.clone();
+                    let unfs_window = we.clone();
                     self.layers_engine.on_animation_finish(
                         animation,
                         move |_: f32| {
                             surface_clone.with_pending_state(|state| {
                                 state.size = Some(restored_size);
                             });
-                            if let Err(e) = workspace_layer.add_sublayer(&unfs_window_layer) {
+                            // Minimised during the transition (minimising a
+                            // fullscreen window leaves fullscreen first): the
+                            // window is in its dock drawer and stays there.
+                            if unfs_window.is_minimised() {
+                                tracing::debug!(
+                                    "unfullscreen: minimised mid-transition, left in the dock"
+                                );
+                            } else if let Err(e) = workspace_layer.add_sublayer(&unfs_window_layer)
+                            {
                                 tracing::warn!(
                                     "unfullscreen: failed to reparent window to workspace: {e}"
                                 );

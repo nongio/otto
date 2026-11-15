@@ -23,6 +23,10 @@ pub(crate) enum RetiredHandle {
     Image(skia::Image),
     /// A render target's surface.
     Surface(skia::Surface),
+    /// No Skia handle is left: the memory only waits for the GPU to finish
+    /// the frames recorded while it was still bound (a plane slot whose
+    /// surface was dropped before its image).
+    Released,
 }
 
 impl RetiredHandle {
@@ -31,6 +35,7 @@ impl RetiredHandle {
         match self {
             Self::Image(image) => image.can_send(),
             Self::Surface(surface) => surface.can_send(),
+            Self::Released => true,
         }
     }
 }

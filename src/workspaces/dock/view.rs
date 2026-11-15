@@ -100,8 +100,25 @@ pub(super) struct IconDrag {
     ghost_scale: f32,
 }
 
+/// Dock work a background task hands to the compositor's main loop.
+pub type DockTask = Box<dyn FnOnce(&DockView) + Send>;
+
+/// The main loop's end of [`DockView::main_loop_channel`].
+pub type DockTaskChannel = smithay::reexports::calloop::channel::Channel<DockTask>;
+
+/// Where the dock's background tasks send what they change in the scene.
+#[derive(Clone, Default)]
+struct MainLoop(Arc<RwLock<Option<smithay::reexports::calloop::channel::Sender<DockTask>>>>);
+
+impl std::fmt::Debug for MainLoop {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("MainLoop")
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct DockView {
+    main_loop: MainLoop,
     layers_engine: Arc<Engine>,
     // layers
     pub wrap_layer: layers::prelude::Layer,
@@ -460,6 +477,7 @@ impl DockView {
             miniwindow_layers: Arc::new(RwLock::new(HashMap::new())),
             state: Arc::new(RwLock::new(initial_state)),
             active: Arc::new(AtomicBool::new(true)),
+            main_loop: MainLoop::default(),
             notify_tx,
             model_feed: Arc::new(ModelFeed::default()),
             model_observers: Arc::new(RwLock::new(Vec::new())),
@@ -504,8 +522,36 @@ impl DockView {
     fn watch_the_trash(&self) {
         let dock = self.clone();
         crate::workspaces::trash::watch(move |has_content| {
-            dock.set_trash_full(has_content);
+            dock.on_main_loop(move |dock| dock.set_trash_full(has_content));
         });
+    }
+
+    /// Send the dock's background work to the main loop from now on, and
+    /// return the main loop's end of it.
+    ///
+    /// The dock resolves applications and watches the Trash on tasks of its
+    /// own, and used to change its layers right there. A frame being drawn on
+    /// the main loop at that moment holds the scene for reading and reads it
+    /// again for every mirror it replays; a write queued between the two
+    /// froze both threads (lay-rs now lets the nested read through, but the
+    /// dock has no reason to race the frame at all).
+    pub fn main_loop_channel(&self) -> DockTaskChannel {
+        let (tx, rx) = smithay::reexports::calloop::channel::channel();
+        *self.main_loop.0.write().unwrap() = Some(tx);
+        rx
+    }
+
+    /// Run `task` on the main loop, or right here while no main loop has asked
+    /// for the dock's work (the dock's own unit tests).
+    pub(crate) fn on_main_loop(&self, task: impl FnOnce(&DockView) + Send + 'static) {
+        let sender = self.main_loop.0.read().unwrap().clone();
+        match sender {
+            // Fails only once the main loop is gone, with the compositor.
+            Some(tx) => {
+                let _ = tx.send(Box::new(task));
+            }
+            None => task(self),
+        }
     }
 
     /// Draw the Trash's icon for a can that is full (or not).
@@ -549,11 +595,13 @@ impl DockView {
             let running = Self::reresolved(&state.running_apps).await;
             let launchers = Self::reresolved(&state.launchers).await;
             let places = Self::reresolved(&state.places).await;
-            dock.update_state(&DockModel {
-                running_apps: running,
-                launchers,
-                places,
-                ..state
+            dock.on_main_loop(move |dock| {
+                dock.update_state(&DockModel {
+                    running_apps: running,
+                    launchers,
+                    places,
+                    ..dock.get_state()
+                })
             });
             // The Trash's icon is an override rather than the desktop entry's
             // own, so it is not in the model and has to be re-read separately.
@@ -562,7 +610,7 @@ impl DockView {
             let full = tokio::task::spawn_blocking(crate::workspaces::trash::has_content)
                 .await
                 .unwrap_or(false);
-            dock.set_trash_full(full);
+            dock.on_main_loop(move |dock| dock.set_trash_full(full));
         });
     }
 
@@ -625,9 +673,11 @@ impl DockView {
                 tracing::info!("dock places not installed, skipped: {}", missing.join(", "));
             }
 
-            let mut state = dock.get_state();
-            state.places = loaded;
-            dock.update_state(&state);
+            dock.on_main_loop(move |dock| {
+                let mut state = dock.get_state();
+                state.places = loaded;
+                dock.update_state(&state);
+            });
         });
     }
 
@@ -663,9 +713,11 @@ impl DockView {
                 );
             }
 
-            let mut state = dock.get_state();
-            state.launchers = launchers;
-            dock.update_state(&state);
+            dock.on_main_loop(move |dock| {
+                let mut state = dock.get_state();
+                state.launchers = launchers;
+                dock.update_state(&state);
+            });
         });
     }
     pub fn update_state(&self, state: &DockModel) {
@@ -1474,15 +1526,15 @@ impl DockView {
 
                     let minimized_windows = workspace.minimized_windows.clone();
 
-                    let state = dock.get_state();
-
                     tracing::info!(target: "otto::dock", "dock update_state: {} resolved apps, running={:?}", apps.len(), apps.iter().map(|a| &a.match_id).collect::<Vec<_>>());
-                    dock.update_state(&DockModel {
-                        running_apps: apps,
-                        minimized_windows,
-                        ..state
+                    dock.on_main_loop(move |dock| {
+                        dock.update_state(&DockModel {
+                            running_apps: apps,
+                            minimized_windows,
+                            ..dock.get_state()
+                        });
+                        dock.model_feed.rendered(seq);
                     });
-                    dock.model_feed.rendered(seq);
                 }
             }
         });

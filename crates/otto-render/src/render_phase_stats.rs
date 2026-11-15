@@ -154,6 +154,36 @@ pub fn record_plane_sync(elapsed: Duration) {
 #[inline]
 pub fn record_plane_sync(_elapsed: std::time::Duration) {}
 
+/// GPU time of a pass's composite after it was submitted, as the udev loop
+/// measures it from the primary fence (`watch_gpu_time`), and the delay the
+/// loop then chose for the next draw after the VBlank (`draw_delay_us`).
+/// Together they say whether the scheduler's picture of the GPU matches the
+/// phases above.
+#[cfg(feature = "perf-counters")]
+static GPU_TIME: Phase = Phase::new();
+#[cfg(feature = "perf-counters")]
+static DRAW_DELAY: Phase = Phase::new();
+
+#[cfg(feature = "perf-counters")]
+#[inline]
+pub fn record_gpu_time(elapsed: Duration) {
+    GPU_TIME.record(elapsed.as_nanos() as u64);
+}
+
+#[cfg(not(feature = "perf-counters"))]
+#[inline]
+pub fn record_gpu_time(_elapsed: std::time::Duration) {}
+
+#[cfg(feature = "perf-counters")]
+#[inline]
+pub fn record_draw_delay(delay: Duration) {
+    DRAW_DELAY.record(delay.as_nanos() as u64);
+}
+
+#[cfg(not(feature = "perf-counters"))]
+#[inline]
+pub fn record_draw_delay(_delay: std::time::Duration) {}
+
 #[cfg(feature = "perf-counters")]
 static LAST_LOG: Mutex<Option<Instant>> = Mutex::new(None);
 
@@ -224,6 +254,8 @@ pub fn log_if_due() {
     let (sd_n, sd_total, sd_max) = SCENE_DRAW.drain();
     let (sf_n, sf_total, sf_max) = SKIA_FLUSH.drain();
     let (ps_n, ps_total, ps_max) = PLANE_SYNC.drain();
+    let (gt_n, gt_total, gt_max) = GPU_TIME.drain();
+    let (dd_n, dd_total, dd_max) = DRAW_DELAY.drain();
 
     let mean_us = |n: u64, total: u64| -> f32 {
         if n == 0 {
@@ -251,6 +283,12 @@ pub fn log_if_due() {
         plane_sync_n = ps_n,
         plane_sync_mean_us = mean_us(ps_n, ps_total),
         plane_sync_max_us = max_us(ps_max),
+        gpu_time_n = gt_n,
+        gpu_time_mean_us = mean_us(gt_n, gt_total),
+        gpu_time_max_us = max_us(gt_max),
+        draw_delay_n = dd_n,
+        draw_delay_mean_us = mean_us(dd_n, dd_total),
+        draw_delay_max_us = max_us(dd_max),
         "compose phase timings (per-second window)",
     );
 

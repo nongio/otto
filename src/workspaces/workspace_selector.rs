@@ -291,6 +291,11 @@ pub struct WorkspaceSelectorViewState {
     /// previews are drop targets then, not things being pointed at: no close
     /// button may appear and the drop-target darkening must not be cleared.
     window_drag: bool,
+    /// Whether the desktop thumbnails follow their workspaces. Only while
+    /// the strip is shown: a thumbnail is a mirror, and a mirror re-records
+    /// the whole workspace (every window, titlebar blur included) on each
+    /// commit of any window in it, seen or not.
+    mirrors_live: bool,
 }
 
 impl Hash for WorkspaceSelectorViewState {
@@ -303,6 +308,7 @@ impl Hash for WorkspaceSelectorViewState {
         self.removing.hash(state);
         self.drag_ghost.hash(state);
         self.window_drag.hash(state);
+        self.mirrors_live.hash(state);
     }
 }
 
@@ -393,6 +399,7 @@ impl WorkspaceSelectorView {
             removing: Vec::new(),
             drag_ghost: None,
             window_drag: false,
+            mirrors_live: false,
         };
         let view = View::new(
             "workspace_selector_view",
@@ -402,6 +409,10 @@ impl WorkspaceSelectorView {
         layer.set_pointer_events(false);
         layer.set_position((0.0, -400.0), None);
         layer.set_opacity(1.0_f32, None);
+        // Hidden until exposé slides it in: parked off-screen it would still
+        // be a visible parent, and its desktop thumbnails would mirror every
+        // workspace on every window commit (see `expose_show_all_apply`).
+        layer.set_hidden(true);
         view.set_layer(layer.clone());
 
         let drop_targets = Arc::new(RwLock::new(Vec::new()));
@@ -548,6 +559,46 @@ impl WorkspaceSelectorView {
     /// output drives its own selector so previews reflect that output's
     /// content at that output's physical resolution: `workspace_size` is the
     /// output's mode and `scale` its own fractional scale.
+    /// Show or hide the strip, and with it the thumbnails' link to their
+    /// workspaces.
+    ///
+    /// Parked off-screen the strip still counts as shown, and hidden it is
+    /// still a mirror: lay-rs marks a follower for repaint whenever its
+    /// leader changes, wherever the follower sits. So hiding also detaches
+    /// each thumbnail from the workspace it mirrors, and showing rebuilds
+    /// the thumbnails, which attaches and records them afresh.
+    pub fn set_visible(&self, visible: bool) {
+        self.layer.set_hidden(!visible);
+        let mut state = self.view.get_state();
+        if state.mirrors_live == visible {
+            return;
+        }
+        state.mirrors_live = visible;
+        if !visible {
+            let engine = &self.layer.engine;
+            for w in &state.workspaces {
+                let links = [
+                    (
+                        format!("workspace_selector_desktop_bg_mirror_{}", w.index),
+                        w.background_node,
+                    ),
+                    (
+                        format!("workspace_selector_desktop_content_mirror_{}", w.index),
+                        w.workspace_node,
+                    ),
+                ];
+                for (key, leader) in links {
+                    let thumbnail = self.view.layer_by_key(&key);
+                    let leader = leader.and_then(|node| engine.get_layer(&node));
+                    if let (Some(thumbnail), Some(leader)) = (thumbnail, leader) {
+                        leader.remove_follower_node(thumbnail.id());
+                    }
+                }
+            }
+        }
+        self.view.update_state(&state);
+    }
+
     pub fn set_workspaces(
         &self,
         workspaces: &[Arc<WorkspaceView>],
@@ -1189,6 +1240,7 @@ fn render_workspace_selector_view(
     view: &View<WorkspaceSelectorViewState>,
 ) -> LayerTree {
     let workspaces = state.workspaces.clone();
+    let mirrors_live = state.mirrors_live;
 
     // The tallest item, in physical pixels: the strip is sized to it.
     let max_item_height = workspaces.iter().fold(0.0_f32, |max_h, w| {
@@ -1323,94 +1375,120 @@ fn render_workspace_selector_view(
                 })
                 .children::<LayerTree>({
                     let children: Vec<Option<LayerTree>> = vec![
-                        // The wallpaper lives in the shared background_plane (own KMS
-                        // plane), outside the windows subtree mirrored below — mirror
-                        // it separately so the preview shows the full desktop.
+                        // The two mirrors below are laid out at the workspace's full
+                        // size and scaled down, and an image cache is as large as the
+                        // layer it belongs to — on the mirrors themselves it kept two
+                        // full-screen surfaces per workspace (some 44 MiB on a
+                        // 2880×1920 output) to show a thumbnail. This wrapper is the
+                        // thumbnail's own size, so the cache is too.
+                        //
+                        // Cached for the workspaces that are not on screen: nothing in
+                        // them commits, so the copy is painted once and reused. The
+                        // current one changes with every commit of every window in it,
+                        // and drawn straight in it costs the thumbnail's own pixels.
                         Some(
                             LayerTreeBuilder::with_key(format!(
-                                "workspace_selector_desktop_bg_mirror_{}",
-                                workspace_index.clone()
+                                "workspace_selector_desktop_mirrors_{}",
+                                w.index
                             ))
                             .layout_style(taffy::Style {
                                 position: taffy::Position::Absolute,
                                 ..Default::default()
                             })
-                            .size((geometry::layer_size(geom.workspace), None))
-                            .scale(Point::new(geom.ratio, geom.ratio))
-                            .replicate_node(w.background_node)
-                            .picture_cached(true)
-                            .image_cache(true)
-                            .color_filter(color_filter.clone())
-                            .border_corner_radius(BorderRadius::new_single(
-                                otto_kit::corners::radius(20.0 / geom.ratio),
-                            ))
-                            .clip_children(true)
-                            .clip_content(true)
-                            .pointer_events(false)
-                            .build()
-                            .unwrap(),
-                        ),
-                        Some(
-                            LayerTreeBuilder::with_key(format!(
-                                "workspace_selector_desktop_content_mirror_{}",
-                                workspace_index.clone()
-                            ))
-                            .layout_style(taffy::Style {
-                                position: taffy::Position::Absolute,
-                                ..Default::default()
-                            })
-                            .size((geometry::layer_size(geom.workspace), None))
-                            .scale(Point::new(geom.ratio, geom.ratio))
-                            .replicate_node(w.workspace_node)
-                            .picture_cached(true)
-                            .image_cache(true)
-                            .color_filter(color_filter)
-                            .border_corner_radius(BorderRadius::new_single(
-                                otto_kit::corners::radius(20.0 / geom.ratio),
-                            ))
-                            .clip_children(true)
-                            .clip_content(true)
-                            .pointer_events(true)
-                            // The wallpaper is mirrored in a sibling layer, so darken
-                            // both on press — otherwise only the windows dim.
-                            .on_pointer_press({
-                                let view_ref = view.clone();
-                                move |layer: &Layer, _x, _y| {
-                                    let filter = press_darken_filter();
-                                    layer.set_color_filter(filter.clone());
-                                    if let Some(bg) = view_ref.layer_by_key(
-                                        format!(
-                                            "workspace_selector_desktop_bg_mirror_{}",
-                                            workspace_index
-                                        )
-                                        .as_str(),
-                                    ) {
-                                        bg.set_color_filter(filter);
-                                    }
-                                }
-                            })
-                            // The darkening also marks the drop target of an
-                            // expose window drag; that one is owned by the
-                            // drop-hover state, not by the pointer crossing
-                            // the preview, so leave it alone for the drag.
-                            .on_pointer_release({
-                                let view_ref = view.clone();
-                                move |layer: &Layer, _x, _y| {
-                                    if view_ref.get_state().window_drag {
-                                        return;
-                                    }
-                                    clear_preview_filter(layer, &view_ref, workspace_index);
-                                }
-                            })
-                            .on_pointer_out({
-                                let view_ref = view.clone();
-                                move |layer: &Layer, _x, _y| {
-                                    if view_ref.get_state().window_drag {
-                                        return;
-                                    }
-                                    clear_preview_filter(layer, &view_ref, workspace_index);
-                                }
-                            })
+                            .position(Point::new(0.0, 0.0))
+                            .size((geometry::layer_size(geom.preview), None))
+                            .image_cache(!current)
+                            .children::<LayerTree>(vec![
+                                // The wallpaper lives in the shared background_plane (own KMS
+                                // plane), outside the windows subtree mirrored below — mirror
+                                // it separately so the preview shows the full desktop.
+                                Some(
+                                    LayerTreeBuilder::with_key(format!(
+                                        "workspace_selector_desktop_bg_mirror_{}",
+                                        workspace_index.clone()
+                                    ))
+                                    .layout_style(taffy::Style {
+                                        position: taffy::Position::Absolute,
+                                        ..Default::default()
+                                    })
+                                    .size((geometry::layer_size(geom.workspace), None))
+                                    .scale(Point::new(geom.ratio, geom.ratio))
+                                    .replicate_node(w.background_node.filter(|_| mirrors_live))
+                                    .picture_cached(true)
+                                    .color_filter(color_filter.clone())
+                                    .border_corner_radius(BorderRadius::new_single(
+                                        otto_kit::corners::radius(20.0 / geom.ratio),
+                                    ))
+                                    .clip_children(true)
+                                    .clip_content(true)
+                                    .pointer_events(false)
+                                    .build()
+                                    .unwrap(),
+                                ),
+                                Some(
+                                    LayerTreeBuilder::with_key(format!(
+                                        "workspace_selector_desktop_content_mirror_{}",
+                                        workspace_index.clone()
+                                    ))
+                                    .layout_style(taffy::Style {
+                                        position: taffy::Position::Absolute,
+                                        ..Default::default()
+                                    })
+                                    .size((geometry::layer_size(geom.workspace), None))
+                                    .scale(Point::new(geom.ratio, geom.ratio))
+                                    .replicate_node(w.workspace_node.filter(|_| mirrors_live))
+                                    .picture_cached(true)
+                                    .color_filter(color_filter)
+                                    .border_corner_radius(BorderRadius::new_single(
+                                        otto_kit::corners::radius(20.0 / geom.ratio),
+                                    ))
+                                    .clip_children(true)
+                                    .clip_content(true)
+                                    .pointer_events(true)
+                                    // The wallpaper is mirrored in a sibling layer, so darken
+                                    // both on press — otherwise only the windows dim.
+                                    .on_pointer_press({
+                                        let view_ref = view.clone();
+                                        move |layer: &Layer, _x, _y| {
+                                            let filter = press_darken_filter();
+                                            layer.set_color_filter(filter.clone());
+                                            if let Some(bg) = view_ref.layer_by_key(
+                                                format!(
+                                                    "workspace_selector_desktop_bg_mirror_{}",
+                                                    workspace_index
+                                                )
+                                                .as_str(),
+                                            ) {
+                                                bg.set_color_filter(filter);
+                                            }
+                                        }
+                                    })
+                                    // The darkening also marks the drop target of an
+                                    // expose window drag; that one is owned by the
+                                    // drop-hover state, not by the pointer crossing
+                                    // the preview, so leave it alone for the drag.
+                                    .on_pointer_release({
+                                        let view_ref = view.clone();
+                                        move |layer: &Layer, _x, _y| {
+                                            if view_ref.get_state().window_drag {
+                                                return;
+                                            }
+                                            clear_preview_filter(layer, &view_ref, workspace_index);
+                                        }
+                                    })
+                                    .on_pointer_out({
+                                        let view_ref = view.clone();
+                                        move |layer: &Layer, _x, _y| {
+                                            if view_ref.get_state().window_drag {
+                                                return;
+                                            }
+                                            clear_preview_filter(layer, &view_ref, workspace_index);
+                                        }
+                                    })
+                                    .build()
+                                    .unwrap(),
+                                ),
+                            ])
                             .build()
                             .unwrap(),
                         ),

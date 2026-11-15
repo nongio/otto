@@ -236,8 +236,15 @@ the Skia handle that reads it. On each submit, `Graveyard::reap`:
    stamping it with the serial of the frame just submitted;
 2. destroys the entry once the GPU has completed that serial.
 
-Plane slot images go through a similar queue (`PlaneTextureRelease`), drained
-in `flush_planes_for_scanout` after a CPU sync.
+Plane slot images go through a small queue of their own (`PlaneTextureRelease`):
+`flush_planes_for_scanout` moves them into the graveyard with no Skia handle
+left to watch, so they go once the GPU completes the frame submitted then.
+
+`flush_planes_for_scanout` itself does not wait for the GPU. It submits the
+plane draws, signals a sync file after them and attaches it to every plane
+dmabuf rendered this frame (`note_scanout_write`) as a write fence, which the
+atomic commit honours through implicit sync. The CPU waits only when no sync
+file can be exported or attached — then once, and every frame after it.
 
 ### Copies and read-back
 
@@ -267,11 +274,16 @@ requested but unavailable, the probe failed and the session is on GL.
 
 ## What is missing
 
-- **Plane scanout.** `VulkanApi::PLANES_SUPPORTED` is `false`, so every
-  output composites into the primary plane: no dock, popup or fullscreen
-  window on its own KMS plane yet. The plane code builds for Vulkan
+- **Plane decomposition.** `VulkanApi::PLANES_SUPPORTED` is `false`, so the
+  scene is not split into planes: dock, popups and the windows composite into
+  the primary plane. The plane code builds for Vulkan
   (`create_surface_from_dmabuf`, `flush_planes_for_scanout`) but has not been
-  run on hardware. See [DRM Planes](drm_plane.md).
+  run on hardware. See [DRM Planes](drm_plane.md). Fullscreen direct scanout
+  does not depend on it and works on Vulkan: a stable fullscreen window's
+  buffer goes on the primary plane on its own, and the compositor does no GPU
+  work for those frames. Checked on Intel (ANV) with a fullscreen mpv: every
+  frame `direct-scanout` (`touch /tmp/otto-probe-black`), and the primary
+  plane holding the client's buffer in `/sys/kernel/debug/dri/*/state`.
 - **More YUV.** NV12 is the only YUV format. P010 and other layouts need
   entries in `format.rs`. NV12 with its planes in separate buffer objects
   (disjoint) is refused by Smithay's device layer, which needs
