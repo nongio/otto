@@ -65,6 +65,7 @@ dock-quit = Quit
 settings-pane-general = General
 settings-pane-appearance = Appearance
 settings-pane-displays = Displays
+settings-pane-network = Network
 settings-pane-dock = Dock
 settings-pane-top-bar = Top bar
 settings-pane-tiling = Tiling
@@ -322,6 +323,45 @@ settings-sound-no-playback = No app is playing sound
 settings-sound-no-recording = No app is recording sound
 settings-sound-no-cards = No sound cards
 
+
+## Settings — Network
+
+settings-network-reading = Reading the network…
+settings-network-unavailable = NetworkManager is not running
+settings-network-unavailable-detail = Otto shows and changes the network through NetworkManager. Start it, or use the tools of the network service you run.
+settings-network-wifi = Wi-Fi
+settings-network-wifi-blocked = Turned off by a hardware switch or airplane mode
+settings-network-current = Network
+settings-network-not-connected = Not connected
+settings-show-network = Show network status in the top bar
+settings-group-network-status = Status
+settings-group-network-details = Details
+settings-group-network-known = Known networks
+settings-network-kind-wifi = Wi-Fi
+settings-network-kind-ethernet = Ethernet
+settings-network-kind-vpn = VPN
+settings-network-kind-other = Other
+settings-network-state-connected = Connected
+settings-network-state-connecting = Connecting…
+settings-network-state-disconnecting = Disconnecting…
+settings-network-state-disconnected = Not connected
+settings-network-state-unplugged = Cable unplugged
+settings-network-state-off = Off
+settings-network-state-failed = Failed to connect
+settings-network-connection = Connection
+settings-network-kind = Type
+settings-network-ipv4 = IPv4 address
+settings-network-router = Router
+settings-network-dns = DNS servers
+settings-network-ipv6 = IPv6 address
+settings-network-hardware-address = Hardware address
+settings-network-limited = Connected, but the internet cannot be reached. A sign-in page may be waiting in your browser.
+settings-network-known-none = No saved networks
+# Under a saved network's name; the switch beside it is auto-join.
+settings-network-known-detail = Join automatically
+settings-network-known-in-use = In use · Join automatically
+# The button that deletes a saved network.
+settings-network-forget = Forget
 
 ## Settings — Power
 
@@ -1148,6 +1188,37 @@ bar-power-performance = Performance
 # Last entry in the battery menu.
 bar-power-settings = Power Settings…
 bar-keyboard-settings = Keyboard Settings…
+
+## Top bar — network
+
+# The Wi-Fi switch at the top of the network menu.
+bar-network-wifi = Wi-Fi
+# A network or VPN coming up. $name is its name.
+bar-network-connecting = { $name } — connecting…
+# Beside a network that asks for a password, in the shortcut column.
+bar-network-secured = Secured
+bar-network-none-found = No networks found
+# The submenu holding networks that are not saved.
+bar-network-other = Other Networks
+bar-network-ethernet-connected = Ethernet — connected
+bar-network-ethernet-connecting = Ethernet — connecting…
+bar-network-ethernet-unplugged = Ethernet — cable unplugged
+bar-network-ethernet-disconnected = Ethernet — not connected
+bar-network-disconnect = Disconnect from { $name }
+bar-network-settings = Network Settings…
+# What a screen reader calls the network indicator.
+bar-network-label-disconnected = Network: not connected
+bar-network-label-off = Network: Wi-Fi off
+bar-network-label-connecting = Network: connecting
+bar-network-label-wired = Network: wired, connected
+# $signal is one of the bar-network-signal-* words.
+bar-network-label-wifi = Wi-Fi: connected to { $name }, { $signal } signal
+# $state is one of the labels above.
+bar-network-label-limited = { $state }, no internet
+bar-network-signal-weak = weak
+bar-network-signal-fair = fair
+bar-network-signal-good = good
+bar-network-signal-excellent = excellent
 bar-keyboard-layout-label = Keyboard layout: { $layout }
 bar-otto-menu = Otto
 bar-otto-update-available = New Version Available…
@@ -1215,6 +1286,8 @@ schema-desktop-widget-label = Background widget
 schema-desktop-widget-description = A full-screen page drawn over the wallpaper, behind the windows. Needs ewwii.
 schema-topbar-show-clock-label = Show date and time
 schema-topbar-show-clock-description = The clock at the right end of the top bar.
+schema-topbar-show-network-label = Show network status
+schema-topbar-show-network-description = The Wi-Fi and wired indicator in the top bar, with a menu to join a network. Shown where NetworkManager runs.
 schema-topbar-clock-format-label = Clock format
 schema-topbar-clock-format-description = How the top bar writes the date and time, as a strftime format. Empty follows your language.
 schema-topbar-show-app-menu-label = Show application menus

@@ -5,7 +5,7 @@
 
 otto-bar is the strip along the top of the screen: the Otto menu and the
 focused app's menus on the left, and the tray, the keyboard layout, the
-battery and the clock on the right. It lives in `components/otto-bar/` and
+network, the battery and the clock on the right. It lives in `components/otto-bar/` and
 sits in the `app` layer of `architecture.toml`, so nothing links it. It runs
 as its own process, an otto-kit app started by the compositor from an
 `exec_once` entry in the shipped config. On the session bus it is both a
@@ -26,6 +26,7 @@ and menus with.
 | `tray.rs` | Serves `org.kde.StatusNotifierWatcher` and follows each registered `StatusNotifierItem`. |
 | `keyboard_layout.rs` | The layout indicator and its menu, from `GetInputs` and `InputChanged` on `org.otto.Shell1`. |
 | `power.rs`, `battery.rs` | Battery state from UPower (sysfs when UPower is absent), CPU frequency and governor from sysfs, power profiles; `battery.rs` draws the glyph. |
+| `network.rs` | The network indicator and its menu, from NetworkManager through `otto-network`, following `topbar.show_network`. |
 | `clock.rs` | The clock, following `topbar.show_clock` and `topbar.clock_format`. |
 | `logout.rs` | Asks through `org.otto.Dialog1`, then sends the compositor its `logout` command. |
 | `update.rs` | Asks a version endpoint whether a newer release is out, and adds an entry to the Otto menu when it is. |

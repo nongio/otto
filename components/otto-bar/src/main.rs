@@ -7,6 +7,7 @@ mod config;
 mod dbusmenu;
 mod keyboard_layout;
 mod logout;
+mod network;
 mod power;
 mod settings;
 mod tray;

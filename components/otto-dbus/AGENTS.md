@@ -1,6 +1,6 @@
 # otto-dbus
 
-One typed zbus client proxy for every D-Bus interface Otto calls. Otto's own `org.otto.*` interfaces: those the compositor serves (settings, shell, screencast, compositor), otto-islands (dialog, island), otto-files (file picker, files, desk) and otto-stash. And the ones other software serves: UPower (`upower`), logind (`login1`), the Settings portal (`portal_settings`), the Access portal backend (`portal_access`), tray items (`status_notifier_item`) and their menus (`dbusmenu`). A caller takes the proxy from here. It does not declare its own `#[zbus::proxy]` (the `dbus-proxies-in-otto-dbus` rule in `architecture.toml` fails the build if it does) or call `call_method` with a method name in a string.
+One typed zbus client proxy for every D-Bus interface Otto calls. Otto's own `org.otto.*` interfaces: those the compositor serves (settings, shell, screencast, compositor), otto-islands (dialog, island), otto-files (file picker, files, desk) and otto-stash. And the ones other software serves: UPower (`upower`), logind (`login1`), NetworkManager (`networkmanager`), the Settings portal (`portal_settings`), the Access portal backend (`portal_access`), tray items (`status_notifier_item`) and their menus (`dbusmenu`). A caller takes the proxy from here. It does not declare its own `#[zbus::proxy]` (the `dbus-proxies-in-otto-dbus` rule in `architecture.toml` fails the build if it does) or call `call_method` with a method name in a string.
 
 How it works: [otto-dbus](../../docs/developer/otto-dbus.md).
 

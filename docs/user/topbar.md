@@ -218,6 +218,51 @@ Picking one switches to it. **Keyboard Settings…** at the bottom opens the
 keyboard settings. The keycap follows every switch, including one made with
 the layout switch keys.
 
+## Network
+
+The network indicator sits between the keyboard layout and the battery. It
+shows Wi-Fi as a fan whose bars fill with the signal, a wired connection as
+three linked boxes, and an empty fan when nothing is connected (crossed out
+when Wi-Fi is off). While a connection is coming up the bars fill one after
+another. When the network is up but the internet cannot be reached, for
+example behind a hotel's sign-in page, the glyph dims and an exclamation mark
+appears beside it.
+
+Click it for the network menu:
+
+- **Wi-Fi** turns the radio on and off.
+- The networks in range: the one you are on is ticked, saved networks come
+  first, and the rest wait under **Other Networks**. A network that needs a
+  password says **Secured**.
+- Your wired connections, and whether a cable is plugged in.
+- Your VPN and WireGuard connections, ticked while they are up. Pick one to
+  start or stop it.
+- **Disconnect from** the current network, and **Network Settings…**.
+
+Opening the menu starts a scan, and the list updates while the menu is open.
+
+The indicator needs NetworkManager. When you join a secured network for the
+first time, NetworkManager asks for the password through whatever password
+agent is running: Otto does not have its own yet, so keep `nm-applet` (or
+another NetworkManager agent) in your session for that, or join once with
+`nmcli --ask device wifi connect "Name"`. Saved networks connect without
+asking again.
+
+**Settings → Network** shows the state of every device, the addresses of
+the connection in use, and your saved networks: untick one to stop joining it
+automatically, or **Forget** it. It is also where the indicator is turned
+off (**Show network status in the top bar**), or in the configuration file:
+
+```toml
+# ~/.config/otto/config.toml
+[topbar]
+show_network = false
+```
+
+While `nm-applet` runs for its password prompts, its own icon stays in the
+tray beside the indicator. That double is expected until Otto has its own
+password agent.
+
 ## Clock
 
 The clock is on the far right. **Settings ▸ Top bar ▸ Clock** turns

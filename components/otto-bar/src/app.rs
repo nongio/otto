@@ -34,6 +34,9 @@ const KEYBOARD_LAYOUT: otto_kit::focus::FocusId = otto_kit::focus::FocusId::from
 /// The Otto mark's, which opens the Otto menu.
 const OTTO_MENU: otto_kit::focus::FocusId = otto_kit::focus::FocusId::from_raw(0xBA51_0004);
 
+/// The network indicator's.
+const NETWORK: otto_kit::focus::FocusId = otto_kit::focus::FocusId::from_raw(0xBA51_0005);
+
 /// One menu's, by its place on the bar.
 fn menu_focus(index: usize) -> otto_kit::focus::FocusId {
     otto_kit::focus::FocusId::new(format!("menu-{index}"))
@@ -121,6 +124,9 @@ pub struct TopBarApp {
     open_power_menu: Option<PowerMenu>,
     /// The keyboard layout menu, while it is open.
     open_layout_menu: Option<ContextMenu>,
+    /// The network menu, while it is open.
+    open_network_menu: Option<ContextMenu>,
+    last_network_gen: u64,
     /// The Otto menu, hanging from the mark at the left end, while it is open.
     open_otto_menu: Option<ContextMenu>,
     /// Whether `open_otto_menu` is the application's menu, under its name,
@@ -153,6 +159,8 @@ impl TopBarApp {
             app_menu_address: None,
             open_power_menu: None,
             open_layout_menu: None,
+            open_network_menu: None,
+            last_network_gen: 0,
             open_otto_menu: None,
             app_name_menu_open: false,
         }
@@ -625,6 +633,102 @@ impl TopBarApp {
         self.redraw_right();
     }
 
+    fn close_network_menu(&mut self) {
+        if let Some(menu) = self.open_network_menu.take() {
+            menu.hide_animated();
+        }
+        if let Some(ref surface) = self.right_surface {
+            surface.set_keyboard_interactivity(KeyboardInteractivity::None);
+        }
+        if self.right.network_active {
+            self.right.network_active = false;
+            self.redraw_right();
+        }
+    }
+
+    /// Open the network menu, or close it when it is open: the same toggle
+    /// for a pointer and for a screen reader.
+    fn toggle_network_menu(&mut self) {
+        let was_open = self.open_network_menu.is_some();
+        self.close_menu();
+        self.close_power_menu();
+        self.close_layout_menu();
+        self.close_network_menu();
+        if !was_open {
+            crate::network::scan_soon();
+            self.show_network_menu();
+        }
+    }
+
+    /// Show the network menu: the Wi-Fi switch, the networks in range, the
+    /// wired devices, the VPNs, and the way to Settings.
+    fn show_network_menu(&mut self) {
+        let Some(ref surface) = self.right_surface else {
+            return;
+        };
+        let Some((ix, iy, iw, ih)) = self.right.network_pill_rect() else {
+            return;
+        };
+        let items = network_menu_items();
+        if items.is_empty() {
+            return;
+        }
+        let menu = ContextMenu::new(items).on_item_click(|action_id| {
+            if action_id == "settings" {
+                open_settings(&["--pane", "network"]);
+            } else {
+                crate::network::activate(action_id);
+            }
+        });
+
+        let Ok(positioner) = XdgPositioner::new(AppContext::xdg_shell_state()) else {
+            return;
+        };
+        let style = otto_kit::components::context_menu::ContextMenuStyle::default();
+        let state = menu.state();
+        let menu_items = state.borrow().items_at_depth(0).to_vec();
+        let (menu_w, menu_h) =
+            otto_kit::components::context_menu::ContextMenuRenderer::measure_items(
+                &menu_items,
+                &style,
+            );
+        positioner.set_size(menu_w as i32, menu_h as i32);
+        positioner.set_anchor_rect(ix as i32, iy as i32, iw as i32, ih as i32);
+        positioner.set_anchor(xdg_positioner::Anchor::BottomRight);
+        positioner.set_gravity(xdg_positioner::Gravity::BottomLeft);
+        positioner.set_offset(0, 1);
+        positioner.set_constraint_adjustment(
+            xdg_positioner::ConstraintAdjustment::SlideX
+                | xdg_positioner::ConstraintAdjustment::SlideY
+                | xdg_positioner::ConstraintAdjustment::FlipX
+                | xdg_positioner::ConstraintAdjustment::FlipY,
+        );
+
+        menu.show_for_layer(&surface.layer_surface(), &positioner);
+        surface.set_keyboard_interactivity(KeyboardInteractivity::Exclusive);
+        self.open_network_menu = Some(menu);
+        self.right.network_active = true;
+        self.redraw_right();
+    }
+
+    /// NetworkManager changed under an open network menu: a scan found a
+    /// network, the tick moved. Redrawn in place, or shown again at its new
+    /// size when lines came or went. A menu whose indicator went away closes
+    /// with it.
+    fn refresh_network_menu(&mut self) {
+        let Some(menu) = self.open_network_menu.as_ref() else {
+            return;
+        };
+        if !crate::network::visible() {
+            self.close_network_menu();
+            return;
+        }
+        if let MenuRefresh::Resized = menu.refresh(network_menu_items()) {
+            self.close_network_menu();
+            self.show_network_menu();
+        }
+    }
+
     fn close_layout_menu(&mut self) {
         if let Some(menu) = self.open_layout_menu.take() {
             menu.hide_animated();
@@ -775,6 +879,12 @@ impl TopBarApp {
         let x = event.position.0 as f32;
 
         // The layout indicator, like the battery, owns its slice of the panel.
+        if self.right.network_at(x) {
+            self.toggle_network_menu();
+            return;
+        }
+        self.close_network_menu();
+
         if self.right.keyboard_at(x) {
             let was_open = self.open_layout_menu.is_some();
             self.close_menu();
@@ -998,6 +1108,7 @@ impl App for TopBarApp {
         crate::appmenu::spawn_appmenu_registrar();
         crate::power::spawn_power_watcher();
         crate::keyboard_layout::spawn_watcher();
+        crate::network::spawn_watcher();
         crate::clock::spawn_watcher();
 
         Ok(())
@@ -1064,6 +1175,14 @@ impl App for TopBarApp {
             return;
         }
 
+        if let Some(ref mut menu) = self.open_network_menu {
+            menu.handle_key(key, state);
+            if !menu.is_visible() {
+                self.close_network_menu();
+            }
+            return;
+        }
+
         if let Some(ref mut menu) = self.open_otto_menu {
             menu.handle_key(key, state);
             if !menu.is_visible() {
@@ -1112,6 +1231,9 @@ impl App for TopBarApp {
         }
         if self.open_layout_menu.is_some() {
             self.close_layout_menu();
+        }
+        if self.open_network_menu.is_some() {
+            self.close_network_menu();
         }
         if self.open_otto_menu.is_some() {
             self.close_otto_menu();
@@ -1232,6 +1354,25 @@ impl App for TopBarApp {
             );
         }
 
+        // The network indicator reads as its state in words, and is
+        // announced when it changes: a dropped connection is worth hearing.
+        if let Some((x, y, w, h)) = self.right.network_rect() {
+            let label = crate::network::label();
+            tree.control(
+                NETWORK,
+                Rect::from_xywh(x, y, w, h),
+                Role::Button,
+                true,
+                |node| {
+                    node.set_label(label);
+                    node.set_expanded(self.open_network_menu.is_some());
+                    node.set_has_popup(otto_kit::accessibility::HasPopup::Menu);
+                    node.add_action(Action::Click);
+                    node.set_live(otto_kit::accessibility::Live::Polite);
+                },
+            );
+        }
+
         // The layout indicator reads as the layout's name, not its code, and
         // is announced when it changes: a switch from a key combination is
         // otherwise silent.
@@ -1313,6 +1454,11 @@ impl App for TopBarApp {
             return;
         }
 
+        if node == otto_kit::accessibility::node_id(NETWORK) {
+            self.toggle_network_menu();
+            return;
+        }
+
         if node == otto_kit::accessibility::node_id(KEYBOARD_LAYOUT) {
             let was_open = self.open_layout_menu.is_some();
             self.close_layout_menu();
@@ -1372,6 +1518,14 @@ impl App for TopBarApp {
             self.close_layout_menu();
             dirty = true;
         }
+        let network_menu_gone = self
+            .open_network_menu
+            .as_ref()
+            .is_some_and(|m| !m.is_visible());
+        if network_menu_gone {
+            self.close_network_menu();
+            dirty = true;
+        }
         let otto_menu_gone = self
             .open_otto_menu
             .as_ref()
@@ -1386,6 +1540,18 @@ impl App for TopBarApp {
             self.last_layout_gen = layout_gen;
             self.refresh_layout_menu();
             dirty = true;
+        }
+
+        // NetworkManager changed something, or the setting moved.
+        let network_gen = crate::network::generation();
+        if network_gen != self.last_network_gen {
+            self.last_network_gen = network_gen;
+            self.refresh_network_menu();
+            dirty = true;
+        }
+        // The connecting animation moved on a step.
+        if crate::network::step_changed() {
+            self.redraw_right();
         }
 
         // Check if clock text changed
@@ -1547,7 +1713,12 @@ impl App for TopBarApp {
         // default format, second boundary when the format shows seconds).
         // Everything else (tray, focus, app menus) wakes the loop via
         // request_wakeup or Wayland events.
-        Some(crate::clock::Clock::until_next_change())
+        let clock = crate::clock::Clock::until_next_change();
+        // The connecting animation steps faster than any clock.
+        Some(match crate::network::until_next_step() {
+            Some(step) => step.min(clock),
+            None => clock,
+        })
     }
 
     fn on_pointer_event(&mut self, _ctx: &AppContext, events: &[PointerEvent]) {
@@ -1772,6 +1943,14 @@ fn app_name_menu_items(app_name: &str) -> Vec<KitMenuItem> {
         ))
         .with_action_id("quit".to_string()),
     ]
+}
+
+/// The network menu's items, from the snapshot as it is now.
+fn network_menu_items() -> Vec<KitMenuItem> {
+    crate::network::menu_items(
+        &crate::network::snapshot(),
+        !battery_config().settings_command.is_empty(),
+    )
 }
 
 /// The keyboard layout menu's items: every layout by its full name, the

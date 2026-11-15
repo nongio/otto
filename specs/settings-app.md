@@ -375,7 +375,7 @@ caused it.
 
 The window presents a list of panes and the selected pane's contents, and opens
 on the first. The sidebar lists them the system first, then the desktop, input,
-and accounts, with About last: General, Appearance, Displays, Sound, Power, Dock,
+and accounts, with About last: General, Appearance, Displays, Network, Sound, Power, Dock,
 Top bar, Tiling, Search, Agents, Keyboard, Dictation, Trackpad & Mouse, Users,
 Lock & Login, Privacy, About. Dictation sits with the keyboard because it is
 another way of typing. The panes are:
@@ -489,6 +489,12 @@ another way of typing. The panes are:
   dragged out of the picker that the palette has no name for is sent as
   `#RRGGBB` and is taken as-is under both schemes.
 - **Displays** — see below.
+- **Network** — the Wi-Fi switch, the network in use and the top bar
+  indicator switch (`topbar.show_network`); the state of every Wi-Fi and
+  Ethernet device; the address details of the connection in use; and the
+  saved Wi-Fi networks, each with an auto-join switch and Forget. Everything
+  but the indicator switch is NetworkManager's, read while the pane is on
+  screen. See [network.md](network.md).
 - **Dock** — size, position, autohide, magnification, minimise effect, and the
   icon tint: what is tinted — the dock's icons, and whether the app switcher
   joins in — then the colour and strength that govern both. The switcher's

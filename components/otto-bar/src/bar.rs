@@ -23,6 +23,9 @@ pub struct RightLayout {
     pub battery_x: f32,
     /// Zero when there is no battery, or it is configured off.
     pub battery_width: f32,
+    pub network_x: f32,
+    /// Zero while the network indicator is hidden.
+    pub network_width: f32,
     pub keyboard_x: f32,
     /// Zero while the keyboard layout indicator is hidden.
     pub keyboard_width: f32,
@@ -40,6 +43,9 @@ pub struct RightPanel {
     pub battery_active: bool,
     /// The keyboard layout menu is open: the keycap wears the same pill.
     pub keyboard_active: bool,
+    /// Whether the network menu is open, which draws the pill behind the
+    /// network indicator.
+    pub network_active: bool,
     pub width: f32,
     pub height: f32,
 }
@@ -350,6 +356,7 @@ impl RightPanel {
             tray_style: tray_menu_style(),
             battery_active: false,
             keyboard_active: false,
+            network_active: false,
             width: RIGHT_WIDTH as f32,
             height: BAR_HEIGHT as f32,
         }
@@ -379,14 +386,16 @@ impl RightPanel {
     /// the box a screen reader highlights cannot drift apart.
     pub fn layout(&self) -> RightLayout {
         let battery_width = crate::battery::width();
+        let network_width = crate::network::width();
         let keyboard_width = crate::keyboard_layout::width();
         let tray_width = MenuBarRenderer::measure_width(&self.tray_menu_state, &self.tray_style);
 
-        let [_, battery_x, keyboard_x, tray_x] = pack_right_to_left(
+        let [_, battery_x, network_x, keyboard_x, tray_x] = pack_right_to_left(
             self.width - BAR_PADDING_H,
             [
                 self.clock_text_width(),
                 battery_width,
+                network_width,
                 keyboard_width,
                 tray_width,
             ],
@@ -395,6 +404,8 @@ impl RightPanel {
         RightLayout {
             battery_x,
             battery_width,
+            network_x,
+            network_width,
             keyboard_x,
             keyboard_width,
             tray_x,
@@ -426,6 +437,15 @@ impl RightPanel {
             crate::battery::draw(canvas, layout.battery_x, self.height, &active_theme);
         } else {
             crate::battery::draw(canvas, layout.battery_x, self.height, &theme);
+        }
+
+        if layout.network_width > 0.0 {
+            let color = if self.network_active {
+                self.draw_pill(canvas, self.network_pill_rect())
+            } else {
+                theme.text_primary
+            };
+            crate::network::draw(canvas, layout.network_x, self.height, color);
         }
 
         if layout.keyboard_width > 0.0 {
@@ -485,6 +505,7 @@ impl RightPanel {
         let content = packed_width([
             self.clock_text_width(),
             crate::battery::width(),
+            crate::network::width(),
             crate::keyboard_layout::width(),
             MenuBarRenderer::measure_width(&self.tray_menu_state, &self.tray_style),
         ]) + BAR_PADDING_H * 2.0;
@@ -573,6 +594,61 @@ impl RightPanel {
     /// The pill an open layout menu draws behind the keycap, and hangs from.
     pub fn keyboard_pill_rect(&self) -> Option<(f32, f32, f32, f32)> {
         self.keyboard_rect().map(|(x, y, w, h)| {
+            (
+                x - BATTERY_PILL_PADDING,
+                y,
+                w + BATTERY_PILL_PADDING * 2.0,
+                h,
+            )
+        })
+    }
+
+    /// The open-menu pill behind an indicator, the tray's down to the
+    /// colours and the corner. Returns the colour to draw the indicator in.
+    fn draw_pill(
+        &self,
+        canvas: &Canvas,
+        rect: Option<(f32, f32, f32, f32)>,
+    ) -> otto_kit::skia::Color {
+        let hl = highlight_colors();
+        let mut paint = Paint::default();
+        paint.set_anti_alias(true);
+        paint.set_color(hl.active);
+        let (px, py, pw, ph) = rect.unwrap_or_default();
+        let radius = self.tray_style.item_corner_radius;
+        canvas.draw_round_rect(
+            otto_kit::skia::Rect::from_xywh(px, py, pw, ph),
+            radius,
+            radius,
+            &paint,
+        );
+        hl.on_active
+    }
+
+    /// Whether `x` (in panel coords) is on the network indicator, with the
+    /// same slack either side the battery has.
+    pub fn network_at(&self, x: f32) -> bool {
+        let layout = self.layout();
+        if layout.network_width <= 0.0 {
+            return false;
+        }
+        let slack = TRAY_CLOCK_GAP / 2.0;
+        x >= layout.network_x - slack && x <= layout.network_x + layout.network_width + slack
+    }
+
+    /// The network indicator's bounding box in surface-local coords.
+    pub fn network_rect(&self) -> Option<(f32, f32, f32, f32)> {
+        let layout = self.layout();
+        if layout.network_width <= 0.0 {
+            return None;
+        }
+        Some((layout.network_x, 0.0, layout.network_width, self.height))
+    }
+
+    /// The pill an open network menu draws behind the indicator, and hangs
+    /// from.
+    pub fn network_pill_rect(&self) -> Option<(f32, f32, f32, f32)> {
+        self.network_rect().map(|(x, y, w, h)| {
             (
                 x - BATTERY_PILL_PADDING,
                 y,
@@ -677,22 +753,23 @@ mod tests {
 
     #[test]
     fn a_hidden_clock_leaves_no_gap_at_the_edge() {
-        // Clock, battery, keyboard, tray.
-        let shown = pack_right_to_left(100.0, [40.0, 20.0, 0.0, 10.0]);
+        // Clock, battery, network, keyboard, tray.
+        let shown = pack_right_to_left(100.0, [40.0, 20.0, 0.0, 0.0, 10.0]);
         assert_eq!(
             shown,
             [
                 60.0,
                 60.0 - TRAY_CLOCK_GAP - 20.0,
                 28.0,
+                28.0,
                 28.0 - TRAY_CLOCK_GAP - 10.0
             ]
         );
 
         // Without the clock the battery takes its place against the edge.
-        let hidden = pack_right_to_left(100.0, [0.0, 20.0, 0.0, 10.0]);
+        let hidden = pack_right_to_left(100.0, [0.0, 20.0, 0.0, 0.0, 10.0]);
         assert_eq!(hidden[1], 80.0);
-        assert_eq!(hidden[3], 80.0 - TRAY_CLOCK_GAP - 10.0);
+        assert_eq!(hidden[4], 80.0 - TRAY_CLOCK_GAP - 10.0);
     }
 
     #[test]

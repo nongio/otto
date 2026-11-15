@@ -36,6 +36,7 @@ pub fn draw(canvas: &Canvas, name: &str, cx: f32, cy: f32, size: f32, color: Col
         "keyboard" => keyboard(canvas, &paint),
         "pointer" => pointer(canvas, &paint, color),
         "sound" => sound(canvas, &paint),
+        "network" => network(canvas, &paint),
         "microphone" => microphone(canvas, &paint),
         "battery" => battery(canvas, &paint),
         "lock" => lock(canvas, &paint),
@@ -180,6 +181,16 @@ fn battery(canvas: &Canvas, paint: &Paint) {
     bolt.line_to(Point::new(-1.0, -0.4));
     bolt.close();
     canvas.draw_path(&bolt.detach(), paint);
+}
+
+/// The Wi-Fi fan: a dot and three arcs above it.
+fn network(canvas: &Canvas, paint: &Paint) {
+    let centre = (0.0, 5.0);
+    canvas.draw_circle(centre, 0.6, paint);
+    for radius in [3.5_f32, 7.0, 10.5] {
+        let oval = Rect::from_ltrb(-radius, centre.1 - radius, radius, centre.1 + radius);
+        canvas.draw_arc(oval, 225.0, 90.0, false, paint);
+    }
 }
 
 /// Padlock, shackle closed.

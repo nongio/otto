@@ -359,7 +359,7 @@ fn contrast_against(color: Color) -> Color {
     }
 }
 
-fn with_alpha(color: Color, alpha: f32) -> Color {
+pub(crate) fn with_alpha(color: Color, alpha: f32) -> Color {
     Color::from_argb(
         (alpha.clamp(0.0, 1.0) * 255.0) as u8,
         color.r(),

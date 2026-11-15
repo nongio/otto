@@ -839,6 +839,7 @@ fn activate(held: view::Pressed, editing: &Arc<Mutex<Option<Editing>>>) {
             panes::keyboard_layouts::remove(id);
             panes::search::remove(id);
             panes::privacy::remove(id);
+            panes::network::remove(id);
         }
         // A second press on the listening line's button stops it.
         view::Pressed::Record(index) => keyboard::set_recording(
@@ -896,6 +897,10 @@ fn apply(id: &str, value: settings_client::Value) {
     }
     // The account picture goes to AccountsService, not to a setting.
     if panes::account::apply(id, &value) {
+        return;
+    }
+    // The Network pane's switches belong to NetworkManager.
+    if panes::network::apply(id, &value) {
         return;
     }
     // The Sound pane's devices, volumes and mutes belong to the sound server.
@@ -3152,6 +3157,8 @@ impl App for SettingsApp {
         panes::search::set_shown(*self.selected.lock().unwrap() == model::SEARCH_PANE);
         // The Privacy pane reads the permission store when it comes on screen.
         panes::privacy::set_shown(*self.selected.lock().unwrap() == model::PRIVACY_PANE);
+        // The Network pane reads NetworkManager when it comes on screen.
+        panes::network::set_shown(*self.selected.lock().unwrap() == model::NETWORK_PANE);
         // The Sound pane reads the sound server when it comes on screen.
         panes::sound::set_shown(*self.selected.lock().unwrap() == model::SOUND_PANE);
         // The Agents pane asks systemd about its service only while it is on

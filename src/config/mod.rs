@@ -1725,6 +1725,9 @@ pub struct TopbarConfig {
     pub show_app_menu: bool,
     /// Show the date and time at the bar's right edge.
     pub show_clock: bool,
+    /// Show the network indicator (Wi-Fi signal, wired, VPN menu). It
+    /// appears only where NetworkManager runs and there is a device.
+    pub show_network: bool,
     /// A chrono strftime format for the clock. Empty follows the language's
     /// own convention, or `clock_format` in `otto-bar.toml` where one is set.
     pub clock_format: String,
@@ -1735,6 +1738,7 @@ impl Default for TopbarConfig {
         Self {
             show_app_menu: true,
             show_clock: true,
+            show_network: true,
             clock_format: String::new(),
         }
     }
