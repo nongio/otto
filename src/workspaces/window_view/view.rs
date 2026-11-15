@@ -405,7 +405,9 @@ impl WindowView {
     /// Whether the window has been restored since the minimise that took
     /// `epoch` began: that minimise must leave the window alone.
     pub fn minimize_overtaken(&self, epoch: u64) -> bool {
-        self.minimize_epoch.load(std::sync::atomic::Ordering::SeqCst) != epoch
+        self.minimize_epoch
+            .load(std::sync::atomic::Ordering::SeqCst)
+            != epoch
     }
 
     pub fn set_is_unmapped(&self, unmapped: bool) {

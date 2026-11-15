@@ -195,6 +195,280 @@ mod minimise_restore_race_tests {
         }
     }
 
+    /// Clients killed together, as the live stress script ends, while their
+    /// windows are minimised, mid-genie, fullscreen and leaving fullscreen:
+    /// once the close fades are over no window layer is left in the scene.
+    /// A stray one draws as a mini window in a corner of the screen.
+    #[test]
+    #[serial]
+    fn windows_closed_in_every_state_leave_no_layer_behind() {
+        // How many frames after the last action the clients die.
+        for frames_before_kill in [0usize, 3, 12, 40] {
+            let handle = HeadlessHandle::start(HeadlessConfig::default());
+            let titles = [
+                "min-settled",
+                "min-genie",
+                "fs-settled",
+                "fs-then-min",
+                "plain",
+            ];
+            let mut clients = Vec::new();
+            for (i, title) in titles.iter().enumerate() {
+                let mut client = TestClient::connect(&handle.socket_name).expect("connect");
+                let toplevel = client.create_toplevel(title, 500, 340);
+                handle.wait(Duration::from_millis(60));
+                client.roundtrip().expect("roundtrip");
+                toplevel.lock().unwrap().commit_frame();
+                client.roundtrip().expect("roundtrip");
+                handle.settle(120);
+                handle.move_window(title, 80 + 60 * i as i32, 80 + 40 * i as i32);
+                let _ = client.roundtrip();
+                clients.push((client, toplevel));
+            }
+            run_out(&handle);
+            let workspaces0 = handle.query(|state| {
+                let ows = state.workspaces.output_workspaces.values().next().unwrap();
+                ows.workspace_views.len()
+            });
+            let minimise = |title: &'static str| {
+                handle.with_state(move |state| {
+                    let window = state
+                        .workspaces
+                        .windows_map
+                        .values()
+                        .find(|w| w.xdg_title() == title)
+                        .cloned()
+                        .unwrap();
+                    state.minimize_window_element(&window);
+                });
+            };
+            let pump = |clients: &mut Vec<(TestClient, _)>| {
+                for (client, _) in clients.iter_mut() {
+                    let _ = client.roundtrip();
+                }
+            };
+
+            let describe = |when: &str| {
+                let s = handle.query(|state| {
+                    let ows = state.workspaces.output_workspaces.values().next().unwrap();
+                    let wss = ows
+                        .workspace_views
+                        .iter()
+                        .zip(ows.spaces.iter())
+                        .map(|(w, s)| {
+                            format!(
+                                "fs {} anim {} windows {}",
+                                w.get_fullscreen_mode(),
+                                w.get_fullscreen_animating(),
+                                s.elements().count()
+                            )
+                        })
+                        .collect::<Vec<_>>();
+                    let wins = state
+                        .workspaces
+                        .windows_map
+                        .values()
+                        .map(|w| {
+                            format!(
+                                "{} fs {} ws {} min {}",
+                                w.xdg_title(),
+                                w.is_fullscreen(),
+                                w.get_fullscreen_workspace(),
+                                w.is_minimised()
+                            )
+                        })
+                        .collect::<Vec<_>>();
+                    format!("current {} {wss:?}\n  {wins:?}", ows.current_workspace)
+                });
+                eprintln!("[{frames_before_kill}] {when}: {s}");
+            };
+            describe("start");
+            minimise("min-settled");
+            run_out(&handle);
+            handle.fullscreen_window("fs-settled");
+            pump(&mut clients);
+            run_out(&handle);
+            describe("fs-settled fullscreen");
+            handle.unfullscreen_window("fs-settled");
+            pump(&mut clients);
+            run_out(&handle);
+            describe("fs-settled back");
+            handle.fullscreen_window("fs-then-min");
+            pump(&mut clients);
+            run_out(&handle);
+            describe("fs-then-min fullscreen");
+            handle.fullscreen_window("fs-settled");
+            pump(&mut clients);
+            for _ in 0..6 {
+                handle.tick(1.0 / 60.0);
+            }
+            describe("fs-settled going fullscreen");
+            minimise("fs-then-min");
+            describe("fs-then-min minimised");
+            minimise("min-genie");
+            pump(&mut clients);
+            for _ in 0..frames_before_kill {
+                handle.tick(1.0 / 60.0);
+            }
+
+            let views = handle.query(|state| {
+                state
+                    .workspaces
+                    .windows_map
+                    .iter()
+                    .map(|(id, w)| {
+                        (
+                            w.xdg_title(),
+                            state.workspaces.get_window_view(id).expect("a view"),
+                        )
+                    })
+                    .collect::<Vec<_>>()
+            });
+            assert_eq!(views.len(), titles.len());
+            describe("before kill");
+
+            // Every client dies at once.
+            drop(clients);
+            for _ in 0..3 {
+                run_out(&handle);
+            }
+            describe("after kill");
+
+            let leftovers = handle.query(move |state| {
+                let engine = &state.layers_engine;
+                views
+                    .iter()
+                    .filter(|(_, view)| view.is_alive())
+                    .map(|(title, view)| {
+                        let mut chain = Vec::new();
+                        let mut node = engine.scene_get_node_parent(view.window_layer.id());
+                        while let Some(n) = node {
+                            let key = engine.get_layer(&n).map(|l| l.key()).unwrap_or_default();
+                            chain.push(if key.is_empty() {
+                                format!("{n:?}")
+                            } else {
+                                key
+                            });
+                            node = engine.scene_get_node_parent(n);
+                        }
+                        let b = view.window_layer.render_bounds_with_children_transformed();
+                        format!(
+                            "{title}: hidden {} at {:.0},{:.0} {:.0}x{:.0}, parents {chain:?}",
+                            view.window_layer.hidden(),
+                            b.x(),
+                            b.y(),
+                            b.width(),
+                            b.height()
+                        )
+                    })
+                    .collect::<Vec<_>>()
+            });
+            let (ws, workspaces, minimised) = handle.query(|state| {
+                let ows = state.workspaces.output_workspaces.values().next().unwrap();
+                (
+                    ows.current_workspace,
+                    ows.workspace_views.len(),
+                    state.workspaces.with_model(|m| m.minimized_windows.len()),
+                )
+            });
+            handle.stop();
+            assert!(
+                leftovers.is_empty(),
+                "killed {frames_before_kill} frames in: window layers left in the scene:\n{}",
+                leftovers.join("\n")
+            );
+            assert_eq!(
+                minimised, 0,
+                "killed {frames_before_kill} frames in: dock still lists windows"
+            );
+            assert_eq!(
+                (ws, workspaces),
+                (0, workspaces0),
+                "killed {frames_before_kill} frames in: fullscreen workspace left behind"
+            );
+        }
+    }
+
+    /// A minimised window asked to go fullscreen or maximized — `wlrctl
+    /// toplevel fullscreen` does that to every match, minimised or not — stays
+    /// in its dock drawer, and comes back windowed when restored.
+    #[test]
+    #[serial]
+    fn a_minimised_window_stays_in_the_dock_when_asked_to_grow() {
+        for action in ["fullscreen", "maximize"] {
+            let handle = HeadlessHandle::start(HeadlessConfig::default());
+            let mut client = TestClient::connect(&handle.socket_name).expect("connect");
+            let toplevel = client.create_toplevel(TITLE, 600, 400);
+            handle.wait(Duration::from_millis(100));
+            client.roundtrip().expect("roundtrip");
+            toplevel.lock().unwrap().commit_frame();
+            client.roundtrip().expect("roundtrip");
+            handle.settle(300);
+            handle.move_window(TITLE, 200, 150);
+            let _ = client.roundtrip();
+            run_out(&handle);
+            let (w0, h0, _, _) = window_state(&handle);
+
+            handle.minimize_window(TITLE);
+            run_out(&handle);
+            let ows_count = || {
+                handle.query(|state| {
+                    let ows = state.workspaces.output_workspaces.values().next().unwrap();
+                    (ows.current_workspace, ows.workspace_views.len())
+                })
+            };
+            let before = ows_count();
+            if action == "fullscreen" {
+                handle.fullscreen_window(TITLE);
+            } else {
+                handle.with_state(|state| {
+                    use smithay::wayland::shell::xdg::XdgShellHandler;
+                    let toplevel = state
+                        .workspaces
+                        .windows_map
+                        .values()
+                        .find(|w| w.xdg_title() == TITLE)
+                        .and_then(|w| w.toplevel().cloned())
+                        .unwrap();
+                    state.maximize_request(toplevel);
+                });
+            }
+            let _ = client.roundtrip();
+            run_out(&handle);
+
+            let (_, h, hidden, listed) = window_state(&handle);
+            let y = handle.query(|state| {
+                let id = state
+                    .workspaces
+                    .windows_map
+                    .iter()
+                    .find(|(_, w)| w.xdg_title() == TITLE)
+                    .map(|(id, _)| id.clone())
+                    .unwrap();
+                let view = state.workspaces.get_window_view(&id).unwrap();
+                view.window_layer
+                    .render_bounds_with_children_transformed()
+                    .y()
+            });
+            assert!(
+                listed && !hidden && h < h0 / 4.0 && y > 1080.0 / 2.0,
+                "{action}: the mini window ({h} high at y {y}) left the dock"
+            );
+            assert_eq!(ows_count(), before, "{action}: no workspace came or went");
+
+            handle.unminimize_window(TITLE);
+            let _ = client.roundtrip();
+            run_out(&handle);
+            let (w, h, hidden, listed) = window_state(&handle);
+            assert!(!listed && !hidden, "{action}: restored");
+            assert!(
+                (w - w0).abs() < 2.0 && (h - h0).abs() < 2.0,
+                "{action}: restored at {w}x{h}, not its own {w0}x{h0}"
+            );
+            handle.stop();
+        }
+    }
+
     /// Going fullscreen parks the window above everything for the transition
     /// and moves it into its fullscreen workspace when the transition ends. A
     /// window minimised before then is in its dock drawer by that time, and

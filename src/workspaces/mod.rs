@@ -506,6 +506,17 @@ pub(super) fn shift_index_for_move(i: usize, from: usize, to: usize) -> usize {
     }
 }
 
+/// Where the workspace at old position `i` ends up once the one at `removed`
+/// is taken out: those after it move down one; the removed position itself
+/// becomes `fallback`, the workspace its windows were moved to.
+pub(super) fn shift_index_for_removal(i: usize, removed: usize, fallback: usize) -> usize {
+    match i.cmp(&removed) {
+        std::cmp::Ordering::Less => i,
+        std::cmp::Ordering::Equal => fallback,
+        std::cmp::Ordering::Greater => i - 1,
+    }
+}
+
 /// The lowest workspace number not already in use on an output.
 ///
 /// Numbers are the default labels, and a label belongs to its workspace — so
@@ -5345,6 +5356,53 @@ impl Workspaces {
             ows.current_workspace = dest_after;
             if !ows.spaces.is_empty() && ows.current_workspace >= ows.spaces.len() {
                 ows.current_workspace = ows.spaces.len() - 1;
+            }
+        }
+
+        // Every workspace position a window of this output remembers moves
+        // down with the strip: the fullscreen workspace it is on and the one
+        // it goes back to. Left as they were, a window that went fullscreen
+        // while an earlier fullscreen workspace was still on its way out
+        // points one past its own workspace — leaving fullscreen or closing
+        // then acts on the wrong one, and an empty fullscreen workspace with
+        // no dock or bar outlives its window. Minimised windows are in no
+        // space but remember where they are restored to, so they shift too.
+        let in_other_outputs = |w: &WindowElement| {
+            self.output_workspaces
+                .iter()
+                .filter(|(name, _)| name.as_str() != output_name)
+                .any(|(_, ows)| ows.spaces.iter().any(|s| s.elements().any(|e| e == w)))
+        };
+        let shifted: Vec<WindowElement> = self
+            .output_workspaces
+            .get(output_name)
+            .map(|ows| {
+                ows.spaces
+                    .iter()
+                    .flat_map(|s| s.elements().cloned().collect::<Vec<_>>())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default()
+            .into_iter()
+            .chain(
+                self.windows_map
+                    .values()
+                    .filter(|w| w.is_minimised() && !in_other_outputs(w))
+                    .cloned(),
+            )
+            .filter(|w| !windows_to_move.iter().any(|(m, _)| m == w))
+            .collect();
+        for window in shifted {
+            window.set_workspace(shift_index_for_removal(
+                window.get_workspace(),
+                pos,
+                dest_after,
+            ));
+            if window.is_fullscreen() {
+                window.set_fullscreen(
+                    true,
+                    shift_index_for_removal(window.get_fullscreen_workspace(), pos, dest_after),
+                );
             }
         }
 
