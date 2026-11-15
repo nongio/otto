@@ -26,6 +26,7 @@ Launch **Settings** from the Dock or the launcher, or run `otto-settings`.
 | Keyboard | Layout and options, repeat rate, and the shortcut list |
 | Dictation | The speech-to-text engine and whether its server runs, the language you speak, the hotword boost, and whether dictation starts at login |
 | Trackpad & Mouse | Tap to click, drag lock, natural scrolling, click method, scroll and pointer speed |
+| Network | Wi-Fi, Ethernet and VPN tabs: the link's signal, band and rate, TCP/IP and DNS for each connection, saved networks, and VPNs with Import… ([Network](network.md)) |
 | Sound | Interface sounds on or off and which sound theme to use, then a mixer like pavucontrol's: each app's volume and device, each device's port, volume, mute and whether it is the default, and each sound card's profile |
 | Power | What the lid switch and the power button do |
 | Lock & Login | Auto-lock timeout, which lock screen and greeter to run, and what starts at login |

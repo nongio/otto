@@ -8,6 +8,7 @@ use otto_kit::{
     App, AppContext, ObjectId,
 };
 use smithay_client_toolkit::{
+    seat::keyboard::KeyEvent,
     seat::pointer::{PointerEvent, PointerEventKind},
     shell::xdg::window::WindowConfigure,
     shell::xdg::XdgPositioner,
@@ -127,6 +128,8 @@ pub struct TopBarApp {
     /// The network menu, while it is open.
     open_network_menu: Option<ContextMenu>,
     last_network_gen: u64,
+    /// The Wi-Fi password dialog, while it is up.
+    join_dialog: Option<crate::join_dialog::JoinDialog>,
     /// The Otto menu, hanging from the mark at the left end, while it is open.
     open_otto_menu: Option<ContextMenu>,
     /// Whether `open_otto_menu` is the application's menu, under its name,
@@ -161,6 +164,7 @@ impl TopBarApp {
             open_layout_menu: None,
             open_network_menu: None,
             last_network_gen: 0,
+            join_dialog: None,
             open_otto_menu: None,
             app_name_menu_open: false,
         }
@@ -729,6 +733,49 @@ impl TopBarApp {
         }
     }
 
+    /// Open the password dialog for `purpose`, unless one is already up:
+    /// then a menu's request is dropped and the agent's is answered no.
+    fn open_join_dialog(&mut self, purpose: crate::join_dialog::Purpose) {
+        if self.join_dialog.is_some() {
+            if let crate::join_dialog::Purpose::Agent { reply, .. } = purpose {
+                let _ = reply.send(None);
+            }
+            return;
+        }
+        self.close_network_menu();
+        let mut dialog = crate::join_dialog::JoinDialog::new(purpose);
+        dialog.show();
+        self.join_dialog = Some(dialog);
+    }
+
+    /// The dialog ended: join, answer the agent, or let it go.
+    fn finish_join_dialog(&mut self, outcome: crate::join_dialog::Outcome) {
+        use crate::join_dialog::{Outcome, Purpose};
+        self.join_dialog = None;
+        match outcome {
+            Outcome::Join {
+                purpose,
+                name,
+                key,
+                password,
+            } => match purpose {
+                Purpose::Join { device, network } => {
+                    crate::network::join_with_password(device, network, password)
+                }
+                Purpose::Hidden { device } => {
+                    crate::network::join_hidden(device, name, key, password)
+                }
+                Purpose::Agent { reply, .. } => {
+                    let _ = reply.send(Some(password));
+                }
+            },
+            Outcome::Cancel(Purpose::Agent { reply, .. }) => {
+                let _ = reply.send(None);
+            }
+            Outcome::Cancel(_) => {}
+        }
+    }
+
     fn close_layout_menu(&mut self) {
         if let Some(menu) = self.open_layout_menu.take() {
             menu.hide_animated();
@@ -1115,6 +1162,9 @@ impl App for TopBarApp {
     }
 
     fn on_theme_changed(&mut self, _ctx: &AppContext) {
+        if let Some(dialog) = self.join_dialog.as_mut() {
+            dialog.redraw();
+        }
         // The panel background lives in the surface style, set once at startup
         // — before the portal watcher has answered. Re-apply it, and repaint so
         // text and icons pick up the new palette too.
@@ -1149,6 +1199,10 @@ impl App for TopBarApp {
         state: wl_keyboard::KeyState,
         _serial: u32,
     ) {
+        // The password dialog takes its keys through `on_key_event`.
+        if self.join_dialog.is_some() {
+            return;
+        }
         // Forward to open tray context menu
         if let Some(ref mut open) = self.open_menu {
             open.menu.handle_key(key, state);
@@ -1542,6 +1596,32 @@ impl App for TopBarApp {
             dirty = true;
         }
 
+        // A password to ask for: the menu's, or NetworkManager's.
+        if self.join_dialog.is_none() {
+            if let Some(purpose) = crate::network::take_dialog_request() {
+                self.open_join_dialog(purpose);
+            } else if let Some(ask) = crate::secret_agent::take_ask() {
+                self.open_join_dialog(crate::join_dialog::Purpose::Agent {
+                    path: ask.path,
+                    request: ask.request,
+                    retry: ask.retry,
+                    reply: ask.reply,
+                });
+            }
+        }
+        // NetworkManager withdrew the question on screen.
+        let withdrawn = self
+            .join_dialog
+            .as_ref()
+            .and_then(|d| d.agent_path())
+            .is_some_and(crate::secret_agent::take_cancelled);
+        if withdrawn {
+            if let Some(mut dialog) = self.join_dialog.take() {
+                let outcome = dialog.finish(false);
+                self.finish_join_dialog(outcome);
+            }
+        }
+
         // NetworkManager changed something, or the setting moved.
         let network_gen = crate::network::generation();
         if network_gen != self.last_network_gen {
@@ -1721,11 +1801,44 @@ impl App for TopBarApp {
         })
     }
 
+    fn on_key_event(
+        &mut self,
+        _ctx: &AppContext,
+        event: &KeyEvent,
+        state: wl_keyboard::KeyState,
+        _serial: u32,
+    ) {
+        if state != wl_keyboard::KeyState::Pressed {
+            return;
+        }
+        let Some(dialog) = self.join_dialog.as_mut() else {
+            return;
+        };
+        if let Some(outcome) = dialog.on_key(event) {
+            self.finish_join_dialog(outcome);
+        }
+    }
+
     fn on_pointer_event(&mut self, _ctx: &AppContext, events: &[PointerEvent]) {
         let right_wl = self.right_surface.as_ref().map(|s| s.wl_surface().clone());
         let left_wl = self.left_surface.as_ref().map(|s| s.wl_surface().clone());
 
         for event in events {
+            if let Some(dialog) = self.join_dialog.as_mut() {
+                if dialog.is_surface(&event.surface) {
+                    let (x, y) = (event.position.0 as f32, event.position.1 as f32);
+                    match event.kind {
+                        PointerEventKind::Press { button: 0x110, .. } => dialog.press(x, y),
+                        PointerEventKind::Release { button: 0x110, .. } => {
+                            if let Some(outcome) = dialog.release(x, y) {
+                                self.finish_join_dialog(outcome);
+                            }
+                        }
+                        _ => {}
+                    }
+                    continue;
+                }
+            }
             let on_right = right_wl
                 .as_ref()
                 .map(|w| event.surface == *w)

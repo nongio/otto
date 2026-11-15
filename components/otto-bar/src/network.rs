@@ -96,6 +96,13 @@ pub fn spawn_watcher() {
 async fn follow_network() -> zbus::Result<()> {
     let conn = Connection::system().await?;
     *SYSTEM_BUS.lock().unwrap() = Some(conn.clone());
+    // Answer NetworkManager's password questions on the same connection.
+    let agent = conn.clone();
+    tokio::spawn(async move {
+        if let Err(e) = crate::secret_agent::run(agent).await {
+            tracing::warn!("network secret agent: {e}");
+        }
+    });
     reread(&conn).await;
     // `watch` hands back a plain callback; the re-read it asks for runs on
     // the runtime, one at a time, the latest request winning.
@@ -200,6 +207,39 @@ pub fn scan_soon() {
     });
 }
 
+/// Dialogs the menu asked for, for the app to open.
+static DIALOG_REQUESTS: Mutex<Vec<crate::join_dialog::Purpose>> = Mutex::new(Vec::new());
+
+fn request_dialog(purpose: crate::join_dialog::Purpose) {
+    DIALOG_REQUESTS.lock().unwrap().push(purpose);
+    AppContext::request_wakeup();
+}
+
+/// The next dialog the menu asked for.
+pub fn take_dialog_request() -> Option<crate::join_dialog::Purpose> {
+    let mut requests = DIALOG_REQUESTS.lock().unwrap();
+    (!requests.is_empty()).then(|| requests.remove(0))
+}
+
+/// Join `network` with the password typed for it.
+pub fn join_with_password(device: String, network: WifiNetwork, password: String) {
+    act("wifi connect", move |conn| async move {
+        otto_network::connect_wifi_with_password(&conn, &device, &network, &password).await
+    });
+}
+
+/// Join a hidden network by name.
+pub fn join_hidden(
+    device: String,
+    name: Vec<u8>,
+    key: Option<otto_network::KeyKind>,
+    password: String,
+) {
+    act("wifi connect", move |conn| async move {
+        otto_network::connect_hidden(&conn, &device, &name, key, &password).await
+    });
+}
+
 /// A menu entry was chosen.
 pub fn activate(action_id: &str) {
     let snapshot = snapshot();
@@ -221,9 +261,19 @@ pub fn activate(action_id: &str) {
             return;
         }
         let device = wifi.device.path;
+        if network.needs_password() {
+            request_dialog(crate::join_dialog::Purpose::Join { device, network });
+            return;
+        }
         act("wifi connect", move |conn| async move {
             otto_network::connect_wifi(&conn, &device, &network).await
         });
+    } else if action_id == "hidden" {
+        if let Some(wifi) = snapshot.wifi {
+            request_dialog(crate::join_dialog::Purpose::Hidden {
+                device: wifi.device.path,
+            });
+        }
     } else if action_id == "disconnect" {
         let Some(device) = snapshot.wifi.map(|w| w.device.path) else {
             return;
@@ -313,7 +363,14 @@ pub fn menu_items(snapshot: &Snapshot, settings: bool) -> Vec<KitMenuItem> {
             if wifi.networks.is_empty() {
                 items.push(KitMenuItem::action(otto_kit::t!("bar-network-none-found")).disabled());
             }
-            items.extend(known.iter().map(|n| network_item(n)));
+            for network in &known {
+                items.push(network_item(network));
+                if network.state == LinkState::Connected {
+                    if let Some(detail) = link_detail(wifi) {
+                        items.push(KitMenuItem::action(detail).with_check_gutter().disabled());
+                    }
+                }
+            }
             if !other.is_empty() {
                 let others: Vec<_> = other.iter().map(|n| network_item(n)).collect();
                 if known.is_empty() {
@@ -326,6 +383,11 @@ pub fn menu_items(snapshot: &Snapshot, settings: bool) -> Vec<KitMenuItem> {
                     ));
                 }
             }
+            items.push(
+                KitMenuItem::action(otto_kit::t!("bar-network-join-other"))
+                    .with_action_id("hidden".to_string())
+                    .with_check_gutter(),
+            );
         }
     }
 
@@ -339,11 +401,21 @@ pub fn menu_items(snapshot: &Snapshot, settings: bool) -> Vec<KitMenuItem> {
             items.push(KitMenuItem::separator());
         }
         for device in wired {
-            let label = match device.state {
-                DeviceState::Connected => otto_kit::t!("bar-network-ethernet-connected"),
-                DeviceState::Connecting => otto_kit::t!("bar-network-ethernet-connecting"),
-                DeviceState::Unavailable => otto_kit::t!("bar-network-ethernet-unplugged"),
-                _ => otto_kit::t!("bar-network-ethernet-disconnected"),
+            let label = match (device.state, device.speed_mbps) {
+                (DeviceState::Connected, Some(speed)) => otto_kit::t_owned!(
+                    "bar-network-ethernet-connected-speed",
+                    speed = format_speed(u64::from(speed) * 1000)
+                ),
+                (DeviceState::Connected, None) => {
+                    otto_kit::t!("bar-network-ethernet-connected").to_string()
+                }
+                (DeviceState::Connecting, _) => {
+                    otto_kit::t!("bar-network-ethernet-connecting").to_string()
+                }
+                (DeviceState::Unavailable, _) => {
+                    otto_kit::t!("bar-network-ethernet-unplugged").to_string()
+                }
+                _ => otto_kit::t!("bar-network-ethernet-disconnected").to_string(),
             };
             items.push(
                 KitMenuItem::action(label)
@@ -387,6 +459,51 @@ pub fn menu_items(snapshot: &Snapshot, settings: bool) -> Vec<KitMenuItem> {
         );
     }
     items
+}
+
+/// A link rate in kbit/s as a person reads it: "866 Mb/s", "1.2 Gb/s".
+pub fn format_speed(kbps: u64) -> String {
+    let mbps = kbps / 1000;
+    if mbps >= 1000 {
+        let gbps = mbps as f64 / 1000.0;
+        if (gbps - gbps.round()).abs() < 0.05 {
+            format!("{} Gb/s", gbps.round())
+        } else {
+            format!("{gbps:.1} Gb/s")
+        }
+    } else {
+        format!("{mbps} Mb/s")
+    }
+}
+
+/// The line under the connected network: band, channel and link rate, what
+/// macOS hides behind Option-click.
+fn link_detail(wifi: &otto_network::WifiDevice) -> Option<String> {
+    let ap = wifi.active_ap.as_ref()?;
+    let mut parts = Vec::new();
+    let band = ap.band().label();
+    if !band.is_empty() {
+        parts.push(band.to_string());
+    }
+    if ap.channel() > 0 {
+        parts.push(otto_kit::t_owned!(
+            "bar-network-channel",
+            channel = ap.channel().to_string()
+        ));
+    }
+    if let Some(rate) = wifi.bitrate_kbps {
+        parts.push(format_speed(u64::from(rate)));
+    }
+    if let Some(ip) = wifi
+        .device
+        .link
+        .as_ref()
+        .and_then(|l| l.ipv4.first())
+        .and_then(|a| a.split('/').next())
+    {
+        parts.push(ip.to_string());
+    }
+    (!parts.is_empty()).then(|| parts.join(" · "))
 }
 
 /// The indicator's state in words, for a screen reader.
@@ -528,6 +645,37 @@ pub fn draw(canvas: &Canvas, x: f32, height: f32, color: Color) {
     }
 }
 
+/// The dialog's badge: the fan in white on a rounded square of `color`,
+/// with a padlock when the network is secured.
+pub fn draw_badge(canvas: &Canvas, x: f32, y: f32, size: f32, color: Color, locked: bool) {
+    let mut fill = Paint::default();
+    fill.set_anti_alias(true);
+    fill.set_color(color);
+    let square = Rect::from_xywh(x, y, size, size);
+    canvas.draw_round_rect(square, size * 0.25, size * 0.25, &fill);
+    canvas.save();
+    let scale = size / 30.0;
+    canvas.translate((x + (size - GLYPH_WIDTH * scale) / 2.0, y + size * 0.1));
+    canvas.scale((scale, scale));
+    draw_fan(canvas, 0.0, 30.0, 4, Color::WHITE, Color::WHITE);
+    canvas.restore();
+    if locked {
+        let w = size * 0.34;
+        let body = Rect::from_xywh(x + size - w - 2.0, y + size - w * 0.8 - 2.0, w, w * 0.8);
+        let mut lock = Paint::default();
+        lock.set_anti_alias(true);
+        // A ring of the badge's colour first, so the padlock stands apart
+        // from the fan it sits on.
+        lock.set_color(color);
+        canvas.draw_round_rect(body.with_outset((2.0, 2.0)), 3.0, 3.0, &lock);
+        lock.set_color(Color::WHITE);
+        canvas.draw_round_rect(body, 2.0, 2.0, &lock);
+        let shackle = Rect::from_xywh(body.left + w * 0.2, body.top - w * 0.45, w * 0.6, w * 0.8);
+        let ring = stroke(Color::WHITE, 1.6);
+        canvas.draw_arc(shackle, 180.0, 180.0, false, &ring);
+    }
+}
+
 fn stroke(color: Color, width: f32) -> Paint {
     let mut paint = Paint::default();
     paint.set_anti_alias(true);
@@ -603,23 +751,13 @@ mod tests {
     use otto_network::{Device, WifiDevice};
 
     fn snapshot_with(networks: Vec<WifiNetwork>) -> Snapshot {
-        let device = Device {
-            path: "/d/1".into(),
-            kind: DeviceKind::Wifi,
-            interface: "wlan0".into(),
-            state: DeviceState::Connected,
-            hw_address: String::new(),
-        };
+        let device = Device::new("/d/1", DeviceKind::Wifi, "wlan0", DeviceState::Connected);
         Snapshot {
             running: true,
             wifi_enabled: true,
             wifi_hardware_enabled: true,
             devices: vec![device.clone()],
-            wifi: Some(WifiDevice {
-                device,
-                networks,
-                last_scan_ms: None,
-            }),
+            wifi: Some(WifiDevice::new(device, networks)),
             ..Snapshot::default()
         }
     }
@@ -632,6 +770,7 @@ mod tests {
             access_point: format!("/ap/{name}"),
             saved: saved.then(|| format!("/c/{name}")),
             state,
+            wpa3_only: false,
         }
     }
 
@@ -674,6 +813,32 @@ mod tests {
         snapshot.wifi_enabled = false;
         let labels = labels(&menu_items(&snapshot, false));
         assert!(!labels.contains(&"Home".to_string()));
+    }
+
+    #[test]
+    fn a_new_secured_network_asks_for_its_password_first() {
+        let snapshot = snapshot_with(vec![network("Cafe", false, LinkState::Idle)]);
+        *SNAPSHOT.lock().unwrap() = snapshot;
+        activate(&format!("net:{}", encode_ssid(b"Cafe")));
+        let request = take_dialog_request().expect("a password dialog");
+        assert!(matches!(
+            request,
+            crate::join_dialog::Purpose::Join { ref network, .. } if network.name() == "Cafe"
+        ));
+    }
+
+    #[test]
+    fn join_other_network_is_offered_with_wifi_on() {
+        let snapshot = snapshot_with(Vec::new());
+        let items = menu_items(&snapshot, false);
+        assert!(items.iter().any(|i| i.action_id() == Some("hidden")));
+    }
+
+    #[test]
+    fn link_rates() {
+        assert_eq!(format_speed(866_000), "866 Mb/s");
+        assert_eq!(format_speed(1_000_000), "1 Gb/s");
+        assert_eq!(format_speed(2_402_000), "2.4 Gb/s");
     }
 
     #[test]

@@ -489,12 +489,14 @@ another way of typing. The panes are:
   dragged out of the picker that the palette has no name for is sent as
   `#RRGGBB` and is taken as-is under both schemes.
 - **Displays** — see below.
-- **Network** — the Wi-Fi switch, the network in use and the top bar
-  indicator switch (`topbar.show_network`); the state of every Wi-Fi and
-  Ethernet device; the address details of the connection in use; and the
-  saved Wi-Fi networks, each with an auto-join switch and Forget. Everything
-  but the indicator switch is NetworkManager's, read while the pane is on
-  screen. See [network.md](network.md).
+- **Network** — tabs for Wi-Fi, Ethernet and VPN. Wi-Fi has the switch, the
+  top bar indicator switch (`topbar.show_network`), the link's signal, band,
+  rate, security and access point, and the saved networks with auto-join and
+  Forget. Wi-Fi and Ethernet each have TCP/IP (IPv4 and IPv6 methods,
+  addresses, router) and DNS (automatic, servers, search domains), edited as
+  a draft and applied with Apply. VPN has a switch and Forget per connection,
+  and Import…. Everything but the indicator switch is NetworkManager's, read
+  while the pane is on screen. See [network.md](network.md).
 - **Dock** — size, position, autohide, magnification, minimise effect, and the
   icon tint: what is tinted — the dock's icons, and whether the app switcher
   joins in — then the colour and strength that govern both. The switcher's

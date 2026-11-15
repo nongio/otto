@@ -19,6 +19,14 @@ pub const SERVICE: &str = "org.freedesktop.NetworkManager";
 pub const PATH: &str = "/org/freedesktop/NetworkManager";
 /// The saved connections' object path.
 pub const SETTINGS_PATH: &str = "/org/freedesktop/NetworkManager/Settings";
+/// The secret agents' registry.
+pub const AGENT_MANAGER_PATH: &str = "/org/freedesktop/NetworkManager/AgentManager";
+/// Where a secret agent serves `org.freedesktop.NetworkManager.SecretAgent`:
+/// NetworkManager calls every registered agent at this path.
+pub const SECRET_AGENT_PATH: &str = "/org/freedesktop/NetworkManager/SecretAgent";
+/// The interface a secret agent serves. It is a server interface, served by
+/// whoever answers password requests (otto-bar), so it has no proxy here.
+pub const SECRET_AGENT_INTERFACE: &str = "org.freedesktop.NetworkManager.SecretAgent";
 
 /// A connection's settings as NetworkManager passes them: setting name
 /// (`"connection"`, `"802-11-wireless"`, …) to its properties.
@@ -93,6 +101,16 @@ pub trait Device {
     /// until something activates a connection on it again.
     fn disconnect(&self) -> zbus::Result<()>;
 
+    /// Apply the saved connection's current settings to the active one
+    /// without taking it down. An empty `connection` means "as saved";
+    /// `version_id` `0` skips the version check.
+    fn reapply(
+        &self,
+        connection: HashMap<&str, HashMap<&str, Value<'_>>>,
+        version_id: u64,
+        flags: u32,
+    ) -> zbus::Result<()>;
+
     /// The kernel interface name ("wlan0").
     #[zbus(property)]
     fn interface(&self) -> zbus::Result<String>;
@@ -139,6 +157,38 @@ pub trait DeviceWireless {
     /// `CLOCK_BOOTTIME` milliseconds of the last scan, `-1` for never.
     #[zbus(property)]
     fn last_scan(&self) -> zbus::Result<i64>;
+
+    /// The link rate in kbit/s.
+    #[zbus(property)]
+    fn bitrate(&self) -> zbus::Result<u32>;
+}
+
+#[zbus::proxy(
+    interface = "org.freedesktop.NetworkManager.Device.Wired",
+    default_service = "org.freedesktop.NetworkManager"
+)]
+pub trait DeviceWired {
+    /// The negotiated speed in Mb/s, `0` when unknown.
+    #[zbus(property)]
+    fn speed(&self) -> zbus::Result<u32>;
+
+    /// Whether a cable is plugged in and live.
+    #[zbus(property)]
+    fn carrier(&self) -> zbus::Result<bool>;
+}
+
+#[zbus::proxy(
+    interface = "org.freedesktop.NetworkManager.AgentManager",
+    default_service = "org.freedesktop.NetworkManager",
+    default_path = "/org/freedesktop/NetworkManager/AgentManager"
+)]
+pub trait AgentManager {
+    /// Register the caller as a secret agent under `identifier`, with
+    /// `capabilities` (`0x1` VPN hints).
+    fn register_with_capabilities(&self, identifier: &str, capabilities: u32) -> zbus::Result<()>;
+
+    /// Stop being asked.
+    fn unregister(&self) -> zbus::Result<()>;
 }
 
 #[zbus::proxy(

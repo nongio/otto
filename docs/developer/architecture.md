@@ -63,6 +63,7 @@ flowchart BT
     otto_search[otto-search]
     otto_agents_client[otto-agents-client]
     otto_pdf[otto-pdf]
+    otto_network[otto-network]
   end
   subgraph toolkit["toolkit"]
     otto_kit[otto-kit]
@@ -114,6 +115,7 @@ flowchart BT
   otto_authorize --> otto_auth_ui
   otto_authorize --> otto_kit
   otto_bar --> otto_kit
+  otto_bar --> otto_network
   otto_canvas --> otto_agents_kit
   otto_canvas --> otto_kit
   otto_dictate --> otto_kit
@@ -137,6 +139,7 @@ flowchart BT
   otto_msg --> otto_dbus
   otto_msg --> otto_foundations
   otto_msg --> otto_term_kit
+  otto_network --> otto_dbus
   otto_pdf --> otto_foundations
   otto_peek --> otto_kit
   otto_peek --> otto_md_kit
@@ -153,6 +156,7 @@ flowchart BT
   otto_search --> otto_foundations
   otto_settings --> otto_agents_client
   otto_settings --> otto_kit
+  otto_settings --> otto_network
   otto_settings --> otto_search
   otto_setup --> otto_agents_client
   otto_setup --> otto_foundations

@@ -5,7 +5,7 @@
 
 ## Summary
 
-Otto shows and changes the machine's network connection itself: an indicator in the top bar with a menu to pick a Wi-Fi network, and a Network pane in Settings for the details and the saved networks. NetworkManager is the backend. Otto keeps no network state of its own.
+Otto shows and changes the machine's network connection itself. The top bar has an indicator with a menu to pick a Wi-Fi network, and a dialog that asks for its password. Settings has a Network pane with Wi-Fi, Ethernet and VPN tabs, the link's details, and an editor for TCP/IP and DNS. NetworkManager is the backend. Otto keeps no network state of its own.
 
 ## What a good network manager does
 
@@ -30,8 +30,9 @@ The common ground, which Otto adopts:
 
 1. **NetworkManager owns everything.** Connections, auto-connect, credentials and scanning all stay with NetworkManager. The UI reads its state and asks it to change. It never keeps a copy of its own.
 2. **One glance tells the state.** The bar shows Wi-Fi signal in bars, wired as its own glyph, and a distinct look when there is no network, when the radio is off, and when the connection is up but the internet is not reachable.
-3. **The menu is for joining, Settings is for managing.** The menu has the switch, the networks, VPN toggles and the way to Settings. Forgetting a network, auto-join and the address details live in Settings.
+3. **The menu is for joining, Settings is for managing.** The menu has the switch, the networks, VPN toggles and the way to Settings. Forgetting a network, auto-join, addresses and DNS live in Settings.
 4. **The list stays honest.** One row per network name, strongest access point first. Saved networks come before others. Hidden networks have no row. The list updates in place while the menu is open.
+5. **What macOS hides, Otto shows.** macOS keeps band, channel, link rate and BSSID behind Option-click, and its TCP/IP sheet edits one family at a time behind a Details… button. Otto puts the link details on the Wi-Fi tab and a line under the connected network in the menu. IPv4, IPv6 and DNS sit on the tab of the connection they belong to, with edits checked before they are applied.
 
 ## Goals
 
@@ -49,19 +50,23 @@ The common ground, which Otto adopts:
   - VPN connections as toggles
   - disconnect
   - the Network pane in Settings
-- Choosing a network connects to it. A saved network uses its saved profile. A new open network is joined directly. A new secured network asks NetworkManager to connect, and NetworkManager asks whichever secret agent is registered for the password.
-- A Network pane in Settings with:
-  - the Wi-Fi switch
-  - the state of every device
-  - the address details of the connection in use
-  - the saved Wi-Fi networks, each with an auto-join checkbox and a way to forget it
-  - whether the indicator is shown in the top bar
+- Choosing a network connects to it. A saved network uses its saved profile. A new open network is joined directly. A new secured network first asks for its password in Otto's own dialog.
+- *Join Other Network…* joins a network that does not broadcast its name.
+- Otto is a NetworkManager secret agent. When NetworkManager needs a Wi-Fi password it does not have, Otto asks for it in the same dialog. No other applet is needed.
+- A Network pane in Settings, with a tab each for Wi-Fi, Ethernet and VPN:
+  - the Wi-Fi switch, and whether the indicator is shown in the top bar
+  - the link: signal, band and channel, link rate, security, access point, hardware address
+  - each wired device's state, speed and hardware address
+  - TCP/IP for the connection: IPv4 and IPv6 each Automatic, Manual, Link-local, Shared or Off, with addresses and router when manual
+  - DNS: whether to also use the network's servers, the servers to ask first, search domains, and the servers in use
+  - the saved Wi-Fi networks, each with an auto-join switch and Forget
+  - the VPNs, each with a switch to connect and Forget, and Import… for a WireGuard or OpenVPN file
 - Everything follows NetworkManager live. A change made with `nmcli`, another applet or the hardware switch shows up without reopening anything.
 
 ## Non-Goals
 
-- **A secret agent of Otto's own (for now).** Until one lands (see Open Questions), the password for a new secured network comes from any registered agent, such as nm-applet's or `nmcli --ask`'s.
-- **Creating or editing connection profiles:** static IP, proxies, 802.1X/enterprise settings, VPN import. `nm-connection-editor` and `nmtui` already do this. Settings can grow into it later.
+- **802.1X (WPA Enterprise) and VPN plug-in secrets.** The agent answers Wi-Fi personal and WEP keys and declines the rest, so another agent can answer.
+- **Proxies, MTU, cloned MAC addresses, routes, bonds, bridges.** `nm-connection-editor` and `nmtui` do these.
 - **Backends other than NetworkManager** (iwd alone, ConnMan, systemd-networkd). Without NetworkManager on the system bus the indicator does not appear, and a tray applet for that backend still works.
 - **Bluetooth and mobile broadband.**
 
@@ -96,31 +101,61 @@ The common ground, which Otto adopts:
      - The connected network is ticked.
      - A network being connected to says *Connecting…* beside it.
    - **VPN** connections, each ticked while active. Choosing one starts or stops it.
+   - Under the connected network, a line with its band, channel, link rate and IPv4 address.
+   - **Join Other Network…**, with Wi-Fi on.
    - **Disconnect from *name*** while Wi-Fi is connected.
    - **Network Settings…**, which opens Settings on the Network pane.
 8. Choosing a network:
    - The connected one: nothing happens.
    - A saved one: that profile is activated on the Wi-Fi device.
-   - Any other: a new profile is added and activated for that access point. Its security is filled in from what the access point advertises, and NetworkManager asks the registered secret agent for the password.
+   - An open one: a new profile is added and activated for that access point.
+   - A secured one: the password dialog opens first. Join adds and activates a profile carrying the key: WPA2 (`wpa-psk`), or SAE when the access point offers only WPA3, or WEP. NetworkManager stores the key with the profile.
    - A WPA-Enterprise network cannot be joined from the menu. It is listed dimmed.
 9. While the menu is open it follows NetworkManager. Networks appear and disappear, the tick moves, and the menu is redrawn in place. It is shown again at its new size only when the number of lines changes.
 10. A failed connection is logged. The indicator goes back to the state NetworkManager reports.
 
+### Password dialog
+
+10a. A card on the overlay layer, centred, holding the keyboard while it is up. It shows a Wi-Fi badge (with a padlock for a secured network), a title, one line saying what is asked, then:
+   - for a hidden network: *Network name* and a segmented *None / WPA2 / WPA3 / WEP*
+   - *Password* (masked), with *Show password*, unless the network is open
+   - *Cancel* and *Join*. Join is dimmed until the password can be a key of that kind: 8–63 characters or 64 hex digits for WPA2, any for WPA3, 5 or 13 characters or 10 or 26 hex digits for WEP.
+10b. Return joins, Escape cancels, Tab moves between the name and the password.
+10c. Otto registers as a NetworkManager secret agent (`org.otto.bar`) on the system bus, again whenever NetworkManager restarts. For a Wi-Fi personal or WEP key, when NetworkManager allows interaction, it opens the dialog. When NetworkManager says the key it had was refused, the dialog says so. The typed key goes back in the reply and is not stored by Otto. Other secrets, and requests that allow no interaction, are declined at once. A request NetworkManager withdraws closes the dialog. Only one dialog is up at a time, and a second request meanwhile is declined.
+
 ### Settings pane
 
-11. The **Network** pane sits after Displays in the sidebar.
-12. **Wi-Fi** group:
-    - the Wi-Fi switch
-    - the network in use
-    - *Show network status in the top bar*, bound to `topbar.show_network`
-13. **Status** group: one line per Wi-Fi and Ethernet device, with its interface name and state (*Connected*, *Connecting*, *Disconnected*, *Cable unplugged*, *Unavailable*).
-14. **Details** group, for the connection in use: name, kind, IPv4 address and prefix, router, DNS servers, IPv6 address, hardware address.
-15. **Known networks** group:
-    - every saved Wi-Fi network, the one in use first, then by last use
-    - a switch per line for auto-join
-    - a **Forget** button per line, which deletes the saved profile
-16. Without NetworkManager the pane says so in a single line and shows nothing else.
-17. The pane reads NetworkManager only while it is on screen, and follows its changes live while it is.
+11. The **Network** pane sits after Displays in the sidebar. A segmented control at the top holds a tab for Wi-Fi when there is a Wi-Fi device, for Ethernet when there is a wired one, and for VPN always. It opens on the kind of the connection in use.
+12. **Wi-Fi tab:**
+    - the Wi-Fi switch (dimmed, with a note, when a hardware switch blocks it), the network in use, and *Show network status in the top bar* (`topbar.show_network`)
+    - **Connection**, while connected:
+      - signal in bars, in words and as a percentage
+      - band and channel
+      - link rate
+      - security
+      - access point (BSSID)
+      - hardware address
+      - a note when the internet cannot be reached
+    - **TCP/IP** and **DNS** for a saved network: the one in use, or the one picked in *Settings for*
+    - **Known networks:** every saved Wi-Fi network, the one in use first, then by last use. Each has an auto-join switch and *Forget*.
+13. **Ethernet tab:** each wired device's state with its speed, and its hardware address. Then TCP/IP and DNS for the wired profile in use, or the most recently used one.
+14. **VPN tab:** each VPN or WireGuard connection with a switch that connects and disconnects it, its state, and *Forget*. *Import…* opens the file chooser for a WireGuard `.conf` or OpenVPN `.ovpn` and imports it with `nmcli connection import`; NetworkManager has no D-Bus call for importing.
+15. **TCP/IP group:**
+    - *Configure IPv4*: Automatic (DHCP), Manually, Link-local only, Share this connection, Off
+    - *Configure IPv6*: Automatic, Automatic DHCP only, Manually, Link-local only, Share this connection, Off
+    - Manually shows the family's addresses (`address/prefix`, comma-separated; a missing prefix is /24 or /64) and router as fields. Any other method shows the addresses and router in use.
+16. **DNS group:**
+    - *Automatic DNS*: off means only the servers below are asked
+    - *DNS servers*: IPv4 and IPv6 together, comma-separated
+    - *Search domains*: a `~` prefix makes a routing-only domain
+    - the servers in use
+17. Edits to TCP/IP and DNS are a draft. *Changes* has *Revert* and *Apply*, dimmed while there is nothing to apply. Apply checks the draft first:
+    - Manually needs at least one address.
+    - Every address, router and DNS server must be of its family.
+    - Every search domain must be a domain.
+    A problem is written under *Changes*, and nothing is sent. A draft that passes is saved on the profile and applied to the running connection in place (`Reapply`), or by reconnecting where NetworkManager cannot apply it in place.
+18. Without NetworkManager the pane says so in a single line and shows nothing else.
+19. The pane reads NetworkManager only while it is on screen, and follows its changes live while it is.
 
 ## Constraints & Edge Cases
 
@@ -130,15 +165,18 @@ The common ground, which Otto adopts:
 - **NetworkManager restarts.** The indicator disappears and comes back once it has rejoined the bus.
 - **Scans.** NetworkManager rate-limits them. A refused scan request is not an error.
 - **Signal noise.** Strength changes are frequent. A burst of property changes is answered with a single re-read about 150 ms later.
+- **Old and new spellings.** IPv4 addresses are read from `address-data`, or the older `addresses`. DNS is read from `dns-data`, or the older `dns`. A write drops the older spelling of what it changes, so NetworkManager cannot prefer a stale copy, and keeps every property it does not edit.
+- **Secrets on update.** A profile's settings are read without secrets, and an update without secrets keeps the ones NetworkManager stored.
 
 ## Rationale
 
 - **The indicator is in otto-bar, not in a separate app or a tray applet.** The bar already draws its status indicators itself (battery, keyboard layout), because the tray carries only an icon, a tooltip and a flat menu. Drawing the indicator in the bar keeps it consistent with its neighbours, and the keyboard focus, menus and accessibility work as they do for every other indicator.
 - **The model is shared.** One library (`otto-network`) reads NetworkManager into a snapshot and performs the actions. The bar and Settings both use it, so the two can never disagree about what "connected" means or how networks are sorted.
-- **No password UI for now.** A correct secret agent is its own piece of work, with a dialog, credential storage hints and cancellation. NetworkManager already routes requests to any agent that is registered. Leaving it out keeps this change shippable without blocking anyone who has nm-applet's or another agent.
+- **The secret agent lives in otto-bar.** The bar runs for the whole session and already holds the network connection on the system bus, and the dialog is the one the menu opens. A second process would need its own bus connection and its own way to put a dialog on screen.
+- **The key travels with the profile.** Joining a new network sends the key with the new profile, so NetworkManager stores it and needs no agent to reconnect later. The agent covers the cases that remain: a changed password, or a profile saved without one.
+- **TCP/IP edits are a draft.** Applying each field as it is typed would drop the connection the moment Manually is picked, before any address is in. A draft lets the person fill in a whole configuration, have it checked, and apply it once.
 
 ## Open Questions
 
-- **Secret agent.** Where should Otto's live: in `otto-authorize`, next to the polkit agent and with the same password panel, or in otto-bar? It should support "show password" and hand passwords to NetworkManager's agent-owned storage.
-- **Hidden networks.** Should *Join Other Network…* be a menu item that opens a sheet in Settings, or a dialog of its own?
 - **Hotspot and airplane mode.**
+- **Proxies.** Per-connection proxy settings (`proxy` setting) would fit the TCP/IP tab.

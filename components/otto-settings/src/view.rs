@@ -2903,6 +2903,7 @@ impl Settings {
                         .or_else(|| crate::panes::startup::display(id, value))
                         .or_else(|| crate::panes::dictation::display(id, value))
                         .or_else(|| crate::panes::sound::display(id, value))
+                        .or_else(|| crate::panes::network::display(id, value))
                         .unwrap_or_else(|| settings_client::display_choice(id, value)),
                     None => value.clone(),
                 };

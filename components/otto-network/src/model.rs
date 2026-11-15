@@ -26,6 +26,8 @@ pub struct Snapshot {
     pub saved: Vec<SavedNetwork>,
     /// Saved VPN and WireGuard connections.
     pub vpns: Vec<Vpn>,
+    /// Every saved connection, with its IP configuration.
+    pub profiles: Vec<crate::profile::Profile>,
 }
 
 /// NetworkManager's `NMConnectivityState`.
@@ -100,6 +102,31 @@ pub struct Device {
     pub interface: String,
     pub state: DeviceState,
     pub hw_address: String,
+    /// The saved connection active on it, if any.
+    pub active_profile: Option<String>,
+    /// A wired device's negotiated speed in Mb/s, when it is known.
+    pub speed_mbps: Option<u32>,
+    /// Its active connection's object path.
+    pub active: Option<String>,
+    /// Its active connection's addresses.
+    pub link: Option<ActiveLink>,
+}
+
+impl Device {
+    /// A device with nothing known about it beyond what it is.
+    pub fn new(path: &str, kind: DeviceKind, interface: &str, state: DeviceState) -> Self {
+        Self {
+            path: path.to_string(),
+            kind,
+            interface: interface.to_string(),
+            state,
+            hw_address: String::new(),
+            active_profile: None,
+            speed_mbps: None,
+            active: None,
+            link: None,
+        }
+    }
 }
 
 /// The Wi-Fi device and the networks it sees.
@@ -110,6 +137,23 @@ pub struct WifiDevice {
     pub networks: Vec<WifiNetwork>,
     /// Milliseconds of `CLOCK_BOOTTIME` at the last scan; `None` for never.
     pub last_scan_ms: Option<i64>,
+    /// The access point the device is associated with.
+    pub active_ap: Option<AccessPoint>,
+    /// The link rate in kbit/s, while associated.
+    pub bitrate_kbps: Option<u32>,
+}
+
+impl WifiDevice {
+    /// A Wi-Fi device seeing `networks`, not associated with any.
+    pub fn new(device: Device, networks: Vec<WifiNetwork>) -> Self {
+        Self {
+            device,
+            networks,
+            last_scan_ms: None,
+            active_ap: None,
+            bitrate_kbps: None,
+        }
+    }
 }
 
 /// How a network is secured, as far as joining it goes.
@@ -129,6 +173,15 @@ impl Security {
     /// Whether joining asks for a password.
     pub fn is_secured(self) -> bool {
         self != Self::Open
+    }
+
+    /// Whether an access point offers only WPA3 Personal (SAE), so a new
+    /// connection must use it rather than WPA2's PSK.
+    pub fn wpa3_only(wpa_flags: u32, rsn_flags: u32) -> bool {
+        const KEY_MGMT_PSK: u32 = 0x100;
+        const KEY_MGMT_SAE: u32 = 0x400;
+        let both = wpa_flags | rsn_flags;
+        both & KEY_MGMT_SAE != 0 && both & KEY_MGMT_PSK == 0
     }
 
     /// Read an access point's flags: `NM80211ApFlags` and the WPA and RSN
@@ -161,7 +214,64 @@ pub struct AccessPoint {
     pub ssid: Vec<u8>,
     pub strength: u8,
     pub security: Security,
+    /// Only WPA3 (SAE) is offered: a new connection must use it.
+    pub wpa3_only: bool,
     pub frequency_mhz: u32,
+    pub bssid: String,
+}
+
+impl AccessPoint {
+    /// The band, for display.
+    pub fn band(&self) -> Band {
+        Band::from_mhz(self.frequency_mhz)
+    }
+
+    /// The channel number, `0` when the frequency is not on a channel.
+    pub fn channel(&self) -> u32 {
+        channel(self.frequency_mhz)
+    }
+}
+
+/// A Wi-Fi band.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Band {
+    Ghz2,
+    Ghz5,
+    Ghz6,
+    Unknown,
+}
+
+impl Band {
+    pub fn from_mhz(mhz: u32) -> Self {
+        match mhz {
+            2400..=2500 => Self::Ghz2,
+            // 5.925 GHz up is 6 GHz (Wi-Fi 6E); below it is 5 GHz.
+            5150..=5924 => Self::Ghz5,
+            5925..=7125 => Self::Ghz6,
+            _ => Self::Unknown,
+        }
+    }
+
+    /// How it is written: "2.4 GHz", "5 GHz", "6 GHz".
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Ghz2 => "2.4 GHz",
+            Self::Ghz5 => "5 GHz",
+            Self::Ghz6 => "6 GHz",
+            Self::Unknown => "",
+        }
+    }
+}
+
+/// The channel number of a frequency in MHz, `0` for none.
+pub fn channel(mhz: u32) -> u32 {
+    match mhz {
+        2484 => 14,
+        2412..=2472 => (mhz - 2407) / 5,
+        5955..=7115 => (mhz - 5950) / 5,
+        5000..=5900 => (mhz - 5000) / 5,
+        _ => 0,
+    }
 }
 
 /// Whether a network is the one in use.
@@ -186,6 +296,8 @@ pub struct WifiNetwork {
     /// The saved connection for this network, if there is one.
     pub saved: Option<String>,
     pub state: LinkState,
+    /// Only WPA3 is offered.
+    pub wpa3_only: bool,
 }
 
 impl WifiNetwork {
@@ -198,6 +310,24 @@ impl WifiNetwork {
     /// Signal bars, `0..=3`.
     pub fn bars(&self) -> u8 {
         bars(self.strength)
+    }
+
+    /// The kind of key joining it takes, for a network with a password a
+    /// person can type. `None` for an open or an enterprise network.
+    pub fn key_kind(&self) -> Option<crate::profile::KeyKind> {
+        use crate::profile::KeyKind;
+        match self.security {
+            Security::Personal if self.wpa3_only => Some(KeyKind::Sae),
+            Security::Personal => Some(KeyKind::WpaPsk),
+            Security::Wep => Some(KeyKind::Wep),
+            Security::Open | Security::Enterprise => None,
+        }
+    }
+
+    /// Whether joining it needs a password asked for first: secured and not
+    /// saved. A saved network has its password already.
+    pub fn needs_password(&self) -> bool {
+        self.saved.is_none() && self.key_kind().is_some()
     }
 }
 
@@ -319,6 +449,7 @@ pub fn group_networks(
                 // treated as the secured one: a password asked for and not
                 // needed beats one needed and not asked for.
                 network.security = network.security.max(ap.security);
+                network.wpa3_only &= ap.wpa3_only;
             }
             None => networks.push(WifiNetwork {
                 ssid: ap.ssid.clone(),
@@ -327,6 +458,7 @@ pub fn group_networks(
                 access_point: ap.path.clone(),
                 saved: None,
                 state: LinkState::Idle,
+                wpa3_only: ap.wpa3_only,
             }),
         }
     }
@@ -452,7 +584,9 @@ mod tests {
             ssid: ssid.as_bytes().to_vec(),
             strength,
             security,
+            wpa3_only: false,
             frequency_mhz: 2412,
+            bssid: String::new(),
         }
     }
 
@@ -547,6 +681,35 @@ mod tests {
     }
 
     #[test]
+    fn bands_and_channels() {
+        assert_eq!(Band::from_mhz(2412), Band::Ghz2);
+        assert_eq!(channel(2412), 1);
+        assert_eq!(channel(2437), 6);
+        assert_eq!(channel(2484), 14);
+        assert_eq!(Band::from_mhz(5180), Band::Ghz5);
+        assert_eq!(channel(5180), 36);
+        assert_eq!(channel(5825), 165);
+        assert_eq!(Band::from_mhz(5955), Band::Ghz6);
+        assert_eq!(channel(5955), 1);
+        assert_eq!(Band::from_mhz(60_000), Band::Unknown);
+    }
+
+    #[test]
+    fn what_joining_asks_for() {
+        use crate::profile::KeyKind;
+        let mut network =
+            group_networks(&[ap("/ap/1", "X", 50, Security::Personal)], &[], None).remove(0);
+        assert_eq!(network.key_kind(), Some(KeyKind::WpaPsk));
+        assert!(network.needs_password());
+        network.wpa3_only = true;
+        assert_eq!(network.key_kind(), Some(KeyKind::Sae));
+        network.saved = Some("/c/1".into());
+        assert!(!network.needs_password());
+        network.security = Security::Enterprise;
+        assert_eq!(network.key_kind(), None);
+    }
+
+    #[test]
     fn signal_bars() {
         assert_eq!(bars(0), 0);
         assert_eq!(bars(24), 0);
@@ -572,6 +735,10 @@ mod tests {
             interface: "x".into(),
             state,
             hw_address: String::new(),
+            active_profile: None,
+            speed_mbps: None,
+            active: None,
+            link: None,
         }
     }
 
@@ -601,6 +768,8 @@ mod tests {
                 device: dev,
                 networks,
                 last_scan_ms: None,
+                active_ap: None,
+                bitrate_kbps: None,
             }),
             ..Snapshot::default()
         }

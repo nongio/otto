@@ -26,6 +26,8 @@ and menus with.
 | `tray.rs` | Serves `org.kde.StatusNotifierWatcher` and follows each registered `StatusNotifierItem`. |
 | `keyboard_layout.rs` | The layout indicator and its menu, from `GetInputs` and `InputChanged` on `org.otto.Shell1`. |
 | `power.rs`, `battery.rs` | Battery state from UPower (sysfs when UPower is absent), CPU frequency and governor from sysfs, power profiles; `battery.rs` draws the glyph. |
+| `join_dialog.rs` | The Wi-Fi password dialog on the overlay layer: a network's password, a hidden network's name and security. |
+| `secret_agent.rs` | NetworkManager's secret agent on the system bus, answering Wi-Fi keys through the dialog. |
 | `network.rs` | The network indicator and its menu, from NetworkManager through `otto-network`, following `topbar.show_network`. |
 | `clock.rs` | The clock, following `topbar.show_clock` and `topbar.clock_format`. |
 | `logout.rs` | Asks through `org.otto.Dialog1`, then sends the compositor its `logout` command. |

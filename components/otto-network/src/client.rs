@@ -12,14 +12,16 @@ use std::time::Duration;
 use futures_util::future::join_all;
 use futures_util::StreamExt;
 use otto_dbus::networkmanager::{
-    AccessPointProxy, ActiveConnectionProxy, DeviceProxy, DeviceWirelessProxy, Ip4ConfigProxy,
-    Ip6ConfigProxy, NetworkManagerProxy, NetworkSettingsProxy, SettingsConnectionProxy, SERVICE,
+    AccessPointProxy, ActiveConnectionProxy, DeviceProxy, DeviceWiredProxy, DeviceWirelessProxy,
+    Ip4ConfigProxy, Ip6ConfigProxy, NetworkManagerProxy, NetworkSettingsProxy,
+    SettingsConnectionProxy, SERVICE,
 };
 use zbus::proxy::CacheProperties;
 use zbus::zvariant::{ObjectPath, OwnedObjectPath, OwnedValue, Value};
 use zbus::Connection;
 
 use crate::model::*;
+use crate::profile::{Family, IpConfig, KeyKind, Profile, ProfileKind};
 
 /// `NMDeviceType` values Otto shows.
 const TYPE_ETHERNET: u32 = 1;
@@ -92,7 +94,30 @@ pub async fn read(conn: &Connection) -> zbus::Result<Snapshot> {
     }
 
     // Saved connections.
-    let (mut saved, vpns) = read_saved(conn).await?;
+    let profiles = read_profiles(conn).await?;
+    let mut saved: Vec<SavedNetwork> = profiles
+        .iter()
+        .filter(|p| p.kind == ProfileKind::Wifi && !p.hotspot)
+        .map(|p| SavedNetwork {
+            path: p.path.clone(),
+            id: p.id.clone(),
+            ssid: p.ssid.clone(),
+            autoconnect: p.autoconnect,
+            last_used: p.last_used,
+            in_use: false,
+        })
+        .collect();
+    let mut vpns: Vec<Vpn> = profiles
+        .iter()
+        .filter(|p| p.kind == ProfileKind::Vpn)
+        .map(|p| Vpn {
+            path: p.path.clone(),
+            id: p.id.clone(),
+            active: None,
+            state: LinkState::Idle,
+        })
+        .collect();
+    vpns.sort_by_key(|v| v.id.to_lowercase());
 
     // Active connections, by the saved connection they came from.
     let mut active_by_connection: HashMap<String, (String, LinkState)> = HashMap::new();
@@ -120,6 +145,14 @@ pub async fn read(conn: &Connection) -> zbus::Result<Snapshot> {
         })
         .collect();
 
+    // What each device's active connection was activated from.
+    for device in &mut snapshot.devices {
+        device.active_profile = active_by_connection
+            .iter()
+            .find(|(_, (active, _))| Some(active.as_str()) == device.active.as_deref())
+            .map(|(profile, _)| profile.clone());
+    }
+
     if let Some((device, active)) = wifi_device {
         // The saved connection on the Wi-Fi device: which name is in use.
         let mut in_use: Option<(Vec<u8>, LinkState)> = None;
@@ -138,6 +171,17 @@ pub async fn read(conn: &Connection) -> zbus::Result<Snapshot> {
         let wireless = at!(DeviceWirelessProxy, conn, device.path.as_str()).await?;
         let access_points = read_access_points(conn, &wireless).await;
         let last_scan_ms = wireless.last_scan().await.ok().filter(|ms| *ms >= 0);
+        let active_ap = wireless
+            .active_access_point()
+            .await
+            .ok()
+            .and_then(some_path)
+            .and_then(|path| access_points.iter().find(|ap| ap.path == path).cloned());
+        let bitrate_kbps = wireless
+            .bitrate()
+            .await
+            .ok()
+            .filter(|rate| *rate > 0 && active_ap.is_some());
         let networks = group_networks(
             &access_points,
             &saved,
@@ -145,18 +189,39 @@ pub async fn read(conn: &Connection) -> zbus::Result<Snapshot> {
                 .as_ref()
                 .map(|(ssid, state)| (ssid.as_slice(), *state)),
         );
+        let device = snapshot
+            .devices
+            .iter()
+            .find(|d| d.path == device.path)
+            .cloned()
+            .unwrap_or(device);
         snapshot.wifi = Some(WifiDevice {
             device,
             networks,
             last_scan_ms,
+            active_ap,
+            bitrate_kbps,
         });
     }
 
     sort_saved(&mut saved);
     snapshot.saved = saved;
+    snapshot.profiles = profiles;
 
     if let Some(primary) = some_path(nm.primary_connection().await.unwrap_or_default()) {
         snapshot.primary = read_link(conn, &primary).await;
+    }
+    // Every device's own addresses, for a page that shows a device that is
+    // not the primary one.
+    for device in &mut snapshot.devices {
+        if let Some(active) = device.active.clone() {
+            device.link = read_link(conn, &active).await;
+        }
+    }
+    if let Some(wifi) = &mut snapshot.wifi {
+        if let Some(device) = snapshot.devices.iter().find(|d| d.path == wifi.device.path) {
+            wifi.device = device.clone();
+        }
     }
 
     Ok(snapshot)
@@ -181,14 +246,25 @@ async fn read_device(conn: &Connection, path: &str) -> Option<(Device, Option<St
     if !proxy.managed().await.unwrap_or(false) {
         return None;
     }
+    let speed_mbps = match kind {
+        DeviceKind::Ethernet => match at!(DeviceWiredProxy, conn, path).await {
+            Ok(wired) => wired.speed().await.ok().filter(|s| *s > 0),
+            Err(_) => None,
+        },
+        DeviceKind::Wifi => None,
+    };
+    let active = proxy.active_connection().await.ok().and_then(some_path);
     let device = Device {
         path: path.to_string(),
         kind,
         interface: proxy.interface().await.unwrap_or_default(),
         state: DeviceState::from_raw(proxy.state().await.unwrap_or(0)),
         hw_address: proxy.hw_address().await.unwrap_or_default(),
+        active_profile: None,
+        speed_mbps,
+        active: active.clone(),
+        link: None,
     };
-    let active = proxy.active_connection().await.ok().and_then(some_path);
     Some((device, active))
 }
 
@@ -201,16 +277,17 @@ async fn read_access_points(
     let paths = wireless.access_points().await.unwrap_or_default();
     let reads = paths.iter().map(|path| async move {
         let proxy = at!(AccessPointProxy, conn, path.as_str()).await.ok()?;
+        let flags = proxy.flags().await.unwrap_or(0);
+        let wpa = proxy.wpa_flags().await.unwrap_or(0);
+        let rsn = proxy.rsn_flags().await.unwrap_or(0);
         Some(AccessPoint {
             path: path.as_str().to_string(),
             ssid: proxy.ssid().await.ok()?,
             strength: proxy.strength().await.unwrap_or(0),
-            security: Security::from_flags(
-                proxy.flags().await.unwrap_or(0),
-                proxy.wpa_flags().await.unwrap_or(0),
-                proxy.rsn_flags().await.unwrap_or(0),
-            ),
+            security: Security::from_flags(flags, wpa, rsn),
+            wpa3_only: Security::wpa3_only(wpa, rsn),
             frequency_mhz: proxy.frequency().await.unwrap_or(0),
+            bssid: proxy.hw_address().await.unwrap_or_default(),
         })
     });
     join_all(reads).await.into_iter().flatten().collect()
@@ -222,8 +299,8 @@ fn string_in(settings: &HashMap<String, OwnedValue>, key: &str) -> Option<String
         .and_then(|v| String::try_from(v.try_clone().ok()?).ok())
 }
 
-/// The saved Wi-Fi networks and VPNs.
-async fn read_saved(conn: &Connection) -> zbus::Result<(Vec<SavedNetwork>, Vec<Vpn>)> {
+/// Every saved connection, with its settings read into a [`Profile`].
+async fn read_profiles(conn: &Connection) -> zbus::Result<Vec<Profile>> {
     let settings = NetworkSettingsProxy::builder(conn)
         .cache_properties(CacheProperties::No)
         .build()
@@ -233,59 +310,10 @@ async fn read_saved(conn: &Connection) -> zbus::Result<(Vec<SavedNetwork>, Vec<V
         let proxy = at!(SettingsConnectionProxy, conn, path.as_str())
             .await
             .ok()?;
-        Some((path.as_str().to_string(), proxy.get_settings().await.ok()?))
+        let settings = proxy.get_settings().await.ok()?;
+        Profile::from_settings(path.as_str(), &settings)
     });
-
-    let mut wifi = Vec::new();
-    let mut vpns = Vec::new();
-    for (path, settings) in join_all(reads).await.into_iter().flatten() {
-        let Some(connection) = settings.get("connection") else {
-            continue;
-        };
-        let kind = string_in(connection, "type").unwrap_or_default();
-        let id = string_in(connection, "id").unwrap_or_default();
-        match kind.as_str() {
-            "802-11-wireless" => {
-                let ssid = settings
-                    .get("802-11-wireless")
-                    .and_then(|w| w.get("ssid"))
-                    .and_then(|v| Vec::<u8>::try_from(v.try_clone().ok()?).ok())
-                    .unwrap_or_default();
-                // A hotspot this machine serves is not a network to join.
-                let mode = settings
-                    .get("802-11-wireless")
-                    .and_then(|w| string_in(w, "mode"))
-                    .unwrap_or_default();
-                if mode == "ap" {
-                    continue;
-                }
-                wifi.push(SavedNetwork {
-                    path,
-                    id,
-                    ssid,
-                    // Absent means the default, which is on.
-                    autoconnect: connection
-                        .get("autoconnect")
-                        .and_then(|v| bool::try_from(v).ok())
-                        .unwrap_or(true),
-                    last_used: connection
-                        .get("timestamp")
-                        .and_then(|v| u64::try_from(v).ok())
-                        .unwrap_or(0),
-                    in_use: false,
-                });
-            }
-            "vpn" | "wireguard" => vpns.push(Vpn {
-                path,
-                id,
-                active: None,
-                state: LinkState::Idle,
-            }),
-            _ => {}
-        }
-    }
-    vpns.sort_by_key(|v| v.id.to_lowercase());
-    Ok((wifi, vpns))
+    Ok(join_all(reads).await.into_iter().flatten().collect())
 }
 
 /// An address list as `address/prefix`.
@@ -386,6 +414,140 @@ pub async fn connect_wifi(
             nm.add_and_activate_connection(settings, &device, &access_point)
                 .await?;
         }
+    }
+    Ok(())
+}
+
+/// Join the secured `network` with `password` typed for it: a new saved
+/// connection carrying the key, so NetworkManager keeps it and asks no
+/// agent. For a network with a saved connection, or one with no key a
+/// person types, this is [`connect_wifi`].
+pub async fn connect_wifi_with_password(
+    conn: &Connection,
+    device: &str,
+    network: &WifiNetwork,
+    password: &str,
+) -> zbus::Result<()> {
+    let Some(key) = network.key_kind().filter(|_| network.saved.is_none()) else {
+        return connect_wifi(conn, device, network).await;
+    };
+    let nm = NetworkManagerProxy::new(conn).await?;
+    let security = key.security_setting(password);
+    let mut wireless = HashMap::new();
+    wireless.insert("ssid", Value::from(network.ssid.clone()));
+    let mut settings: HashMap<&str, HashMap<&str, Value<'_>>> = HashMap::new();
+    settings.insert("802-11-wireless", wireless);
+    settings.insert(
+        "802-11-wireless-security",
+        security
+            .iter()
+            .map(|(k, v)| {
+                (
+                    k.as_str(),
+                    Value::from(v.try_clone().expect("plain values")),
+                )
+            })
+            .collect(),
+    );
+    nm.add_and_activate_connection(
+        settings,
+        &object_path(device)?,
+        &object_path(&network.access_point)?,
+    )
+    .await?;
+    Ok(())
+}
+
+/// Join a network that does not broadcast its name. `key` is `None` for an
+/// open one; `password` is ignored then.
+pub async fn connect_hidden(
+    conn: &Connection,
+    device: &str,
+    ssid: &[u8],
+    key: Option<KeyKind>,
+    password: &str,
+) -> zbus::Result<()> {
+    let nm = NetworkManagerProxy::new(conn).await?;
+    let mut wireless = HashMap::new();
+    wireless.insert("ssid", Value::from(ssid.to_vec()));
+    wireless.insert("hidden", Value::from(true));
+    let mut settings: HashMap<&str, HashMap<&str, Value<'_>>> = HashMap::new();
+    settings.insert("802-11-wireless", wireless);
+    let security = key.map(|key| key.security_setting(password));
+    if let Some(security) = &security {
+        settings.insert(
+            "802-11-wireless-security",
+            security
+                .iter()
+                .map(|(k, v)| {
+                    (
+                        k.as_str(),
+                        Value::from(v.try_clone().expect("plain values")),
+                    )
+                })
+                .collect(),
+        );
+    }
+    nm.add_and_activate_connection(settings, &object_path(device)?, &object_path("/")?)
+        .await?;
+    Ok(())
+}
+
+/// Save `config` as `family`'s configuration on the profile at `profile`,
+/// then apply it to the connection if it is up: in place where
+/// NetworkManager can (`Reapply`), by reconnecting where it cannot.
+///
+/// Refused before anything is sent when the configuration does not
+/// validate, so a half-typed address never reaches the profile.
+pub async fn set_ip_config(
+    conn: &Connection,
+    profile: &str,
+    family: Family,
+    config: &IpConfig,
+) -> zbus::Result<()> {
+    config
+        .validate(family)
+        .map_err(|e| zbus::Error::Failure(format!("{e:?}")))?;
+    let proxy = at!(SettingsConnectionProxy, conn, profile).await?;
+    let mut settings = proxy.get_settings().await?;
+    config.write_into(&mut settings, family);
+    proxy.update(settings).await?;
+    reapply(conn, profile).await
+}
+
+/// Apply a saved profile's settings to the device it is active on, if any.
+async fn reapply(conn: &Connection, profile: &str) -> zbus::Result<()> {
+    let nm = NetworkManagerProxy::builder(conn)
+        .cache_properties(CacheProperties::No)
+        .build()
+        .await?;
+    for active in nm.active_connections().await.unwrap_or_default() {
+        let Ok(proxy) = at!(ActiveConnectionProxy, conn, active.as_str()).await else {
+            continue;
+        };
+        if proxy.connection().await.ok().as_ref().map(|c| c.as_str()) != Some(profile) {
+            continue;
+        }
+        let devices = proxy.devices().await.unwrap_or_default();
+        let Some(device) = devices.first() else {
+            // A VPN runs on no device of its own: start it again.
+            nm.deactivate_connection(&active).await?;
+            nm.activate_connection(
+                &object_path(profile)?,
+                &object_path("/")?,
+                &object_path("/")?,
+            )
+            .await?;
+            return Ok(());
+        };
+        let device_proxy = at!(DeviceProxy, conn, device.as_str()).await?;
+        if device_proxy.reapply(HashMap::new(), 0, 0).await.is_err() {
+            // Some changes cannot be applied in place (NetworkManager says
+            // which); reconnecting applies anything.
+            nm.activate_connection(&object_path(profile)?, device, &object_path("/")?)
+                .await?;
+        }
+        return Ok(());
     }
     Ok(())
 }

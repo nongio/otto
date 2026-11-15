@@ -11,6 +11,7 @@ use std::future::Future;
 use zbus::Connection;
 
 use crate::model::{Snapshot, WifiNetwork};
+use crate::profile::{Family, IpConfig};
 
 /// Run `work` with a fresh system bus connection on a runtime of its own.
 fn run<T, F, Fut>(work: F) -> zbus::Result<T>
@@ -41,6 +42,32 @@ pub fn set_wifi_enabled(enabled: bool) -> zbus::Result<()> {
 /// [`crate::connect_wifi`].
 pub fn connect_wifi(device: &str, network: &WifiNetwork) -> zbus::Result<()> {
     run(|conn| async move { crate::connect_wifi(&conn, device, network).await })
+}
+
+/// [`crate::connect_wifi_with_password`].
+pub fn connect_wifi_with_password(
+    device: &str,
+    network: &WifiNetwork,
+    password: &str,
+) -> zbus::Result<()> {
+    run(
+        |conn| async move { crate::connect_wifi_with_password(&conn, device, network, password).await },
+    )
+}
+
+/// [`crate::set_ip_config`].
+pub fn set_ip_config(profile: &str, family: Family, config: &IpConfig) -> zbus::Result<()> {
+    run(|conn| async move { crate::set_ip_config(&conn, profile, family, config).await })
+}
+
+/// [`crate::activate`].
+pub fn activate(connection: &str) -> zbus::Result<()> {
+    run(|conn| async move { crate::activate(&conn, connection).await })
+}
+
+/// [`crate::deactivate`].
+pub fn deactivate(active: &str) -> zbus::Result<()> {
+    run(|conn| async move { crate::deactivate(&conn, active).await })
 }
 
 /// [`crate::disconnect_device`].

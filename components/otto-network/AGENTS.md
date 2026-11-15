@@ -1,6 +1,23 @@
 # otto-network
 
-Otto's view of the network through NetworkManager. One read of the system bus becomes a `Snapshot` (devices, the Wi-Fi networks in range folded one per name, saved networks, VPNs, the connection in use and its addresses). The crate also has the actions a network UI takes (Wi-Fi on and off, join, disconnect, scan, VPN up and down, forget, auto-join) and a watcher that says when to read again. NetworkManager keeps all the state. Nothing here caches it.
+Otto's view of the network through NetworkManager. One read of the system bus becomes a `Snapshot`:
+- devices, with each one's link and wired speed
+- the Wi-Fi networks in range, folded one per name, and the access point in use with its link rate
+- every saved profile with its IPv4 and IPv6 configuration
+- VPNs
+- the connection in use and its addresses
+
+The crate also has the actions a network UI takes:
+- Wi-Fi on and off
+- join, by saved profile, with a password, or by a hidden name
+- disconnect
+- scan
+- VPN up and down
+- forget
+- auto-join
+- save and reapply TCP/IP and DNS
+
+It has the secret agent's request and reply shapes, and a watcher that says when to read again. NetworkManager keeps all the state. Nothing here caches it.
 
 - **Layer:** service. Used by `otto-bar` (the network indicator) and `otto-settings` (the Network pane).
 
@@ -19,12 +36,18 @@ Otto's view of the network through NetworkManager. One read of the system bus be
   - signal bars
   - security from access point flags
   - the indicator's glyph
+- `src/profile.rs`: saved connections, read and written in NetworkManager's `a{sa{sv}}` shape:
+  - IP configuration, with its validation
+  - the keys a dialog asks for (`KeyKind`)
+  - the secret agent's `SecretRequest`
 - `src/client.rs`: `read`, the actions and `watch`, all async on the caller's runtime.
+- `tests/mock_networkmanager.rs` runs `read` and every action against a stand-in NetworkManager on a private `dbus-daemon`. It is skipped where there is none.
 - `src/blocking.rs`: the same calls for a plain thread, each on a runtime of its own.
 
 ## Rules
 - No toolkit and no Wayland. The crate is the model and the bus calls, and the UIs draw.
 - Proxies come from `otto-dbus` and are built uncached (`CacheProperties::No`), because a snapshot is read once and dropped.
+- A write to a profile changes only the properties it edits and drops their older spellings (`addresses`, `dns-data`). Settings come without secrets, and an update without secrets keeps the stored ones. Never send a profile's secrets back.
 - Decisions about what to show (order, grouping, the glyph) belong in `model.rs` with a test, not in a UI, so the bar and Settings never disagree.
 - The behaviour is specified in `specs/network.md`. A change to it updates the spec.
 

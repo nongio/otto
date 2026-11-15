@@ -335,12 +335,10 @@ settings-network-current = Network
 settings-network-not-connected = Not connected
 settings-show-network = Show network status in the top bar
 settings-group-network-status = Status
-settings-group-network-details = Details
 settings-group-network-known = Known networks
 settings-network-kind-wifi = Wi-Fi
 settings-network-kind-ethernet = Ethernet
 settings-network-kind-vpn = VPN
-settings-network-kind-other = Other
 settings-network-state-connected = Connected
 settings-network-state-connecting = Connecting…
 settings-network-state-disconnecting = Disconnecting…
@@ -348,8 +346,6 @@ settings-network-state-disconnected = Not connected
 settings-network-state-unplugged = Cable unplugged
 settings-network-state-off = Off
 settings-network-state-failed = Failed to connect
-settings-network-connection = Connection
-settings-network-kind = Type
 settings-network-ipv4 = IPv4 address
 settings-network-router = Router
 settings-network-dns = DNS servers
@@ -362,6 +358,71 @@ settings-network-known-detail = Join automatically
 settings-network-known-in-use = In use · Join automatically
 # The button that deletes a saved network.
 settings-network-forget = Forget
+# The groups and rows of the Wi-Fi tab's link details.
+settings-group-network-connection = Connection
+settings-network-signal = Signal
+settings-network-signal-weak = Weak
+settings-network-signal-fair = Fair
+settings-network-signal-good = Good
+settings-network-signal-excellent = Excellent
+settings-network-band = Band
+# $band is e.g. "5 GHz", $channel a number.
+settings-network-band-value = { $band }, channel { $channel }
+settings-network-link-rate = Link rate
+settings-network-security = Security
+settings-network-security-open = None
+settings-network-security-wpa2 = WPA2 Personal
+settings-network-security-wpa3 = WPA3 Personal
+settings-network-security-enterprise = WPA Enterprise
+# The access point's hardware address.
+settings-network-bssid = Access point
+# $name is the connection's name.
+settings-group-network-tcpip = TCP/IP — { $name }
+# The pop-up choosing which saved network the TCP/IP rows edit.
+settings-network-settings-for = Settings for
+settings-network-configure-ipv4 = Configure IPv4
+settings-network-configure-ipv6 = Configure IPv6
+settings-network-method-dhcp = Automatic (DHCP)
+settings-network-method-auto = Automatic
+settings-network-method-dhcp-only = Automatic, DHCP only
+settings-network-method-manual = Manually
+settings-network-method-link-local = Link-local only
+settings-network-method-shared = Share this connection
+settings-network-method-off = Off
+settings-network-router-v6 = IPv6 router
+settings-network-address-detail-v4 = With its prefix, such as 192.168.1.20/24
+settings-network-address-detail-v6 = With its prefix, such as fd00::20/64
+settings-group-network-dns = DNS
+settings-network-dns-auto = Automatic DNS
+settings-network-dns-auto-detail = Also ask the servers the network offers
+settings-network-dns-detail = Asked first. Separate several with commas.
+settings-network-dns-search = Search domains
+settings-network-dns-search-detail = Added to names without a dot. ~domain only routes it.
+settings-network-dns-in-use = Servers in use
+# The row holding Revert and Apply.
+settings-network-changes = Changes
+settings-network-revert = Revert
+settings-network-apply = Apply
+settings-network-unsaved = Not applied yet
+settings-network-applying = Applying…
+# $reason is NetworkManager's own message.
+settings-network-apply-failed = NetworkManager refused the change: { $reason }
+# $family is IPv4 or IPv6.
+settings-network-error-no-address = { $family } is set to Manually but has no address.
+settings-network-error-bad-address = { $family }: “{ $value }” is not an address with a prefix.
+settings-network-error-bad-router = { $family }: “{ $value }” is not a router address.
+settings-network-error-address-v4 = An IPv4 address is not complete yet.
+settings-network-error-address-v6 = An IPv6 address is not complete yet.
+settings-network-error-bad-dns = “{ $value }” is not a DNS server address.
+settings-network-error-bad-domain = “{ $value }” is not a domain name.
+settings-network-ethernet-no-profile = No wired connection is saved yet. Plug in a cable and NetworkManager makes one.
+settings-group-network-vpn = VPN
+settings-network-vpn-none = No VPN connections
+settings-network-vpn-add = Add a VPN
+settings-network-vpn-add-detail = A WireGuard .conf or an OpenVPN .ovpn file
+settings-network-vpn-import = Import…
+settings-network-vpn-import-title = Import a VPN
+settings-network-vpn-import-filter = VPN configurations
 
 ## Settings — Power
 
@@ -1206,6 +1267,28 @@ bar-network-ethernet-unplugged = Ethernet — cable unplugged
 bar-network-ethernet-disconnected = Ethernet — not connected
 bar-network-disconnect = Disconnect from { $name }
 bar-network-settings = Network Settings…
+bar-network-join-other = Join Other Network…
+# Ethernet with its negotiated speed, e.g. "1 Gb/s".
+bar-network-ethernet-connected-speed = Ethernet — connected, { $speed }
+# Part of the line under the connected network: band · channel · rate · address.
+bar-network-channel = channel { $channel }
+
+## Top bar — Wi-Fi password dialog
+
+# $name is the network's name.
+bar-join-title = Join “{ $name }”
+bar-join-body = Enter the password for this Wi-Fi network.
+bar-join-body-wep = Enter the WEP key for this Wi-Fi network.
+bar-join-body-retry = The password was not accepted. Enter it again.
+bar-join-hidden-title = Join a hidden network
+bar-join-hidden-body = Enter the name of the network and how it is secured.
+bar-join-name = Network name
+bar-join-password = Password
+bar-join-show-password = Show password
+# The first choice of how a hidden network is secured: no password.
+bar-join-security-none = None
+bar-join-cancel = Cancel
+bar-join-join = Join
 # What a screen reader calls the network indicator.
 bar-network-label-disconnected = Network: not connected
 bar-network-label-off = Network: Wi-Fi off

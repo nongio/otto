@@ -27,6 +27,12 @@ struct Calls {
     added: Vec<Vec<u8>>,
     deleted: Vec<String>,
     autoconnect: Vec<bool>,
+    /// The security setting of each connection added.
+    added_security: Vec<Option<(String, String)>>,
+    added_hidden: Vec<bool>,
+    /// Settings each Update carried.
+    updated: Vec<HashMap<String, HashMap<String, OwnedValue>>>,
+    reapplied: Vec<String>,
 }
 
 struct Manager {
@@ -64,11 +70,20 @@ impl Manager {
         _specific_object: ObjectPath<'_>,
     ) -> (OwnedObjectPath, OwnedObjectPath) {
         let ssid = connection["802-11-wireless"]["ssid"].try_clone().unwrap();
-        self.calls
-            .lock()
-            .unwrap()
-            .added
-            .push(Vec::<u8>::try_from(ssid).unwrap());
+        let mut calls = self.calls.lock().unwrap();
+        calls.added.push(Vec::<u8>::try_from(ssid).unwrap());
+        calls.added_hidden.push(
+            connection["802-11-wireless"]
+                .get("hidden")
+                .is_some_and(|v| bool::try_from(v).unwrap()),
+        );
+        calls
+            .added_security
+            .push(connection.get("802-11-wireless-security").map(|sec| {
+                let get = |k: &str| String::try_from(sec[k].try_clone().unwrap()).unwrap();
+                (get("key-mgmt"), get("psk"))
+            }));
+        drop(calls);
         (
             path("/org/freedesktop/NetworkManager/Settings/9"),
             path("/org/freedesktop/NetworkManager/ActiveConnection/9"),
@@ -110,6 +125,8 @@ impl Manager {
 }
 
 struct Device {
+    calls: Arc<Mutex<Calls>>,
+    path: &'static str,
     kind: u32,
     interface: &'static str,
     state: u32,
@@ -119,6 +136,9 @@ struct Device {
 #[interface(name = "org.freedesktop.NetworkManager.Device")]
 impl Device {
     fn disconnect(&self) {}
+    fn reapply(&self, _connection: HashMap<String, HashMap<String, OwnedValue>>, _v: u64, _f: u32) {
+        self.calls.lock().unwrap().reapplied.push(self.path.into());
+    }
     #[zbus(property)]
     fn interface(&self) -> String {
         self.interface.into()
@@ -176,6 +196,24 @@ impl Wireless {
     #[zbus(property)]
     fn last_scan(&self) -> i64 {
         1234
+    }
+    #[zbus(property)]
+    fn bitrate(&self) -> u32 {
+        866_000
+    }
+}
+
+struct Wired;
+
+#[interface(name = "org.freedesktop.NetworkManager.Device.Wired")]
+impl Wired {
+    #[zbus(property)]
+    fn speed(&self) -> u32 {
+        1000
+    }
+    #[zbus(property)]
+    fn carrier(&self) -> bool {
+        false
     }
 }
 
@@ -264,10 +302,13 @@ impl Saved {
     }
 
     fn update(&self, properties: HashMap<String, HashMap<String, OwnedValue>>) {
-        let on = bool::try_from(&properties["connection"]["autoconnect"]).unwrap();
         // The rest of the settings came back as they were sent.
         assert!(properties["connection"].contains_key("id"));
-        self.calls.lock().unwrap().autoconnect.push(on);
+        let mut calls = self.calls.lock().unwrap();
+        if let Some(on) = properties["connection"].get("autoconnect") {
+            calls.autoconnect.push(bool::try_from(on).unwrap());
+        }
+        calls.updated.push(properties);
     }
 
     fn delete(&self) {
@@ -387,6 +428,8 @@ async fn serve(address: &str, calls: Arc<Mutex<Calls>>) -> Connection {
         .serve_at(
             wifi_dev,
             Device {
+                calls: calls.clone(),
+                path: wifi_dev,
                 kind: 2,
                 interface: "wlan0",
                 state: 100,
@@ -396,9 +439,13 @@ async fn serve(address: &str, calls: Arc<Mutex<Calls>>) -> Connection {
         .unwrap()
         .serve_at(wifi_dev, Wireless)
         .unwrap()
+        .serve_at("/org/freedesktop/NetworkManager/Devices/2", Wired)
+        .unwrap()
         .serve_at(
             "/org/freedesktop/NetworkManager/Devices/2",
             Device {
+                calls: calls.clone(),
+                path: "/org/freedesktop/NetworkManager/Devices/2",
                 kind: 1,
                 interface: "eth0",
                 state: 20,
@@ -509,10 +556,21 @@ async fn a_snapshot_and_the_actions_against_a_stand_in() {
         .find(|d| d.kind == DeviceKind::Ethernet)
         .unwrap();
     assert_eq!(eth.state, DeviceState::Unavailable);
+    assert_eq!(eth.speed_mbps, Some(1000));
 
     let wifi = snapshot.wifi.as_ref().expect("a Wi-Fi device");
     assert_eq!(wifi.device.interface, "wlan0");
     assert_eq!(wifi.last_scan_ms, Some(1234));
+    let link = wifi.active_ap.as_ref().expect("the access point in use");
+    assert_eq!(link.path, "/org/freedesktop/NetworkManager/AccessPoint/2");
+    assert_eq!(link.band(), otto_network::Band::Ghz5);
+    assert_eq!(link.channel(), 36);
+    assert_eq!(wifi.bitrate_kbps, Some(866_000));
+    assert_eq!(
+        wifi.device.active_profile.as_deref(),
+        Some("/org/freedesktop/NetworkManager/Settings/1")
+    );
+    assert_eq!(snapshot.profiles.len(), 2);
     let names: Vec<_> = wifi.networks.iter().map(|n| n.name()).collect();
     assert_eq!(names, ["Home", "Cafe"], "in use first, one row per name");
     let home = &wifi.networks[0];
@@ -551,6 +609,48 @@ async fn a_snapshot_and_the_actions_against_a_stand_in() {
     otto_network::set_autoconnect(&conn, &snapshot.saved[0].path, false)
         .await
         .unwrap();
+    // A new secured network joined with a password: the key goes with it.
+    let mut secured = wifi.networks[1].clone();
+    secured.security = Security::Personal;
+    otto_network::connect_wifi_with_password(&conn, &device, &secured, "hunter22")
+        .await
+        .unwrap();
+    otto_network::connect_hidden(
+        &conn,
+        &device,
+        b"Secret",
+        Some(otto_network::KeyKind::Sae),
+        "pw",
+    )
+    .await
+    .unwrap();
+
+    // A manual address, saved and applied in place.
+    let manual = otto_network::IpConfig {
+        method: otto_network::IpMethod::Manual,
+        addresses: vec![
+            otto_network::parse_address("10.0.0.9/8", otto_network::Family::V4).unwrap(),
+        ],
+        gateway: Some("10.0.0.1".into()),
+        dns: vec!["1.1.1.1".into()],
+        ignore_auto_dns: true,
+        dns_search: Vec::new(),
+    };
+    let profile = snapshot.saved[0].path.clone();
+    otto_network::set_ip_config(&conn, &profile, otto_network::Family::V4, &manual)
+        .await
+        .unwrap();
+    // One that does not validate is refused before anything is sent.
+    let broken = otto_network::IpConfig {
+        addresses: Vec::new(),
+        ..manual.clone()
+    };
+    assert!(
+        otto_network::set_ip_config(&conn, &profile, otto_network::Family::V4, &broken)
+            .await
+            .is_err()
+    );
+
     otto_network::forget(&conn, &snapshot.saved[0].path)
         .await
         .unwrap();
@@ -567,7 +667,25 @@ async fn a_snapshot_and_the_actions_against_a_stand_in() {
             "/org/freedesktop/NetworkManager/AccessPoint/2".to_string()
         )]
     );
-    assert_eq!(calls.added, [b"Cafe".to_vec()]);
+    assert_eq!(
+        calls.added,
+        [b"Cafe".to_vec(), b"Cafe".to_vec(), b"Secret".to_vec()]
+    );
+    assert_eq!(
+        calls.added_security,
+        [
+            None,
+            Some(("wpa-psk".to_string(), "hunter22".to_string())),
+            Some(("sae".to_string(), "pw".to_string())),
+        ]
+    );
+    assert_eq!(calls.added_hidden, [false, false, true]);
+    // autoconnect, then the address.
+    assert_eq!(calls.updated.len(), 2);
+    let written =
+        otto_network::IpConfig::from_settings(&calls.updated[1], otto_network::Family::V4);
+    assert_eq!(written, manual);
+    assert_eq!(calls.reapplied, std::slice::from_ref(&device));
     assert_eq!(calls.autoconnect, [false]);
     assert_eq!(
         calls.deleted,

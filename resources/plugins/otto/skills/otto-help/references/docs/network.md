@@ -1,0 +1,140 @@
+# Network
+
+Otto shows and changes your network through NetworkManager: an indicator in
+the top bar, a password dialog when a network needs one, and **Settings →
+Network** for everything else. Nothing else needs to run: Otto answers
+NetworkManager's password questions itself, so `nm-applet` is not needed.
+
+## The indicator
+
+The indicator sits in the top bar between the keyboard layout and the
+battery.
+
+| It shows | When |
+|----------|------|
+| A fan with one to three bars lit | Connected over Wi-Fi; the bars are the signal |
+| Three linked boxes | Connected by cable |
+| The bars filling one after another | A connection is coming up |
+| An empty fan | Nothing is connected |
+| An empty fan, crossed out | Wi-Fi is off |
+| Dimmed, with an exclamation mark | Connected, but the internet cannot be reached, for example behind a hotel's sign-in page |
+
+It needs NetworkManager and a Wi-Fi or wired device. **Settings → Network →
+Show network status in the top bar** turns it off, as does this in the
+configuration file:
+
+```toml
+# ~/.config/otto/config.toml
+[topbar]
+show_network = false
+```
+
+## The menu
+
+Click the indicator for the network menu:
+
+- **Wi-Fi** turns the radio on and off. It is dimmed when a hardware switch
+  or airplane mode keeps the radio off.
+- The networks in range. The one you are on is ticked, with a line under it
+  giving its band, channel, link rate and address. Saved networks come first,
+  and the rest wait under **Other Networks**. A network that needs a password
+  says **Secured**.
+- **Join Other Network…** joins a network that does not broadcast its name.
+- Your wired connections, whether a cable is plugged in, and the link speed.
+- Your VPN and WireGuard connections, ticked while they are up. Pick one to
+  start or stop it.
+- **Disconnect from** the current network, and **Network Settings…**.
+
+Opening the menu starts a scan, and the list updates while the menu is open.
+
+## Joining a secured network
+
+Picking a secured network you have not joined before opens the password
+dialog. **Join** stays dimmed until the password could be right for that kind
+of network: 8 to 63 characters for WPA2, any length for WPA3, and 5 or 13
+characters (or 10 or 26 hex digits) for WEP. **Show password** reveals what
+you typed. NetworkManager saves the password with the network, so it connects
+again by itself.
+
+The same dialog comes up when NetworkManager needs a password it does not
+have, for example after the network's password was changed. Then it says that
+the password was not accepted.
+
+For a hidden network, **Join Other Network…** asks for the network's name and
+how it is secured (**None**, **WPA2**, **WPA3** or **WEP**) as well.
+
+WPA Enterprise networks (a user name and a certificate, as at universities)
+cannot be joined from the menu yet. Set them up with `nm-connection-editor`
+once; after that they connect from the menu.
+
+## Settings → Network
+
+The pane has a tab for **Wi-Fi** and one for **Ethernet** when the machine has
+those, and one for **VPN**. It opens on the kind of connection you are using.
+
+### Wi-Fi
+
+The switch, the network in use, and **Show network status in the top bar**.
+While you are connected, **Connection** shows:
+
+- **Signal** in bars, in words and as a percentage
+- **Band** and channel
+- **Link rate**
+- **Security**
+- **Access point**, the BSSID of the one you are associated with
+- **Hardware address**
+
+**Known networks** lists every saved network. Untick one to stop joining it
+automatically, or **Forget** it.
+
+### Ethernet
+
+Each wired port's state, link speed and hardware address.
+
+### TCP/IP and DNS
+
+The Wi-Fi and Ethernet tabs both have **TCP/IP** and **DNS** for their
+connection. On the Wi-Fi tab, **Settings for** picks which saved network you
+are editing.
+
+| Setting | Choices |
+|---------|---------|
+| **Configure IPv4** | Automatic (DHCP), Manually, Link-local only, Share this connection, Off |
+| **Configure IPv6** | Automatic, Automatic DHCP only, Manually, Link-local only, Share this connection, Off |
+
+**Manually** shows the address fields:
+
+- **IPv4 address**, like `192.168.1.20/24`. Several are separated by commas. Without a prefix, /24 is assumed (/64 for IPv6).
+- **Router**
+
+Any other choice shows the addresses and router the connection has now.
+
+**Share this connection** makes this machine the router for whatever is
+plugged into that port, handing out addresses and passing traffic on through
+your other connection.
+
+DNS:
+
+- **Automatic DNS**: also ask the servers the network offers. Turn it off to ask only yours.
+- **DNS servers**: asked first. IPv4 and IPv6 addresses go in the same field, separated by commas.
+- **Search domains**: added to names that have no dot. A domain written as `~corp.example` is not added to names; it only sends that domain's lookups to this connection's servers. That is what a VPN to an office needs.
+- **Servers in use**: what the connection is asking now.
+
+Changes are not sent as you type. **Apply** checks them first, and says what
+is wrong instead of saving anything half-filled. For example, Manually with no
+address, or a router that is not an address. It then applies them to the
+running connection without dropping it where NetworkManager can.
+**Revert** throws the changes away.
+
+### VPN
+
+Each VPN and WireGuard connection, with a switch to connect and disconnect it,
+and **Forget**. **Import…** adds one from a WireGuard `.conf` or an OpenVPN
+`.ovpn` file. OpenVPN needs NetworkManager's OpenVPN plug-in
+(`networkmanager-openvpn` or `NetworkManager-openvpn`, by distribution).
+
+## Without NetworkManager
+
+Without NetworkManager on the system bus the indicator is not drawn and the
+pane says so. A tray applet for another network service, such as `iwgtk` for
+iwd, still shows in the tray.
