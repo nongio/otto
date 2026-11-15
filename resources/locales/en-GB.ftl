@@ -330,7 +330,8 @@ settings-network-reading = Reading the network…
 settings-network-unavailable = NetworkManager is not running
 settings-network-unavailable-detail = Otto shows and changes the network through NetworkManager. Start it, or use the tools of the network service you run.
 settings-network-wifi = Wi-Fi
-settings-network-wifi-blocked = Turned off by a hardware switch or airplane mode
+settings-network-wifi-hard-blocked = Off with the wireless switch on the computer
+settings-network-wifi-soft-blocked = Off with airplane mode. Turning Wi-Fi on ends it.
 settings-network-current = Network
 settings-network-not-connected = Not connected
 settings-show-network = Show network status in the top bar
@@ -1258,6 +1259,8 @@ bar-keyboard-settings = Keyboard Settings…
 
 # The Wi-Fi switch at the top of the network menu.
 bar-network-wifi = Wi-Fi
+bar-network-wifi-hard-blocked = Wi-Fi — off with the wireless switch
+bar-network-wifi-soft-blocked = Off with airplane mode
 # A network or VPN coming up. $name is its name.
 bar-network-connecting = { $name } — connecting…
 # Beside a network that asks for a password, in the shortcut column.
@@ -1296,6 +1299,7 @@ bar-join-join = Join
 # What a screen reader calls the network indicator.
 bar-network-label-disconnected = Network: not connected
 bar-network-label-off = Network: Wi-Fi off
+bar-network-label-hard-blocked = Network: Wi-Fi off with the wireless switch
 bar-network-label-connecting = Network: connecting
 bar-network-label-wired = Network: wired, connected
 # $signal is one of the bar-network-signal-* words.

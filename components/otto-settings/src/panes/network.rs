@@ -451,6 +451,10 @@ pub fn apply(id: &str, value: &Value) -> bool {
             let on = *on;
             if let Read::Ready(snapshot) = &mut *SNAPSHOT.write().unwrap() {
                 snapshot.wifi_enabled = on;
+                if on {
+                    // Turning on lifts a soft block too.
+                    snapshot.wifi_block.soft = false;
+                }
             }
             act("network-wifi", move || {
                 otto_network::blocking::set_wifi_enabled(on)
@@ -887,14 +891,16 @@ fn wifi_groups(snapshot: &Snapshot) -> Vec<Group> {
     let mut switch = bound(
         Row::new(
             otto_kit::t!("settings-network-wifi"),
-            Control::Toggle(snapshot.wifi_enabled),
+            Control::Toggle(snapshot.wifi_on()),
         ),
         WIFI_ID,
     );
-    if !snapshot.wifi_hardware_enabled {
+    if snapshot.wifi_hard_blocked() {
         switch = switch
-            .detail(otto_kit::t!("settings-network-wifi-blocked"))
+            .detail(otto_kit::t!("settings-network-wifi-hard-blocked"))
             .inactive(true);
+    } else if snapshot.wifi_soft_blocked() {
+        switch = switch.detail(otto_kit::t!("settings-network-wifi-soft-blocked"));
     }
     let connected = snapshot.connected_network();
     let current = match connected {
@@ -1366,6 +1372,29 @@ mod tests {
         assert_eq!(slot_path("network.saved.0").as_deref(), Some("/c/7"));
         assert!(row.removable);
         assert!(matches!(row.control, Control::Toggle(false)));
+    }
+
+    #[test]
+    fn the_wifi_switch_follows_the_radio() {
+        let mut snapshot = snapshot();
+        snapshot.wifi_block.soft = true;
+        let groups = wifi_groups(&snapshot);
+        let switch = &groups[0].rows[0];
+        assert!(matches!(switch.control, Control::Toggle(false)));
+        assert!(!switch.inactive);
+        assert_eq!(
+            switch.detail.as_deref(),
+            Some(otto_kit::t!("settings-network-wifi-soft-blocked"))
+        );
+
+        snapshot.wifi_hardware_enabled = false;
+        let groups = wifi_groups(&snapshot);
+        let switch = &groups[0].rows[0];
+        assert!(switch.inactive, "only the switch on the machine can");
+        assert_eq!(
+            switch.detail.as_deref(),
+            Some(otto_kit::t!("settings-network-wifi-hard-blocked"))
+        );
     }
 
     #[test]

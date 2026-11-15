@@ -78,7 +78,7 @@ The common ground, which Otto adopts:
 1. The indicator sits in the bar's status area, between the battery and the keyboard layout indicator.
 2. It is shown when the `topbar.show_network` setting is on, NetworkManager is on the system bus, and the machine has a Wi-Fi or Ethernet device. Otherwise it takes no space.
 3. What it draws, in order of precedence:
-   - Wi-Fi off and no wired connection: the empty fan, crossed out.
+   - Wi-Fi off and no wired connection: the empty fan, crossed out. Wi-Fi counts as off when NetworkManager's switch is off, and also when a kill switch holds the radio off, whatever NetworkManager's switch says.
    - A connection activating: the fan's bars light up one after another until the connection is up or fails.
    - Wired as the primary connection: the wired glyph.
    - Wi-Fi as the primary connection: the fan, with bars lit by signal strength:
@@ -94,7 +94,10 @@ The common ground, which Otto adopts:
 
 6. A click on the indicator opens the menu. Another click closes it. Opening it asks NetworkManager to scan, unless a scan happened in the last few seconds.
 7. The menu reads, top to bottom:
-   - **Wi-Fi**, ticked when the radio is on. Choosing it toggles the radio. When the hardware switch blocks the radio, the item is dimmed.
+   - **Wi-Fi**, ticked when the radio is actually on. Choosing it toggles the radio.
+     - When a soft block holds the radio off (the airplane key, `rfkill block wifi`, another desktop's switch), the item is unticked, with *Off with airplane mode* under it. Choosing it lifts the block and turns Wi-Fi on.
+     - When a hard block holds it off (a physical switch, the firmware), the item reads *Wi-Fi — off with the wireless switch* and is dimmed: only that switch can turn it on.
+     - The list of networks shows only while the radio is on.
    - **Ethernet** (one line per wired device), saying whether it is connected or unplugged. Not selectable.
    - With Wi-Fi on, the networks in range:
      - Saved networks come first, then the others, which go into an **Other Networks** submenu when there are saved networks above them.
@@ -128,7 +131,7 @@ The common ground, which Otto adopts:
 
 11. The **Network** pane sits after Displays in the sidebar. A segmented control at the top holds a tab for Wi-Fi when there is a Wi-Fi device, for Ethernet when there is a wired one, and for VPN always. It opens on the kind of the connection in use.
 12. **Wi-Fi tab:**
-    - the Wi-Fi switch (dimmed, with a note, when a hardware switch blocks it) and the network in use
+    - the Wi-Fi switch, on only while the radio is, and the network in use. Under a soft block the switch is off and turning it on lifts the block. Under a hard block it is dimmed. Each says which it is.
     - **Connection**, while connected:
       - signal in bars, in words and as a percentage
       - band and channel
@@ -164,6 +167,8 @@ The common ground, which Otto adopts:
 - **Names that are not UTF-8.** They are shown with replacement characters and still matched by their bytes.
 - **Two Wi-Fi devices.** The first managed one is used, and the Status group lists both.
 - **NetworkManager restarts.** The indicator disappears and comes back once it has rejoined the bus.
+- **Kill switches.** The radios' blocks are read from `/sys/class/rfkill`, and their changes followed on `/dev/rfkill`, since NetworkManager does not report every soft block set elsewhere. A soft block is lifted by writing to `/dev/rfkill`, which the active session may (systemd's `uaccess`). Where it may not, turning Wi-Fi on is left to NetworkManager.
+- **Sleep.** While the machine sleeps NetworkManager takes the devices down and the indicator may go with them. When logind says the machine has woken (`PrepareForSleep(false)`), everything is read again, so the indicator and an open menu or pane catch up at once. Going to sleep reads nothing.
 - **Scans.** NetworkManager rate-limits them. A refused scan request is not an error.
 - **Signal noise.** Strength changes are frequent. A burst of changes is gathered for about 150 ms and answered once, and only as much as it needs is read again: a burst of signal strengths alone is applied from the signals themselves with no read, and saved connections are read again only when one of them changed.
 - **Old and new spellings.** IPv4 addresses are read from `address-data`, or the older `addresses`, and written as `address-data`. DNS is read from `dns-data` (NetworkManager 1.42), or the older `dns`. It is written as `dns-data` where the connection already uses it or an entry needs it (a port, an IPv6 scope such as `%eth0`, or a DNS-over-TLS name such as `#one.one.one.one`), and as `dns` otherwise, which every NetworkManager reads. Each value is written in one spelling only, so neither can shadow the other, and every property not edited is kept.

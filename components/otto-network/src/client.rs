@@ -14,7 +14,7 @@ use futures_util::StreamExt;
 use otto_dbus::networkmanager::{
     AccessPointProxy, ActiveConnectionProxy, DeviceProxy, DeviceWiredProxy, DeviceWirelessProxy,
     Ip4ConfigProxy, Ip6ConfigProxy, NetworkManagerProxy, NetworkSettingsProxy,
-    SettingsConnectionProxy, SERVICE,
+    SettingsConnectionProxy, PATH, SERVICE,
 };
 use zbus::proxy::CacheProperties;
 use zbus::zvariant::{ObjectPath, OwnedObjectPath, OwnedValue, Value};
@@ -82,6 +82,7 @@ async fn read_with(conn: &Connection, profiles: Option<Vec<Profile>>) -> zbus::R
         running: true,
         wifi_enabled: nm.wireless_enabled().await?,
         wifi_hardware_enabled: nm.wireless_hardware_enabled().await.unwrap_or(true),
+        wifi_block: crate::rfkill::wifi_block().unwrap_or_default(),
         connectivity: Connectivity::from_raw(nm.connectivity().await.unwrap_or(0)),
         ..Snapshot::default()
     };
@@ -392,8 +393,17 @@ fn object_path(path: &str) -> zbus::Result<ObjectPath<'_>> {
     Ok(ObjectPath::try_from(path)?)
 }
 
-/// Turn the Wi-Fi radios on or off.
+/// Turn the Wi-Fi radios on or off. Turning them on also lifts a soft block
+/// (the airplane key, `rfkill block wifi`): the person asked for Wi-Fi, and
+/// NetworkManager's switch alone does not lift a block set elsewhere. A
+/// hard block stays; only its switch lifts that.
 pub async fn set_wifi_enabled(conn: &Connection, enabled: bool) -> zbus::Result<()> {
+    if enabled && crate::rfkill::wifi_block().is_some_and(|block| block.soft) {
+        // Without write access to /dev/rfkill (no logind seat), the
+        // switch below is all there is, and NetworkManager may lift the
+        // block itself.
+        let _ = tokio::task::spawn_blocking(crate::rfkill::unblock_wifi).await;
+    }
     NetworkManagerProxy::new(conn)
         .await?
         .set_wireless_enabled(enabled)
@@ -686,15 +696,51 @@ pub async fn watch(conn: &Connection, mut changed: impl FnMut(Changes)) -> zbus:
         .msg_type(zbus::message::Type::Signal)
         .sender(SERVICE)?
         .build();
+    // The rule names NetworkManager by its well-known name, which the bus
+    // routes by but this end cannot check a message's unique sender
+    // against: another service's signal delivered to this connection for
+    // another rule (logind's, the bus's own) would pass it. Every one of
+    // NetworkManager's signals comes from under its own path, so that is
+    // checked too.
     let signals = zbus::MessageStream::for_match_rule(rule, conn, Some(256))
         .await?
-        .map(|message| match message {
-            Ok(message) => classify(&message),
-            Err(_) => Changes {
-                other: true,
-                ..Changes::default()
-            },
+        .filter_map(|message| async move {
+            let message = message.ok()?;
+            let ours = message
+                .header()
+                .path()
+                .is_some_and(|path| path.as_str().starts_with(PATH));
+            ours.then(|| classify(&message))
         });
+    // A kill switch moving: the airplane key, a physical switch. Not every
+    // one of these reaches NetworkManager's own properties.
+    let switches = crate::rfkill::changes().map(|()| Changes {
+        other: true,
+        ..Changes::default()
+    });
+    // Waking from sleep: NetworkManager brings the devices back, and the
+    // world may have changed while the lid was shut. Everything is read
+    // again, once it is awake.
+    let wakes = match otto_dbus::login1::Login1ManagerProxy::builder(conn)
+        .cache_properties(CacheProperties::No)
+        .build()
+        .await
+    {
+        Ok(login1) => match login1.receive_prepare_for_sleep().await {
+            Ok(signals) => signals
+                .filter_map(|signal| async move {
+                    let waking = signal.args().is_ok_and(|args| !*args.start());
+                    waking.then(|| Changes {
+                        profiles: true,
+                        other: true,
+                        ..Changes::default()
+                    })
+                })
+                .boxed(),
+            Err(_) => futures_util::stream::pending().boxed(),
+        },
+        Err(_) => futures_util::stream::pending().boxed(),
+    };
     // NetworkManager coming or going changes everything, its saved
     // connections included.
     let owners = zbus::fdo::DBusProxy::new(conn)
@@ -706,7 +752,12 @@ pub async fn watch(conn: &Connection, mut changed: impl FnMut(Changes)) -> zbus:
             other: true,
             ..Changes::default()
         });
-    let mut events = futures_util::stream::select(signals, owners);
+    let mut events = futures_util::stream::select_all([
+        signals.boxed(),
+        owners.boxed(),
+        switches.boxed(),
+        wakes,
+    ]);
 
     while let Some(first) = events.next().await {
         let mut burst = first;

@@ -223,7 +223,10 @@ pub fn join_hidden(
 pub fn activate(action_id: &str) {
     let snapshot = snapshot();
     if action_id == "wifi" {
-        let on = !snapshot.wifi_enabled;
+        // Against the radio as it is, not NetworkManager's switch alone: a
+        // radio a kill switch holds off reads as off, and choosing Wi-Fi then
+        // turns it on, lifting a soft block (otto_network::set_wifi_enabled).
+        let on = !snapshot.wifi_on();
         act("wifi switch", move |conn| async move {
             otto_network::set_wifi_enabled(&conn, on).await
         });
@@ -325,15 +328,31 @@ pub fn menu_items(snapshot: &Snapshot, settings: bool) -> Vec<KitMenuItem> {
     let mut items = Vec::new();
 
     if let Some(wifi) = &snapshot.wifi {
-        let mut toggle = KitMenuItem::action(otto_kit::t!("bar-network-wifi"))
-            .with_action_id("wifi".to_string())
-            .with_checked(snapshot.wifi_enabled);
-        if !snapshot.wifi_hardware_enabled {
-            toggle = toggle.disabled();
+        if snapshot.wifi_hard_blocked() {
+            // Nothing on screen can turn it on: say what can.
+            items.push(
+                KitMenuItem::action(otto_kit::t!("bar-network-wifi-hard-blocked"))
+                    .with_checked(false)
+                    .disabled(),
+            );
+        } else {
+            items.push(
+                KitMenuItem::action(otto_kit::t!("bar-network-wifi"))
+                    .with_action_id("wifi".to_string())
+                    .with_checked(snapshot.wifi_on()),
+            );
+            if snapshot.wifi_soft_blocked() {
+                // Off with the airplane key or another switch: choosing
+                // Wi-Fi above turns it back on.
+                items.push(
+                    KitMenuItem::action(otto_kit::t!("bar-network-wifi-soft-blocked"))
+                        .with_check_gutter()
+                        .disabled(),
+                );
+            }
         }
-        items.push(toggle);
 
-        if snapshot.wifi_enabled {
+        if snapshot.wifi_on() {
             items.push(KitMenuItem::separator());
             let (known, other): (Vec<_>, Vec<_>) = wifi
                 .networks
@@ -476,6 +495,9 @@ pub fn label() -> String {
     let state = match snapshot.glyph() {
         Glyph::Hidden | Glyph::Disconnected => {
             otto_kit::t!("bar-network-label-disconnected").to_string()
+        }
+        Glyph::WifiOff if snapshot.wifi_hard_blocked() => {
+            otto_kit::t!("bar-network-label-hard-blocked").to_string()
         }
         Glyph::WifiOff => otto_kit::t!("bar-network-label-off").to_string(),
         Glyph::Connecting => otto_kit::t!("bar-network-label-connecting").to_string(),
@@ -789,6 +811,33 @@ mod tests {
             request,
             crate::join_dialog::Purpose::Join { ref network, .. } if network.name() == "Cafe"
         ));
+    }
+
+    #[test]
+    fn a_kill_switch_reads_as_off_in_the_menu() {
+        let mut snapshot = snapshot_with(vec![network("Home", true, LinkState::Idle)]);
+        // The physical switch: nothing to choose, and no list under it.
+        snapshot.wifi_hardware_enabled = false;
+        let items = menu_items(&snapshot, false);
+        assert_eq!(
+            items[0].label(),
+            Some(otto_kit::t!("bar-network-wifi-hard-blocked"))
+        );
+        assert!(!items[0].is_enabled());
+        assert!(!labels(&items).contains(&"Home".to_string()));
+
+        // The airplane key: Wi-Fi can be chosen, unticked, with a line saying
+        // why it is off.
+        snapshot.wifi_hardware_enabled = true;
+        snapshot.wifi_block.soft = true;
+        let items = menu_items(&snapshot, false);
+        assert_eq!(items[0].action_id(), Some("wifi"));
+        assert!(items[0].is_enabled());
+        assert_eq!(
+            items[1].label(),
+            Some(otto_kit::t!("bar-network-wifi-soft-blocked"))
+        );
+        assert!(!labels(&items).contains(&"Home".to_string()));
     }
 
     #[test]

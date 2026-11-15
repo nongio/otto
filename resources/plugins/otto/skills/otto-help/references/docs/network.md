@@ -33,8 +33,11 @@ show_network = false
 
 Click the indicator for the network menu:
 
-- **Wi-Fi** turns the radio on and off. It is dimmed when a hardware switch
-  or airplane mode keeps the radio off.
+- **Wi-Fi** turns the radio on and off.
+  - **Airplane mode:** after the airplane key, or another program, turned the radio off, the menu says *Off with airplane mode*. Choosing **Wi-Fi** turns the radio back on.
+  - **Wireless switch:** when the computer's own wireless switch is off, the menu says so and nothing on screen can turn Wi-Fi on. Flip the switch.
+
+  The indicator follows either one as soon as it happens, and catches up as soon as the laptop wakes from sleep.
 - The networks in range. The one you are on is ticked, with a line under it
   giving its band, channel, link rate and address. Saved networks come first,
   and the rest wait under **Other Networks**. A network that needs a password

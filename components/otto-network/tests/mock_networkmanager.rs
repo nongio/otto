@@ -812,3 +812,62 @@ fn following_on_a_plain_thread_reads_again_on_every_change() {
         "read again after the change"
     );
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn waking_from_sleep_reads_everything_again() {
+    let Some(bus) = private_bus() else {
+        eprintln!("no dbus-daemon: skipped");
+        return;
+    };
+    let conn = zbus::connection::Builder::address(bus.1.as_str())
+        .unwrap()
+        .build()
+        .await
+        .unwrap();
+    // logind's stand-in: only its bus name and its sleep signal.
+    let logind = zbus::connection::Builder::address(bus.1.as_str())
+        .unwrap()
+        .name("org.freedesktop.login1")
+        .unwrap()
+        .build()
+        .await
+        .unwrap();
+
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let watcher = conn.clone();
+    tokio::spawn(async move {
+        let _ = otto_network::watch(&watcher, move |changes| {
+            let _ = tx.send(changes);
+        })
+        .await;
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+    let sleep_signal = |start: bool| {
+        let logind = logind.clone();
+        async move {
+            logind
+                .emit_signal(
+                    None::<()>,
+                    "/org/freedesktop/login1",
+                    "org.freedesktop.login1.Manager",
+                    "PrepareForSleep",
+                    &(start,),
+                )
+                .await
+        }
+    };
+    // Going to sleep is nothing to read for: the screen is about to go dark.
+    sleep_signal(true).await.unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    let got = rx.try_recv();
+    assert!(got.is_err(), "{got:?}");
+
+    // Waking is everything.
+    sleep_signal(false).await.unwrap();
+    let changes = tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv())
+        .await
+        .expect("the watcher reported the wake")
+        .unwrap();
+    assert!(changes.other && changes.profiles);
+}

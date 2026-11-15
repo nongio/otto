@@ -40,6 +40,7 @@ It has the secret agent's request and reply shapes, and a watcher that says when
   - IP configuration, with its validation
   - the keys a dialog asks for (`KeyKind`)
   - the secret agent's `SecretRequest`
+- `src/rfkill.rs`: the kernel's Wi-Fi kill switches. It reads the blocks from `/sys/class/rfkill`, follows them on `/dev/rfkill`, and lifts a soft block.
 - `src/client.rs`: `read`, the actions, `watch` (which says what changed: strengths, saved connections, or anything else) and `follow` (read, then keep reading as little as each change needs), all async on the caller's runtime.
 - `tests/mock_networkmanager.rs` runs `read` and every action against a stand-in NetworkManager on a private `dbus-daemon`. It is skipped where there is none.
 - `src/blocking.rs`: the same calls for a plain thread, each on a runtime of its own.

@@ -23,4 +23,9 @@ pub trait Login1Manager {
 
     /// Suspend to RAM. Answers once the machine is on its way down.
     fn suspend(&self, interactive: bool) -> zbus::Result<()>;
+
+    /// Sent with `true` as the machine is about to sleep, and with `false`
+    /// once it has woken.
+    #[zbus(signal)]
+    fn prepare_for_sleep(&self, start: bool) -> zbus::Result<()>;
 }

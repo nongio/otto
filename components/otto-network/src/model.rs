@@ -12,8 +12,10 @@ pub struct Snapshot {
     pub running: bool,
     /// Whether the Wi-Fi radios are on.
     pub wifi_enabled: bool,
-    /// Whether a hardware switch lets them be on.
+    /// Whether a hardware switch lets them be on, as NetworkManager says.
     pub wifi_hardware_enabled: bool,
+    /// How the kernel's kill switches block the Wi-Fi radios.
+    pub wifi_block: crate::rfkill::Block,
     pub connectivity: Connectivity,
     /// The first managed Wi-Fi device, with the networks it sees.
     pub wifi: Option<WifiDevice>,
@@ -607,6 +609,25 @@ impl Snapshot {
             .find(|n| n.state == LinkState::Connected)
     }
 
+    /// Whether the Wi-Fi radio is actually on: NetworkManager has it on, and
+    /// no switch blocks it. NetworkManager can report itself on while a
+    /// switch holds the radio off, which is still off to a person.
+    pub fn wifi_on(&self) -> bool {
+        self.wifi_enabled && self.wifi_hardware_enabled && !self.wifi_block.any()
+    }
+
+    /// Whether only a physical switch (or the firmware) can turn the radio
+    /// back on: nothing on screen can.
+    pub fn wifi_hard_blocked(&self) -> bool {
+        !self.wifi_hardware_enabled || self.wifi_block.hard
+    }
+
+    /// Whether a switch the person flipped elsewhere (the airplane key,
+    /// another desktop) holds the radio off, which turning Wi-Fi on lifts.
+    pub fn wifi_soft_blocked(&self) -> bool {
+        self.wifi_block.soft && !self.wifi_hard_blocked()
+    }
+
     /// Whether a wired device has its connection up.
     pub fn wired_connected(&self) -> bool {
         self.devices
@@ -650,7 +671,7 @@ impl Snapshot {
         if self.wired_connected() {
             return Glyph::Wired;
         }
-        if !self.wifi_enabled && self.wifi.is_some() {
+        if !self.wifi_on() && self.wifi.is_some() {
             return Glyph::WifiOff;
         }
         Glyph::Disconnected
@@ -919,6 +940,27 @@ mod tests {
 
         let snapshot = wifi_snapshot(Vec::new(), DeviceState::Connecting);
         assert_eq!(snapshot.glyph(), Glyph::Connecting);
+    }
+
+    #[test]
+    fn a_switch_holding_the_radio_off_is_off() {
+        let mut snapshot = wifi_snapshot(Vec::new(), DeviceState::Unavailable);
+        assert!(snapshot.wifi_on());
+        // NetworkManager still says enabled, but the switch says no.
+        snapshot.wifi_hardware_enabled = false;
+        assert!(!snapshot.wifi_on());
+        assert!(snapshot.wifi_hard_blocked() && !snapshot.wifi_soft_blocked());
+        assert_eq!(snapshot.glyph(), Glyph::WifiOff);
+
+        snapshot.wifi_hardware_enabled = true;
+        snapshot.wifi_block.soft = true;
+        assert!(!snapshot.wifi_on());
+        assert!(snapshot.wifi_soft_blocked());
+        assert_eq!(snapshot.glyph(), Glyph::WifiOff);
+
+        // A hard block wins: the soft one under it is not what to lift.
+        snapshot.wifi_block.hard = true;
+        assert!(snapshot.wifi_hard_blocked() && !snapshot.wifi_soft_blocked());
     }
 
     #[test]

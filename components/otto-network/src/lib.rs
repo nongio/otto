@@ -19,6 +19,7 @@ pub mod blocking;
 mod client;
 pub mod model;
 pub mod profile;
+pub mod rfkill;
 
 pub use client::{
     activate, connect_hidden, connect_wifi, connect_wifi_with_password, deactivate,
