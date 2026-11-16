@@ -16,7 +16,11 @@
 //! in for what the window behind draws.
 
 #[cfg(feature = "headless")]
+mod support;
+
+#[cfg(feature = "headless")]
 mod titlebar_frost_tests {
+    use crate::support::{rgba, solid, wallpaper};
     use layers::prelude::Layer as SceneLayer;
     use layers::skia;
     use layers::types::Color;
@@ -38,55 +42,6 @@ mod titlebar_frost_tests {
         )>> = const { RefCell::new(None) };
         /// What changes behind the titlebar, frame after frame.
         static TICK: RefCell<Option<SceneLayer>> = const { RefCell::new(None) };
-    }
-
-    fn wallpaper(name: &str, colour: skia::Color) -> String {
-        let mut surface = skia::surfaces::raster_n32_premul((64, 64)).unwrap();
-        surface.canvas().clear(colour);
-        let data = surface
-            .image_snapshot()
-            .encode(None, skia::EncodedImageFormat::PNG, 100)
-            .unwrap();
-        let path = std::env::temp_dir().join(format!("otto-test-{name}.png"));
-        std::fs::write(&path, data.as_bytes()).unwrap();
-        path.to_string_lossy().into_owned()
-    }
-
-    fn solid(
-        state: &otto::state::Otto<otto::headless::HeadlessData>,
-        parent: &SceneLayer,
-        at: (f32, f32),
-        size: (f32, f32),
-        colour: Color,
-    ) -> SceneLayer {
-        let layer = state.layers_engine.new_layer();
-        layer.set_layout_style(layers::taffy::Style {
-            position: layers::taffy::Position::Absolute,
-            ..Default::default()
-        });
-        layer.set_position(at, None);
-        layer.set_size(layers::types::Size::points(size.0, size.1), None);
-        layer.set_background_color(colour, None);
-        let _ = parent.add_sublayer(&layer);
-        layer
-    }
-
-    fn rgba(image: &skia::Image) -> Vec<u8> {
-        let info = skia::ImageInfo::new(
-            (image.width(), image.height()),
-            skia::ColorType::RGBA8888,
-            skia::AlphaType::Unpremul,
-            None,
-        );
-        let mut px = vec![0u8; (image.width() * image.height() * 4) as usize];
-        assert!(image.read_pixels(
-            &info,
-            &mut px,
-            (image.width() * 4) as usize,
-            (0, 0),
-            skia::image::CachingHint::Disallow
-        ));
-        px
     }
 
     /// One frame drawn the way the udev composite path draws it, and the

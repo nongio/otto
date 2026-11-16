@@ -209,6 +209,12 @@ pixels to layer coordinates (buffer scale, the viewport crop, the contents
 gravity), so it is the only place that can convert the client's buffer damage
 into a rect the engine can use.
 
+The closure runs once per paint and sees only the texture stored last, so on
+its own it would report only the last commit's damage when a client commits
+more than once between two scene ticks. `configure_surface_layer` therefore
+also passes each commit's damage, mapped the same way, to `Layer::add_damage`,
+which unions it until the next paint consumes it.
+
 When the damage source is outside the closure entirely, `Layer::add_damage(rect)`
 and `set_damage(rect)` hand the engine a layer-local rect directly. They are
 also what mark a layer's *followers* for repaint.

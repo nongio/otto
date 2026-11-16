@@ -413,13 +413,15 @@ impl<R: FrameSurface> RenderElement<R> for SceneElement {
 impl SceneElement {
     /// Draws the damaged part of the scene into `canvas` at `dst`.
     ///
-    /// Damage is relative to `dst`.
+    /// Damage is relative to `dst`. Returns the rects it repainted, in
+    /// canvas coordinates: the damage, clipped to `dst`, and grown over the
+    /// frosted shapes that had to be blurred whole.
     pub fn draw_scene(
         &self,
         canvas: &layers::skia::Canvas,
         dst: Rectangle<i32, Physical>,
         damage: &[Rectangle<i32, Physical>],
-    ) {
+    ) -> Vec<layers::skia::IRect> {
         #[cfg(feature = "profile-with-puffin")]
         profiling::puffin::profile_scope!("render_scene");
         tracing::debug!(target: "otto::planes", "scene draw {damage:?}");
@@ -501,7 +503,31 @@ impl SceneElement {
                     .iter_node_ids()
                     .filter_map(|id| {
                         let node = arena.get(id)?;
-                        if node.is_removed() || node.get().hidden() {
+                        if node.is_removed() {
+                            return None;
+                        }
+                        // Only a shape these passes paint: lay-rs keeps a
+                        // blur only for a shape it drew, so one it never
+                        // draws here — outside this element's tree, under a
+                        // hidden layer, or occluded — would never be kept,
+                        // and every pass touching it would be grown over
+                        // it for nothing.
+                        let root = root_id?;
+                        if occluded_ref.is_some_and(|set| set.contains(&NodeRef(id))) {
+                            return None;
+                        }
+                        let mut reaches_root = false;
+                        for ancestor in id.ancestors(arena) {
+                            let n = arena.get(ancestor)?;
+                            if n.is_removed() || n.get().hidden() {
+                                return None;
+                            }
+                            if ancestor == root.0 {
+                                reaches_root = true;
+                                break;
+                            }
+                        }
+                        if !reaches_root {
                             return None;
                         }
                         let layer = node.get().render_layer();
@@ -545,13 +571,25 @@ impl SceneElement {
                         // A blur lay-rs cannot keep — a fading layer, drawn
                         // in a group, or one under an image-cached ancestor,
                         // drawn offscreen — is blurred afresh by every pass
-                        // and so always needs the whole shape.
+                        // and so always needs the whole shape. Nor can a
+                        // partial pass replay a blur lay-rs did not in fact
+                        // keep: it stores one only under conditions of its
+                        // own (the pass's damage region has to contain the
+                        // shape's whole bounds), and a shape recorded as kept
+                        // here that it never stored is blurred in part by the
+                        // next partial pass — a box with hard edges inside
+                        // the frost.
                         let keepable = layer.premultiplied_opacity >= 1.0
                             && !id.ancestors(arena).skip(1).any(|ancestor| {
                                 arena
                                     .get(ancestor)
                                     .is_some_and(|n| !n.is_removed() && n.get().is_image_cached())
-                            });
+                            })
+                            && layers::drawing::kept_blur_rect(
+                                NodeRef(id),
+                                layer.backdrop_generation,
+                            )
+                            .is_some();
                         (!ir.is_empty()).then_some((NodeRef(id), ir, inputs, keepable))
                     })
                     .collect()
@@ -584,6 +622,7 @@ impl SceneElement {
             )
         };
         let mut rects = rects;
+        let mut regions = rects.clone();
         if !blur_shapes.is_empty() {
             let mut grown = true;
             while grown {
@@ -614,6 +653,14 @@ impl SceneElement {
                 }
                 rects = merged;
             }
+            // A pass grown over a shape that runs off the output is clipped
+            // back to the output, but the damage region lay-rs gets keeps the
+            // grown rect: lay-rs keeps a blur only from a pass whose region
+            // contains the shape's whole bounds, off-output part included, so
+            // a clipped region would never let it keep the blur of a window
+            // hanging off an edge, and every pass touching it would blur it
+            // afresh.
+            regions = rects.clone();
             for rect in rects.iter_mut() {
                 if let Some(clipped) = layers::skia::IRect::intersect(rect, &output_clip) {
                     *rect = clipped;
@@ -647,7 +694,7 @@ impl SceneElement {
                 // clips the same way for every draw. Damage arrives from the
                 // tracker already merged, so the passes are few, and each
                 // one culls what lies outside its own rect.
-                for rect in &rects {
+                for (rect, region_rect) in rects.iter().zip(&regions) {
                     let save_point = canvas.save();
                     canvas.clip_irect(*rect, Some(layers::skia::ClipOp::Intersect));
                     if let Some((dx, dy)) = translate {
@@ -657,7 +704,7 @@ impl SceneElement {
                     // render_node_tree can cull whole untouched subtrees
                     // instead of re-walking them per frame.
                     let mut region = layers::skia::Region::new();
-                    region.set_rect(*rect);
+                    region.set_rect(*region_rect);
                     render_node_tree(
                         root_id,
                         arena,
@@ -674,5 +721,6 @@ impl SceneElement {
             });
         });
         crate::render_phase_stats::record_scene_draw(scene_draw_t.elapsed());
+        rects
     }
 }
