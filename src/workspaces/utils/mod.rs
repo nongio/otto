@@ -621,6 +621,7 @@ pub fn configure_surface_layer(
         // viewport crop (phy_src) tells us the actual content region.
         let src_w = draw_wvs.phy_src_w.max(1.0);
         let src_h = draw_wvs.phy_src_h.max(1.0);
+        // Use live w/h for all gravity modes so the draw scales correctly during animations.
         let (scale_x, scale_y, tx, ty) = content_mapping(&draw_wvs, gravity, w, h);
         let damage = buffer_damage_to_layer(tex.damage.as_deref(), (scale_x, scale_y, tx, ty));
 
@@ -760,10 +761,15 @@ mod surface_damage_tests {
             engine.append_layer(&layer, root.id).unwrap();
             let mut surface = layers::skia::surfaces::raster_n32_premul((SIZE, SIZE)).unwrap();
             surface.canvas().clear(layers::skia::Color::WHITE);
+            // Both stores are global and keyed by surface id: start from what
+            // no earlier test under the same id left behind.
+            let id = ObjectId::null();
+            crate::textures_storage::remove(&id);
+            crate::surface_config_cache::invalidate(&id);
             Self {
                 engine,
                 layer,
-                id: ObjectId::null(),
+                id,
                 image: surface.image_snapshot(),
                 commit: CommitCounter::default(),
             }
