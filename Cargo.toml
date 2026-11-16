@@ -221,7 +221,7 @@ too_many_arguments = "allow"
 # For local development point this at the checkout — one edit, whole workspace:
 #   laye-rs = { path = "../layers", features = ["export-taffy"] }
 [workspace.dependencies]
-laye-rs = { git = "https://github.com/nongio/layers", tag = "v1.19.0", features = [
+laye-rs = { git = "https://github.com/nongio/layers", tag = "v1.19.1", features = [
     "export-taffy",
 ] }
 
