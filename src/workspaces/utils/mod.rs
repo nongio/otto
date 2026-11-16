@@ -384,6 +384,81 @@ fn surface_filter(
     }
 }
 
+/// How a surface's buffer lands on its layer: the scale and offset, in layer
+/// space, that the draw closure paints the texture with for this gravity at
+/// the layer's size `w` x `h`.
+fn content_mapping(
+    wvs: &WindowViewSurface,
+    gravity: crate::surface_style::ContentsGravity,
+    w: f32,
+    h: f32,
+) -> (f32, f32, f32, f32) {
+    use crate::surface_style::ContentsGravity;
+    let src_w = wvs.phy_src_w.max(1.0);
+    let src_h = wvs.phy_src_h.max(1.0);
+
+    // Buffer pixels are not physical pixels: a client painting at buffer
+    // scale 2 on a 1.5x output hands us a 60px buffer for 45 physical px.
+    // The non-resizing gravities align the texture rather than stretch it,
+    // but they still have to bridge that ratio — otherwise the content is
+    // drawn oversized and cropped to the layer.
+    let base_x = if wvs.phy_dst_w > 0.0 {
+        wvs.phy_dst_w / src_w
+    } else {
+        1.0
+    };
+    let base_y = if wvs.phy_dst_h > 0.0 {
+        wvs.phy_dst_h / src_h
+    } else {
+        1.0
+    };
+
+    match gravity {
+        ContentsGravity::Resize => (w / src_w, h / src_h, 0.0f32, 0.0f32),
+        ContentsGravity::ResizeAspect => {
+            let s = (w / src_w).min(h / src_h);
+            let tx = (w - src_w * s) / 2.0;
+            let ty = (h - src_h * s) / 2.0;
+            (s, s, tx, ty)
+        }
+        ContentsGravity::ResizeAspectFill => {
+            let s = (w / src_w).max(h / src_h);
+            let tx = (w - src_w * s) / 2.0;
+            let ty = (h - src_h * s) / 2.0;
+            (s, s, tx, ty)
+        }
+        ContentsGravity::Center => {
+            let tx = (w - src_w * base_x) / 2.0;
+            let ty = (h - src_h * base_y) / 2.0;
+            (base_x, base_y, tx, ty)
+        }
+        ContentsGravity::TopLeft => (base_x, base_y, 0.0f32, 0.0f32),
+        ContentsGravity::TopRight => {
+            let tx = w - src_w * base_x;
+            (base_x, base_y, tx, 0.0f32)
+        }
+    }
+}
+
+/// Buffer damage in layer-local coordinates, through the mapping the texture
+/// is drawn with. No damage information (`None`) maps to an empty rect, which
+/// lay-rs takes as "the whole layer".
+fn buffer_damage_to_layer(
+    damage: Option<&[smithay::utils::Rectangle<i32, smithay::utils::Buffer>]>,
+    (scale_x, scale_y, tx, ty): (f32, f32, f32, f32),
+) -> layers::skia::Rect {
+    let mut out = layers::skia::Rect::default();
+    for bd in damage.unwrap_or_default() {
+        out.join(layers::skia::Rect::from_xywh(
+            bd.loc.x as f32 * scale_x + tx,
+            bd.loc.y as f32 * scale_y + ty,
+            bd.size.w as f32 * scale_x,
+            bd.size.h as f32 * scale_y,
+        ));
+    }
+    out
+}
+
 /// Put a surface's layer where the surface tree says it sits, and size it,
 /// unless the client has claimed its bounds. Returns the snapped origin.
 fn place_surface_layer(
@@ -546,64 +621,8 @@ pub fn configure_surface_layer(
         // viewport crop (phy_src) tells us the actual content region.
         let src_w = draw_wvs.phy_src_w.max(1.0);
         let src_h = draw_wvs.phy_src_h.max(1.0);
-
-        // Buffer pixels are not physical pixels: a client painting at buffer
-        // scale 2 on a 1.5x output hands us a 60px buffer for 45 physical px.
-        // The non-resizing gravities align the texture rather than stretch it,
-        // but they still have to bridge that ratio — otherwise the content is
-        // drawn oversized and cropped to the layer.
-        let base_x = if draw_wvs.phy_dst_w > 0.0 {
-            draw_wvs.phy_dst_w / src_w
-        } else {
-            1.0
-        };
-        let base_y = if draw_wvs.phy_dst_h > 0.0 {
-            draw_wvs.phy_dst_h / src_h
-        } else {
-            1.0
-        };
-
-        // Use live w/h for all gravity modes so the draw scales correctly during animations.
-        let (scale_x, scale_y, tx, ty) = match gravity {
-            ContentsGravity::Resize => (w / src_w, h / src_h, 0.0f32, 0.0f32),
-            ContentsGravity::ResizeAspect => {
-                let s = (w / src_w).min(h / src_h);
-                let tx = (w - src_w * s) / 2.0;
-                let ty = (h - src_h * s) / 2.0;
-                (s, s, tx, ty)
-            }
-            ContentsGravity::ResizeAspectFill => {
-                let s = (w / src_w).max(h / src_h);
-                let tx = (w - src_w * s) / 2.0;
-                let ty = (h - src_h * s) / 2.0;
-                (s, s, tx, ty)
-            }
-            ContentsGravity::Center => {
-                let tx = (w - src_w * base_x) / 2.0;
-                let ty = (h - src_h * base_y) / 2.0;
-                (base_x, base_y, tx, ty)
-            }
-            ContentsGravity::TopLeft => (base_x, base_y, 0.0f32, 0.0f32),
-            ContentsGravity::TopRight => {
-                let tx = w - src_w * base_x;
-                (base_x, base_y, tx, 0.0f32)
-            }
-        };
-
-        // Convert buffer-pixel damage to layer-local coords using the same
-        // scale + offset that the texture is drawn with.
-        let mut damage = layers::skia::Rect::default();
-        if let Some(tex_damage) = tex.damage {
-            tex_damage.iter().for_each(|bd| {
-                let r = layers::skia::Rect::from_xywh(
-                    bd.loc.x as f32 * scale_x + tx,
-                    bd.loc.y as f32 * scale_y + ty,
-                    bd.size.w as f32 * scale_x,
-                    bd.size.h as f32 * scale_y,
-                );
-                damage.join(r);
-            });
-        }
+        let (scale_x, scale_y, tx, ty) = content_mapping(&draw_wvs, gravity, w, h);
+        let damage = buffer_damage_to_layer(tex.damage.as_deref(), (scale_x, scale_y, tx, ty));
 
         let mut matrix = layers::skia::Matrix::new_identity();
         match draw_wvs.transform {
@@ -670,6 +689,36 @@ pub fn configure_surface_layer(
         canvas.draw_rect(rect, &paint);
         damage
     });
+
+    // Hand this commit's damage to the layer as well. The closure above
+    // reports only the damage of the texture stored last, and it runs once per
+    // paint: a client that commits twice before the scene ticks (Chrome
+    // drawing at its own rate, the udev backend ticking once per frame) would
+    // otherwise get only its second commit's region repainted, leaving the
+    // first one stale on screen. lay-rs unions pending damage until the paint
+    // consumes it.
+    if let Some(tex) = crate::textures_storage::get(&wvs.id) {
+        let live_gravity = shared_gravity
+            .as_ref()
+            .map(|g| ContentsGravity::from_u8(g.load(std::sync::atomic::Ordering::Relaxed)))
+            .unwrap_or(gravity);
+        let (w, h) = if client_owns_size {
+            let size = layer.render_size();
+            (size.x, size.y)
+        } else {
+            (
+                snap_extent_px(wvs.phy_dst_x + wvs.log_offset_x, wvs.phy_dst_w),
+                snap_extent_px(wvs.phy_dst_y + wvs.log_offset_y, wvs.phy_dst_h),
+            )
+        };
+        let damage = buffer_damage_to_layer(
+            tex.damage.as_deref(),
+            content_mapping(wvs, live_gravity, w, h),
+        );
+        if !damage.is_empty() {
+            layer.add_damage(damage);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -803,7 +852,6 @@ mod surface_damage_tests {
     /// last: the first commit's region must still be reported, or it is never
     /// repainted and stays stale on screen.
     #[test]
-    #[ignore = "repro: damage of all but the last commit before a tick is lost"]
     fn two_commits_between_ticks_report_both_regions() {
         let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
         let mut s = Surface::new();
