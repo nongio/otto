@@ -16,7 +16,11 @@
 //! no client buffers, so solid layers stand in for client content.
 
 #[cfg(feature = "headless")]
+mod support;
+
+#[cfg(feature = "headless")]
 mod frost_damage_tests {
+    use crate::support::{rgba, solid, wallpaper};
     use layers::prelude::Layer as SceneLayer;
     use layers::skia;
     use layers::types::Color;
@@ -132,6 +136,13 @@ mod frost_damage_tests {
         gpu: Gpu,
         /// Compare only over the front window, not the whole output.
         only_front: bool,
+        /// After setup, every pass must be just the damage: no frosted
+        /// shape needs growing over, because each one's blur is kept. Only
+        /// for `Draw::Passes`, the path that grows passes.
+        kept: bool,
+        /// An opaque layer above the front window, covering it whole, in
+        /// the overlay plane: the frost is occluded.
+        cover_front: bool,
     }
 
     /// How a frame repaints its damage.
@@ -145,55 +156,6 @@ mod frost_damage_tests {
         Region,
     }
 
-    fn wallpaper(name: &str, colour: skia::Color) -> String {
-        let mut surface = skia::surfaces::raster_n32_premul((64, 64)).unwrap();
-        surface.canvas().clear(colour);
-        let data = surface
-            .image_snapshot()
-            .encode(None, skia::EncodedImageFormat::PNG, 100)
-            .unwrap();
-        let path = std::env::temp_dir().join(format!("otto-test-{name}.png"));
-        std::fs::write(&path, data.as_bytes()).unwrap();
-        path.to_string_lossy().into_owned()
-    }
-
-    fn solid(
-        state: &otto::state::Otto<otto::headless::HeadlessData>,
-        parent: &SceneLayer,
-        at: (f32, f32),
-        size: (f32, f32),
-        colour: Color,
-    ) -> SceneLayer {
-        let layer = state.layers_engine.new_layer();
-        layer.set_layout_style(layers::taffy::Style {
-            position: layers::taffy::Position::Absolute,
-            ..Default::default()
-        });
-        layer.set_position(at, None);
-        layer.set_size(layers::types::Size::points(size.0, size.1), None);
-        layer.set_background_color(colour, None);
-        let _ = parent.add_sublayer(&layer);
-        layer
-    }
-
-    fn rgba(image: &skia::Image) -> Vec<u8> {
-        let info = skia::ImageInfo::new(
-            (image.width(), image.height()),
-            skia::ColorType::RGBA8888,
-            skia::AlphaType::Unpremul,
-            None,
-        );
-        let mut px = vec![0u8; (image.width() * image.height() * 4) as usize];
-        assert!(image.read_pixels(
-            &info,
-            &mut px,
-            (image.width() * 4) as usize,
-            (0, 0),
-            skia::image::CachingHint::Disallow
-        ));
-        px
-    }
-
     /// Repaints `damage` of the output tree into `canvas` the way `draw` says.
     fn paint_damage(
         state: &otto::state::Otto<otto::headless::HeadlessData>,
@@ -202,11 +164,24 @@ mod frost_damage_tests {
         canvas: &skia::Canvas,
         damage: &[smithay::utils::Rectangle<i32, smithay::utils::Physical>],
         draw: Draw,
-    ) {
+    ) -> bool {
         match draw {
             Draw::Passes => {
                 let dst = smithay::utils::Rectangle::new((0, 0).into(), SIZE.into());
-                element.draw_scene(canvas, dst, damage);
+                let passes = element.draw_scene(canvas, dst, damage);
+                // Grown: some pass is not one of the damage rects as given.
+                let output = skia::IRect::from_wh(SIZE.0, SIZE.1);
+                let asked: Vec<skia::IRect> = damage
+                    .iter()
+                    .filter_map(|r| {
+                        skia::IRect::intersect(
+                            &skia::IRect::from_xywh(r.loc.x, r.loc.y, r.size.w, r.size.h),
+                            &output,
+                        )
+                    })
+                    .filter(|r| !r.is_empty())
+                    .collect();
+                passes.iter().any(|p| !asked.contains(p))
             }
             Draw::Region => {
                 // The way `SceneDmabufElement::render` draws a plane: one
@@ -241,6 +216,7 @@ mod frost_damage_tests {
                     canvas.restore_to_count(save);
                 }
                 state.layers_engine.clear_damage();
+                false
             }
         }
     }
@@ -268,13 +244,14 @@ mod frost_damage_tests {
     }
 
     /// One frame drawn incrementally into the next framebuffer of the
-    /// rotation, and the same scene drawn whole from scratch.
+    /// rotation, and the same scene drawn whole from scratch; and whether a
+    /// pass of the frame was grown past the damage.
     fn frame_and_reference(
         handle: &HeadlessHandle,
         buffers: usize,
         draw: Draw,
         gpu: Gpu,
-    ) -> (Vec<u8>, Vec<u8>) {
+    ) -> (Vec<u8>, Vec<u8>, bool) {
         use smithay::backend::renderer::element::Element;
         handle.query(move |state| {
             if state.scene_element.size == (0.0, 0.0) {
@@ -288,7 +265,7 @@ mod frost_damage_tests {
             let scale = smithay::utils::Scale::from(output.current_scale().fractional_scale());
             let trace = std::env::var_os("OTTO_TEST_TRACE").is_some();
 
-            let frame = match gpu {
+            let (frame, grown) = match gpu {
                 Gpu::Raster => FRAMES.with(|frames| {
                     let mut frames = frames.borrow_mut();
                     let (surfaces, next) = &mut *frames;
@@ -302,7 +279,7 @@ mod frost_damage_tests {
                         eprintln!("  damage since {last:?}: {:?}", damage.as_ref());
                     }
                     *last = Some(element.current_commit());
-                    paint_damage(
+                    let grown = paint_damage(
                         state,
                         &element,
                         &output_layer,
@@ -310,7 +287,7 @@ mod frost_damage_tests {
                         &damage,
                         draw,
                     );
-                    rgba(&surface.image_snapshot())
+                    (rgba(&surface.image_snapshot()), grown)
                 }),
                 Gpu::Vulkan => VK.with(|vk| {
                     use smithay::backend::allocator::Fourcc;
@@ -340,9 +317,11 @@ mod frost_damage_tests {
                     let Vk {
                         renderer, targets, ..
                     } = vk;
-                    vk_draw(renderer, &mut targets[index].0, |canvas| {
-                        paint_damage(state, &element, &output_layer, canvas, &damage, draw)
-                    })
+                    let mut grown = false;
+                    let px = vk_draw(renderer, &mut targets[index].0, |canvas| {
+                        grown = paint_damage(state, &element, &output_layer, canvas, &damage, draw)
+                    });
+                    (px, grown)
                 }),
             };
 
@@ -388,7 +367,7 @@ mod frost_damage_tests {
                     })
                 }
             };
-            (frame, reference)
+            (frame, reference, grown)
         })
     }
 
@@ -501,6 +480,7 @@ mod frost_damage_tests {
         let scale = handle.output_scale() as f32;
         let (px, py, pw, ph) = case.patch;
         let parent = case.parent;
+        let (cover_front, front_at) = (case.cover_front, case.front_at);
         handle.with_state(move |state| {
             let window = state
                 .workspaces
@@ -540,6 +520,19 @@ mod frost_damage_tests {
                     ows.overlay_plane.clone()
                 }
             };
+            if cover_front {
+                let ows = state.workspaces.output_workspaces.values().next().unwrap();
+                let _cover = solid(
+                    state,
+                    &ows.overlay_plane,
+                    (
+                        (front_at.0 - 40) as f32 * scale,
+                        (front_at.1 - 40) as f32 * scale,
+                    ),
+                    (580.0 * scale, 380.0 * scale),
+                    Color::new_rgba255(90, 90, 90, 255),
+                );
+            }
             let patch = solid(
                 state,
                 &patch_parent,
@@ -568,8 +561,15 @@ mod frost_damage_tests {
                         .set_background_color(Color::new_rgba255(r, g, b, 255), None)
                 });
             });
-            let (frame, reference) =
+            let (frame, reference, grown) =
                 frame_and_reference(&handle, case.buffers, case.draw, case.gpu);
+            if case.kept && grown {
+                failure = Some(format!(
+                    "{name}: frame {i} grew a pass over a frosted shape whose blur should \
+                     be kept"
+                ));
+                break;
+            }
             let over = if case.only_front {
                 skia::IRect::from_xywh(
                     (case.front_at.0 as f32 * scale) as i32,
@@ -622,6 +622,8 @@ mod frost_damage_tests {
             draw,
             gpu,
             only_front: false,
+            kept: false,
+            cover_front: false,
         };
         let tag = format!("{frost:?}-{draw:?}-{gpu:?}-s{scale}-b{buffers}").to_lowercase();
         // The output in logical px.
@@ -748,45 +750,78 @@ mod frost_damage_tests {
         }
     }
 
-    /// A frosted window hanging off the bottom of a 2x output, a patch just
-    /// above it. From the second frame on, the app switcher panel and the OSD
-    /// (both `BackgroundBlur`, both at opacity 0, centred on the output)
-    /// report damage on every frame, and that damage cuts across the top of
-    /// the window. lay-rs kept no blur for this window — a pass's damage
-    /// region, clipped to the output, never contained its bounds, which run
-    /// past the output — while `SceneElement` recorded it as kept after the
-    /// first full pass, so the pass was not grown over the window and the
-    /// part of the frost it covered came out blurred differently from the
-    /// rest: a box with hard edges inside the frost (up to 49/255 off).
+    /// A frosted window hanging off the bottom of the output, a patch above
+    /// its frost and inside it changing every frame: each frame's pass covers
+    /// only part of the frost, so the blur kept from the first full pass has
+    /// to be replayed. lay-rs used to keep no blur for this window — the
+    /// pass's damage region, clipped to the output, never contained the
+    /// window's bounds, which run past the output — while `SceneElement`
+    /// recorded it as kept, so the pass was not grown over the window and the
+    /// part of the frost it covered was blurred afresh, differently from the
+    /// rest: a box with hard edges inside the frost (up to 49/255 off). The
+    /// blur has to be kept, too: no pass may be grown over the window once
+    /// it is set up. At fractional scales as well, where the rect lay-rs
+    /// keeps and the one Otto grows passes to are rounded separately.
     #[test]
     #[serial]
     fn a_frosted_window_partly_off_the_output_keeps_its_frost_whole() {
-        off_output_frost(Gpu::Raster);
+        for scale in [1.5, 1.75, 2.0] {
+            off_output_frost(Gpu::Raster, scale);
+        }
     }
 
     /// The same, drawn with the Vulkan renderer on the machine's Vulkan
-    /// device.
+    /// device. One scale: several Vulkan compositors started one after
+    /// another in the same test process can segfault.
     #[test]
     #[serial]
     #[ignore = "needs a Vulkan GPU; repro as the raster one"]
     fn vulkan_a_frosted_window_partly_off_the_output_keeps_its_frost_whole() {
-        off_output_frost(Gpu::Vulkan);
+        off_output_frost(Gpu::Vulkan, 2.0);
     }
 
-    fn off_output_frost(gpu: Gpu) {
+    fn off_output_frost(gpu: Gpu, scale: f64) {
+        let h = (SIZE.1 as f64 / scale).floor() as i32;
         check_one(
-            "off-output-frost",
+            &format!("off-output-frost-s{scale}"),
             Case {
                 gpu,
-                // The dock's rim differs on its own (the other repro).
                 only_front: true,
                 frost: Frost::Material,
+                scale,
+                patch: (330.0, (h - 143) as f32, 240.0, 15.0),
+                parent: Parent::Above,
+                buffers: 1,
+                front_at: (301, h - 150),
+                draw: Draw::Passes,
+                kept: true,
+                cover_front: false,
+            },
+        );
+    }
+
+    /// A frosted window wholly behind an opaque one, which a small patch
+    /// above repaints every frame. Occlusion culling skips the frost, so
+    /// lay-rs never draws it nor keeps its blur: a pass over it must not be
+    /// grown to the whole frosted window on every frame for a blur that is
+    /// never painted.
+    #[test]
+    #[serial]
+    fn an_occluded_frosted_window_grows_no_pass() {
+        check_one(
+            "occluded-frost",
+            Case {
+                gpu: Gpu::Raster,
+                only_front: false,
+                frost: Frost::Material,
                 scale: 2.0,
-                patch: (400.0, 287.0, 40.0, 12.0),
-                parent: Parent::Behind,
+                patch: (330.0, 310.0, 240.0, 15.0),
+                parent: Parent::Above,
                 buffers: 1,
                 front_at: (301, 303),
                 draw: Draw::Passes,
+                kept: true,
+                cover_front: true,
             },
         );
     }
@@ -832,6 +867,8 @@ mod frost_damage_tests {
                 buffers: 3,
                 front_at: (301, 303),
                 draw: Draw::Passes,
+                kept: false,
+                cover_front: false,
             },
         );
     }
@@ -840,7 +877,10 @@ mod frost_damage_tests {
     // (`OTTO_TEST_SCALES=1,2` narrows it, `OTTO_TEST_CASE=<substring>`
     // picks cases, `OTTO_TEST_DIFF_DIR` saves frame/reference/diff PNGs,
     // `OTTO_TEST_TRACE=1` prints the damage per frame). Several minutes
-    // each, and they fail on the two repros above.
+    // each. Without the lay-rs fix for the rim (see
+    // `a_replayed_frost_matches_a_fresh_one`) every age-3 and region case
+    // fails on the dock's rim; with it, the titlebar cases at 1.75x still
+    // fail on a one-pixel column under the patch's half-pixel edge.
 
     #[test]
     #[serial]

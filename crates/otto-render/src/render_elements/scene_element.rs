@@ -413,13 +413,15 @@ impl<R: FrameSurface> RenderElement<R> for SceneElement {
 impl SceneElement {
     /// Draws the damaged part of the scene into `canvas` at `dst`.
     ///
-    /// Damage is relative to `dst`.
+    /// Damage is relative to `dst`. Returns the rects it repainted, in
+    /// canvas coordinates: the damage, clipped to `dst`, and grown over the
+    /// frosted shapes that had to be blurred whole.
     pub fn draw_scene(
         &self,
         canvas: &layers::skia::Canvas,
         dst: Rectangle<i32, Physical>,
         damage: &[Rectangle<i32, Physical>],
-    ) {
+    ) -> Vec<layers::skia::IRect> {
         #[cfg(feature = "profile-with-puffin")]
         profiling::puffin::profile_scope!("render_scene");
         tracing::debug!(target: "otto::planes", "scene draw {damage:?}");
@@ -501,7 +503,31 @@ impl SceneElement {
                     .iter_node_ids()
                     .filter_map(|id| {
                         let node = arena.get(id)?;
-                        if node.is_removed() || node.get().hidden() {
+                        if node.is_removed() {
+                            return None;
+                        }
+                        // Only a shape these passes paint: lay-rs keeps a
+                        // blur only for a shape it drew, so one it never
+                        // draws here — outside this element's tree, under a
+                        // hidden layer, or occluded — would never be kept,
+                        // and every pass touching it would be grown over
+                        // it for nothing.
+                        let root = root_id?;
+                        if occluded_ref.is_some_and(|set| set.contains(&NodeRef(id))) {
+                            return None;
+                        }
+                        let mut reaches_root = false;
+                        for ancestor in id.ancestors(arena) {
+                            let n = arena.get(ancestor)?;
+                            if n.is_removed() || n.get().hidden() {
+                                return None;
+                            }
+                            if ancestor == root.0 {
+                                reaches_root = true;
+                                break;
+                            }
+                        }
+                        if !reaches_root {
                             return None;
                         }
                         let layer = node.get().render_layer();
@@ -695,5 +721,6 @@ impl SceneElement {
             });
         });
         crate::render_phase_stats::record_scene_draw(scene_draw_t.elapsed());
+        rects
     }
 }
