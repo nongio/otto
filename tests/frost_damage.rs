@@ -798,10 +798,14 @@ mod frost_damage_tests {
     /// (up to 25-28/255): a buffer that holds a replay shows a different
     /// outline than one holding a fresh blur, and swapping between them —
     /// any partial update elsewhere at buffer age > 1 — makes the rim
-    /// shimmer.
+    /// shimmer. lay-rs replays the kept pixels under the same anti-aliased
+    /// shape clip the blur was composited under, so the rim's coverage is
+    /// applied twice; the fix is in lay-rs (branch `fix/kept-blur-rim`, on
+    /// top of v1.19.0) and passes this test, but is in no release yet.
     #[test]
     #[serial]
-    #[ignore = "repro: a replayed kept blur differs from a fresh blur along the shape's rim"]
+    #[ignore = "repro: a replayed kept blur differs from a fresh blur along the shape's rim; \
+                fixed in lay-rs, not yet released"]
     fn a_replayed_frost_matches_a_fresh_one() {
         replayed_frost(Gpu::Raster);
     }
