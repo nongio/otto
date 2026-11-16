@@ -752,16 +752,14 @@ mod frost_damage_tests {
     /// above it. From the second frame on, the app switcher panel and the OSD
     /// (both `BackgroundBlur`, both at opacity 0, centred on the output)
     /// report damage on every frame, and that damage cuts across the top of
-    /// the window. lay-rs never keeps a blur for this window — a pass's
-    /// damage region never contains its bounds, which run past the output —
-    /// while `SceneElement` records it as kept after the first full pass, so
-    /// the pass is not grown over the window and the part of the frost it
-    /// covers comes out blurred differently from the rest: a box with hard
-    /// edges inside the frost (up to 49/255 off).
+    /// the window. lay-rs kept no blur for this window — a pass's damage
+    /// region, clipped to the output, never contained its bounds, which run
+    /// past the output — while `SceneElement` recorded it as kept after the
+    /// first full pass, so the pass was not grown over the window and the
+    /// part of the frost it covered came out blurred differently from the
+    /// rest: a box with hard edges inside the frost (up to 49/255 off).
     #[test]
     #[serial]
-    #[ignore = "repro: frost under a pass from the app switcher/OSD, partly off the output, \
-                breaks into a box"]
     fn a_frosted_window_partly_off_the_output_keeps_its_frost_whole() {
         off_output_frost(Gpu::Raster);
     }
