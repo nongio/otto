@@ -320,6 +320,13 @@ jobs:
         # What reaches the screen, in the layout set, and the same pixels
         # however a frame is repainted (nongio/otto#361).
         run: cargo test --locked --features headless --test wallpaper --test expose_wallpaper
+      - name: Run frost tests
+        timeout-minutes: 15
+        if: needs.changes.outputs.compositor == 'true'
+        # Frost repainted in part comes out as a fresh render would, and its
+        # blur stays kept between frames (#414). The GPU and matrix cases are
+        # ignored.
+        run: cargo test --locked --features headless --test frost_damage --test titlebar_frost
       - name: Run screencast integration tests
         timeout-minutes: 15
         if: needs.changes.outputs.compositor == 'true' || needs.changes.outputs.portal == 'true'
