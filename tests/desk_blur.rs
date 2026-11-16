@@ -13,7 +13,11 @@
 //! the desk.
 
 #[cfg(feature = "headless")]
+mod support;
+
+#[cfg(feature = "headless")]
 mod desk_blur_tests {
+    use crate::support::wallpaper;
     use layers::prelude::Layer as SceneLayer;
     use layers::types::Color;
     use otto::headless::{HeadlessConfig, HeadlessHandle};
@@ -37,20 +41,6 @@ mod desk_blur_tests {
         static FILL: RefCell<Option<SceneLayer>> = const { RefCell::new(None) };
         /// Stand-in for the desk's content.
         static PANEL: RefCell<Option<SceneLayer>> = const { RefCell::new(None) };
-    }
-
-    /// Write a solid-colour PNG and return its path.
-    fn wallpaper(name: &str, colour: layers::skia::Color) -> String {
-        use layers::skia;
-        let mut surface = skia::surfaces::raster_n32_premul((64, 64)).unwrap();
-        surface.canvas().clear(colour);
-        let image = surface.image_snapshot();
-        let data = image
-            .encode(None, skia::EncodedImageFormat::PNG, 100)
-            .unwrap();
-        let path = std::env::temp_dir().join(format!("otto-test-{name}.png"));
-        std::fs::write(&path, data.as_bytes()).unwrap();
-        path.to_string_lossy().into_owned()
     }
 
     /// A solid layer of `size` physical px at `at` under `parent`.
