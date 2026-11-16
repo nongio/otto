@@ -828,20 +828,14 @@ mod frost_damage_tests {
 
     /// Three framebuffers in rotation, nothing changing near the dock after
     /// setup. The first full frame blurs the dock's frost afresh and keeps
-    /// it; the next two full frames replay the kept blur. Replayed, the
-    /// frost differs from a fresh one along the shape's anti-aliased rim
-    /// (up to 25-28/255): a buffer that holds a replay shows a different
-    /// outline than one holding a fresh blur, and swapping between them —
-    /// any partial update elsewhere at buffer age > 1 — makes the rim
-    /// shimmer. lay-rs replays the kept pixels under the same anti-aliased
-    /// shape clip the blur was composited under, so the rim's coverage is
-    /// applied twice. The fix is in lay-rs,
-    /// https://github.com/nongio/layers/pull/36, and passes this test, but is
-    /// in no release yet.
+    /// it; the next two full frames replay the kept blur. The replay must
+    /// match the fresh blur along the shape's anti-aliased rim: otherwise a
+    /// buffer holding a replay shows a different outline than one holding a
+    /// fresh blur, and swapping between them (any partial update elsewhere
+    /// at buffer age > 1) makes the rim shimmer. lay-rs replays the kept
+    /// pixels without the shape clip, so the rim's coverage is applied once.
     #[test]
     #[serial]
-    #[ignore = "repro: a replayed kept blur differs from a fresh blur along the shape's rim; \
-                fixed by nongio/layers#36, not yet released"]
     fn a_replayed_frost_matches_a_fresh_one() {
         replayed_frost(Gpu::Raster);
     }
