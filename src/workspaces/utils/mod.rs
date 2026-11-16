@@ -673,6 +673,160 @@ pub fn configure_surface_layer(
 }
 
 #[cfg(test)]
+mod surface_damage_tests {
+    use super::*;
+    use layers::prelude::*;
+    use smithay::backend::renderer::utils::CommitCounter;
+    use smithay::reexports::wayland_server::backend::ObjectId;
+    use smithay::utils::{Buffer, Rectangle};
+
+    /// A client surface layer as `configure_surface_layer` builds it, and
+    /// the texture a commit leaves in `textures_storage`.
+    struct Surface {
+        engine: std::sync::Arc<Engine>,
+        layer: Layer,
+        id: ObjectId,
+        image: layers::skia::Image,
+        commit: CommitCounter,
+    }
+
+    const SIZE: i32 = 200;
+    const AT: f32 = 100.0;
+
+    /// `textures_storage` and the surface configuration cache are global and
+    /// keyed by surface id, which these tests share.
+    static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    impl Surface {
+        fn new() -> Self {
+            let engine = Engine::create(1000.0, 1000.0);
+            let root = engine.new_layer();
+            root.set_layout_style(taffy::Style {
+                position: taffy::Position::Absolute,
+                ..Default::default()
+            });
+            root.set_size(Size::points(1000.0, 1000.0), None);
+            engine.add_layer(&root).unwrap();
+            let layer = engine.new_layer();
+            engine.append_layer(&layer, root.id).unwrap();
+            let mut surface = layers::skia::surfaces::raster_n32_premul((SIZE, SIZE)).unwrap();
+            surface.canvas().clear(layers::skia::Color::WHITE);
+            Self {
+                engine,
+                layer,
+                id: ObjectId::null(),
+                image: surface.image_snapshot(),
+                commit: CommitCounter::default(),
+            }
+        }
+
+        /// A commit with this buffer damage, as the commit handler applies
+        /// it: the import's texture (carrying the import's damage) stored,
+        /// then the layer configured from the surface state.
+        fn commit(&mut self, damage: Rectangle<i32, Buffer>) {
+            self.commit.increment();
+            crate::textures_storage::set(
+                &self.id,
+                crate::skia_renderer::SkiaTextureImage {
+                    tid: 1,
+                    image: self.image.clone(),
+                    has_alpha: false,
+                    padding_alpha: false,
+                    format: None,
+                    damage: Some(vec![damage]),
+                },
+            );
+            let wvs = WindowViewSurface {
+                id: self.id.clone(),
+                parent_id: None,
+                phy_src_x: 0.0,
+                phy_src_y: 0.0,
+                phy_src_w: SIZE as f32,
+                phy_src_h: SIZE as f32,
+                phy_dst_x: 0.0,
+                phy_dst_y: 0.0,
+                phy_dst_w: SIZE as f32,
+                phy_dst_h: SIZE as f32,
+                log_offset_x: AT,
+                log_offset_y: AT,
+                texture_id: Some(1),
+                commit: self.commit,
+                transform: smithay::utils::Transform::Normal,
+                fully_opaque: true,
+            };
+            configure_surface_layer(
+                &self.layer,
+                &wvs,
+                crate::surface_style::ContentsGravity::Resize,
+                false,
+                None,
+            );
+        }
+
+        /// One engine tick, and the damage it reported.
+        fn tick(&self) -> layers::skia::Rect {
+            self.engine.update(0.016);
+            let damage = self.engine.damage();
+            self.engine.clear_damage();
+            damage
+        }
+    }
+
+    fn rect(x: i32, y: i32, w: i32, h: i32) -> Rectangle<i32, Buffer> {
+        Rectangle::new((x, y).into(), (w, h).into())
+    }
+
+    /// The control: one commit per engine tick reports that commit's
+    /// damage, in scene space.
+    #[test]
+    fn one_commit_per_tick_reports_its_damage() {
+        let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+        let mut s = Surface::new();
+        s.commit(rect(0, 0, SIZE, SIZE));
+        let _ = s.tick();
+        s.commit(rect(10, 10, 20, 20));
+        let damage = s.tick();
+        assert!(
+            layers::skia::Contains::contains(
+                &damage,
+                layers::skia::Rect::from_xywh(AT + 10.0, AT + 10.0, 20.0, 20.0)
+            ),
+            "damage {damage:?} misses the commit's rect"
+        );
+    }
+
+    /// A client that commits twice between two engine ticks — Chrome
+    /// drawing at its own rate while the compositor ticks the scene once per
+    /// frame — changed two regions. Each commit imports its buffer with only
+    /// the damage since the previous import and stores it over the last one,
+    /// and the layer is painted once, at the tick, with the texture stored
+    /// last: the first commit's region must still be reported, or it is never
+    /// repainted and stays stale on screen.
+    #[test]
+    #[ignore = "repro: damage of all but the last commit before a tick is lost"]
+    fn two_commits_between_ticks_report_both_regions() {
+        let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+        let mut s = Surface::new();
+        s.commit(rect(0, 0, SIZE, SIZE));
+        let _ = s.tick();
+        s.commit(rect(10, 10, 20, 20));
+        s.commit(rect(150, 150, 20, 20));
+        let damage = s.tick();
+        let first = layers::skia::Rect::from_xywh(AT + 10.0, AT + 10.0, 20.0, 20.0);
+        let second = layers::skia::Rect::from_xywh(AT + 150.0, AT + 150.0, 20.0, 20.0);
+        assert!(
+            layers::skia::Contains::contains(&damage, second),
+            "damage {damage:?} misses the last commit's rect"
+        );
+        assert!(
+            layers::skia::Contains::contains(&damage, first),
+            "damage {damage:?} misses the first commit's rect {first:?}: that region is \
+             never repainted"
+        );
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
