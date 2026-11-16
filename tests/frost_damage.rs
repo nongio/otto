@@ -835,12 +835,13 @@ mod frost_damage_tests {
     /// any partial update elsewhere at buffer age > 1 — makes the rim
     /// shimmer. lay-rs replays the kept pixels under the same anti-aliased
     /// shape clip the blur was composited under, so the rim's coverage is
-    /// applied twice; the fix is in lay-rs (branch `fix/kept-blur-rim`, on
-    /// top of v1.19.0) and passes this test, but is in no release yet.
+    /// applied twice. The fix is in lay-rs,
+    /// https://github.com/nongio/layers/pull/36, and passes this test, but is
+    /// in no release yet.
     #[test]
     #[serial]
     #[ignore = "repro: a replayed kept blur differs from a fresh blur along the shape's rim; \
-                fixed in lay-rs, not yet released"]
+                fixed by nongio/layers#36, not yet released"]
     fn a_replayed_frost_matches_a_fresh_one() {
         replayed_frost(Gpu::Raster);
     }
