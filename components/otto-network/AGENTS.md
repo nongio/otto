@@ -16,6 +16,7 @@ The crate also has the actions a network UI takes:
 - forget
 - auto-join
 - save and reapply TCP/IP and DNS
+- the private hardware address and metered setting of a profile
 
 It has the secret agent's request and reply shapes, and a watcher that says when to read again. NetworkManager keeps all the state. Nothing here caches it.
 

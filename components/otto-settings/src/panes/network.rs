@@ -22,7 +22,8 @@ use std::time::{Duration, Instant};
 
 use otto_network::{
     dns_address, parse_address, split_list, Band, DeviceKind, DeviceState, Family, IpConfig,
-    IpError, IpMethod, LinkState, MacPolicy, Profile, ProfileKind, Security, Snapshot,
+    IpError, IpMethod, LinkState, MacPolicy, Metered, MeteredSetting, Profile, ProfileKind,
+    Security, Snapshot,
 };
 
 use crate::discovery::Choice;
@@ -51,6 +52,8 @@ const DNS_SEARCH_ID: &str = "network.dns.search";
 const APPLY_ID: &str = "network.apply";
 /// The private address pop-up of the connection the editor shows.
 const MAC_ID: &str = "network.mac";
+/// The metered pop-up of the connection the editor shows.
+const METERED_ID: &str = "network.metered";
 /// The VPN tab's Import… button.
 const IMPORT_ID: &str = "network.vpn-import";
 
@@ -439,7 +442,7 @@ fn edit(change: impl FnOnce(&mut Draft)) {
 /// pane has no rows until NetworkManager answers, so the walk over the
 /// panes would find none of them.
 pub fn slot_ids() -> &'static [&'static str] {
-    &[PROFILE_ID, V4_METHOD_ID, V6_METHOD_ID, MAC_ID]
+    &[PROFILE_ID, V4_METHOD_ID, V6_METHOD_ID, MAC_ID, METERED_ID]
 }
 
 fn method_label(method: &IpMethod, family: Family) -> String {
@@ -508,6 +511,43 @@ fn set_mac_policy(policy: MacPolicy) {
     );
 }
 
+fn metered_label(metered: MeteredSetting) -> &'static str {
+    match metered {
+        MeteredSetting::Automatic => otto_kit::t!("settings-network-metered-auto"),
+        MeteredSetting::Yes => otto_kit::t!("settings-network-metered-on"),
+        MeteredSetting::No => otto_kit::t!("settings-network-metered-off"),
+    }
+}
+
+/// Save `metered` on the connection the editor shows, applied to it in
+/// place where it is up.
+fn set_metered(metered: MeteredSetting) {
+    let Some(path) = change_shown_profile(|profile| {
+        let changed = profile.metered != metered;
+        profile.metered = metered;
+        changed
+    }) else {
+        return;
+    };
+    settings_client::request_redraw();
+    act(
+        "network-metered",
+        ErrorAt::Option(METERED_ID, path.clone()),
+        move || otto_network::blocking::set_metered(&path, metered),
+    );
+}
+
+/// The row saying a device's connection is metered, when it is: what
+/// NetworkManager has it as now, set on the profile or guessed.
+fn metered_row(metered: Metered) -> Option<Row> {
+    let text = match metered {
+        Metered::Yes => otto_kit::t!("settings-network-metered-yes"),
+        Metered::GuessYes => otto_kit::t!("settings-network-metered-guessed"),
+        Metered::No | Metered::GuessNo | Metered::Unknown => return None,
+    };
+    Some(value(otto_kit::t!("settings-network-metered-now"), text))
+}
+
 fn family_of(id: &str) -> Option<Family> {
     match id {
         V4_METHOD_ID | V4_ADDRESS_ID | V4_GATEWAY_ID => Some(Family::V4),
@@ -531,6 +571,15 @@ pub fn menu_choices(id: &str) -> Option<Vec<Choice>> {
                     .collect(),
             )
         }
+        METERED_ID => Some(
+            MeteredSetting::choices()
+                .iter()
+                .map(|metered| Choice {
+                    label: metered_label(*metered).to_string(),
+                    value: metered.name().to_string(),
+                })
+                .collect(),
+        ),
         MAC_ID => Some(
             MacPolicy::choices()
                 .iter()
@@ -565,6 +614,9 @@ pub fn display(id: &str, value: &str) -> Option<String> {
         V4_METHOD_ID => Some(method_label(&IpMethod::from_nm(value), Family::V4)),
         V6_METHOD_ID => Some(method_label(&IpMethod::from_nm(value), Family::V6)),
         MAC_ID => Some(mac_label(&MacPolicy::from_nm(value))),
+        METERED_ID => {
+            Some(metered_label(MeteredSetting::from_name(value).unwrap_or_default()).to_string())
+        }
         PROFILE_ID => {
             let Read::Ready(snapshot) = &*SNAPSHOT.read().unwrap() else {
                 return Some(String::new());
@@ -596,6 +648,12 @@ pub fn choose(id: &str, value: &str) -> bool {
         }
         MAC_ID => {
             set_mac_policy(MacPolicy::from_nm(value));
+            true
+        }
+        METERED_ID => {
+            if let Some(metered) = MeteredSetting::from_name(value) {
+                set_metered(metered);
+            }
             true
         }
         PROFILE_ID => {
@@ -1139,6 +1197,7 @@ fn wifi_groups(snapshot: &Snapshot) -> Vec<Group> {
                 wifi.device.hw_address.clone(),
             ));
         }
+        rows.extend(metered_row(wifi.device.metered));
         if snapshot.limited() {
             rows.push(note(otto_kit::t!("settings-network-limited")));
         }
@@ -1219,6 +1278,9 @@ fn ethernet_groups(snapshot: &Snapshot) -> Vec<Group> {
                     otto_kit::t!("settings-network-hardware-address"),
                     device.hw_address.clone(),
                 ));
+            }
+            if device.state == DeviceState::Connected {
+                rows.extend(metered_row(device.metered));
             }
             rows
         })
@@ -1491,7 +1553,7 @@ fn option_detail(id: &'static str, profile: &Profile, fallback: &'static str) ->
 }
 
 /// The rows of `profile` that save as soon as they change: its private
-/// address.
+/// address and whether it is metered.
 fn option_rows(profile: &Profile) -> Vec<Row> {
     let mut rows = Vec::new();
     let mac_label = match profile.kind {
@@ -1505,6 +1567,18 @@ fn option_rows(profile: &Profile) -> Vec<Row> {
                 option_detail(MAC_ID, profile, otto_kit::t!("settings-network-mac-detail")),
             ),
             MAC_ID,
+        ));
+        rows.push(bound(
+            Row::new(
+                otto_kit::t!("settings-network-metered"),
+                Control::Select(profile.metered.name().to_string()),
+            )
+            .detail(option_detail(
+                METERED_ID,
+                profile,
+                otto_kit::t!("settings-network-metered-detail"),
+            )),
+            METERED_ID,
         ));
     }
     rows
@@ -1571,6 +1645,7 @@ mod tests {
             ipv4: IpConfig::default(),
             ipv6: IpConfig::default(),
             mac: MacPolicy::Unset,
+            metered: MeteredSetting::Automatic,
         }
     }
 
@@ -1713,6 +1788,37 @@ mod tests {
             .find(|r| r.id == Some(MAC_ID))
             .expect("the wired private address row");
         assert_eq!(row.label, otto_kit::t!("settings-network-mac-wired"));
+    }
+
+    #[test]
+    fn metered_is_a_pop_up_and_a_status_line() {
+        let mut wifi = profile("/c/m", ProfileKind::Wifi);
+        wifi.metered = MeteredSetting::Yes;
+        let groups = editor(&wifi, None, None);
+        let row = groups
+            .iter()
+            .flat_map(|g| &g.rows)
+            .find(|r| r.id == Some(METERED_ID))
+            .expect("the metered row");
+        assert!(matches!(&row.control, Control::Select(v) if v == "yes"));
+        assert_eq!(
+            display(METERED_ID, "yes").as_deref(),
+            Some(otto_kit::t!("settings-network-metered-on"))
+        );
+        let values: Vec<_> = menu_choices(METERED_ID)
+            .unwrap()
+            .into_iter()
+            .map(|c| c.value)
+            .collect();
+        assert_eq!(values, ["auto", "yes", "no"]);
+
+        // The live state shows only when the connection counts as metered.
+        assert!(metered_row(Metered::GuessNo).is_none());
+        let guessed = metered_row(Metered::GuessYes).expect("a guessed line");
+        assert!(matches!(
+            &guessed.control,
+            Control::Value(v) if v == otto_kit::t!("settings-network-metered-guessed")
+        ));
     }
 
     #[test]

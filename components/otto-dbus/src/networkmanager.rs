@@ -125,6 +125,11 @@ pub trait Device {
     /// The hardware address.
     #[zbus(property)]
     fn hw_address(&self) -> zbus::Result<String>;
+
+    /// `NMMetered`: `0` unknown, `1` yes, `2` no, `3` guessed yes, `4`
+    /// guessed no.
+    #[zbus(property)]
+    fn metered(&self) -> zbus::Result<u32>;
 }
 
 #[zbus::proxy(

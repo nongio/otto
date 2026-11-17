@@ -107,13 +107,14 @@ shows:
 - **Security**
 - **Access point**, the BSSID of the one you are associated with
 - **Hardware address**
+- **Metered**, when the connection counts as metered
 
 **Known networks** lists every saved network. Untick one to stop joining it
 automatically, or **Forget** it.
 
 ### Ethernet
 
-Each wired port's state, link speed and hardware address.
+Each wired port's state, link speed and hardware address, and a **Metered** line while it is connected and metered.
 
 ### Options
 
@@ -136,6 +137,19 @@ A network can be set some other way, for example by `nmcli` or
 it**, or a specific address. The pop-up shows that, and leaves it alone until
 you pick one of the three. The new address is used the next time the
 connection comes up, so disconnect and join again to use it now.
+
+**Metered connection** tells apps that data costs on this network, such as a
+phone's hotspot or a capped mobile plan. Apps that check it, such as software
+updates, hold back large downloads.
+
+- **Automatic** lets NetworkManager decide. It guesses from the link, for
+  example a phone sharing its connection.
+- **On** and **Off** decide for it.
+
+The change applies straight away, without dropping the connection. While the
+connection in use counts as metered, **Connection** on the Wi-Fi tab (and
+**Status** on the Ethernet tab) has a **Metered** line: **Yes**, or **Yes
+(guessed)** when NetworkManager guessed it.
 
 ### TCP/IP and DNS
 

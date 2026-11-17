@@ -28,7 +28,8 @@ pub mod rfkill;
 pub use client::{
     activate, connect_hidden, connect_wifi, connect_wifi_with_password, deactivate,
     disconnect_device, follow, follow_with, forget, read, read_with, request_scan, set_autoconnect,
-    set_ip_config, set_mac_policy, set_wifi_enabled, set_wifi_enabled_with, watch, watch_with,
+    set_ip_config, set_mac_policy, set_metered, set_wifi_enabled, set_wifi_enabled_with, watch,
+    watch_with,
 };
 pub use model::*;
 pub use profile::*;

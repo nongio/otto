@@ -388,6 +388,14 @@ settings-network-mac-random = Changes over time
 settings-network-mac-unset = Default
 settings-network-mac-preserve = As the device has it
 settings-network-mac-detail = Takes effect the next time it connects
+settings-network-metered = Metered connection
+settings-network-metered-detail = Apps that check it hold back on large downloads
+settings-network-metered-auto = Automatic
+settings-network-metered-on = On
+settings-network-metered-off = Off
+settings-network-metered-now = Metered
+settings-network-metered-yes = Yes
+settings-network-metered-guessed = Yes (guessed)
 # The pop-up choosing which saved network the TCP/IP rows edit.
 settings-network-settings-for = Settings for
 settings-network-configure-ipv4 = Configure IPv4

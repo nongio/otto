@@ -60,7 +60,8 @@ The common ground, which Otto adopts:
   - TCP/IP for the connection: IPv4 and IPv6 each Automatic, Manual, Link-local, Shared or Off, with addresses and router when manual
   - DNS: whether to also use the network's servers, the servers to ask first, search domains, and the servers in use
   - the saved Wi-Fi networks, each with an auto-join switch and Forget
-  - for the Wi-Fi or Ethernet profile shown, its private hardware address
+  - for the Wi-Fi or Ethernet profile shown, its private hardware address and whether it is metered
+  - whether the connection in use counts as metered now, set or guessed
   - the VPNs, each with a switch to connect and Forget, and Import… for a WireGuard or OpenVPN file
 - Whether the indicator is shown is a switch on the Top bar pane, next to the clock's, so it is there whatever devices the machine has.
 - Everything follows NetworkManager live. A change made with `nmcli`, another applet or the hardware switch shows up without reopening anything.
@@ -139,10 +140,11 @@ The common ground, which Otto adopts:
       - security
       - access point (BSSID)
       - hardware address
+      - *Metered*, when NetworkManager counts the link as metered: *Yes*, or *Yes (guessed)* when it guessed with nothing set on the profile (the device's `Metered` property: `yes`, `guess-yes`)
       - a note when the internet cannot be reached
     - **Options**, **TCP/IP** and **DNS** for a saved network: the one in use, or the one picked in *Settings for*, which heads Options
     - **Known networks:** every saved Wi-Fi network, the one in use first, then by last use. Each has an auto-join switch and *Forget*.
-13. **Ethernet tab:** each wired device's state with its speed, and its hardware address. Then Options, TCP/IP and DNS for the wired profile in use, or the most recently used one.
+13. **Ethernet tab:** each wired device's state with its speed, its hardware address, and *Metered* as on the Wi-Fi tab while it is connected. Then Options, TCP/IP and DNS for the wired profile in use, or the most recently used one.
 14. **VPN tab:** each VPN or WireGuard connection with a switch that connects and disconnects it, its state, and *Forget*. *Import…* opens the file chooser for a WireGuard `.conf` or OpenVPN `.ovpn` and imports it with `nmcli connection import`; NetworkManager has no D-Bus call for importing.
 15. **TCP/IP group:**
     - *Configure IPv4*: Automatic (DHCP), Manually, Link-local only, Share this connection, Off
@@ -160,6 +162,7 @@ The common ground, which Otto adopts:
       - Changes over time: `random`, new on each connect
     - A profile with nothing set shows *Default*, one with `preserve` shows *As the device has it*, and one with an explicit address shows that address. None of them is changed until a choice is picked.
     - The new address is used the next time the connection comes up; the row says so. It is not reapplied, since NetworkManager cannot change the address of a link that is up without taking it down.
+    - *Metered connection*, a pop-up writing `connection.metered`: Automatic (`0`, NetworkManager guesses), On (`1`), Off (`2`). It is applied to the running connection in place (`Reapply`). Where NetworkManager cannot, it waits for the next connect: being metered is no reason to drop a link.
     - A refusal shows on the row's detail line.
 17. Edits to TCP/IP and DNS are a draft. *Changes* has *Revert* and *Apply*, dimmed while there is nothing to apply. Apply checks the draft first:
     - Manually needs at least one address.
@@ -197,5 +200,4 @@ The common ground, which Otto adopts:
 ## Open Questions
 
 - **Hotspot and airplane mode.**
-- **Metered connections.** Whether to show NetworkManager's metered flag, and let a connection be marked metered.
 - **Proxies.** Per-connection proxy settings (`proxy` setting) would fit the TCP/IP tab.

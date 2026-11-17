@@ -143,6 +143,7 @@ struct Device {
     interface: &'static str,
     state: u32,
     active: &'static str,
+    metered: u32,
 }
 
 #[interface(name = "org.freedesktop.NetworkManager.Device")]
@@ -174,6 +175,10 @@ impl Device {
     #[zbus(property)]
     fn hw_address(&self) -> String {
         "AA:BB:CC:DD:EE:FF".into()
+    }
+    #[zbus(property)]
+    fn metered(&self) -> u32 {
+        self.metered
     }
 }
 
@@ -523,6 +528,7 @@ async fn serve(address: &str, calls: Arc<Mutex<Calls>>) -> Connection {
                 interface: "wlan0",
                 state: 100,
                 active: "/org/freedesktop/NetworkManager/ActiveConnection/1",
+                metered: 3,
             },
         )
         .unwrap()
@@ -539,6 +545,7 @@ async fn serve(address: &str, calls: Arc<Mutex<Calls>>) -> Connection {
                 interface: "eth0",
                 state: 20,
                 active: "/",
+                metered: 0,
             },
         )
         .unwrap()
@@ -651,6 +658,7 @@ async fn a_snapshot_and_the_actions_against_a_stand_in() {
 
     let wifi = snapshot.wifi.as_ref().expect("a Wi-Fi device");
     assert_eq!(wifi.device.interface, "wlan0");
+    assert_eq!(wifi.device.metered, otto_network::Metered::GuessYes);
     let link = wifi.active_ap.as_ref().expect("the access point in use");
     assert_eq!(link.path, "/org/freedesktop/NetworkManager/AccessPoint/2");
     assert_eq!(link.band(), otto_network::Band::Ghz5);
@@ -1100,5 +1108,32 @@ async fn a_private_address_is_saved_on_the_profile() {
     assert!(wireless.contains_key("ssid"));
     // Saving it does not reconnect: it takes effect on the next join.
     assert!(calls.reapplied.is_empty());
+    assert!(calls.activated.is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn metered_is_saved_and_applied_in_place() {
+    let Some(bus) = private_bus() else {
+        eprintln!("no dbus-daemon: skipped");
+        return;
+    };
+    let calls = Arc::new(Mutex::new(Calls::default()));
+    let _server = serve(&bus.1, calls.clone()).await;
+    let conn = connect(&bus.1).await;
+    let profile = "/org/freedesktop/NetworkManager/Settings/1";
+
+    otto_network::set_metered(&conn, profile, otto_network::MeteredSetting::Yes)
+        .await
+        .unwrap();
+
+    let calls = calls.lock().unwrap();
+    let sent = calls.updated.last().expect("an update");
+    assert_eq!(i32::try_from(&sent["connection"]["metered"]).unwrap(), 1);
+    assert!(sent.contains_key("802-11-wireless"));
+    // Applied to the link in use, without reconnecting it.
+    assert_eq!(
+        calls.reapplied,
+        ["/org/freedesktop/NetworkManager/Devices/1"]
+    );
     assert!(calls.activated.is_empty());
 }

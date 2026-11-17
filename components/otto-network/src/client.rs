@@ -21,7 +21,7 @@ use zbus::zvariant::{ObjectPath, OwnedObjectPath, OwnedValue, Value};
 use zbus::Connection;
 
 use crate::model::*;
-use crate::profile::{Family, IpConfig, KeyKind, MacPolicy, Profile, ProfileKind};
+use crate::profile::{Family, IpConfig, KeyKind, MacPolicy, MeteredSetting, Profile, ProfileKind};
 use crate::rfkill::Radios;
 
 /// `NMDeviceType` values Otto shows.
@@ -320,6 +320,7 @@ async fn read_device(conn: &Connection, path: &str) -> Option<(Device, Option<St
         speed_mbps,
         active: active.clone(),
         link: None,
+        metered: Metered::from_raw(proxy.metered().await.unwrap_or(0)),
     };
     Some((device, active))
 }
@@ -614,19 +615,25 @@ pub async fn set_ip_config(
             .validate(family)
             .map_err(|e| zbus::Error::Failure(format!("{e:?}")))?;
     }
-    let proxy = at!(SettingsConnectionProxy, conn, profile).await?;
-    {
-        let _writing = PROFILE_WRITES.lock().await;
-        let mut settings = proxy.get_settings().await?;
-        v4.write_into(&mut settings, Family::V4);
-        v6.write_into(&mut settings, Family::V6);
-        proxy.update(settings).await?;
-    }
-    reapply(conn, profile).await
+    edit_profile(conn, profile, |settings| {
+        v4.write_into(settings, Family::V4);
+        v6.write_into(settings, Family::V6);
+    })
+    .await?;
+    reapply(conn, profile, Reapply::OrReconnect).await
+}
+
+/// How far [`reapply`] goes to apply a saved profile.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Reapply {
+    /// In place where NetworkManager can, by reconnecting where it cannot.
+    OrReconnect,
+    /// In place only; what cannot be applied waits for the next connect.
+    InPlace,
 }
 
 /// Apply a saved profile's settings to the device it is active on, if any.
-async fn reapply(conn: &Connection, profile: &str) -> zbus::Result<()> {
+async fn reapply(conn: &Connection, profile: &str, how: Reapply) -> zbus::Result<()> {
     let nm = NetworkManagerProxy::builder(conn)
         .cache_properties(CacheProperties::No)
         .build()
@@ -640,6 +647,9 @@ async fn reapply(conn: &Connection, profile: &str) -> zbus::Result<()> {
         }
         let devices = proxy.devices().await.unwrap_or_default();
         let Some(device) = devices.first() else {
+            if how == Reapply::InPlace {
+                return Ok(());
+            }
             // A VPN runs on no device of its own: start it again.
             nm.deactivate_connection(&active).await?;
             nm.activate_connection(
@@ -651,7 +661,8 @@ async fn reapply(conn: &Connection, profile: &str) -> zbus::Result<()> {
             return Ok(());
         };
         let device_proxy = at!(DeviceProxy, conn, device.as_str()).await?;
-        if device_proxy.reapply(HashMap::new(), 0, 0).await.is_err() {
+        if device_proxy.reapply(HashMap::new(), 0, 0).await.is_err() && how == Reapply::OrReconnect
+        {
             // Some changes cannot be applied in place (NetworkManager says
             // which); reconnecting applies anything.
             nm.activate_connection(&object_path(profile)?, device, &object_path("/")?)
@@ -731,6 +742,20 @@ pub async fn set_autoconnect(conn: &Connection, connection: &str, on: bool) -> z
             .insert("autoconnect".to_string(), OwnedValue::from(on));
     })
     .await
+}
+
+/// Mark the Wi-Fi or Ethernet connection at `connection` metered, not
+/// metered, or leave it to NetworkManager to guess, and apply that to the
+/// connection in place if it is up. Where NetworkManager cannot apply it in
+/// place, it takes effect on the next connect: being metered is no reason to
+/// drop a link.
+pub async fn set_metered(
+    conn: &Connection,
+    connection: &str,
+    metered: MeteredSetting,
+) -> zbus::Result<()> {
+    edit_profile(conn, connection, |settings| metered.write_into(settings)).await?;
+    reapply(conn, connection, Reapply::InPlace).await
 }
 
 /// Save `policy` as the hardware address the Wi-Fi or Ethernet connection

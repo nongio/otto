@@ -577,6 +577,75 @@ impl MacPolicy {
     }
 }
 
+/// Whether a profile is marked metered: `connection.metered`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum MeteredSetting {
+    /// Unset (`0`): NetworkManager guesses from the link.
+    #[default]
+    Automatic,
+    /// `1`.
+    Yes,
+    /// `2`.
+    No,
+}
+
+impl MeteredSetting {
+    /// The three a person picks from, in the order a pop-up lists them.
+    pub fn choices() -> &'static [MeteredSetting] {
+        &[Self::Automatic, Self::Yes, Self::No]
+    }
+
+    /// NetworkManager's value. Anything but `1` and `2` is automatic, as
+    /// NetworkManager reads it.
+    pub fn from_raw(raw: i32) -> Self {
+        match raw {
+            1 => Self::Yes,
+            2 => Self::No,
+            _ => Self::Automatic,
+        }
+    }
+
+    pub fn to_raw(self) -> i32 {
+        match self {
+            Self::Automatic => 0,
+            Self::Yes => 1,
+            Self::No => 2,
+        }
+    }
+
+    /// A short name, for a pop-up's value.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Automatic => "auto",
+            Self::Yes => "yes",
+            Self::No => "no",
+        }
+    }
+
+    /// The setting a [`Self::name`] names, `None` for no name of these.
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::choices().iter().copied().find(|m| m.name() == name)
+    }
+
+    /// Read a profile's setting; unset is automatic.
+    pub fn from_settings(settings: &Settings) -> Self {
+        settings
+            .get("connection")
+            .and_then(|c| c.get("metered"))
+            .and_then(|v| i32::try_from(v).ok())
+            .map(Self::from_raw)
+            .unwrap_or_default()
+    }
+
+    /// Write this setting into `settings`, keeping every other property.
+    pub fn write_into(self, settings: &mut Settings) {
+        settings
+            .entry("connection".to_string())
+            .or_default()
+            .insert("metered".into(), OwnedValue::from(self.to_raw()));
+    }
+}
+
 /// A saved connection, read out of its settings.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Profile {
@@ -596,6 +665,8 @@ pub struct Profile {
     pub ipv6: IpConfig,
     /// The hardware address it shows the network.
     pub mac: MacPolicy,
+    /// Whether it is marked metered.
+    pub metered: MeteredSetting,
 }
 
 impl Profile {
@@ -630,6 +701,7 @@ impl Profile {
             ipv4: IpConfig::from_settings(settings, Family::V4),
             ipv6: IpConfig::from_settings(settings, Family::V6),
             mac: MacPolicy::from_settings(settings, kind),
+            metered: MeteredSetting::from_settings(settings),
         })
     }
 }
@@ -1132,6 +1204,35 @@ mod tests {
         let mut vpn = Settings::new();
         MacPolicy::Random.write_into(&mut vpn, ProfileKind::Vpn);
         assert!(vpn.is_empty());
+    }
+
+    #[test]
+    fn metered_is_read_and_written_on_the_connection() {
+        let mut settings = link("802-11-wireless", Vec::new());
+        assert_eq!(
+            MeteredSetting::from_settings(&settings),
+            MeteredSetting::Automatic
+        );
+        for setting in MeteredSetting::choices() {
+            setting.write_into(&mut settings);
+            assert_eq!(MeteredSetting::from_settings(&settings), *setting);
+            assert_eq!(MeteredSetting::from_name(setting.name()), Some(*setting));
+            // The rest of the connection stays.
+            assert!(settings["connection"].contains_key("id"));
+        }
+        // NetworkManager sends an `i`.
+        let raw = i32::try_from(&settings["connection"]["metered"]).unwrap();
+        assert_eq!(raw, 2);
+        // A value NetworkManager reads as unknown is automatic.
+        settings
+            .get_mut("connection")
+            .unwrap()
+            .insert("metered".into(), OwnedValue::from(7i32));
+        assert_eq!(
+            MeteredSetting::from_settings(&settings),
+            MeteredSetting::Automatic
+        );
+        assert_eq!(MeteredSetting::from_name("sometimes"), None);
     }
 
     #[test]
