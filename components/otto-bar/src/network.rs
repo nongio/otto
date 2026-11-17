@@ -39,9 +39,12 @@ static SYSTEM_BUS: LazyLock<Mutex<Option<Connection>>> = LazyLock::new(|| Mutex:
 /// When the open menu last asked for a scan.
 static LAST_SCAN_REQUEST: Mutex<Option<Instant>> = Mutex::new(None);
 
-/// How often opening the menu may ask for a scan. NetworkManager refuses
-/// more anyway; this saves asking.
+/// How often an open menu asks for a scan. NetworkManager refuses more
+/// anyway; this saves asking.
 const SCAN_INTERVAL: Duration = Duration::from_secs(10);
+/// The least time between two scans, however they were asked for: one
+/// takes a few seconds to finish.
+const RESCAN_GAP: Duration = Duration::from_secs(3);
 
 /// The snapshot as last read.
 pub fn snapshot() -> Snapshot {
@@ -169,14 +172,24 @@ where
 }
 
 /// Ask for a fresh scan, at most every [`SCAN_INTERVAL`]: the menu is
-/// opening, and the list should be current by the time it is read.
+/// open, and the list should be current while it is read.
 pub fn scan_soon() {
+    scan_if_older_than(SCAN_INTERVAL);
+}
+
+/// Ask for a fresh scan unless one was asked for a moment ago: Other
+/// Networks just opened, and is what the scan is for.
+pub fn scan_now() {
+    scan_if_older_than(RESCAN_GAP);
+}
+
+fn scan_if_older_than(age: Duration) {
     let Some(device) = snapshot().wifi.map(|w| w.device.path) else {
         return;
     };
     {
         let mut last = LAST_SCAN_REQUEST.lock().unwrap();
-        if last.is_some_and(|at| at.elapsed() < SCAN_INTERVAL) {
+        if last.is_some_and(|at| at.elapsed() < age) {
             return;
         }
         *last = Some(Instant::now());
@@ -184,6 +197,17 @@ pub fn scan_soon() {
     act("wifi scan", move |conn| async move {
         otto_network::request_scan(&conn, &device).await
     });
+}
+
+/// How long until [`scan_soon`] asks again: an open menu keeps the list
+/// current by scanning on this beat.
+pub fn until_next_scan() -> Duration {
+    LAST_SCAN_REQUEST
+        .lock()
+        .unwrap()
+        .map_or(Duration::ZERO, |at| {
+            SCAN_INTERVAL.saturating_sub(at.elapsed())
+        })
 }
 
 /// Dialogs the menu asked for, for the app to open.

@@ -127,6 +127,9 @@ pub struct TopBarApp {
     open_layout_menu: Option<ContextMenu>,
     /// The network menu, while it is open.
     open_network_menu: Option<ContextMenu>,
+    /// Whether the network menu's Other Networks submenu was open on the
+    /// last update, to scan when it opens.
+    network_submenu_was_open: bool,
     last_network_gen: u64,
     /// The Wi-Fi password dialog, while it is up.
     join_dialog: Option<crate::join_dialog::JoinDialog>,
@@ -163,6 +166,7 @@ impl TopBarApp {
             open_power_menu: None,
             open_layout_menu: None,
             open_network_menu: None,
+            network_submenu_was_open: false,
             last_network_gen: 0,
             join_dialog: None,
             open_otto_menu: None,
@@ -1631,6 +1635,20 @@ impl App for TopBarApp {
             }
         }
 
+        // The network menu is open: scan again once the last one is old,
+        // and as soon as Other Networks opens.
+        if let Some(menu) = self.open_network_menu.as_ref() {
+            let submenu_open = menu.state().borrow().has_open_submenu_at(0);
+            if submenu_open && !self.network_submenu_was_open {
+                crate::network::scan_now();
+            } else {
+                crate::network::scan_soon();
+            }
+            self.network_submenu_was_open = submenu_open;
+        } else {
+            self.network_submenu_was_open = false;
+        }
+
         // NetworkManager changed something, or the setting moved.
         let network_gen = crate::network::generation();
         if network_gen != self.last_network_gen {
@@ -1804,9 +1822,14 @@ impl App for TopBarApp {
         // request_wakeup or Wayland events.
         let clock = crate::clock::Clock::until_next_change();
         // The connecting animation steps faster than any clock.
-        Some(match crate::network::until_next_step() {
+        let wake = match crate::network::until_next_step() {
             Some(step) => step.min(clock),
             None => clock,
+        };
+        // An open network menu scans on a beat, so the list stays current.
+        Some(match self.open_network_menu {
+            Some(_) => wake.min(crate::network::until_next_scan()),
+            None => wake,
         })
     }
 

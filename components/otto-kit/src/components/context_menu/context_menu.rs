@@ -1206,7 +1206,8 @@ impl ContextMenu {
     /// A popup's size is fixed when it is created: xdg-shell positions it
     /// from the size given then. So a refresh can repaint in place only
     /// while every open level keeps its size. A submenu that changes shape
-    /// is closed, and hovering its parent opens it again at the new size.
+    /// is shown again at its new size, in the same place; the submenus
+    /// below it close.
     /// The root changing shape is reported as [`MenuRefresh::Resized`], and
     /// the caller reopens the menu — it owns the positioner that says where.
     pub fn refresh(&self, items: Vec<MenuItem>) -> MenuRefresh {
@@ -1247,8 +1248,23 @@ impl ContextMenu {
                 if depth == 0 {
                     return MenuRefresh::Resized;
                 }
-                self.state.borrow_mut().close_submenus_from(depth - 1);
-                Self::hide_submenus_from_static(&self.state, &self.popups, depth);
+                // A new popup at the new size, from the same parent row.
+                // The submenus below it go with the old one.
+                let parent = depth - 1;
+                let row = self.state.borrow().open_submenu_at(parent);
+                match row {
+                    Some(row) => Self::show_submenu_static(
+                        &self.state,
+                        &self.popups,
+                        &self.style,
+                        &self.registered_surfaces,
+                        &self.parent_xdg,
+                        parent,
+                        row,
+                        0.0,
+                    ),
+                    None => Self::hide_submenus_from_static(&self.state, &self.popups, depth),
+                }
                 break;
             }
 
