@@ -124,6 +124,12 @@ headless = []
 vulkan = ["udev", "otto-render/vulkan"]
 renderer_sync = []
 
+# Deterministic, no GPU: the real FramePacer on a virtual display
+# (src/frame_pacing/sim.rs). Run as `cargo bench --bench frame_pacing`.
+[[bench]]
+name = "frame_pacing"
+harness = false
+
 [dev-dependencies]
 tempfile.workspace = true
 serial_test = "3"

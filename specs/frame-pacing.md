@@ -73,6 +73,16 @@ next VBlank with little latency.
   would leave their presentation feedback to be discarded on the next commit.
   Feedback is taken for every shown window on the output's flip instead.
 
+## Verification
+
+The pacing decisions live in `FramePacer` (`src/frame_pacing/mod.rs`), which
+the udev backend drives. `cargo bench --bench frame_pacing` runs it on a
+simulated display (an EDID mode with a perfect VBlank) through scenarios for
+the goals above: a light and a heavy toolkit window, a fast client, five heavy
+windows, video, a GPU stall, a 1000 Hz mouse and animations. The unit tests
+in `src/frame_pacing/sim.rs` hold the promises; CI compares every scenario
+with `benches/frame_pacing.baseline.json`.
+
 ## Rationale
 
 With callbacks sent at render time, a client woken then has only the

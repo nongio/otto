@@ -125,8 +125,7 @@ impl<A: RendererApi> Otto<UdevData<A>> {
         }
         surface.last_vblank = Some(Instant::now());
         if let Some(mode) = output.current_mode() {
-            // `mode.refresh` is in millihertz.
-            surface.frame_period_us = 1_000_000_000f32 / mode.refresh as f32;
+            surface.pacer.set_refresh_mhz(mode.refresh);
         }
         let schedule_render =
             match surface.compositor.frame_submitted() {
@@ -226,7 +225,7 @@ impl<A: RendererApi> Otto<UdevData<A>> {
             // clients render frames the next compose supersedes, and they
             // are better paced by the flips alone.
             let armed = surface.last_vblank;
-            let period = Duration::from_micros(surface.frame_period_us.max(1000.0) as u64);
+            let period = Duration::from_micros(surface.pacer.period_us().max(1000.0) as u64);
             if let Some(vblank) = armed {
                 use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
                 let tick_output = output.clone();
@@ -234,7 +233,7 @@ impl<A: RendererApi> Otto<UdevData<A>> {
                 let _ = self.handle.insert_source(
                     Timer::from_deadline(vblank + period),
                     move |_, _, otto: &mut Otto<UdevData<A>>| {
-                        let Some((pacing, need_us)) = otto
+                        let Some((pacing, keeping_up)) = otto
                             .backend_data
                             .backends
                             .get(&dev_id)
@@ -243,17 +242,12 @@ impl<A: RendererApi> Otto<UdevData<A>> {
                             .map(|surface| {
                                 (
                                     surface.last_frame_pacing.clone().unwrap_or_default(),
-                                    surface.avg_render_time_us + surface.avg_gpu_time_us,
+                                    surface.pacer.keeping_up(),
                                 )
                             })
                         else {
                             return TimeoutAction::Drop;
                         };
-                        // Keeping up means a compose fits comfortably in a
-                        // period. The compose interval itself is no signal:
-                        // at 60 fps it reads as "behind" because the client
-                        // is at 60, and that would hold it there.
-                        let keeping_up = need_us < period.as_micros() as f32 * 0.6;
                         if keeping_up {
                             let windows: Vec<&WindowElement> =
                                 otto.workspaces.spaces_elements().collect();
@@ -277,10 +271,9 @@ impl<A: RendererApi> Otto<UdevData<A>> {
         }
 
         if schedule_render {
-            let output_refresh = match output.current_mode() {
-                Some(mode) => mode.refresh,
-                None => return,
-            };
+            if output.current_mode().is_none() {
+                return;
+            }
 
             // ── Frame-pipeline Phase 1: CPU scene update ─────────────────────
             //
@@ -310,28 +303,24 @@ impl<A: RendererApi> Otto<UdevData<A>> {
             // promoted window's commit, or a consumer that needs every
             // VBlank. Content at 30 fps then costs 30 passes a second, not
             // one per refresh; an idle desktop costs none until an event.
-            surface.frame_scheduled = false;
             let redraw_gen = self
                 .backend_data
                 .redraw_generation
                 .load(std::sync::atomic::Ordering::Acquire);
-            let wants_frame =
-                super::schedule::wants_frame_after_vblank(&super::schedule::VblankInputs {
-                    scene_has_damage,
-                    continuous_frames: surface.continuous_frames,
-                    redraw_gen,
-                    seen_redraw_gen: surface.seen_redraw_gen,
-                    animations_pending: self.scene_element.has_pending_animations(),
-                    scanout_commit_pending: self
-                        .workspaces
-                        .scanout_commit_pending
-                        .load(std::sync::atomic::Ordering::Relaxed),
-                });
-            if !wants_frame {
+            let reasons = crate::frame_pacing::VblankReasons {
+                scene_has_damage,
+                continuous_frames: surface.continuous_frames,
+                redraw_gen,
+                animations_pending: self.scene_element.has_pending_animations(),
+                scanout_commit_pending: self
+                    .workspaces
+                    .scanout_commit_pending
+                    .load(std::sync::atomic::Ordering::Relaxed),
+            };
+            let Some(draw) = surface.pacer.on_vblank(&reasons) else {
                 trace!("nothing to draw after VBlank on {:?}; idling", crtc);
                 return;
-            }
-            surface.frame_scheduled = true;
+            };
 
             // ── Frame-pipeline Phase 2: schedule the draw at the deadline ─────
             //
@@ -340,33 +329,30 @@ impl<A: RendererApi> Otto<UdevData<A>> {
             // enough margin for the GPU command recording to finish on time.
             //
             // Target = frame_period − 2×(avg CPU pass + avg GPU composite),
-            // at least 1 ms — see `schedule::draw_delay_us`. The GPU term is
-            // what keeps a 120 Hz panel at 120: the flip only lands once the
-            // composite is done, and that part is invisible to the CPU clock.
+            // at least 1 ms — see `frame_pacing::draw_delay_us`. The GPU term
+            // is what keeps a 120 Hz panel at 120: the flip only lands once
+            // the composite is done, and that part is invisible to the CPU
+            // clock.
             //
             // For multi-GPU paths a buffer copy is needed after rendering; we
             // have no reliable estimate for the copy duration, so we fire
             // immediately and accept the slightly-wider timing window.
             let is_multi_gpu = self.backend_data.primary_gpu != surface.render_node;
-            let timer = if is_multi_gpu {
-                Timer::immediate()
-            } else {
-                // output_refresh is in millihertz (mHz); convert to µs/frame.
-                let frame_period_us = 1_000_000_000f32 / output_refresh as f32;
-                let avg_us = surface.avg_render_time_us;
-                let gpu_us = surface.avg_gpu_time_us;
-                let draw_delay_us = super::schedule::draw_delay_us(frame_period_us, avg_us, gpu_us);
-                trace!(
-                    draw_delay_us,
-                    frame_period_us,
-                    avg_us,
-                    gpu_us,
-                    "scheduling draw phase on {:?}",
-                    crtc
-                );
-                let delay = Duration::from_micros(draw_delay_us as u64);
-                crate::render_phase_stats::record_draw_delay(delay);
-                Timer::from_duration(delay)
+            let timer = match draw {
+                crate::frame_pacing::Draw::In(draw_delay_us) if !is_multi_gpu => {
+                    trace!(
+                        draw_delay_us,
+                        frame_period_us = surface.pacer.period_us(),
+                        avg_us = surface.pacer.avg_cpu_us(),
+                        gpu_us = surface.pacer.avg_gpu_us(),
+                        "scheduling draw phase on {:?}",
+                        crtc
+                    );
+                    let delay = Duration::from_micros(draw_delay_us as u64);
+                    crate::render_phase_stats::record_draw_delay(delay);
+                    Timer::from_duration(delay)
+                }
+                _ => Timer::immediate(),
             };
 
             self.handle
@@ -840,10 +826,11 @@ impl<A: RendererApi> Otto<UdevData<A>> {
         };
         // Everything requested up to now is seen by this pass; a request that
         // lands later is owed another one (checked at VBlank and by the loop).
-        surface.seen_redraw_gen = self
-            .backend_data
-            .redraw_generation
-            .load(std::sync::atomic::Ordering::Acquire);
+        surface.pacer.begin_pass(
+            self.backend_data
+                .redraw_generation
+                .load(std::sync::atomic::Ordering::Acquire),
+        );
 
         // A demoted window's content was hidden/blanked in the windows plane
         // while it was promoted; on demotion force a full-buffer redraw so the
@@ -1892,49 +1879,43 @@ impl<A: RendererApi> Otto<UdevData<A>> {
             self.update_dnd();
         }
 
-        // Update the running average of render time (EMA with α=0.1)
+        // The pass's cost feeds the next deadline; a pass that drew nothing
+        // while an animation is in flight is followed by one on a timer.
         let render_time_us = start.elapsed().as_micros() as f32;
         let has_animations = self.scene_element.has_pending_animations();
         let was_rendered = result.as_ref().map(|o| o.rendered).unwrap_or(false);
-        let (frame_scheduled, reschedule) =
-            super::schedule::after_pass(was_rendered, reschedule, has_animations);
+        let mut reschedule_us = None;
         if let Some(device) = self.backend_data.backends.get_mut(&node) {
             if let Some(surface) = device.surfaces.get_mut(&crtc) {
-                surface.avg_render_time_us =
-                    surface.avg_render_time_us * 0.9 + render_time_us * 0.1;
+                // Known before the first VBlank too: a follow-up pass is
+                // timed from the mode.
+                if let Some(mode) = output.current_mode() {
+                    surface.pacer.set_refresh_mhz(mode.refresh);
+                }
+                reschedule_us = surface.pacer.end_pass(
+                    render_time_us,
+                    was_rendered,
+                    reschedule,
+                    has_animations,
+                );
                 if was_rendered {
                     surface.has_rendered_once = true;
                 }
                 if result.is_ok() {
                     surface.rendered_damage_gen = frame_gen;
                 }
-                surface.frame_scheduled = frame_scheduled;
             }
         }
         if was_rendered {
             self.watch_gpu_time(node, crtc);
         }
 
-        if reschedule {
-            let output_refresh = match output.current_mode() {
-                Some(mode) => mode.refresh,
-                None => return,
-            };
-            // Schedule the next render early enough to finish — CPU pass and
-            // GPU composite — before the next VBlank; see
-            // `schedule::draw_delay_us` for the margin and the 1 ms floor.
-            //
-            // `output_refresh` is in millihertz (mHz), so the frame period in
-            // microseconds is 1_000_000_000 / refresh_mHz (not 1_000_000).
-            let frame_period_us = 1_000_000_000f32 / output_refresh as f32;
-            let (avg_us, gpu_us) = self
-                .backend_data
-                .backends
-                .get(&node)
-                .and_then(|d| d.surfaces.get(&crtc))
-                .map(|s| (s.avg_render_time_us, s.avg_gpu_time_us))
-                .unwrap_or((2000.0, 0.0));
-            let delay_us = super::schedule::draw_delay_us(frame_period_us, avg_us, gpu_us);
+        if let Some(delay_us) = reschedule_us {
+            if output.current_mode().is_none() {
+                return;
+            }
+            // Early enough to finish — CPU pass and GPU composite — before
+            // the next VBlank; see `frame_pacing::draw_delay_us`.
             let delay = Duration::from_micros(delay_us as u64);
             crate::render_phase_stats::record_draw_delay(delay);
             let timer = Timer::from_duration(delay);
@@ -1944,9 +1925,6 @@ impl<A: RendererApi> Otto<UdevData<A>> {
                     TimeoutAction::Drop
                 })
                 .expect("failed to schedule frame timer");
-        } else {
-            let _elapsed = start.elapsed();
-            //tracing::trace!(?elapsed, "rendered surface");
         }
 
         // Multi-output damage lifecycle: engine damage can only be cleared
@@ -1961,10 +1939,9 @@ impl<A: RendererApi> Otto<UdevData<A>> {
             for (c, s) in d.surfaces.iter_mut() {
                 if s.rendered_damage_gen < gen {
                     all_caught_up = false;
-                    if !s.frame_scheduled {
-                        // Marks the surface as scheduled — the same invariant
-                        // the input kick in init.rs relies on.
-                        s.frame_scheduled = true;
+                    // Marks the surface as scheduled — the same invariant
+                    // the input kick in init.rs relies on.
+                    if s.pacer.claim() {
                         lagging.push((*n, *c));
                     }
                 }
@@ -3310,43 +3287,25 @@ pub(super) fn initial_render<A: RendererApi>(
 
 impl<A: RendererApi> Otto<UdevData<A>> {
     /// Runs the pass a wake-up asks for on an idle surface: on the VBlank
-    /// rhythm (`schedule::wake_delay_us`) when the surface has seen a VBlank,
+    /// rhythm (`FramePacer::wake`) when the surface has seen a VBlank,
     /// right away otherwise.
     pub(super) fn render_on_wake(&mut self, node: DrmNode, crtc: crtc::Handle) {
-        let timing = self
+        let draw = self
             .backend_data
             .backends
-            .get(&node)
-            .and_then(|d| d.surfaces.get(&crtc))
-            .and_then(|s| {
-                let last = s.last_vblank?;
-                (s.frame_period_us > 0.0).then(|| {
-                    let since = last.elapsed().as_micros() as f32;
-                    let gpu_us = s.avg_gpu_time_us;
-                    let delay = super::schedule::draw_delay_us(
-                        s.frame_period_us,
-                        s.avg_render_time_us,
-                        gpu_us,
-                    );
-                    let budget = super::schedule::draw_budget_us(s.avg_render_time_us, gpu_us);
-                    super::schedule::wake_delay_us(since, s.frame_period_us, delay, budget)
-                })
+            .get_mut(&node)
+            .and_then(|d| d.surfaces.get_mut(&crtc))
+            .map(|s| {
+                let since = s.last_vblank.map(|last| last.elapsed().as_micros() as f32);
+                s.pacer.wake(since)
             });
-        let wait_us = match timing {
-            Some(wait) if wait > 0.0 => wait,
+        let wait_us = match draw {
+            Some(crate::frame_pacing::Draw::In(wait)) => wait,
             _ => {
                 self.render(node, Some(crtc));
                 return;
             }
         };
-        if let Some(surface) = self
-            .backend_data
-            .backends
-            .get_mut(&node)
-            .and_then(|d| d.surfaces.get_mut(&crtc))
-        {
-            surface.frame_scheduled = true;
-        }
         let delay = Duration::from_micros(wait_us as u64);
         crate::render_phase_stats::record_draw_delay(delay);
         self.handle
@@ -3363,8 +3322,8 @@ impl<A: RendererApi> Otto<UdevData<A>> {
     ///
     /// The primary fence signals when the composite is done; its sync file
     /// becomes readable then, and the event loop reports it without anyone
-    /// blocking. The time from now to that moment feeds `avg_gpu_time_us`,
-    /// which the next deadline counts (see `schedule::draw_delay_us`).
+    /// blocking. The time from now to that moment feeds the pacer's GPU
+    /// estimate, which the next deadline counts (`frame_pacing::draw_delay_us`).
     /// A fence that cannot be exported leaves the average as it was.
     fn watch_gpu_time(&mut self, node: DrmNode, crtc: crtc::Handle) {
         #[cfg(feature = "renderer_sync")]
@@ -3389,9 +3348,7 @@ impl<A: RendererApi> Otto<UdevData<A>> {
                     .get_mut(&node)
                     .and_then(|d| d.surfaces.get_mut(&crtc))
                 {
-                    let sample_us = gpu_time.as_micros() as f32;
-                    surface.avg_gpu_time_us =
-                        super::schedule::gpu_estimate_us(surface.avg_gpu_time_us, sample_us);
+                    surface.pacer.record_gpu(gpu_time.as_micros() as f32);
                 }
                 Ok(PostAction::Remove)
             });

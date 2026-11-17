@@ -163,7 +163,7 @@ This is the production loop, and the only one with real VBlank timing.
      CPU and the GPU composite it submits — is done by the VBlank it aims
      at, with the time doubled as margin: `n × frame_period − 2 × (average
      CPU pass + average GPU composite)`, `n` the first number of periods the
-     budget fits, at least 1 ms (`schedule::draw_delay_us`). The GPU term is
+     budget fits, at least 1 ms (`frame_pacing::draw_delay_us`). The GPU term is
      measured without blocking: each pass exports its primary fence as a
      sync file and the event loop notes when it becomes readable
      (`watch_gpu_time`); the estimate rises fast and falls slowly. A budget
@@ -184,6 +184,38 @@ This is the production loop, and the only one with real VBlank timing.
    `wp_presentation` feedback with hardware clock bits when available.
    Temporary DRM errors either pause scheduling (device inactive) or trigger a
    retry, depending on the error class.
+
+Every timing decision above belongs to one `FramePacer` per surface
+(`src/frame_pacing/mod.rs`): whether a VBlank owes a pass and when it starts,
+where a wake-up from idle lands, the follow-up of a pass that drew nothing,
+the CPU and GPU estimates, and the keeping-up gate on the callback tick. The
+backend only feeds it times and turns its answers into calloop timers; the
+pacer reads no clock and knows no DRM device.
+
+### Measuring frame pacing
+
+Because the pacer is pure, it can be driven by something other than DRM.
+`src/frame_pacing/sim.rs` is a discrete-event simulator of the parts of this
+loop that decide timing: a display scanning out a mode read from an EDID
+(`src/frame_pacing/edid.rs`) with a perfect VBlank, a flip at the first VBlank
+after the composite's GPU work is done, one event-loop thread that a pass
+blocks for its CPU time, the VBlank-cadence ticks, callbacks on commit, and
+clients that paint on frame callbacks or on their own clock. Costs come from
+a seeded generator, so every run gives the same numbers.
+
+```sh
+cargo bench --bench frame_pacing                 # table of the standard scenarios
+cargo bench --bench frame_pacing -- --edid /sys/class/drm/card1-eDP-1/edid
+cargo bench --bench frame_pacing -- --write-baseline benches/frame_pacing.baseline.json
+```
+
+It reports, per scenario, flips and passes per second, VBlanks missed against
+the one the pass aimed at, and per client its presented fps, frame interval,
+commit-to-scanout latency, superseded frames and cadence breaks. CI runs it
+against `benches/frame_pacing.baseline.json` and fails on a regression;
+refresh the baseline when a change is meant to move the numbers. It does not
+model GPU contention between clients and the compositor, plane scanout,
+several outputs or VRR, so a real session still has the last word.
 
 ## Winit backend: `src/winit.rs`
 

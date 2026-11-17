@@ -145,28 +145,14 @@ pub struct SurfaceData {
     /// Rendering metrics
     #[cfg(feature = "metrics")]
     pub(super) render_metrics: Option<Arc<crate::render_metrics::RenderMetrics>>,
-    /// Exponential moving average of render time in microseconds.
-    /// Used to schedule reschedule timers with proper headroom.
-    pub(super) avg_render_time_us: f32,
-    /// Exponential moving average of the GPU time a pass's composite takes
-    /// after it is submitted, in microseconds: from the end of the pass to
-    /// the primary fence signalling. The draw deadline counts it with the
-    /// CPU time (`schedule::draw_delay_us`); zero until a fence was watched.
-    pub(super) avg_gpu_time_us: f32,
-    /// When the last VBlank was acknowledged and how long its period is,
-    /// so a pass asked for while the surface idles can be placed on the
-    /// VBlank rhythm (`schedule::wake_delay_us`).
+    /// When to draw and when not: pass-cost estimates, the refresh period,
+    /// whether a pass is on its way and the requests the last one saw. See
+    /// `crate::frame_pacing`.
+    pub(super) pacer: crate::frame_pacing::FramePacer,
+    /// When the last VBlank was acknowledged, so a pass asked for while the
+    /// surface idles can be placed on the VBlank rhythm
+    /// (`FramePacer::wake`).
     pub(super) last_vblank: Option<std::time::Instant>,
-    pub(super) frame_period_us: f32,
-    /// A draw pass is on its way: a deadline timer is inserted, or a frame
-    /// is queued and its VBlank decides the next one. While set, nothing
-    /// else schedules a pass for this surface — the pending one sees every
-    /// change that lands before it runs.
-    pub(super) frame_scheduled: bool,
-    /// The redraw-request generation the last pass started from. A newer
-    /// generation at VBlank means input or a commit arrived since, and the
-    /// next pass is owed.
-    pub(super) seen_redraw_gen: u64,
     /// The last pass had a reason to draw every VBlank regardless of scene
     /// damage: a fullscreen scanout window (its commits leave no scene
     /// damage), a screencopy or screencast consumer, a drag icon, or an

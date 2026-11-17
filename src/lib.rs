@@ -20,6 +20,7 @@ pub mod debug_info;
 pub mod desk;
 pub mod desktop_widget;
 pub mod focus;
+pub mod frame_pacing;
 #[cfg(feature = "headless")]
 pub mod headless;
 pub mod input;

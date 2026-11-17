@@ -14,7 +14,6 @@ pub mod input;
 pub mod input_config;
 pub mod planes;
 pub mod render;
-pub mod schedule;
 pub mod types;
 
 // Re-export public API

@@ -306,7 +306,11 @@ impl FrameCallbackSend {
 }
 
 fn due_on_commit(full_rate: bool, sent: Duration, period: Duration, now: Duration) -> bool {
-    full_rate && now.saturating_sub(sent) >= period.mul_f32(0.95)
+    crate::frame_pacing::callback_due_on_commit(
+        full_rate,
+        now.saturating_sub(sent).as_secs_f32() * 1e6,
+        period.as_secs_f32() * 1e6,
+    )
 }
 
 /// The last VBlank-paced send to each toplevel or layer surface, by its
