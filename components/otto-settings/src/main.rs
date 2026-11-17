@@ -437,6 +437,9 @@ fn select_ids() -> Vec<&'static str> {
     // The Sound pane's device pop-ups, whose rows only appear once the sound
     // server has answered.
     ids.extend(panes::sound::slot_ids());
+    // The Network pane's pop-ups, whose rows only appear once NetworkManager
+    // has answered.
+    ids.extend_from_slice(panes::network::slot_ids());
     ids
 }
 
@@ -622,6 +625,8 @@ fn open_menu(
             choices
         } else if let Some(choices) = panes::sound::menu_choices(select.id) {
             choices
+        } else if let Some(choices) = panes::network::menu_choices(select.id) {
+            choices
         } else if let Some(choices) = panes::keyboard_layouts::menu_choices(select.id) {
             choices
         } else if let Some(choices) = panes::desk::menu_choices(select.id) {
@@ -698,6 +703,7 @@ fn open_menu(
                 if panes::privacy::choose(id, value)
                     || panes::account::choose(id, value)
                     || panes::sound::choose(id, value)
+                    || panes::network::choose(id, value)
                     || panes::keyboard_layouts::choose(id, value)
                     || panes::desk::choose(id, value)
                     || panes::startup::choose(id, value)
@@ -802,6 +808,7 @@ fn activate(held: view::Pressed, editing: &Arc<Mutex<Option<Editing>>>) {
             panes::desk::press(row, button);
             panes::dictation::press(row, button);
             panes::keyboard_layouts::press(row, button);
+            panes::network::press(row, button);
             if let Some((id, name)) = agents::take_rename() {
                 start_edit(
                     editing,
@@ -839,6 +846,7 @@ fn activate(held: view::Pressed, editing: &Arc<Mutex<Option<Editing>>>) {
             panes::keyboard_layouts::remove(id);
             panes::search::remove(id);
             panes::privacy::remove(id);
+            panes::network::remove(id);
         }
         // A second press on the listening line's button stops it.
         view::Pressed::Record(index) => keyboard::set_recording(
@@ -896,6 +904,10 @@ fn apply(id: &str, value: settings_client::Value) {
     }
     // The account picture goes to AccountsService, not to a setting.
     if panes::account::apply(id, &value) {
+        return;
+    }
+    // The Network pane's switches belong to NetworkManager.
+    if panes::network::apply(id, &value) {
         return;
     }
     // The Sound pane's devices, volumes and mutes belong to the sound server.
@@ -1115,6 +1127,7 @@ fn describe_row(tree: &mut A11yTree, row: &model::Row, bounds: Rect) {
                     .or_else(|| panes::desk::display(id, current))
                     .or_else(|| panes::startup::display(id, current))
                     .or_else(|| panes::dictation::display(id, current))
+                    .or_else(|| panes::network::display(id, current))
                     .or_else(|| panes::sound::display(id, current))
                     .unwrap_or_else(|| settings_client::display_choice(id, current)),
                 None => current.clone(),
@@ -1876,6 +1889,7 @@ impl SettingsApp {
                     return false;
                 };
                 panes::sound::select_tab(id, next);
+                panes::network::select_tab(id, next);
             }
             model::Control::Button(labels) if step == 0.0 => {
                 // The keyboard is on one particular button, so that is the one
@@ -2790,6 +2804,7 @@ impl App for SettingsApp {
                             // A tab is a view of the pane, not a setting: the
                             // pane owning the row switches it and is rebuilt.
                             panes::sound::select_tab(row, index);
+                            panes::network::select_tab(row, index);
                             mark_pane_dirty(&pane_dirty);
                         } else if let Some(select) = settings.select_hit(x, y, offset) {
                             close_pickers(&pickers, &open_picker);
@@ -3152,6 +3167,8 @@ impl App for SettingsApp {
         panes::search::set_shown(*self.selected.lock().unwrap() == model::SEARCH_PANE);
         // The Privacy pane reads the permission store when it comes on screen.
         panes::privacy::set_shown(*self.selected.lock().unwrap() == model::PRIVACY_PANE);
+        // The Network pane reads NetworkManager when it comes on screen.
+        panes::network::set_shown(*self.selected.lock().unwrap() == model::NETWORK_PANE);
         // The Sound pane reads the sound server when it comes on screen.
         panes::sound::set_shown(*self.selected.lock().unwrap() == model::SOUND_PANE);
         // The Agents pane asks systemd about its service only while it is on

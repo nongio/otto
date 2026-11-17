@@ -595,6 +595,14 @@ pub static SETTINGS: &[SettingSpec] = &[
         Live,
     ),
     spec(
+        "topbar.show_network",
+        Bool,
+        "Show network status",
+        "The Wi-Fi and wired indicator in the top bar, with a menu to join \
+         a network. Shown where NetworkManager runs.",
+        Live,
+    ),
+    spec(
         "topbar.clock_format",
         Str,
         "Clock format",

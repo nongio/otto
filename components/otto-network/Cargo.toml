@@ -1,0 +1,22 @@
+[package]
+name = "otto-network"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Otto's view of the network through NetworkManager, shared by the top bar and Settings"
+
+# No toolkit, no Wayland: a snapshot model and the NetworkManager calls behind
+# it, so anything that shows or changes the network can link it.
+[dependencies]
+futures-util.workspace = true
+otto-dbus = { path = "../otto-dbus" }
+tokio = { workspace = true, features = ["rt", "time", "macros", "sync"] }
+zbus.workspace = true
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

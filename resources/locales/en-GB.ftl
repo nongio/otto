@@ -65,6 +65,7 @@ dock-quit = Quit
 settings-pane-general = General
 settings-pane-appearance = Appearance
 settings-pane-displays = Displays
+settings-pane-network = Network
 settings-pane-dock = Dock
 settings-pane-top-bar = Top bar
 settings-pane-tiling = Tiling
@@ -322,6 +323,111 @@ settings-sound-no-playback = No app is playing sound
 settings-sound-no-recording = No app is recording sound
 settings-sound-no-cards = No sound cards
 
+
+## Settings — Network
+
+settings-network-reading = Reading the network…
+settings-network-unavailable = NetworkManager is not running
+settings-network-unavailable-detail = Otto shows and changes the network through NetworkManager. Start it, or use the tools of the network service you run.
+settings-network-wifi = Wi-Fi
+settings-network-wifi-hard-blocked = Off with the wireless switch on the computer
+settings-network-wifi-soft-blocked = Off with airplane mode. Turning Wi-Fi on ends it.
+settings-network-current = Network
+settings-network-not-connected = Not connected
+settings-show-network = Show network status in the top bar
+settings-group-network-status = Status
+settings-group-network-known = Known networks
+settings-network-kind-wifi = Wi-Fi
+settings-network-kind-ethernet = Ethernet
+settings-network-kind-vpn = VPN
+settings-network-state-connected = Connected
+settings-network-state-connecting = Connecting…
+settings-network-state-disconnecting = Disconnecting…
+settings-network-state-disconnected = Not connected
+settings-network-state-unplugged = Cable unplugged
+settings-network-state-off = Off
+settings-network-state-failed = Failed to connect
+settings-network-ipv4 = IPv4 address
+settings-network-router = Router
+settings-network-dns = DNS servers
+settings-network-ipv6 = IPv6 address
+settings-network-hardware-address = Hardware address
+settings-network-limited = Connected, but the internet cannot be reached. A sign-in page may be waiting in your browser.
+settings-network-known-none = No saved networks
+# Under a saved network's name; the switch beside it is auto-join.
+settings-network-known-detail = Join automatically
+settings-network-known-in-use = In use · Join automatically
+# The button that deletes a saved network.
+settings-network-forget = Forget
+# The groups and rows of the Wi-Fi tab's link details.
+settings-group-network-connection = Connection
+settings-network-signal = Signal
+settings-network-signal-weak = Weak
+settings-network-signal-fair = Fair
+settings-network-signal-good = Good
+settings-network-signal-excellent = Excellent
+settings-network-band = Band
+# $band is e.g. "5 GHz", $channel a number.
+settings-network-band-value = { $band }, channel { $channel }
+settings-network-link-rate = Link rate
+settings-network-security = Security
+settings-network-security-open = None
+settings-network-security-wpa2 = WPA2 Personal
+settings-network-security-wpa3 = WPA3 Personal
+settings-network-security-enterprise = WPA Enterprise
+# The access point's hardware address.
+settings-network-bssid = Access point
+# $name is the connection's name.
+settings-group-network-tcpip = TCP/IP — { $name }
+# The pop-up choosing which saved network the TCP/IP rows edit.
+settings-network-settings-for = Settings for
+settings-network-configure-ipv4 = Configure IPv4
+settings-network-configure-ipv6 = Configure IPv6
+settings-network-method-dhcp = Automatic (DHCP)
+settings-network-method-auto = Automatic
+settings-network-method-dhcp-only = Automatic, DHCP only
+settings-network-method-manual = Manually
+settings-network-method-link-local = Link-local only
+settings-network-method-shared = Share this connection
+settings-network-method-off = Off
+settings-network-router-v6 = IPv6 router
+settings-network-address-detail-v4 = With its prefix, such as 192.168.1.20/24
+settings-network-address-detail-v6 = With its prefix, such as fd00::20/64
+settings-group-network-dns = DNS
+settings-network-dns-auto = Automatic DNS
+settings-network-dns-auto-detail = Also ask the servers the network offers
+settings-network-dns-detail = Asked first. Separate several with commas.
+settings-network-dns-search = Search domains
+settings-network-dns-search-detail = Added to names without a dot. ~domain only routes it.
+settings-network-dns-in-use = Servers in use
+# The row holding Revert and Apply.
+settings-network-changes = Changes
+settings-network-revert = Revert
+settings-network-apply = Apply
+settings-network-unsaved = Not applied yet
+settings-network-applying = Applying…
+# $reason is NetworkManager's own message.
+settings-network-apply-failed = NetworkManager refused the change: { $reason }
+# $family is IPv4 or IPv6.
+settings-network-error-no-address = { $family } is set to Manually but has no address.
+settings-network-error-bad-address = { $family }: “{ $value }” is not an address with a prefix.
+settings-network-error-bad-router = { $family }: “{ $value }” is not a router address.
+settings-network-error-address-v4 = An IPv4 address is not complete yet.
+settings-network-error-address-v6 = An IPv6 address is not complete yet.
+settings-network-error-bad-dns = “{ $value }” is not a DNS server address.
+settings-network-error-bad-domain = “{ $value }” is not a domain name.
+settings-network-ethernet-no-profile = No wired connection is saved yet. Plug in a cable and NetworkManager makes one.
+settings-group-network-vpn = VPN
+settings-network-vpn-none = No VPN connections
+settings-network-vpn-add = Add a VPN
+settings-network-vpn-add-detail = A WireGuard .conf or an OpenVPN .ovpn file
+settings-network-vpn-import = Import…
+settings-network-vpn-import-title = Import a VPN
+settings-network-vpn-import-filter = VPN configurations
+settings-network-vpn-import-unknown = Only WireGuard .conf and OpenVPN .ovpn files can be imported
+# $reason is nmcli's own message.
+settings-network-vpn-import-failed = Not imported: { $reason }
+settings-network-vpn-import-no-nmcli = Not imported: nmcli is not installed
 
 ## Settings — Power
 
@@ -1148,6 +1254,62 @@ bar-power-performance = Performance
 # Last entry in the battery menu.
 bar-power-settings = Power Settings…
 bar-keyboard-settings = Keyboard Settings…
+
+## Top bar — network
+
+# The Wi-Fi switch at the top of the network menu.
+bar-network-wifi = Wi-Fi
+bar-network-wifi-hard-blocked = Wi-Fi — off with the wireless switch
+bar-network-wifi-soft-blocked = Off with airplane mode
+# A network or VPN coming up. $name is its name.
+bar-network-connecting = { $name } — connecting…
+# Beside a network that asks for a password, in the shortcut column.
+bar-network-secured = Secured
+bar-network-none-found = No networks found
+# The submenu holding networks that are not saved.
+bar-network-other = Other Networks
+bar-network-ethernet-connected = Ethernet — connected
+bar-network-ethernet-connecting = Ethernet — connecting…
+bar-network-ethernet-unplugged = Ethernet — cable unplugged
+bar-network-ethernet-disconnected = Ethernet — not connected
+bar-network-disconnect = Disconnect from { $name }
+bar-network-settings = Network Settings…
+bar-network-join-other = Join Other Network…
+# Ethernet with its negotiated speed, e.g. "1 Gb/s".
+bar-network-ethernet-connected-speed = Ethernet — connected, { $speed }
+# Part of the line under the connected network: band · channel · rate · address.
+bar-network-channel = channel { $channel }
+
+## Top bar — Wi-Fi password dialog
+
+# $name is the network's name.
+bar-join-title = Join “{ $name }”
+bar-join-body = Enter the password for this Wi-Fi network.
+bar-join-body-wep = Enter the WEP key for this Wi-Fi network.
+bar-join-body-retry = The password was not accepted. Enter it again.
+bar-join-hidden-title = Join a hidden network
+bar-join-hidden-body = Enter the name of the network and how it is secured.
+bar-join-name = Network name
+bar-join-password = Password
+bar-join-show-password = Show password
+# The first choice of how a hidden network is secured: no password.
+bar-join-security-none = None
+bar-join-cancel = Cancel
+bar-join-join = Join
+# What a screen reader calls the network indicator.
+bar-network-label-disconnected = Network: not connected
+bar-network-label-off = Network: Wi-Fi off
+bar-network-label-hard-blocked = Network: Wi-Fi off with the wireless switch
+bar-network-label-connecting = Network: connecting
+bar-network-label-wired = Network: wired, connected
+# $signal is one of the bar-network-signal-* words.
+bar-network-label-wifi = Wi-Fi: connected to { $name }, { $signal } signal
+# $state is one of the labels above.
+bar-network-label-limited = { $state }, no internet
+bar-network-signal-weak = weak
+bar-network-signal-fair = fair
+bar-network-signal-good = good
+bar-network-signal-excellent = excellent
 bar-keyboard-layout-label = Keyboard layout: { $layout }
 bar-otto-menu = Otto
 bar-otto-update-available = New Version Available…
@@ -1215,6 +1377,8 @@ schema-desktop-widget-label = Background widget
 schema-desktop-widget-description = A full-screen page drawn over the wallpaper, behind the windows. Needs ewwii.
 schema-topbar-show-clock-label = Show date and time
 schema-topbar-show-clock-description = The clock at the right end of the top bar.
+schema-topbar-show-network-label = Show network status
+schema-topbar-show-network-description = The Wi-Fi and wired indicator in the top bar, with a menu to join a network. Shown where NetworkManager runs.
 schema-topbar-clock-format-label = Clock format
 schema-topbar-clock-format-description = How the top bar writes the date and time, as a strftime format. Empty follows your language.
 schema-topbar-show-app-menu-label = Show application menus

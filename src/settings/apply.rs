@@ -75,6 +75,7 @@ pub fn is_applied_live(id: &str) -> bool {
             | "desktop.widget"
             | "topbar.show_app_menu"
             | "topbar.show_clock"
+            | "topbar.show_network"
             | "topbar.clock_format"
             | "search.folders"
             | "search.skip_code_repositories"
@@ -402,7 +403,10 @@ pub fn apply_live<B: Backend + 'static>(state: &mut Otto<B>, id: &str) -> Result
         }
         // Nothing to do here: otto-bar follows `Changed` and reads the new
         // value back itself.
-        "topbar.show_app_menu" | "topbar.show_clock" | "topbar.clock_format" => Ok(()),
+        "topbar.show_app_menu"
+        | "topbar.show_clock"
+        | "topbar.show_network"
+        | "topbar.clock_format" => Ok(()),
         // LocalSearch's own settings: pushed to it on a thread of its own,
         // since writing them runs `gsettings`.
         "search.folders" => {
@@ -533,6 +537,7 @@ mod tests {
             "lock.on_suspend",
             "topbar.show_app_menu",
             "topbar.show_clock",
+            "topbar.show_network",
             "topbar.clock_format",
         ] {
             assert_eq!(

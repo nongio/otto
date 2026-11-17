@@ -52,6 +52,7 @@ depends=(
     "xorg-xwayland"
 )
 optdepends=(
+    "networkmanager: the network indicator, its menu and the Network pane in Settings"
     "xdg-desktop-portal: desktop integration"
     "fprintd: fingerprint unlock for otto-lock, otto-greeter and otto-authorize"
     "greetd: login manager otto --login hosts a greeter for"

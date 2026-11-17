@@ -180,6 +180,7 @@ members = [
     "components/otto-stash",
     "components/otto-canvas",
     "components/otto-search",
+    "components/otto-network",
     "components/otto-foundations",
     "components/otto-dictate",
     "crates/otto-render",

@@ -8,6 +8,7 @@ use otto_kit::{
     App, AppContext, ObjectId,
 };
 use smithay_client_toolkit::{
+    seat::keyboard::KeyEvent,
     seat::pointer::{PointerEvent, PointerEventKind},
     shell::xdg::window::WindowConfigure,
     shell::xdg::XdgPositioner,
@@ -33,6 +34,9 @@ const BATTERY: otto_kit::focus::FocusId = otto_kit::focus::FocusId::from_raw(0xB
 const KEYBOARD_LAYOUT: otto_kit::focus::FocusId = otto_kit::focus::FocusId::from_raw(0xBA51_0003);
 /// The Otto mark's, which opens the Otto menu.
 const OTTO_MENU: otto_kit::focus::FocusId = otto_kit::focus::FocusId::from_raw(0xBA51_0004);
+
+/// The network indicator's.
+const NETWORK: otto_kit::focus::FocusId = otto_kit::focus::FocusId::from_raw(0xBA51_0005);
 
 /// One menu's, by its place on the bar.
 fn menu_focus(index: usize) -> otto_kit::focus::FocusId {
@@ -121,6 +125,14 @@ pub struct TopBarApp {
     open_power_menu: Option<PowerMenu>,
     /// The keyboard layout menu, while it is open.
     open_layout_menu: Option<ContextMenu>,
+    /// The network menu, while it is open.
+    open_network_menu: Option<ContextMenu>,
+    /// Whether the network menu's Other Networks submenu was open on the
+    /// last update, to scan when it opens.
+    network_submenu_was_open: bool,
+    last_network_gen: u64,
+    /// The Wi-Fi password dialog, while it is up.
+    join_dialog: Option<crate::join_dialog::JoinDialog>,
     /// The Otto menu, hanging from the mark at the left end, while it is open.
     open_otto_menu: Option<ContextMenu>,
     /// Whether `open_otto_menu` is the application's menu, under its name,
@@ -153,6 +165,10 @@ impl TopBarApp {
             app_menu_address: None,
             open_power_menu: None,
             open_layout_menu: None,
+            open_network_menu: None,
+            network_submenu_was_open: false,
+            last_network_gen: 0,
+            join_dialog: None,
             open_otto_menu: None,
             app_name_menu_open: false,
         }
@@ -625,6 +641,146 @@ impl TopBarApp {
         self.redraw_right();
     }
 
+    fn close_network_menu(&mut self) {
+        if let Some(menu) = self.open_network_menu.take() {
+            menu.hide_animated();
+        }
+        if let Some(ref surface) = self.right_surface {
+            surface.set_keyboard_interactivity(KeyboardInteractivity::None);
+        }
+        if self.right.network_active {
+            self.right.network_active = false;
+            self.redraw_right();
+        }
+    }
+
+    /// Open the network menu, or close it when it is open: the same toggle
+    /// for a pointer and for a screen reader.
+    fn toggle_network_menu(&mut self) {
+        let was_open = self.open_network_menu.is_some();
+        self.close_menu();
+        self.close_power_menu();
+        self.close_layout_menu();
+        self.close_network_menu();
+        if !was_open {
+            crate::network::scan_soon();
+            self.show_network_menu();
+        }
+    }
+
+    /// Show the network menu: the Wi-Fi switch, the networks in range, the
+    /// wired devices, the VPNs, and the way to Settings.
+    fn show_network_menu(&mut self) {
+        let Some(ref surface) = self.right_surface else {
+            return;
+        };
+        let Some((ix, iy, iw, ih)) = self.right.network_pill_rect() else {
+            return;
+        };
+        let items = network_menu_items();
+        if items.is_empty() {
+            return;
+        }
+        let menu = ContextMenu::new(items).on_item_click(|action_id| {
+            if action_id == "settings" {
+                open_settings(&["--pane", "network"]);
+            } else {
+                crate::network::activate(action_id);
+            }
+        });
+
+        let Ok(positioner) = XdgPositioner::new(AppContext::xdg_shell_state()) else {
+            return;
+        };
+        let style = otto_kit::components::context_menu::ContextMenuStyle::default();
+        let state = menu.state();
+        let menu_items = state.borrow().items_at_depth(0).to_vec();
+        let (menu_w, menu_h) =
+            otto_kit::components::context_menu::ContextMenuRenderer::measure_items(
+                &menu_items,
+                &style,
+            );
+        positioner.set_size(menu_w as i32, menu_h as i32);
+        positioner.set_anchor_rect(ix as i32, iy as i32, iw as i32, ih as i32);
+        positioner.set_anchor(xdg_positioner::Anchor::BottomRight);
+        positioner.set_gravity(xdg_positioner::Gravity::BottomLeft);
+        positioner.set_offset(0, 1);
+        positioner.set_constraint_adjustment(
+            xdg_positioner::ConstraintAdjustment::SlideX
+                | xdg_positioner::ConstraintAdjustment::SlideY
+                | xdg_positioner::ConstraintAdjustment::FlipX
+                | xdg_positioner::ConstraintAdjustment::FlipY,
+        );
+
+        menu.show_for_layer(&surface.layer_surface(), &positioner);
+        surface.set_keyboard_interactivity(KeyboardInteractivity::Exclusive);
+        self.open_network_menu = Some(menu);
+        self.right.network_active = true;
+        self.redraw_right();
+    }
+
+    /// NetworkManager changed under an open network menu: a scan found a
+    /// network, the tick moved. Redrawn in place, or shown again at its new
+    /// size when lines came or went. A menu whose indicator went away closes
+    /// with it.
+    fn refresh_network_menu(&mut self) {
+        let Some(menu) = self.open_network_menu.as_ref() else {
+            return;
+        };
+        if !crate::network::visible() {
+            self.close_network_menu();
+            return;
+        }
+        if let MenuRefresh::Resized = menu.refresh(network_menu_items()) {
+            self.close_network_menu();
+            self.show_network_menu();
+        }
+    }
+
+    /// Open the password dialog for `purpose`. Only called with none up:
+    /// the next question waits in its queue until this one ends.
+    fn open_join_dialog(&mut self, purpose: crate::join_dialog::Purpose) {
+        self.close_network_menu();
+        let mut dialog = crate::join_dialog::JoinDialog::new(purpose);
+        if dialog.show() {
+            self.join_dialog = Some(dialog);
+        } else {
+            // No card: end it as cancelled at once, so an agent's question
+            // is answered rather than left waiting, and the bar's keys are
+            // not held for a dialog nobody can see.
+            let outcome = dialog.finish(false);
+            self.finish_join_dialog(outcome);
+        }
+    }
+
+    /// The dialog ended: join, answer the agent, or let it go.
+    fn finish_join_dialog(&mut self, outcome: crate::join_dialog::Outcome) {
+        use crate::join_dialog::{Outcome, Purpose};
+        self.join_dialog = None;
+        match outcome {
+            Outcome::Join {
+                purpose,
+                name,
+                key,
+                password,
+            } => match purpose {
+                Purpose::Join { device, network } => {
+                    crate::network::join_with_password(device, network, password)
+                }
+                Purpose::Hidden { device } => {
+                    crate::network::join_hidden(device, name, key, password)
+                }
+                Purpose::Agent { reply, .. } => {
+                    let _ = reply.send(Some(password));
+                }
+            },
+            Outcome::Cancel(Purpose::Agent { reply, .. }) => {
+                let _ = reply.send(None);
+            }
+            Outcome::Cancel(_) => {}
+        }
+    }
+
     fn close_layout_menu(&mut self) {
         if let Some(menu) = self.open_layout_menu.take() {
             menu.hide_animated();
@@ -775,6 +931,12 @@ impl TopBarApp {
         let x = event.position.0 as f32;
 
         // The layout indicator, like the battery, owns its slice of the panel.
+        if self.right.network_at(x) {
+            self.toggle_network_menu();
+            return;
+        }
+        self.close_network_menu();
+
         if self.right.keyboard_at(x) {
             let was_open = self.open_layout_menu.is_some();
             self.close_menu();
@@ -998,12 +1160,16 @@ impl App for TopBarApp {
         crate::appmenu::spawn_appmenu_registrar();
         crate::power::spawn_power_watcher();
         crate::keyboard_layout::spawn_watcher();
+        crate::network::spawn_watcher();
         crate::clock::spawn_watcher();
 
         Ok(())
     }
 
     fn on_theme_changed(&mut self, _ctx: &AppContext) {
+        if let Some(dialog) = self.join_dialog.as_mut() {
+            dialog.redraw();
+        }
         // The panel background lives in the surface style, set once at startup
         // — before the portal watcher has answered. Re-apply it, and repaint so
         // text and icons pick up the new palette too.
@@ -1022,11 +1188,16 @@ impl App for TopBarApp {
     }
 
     fn on_configure_layer(&mut self, _ctx: &AppContext, _width: i32, _height: i32, _serial: u32) {
-        // Configure fires for each layer surface (spacer, left, right).
-        // We use fixed dimensions, so just redraw on any configure.
+        // Configure fires for each layer surface (spacer, left, right, the
+        // join dialog). We use fixed dimensions, so just redraw on any
+        // configure. A layer surface has no buffer to draw into before its
+        // first configure, so this is the dialog's first real paint.
         self.right.clock.tick();
         self.update_left_panel(false);
         self.update_right_panel(false);
+        if let Some(dialog) = self.join_dialog.as_mut() {
+            dialog.redraw();
+        }
     }
 
     fn on_configure(&mut self, _ctx: &AppContext, _configure: WindowConfigure, _serial: u32) {}
@@ -1038,6 +1209,10 @@ impl App for TopBarApp {
         state: wl_keyboard::KeyState,
         _serial: u32,
     ) {
+        // The password dialog takes its keys through `on_key_event`.
+        if self.join_dialog.is_some() {
+            return;
+        }
         // Forward to open tray context menu
         if let Some(ref mut open) = self.open_menu {
             open.menu.handle_key(key, state);
@@ -1060,6 +1235,14 @@ impl App for TopBarApp {
             menu.handle_key(key, state);
             if !menu.is_visible() {
                 self.close_layout_menu();
+            }
+            return;
+        }
+
+        if let Some(ref mut menu) = self.open_network_menu {
+            menu.handle_key(key, state);
+            if !menu.is_visible() {
+                self.close_network_menu();
             }
             return;
         }
@@ -1113,6 +1296,9 @@ impl App for TopBarApp {
         if self.open_layout_menu.is_some() {
             self.close_layout_menu();
         }
+        if self.open_network_menu.is_some() {
+            self.close_network_menu();
+        }
         if self.open_otto_menu.is_some() {
             self.close_otto_menu();
         }
@@ -1121,6 +1307,13 @@ impl App for TopBarApp {
     /// The bar, described. Which panel is asked for decides what is in it:
     /// the menus on the left, the tray and the clock on the right.
     fn accessibility(&mut self, _ctx: &AppContext, surface: &ObjectId) -> Option<A11yTree> {
+        if let Some(dialog) = self
+            .join_dialog
+            .as_ref()
+            .filter(|d| d.surface_id().as_ref() == Some(surface))
+        {
+            return Some(dialog.accessibility());
+        }
         let left = self
             .left_surface
             .as_ref()
@@ -1232,6 +1425,25 @@ impl App for TopBarApp {
             );
         }
 
+        // The network indicator reads as its state in words, and is
+        // announced when it changes: a dropped connection is worth hearing.
+        if let Some((x, y, w, h)) = self.right.network_rect() {
+            let label = crate::network::label();
+            tree.control(
+                NETWORK,
+                Rect::from_xywh(x, y, w, h),
+                Role::Button,
+                true,
+                |node| {
+                    node.set_label(label);
+                    node.set_expanded(self.open_network_menu.is_some());
+                    node.set_has_popup(otto_kit::accessibility::HasPopup::Menu);
+                    node.add_action(Action::Click);
+                    node.set_live(otto_kit::accessibility::Live::Polite);
+                },
+            );
+        }
+
         // The layout indicator reads as the layout's name, not its code, and
         // is announced when it changes: a switch from a key combination is
         // otherwise silent.
@@ -1280,14 +1492,29 @@ impl App for TopBarApp {
         Some(tree)
     }
 
-    /// A screen reader clicked the bar: open that menu, or activate that tray
-    /// item, exactly as a pointer click does.
+    /// A screen reader acted on the bar or the password dialog. On the bar a
+    /// click opens that menu or activates that tray item, exactly as a
+    /// pointer click does; the dialog takes every action it advertises.
     fn on_accessibility_action(
         &mut self,
         _ctx: &AppContext,
         surface: &ObjectId,
         request: &ActionRequest,
     ) {
+        let on_dialog = self
+            .join_dialog
+            .as_ref()
+            .is_some_and(|d| d.surface_id().as_ref() == Some(surface));
+        if on_dialog {
+            let outcome = self
+                .join_dialog
+                .as_mut()
+                .and_then(|d| d.on_accessibility_action(request));
+            if let Some(outcome) = outcome {
+                self.finish_join_dialog(outcome);
+            }
+            return;
+        }
         if !matches!(request.action, Action::Click) {
             return;
         }
@@ -1310,6 +1537,11 @@ impl App for TopBarApp {
             {
                 self.open_menu_at(index);
             }
+            return;
+        }
+
+        if node == otto_kit::accessibility::node_id(NETWORK) {
+            self.toggle_network_menu();
             return;
         }
 
@@ -1372,6 +1604,14 @@ impl App for TopBarApp {
             self.close_layout_menu();
             dirty = true;
         }
+        let network_menu_gone = self
+            .open_network_menu
+            .as_ref()
+            .is_some_and(|m| !m.is_visible());
+        if network_menu_gone {
+            self.close_network_menu();
+            dirty = true;
+        }
         let otto_menu_gone = self
             .open_otto_menu
             .as_ref()
@@ -1386,6 +1626,54 @@ impl App for TopBarApp {
             self.last_layout_gen = layout_gen;
             self.refresh_layout_menu();
             dirty = true;
+        }
+
+        // A password to ask for: the menu's, or NetworkManager's.
+        if self.join_dialog.is_none() {
+            if let Some(purpose) = crate::network::take_dialog_request() {
+                self.open_join_dialog(purpose);
+            } else if let Some(ask) = crate::secret_agent::take_ask() {
+                self.open_join_dialog(crate::join_dialog::Purpose::Agent {
+                    cancelled: ask.cancelled,
+                    request: ask.request,
+                    retry: ask.retry,
+                    reply: ask.reply,
+                });
+            }
+        }
+        // NetworkManager withdrew the question on screen.
+        let withdrawn = self.join_dialog.as_ref().is_some_and(|d| d.withdrawn());
+        if withdrawn {
+            if let Some(mut dialog) = self.join_dialog.take() {
+                let outcome = dialog.finish(false);
+                self.finish_join_dialog(outcome);
+            }
+        }
+
+        // The network menu is open: scan again once the last one is old,
+        // and as soon as Other Networks opens.
+        if let Some(menu) = self.open_network_menu.as_ref() {
+            let submenu_open = menu.state().borrow().has_open_submenu_at(0);
+            if submenu_open && !self.network_submenu_was_open {
+                crate::network::scan_now();
+            } else {
+                crate::network::scan_soon();
+            }
+            self.network_submenu_was_open = submenu_open;
+        } else {
+            self.network_submenu_was_open = false;
+        }
+
+        // NetworkManager changed something, or the setting moved.
+        let network_gen = crate::network::generation();
+        if network_gen != self.last_network_gen {
+            self.last_network_gen = network_gen;
+            self.refresh_network_menu();
+            dirty = true;
+        }
+        // The connecting animation moved on a step.
+        if crate::network::step_changed() {
+            self.redraw_right();
         }
 
         // Check if clock text changed
@@ -1547,7 +1835,35 @@ impl App for TopBarApp {
         // default format, second boundary when the format shows seconds).
         // Everything else (tray, focus, app menus) wakes the loop via
         // request_wakeup or Wayland events.
-        Some(crate::clock::Clock::until_next_change())
+        let clock = crate::clock::Clock::until_next_change();
+        // The connecting animation steps faster than any clock.
+        let wake = match crate::network::until_next_step() {
+            Some(step) => step.min(clock),
+            None => clock,
+        };
+        // An open network menu scans on a beat, so the list stays current.
+        Some(match self.open_network_menu {
+            Some(_) => wake.min(crate::network::until_next_scan()),
+            None => wake,
+        })
+    }
+
+    fn on_key_event(
+        &mut self,
+        _ctx: &AppContext,
+        event: &KeyEvent,
+        state: wl_keyboard::KeyState,
+        _serial: u32,
+    ) {
+        if state != wl_keyboard::KeyState::Pressed {
+            return;
+        }
+        let Some(dialog) = self.join_dialog.as_mut() else {
+            return;
+        };
+        if let Some(outcome) = dialog.on_key(event) {
+            self.finish_join_dialog(outcome);
+        }
     }
 
     fn on_pointer_event(&mut self, _ctx: &AppContext, events: &[PointerEvent]) {
@@ -1555,6 +1871,21 @@ impl App for TopBarApp {
         let left_wl = self.left_surface.as_ref().map(|s| s.wl_surface().clone());
 
         for event in events {
+            if let Some(dialog) = self.join_dialog.as_mut() {
+                if dialog.is_surface(&event.surface) {
+                    let (x, y) = (event.position.0 as f32, event.position.1 as f32);
+                    match event.kind {
+                        PointerEventKind::Press { button: 0x110, .. } => dialog.press(x, y),
+                        PointerEventKind::Release { button: 0x110, .. } => {
+                            if let Some(outcome) = dialog.release(x, y) {
+                                self.finish_join_dialog(outcome);
+                            }
+                        }
+                        _ => {}
+                    }
+                    continue;
+                }
+            }
             let on_right = right_wl
                 .as_ref()
                 .map(|w| event.surface == *w)
@@ -1772,6 +2103,14 @@ fn app_name_menu_items(app_name: &str) -> Vec<KitMenuItem> {
         ))
         .with_action_id("quit".to_string()),
     ]
+}
+
+/// The network menu's items, from the snapshot as it is now.
+fn network_menu_items() -> Vec<KitMenuItem> {
+    crate::network::menu_items(
+        &crate::network::snapshot(),
+        !battery_config().settings_command.is_empty(),
+    )
 }
 
 /// The keyboard layout menu's items: every layout by its full name, the

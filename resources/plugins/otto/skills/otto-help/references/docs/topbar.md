@@ -218,6 +218,14 @@ Picking one switches to it. **Keyboard Settings…** at the bottom opens the
 keyboard settings. The keycap follows every switch, including one made with
 the layout switch keys.
 
+## Network
+
+The network indicator sits between the keyboard layout and the battery: Wi-Fi
+signal in bars, a wired glyph, or an empty fan when nothing is connected.
+Click it to turn Wi-Fi on or off, join a network (a password dialog opens for
+a secured one), start a VPN, or open **Network Settings…**. See
+[Network](network.md) for the whole of it.
+
 ## Clock
 
 The clock is on the far right. **Settings ▸ Top bar ▸ Clock** turns

@@ -54,6 +54,7 @@ versions: useful day to day, still filling in.
 | [Theming](theming.md) | Light/dark, accent color, fonts, wallpaper, cursors, icons |
 | [Customization](customization.md) | What the appearance settings do, shown on six configurations |
 | [Input](input.md) | Keyboard layout and repeat, touchpad, pointer acceleration |
+| [Network](network.md) | Wi-Fi, Ethernet and VPN: the indicator, joining a network, TCP/IP and DNS |
 | [Audio](audio.md) | UI sound effects and sound themes |
 | [Power Management](power-management.md) | Lid close, power button, suspend, clamshell |
 | [Night Shift](night-shift.md) | Color temperature and brightness |

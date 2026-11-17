@@ -375,7 +375,7 @@ caused it.
 
 The window presents a list of panes and the selected pane's contents, and opens
 on the first. The sidebar lists them the system first, then the desktop, input,
-and accounts, with About last: General, Appearance, Displays, Sound, Power, Dock,
+and accounts, with About last: General, Appearance, Displays, Network, Sound, Power, Dock,
 Top bar, Tiling, Search, Agents, Keyboard, Dictation, Trackpad & Mouse, Users,
 Lock & Login, Privacy, About. Dictation sits with the keyboard because it is
 another way of typing. The panes are:
@@ -489,6 +489,13 @@ another way of typing. The panes are:
   dragged out of the picker that the palette has no name for is sent as
   `#RRGGBB` and is taken as-is under both schemes.
 - **Displays** — see below.
+- **Network** — tabs for Wi-Fi, Ethernet and VPN. Wi-Fi has the switch, the
+  link's signal, band, rate, security and access point, and the saved
+  networks with auto-join and Forget. Wi-Fi and Ethernet each have TCP/IP (IPv4 and IPv6 methods,
+  addresses, router) and DNS (automatic, servers, search domains), edited as
+  a draft and applied with Apply. VPN has a switch and Forget per connection,
+  and Import…. Everything but the indicator switch is NetworkManager's, read
+  while the pane is on screen. See [network.md](network.md).
 - **Dock** — size, position, autohide, magnification, minimise effect, and the
   icon tint: what is tinted — the dock's icons, and whether the app switcher
   joins in — then the colour and strength that govern both. The switcher's
@@ -496,7 +503,7 @@ another way of typing. The panes are:
   says nothing on its own: it borrows the dock's tint, and does nothing while
   that tint is off.
 - **Top bar** — right after Dock. What otto-bar shows: the application
-  menus, then the clock.
+  menus, then the network indicator, then the clock.
 
   The application menu group has one toggle, *Show application menus*
   (`topbar.show_app_menu`, live, on by default). Off, the bar shows only the
@@ -516,6 +523,10 @@ another way of typing. The panes are:
   force. otto-bar reads both settings over `org.otto.Settings` and follows
   `Changed`, so both apply live; the compositor has nothing to reconcile
   ([topbar.md](./topbar.md)).
+
+  The *Network* group has one toggle, *Show network status in the top bar*
+  (`topbar.show_network`, live, on by default). It sits here rather than on
+  the Network pane so that it is reachable on a machine without Wi-Fi.
 - **Keyboard** — repeat delay and rate, the input sources (see below), then
   shortcuts.
 - **Trackpad & Mouse** — the pointer and touchpad settings.

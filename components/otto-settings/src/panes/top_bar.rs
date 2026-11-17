@@ -45,6 +45,15 @@ pub fn build() -> Pane {
                 .detail(otto_kit::t!("settings-show-app-menu-detail"))
                 .id("topbar.show_app_menu")],
             ),
+            // Beside the clock's: every switch for what the bar shows is on
+            // this pane, whatever devices the machine has.
+            group(
+                otto_kit::t!("settings-pane-network"),
+                vec![
+                    Row::new(otto_kit::t!("settings-show-network"), Control::Toggle(true))
+                        .id("topbar.show_network"),
+                ],
+            ),
             group(
                 otto_kit::t!("settings-group-clock"),
                 vec![

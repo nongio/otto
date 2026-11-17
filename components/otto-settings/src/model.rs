@@ -370,6 +370,7 @@ pub fn panes() -> Vec<Pane> {
         panes::general::build(),
         panes::appearance::build(),
         panes::displays::build(),
+        panes::network::build(),
         panes::sound::build(),
         panes::power::build(),
         panes::dock::build(),
@@ -390,23 +391,27 @@ pub fn panes() -> Vec<Pane> {
 
 /// Where the Search pane sits in [`panes`], so `main.rs` can tell the pane
 /// when it is on screen without building every pane to find out.
-pub const SEARCH_PANE: usize = 8;
+pub const SEARCH_PANE: usize = 9;
 
 /// Where the Sound pane sits in [`panes`]: it reads the sound server only
 /// while it is on screen.
-pub const SOUND_PANE: usize = 3;
+pub const SOUND_PANE: usize = 4;
+
+/// Where the Network pane sits in [`panes`]: it reads NetworkManager only
+/// while it is on screen.
+pub const NETWORK_PANE: usize = 3;
 
 /// Where the Privacy pane sits in [`panes`]: it reads the permission store
 /// only while it is on screen.
-pub const PRIVACY_PANE: usize = 15;
+pub const PRIVACY_PANE: usize = 16;
 
 /// Where the Agents pane sits in [`panes`]: it watches its service only while
 /// it is on screen.
-pub const AGENTS_PANE: usize = 9;
+pub const AGENTS_PANE: usize = 10;
 
 /// Where the Dictation pane sits in [`panes`]: it watches its engines' units
 /// only while it is on screen.
-pub const DICTATION_PANE: usize = 11;
+pub const DICTATION_PANE: usize = 12;
 
 pub(crate) fn group(title: impl Into<Cow<'static, str>>, rows: Vec<Row>) -> Group {
     Group {
@@ -975,7 +980,9 @@ mod readout_tests {
 
 #[cfg(test)]
 mod pane_order_tests {
-    use super::{panes, AGENTS_PANE, DICTATION_PANE, PRIVACY_PANE, SEARCH_PANE, SOUND_PANE};
+    use super::{
+        panes, AGENTS_PANE, DICTATION_PANE, NETWORK_PANE, PRIVACY_PANE, SEARCH_PANE, SOUND_PANE,
+    };
 
     #[test]
     fn the_dictation_pane_sits_where_main_looks_for_it() {
@@ -995,6 +1002,11 @@ mod pane_order_tests {
     #[test]
     fn the_agents_pane_sits_where_main_looks_for_it() {
         assert_eq!(panes()[AGENTS_PANE].icon, "agent");
+    }
+
+    #[test]
+    fn the_network_pane_sits_where_main_looks_for_it() {
+        assert_eq!(panes()[NETWORK_PANE].icon, "network");
     }
 
     #[test]

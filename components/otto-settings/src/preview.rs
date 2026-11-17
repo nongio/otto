@@ -29,6 +29,8 @@ pub fn render_to_png(out: Option<&String>, only: Option<&String>, query: Option<
     // background as the pane comes on screen; a preview draws once, so it
     // reads it first.
     crate::panes::sound::load_now();
+    // So is the Network pane, from NetworkManager.
+    crate::panes::network::load_now();
 
     let mut cells: Vec<(String, Settings, Option<Search>)> = Vec::new();
     for (i, pane) in model::panes().iter().enumerate() {

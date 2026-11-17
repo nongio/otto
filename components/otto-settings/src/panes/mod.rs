@@ -15,6 +15,7 @@ pub mod general;
 pub mod keyboard;
 pub mod keyboard_layouts;
 pub mod lock_and_login;
+pub mod network;
 pub mod pointing;
 pub mod power;
 pub mod privacy;

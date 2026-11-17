@@ -527,7 +527,10 @@ impl ContextMenu {
 
     // === Submenu Management ===
 
-    /// Show submenu for item at given depth (static helper for callbacks)
+    /// Show submenu for item at given depth (static helper for callbacks).
+    /// It fades in after `fade_in_after` seconds, or with `None` appears at
+    /// once: a submenu shown again at a new size replaces one already on
+    /// screen, and fading would blink it.
     #[allow(clippy::too_many_arguments)]
     fn show_submenu_static(
         state: &Rc<RefCell<ContextMenuState>>,
@@ -537,7 +540,7 @@ impl ContextMenu {
         parent_xdg: &Rc<RefCell<Option<xdg_surface::XdgSurface>>>,
         depth: usize,
         item_idx: usize,
-        delay: f64,
+        fade_in_after: Option<f64>,
     ) {
         // CRITICAL: Close any existing popup at depth+1 before creating new one
         // This ensures we don't violate XDG protocol (new popup must be on topmost popup)
@@ -668,8 +671,10 @@ impl ContextMenu {
                     let surface_id = popup.wl_surface().id();
                     ContextMenu::apply_surface_effects(&style, &popup);
 
-                    if let Some(scene_surface) = popup.base_surface().surface_style() {
-                        scene_surface.set_opacity(0.0); // Start fully transparent
+                    if fade_in_after.is_some() {
+                        if let Some(scene_surface) = popup.base_surface().surface_style() {
+                            scene_surface.set_opacity(0.0); // Start fully transparent
+                        }
                     }
 
                     // Register - borrow_mut for insertion
@@ -699,6 +704,9 @@ impl ContextMenu {
                             submenu_depth,
                         );
 
+                        let Some(delay) = fade_in_after else {
+                            return;
+                        };
                         if let Some(scene) = AppContext::surface_style_manager() {
                             if let Some(scene_surface) = popup_ref
                                 .borrow()
@@ -957,7 +965,7 @@ impl ContextMenu {
                         parent_xdg,
                         depth,
                         new_idx,
-                        show_delay as f64,
+                        Some(show_delay as f64),
                     );
                 } else if !has_submenu {
                     // Close any open submenus and update state
@@ -1206,7 +1214,8 @@ impl ContextMenu {
     /// A popup's size is fixed when it is created: xdg-shell positions it
     /// from the size given then. So a refresh can repaint in place only
     /// while every open level keeps its size. A submenu that changes shape
-    /// is closed, and hovering its parent opens it again at the new size.
+    /// is shown again at its new size, in the same place; the submenus
+    /// below it close.
     /// The root changing shape is reported as [`MenuRefresh::Resized`], and
     /// the caller reopens the menu — it owns the positioner that says where.
     pub fn refresh(&self, items: Vec<MenuItem>) -> MenuRefresh {
@@ -1247,8 +1256,23 @@ impl ContextMenu {
                 if depth == 0 {
                     return MenuRefresh::Resized;
                 }
-                self.state.borrow_mut().close_submenus_from(depth - 1);
-                Self::hide_submenus_from_static(&self.state, &self.popups, depth);
+                // A new popup at the new size, from the same parent row.
+                // The submenus below it go with the old one.
+                let parent = depth - 1;
+                let row = self.state.borrow().open_submenu_at(parent);
+                match row {
+                    Some(row) => Self::show_submenu_static(
+                        &self.state,
+                        &self.popups,
+                        &self.style,
+                        &self.registered_surfaces,
+                        &self.parent_xdg,
+                        parent,
+                        row,
+                        None,
+                    ),
+                    None => Self::hide_submenus_from_static(&self.state, &self.popups, depth),
+                }
                 break;
             }
 
@@ -1483,7 +1507,7 @@ impl ContextMenu {
                             &self.parent_xdg,
                             current_depth,
                             idx,
-                            show_delay as f64,
+                            Some(show_delay as f64),
                         );
                     }
                 }

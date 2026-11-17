@@ -171,6 +171,9 @@ args = []
 # show_app_menu = true
 # Show the date and time at the right end of the bar (default true).
 # show_clock = true
+# Show the network indicator: Wi-Fi signal or wired, with a menu to join a
+# network (default true). It appears only where NetworkManager runs.
+# show_network = true
 # A chrono strftime format (https://docs.rs/chrono/latest/chrono/format/strftime/).
 # Empty (the default) uses clock_format from otto-bar.toml if set, otherwise
 # your language's own format.

@@ -5293,6 +5293,7 @@ dependencies = [
  "chrono",
  "futures-util",
  "otto-kit",
+ "otto-network",
  "serde_json",
  "smithay-client-toolkit",
  "tokio",
@@ -5518,6 +5519,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "otto-network"
+version = "1.9.0"
+dependencies = [
+ "futures-util",
+ "otto-dbus",
+ "tokio",
+ "zbus",
+]
+
+[[package]]
 name = "otto-pdf"
 version = "1.9.0"
 dependencies = [
@@ -5632,6 +5643,7 @@ dependencies = [
  "chrono",
  "otto-agents-client",
  "otto-kit",
+ "otto-network",
  "otto-search",
  "serde",
  "serde_json",
