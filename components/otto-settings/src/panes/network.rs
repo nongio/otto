@@ -14,6 +14,7 @@
 //! a half-typed address is never saved, and switching to Manual does not
 //! drop the connection before an address is in.
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock, RwLock};
@@ -21,7 +22,7 @@ use std::time::{Duration, Instant};
 
 use otto_network::{
     dns_address, parse_address, split_list, Band, DeviceKind, DeviceState, Family, IpConfig,
-    IpError, IpMethod, LinkState, Profile, ProfileKind, Security, Snapshot,
+    IpError, IpMethod, LinkState, MacPolicy, Profile, ProfileKind, Security, Snapshot,
 };
 
 use crate::discovery::Choice;
@@ -48,6 +49,8 @@ const DNS_AUTO_ID: &str = "network.dns.auto";
 const DNS_SERVERS_ID: &str = "network.dns.servers";
 const DNS_SEARCH_ID: &str = "network.dns.search";
 const APPLY_ID: &str = "network.apply";
+/// The private address pop-up of the connection the editor shows.
+const MAC_ID: &str = "network.mac";
 /// The VPN tab's Import… button.
 const IMPORT_ID: &str = "network.vpn-import";
 
@@ -95,14 +98,24 @@ struct Ui {
     applying: bool,
     /// Why the last VPN import did not take.
     import_error: Option<String>,
-    /// Why the last switch, Forget or VPN connect did not take.
+    /// Why the last switch, pop-up, Forget or VPN connect did not take.
     action_error: Option<ActionError>,
+}
+
+/// The row an action came from, where its refusal shows.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ErrorAt {
+    /// The Wi-Fi switch.
+    WifiSwitch,
+    /// A saved network's or a VPN's row, by its connection's object path.
+    Connection(String),
+    /// One of the editor's rows, for the connection at the path.
+    Option(&'static str, String),
 }
 
 /// An action NetworkManager refused, shown on the row it came from.
 struct ActionError {
-    /// The connection whose row it was; `None` for the Wi-Fi switch.
-    path: Option<String>,
+    at: ErrorAt,
     text: String,
 }
 
@@ -264,15 +277,14 @@ pub fn load_now() {
 }
 
 /// Run an action on a thread, then read again so the pane shows what took.
-/// A refusal shows on the row it came from: the connection at `path`, or
-/// the Wi-Fi switch for `None`.
-fn act(name: &str, path: Option<String>, work: impl FnOnce() -> zbus::Result<()> + Send + 'static) {
+/// A refusal shows on the row it came from, `at`.
+fn act(name: &str, at: ErrorAt, work: impl FnOnce() -> zbus::Result<()> + Send + 'static) {
     ui().action_error = None;
     in_background(name, move || {
         if let Err(why) = work() {
             eprintln!("network: {why}");
             ui().action_error = Some(ActionError {
-                path,
+                at,
                 text: otto_kit::t_owned!("settings-network-apply-failed", reason = why.to_string()),
             });
         }
@@ -280,12 +292,11 @@ fn act(name: &str, path: Option<String>, work: impl FnOnce() -> zbus::Result<()>
     });
 }
 
-/// Why the last action on the row for `path` failed, if it did; `None` asks
-/// for the Wi-Fi switch.
-fn action_error(path: Option<&str>) -> Option<String> {
+/// Why the last action on the row `at` failed, if it did.
+fn action_error(at: &ErrorAt) -> Option<String> {
     ui().action_error
         .as_ref()
-        .filter(|e| e.path.as_deref() == path)
+        .filter(|e| e.at == *at)
         .map(|e| e.text.clone())
 }
 
@@ -428,7 +439,7 @@ fn edit(change: impl FnOnce(&mut Draft)) {
 /// pane has no rows until NetworkManager answers, so the walk over the
 /// panes would find none of them.
 pub fn slot_ids() -> &'static [&'static str] {
-    &[PROFILE_ID, V4_METHOD_ID, V6_METHOD_ID]
+    &[PROFILE_ID, V4_METHOD_ID, V6_METHOD_ID, MAC_ID]
 }
 
 fn method_label(method: &IpMethod, family: Family) -> String {
@@ -446,6 +457,55 @@ fn method_label(method: &IpMethod, family: Family) -> String {
         }
         IpMethod::Other(raw) => raw.clone(),
     }
+}
+
+/// What the private address pop-up shows for `policy`. A value with no name
+/// here (an explicit address) shows as it is.
+fn mac_label(policy: &MacPolicy) -> String {
+    match policy {
+        MacPolicy::Permanent => otto_kit::t!("settings-network-mac-off").to_string(),
+        MacPolicy::Stable => otto_kit::t!("settings-network-mac-stable").to_string(),
+        MacPolicy::Random => otto_kit::t!("settings-network-mac-random").to_string(),
+        MacPolicy::Unset => otto_kit::t!("settings-network-mac-unset").to_string(),
+        MacPolicy::Kept(raw) if raw == "preserve" => {
+            otto_kit::t!("settings-network-mac-preserve").to_string()
+        }
+        MacPolicy::Kept(raw) => raw.clone(),
+    }
+}
+
+/// The saved connection the editor on the shown tab edits, by its object
+/// path, with `change` made to it in the snapshot so the row shows the
+/// change straight away. `None`, and nothing changed, when there is none or
+/// `change` says nothing changed.
+fn change_shown_profile(change: impl FnOnce(&mut Profile) -> bool) -> Option<String> {
+    let mut read = SNAPSHOT.write().unwrap();
+    let Read::Ready(snapshot) = &mut *read else {
+        return None;
+    };
+    let tab = current_tab(snapshot);
+    let path = edited_profile(snapshot, tab)?.path.clone();
+    let profile = snapshot.profiles.iter_mut().find(|p| p.path == path)?;
+    change(profile).then_some(path)
+}
+
+/// Save `policy` on the connection the editor shows. The read after the
+/// save puts the pop-up back if NetworkManager refused.
+fn set_mac_policy(policy: MacPolicy) {
+    let shown = policy.clone();
+    let Some(path) = change_shown_profile(|profile| {
+        let changed = profile.mac != shown;
+        profile.mac = shown;
+        changed
+    }) else {
+        return;
+    };
+    settings_client::request_redraw();
+    act(
+        "network-mac",
+        ErrorAt::Option(MAC_ID, path.clone()),
+        move || otto_network::blocking::set_mac_policy(&path, &policy),
+    );
 }
 
 fn family_of(id: &str) -> Option<Family> {
@@ -471,6 +531,15 @@ pub fn menu_choices(id: &str) -> Option<Vec<Choice>> {
                     .collect(),
             )
         }
+        MAC_ID => Some(
+            MacPolicy::choices()
+                .iter()
+                .map(|policy| Choice {
+                    label: mac_label(policy),
+                    value: policy.to_nm().to_string(),
+                })
+                .collect(),
+        ),
         PROFILE_ID => {
             let Read::Ready(snapshot) = &*SNAPSHOT.read().unwrap() else {
                 return Some(Vec::new());
@@ -495,6 +564,7 @@ pub fn display(id: &str, value: &str) -> Option<String> {
     match id {
         V4_METHOD_ID => Some(method_label(&IpMethod::from_nm(value), Family::V4)),
         V6_METHOD_ID => Some(method_label(&IpMethod::from_nm(value), Family::V6)),
+        MAC_ID => Some(mac_label(&MacPolicy::from_nm(value))),
         PROFILE_ID => {
             let Read::Ready(snapshot) = &*SNAPSHOT.read().unwrap() else {
                 return Some(String::new());
@@ -522,6 +592,10 @@ pub fn choose(id: &str, value: &str) -> bool {
             let method = IpMethod::from_nm(value);
             edit(|draft| draft.set_method(family, method));
             settings_client::request_redraw();
+            true
+        }
+        MAC_ID => {
+            set_mac_policy(MacPolicy::from_nm(value));
             true
         }
         PROFILE_ID => {
@@ -553,7 +627,7 @@ pub fn apply(id: &str, value: &Value) -> bool {
                     snapshot.wifi_block.soft = false;
                 }
             }
-            act("network-wifi", None, move || {
+            act("network-wifi", ErrorAt::WifiSwitch, move || {
                 otto_network::blocking::set_wifi_enabled(on)
             });
             return true;
@@ -640,9 +714,11 @@ pub fn apply(id: &str, value: &Value) -> bool {
                 }
             }
             let path = path.to_string();
-            act("network-autoconnect", Some(path.clone()), move || {
-                otto_network::blocking::set_autoconnect(&path, on)
-            });
+            act(
+                "network-autoconnect",
+                ErrorAt::Connection(path.clone()),
+                move || otto_network::blocking::set_autoconnect(&path, on),
+            );
         }
         return true;
     }
@@ -661,13 +737,15 @@ pub fn apply(id: &str, value: &Value) -> bool {
                 _ => None,
             };
             let path = path.to_string();
-            act("network-vpn", Some(path.clone()), move || {
-                match (on, active) {
+            act(
+                "network-vpn",
+                ErrorAt::Connection(path.clone()),
+                move || match (on, active) {
                     (true, _) => otto_network::blocking::activate(&path),
                     (false, Some(active)) => otto_network::blocking::deactivate(&active),
                     (false, None) => Ok(()),
-                }
-            });
+                },
+            );
         }
         return true;
     }
@@ -841,9 +919,11 @@ pub fn remove(id: &str) {
         }
     }
     let path = path.to_string();
-    act("network-forget", Some(path.clone()), move || {
-        otto_network::blocking::forget(&path)
-    });
+    act(
+        "network-forget",
+        ErrorAt::Connection(path.clone()),
+        move || otto_network::blocking::forget(&path),
+    );
 }
 
 fn field_error(field: &str) -> String {
@@ -1007,7 +1087,7 @@ fn wifi_groups(snapshot: &Snapshot) -> Vec<Group> {
     } else if snapshot.wifi_soft_blocked() {
         switch = switch.detail(otto_kit::t!("settings-network-wifi-soft-blocked"));
     }
-    if let Some(error) = action_error(None) {
+    if let Some(error) = action_error(&ErrorAt::WifiSwitch) {
         switch = switch.detail(error);
     }
     let connected = snapshot.connected_network();
@@ -1100,7 +1180,7 @@ fn known_group(snapshot: &Snapshot) -> Group {
         .iter()
         .enumerate()
         .map(|(index, saved)| {
-            let detail = match action_error(Some(&saved.path)) {
+            let detail = match action_error(&ErrorAt::Connection(saved.path.clone())) {
                 Some(error) => std::borrow::Cow::Owned(error),
                 None if saved.in_use => otto_kit::t!("settings-network-known-in-use").into(),
                 None => otto_kit::t!("settings-network-known-detail").into(),
@@ -1185,7 +1265,10 @@ fn vpn_groups(snapshot: &Snapshot) -> Vec<Group> {
         .iter()
         .enumerate()
         .map(|(index, vpn)| {
-            let detail = match (action_error(Some(&vpn.path)), vpn.state) {
+            let detail = match (
+                action_error(&ErrorAt::Connection(vpn.path.clone())),
+                vpn.state,
+            ) {
                 (Some(error), _) => std::borrow::Cow::Owned(error),
                 (None, LinkState::Connected) => {
                     otto_kit::t!("settings-network-state-connected").into()
@@ -1244,10 +1327,12 @@ fn editor(
         )
     };
 
-    let mut ip = Vec::new();
+    let mut options = Vec::new();
     if let Some(picker) = picker {
-        ip.push(picker);
+        options.push(picker);
     }
+    options.extend(option_rows(profile));
+    let mut ip = Vec::new();
     for (family, config) in [(Family::V4, &draft.v4), (Family::V6, &draft.v6)] {
         let (method_id, address_id, gateway_id, method_label_text) = match family {
             Family::V4 => (
@@ -1383,13 +1468,46 @@ fn editor(
     }
     dns.push(apply);
 
-    vec![
-        group(
-            otto_kit::t_owned!("settings-group-network-tcpip", name = profile.id.clone()),
-            ip,
-        ),
-        group(otto_kit::t!("settings-group-network-dns"), dns),
-    ]
+    let mut groups = Vec::new();
+    if !options.is_empty() {
+        groups.push(group(
+            otto_kit::t_owned!("settings-group-network-options", name = profile.id.clone()),
+            options,
+        ));
+    }
+    groups.push(group(
+        otto_kit::t_owned!("settings-group-network-tcpip", name = profile.id.clone()),
+        ip,
+    ));
+    groups.push(group(otto_kit::t!("settings-group-network-dns"), dns));
+    groups
+}
+
+/// A refusal on the editor's row `id` for `profile`, or else `fallback`.
+fn option_detail(id: &'static str, profile: &Profile, fallback: &'static str) -> Cow<'static, str> {
+    action_error(&ErrorAt::Option(id, profile.path.clone()))
+        .map(Cow::Owned)
+        .unwrap_or(Cow::Borrowed(fallback))
+}
+
+/// The rows of `profile` that save as soon as they change: its private
+/// address.
+fn option_rows(profile: &Profile) -> Vec<Row> {
+    let mut rows = Vec::new();
+    let mac_label = match profile.kind {
+        ProfileKind::Wifi => Some(otto_kit::t!("settings-network-mac-wifi")),
+        ProfileKind::Ethernet => Some(otto_kit::t!("settings-network-mac-wired")),
+        ProfileKind::Vpn | ProfileKind::Other => None,
+    };
+    if let Some(label) = mac_label {
+        rows.push(bound(
+            Row::new(label, Control::Select(profile.mac.to_nm().to_string())).detail(
+                option_detail(MAC_ID, profile, otto_kit::t!("settings-network-mac-detail")),
+            ),
+            MAC_ID,
+        ));
+    }
+    rows
 }
 
 pub fn build() -> Pane {
@@ -1452,6 +1570,7 @@ mod tests {
             last_used: 1,
             ipv4: IpConfig::default(),
             ipv6: IpConfig::default(),
+            mac: MacPolicy::Unset,
         }
     }
 
@@ -1556,6 +1675,44 @@ mod tests {
             .collect();
         assert!(ids.contains(&V4_ADDRESS_ID) && ids.contains(&V4_GATEWAY_ID));
         assert!(!ids.contains(&V6_ADDRESS_ID));
+    }
+
+    #[test]
+    fn the_private_address_shows_what_is_saved() {
+        let mut wifi = profile("/c/mac", ProfileKind::Wifi);
+        wifi.mac = MacPolicy::Kept("02:00:00:00:00:01".into());
+        let groups = editor(&wifi, None, None);
+        let row = groups
+            .iter()
+            .flat_map(|g| &g.rows)
+            .find(|r| r.id == Some(MAC_ID))
+            .expect("the private address row");
+        assert_eq!(row.label, otto_kit::t!("settings-network-mac-wifi"));
+        assert!(matches!(&row.control, Control::Select(v) if v == "02:00:00:00:00:01"));
+        // A value with no name shows as it is; the choices are the three.
+        assert_eq!(
+            display(MAC_ID, "02:00:00:00:00:01").as_deref(),
+            Some("02:00:00:00:00:01")
+        );
+        assert_eq!(
+            display(MAC_ID, "").as_deref(),
+            Some(otto_kit::t!("settings-network-mac-unset"))
+        );
+        let values: Vec<_> = menu_choices(MAC_ID)
+            .unwrap()
+            .into_iter()
+            .map(|c| c.value)
+            .collect();
+        assert_eq!(values, ["permanent", "stable", "random"]);
+
+        let wired = profile("/c/eth", ProfileKind::Ethernet);
+        let groups = editor(&wired, None, None);
+        let row = groups
+            .iter()
+            .flat_map(|g| &g.rows)
+            .find(|r| r.id == Some(MAC_ID))
+            .expect("the wired private address row");
+        assert_eq!(row.label, otto_kit::t!("settings-network-mac-wired"));
     }
 
     #[test]

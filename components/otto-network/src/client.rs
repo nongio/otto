@@ -21,7 +21,7 @@ use zbus::zvariant::{ObjectPath, OwnedObjectPath, OwnedValue, Value};
 use zbus::Connection;
 
 use crate::model::*;
-use crate::profile::{Family, IpConfig, KeyKind, Profile, ProfileKind};
+use crate::profile::{Family, IpConfig, KeyKind, MacPolicy, Profile, ProfileKind};
 use crate::rfkill::Radios;
 
 /// `NMDeviceType` values Otto shows.
@@ -706,19 +706,52 @@ pub async fn forget(conn: &Connection, connection: &str) -> zbus::Result<()> {
         .await
 }
 
-/// Let NetworkManager join the saved connection at `connection` by itself,
-/// or not.
-pub async fn set_autoconnect(conn: &Connection, connection: &str, on: bool) -> zbus::Result<()> {
+/// Read the saved connection at `connection` fresh, change it with `edit`
+/// and save it, under [`PROFILE_WRITES`]. The settings come without secrets,
+/// and an update without secrets keeps the ones already stored.
+async fn edit_profile(
+    conn: &Connection,
+    connection: &str,
+    edit: impl FnOnce(&mut crate::profile::Settings),
+) -> zbus::Result<()> {
     let proxy = at!(SettingsConnectionProxy, conn, connection).await?;
     let _writing = PROFILE_WRITES.lock().await;
     let mut settings = proxy.get_settings().await?;
-    settings
-        .entry("connection".to_string())
-        .or_default()
-        .insert("autoconnect".to_string(), OwnedValue::from(on));
-    // The settings come without secrets, and an update without secrets keeps
-    // the ones already stored.
+    edit(&mut settings);
     proxy.update(settings).await
+}
+
+/// Let NetworkManager join the saved connection at `connection` by itself,
+/// or not.
+pub async fn set_autoconnect(conn: &Connection, connection: &str, on: bool) -> zbus::Result<()> {
+    edit_profile(conn, connection, |settings| {
+        settings
+            .entry("connection".to_string())
+            .or_default()
+            .insert("autoconnect".to_string(), OwnedValue::from(on));
+    })
+    .await
+}
+
+/// Save `policy` as the hardware address the Wi-Fi or Ethernet connection
+/// at `connection` shows its network. It takes effect the next time the
+/// connection comes up: NetworkManager cannot change the address of a link
+/// in use without taking it down.
+pub async fn set_mac_policy(
+    conn: &Connection,
+    connection: &str,
+    policy: &MacPolicy,
+) -> zbus::Result<()> {
+    edit_profile(conn, connection, |settings| {
+        let kind = settings
+            .get("connection")
+            .and_then(|c| c.get("type"))
+            .and_then(|v| String::try_from(v.try_clone().ok()?).ok())
+            .map(|kind| ProfileKind::from_type(&kind))
+            .unwrap_or(ProfileKind::Other);
+        policy.write_into(settings, kind);
+    })
+    .await
 }
 
 /// What one of NetworkManager's signals says changed.

@@ -379,6 +379,15 @@ settings-network-security-enterprise = WPA Enterprise
 settings-network-bssid = Access point
 # $name is the connection's name.
 settings-group-network-tcpip = TCP/IP — { $name }
+settings-group-network-options = Options — { $name }
+settings-network-mac-wifi = Private Wi-Fi address
+settings-network-mac-wired = Private address
+settings-network-mac-off = Off
+settings-network-mac-stable = Fixed for this network
+settings-network-mac-random = Changes over time
+settings-network-mac-unset = Default
+settings-network-mac-preserve = As the device has it
+settings-network-mac-detail = Takes effect the next time it connects
 # The pop-up choosing which saved network the TCP/IP rows edit.
 settings-network-settings-for = Settings for
 settings-network-configure-ipv4 = Configure IPv4

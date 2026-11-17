@@ -477,6 +477,106 @@ impl ProfileKind {
     }
 }
 
+impl ProfileKind {
+    /// The setting of this kind's link: where its hardware address lives.
+    /// `None` for a kind with no hardware address of its own.
+    pub fn link_setting(self) -> Option<&'static str> {
+        match self {
+            Self::Wifi => Some("802-11-wireless"),
+            Self::Ethernet => Some("802-3-ethernet"),
+            Self::Vpn | Self::Other => None,
+        }
+    }
+}
+
+/// The hardware address a connection shows the network it joins.
+///
+/// NetworkManager keeps it as `cloned-mac-address` in the link's setting
+/// (`802-11-wireless` or `802-3-ethernet`). On D-Bus that property holds only
+/// an explicit address, as bytes; the named policies travel as the string
+/// `assigned-mac-address`, which is read first and the only one written.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MacPolicy {
+    /// Nothing set: NetworkManager's own default applies.
+    Unset,
+    /// The device's own address (`permanent`): no private address.
+    Permanent,
+    /// A private address generated once for this connection (`stable`).
+    Stable,
+    /// A new private address each time it connects (`random`).
+    Random,
+    /// Any other value (`preserve`, an explicit address), kept as it is.
+    Kept(String),
+}
+
+impl MacPolicy {
+    /// The three a person picks from.
+    pub fn choices() -> &'static [MacPolicy] {
+        &[MacPolicy::Permanent, MacPolicy::Stable, MacPolicy::Random]
+    }
+
+    /// Read NetworkManager's value; an empty one is unset.
+    pub fn from_nm(raw: &str) -> Self {
+        match raw {
+            "" => Self::Unset,
+            "permanent" => Self::Permanent,
+            "stable" => Self::Stable,
+            "random" => Self::Random,
+            other => Self::Kept(other.to_string()),
+        }
+    }
+
+    /// NetworkManager's value; empty for unset.
+    pub fn to_nm(&self) -> &str {
+        match self {
+            Self::Unset => "",
+            Self::Permanent => "permanent",
+            Self::Stable => "stable",
+            Self::Random => "random",
+            Self::Kept(raw) => raw,
+        }
+    }
+
+    /// Read the policy of a connection of `kind` out of `settings`.
+    pub fn from_settings(settings: &Settings, kind: ProfileKind) -> Self {
+        let Some(link) = kind.link_setting().and_then(|name| settings.get(name)) else {
+            return Self::Unset;
+        };
+        if let Some(assigned) = string(link, "assigned-mac-address") {
+            return Self::from_nm(&assigned);
+        }
+        // An explicit address, from a NetworkManager that sends only the
+        // older property.
+        link.get("cloned-mac-address")
+            .and_then(|v| Vec::<u8>::try_from(v.try_clone().ok()?).ok())
+            .filter(|bytes| !bytes.is_empty())
+            .map(|bytes| {
+                let hex: Vec<String> = bytes.iter().map(|b| format!("{b:02X}")).collect();
+                Self::Kept(hex.join(":"))
+            })
+            .unwrap_or(Self::Unset)
+    }
+
+    /// Write this policy into a connection of `kind`, keeping every other
+    /// property. Written as `assigned-mac-address` only, so the older
+    /// `cloned-mac-address` cannot shadow it. Does nothing for a kind with
+    /// no link setting.
+    pub fn write_into(&self, settings: &mut Settings, kind: ProfileKind) {
+        let Some(name) = kind.link_setting() else {
+            return;
+        };
+        let link = settings.entry(name.to_string()).or_default();
+        link.remove("cloned-mac-address");
+        link.remove("assigned-mac-address");
+        if *self != Self::Unset {
+            link.insert(
+                "assigned-mac-address".into(),
+                OwnedValue::try_from(Value::from(self.to_nm())).expect("plain values"),
+            );
+        }
+    }
+}
+
 /// A saved connection, read out of its settings.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Profile {
@@ -494,6 +594,8 @@ pub struct Profile {
     pub last_used: u64,
     pub ipv4: IpConfig,
     pub ipv6: IpConfig,
+    /// The hardware address it shows the network.
+    pub mac: MacPolicy,
 }
 
 impl Profile {
@@ -503,11 +605,12 @@ impl Profile {
         let connection = settings.get("connection")?;
         let kind_raw = string(connection, "type").unwrap_or_default();
         let wireless = settings.get("802-11-wireless");
+        let kind = ProfileKind::from_type(&kind_raw);
         Some(Self {
             path: path.to_string(),
             id: string(connection, "id").unwrap_or_default(),
             uuid: string(connection, "uuid").unwrap_or_default(),
-            kind: ProfileKind::from_type(&kind_raw),
+            kind,
             ssid: wireless
                 .and_then(|w| w.get("ssid"))
                 .and_then(|v| Vec::<u8>::try_from(v.try_clone().ok()?).ok())
@@ -526,6 +629,7 @@ impl Profile {
                 .unwrap_or(0),
             ipv4: IpConfig::from_settings(settings, Family::V4),
             ipv6: IpConfig::from_settings(settings, Family::V6),
+            mac: MacPolicy::from_settings(settings, kind),
         })
     }
 }
@@ -925,6 +1029,109 @@ mod tests {
         assert_eq!(profile.ipv4, manual());
         assert_eq!(profile.ipv6, IpConfig::default());
         assert!(!profile.hotspot);
+    }
+
+    fn link(kind: &str, entries: Vec<(&str, OwnedValue)>) -> Settings {
+        let link = entries
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v))
+            .collect();
+        Settings::from([
+            (
+                "connection".to_string(),
+                HashMap::from([("id".to_string(), owned(Value::from("Home")))]),
+            ),
+            (kind.to_string(), link),
+        ])
+    }
+
+    #[test]
+    fn the_private_address_is_read_by_its_name() {
+        for (raw, policy) in [
+            ("permanent", MacPolicy::Permanent),
+            ("stable", MacPolicy::Stable),
+            ("random", MacPolicy::Random),
+            ("preserve", MacPolicy::Kept("preserve".into())),
+            (
+                "02:11:22:33:44:55",
+                MacPolicy::Kept("02:11:22:33:44:55".into()),
+            ),
+        ] {
+            let settings = link(
+                "802-11-wireless",
+                vec![("assigned-mac-address", owned(Value::from(raw)))],
+            );
+            assert_eq!(
+                MacPolicy::from_settings(&settings, ProfileKind::Wifi),
+                policy
+            );
+            assert_eq!(policy.to_nm(), raw);
+        }
+        // Nothing set, and nothing to set on a VPN.
+        let none = link("802-11-wireless", Vec::new());
+        assert_eq!(
+            MacPolicy::from_settings(&none, ProfileKind::Wifi),
+            MacPolicy::Unset
+        );
+        assert_eq!(
+            MacPolicy::from_settings(&none, ProfileKind::Vpn),
+            MacPolicy::Unset
+        );
+    }
+
+    #[test]
+    fn an_explicit_address_in_the_older_property_is_kept() {
+        let settings = link(
+            "802-3-ethernet",
+            vec![(
+                "cloned-mac-address",
+                owned(Value::from(vec![0x02u8, 0x0a, 0, 0, 0, 0xff])),
+            )],
+        );
+        assert_eq!(
+            MacPolicy::from_settings(&settings, ProfileKind::Ethernet),
+            MacPolicy::Kept("02:0A:00:00:00:FF".into())
+        );
+    }
+
+    #[test]
+    fn writing_the_private_address_keeps_the_rest() {
+        let mut settings = link(
+            "802-11-wireless",
+            vec![
+                ("ssid", owned(Value::from(b"Home".to_vec()))),
+                (
+                    "cloned-mac-address",
+                    owned(Value::from(vec![2u8, 0, 0, 0, 0, 1])),
+                ),
+            ],
+        );
+        MacPolicy::Stable.write_into(&mut settings, ProfileKind::Wifi);
+        let wireless = &settings["802-11-wireless"];
+        assert!(wireless.contains_key("ssid"));
+        // One spelling only.
+        assert!(!wireless.contains_key("cloned-mac-address"));
+        assert_eq!(
+            MacPolicy::from_settings(&settings, ProfileKind::Wifi),
+            MacPolicy::Stable
+        );
+        assert!(settings["connection"].contains_key("id"));
+
+        let mut wired = link("802-3-ethernet", Vec::new());
+        wired
+            .get_mut("connection")
+            .unwrap()
+            .insert("type".into(), owned(Value::from("802-3-ethernet")));
+        MacPolicy::Random.write_into(&mut wired, ProfileKind::Ethernet);
+        let profile = Profile::from_settings("/c/2", &wired).unwrap();
+        assert_eq!(profile.mac, MacPolicy::Random);
+
+        MacPolicy::Unset.write_into(&mut wired, ProfileKind::Ethernet);
+        assert!(!wired["802-3-ethernet"].contains_key("assigned-mac-address"));
+
+        let mut vpn = Settings::new();
+        MacPolicy::Random.write_into(&mut vpn, ProfileKind::Vpn);
+        assert!(vpn.is_empty());
     }
 
     #[test]

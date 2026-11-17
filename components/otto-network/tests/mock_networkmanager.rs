@@ -1073,3 +1073,32 @@ async fn following_ends_when_the_bus_goes_away() {
         .unwrap();
     assert!(ended.is_ok(), "{ended:?}");
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_private_address_is_saved_on_the_profile() {
+    let Some(bus) = private_bus() else {
+        eprintln!("no dbus-daemon: skipped");
+        return;
+    };
+    let calls = Arc::new(Mutex::new(Calls::default()));
+    let _server = serve(&bus.1, calls.clone()).await;
+    let conn = connect(&bus.1).await;
+    let profile = "/org/freedesktop/NetworkManager/Settings/1";
+
+    otto_network::set_mac_policy(&conn, profile, &otto_network::MacPolicy::Stable)
+        .await
+        .unwrap();
+
+    let calls = calls.lock().unwrap();
+    let sent = calls.updated.last().expect("an update");
+    let wireless = &sent["802-11-wireless"];
+    assert_eq!(
+        String::try_from(wireless["assigned-mac-address"].try_clone().unwrap()).unwrap(),
+        "stable"
+    );
+    // The rest of the profile went back as it was.
+    assert!(wireless.contains_key("ssid"));
+    // Saving it does not reconnect: it takes effect on the next join.
+    assert!(calls.reapplied.is_empty());
+    assert!(calls.activated.is_empty());
+}

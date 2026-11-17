@@ -60,6 +60,7 @@ The common ground, which Otto adopts:
   - TCP/IP for the connection: IPv4 and IPv6 each Automatic, Manual, Link-local, Shared or Off, with addresses and router when manual
   - DNS: whether to also use the network's servers, the servers to ask first, search domains, and the servers in use
   - the saved Wi-Fi networks, each with an auto-join switch and Forget
+  - for the Wi-Fi or Ethernet profile shown, its private hardware address
   - the VPNs, each with a switch to connect and Forget, and Import… for a WireGuard or OpenVPN file
 - Whether the indicator is shown is a switch on the Top bar pane, next to the clock's, so it is there whatever devices the machine has.
 - Everything follows NetworkManager live. A change made with `nmcli`, another applet or the hardware switch shows up without reopening anything.
@@ -67,7 +68,7 @@ The common ground, which Otto adopts:
 ## Non-Goals
 
 - **802.1X (WPA Enterprise) and VPN plug-in secrets.** The agent answers Wi-Fi personal and WEP keys and declines the rest, so another agent can answer. Such profiles connect without an agent when their secrets are stored for all users.
-- **Proxies, MTU, cloned MAC addresses, routes, bonds, bridges.** `nm-connection-editor` and `nmtui` do these.
+- **Proxies, MTU, an explicit cloned MAC address, routes, bonds, bridges.** `nm-connection-editor` and `nmtui` do these.
 - **Backends other than NetworkManager** (iwd alone, ConnMan, systemd-networkd). Without NetworkManager on the system bus the indicator does not appear, and a tray applet for that backend still works.
 - **Bluetooth and mobile broadband.**
 
@@ -139,9 +140,9 @@ The common ground, which Otto adopts:
       - access point (BSSID)
       - hardware address
       - a note when the internet cannot be reached
-    - **TCP/IP** and **DNS** for a saved network: the one in use, or the one picked in *Settings for*
+    - **Options**, **TCP/IP** and **DNS** for a saved network: the one in use, or the one picked in *Settings for*, which heads Options
     - **Known networks:** every saved Wi-Fi network, the one in use first, then by last use. Each has an auto-join switch and *Forget*.
-13. **Ethernet tab:** each wired device's state with its speed, and its hardware address. Then TCP/IP and DNS for the wired profile in use, or the most recently used one.
+13. **Ethernet tab:** each wired device's state with its speed, and its hardware address. Then Options, TCP/IP and DNS for the wired profile in use, or the most recently used one.
 14. **VPN tab:** each VPN or WireGuard connection with a switch that connects and disconnects it, its state, and *Forget*. *Import…* opens the file chooser for a WireGuard `.conf` or OpenVPN `.ovpn` and imports it with `nmcli connection import`; NetworkManager has no D-Bus call for importing.
 15. **TCP/IP group:**
     - *Configure IPv4*: Automatic (DHCP), Manually, Link-local only, Share this connection, Off
@@ -152,6 +153,14 @@ The common ground, which Otto adopts:
     - *DNS servers*: IPv4 and IPv6 together, comma-separated
     - *Search domains*, saved on both families so they apply on an IPv6-only connection too: a `~` prefix makes a routing-only domain
     - the servers in use
+16a. **Options group**, saved as soon as a choice is made, each on its own update of the profile:
+    - *Private Wi-Fi address* (*Private address* for Ethernet), a pop-up of three choices, writing the link setting's cloned MAC address (`802-11-wireless` or `802-3-ethernet`):
+      - Off: `permanent`, the device's own address
+      - Fixed for this network: `stable`, generated once per profile
+      - Changes over time: `random`, new on each connect
+    - A profile with nothing set shows *Default*, one with `preserve` shows *As the device has it*, and one with an explicit address shows that address. None of them is changed until a choice is picked.
+    - The new address is used the next time the connection comes up; the row says so. It is not reapplied, since NetworkManager cannot change the address of a link that is up without taking it down.
+    - A refusal shows on the row's detail line.
 17. Edits to TCP/IP and DNS are a draft. *Changes* has *Revert* and *Apply*, dimmed while there is nothing to apply. Apply checks the draft first:
     - Manually needs at least one address.
     - Every address, router and DNS server must be of its family. A router is checked only with Manually, the one method that uses it.
@@ -173,6 +182,7 @@ The common ground, which Otto adopts:
 - **Scans.** NetworkManager rate-limits them. A refused scan request is not an error.
 - **Signal noise.** Strength changes are frequent. A burst of changes is gathered for about 150 ms and answered once, and only as much as it needs is read again: a burst of signal strengths alone is applied from the signals themselves with no read, and saved connections are read again only when one of them changed.
 - **Old and new spellings.** IPv4 addresses are read from `address-data`, or the older `addresses`, and written as `address-data`. DNS is read from `dns-data` (NetworkManager 1.42), or the older `dns`. It is written as `dns-data` where the connection already uses it or an entry needs it (a port, an IPv6 scope such as `%eth0`, or a DNS-over-TLS name such as `#one.one.one.one`), and as `dns` otherwise, which every NetworkManager reads. Each value is written in one spelling only, so neither can shadow the other, and every property not edited is kept.
+- **Cloned MAC on D-Bus.** The setting libnm and `nmcli` call `cloned-mac-address` travels on D-Bus as `assigned-mac-address` (a string: `permanent`, `stable`, `random`, `preserve` or an address), while the D-Bus `cloned-mac-address` holds only an explicit address as bytes. The string is read first, the bytes as a fallback, and only the string is written, the bytes removed.
 - **One update.** IPv4 and IPv6 are saved in a single update and applied once, so one family is never saved without the other.
 - **Secrets on update.** A profile's settings are read without secrets, and an update without secrets keeps the ones NetworkManager stored.
 

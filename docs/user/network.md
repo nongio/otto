@@ -115,11 +115,32 @@ automatically, or **Forget** it.
 
 Each wired port's state, link speed and hardware address.
 
+### Options
+
+The Wi-Fi and Ethernet tabs both have **Options** for their connection. On
+the Wi-Fi tab, **Settings for** at the top picks which saved network you are
+editing, here and in TCP/IP and DNS below. Options are saved as soon as you
+pick them.
+
+**Private Wi-Fi address** (**Private address** on Ethernet) sets the hardware
+address the network sees:
+
+| Choice | What the network sees |
+|--------|-----------------------|
+| **Off** | The device's own address |
+| **Fixed for this network** | A private address made for this network, the same each time you join it |
+| **Changes over time** | A new private address each time you connect |
+
+A network can be set some other way, for example by `nmcli` or
+`nm-connection-editor`: **Default** when nothing is set, **As the device has
+it**, or a specific address. The pop-up shows that, and leaves it alone until
+you pick one of the three. The new address is used the next time the
+connection comes up, so disconnect and join again to use it now.
+
 ### TCP/IP and DNS
 
 The Wi-Fi and Ethernet tabs both have **TCP/IP** and **DNS** for their
-connection. On the Wi-Fi tab, **Settings for** picks which saved network you
-are editing.
+connection, the one picked in **Settings for** on the Wi-Fi tab.
 
 | Setting | Choices |
 |---------|---------|
