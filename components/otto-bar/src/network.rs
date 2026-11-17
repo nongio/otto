@@ -200,12 +200,14 @@ fn scan_if_older_than(age: Duration) {
 }
 
 /// How long until [`scan_soon`] asks again: an open menu keeps the list
-/// current by scanning on this beat.
+/// current by scanning on this beat. With no request on record (no Wi-Fi
+/// device to scan) it is a full interval, never zero, or the loop would
+/// spin.
 pub fn until_next_scan() -> Duration {
     LAST_SCAN_REQUEST
         .lock()
         .unwrap()
-        .map_or(Duration::ZERO, |at| {
+        .map_or(SCAN_INTERVAL, |at| {
             SCAN_INTERVAL.saturating_sub(at.elapsed())
         })
 }
