@@ -17,6 +17,7 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock, RwLock};
+use std::time::{Duration, Instant};
 
 use otto_network::{
     dns_address, parse_address, split_list, Band, DeviceKind, DeviceState, Family, IpConfig,
@@ -94,6 +95,15 @@ struct Ui {
     applying: bool,
     /// Why the last VPN import did not take.
     import_error: Option<String>,
+    /// Why the last switch, Forget or VPN connect did not take.
+    action_error: Option<ActionError>,
+}
+
+/// An action NetworkManager refused, shown on the row it came from.
+struct ActionError {
+    /// The connection whose row it was; `None` for the Wi-Fi switch.
+    path: Option<String>,
+    text: String,
 }
 
 /// Edits to one connection's TCP/IP and DNS, not yet applied.
@@ -107,6 +117,54 @@ struct Draft {
     typed: HashMap<&'static str, String>,
 }
 
+impl Draft {
+    fn config(&self, family: Family) -> &IpConfig {
+        match family {
+            Family::V4 => &self.v4,
+            Family::V6 => &self.v6,
+        }
+    }
+
+    fn config_mut(&mut self, family: Family) -> &mut IpConfig {
+        match family {
+            Family::V4 => &mut self.v4,
+            Family::V6 => &mut self.v6,
+        }
+    }
+
+    /// Set `family`'s method. Text typed into its address field goes when
+    /// the method hides the field, so Apply never stops on what is not shown.
+    fn set_method(&mut self, family: Family, method: IpMethod) {
+        if method != IpMethod::Manual {
+            self.typed.remove(address_id(family));
+        }
+        self.config_mut(family).method = method;
+    }
+
+    /// The first shown address field whose text does not parse yet.
+    fn unfinished_field(&self) -> Option<&'static str> {
+        [Family::V4, Family::V6]
+            .into_iter()
+            .filter(|family| self.config(*family).method == IpMethod::Manual)
+            .map(address_id)
+            .find(|id| self.typed.contains_key(id))
+    }
+
+    /// Whether the Automatic DNS switch shows on: either family taking its
+    /// servers from the network, since the switch writes both.
+    fn dns_auto(&self) -> bool {
+        !self.v4.ignore_auto_dns || !self.v6.ignore_auto_dns
+    }
+}
+
+/// The address field of `family`.
+fn address_id(family: Family) -> &'static str {
+    match family {
+        Family::V4 => V4_ADDRESS_ID,
+        Family::V6 => V6_ADDRESS_ID,
+    }
+}
+
 static UI: Mutex<Ui> = Mutex::new(Ui {
     tab: None,
     wifi_profile: None,
@@ -114,6 +172,7 @@ static UI: Mutex<Ui> = Mutex::new(Ui {
     error: None,
     applying: false,
     import_error: None,
+    action_error: None,
 });
 
 fn ui() -> std::sync::MutexGuard<'static, Ui> {
@@ -139,26 +198,52 @@ fn in_background(name: &str, work: impl FnOnce() + Send + 'static) {
     }
 }
 
+/// The shortest wait before following NetworkManager again.
+const WATCH_BACKOFF_MIN: Duration = Duration::from_secs(1);
+/// The longest wait: a bus that keeps refusing costs a retry every half
+/// minute, not a busy loop.
+const WATCH_BACKOFF_MAX: Duration = Duration::from_secs(30);
+
+/// The wait before following again, given the last wait and how long the
+/// last `follow` ran: a run as long as the longest wait starts over from the
+/// shortest, a shorter one doubles the last wait.
+fn watch_backoff(last: Duration, ran: Duration) -> Duration {
+    if ran >= WATCH_BACKOFF_MAX {
+        WATCH_BACKOFF_MIN
+    } else {
+        (last * 2).clamp(WATCH_BACKOFF_MIN, WATCH_BACKOFF_MAX)
+    }
+}
+
 /// Follow NetworkManager for as long as the app runs, once the pane has
 /// been shown. Changes cost little (see `otto_network::follow`), and off
-/// screen they only update what the pane shows next.
+/// screen they only update what the pane shows next. `follow` returns when
+/// NetworkManager's bus stream ends, as when the service restarts; the
+/// watcher then follows again, after a wait that grows while it keeps
+/// returning straight away.
 fn watch() {
     if WATCHING.swap(true, Ordering::Relaxed) {
         return;
     }
     in_background("network-watch", || {
-        // The snapshot comes with the change: reading again from in here
-        // would start a runtime inside the one `follow` runs on.
-        let result = otto_network::blocking::follow(|snapshot| {
-            *SNAPSHOT.write().unwrap() = Read::Ready(Box::new(snapshot.clone()));
-            if SHOWN.load(Ordering::Relaxed) {
-                settings_client::request_redraw();
+        let mut wait = Duration::ZERO;
+        loop {
+            let started = Instant::now();
+            // The snapshot comes with the change: reading again from in here
+            // would start a runtime inside the one `follow` runs on.
+            let result = otto_network::blocking::follow(|snapshot| {
+                *SNAPSHOT.write().unwrap() = Read::Ready(Box::new(snapshot.clone()));
+                if SHOWN.load(Ordering::Relaxed) {
+                    settings_client::request_redraw();
+                }
+            });
+            match result {
+                Ok(()) => eprintln!("network: NetworkManager's changes stopped coming"),
+                Err(why) => eprintln!("network: stopped following NetworkManager: {why}"),
             }
-        });
-        if let Err(why) = result {
-            eprintln!("network: stopped following NetworkManager: {why}");
+            wait = watch_backoff(wait, started.elapsed());
+            std::thread::sleep(wait);
         }
-        WATCHING.store(false, Ordering::Relaxed);
     });
 }
 
@@ -179,13 +264,29 @@ pub fn load_now() {
 }
 
 /// Run an action on a thread, then read again so the pane shows what took.
-fn act(name: &str, work: impl FnOnce() -> zbus::Result<()> + Send + 'static) {
+/// A refusal shows on the row it came from: the connection at `path`, or
+/// the Wi-Fi switch for `None`.
+fn act(name: &str, path: Option<String>, work: impl FnOnce() -> zbus::Result<()> + Send + 'static) {
+    ui().action_error = None;
     in_background(name, move || {
         if let Err(why) = work() {
             eprintln!("network: {why}");
+            ui().action_error = Some(ActionError {
+                path,
+                text: otto_kit::t_owned!("settings-network-apply-failed", reason = why.to_string()),
+            });
         }
         reload();
     });
+}
+
+/// Why the last action on the row for `path` failed, if it did; `None` asks
+/// for the Wi-Fi switch.
+fn action_error(path: Option<&str>) -> Option<String> {
+    ui().action_error
+        .as_ref()
+        .filter(|e| e.path.as_deref() == path)
+        .map(|e| e.text.clone())
 }
 
 // ---------------------------------------------------------------------------
@@ -419,13 +520,7 @@ pub fn choose(id: &str, value: &str) -> bool {
                 return true;
             };
             let method = IpMethod::from_nm(value);
-            edit(|draft| {
-                let config = match family {
-                    Family::V4 => &mut draft.v4,
-                    Family::V6 => &mut draft.v6,
-                };
-                config.method = method;
-            });
+            edit(|draft| draft.set_method(family, method));
             settings_client::request_redraw();
             true
         }
@@ -458,7 +553,7 @@ pub fn apply(id: &str, value: &Value) -> bool {
                     snapshot.wifi_block.soft = false;
                 }
             }
-            act("network-wifi", move || {
+            act("network-wifi", None, move || {
                 otto_network::blocking::set_wifi_enabled(on)
             });
             return true;
@@ -545,7 +640,7 @@ pub fn apply(id: &str, value: &Value) -> bool {
                 }
             }
             let path = path.to_string();
-            act("network-autoconnect", move || {
+            act("network-autoconnect", Some(path.clone()), move || {
                 otto_network::blocking::set_autoconnect(&path, on)
             });
         }
@@ -566,10 +661,12 @@ pub fn apply(id: &str, value: &Value) -> bool {
                 _ => None,
             };
             let path = path.to_string();
-            act("network-vpn", move || match (on, active) {
-                (true, _) => otto_network::blocking::activate(&path),
-                (false, Some(active)) => otto_network::blocking::deactivate(&active),
-                (false, None) => Ok(()),
+            act("network-vpn", Some(path.clone()), move || {
+                match (on, active) {
+                    (true, _) => otto_network::blocking::activate(&path),
+                    (false, Some(active)) => otto_network::blocking::deactivate(&active),
+                    (false, None) => Ok(()),
+                }
             });
         }
         return true;
@@ -597,7 +694,7 @@ pub fn press(row: &str, button: &str) {
     let Some(draft) = ui().draft.clone() else {
         return;
     };
-    if let Some(field) = draft.typed.keys().next() {
+    if let Some(field) = draft.unfinished_field() {
         ui().error = Some(field_error(field));
         settings_client::request_redraw();
         return;
@@ -629,22 +726,29 @@ pub fn press(row: &str, button: &str) {
         } else {
             Ok(())
         };
-        {
-            let mut ui = ui();
-            ui.applying = false;
-            match result {
-                Ok(()) => ui.draft = None,
-                Err(why) => {
-                    eprintln!("network: {why}");
-                    ui.error = Some(otto_kit::t_owned!(
-                        "settings-network-apply-failed",
-                        reason = why.to_string()
-                    ));
-                }
-            }
-        }
+        settle_apply(&mut ui(), &draft, result);
         reload();
     });
+}
+
+/// Take in how the Apply of `sent` went. A draft edited while Apply was on
+/// its way is kept: only the draft that was sent is done with.
+fn settle_apply(ui: &mut Ui, sent: &Draft, result: zbus::Result<()>) {
+    ui.applying = false;
+    match result {
+        Ok(()) => {
+            if ui.draft.as_ref() == Some(sent) {
+                ui.draft = None;
+            }
+        }
+        Err(why) => {
+            eprintln!("network: {why}");
+            ui.error = Some(otto_kit::t_owned!(
+                "settings-network-apply-failed",
+                reason = why.to_string()
+            ));
+        }
+    }
 }
 
 /// What `nmcli connection import` calls the kind of VPN in `path`, by its
@@ -737,7 +841,7 @@ pub fn remove(id: &str) {
         }
     }
     let path = path.to_string();
-    act("network-forget", move || {
+    act("network-forget", Some(path.clone()), move || {
         otto_network::blocking::forget(&path)
     });
 }
@@ -903,6 +1007,9 @@ fn wifi_groups(snapshot: &Snapshot) -> Vec<Group> {
     } else if snapshot.wifi_soft_blocked() {
         switch = switch.detail(otto_kit::t!("settings-network-wifi-soft-blocked"));
     }
+    if let Some(error) = action_error(None) {
+        switch = switch.detail(error);
+    }
     let connected = snapshot.connected_network();
     let current = match connected {
         Some(network) => network.name(),
@@ -993,10 +1100,10 @@ fn known_group(snapshot: &Snapshot) -> Group {
         .iter()
         .enumerate()
         .map(|(index, saved)| {
-            let detail = if saved.in_use {
-                otto_kit::t!("settings-network-known-in-use")
-            } else {
-                otto_kit::t!("settings-network-known-detail")
+            let detail = match action_error(Some(&saved.path)) {
+                Some(error) => std::borrow::Cow::Owned(error),
+                None if saved.in_use => otto_kit::t!("settings-network-known-in-use").into(),
+                None => otto_kit::t!("settings-network-known-detail").into(),
             };
             let mut row = Row::new(intern(saved.name()), Control::Toggle(saved.autoconnect))
                 .remove_label(otto_kit::t!("settings-network-forget"))
@@ -1078,10 +1185,17 @@ fn vpn_groups(snapshot: &Snapshot) -> Vec<Group> {
         .iter()
         .enumerate()
         .map(|(index, vpn)| {
-            let detail = match vpn.state {
-                LinkState::Connected => otto_kit::t!("settings-network-state-connected"),
-                LinkState::Connecting => otto_kit::t!("settings-network-state-connecting"),
-                LinkState::Idle => otto_kit::t!("settings-network-state-disconnected"),
+            let detail = match (action_error(Some(&vpn.path)), vpn.state) {
+                (Some(error), _) => std::borrow::Cow::Owned(error),
+                (None, LinkState::Connected) => {
+                    otto_kit::t!("settings-network-state-connected").into()
+                }
+                (None, LinkState::Connecting) => {
+                    otto_kit::t!("settings-network-state-connecting").into()
+                }
+                (None, LinkState::Idle) => {
+                    otto_kit::t!("settings-network-state-disconnected").into()
+                }
             };
             let mut row = Row::new(
                 intern(vpn.id.clone()),
@@ -1214,7 +1328,7 @@ fn editor(
         bound(
             Row::new(
                 otto_kit::t!("settings-network-dns-auto"),
-                Control::Toggle(!draft.v4.ignore_auto_dns),
+                Control::Toggle(draft.dns_auto()),
             )
             .detail(otto_kit::t!("settings-network-dns-auto-detail")),
             DNS_AUTO_ID,
@@ -1467,6 +1581,94 @@ mod tests {
         assert_eq!(vpn_kind(Path::new("/x/wg0.conf")), Some("wireguard"));
         assert_eq!(vpn_kind(Path::new("/x/Work.OVPN")), Some("openvpn"));
         assert_eq!(vpn_kind(Path::new("/x/notes.txt")), None);
+    }
+
+    fn draft() -> Draft {
+        Draft {
+            profile: "/c/7".into(),
+            v4: IpConfig::default(),
+            v6: IpConfig::default(),
+            typed: HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn text_in_a_hidden_field_does_not_stop_apply() {
+        let mut draft = draft();
+        draft.set_method(Family::V4, IpMethod::Manual);
+        draft.typed.insert(V4_ADDRESS_ID, "192.168.1".into());
+        assert_eq!(draft.unfinished_field(), Some(V4_ADDRESS_ID));
+
+        draft.set_method(Family::V4, IpMethod::Automatic);
+        assert_eq!(draft.unfinished_field(), None);
+        assert!(draft.typed.is_empty(), "the hidden field's text is dropped");
+
+        // Text left under a method that hides it is not asked about either.
+        draft.typed.insert(V6_ADDRESS_ID, "2001:db8::".into());
+        assert_eq!(draft.unfinished_field(), None);
+    }
+
+    #[test]
+    fn an_edit_made_while_applying_is_kept() {
+        let sent = draft();
+        let mut edited = sent.clone();
+        edited.v4.dns = vec!["1.1.1.1".into()];
+        let mut ui = Ui {
+            tab: None,
+            wifi_profile: None,
+            draft: Some(edited.clone()),
+            error: None,
+            applying: true,
+            import_error: None,
+            action_error: None,
+        };
+
+        settle_apply(&mut ui, &sent, Ok(()));
+        assert!(!ui.applying);
+        assert_eq!(ui.draft, Some(edited));
+
+        ui.draft = Some(sent.clone());
+        settle_apply(&mut ui, &sent, Ok(()));
+        assert_eq!(ui.draft, None, "the draft that was sent is done with");
+
+        ui.draft = Some(sent.clone());
+        settle_apply(&mut ui, &sent, Err(zbus::Error::Failure("no".into())));
+        assert_eq!(ui.draft, Some(sent), "a refused draft stays to fix");
+        assert!(ui.error.is_some());
+    }
+
+    #[test]
+    fn automatic_dns_is_on_while_either_family_is() {
+        let mut draft = draft();
+        draft.v4.ignore_auto_dns = true;
+        assert!(draft.dns_auto(), "IPv6 still takes the network's servers");
+        draft.v6.ignore_auto_dns = true;
+        assert!(!draft.dns_auto());
+
+        let mut profile = profile("/c/dns", ProfileKind::Ethernet);
+        profile.ipv4.method = IpMethod::Disabled;
+        profile.ipv4.ignore_auto_dns = true;
+        let groups = editor(&profile, None, None);
+        let switch = groups
+            .iter()
+            .flat_map(|g| &g.rows)
+            .find(|r| r.id == Some(DNS_AUTO_ID))
+            .expect("the Automatic DNS row");
+        assert!(matches!(switch.control, Control::Toggle(true)));
+    }
+
+    #[test]
+    fn the_watcher_backs_off_while_follow_returns_at_once() {
+        let quick = Duration::from_millis(5);
+        let first = watch_backoff(Duration::ZERO, quick);
+        assert_eq!(first, WATCH_BACKOFF_MIN);
+        assert_eq!(watch_backoff(first, quick), first * 2);
+        assert_eq!(watch_backoff(WATCH_BACKOFF_MAX, quick), WATCH_BACKOFF_MAX);
+        // A long run was a working watch: the next wait is short again.
+        assert_eq!(
+            watch_backoff(WATCH_BACKOFF_MAX, WATCH_BACKOFF_MAX),
+            WATCH_BACKOFF_MIN
+        );
     }
 
     #[test]
