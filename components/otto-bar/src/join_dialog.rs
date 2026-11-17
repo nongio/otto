@@ -13,6 +13,7 @@
 //! keyboard while it is up, laid out from fixed sizes so the paint and the
 //! hit test agree by construction (see [`Layout`]).
 
+use otto_kit::accessibility::{Action, ActionData, ActionRequest};
 use otto_kit::common::Renderable;
 use otto_kit::components::label::Label;
 use otto_kit::components::push_button::{self, PushButton, Role};
@@ -20,6 +21,7 @@ use otto_kit::components::segmented::{self, Segment, SegmentedInteraction};
 use otto_kit::components::text_input::{
     key_for, KeyMods, TextInput, TextInputResponse, TextInputStyle,
 };
+use otto_kit::focus::{draw_focus_ring, FocusId};
 use otto_kit::prelude::*;
 use otto_kit::protocols::otto_surface_style_v1::ClipMode;
 use otto_kit::skia::{Paint, PaintStyle, RRect, Rect};
@@ -41,6 +43,11 @@ const LABEL_H: f32 = 18.0;
 const FIELD_H: f32 = 28.0;
 const CHECK: f32 = 15.0;
 const RADIUS: f32 = 14.0;
+/// The corner radius of the kit's push buttons and segmented track, which
+/// the focus ring follows around them.
+const CONTROL_RADIUS: f32 = 7.0;
+/// The checkbox's corner radius.
+const CHECK_RADIUS: f32 = 4.0;
 
 /// What the dialog is asking for, and what answers it.
 pub enum Purpose {
@@ -80,13 +87,19 @@ fn security_label(index: usize) -> &'static str {
     }
 }
 
+/// A stop in the keyboard order. The security choices are one stop, moved
+/// within by Left and Right.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Focus {
     Name,
+    Security,
     Password,
+    ShowPassword,
+    Cancel,
+    Join,
 }
 
-/// Where a press landed.
+/// Where a press landed, or which control an assistive technology named.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Hit {
     Name,
@@ -95,6 +108,33 @@ pub enum Hit {
     ShowPassword,
     Cancel,
     Join,
+}
+
+impl Hit {
+    /// The control's id, shared by the accessibility tree and the actions
+    /// that come back against it.
+    fn focus_id(self) -> FocusId {
+        match self {
+            Hit::Name => FocusId::new("join-name"),
+            Hit::Password => FocusId::new("join-password"),
+            Hit::Security(index) => FocusId::new(format!("join-security-{index}")),
+            Hit::ShowPassword => FocusId::new("join-show-password"),
+            Hit::Cancel => FocusId::new("join-cancel"),
+            Hit::Join => FocusId::new("join-join"),
+        }
+    }
+
+    /// The keyboard stop the control belongs to.
+    fn focus(self) -> Focus {
+        match self {
+            Hit::Name => Focus::Name,
+            Hit::Password => Focus::Password,
+            Hit::Security(_) => Focus::Security,
+            Hit::ShowPassword => Focus::ShowPassword,
+            Hit::Cancel => Focus::Cancel,
+            Hit::Join => Focus::Join,
+        }
+    }
 }
 
 /// How the dialog ended.
@@ -211,6 +251,27 @@ impl Layout {
             return Some(Hit::Join);
         }
         None
+    }
+
+    /// Every control on the card in keyboard order, each security choice
+    /// on its own.
+    fn controls(&self) -> Vec<Hit> {
+        let mut controls = Vec::new();
+        if self.name.is_some() {
+            controls.push(Hit::Name);
+        }
+        if self.security.is_some() {
+            controls.extend((0..SECURITY.len()).map(Hit::Security));
+        }
+        if self.password.is_some() {
+            controls.push(Hit::Password);
+        }
+        if self.show.is_some() {
+            controls.push(Hit::ShowPassword);
+        }
+        controls.push(Hit::Cancel);
+        controls.push(Hit::Join);
+        controls
     }
 }
 
@@ -361,6 +422,8 @@ impl JoinDialog {
         }
         AppContext::enable_accessibility(&surface.wl_surface().id());
         self.surface = Some(surface);
+        // Only the initial commit: the surface is not configured yet, so
+        // nothing is painted here. The first paint is in `on_configure_layer`.
         self.redraw();
         true
     }
@@ -370,7 +433,6 @@ impl JoinDialog {
     /// choices and the buttons.
     pub fn accessibility(&self) -> otto_kit::accessibility::A11yTree {
         use otto_kit::accessibility::{A11yTree, Role};
-        use otto_kit::focus::FocusId;
         let layout = self.layout();
         let title = self.title();
         let mut tree = A11yTree::new(title.clone());
@@ -384,7 +446,7 @@ impl JoinDialog {
                 tree.label(FocusId::new("join-body"), card, self.body());
                 if let Some(rect) = layout.name {
                     tree.text_field(
-                        FocusId::new("join-name"),
+                        Hit::Name.focus_id(),
                         rect,
                         otto_kit::t!("bar-join-name"),
                         &self.name.state,
@@ -394,7 +456,7 @@ impl JoinDialog {
                 if let Some(rect) = layout.security {
                     for index in 0..SECURITY.len() {
                         tree.radio(
-                            FocusId::new(format!("join-security-{index}")),
+                            Hit::Security(index).focus_id(),
                             segmented::segment_rect(rect, SECURITY.len(), index),
                             security_label(index),
                             index == self.security,
@@ -404,7 +466,7 @@ impl JoinDialog {
                 }
                 if let Some(rect) = layout.password {
                     tree.text_field(
-                        FocusId::new("join-password"),
+                        Hit::Password.focus_id(),
                         rect,
                         otto_kit::t!("bar-join-password"),
                         &self.password.state,
@@ -413,7 +475,7 @@ impl JoinDialog {
                 }
                 if let Some(rect) = layout.show {
                     tree.checkbox(
-                        FocusId::new("join-show-password"),
+                        Hit::ShowPassword.focus_id(),
                         rect,
                         otto_kit::t!("bar-join-show-password"),
                         self.show_password,
@@ -421,19 +483,20 @@ impl JoinDialog {
                     );
                 }
                 tree.button(
-                    FocusId::new("join-cancel"),
+                    Hit::Cancel.focus_id(),
                     layout.cancel,
                     otto_kit::t!("bar-join-cancel"),
                     true,
                 );
                 tree.button(
-                    FocusId::new("join-join"),
+                    Hit::Join.focus_id(),
                     layout.join,
                     otto_kit::t!("bar-join-join"),
                     self.can_join(),
                 );
             },
         );
+        tree.set_focus(self.focused_control().focus_id());
         tree
     }
 
@@ -466,6 +529,7 @@ impl JoinDialog {
         let key = self.key();
         let (name, password) = (&self.name, &self.password);
         let (security, show_password, pressed) = (self.security, self.show_password, self.pressed);
+        let focus = self.focus;
         {
             canvas.clear(otto_kit::skia::Color::TRANSPARENT);
             let mut paint = Paint::default();
@@ -521,6 +585,9 @@ impl JoinDialog {
                     SegmentedInteraction::Normal,
                     &theme,
                 );
+                if focus == Focus::Security {
+                    draw_focus_ring(canvas, rect, CONTROL_RADIUS);
+                }
             }
             if let (Some(y), Some(rect)) = (layout.password_label_y, layout.password) {
                 label(canvas, otto_kit::t!("bar-join-password"), y);
@@ -547,7 +614,13 @@ impl JoinDialog {
                     box_paint.set_style(PaintStyle::Stroke);
                     box_paint.set_stroke_width(1.0);
                     box_paint.set_color(theme.fill_secondary);
-                    canvas.draw_rrect(RRect::new_rect_xy(check, 4.0, 4.0), &box_paint);
+                    canvas.draw_rrect(
+                        RRect::new_rect_xy(check, CHECK_RADIUS, CHECK_RADIUS),
+                        &box_paint,
+                    );
+                }
+                if focus == Focus::ShowPassword {
+                    draw_focus_ring(canvas, check, CHECK_RADIUS);
                 }
                 Label::new(otto_kit::t!("bar-join-show-password"))
                     .with_style(styles::BODY)
@@ -572,6 +645,13 @@ impl JoinDialog {
                     .pressed(pressed == Some(Hit::Join)),
                 &theme,
             );
+            match focus {
+                Focus::Cancel => draw_focus_ring(canvas, layout.cancel, CONTROL_RADIUS),
+                Focus::Join => draw_focus_ring(canvas, layout.join, CONTROL_RADIUS),
+                // The text fields draw their own ring, and the rest is drawn
+                // with its control above.
+                Focus::Name | Focus::Security | Focus::Password | Focus::ShowPassword => {}
+            }
         }
     }
 
@@ -581,35 +661,117 @@ impl JoinDialog {
         self.password.state.set_focused(focus == Focus::Password);
     }
 
+    /// The keyboard stops on the card, in order. Join is skipped while it
+    /// would do nothing.
+    fn focus_order(&self) -> Vec<Focus> {
+        let can_join = self.can_join();
+        let mut order: Vec<Focus> = Vec::new();
+        for control in self.layout().controls() {
+            let focus = control.focus();
+            if order.last() == Some(&focus) || (focus == Focus::Join && !can_join) {
+                continue;
+            }
+            order.push(focus);
+        }
+        order
+    }
+
+    /// Move the focus to the next stop, or the previous one, wrapping.
+    fn move_focus(&mut self, forward: bool) {
+        let order = self.focus_order();
+        let len = order.len();
+        let next = match order.iter().position(|f| *f == self.focus) {
+            Some(index) if forward => order[(index + 1) % len],
+            Some(index) => order[(index + len - 1) % len],
+            None => order[0],
+        };
+        self.set_focus(next);
+    }
+
+    /// The control the keyboard is on, as the accessibility tree names it.
+    fn focused_control(&self) -> Hit {
+        match self.focus {
+            Focus::Name => Hit::Name,
+            Focus::Security => Hit::Security(self.security),
+            Focus::Password => Hit::Password,
+            Focus::ShowPassword => Hit::ShowPassword,
+            Focus::Cancel => Hit::Cancel,
+            Focus::Join => Hit::Join,
+        }
+    }
+
+    /// Pick a security choice for a hidden network. Choosing none takes the
+    /// password field away, and the focus with it when it was there.
+    fn select_security(&mut self, index: usize) {
+        self.security = index;
+        if !self.focus_order().contains(&self.focus) {
+            self.set_focus(Focus::Name);
+        }
+        self.resize();
+    }
+
+    fn toggle_show_password(&mut self) {
+        self.show_password = !self.show_password;
+        self.password.state.password = !self.show_password;
+    }
+
+    /// Act on the focused stop as Space does: a button pressed, the checkbox
+    /// toggled. Returns the outcome when it ended the dialog.
+    fn activate(&mut self) -> Option<Outcome> {
+        match self.focus {
+            Focus::Cancel => Some(self.finish(false)),
+            Focus::Join => self.can_join().then(|| self.finish(true)),
+            Focus::ShowPassword => {
+                self.toggle_show_password();
+                self.redraw();
+                None
+            }
+            Focus::Name | Focus::Security | Focus::Password => None,
+        }
+    }
+
     /// A key was pressed. Returns the outcome when it ended the dialog.
     pub fn on_key(&mut self, event: &KeyEvent) -> Option<Outcome> {
         match event.keysym {
             Keysym::Escape => return Some(self.finish(false)),
             Keysym::Return | Keysym::KP_Enter => {
-                if self.can_join() {
-                    return Some(self.finish(true));
-                }
-                return None;
+                return match self.focus {
+                    Focus::Cancel | Focus::ShowPassword => self.activate(),
+                    _ => self.can_join().then(|| self.finish(true)),
+                };
             }
             Keysym::Tab | Keysym::ISO_Left_Tab => {
-                if self.hidden() && self.key().is_some() {
-                    let next = match self.focus {
-                        Focus::Name => Focus::Password,
-                        Focus::Password => Focus::Name,
-                    };
-                    self.set_focus(next);
-                    self.redraw();
-                }
+                let shift = AppContext::current_modifiers().shift;
+                self.move_focus(event.keysym == Keysym::Tab && !shift);
+                self.redraw();
                 return None;
             }
             _ => {}
         }
-        let mods: KeyMods = AppContext::current_modifiers().into();
-        let (edit, mods) = key_for(event.keysym, event.utf8.as_deref(), mods)?;
         let input = match self.focus {
             Focus::Name => &mut self.name,
             Focus::Password => &mut self.password,
+            Focus::Security => {
+                let index = match event.keysym {
+                    Keysym::Left | Keysym::KP_Left => self.security.saturating_sub(1),
+                    Keysym::Right | Keysym::KP_Right => (self.security + 1).min(SECURITY.len() - 1),
+                    _ => return None,
+                };
+                if index != self.security {
+                    self.select_security(index);
+                    self.redraw();
+                }
+                return None;
+            }
+            Focus::ShowPassword | Focus::Cancel | Focus::Join => {
+                return match event.keysym {
+                    Keysym::space | Keysym::KP_Space => self.activate(),
+                    _ => None,
+                };
+            }
         };
+        let mods: KeyMods = AppContext::current_modifiers().into();
+        let (edit, mods) = key_for(event.keysym, event.utf8.as_deref(), mods)?;
         // A copy or cut comes back as `Clipboard`, and the bar has no
         // clipboard to put it on: nothing typed here, a password above all,
         // ever leaves the dialog that way, shown or not.
@@ -618,6 +780,71 @@ impl JoinDialog {
             self.redraw();
         }
         None
+    }
+
+    /// An assistive technology acted on one of the card's controls. Returns
+    /// the outcome when it ended the dialog.
+    pub fn on_accessibility_action(&mut self, request: &ActionRequest) -> Option<Outcome> {
+        let target =
+            self.control_for(|id| otto_kit::accessibility::node_id(id) == request.target_node)?;
+        let value = match &request.data {
+            Some(ActionData::Value(value)) => Some(&**value),
+            _ => None,
+        };
+        let outcome = self.act(request.action, target, value);
+        if outcome.is_none() {
+            self.redraw();
+        }
+        outcome
+    }
+
+    /// The control on the card whose id `matches`.
+    fn control_for(&self, matches: impl Fn(FocusId) -> bool) -> Option<Hit> {
+        self.layout()
+            .controls()
+            .into_iter()
+            .find(|control| matches(control.focus_id()))
+    }
+
+    /// Do `action` on `target` as the user would by hand: focus it, click
+    /// it, or for a text field set what it holds. Returns the outcome when
+    /// it ended the dialog.
+    fn act(&mut self, action: Action, target: Hit, value: Option<&str>) -> Option<Outcome> {
+        match (action, target) {
+            (Action::Focus, _) => {
+                if target != Hit::Join || self.can_join() {
+                    self.set_focus(target.focus());
+                }
+                None
+            }
+            (Action::SetValue, Hit::Name | Hit::Password) => {
+                let value = value?;
+                self.set_focus(target.focus());
+                let input = if target == Hit::Name {
+                    &mut self.name
+                } else {
+                    &mut self.password
+                };
+                input.set_value(value);
+                None
+            }
+            (Action::Click, Hit::Name | Hit::Password) => {
+                self.set_focus(target.focus());
+                None
+            }
+            (Action::Click, Hit::Security(index)) => {
+                self.set_focus(Focus::Security);
+                self.select_security(index);
+                None
+            }
+            (Action::Click, Hit::ShowPassword) => {
+                self.toggle_show_password();
+                None
+            }
+            (Action::Click, Hit::Cancel) => Some(self.finish(false)),
+            (Action::Click, Hit::Join) => self.can_join().then(|| self.finish(true)),
+            _ => None,
+        }
     }
 
     /// A pointer press at `(x, y)` on the card.
@@ -636,17 +863,8 @@ impl JoinDialog {
                     self.password.on_pointer_down(x - rect.left, 1, false);
                 }
             }
-            Some(Hit::Security(index)) => {
-                self.security = index;
-                if SECURITY[index].is_none() {
-                    self.set_focus(Focus::Name);
-                }
-                self.resize();
-            }
-            Some(Hit::ShowPassword) => {
-                self.show_password = !self.show_password;
-                self.password.state.password = !self.show_password;
-            }
+            Some(Hit::Security(index)) => self.select_security(index),
+            Some(Hit::ShowPassword) => self.toggle_show_password(),
             Some(Hit::Cancel) | Some(Hit::Join) => self.pressed = hit,
             None => {}
         }
@@ -725,6 +943,155 @@ mod tests {
             Some(Hit::Security(0))
         );
         assert_eq!(layout.hit(1.0, 1.0), None);
+    }
+
+    fn hidden() -> JoinDialog {
+        JoinDialog::new(Purpose::Hidden {
+            device: "/dev/0".into(),
+        })
+    }
+
+    fn key(keysym: Keysym) -> KeyEvent {
+        KeyEvent {
+            time: 0,
+            raw_code: 0,
+            keysym,
+            utf8: None,
+        }
+    }
+
+    fn by_id(dialog: &JoinDialog, hit: Hit) -> Option<Hit> {
+        dialog.control_for(|id| id == hit.focus_id())
+    }
+
+    #[test]
+    fn tab_reaches_every_control_and_skips_a_join_that_would_do_nothing() {
+        let mut dialog = hidden();
+        let mut seen = vec![dialog.focus];
+        for _ in 0..5 {
+            assert!(dialog.on_key(&key(Keysym::Tab)).is_none());
+            seen.push(dialog.focus);
+        }
+        assert_eq!(
+            seen,
+            [
+                Focus::Name,
+                Focus::Security,
+                Focus::Password,
+                Focus::ShowPassword,
+                Focus::Cancel,
+                Focus::Name,
+            ]
+        );
+
+        dialog.name.set_value("cafe");
+        dialog.password.set_value("12345678");
+        dialog.set_focus(Focus::Cancel);
+        dialog.on_key(&key(Keysym::Tab));
+        assert_eq!(dialog.focus, Focus::Join);
+        dialog.on_key(&key(Keysym::ISO_Left_Tab));
+        assert_eq!(dialog.focus, Focus::Cancel);
+    }
+
+    #[test]
+    fn arrows_pick_the_security_and_none_drops_the_password_stops() {
+        let mut dialog = hidden();
+        dialog.set_focus(Focus::Security);
+        dialog.on_key(&key(Keysym::Right));
+        assert_eq!(SECURITY[dialog.security], Some(KeyKind::Sae));
+        dialog.on_key(&key(Keysym::Left));
+        dialog.on_key(&key(Keysym::Left));
+        dialog.on_key(&key(Keysym::Left));
+        assert_eq!(dialog.security, 0);
+        assert!(!dialog.focus_order().contains(&Focus::Password));
+        assert!(!dialog.focus_order().contains(&Focus::ShowPassword));
+    }
+
+    #[test]
+    fn space_and_return_activate_the_focused_control() {
+        let mut dialog = hidden();
+        dialog.set_focus(Focus::ShowPassword);
+        assert!(dialog.on_key(&key(Keysym::space)).is_none());
+        assert!(dialog.show_password && !dialog.password.state.password);
+        assert!(dialog.on_key(&key(Keysym::Return)).is_none());
+        assert!(!dialog.show_password);
+
+        dialog.set_focus(Focus::Cancel);
+        assert!(matches!(
+            dialog.on_key(&key(Keysym::Return)),
+            Some(Outcome::Cancel(_))
+        ));
+    }
+
+    #[test]
+    fn return_in_a_field_joins_and_escape_cancels() {
+        let mut dialog = hidden();
+        dialog.name.set_value("cafe");
+        assert!(dialog.on_key(&key(Keysym::Return)).is_none());
+        dialog.password.set_value("12345678");
+        assert!(matches!(
+            dialog.on_key(&key(Keysym::Return)),
+            Some(Outcome::Join {
+                key: Some(KeyKind::WpaPsk),
+                ..
+            })
+        ));
+
+        let mut dialog = hidden();
+        dialog.set_focus(Focus::Security);
+        assert!(matches!(
+            dialog.on_key(&key(Keysym::Escape)),
+            Some(Outcome::Cancel(_))
+        ));
+    }
+
+    #[test]
+    fn accessibility_actions_reach_the_dialog_controls() {
+        let mut dialog = hidden();
+        let wep = by_id(&dialog, Hit::Security(3)).unwrap();
+        assert!(dialog.act(Action::Click, wep, None).is_none());
+        assert_eq!(SECURITY[dialog.security], Some(KeyKind::Wep));
+        assert_eq!(dialog.focus, Focus::Security);
+
+        let name = by_id(&dialog, Hit::Name).unwrap();
+        dialog.act(Action::SetValue, name, Some("cafe"));
+        assert_eq!(dialog.name.value(), "cafe");
+        assert_eq!(dialog.focus, Focus::Name);
+
+        let password = by_id(&dialog, Hit::Password).unwrap();
+        dialog.act(Action::Focus, password, None);
+        assert_eq!(dialog.focus, Focus::Password);
+        dialog.act(Action::SetValue, password, Some("12345"));
+
+        let show = by_id(&dialog, Hit::ShowPassword).unwrap();
+        dialog.act(Action::Click, show, None);
+        assert!(dialog.show_password);
+
+        let join = by_id(&dialog, Hit::Join).unwrap();
+        assert!(matches!(
+            dialog.act(Action::Click, join, None),
+            Some(Outcome::Join {
+                key: Some(KeyKind::Wep),
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn accessibility_names_only_the_controls_on_the_card() {
+        let dialog = JoinDialog::new(Purpose::Agent {
+            cancelled: Default::default(),
+            request: SecretRequest {
+                ssid: b"cafe".to_vec(),
+                key: KeyKind::WpaPsk,
+            },
+            retry: false,
+            reply: tokio::sync::oneshot::channel().0,
+        });
+        assert_eq!(by_id(&dialog, Hit::Name), None);
+        assert_eq!(by_id(&dialog, Hit::Security(1)), None);
+        assert_eq!(by_id(&dialog, Hit::Cancel), Some(Hit::Cancel));
+        assert_eq!(dialog.focused_control(), Hit::Password);
     }
 
     #[test]

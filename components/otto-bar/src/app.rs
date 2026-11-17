@@ -1492,14 +1492,29 @@ impl App for TopBarApp {
         Some(tree)
     }
 
-    /// A screen reader clicked the bar: open that menu, or activate that tray
-    /// item, exactly as a pointer click does.
+    /// A screen reader acted on the bar or the password dialog. On the bar a
+    /// click opens that menu or activates that tray item, exactly as a
+    /// pointer click does; the dialog takes every action it advertises.
     fn on_accessibility_action(
         &mut self,
         _ctx: &AppContext,
         surface: &ObjectId,
         request: &ActionRequest,
     ) {
+        let on_dialog = self
+            .join_dialog
+            .as_ref()
+            .is_some_and(|d| d.surface_id().as_ref() == Some(surface));
+        if on_dialog {
+            let outcome = self
+                .join_dialog
+                .as_mut()
+                .and_then(|d| d.on_accessibility_action(request));
+            if let Some(outcome) = outcome {
+                self.finish_join_dialog(outcome);
+            }
+            return;
+        }
         if !matches!(request.action, Action::Click) {
             return;
         }
