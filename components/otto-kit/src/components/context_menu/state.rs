@@ -574,6 +574,14 @@ mod tests {
         assert!(state.is_submenu_open(0, 3), "Networks, one row lower");
         assert_eq!(state.selected_at_depth(1), Some(2), "Office, inside it");
         assert_eq!(state.depth(), 1);
+        // The rows a refresh measures to show the submenu again at its new
+        // size are the new ones.
+        let labels: Vec<_> = state
+            .items_at_depth(1)
+            .iter()
+            .filter_map(|i| i.label())
+            .collect();
+        assert_eq!(labels, ["Cafe", "Home", "Office"]);
     }
 
     #[test]
