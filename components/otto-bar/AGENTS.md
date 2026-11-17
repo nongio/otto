@@ -27,7 +27,7 @@ The top menu bar: the focused app's global menu on the left, and tray icons, the
 - With `topbar.show_app_menu` off the bar also gives up the registrar name, so apps keep their menus in their own windows. Keep that when changing `appmenu.rs`.
 - Battery and CPU state are drawn by the bar and never published as an SNI item (see the non-goals in the spec).
 - The network indicator decides nothing itself: list order, grouping and the glyph come from `otto-network`'s model, which Settings shares. The behaviour is `specs/network.md`.
-- The secret agent answers only Wi-Fi personal and WEP keys, and only when NetworkManager allows interaction; it declines everything else at once so another agent can answer. It never stores a password: the reply is the only place one goes.
+- The secret agent answers only Wi-Fi personal and WEP keys, and only when NetworkManager allows interaction; it declines everything else at once so another agent can answer. It keeps no store of its own: an agent-owned Wi-Fi key it answers is handed to NetworkManager to store with the profile.
 
 ## See also
 - [README](README.md) for the config file.

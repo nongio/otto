@@ -1,9 +1,15 @@
 # Network
 
-Otto shows and changes your network through NetworkManager: an indicator in
-the top bar, a password dialog when a network needs one, and **Settings →
-Network** for everything else. Nothing else needs to run: Otto answers
-NetworkManager's password questions itself, so `nm-applet` is not needed.
+Otto shows and changes your network through NetworkManager. You join
+networks from the indicator in the top bar, and manage the ones you have
+saved in **Settings → Network**.
+
+When NetworkManager needs a Wi-Fi password, Otto asks for it in its own
+dialog, so Wi-Fi needs no other applet. Otto does not answer other
+credentials: a VPN or an enterprise Wi-Fi network that needs a password to
+connect needs it saved for all users (see
+[Enterprise Wi-Fi and VPNs](#enterprise-wi-fi-and-vpns)), or another secret
+agent such as `nm-applet` running alongside.
 
 ## The indicator
 
@@ -66,9 +72,24 @@ the password was not accepted.
 For a hidden network, **Join Other Network…** asks for the network's name and
 how it is secured (**None**, **WPA2**, **WPA3** or **WEP**) as well.
 
+### Networks saved by another applet
+
+Some applets keep Wi-Fi passwords in your keyring rather than with
+NetworkManager, and those networks cannot connect by themselves at login
+without that applet. The first time you pick one from the menu, Otto asks
+for its password and then has NetworkManager keep it with the network. From
+then on it connects by itself, like any network joined in Otto. A network
+set to ask for its password every time keeps asking.
+
+### Enterprise Wi-Fi and VPNs
+
 WPA Enterprise networks (a user name and a certificate, as at universities)
 cannot be joined from the menu yet. Set them up with `nm-connection-editor`
-once; after that they connect from the menu.
+and choose **Store the password for all users** from the icon in the
+password field. After that they connect from the menu. The same goes
+for a VPN that asks for a password: with it stored for all users, the switch
+in the menu and in Settings is all it needs. A one-time code or token cannot
+be stored, so for those keep `nm-applet` or another secret agent running.
 
 ## Settings → Network
 

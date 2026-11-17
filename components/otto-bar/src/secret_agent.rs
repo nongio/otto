@@ -7,8 +7,17 @@
 //! answers Wi-Fi personal and WEP keys by putting up the bar's password
 //! dialog ([`crate::join_dialog`]); everything else (802.1X, VPN plug-ins)
 //! it declines at once, so another agent can answer. A password the person
-//! types goes back to NetworkManager in the reply and nowhere else: the
-//! agent stores nothing, and saving it is NetworkManager's choice.
+//! types goes back to NetworkManager and nowhere else: the agent keeps no
+//! store of its own.
+//!
+//! A profile whose key is agent-owned (`psk-flags` or `wep-key-flags` with
+//! `AGENT_OWNED`, as a keyring-backed applet saves them) expects the agent
+//! to store the key, and is stuck once that agent is gone: every
+//! auto-connect finds no key, and NetworkManager never offers the answer
+//! back through `SaveSecrets`. So when the person answers for such a
+//! profile, the agent also updates the profile to keep the key itself
+//! (the `AGENT_OWNED` flag cleared, the key included), and later connects
+//! need no agent at all.
 //!
 //! The interface is NetworkManager's `org.freedesktop.NetworkManager.SecretAgent`
 //! (`man nm-dbus-api`), served on the system bus at
@@ -18,10 +27,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use futures_util::StreamExt;
-use otto_kit::dbus::networkmanager::{AgentManagerProxy, SECRET_AGENT_PATH, SERVICE};
+use otto_kit::dbus::networkmanager::{
+    AgentManagerProxy, SettingsConnectionProxy, SECRET_AGENT_PATH, SERVICE,
+};
 use otto_kit::AppContext;
 use otto_network::{SecretRequest, Settings};
-use zbus::zvariant::OwnedObjectPath;
+use zbus::zvariant::{OwnedObjectPath, OwnedValue};
 use zbus::Connection;
 
 /// How the agent is known to NetworkManager.
@@ -30,6 +41,14 @@ const IDENTIFIER: &str = "org.otto.bar";
 /// `NMSecretAgentGetSecretsFlags`.
 const ALLOW_INTERACTION: u32 = 0x1;
 const REQUEST_NEW: u32 = 0x2;
+
+/// `NMSettingSecretFlags`: a user-session agent stores the secret.
+const AGENT_OWNED: u32 = 0x1;
+/// `NMSettingSecretFlags`: the secret is asked for every time, never kept.
+const NOT_SAVED: u32 = 0x2;
+
+/// The setting that holds Wi-Fi keys.
+const WIFI_SECURITY: &str = "802-11-wireless-security";
 
 /// A question waiting for the dialog.
 pub struct Ask {
@@ -158,7 +177,18 @@ impl Agent {
         if !from_networkmanager(conn, &header).await {
             return Err(AgentError::PermissionDenied(setting_name));
         }
-        ask(connection, connection_path.as_str(), setting_name, flags).await
+        let path = connection_path.to_string();
+        let secrets = ask(connection.clone(), &path, setting_name, flags).await?;
+        // Decided on what NetworkManager sent, so a profile that keeps its
+        // own key costs no extra round trip.
+        if store_with_profile(connection, &secrets).is_some() {
+            tokio::spawn(keep_with_networkmanager(
+                conn.clone(),
+                path,
+                secrets.clone(),
+            ));
+        }
+        Ok(secrets)
     }
 
     async fn cancel_get_secrets(
@@ -173,11 +203,76 @@ impl Agent {
         }
     }
 
-    /// NetworkManager keeps the secrets it is given itself (the connections
-    /// Otto makes are not agent-owned), so there is nothing to save.
+    /// Accepted and dropped: the agent keeps no store. Keys it answers end
+    /// up stored by NetworkManager (see [`store_with_profile`]), so there is
+    /// nothing of its own to save.
     fn save_secrets(&self, _connection: Settings, _connection_path: OwnedObjectPath) {}
 
+    /// Accepted with nothing to do, for the same reason as `save_secrets`.
     fn delete_secrets(&self, _connection: Settings, _connection_path: OwnedObjectPath) {}
+}
+
+/// The flag property governing the key in `secrets`, the reply to a Wi-Fi
+/// key request.
+fn flags_key(secrets: &Settings) -> Option<&'static str> {
+    let security = secrets.get(WIFI_SECURITY)?;
+    if security.contains_key("psk") {
+        Some("psk-flags")
+    } else if security.contains_key("wep-key0") {
+        Some("wep-key-flags")
+    } else {
+        None
+    }
+}
+
+/// `settings` changed to keep the key in `secrets` with NetworkManager, when
+/// the key is agent-owned and meant to be saved; `None` otherwise.
+///
+/// The `AGENT_OWNED` flag is cleared and every other flag kept. Only the
+/// reply's own keys (`psk`, `wep-key0`, `wep-key-type`) are added, since
+/// the reply carries nothing else.
+fn store_with_profile(mut settings: Settings, secrets: &Settings) -> Option<Settings> {
+    let flags_key = flags_key(secrets)?;
+    let security = settings.get_mut(WIFI_SECURITY)?;
+    let flags = security
+        .get(flags_key)
+        .and_then(|v| u32::try_from(v).ok())
+        .unwrap_or(0);
+    if flags & AGENT_OWNED == 0 || flags & NOT_SAVED != 0 {
+        return None;
+    }
+    let cleared = OwnedValue::from(flags & !AGENT_OWNED);
+    security.insert(flags_key.to_string(), cleared);
+    for (key, value) in secrets.get(WIFI_SECURITY)? {
+        security.insert(key.clone(), value.clone());
+    }
+    Some(settings)
+}
+
+/// Have NetworkManager keep the key in `secrets` with the profile at
+/// `path`, when the profile leaves it to an agent.
+///
+/// Spawned beside the reply, which does not wait on it. The profile is read
+/// fresh and updated, so its other settings are kept as NetworkManager has
+/// them. A refusal (no
+/// permission to change the profile) leaves things as they were, and the
+/// next connect asks again. The key is never logged.
+async fn keep_with_networkmanager(conn: Connection, path: String, secrets: Settings) {
+    let result = async {
+        let proxy = SettingsConnectionProxy::builder(&conn)
+            .path(path.as_str())?
+            .build()
+            .await?;
+        let settings = proxy.get_settings().await?;
+        match store_with_profile(settings, &secrets) {
+            Some(updated) => proxy.update(updated).await,
+            None => Ok(()),
+        }
+    }
+    .await;
+    if let Err(e) = result {
+        tracing::debug!("network key left with the agent: {e}");
+    }
 }
 
 /// Serve the agent on `conn` and register it, again whenever NetworkManager
@@ -323,5 +418,82 @@ mod tests {
         )
         .await;
         assert!(matches!(quiet, Err(AgentError::NoSecrets(_))));
+    }
+
+    /// `settings` with `flags` set on the security setting's `key`.
+    fn with_flags(mut settings: Settings, key: &str, flags: u32) -> Settings {
+        settings
+            .get_mut(WIFI_SECURITY)
+            .unwrap()
+            .insert(key.to_string(), OwnedValue::from(flags));
+        settings
+    }
+
+    /// The reply the dialog sends for `settings`.
+    fn answer(settings: &Settings, password: &str) -> Settings {
+        SecretRequest::from_settings(WIFI_SECURITY, settings)
+            .unwrap()
+            .reply(password)
+    }
+
+    fn flags(settings: &Settings, key: &str) -> u32 {
+        u32::try_from(&settings[WIFI_SECURITY][key]).unwrap()
+    }
+
+    #[test]
+    fn an_agent_owned_key_moves_to_networkmanager() {
+        let profile = with_flags(wifi_settings("wpa-psk"), "psk-flags", AGENT_OWNED);
+        let secrets = answer(&profile, "hunter22");
+        let updated = store_with_profile(profile, &secrets).unwrap();
+        assert_eq!(flags(&updated, "psk-flags"), 0);
+        assert_eq!(
+            String::try_from(updated[WIFI_SECURITY]["psk"].clone()).unwrap(),
+            "hunter22"
+        );
+        // The rest of the profile is untouched.
+        assert!(updated["802-11-wireless"].contains_key("ssid"));
+        assert_eq!(
+            String::try_from(updated[WIFI_SECURITY]["key-mgmt"].clone()).unwrap(),
+            "wpa-psk"
+        );
+    }
+
+    #[test]
+    fn a_wep_key_moves_with_its_type() {
+        let profile = with_flags(wifi_settings("none"), "wep-key-flags", AGENT_OWNED);
+        let secrets = answer(&profile, "abcde");
+        let updated = store_with_profile(profile, &secrets).unwrap();
+        assert_eq!(flags(&updated, "wep-key-flags"), 0);
+        assert!(updated[WIFI_SECURITY].contains_key("wep-key0"));
+        assert!(updated[WIFI_SECURITY].contains_key("wep-key-type"));
+    }
+
+    #[test]
+    fn only_the_agent_owned_flag_is_cleared() {
+        const NOT_REQUIRED: u32 = 0x4;
+        let profile = with_flags(
+            wifi_settings("sae"),
+            "psk-flags",
+            AGENT_OWNED | NOT_REQUIRED,
+        );
+        let secrets = answer(&profile, "correct horse");
+        let updated = store_with_profile(profile, &secrets).unwrap();
+        assert_eq!(flags(&updated, "psk-flags"), NOT_REQUIRED);
+    }
+
+    #[test]
+    fn a_key_kept_elsewhere_or_never_saved_stays_put() {
+        // NetworkManager already keeps it: nothing to change.
+        let system = wifi_settings("wpa-psk");
+        let secrets = answer(&system, "hunter22");
+        assert!(store_with_profile(system, &secrets).is_none());
+        // Asked for every time: the person chose that.
+        let never = with_flags(
+            wifi_settings("wpa-psk"),
+            "psk-flags",
+            AGENT_OWNED | NOT_SAVED,
+        );
+        let secrets = answer(&never, "hunter22");
+        assert!(store_with_profile(never, &secrets).is_none());
     }
 }

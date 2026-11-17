@@ -45,14 +45,14 @@ The common ground, which Otto adopts:
   - connected with no internet
 - Clicking the indicator opens a menu with:
   - the Wi-Fi switch
-  - the wired connection's state, when there is a wired device
   - the networks in range, with the connected one ticked
+  - the wired connection's state, when there is a wired device
   - VPN connections as toggles
   - disconnect
   - the Network pane in Settings
 - Choosing a network connects to it. A saved network uses its saved profile. A new open network is joined directly. A new secured network first asks for its password in Otto's own dialog.
 - *Join Other Network…* joins a network that does not broadcast its name.
-- Otto is a NetworkManager secret agent. When NetworkManager needs a Wi-Fi password it does not have, Otto asks for it in the same dialog. No other applet is needed.
+- Otto is a NetworkManager secret agent. When NetworkManager needs a Wi-Fi password it does not have, Otto asks for it in the same dialog, so Wi-Fi needs no other applet. A Wi-Fi key that a previous agent kept (agent-owned) is handed to NetworkManager to keep from then on.
 - A Network pane in Settings, with a tab each for Wi-Fi, Ethernet and VPN:
   - the Wi-Fi switch
   - the link: signal, band and channel, link rate, security, access point, hardware address
@@ -66,7 +66,7 @@ The common ground, which Otto adopts:
 
 ## Non-Goals
 
-- **802.1X (WPA Enterprise) and VPN plug-in secrets.** The agent answers Wi-Fi personal and WEP keys and declines the rest, so another agent can answer.
+- **802.1X (WPA Enterprise) and VPN plug-in secrets.** The agent answers Wi-Fi personal and WEP keys and declines the rest, so another agent can answer. Such profiles connect without an agent when their secrets are stored for all users.
 - **Proxies, MTU, cloned MAC addresses, routes, bonds, bridges.** `nm-connection-editor` and `nmtui` do these.
 - **Backends other than NetworkManager** (iwd alone, ConnMan, systemd-networkd). Without NetworkManager on the system bus the indicator does not appear, and a tray applet for that backend still works.
 - **Bluetooth and mobile broadband.**
@@ -98,15 +98,14 @@ The common ground, which Otto adopts:
      - When a soft block holds the radio off (the airplane key, `rfkill block wifi`, another desktop's switch), the item is unticked, with *Off with airplane mode* under it. Choosing it lifts the block and turns Wi-Fi on.
      - When a hard block holds it off (a physical switch, the firmware), the item reads *Wi-Fi — off with the wireless switch* and is dimmed: only that switch can turn it on.
      - The list of networks shows only while the radio is on.
-   - **Ethernet** (one line per wired device), saying whether it is connected or unplugged. Not selectable.
    - With Wi-Fi on, the networks in range:
-     - Saved networks come first, then the others, which go into an **Other Networks** submenu when there are saved networks above them.
-     - Each row shows the network's name and a signal icon. A secured network says *Secured* beside its name.
-     - The connected network is ticked.
+     - Saved networks come first. Each row shows the network's name and a signal icon. A secured network says *Secured* beside its name.
+     - The connected network is ticked, with a line under it giving its band, channel, link rate and IPv4 address.
      - A network being connected to says *Connecting…* beside it.
-   - **VPN** connections, each ticked while active. Choosing one starts or stops it.
-   - Under the connected network, a line with its band, channel, link rate and IPv4 address.
+   - **Other Networks**, a submenu holding the networks that are not saved, when there are saved networks above it. Without saved networks they are listed directly.
    - **Join Other Network…**, with Wi-Fi on.
+   - **Ethernet** (one line per wired device), saying whether it is connected or unplugged. Not selectable.
+   - **VPN** connections, each ticked while active. Choosing one starts or stops it.
    - **Disconnect from *name*** while Wi-Fi is connected.
    - **Network Settings…**, which opens Settings on the Network pane.
 8. Choosing a network:
@@ -125,7 +124,7 @@ The common ground, which Otto adopts:
    - *Password* (masked), with *Show password*, unless the network is open
    - *Cancel* and *Join*. Join is dimmed until the password can be a key of that kind: 8–63 characters or 64 hex digits for WPA2, any for WPA3, 5 or 13 characters or 10 or 26 hex digits for WEP.
 10b. Return joins, Escape cancels, Tab moves between the name and the password.
-10c. Otto registers as a NetworkManager secret agent (`org.otto.bar`) on the system bus, again whenever NetworkManager restarts. For a Wi-Fi personal or WEP key, when NetworkManager allows interaction, it opens the dialog. When NetworkManager says the key it had was refused, the dialog says so. The typed key goes back in the reply and is not stored by Otto. Other secrets, and requests that allow no interaction, are declined at once. A request NetworkManager withdraws closes the dialog if it is on screen, and is answered no if it is still waiting; a withdrawal belongs to its own request and never closes a later one. Only one dialog is up at a time: a second request waits until the first is answered. A call from anyone but NetworkManager's own bus name is refused.
+10c. Otto registers as a NetworkManager secret agent (`org.otto.bar`) on the system bus, again whenever NetworkManager restarts. For a Wi-Fi personal or WEP key, when NetworkManager allows interaction, it opens the dialog. When NetworkManager says the key it had was refused, the dialog says so. The typed key goes back in the reply, and only `psk`, `wep-key0` and `wep-key-type` are ever sent; nothing is logged. Otto keeps no store of its own: when the profile's `psk-flags` or `wep-key-flags` has `AGENT_OWNED` (0x1) and not `NOT_SAVED` (0x2), Otto then updates the profile (`Settings.Connection.Update`, read fresh with `GetSettings`) with that flag cleared and the key included, so NetworkManager keeps it and later connects, auto-connect at login included, need no agent. NetworkManager never passes an agent's own answer back to `SaveSecrets`, so without this an agent-owned profile would ask on every connect and never auto-connect. When the update is refused (no permission to change the profile), nothing changes and the next connect asks again. `SaveSecrets` and `DeleteSecrets` are accepted and do nothing. Other secrets, and requests that allow no interaction, are declined at once. A request NetworkManager withdraws closes the dialog if it is on screen, and is answered no if it is still waiting; a withdrawal belongs to its own request and never closes a later one. Only one dialog is up at a time: a second request waits until the first is answered. A call from anyone but NetworkManager's own bus name is refused.
 
 ### Settings pane
 
@@ -165,7 +164,7 @@ The common ground, which Otto adopts:
 
 - **Several access points share a network name.** They are one row, with the strongest one's signal and the strongest one used when a new profile is added.
 - **Names that are not UTF-8.** They are shown with replacement characters and still matched by their bytes.
-- **Two Wi-Fi devices.** The first managed one is used, and the Status group lists both.
+- **Two Wi-Fi devices.** The first managed one is used for the menu and the Wi-Fi tab, and the second is not shown. The Status group is on the Ethernet tab and lists wired devices only.
 - **NetworkManager restarts.** The indicator disappears and comes back once it has rejoined the bus.
 - **Kill switches.** The radios' blocks are read from `/sys/class/rfkill`, and their changes followed on `/dev/rfkill`, since NetworkManager does not report every soft block set elsewhere. A soft block is lifted by writing to `/dev/rfkill`, which the active session may (systemd's `uaccess`). Where it may not, turning Wi-Fi on is left to NetworkManager.
 - **Sleep.** While the machine sleeps NetworkManager takes the devices down and the indicator may go with them. When logind says the machine has woken (`PrepareForSleep(false)`), everything is read again, so the indicator and an open menu or pane catch up at once. Going to sleep reads nothing.
@@ -180,10 +179,11 @@ The common ground, which Otto adopts:
 - **The indicator is in otto-bar, not in a separate app or a tray applet.** The bar already draws its status indicators itself (battery, keyboard layout), because the tray carries only an icon, a tooltip and a flat menu. Drawing the indicator in the bar keeps it consistent with its neighbours, and the keyboard focus, menus and accessibility work as they do for every other indicator.
 - **The model is shared.** One library (`otto-network`) reads NetworkManager into a snapshot and performs the actions. The bar and Settings both use it, so the two can never disagree about what "connected" means or how networks are sorted.
 - **The secret agent lives in otto-bar.** The bar runs for the whole session and already holds the network connection on the system bus, and the dialog is the one the menu opens. A second process would need its own bus connection and its own way to put a dialog on screen.
-- **The key travels with the profile.** Joining a new network sends the key with the new profile, so NetworkManager stores it and needs no agent to reconnect later. The agent covers the cases that remain: a changed password, or a profile saved without one.
+- **The key travels with the profile.** Joining a new network sends the key with the new profile, so NetworkManager stores it and needs no agent to reconnect later. The agent covers the cases that remain: a changed password, a profile saved without one, or one whose key a previous agent kept, which it moves to NetworkManager the first time it is answered.
 - **TCP/IP edits are a draft.** Applying each field as it is typed would drop the connection the moment Manually is picked, before any address is in. A draft lets the person fill in a whole configuration, have it checked, and apply it once.
 
 ## Open Questions
 
 - **Hotspot and airplane mode.**
+- **Metered connections.** Whether to show NetworkManager's metered flag, and let a connection be marked metered.
 - **Proxies.** Per-connection proxy settings (`proxy` setting) would fit the TCP/IP tab.
