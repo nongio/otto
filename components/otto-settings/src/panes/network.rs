@@ -1306,7 +1306,7 @@ fn editor(
         } else if let Some(live) = live {
             let (addresses, gateway) = match family {
                 Family::V4 => (&live.ipv4, live.gateway.clone()),
-                Family::V6 => (&live.ipv6, None),
+                Family::V6 => (&live.ipv6, live.gateway6.clone()),
             };
             if !addresses.is_empty() {
                 ip.push(value(address_label, addresses.join(", ")));

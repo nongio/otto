@@ -79,13 +79,13 @@ The common ground, which Otto adopts:
 2. It is shown when the `topbar.show_network` setting is on, NetworkManager is on the system bus, and the machine has a Wi-Fi or Ethernet device. Otherwise it takes no space.
 3. What it draws, in order of precedence:
    - Wi-Fi off and no wired connection: the empty fan, crossed out. Wi-Fi counts as off when NetworkManager's switch is off, and also when a kill switch holds the radio off, whatever NetworkManager's switch says.
-   - A connection activating: the fan's bars light up one after another until the connection is up or fails.
    - Wired as the primary connection: the wired glyph.
-   - Wi-Fi as the primary connection: the fan, with bars lit by signal strength:
+   - Any other primary connection, over a link that is up: the fan for a Wi-Fi link, with bars lit by signal strength, or the wired glyph for a connected cable:
      - below 25%: none
      - 25% to 49%: one
      - 50% to 74%: two
      - 75% and up: three
+   - A connection activating: the fan's bars light up one after another until the connection is up or fails. A link in use keeps its glyph while another one activates.
    - Nothing connected: the empty fan.
 4. When NetworkManager reports limited connectivity or a captive portal, the glyph is drawn dimmed with a small exclamation mark.
 5. A screen reader reads the indicator as a button with a menu. Its label says the state in words, for example "Wi-Fi, connected to Home, strong signal". It is announced when it changes.
@@ -146,7 +146,7 @@ The common ground, which Otto adopts:
 15. **TCP/IP group:**
     - *Configure IPv4*: Automatic (DHCP), Manually, Link-local only, Share this connection, Off
     - *Configure IPv6*: Automatic, Automatic DHCP only, Manually, Link-local only, Share this connection, Off
-    - Manually shows the family's addresses (`address/prefix`, comma-separated; a missing prefix is /24 or /64) and router as fields. Any other method shows the addresses and router in use.
+    - Manually shows the family's addresses (`address/prefix`, comma-separated; a missing prefix is /24 or /64) and router as fields. Any other method shows the addresses and router in use, for IPv6 too.
 16. **DNS group:**
     - *Automatic DNS*: off means only the servers below are asked
     - *DNS servers*: IPv4 and IPv6 together, comma-separated
@@ -154,7 +154,7 @@ The common ground, which Otto adopts:
     - the servers in use
 17. Edits to TCP/IP and DNS are a draft. *Changes* has *Revert* and *Apply*, dimmed while there is nothing to apply. Apply checks the draft first:
     - Manually needs at least one address.
-    - Every address, router and DNS server must be of its family.
+    - Every address, router and DNS server must be of its family. A router is checked only with Manually, the one method that uses it.
     - Every search domain must be a domain.
     A problem is written under *Changes*, and nothing is sent. A draft that passes is saved on the profile and applied to the running connection in place (`Reapply`), or by reconnecting where NetworkManager cannot apply it in place.
 18. Without NetworkManager the pane says so in a single line and shows nothing else.
@@ -162,10 +162,12 @@ The common ground, which Otto adopts:
 
 ## Constraints & Edge Cases
 
-- **Several access points share a network name.** They are one row, with the strongest one's signal and the strongest one used when a new profile is added.
+- **Several access points share a network name.** They are one row, with the strongest one's signal. The row asks for the strongest security among them, and a new profile is added for the strongest access point that takes that key.
+- **A hidden network in use.** Its access point may report no name. It is shown under its saved profile's name and reads as connected.
 - **Names that are not UTF-8.** They are shown with replacement characters and still matched by their bytes.
-- **Two Wi-Fi devices.** The first managed one is used for the menu and the Wi-Fi tab, and the second is not shown. The Status group is on the Ethernet tab and lists wired devices only.
+- **Two Wi-Fi devices.** The first managed one with a connection is used for the menu and the Wi-Fi tab, or the first when none has one; the other is not shown. The Status group is on the Ethernet tab and lists wired devices only.
 - **NetworkManager restarts.** The indicator disappears and comes back once it has rejoined the bus.
+- **A failed read.** If NetworkManager fails a read, it is tried again on its next change or after a pause that grows from 1 s to 30 s. If following stops (the bus went away), the bar and Settings start following again.
 - **Kill switches.** The radios' blocks are read from `/sys/class/rfkill`, and their changes followed on `/dev/rfkill`, since NetworkManager does not report every soft block set elsewhere. A soft block is lifted by writing to `/dev/rfkill`, which the active session may (systemd's `uaccess`). Where it may not, turning Wi-Fi on is left to NetworkManager.
 - **Sleep.** While the machine sleeps NetworkManager takes the devices down and the indicator may go with them. When logind says the machine has woken (`PrepareForSleep(false)`), everything is read again, so the indicator and an open menu or pane catch up at once. Going to sleep reads nothing.
 - **Scans.** NetworkManager rate-limits them. A refused scan request is not an error.
