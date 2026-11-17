@@ -3,7 +3,7 @@
 //! A draw pass is expensive even when it ends up flipping nothing: every
 //! element is rebuilt, the scene ticked, the planes reconsidered. So passes
 //! run only for a reason, and each surface tracks whether one is already on
-//! its way ([`FramePacer::is_scheduled`]) so a reason never schedules two.
+//! its way ([`Pacemaker::is_scheduled`]) so a reason never schedules two.
 //!
 //! Reasons arrive as events — a client commit or input bumps the redraw
 //! generation, lay-rs reports pending transactions — or hold for a while
@@ -12,12 +12,12 @@
 //! be tested: content at 30 fps costs 30 passes a second, an idle desktop
 //! none, and a request that lands while a frame is in flight is never lost.
 //!
-//! [`FramePacer`] holds one surface's pacing state and is the only thing the
+//! [`Pacemaker`] holds one surface's pacing state and is the only thing the
 //! udev backend asks when to draw. It knows no clock, DRM device or event
 //! loop: the backend hands it times in microseconds and turns its answers
-//! into calloop timers. [`sim`] drives the same pacer from a virtual display
+//! into calloop timers. [`sim`] drives the same pacemaker from a virtual display
 //! (an [`edid`] mode with a perfect VBlank), so frame pacing can be measured
-//! deterministically, without a GPU (`cargo bench --bench frame_pacing`).
+//! deterministically, without a GPU (`cargo bench --bench pacemaker`).
 //! See `specs/frame-pacing.md` and `docs/developer/render_loop.md`.
 
 pub mod edid;
@@ -26,7 +26,7 @@ pub mod sim;
 /// The share of a period the compositor's own CPU plus GPU need may take for
 /// it to count as keeping up: below it, the VBlank-cadence tick sends the
 /// callbacks of VBlanks at which nothing flipped (see
-/// [`FramePacer::keeping_up`]).
+/// [`Pacemaker::keeping_up`]).
 pub const KEEP_UP_FRACTION: f32 = 0.6;
 
 /// The share of a period a full-rate surface must have gone without a frame
@@ -55,7 +55,7 @@ pub enum Draw {
 }
 
 /// Why the next pass may be wanted, as the VBlank handler sees it. The
-/// generation the last pass started from is the pacer's own.
+/// generation the last pass started from is the pacemaker's own.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct VblankReasons {
     /// The scene tick run at this VBlank reported damage.
@@ -73,10 +73,10 @@ pub struct VblankReasons {
 /// One output's pacing state: what its passes cost, how long its period is,
 /// whether a pass is on its way and which requests the last one saw.
 ///
-/// Times are microseconds. The pacer never reads a clock: the caller says
+/// Times are microseconds. The pacemaker never reads a clock: the caller says
 /// how long ago the last VBlank was, and turns [`Draw`] into a timer.
 #[derive(Debug, Clone)]
-pub struct FramePacer {
+pub struct Pacemaker {
     /// Mean CPU time of a pass (EMA, α = 0.1).
     avg_cpu_us: f32,
     /// GPU time of a pass's composite, from submission to the fence
@@ -93,13 +93,13 @@ pub struct FramePacer {
     seen_redraw_gen: u64,
 }
 
-impl Default for FramePacer {
+impl Default for Pacemaker {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl FramePacer {
+impl Pacemaker {
     pub fn new() -> Self {
         Self {
             avg_cpu_us: INITIAL_CPU_ESTIMATE_US,
@@ -235,7 +235,7 @@ impl FramePacer {
         self.avg_gpu_us = gpu_estimate_us(self.avg_gpu_us, gpu_us);
     }
 
-    /// Claims the surface for a pass scheduled from outside the pacer's own
+    /// Claims the surface for a pass scheduled from outside the pacemaker's own
     /// decisions (an output lagging behind the damage generation). Returns
     /// false, changing nothing, when a pass is already on its way.
     pub fn claim(&mut self) -> bool {
@@ -372,11 +372,11 @@ fn after_pass(rendered: bool, may_reschedule: bool, animations_pending: bool) ->
 mod tests {
     use super::*;
 
-    /// One output driven through the real pacer, with the VBlank-scheduled
+    /// One output driven through the real pacemaker, with the VBlank-scheduled
     /// pass modelled as "runs before the next VBlank". `sim` measures timing;
     /// this checks only which passes happen.
     struct Sim {
-        pacer: FramePacer,
+        pacemaker: Pacemaker,
         redraw_gen: u64,
         /// A pass is scheduled by a timer and runs before the next VBlank.
         pass_pending: bool,
@@ -393,7 +393,7 @@ mod tests {
     impl Sim {
         fn new() -> Self {
             Sim {
-                pacer: FramePacer::new(),
+                pacemaker: Pacemaker::new(),
                 redraw_gen: 0,
                 pass_pending: false,
                 in_flight: false,
@@ -415,11 +415,11 @@ mod tests {
 
         fn loop_turn(&mut self) {
             if self
-                .pacer
+                .pacemaker
                 .should_wake(self.redraw_gen, self.animations_pending)
             {
                 // No VBlank seen: the wake-up draws at once.
-                assert_eq!(self.pacer.wake(None), Draw::Now);
+                assert_eq!(self.pacemaker.wake(None), Draw::Now);
                 self.pass();
             }
         }
@@ -429,13 +429,13 @@ mod tests {
         fn pass(&mut self) {
             self.pass_pending = false;
             self.passes += 1;
-            self.pacer.begin_pass(self.redraw_gen);
+            self.pacemaker.begin_pass(self.redraw_gen);
             let rendered = self.scene_damage || self.scanout_commit;
             self.scene_damage = false;
             self.scanout_commit = false;
-            let reschedule = self
-                .pacer
-                .end_pass(1_000.0, rendered, true, self.animations_pending);
+            let reschedule =
+                self.pacemaker
+                    .end_pass(1_000.0, rendered, true, self.animations_pending);
             if rendered {
                 self.in_flight = true;
                 self.flips += 1;
@@ -452,7 +452,7 @@ mod tests {
                 return;
             }
             self.in_flight = false;
-            let draw = self.pacer.on_vblank(&VblankReasons {
+            let draw = self.pacemaker.on_vblank(&VblankReasons {
                 scene_has_damage: self.scene_damage,
                 continuous_frames: self.continuous_frames,
                 redraw_gen: self.redraw_gen,
@@ -494,7 +494,7 @@ mod tests {
         }
         assert_eq!(sim.flips, 1);
         assert_eq!(sim.passes, 1);
-        assert!(!sim.pacer.is_scheduled());
+        assert!(!sim.pacemaker.is_scheduled());
     }
 
     #[test]
@@ -545,7 +545,7 @@ mod tests {
             sim.passes, 12,
             "one last pass sees the animation drained, then idle"
         );
-        assert!(!sim.pacer.is_scheduled());
+        assert!(!sim.pacemaker.is_scheduled());
     }
 
     #[test]
@@ -671,44 +671,44 @@ mod tests {
     /// at once; after one it keeps the rhythm and claims the surface.
     #[test]
     fn a_wake_up_is_placed_on_the_rhythm_once_there_is_one() {
-        let mut pacer = FramePacer::new();
-        assert_eq!(pacer.wake(Some(1_000.0)), Draw::Now, "no period yet");
-        pacer.set_refresh_mhz(60_000);
-        assert_eq!(pacer.wake(None), Draw::Now, "no VBlank yet");
-        assert!(!pacer.is_scheduled());
-        let Draw::In(wait) = pacer.wake(Some(1_000.0)) else {
+        let mut pacemaker = Pacemaker::new();
+        assert_eq!(pacemaker.wake(Some(1_000.0)), Draw::Now, "no period yet");
+        pacemaker.set_refresh_mhz(60_000);
+        assert_eq!(pacemaker.wake(None), Draw::Now, "no VBlank yet");
+        assert!(!pacemaker.is_scheduled());
+        let Draw::In(wait) = pacemaker.wake(Some(1_000.0)) else {
             panic!("1 ms into the period the deadline is still ahead");
         };
-        assert!(close_to(wait, pacer.draw_delay_us() - 1_000.0));
-        assert!(pacer.is_scheduled());
-        assert!(!pacer.claim(), "already claimed by the wake-up");
+        assert!(close_to(wait, pacemaker.draw_delay_us() - 1_000.0));
+        assert!(pacemaker.is_scheduled());
+        assert!(!pacemaker.claim(), "already claimed by the wake-up");
     }
 
     #[test]
     fn an_unknown_period_never_spins() {
-        let mut pacer = FramePacer::new();
+        let mut pacemaker = Pacemaker::new();
         assert_eq!(
-            pacer.end_pass(1_000.0, false, true, true),
+            pacemaker.end_pass(1_000.0, false, true, true),
             Some(MIN_DRAW_DELAY_US)
         );
-        pacer.set_refresh_mhz(0);
-        assert_eq!(pacer.draw_delay_us(), MIN_DRAW_DELAY_US);
+        pacemaker.set_refresh_mhz(0);
+        assert_eq!(pacemaker.draw_delay_us(), MIN_DRAW_DELAY_US);
     }
 
     /// The tick paces clients at VBlanks with no flip only while the
     /// compositor's own need is under 60 % of the period.
     #[test]
     fn keeping_up_is_the_compositors_need_not_its_rate() {
-        let mut pacer = FramePacer::new();
-        pacer.set_refresh_mhz(120_000);
+        let mut pacemaker = Pacemaker::new();
+        pacemaker.set_refresh_mhz(120_000);
         for _ in 0..100 {
-            pacer.end_pass(1_000.0, true, true, false);
+            pacemaker.end_pass(1_000.0, true, true, false);
         }
         // The GPU estimate moves halfway to a longer sample.
-        pacer.record_gpu(4_000.0);
-        assert!(pacer.keeping_up(), "1 + 2 ms of 8.3");
-        pacer.record_gpu(10_000.0);
-        assert!(!pacer.keeping_up(), "1 + 6 ms of 8.3");
+        pacemaker.record_gpu(4_000.0);
+        assert!(pacemaker.keeping_up(), "1 + 2 ms of 8.3");
+        pacemaker.record_gpu(10_000.0);
+        assert!(!pacemaker.keeping_up(), "1 + 6 ms of 8.3");
     }
 
     #[test]

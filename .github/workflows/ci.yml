@@ -309,16 +309,16 @@ jobs:
       - name: Frame pacing bench
         timeout-minutes: 15
         if: needs.changes.outputs.compositor == 'true'
-        # The udev backend's FramePacer on a virtual display: a mode read from
+        # The udev backend's Pacemaker on a virtual display: a mode read from
         # an EDID, a perfect VBlank, a single-threaded loop and modelled
-        # clients (src/frame_pacing/sim.rs). Deterministic, so a change in the
+        # clients (src/pacemaker/sim.rs). Deterministic, so a change in the
         # numbers is the code's, never the runner's: this fails when a
         # scenario got worse than the committed baseline, and the table goes
         # to the job summary. The dev profile reuses the test build.
         run: |
           set -o pipefail
-          cargo bench --locked --profile dev --features headless --bench frame_pacing \
-            -- --baseline benches/frame_pacing.baseline.json | tee -a "$GITHUB_STEP_SUMMARY"
+          cargo bench --locked --profile dev --features headless --bench pacemaker \
+            -- --baseline benches/pacemaker.baseline.json | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Run headless integration tests
         timeout-minutes: 15
         if: needs.changes.outputs.compositor == 'true'

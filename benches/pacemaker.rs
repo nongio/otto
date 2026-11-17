@@ -1,22 +1,22 @@
-//! The frame-pacing bench: Otto's `FramePacer` on a virtual display with a
+//! The pacemaker bench: Otto's `Pacemaker` on a virtual display with a
 //! perfect VBlank, deterministic, no GPU or DRM device needed.
 //!
 //! ```sh
-//! cargo bench --bench frame_pacing                       # Markdown table
-//! cargo bench --bench frame_pacing -- --json             # the reports as JSON
-//! cargo bench --bench frame_pacing -- --edid /sys/class/drm/card1-eDP-1/edid
-//! cargo bench --bench frame_pacing -- --baseline benches/frame_pacing.baseline.json
-//! cargo bench --bench frame_pacing -- --write-baseline benches/frame_pacing.baseline.json
+//! cargo bench --bench pacemaker                       # Markdown table
+//! cargo bench --bench pacemaker -- --json             # the reports as JSON
+//! cargo bench --bench pacemaker -- --edid /sys/class/drm/card1-eDP-1/edid
+//! cargo bench --bench pacemaker -- --baseline benches/pacemaker.baseline.json
+//! cargo bench --bench pacemaker -- --write-baseline benches/pacemaker.baseline.json
 //! ```
 //!
 //! `--baseline` exits non-zero when a scenario got worse than the committed
-//! reports (see `frame_pacing::sim::regressions`); `--write-baseline`
+//! reports (see `pacemaker::sim::regressions`); `--write-baseline`
 //! refreshes them after a change that improves pacing. `--scenario NAME`
-//! runs one. The scenarios and what they model: `src/frame_pacing/sim.rs`.
+//! runs one. The scenarios and what they model: `src/pacemaker/sim.rs`.
 
 use std::process::ExitCode;
 
-use otto::frame_pacing::{edid, sim};
+use otto::pacemaker::{edid, sim};
 
 fn main() -> ExitCode {
     let mut args = std::env::args().skip(1);
@@ -95,7 +95,7 @@ fn main() -> ExitCode {
             }
             println!(
                 "\nIf that is intended, refresh the baseline: \
-                 `cargo bench --bench frame_pacing -- --write-baseline {path}`"
+                 `cargo bench --bench pacemaker -- --write-baseline {path}`"
             );
             return ExitCode::FAILURE;
         }

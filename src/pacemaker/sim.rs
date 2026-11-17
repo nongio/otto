@@ -1,4 +1,4 @@
-//! A deterministic frame-pacing bench: the real [`FramePacer`] driven by a
+//! A deterministic pacemaker bench: the real [`Pacemaker`] driven by a
 //! virtual display.
 //!
 //! The display scans out a mode read from an EDID ([`super::edid`]) with a
@@ -16,7 +16,7 @@
 //! between the clients and the compositor, plane scanout, several outputs,
 //! VRR, and the scene work a VBlank does before arming the deadline.
 //!
-//! `cargo bench --bench frame_pacing` runs [`standard`] and prints a table.
+//! `cargo bench --bench pacemaker` runs [`standard`] and prints a table.
 
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
@@ -24,7 +24,7 @@ use std::collections::BinaryHeap;
 use serde::{Deserialize, Serialize};
 
 use super::edid::{self, DisplayMode};
-use super::{callback_due_on_commit, Draw, FramePacer, VblankReasons};
+use super::{callback_due_on_commit, Draw, Pacemaker, VblankReasons};
 
 /// The share of a pass's CPU time one that draws nothing costs: it still
 /// rebuilds the elements and reconsiders the planes.
@@ -395,7 +395,7 @@ struct Sim<'a> {
     busy_until_us: f64,
     queue: BinaryHeap<Reverse<(u64, u64, Event)>>,
     seq: u64,
-    pacer: FramePacer,
+    pacemaker: Pacemaker,
     redraw_gen: u64,
     last_vblank_us: Option<f64>,
     flips: u64,
@@ -413,8 +413,8 @@ struct Sim<'a> {
 
 impl<'a> Sim<'a> {
     fn new(sc: &'a Scenario) -> Self {
-        let mut pacer = FramePacer::new();
-        pacer.set_refresh_mhz(sc.display.refresh_mhz);
+        let mut pacemaker = Pacemaker::new();
+        pacemaker.set_refresh_mhz(sc.display.refresh_mhz);
         Self {
             sc,
             rng: Rng(sc.seed | 1),
@@ -422,7 +422,7 @@ impl<'a> Sim<'a> {
             busy_until_us: 0.0,
             queue: BinaryHeap::new(),
             seq: 0,
-            pacer,
+            pacemaker,
             redraw_gen: 0,
             last_vblank_us: None,
             flips: 0,
@@ -504,12 +504,12 @@ impl<'a> Sim<'a> {
             match event {
                 Event::Flip => self.flip(at_us, now),
                 Event::GpuDone { submitted_ns } => {
-                    self.pacer
+                    self.pacemaker
                         .record_gpu((now - submitted_ns as f64 / 1000.0) as f32);
                 }
                 Event::Pass => self.pass(now),
                 Event::Tick { armed } => {
-                    if armed == self.flips && self.pacer.keeping_up() {
+                    if armed == self.flips && self.pacemaker.keeping_up() {
                         self.send_callbacks(now);
                     }
                 }
@@ -536,11 +536,14 @@ impl<'a> Sim<'a> {
     /// After each dispatch the loop wakes an idle surface that is owed a
     /// pass (`run_udev`'s loop, `render_on_wake`).
     fn loop_turn(&mut self, now: f64) {
-        if !self.pacer.should_wake(self.redraw_gen, self.animating(now)) {
+        if !self
+            .pacemaker
+            .should_wake(self.redraw_gen, self.animating(now))
+        {
             return;
         }
         let since = self.last_vblank_us.map(|v| (now - v) as f32);
-        match self.pacer.wake(since) {
+        match self.pacemaker.wake(since) {
             Draw::Now => self.pass(now),
             Draw::In(us) => self.at(now + us as f64, Event::Pass),
         }
@@ -549,7 +552,7 @@ impl<'a> Sim<'a> {
     /// `render_surface`: compose what is new, queue it, and say what follows.
     fn pass(&mut self, now: f64) {
         self.passes += 1;
-        self.pacer.begin_pass(self.redraw_gen);
+        self.pacemaker.begin_pass(self.redraw_gen);
         let animating = self.animating(now);
         let has_commits = self.clients.iter().any(|c| c.pending_commit_us.is_some());
         let rendered = self.in_flight.is_none() && (has_commits || self.cursor_damage || animating);
@@ -568,7 +571,7 @@ impl<'a> Sim<'a> {
             }
         }
         if rendered {
-            let expected = (self.pacer.avg_cpu_us() + self.pacer.avg_gpu_us()) as f64;
+            let expected = (self.pacemaker.avg_cpu_us() + self.pacemaker.avg_gpu_us()) as f64;
             let aimed_vblank = self.vblank_at_or_after(now + expected);
             let latched = self
                 .clients
@@ -595,7 +598,7 @@ impl<'a> Sim<'a> {
         }
         let animating_after = self.animating(end);
         if let Some(us) = self
-            .pacer
+            .pacemaker
             .end_pass(cpu as f32, rendered, true, animating_after)
         {
             self.at(end + us as f64, Event::Pass);
@@ -636,7 +639,7 @@ impl<'a> Sim<'a> {
             animations_pending: self.animating(now),
             scanout_commit_pending: false,
         };
-        match self.pacer.on_vblank(&reasons) {
+        match self.pacemaker.on_vblank(&reasons) {
             Some(Draw::In(us)) => self.at(now + us as f64, Event::Pass),
             Some(Draw::Now) => self.pass(now),
             None => {}

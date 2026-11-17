@@ -20,7 +20,6 @@ pub mod debug_info;
 pub mod desk;
 pub mod desktop_widget;
 pub mod focus;
-pub mod frame_pacing;
 #[cfg(feature = "headless")]
 pub mod headless;
 pub mod input;
@@ -31,6 +30,7 @@ pub mod lock;
 pub mod login;
 pub mod otto_canvas;
 pub mod otto_dock;
+pub mod pacemaker;
 pub mod polkit_agent;
 pub mod render;
 #[cfg(feature = "metrics")]

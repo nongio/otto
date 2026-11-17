@@ -866,7 +866,10 @@ pub fn run_udev<A: RendererApi>() {
             )> = Vec::new();
             for (node, device) in state.backend_data.backends.iter_mut() {
                 for (crtc, surface) in device.surfaces.iter_mut() {
-                    if surface.pacer.should_wake(redraw_gen, animations_pending) {
+                    if surface
+                        .pacemaker
+                        .should_wake(redraw_gen, animations_pending)
+                    {
                         kick.push((*node, *crtc));
                     }
                 }

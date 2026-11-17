@@ -108,7 +108,7 @@ protocols/       Wayland protocol XML (otto-surface-style, otto-dock,
 docs/            user/ and developer/ guides
 specs/           Behavioural specs — the contract each feature must meet
 tests/           Integration tests that drive the headless backend
-benches/         The frame-pacing bench and its baseline (no GPU needed)
+benches/         The pacemaker bench and its baseline (no GPU needed)
 sample-clients/  Minimal Wayland clients for testing protocol behaviour
 examples/        Cargo examples, built with `cargo run --example`
 scripts/         Session launchers, packaging, and test helpers

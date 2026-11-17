@@ -684,7 +684,7 @@ impl<A: RendererApi> Otto<UdevData<A>> {
                 dmabuf_feedback,
                 #[cfg(feature = "metrics")]
                 render_metrics: Some(self.render_metrics.clone()),
-                pacer: crate::frame_pacing::FramePacer::new(),
+                pacemaker: crate::pacemaker::Pacemaker::new(),
                 last_vblank: None,
                 continuous_frames: false,
                 has_rendered_once: false,

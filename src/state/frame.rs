@@ -306,7 +306,7 @@ impl FrameCallbackSend {
 }
 
 fn due_on_commit(full_rate: bool, sent: Duration, period: Duration, now: Duration) -> bool {
-    crate::frame_pacing::callback_due_on_commit(
+    crate::pacemaker::callback_due_on_commit(
         full_rate,
         now.saturating_sub(sent).as_secs_f32() * 1e6,
         period.as_secs_f32() * 1e6,

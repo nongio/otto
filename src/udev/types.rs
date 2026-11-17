@@ -147,11 +147,11 @@ pub struct SurfaceData {
     pub(super) render_metrics: Option<Arc<crate::render_metrics::RenderMetrics>>,
     /// When to draw and when not: pass-cost estimates, the refresh period,
     /// whether a pass is on its way and the requests the last one saw. See
-    /// `crate::frame_pacing`.
-    pub(super) pacer: crate::frame_pacing::FramePacer,
+    /// `crate::pacemaker`.
+    pub(super) pacemaker: crate::pacemaker::Pacemaker,
     /// When the last VBlank was acknowledged, so a pass asked for while the
     /// surface idles can be placed on the VBlank rhythm
-    /// (`FramePacer::wake`).
+    /// (`Pacemaker::wake`).
     pub(super) last_vblank: Option<std::time::Instant>,
     /// The last pass had a reason to draw every VBlank regardless of scene
     /// damage: a fullscreen scanout window (its commits leave no scene

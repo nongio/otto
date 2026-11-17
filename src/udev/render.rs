@@ -125,7 +125,7 @@ impl<A: RendererApi> Otto<UdevData<A>> {
         }
         surface.last_vblank = Some(Instant::now());
         if let Some(mode) = output.current_mode() {
-            surface.pacer.set_refresh_mhz(mode.refresh);
+            surface.pacemaker.set_refresh_mhz(mode.refresh);
         }
         let schedule_render =
             match surface.compositor.frame_submitted() {
@@ -225,7 +225,7 @@ impl<A: RendererApi> Otto<UdevData<A>> {
             // clients render frames the next compose supersedes, and they
             // are better paced by the flips alone.
             let armed = surface.last_vblank;
-            let period = Duration::from_micros(surface.pacer.period_us().max(1000.0) as u64);
+            let period = Duration::from_micros(surface.pacemaker.period_us().max(1000.0) as u64);
             if let Some(vblank) = armed {
                 use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
                 let tick_output = output.clone();
@@ -242,7 +242,7 @@ impl<A: RendererApi> Otto<UdevData<A>> {
                             .map(|surface| {
                                 (
                                     surface.last_frame_pacing.clone().unwrap_or_default(),
-                                    surface.pacer.keeping_up(),
+                                    surface.pacemaker.keeping_up(),
                                 )
                             })
                         else {
@@ -307,7 +307,7 @@ impl<A: RendererApi> Otto<UdevData<A>> {
                 .backend_data
                 .redraw_generation
                 .load(std::sync::atomic::Ordering::Acquire);
-            let reasons = crate::frame_pacing::VblankReasons {
+            let reasons = crate::pacemaker::VblankReasons {
                 scene_has_damage,
                 continuous_frames: surface.continuous_frames,
                 redraw_gen,
@@ -317,7 +317,7 @@ impl<A: RendererApi> Otto<UdevData<A>> {
                     .scanout_commit_pending
                     .load(std::sync::atomic::Ordering::Relaxed),
             };
-            let Some(draw) = surface.pacer.on_vblank(&reasons) else {
+            let Some(draw) = surface.pacemaker.on_vblank(&reasons) else {
                 trace!("nothing to draw after VBlank on {:?}; idling", crtc);
                 return;
             };
@@ -329,7 +329,7 @@ impl<A: RendererApi> Otto<UdevData<A>> {
             // enough margin for the GPU command recording to finish on time.
             //
             // Target = frame_period − 2×(avg CPU pass + avg GPU composite),
-            // at least 1 ms — see `frame_pacing::draw_delay_us`. The GPU term
+            // at least 1 ms — see `pacemaker::draw_delay_us`. The GPU term
             // is what keeps a 120 Hz panel at 120: the flip only lands once
             // the composite is done, and that part is invisible to the CPU
             // clock.
@@ -339,12 +339,12 @@ impl<A: RendererApi> Otto<UdevData<A>> {
             // immediately and accept the slightly-wider timing window.
             let is_multi_gpu = self.backend_data.primary_gpu != surface.render_node;
             let timer = match draw {
-                crate::frame_pacing::Draw::In(draw_delay_us) if !is_multi_gpu => {
+                crate::pacemaker::Draw::In(draw_delay_us) if !is_multi_gpu => {
                     trace!(
                         draw_delay_us,
-                        frame_period_us = surface.pacer.period_us(),
-                        avg_us = surface.pacer.avg_cpu_us(),
-                        gpu_us = surface.pacer.avg_gpu_us(),
+                        frame_period_us = surface.pacemaker.period_us(),
+                        avg_us = surface.pacemaker.avg_cpu_us(),
+                        gpu_us = surface.pacemaker.avg_gpu_us(),
                         "scheduling draw phase on {:?}",
                         crtc
                     );
@@ -826,7 +826,7 @@ impl<A: RendererApi> Otto<UdevData<A>> {
         };
         // Everything requested up to now is seen by this pass; a request that
         // lands later is owed another one (checked at VBlank and by the loop).
-        surface.pacer.begin_pass(
+        surface.pacemaker.begin_pass(
             self.backend_data
                 .redraw_generation
                 .load(std::sync::atomic::Ordering::Acquire),
@@ -1890,9 +1890,9 @@ impl<A: RendererApi> Otto<UdevData<A>> {
                 // Known before the first VBlank too: a follow-up pass is
                 // timed from the mode.
                 if let Some(mode) = output.current_mode() {
-                    surface.pacer.set_refresh_mhz(mode.refresh);
+                    surface.pacemaker.set_refresh_mhz(mode.refresh);
                 }
-                reschedule_us = surface.pacer.end_pass(
+                reschedule_us = surface.pacemaker.end_pass(
                     render_time_us,
                     was_rendered,
                     reschedule,
@@ -1915,7 +1915,7 @@ impl<A: RendererApi> Otto<UdevData<A>> {
                 return;
             }
             // Early enough to finish — CPU pass and GPU composite — before
-            // the next VBlank; see `frame_pacing::draw_delay_us`.
+            // the next VBlank; see `pacemaker::draw_delay_us`.
             let delay = Duration::from_micros(delay_us as u64);
             crate::render_phase_stats::record_draw_delay(delay);
             let timer = Timer::from_duration(delay);
@@ -1941,7 +1941,7 @@ impl<A: RendererApi> Otto<UdevData<A>> {
                     all_caught_up = false;
                     // Marks the surface as scheduled — the same invariant
                     // the input kick in init.rs relies on.
-                    if s.pacer.claim() {
+                    if s.pacemaker.claim() {
                         lagging.push((*n, *c));
                     }
                 }
@@ -3287,7 +3287,7 @@ pub(super) fn initial_render<A: RendererApi>(
 
 impl<A: RendererApi> Otto<UdevData<A>> {
     /// Runs the pass a wake-up asks for on an idle surface: on the VBlank
-    /// rhythm (`FramePacer::wake`) when the surface has seen a VBlank,
+    /// rhythm (`Pacemaker::wake`) when the surface has seen a VBlank,
     /// right away otherwise.
     pub(super) fn render_on_wake(&mut self, node: DrmNode, crtc: crtc::Handle) {
         let draw = self
@@ -3297,10 +3297,10 @@ impl<A: RendererApi> Otto<UdevData<A>> {
             .and_then(|d| d.surfaces.get_mut(&crtc))
             .map(|s| {
                 let since = s.last_vblank.map(|last| last.elapsed().as_micros() as f32);
-                s.pacer.wake(since)
+                s.pacemaker.wake(since)
             });
         let wait_us = match draw {
-            Some(crate::frame_pacing::Draw::In(wait)) => wait,
+            Some(crate::pacemaker::Draw::In(wait)) => wait,
             _ => {
                 self.render(node, Some(crtc));
                 return;
@@ -3322,8 +3322,8 @@ impl<A: RendererApi> Otto<UdevData<A>> {
     ///
     /// The primary fence signals when the composite is done; its sync file
     /// becomes readable then, and the event loop reports it without anyone
-    /// blocking. The time from now to that moment feeds the pacer's GPU
-    /// estimate, which the next deadline counts (`frame_pacing::draw_delay_us`).
+    /// blocking. The time from now to that moment feeds the pacemaker's GPU
+    /// estimate, which the next deadline counts (`pacemaker::draw_delay_us`).
     /// A fence that cannot be exported leaves the average as it was.
     fn watch_gpu_time(&mut self, node: DrmNode, crtc: crtc::Handle) {
         #[cfg(feature = "renderer_sync")]
@@ -3348,7 +3348,7 @@ impl<A: RendererApi> Otto<UdevData<A>> {
                     .get_mut(&node)
                     .and_then(|d| d.surfaces.get_mut(&crtc))
                 {
-                    surface.pacer.record_gpu(gpu_time.as_micros() as f32);
+                    surface.pacemaker.record_gpu(gpu_time.as_micros() as f32);
                 }
                 Ok(PostAction::Remove)
             });
