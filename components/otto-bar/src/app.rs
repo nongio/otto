@@ -1184,11 +1184,16 @@ impl App for TopBarApp {
     }
 
     fn on_configure_layer(&mut self, _ctx: &AppContext, _width: i32, _height: i32, _serial: u32) {
-        // Configure fires for each layer surface (spacer, left, right).
-        // We use fixed dimensions, so just redraw on any configure.
+        // Configure fires for each layer surface (spacer, left, right, the
+        // join dialog). We use fixed dimensions, so just redraw on any
+        // configure. A layer surface has no buffer to draw into before its
+        // first configure, so this is the dialog's first real paint.
         self.right.clock.tick();
         self.update_left_panel(false);
         self.update_right_panel(false);
+        if let Some(dialog) = self.join_dialog.as_mut() {
+            dialog.redraw();
+        }
     }
 
     fn on_configure(&mut self, _ctx: &AppContext, _configure: WindowConfigure, _serial: u32) {}
