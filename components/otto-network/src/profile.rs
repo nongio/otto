@@ -264,7 +264,13 @@ impl IpConfig {
         for address in &self.addresses {
             parse_address(&address.to_string(), family)?;
         }
-        if let Some(gateway) = &self.gateway {
+        // NetworkManager takes a gateway only with manual addresses, and one
+        // left over from Manual is not saved otherwise.
+        if let Some(gateway) = self
+            .gateway
+            .as_ref()
+            .filter(|_| self.method == IpMethod::Manual)
+        {
             parse_ip(gateway, family).ok_or_else(|| IpError::BadGateway(gateway.clone()))?;
         }
         for server in &self.dns {
@@ -824,6 +830,34 @@ mod tests {
             ..manual()
         };
         assert_eq!(routing.validate(Family::V4), Ok(()));
+    }
+
+    #[test]
+    fn a_router_left_over_from_manual_does_not_block_automatic() {
+        let leftover = IpConfig {
+            method: IpMethod::Automatic,
+            addresses: Vec::new(),
+            gateway: Some("not a router".into()),
+            ..manual()
+        };
+        assert_eq!(leftover.validate(Family::V4), Ok(()));
+        // Nor is it saved.
+        let mut settings = HashMap::new();
+        leftover.write_into(&mut settings, Family::V4);
+        assert!(!settings["ipv4"].contains_key("gateway"));
+        // Back on Manual it is checked again.
+        let manual_again = IpConfig {
+            method: IpMethod::Manual,
+            ..manual()
+        };
+        let bad = IpConfig {
+            gateway: Some("not a router".into()),
+            ..manual_again
+        };
+        assert!(matches!(
+            bad.validate(Family::V4),
+            Err(IpError::BadGateway(_))
+        ));
     }
 
     #[test]

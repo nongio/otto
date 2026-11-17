@@ -8,6 +8,10 @@
 //! something, and [`watch`] says when to read again. NetworkManager keeps all
 //! the state; nothing here caches it.
 //!
+//! The calls that touch the radios' kill switches use the machine's own;
+//! each has a `_with` variant taking [`rfkill::Radios`], for a test that must
+//! leave the host's radios alone.
+//!
 //! The functions are async on the caller's tokio runtime. [`blocking`] runs
 //! them from a plain thread, as Settings does.
 //!
@@ -23,8 +27,8 @@ pub mod rfkill;
 
 pub use client::{
     activate, connect_hidden, connect_wifi, connect_wifi_with_password, deactivate,
-    disconnect_device, follow, forget, is_running, read, request_scan, set_autoconnect,
-    set_ip_config, set_wifi_enabled, watch,
+    disconnect_device, follow, follow_with, forget, read, read_with, request_scan, set_autoconnect,
+    set_ip_config, set_wifi_enabled, set_wifi_enabled_with, watch, watch_with,
 };
 pub use model::*;
 pub use profile::*;

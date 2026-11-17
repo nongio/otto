@@ -84,11 +84,7 @@ pub fn spawn_watcher() {
     if STARTED.swap(true, Ordering::SeqCst) {
         return;
     }
-    tokio::spawn(async {
-        if let Err(e) = follow_network().await {
-            tracing::warn!("network indicator: {e}");
-        }
-    });
+    tokio::spawn(follow_network());
     tokio::spawn(async {
         if let Err(e) = follow_setting().await {
             tracing::warn!("network indicator setting: {e}");
@@ -96,25 +92,76 @@ pub fn spawn_watcher() {
     });
 }
 
-async fn follow_network() -> zbus::Result<()> {
+/// The first pause before following NetworkManager again after it stopped.
+const RESTART_FIRST: Duration = Duration::from_secs(1);
+/// The longest pause between two restarts.
+const RESTART_MAX: Duration = Duration::from_secs(60);
+
+/// Follow NetworkManager for the whole session. Following ends when the
+/// system bus connection closes, or fails when the bus refuses it; either
+/// way it starts again after a pause that doubles each time, on the same
+/// connection while it still answers and on a new one otherwise.
+async fn follow_network() {
+    let mut pause = RESTART_FIRST;
+    let mut current: Option<Connection> = None;
+    loop {
+        let conn = match current.take() {
+            Some(conn) if answers(&conn).await => conn,
+            _ => match connect_system_bus().await {
+                Ok(conn) => conn,
+                Err(e) => {
+                    tracing::warn!("network indicator: no system bus: {e}");
+                    tokio::time::sleep(pause).await;
+                    pause = (pause * 2).min(RESTART_MAX);
+                    continue;
+                }
+            },
+        };
+        let started = Instant::now();
+        let result = otto_network::follow(&conn, |next| {
+            let mut slot = SNAPSHOT.lock().unwrap();
+            if *slot != *next {
+                *slot = next.clone();
+                drop(slot);
+                bump();
+            }
+        })
+        .await;
+        match result {
+            Ok(()) => tracing::warn!("network indicator: the system bus closed"),
+            Err(e) => tracing::warn!("network indicator: {e}"),
+        }
+        // A follow that ran a good while was not failing at the start.
+        if started.elapsed() > RESTART_MAX {
+            pause = RESTART_FIRST;
+        }
+        current = Some(conn);
+        tokio::time::sleep(pause).await;
+        pause = (pause * 2).min(RESTART_MAX);
+    }
+}
+
+/// A new system bus connection for the indicator and its actions, with the
+/// secret agent answering NetworkManager's password questions on it. The
+/// agent lasts as long as the connection.
+async fn connect_system_bus() -> zbus::Result<Connection> {
     let conn = Connection::system().await?;
     *SYSTEM_BUS.lock().unwrap() = Some(conn.clone());
-    // Answer NetworkManager's password questions on the same connection.
     let agent = conn.clone();
     tokio::spawn(async move {
         if let Err(e) = crate::secret_agent::run(agent).await {
             tracing::warn!("network secret agent: {e}");
         }
     });
-    otto_network::follow(&conn, |next| {
-        let mut slot = SNAPSHOT.lock().unwrap();
-        if *slot != *next {
-            *slot = next.clone();
-            drop(slot);
-            bump();
-        }
-    })
-    .await
+    Ok(conn)
+}
+
+/// Whether the bus behind `conn` still answers.
+async fn answers(conn: &Connection) -> bool {
+    match zbus::fdo::DBusProxy::new(conn).await {
+        Ok(dbus) => dbus.get_id().await.is_ok(),
+        Err(_) => false,
+    }
 }
 
 async fn follow_setting() -> zbus::Result<()> {
@@ -184,7 +231,13 @@ pub fn scan_now() {
 }
 
 fn scan_if_older_than(age: Duration) {
-    let Some(device) = snapshot().wifi.map(|w| w.device.path) else {
+    let Some(device) = SNAPSHOT
+        .lock()
+        .unwrap()
+        .wifi
+        .as_ref()
+        .map(|w| w.device.path.clone())
+    else {
         return;
     };
     {

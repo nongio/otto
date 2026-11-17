@@ -12,7 +12,7 @@ description = "Otto's view of the network through NetworkManager, shared by the 
 [dependencies]
 futures-util.workspace = true
 otto-dbus = { path = "../otto-dbus" }
-tokio = { workspace = true, features = ["rt", "time", "macros"] }
+tokio = { workspace = true, features = ["rt", "time", "macros", "sync"] }
 zbus.workspace = true
 
 [lints]

@@ -12,9 +12,20 @@ use zbus::Connection;
 
 use crate::model::{Snapshot, WifiNetwork};
 use crate::profile::IpConfig;
+use crate::rfkill::Radios;
 
 /// Run `work` with a fresh system bus connection on a runtime of its own.
 fn run<T, F, Fut>(work: F) -> zbus::Result<T>
+where
+    F: FnOnce(Connection) -> Fut,
+    Fut: Future<Output = zbus::Result<T>>,
+{
+    run_on(None, work)
+}
+
+/// Run `work` with a fresh connection to the bus at `address`, or to the
+/// system bus when it is `None`, on a runtime of its own.
+fn run_on<T, F, Fut>(address: Option<&str>, work: F) -> zbus::Result<T>
 where
     F: FnOnce(Connection) -> Fut,
     Fut: Future<Output = zbus::Result<T>>,
@@ -24,7 +35,10 @@ where
         .build()
         .map_err(|e| zbus::Error::Failure(e.to_string()))?;
     runtime.block_on(async move {
-        let conn = Connection::system().await?;
+        let conn = match address {
+            Some(address) => zbus::connection::Builder::address(address)?.build().await?,
+            None => Connection::system().await?,
+        };
         work(conn).await
     })
 }
@@ -88,6 +102,27 @@ pub fn set_autoconnect(connection: &str, on: bool) -> zbus::Result<()> {
 /// [`crate::follow`], blocking the thread until the bus connection closes.
 /// `on_snapshot` runs on this thread between reads; it must not call the
 /// other functions here (see the module's note).
+///
+/// # Errors
+///
+/// No system bus, or the bus refusing the subscriptions at the start.
 pub fn follow(on_snapshot: impl FnMut(&Snapshot)) -> zbus::Result<()> {
     run(|conn| async move { crate::follow(&conn, on_snapshot).await })
+}
+
+/// [`follow`], on the bus at `address` (a D-Bus address such as
+/// `unix:path=/run/dbus/system_bus_socket`) and with the kill switches of
+/// `radios`: what a test points at a stand-in NetworkManager.
+///
+/// # Errors
+///
+/// No bus at `address`, or the bus refusing the subscriptions at the start.
+pub fn follow_with(
+    address: &str,
+    radios: Radios,
+    on_snapshot: impl FnMut(&Snapshot),
+) -> zbus::Result<()> {
+    run_on(Some(address), |conn| async move {
+        crate::follow_with(&conn, &radios, on_snapshot).await
+    })
 }

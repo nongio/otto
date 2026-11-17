@@ -3,12 +3,17 @@
 //! name), a saved network in use, a saved VPN, and the address configuration
 //! of the connection in use.
 //!
-//! Needs `dbus-daemon`; skipped without it.
+//! Needs `dbus-daemon`; skipped without it. Every call is given
+//! [`Radios::none`], so nothing here reads the host's radios or turns its
+//! Wi-Fi on, and every connection names its bus, so no test touches the
+//! system bus or the environment.
 
 use std::collections::HashMap;
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
+use otto_network::rfkill::Radios;
 use otto_network::{Connectivity, DeviceKind, DeviceState, LinkKind, LinkState, Security};
 use zbus::zvariant::{ObjectPath, OwnedObjectPath, OwnedValue, Value};
 use zbus::{interface, Connection};
@@ -33,6 +38,8 @@ struct Calls {
     /// Settings each Update carried.
     updated: Vec<HashMap<String, HashMap<String, OwnedValue>>>,
     reapplied: Vec<String>,
+    /// How many `GetDevices` calls to fail before answering.
+    fail_get_devices: u32,
 }
 
 struct Manager {
@@ -42,11 +49,16 @@ struct Manager {
 
 #[interface(name = "org.freedesktop.NetworkManager")]
 impl Manager {
-    fn get_devices(&self) -> Vec<OwnedObjectPath> {
-        vec![
+    fn get_devices(&self) -> zbus::fdo::Result<Vec<OwnedObjectPath>> {
+        let mut calls = self.calls.lock().unwrap();
+        if calls.fail_get_devices > 0 {
+            calls.fail_get_devices -= 1;
+            return Err(zbus::fdo::Error::Failed("starting up".into()));
+        }
+        Ok(vec![
             path("/org/freedesktop/NetworkManager/Devices/1"),
             path("/org/freedesktop/NetworkManager/Devices/2"),
-        ]
+        ])
     }
 
     fn activate_connection(
@@ -272,17 +284,52 @@ impl SettingsRoot {
     }
 }
 
+type Settings = HashMap<String, HashMap<String, OwnedValue>>;
+
+fn copy(settings: &Settings) -> Settings {
+    settings
+        .iter()
+        .map(|(group, values)| {
+            let values = values
+                .iter()
+                .map(|(k, v)| (k.clone(), v.try_clone().unwrap()))
+                .collect();
+            (group.clone(), values)
+        })
+        .collect()
+}
+
+/// A saved connection. It keeps what an `Update` sends, and takes a moment
+/// to answer `GetSettings`, as NetworkManager reading a profile from disk
+/// can: two edits made at once both read before either writes.
 struct Saved {
     calls: Arc<Mutex<Calls>>,
     path: &'static str,
     kind: &'static str,
     id: &'static str,
     ssid: Option<&'static str>,
+    stored: Mutex<Option<Settings>>,
 }
 
-#[interface(name = "org.freedesktop.NetworkManager.Settings.Connection")]
 impl Saved {
-    fn get_settings(&self) -> HashMap<String, HashMap<String, OwnedValue>> {
+    fn new(
+        calls: Arc<Mutex<Calls>>,
+        path: &'static str,
+        kind: &'static str,
+        id: &'static str,
+        ssid: Option<&'static str>,
+    ) -> Self {
+        Self {
+            calls,
+            path,
+            kind,
+            id,
+            ssid,
+            stored: Mutex::new(None),
+        }
+    }
+
+    fn initial(&self) -> Settings {
         let mut connection = HashMap::new();
         connection.insert(
             "type".into(),
@@ -305,10 +352,23 @@ impl Saved {
         }
         settings
     }
+}
 
-    fn update(&self, properties: HashMap<String, HashMap<String, OwnedValue>>) {
+#[interface(name = "org.freedesktop.NetworkManager.Settings.Connection")]
+impl Saved {
+    async fn get_settings(&self) -> Settings {
+        let settings = match &*self.stored.lock().unwrap() {
+            Some(stored) => copy(stored),
+            None => self.initial(),
+        };
+        tokio::time::sleep(Duration::from_millis(30)).await;
+        settings
+    }
+
+    fn update(&self, properties: Settings) {
         // The rest of the settings came back as they were sent.
         assert!(properties["connection"].contains_key("id"));
+        *self.stored.lock().unwrap() = Some(copy(&properties));
         let mut calls = self.calls.lock().unwrap();
         if let Some(on) = properties["connection"].get("autoconnect") {
             calls.autoconnect.push(bool::try_from(on).unwrap());
@@ -327,6 +387,7 @@ struct Active {
     kind: &'static str,
     devices: Vec<OwnedObjectPath>,
     ip4: &'static str,
+    ip6: &'static str,
 }
 
 #[interface(name = "org.freedesktop.NetworkManager.Connection.Active")]
@@ -357,7 +418,7 @@ impl Active {
     }
     #[zbus(property)]
     fn ip6_config(&self) -> OwnedObjectPath {
-        path("/")
+        path(self.ip6)
     }
 }
 
@@ -391,6 +452,20 @@ impl Ip4 {
     }
 }
 
+struct Ip6;
+
+#[interface(name = "org.freedesktop.NetworkManager.IP6Config")]
+impl Ip6 {
+    #[zbus(property)]
+    fn address_data(&self) -> Vec<HashMap<String, OwnedValue>> {
+        vec![entry("2001:db8::20", Some(64))]
+    }
+    #[zbus(property)]
+    fn gateway(&self) -> String {
+        "fe80::1".into()
+    }
+}
+
 /// A private bus, killed when dropped.
 struct Bus(Child, String);
 
@@ -414,6 +489,15 @@ fn private_bus() -> Option<Bus> {
         address.push(byte[0] as char);
     }
     Some(Bus(child, address))
+}
+
+/// A client connection to the bus at `address`.
+async fn connect(address: &str) -> Connection {
+    zbus::connection::Builder::address(address)
+        .unwrap()
+        .build()
+        .await
+        .unwrap()
 }
 
 async fn serve(address: &str, calls: Arc<Mutex<Calls>>) -> Connection {
@@ -489,24 +573,24 @@ async fn serve(address: &str, calls: Arc<Mutex<Calls>>) -> Connection {
         .unwrap()
         .serve_at(
             "/org/freedesktop/NetworkManager/Settings/1",
-            Saved {
-                calls: calls.clone(),
-                path: "/org/freedesktop/NetworkManager/Settings/1",
-                kind: "802-11-wireless",
-                id: "Home",
-                ssid: Some("Home"),
-            },
+            Saved::new(
+                calls.clone(),
+                "/org/freedesktop/NetworkManager/Settings/1",
+                "802-11-wireless",
+                "Home",
+                Some("Home"),
+            ),
         )
         .unwrap()
         .serve_at(
             "/org/freedesktop/NetworkManager/Settings/2",
-            Saved {
-                calls: calls.clone(),
-                path: "/org/freedesktop/NetworkManager/Settings/2",
-                kind: "wireguard",
-                id: "Office",
-                ssid: None,
-            },
+            Saved::new(
+                calls.clone(),
+                "/org/freedesktop/NetworkManager/Settings/2",
+                "wireguard",
+                "Office",
+                None,
+            ),
         )
         .unwrap()
         .serve_at(
@@ -517,6 +601,7 @@ async fn serve(address: &str, calls: Arc<Mutex<Calls>>) -> Connection {
                 kind: "802-11-wireless",
                 devices: vec![path(wifi_dev)],
                 ip4: "/org/freedesktop/NetworkManager/IP4Config/1",
+                ip6: "/org/freedesktop/NetworkManager/IP6Config/1",
             },
         )
         .unwrap()
@@ -528,10 +613,13 @@ async fn serve(address: &str, calls: Arc<Mutex<Calls>>) -> Connection {
                 kind: "wireguard",
                 devices: Vec::new(),
                 ip4: "/",
+                ip6: "/",
             },
         )
         .unwrap()
         .serve_at("/org/freedesktop/NetworkManager/IP4Config/1", Ip4)
+        .unwrap()
+        .serve_at("/org/freedesktop/NetworkManager/IP6Config/1", Ip6)
         .unwrap();
     builder.build().await.unwrap()
 }
@@ -544,13 +632,11 @@ async fn a_snapshot_and_the_actions_against_a_stand_in() {
     };
     let calls = Arc::new(Mutex::new(Calls::default()));
     let _server = serve(&bus.1, calls.clone()).await;
-    let conn = zbus::connection::Builder::address(bus.1.as_str())
-        .unwrap()
-        .build()
-        .await
-        .unwrap();
+    let conn = connect(&bus.1).await;
 
-    let snapshot = otto_network::read(&conn).await.expect("a snapshot");
+    let snapshot = otto_network::read_with(&conn, &Radios::none())
+        .await
+        .expect("a snapshot");
     assert!(snapshot.running);
     assert!(snapshot.wifi_enabled);
     assert_eq!(snapshot.connectivity, Connectivity::Full);
@@ -565,7 +651,6 @@ async fn a_snapshot_and_the_actions_against_a_stand_in() {
 
     let wifi = snapshot.wifi.as_ref().expect("a Wi-Fi device");
     assert_eq!(wifi.device.interface, "wlan0");
-    assert_eq!(wifi.last_scan_ms, Some(1234));
     let link = wifi.active_ap.as_ref().expect("the access point in use");
     assert_eq!(link.path, "/org/freedesktop/NetworkManager/AccessPoint/2");
     assert_eq!(link.band(), otto_network::Band::Ghz5);
@@ -600,11 +685,15 @@ async fn a_snapshot_and_the_actions_against_a_stand_in() {
     assert_eq!(primary.ipv4, ["192.168.1.20/24"]);
     assert_eq!(primary.gateway.as_deref(), Some("192.168.1.1"));
     assert_eq!(primary.dns, ["1.1.1.1"]);
+    assert_eq!(primary.ipv6, ["2001:db8::20/64"]);
+    assert_eq!(primary.gateway6.as_deref(), Some("fe80::1"));
     assert_eq!(snapshot.glyph(), otto_network::Glyph::Wifi(3));
 
     // The actions.
     let device = wifi.device.path.clone();
-    otto_network::set_wifi_enabled(&conn, false).await.unwrap();
+    otto_network::set_wifi_enabled_with(&conn, &Radios::none(), false)
+        .await
+        .unwrap();
     otto_network::connect_wifi(&conn, &device, home)
         .await
         .unwrap();
@@ -690,7 +779,8 @@ async fn a_snapshot_and_the_actions_against_a_stand_in() {
         otto_network::IpConfig::from_settings(&calls.updated[1], otto_network::Family::V4);
     assert_eq!(written, manual);
     assert_eq!(calls.reapplied, std::slice::from_ref(&device));
-    assert_eq!(calls.autoconnect, [false]);
+    // The address update kept the autoconnect change made before it.
+    assert_eq!(calls.autoconnect, [false, false]);
     assert_eq!(
         calls.deleted,
         ["/org/freedesktop/NetworkManager/Settings/1"]
@@ -703,12 +793,10 @@ async fn no_networkmanager_is_an_empty_snapshot() {
         eprintln!("no dbus-daemon: skipped");
         return;
     };
-    let conn = zbus::connection::Builder::address(bus.1.as_str())
-        .unwrap()
-        .build()
+    let conn = connect(&bus.1).await;
+    let snapshot = otto_network::read_with(&conn, &Radios::none())
         .await
         .unwrap();
-    let snapshot = otto_network::read(&conn).await.unwrap();
     assert!(!snapshot.running);
     assert_eq!(snapshot.glyph(), otto_network::Glyph::Hidden);
 }
@@ -721,16 +809,12 @@ async fn a_change_wakes_the_watcher_once_and_says_what_changed() {
     };
     let calls = Arc::new(Mutex::new(Calls::default()));
     let _server = serve(&bus.1, calls).await;
-    let conn = zbus::connection::Builder::address(bus.1.as_str())
-        .unwrap()
-        .build()
-        .await
-        .unwrap();
+    let conn = connect(&bus.1).await;
 
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
     let watcher = conn.clone();
     tokio::spawn(async move {
-        let _ = otto_network::watch(&watcher, move |changes| {
+        let _ = otto_network::watch_with(&watcher, &Radios::none(), move |changes| {
             let _ = tx.send(changes);
         })
         .await;
@@ -740,7 +824,9 @@ async fn a_change_wakes_the_watcher_once_and_says_what_changed() {
 
     // A burst: three changes in a row, each a PropertiesChanged signal.
     for on in [false, true, false] {
-        otto_network::set_wifi_enabled(&conn, on).await.unwrap();
+        otto_network::set_wifi_enabled_with(&conn, &Radios::none(), on)
+            .await
+            .unwrap();
     }
     let changes = tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv())
         .await
@@ -793,19 +879,24 @@ fn following_on_a_plain_thread_reads_again_on_every_change() {
     };
     let runtime = tokio::runtime::Runtime::new().unwrap();
     let _server = runtime.block_on(serve(&bus.1, Arc::new(Mutex::new(Calls::default()))));
-    // The blocking calls connect to "the system bus": point it here. No other
-    // test in this file uses the system bus.
-    std::env::set_var("DBUS_SYSTEM_BUS_ADDRESS", &bus.1);
+    let conn = runtime.block_on(connect(&bus.1));
 
     let (tx, rx) = std::sync::mpsc::channel();
+    let address = bus.1.clone();
     std::thread::spawn(move || {
-        let _ = otto_network::blocking::follow(move |snapshot| {
+        let _ = otto_network::blocking::follow_with(&address, Radios::none(), move |snapshot| {
             let _ = tx.send(snapshot.wifi_enabled);
         });
     });
     let wait = std::time::Duration::from_secs(5);
     assert_eq!(rx.recv_timeout(wait), Ok(true), "the first read");
-    otto_network::blocking::set_wifi_enabled(false).unwrap();
+    runtime
+        .block_on(otto_network::set_wifi_enabled_with(
+            &conn,
+            &Radios::none(),
+            false,
+        ))
+        .unwrap();
     assert_eq!(
         rx.recv_timeout(wait),
         Ok(false),
@@ -836,7 +927,7 @@ async fn waking_from_sleep_reads_everything_again() {
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
     let watcher = conn.clone();
     tokio::spawn(async move {
-        let _ = otto_network::watch(&watcher, move |changes| {
+        let _ = otto_network::watch_with(&watcher, &Radios::none(), move |changes| {
             let _ = tx.send(changes);
         })
         .await;
@@ -870,4 +961,115 @@ async fn waking_from_sleep_reads_everything_again() {
         .expect("the watcher reported the wake")
         .unwrap();
     assert!(changes.other && changes.profiles);
+}
+
+/// The address the race test writes, valid for the profile.
+fn manual_v4() -> otto_network::IpConfig {
+    otto_network::IpConfig {
+        method: otto_network::IpMethod::Manual,
+        addresses: vec![
+            otto_network::parse_address("10.0.0.9/8", otto_network::Family::V4).unwrap(),
+        ],
+        gateway: Some("10.0.0.1".into()),
+        dns: vec!["1.1.1.1".into()],
+        ignore_auto_dns: true,
+        dns_search: Vec::new(),
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn two_edits_at_once_both_stay_on_the_profile() {
+    let Some(bus) = private_bus() else {
+        eprintln!("no dbus-daemon: skipped");
+        return;
+    };
+    let calls = Arc::new(Mutex::new(Calls::default()));
+    let _server = serve(&bus.1, calls.clone()).await;
+    let conn = connect(&bus.1).await;
+    let profile = "/org/freedesktop/NetworkManager/Settings/1";
+    let manual = manual_v4();
+    let v6 = otto_network::IpConfig::default();
+
+    // Settings saves an address while the bar turns auto-join off.
+    let (ip, autoconnect) = tokio::join!(
+        otto_network::set_ip_config(&conn, profile, &manual, &v6),
+        otto_network::set_autoconnect(&conn, profile, false),
+    );
+    ip.unwrap();
+    autoconnect.unwrap();
+
+    let calls = calls.lock().unwrap();
+    assert_eq!(calls.updated.len(), 2);
+    let last = calls.updated.last().unwrap();
+    assert_eq!(
+        last["connection"]
+            .get("autoconnect")
+            .map(|v| bool::try_from(v).unwrap()),
+        Some(false),
+        "the auto-join change survived"
+    );
+    assert_eq!(
+        otto_network::IpConfig::from_settings(last, otto_network::Family::V4),
+        manual,
+        "the address survived"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_first_read_that_fails_is_tried_again() {
+    let Some(bus) = private_bus() else {
+        eprintln!("no dbus-daemon: skipped");
+        return;
+    };
+    let calls = Arc::new(Mutex::new(Calls {
+        fail_get_devices: 2,
+        ..Calls::default()
+    }));
+    let _server = serve(&bus.1, calls.clone()).await;
+    let conn = connect(&bus.1).await;
+
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    tokio::spawn(async move {
+        let _ = otto_network::follow_with(&conn, &Radios::none(), move |snapshot| {
+            let _ = tx.send(snapshot.clone());
+        })
+        .await;
+    });
+    // Two failures: a second's pause, then two.
+    let snapshot = tokio::time::timeout(Duration::from_secs(6), rx.recv())
+        .await
+        .expect("a snapshot once NetworkManager answers")
+        .unwrap();
+    assert!(snapshot.running);
+    assert_eq!(snapshot.devices.len(), 2);
+    assert_eq!(calls.lock().unwrap().fail_get_devices, 0);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn following_ends_when_the_bus_goes_away() {
+    let Some(bus) = private_bus() else {
+        eprintln!("no dbus-daemon: skipped");
+        return;
+    };
+    let _server = serve(&bus.1, Arc::new(Mutex::new(Calls::default()))).await;
+    let conn = connect(&bus.1).await;
+
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let following = tokio::spawn(async move {
+        otto_network::follow_with(&conn, &Radios::none(), move |_| {
+            let _ = tx.send(());
+        })
+        .await
+    });
+    tokio::time::timeout(Duration::from_secs(5), rx.recv())
+        .await
+        .expect("the first snapshot")
+        .unwrap();
+
+    drop(bus);
+    let ended = tokio::time::timeout(Duration::from_secs(5), following)
+        .await
+        .expect("follow returned once the bus closed")
+        .unwrap();
+    assert!(ended.is_ok(), "{ended:?}");
 }

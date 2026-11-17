@@ -22,6 +22,7 @@ use zbus::Connection;
 
 use crate::model::*;
 use crate::profile::{Family, IpConfig, KeyKind, Profile, ProfileKind};
+use crate::rfkill::Radios;
 
 /// `NMDeviceType` values Otto shows.
 const TYPE_ETHERNET: u32 = 1;
@@ -30,6 +31,20 @@ const TYPE_WIFI: u32 = 2;
 /// How long a burst of changes is gathered before the watcher reports it.
 /// Signal strengths move on every scan, many objects at once.
 const SETTLE: Duration = Duration::from_millis(150);
+
+/// How long [`follow`] waits before reading again after a read failed, at
+/// first. Each failure in a row doubles it, up to [`RETRY_MAX`]; a change
+/// NetworkManager signals reads again at once.
+const RETRY_FIRST: Duration = Duration::from_secs(1);
+/// The longest [`follow`] waits between two failed reads.
+const RETRY_MAX: Duration = Duration::from_secs(30);
+
+/// Held across the read and the write of a profile's settings. NetworkManager
+/// takes a profile's settings whole (`Update`), so two edits made at once
+/// from this process, each reading the profile before the other wrote it,
+/// would leave only the last one. One lock for every profile: edits are a
+/// person's clicks, never many at once.
+static PROFILE_WRITES: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 /// Build a proxy of type `P` for the object at `path`, uncached.
 macro_rules! at {
@@ -45,7 +60,7 @@ macro_rules! at {
 }
 
 /// Whether NetworkManager is on the bus.
-pub async fn is_running(conn: &Connection) -> bool {
+pub(crate) async fn is_running(conn: &Connection) -> bool {
     let Ok(dbus) = zbus::fdo::DBusProxy::new(conn).await else {
         return false;
     };
@@ -62,14 +77,32 @@ fn some_path(path: OwnedObjectPath) -> Option<String> {
 }
 
 /// Read everything a network UI shows. A NetworkManager that is not running
-/// is an empty snapshot with `running` false, not an error.
+/// is an empty snapshot with `running` false, not an error. The radios'
+/// kill switches are the machine's ([`Radios::system`]).
+///
+/// # Errors
+///
+/// A bus error from NetworkManager while it is running.
 pub async fn read(conn: &Connection) -> zbus::Result<Snapshot> {
-    read_with(conn, None).await
+    read_with(conn, &Radios::system()).await
 }
 
-/// [`read`], with the saved connections from an earlier read when none of
-/// them changed since: a `GetSettings` per profile is the dearest part.
-async fn read_with(conn: &Connection, profiles: Option<Vec<Profile>>) -> zbus::Result<Snapshot> {
+/// [`read`], with the kill switches read from `radios`.
+///
+/// # Errors
+///
+/// A bus error from NetworkManager while it is running.
+pub async fn read_with(conn: &Connection, radios: &Radios) -> zbus::Result<Snapshot> {
+    read_cached(conn, radios, None).await
+}
+
+/// [`read_with`], with the saved connections from an earlier read when none
+/// of them changed since: a `GetSettings` per profile is the dearest part.
+async fn read_cached(
+    conn: &Connection,
+    radios: &Radios,
+    profiles: Option<Vec<Profile>>,
+) -> zbus::Result<Snapshot> {
     if !is_running(conn).await {
         return Ok(Snapshot::default());
     }
@@ -82,19 +115,24 @@ async fn read_with(conn: &Connection, profiles: Option<Vec<Profile>>) -> zbus::R
         running: true,
         wifi_enabled: nm.wireless_enabled().await?,
         wifi_hardware_enabled: nm.wireless_hardware_enabled().await.unwrap_or(true),
-        wifi_block: crate::rfkill::wifi_block().unwrap_or_default(),
+        wifi_block: radios.wifi_block().unwrap_or_default(),
         connectivity: Connectivity::from_raw(nm.connectivity().await.unwrap_or(0)),
         ..Snapshot::default()
     };
 
     // Devices, with the Wi-Fi device's active connection kept aside to tell
-    // which network is in use.
+    // which network is in use. Of several Wi-Fi devices, the first with a
+    // connection is the one shown, or the first when none has one.
     let mut wifi_device: Option<(Device, Option<String>)> = None;
     for path in nm.get_devices().await? {
         let Some((device, active)) = read_device(conn, path.as_str()).await else {
             continue;
         };
-        if device.kind == DeviceKind::Wifi && wifi_device.is_none() {
+        let better = match &wifi_device {
+            None => true,
+            Some((_, shown)) => shown.is_none() && active.is_some(),
+        };
+        if device.kind == DeviceKind::Wifi && better {
             wifi_device = Some((device.clone(), active));
         }
         snapshot.devices.push(device);
@@ -179,13 +217,19 @@ async fn read_with(conn: &Connection, profiles: Option<Vec<Profile>>) -> zbus::R
         }
 
         let wireless = at!(DeviceWirelessProxy, conn, device.path.as_str()).await?;
-        let access_points = read_access_points(conn, &wireless).await;
+        let mut access_points = read_access_points(conn, &wireless).await;
         let last_scan_ms = wireless.last_scan().await.ok().filter(|ms| *ms >= 0);
-        let active_ap = wireless
+        let active_ap_path = wireless
             .active_access_point()
             .await
             .ok()
-            .and_then(some_path)
+            .and_then(some_path);
+        name_hidden_access_point(
+            &mut access_points,
+            active_ap_path.as_deref(),
+            in_use.as_ref().map(|(ssid, _)| ssid.as_slice()),
+        );
+        let active_ap = active_ap_path
             .and_then(|path| access_points.iter().find(|ap| ap.path == path).cloned());
         let bitrate_kbps = wireless
             .bitrate()
@@ -356,6 +400,7 @@ async fn read_link(conn: &Connection, path: &str) -> Option<ActiveLink> {
         gateway: None,
         dns: Vec::new(),
         ipv6: Vec::new(),
+        gateway6: None,
     };
     if let Some(device) = active
         .devices()
@@ -385,8 +430,26 @@ async fn read_link(conn: &Connection, path: &str) -> Option<ActiveLink> {
         if let Ok(proxy) = at!(Ip6ConfigProxy, conn, ip6.as_str()).await {
             link.ipv6 = addresses(proxy.address_data().await.unwrap_or_default());
         }
+        link.gateway6 = ip6_gateway(conn, &ip6).await;
     }
     Some(link)
+}
+
+/// The IPv6 router of the `IP6Config` object at `path`, through the generic
+/// properties interface: the `otto-dbus` proxy does not list `Gateway`.
+async fn ip6_gateway(conn: &Connection, path: &str) -> Option<String> {
+    let properties = zbus::fdo::PropertiesProxy::builder(conn)
+        .destination(SERVICE)
+        .ok()?
+        .path(path)
+        .ok()?
+        .build()
+        .await
+        .ok()?;
+    let interface =
+        zbus::names::InterfaceName::try_from("org.freedesktop.NetworkManager.IP6Config").ok()?;
+    let value = properties.get(interface, "Gateway").await.ok()?;
+    String::try_from(value).ok().filter(|g| !g.is_empty())
 }
 
 fn object_path(path: &str) -> zbus::Result<ObjectPath<'_>> {
@@ -396,13 +459,32 @@ fn object_path(path: &str) -> zbus::Result<ObjectPath<'_>> {
 /// Turn the Wi-Fi radios on or off. Turning them on also lifts a soft block
 /// (the airplane key, `rfkill block wifi`): the person asked for Wi-Fi, and
 /// NetworkManager's switch alone does not lift a block set elsewhere. A
-/// hard block stays; only its switch lifts that.
+/// hard block stays; only its switch lifts that. The kill switches are the
+/// machine's ([`Radios::system`]).
+///
+/// # Errors
+///
+/// NetworkManager refusing the switch, or not being on the bus.
 pub async fn set_wifi_enabled(conn: &Connection, enabled: bool) -> zbus::Result<()> {
-    if enabled && crate::rfkill::wifi_block().is_some_and(|block| block.soft) {
-        // Without write access to /dev/rfkill (no logind seat), the
-        // switch below is all there is, and NetworkManager may lift the
-        // block itself.
-        let _ = tokio::task::spawn_blocking(crate::rfkill::unblock_wifi).await;
+    set_wifi_enabled_with(conn, &Radios::system(), enabled).await
+}
+
+/// [`set_wifi_enabled`], lifting a soft block on `radios`.
+///
+/// # Errors
+///
+/// NetworkManager refusing the switch, or not being on the bus.
+pub async fn set_wifi_enabled_with(
+    conn: &Connection,
+    radios: &Radios,
+    enabled: bool,
+) -> zbus::Result<()> {
+    if enabled && radios.wifi_block().is_some_and(|block| block.soft) {
+        // Without write access to the device (no logind seat), the switch
+        // below is all there is, and NetworkManager may lift the block
+        // itself.
+        let radios = radios.clone();
+        let _ = tokio::task::spawn_blocking(move || radios.unblock_wifi()).await;
     }
     NetworkManagerProxy::new(conn)
         .await?
@@ -533,10 +615,13 @@ pub async fn set_ip_config(
             .map_err(|e| zbus::Error::Failure(format!("{e:?}")))?;
     }
     let proxy = at!(SettingsConnectionProxy, conn, profile).await?;
-    let mut settings = proxy.get_settings().await?;
-    v4.write_into(&mut settings, Family::V4);
-    v6.write_into(&mut settings, Family::V6);
-    proxy.update(settings).await?;
+    {
+        let _writing = PROFILE_WRITES.lock().await;
+        let mut settings = proxy.get_settings().await?;
+        v4.write_into(&mut settings, Family::V4);
+        v6.write_into(&mut settings, Family::V6);
+        proxy.update(settings).await?;
+    }
     reapply(conn, profile).await
 }
 
@@ -625,6 +710,7 @@ pub async fn forget(conn: &Connection, connection: &str) -> zbus::Result<()> {
 /// or not.
 pub async fn set_autoconnect(conn: &Connection, connection: &str, on: bool) -> zbus::Result<()> {
     let proxy = at!(SettingsConnectionProxy, conn, connection).await?;
+    let _writing = PROFILE_WRITES.lock().await;
     let mut settings = proxy.get_settings().await?;
     settings
         .entry("connection".to_string())
@@ -689,9 +775,29 @@ fn classify(message: &zbus::Message) -> Changes {
 }
 
 /// Call `changed` with what changed whenever NetworkManager signals: any of
-/// its signals, and it joining or leaving the bus. A burst is reported once,
-/// [`SETTLE`] after it starts. Returns when the connection closes.
-pub async fn watch(conn: &Connection, mut changed: impl FnMut(Changes)) -> zbus::Result<()> {
+/// its signals, it joining or leaving the bus, a kill switch moving and the
+/// machine waking. A burst is reported once, [`SETTLE`] after it starts.
+/// The kill switches followed are the machine's ([`Radios::system`]).
+///
+/// Returns when the connection closes, once the burst under way is reported.
+///
+/// # Errors
+///
+/// The bus refusing the subscriptions at the start.
+pub async fn watch(conn: &Connection, changed: impl FnMut(Changes)) -> zbus::Result<()> {
+    watch_with(conn, &Radios::system(), changed).await
+}
+
+/// [`watch`], following the kill switches of `radios`.
+///
+/// # Errors
+///
+/// The bus refusing the subscriptions at the start.
+pub async fn watch_with(
+    conn: &Connection,
+    radios: &Radios,
+    mut changed: impl FnMut(Changes),
+) -> zbus::Result<()> {
     let rule = zbus::MatchRule::builder()
         .msg_type(zbus::message::Type::Signal)
         .sender(SERVICE)?
@@ -714,7 +820,7 @@ pub async fn watch(conn: &Connection, mut changed: impl FnMut(Changes)) -> zbus:
         });
     // A kill switch moving: the airplane key, a physical switch. Not every
     // one of these reaches NetworkManager's own properties.
-    let switches = crate::rfkill::changes().map(|()| Changes {
+    let switches = radios.changes().map(|()| Changes {
         other: true,
         ..Changes::default()
     });
@@ -752,27 +858,38 @@ pub async fn watch(conn: &Connection, mut changed: impl FnMut(Changes)) -> zbus:
             other: true,
             ..Changes::default()
         });
+    // NetworkManager's signals and its owner changes end when the connection
+    // closes; each ends with a `None` that ends the watch. The kill switches
+    // and logind may never end, or never start, so they only add changes.
+    let closing = || futures_util::stream::once(async { None });
     let mut events = futures_util::stream::select_all([
-        signals.boxed(),
-        owners.boxed(),
-        switches.boxed(),
-        wakes,
+        signals.map(Some).chain(closing()).boxed(),
+        owners.map(Some).chain(closing()).boxed(),
+        switches.map(Some).boxed(),
+        wakes.map(Some).boxed(),
     ]);
 
-    while let Some(first) = events.next().await {
+    while let Some(Some(first)) = events.next().await {
         let mut burst = first;
+        let mut closed = false;
         let settle = tokio::time::sleep(SETTLE);
         tokio::pin!(settle);
         loop {
             tokio::select! {
                 _ = &mut settle => break,
                 more = events.next() => match more {
-                    Some(more) => burst.merge(more),
-                    None => break,
+                    Some(Some(more)) => burst.merge(more),
+                    _ => {
+                        closed = true;
+                        break;
+                    }
                 },
             }
         }
         changed(burst);
+        if closed {
+            break;
+        }
     }
     Ok(())
 }
@@ -780,39 +897,92 @@ pub async fn watch(conn: &Connection, mut changed: impl FnMut(Changes)) -> zbus:
 /// Read NetworkManager, then follow it for as long as the connection lasts,
 /// handing every new snapshot to `on_snapshot`. A burst of changes costs
 /// only what it needs: strengths alone are applied without a bus call, and
-/// saved connections are read again only when one of them changed.
+/// saved connections are read again only when one of them changed. The kill
+/// switches are the machine's ([`Radios::system`]).
+///
+/// A read that fails, the first one included, is tried again on the next
+/// change NetworkManager signals, or after a pause when none comes: a second
+/// at first, doubling with each failure in a row up to half a minute. The
+/// first snapshot is handed over once a read succeeds.
 ///
 /// The reads run on the caller's runtime, never inside a callback, so this
 /// is what a plain thread runs through [`crate::blocking::follow`].
-pub async fn follow(conn: &Connection, mut on_snapshot: impl FnMut(&Snapshot)) -> zbus::Result<()> {
+///
+/// # Errors
+///
+/// The bus refusing the subscriptions at the start. Otherwise it returns
+/// `Ok` when the connection closes.
+pub async fn follow(conn: &Connection, on_snapshot: impl FnMut(&Snapshot)) -> zbus::Result<()> {
+    follow_with(conn, &Radios::system(), on_snapshot).await
+}
+
+/// [`follow`], with the kill switches of `radios`.
+///
+/// # Errors
+///
+/// The bus refusing the subscriptions at the start. Otherwise it returns
+/// `Ok` when the connection closes.
+pub async fn follow_with(
+    conn: &Connection,
+    radios: &Radios,
+    mut on_snapshot: impl FnMut(&Snapshot),
+) -> zbus::Result<()> {
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Changes>();
-    let watching = watch(conn, move |changes| {
+    let watching = watch_with(conn, radios, move |changes| {
         let _ = tx.send(changes);
     });
+    let everything = || Changes {
+        profiles: true,
+        other: true,
+        ..Changes::default()
+    };
     let reading = async {
-        let mut current = read(conn).await?;
-        on_snapshot(&current);
-        while let Some(mut changes) = rx.recv().await {
-            while let Ok(more) = rx.try_recv() {
-                changes.merge(more);
-            }
-            let next = if changes.only_strengths() {
-                let mut next = current.clone();
-                next.apply_strengths(&changes.strengths);
-                Ok(next)
-            } else {
-                let profiles = (!changes.profiles).then(|| current.profiles.clone());
-                read_with(conn, profiles).await
+        let mut current: Option<Snapshot> = None;
+        // What the next read is for; a first read is for everything.
+        let mut pending = everything();
+        let mut retry = RETRY_FIRST;
+        loop {
+            let next = match &current {
+                Some(current) if pending.only_strengths() => {
+                    let mut next = current.clone();
+                    next.apply_strengths(&pending.strengths);
+                    Ok(next)
+                }
+                Some(current) => {
+                    let profiles = (!pending.profiles).then(|| current.profiles.clone());
+                    read_cached(conn, radios, profiles).await
+                }
+                None => read_cached(conn, radios, None).await,
             };
             match next {
-                Ok(next) if next != current => {
-                    current = next;
-                    on_snapshot(&current);
+                Ok(next) => {
+                    retry = RETRY_FIRST;
+                    if current.as_ref() != Some(&next) {
+                        on_snapshot(&next);
+                        current = Some(next);
+                    }
+                    match rx.recv().await {
+                        Some(changes) => pending = changes,
+                        None => break,
+                    }
                 }
-                Ok(_) => {}
-                // NetworkManager going away mid-read: the owner change that
-                // comes with it reads again.
-                Err(_) => {}
+                // NetworkManager failing a call, or going away mid-read: what
+                // the read was for stays pending, and is read on the next
+                // change or once the pause is over.
+                Err(_) => {
+                    tokio::select! {
+                        changes = rx.recv() => match changes {
+                            Some(changes) => pending.merge(changes),
+                            None => break,
+                        },
+                        _ = tokio::time::sleep(retry) => {
+                            retry = (retry * 2).min(RETRY_MAX);
+                        }
+                    }
+                }
+            }
+            while let Ok(more) = rx.try_recv() {
+                pending.merge(more);
             }
         }
         Ok::<(), zbus::Error>(())

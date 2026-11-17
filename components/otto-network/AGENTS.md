@@ -26,7 +26,7 @@ It has the secret agent's request and reply shapes, and a watcher that says when
 - **External:** NetworkManager on the system bus. `zbus` and `tokio` (current-thread runtime for `blocking`).
 
 ## Develop
-- `cargo test -p otto-network` runs the model's tests. They need no bus.
+- `cargo test -p otto-network` runs the model's tests, which need no bus, and the stand-in NetworkManager tests below.
 - Against a real NetworkManager, run the bar or Settings. `nmcli monitor` shows the changes the watcher reacts to.
 
 ## Where things are
@@ -40,9 +40,9 @@ It has the secret agent's request and reply shapes, and a watcher that says when
   - IP configuration, with its validation
   - the keys a dialog asks for (`KeyKind`)
   - the secret agent's `SecretRequest`
-- `src/rfkill.rs`: the kernel's Wi-Fi kill switches. It reads the blocks from `/sys/class/rfkill`, follows them on `/dev/rfkill`, and lifts a soft block.
-- `src/client.rs`: `read`, the actions, `watch` (which says what changed: strengths, saved connections, or anything else) and `follow` (read, then keep reading as little as each change needs), all async on the caller's runtime.
-- `tests/mock_networkmanager.rs` runs `read` and every action against a stand-in NetworkManager on a private `dbus-daemon`. It is skipped where there is none.
+- `src/rfkill.rs`: the kernel's Wi-Fi kill switches, named by a `Radios` value (`Radios::system()` is `/sys/class/rfkill` and `/dev/rfkill`). It reads the blocks, follows them, and lifts a soft block.
+- `src/client.rs`: `read`, the actions, `watch` (which says what changed: strengths, saved connections, or anything else, and ends when the bus closes) and `follow` (read, then keep reading as little as each change needs, retrying a failed read), all async on the caller's runtime. The calls touching the kill switches have `_with` variants taking `Radios`.
+- `tests/mock_networkmanager.rs` runs `read` and every action against a stand-in NetworkManager on a private `dbus-daemon`. It is skipped where there is none. Its calls take `Radios::none()` and name their bus, so a test never reads or changes the host's radios and never sets the environment.
 - `src/blocking.rs`: the same calls for a plain thread, each on a runtime of its own.
 
 ## Rules

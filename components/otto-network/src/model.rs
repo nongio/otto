@@ -17,7 +17,8 @@ pub struct Snapshot {
     /// How the kernel's kill switches block the Wi-Fi radios.
     pub wifi_block: crate::rfkill::Block,
     pub connectivity: Connectivity,
-    /// The first managed Wi-Fi device, with the networks it sees.
+    /// The managed Wi-Fi device shown, with the networks it sees: the first
+    /// with a connection, or the first when none has one.
     pub wifi: Option<WifiDevice>,
     /// Every managed Wi-Fi and Ethernet device, for a status list.
     pub devices: Vec<Device>,
@@ -135,14 +136,15 @@ impl Device {
 #[derive(Debug, Clone, PartialEq)]
 pub struct WifiDevice {
     pub device: Device,
-    /// One per network name, as [`group_networks`] makes them.
+    /// One per network name, in the order a list shows them: the one in use,
+    /// then saved ones, then the rest, each by signal.
     pub networks: Vec<WifiNetwork>,
     /// Milliseconds of `CLOCK_BOOTTIME` at the last scan; `None` for never.
-    pub last_scan_ms: Option<i64>,
+    pub(crate) last_scan_ms: Option<i64>,
     /// The access point the device is associated with.
     pub active_ap: Option<AccessPoint>,
-    /// Every access point the device sees, before [`group_networks`] folds
-    /// them: what a signal-strength change is applied to.
+    /// Every access point the device sees, before they are folded into
+    /// `networks`: what a signal-strength change is applied to.
     pub access_points: Vec<AccessPoint>,
     /// The network name in use or coming up, as `networks` was grouped with.
     pub in_use: Option<(Vec<u8>, LinkState)>,
@@ -300,12 +302,14 @@ pub struct WifiNetwork {
     /// The strongest access point's signal, `0..=100`.
     pub strength: u8,
     pub security: Security,
-    /// The strongest access point, which a new connection is made for.
+    /// The strongest access point that takes the key [`Self::key_kind`]
+    /// names, which a connection is made for.
     pub access_point: String,
     /// The saved connection for this network, if there is one.
     pub saved: Option<String>,
     pub state: LinkState,
-    /// Only WPA3 is offered.
+    /// Only WPA3 is offered: every access point secured as `security` says
+    /// offers WPA3 alone.
     pub wpa3_only: bool,
 }
 
@@ -426,49 +430,102 @@ pub struct ActiveLink {
     pub hw_address: String,
     /// `address/prefix`.
     pub ipv4: Vec<String>,
+    /// The IPv4 router.
     pub gateway: Option<String>,
     pub dns: Vec<String>,
     /// `address/prefix`.
     pub ipv6: Vec<String>,
+    /// The IPv6 router, usually a link-local address.
+    pub gateway6: Option<String>,
+}
+
+/// Whether a network name is hidden: empty, or all zero bytes.
+fn is_hidden(ssid: &[u8]) -> bool {
+    ssid.iter().all(|b| *b == 0)
+}
+
+/// Name the access point in use after the network in use, when it hides its
+/// name. NetworkManager can report an empty name for the access point of a
+/// hidden network it joined; the saved connection knows the name, and the
+/// access point then folds into that network's row like any other.
+pub(crate) fn name_hidden_access_point(
+    access_points: &mut [AccessPoint],
+    active_ap: Option<&str>,
+    in_use: Option<&[u8]>,
+) {
+    let (Some(active_ap), Some(in_use)) = (active_ap, in_use) else {
+        return;
+    };
+    if is_hidden(in_use) {
+        return;
+    }
+    if let Some(ap) = access_points
+        .iter_mut()
+        .find(|ap| ap.path == active_ap && is_hidden(&ap.ssid))
+    {
+        ap.ssid = in_use.to_vec();
+    }
 }
 
 /// Fold access points into networks: one per name, hidden ones left out,
-/// with the strongest access point's signal and path. `saved` matches names
-/// to saved connections; `active` is the name in use or coming up.
+/// with the strongest access point's signal. `saved` matches names to saved
+/// connections; `active` is the name in use or coming up.
+///
+/// A name shared by access points secured differently takes the strongest
+/// security among them, and is WPA3-only when every access point with that
+/// security is. The access point a connection is made for is the strongest
+/// that takes that key: on a mesh where one node offers WPA3 alone and
+/// another WPA2 too, a WPA2 key goes to the one that takes it.
 ///
 /// Sorted with the network in use first, then saved networks, then the rest,
 /// each by signal, then by name.
-pub fn group_networks(
+pub(crate) fn group_networks(
     access_points: &[AccessPoint],
     saved: &[SavedNetwork],
     active: Option<(&[u8], LinkState)>,
 ) -> Vec<WifiNetwork> {
     let mut networks: Vec<WifiNetwork> = Vec::new();
     for ap in access_points {
-        if ap.ssid.is_empty() || ap.ssid.iter().all(|b| *b == 0) {
+        if is_hidden(&ap.ssid) {
             continue;
         }
         match networks.iter_mut().find(|n| n.ssid == ap.ssid) {
             Some(network) => {
-                if ap.strength > network.strength {
-                    network.strength = ap.strength;
-                    network.access_point = ap.path.clone();
-                }
+                network.strength = network.strength.max(ap.strength);
                 // A name shared by an open and a secured access point is
                 // treated as the secured one: a password asked for and not
                 // needed beats one needed and not asked for.
                 network.security = network.security.max(ap.security);
-                network.wpa3_only &= ap.wpa3_only;
             }
             None => networks.push(WifiNetwork {
                 ssid: ap.ssid.clone(),
                 strength: ap.strength,
                 security: ap.security,
-                access_point: ap.path.clone(),
+                access_point: String::new(),
                 saved: None,
                 state: LinkState::Idle,
-                wpa3_only: ap.wpa3_only,
+                wpa3_only: false,
             }),
+        }
+    }
+
+    for network in &mut networks {
+        let secured_alike: Vec<&AccessPoint> = access_points
+            .iter()
+            .filter(|ap| ap.ssid == network.ssid && ap.security == network.security)
+            .collect();
+        network.wpa3_only = secured_alike.iter().all(|ap| ap.wpa3_only);
+        // The first of the strongest, among those that take the key.
+        let mut chosen: Option<&AccessPoint> = None;
+        for ap in secured_alike {
+            if (network.wpa3_only || !ap.wpa3_only)
+                && chosen.is_none_or(|best| ap.strength > best.strength)
+            {
+                chosen = Some(ap);
+            }
+        }
+        if let Some(ap) = chosen {
+            network.access_point = ap.path.clone();
         }
     }
 
@@ -628,6 +685,21 @@ impl Snapshot {
         self.wifi_block.soft && !self.wifi_hard_blocked()
     }
 
+    /// The signal bars of the Wi-Fi link, `None` while there is none.
+    ///
+    /// The network in use when it has a row; otherwise the Wi-Fi device's
+    /// own state, with the access point it is associated with: a link
+    /// whose network has no row (no saved connection names a hidden
+    /// access point) is still up.
+    fn wifi_link_bars(&self) -> Option<u8> {
+        if let Some(network) = self.connected_network() {
+            return Some(network.bars());
+        }
+        let wifi = self.wifi.as_ref()?;
+        (wifi.device.state == DeviceState::Connected)
+            .then(|| wifi.active_ap.as_ref().map_or(0, |ap| bars(ap.strength)))
+    }
+
     /// Whether a wired device has its connection up.
     pub fn wired_connected(&self) -> bool {
         self.devices
@@ -656,17 +728,27 @@ impl Snapshot {
         if !self.running || self.devices.is_empty() {
             return Glyph::Hidden;
         }
-        if self.connecting() {
-            return Glyph::Connecting;
-        }
         // The kind of the primary connection decides, so a laptop on a
-        // cable with Wi-Fi also up shows what its traffic goes over.
+        // cable with Wi-Fi also up shows what its traffic goes over. A link
+        // carrying traffic also wins over another coming up: a cable stuck
+        // waiting for an address is not what the machine is using.
         let primary = self.primary.as_ref().map(|p| p.kind);
         if primary == Some(LinkKind::Ethernet) {
             return Glyph::Wired;
         }
-        if let Some(network) = self.connected_network() {
-            return Glyph::Wifi(network.bars());
+        if primary.is_some() {
+            if let Some(bars) = self.wifi_link_bars() {
+                return Glyph::Wifi(bars);
+            }
+            if self.wired_connected() {
+                return Glyph::Wired;
+            }
+        }
+        if self.connecting() {
+            return Glyph::Connecting;
+        }
+        if let Some(bars) = self.wifi_link_bars() {
+            return Glyph::Wifi(bars);
         }
         if self.wired_connected() {
             return Glyph::Wired;
@@ -897,6 +979,7 @@ mod tests {
             gateway: None,
             dns: Vec::new(),
             ipv6: Vec::new(),
+            gateway6: None,
         }
     }
 
@@ -940,6 +1023,101 @@ mod tests {
 
         let snapshot = wifi_snapshot(Vec::new(), DeviceState::Connecting);
         assert_eq!(snapshot.glyph(), Glyph::Connecting);
+    }
+
+    #[test]
+    fn a_cable_coming_up_does_not_hide_the_wifi_in_use() {
+        let connected = group_networks(
+            &[ap("/ap/1", "Home", 80, Security::Personal)],
+            &[],
+            Some((b"Home".as_slice(), LinkState::Connected)),
+        );
+        let mut snapshot = wifi_snapshot(connected, DeviceState::Connected);
+        snapshot
+            .devices
+            .push(device(DeviceKind::Ethernet, DeviceState::Connecting));
+        // Nothing carries the default route yet: something is coming up.
+        assert_eq!(snapshot.glyph(), Glyph::Connecting);
+        snapshot.primary = Some(link(LinkKind::Wifi));
+        assert_eq!(snapshot.glyph(), Glyph::Wifi(3));
+    }
+
+    #[test]
+    fn a_hidden_network_in_use_takes_its_saved_name() {
+        let mut aps = vec![
+            ap("/ap/1", "", 80, Security::Personal),
+            ap("/ap/2", "", 40, Security::Personal),
+            ap("/ap/3", "Cafe", 60, Security::Open),
+        ];
+        name_hidden_access_point(&mut aps, Some("/ap/1"), Some(b"Secret".as_slice()));
+        assert_eq!(aps[0].ssid, b"Secret");
+        assert!(aps[1].ssid.is_empty(), "only the access point in use");
+        // A named access point keeps its name.
+        name_hidden_access_point(&mut aps, Some("/ap/3"), Some(b"Secret".as_slice()));
+        assert_eq!(aps[2].ssid, b"Cafe");
+
+        let networks = group_networks(
+            &aps,
+            &[],
+            Some((b"Secret".as_slice(), LinkState::Connected)),
+        );
+        let mut snapshot = wifi_snapshot(networks, DeviceState::Connected);
+        snapshot.primary = Some(link(LinkKind::Wifi));
+        assert_eq!(
+            snapshot.connected_network().map(|n| n.name()).as_deref(),
+            Some("Secret")
+        );
+        assert_eq!(snapshot.glyph(), Glyph::Wifi(3));
+    }
+
+    #[test]
+    fn a_wifi_link_without_a_row_still_reads_connected() {
+        let mut snapshot = wifi_snapshot(Vec::new(), DeviceState::Connected);
+        snapshot.primary = Some(link(LinkKind::Wifi));
+        snapshot.wifi.as_mut().unwrap().active_ap = Some(ap("/ap/1", "", 55, Security::Personal));
+        assert_eq!(snapshot.connected_network(), None);
+        assert_eq!(snapshot.glyph(), Glyph::Wifi(2));
+    }
+
+    #[test]
+    fn a_mesh_joins_the_node_that_takes_the_key() {
+        let sae_only = |path: &str, strength: u8| AccessPoint {
+            wpa3_only: true,
+            ..ap(path, "Mesh", strength, Security::Personal)
+        };
+        // The strongest node takes WPA3 alone, another WPA2 too: the key is
+        // WPA2's, so the connection goes to the node that takes it.
+        let networks = group_networks(
+            &[
+                sae_only("/ap/1", 90),
+                ap("/ap/2", "Mesh", 50, Security::Personal),
+                ap("/ap/3", "Mesh", 30, Security::Personal),
+            ],
+            &[],
+            None,
+        );
+        let mesh = &networks[0];
+        assert_eq!(mesh.strength, 90);
+        assert_eq!(mesh.key_kind(), Some(crate::profile::KeyKind::WpaPsk));
+        assert_eq!(mesh.access_point, "/ap/2");
+
+        // Every node WPA3 alone: WPA3's key, to the strongest.
+        let networks = group_networks(&[sae_only("/ap/1", 40), sae_only("/ap/2", 70)], &[], None);
+        assert_eq!(networks[0].key_kind(), Some(crate::profile::KeyKind::Sae));
+        assert_eq!(networks[0].access_point, "/ap/2");
+
+        // An open node beside a WPA3-only one: the name is secured, with
+        // WPA3's key, and the open node is not where it goes.
+        let networks = group_networks(
+            &[
+                ap("/ap/1", "Mesh", 90, Security::Open),
+                sae_only("/ap/2", 20),
+            ],
+            &[],
+            None,
+        );
+        assert_eq!(networks[0].key_kind(), Some(crate::profile::KeyKind::Sae));
+        assert_eq!(networks[0].access_point, "/ap/2");
     }
 
     #[test]
