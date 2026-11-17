@@ -19,8 +19,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock, RwLock};
 
 use otto_network::{
-    parse_address, split_list, Band, DeviceKind, DeviceState, Family, IpConfig, IpError, IpMethod,
-    LinkState, Profile, ProfileKind, Security, Snapshot,
+    dns_address, parse_address, split_list, Band, DeviceKind, DeviceState, Family, IpConfig,
+    IpError, IpMethod, LinkState, Profile, ProfileKind, Security, Snapshot,
 };
 
 use crate::discovery::Choice;
@@ -340,7 +340,9 @@ fn method_label(method: &IpMethod, family: Family) -> String {
         IpMethod::Manual => otto_kit::t!("settings-network-method-manual").to_string(),
         IpMethod::LinkLocal => otto_kit::t!("settings-network-method-link-local").to_string(),
         IpMethod::Shared => otto_kit::t!("settings-network-method-shared").to_string(),
-        IpMethod::Disabled => otto_kit::t!("settings-network-method-off").to_string(),
+        IpMethod::Disabled | IpMethod::Ignore => {
+            otto_kit::t!("settings-network-method-off").to_string()
+        }
         IpMethod::Other(raw) => raw.clone(),
     }
 }
@@ -507,16 +509,15 @@ pub fn apply(id: &str, value: &Value) -> bool {
         (DNS_SERVERS_ID, Value::Text(text)) => {
             let servers = split_list(text);
             edit(|draft| {
-                draft.v4.dns = servers
+                // By what the entry's address is: a port (`1.1.1.1:853`)
+                // has a colon too. What is neither stays on IPv6, where
+                // validation names it.
+                let (v4, v6) = servers
                     .iter()
-                    .filter(|s| !s.contains(':'))
                     .cloned()
-                    .collect();
-                draft.v6.dns = servers
-                    .iter()
-                    .filter(|s| s.contains(':'))
-                    .cloned()
-                    .collect();
+                    .partition(|s| dns_address(s, Family::V4).is_some());
+                draft.v4.dns = v4;
+                draft.v6.dns = v6;
             });
             return true;
         }

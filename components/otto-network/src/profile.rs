@@ -60,6 +60,9 @@ pub enum IpMethod {
     Shared,
     /// The family is off on this connection.
     Disabled,
+    /// IPv6 only: NetworkManager leaves the family to the kernel. Read as
+    /// off, and written back as it was; choosing Off writes `disabled`.
+    Ignore,
     /// A method this code has no name for, kept as it is.
     Other(String),
 }
@@ -72,26 +75,21 @@ impl IpMethod {
             "manual" => Self::Manual,
             "link-local" => Self::LinkLocal,
             "shared" => Self::Shared,
-            // IPv6's "ignore" leaves the family to the kernel; to a person
-            // it reads as off, as "disabled" does.
-            "disabled" | "ignore" => Self::Disabled,
+            "disabled" => Self::Disabled,
+            "ignore" => Self::Ignore,
             other => Self::Other(other.to_string()),
         }
     }
 
-    pub fn to_nm(&self, family: Family) -> String {
+    pub fn to_nm(&self, _family: Family) -> String {
         match self {
             Self::Automatic => "auto",
             Self::DhcpOnly => "dhcp",
             Self::Manual => "manual",
             Self::LinkLocal => "link-local",
             Self::Shared => "shared",
-            Self::Disabled => match family {
-                Family::V4 => "disabled",
-                // "disabled" needs NetworkManager 1.20; "ignore" works
-                // everywhere and is what the setting has always meant.
-                Family::V6 => "ignore",
-            },
+            Self::Disabled => "disabled",
+            Self::Ignore => "ignore",
             Self::Other(raw) => raw,
         }
         .to_string()
@@ -227,6 +225,27 @@ pub fn parse_address(text: &str, family: Family) -> Result<IpAddress, IpError> {
     })
 }
 
+/// Whether `domain` is a search domain NetworkManager takes: a name, with
+/// an optional trailing dot, or prefixed `~` to route its lookups without
+/// searching it. `~.` sends every lookup to this connection's servers.
+/// Labels may hold `_` (service names) and letters outside ASCII (an
+/// internationalised name as typed).
+pub fn search_domain(domain: &str) -> bool {
+    let name = domain.strip_prefix('~').unwrap_or(domain);
+    if name == "." && domain.starts_with('~') {
+        return true;
+    }
+    let name = name.strip_suffix('.').unwrap_or(name);
+    !name.is_empty()
+        && name.split('.').all(|label| {
+            !label.is_empty()
+                && label.len() <= 63
+                && label
+                    .chars()
+                    .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
+        })
+}
+
 /// Split a typed list: commas, spaces or both between entries.
 pub fn split_list(text: &str) -> Vec<String> {
     text.split([',', ' ', ';'])
@@ -252,12 +271,7 @@ impl IpConfig {
             dns_address(server, family).ok_or_else(|| IpError::BadDns(server.clone()))?;
         }
         for domain in &self.dns_search {
-            let fine = domain.trim_start_matches('~').split('.').all(|label| {
-                !label.is_empty()
-                    && label.len() <= 63
-                    && label.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
-            });
-            if !fine {
+            if !search_domain(domain) {
                 return Err(IpError::BadDomain(domain.clone()));
             }
         }
@@ -822,13 +836,32 @@ mod tests {
     }
 
     #[test]
+    fn search_domains_as_networkmanager_takes_them() {
+        for good in [
+            "example.com",
+            "example.com.",
+            "~example.com",
+            "~.",
+            "_ldap.corp",
+            "bücher.de",
+        ] {
+            assert!(search_domain(good), "{good}");
+        }
+        for bad in ["", ".", "~", "a..b", "has space.com", "a/b"] {
+            assert!(!search_domain(bad), "{bad}");
+        }
+    }
+
+    #[test]
     fn methods_round_trip() {
         for family in [Family::V4, Family::V6] {
             for method in IpMethod::choices(family) {
                 assert_eq!(&IpMethod::from_nm(&method.to_nm(family)), method);
             }
         }
-        assert_eq!(IpMethod::from_nm("ignore"), IpMethod::Disabled);
+        // Read back as it was written, so an unrelated edit keeps it.
+        assert_eq!(IpMethod::from_nm("ignore").to_nm(Family::V6), "ignore");
+        assert_eq!(IpMethod::Disabled.to_nm(Family::V6), "disabled");
         assert_eq!(
             IpMethod::from_nm("weird").to_nm(Family::V4),
             "weird".to_string()
