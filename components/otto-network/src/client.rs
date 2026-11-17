@@ -21,7 +21,9 @@ use zbus::zvariant::{ObjectPath, OwnedObjectPath, OwnedValue, Value};
 use zbus::Connection;
 
 use crate::model::*;
-use crate::profile::{Family, IpConfig, KeyKind, MacPolicy, MeteredSetting, Profile, ProfileKind};
+use crate::profile::{
+    Family, IpConfig, KeyKind, MacPolicy, MeteredSetting, Profile, ProfileKind, WifiShare,
+};
 use crate::rfkill::Radios;
 
 /// `NMDeviceType` values Otto shows.
@@ -756,6 +758,32 @@ pub async fn set_metered(
 ) -> zbus::Result<()> {
     edit_profile(conn, connection, |settings| metered.write_into(settings)).await?;
     reapply(conn, connection, Reapply::InPlace).await
+}
+
+/// The name, security and password of the saved Wi-Fi network at
+/// `connection`, for showing or sharing it.
+///
+/// The password comes from `GetSecrets`, which NetworkManager authorises
+/// through polkit and may refuse; a polkit agent may ask first. It is asked
+/// only where NetworkManager stores one: a password an agent keeps, or one
+/// asked for on every connect, is `None` with no call.
+///
+/// # Errors
+///
+/// A connection that is not Wi-Fi, a refusal (`PermissionDenied`), or any
+/// other bus error.
+pub async fn wifi_share(conn: &Connection, connection: &str) -> zbus::Result<WifiShare> {
+    let proxy = at!(SettingsConnectionProxy, conn, connection).await?;
+    let settings = proxy.get_settings().await?;
+    if !settings.contains_key("802-11-wireless") {
+        return Err(zbus::Error::Failure("not a Wi-Fi connection".into()));
+    }
+    let secrets = if WifiShare::stores_password(&settings) {
+        proxy.get_secrets("802-11-wireless-security").await?
+    } else {
+        HashMap::new()
+    };
+    Ok(WifiShare::from_settings(&settings, &secrets))
 }
 
 /// Save `policy` as the hardware address the Wi-Fi or Ethernet connection

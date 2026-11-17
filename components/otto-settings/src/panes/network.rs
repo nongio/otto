@@ -54,6 +54,8 @@ const APPLY_ID: &str = "network.apply";
 const MAC_ID: &str = "network.mac";
 /// The metered pop-up of the connection the editor shows.
 const METERED_ID: &str = "network.metered";
+/// The Show… button of the Wi-Fi network the editor shows.
+const PASSWORD_ID: &str = "network.password";
 /// The VPN tab's Import… button.
 const IMPORT_ID: &str = "network.vpn-import";
 
@@ -103,6 +105,18 @@ struct Ui {
     import_error: Option<String>,
     /// Why the last switch, pop-up, Forget or VPN connect did not take.
     action_error: Option<ActionError>,
+    /// The saved network whose password is being read, while it is.
+    revealing: Option<String>,
+    /// The network shown on the sharing sheet, password and all, while the
+    /// sheet is up. Closing the sheet drops it.
+    reveal: Option<Reveal>,
+}
+
+/// A saved Wi-Fi network on the sharing sheet.
+struct Reveal {
+    share: otto_network::WifiShare,
+    /// The code a phone scans to join, when it fits one.
+    qr: Option<otto_kit::qr::QrCode>,
 }
 
 /// The row an action came from, where its refusal shows.
@@ -189,6 +203,8 @@ static UI: Mutex<Ui> = Mutex::new(Ui {
     applying: false,
     import_error: None,
     action_error: None,
+    revealing: None,
+    reveal: None,
 });
 
 fn ui() -> std::sync::MutexGuard<'static, Ui> {
@@ -810,10 +826,15 @@ pub fn apply(id: &str, value: &Value) -> bool {
     id.starts_with("network.")
 }
 
-/// A push button let go on: Apply or Revert, or a VPN's Import….
+/// A push button let go on: Apply or Revert, a VPN's Import…, or a Wi-Fi
+/// network's Show….
 pub fn press(row: &str, button: &str) {
     if row == IMPORT_ID {
         import_vpn();
+        return;
+    }
+    if row == PASSWORD_ID {
+        reveal_password();
         return;
     }
     if row != APPLY_ID {
@@ -885,6 +906,106 @@ fn settle_apply(ui: &mut Ui, sent: &Draft, result: zbus::Result<()>) {
             ));
         }
     }
+}
+
+/// Read the password of the Wi-Fi network the editor shows, then put up the
+/// sheet sharing it. NetworkManager asks polkit, which may prompt; a refusal,
+/// or a password it does not store, shows on the row instead.
+fn reveal_password() {
+    let path = match &*SNAPSHOT.read().unwrap() {
+        Read::Ready(snapshot) => edited_profile(snapshot, Tab::Wifi).map(|p| p.path.clone()),
+        _ => None,
+    };
+    let Some(path) = path else {
+        return;
+    };
+    {
+        let mut ui = ui();
+        if ui.revealing.is_some() {
+            return;
+        }
+        ui.revealing = Some(path.clone());
+        ui.action_error = None;
+    }
+    settings_client::request_redraw();
+    in_background("network-password", move || {
+        let result = otto_network::blocking::wifi_share(&path);
+        let mut ui = ui();
+        ui.revealing = None;
+        match revealed(result) {
+            Ok(reveal) => ui.reveal = Some(reveal),
+            Err(text) => {
+                ui.action_error = Some(ActionError {
+                    at: ErrorAt::Option(PASSWORD_ID, path),
+                    text,
+                });
+            }
+        }
+        drop(ui);
+        settings_client::request_redraw();
+    });
+}
+
+/// What reading a network's password comes to: the sheet to show, or the
+/// line the row says instead. The password itself is never logged.
+fn revealed(result: zbus::Result<otto_network::WifiShare>) -> Result<Reveal, String> {
+    let share = match result {
+        Ok(share) => share,
+        Err(zbus::Error::MethodError(name, _, _))
+            if name.contains("PermissionDenied") || name.ends_with("AccessDenied") =>
+        {
+            return Err(otto_kit::t!("settings-network-password-denied").to_string());
+        }
+        Err(why) => {
+            eprintln!("network: reading a password: {why}");
+            return Err(otto_kit::t_owned!(
+                "settings-network-apply-failed",
+                reason = why.to_string()
+            ));
+        }
+    };
+    if share.security == otto_network::ShareSecurity::Enterprise {
+        return Err(otto_kit::t!("settings-network-password-enterprise").to_string());
+    }
+    if !share.shareable() {
+        return Err(otto_kit::t!("settings-network-password-not-stored").to_string());
+    }
+    let qr = share
+        .qr_text()
+        .and_then(|text| otto_kit::qr::QrCode::encode(text.expose().as_bytes()));
+    Ok(Reveal { share, qr })
+}
+
+/// The sheet sharing a Wi-Fi network, while it is up.
+pub fn sheet() -> Option<crate::panes::account::SheetView> {
+    let ui = ui();
+    let reveal = ui.reveal.as_ref()?;
+    let body = match (&reveal.share.password, &reveal.qr) {
+        (_, None) => otto_kit::t!("settings-network-share-too-long"),
+        (None, Some(_)) => otto_kit::t!("settings-network-share-open"),
+        (Some(_), Some(_)) => otto_kit::t!("settings-network-share-body"),
+    };
+    Some(crate::panes::account::SheetView {
+        title: reveal.share.name(),
+        body: Some(body.to_string()),
+        fields: Vec::new(),
+        action: otto_kit::t!("settings-network-share-done"),
+        destructive: false,
+        message: None,
+        busy: false,
+        cancellable: true,
+        cancel: false,
+        share: Some(crate::sheet::SheetShare {
+            password: reveal.share.password.clone(),
+            qr: reveal.qr.clone(),
+        }),
+    })
+}
+
+/// Close the sharing sheet, forgetting the password it showed.
+pub fn close_sheet() {
+    ui().reveal = None;
+    settings_client::request_redraw();
 }
 
 /// What `nmcli connection import` calls the kind of VPN in `path`, by its
@@ -1552,8 +1673,8 @@ fn option_detail(id: &'static str, profile: &Profile, fallback: &'static str) ->
         .unwrap_or(Cow::Borrowed(fallback))
 }
 
-/// The rows of `profile` that save as soon as they change: its private
-/// address and whether it is metered.
+/// The rows of `profile` that act as soon as they change: its private
+/// address, whether it is metered, and for Wi-Fi its password.
 fn option_rows(profile: &Profile) -> Vec<Row> {
     let mut rows = Vec::new();
     let mac_label = match profile.kind {
@@ -1579,6 +1700,26 @@ fn option_rows(profile: &Profile) -> Vec<Row> {
                 otto_kit::t!("settings-network-metered-detail"),
             )),
             METERED_ID,
+        ));
+    }
+    if profile.kind == ProfileKind::Wifi {
+        static SHOW: OnceLock<[&'static str; 1]> = OnceLock::new();
+        let reading = ui().revealing.as_deref() == Some(profile.path.as_str());
+        let fallback = if reading {
+            otto_kit::t!("settings-network-password-reading")
+        } else {
+            otto_kit::t!("settings-network-password-detail")
+        };
+        rows.push(bound(
+            Row::new(
+                otto_kit::t!("settings-network-password"),
+                Control::Button(
+                    SHOW.get_or_init(|| [otto_kit::t!("settings-network-password-show")]),
+                ),
+            )
+            .detail(option_detail(PASSWORD_ID, profile, fallback))
+            .inactive(reading),
+            PASSWORD_ID,
         ));
     }
     rows
@@ -1821,6 +1962,71 @@ mod tests {
         ));
     }
 
+    fn share(
+        security: otto_network::ShareSecurity,
+        password: Option<&str>,
+    ) -> otto_network::WifiShare {
+        otto_network::WifiShare {
+            ssid: b"Home".to_vec(),
+            security,
+            hidden: false,
+            password: password.map(|p| otto_network::Password::new(p.into())),
+        }
+    }
+
+    #[test]
+    fn a_read_password_opens_the_sheet_or_says_why_not() {
+        use otto_network::ShareSecurity;
+        let reveal = revealed(Ok(share(ShareSecurity::Wpa, Some("hunter22")))).unwrap();
+        assert!(reveal.qr.is_some());
+
+        assert_eq!(
+            revealed(Ok(share(ShareSecurity::Wpa, None)))
+                .err()
+                .as_deref(),
+            Some(otto_kit::t!("settings-network-password-not-stored"))
+        );
+        assert_eq!(
+            revealed(Ok(share(ShareSecurity::Enterprise, None)))
+                .err()
+                .as_deref(),
+            Some(otto_kit::t!("settings-network-password-enterprise"))
+        );
+        // An open network has no password, but a code all the same.
+        assert!(revealed(Ok(share(ShareSecurity::Open, None)))
+            .unwrap()
+            .qr
+            .is_some());
+
+        let denied = zbus::Error::MethodError(
+            zbus::names::OwnedErrorName::try_from(
+                "org.freedesktop.NetworkManager.Settings.PermissionDenied",
+            )
+            .unwrap(),
+            Some("Insufficient privileges".into()),
+            zbus::message::Message::method_call("/", "Ping")
+                .unwrap()
+                .build(&())
+                .unwrap(),
+        );
+        assert_eq!(
+            revealed(Err(denied)).err().as_deref(),
+            Some(otto_kit::t!("settings-network-password-denied"))
+        );
+    }
+
+    #[test]
+    fn the_password_row_is_wifi_only() {
+        let ids = |profile: &Profile| -> Vec<&'static str> {
+            editor(profile, None, None)
+                .iter()
+                .flat_map(|g| g.rows.iter().filter_map(|r| r.id))
+                .collect()
+        };
+        assert!(ids(&profile("/c/w", ProfileKind::Wifi)).contains(&PASSWORD_ID));
+        assert!(!ids(&profile("/c/e", ProfileKind::Ethernet)).contains(&PASSWORD_ID));
+    }
+
     #[test]
     fn method_choices_show_their_names() {
         let choices = menu_choices(V4_METHOD_ID).unwrap();
@@ -1884,6 +2090,8 @@ mod tests {
             applying: true,
             import_error: None,
             action_error: None,
+            revealing: None,
+            reveal: None,
         };
 
         settle_apply(&mut ui, &sent, Ok(()));

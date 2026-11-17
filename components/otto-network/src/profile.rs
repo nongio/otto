@@ -762,6 +762,197 @@ impl KeyKind {
     }
 }
 
+/// A Wi-Fi password read back from NetworkManager. Its [`Debug`] never shows
+/// it, so it stays out of logs.
+#[derive(Clone, PartialEq, Eq)]
+pub struct Password(String);
+
+impl Password {
+    pub fn new(text: String) -> Self {
+        Self(text)
+    }
+
+    /// The password itself, for showing it or encoding it.
+    pub fn expose(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Debug for Password {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Password(…)")
+    }
+}
+
+/// How a saved Wi-Fi network is secured, as sharing it goes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShareSecurity {
+    /// No password: open, or Enhanced Open (OWE).
+    Open,
+    /// WPA or WPA2 Personal, which WPA3 transition networks also take.
+    Wpa,
+    /// WPA3 Personal only.
+    Sae,
+    Wep,
+    /// A user name and a certificate, which a password alone cannot share.
+    Enterprise,
+}
+
+/// `NM_SETTING_SECRET_FLAG_AGENT_OWNED`: an agent keeps the secret.
+const SECRET_AGENT_OWNED: u32 = 0x1;
+/// `NM_SETTING_SECRET_FLAG_NOT_SAVED`: asked for on every connect.
+const SECRET_NOT_SAVED: u32 = 0x2;
+
+/// What it takes to join a saved Wi-Fi network: its name, security and
+/// password, as a person reads them out or a phone scans them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WifiShare {
+    pub ssid: Vec<u8>,
+    pub security: ShareSecurity,
+    /// The network does not broadcast its name.
+    pub hidden: bool,
+    /// The password, where NetworkManager stores it. `None` for an open
+    /// network, and for one whose password an agent keeps or that asks for
+    /// it each time.
+    pub password: Option<Password>,
+}
+
+impl WifiShare {
+    /// How the Wi-Fi profile with `settings` is secured.
+    pub fn security(settings: &Settings) -> ShareSecurity {
+        let Some(security) = settings.get("802-11-wireless-security") else {
+            return ShareSecurity::Open;
+        };
+        match string(security, "key-mgmt").as_deref() {
+            Some("wpa-psk") => ShareSecurity::Wpa,
+            Some("sae") => ShareSecurity::Sae,
+            Some("none") => ShareSecurity::Wep,
+            Some("owe") | None => ShareSecurity::Open,
+            Some(_) => ShareSecurity::Enterprise,
+        }
+    }
+
+    /// The secret that holds the password of a profile with `settings`:
+    /// `psk`, or the WEP key in use. `None` where no password is shared.
+    fn secret_key(settings: &Settings) -> Option<String> {
+        match Self::security(settings) {
+            ShareSecurity::Wpa | ShareSecurity::Sae => Some("psk".to_string()),
+            ShareSecurity::Wep => {
+                let index = settings
+                    .get("802-11-wireless-security")
+                    .and_then(|s| s.get("wep-tx-keyidx"))
+                    .and_then(|v| u32::try_from(v).ok())
+                    .unwrap_or(0);
+                Some(format!("wep-key{index}"))
+            }
+            ShareSecurity::Open | ShareSecurity::Enterprise => None,
+        }
+    }
+
+    /// Whether NetworkManager stores the password of a profile with
+    /// `settings`, so asking it for the secrets can return one: not when
+    /// there is none, nor when an agent keeps it or it is never saved.
+    pub fn stores_password(settings: &Settings) -> bool {
+        let Some(key) = Self::secret_key(settings) else {
+            return false;
+        };
+        let flags_key = if key == "psk" {
+            "psk-flags"
+        } else {
+            "wep-key-flags"
+        };
+        let flags = settings
+            .get("802-11-wireless-security")
+            .and_then(|s| s.get(flags_key))
+            .and_then(|v| u32::try_from(v).ok())
+            .unwrap_or(0);
+        flags & (SECRET_AGENT_OWNED | SECRET_NOT_SAVED) == 0
+    }
+
+    /// The network of a profile with `settings`, its password taken from
+    /// `secrets`: what `GetSecrets` returned for `802-11-wireless-security`,
+    /// empty where it was not asked. An empty password is none.
+    pub fn from_settings(settings: &Settings, secrets: &Settings) -> Self {
+        let wireless = settings.get("802-11-wireless");
+        let password = Self::secret_key(settings).and_then(|key| {
+            secrets
+                .get("802-11-wireless-security")
+                .and_then(|s| string(s, &key))
+                .filter(|p| !p.is_empty())
+                .map(Password::new)
+        });
+        Self {
+            ssid: wireless
+                .and_then(|w| w.get("ssid"))
+                .and_then(|v| Vec::<u8>::try_from(v.try_clone().ok()?).ok())
+                .unwrap_or_default(),
+            security: Self::security(settings),
+            hidden: wireless
+                .and_then(|w| w.get("hidden"))
+                .and_then(|v| bool::try_from(v).ok())
+                .unwrap_or(false),
+            password,
+        }
+    }
+
+    /// The network's name for showing, with replacement characters where
+    /// it is not UTF-8.
+    pub fn name(&self) -> String {
+        String::from_utf8_lossy(&self.ssid).into_owned()
+    }
+
+    /// Whether a phone could join from this: the network takes no password,
+    /// or takes one and it is here.
+    pub fn shareable(&self) -> bool {
+        match self.security {
+            ShareSecurity::Open => true,
+            ShareSecurity::Wpa | ShareSecurity::Sae | ShareSecurity::Wep => self.password.is_some(),
+            ShareSecurity::Enterprise => false,
+        }
+    }
+
+    /// The text of a Wi-Fi QR code, `WIFI:T:WPA;S:<name>;P:<password>;;`,
+    /// as phone cameras read it, with `\`, `;`, `,`, `:` and `"` escaped.
+    /// It holds the password, so it is one too. `None` when it is not
+    /// [`shareable`](Self::shareable).
+    pub fn qr_text(&self) -> Option<Password> {
+        if !self.shareable() {
+            return None;
+        }
+        let kind = match self.security {
+            ShareSecurity::Open => "nopass",
+            ShareSecurity::Wpa => "WPA",
+            ShareSecurity::Sae => "SAE",
+            ShareSecurity::Wep => "WEP",
+            ShareSecurity::Enterprise => return None,
+        };
+        let mut text = format!("WIFI:T:{kind};S:{};", escape_wifi(&self.name()));
+        if let Some(password) = &self.password {
+            text.push_str("P:");
+            text.push_str(&escape_wifi(password.expose()));
+            text.push(';');
+        }
+        if self.hidden {
+            text.push_str("H:true;");
+        }
+        text.push(';');
+        Some(Password::new(text))
+    }
+}
+
+/// `text` with the characters a Wi-Fi QR code reserves escaped by a
+/// backslash.
+fn escape_wifi(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        if matches!(c, '\\' | ';' | ',' | ':' | '"') {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
+}
+
 /// A request for a Wi-Fi password, read out of what NetworkManager sends a
 /// secret agent.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1233,6 +1424,129 @@ mod tests {
             MeteredSetting::Automatic
         );
         assert_eq!(MeteredSetting::from_name("sometimes"), None);
+    }
+
+    fn secured(name: &[u8], security: Vec<(&str, OwnedValue)>) -> Settings {
+        let mut settings = link(
+            "802-11-wireless",
+            vec![("ssid", owned(Value::from(name.to_vec())))],
+        );
+        settings.insert(
+            "802-11-wireless-security".into(),
+            security
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), v))
+                .collect(),
+        );
+        settings
+    }
+
+    fn secrets(entries: Vec<(&str, &str)>) -> Settings {
+        Settings::from([(
+            "802-11-wireless-security".to_string(),
+            entries
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), owned(Value::from(v))))
+                .collect(),
+        )])
+    }
+
+    #[test]
+    fn a_wpa_network_shares_as_a_qr_code() {
+        let settings = secured(b"Home", vec![("key-mgmt", owned(Value::from("wpa-psk")))]);
+        assert!(WifiShare::stores_password(&settings));
+        let share = WifiShare::from_settings(&settings, &secrets(vec![("psk", "hunter22")]));
+        assert_eq!(share.security, ShareSecurity::Wpa);
+        assert_eq!(
+            share.password.as_ref().map(Password::expose),
+            Some("hunter22")
+        );
+        assert_eq!(
+            share.qr_text().unwrap().expose(),
+            "WIFI:T:WPA;S:Home;P:hunter22;;"
+        );
+    }
+
+    #[test]
+    fn reserved_characters_are_escaped() {
+        let mut settings = secured(
+            br#"Caf;e "x""#,
+            vec![("key-mgmt", owned(Value::from("sae")))],
+        );
+        settings
+            .get_mut("802-11-wireless")
+            .unwrap()
+            .insert("hidden".into(), owned(Value::from(true)));
+        let share = WifiShare::from_settings(&settings, &secrets(vec![("psk", r"p:a,s\s")]));
+        assert_eq!(
+            share.qr_text().unwrap().expose(),
+            r#"WIFI:T:SAE;S:Caf\;e \"x\";P:p\:a\,s\\s;H:true;;"#
+        );
+    }
+
+    #[test]
+    fn open_wep_and_enterprise_networks() {
+        let open = link(
+            "802-11-wireless",
+            vec![("ssid", owned(Value::from(b"Cafe".to_vec())))],
+        );
+        assert!(!WifiShare::stores_password(&open));
+        let share = WifiShare::from_settings(&open, &Settings::new());
+        assert_eq!(share.security, ShareSecurity::Open);
+        assert_eq!(share.qr_text().unwrap().expose(), "WIFI:T:nopass;S:Cafe;;");
+
+        let wep = secured(
+            b"Old",
+            vec![
+                ("key-mgmt", owned(Value::from("none"))),
+                ("wep-tx-keyidx", owned(Value::from(1u32))),
+            ],
+        );
+        let share = WifiShare::from_settings(
+            &wep,
+            &secrets(vec![("wep-key0", "wrong"), ("wep-key1", "abcde")]),
+        );
+        assert_eq!(
+            share.qr_text().unwrap().expose(),
+            "WIFI:T:WEP;S:Old;P:abcde;;"
+        );
+
+        let eap = secured(b"Uni", vec![("key-mgmt", owned(Value::from("wpa-eap")))]);
+        assert!(!WifiShare::stores_password(&eap));
+        let share = WifiShare::from_settings(&eap, &Settings::new());
+        assert_eq!(share.security, ShareSecurity::Enterprise);
+        assert!(share.qr_text().is_none());
+    }
+
+    #[test]
+    fn a_password_an_agent_keeps_is_not_stored() {
+        for flags in [SECRET_AGENT_OWNED, SECRET_NOT_SAVED] {
+            let settings = secured(
+                b"Home",
+                vec![
+                    ("key-mgmt", owned(Value::from("wpa-psk"))),
+                    ("psk-flags", owned(Value::from(flags))),
+                ],
+            );
+            assert!(!WifiShare::stores_password(&settings));
+        }
+        // GetSecrets answering with nothing, or an empty key.
+        let settings = secured(b"Home", vec![("key-mgmt", owned(Value::from("wpa-psk")))]);
+        for answer in [Settings::new(), secrets(vec![("psk", "")])] {
+            let share = WifiShare::from_settings(&settings, &answer);
+            assert_eq!(share.password, None);
+            assert!(!share.shareable());
+            assert!(share.qr_text().is_none());
+        }
+    }
+
+    #[test]
+    fn a_password_stays_out_of_debug() {
+        let settings = secured(b"Home", vec![("key-mgmt", owned(Value::from("wpa-psk")))]);
+        let share = WifiShare::from_settings(&settings, &secrets(vec![("psk", "hunter22")]));
+        let shown = format!("{share:?} {:?}", share.qr_text());
+        assert!(shown.contains("Password"));
+        assert!(!shown.contains("hunter22"), "{shown}");
     }
 
     #[test]

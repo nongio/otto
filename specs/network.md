@@ -62,6 +62,7 @@ The common ground, which Otto adopts:
   - the saved Wi-Fi networks, each with an auto-join switch and Forget
   - for the Wi-Fi or Ethernet profile shown, its private hardware address and whether it is metered
   - whether the connection in use counts as metered now, set or guessed
+  - a saved Wi-Fi network's password, shown with a QR code a phone scans to join
   - the VPNs, each with a switch to connect and Forget, and Import… for a WireGuard or OpenVPN file
 - Whether the indicator is shown is a switch on the Top bar pane, next to the clock's, so it is there whatever devices the machine has.
 - Everything follows NetworkManager live. A change made with `nmcli`, another applet or the hardware switch shows up without reopening anything.
@@ -163,6 +164,12 @@ The common ground, which Otto adopts:
     - A profile with nothing set shows *Default*, one with `preserve` shows *As the device has it*, and one with an explicit address shows that address. None of them is changed until a choice is picked.
     - The new address is used the next time the connection comes up; the row says so. It is not reapplied, since NetworkManager cannot change the address of a link that is up without taking it down.
     - *Metered connection*, a pop-up writing `connection.metered`: Automatic (`0`, NetworkManager guesses), On (`1`), Off (`2`). It is applied to the running connection in place (`Reapply`). Where NetworkManager cannot, it waits for the next connect: being metered is no reason to drop a link.
+    - *Password* (Wi-Fi only), with *Show…*:
+      - It reads the profile with `GetSettings`, then its secrets with `Settings.Connection.GetSecrets("802-11-wireless-security")`, sent allowing interactive authorisation. NetworkManager checks polkit first (`org.freedesktop.NetworkManager.settings.modify.own` for a profile visible only to this user, `settings.modify.system` otherwise), so a polkit agent may prompt. While the call is out the row says it is reading and the button is dimmed.
+      - `GetSecrets` is not called when the profile stores no password: open, enterprise, or a key whose flags say agent-owned (`0x1`) or not saved (`0x2`). NetworkManager would return nothing for those.
+      - A refusal (`PermissionDenied`) says the password may not be read. A password not stored says so. An enterprise network says it signs in with an account. Each shows on the row's detail line, as other refusals do.
+      - Otherwise a sheet comes up with the network's name, its password, and a QR code holding `WIFI:T:<kind>;S:<name>;P:<password>;;`, plus `H:true;` for a hidden network. The kind is `WPA` for WPA/WPA2 (`wpa-psk`), `SAE` for WPA3-only (`sae`), `WEP` for WEP (the key `wep-tx-keyidx` names), and `nopass` for open and Enhanced Open, which leave out `P:`. `\`, `;`, `,`, `:` and `"` in the name and password are escaped with a backslash. A string too long for a code (more than version 10 holds) shows the password with a line saying so.
+      - The sheet has one button, *Done*. Done, Escape or Return close it, and closing it drops the password from the pane's state. The password is never logged, and the types holding it (`Password`, `WifiShare`, the QR symbol) print nothing of it in `Debug`.
     - A refusal shows on the row's detail line.
 17. Edits to TCP/IP and DNS are a draft. *Changes* has *Revert* and *Apply*, dimmed while there is nothing to apply. Apply checks the draft first:
     - Manually needs at least one address.
@@ -188,6 +195,7 @@ The common ground, which Otto adopts:
 - **Cloned MAC on D-Bus.** The setting libnm and `nmcli` call `cloned-mac-address` travels on D-Bus as `assigned-mac-address` (a string: `permanent`, `stable`, `random`, `preserve` or an address), while the D-Bus `cloned-mac-address` holds only an explicit address as bytes. The string is read first, the bytes as a fallback, and only the string is written, the bytes removed.
 - **One update.** IPv4 and IPv6 are saved in a single update and applied once, so one family is never saved without the other.
 - **Secrets on update.** A profile's settings are read without secrets, and an update without secrets keeps the ones NetworkManager stored.
+- **QR codes.** `otto_kit::qr` encodes byte mode at error correction level M, versions 1 to 10 (up to 213 bytes), with the mask the standard's penalty rules pick; `otto_kit::components::qr_code` draws it black on white with a four-module quiet zone, on whole device pixels. The longest name (32 bytes) and password (63 characters) fit unless nearly all of their characters need escaping. No QR library is linked.
 
 ## Rationale
 

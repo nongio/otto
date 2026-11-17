@@ -237,6 +237,14 @@ pub trait SettingsConnection {
 
     /// Forget the connection.
     fn delete(&self) -> zbus::Result<()>;
+
+    /// The secrets NetworkManager stores for one setting of the connection
+    /// (`"802-11-wireless-security"`), in the same shape as the settings.
+    /// Secrets an agent keeps, or that are never saved, are left out.
+    /// NetworkManager asks polkit first (`settings.modify.own` or
+    /// `settings.modify.system`), which may prompt.
+    #[zbus(allow_interactive_auth)]
+    fn get_secrets(&self, setting_name: &str) -> zbus::Result<ConnectionSettings>;
 }
 
 #[zbus::proxy(

@@ -396,6 +396,17 @@ settings-network-metered-off = Off
 settings-network-metered-now = Metered
 settings-network-metered-yes = Yes
 settings-network-metered-guessed = Yes (guessed)
+settings-network-password = Password
+settings-network-password-show = Show…
+settings-network-password-detail = See it, or share it with a QR code
+settings-network-password-reading = Reading the password…
+settings-network-password-not-stored = The password isn't stored with this network, so it can't be shown
+settings-network-password-enterprise = This network signs in with an account, so there's no password to share
+settings-network-password-denied = Not allowed to read this network's password
+settings-network-share-body = Point a phone's camera at the code to join this network.
+settings-network-share-open = This network has no password. Point a phone's camera at the code to join it.
+settings-network-share-too-long = The name and password are too long to fit in a code.
+settings-network-share-done = Done
 # The pop-up choosing which saved network the TCP/IP rows edit.
 settings-network-settings-for = Settings for
 settings-network-configure-ipv4 = Configure IPv4

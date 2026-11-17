@@ -17,6 +17,7 @@ The crate also has the actions a network UI takes:
 - auto-join
 - save and reapply TCP/IP and DNS
 - the private hardware address and metered setting of a profile
+- read a saved Wi-Fi password for sharing (`wifi_share`, through `GetSecrets`)
 
 It has the secret agent's request and reply shapes, and a watcher that says when to read again. NetworkManager keeps all the state. Nothing here caches it.
 
@@ -50,7 +51,7 @@ It has the secret agent's request and reply shapes, and a watcher that says when
 - No toolkit and no Wayland. The crate is the model and the bus calls, and the UIs draw.
 - A UI follows NetworkManager with `follow`, not by calling `read` from a `watch` callback: a `blocking` call made inside the watch's runtime panics.
 - Proxies come from `otto-dbus` and are built uncached (`CacheProperties::No`), because a snapshot is read once and dropped.
-- A write to a profile changes only the properties it edits, each in one spelling only: `address-data`, never the older `addresses`; `dns-data` (1.42+) where the profile already uses it or an entry needs it, the older `dns` otherwise. Settings come without secrets, and an update without secrets keeps the stored ones. Never send a profile's secrets back.
+- A write to a profile changes only the properties it edits, each in one spelling only: `address-data`, never the older `addresses`; `dns-data` (1.42+) where the profile already uses it or an entry needs it, the older `dns` otherwise. Settings come without secrets, and an update without secrets keeps the stored ones. Never send a profile's secrets back. A password read for sharing travels as `Password`, whose `Debug` hides it; never log one.
 - Decisions about what to show (order, grouping, the glyph) belong in `model.rs` with a test, not in a UI, so the bar and Settings never disagree.
 - The behaviour is specified in `specs/network.md`. A change to it updates the spec.
 

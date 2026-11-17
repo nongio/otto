@@ -11,7 +11,7 @@ use std::future::Future;
 use zbus::Connection;
 
 use crate::model::{Snapshot, WifiNetwork};
-use crate::profile::{IpConfig, MacPolicy, MeteredSetting};
+use crate::profile::{IpConfig, MacPolicy, MeteredSetting, WifiShare};
 use crate::rfkill::Radios;
 
 /// Run `work` with a fresh system bus connection on a runtime of its own.
@@ -107,6 +107,11 @@ pub fn set_mac_policy(connection: &str, policy: &MacPolicy) -> zbus::Result<()> 
 /// [`crate::set_metered`].
 pub fn set_metered(connection: &str, metered: MeteredSetting) -> zbus::Result<()> {
     run(|conn| async move { crate::set_metered(&conn, connection, metered).await })
+}
+
+/// [`crate::wifi_share`]. Blocks while a polkit agent asks.
+pub fn wifi_share(connection: &str) -> zbus::Result<WifiShare> {
+    run(|conn| async move { crate::wifi_share(&conn, connection).await })
 }
 
 /// [`crate::follow`], blocking the thread until the bus connection closes.

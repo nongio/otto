@@ -38,6 +38,11 @@ struct Calls {
     /// Settings each Update carried.
     updated: Vec<HashMap<String, HashMap<String, OwnedValue>>>,
     reapplied: Vec<String>,
+    /// The setting each `GetSecrets` asked for, and whether it allowed a
+    /// polkit prompt.
+    secrets: Vec<(String, bool)>,
+    /// Answer `GetSecrets` as polkit refusing it.
+    refuse_secrets: bool,
     /// How many `GetDevices` calls to fail before answering.
     fail_get_devices: u32,
 }
@@ -354,6 +359,12 @@ impl Saved {
                 OwnedValue::try_from(Value::from(ssid.as_bytes().to_vec())).unwrap(),
             );
             settings.insert("802-11-wireless".into(), wireless);
+            let mut security = HashMap::new();
+            security.insert(
+                "key-mgmt".into(),
+                OwnedValue::try_from(Value::from("wpa-psk")).unwrap(),
+            );
+            settings.insert("802-11-wireless-security".into(), security);
         }
         settings
     }
@@ -383,6 +394,35 @@ impl Saved {
 
     fn delete(&self) {
         self.calls.lock().unwrap().deleted.push(self.path.into());
+    }
+
+    fn get_secrets(
+        &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+        setting_name: String,
+    ) -> zbus::fdo::Result<Settings> {
+        let interactive = header
+            .primary()
+            .flags()
+            .contains(zbus::message::Flags::AllowInteractiveAuth);
+        self.calls
+            .lock()
+            .unwrap()
+            .secrets
+            .push((setting_name.clone(), interactive));
+        if self.calls.lock().unwrap().refuse_secrets {
+            return Err(zbus::fdo::Error::AccessDenied(
+                "Insufficient privileges".into(),
+            ));
+        }
+        let mut security = HashMap::new();
+        if setting_name == "802-11-wireless-security" {
+            security.insert(
+                "psk".to_string(),
+                OwnedValue::try_from(Value::from("hunter22")).unwrap(),
+            );
+        }
+        Ok(HashMap::from([(setting_name, security)]))
     }
 }
 
@@ -1136,4 +1176,42 @@ async fn metered_is_saved_and_applied_in_place() {
         ["/org/freedesktop/NetworkManager/Devices/1"]
     );
     assert!(calls.activated.is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_saved_password_is_read_for_sharing() {
+    let Some(bus) = private_bus() else {
+        eprintln!("no dbus-daemon: skipped");
+        return;
+    };
+    let calls = Arc::new(Mutex::new(Calls::default()));
+    let _server = serve(&bus.1, calls.clone()).await;
+    let conn = connect(&bus.1).await;
+    let profile = "/org/freedesktop/NetworkManager/Settings/1";
+
+    let share = otto_network::wifi_share(&conn, profile).await.unwrap();
+    assert_eq!(share.name(), "Home");
+    assert_eq!(
+        share.qr_text().unwrap().expose(),
+        "WIFI:T:WPA;S:Home;P:hunter22;;"
+    );
+    assert_eq!(
+        calls.lock().unwrap().secrets,
+        [("802-11-wireless-security".to_string(), true)],
+        "asked for the Wi-Fi secrets, letting polkit prompt"
+    );
+
+    calls.lock().unwrap().refuse_secrets = true;
+    let refused = otto_network::wifi_share(&conn, profile).await;
+    assert!(
+        matches!(&refused, Err(zbus::Error::MethodError(name, _, _)) if name.as_str().ends_with("AccessDenied")),
+        "{refused:?}"
+    );
+
+    // A VPN has no Wi-Fi password.
+    assert!(
+        otto_network::wifi_share(&conn, "/org/freedesktop/NetworkManager/Settings/2")
+            .await
+            .is_err()
+    );
 }

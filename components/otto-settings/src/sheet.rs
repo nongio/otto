@@ -1,6 +1,8 @@
-//! The users pane's sheets: a card over the dimmed window with a title, a
-//! paragraph or a few fields, and the two buttons that end it — Change
-//! Password, Reset Password, Add User and Delete User all take this shape.
+//! The app's sheets: a card over the dimmed window with a title, a
+//! paragraph or a few fields, and the buttons that end it. Change Password,
+//! Reset Password, Add User and Delete User all take this shape, and so does
+//! the Network pane's sheet sharing a Wi-Fi network, which adds its password
+//! and a QR code under the paragraph.
 //!
 //! Drawn on a subsurface of its own above the pane (see `main.rs`), because
 //! the pane already scrolls in subsurfaces stacked over the window's buffer —
@@ -12,10 +14,13 @@
 //! Everything is laid out from the window's size alone, so the paint and the
 //! hit test agree by construction.
 
+use otto_kit::components::qr_code;
 use otto_kit::components::text_input::TextInput;
 use otto_kit::prelude::*;
+use otto_kit::qr::QrCode;
 use otto_kit::skia::{BlurStyle, ClipOp, Contains, MaskFilter, PaintStyle, Point, RRect};
 use otto_kit::typography::styles;
+use otto_network::Password;
 
 use crate::panes::account::SheetView;
 use crate::widgets;
@@ -31,6 +36,17 @@ const BODY_LINE_H: f32 = 19.0;
 const RADIUS: f32 = 12.0;
 /// Width of each password field, which is also what the editor scrolls in.
 pub const FIELD_W: f32 = widgets::TEXT_W;
+/// The side of a QR code, quiet zone included: big enough for a phone
+/// camera at arm's length.
+const QR_SIDE: f32 = 208.0;
+
+/// A network shared on a sheet: its password, and the code a phone scans.
+/// Its `Debug` shows neither.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SheetShare {
+    pub password: Option<Password>,
+    pub qr: Option<QrCode>,
+}
 
 /// Where a press on the sheet landed.
 #[derive(Debug, PartialEq)]
@@ -56,6 +72,9 @@ struct Layout {
     /// The body paragraph's wrapped lines, and the top of the first.
     body: Vec<String>,
     body_top: f32,
+    /// The centre line of the shared password, and the code's square.
+    password_cy: Option<f32>,
+    qr: Option<Rect>,
     fields: Vec<Rect>,
     labels_cy: Vec<f32>,
     message: Rect,
@@ -79,8 +98,27 @@ fn layout(width: f32, height: f32, view: &SheetView) -> Layout {
         body.len() as f32 * BODY_LINE_H + 8.0
     };
     let count = view.fields.len();
-    let card_h =
-        PAD + TITLE_H + 8.0 + body_h + ROW_H * count as f32 + MESSAGE_H + widgets::CONTROL_H + PAD;
+    let share = view.share.as_ref();
+    let password_h = if share.is_some_and(|s| s.password.is_some()) {
+        ROW_H
+    } else {
+        0.0
+    };
+    let qr_h = if share.is_some_and(|s| s.qr.is_some()) {
+        QR_SIDE + 8.0
+    } else {
+        0.0
+    };
+    let card_h = PAD
+        + TITLE_H
+        + 8.0
+        + body_h
+        + password_h
+        + qr_h
+        + ROW_H * count as f32
+        + MESSAGE_H
+        + widgets::CONTROL_H
+        + PAD;
     let card = Rect::from_xywh(
         (width - CARD_W) / 2.0,
         ((height - card_h) / 2.0).max(PAD),
@@ -89,7 +127,17 @@ fn layout(width: f32, height: f32, view: &SheetView) -> Layout {
     );
     let title_cy = card.top + PAD + TITLE_H / 2.0;
     let body_top = card.top + PAD + TITLE_H + 8.0;
-    let rows_top = body_top + body_h;
+    let share_top = body_top + body_h;
+    let password_cy = (password_h > 0.0).then_some(share_top + ROW_H / 2.0);
+    let qr = (qr_h > 0.0).then(|| {
+        Rect::from_xywh(
+            card.center_x() - QR_SIDE / 2.0,
+            share_top + password_h + 4.0,
+            QR_SIDE,
+            QR_SIDE,
+        )
+    });
+    let rows_top = share_top + password_h + qr_h;
     let row_cy = |i: usize| rows_top + ROW_H * i as f32 + ROW_H / 2.0;
     let field = |i: usize| {
         Rect::from_xywh(
@@ -101,18 +149,29 @@ fn layout(width: f32, height: f32, view: &SheetView) -> Layout {
     };
     let message_top = rows_top + ROW_H * count as f32;
     let buttons_cy = card.bottom - PAD - widgets::CONTROL_H / 2.0;
-    let buttons =
-        widgets::button_rects(card.right - PAD, buttons_cy, &[cancel_label(), view.action]);
+    let labels: &[&str] = if view.cancel {
+        &[cancel_label(), view.action]
+    } else {
+        &[view.action]
+    };
+    let buttons = widgets::button_rects(card.right - PAD, buttons_cy, labels);
+    let (cancel, action) = match buttons.as_slice() {
+        [cancel, action] => (*cancel, *action),
+        [action] => (Rect::new_empty(), *action),
+        _ => unreachable!("one button or two"),
+    };
     Layout {
         card,
         title_cy,
         body,
         body_top,
+        password_cy,
+        qr,
         fields: (0..count).map(field).collect(),
         labels_cy: (0..count).map(row_cy).collect(),
         message: Rect::from_xywh(card.left + PAD, message_top, CARD_W - PAD * 2.0, MESSAGE_H),
-        cancel: buttons[0],
-        action: buttons[1],
+        cancel,
+        action,
     }
 }
 
@@ -123,7 +182,7 @@ pub fn hit(width: f32, height: f32, view: &SheetView, x: f32, y: f32) -> SheetHi
     if !layout.card.contains(point) {
         return SheetHit::Outside;
     }
-    if layout.cancel.contains(point) {
+    if view.cancel && layout.cancel.contains(point) {
         return SheetHit::Cancel;
     }
     if layout.action.contains(point) {
@@ -204,6 +263,38 @@ pub fn paint(
         );
     }
 
+    if let (Some(cy), Some(password)) = (
+        layout.password_cy,
+        view.share.as_ref().and_then(|s| s.password.as_ref()),
+    ) {
+        let label = otto_kit::t!("settings-network-password");
+        widgets::text_centered_y(
+            canvas,
+            label,
+            layout.card.left + PAD,
+            cy,
+            styles::BODY,
+            theme.text_primary,
+        );
+        let room = CARD_W - PAD * 3.0 - styles::BODY.font().measure_str(label, None).0;
+        let shown = otto_kit::typography::ellipsize(&styles::BODY.font(), password.expose(), room);
+        let w = styles::BODY.font().measure_str(&shown, None).0;
+        widgets::text_centered_y(
+            canvas,
+            &shown,
+            layout.card.right - PAD - w,
+            cy,
+            styles::BODY,
+            theme.text_primary,
+        );
+    }
+    if let (Some(rect), Some(code)) = (layout.qr, view.share.as_ref().and_then(|s| s.qr.as_ref())) {
+        let mut ground = fill(Color::WHITE);
+        ground.set_anti_alias(true);
+        canvas.draw_rrect(RRect::new_rect_xy(rect, 8.0, 8.0), &ground);
+        qr_code::draw(canvas, code, rect.with_inset((4.0, 4.0)));
+    }
+
     for (i, field) in view.fields.iter().enumerate() {
         widgets::text_centered_y(
             canvas,
@@ -272,12 +363,14 @@ pub fn paint(
             color,
         );
     };
-    button(
-        layout.cancel,
-        cancel_label(),
-        theme.fill_tertiary,
-        text(cancellable, theme.text_primary),
-    );
+    if view.cancel {
+        button(
+            layout.cancel,
+            cancel_label(),
+            theme.fill_tertiary,
+            text(cancellable, theme.text_primary),
+        );
+    }
     button(
         layout.action,
         view.action,
@@ -317,6 +410,8 @@ mod tests {
             message: None,
             busy: false,
             cancellable: true,
+            cancel: true,
+            share: None,
         }
     }
 
@@ -343,6 +438,30 @@ mod tests {
         assert!(with_body.fields[0].top > plain.fields[0].top);
         let empty = layout(900.0, 600.0, &view(0, Some("Sure?")));
         assert!(empty.card.height() < plain.card.height());
+    }
+
+    #[test]
+    fn a_shared_network_shows_its_code_and_one_button() {
+        let (w, h) = (900.0, 700.0);
+        let mut v = view(0, Some("Point a phone's camera at the code."));
+        v.cancel = false;
+        v.share = Some(SheetShare {
+            password: Some(Password::new("hunter22".into())),
+            qr: QrCode::encode(b"WIFI:T:WPA;S:Home;P:hunter22;;"),
+        });
+        let l = layout(w, h, &v);
+        let qr = l.qr.expect("room for the code");
+        assert!(qr.top > l.password_cy.unwrap());
+        assert!(l.message.top >= qr.bottom);
+        assert!(l.card.contains(qr));
+        // No Cancel: its place takes no press, and the one button acts.
+        assert_eq!(
+            hit(w, h, &v, l.action.center_x(), l.action.center_y()),
+            SheetHit::Action
+        );
+        assert!(l.cancel.is_empty());
+        // Nothing of the password in what a log would print.
+        assert!(!format!("{v:?}").contains("hunter22"));
     }
 
     #[test]
