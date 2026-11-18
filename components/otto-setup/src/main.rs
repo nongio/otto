@@ -1,16 +1,20 @@
 //! `otto-setup`: set Otto up the first time, from a terminal.
 //!
-//! Starts with the agents: finds what is installed, adds agents for the
-//! harnesses the user ticks with the instructions they pick, gives the
+//! Two topics so far. The agents: finds what is installed, adds agents for
+//! the harnesses the user ticks with the instructions they pick, gives the
 //! services the PATH their programs live on, links Otto's skills, and turns
-//! the agent service and the chat bridge on, previewing each step before it
-//! runs. What it does not do itself (install Node.js, a harness, an ACP
-//! adapter or cc-connect, sign in) it explains. The user guide is
-//! `docs/user/agents.md`.
+//! the agent service and the chat bridge on. Dictation: finds the speech
+//! engines `install.sh` left, picks one, starts its server and turns on
+//! otto-dictate at login. Each step is previewed before it runs. What setup
+//! does not do itself (install Node.js, a harness, an adapter, cc-connect,
+//! an engine; sign in) it explains. The user guides are `docs/user/agents.md`
+//! and the Dictation section of `docs/user/settings.md`.
 
 // Rust guideline compliant 2026-02-21
 
 mod apply;
+mod dictation;
+mod dictation_guide;
 mod guide;
 mod plan;
 mod plugins;
@@ -19,24 +23,31 @@ mod tui;
 
 use std::process::ExitCode;
 
-use crate::plan::{Bridge, Choices, State};
+use crate::apply::Check;
+use crate::plan::{Bridge, Choices, State, Step};
 use crate::probe::Facts;
 
 const USAGE: &str = "\
-Usage: otto-setup [agents] [options]
+Usage: otto-setup [agents|dictation] [options]
 
-Sets Otto up the first time. For now there is one topic, `agents`
-(the default): the AI agents that answer in Ask and run your Sessions.
-It adds the agents you pick to agents.toml, makes sure Otto's agent
-service can find them, and starts it; it can also turn on the Telegram
-chat bridge. It installs nothing itself: for anything missing (Node.js,
-an agent, an adapter, cc-connect) it shows the commands to run.
-Nothing changes until you apply. Settings › Agents has the rest.
+Sets Otto up the first time. Two topics:
+
+  agents      the AI agents that answer in Ask and run your Sessions
+              (the default). Adds the agents you pick to agents.toml,
+              makes sure Otto's agent service can find them, and starts
+              it; it can also turn on the Telegram chat bridge.
+  dictation   speaking into the launcher, the Ask chat and any text
+              field. Picks the speech engine, starts its server and
+              starts otto-dictate at login.
+
+It installs nothing itself: for anything missing (Node.js, an agent,
+an adapter, cc-connect, a speech engine) it shows the commands to run.
+Nothing changes until you apply. Settings has the rest.
 
 Options:
       --check    print what is set up and what is left, and exit 1 when
-                 something is left to do
-      --apply    apply without asking, adding every agent that is ready
+                 something is left to do, by setup or by you
+      --apply    apply without asking, with the choices setup would make
   -V, --version  print the version and exit
   -h, --help     print this and exit
 
@@ -54,30 +65,39 @@ enum Command {
     Version,
 }
 
+/// The topic named on the command line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Topic {
+    Agents,
+    Dictation,
+}
+
 /// Parses the arguments after the program name.
-fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Command, String> {
+fn parse_args(args: impl IntoIterator<Item = String>) -> Result<(Topic, Command), String> {
     let mut command = Command::Interactive;
+    let mut topic = Topic::Agents;
     for arg in args {
         match arg.as_str() {
-            "agents" => {}
+            "agents" => topic = Topic::Agents,
+            "dictation" => topic = Topic::Dictation,
             "--check" => command = Command::Check,
             "--apply" => command = Command::Apply,
-            "-h" | "--help" => return Ok(Command::Help),
-            "-V" | "--version" => return Ok(Command::Version),
+            "-h" | "--help" => return Ok((topic, Command::Help)),
+            "-V" | "--version" => return Ok((topic, Command::Version)),
             other if other.starts_with('-') => return Err(format!("unknown option {other:?}")),
             other => {
                 return Err(format!(
-                    "no topic called {other:?}; the only one is `agents`"
+                    "no topic called {other:?}; the topics are `agents` and `dictation`"
                 ))
             }
         }
     }
-    Ok(command)
+    Ok((topic, command))
 }
 
 fn main() -> ExitCode {
-    let command = match parse_args(std::env::args().skip(1)) {
-        Ok(command) => command,
+    let (topic, command) = match parse_args(std::env::args().skip(1)) {
+        Ok(parsed) => parsed,
         Err(err) => {
             eprintln!("otto-setup: {err}\n\n{USAGE}");
             return ExitCode::from(2);
@@ -85,24 +105,42 @@ fn main() -> ExitCode {
     };
     let interactive =
         otto_term_kit::is_tty(libc::STDIN_FILENO) && otto_term_kit::is_tty(libc::STDOUT_FILENO);
-    match command {
-        Command::Help => {
+    match (command, topic) {
+        (Command::Help, _) => {
             print!("{USAGE}");
             ExitCode::SUCCESS
         }
-        Command::Version => {
+        (Command::Version, _) => {
             println!("otto-setup {}", env!("CARGO_PKG_VERSION"));
             ExitCode::SUCCESS
         }
-        Command::Interactive if interactive => match tui::run(Facts::read()) {
-            Ok(()) => ExitCode::SUCCESS,
-            Err(err) => {
-                eprintln!("otto-setup: {err}");
-                ExitCode::FAILURE
+        (Command::Interactive, _) if interactive => {
+            match tui::run(Facts::read(), dictation::Facts::read()) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(err) => {
+                    eprintln!("otto-setup: {err}");
+                    ExitCode::FAILURE
+                }
             }
-        },
-        Command::Interactive | Command::Check => check(&Facts::read()),
-        Command::Apply => apply(&Facts::read()),
+        }
+        (Command::Interactive | Command::Check, Topic::Agents) => check(&Facts::read()),
+        (Command::Interactive | Command::Check, Topic::Dictation) => {
+            check_dictation(&dictation::Facts::read())
+        }
+        (Command::Apply, Topic::Agents) => {
+            let facts = Facts::read();
+            apply(
+                &plan::steps(&facts, &Choices::initial(&facts)),
+                Check::Agents,
+            )
+        }
+        (Command::Apply, Topic::Dictation) => {
+            let facts = dictation::Facts::read();
+            apply(
+                &dictation::steps(&facts, &dictation::Choices::initial(&facts)),
+                Check::SpeechServer,
+            )
+        }
     }
 }
 
@@ -200,32 +238,114 @@ fn check(facts: &Facts) -> ExitCode {
         Bridge::Unavailable(why) => why.to_owned(),
     };
     println!("  {:<16}{bridge}", "Chat bridge");
+    print_steps(&plan::steps(facts, &choices), "otto-setup")
+}
+
+/// Prints what dictation has and lacks, and the plan.
+fn check_dictation(facts: &dictation::Facts) -> ExitCode {
+    use dictation::{Dictate, Status, ENGINES};
+    let choices = dictation::Choices::initial(facts);
+    println!("Engines");
+    for engine in ENGINES {
+        let line = match dictation::status(facts, engine) {
+            Status::Running { enabled: true } => "running, starts at login".to_owned(),
+            Status::Running { enabled: false } => "running".to_owned(),
+            Status::Stopped { enabled: true } => "installed, stopped; starts at login".to_owned(),
+            Status::Stopped { enabled: false } => "installed, off".to_owned(),
+            Status::Missing(missing) => format!("not installed: missing {}", missing.join(" and ")),
+            Status::Unmanaged => "no systemd user session".to_owned(),
+        };
+        let picked = if choices.engine == Some(engine) {
+            " (picked)"
+        } else {
+            ""
+        };
+        println!("  {:<16}{line}{picked}", engine.name());
+    }
+    println!(
+        "  {:<16}{}",
+        "Speech server",
+        if facts.answering {
+            format!("answers at {}", dictation::SERVER)
+        } else {
+            format!("nothing at {}", dictation::SERVER)
+        }
+    );
+    println!("\nRequirements");
+    let pipewire = match (&facts.pipewire, facts.pipewire_running) {
+        (Some(_), true) => "PipeWire running".to_owned(),
+        (Some(path), false) => format!("PipeWire at {}, not running", facts.shown(path)),
+        (None, _) => "PipeWire not installed".to_owned(),
+    };
+    println!("  {:<16}{pipewire}", "Microphone");
+    println!(
+        "  {:<16}{}",
+        "GPU driver",
+        if facts.vulkan {
+            "Vulkan driver installed"
+        } else {
+            "no Vulkan driver"
+        }
+    );
+    let missing = facts.missing_tools();
+    let tools = if missing.is_empty() {
+        "all there".to_owned()
+    } else {
+        format!("missing {}", missing.join(", "))
+    };
+    println!("  {:<16}{tools}", "Build tools");
+    let source = facts
+        .source
+        .as_deref()
+        .map_or_else(|| "no checkout found".to_owned(), |dir| facts.shown(dir));
+    println!("  {:<16}{source}", "Otto's source");
+    println!("\nOptional");
+    let dictate = match dictation::dictate(facts) {
+        Dictate::NotInstalled => "otto-dictate not installed".to_owned(),
+        Dictate::Off => "otto-dictate installed, not started at login".to_owned(),
+        Dictate::On => "otto-dictate starts at login".to_owned(),
+    };
+    println!("  {:<16}{dictate}", "Other fields");
+    let shortcut = facts
+        .shortcut
+        .as_deref()
+        .map_or("none bound to otto-dictate", |key| key);
+    println!("  {:<16}{shortcut}", "Shortcut");
+    print_steps(&dictation::steps(facts, &choices), "otto-setup dictation")
+}
+
+/// Prints the steps, and exits 1 when one is left to do.
+fn print_steps(steps: &[Step], command: &str) -> ExitCode {
     println!("\nSteps");
-    let steps = plan::steps(facts, &choices);
-    for step in &steps {
+    for step in steps {
         let mark = match step.state {
             State::Done => "ok  ",
             State::Todo => "todo",
             State::Blocked => "!!  ",
         };
-        println!("  [{mark}] {:<18}{}", step.title, step.summary);
+        println!("  [{mark}] {:<18} {}", step.title, step.summary);
     }
-    if steps.iter().any(|s| s.state == State::Todo) {
-        println!("\nRun otto-setup in a terminal to choose and apply, or otto-setup --apply.");
+    let todo = steps.iter().any(|s| s.state == State::Todo);
+    let blocked = steps.iter().any(|s| s.state == State::Blocked);
+    if todo {
+        println!("\nRun {command} in a terminal to choose and apply, or {command} --apply.");
+    } else if blocked {
+        println!("\nSomething is left to do by hand: {command} in a terminal shows the steps.");
+    }
+    if todo || blocked {
         ExitCode::FAILURE
     } else {
         ExitCode::SUCCESS
     }
 }
 
-/// Applies the plan for the agents that are ready, saying how it went.
-fn apply(facts: &Facts) -> ExitCode {
-    let steps = plan::steps(facts, &Choices::initial(facts));
+/// Applies the steps, saying how it went.
+fn apply(steps: &[Step], check: Check) -> ExitCode {
     if steps.iter().all(|s| s.state != State::Todo) {
         println!("Nothing to do.");
         return ExitCode::SUCCESS;
     }
-    let outcomes = apply::run(&steps);
+    let outcomes = apply::run(steps, check);
     for outcome in &outcomes {
         let mark = if outcome.ok { "ok  " } else { "fail" };
         println!("[{mark}] {}", outcome.title);
@@ -244,15 +364,22 @@ fn apply(facts: &Facts) -> ExitCode {
 mod tests {
     use super::*;
 
-    fn parse(args: &[&str]) -> Result<Command, String> {
+    fn parse(args: &[&str]) -> Result<(Topic, Command), String> {
         parse_args(args.iter().map(|a| (*a).to_owned()))
     }
 
     #[test]
     fn parses_the_topic_and_the_modes() {
-        assert_eq!(parse(&[]), Ok(Command::Interactive));
-        assert_eq!(parse(&["agents", "--check"]), Ok(Command::Check));
-        assert_eq!(parse(&["--apply"]), Ok(Command::Apply));
+        assert_eq!(parse(&[]), Ok((Topic::Agents, Command::Interactive)));
+        assert_eq!(
+            parse(&["agents", "--check"]),
+            Ok((Topic::Agents, Command::Check))
+        );
+        assert_eq!(parse(&["--apply"]), Ok((Topic::Agents, Command::Apply)));
+        assert_eq!(
+            parse(&["dictation", "--check"]),
+            Ok((Topic::Dictation, Command::Check))
+        );
         assert!(parse(&["display"]).is_err());
         assert!(parse(&["--frobnicate"]).is_err());
     }
