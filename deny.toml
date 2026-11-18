@@ -203,6 +203,10 @@ ignore = [
     # rsa has no fixed release; it reaches otto-rdp through ironrdp's picky
     # (CredSSP). Revisit when ironrdp moves off rsa or rsa ships the fix.
     { id = "RUSTSEC-2023-0071", reason = "no fixed rsa release; only via ironrdp in otto-rdp" },
+    # chrono is unmaintained with no successor release. Otto uses it for
+    # local time and localised dates (otto-kit, otto-bar, otto-settings,
+    # otto-auth-ui). Revisit when a maintained replacement covers locales.
+    { id = "RUSTSEC-2026-0543", reason = "chrono unmaintained, no safe upgrade; replace when a maintained crate covers localised dates" },
 ]
 
 # Otto is MIT. Everything it links must be permissive, or weak copyleft at the
