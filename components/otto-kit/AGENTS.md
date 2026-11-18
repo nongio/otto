@@ -24,6 +24,7 @@ How it works: [otto-kit](../../docs/developer/otto-kit.md).
 - `portal_file_chooser.rs` is the one `org.freedesktop.portal.FileChooser` client: apps build a `Request` and `spawn` it rather than calling the portal themselves.
 - `qr.rs` encodes QR codes (byte mode, level M, versions 1 to 10) and `components/qr_code.rs` draws one.
 - The desktop wallpaper's layout, frame rendering and drawing are `src/wallpaper/`, shared by the compositor and the settings app's preview; `src/utils/resample.rs` is the high-quality CPU resampler it renders with.
+- `events` (in `lib.rs`) re-exports the pointer, keyboard and configure types the `App` trait and `Window` callbacks hand over, so an app never names `smithay-client-toolkit` or `wayland-client` itself.
 - Otto's own protocols are generated in `src/protocols/`; desktop entries, file types, previews, clipboard, drag and drop, sound and Lottie have their own modules.
 
 ## Rules

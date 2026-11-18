@@ -2318,3 +2318,66 @@ bar-network-signal-good = 良好
 bar-network-signal-excellent = 非常に良好
 schema-topbar-show-network-label = ネットワークの状況を表示
 schema-topbar-show-network-description = 上部バーの Wi-Fi と有線のインジケータ。ネットワークに接続するメニュー付き。NetworkManager が動作している場合に表示されます。
+
+## otto-audio: the PipeWire graph as a patchbay (Graph), and the sound
+## server's rate and buffer size (Engine). A card is about 220 px wide; the
+## toolbar and the banner share one line with their buttons.
+
+audio-title = オーディオ
+audio-pane-graph = グラフ
+audio-pane-engine = エンジン
+audio-no-server-title = サウンドサーバが動作していません
+audio-no-server-body = PipeWire が起動すると、すぐにオーディオが接続されます。
+audio-no-server-start = PipeWire を起動
+audio-graph-empty = このフィルタでは表示するものがありません
+audio-filter-audio = オーディオ
+audio-filter-midi = MIDI
+audio-filter-video = ビデオ
+# Saves every link on the canvas so the audio service puts them back.
+audio-save-routing = ルーティングを保存
+# On the selected wire.
+audio-save-link = リンクを保存
+audio-forget-link = 保存を解除
+audio-remove-link = 削除
+audio-service-down = オーディオサービスがオフの間は、保存したリンクは保持されません。
+audio-service-start = サービスを起動
+# What a card stands for, under its name.
+audio-role-playing = サウンドを再生
+audio-role-recording = 録音
+audio-role-output-device = 出力装置
+audio-role-input-device = 入力装置
+audio-role-virtual-output = 仮想出力
+audio-role-virtual-input = 仮想入力
+audio-role-duplex = 入出力
+audio-role-midi = MIDI
+audio-role-video = ビデオ
+audio-role-other = その他
+# A folded row with more channels than fit, e.g. "8 channels".
+audio-channels = { $count } チャンネル
+# A sink's monitor ports folded into one row, e.g. "Monitor FL FR".
+audio-monitor = モニタ { $channels }
+audio-state-running = 実行中
+audio-state-idle = アイドル
+audio-state-suspended = サスペンド
+audio-state-error = エラー
+audio-state-creating = 起動中
+audio-detail-app = アプリ
+audio-detail-class = メディアクラス
+audio-detail-state = 状態
+# How saved links name this node across plugs and restarts.
+audio-detail-identity = 保存名
+audio-detail-properties = プロパティ
+audio-engine-title = エンジン
+audio-engine-rate = サンプルレート
+audio-engine-rate-auto = { $rate }（エンジンが選択）
+audio-engine-rate-forced = { $rate }（ここで設定）
+# Lets the engine pick the value itself.
+audio-engine-auto = 自動
+# A sample rate, e.g. "48 kHz" or "44.1 kHz".
+audio-khz = { $value } kHz
+audio-engine-quantum = バッファサイズ
+# e.g. "1024 frames, 21.3 ms of latency"
+audio-engine-quantum-now = { $frames } フレーム、レイテンシ { $ms } ms
+audio-engine-quantum-range = エンジンのデフォルトは { $default } で、範囲は { $min }〜{ $max } です。バッファを小さくするとレイテンシは減りますが、プロセッサの負荷は増えます。
+audio-engine-reset = リセット
+audio-engine-note = 変更はすぐに適用されます。サウンドサーバが再起動すると、オーディオサービスが設定を戻します。

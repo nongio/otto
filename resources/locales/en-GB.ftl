@@ -2462,3 +2462,66 @@ settings-dictation-autostart = Start dictation at login
 # ~/.config/autostart is a folder and xdg_autostart a configuration key; both
 # stay as they are.
 settings-dictation-autostart-detail = Runs otto-dictate from ~/.config/autostart, which Otto reads when xdg_autostart is on
+
+## otto-audio: the PipeWire graph as a patchbay (Graph), and the sound
+## server's rate and buffer size (Engine). A card is about 220 px wide; the
+## toolbar and the banner share one line with their buttons.
+
+audio-title = Audio
+audio-pane-graph = Graph
+audio-pane-engine = Engine
+audio-no-server-title = The sound server isn't running
+audio-no-server-body = Audio will connect as soon as PipeWire starts.
+audio-no-server-start = Start PipeWire
+audio-graph-empty = Nothing to show with these filters
+audio-filter-audio = Audio
+audio-filter-midi = MIDI
+audio-filter-video = Video
+# Saves every link on the canvas so the audio service puts them back.
+audio-save-routing = Save Routing
+# On the selected wire.
+audio-save-link = Save Link
+audio-forget-link = Forget
+audio-remove-link = Remove
+audio-service-down = Saved links aren't kept while the audio service is off.
+audio-service-start = Start Service
+# What a card stands for, under its name.
+audio-role-playing = Plays sound
+audio-role-recording = Records
+audio-role-output-device = Output device
+audio-role-input-device = Input device
+audio-role-virtual-output = Virtual output
+audio-role-virtual-input = Virtual input
+audio-role-duplex = Input and output
+audio-role-midi = MIDI
+audio-role-video = Video
+audio-role-other = Other
+# A folded row with more channels than fit, e.g. "8 channels".
+audio-channels = { $count } channels
+# A sink's monitor ports folded into one row, e.g. "Monitor FL FR".
+audio-monitor = Monitor { $channels }
+audio-state-running = Running
+audio-state-idle = Idle
+audio-state-suspended = Suspended
+audio-state-error = Error
+audio-state-creating = Starting
+audio-detail-app = App
+audio-detail-class = Media class
+audio-detail-state = State
+# How saved links name this node across plugs and restarts.
+audio-detail-identity = Saved as
+audio-detail-properties = Properties
+audio-engine-title = Engine
+audio-engine-rate = Sample rate
+audio-engine-rate-auto = { $rate }, chosen by the engine
+audio-engine-rate-forced = { $rate }, set here
+# Lets the engine pick the value itself.
+audio-engine-auto = Auto
+# A sample rate, e.g. "48 kHz" or "44.1 kHz".
+audio-khz = { $value } kHz
+audio-engine-quantum = Buffer size
+# e.g. "1024 frames, 21.3 ms of latency"
+audio-engine-quantum-now = { $frames } frames, { $ms } ms of latency
+audio-engine-quantum-range = The engine's default is { $default }, from { $min } to { $max }. Smaller buffers mean less latency and more work for the processor.
+audio-engine-reset = Reset
+audio-engine-note = Changes apply right away. The audio service puts them back when the sound server restarts.

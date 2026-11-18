@@ -290,6 +290,33 @@ A setup can be exported to a file and imported from one.
 - **Video nodes.** Cameras and screencasts appear under the Video filter;
   linking them works like audio, but they have no meters.
 
+## First version
+
+The first version builds Graph, Engine and the service; Devices, Effects,
+Virtual devices, Rules, Setups and meters come later, and the sidebar shows
+only the sections that exist. Where it consciously differs from the above:
+
+- **Saved routing file.** The saved links live in
+  `$XDG_CONFIG_HOME/otto/audio/routing.toml`, written by the app and
+  followed by the service through a file watch; card positions live in
+  `$XDG_STATE_HOME/otto/audio/layout.toml`. There is one implicit setup.
+- **Links the service makes are its own.** They last while the service runs
+  and go with it when it stops; the service makes them again when it
+  starts. Links made in the app outlive the app.
+- **App streams.** A saved route from an app stream is added to the session
+  manager's automatic route rather than replacing it.
+- **Loop guard.** A link the service gives up on is reported in the
+  service's log, not on Graph.
+- **Engine.** Rate and quantum can be forced to one value each or left to
+  the engine (*Auto*); there is no *Follow the content*, rate list, quantum
+  range or live table. Forced values are kept in the routing file, and the
+  service puts them back when the sound server starts. Each value shows its
+  latency; the defaults and range are shown as text.
+- **Graph.** No undo, search, context menus or feedback-loop warnings. A
+  wire is removed with Delete or the toolbar's Remove. The details panel
+  shows the name, app, media class, state, identity and every property.
+- **One window.** Running the app again opens a second window.
+
 ## Rationale
 
 - **A separate app, not a Settings pane.** The graph needs a large,

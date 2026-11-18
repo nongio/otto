@@ -1,0 +1,12 @@
+[Unit]
+Description=Otto audio routing: keeps the links saved in Audio
+PartOf=graphical-session.target
+After=graphical-session.target pipewire.service
+
+[Service]
+ExecStart=/usr/bin/otto-audio-service
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=graphical-session.target

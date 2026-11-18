@@ -2322,3 +2322,66 @@ bar-network-signal-good = 良好
 bar-network-signal-excellent = 极佳
 schema-topbar-show-network-label = 显示网络状态
 schema-topbar-show-network-description = 顶部栏中的 Wi-Fi 和有线网络指示器，附带用于加入网络的菜单。在运行 NetworkManager 的系统上显示。
+
+## otto-audio: the PipeWire graph as a patchbay (Graph), and the sound
+## server's rate and buffer size (Engine). A card is about 220 px wide; the
+## toolbar and the banner share one line with their buttons.
+
+audio-title = 音频
+audio-pane-graph = 连接图
+audio-pane-engine = 引擎
+audio-no-server-title = 声音服务器未运行
+audio-no-server-body = PipeWire 启动后，音频会立即连接。
+audio-no-server-start = 启动 PipeWire
+audio-graph-empty = 在这些过滤条件下没有可显示的内容
+audio-filter-audio = 音频
+audio-filter-midi = MIDI
+audio-filter-video = 视频
+# Saves every link on the canvas so the audio service puts them back.
+audio-save-routing = 存储路由
+# On the selected wire.
+audio-save-link = 存储连接
+audio-forget-link = 忘记
+audio-remove-link = 移除
+audio-service-down = 音频服务关闭时，已存储的连接不会保留。
+audio-service-start = 启动服务
+# What a card stands for, under its name.
+audio-role-playing = 播放声音
+audio-role-recording = 录音
+audio-role-output-device = 输出设备
+audio-role-input-device = 输入设备
+audio-role-virtual-output = 虚拟输出
+audio-role-virtual-input = 虚拟输入
+audio-role-duplex = 输入和输出
+audio-role-midi = MIDI
+audio-role-video = 视频
+audio-role-other = 其他
+# A folded row with more channels than fit, e.g. "8 channels".
+audio-channels = { $count } 个声道
+# A sink's monitor ports folded into one row, e.g. "Monitor FL FR".
+audio-monitor = 监听 { $channels }
+audio-state-running = 运行中
+audio-state-idle = 空闲
+audio-state-suspended = 已挂起
+audio-state-error = 错误
+audio-state-creating = 正在启动
+audio-detail-app = 应用
+audio-detail-class = 媒体类别
+audio-detail-state = 状态
+# How saved links name this node across plugs and restarts.
+audio-detail-identity = 存储为
+audio-detail-properties = 属性
+audio-engine-title = 引擎
+audio-engine-rate = 采样率
+audio-engine-rate-auto = { $rate }，由引擎选择
+audio-engine-rate-forced = { $rate }，在此设定
+# Lets the engine pick the value itself.
+audio-engine-auto = 自动
+# A sample rate, e.g. "48 kHz" or "44.1 kHz".
+audio-khz = { $value } kHz
+audio-engine-quantum = 缓冲区大小
+# e.g. "1024 frames, 21.3 ms of latency"
+audio-engine-quantum-now = { $frames } 帧，延迟 { $ms } ms
+audio-engine-quantum-range = 引擎默认值为 { $default }，范围为 { $min } 至 { $max }。缓冲区越小，延迟越低，处理器负担越重。
+audio-engine-reset = 重置
+audio-engine-note = 更改立即生效。声音服务器重启时，音频服务会恢复这些设置。

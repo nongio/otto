@@ -2416,3 +2416,76 @@ bar-network-signal-good = хороший
 bar-network-signal-excellent = отличный
 schema-topbar-show-network-label = Показывать состояние сети
 schema-topbar-show-network-description = Индикатор Wi-Fi и проводной сети на верхней панели, с меню для подключения к сети. Показывается там, где работает NetworkManager.
+
+## otto-audio: the PipeWire graph as a patchbay (Graph), and the sound
+## server's rate and buffer size (Engine). A card is about 220 px wide; the
+## toolbar and the banner share one line with their buttons.
+
+audio-title = Аудио
+audio-pane-graph = Граф
+audio-pane-engine = Движок
+audio-no-server-title = Звуковой сервер не запущен
+audio-no-server-body = Аудио подключится, как только запустится PipeWire.
+audio-no-server-start = Запустить PipeWire
+audio-graph-empty = С этими фильтрами нечего показать
+audio-filter-audio = Аудио
+audio-filter-midi = MIDI
+audio-filter-video = Видео
+# Saves every link on the canvas so the audio service puts them back.
+audio-save-routing = Сохранить маршруты
+# On the selected wire.
+audio-save-link = Сохранить связь
+audio-forget-link = Забыть
+audio-remove-link = Удалить
+audio-service-down = Сохранённые связи не восстанавливаются, пока служба аудио выключена.
+audio-service-start = Запустить службу
+# What a card stands for, under its name.
+audio-role-playing = Воспроизводит звук
+audio-role-recording = Записывает
+audio-role-output-device = Устройство вывода
+audio-role-input-device = Устройство ввода
+audio-role-virtual-output = Виртуальный выход
+audio-role-virtual-input = Виртуальный вход
+audio-role-duplex = Вход и выход
+audio-role-midi = MIDI
+audio-role-video = Видео
+audio-role-other = Другое
+# A folded row with more channels than fit, e.g. "8 channels".
+audio-channels = { $count ->
+    [one] { $count } канал
+    [few] { $count } канала
+    [many] { $count } каналов
+   *[other] { $count } канала
+}
+# A sink's monitor ports folded into one row, e.g. "Monitor FL FR".
+audio-monitor = Монитор { $channels }
+audio-state-running = Работает
+audio-state-idle = Простаивает
+audio-state-suspended = Приостановлен
+audio-state-error = Ошибка
+audio-state-creating = Запускается
+audio-detail-app = Приложение
+audio-detail-class = Класс медиа
+audio-detail-state = Состояние
+# How saved links name this node across plugs and restarts.
+audio-detail-identity = Сохранён как
+audio-detail-properties = Свойства
+audio-engine-title = Движок
+audio-engine-rate = Частота дискретизации
+audio-engine-rate-auto = { $rate }, выбрана движком
+audio-engine-rate-forced = { $rate }, задана здесь
+# Lets the engine pick the value itself.
+audio-engine-auto = Авто
+# A sample rate, e.g. "48 kHz" or "44.1 kHz".
+audio-khz = { $value } kHz
+audio-engine-quantum = Размер буфера
+# e.g. "1024 frames, 21.3 ms of latency"
+audio-engine-quantum-now = { $frames ->
+    [one] { $frames } фрейм, задержка { $ms } ms
+    [few] { $frames } фрейма, задержка { $ms } ms
+    [many] { $frames } фреймов, задержка { $ms } ms
+   *[other] { $frames } фрейма, задержка { $ms } ms
+}
+audio-engine-quantum-range = По умолчанию у движка { $default }, от { $min } до { $max }. Меньший буфер — меньше задержка и больше нагрузка на процессор.
+audio-engine-reset = Сбросить
+audio-engine-note = Изменения применяются сразу. Служба аудио восстанавливает их при перезапуске звукового сервера.

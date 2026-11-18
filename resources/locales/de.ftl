@@ -2328,3 +2328,66 @@ bar-network-signal-good = gut
 bar-network-signal-excellent = ausgezeichnet
 schema-topbar-show-network-label = Netzwerkstatus anzeigen
 schema-topbar-show-network-description = Die WLAN- und Kabelanzeige in der oberen Leiste, mit einem Menü zum Verbinden. Erscheint, wo NetworkManager läuft.
+
+## otto-audio: the PipeWire graph as a patchbay (Graph), and the sound
+## server's rate and buffer size (Engine). A card is about 220 px wide; the
+## toolbar and the banner share one line with their buttons.
+
+audio-title = Audio
+audio-pane-graph = Graph
+audio-pane-engine = Engine
+audio-no-server-title = Der Soundserver läuft nicht
+audio-no-server-body = Audio verbindet sich, sobald PipeWire startet.
+audio-no-server-start = PipeWire starten
+audio-graph-empty = Mit diesen Filtern gibt es nichts anzuzeigen
+audio-filter-audio = Audio
+audio-filter-midi = MIDI
+audio-filter-video = Video
+# Saves every link on the canvas so the audio service puts them back.
+audio-save-routing = Routing speichern
+# On the selected wire.
+audio-save-link = Link speichern
+audio-forget-link = Vergessen
+audio-remove-link = Entfernen
+audio-service-down = Gespeicherte Links bleiben nicht erhalten, solange der Audiodienst aus ist.
+audio-service-start = Dienst starten
+# What a card stands for, under its name.
+audio-role-playing = Spielt Ton ab
+audio-role-recording = Nimmt auf
+audio-role-output-device = Ausgabegerät
+audio-role-input-device = Eingabegerät
+audio-role-virtual-output = Virtuelle Ausgabe
+audio-role-virtual-input = Virtuelle Eingabe
+audio-role-duplex = Ein- und Ausgabe
+audio-role-midi = MIDI
+audio-role-video = Video
+audio-role-other = Andere
+# A folded row with more channels than fit, e.g. "8 channels".
+audio-channels = { $count } Kanäle
+# A sink's monitor ports folded into one row, e.g. "Monitor FL FR".
+audio-monitor = Monitor { $channels }
+audio-state-running = Läuft
+audio-state-idle = Inaktiv
+audio-state-suspended = Angehalten
+audio-state-error = Fehler
+audio-state-creating = Startet
+audio-detail-app = App
+audio-detail-class = Medienklasse
+audio-detail-state = Status
+# How saved links name this node across plugs and restarts.
+audio-detail-identity = Gespeichert als
+audio-detail-properties = Eigenschaften
+audio-engine-title = Engine
+audio-engine-rate = Abtastrate
+audio-engine-rate-auto = { $rate }, von der Engine gewählt
+audio-engine-rate-forced = { $rate }, hier festgelegt
+# Lets the engine pick the value itself.
+audio-engine-auto = Auto
+# A sample rate, e.g. "48 kHz" or "44.1 kHz".
+audio-khz = { $value } kHz
+audio-engine-quantum = Puffergröße
+# e.g. "1024 frames, 21.3 ms of latency"
+audio-engine-quantum-now = { $frames } Frames, { $ms } ms Latenz
+audio-engine-quantum-range = Der Standard der Engine ist { $default }, von { $min } bis { $max }. Kleinere Puffer bedeuten weniger Latenz und mehr Arbeit für den Prozessor.
+audio-engine-reset = Zurücksetzen
+audio-engine-note = Änderungen gelten sofort. Der Audiodienst stellt sie wieder her, wenn der Soundserver neu startet.

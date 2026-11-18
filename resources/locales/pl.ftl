@@ -2423,3 +2423,76 @@ bar-network-signal-good = dobry
 bar-network-signal-excellent = doskonały
 schema-topbar-show-network-label = Pokazuj stan sieci
 schema-topbar-show-network-description = Wskaźnik Wi-Fi i sieci przewodowej na górnym pasku, z menu do łączenia z siecią. Widoczny tam, gdzie działa NetworkManager.
+
+## otto-audio: the PipeWire graph as a patchbay (Graph), and the sound
+## server's rate and buffer size (Engine). A card is about 220 px wide; the
+## toolbar and the banner share one line with their buttons.
+
+audio-title = Audio
+audio-pane-graph = Graf
+audio-pane-engine = Silnik
+audio-no-server-title = Serwer dźwięku nie działa
+audio-no-server-body = Dźwięk połączy się, gdy tylko uruchomi się PipeWire.
+audio-no-server-start = Uruchom PipeWire
+audio-graph-empty = Brak elementów dla tych filtrów
+audio-filter-audio = Audio
+audio-filter-midi = MIDI
+audio-filter-video = Wideo
+# Saves every link on the canvas so the audio service puts them back.
+audio-save-routing = Zapisz routing
+# On the selected wire.
+audio-save-link = Zapisz połączenie
+audio-forget-link = Zapomnij
+audio-remove-link = Usuń
+audio-service-down = Zapisane połączenia nie są utrzymywane, gdy usługa audio jest wyłączona.
+audio-service-start = Uruchom usługę
+# What a card stands for, under its name.
+audio-role-playing = Odtwarza dźwięk
+audio-role-recording = Nagrywa
+audio-role-output-device = Urządzenie wyjściowe
+audio-role-input-device = Urządzenie wejściowe
+audio-role-virtual-output = Wirtualne wyjście
+audio-role-virtual-input = Wirtualne wejście
+audio-role-duplex = Wejście i wyjście
+audio-role-midi = MIDI
+audio-role-video = Wideo
+audio-role-other = Inne
+# A folded row with more channels than fit, e.g. "8 channels".
+audio-channels = { $count ->
+    [one] { $count } kanał
+    [few] { $count } kanały
+    [many] { $count } kanałów
+   *[other] { $count } kanału
+}
+# A sink's monitor ports folded into one row, e.g. "Monitor FL FR".
+audio-monitor = Monitor { $channels }
+audio-state-running = Działa
+audio-state-idle = Bezczynny
+audio-state-suspended = Wstrzymany
+audio-state-error = Błąd
+audio-state-creating = Uruchamianie
+audio-detail-app = Aplikacja
+audio-detail-class = Klasa multimediów
+audio-detail-state = Stan
+# How saved links name this node across plugs and restarts.
+audio-detail-identity = Zapisany jako
+audio-detail-properties = Właściwości
+audio-engine-title = Silnik
+audio-engine-rate = Częstotliwość próbkowania
+audio-engine-rate-auto = { $rate }, wybrana przez silnik
+audio-engine-rate-forced = { $rate }, ustawiona tutaj
+# Lets the engine pick the value itself.
+audio-engine-auto = Automatycznie
+# A sample rate, e.g. "48 kHz" or "44.1 kHz".
+audio-khz = { $value } kHz
+audio-engine-quantum = Rozmiar bufora
+# e.g. "1024 frames, 21.3 ms of latency"
+audio-engine-quantum-now = { $frames ->
+    [one] { $frames } ramka, opóźnienie { $ms } ms
+    [few] { $frames } ramki, opóźnienie { $ms } ms
+    [many] { $frames } ramek, opóźnienie { $ms } ms
+   *[other] { $frames } ramki, opóźnienie { $ms } ms
+}
+audio-engine-quantum-range = Domyślna wartość silnika to { $default }, od { $min } do { $max }. Mniejszy bufor to mniejsze opóźnienie i więcej pracy dla procesora.
+audio-engine-reset = Resetuj
+audio-engine-note = Zmiany działają od razu. Usługa audio przywraca je po ponownym uruchomieniu serwera dźwięku.
