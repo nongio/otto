@@ -125,6 +125,11 @@ pub trait Device {
     /// The hardware address.
     #[zbus(property)]
     fn hw_address(&self) -> zbus::Result<String>;
+
+    /// `NMMetered`: `0` unknown, `1` yes, `2` no, `3` guessed yes, `4`
+    /// guessed no.
+    #[zbus(property)]
+    fn metered(&self) -> zbus::Result<u32>;
 }
 
 #[zbus::proxy(
@@ -232,6 +237,14 @@ pub trait SettingsConnection {
 
     /// Forget the connection.
     fn delete(&self) -> zbus::Result<()>;
+
+    /// The secrets NetworkManager stores for one setting of the connection
+    /// (`"802-11-wireless-security"`), in the same shape as the settings.
+    /// Secrets an agent keeps, or that are never saved, are left out.
+    /// NetworkManager asks polkit first (`settings.modify.own` or
+    /// `settings.modify.system`), which may prompt.
+    #[zbus(allow_interactive_auth)]
+    fn get_secrets(&self, setting_name: &str) -> zbus::Result<ConnectionSettings>;
 }
 
 #[zbus::proxy(

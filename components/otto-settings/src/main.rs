@@ -1288,6 +1288,31 @@ fn text_input_style(dark: bool) -> TextInputStyle {
     style
 }
 
+/// The sheet that is up, whichever pane put it up: the users pane's, or the
+/// Network pane's sharing a Wi-Fi network.
+fn current_sheet() -> Option<panes::account::SheetView> {
+    panes::account::sheet().or_else(panes::network::sheet)
+}
+
+/// Close the sheet that is up: Cancel, Escape.
+fn close_sheet() {
+    if panes::account::sheet().is_some() {
+        panes::account::close_sheet();
+    } else {
+        panes::network::close_sheet();
+    }
+}
+
+/// The sheet's default button, or Return. The sharing sheet only shows
+/// something, so its button closes it.
+fn submit_sheet() {
+    if panes::account::sheet().is_some() {
+        panes::account::submit();
+    } else {
+        panes::network::close_sheet();
+    }
+}
+
 /// Put the keyboard in the sheet's `index`th field, committing the one it
 /// was in.
 fn focus_sheet_field(editing: &Arc<Mutex<Option<Editing>>>, index: usize) {
@@ -1324,7 +1349,7 @@ fn press_sheet(
     x: f32,
     y: f32,
 ) -> bool {
-    let Some(view) = panes::account::sheet() else {
+    let Some(view) = current_sheet() else {
         return false;
     };
     let (width, height) = *size.lock().unwrap();
@@ -1351,11 +1376,11 @@ fn press_sheet(
         }
         sheet::SheetHit::Cancel => {
             cancel_edit(editing);
-            panes::account::close_sheet();
+            close_sheet();
         }
         sheet::SheetHit::Action => {
             commit_edit(editing);
-            panes::account::submit();
+            submit_sheet();
         }
         sheet::SheetHit::Card | sheet::SheetHit::Outside => {
             commit_edit(editing);
@@ -1459,7 +1484,7 @@ fn press_search(
     x: f32,
     y: f32,
 ) -> bool {
-    if panes::account::sheet().is_some() {
+    if current_sheet().is_some() {
         return false;
     }
     let point = otto_kit::skia::Point::new(x, y);
@@ -1497,12 +1522,12 @@ fn press_search(
 }
 
 impl SettingsApp {
-    /// Bring the password sheet's surface in line with the account pane: made
+    /// Bring the sheet's surface in line with the pane that put it up: made
     /// when the sheet opens, dropped when it closes, and repainted when what
     /// it shows has changed (`changed`, the pane's own repaint signal, which a
     /// caret blink and every keystroke also raise) or the window was resized.
     fn sync_sheet(&mut self, changed: bool) {
-        let Some(view) = panes::account::sheet() else {
+        let Some(view) = current_sheet() else {
             if let Some((mut surface, _)) = self.sheet.take() {
                 surface.destroy();
                 // A field left open in a sheet that is gone has nowhere to go.
@@ -1684,7 +1709,7 @@ impl SettingsApp {
         // A sheet is modal: nothing behind it is a stop. With the ring empty
         // the toolkit leaves Tab alone, so it reaches the sheet's own handler,
         // which walks the sheet's fields.
-        if panes::account::sheet().is_some() {
+        if current_sheet().is_some() {
             AppContext::with_focus_ring(&surface, |ring| {
                 ring.begin();
                 ring.end();
@@ -2001,7 +2026,7 @@ impl SettingsApp {
     /// selected so typing replaces it — Ctrl+F, `/`, or a screen reader.
     fn focus_search(&mut self) {
         // The password sheet is modal: the field behind it waits.
-        if panes::account::sheet().is_some() {
+        if current_sheet().is_some() {
             return;
         }
         if commit_edit(&self.editing) {
@@ -2181,7 +2206,7 @@ impl SettingsApp {
         let active = self.active.load(std::sync::atomic::Ordering::Relaxed);
         let search = self.search.lock().unwrap();
 
-        if !search.open || panes::account::sheet().is_some() {
+        if !search.open || current_sheet().is_some() {
             drop(search);
             if let Some((mut surface, _)) = self.search_panel.take() {
                 surface.destroy();
@@ -2428,7 +2453,7 @@ impl App for SettingsApp {
 
                         // Everything else the chrome owns is the sidebar,
                         // which is behind the password sheet while it is up.
-                        if panes::account::sheet().is_some() {
+                        if current_sheet().is_some() {
                             continue;
                         }
                         if let Some(index) = view::pane_at(x, y) {
@@ -2489,7 +2514,7 @@ impl App for SettingsApp {
                             .unwrap()
                             .panel(win_w, win_h)
                             .is_some_and(|panel| panel.contains(otto_kit::skia::Point::new(x, y)));
-                        if panes::account::sheet().is_none() && !over_list {
+                        if current_sheet().is_none() && !over_list {
                             handle_wheel(&pane, vertical);
                         }
                     }
@@ -3407,14 +3432,14 @@ impl App for SettingsApp {
         // fields, Enter moves on to the next one or, from the last, changes
         // the password. Anything else is typing for the field that has the
         // keyboard, and nothing reaches the pane behind.
-        if panes::account::sheet().is_some() {
+        if current_sheet().is_some() {
             let fields = panes::account::sheet_fields().len();
             let at = sheet_field_index(&self.editing);
             let back = self.modifiers.lock().unwrap().shift || event.keysym == Keysym::ISO_Left_Tab;
             let handled = match event.keysym {
                 Keysym::Escape => {
                     cancel_edit(&self.editing);
-                    panes::account::close_sheet();
+                    close_sheet();
                     true
                 }
                 Keysym::Tab | Keysym::ISO_Left_Tab if fields > 0 => {
@@ -3431,7 +3456,7 @@ impl App for SettingsApp {
                         Some(i) if i + 1 < fields => focus_sheet_field(&self.editing, i + 1),
                         _ => {
                             commit_edit(&self.editing);
-                            panes::account::submit();
+                            submit_sheet();
                         }
                     }
                     true

@@ -21,7 +21,10 @@ use zbus::zvariant::{ObjectPath, OwnedObjectPath, OwnedValue, Value};
 use zbus::Connection;
 
 use crate::model::*;
-use crate::profile::{Family, IpConfig, KeyKind, Profile, ProfileKind};
+use crate::profile::{
+    Family, IpConfig, KeyKind, MacPolicy, MeteredSetting, Profile, ProfileKind, WifiShare,
+};
+use crate::reveal::ShareError;
 use crate::rfkill::Radios;
 
 /// `NMDeviceType` values Otto shows.
@@ -320,6 +323,7 @@ async fn read_device(conn: &Connection, path: &str) -> Option<(Device, Option<St
         speed_mbps,
         active: active.clone(),
         link: None,
+        metered: Metered::from_raw(proxy.metered().await.unwrap_or(0)),
     };
     Some((device, active))
 }
@@ -614,19 +618,25 @@ pub async fn set_ip_config(
             .validate(family)
             .map_err(|e| zbus::Error::Failure(format!("{e:?}")))?;
     }
-    let proxy = at!(SettingsConnectionProxy, conn, profile).await?;
-    {
-        let _writing = PROFILE_WRITES.lock().await;
-        let mut settings = proxy.get_settings().await?;
-        v4.write_into(&mut settings, Family::V4);
-        v6.write_into(&mut settings, Family::V6);
-        proxy.update(settings).await?;
-    }
-    reapply(conn, profile).await
+    edit_profile(conn, profile, |settings| {
+        v4.write_into(settings, Family::V4);
+        v6.write_into(settings, Family::V6);
+    })
+    .await?;
+    reapply(conn, profile, Reapply::OrReconnect).await
+}
+
+/// How far [`reapply`] goes to apply a saved profile.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Reapply {
+    /// In place where NetworkManager can, by reconnecting where it cannot.
+    OrReconnect,
+    /// In place only; what cannot be applied waits for the next connect.
+    InPlace,
 }
 
 /// Apply a saved profile's settings to the device it is active on, if any.
-async fn reapply(conn: &Connection, profile: &str) -> zbus::Result<()> {
+async fn reapply(conn: &Connection, profile: &str, how: Reapply) -> zbus::Result<()> {
     let nm = NetworkManagerProxy::builder(conn)
         .cache_properties(CacheProperties::No)
         .build()
@@ -640,6 +650,9 @@ async fn reapply(conn: &Connection, profile: &str) -> zbus::Result<()> {
         }
         let devices = proxy.devices().await.unwrap_or_default();
         let Some(device) = devices.first() else {
+            if how == Reapply::InPlace {
+                return Ok(());
+            }
             // A VPN runs on no device of its own: start it again.
             nm.deactivate_connection(&active).await?;
             nm.activate_connection(
@@ -651,7 +664,8 @@ async fn reapply(conn: &Connection, profile: &str) -> zbus::Result<()> {
             return Ok(());
         };
         let device_proxy = at!(DeviceProxy, conn, device.as_str()).await?;
-        if device_proxy.reapply(HashMap::new(), 0, 0).await.is_err() {
+        if device_proxy.reapply(HashMap::new(), 0, 0).await.is_err() && how == Reapply::OrReconnect
+        {
             // Some changes cannot be applied in place (NetworkManager says
             // which); reconnecting applies anything.
             nm.activate_connection(&object_path(profile)?, device, &object_path("/")?)
@@ -706,19 +720,98 @@ pub async fn forget(conn: &Connection, connection: &str) -> zbus::Result<()> {
         .await
 }
 
-/// Let NetworkManager join the saved connection at `connection` by itself,
-/// or not.
-pub async fn set_autoconnect(conn: &Connection, connection: &str, on: bool) -> zbus::Result<()> {
+/// Read the saved connection at `connection` fresh, change it with `edit`
+/// and save it, under [`PROFILE_WRITES`]. The settings come without secrets,
+/// and an update without secrets keeps the ones already stored.
+async fn edit_profile(
+    conn: &Connection,
+    connection: &str,
+    edit: impl FnOnce(&mut crate::profile::Settings),
+) -> zbus::Result<()> {
     let proxy = at!(SettingsConnectionProxy, conn, connection).await?;
     let _writing = PROFILE_WRITES.lock().await;
     let mut settings = proxy.get_settings().await?;
-    settings
-        .entry("connection".to_string())
-        .or_default()
-        .insert("autoconnect".to_string(), OwnedValue::from(on));
-    // The settings come without secrets, and an update without secrets keeps
-    // the ones already stored.
+    edit(&mut settings);
     proxy.update(settings).await
+}
+
+/// Let NetworkManager join the saved connection at `connection` by itself,
+/// or not.
+pub async fn set_autoconnect(conn: &Connection, connection: &str, on: bool) -> zbus::Result<()> {
+    edit_profile(conn, connection, |settings| {
+        settings
+            .entry("connection".to_string())
+            .or_default()
+            .insert("autoconnect".to_string(), OwnedValue::from(on));
+    })
+    .await
+}
+
+/// Mark the Wi-Fi or Ethernet connection at `connection` metered, not
+/// metered, or leave it to NetworkManager to guess, and apply that to the
+/// connection in place if it is up. Where NetworkManager cannot apply it in
+/// place, it takes effect on the next connect: being metered is no reason to
+/// drop a link.
+pub async fn set_metered(
+    conn: &Connection,
+    connection: &str,
+    metered: MeteredSetting,
+) -> zbus::Result<()> {
+    edit_profile(conn, connection, |settings| metered.write_into(settings)).await?;
+    reapply(conn, connection, Reapply::InPlace).await
+}
+
+/// The name, security and password of the saved Wi-Fi network at
+/// `connection`, for showing or sharing it.
+///
+/// The password comes from `GetSecrets`, asked only where NetworkManager
+/// stores one: a password an agent keeps, or one asked for on every
+/// connect, is `None` with no call. Before it, polkit confirms it's the
+/// person through [`crate::reveal::ACTION`], on the same bus as `conn`; the
+/// session's authentication agent asks for their password, and this waits
+/// for the answer. NetworkManager then authorises `GetSecrets` itself and
+/// may still refuse.
+///
+/// # Errors
+///
+/// [`ShareError::NotConfirmed`] or [`ShareError::Unavailable`] when polkit
+/// did not authorize the read, and [`ShareError::Bus`] for a connection that
+/// is not Wi-Fi, NetworkManager's refusal (`PermissionDenied`), or any other
+/// bus error.
+pub async fn wifi_share(conn: &Connection, connection: &str) -> Result<WifiShare, ShareError> {
+    let proxy = at!(SettingsConnectionProxy, conn, connection).await?;
+    let settings = proxy.get_settings().await?;
+    if !settings.contains_key("802-11-wireless") {
+        return Err(zbus::Error::Failure("not a Wi-Fi connection".into()).into());
+    }
+    let secrets = if WifiShare::stores_password(&settings) {
+        crate::reveal::confirm(conn).await?;
+        proxy.get_secrets("802-11-wireless-security").await?
+    } else {
+        HashMap::new()
+    };
+    Ok(WifiShare::from_settings(&settings, &secrets))
+}
+
+/// Save `policy` as the hardware address the Wi-Fi or Ethernet connection
+/// at `connection` shows its network. It takes effect the next time the
+/// connection comes up: NetworkManager cannot change the address of a link
+/// in use without taking it down.
+pub async fn set_mac_policy(
+    conn: &Connection,
+    connection: &str,
+    policy: &MacPolicy,
+) -> zbus::Result<()> {
+    edit_profile(conn, connection, |settings| {
+        let kind = settings
+            .get("connection")
+            .and_then(|c| c.get("type"))
+            .and_then(|v| String::try_from(v.try_clone().ok()?).ok())
+            .map(|kind| ProfileKind::from_type(&kind))
+            .unwrap_or(ProfileKind::Other);
+        policy.write_into(settings, kind);
+    })
+    .await
 }
 
 /// What one of NetworkManager's signals says changed.

@@ -11,7 +11,8 @@ use std::future::Future;
 use zbus::Connection;
 
 use crate::model::{Snapshot, WifiNetwork};
-use crate::profile::IpConfig;
+use crate::profile::{IpConfig, MacPolicy, MeteredSetting, WifiShare};
+use crate::reveal::ShareError;
 use crate::rfkill::Radios;
 
 /// Run `work` with a fresh system bus connection on a runtime of its own.
@@ -97,6 +98,25 @@ pub fn forget(connection: &str) -> zbus::Result<()> {
 /// [`crate::set_autoconnect`].
 pub fn set_autoconnect(connection: &str, on: bool) -> zbus::Result<()> {
     run(|conn| async move { crate::set_autoconnect(&conn, connection, on).await })
+}
+
+/// [`crate::set_mac_policy`].
+pub fn set_mac_policy(connection: &str, policy: &MacPolicy) -> zbus::Result<()> {
+    run(|conn| async move { crate::set_mac_policy(&conn, connection, policy).await })
+}
+
+/// [`crate::set_metered`].
+pub fn set_metered(connection: &str, metered: MeteredSetting) -> zbus::Result<()> {
+    run(|conn| async move { crate::set_metered(&conn, connection, metered).await })
+}
+
+/// [`crate::wifi_share`]. Blocks while a polkit agent asks.
+///
+/// # Errors
+///
+/// As [`crate::wifi_share`], and [`ShareError::Bus`] with no system bus.
+pub fn wifi_share(connection: &str) -> Result<WifiShare, ShareError> {
+    run(|conn| async move { Ok(crate::wifi_share(&conn, connection).await) })?
 }
 
 /// [`crate::follow`], blocking the thread until the bus connection closes.

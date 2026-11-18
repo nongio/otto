@@ -477,6 +477,175 @@ impl ProfileKind {
     }
 }
 
+impl ProfileKind {
+    /// The setting of this kind's link: where its hardware address lives.
+    /// `None` for a kind with no hardware address of its own.
+    pub fn link_setting(self) -> Option<&'static str> {
+        match self {
+            Self::Wifi => Some("802-11-wireless"),
+            Self::Ethernet => Some("802-3-ethernet"),
+            Self::Vpn | Self::Other => None,
+        }
+    }
+}
+
+/// The hardware address a connection shows the network it joins.
+///
+/// NetworkManager keeps it as `cloned-mac-address` in the link's setting
+/// (`802-11-wireless` or `802-3-ethernet`). On D-Bus that property holds only
+/// an explicit address, as bytes; the named policies travel as the string
+/// `assigned-mac-address`, which is read first and the only one written.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MacPolicy {
+    /// Nothing set: NetworkManager's own default applies.
+    Unset,
+    /// The device's own address (`permanent`): no private address.
+    Permanent,
+    /// A private address generated once for this connection (`stable`).
+    Stable,
+    /// A new private address each time it connects (`random`).
+    Random,
+    /// Any other value (`preserve`, an explicit address), kept as it is.
+    Kept(String),
+}
+
+impl MacPolicy {
+    /// The three a person picks from.
+    pub fn choices() -> &'static [MacPolicy] {
+        &[MacPolicy::Permanent, MacPolicy::Stable, MacPolicy::Random]
+    }
+
+    /// Read NetworkManager's value; an empty one is unset.
+    pub fn from_nm(raw: &str) -> Self {
+        match raw {
+            "" => Self::Unset,
+            "permanent" => Self::Permanent,
+            "stable" => Self::Stable,
+            "random" => Self::Random,
+            other => Self::Kept(other.to_string()),
+        }
+    }
+
+    /// NetworkManager's value; empty for unset.
+    pub fn to_nm(&self) -> &str {
+        match self {
+            Self::Unset => "",
+            Self::Permanent => "permanent",
+            Self::Stable => "stable",
+            Self::Random => "random",
+            Self::Kept(raw) => raw,
+        }
+    }
+
+    /// Read the policy of a connection of `kind` out of `settings`.
+    pub fn from_settings(settings: &Settings, kind: ProfileKind) -> Self {
+        let Some(link) = kind.link_setting().and_then(|name| settings.get(name)) else {
+            return Self::Unset;
+        };
+        if let Some(assigned) = string(link, "assigned-mac-address") {
+            return Self::from_nm(&assigned);
+        }
+        // An explicit address, from a NetworkManager that sends only the
+        // older property.
+        link.get("cloned-mac-address")
+            .and_then(|v| Vec::<u8>::try_from(v.try_clone().ok()?).ok())
+            .filter(|bytes| !bytes.is_empty())
+            .map(|bytes| {
+                let hex: Vec<String> = bytes.iter().map(|b| format!("{b:02X}")).collect();
+                Self::Kept(hex.join(":"))
+            })
+            .unwrap_or(Self::Unset)
+    }
+
+    /// Write this policy into a connection of `kind`, keeping every other
+    /// property. Written as `assigned-mac-address` only, so the older
+    /// `cloned-mac-address` cannot shadow it. Does nothing for a kind with
+    /// no link setting.
+    pub fn write_into(&self, settings: &mut Settings, kind: ProfileKind) {
+        let Some(name) = kind.link_setting() else {
+            return;
+        };
+        let link = settings.entry(name.to_string()).or_default();
+        link.remove("cloned-mac-address");
+        link.remove("assigned-mac-address");
+        if *self != Self::Unset {
+            link.insert(
+                "assigned-mac-address".into(),
+                OwnedValue::try_from(Value::from(self.to_nm())).expect("plain values"),
+            );
+        }
+    }
+}
+
+/// Whether a profile is marked metered: `connection.metered`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum MeteredSetting {
+    /// Unset (`0`): NetworkManager guesses from the link.
+    #[default]
+    Automatic,
+    /// `1`.
+    Yes,
+    /// `2`.
+    No,
+}
+
+impl MeteredSetting {
+    /// The three a person picks from, in the order a pop-up lists them.
+    pub fn choices() -> &'static [MeteredSetting] {
+        &[Self::Automatic, Self::Yes, Self::No]
+    }
+
+    /// NetworkManager's value. Anything but `1` and `2` is automatic, as
+    /// NetworkManager reads it.
+    pub fn from_raw(raw: i32) -> Self {
+        match raw {
+            1 => Self::Yes,
+            2 => Self::No,
+            _ => Self::Automatic,
+        }
+    }
+
+    pub fn to_raw(self) -> i32 {
+        match self {
+            Self::Automatic => 0,
+            Self::Yes => 1,
+            Self::No => 2,
+        }
+    }
+
+    /// A short name, for a pop-up's value.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Automatic => "auto",
+            Self::Yes => "yes",
+            Self::No => "no",
+        }
+    }
+
+    /// The setting a [`Self::name`] names, `None` for no name of these.
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::choices().iter().copied().find(|m| m.name() == name)
+    }
+
+    /// Read a profile's setting; unset is automatic.
+    pub fn from_settings(settings: &Settings) -> Self {
+        settings
+            .get("connection")
+            .and_then(|c| c.get("metered"))
+            .and_then(|v| i32::try_from(v).ok())
+            .map(Self::from_raw)
+            .unwrap_or_default()
+    }
+
+    /// Write this setting into `settings`, keeping every other property.
+    pub fn write_into(self, settings: &mut Settings) {
+        settings
+            .entry("connection".to_string())
+            .or_default()
+            .insert("metered".into(), OwnedValue::from(self.to_raw()));
+    }
+}
+
 /// A saved connection, read out of its settings.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Profile {
@@ -494,6 +663,10 @@ pub struct Profile {
     pub last_used: u64,
     pub ipv4: IpConfig,
     pub ipv6: IpConfig,
+    /// The hardware address it shows the network.
+    pub mac: MacPolicy,
+    /// Whether it is marked metered.
+    pub metered: MeteredSetting,
 }
 
 impl Profile {
@@ -503,11 +676,12 @@ impl Profile {
         let connection = settings.get("connection")?;
         let kind_raw = string(connection, "type").unwrap_or_default();
         let wireless = settings.get("802-11-wireless");
+        let kind = ProfileKind::from_type(&kind_raw);
         Some(Self {
             path: path.to_string(),
             id: string(connection, "id").unwrap_or_default(),
             uuid: string(connection, "uuid").unwrap_or_default(),
-            kind: ProfileKind::from_type(&kind_raw),
+            kind,
             ssid: wireless
                 .and_then(|w| w.get("ssid"))
                 .and_then(|v| Vec::<u8>::try_from(v.try_clone().ok()?).ok())
@@ -526,6 +700,8 @@ impl Profile {
                 .unwrap_or(0),
             ipv4: IpConfig::from_settings(settings, Family::V4),
             ipv6: IpConfig::from_settings(settings, Family::V6),
+            mac: MacPolicy::from_settings(settings, kind),
+            metered: MeteredSetting::from_settings(settings),
         })
     }
 }
@@ -584,6 +760,197 @@ impl KeyKind {
         }
         security
     }
+}
+
+/// A Wi-Fi password read back from NetworkManager. Its [`Debug`] never shows
+/// it, so it stays out of logs.
+#[derive(Clone, PartialEq, Eq)]
+pub struct Password(String);
+
+impl Password {
+    pub fn new(text: String) -> Self {
+        Self(text)
+    }
+
+    /// The password itself, for showing it or encoding it.
+    pub fn expose(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Debug for Password {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Password(…)")
+    }
+}
+
+/// How a saved Wi-Fi network is secured, as sharing it goes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShareSecurity {
+    /// No password: open, or Enhanced Open (OWE).
+    Open,
+    /// WPA or WPA2 Personal, which WPA3 transition networks also take.
+    Wpa,
+    /// WPA3 Personal only.
+    Sae,
+    Wep,
+    /// A user name and a certificate, which a password alone cannot share.
+    Enterprise,
+}
+
+/// `NM_SETTING_SECRET_FLAG_AGENT_OWNED`: an agent keeps the secret.
+const SECRET_AGENT_OWNED: u32 = 0x1;
+/// `NM_SETTING_SECRET_FLAG_NOT_SAVED`: asked for on every connect.
+const SECRET_NOT_SAVED: u32 = 0x2;
+
+/// What it takes to join a saved Wi-Fi network: its name, security and
+/// password, as a person reads them out or a phone scans them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WifiShare {
+    pub ssid: Vec<u8>,
+    pub security: ShareSecurity,
+    /// The network does not broadcast its name.
+    pub hidden: bool,
+    /// The password, where NetworkManager stores it. `None` for an open
+    /// network, and for one whose password an agent keeps or that asks for
+    /// it each time.
+    pub password: Option<Password>,
+}
+
+impl WifiShare {
+    /// How the Wi-Fi profile with `settings` is secured.
+    pub fn security(settings: &Settings) -> ShareSecurity {
+        let Some(security) = settings.get("802-11-wireless-security") else {
+            return ShareSecurity::Open;
+        };
+        match string(security, "key-mgmt").as_deref() {
+            Some("wpa-psk") => ShareSecurity::Wpa,
+            Some("sae") => ShareSecurity::Sae,
+            Some("none") => ShareSecurity::Wep,
+            Some("owe") | None => ShareSecurity::Open,
+            Some(_) => ShareSecurity::Enterprise,
+        }
+    }
+
+    /// The secret that holds the password of a profile with `settings`:
+    /// `psk`, or the WEP key in use. `None` where no password is shared.
+    fn secret_key(settings: &Settings) -> Option<String> {
+        match Self::security(settings) {
+            ShareSecurity::Wpa | ShareSecurity::Sae => Some("psk".to_string()),
+            ShareSecurity::Wep => {
+                let index = settings
+                    .get("802-11-wireless-security")
+                    .and_then(|s| s.get("wep-tx-keyidx"))
+                    .and_then(|v| u32::try_from(v).ok())
+                    .unwrap_or(0);
+                Some(format!("wep-key{index}"))
+            }
+            ShareSecurity::Open | ShareSecurity::Enterprise => None,
+        }
+    }
+
+    /// Whether NetworkManager stores the password of a profile with
+    /// `settings`, so asking it for the secrets can return one: not when
+    /// there is none, nor when an agent keeps it or it is never saved.
+    pub fn stores_password(settings: &Settings) -> bool {
+        let Some(key) = Self::secret_key(settings) else {
+            return false;
+        };
+        let flags_key = if key == "psk" {
+            "psk-flags"
+        } else {
+            "wep-key-flags"
+        };
+        let flags = settings
+            .get("802-11-wireless-security")
+            .and_then(|s| s.get(flags_key))
+            .and_then(|v| u32::try_from(v).ok())
+            .unwrap_or(0);
+        flags & (SECRET_AGENT_OWNED | SECRET_NOT_SAVED) == 0
+    }
+
+    /// The network of a profile with `settings`, its password taken from
+    /// `secrets`: what `GetSecrets` returned for `802-11-wireless-security`,
+    /// empty where it was not asked. An empty password is none.
+    pub fn from_settings(settings: &Settings, secrets: &Settings) -> Self {
+        let wireless = settings.get("802-11-wireless");
+        let password = Self::secret_key(settings).and_then(|key| {
+            secrets
+                .get("802-11-wireless-security")
+                .and_then(|s| string(s, &key))
+                .filter(|p| !p.is_empty())
+                .map(Password::new)
+        });
+        Self {
+            ssid: wireless
+                .and_then(|w| w.get("ssid"))
+                .and_then(|v| Vec::<u8>::try_from(v.try_clone().ok()?).ok())
+                .unwrap_or_default(),
+            security: Self::security(settings),
+            hidden: wireless
+                .and_then(|w| w.get("hidden"))
+                .and_then(|v| bool::try_from(v).ok())
+                .unwrap_or(false),
+            password,
+        }
+    }
+
+    /// The network's name for showing, with replacement characters where
+    /// it is not UTF-8.
+    pub fn name(&self) -> String {
+        String::from_utf8_lossy(&self.ssid).into_owned()
+    }
+
+    /// Whether a phone could join from this: the network takes no password,
+    /// or takes one and it is here.
+    pub fn shareable(&self) -> bool {
+        match self.security {
+            ShareSecurity::Open => true,
+            ShareSecurity::Wpa | ShareSecurity::Sae | ShareSecurity::Wep => self.password.is_some(),
+            ShareSecurity::Enterprise => false,
+        }
+    }
+
+    /// The text of a Wi-Fi QR code, `WIFI:T:WPA;S:<name>;P:<password>;;`,
+    /// as phone cameras read it, with `\`, `;`, `,`, `:` and `"` escaped.
+    /// It holds the password, so it is one too. `None` when it is not
+    /// [`shareable`](Self::shareable).
+    pub fn qr_text(&self) -> Option<Password> {
+        if !self.shareable() {
+            return None;
+        }
+        let kind = match self.security {
+            ShareSecurity::Open => "nopass",
+            ShareSecurity::Wpa => "WPA",
+            ShareSecurity::Sae => "SAE",
+            ShareSecurity::Wep => "WEP",
+            ShareSecurity::Enterprise => return None,
+        };
+        let mut text = format!("WIFI:T:{kind};S:{};", escape_wifi(&self.name()));
+        if let Some(password) = &self.password {
+            text.push_str("P:");
+            text.push_str(&escape_wifi(password.expose()));
+            text.push(';');
+        }
+        if self.hidden {
+            text.push_str("H:true;");
+        }
+        text.push(';');
+        Some(Password::new(text))
+    }
+}
+
+/// `text` with the characters a Wi-Fi QR code reserves escaped by a
+/// backslash.
+fn escape_wifi(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        if matches!(c, '\\' | ';' | ',' | ':' | '"') {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
 }
 
 /// A request for a Wi-Fi password, read out of what NetworkManager sends a
@@ -925,6 +1292,261 @@ mod tests {
         assert_eq!(profile.ipv4, manual());
         assert_eq!(profile.ipv6, IpConfig::default());
         assert!(!profile.hotspot);
+    }
+
+    fn link(kind: &str, entries: Vec<(&str, OwnedValue)>) -> Settings {
+        let link = entries
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v))
+            .collect();
+        Settings::from([
+            (
+                "connection".to_string(),
+                HashMap::from([("id".to_string(), owned(Value::from("Home")))]),
+            ),
+            (kind.to_string(), link),
+        ])
+    }
+
+    #[test]
+    fn the_private_address_is_read_by_its_name() {
+        for (raw, policy) in [
+            ("permanent", MacPolicy::Permanent),
+            ("stable", MacPolicy::Stable),
+            ("random", MacPolicy::Random),
+            ("preserve", MacPolicy::Kept("preserve".into())),
+            (
+                "02:11:22:33:44:55",
+                MacPolicy::Kept("02:11:22:33:44:55".into()),
+            ),
+        ] {
+            let settings = link(
+                "802-11-wireless",
+                vec![("assigned-mac-address", owned(Value::from(raw)))],
+            );
+            assert_eq!(
+                MacPolicy::from_settings(&settings, ProfileKind::Wifi),
+                policy
+            );
+            assert_eq!(policy.to_nm(), raw);
+        }
+        // Nothing set, and nothing to set on a VPN.
+        let none = link("802-11-wireless", Vec::new());
+        assert_eq!(
+            MacPolicy::from_settings(&none, ProfileKind::Wifi),
+            MacPolicy::Unset
+        );
+        assert_eq!(
+            MacPolicy::from_settings(&none, ProfileKind::Vpn),
+            MacPolicy::Unset
+        );
+    }
+
+    #[test]
+    fn an_explicit_address_in_the_older_property_is_kept() {
+        let settings = link(
+            "802-3-ethernet",
+            vec![(
+                "cloned-mac-address",
+                owned(Value::from(vec![0x02u8, 0x0a, 0, 0, 0, 0xff])),
+            )],
+        );
+        assert_eq!(
+            MacPolicy::from_settings(&settings, ProfileKind::Ethernet),
+            MacPolicy::Kept("02:0A:00:00:00:FF".into())
+        );
+    }
+
+    #[test]
+    fn writing_the_private_address_keeps_the_rest() {
+        let mut settings = link(
+            "802-11-wireless",
+            vec![
+                ("ssid", owned(Value::from(b"Home".to_vec()))),
+                (
+                    "cloned-mac-address",
+                    owned(Value::from(vec![2u8, 0, 0, 0, 0, 1])),
+                ),
+            ],
+        );
+        MacPolicy::Stable.write_into(&mut settings, ProfileKind::Wifi);
+        let wireless = &settings["802-11-wireless"];
+        assert!(wireless.contains_key("ssid"));
+        // One spelling only.
+        assert!(!wireless.contains_key("cloned-mac-address"));
+        assert_eq!(
+            MacPolicy::from_settings(&settings, ProfileKind::Wifi),
+            MacPolicy::Stable
+        );
+        assert!(settings["connection"].contains_key("id"));
+
+        let mut wired = link("802-3-ethernet", Vec::new());
+        wired
+            .get_mut("connection")
+            .unwrap()
+            .insert("type".into(), owned(Value::from("802-3-ethernet")));
+        MacPolicy::Random.write_into(&mut wired, ProfileKind::Ethernet);
+        let profile = Profile::from_settings("/c/2", &wired).unwrap();
+        assert_eq!(profile.mac, MacPolicy::Random);
+
+        MacPolicy::Unset.write_into(&mut wired, ProfileKind::Ethernet);
+        assert!(!wired["802-3-ethernet"].contains_key("assigned-mac-address"));
+
+        let mut vpn = Settings::new();
+        MacPolicy::Random.write_into(&mut vpn, ProfileKind::Vpn);
+        assert!(vpn.is_empty());
+    }
+
+    #[test]
+    fn metered_is_read_and_written_on_the_connection() {
+        let mut settings = link("802-11-wireless", Vec::new());
+        assert_eq!(
+            MeteredSetting::from_settings(&settings),
+            MeteredSetting::Automatic
+        );
+        for setting in MeteredSetting::choices() {
+            setting.write_into(&mut settings);
+            assert_eq!(MeteredSetting::from_settings(&settings), *setting);
+            assert_eq!(MeteredSetting::from_name(setting.name()), Some(*setting));
+            // The rest of the connection stays.
+            assert!(settings["connection"].contains_key("id"));
+        }
+        // NetworkManager sends an `i`.
+        let raw = i32::try_from(&settings["connection"]["metered"]).unwrap();
+        assert_eq!(raw, 2);
+        // A value NetworkManager reads as unknown is automatic.
+        settings
+            .get_mut("connection")
+            .unwrap()
+            .insert("metered".into(), OwnedValue::from(7i32));
+        assert_eq!(
+            MeteredSetting::from_settings(&settings),
+            MeteredSetting::Automatic
+        );
+        assert_eq!(MeteredSetting::from_name("sometimes"), None);
+    }
+
+    fn secured(name: &[u8], security: Vec<(&str, OwnedValue)>) -> Settings {
+        let mut settings = link(
+            "802-11-wireless",
+            vec![("ssid", owned(Value::from(name.to_vec())))],
+        );
+        settings.insert(
+            "802-11-wireless-security".into(),
+            security
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), v))
+                .collect(),
+        );
+        settings
+    }
+
+    fn secrets(entries: Vec<(&str, &str)>) -> Settings {
+        Settings::from([(
+            "802-11-wireless-security".to_string(),
+            entries
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), owned(Value::from(v))))
+                .collect(),
+        )])
+    }
+
+    #[test]
+    fn a_wpa_network_shares_as_a_qr_code() {
+        let settings = secured(b"Home", vec![("key-mgmt", owned(Value::from("wpa-psk")))]);
+        assert!(WifiShare::stores_password(&settings));
+        let share = WifiShare::from_settings(&settings, &secrets(vec![("psk", "hunter22")]));
+        assert_eq!(share.security, ShareSecurity::Wpa);
+        assert_eq!(
+            share.password.as_ref().map(Password::expose),
+            Some("hunter22")
+        );
+        assert_eq!(
+            share.qr_text().unwrap().expose(),
+            "WIFI:T:WPA;S:Home;P:hunter22;;"
+        );
+    }
+
+    #[test]
+    fn reserved_characters_are_escaped() {
+        let mut settings = secured(
+            br#"Caf;e "x""#,
+            vec![("key-mgmt", owned(Value::from("sae")))],
+        );
+        settings
+            .get_mut("802-11-wireless")
+            .unwrap()
+            .insert("hidden".into(), owned(Value::from(true)));
+        let share = WifiShare::from_settings(&settings, &secrets(vec![("psk", r"p:a,s\s")]));
+        assert_eq!(
+            share.qr_text().unwrap().expose(),
+            r#"WIFI:T:SAE;S:Caf\;e \"x\";P:p\:a\,s\\s;H:true;;"#
+        );
+    }
+
+    #[test]
+    fn open_wep_and_enterprise_networks() {
+        let open = link(
+            "802-11-wireless",
+            vec![("ssid", owned(Value::from(b"Cafe".to_vec())))],
+        );
+        assert!(!WifiShare::stores_password(&open));
+        let share = WifiShare::from_settings(&open, &Settings::new());
+        assert_eq!(share.security, ShareSecurity::Open);
+        assert_eq!(share.qr_text().unwrap().expose(), "WIFI:T:nopass;S:Cafe;;");
+
+        let wep = secured(
+            b"Old",
+            vec![
+                ("key-mgmt", owned(Value::from("none"))),
+                ("wep-tx-keyidx", owned(Value::from(1u32))),
+            ],
+        );
+        let share = WifiShare::from_settings(
+            &wep,
+            &secrets(vec![("wep-key0", "wrong"), ("wep-key1", "abcde")]),
+        );
+        assert_eq!(
+            share.qr_text().unwrap().expose(),
+            "WIFI:T:WEP;S:Old;P:abcde;;"
+        );
+
+        let eap = secured(b"Uni", vec![("key-mgmt", owned(Value::from("wpa-eap")))]);
+        assert!(!WifiShare::stores_password(&eap));
+        let share = WifiShare::from_settings(&eap, &Settings::new());
+        assert_eq!(share.security, ShareSecurity::Enterprise);
+        assert!(share.qr_text().is_none());
+    }
+
+    #[test]
+    fn a_password_an_agent_keeps_is_not_stored() {
+        for flags in [SECRET_AGENT_OWNED, SECRET_NOT_SAVED] {
+            let settings = secured(
+                b"Home",
+                vec![
+                    ("key-mgmt", owned(Value::from("wpa-psk"))),
+                    ("psk-flags", owned(Value::from(flags))),
+                ],
+            );
+            assert!(!WifiShare::stores_password(&settings));
+        }
+        // GetSecrets answering with nothing, or an empty key.
+        let settings = secured(b"Home", vec![("key-mgmt", owned(Value::from("wpa-psk")))]);
+        for answer in [Settings::new(), secrets(vec![("psk", "")])] {
+            let share = WifiShare::from_settings(&settings, &answer);
+            assert_eq!(share.password, None);
+            assert!(!share.shareable());
+            assert!(share.qr_text().is_none());
+        }
+    }
+
+    #[test]
+    fn a_password_stays_out_of_debug() {
+        let settings = secured(b"Home", vec![("key-mgmt", owned(Value::from("wpa-psk")))]);
+        let share = WifiShare::from_settings(&settings, &secrets(vec![("psk", "hunter22")]));
+        let shown = format!("{share:?} {:?}", share.qr_text());
+        assert!(shown.contains("Password"));
+        assert!(!shown.contains("hunter22"), "{shown}");
     }
 
     #[test]

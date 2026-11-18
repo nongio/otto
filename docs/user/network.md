@@ -107,19 +107,66 @@ shows:
 - **Security**
 - **Access point**, the BSSID of the one you are associated with
 - **Hardware address**
+- **Metered**, when the connection counts as metered
 
 **Known networks** lists every saved network. Untick one to stop joining it
 automatically, or **Forget** it.
 
 ### Ethernet
 
-Each wired port's state, link speed and hardware address.
+Each wired port's state, link speed and hardware address, and a **Metered** line while it is connected and metered.
+
+### Options
+
+The Wi-Fi and Ethernet tabs both have **Options** for their connection. On
+the Wi-Fi tab, **Settings for** at the top picks which saved network you are
+editing, here and in TCP/IP and DNS below. Options are saved as soon as you
+pick them.
+
+**Private Wi-Fi address** (**Private address** on Ethernet) sets the hardware
+address the network sees:
+
+| Choice | What the network sees |
+|--------|-----------------------|
+| **Off** | The device's own address |
+| **Fixed for this network** | A private address made for this network, the same each time you join it |
+| **Changes over time** | A new private address each time you connect |
+
+A network can be set some other way, for example by `nmcli` or
+`nm-connection-editor`: **Default** when nothing is set, **As the device has
+it**, or a specific address. The pop-up shows that, and leaves it alone until
+you pick one of the three. The new address is used the next time the
+connection comes up, so disconnect and join again to use it now.
+
+**Metered connection** tells apps that data costs on this network, such as a
+phone's hotspot or a capped mobile plan. Apps that check it, such as software
+updates, hold back large downloads.
+
+- **Automatic** lets NetworkManager decide. It guesses from the link, for
+  example a phone sharing its connection.
+- **On** and **Off** decide for it.
+
+The change applies straight away, without dropping the connection. While the
+connection in use counts as metered, **Connection** on the Wi-Fi tab (and
+**Status** on the Ethernet tab) has a **Metered** line: **Yes**, or **Yes
+(guessed)** when NetworkManager guessed it.
+
+**Password**, on the Wi-Fi tab, has **Show…**. It shows the network's name
+and password with a QR code: point a phone's camera at it to join the same
+network. The password is shown only after you confirm it's you: Otto's
+authorisation dialog asks for your own password first. Once you have
+confirmed, showing another password within a few minutes asks nothing.
+NetworkManager then decides whether the saved password may be read, and
+where it asks for an administrator, the dialog comes up again. If you
+cancel, or it is not allowed, the row says so. A password that is not
+stored with the network cannot be shown: one kept by another applet, or one
+set to be asked for every time. Neither can an enterprise network's sign-in.
+The password is gone from Settings as soon as you close the sheet.
 
 ### TCP/IP and DNS
 
 The Wi-Fi and Ethernet tabs both have **TCP/IP** and **DNS** for their
-connection. On the Wi-Fi tab, **Settings for** picks which saved network you
-are editing.
+connection, the one picked in **Settings for** on the Wi-Fi tab.
 
 | Setting | Choices |
 |---------|---------|

@@ -45,6 +45,7 @@ mod portal_runtime;
 mod portal_settings;
 pub mod preview;
 pub mod protocols;
+pub mod qr;
 pub mod rendering;
 pub mod sound;
 pub mod surfaces;

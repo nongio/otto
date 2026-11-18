@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC
+ "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+<!--
+  Otto asks for this before Settings shows a saved Wi-Fi password, whatever
+  NetworkManager's own policy allows. The user confirms with their own
+  password; polkit remembers it for a few minutes, so showing a second
+  password soon after asks nothing.
+-->
+<policyconfig>
+  <vendor>Otto</vendor>
+  <vendor_url>https://github.com/nongio/otto</vendor_url>
+
+  <action id="org.otto.network.reveal-password">
+    <description>Show a saved Wi-Fi password</description>
+    <message>Confirm it's you to show this network's password.</message>
+    <defaults>
+      <allow_any>auth_self</allow_any>
+      <allow_inactive>auth_self</allow_inactive>
+      <allow_active>auth_self_keep</allow_active>
+    </defaults>
+  </action>
+</policyconfig>

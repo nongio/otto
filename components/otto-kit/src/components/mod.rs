@@ -14,6 +14,7 @@ pub mod list;
 pub mod menu_bar;
 pub mod menu_item;
 pub mod push_button;
+pub mod qr_code;
 pub mod scroll;
 pub mod segmented;
 pub mod selectable_text;

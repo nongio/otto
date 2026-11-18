@@ -45,6 +45,7 @@ else
 fi
 check "$portal" exec
 check /usr/share/polkit-1/actions/org.otto.settings.policy
+check /usr/share/polkit-1/actions/org.otto.network.policy
 check /usr/bin/otto-look exec
 # PDFium, which Studio fills and marks up PDFs with.
 check /usr/lib/otto/libpdfium.so

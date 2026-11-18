@@ -97,6 +97,8 @@ install -Dm644 components/otto-lock/otto-lock.pam \
     "$tmpdir/$PKGDIR/components/otto-lock/otto-lock.pam"
 install -Dm644 resources/polkit/org.otto.settings.policy \
     "$tmpdir/$PKGDIR/resources/polkit/org.otto.settings.policy"
+install -Dm644 resources/polkit/org.otto.network.policy \
+    "$tmpdir/$PKGDIR/resources/polkit/org.otto.network.policy"
 
 # The agent skills, as a tree: PKGBUILD and PKGBUILD-nightly-bin install
 # whatever is under resources/plugins/otto, so the tarball has to carry all of

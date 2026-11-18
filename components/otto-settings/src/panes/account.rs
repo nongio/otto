@@ -655,6 +655,11 @@ pub struct SheetView {
     pub busy: bool,
     /// Cancel still works while busy: it stops the work underway.
     pub cancellable: bool,
+    /// Whether there is a Cancel button beside the default one. A sheet
+    /// that only shows something has the one button that closes it.
+    pub cancel: bool,
+    /// What a sheet sharing a network shows under its body.
+    pub share: Option<crate::sheet::SheetShare>,
 }
 
 /// The sheet, while one is up.
@@ -731,6 +736,8 @@ pub fn sheet() -> Option<SheetView> {
         },
         busy: state.status == Status::Working,
         cancellable: state.status != Status::Working || state.cancel.is_some(),
+        cancel: true,
+        share: None,
     })
 }
 

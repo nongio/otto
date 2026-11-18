@@ -95,6 +95,38 @@ impl DeviceState {
     }
 }
 
+/// Whether a device's connection costs by the byte, as NetworkManager
+/// decides it (`NMMetered`): from the profile's own setting, or guessed from
+/// the link, such as a phone's hotspot.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Metered {
+    #[default]
+    Unknown,
+    Yes,
+    No,
+    /// Guessed metered, with nothing set on the profile.
+    GuessYes,
+    /// Guessed not metered, with nothing set on the profile.
+    GuessNo,
+}
+
+impl Metered {
+    pub fn from_raw(raw: u32) -> Self {
+        match raw {
+            1 => Self::Yes,
+            2 => Self::No,
+            3 => Self::GuessYes,
+            4 => Self::GuessNo,
+            _ => Self::Unknown,
+        }
+    }
+
+    /// Whether the connection counts as metered, guessed or not.
+    pub fn is_metered(self) -> bool {
+        matches!(self, Self::Yes | Self::GuessYes)
+    }
+}
+
 /// One network device.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Device {
@@ -113,6 +145,8 @@ pub struct Device {
     pub active: Option<String>,
     /// Its active connection's addresses.
     pub link: Option<ActiveLink>,
+    /// Whether its connection is metered, as NetworkManager has it now.
+    pub metered: Metered,
 }
 
 impl Device {
@@ -128,6 +162,7 @@ impl Device {
             speed_mbps: None,
             active: None,
             link: None,
+            metered: Metered::Unknown,
         }
     }
 }
@@ -964,6 +999,7 @@ mod tests {
             speed_mbps: None,
             active: None,
             link: None,
+            metered: Metered::Unknown,
         }
     }
 

@@ -17,14 +17,11 @@
 
 use std::collections::HashMap;
 
-use zbus::zvariant::Value;
+use otto_kit::dbus::polkit::{self, AuthorityProxy};
 
 /// The polkit action every protected setting asks for. Declared in
 /// `resources/polkit/org.otto.settings.policy`.
 pub const ACTION: &str = "org.otto.settings.lock";
-
-/// `CheckAuthorization`'s `AllowUserInteraction` flag.
-const ALLOW_USER_INTERACTION: u32 = 1;
 
 /// Why a protected change was not authorized.
 #[derive(Debug)]
@@ -54,26 +51,18 @@ pub async fn authorize(setting: &str) -> Result<(), Refusal> {
         .await
         .map_err(|err| Refusal::Unavailable(err.to_string()))?;
 
-    let mut subject_fields: HashMap<&str, Value<'_>> = HashMap::new();
-    subject_fields.insert("pid", Value::from(std::process::id()));
-    subject_fields.insert("start-time", Value::from(start_time().unwrap_or(0)));
-    let subject = ("unix-process", subject_fields);
-
-    let details: HashMap<&str, &str> = HashMap::new();
-
-    let reply = connection
-        .call_method(
-            Some("org.freedesktop.PolicyKit1"),
-            "/org/freedesktop/PolicyKit1/Authority",
-            Some("org.freedesktop.PolicyKit1.Authority"),
-            "CheckAuthorization",
-            &(subject, ACTION, details, ALLOW_USER_INTERACTION, ""),
-        )
+    let authority = AuthorityProxy::new(&connection)
         .await
         .map_err(|err| Refusal::Unavailable(err.to_string()))?;
-    let (authorized, _challenge, _details): (bool, bool, HashMap<String, String>) = reply
-        .body()
-        .deserialize()
+    let (authorized, _challenge, _details) = authority
+        .check_authorization(
+            &polkit::this_process(),
+            ACTION,
+            HashMap::new(),
+            polkit::ALLOW_USER_INTERACTION,
+            "",
+        )
+        .await
         .map_err(|err| Refusal::Unavailable(err.to_string()))?;
 
     if authorized {
@@ -82,25 +71,5 @@ pub async fn authorize(setting: &str) -> Result<(), Refusal> {
     } else {
         tracing::info!(setting, "protected setting change not confirmed");
         Err(Refusal::NotAuthorized)
-    }
-}
-
-/// This process's start time in clock ticks since boot, the 22nd field of
-/// `/proc/self/stat`, as polkit identifies a process by.
-fn start_time() -> Option<u64> {
-    let stat = std::fs::read_to_string("/proc/self/stat").ok()?;
-    // The command name is in parentheses and may hold spaces; count from
-    // after the last one.
-    let rest = &stat[stat.rfind(')')? + 1..];
-    rest.split_whitespace().nth(19)?.parse().ok()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn this_process_has_a_start_time() {
-        assert!(start_time().is_some_and(|ticks| ticks > 0));
     }
 }
