@@ -24,6 +24,7 @@ use crate::model::*;
 use crate::profile::{
     Family, IpConfig, KeyKind, MacPolicy, MeteredSetting, Profile, ProfileKind, WifiShare,
 };
+use crate::reveal::ShareError;
 use crate::rfkill::Radios;
 
 /// `NMDeviceType` values Otto shows.
@@ -763,22 +764,28 @@ pub async fn set_metered(
 /// The name, security and password of the saved Wi-Fi network at
 /// `connection`, for showing or sharing it.
 ///
-/// The password comes from `GetSecrets`, which NetworkManager authorises
-/// through polkit and may refuse; a polkit agent may ask first. It is asked
-/// only where NetworkManager stores one: a password an agent keeps, or one
-/// asked for on every connect, is `None` with no call.
+/// The password comes from `GetSecrets`, asked only where NetworkManager
+/// stores one: a password an agent keeps, or one asked for on every
+/// connect, is `None` with no call. Before it, polkit confirms it's the
+/// person through [`crate::reveal::ACTION`], on the same bus as `conn`; the
+/// session's authentication agent asks for their password, and this waits
+/// for the answer. NetworkManager then authorises `GetSecrets` itself and
+/// may still refuse.
 ///
 /// # Errors
 ///
-/// A connection that is not Wi-Fi, a refusal (`PermissionDenied`), or any
-/// other bus error.
-pub async fn wifi_share(conn: &Connection, connection: &str) -> zbus::Result<WifiShare> {
+/// [`ShareError::NotConfirmed`] or [`ShareError::Unavailable`] when polkit
+/// did not authorize the read, and [`ShareError::Bus`] for a connection that
+/// is not Wi-Fi, NetworkManager's refusal (`PermissionDenied`), or any other
+/// bus error.
+pub async fn wifi_share(conn: &Connection, connection: &str) -> Result<WifiShare, ShareError> {
     let proxy = at!(SettingsConnectionProxy, conn, connection).await?;
     let settings = proxy.get_settings().await?;
     if !settings.contains_key("802-11-wireless") {
-        return Err(zbus::Error::Failure("not a Wi-Fi connection".into()));
+        return Err(zbus::Error::Failure("not a Wi-Fi connection".into()).into());
     }
     let secrets = if WifiShare::stores_password(&settings) {
+        crate::reveal::confirm(conn).await?;
         proxy.get_secrets("802-11-wireless-security").await?
     } else {
         HashMap::new()

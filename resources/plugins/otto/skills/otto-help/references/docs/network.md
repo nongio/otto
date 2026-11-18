@@ -153,9 +153,12 @@ connection in use counts as metered, **Connection** on the Wi-Fi tab (and
 
 **Password**, on the Wi-Fi tab, has **Show…**. It shows the network's name
 and password with a QR code: point a phone's camera at it to join the same
-network. NetworkManager decides who may read a saved password. Where it asks
-for an administrator, Otto's authorisation dialog comes up first. If you
-cancel it, or it is not allowed, the row says so. A password that is not
+network. The password is shown only after you confirm it's you: Otto's
+authorisation dialog asks for your own password first. Once you have
+confirmed, showing another password within a few minutes asks nothing.
+NetworkManager then decides whether the saved password may be read, and
+where it asks for an administrator, the dialog comes up again. If you
+cancel, or it is not allowed, the row says so. A password that is not
 stored with the network cannot be shown: one kept by another applet, or one
 set to be asked for every time. Neither can an enterprise network's sign-in.
 The password is gone from Settings as soon as you close the sheet.

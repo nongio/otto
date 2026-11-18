@@ -23,6 +23,7 @@ pub mod blocking;
 mod client;
 pub mod model;
 pub mod profile;
+pub mod reveal;
 pub mod rfkill;
 
 pub use client::{
@@ -33,3 +34,4 @@ pub use client::{
 };
 pub use model::*;
 pub use profile::*;
+pub use reveal::ShareError;

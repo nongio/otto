@@ -90,6 +90,11 @@ package() {
         install -Dm644 resources/polkit/org.otto.settings.policy \
             "$pkgdir/usr/share/polkit-1/actions/org.otto.settings.policy"
     fi
+    # The polkit action for showing a saved Wi-Fi password.
+    if [ -f resources/polkit/org.otto.network.policy ]; then
+        install -Dm644 resources/polkit/org.otto.network.policy \
+            "$pkgdir/usr/share/polkit-1/actions/org.otto.network.policy"
+    fi
     install -Dm755 target/release/otto-greeter "$pkgdir/usr/bin/otto-greeter"
     install -Dm755 target/release/otto-rdp "$pkgdir/usr/bin/otto-rdp"
     install -Dm755 target/release/otto-settings "$pkgdir/usr/bin/otto-settings"

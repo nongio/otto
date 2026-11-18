@@ -135,6 +135,8 @@ package() {
     install -Dm755 target/release/otto-authorize "$pkgdir/usr/bin/otto-authorize"
     install -Dm644 resources/polkit/org.otto.settings.policy \
         "$pkgdir/usr/share/polkit-1/actions/org.otto.settings.policy"
+    install -Dm644 resources/polkit/org.otto.network.policy \
+        "$pkgdir/usr/share/polkit-1/actions/org.otto.network.policy"
     install -Dm755 target/release/otto-greeter "$pkgdir/usr/bin/otto-greeter"
     install -Dm755 target/release/otto-rdp "$pkgdir/usr/bin/otto-rdp"
     install -Dm755 target/release/otto-settings "$pkgdir/usr/bin/otto-settings"

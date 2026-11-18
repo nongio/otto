@@ -426,6 +426,41 @@ impl Saved {
     }
 }
 
+/// A stand-in polkit Authority answering every check with `authorize`.
+struct Authority {
+    authorize: Arc<Mutex<bool>>,
+    /// The action and flags of each check.
+    checks: Arc<Mutex<Vec<(String, u32)>>>,
+}
+
+#[interface(name = "org.freedesktop.PolicyKit1.Authority")]
+impl Authority {
+    fn check_authorization(
+        &self,
+        _subject: (String, HashMap<String, OwnedValue>),
+        action_id: String,
+        _details: HashMap<String, String>,
+        flags: u32,
+        _cancellation_id: String,
+    ) -> (bool, bool, HashMap<String, String>) {
+        self.checks.lock().unwrap().push((action_id, flags));
+        (*self.authorize.lock().unwrap(), false, HashMap::new())
+    }
+}
+
+/// Serve a stand-in polkit on the bus at `address`.
+async fn serve_polkit(address: &str, authority: Authority) -> Connection {
+    zbus::connection::Builder::address(address)
+        .unwrap()
+        .name("org.freedesktop.PolicyKit1")
+        .unwrap()
+        .serve_at("/org/freedesktop/PolicyKit1/Authority", authority)
+        .unwrap()
+        .build()
+        .await
+        .unwrap()
+}
+
 struct Active {
     connection: &'static str,
     id: &'static str,
@@ -1189,6 +1224,38 @@ async fn a_saved_password_is_read_for_sharing() {
     let conn = connect(&bus.1).await;
     let profile = "/org/freedesktop/NetworkManager/Settings/1";
 
+    // No polkit on the bus: refused, and the secrets are never asked for.
+    let refused = otto_network::wifi_share(&conn, profile).await;
+    assert!(
+        matches!(&refused, Err(otto_network::ShareError::Unavailable(_))),
+        "{refused:?}"
+    );
+    assert!(calls.lock().unwrap().secrets.is_empty());
+
+    // polkit says no: refused the same way.
+    let authorize = Arc::new(Mutex::new(false));
+    let checks = Arc::new(Mutex::new(Vec::new()));
+    let _polkit = serve_polkit(
+        &bus.1,
+        Authority {
+            authorize: authorize.clone(),
+            checks: checks.clone(),
+        },
+    )
+    .await;
+    let refused = otto_network::wifi_share(&conn, profile).await;
+    assert!(
+        matches!(&refused, Err(otto_network::ShareError::NotConfirmed)),
+        "{refused:?}"
+    );
+    assert!(calls.lock().unwrap().secrets.is_empty());
+    assert_eq!(
+        *checks.lock().unwrap(),
+        [(otto_network::reveal::ACTION.to_string(), 1)],
+        "asked for the reveal action, letting the agent prompt"
+    );
+
+    *authorize.lock().unwrap() = true;
     let share = otto_network::wifi_share(&conn, profile).await.unwrap();
     assert_eq!(share.name(), "Home");
     assert_eq!(
@@ -1204,9 +1271,10 @@ async fn a_saved_password_is_read_for_sharing() {
     calls.lock().unwrap().refuse_secrets = true;
     let refused = otto_network::wifi_share(&conn, profile).await;
     assert!(
-        matches!(&refused, Err(zbus::Error::MethodError(name, _, _)) if name.as_str().ends_with("AccessDenied")),
+        matches!(&refused, Err(otto_network::ShareError::Bus(zbus::Error::MethodError(name, _, _))) if name.as_str().ends_with("AccessDenied")),
         "{refused:?}"
     );
+    assert!(refused.unwrap_err().is_refusal());
 
     // A VPN has no Wi-Fi password.
     assert!(

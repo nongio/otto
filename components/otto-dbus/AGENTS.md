@@ -1,6 +1,6 @@
 # otto-dbus
 
-One typed zbus client proxy for every D-Bus interface Otto calls. Otto's own `org.otto.*` interfaces: those the compositor serves (settings, shell, screencast, compositor), otto-islands (dialog, island), otto-files (file picker, files, desk) and otto-stash. And the ones other software serves: UPower (`upower`), logind (`login1`), NetworkManager (`networkmanager`), the Settings portal (`portal_settings`), the Access portal backend (`portal_access`), tray items (`status_notifier_item`) and their menus (`dbusmenu`). A caller takes the proxy from here. It does not declare its own `#[zbus::proxy]` (the `dbus-proxies-in-otto-dbus` rule in `architecture.toml` fails the build if it does) or call `call_method` with a method name in a string.
+One typed zbus client proxy for every D-Bus interface Otto calls. Otto's own `org.otto.*` interfaces: those the compositor serves (settings, shell, screencast, compositor), otto-islands (dialog, island), otto-files (file picker, files, desk) and otto-stash. And the ones other software serves: UPower (`upower`), logind (`login1`), NetworkManager (`networkmanager`), polkit's Authority (`polkit`, with `this_process()`, the subject Otto's own checks name), the Settings portal (`portal_settings`), the Access portal backend (`portal_access`), tray items (`status_notifier_item`) and their menus (`dbusmenu`). A caller takes the proxy from here. It does not declare its own `#[zbus::proxy]` (the `dbus-proxies-in-otto-dbus` rule in `architecture.toml` fails the build if it does) or call `call_method` with a method name in a string.
 
 How it works: [otto-dbus](../../docs/developer/otto-dbus.md).
 
@@ -11,7 +11,7 @@ How it works: [otto-dbus](../../docs/developer/otto-dbus.md).
 - **External:** `zbus`, taken from `[workspace.dependencies]` like every other member, so it runs on the same tokio executor as the rest of the workspace. No UI and no async runtime of its own.
 
 ## Develop
-- `cargo build -p otto-dbus`. The crate has no tests.
+- `cargo build -p otto-dbus`; `cargo test -p otto-dbus` runs its one test, reading this process's start time for `polkit`.
 
 ## Where things are
 - One module per interface, named after it, Otto's own first in `lib.rs` and then the ones other software serves. Each exports `SERVICE` and `PATH`, plus any wire tuple types the interface uses (`WireChoice`, `WireRequest`, `WireLayout`, …). An interface with no fixed bus name (`portal_access`, `status_notifier_item`, `dbusmenu`) has no `SERVICE`: the caller sets the destination, and the path too where it varies.

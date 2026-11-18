@@ -17,15 +17,15 @@ The crate also has the actions a network UI takes:
 - auto-join
 - save and reapply TCP/IP and DNS
 - the private hardware address and metered setting of a profile
-- read a saved Wi-Fi password for sharing (`wifi_share`, through `GetSecrets`)
+- read a saved Wi-Fi password for sharing (`wifi_share`, through `GetSecrets`, after polkit confirms it's the person)
 
 It has the secret agent's request and reply shapes, and a watcher that says when to read again. NetworkManager keeps all the state. Nothing here caches it.
 
 - **Layer:** service. Used by `otto-bar` (the network indicator) and `otto-settings` (the Network pane).
 
 ## Dependencies
-- **Internal:** `otto-dbus` for the NetworkManager proxies (`networkmanager`).
-- **External:** NetworkManager on the system bus. `zbus` and `tokio` (current-thread runtime for `blocking`).
+- **Internal:** `otto-dbus` for the NetworkManager proxies (`networkmanager`) and polkit's (`polkit`).
+- **External:** NetworkManager on the system bus, and polkit's Authority there (`org.otto.network.reveal-password`, `resources/polkit/org.otto.network.policy`). `zbus` and `tokio` (current-thread runtime for `blocking`).
 
 ## Develop
 - `cargo test -p otto-network` runs the model's tests, which need no bus, and the stand-in NetworkManager tests below.
@@ -44,7 +44,8 @@ It has the secret agent's request and reply shapes, and a watcher that says when
   - the secret agent's `SecretRequest`
 - `src/rfkill.rs`: the kernel's Wi-Fi kill switches, named by a `Radios` value (`Radios::system()` is `/sys/class/rfkill` and `/dev/rfkill`). It reads the blocks, follows them, and lifts a soft block.
 - `src/client.rs`: `read`, the actions, `watch` (which says what changed: strengths, saved connections, or anything else, and ends when the bus closes) and `follow` (read, then keep reading as little as each change needs, retrying a failed read), all async on the caller's runtime. The calls touching the kill switches have `_with` variants taking `Radios`.
-- `tests/mock_networkmanager.rs` runs `read` and every action against a stand-in NetworkManager on a private `dbus-daemon`. It is skipped where there is none. Its calls take `Radios::none()` and name their bus, so a test never reads or changes the host's radios and never sets the environment.
+- `tests/mock_networkmanager.rs` runs `read` and every action against a stand-in NetworkManager, and a stand-in polkit Authority for `wifi_share`, on a private `dbus-daemon`. It is skipped where there is none. Its calls take `Radios::none()` and name their bus, so a test never reads or changes the host's radios and never sets the environment.
+- `src/reveal.rs`: the polkit check before a password is read (`ACTION`), and `ShareError`, which says whether a failed read was a refusal.
 - `src/blocking.rs`: the same calls for a plain thread, each on a runtime of its own.
 
 ## Rules

@@ -4,7 +4,7 @@
 //! portal, the agents daemon, `otto-msg`) speaks the same method signatures
 //! instead of keeping a copy of its own or calling methods by name. Most are
 //! Otto's own `org.otto.*` interfaces; the rest are the freedesktop and tray
-//! interfaces Otto's apps call (UPower, logind, NetworkManager, the portals, StatusNotifierItem,
+//! interfaces Otto's apps call (UPower, logind, NetworkManager, polkit, the portals, StatusNotifierItem,
 //! dbusmenu). Each module names the interface it covers and where its server
 //! lives; a new interface gets its proxy here when its server is written or
 //! its first caller is.
@@ -36,6 +36,7 @@ pub mod stash;
 pub mod dbusmenu;
 pub mod login1;
 pub mod networkmanager;
+pub mod polkit;
 pub mod portal_access;
 pub mod portal_settings;
 pub mod status_notifier_item;

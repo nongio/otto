@@ -12,6 +12,7 @@ use zbus::Connection;
 
 use crate::model::{Snapshot, WifiNetwork};
 use crate::profile::{IpConfig, MacPolicy, MeteredSetting, WifiShare};
+use crate::reveal::ShareError;
 use crate::rfkill::Radios;
 
 /// Run `work` with a fresh system bus connection on a runtime of its own.
@@ -110,8 +111,12 @@ pub fn set_metered(connection: &str, metered: MeteredSetting) -> zbus::Result<()
 }
 
 /// [`crate::wifi_share`]. Blocks while a polkit agent asks.
-pub fn wifi_share(connection: &str) -> zbus::Result<WifiShare> {
-    run(|conn| async move { crate::wifi_share(&conn, connection).await })
+///
+/// # Errors
+///
+/// As [`crate::wifi_share`], and [`ShareError::Bus`] with no system bus.
+pub fn wifi_share(connection: &str) -> Result<WifiShare, ShareError> {
+    run(|conn| async move { Ok(crate::wifi_share(&conn, connection).await) })?
 }
 
 /// [`crate::follow`], blocking the thread until the bus connection closes.

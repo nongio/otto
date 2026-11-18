@@ -948,12 +948,15 @@ fn reveal_password() {
 
 /// What reading a network's password comes to: the sheet to show, or the
 /// line the row says instead. The password itself is never logged.
-fn revealed(result: zbus::Result<otto_network::WifiShare>) -> Result<Reveal, String> {
+fn revealed(
+    result: Result<otto_network::WifiShare, otto_network::ShareError>,
+) -> Result<Reveal, String> {
     let share = match result {
         Ok(share) => share,
-        Err(zbus::Error::MethodError(name, _, _))
-            if name.contains("PermissionDenied") || name.ends_with("AccessDenied") =>
-        {
+        Err(why) if why.is_refusal() => {
+            if let otto_network::ShareError::Unavailable(_) = why {
+                eprintln!("network: reading a password: {why}");
+            }
             return Err(otto_kit::t!("settings-network-password-denied").to_string());
         }
         Err(why) => {
@@ -2009,10 +2012,18 @@ mod tests {
                 .build(&())
                 .unwrap(),
         );
-        assert_eq!(
-            revealed(Err(denied)).err().as_deref(),
-            Some(otto_kit::t!("settings-network-password-denied"))
-        );
+        // Not confirmed at the prompt, no polkit to ask, or NetworkManager
+        // refusing: the row says the same.
+        for refused in [
+            otto_network::ShareError::Bus(denied),
+            otto_network::ShareError::NotConfirmed,
+            otto_network::ShareError::Unavailable("no polkit".into()),
+        ] {
+            assert_eq!(
+                revealed(Err(refused)).err().as_deref(),
+                Some(otto_kit::t!("settings-network-password-denied"))
+            );
+        }
     }
 
     #[test]
