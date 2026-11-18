@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.10.0] - 2026-11-18
+
+### 🚀 Features
+
+- *(website)* Cookieless Cloudflare analytics
+- *(network)* Native Wi-Fi, Ethernet and VPN manager (#413)
+- *(network)* Private address, metered, share password (#416)
+
+### 🐛 Bug Fixes
+
+- *(render)* Damage lost over frost and between ticks (#414)
+
+### ⚡ Performance
+
+- Frame pacing, frosting and exposé cost (#411) (#412)
+
 ## [1.9.0] - 2026-11-07
 
 ### 🚀 Features
