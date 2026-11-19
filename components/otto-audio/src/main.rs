@@ -28,6 +28,8 @@ const WINDOW_H: i32 = 700;
 /// column of cards.
 const MIN_W: u32 = 720;
 const MIN_H: u32 = 460;
+/// How often the loop wakes while something on screen is animating.
+const ANIMATION_TICK: std::time::Duration = std::time::Duration::from_millis(8);
 
 struct AudioApp {
     ui: Option<Arc<Mutex<Ui>>>,
@@ -154,7 +156,18 @@ impl App for AudioApp {
         self.with_ui(Ui::pinch_end);
     }
 
+    /// While a scroll is coasting, bouncing or fading its bar the loop needs a
+    /// steady clock, not just the next event.
+    fn idle_timeout(&self) -> Option<std::time::Duration> {
+        self.with_ui(|ui| ui.is_animating())
+            .unwrap_or(false)
+            .then_some(ANIMATION_TICK)
+    }
+
     fn on_update(&mut self, _ctx: &AppContext) {
+        if self.with_ui(|ui| ui.is_animating()).unwrap_or(false) {
+            self.redraw();
+        }
         let events = match self.inbox.lock() {
             Ok(mut inbox) => std::mem::take(&mut *inbox),
             Err(_) => return,

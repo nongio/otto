@@ -15,6 +15,7 @@ use otto_audio_graph::{
     SETTING_QUANTUM, SETTING_RATE,
 };
 use otto_kit::components::push_button::{self, PushButton, Role as ButtonRole};
+use otto_kit::components::scroll::ScrollView;
 use otto_kit::components::segmented::{self, Segment, SegmentedInteraction};
 use otto_kit::components::source_list::{self, SourceListItem, SourceListLayout};
 use otto_kit::components::titlebar::{
@@ -98,7 +99,8 @@ pub struct Ui {
     drag: Option<Drag>,
     pressed: Option<Action>,
     targets: Vec<(Rect, Action)>,
-    props_scroll: f32,
+    /// The details panel's property list.
+    props_scroll: ScrollView,
     pinch_zoom: Option<f32>,
     /// Whether the server has said once whether it is there, so the window
     /// does not flash "not running" while it connects.
@@ -131,7 +133,7 @@ impl Ui {
             drag: None,
             pressed: None,
             targets: Vec::new(),
-            props_scroll: 0.0,
+            props_scroll: ScrollView::new(Rect::from_xywh(0.0, 0.0, 0.0, 0.0)),
             pinch_zoom: None,
             heard: false,
             dark: false,
@@ -505,31 +507,41 @@ impl Ui {
             .render(canvas);
         let list_top = y + 18.0;
         let list = Rect::from_ltrb(rect.left, list_top, rect.right, rect.bottom);
-        canvas.clip_rect(list, None, Some(true));
         let key_font = styles::CAPTION_2.font();
+        let row_h = 2.0 * PROP_LINE_H;
         let lines = node.props.len() as f32;
-        let max_scroll = (lines * PROP_LINE_H * 2.0 - list.height() + 12.0).max(0.0);
-        self.props_scroll = self.props_scroll.clamp(0.0, max_scroll);
-        let mut y = list_top + 8.0 - self.props_scroll;
-        for (key, value) in &node.props {
-            if y > rect.bottom {
-                break;
+        self.props_scroll.set_viewport(list);
+        self.props_scroll.set_content_length(lines * row_h + 12.0);
+        self.props_scroll.tick();
+        // Content-local: x from the list's left edge, y from its top.
+        let x = left - rect.left;
+        self.props_scroll.render(canvas, theme, |canvas, band| {
+            let mut y = 8.0;
+            for (key, value) in &node.props {
+                if y > band.bottom {
+                    break;
+                }
+                if y + row_h >= band.top {
+                    Label::new(ellipsize(&key_font, key, width))
+                        .with_style(styles::CAPTION_2)
+                        .with_color(theme.text_secondary)
+                        .centered_on(x, y)
+                        .render(canvas);
+                    Label::new(ellipsize(&value_font, value, width))
+                        .with_style(styles::FOOTNOTE)
+                        .with_color(theme.text_primary)
+                        .centered_on(x, y + 15.0)
+                        .render(canvas);
+                }
+                y += row_h;
             }
-            if y + 2.0 * PROP_LINE_H >= list_top {
-                Label::new(ellipsize(&key_font, key, width))
-                    .with_style(styles::CAPTION_2)
-                    .with_color(theme.text_secondary)
-                    .centered_on(left, y)
-                    .render(canvas);
-                Label::new(ellipsize(&value_font, value, width))
-                    .with_style(styles::FOOTNOTE)
-                    .with_color(theme.text_primary)
-                    .centered_on(left, y + 15.0)
-                    .render(canvas);
-            }
-            y += 2.0 * PROP_LINE_H;
-        }
+        });
         canvas.restore();
+    }
+
+    /// Whether something drawn is still moving and wants another frame.
+    pub fn is_animating(&self) -> bool {
+        self.view.selected_node.is_some() && self.props_scroll.is_animating()
     }
 
     fn draw_engine(&mut self, canvas: &Canvas, theme: &Theme) {
@@ -710,7 +722,13 @@ impl Ui {
                     vertical,
                     ..
                 } => {
-                    redraw |= self.scroll(p, horizontal.absolute as f32, vertical.absolute as f32);
+                    redraw |= self.scroll(
+                        p,
+                        horizontal.absolute as f32,
+                        vertical.absolute as f32,
+                        vertical.discrete != 0,
+                        vertical.stop,
+                    );
                 }
             }
         }
@@ -804,7 +822,7 @@ impl Ui {
                     .card(node)
                     .map_or(world, |c| Point::new(c.rect.left, c.rect.top));
                 if self.view.selected_node != Some(node) {
-                    self.props_scroll = 0.0;
+                    self.props_scroll.scroll_to(0.0);
                 }
                 self.view.selected_node = Some(node);
                 self.view.selected_wire = None;
@@ -882,10 +900,19 @@ impl Ui {
         }
     }
 
-    fn scroll(&mut self, p: Point, dx: f32, dy: f32) -> bool {
+    fn scroll(&mut self, p: Point, dx: f32, dy: f32, discrete: bool, stop: bool) -> bool {
         if self.details_rect().is_some_and(|r| r.contains(p)) {
-            self.props_scroll += dy;
-            return true;
+            // A notched wheel moves one step per click; a touchpad stream
+            // drives momentum, and lifting the fingers throws it.
+            if stop {
+                self.props_scroll.on_wheel_end();
+                return true;
+            }
+            return if discrete {
+                self.props_scroll.on_wheel_discrete(dy)
+            } else {
+                self.props_scroll.on_wheel(dy)
+            };
         }
         if self.pane != Pane::Graph || !self.viewport().contains(p) {
             return false;
