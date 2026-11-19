@@ -370,7 +370,22 @@ only the sections that exist. Where it consciously differs from the above:
   microphone is open, and warnings for profile clashes such as HDMI on the
   built-in card. The default output and input are not marked either; that
   waits for the `default` metadata (Plan, step 3).
-- **Top bar.** No sound menu yet (Plan, step 3).
+- **Top bar.** The sound indicator and menu are in `otto-bar`, as above,
+  with three differences. The input has no level meter yet: it waits for
+  the meters (step 2). There is no setup row, since there is one implicit
+  setup. Each output and input shows what kind of device it is (Bluetooth,
+  USB, HDMI, Built-in or Virtual) beside its name. The defaults are read
+  from `default.audio.sink` and `.source` in the `default` metadata, and a
+  choice is written to `default.configured.audio.sink` and `.source`, as
+  `wpctl set-default` does. Volume and mute are read from each node's
+  `Props`; a change goes through the card's `Route` (saved with the route)
+  when the node belongs to a card, and through the node's `Props`
+  otherwise, as `wpctl` and the PulseAudio server do. Volumes are cubic on
+  the wire and shown linear. Sliders reach 100 %, never past it. An app is
+  shown by `application.name`; its streams move together, and filters'
+  own streams and level monitors are left out. The sliders, toggles and
+  captions are otto-kit menu rows, so the menu is drawn by the same
+  `ContextMenu` as every other bar menu.
 - **Virtual devices.** Three kinds: an *output* (a null sink, whose monitor
   carries what apps play into it), an *input* (a virtual source apps record
   from) and a *loopback* (a recording stream and a playing stream that pass

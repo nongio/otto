@@ -335,6 +335,7 @@ settings-network-wifi-soft-blocked = Off with airplane mode. Turning Wi-Fi on en
 settings-network-current = Network
 settings-network-not-connected = Not connected
 settings-show-network = Show network status in the top bar
+settings-show-sound = Show sound in the top bar
 settings-group-network-status = Status
 settings-group-network-known = Known networks
 settings-network-kind-wifi = Wi-Fi
@@ -1308,6 +1309,38 @@ bar-network-ethernet-connected-speed = Ethernet — connected, { $speed }
 # Part of the line under the connected network: band · channel · rate · address.
 bar-network-channel = channel { $channel }
 
+## Top bar — sound
+##
+## The speaker in the top bar and the menu under it.
+
+# Captions over the menu's groups: where sound plays, where it is recorded
+# from, and the apps playing.
+bar-sound-output = Output
+bar-sound-input = Input
+bar-sound-apps = Apps
+# Screen-reader names of the sliders. $app is an app's name, e.g. Firefox.
+bar-sound-output-volume = Output volume
+bar-sound-input-volume = Input volume
+bar-sound-app-volume = { $app } volume
+# Screen-reader names of the round mute buttons beside the sliders.
+bar-sound-mute-output = Mute output
+bar-sound-mute-input = Mute input
+bar-sound-mute-app = Mute { $app }
+# Beside each output and input, in the shortcut column: what kind of device
+# it is. Virtual is one made in software, such as a mix or an effect.
+bar-sound-kind-bluetooth = Bluetooth
+bar-sound-kind-usb = USB
+bar-sound-kind-hdmi = HDMI
+bar-sound-kind-virtual = Virtual
+bar-sound-kind-built-in = Built-in
+# The menu's last row, which opens the Audio app.
+bar-sound-open-audio = Audio…
+# What a screen reader calls the indicator. $percent is a whole number and
+# $device the output's name.
+bar-sound-label = Sound, { $percent }%, { $device }
+bar-sound-label-muted = Sound muted, { $device }
+bar-sound-label-none = Sound, no output
+
 ## Top bar — Wi-Fi password dialog
 
 # $name is the network's name.
@@ -1350,6 +1383,14 @@ bar-app-quit = Quit { $app }
 bar-logout-title = Log out now?
 bar-logout-body = Your apps will be asked to close first, so anything unsaved gets a chance to be saved.
 
+
+## Menus
+##
+## Parts of the menus every app shares.
+
+# Beside a slider in a menu, such as a volume. $percent is a whole number,
+# 0 to 100.
+menu-slider-percent = { $percent }%
 
 ## Settings — widgets
 ##
@@ -1407,6 +1448,8 @@ schema-topbar-show-clock-label = Show date and time
 schema-topbar-show-clock-description = The clock at the right end of the top bar.
 schema-topbar-show-network-label = Show network status
 schema-topbar-show-network-description = The Wi-Fi and wired indicator in the top bar, with a menu to join a network. Shown where NetworkManager runs.
+schema-topbar-show-sound-label = Show sound
+schema-topbar-show-sound-description = The speaker in the top bar, with a menu for the volume, the output and input, and the apps playing. Shown where PipeWire runs.
 schema-topbar-clock-format-label = Clock format
 schema-topbar-clock-format-description = How the top bar writes the date and time, as a strftime format. Empty follows your language.
 schema-topbar-show-app-menu-label = Show application menus

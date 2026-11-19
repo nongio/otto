@@ -119,7 +119,8 @@ The Top Bar is a persistent, full-width panel anchored to the top edge of the pr
 
 ### Sound (Right Zone)
 
-39b. The sound indicator and its menu are specified in [audio-routing.md](audio-routing.md#the-top-bar-sound-menu). It sits before the network indicator. It is shown while the `topbar.show_sound` setting (Settings, Top bar, "Show sound in the top bar", on by default) is true and a PipeWire server answers; otherwise it takes no room. Its last row opens the Audio app.
+39b. The sound indicator and its menu are specified in [audio-routing.md](audio-routing.md#the-top-bar-sound-menu). It sits before the network indicator. It is shown while the `topbar.show_sound` setting (Settings, Top bar, "Show sound in the top bar", on by default) is true and a PipeWire server answers; otherwise it takes no room. Its last row opens the Audio app (`otto-audio`). The state comes from the PipeWire graph through `otto-audio-graph`, followed live on a thread of its own; the bar redraws only when what the indicator or the open menu shows changes. Clicking it opens the menu, scrolling over it changes the default output's volume in 5 % steps, and a middle click mutes and unmutes it. While the menu is open it follows the graph in place, and is shown again at its new size when rows come or go.
+39c. To an assistive technology the sound indicator is a button with a popup, labelled with the default output's volume and name ("Sound, 45%, Built-in Audio Analog Stereo", or "Sound muted, …"), and announced politely as it changes.
 
 ### Clock (Right Zone)
 

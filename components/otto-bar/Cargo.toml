@@ -13,6 +13,9 @@ path = "src/main.rs"
 [dependencies]
 otto-kit = { path = "../otto-kit" }
 otto-network = { path = "../otto-network" }
+# The sound indicator's graph: defaults, volumes and streams. It wraps
+# PipeWire, which the bar never links itself.
+otto-audio-graph = { path = "../otto-audio-graph" }
 wayland-client.workspace = true
 wayland-protocols = { workspace = true, features = ["client"] }
 wayland-protocols-wlr = { workspace = true, features = ["client"] }

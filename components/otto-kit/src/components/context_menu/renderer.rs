@@ -10,6 +10,10 @@ pub struct ContextMenuRenderer;
 /// Height of the strip a scroll arrow sits in, at either end of a capped menu.
 const ARROW_STRIP: f32 = 14.0;
 
+/// The narrowest a slider row is: room for a toggle, a name, a track worth
+/// dragging and the percentage.
+const SLIDER_MIN_WIDTH: f32 = 300.0;
+
 impl ContextMenuRenderer {
     /// Calculate menu dimensions from items and style
     ///
@@ -123,6 +127,17 @@ impl ContextMenuRenderer {
                 } => (label.as_str(), shortcut.as_deref(), false),
                 MenuItemKind::Submenu { label, .. } => (label.as_str(), None, true),
                 MenuItemKind::Separator => continue,
+                MenuItemKind::Header { label } => {
+                    let caption = crate::typography::styles::CAPTION_1_EMPHASIZED.font();
+                    let row_w = item_style.horizontal_padding * 2.0
+                        + crate::typography::measure_runs(&caption, label);
+                    max_width = max_width.max(row_w);
+                    continue;
+                }
+                MenuItemKind::Slider(_) => {
+                    max_width = max_width.max(SLIDER_MIN_WIDTH);
+                    continue;
+                }
             };
 
             // Measured in the faces the label will be drawn in: a font with
@@ -377,6 +392,9 @@ impl ContextMenuRenderer {
     /// `scroll` is how far the list is scrolled inside the menu's box: the
     /// pointer arrives in the box's coordinates, and the items have moved up
     /// by that much underneath it.
+    ///
+    /// Only rows a pointer highlights count: not a separator, a header or a
+    /// slider, whose parts take the pointer themselves (see [`Self::row_at`]).
     pub fn hit_test_items(
         items: &[MenuItem],
         style: &ContextMenuStyle,
@@ -384,6 +402,20 @@ impl ContextMenuRenderer {
         y: f32,
         scroll: f32,
     ) -> Option<usize> {
+        let (index, _) = Self::row_at(items, style, x, y, scroll)?;
+        let item = &items[index];
+        (item.is_selectable() && item.slider_data().is_none()).then_some(index)
+    }
+
+    /// The row under `(x, y)`, whatever it is, and the rectangle it is drawn
+    /// in, in the menu box's coordinates.
+    pub fn row_at(
+        items: &[MenuItem],
+        style: &ContextMenuStyle,
+        x: f32,
+        y: f32,
+        scroll: f32,
+    ) -> Option<(usize, Rect)> {
         // Use the same width logic as measure_items
         let total_width = style
             .width
@@ -404,16 +436,24 @@ impl ContextMenuRenderer {
         }
 
         // Into the list's own coordinates, which have slid up by `scroll`.
-        let y = y + scroll.clamp(0.0, Self::overflow(items, style));
+        let scroll = scroll.clamp(0.0, Self::overflow(items, style));
+        let y = y + scroll;
 
         // Calculate position relative to first item
         let mut current_y = style.vertical_padding;
 
         for (i, item) in items.iter().enumerate() {
-            let item_bottom = current_y + style.item_height_of(item);
+            let height = style.item_height_of(item);
+            let item_bottom = current_y + height;
 
             if y >= current_y && y < item_bottom {
-                return if item.is_separator() { None } else { Some(i) };
+                let row = Rect::from_xywh(
+                    style.horizontal_padding,
+                    current_y - scroll,
+                    total_width - style.horizontal_padding * 2.0,
+                    height,
+                );
+                return Some((i, row));
             }
 
             current_y = item_bottom;
@@ -562,6 +602,55 @@ mod tests {
             ContextMenuRenderer::scroll_to_reveal(&items, &short, 19, 0.0),
             0.0
         );
+    }
+
+    #[test]
+    fn a_slider_row_takes_the_pointer_itself_and_a_header_takes_none() {
+        use crate::components::menu_item::{slider_layout, MenuItemIcon, SLIDER_HEIGHT};
+
+        let items = vec![
+            MenuItem::header("Output"),
+            MenuItem::slider("out", "Output volume", 0.5).with_slider_toggle(
+                MenuItemIcon::Named("audio-volume-high-symbolic".into()),
+                true,
+                "Mute output",
+            ),
+            MenuItem::action("Speakers"),
+        ];
+        let style = ContextMenuStyle::default();
+        let (width, _) = ContextMenuRenderer::measure_items(&items, &style);
+        assert!(width >= SLIDER_MIN_WIDTH);
+
+        let header_y = style.vertical_padding + 2.0;
+        let slider_y = style.vertical_padding + items[0].height + SLIDER_HEIGHT / 2.0;
+        let x = width / 2.0;
+        assert_eq!(
+            ContextMenuRenderer::hit_test_items(&items, &style, x, header_y, 0.0),
+            None
+        );
+        assert_eq!(
+            ContextMenuRenderer::hit_test_items(&items, &style, x, slider_y, 0.0),
+            None
+        );
+        let (index, row) =
+            ContextMenuRenderer::row_at(&items, &style, x, slider_y, 0.0).expect("a row");
+        assert_eq!(index, 1);
+        assert_eq!(row.height(), SLIDER_HEIGHT);
+
+        // The parts sit left to right inside the row, and the track has room.
+        let slider = items[1].slider_data().expect("a slider");
+        let layout = slider_layout(
+            slider,
+            &style.item_style(),
+            row.left,
+            row.top,
+            row.width(),
+            row.height(),
+        );
+        let toggle = layout.toggle.expect("a toggle");
+        assert!(toggle.right < layout.track.left);
+        assert!(layout.track.right < layout.readout.left);
+        assert!(layout.track.width() > 120.0);
     }
 
     #[test]

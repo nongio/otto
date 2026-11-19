@@ -5318,6 +5318,7 @@ version = "1.9.0"
 dependencies = [
  "chrono",
  "futures-util",
+ "otto-audio-graph",
  "otto-kit",
  "otto-network",
  "serde_json",

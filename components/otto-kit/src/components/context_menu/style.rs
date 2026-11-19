@@ -205,8 +205,9 @@ impl ContextMenuStyle {
     /// they are a rule, not a row, and stretching them with the text would
     /// only add space.
     pub fn item_height_of(&self, item: &crate::components::menu_item::MenuItem) -> f32 {
-        match self.item_height {
-            Some(height) if !item.is_separator() => height,
+        use crate::components::menu_item::MenuItemKind;
+        match (self.item_height, &item.kind) {
+            (Some(height), MenuItemKind::Action { .. } | MenuItemKind::Submenu { .. }) => height,
             _ => item.height,
         }
     }

@@ -4,9 +4,12 @@ mod group;
 mod renderer;
 mod style;
 
-pub use data::{MenuItem, MenuItemIcon, MenuItemKind, VisualState};
+pub use data::{
+    MenuItem, MenuItemIcon, MenuItemKind, MenuSlider, SliderChange, SliderToggle, VisualState,
+    HEADER_HEIGHT, SLIDER_HEIGHT,
+};
 pub use group::MenuItemGroup;
-pub use renderer::{MenuItemRenderer, CHECK_GUTTER};
+pub use renderer::{slider_layout, slider_readout, MenuItemRenderer, SliderLayout, CHECK_GUTTER};
 pub use style::MenuItemStyle;
 
 // Backward compatibility alias

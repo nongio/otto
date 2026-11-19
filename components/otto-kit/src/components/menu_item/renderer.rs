@@ -1,10 +1,84 @@
-use super::{MenuItem, MenuItemIcon, MenuItemStyle, VisualState};
+use super::{MenuItem, MenuItemIcon, MenuItemKind, MenuItemStyle, MenuSlider, VisualState};
 
+use crate::components::slider::{self, SliderInteraction, KNOB_RADIUS};
 use crate::{components::icon::Icon, Renderable};
 use skia_safe::{Canvas, Font, Paint, Point, RRect, Rect};
 
 /// Room before a toggle's label for its check.
 pub const CHECK_GUTTER: f32 = 16.0;
+
+/// The round toggle of a slider row.
+const TOGGLE_DIAMETER: f32 = 24.0;
+/// The glyph inside the toggle.
+const TOGGLE_ICON: f32 = 14.0;
+/// The column a slider row's name is drawn in; a longer name is cut short.
+const SLIDER_LABEL_WIDTH: f32 = 76.0;
+/// The column the percentage is drawn in, right-aligned: room for "100%".
+const READOUT_WIDTH: f32 = 36.0;
+/// The space between the parts of a slider row.
+const SLIDER_GAP: f32 = 10.0;
+
+/// Where the parts of a slider row sit, in the row's coordinates. Drawing
+/// and hit-testing both come through [`slider_layout`], so a press lands on
+/// what is drawn.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SliderLayout {
+    /// The round toggle, when the row has one.
+    pub toggle: Option<Rect>,
+    /// The name's column, when the row has a name.
+    pub label: Option<Rect>,
+    /// The track. The knob's centre stays inside it.
+    pub track: Rect,
+    /// The percentage's column.
+    pub readout: Rect,
+}
+
+/// Lay out the slider row at `(x, y)`, `width` by `height`.
+pub fn slider_layout(
+    slider: &MenuSlider,
+    style: &MenuItemStyle,
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+) -> SliderLayout {
+    let cy = y + height / 2.0;
+    let mut left = x + style.horizontal_padding;
+    let toggle = slider.toggle.as_ref().map(|_| {
+        let rect = Rect::from_xywh(
+            left,
+            cy - TOGGLE_DIAMETER / 2.0,
+            TOGGLE_DIAMETER,
+            TOGGLE_DIAMETER,
+        );
+        left += TOGGLE_DIAMETER + SLIDER_GAP;
+        rect
+    });
+    let label = slider.label.as_ref().map(|_| {
+        let rect = Rect::from_xywh(left, y, SLIDER_LABEL_WIDTH, height);
+        left += SLIDER_LABEL_WIDTH + SLIDER_GAP;
+        rect
+    });
+    let right = x + width - style.horizontal_padding;
+    let readout = Rect::from_xywh(right - READOUT_WIDTH, y, READOUT_WIDTH, height);
+    let track_left = left + KNOB_RADIUS;
+    let track_right = (readout.left - SLIDER_GAP - KNOB_RADIUS).max(track_left);
+    let track = Rect::from_ltrb(track_left, y, track_right, y + height);
+    SliderLayout {
+        toggle,
+        label,
+        track,
+        readout,
+    }
+}
+
+/// A value from 0.0 to 1.0 as the percentage a slider row shows.
+pub fn slider_readout(value: f32) -> String {
+    crate::t_owned!(
+        "menu-slider-percent",
+        percent = (value.clamp(0.0, 1.0) * 100.0).round() as f64
+    )
+}
 
 /// Pure rendering functions for MenuItem
 pub struct MenuItemRenderer;
@@ -19,10 +93,15 @@ impl MenuItemRenderer {
         y: f32,
         width: f32,
     ) {
-        if data.is_separator() {
-            Self::draw_separator(canvas, style, x, y, width);
-        } else {
-            Self::draw_item(canvas, data, style, x, y, width);
+        match &data.kind {
+            MenuItemKind::Separator => Self::draw_separator(canvas, style, x, y, width),
+            MenuItemKind::Slider(slider) => {
+                Self::draw_slider(canvas, data, slider, style, x, y, width);
+            }
+            MenuItemKind::Header { label } => {
+                Self::draw_header(canvas, label, style, x, y, data.height);
+            }
+            _ => Self::draw_item(canvas, data, style, x, y, width),
         }
     }
 
@@ -37,6 +116,143 @@ impl MenuItemRenderer {
         canvas.draw_line(
             Point::new(x + style.horizontal_padding, line_y),
             Point::new(x + width - style.horizontal_padding, line_y),
+            &paint,
+        );
+    }
+
+    /// A caption over a group: small, emphasised and in the secondary tone,
+    /// set low in its row so it sits on the rows it names.
+    fn draw_header(
+        canvas: &Canvas,
+        label: &str,
+        style: &MenuItemStyle,
+        x: f32,
+        y: f32,
+        height: f32,
+    ) {
+        let font = crate::typography::styles::CAPTION_1_EMPHASIZED.font();
+        let mut paint = Paint::default();
+        paint.set_color(style.theme.text_secondary);
+        paint.set_anti_alias(true);
+        let (_, metrics) = font.metrics();
+        let baseline = y + height - metrics.descent - 3.0;
+        crate::typography::draw_runs(
+            canvas,
+            label,
+            Point::new(x + style.horizontal_padding, baseline),
+            &font,
+            &paint,
+        );
+    }
+
+    /// A slider row: the toggle, the name, the track and the percentage.
+    #[allow(clippy::too_many_arguments)]
+    fn draw_slider(
+        canvas: &Canvas,
+        data: &MenuItem,
+        slider: &MenuSlider,
+        style: &MenuItemStyle,
+        x: f32,
+        y: f32,
+        width: f32,
+    ) {
+        let theme = &style.theme;
+        let layout = slider_layout(slider, style, x, y, width, data.height);
+        let enabled = data.is_enabled();
+
+        // The keyboard is on this row: a quiet band, since the accent pill an
+        // action wears would swallow the accent track.
+        if data.visual_state() == VisualState::Hovered {
+            let mut band = Paint::default();
+            band.set_color(theme.fill_secondary);
+            band.set_anti_alias(true);
+            canvas.draw_rrect(
+                RRect::new_rect_xy(
+                    Rect::from_xywh(x, y, width, data.height),
+                    style.border_radius,
+                    style.border_radius,
+                ),
+                &band,
+            );
+        }
+
+        if let (Some(rect), Some(toggle)) = (layout.toggle, slider.toggle.as_ref()) {
+            let lit = toggle.on && enabled;
+            let mut fill = Paint::default();
+            fill.set_anti_alias(true);
+            fill.set_color(if lit {
+                theme.accent
+            } else {
+                theme.fill_secondary
+            });
+            canvas.draw_circle(rect.center(), TOGGLE_DIAMETER / 2.0, &fill);
+            let tint = if lit {
+                skia_safe::Color::WHITE
+            } else {
+                style.text_color_normal
+            };
+            Self::draw_icon_at(
+                canvas,
+                &toggle.icon,
+                tint,
+                rect.center_x() - TOGGLE_ICON / 2.0,
+                rect.center_y() - TOGGLE_ICON / 2.0,
+                TOGGLE_ICON,
+            );
+        }
+
+        let text_color = if enabled {
+            style.text_color_normal
+        } else {
+            style.text_color_disabled
+        };
+        if let (Some(rect), Some(label)) = (layout.label, slider.label.as_deref()) {
+            let font = style.font();
+            let fitted = crate::typography::ellipsize_by(label, rect.width(), |piece| {
+                crate::typography::measure_runs(&font, piece)
+            });
+            Self::draw_label(
+                canvas,
+                &fitted,
+                &font,
+                text_color,
+                rect.left - style.horizontal_padding,
+                y,
+                data.height,
+                style,
+                0.0,
+            );
+        }
+
+        let interaction = if enabled {
+            SliderInteraction::Normal
+        } else {
+            SliderInteraction::Disabled
+        };
+        slider::draw(
+            canvas,
+            layout.track,
+            slider.value,
+            0.0,
+            1.0,
+            None,
+            interaction,
+            theme,
+        );
+
+        let font = style.shortcut_font();
+        let readout = slider_readout(slider.value);
+        let (readout_width, _) = font.measure_str(&readout, None);
+        let (_, metrics) = font.metrics();
+        let baseline =
+            y + (data.height - (metrics.descent - metrics.ascent)) / 2.0 - metrics.ascent;
+        let mut paint = Paint::default();
+        paint.set_color(style.shortcut_color_normal);
+        paint.set_anti_alias(true);
+        canvas.draw_str(
+            &readout,
+            Point::new(layout.readout.right - readout_width, baseline),
+            &font,
             &paint,
         );
     }
@@ -218,7 +434,18 @@ impl MenuItemRenderer {
     ) {
         let icon_x = x + style.horizontal_padding;
         let icon_y = y + (height - icon_size) / 2.0;
+        Self::draw_icon_at(canvas, icon, tint, icon_x, icon_y, icon_size);
+    }
 
+    /// Draw `icon` in an `icon_size` square at `(icon_x, icon_y)`.
+    fn draw_icon_at(
+        canvas: &Canvas,
+        icon: &MenuItemIcon,
+        tint: skia_safe::Color,
+        icon_x: f32,
+        icon_y: f32,
+        icon_size: f32,
+    ) {
         match icon {
             MenuItemIcon::Named(name) => {
                 tracing::trace!(

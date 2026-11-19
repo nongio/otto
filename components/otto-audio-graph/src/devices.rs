@@ -400,6 +400,13 @@ struct Tracker {
     reported: bool,
 }
 
+/// The device proxy kept in `bound` for a device, for setting its params.
+pub(crate) fn proxy_in(bound: &dyn std::any::Any) -> Option<&pw::device::Device> {
+    bound
+        .downcast_ref::<(Bound, Rc<RefCell<Tracker>>)>()
+        .map(|(bound, _)| bound.proxy.as_ref())
+}
+
 /// Bind the device `global` and follow its profiles and routes.
 pub(crate) fn bind(
     core: &pw::core::CoreRc,
@@ -460,12 +467,24 @@ pub(crate) fn bind(
         .done({
             let tracker = Rc::downgrade(&tracker);
             let emit = Rc::downgrade(emit);
+            let mixer = Rc::downgrade(&state.mixer);
             move |id, seq| {
                 if id != pw::core::PW_ID_CORE {
                     return;
                 }
                 if let (Some(tracker), Some(emit)) = (tracker.upgrade(), emit.upgrade()) {
                     on_done(&tracker, &emit, seq);
+                    // The mixer sets a card's volume through its active
+                    // route, so it follows the routes read here.
+                    if let Some(mixer) = mixer.upgrade() {
+                        let t = tracker.borrow();
+                        let routes = t
+                            .device
+                            .active_routes
+                            .iter()
+                            .filter_map(|r| r.device.map(|device| (device, r.index)));
+                        mixer.set_routes(t.device.id, routes);
+                    }
                 }
             }
         })

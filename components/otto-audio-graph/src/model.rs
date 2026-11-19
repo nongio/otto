@@ -219,6 +219,17 @@ pub enum Event {
     Setting { key: String, value: Option<String> },
     /// A device appeared or changed: its profiles, ports or properties.
     Device(crate::devices::Device),
+    /// The default output or input is now the node named `name`; `None`
+    /// when the session manager names none.
+    Default {
+        endpoint: crate::mixer::Endpoint,
+        name: Option<String>,
+    },
+    /// A node's volume or mute changed.
+    Volume {
+        node: u32,
+        volume: crate::mixer::Volume,
+    },
 }
 
 /// The graph as last reported, keyed by global id.
@@ -232,6 +243,7 @@ pub struct Graph {
     devices: BTreeMap<u32, crate::devices::Device>,
     connected: bool,
     synced: bool,
+    pub(crate) mixer: crate::mixer::Mixer,
 }
 
 impl Graph {
@@ -271,6 +283,7 @@ impl Graph {
                 self.links.remove(&id);
                 self.clients.remove(&id);
                 self.devices.remove(&id);
+                self.mixer.remove(id);
             }
             Event::Setting { key, value } => match value {
                 Some(value) => {
@@ -283,6 +296,8 @@ impl Graph {
             Event::Device(device) => {
                 self.devices.insert(device.id, device);
             }
+            Event::Default { endpoint, name } => self.mixer.set_default(endpoint, name),
+            Event::Volume { node, volume } => self.mixer.set_volume(node, volume),
         }
     }
 
@@ -293,6 +308,7 @@ impl Graph {
         self.clients.clear();
         self.settings.clear();
         self.devices.clear();
+        self.mixer = crate::mixer::Mixer::default();
         self.synced = false;
     }
 

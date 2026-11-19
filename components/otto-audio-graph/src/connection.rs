@@ -53,6 +53,7 @@ pub(crate) enum Command {
     },
     VirtualDevices(Vec<VirtualDevice>),
     Device(crate::devices::DeviceCommand),
+    Mixer(crate::mixer::Command),
 }
 
 /// A connection to PipeWire, followed on a thread of its own.
@@ -113,6 +114,10 @@ impl Connection {
     /// again whenever the server comes back. They go when this program does.
     pub fn keep_virtual_devices(&self, devices: Vec<VirtualDevice>) {
         self.send(Command::VirtualDevices(devices));
+    }
+
+    pub(crate) fn send_mixer(&self, command: crate::mixer::Command) {
+        self.send(Command::Mixer(command));
     }
 
     pub(crate) fn send(&self, command: Command) {
@@ -235,6 +240,7 @@ fn session(
                     *state.settings.borrow_mut() = None;
                     *state.settings_id.borrow_mut() = None;
                 }
+                state.mixer.forget(id, &*emit);
                 emit(Event::Removed(id));
             }
         })
@@ -284,6 +290,8 @@ pub(crate) struct State {
     settings_id: RefCell<Option<u32>>,
     /// The virtual devices made on this connection.
     virtual_devices: RefCell<Made>,
+    /// The defaults, the volumes and the cards' routes.
+    pub(crate) mixer: Rc<crate::mixer::Thread>,
 }
 
 impl State {
@@ -291,6 +299,7 @@ impl State {
         self.virtual_devices.borrow_mut().clear();
         self.owned.borrow_mut().clear();
         *self.settings.borrow_mut() = None;
+        self.mixer.clear();
         self.bound.borrow_mut().clear();
     }
 }
@@ -384,12 +393,13 @@ fn on_global(
                 .map(str::to_string);
             emit(Event::Client(Client { id, app }));
         }
-        ObjectType::Metadata => {
-            if global.props.and_then(|p| p.get("metadata.name")) != Some("settings") {
-                return;
+        ObjectType::Metadata => match global.props.and_then(|p| p.get("metadata.name")) {
+            Some("settings") => bind_settings(registry, state, emit, global),
+            Some("default") => {
+                crate::mixer::bind_default(registry, global, &state.bound, &state.mixer, emit);
             }
-            bind_settings(registry, state, emit, global);
-        }
+            _ => {}
+        },
         _ => {}
     }
 }
@@ -440,10 +450,9 @@ fn bind_node(
             }
         })
         .register();
-    state
-        .bound
-        .borrow_mut()
-        .insert(id, Box::new((listener, proxy)));
+    let mixer = crate::mixer::watch_node(&proxy, id, global.props, &state.mixer, emit);
+    let node: crate::mixer::BoundNode = (listener, mixer, proxy);
+    state.bound.borrow_mut().insert(id, Box::new(node));
 }
 
 fn bind_settings(
@@ -535,5 +544,6 @@ fn run_command(
         },
         Command::VirtualDevices(_) => {}
         Command::Device(command) => crate::devices::run(state, command),
+        Command::Mixer(command) => crate::mixer::run(&state.bound, &state.mixer, command),
     }
 }
