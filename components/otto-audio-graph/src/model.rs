@@ -217,6 +217,8 @@ pub enum Event {
     Removed(u32),
     /// An engine setting changed; `None` when it was cleared.
     Setting { key: String, value: Option<String> },
+    /// A device appeared or changed: its profiles, ports or properties.
+    Device(crate::devices::Device),
 }
 
 /// The graph as last reported, keyed by global id.
@@ -227,6 +229,7 @@ pub struct Graph {
     links: BTreeMap<u32, Link>,
     clients: BTreeMap<u32, Client>,
     settings: BTreeMap<String, String>,
+    devices: BTreeMap<u32, crate::devices::Device>,
     connected: bool,
     synced: bool,
 }
@@ -267,6 +270,7 @@ impl Graph {
                 self.ports.remove(&id);
                 self.links.remove(&id);
                 self.clients.remove(&id);
+                self.devices.remove(&id);
             }
             Event::Setting { key, value } => match value {
                 Some(value) => {
@@ -276,6 +280,9 @@ impl Graph {
                     self.settings.remove(&key);
                 }
             },
+            Event::Device(device) => {
+                self.devices.insert(device.id, device);
+            }
         }
     }
 
@@ -285,6 +292,7 @@ impl Graph {
         self.links.clear();
         self.clients.clear();
         self.settings.clear();
+        self.devices.clear();
         self.synced = false;
     }
 
@@ -380,6 +388,16 @@ impl Graph {
                 .get(&port.node)
                 .map_or(MediaType::Other, Node::media_type),
         }
+    }
+
+    /// Every device, by id.
+    pub fn devices(&self) -> impl Iterator<Item = &crate::devices::Device> {
+        self.devices.values()
+    }
+
+    #[must_use]
+    pub fn device(&self, id: u32) -> Option<&crate::devices::Device> {
+        self.devices.get(&id)
     }
 }
 

@@ -66,4 +66,30 @@ fn print(graph: &Graph) {
     {
         println!("{key} = {value:?}");
     }
+    for device in graph.devices() {
+        let profile = device.profile.as_ref().map(|p| p.description.as_str());
+        println!(
+            "device {:>4} {:<28} {} profile {profile:?}",
+            device.id,
+            device.title(),
+            device.media_class()
+        );
+        for profile in &device.profiles {
+            println!(
+                "       profile {:>3} {} {:?}",
+                profile.index, profile.description, profile.available
+            );
+        }
+        for route in &device.active_routes {
+            let ports: Vec<&str> = device
+                .routes_for(route)
+                .iter()
+                .map(|r| r.description.as_str())
+                .collect();
+            println!(
+                "       port {:?} {} of {ports:?}",
+                route.direction, route.description
+            );
+        }
+    }
 }

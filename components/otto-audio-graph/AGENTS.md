@@ -6,8 +6,9 @@ The PipeWire graph, followed live. A `Connection` talks to PipeWire on a thread 
 - links, and which client made each
 - clients, by `application.name`
 - the engine settings in the `settings` metadata (`clock.rate`, `clock.quantum`, `clock.force-*`)
+- devices (cards, Bluetooth devices, cameras), bound, with their `EnumProfile`, `Profile`, `EnumRoute` and `Route` params; a device is reported whole once a core sync says every result of an enumeration is in
 
-It takes commands: make a link (lingering, or owned by this connection), remove one, set an engine setting, keep a set of virtual devices made. A `Graph` applies the events and is what a UI or a daemon reads. When the server goes away it reports `Disconnected` and connects again by itself.
+It takes commands: make a link (lingering, or owned by this connection), remove one, set an engine setting, switch a device's profile or port (`set_profile`, `set_route`, kept by the server), keep a set of virtual devices made. A Bluetooth codec is a profile, so a codec switch is a profile switch. A `Graph` applies the events and is what a UI or a daemon reads. When the server goes away it reports `Disconnected` and connects again by itself.
 
 The crate also has what saving a routing needs:
 - `NodeIdentity`: a device by `node.name`, an app's stream by app, direction and media role
@@ -31,6 +32,7 @@ The crate also has what saving a routing needs:
 ## Where things are
 - `src/connection.rs`: the thread, binding nodes and the `settings` metadata, and the commands.
 - `src/model.rs`: `Graph`, `Node`, `Port`, `Link`, `Client`, `Event` and the setting keys.
+- `src/devices.rs`: `Device`, `Profile`, `Route`, the Bluetooth codec names, following a device's params on the thread and the pods that set them.
 - `src/identity.rs`, `src/routing.rs`, `src/pairing.rs`, `src/guard.rs`: the parts above.
 - `src/virtual_devices.rs`: `VirtualDevice`, the `Routing` methods that add, rename and remove one, and `Made`, which makes them on the PipeWire thread and makes them again after a reconnect.
 
@@ -41,6 +43,7 @@ The crate also has what saving a routing needs:
 - A loopback's module must be destroyed before its context: `State::clear` drops `Made` first.
 - The routing file is replaced whole with `write_atomically`; the service follows it by watching its directory. Keep the format readable by hand, and bump `VERSION` only with a migration.
 - Never link or unlink the person's own nodes from a test. Make throwaway nodes, as `tests/live_link.rs` does.
+- Never switch the person's devices' profiles or ports from a test either; the param pods are unit-tested by reading them back.
 
 ## See also
 - [Audio routing spec](../../specs/audio-routing.md), [otto-audio](../otto-audio/AGENTS.md).

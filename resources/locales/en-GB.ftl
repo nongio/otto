@@ -2566,6 +2566,39 @@ audio-ms-value = { $ms } ms
 audio-khz-short = { $value }k
 audio-engine-reset = Reset
 audio-engine-note = Changes apply right away. The audio service puts them back when the sound server restarts.
+audio-pane-devices = Devices
+audio-devices-title = Devices
+audio-devices-intro = Changes apply right away and the sound server remembers them.
+audio-devices-empty = No sound devices
+# Row labels on a device's card.
+audio-devices-profile = Profile
+audio-devices-codec = Codec
+audio-devices-output-port = Output port
+audio-devices-input-port = Input port
+# Where the device's volume is set: on its own hardware mixer, or in software.
+audio-devices-volume = Volume control
+audio-devices-volume-hardware = Hardware
+audio-devices-volume-software = Software
+# When output and input differ, e.g. "Output: Hardware · Input: Software".
+audio-devices-volume-output = Output: { $control }
+audio-devices-volume-input = Input: { $control }
+# A port with nothing plugged in, e.g. "Headphones (unplugged)".
+audio-devices-unplugged = { $port } (unplugged)
+# Under a Bluetooth device's codecs.
+audio-devices-codec-note = Switching codec interrupts the sound for a moment.
+# Beside a device's name: the channels it records and plays now, e.g. "2 in · 2 out".
+audio-devices-inputs = { $count } in
+audio-devices-outputs = { $count } out
+# Beside a device's name when its profile is Off.
+audio-devices-off = Off
+# What a device is, under its name.
+audio-devices-kind-bluetooth = Bluetooth device
+audio-devices-kind-bluetooth-headphones = Bluetooth headphones
+audio-devices-kind-bluetooth-headset = Bluetooth headset
+audio-devices-kind-bluetooth-speaker = Bluetooth speaker
+audio-devices-kind-usb = USB audio
+audio-devices-kind-built-in = Built-in audio
+audio-devices-kind-other = Sound card
 
 ## otto-audio — Virtual devices: outputs, inputs and loopbacks the audio
 ## service makes. The cards are about 260 px wide; the form's labels sit in a

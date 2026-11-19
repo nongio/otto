@@ -132,7 +132,7 @@ impl Ui {
             if card.top > content.bottom {
                 break;
             }
-            self.draw_device_card(canvas, card, index, device, theme);
+            self.draw_virtual_card(canvas, card, index, device, theme);
         }
     }
 
@@ -284,7 +284,7 @@ impl Ui {
         }
     }
 
-    fn draw_device_card(
+    fn draw_virtual_card(
         &mut self,
         canvas: &Canvas,
         card: Rect,

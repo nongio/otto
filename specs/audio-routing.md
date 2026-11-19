@@ -318,8 +318,8 @@ reads and changes the same graph as the app through `otto-audio-graph`.
 
 ## First version
 
-The first version builds Graph, Engine, Virtual devices and the service;
-Devices, Effects, Rules, Setups and meters come later, and the sidebar shows
+The first version builds Graph, Devices, Engine, Virtual devices and the
+service; Effects, Rules, Setups and meters come later, and the sidebar shows
 only the sections that exist. Where it consciously differs from the above:
 
 - **Saved routing file.** The saved links live in
@@ -345,6 +345,31 @@ only the sections that exist. Where it consciously differs from the above:
   there), and every property, folded away until opened. The title bar
   shows the engine's rate, buffer and latency; the sidebar's foot says
   whether the service is keeping saved links.
+- **Devices.** One card per sound device (cameras are left out), cards
+  first and Bluetooth devices after. Each shows its name, its kind (built-in,
+  USB, Bluetooth headphones…), the channels it records and plays now or
+  *Off*, and these rows, all following the server live:
+  - **Profile**: a pop-up of the profiles that can run now, plus the one
+    running. A Bluetooth device lists one entry per family (playback,
+    headset, off) rather than one per codec.
+  - **Codec**, on a Bluetooth device: the codecs its running profile family
+    offers, as segments; picking one switches to that codec's profile. The
+    codec in use comes from the profile's name, or from the node's
+    `api.bluez5.codec` when BlueZ chose it. A note under it says switching
+    interrupts the sound for a moment.
+  - **Output port** and **Input port**, one per sink and source in use: the
+    ports it can switch between under the running profile, unplugged ones
+    shown dimmed and marked *(unplugged)*; segments when they fit, else a
+    pop-up.
+  - **Volume control**: hardware or software, read from the port in use
+    (`route.hw-volume`). Shown, not set.
+
+  Not there yet, because nothing the server reports backs them: sample
+  rates a device may open at, switching volume control, battery level, the
+  codec's quality (LDAC bitrate) and the headset profile used while a
+  microphone is open, and warnings for profile clashes such as HDMI on the
+  built-in card. The default output and input are not marked either; that
+  waits for the `default` metadata (Plan, step 3).
 - **Top bar.** No sound menu yet (Plan, step 3).
 - **Virtual devices.** Three kinds: an *output* (a null sink, whose monitor
   carries what apps play into it), an *input* (a virtual source apps record
@@ -384,6 +409,8 @@ updates this spec's First version notes.
 4. **Devices.** One card per device: profile, port, sample rates, volume
    control, and Bluetooth codec and quality, set through the device's
    params. HDMI and other profile clashes are said before they happen.
+   Profile, ports, codec and the volume control shown are built; see First
+   version for what is still to come.
 5. **Engine, live.** The DSP load chart, dropouts, the driver, and the
    table of running nodes from the profiler; the allowed rates and
    *Follow the content*; a quantum range next to the fixed value.

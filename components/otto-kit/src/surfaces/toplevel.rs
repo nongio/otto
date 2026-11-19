@@ -272,6 +272,13 @@ impl ToplevelSurface {
     pub fn xdg_window(&self) -> &smithay_client_toolkit::shell::xdg::window::Window {
         &self.window
     }
+
+    /// The window's `xdg_surface`, which a pop-up such as a
+    /// [`DropdownMenu`](crate::components::dropdown::DropdownMenu) is opened
+    /// against, without the caller naming the toolkit's traits.
+    pub fn xdg_surface(&self) -> &xdg_surface::XdgSurface {
+        self.window.xdg_surface()
+    }
 }
 
 impl ToplevelSurface {
