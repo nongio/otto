@@ -26,7 +26,7 @@ const ROW_H: f32 = 22.0;
 /// Room under the last row.
 const CARD_PAD: f32 = 8.0;
 /// Between two columns of cards: room for the wires to curve.
-const COLUMN_GAP: f32 = 130.0;
+const COLUMN_GAP: f32 = 90.0;
 /// Between two cards of one column.
 const CARD_GAP: f32 = 18.0;
 /// A port's connector dot.
@@ -37,6 +37,10 @@ const WIRE_SLOP: f32 = 6.0;
 const CHEVRON: f32 = 22.0;
 /// The card corner radius.
 const CARD_RADIUS: f32 = 10.0;
+/// The canvas's dot grid, in world points.
+const GRID: f32 = 20.0;
+/// How far above a column's first card its heading sits, in world points.
+const COLUMN_HEADING: f32 = 22.0;
 /// The zoom range.
 const MIN_ZOOM: f32 = 0.3;
 const MAX_ZOOM: f32 = 2.0;
@@ -182,6 +186,8 @@ fn controls(a: Point, b: Point) -> (Point, Point) {
 pub struct Scene {
     pub cards: Vec<Card>,
     pub wires: Vec<Wire>,
+    /// The default columns some card belongs to, left to right.
+    pub columns: Vec<usize>,
 }
 
 /// What a press landed on.
@@ -206,6 +212,13 @@ impl Scene {
 
     pub fn wire(&self, from: RowKey, to: RowKey) -> Option<&Wire> {
         self.wires.iter().find(|w| w.from == from && w.to == to)
+    }
+
+    /// The wires into or out of `node`.
+    pub fn wires_of(&self, node: u32) -> impl Iterator<Item = &Wire> {
+        self.wires
+            .iter()
+            .filter(move |w| w.from.node == node || w.to.node == node)
     }
 
     /// What is under `p` (world points) at `zoom`.
@@ -246,11 +259,13 @@ impl Scene {
         best.map_or(Hit::Nothing, |(index, _)| Hit::Wire(index))
     }
 
-    /// The union of every card's rect.
+    /// The union of every card's rect, and the column headings over them.
     pub fn bounds(&self) -> Option<Rect> {
         let mut cards = self.cards.iter().map(|c| c.rect);
         let first = cards.next()?;
-        Some(cards.fold(first, |acc, r| {
+        let headings = (!self.columns.is_empty())
+            .then(|| Rect::from_xywh(0.0, -COLUMN_HEADING - 8.0, CARD_W, COLUMN_HEADING));
+        Some(cards.chain(headings).fold(first, |acc, r| {
             Rect::from_ltrb(
                 acc.left.min(r.left),
                 acc.top.min(r.top),
@@ -297,8 +312,18 @@ pub fn column(node: &Node) -> usize {
     }
 }
 
+/// The heading over a default column.
+fn column_heading(column: usize) -> &'static str {
+    match column {
+        0 => otto_kit::t!("audio-column-sources"),
+        1 => otto_kit::t!("audio-column-between"),
+        2 => otto_kit::t!("audio-column-destinations"),
+        _ => otto_kit::t!("audio-column-midi-video"),
+    }
+}
+
 /// What a node is, in a few words, for its card.
-fn role(node: &Node) -> String {
+pub fn role(node: &Node) -> String {
     let class = node.media_class();
     let what = if class.starts_with("Stream/Output") {
         otto_kit::t!("audio-role-playing")
@@ -501,6 +526,10 @@ impl GraphView {
             scene.cards.push(card);
         }
         scene.wires = wires(&scene, graph, routing);
+        let mut used: Vec<usize> = columns.values().copied().collect();
+        used.sort_unstable();
+        used.dedup();
+        scene.columns = used;
         scene
     }
 
@@ -675,15 +704,32 @@ fn wires(scene: &Scene, graph: &Graph, routing: &Routing) -> Vec<Wire> {
 /// The colour of `media`'s wires and connectors.
 pub fn media_color(theme: &Theme, media: MediaType) -> Color {
     match media {
-        MediaType::Audio => theme.accent_green,
+        MediaType::Audio => theme.accent_blue,
         MediaType::Midi => theme.accent_orange,
         MediaType::Video => theme.accent_purple,
         MediaType::Other => theme.accent_gray,
     }
 }
 
+/// The canvas's ground, under the dot grid.
+pub fn canvas_ground(theme: &Theme) -> Color {
+    if theme.is_dark() {
+        Color::from_rgb(0x1c, 0x1c, 0x1e)
+    } else {
+        Color::from_rgb(0xf7, 0xf7, 0xf9)
+    }
+}
+
+fn grid_dot(theme: &Theme) -> Color {
+    if theme.is_dark() {
+        Color::from_rgb(0x3a, 0x3a, 0x3e)
+    } else {
+        Color::from_rgb(0xd9, 0xd9, 0xe0)
+    }
+}
+
 /// A card's ground.
-fn card_ground(theme: &Theme) -> Color {
+pub fn card_ground(theme: &Theme) -> Color {
     if theme.is_dark() {
         Color::from_rgb(0x2c, 0x2c, 0x2e)
     } else {
@@ -710,9 +756,12 @@ pub fn draw(
 ) {
     canvas.save();
     canvas.clip_rect(viewport, None, Some(true));
+    canvas.draw_rect(viewport, &fill(canvas_ground(theme)));
+    draw_grid(canvas, view, viewport, theme);
     canvas.translate((viewport.left + view.pan.x, viewport.top + view.pan.y));
     canvas.scale((view.zoom, view.zoom));
 
+    draw_column_headings(canvas, scene, theme);
     for wire in &scene.wires {
         let selected = view.selected_wire == Some((wire.from, wire.to));
         draw_wire(canvas, wire, selected, theme);
@@ -728,16 +777,53 @@ pub fn draw(
             canvas.draw_path(&curve(a, b), &paint);
         }
     }
+    let linked: HashSet<RowKey> = scene.wires.iter().flat_map(|w| [w.from, w.to]).collect();
     for card in &scene.cards {
         draw_card(
             canvas,
             card,
             view.selected_node == Some(card.node),
+            &linked,
             link_drag,
             theme,
         );
     }
     canvas.restore();
+}
+
+/// A dot every grid step, in window space so the dots stay round and crisp
+/// at any zoom; left out when zoomed so far out they would read as a tint.
+fn draw_grid(canvas: &Canvas, view: &GraphView, viewport: Rect, theme: &Theme) {
+    let step = GRID * view.zoom;
+    if step < 8.0 {
+        return;
+    }
+    let origin_x = viewport.left + view.pan.x.rem_euclid(step);
+    let origin_y = viewport.top + view.pan.y.rem_euclid(step);
+    let paint = fill(grid_dot(theme));
+    let mut y = origin_y;
+    while y < viewport.bottom {
+        let mut x = origin_x;
+        while x < viewport.right {
+            canvas.draw_rect(Rect::from_xywh(x - 0.5, y - 0.5, 1.2, 1.2), &paint);
+            x += step;
+        }
+        y += step;
+    }
+}
+
+/// The default columns' headings, over where their cards start.
+fn draw_column_headings(canvas: &Canvas, scene: &Scene, theme: &Theme) {
+    let font = styles::CAPTION_2_EMPHASIZED.font();
+    for column in &scene.columns {
+        let x = *column as f32 * (CARD_W + COLUMN_GAP);
+        let text = column_heading(*column).to_uppercase();
+        Label::new(ellipsize(&font, &text, CARD_W))
+            .with_style(styles::CAPTION_2_EMPHASIZED)
+            .with_color(theme.text_tertiary)
+            .centered_on(x + 2.0, -COLUMN_HEADING)
+            .render(canvas);
+    }
 }
 
 fn stroke(color: Color, width: f32) -> Paint {
@@ -799,10 +885,20 @@ fn draw_card(
     canvas: &Canvas,
     card: &Card,
     selected: bool,
+    linked: &HashSet<RowKey>,
     link_drag: Option<LinkDrag>,
     theme: &Theme,
 ) {
     let rrect = RRect::new_rect_xy(card.rect, CARD_RADIUS, CARD_RADIUS);
+    if selected {
+        let a = theme.accent;
+        let halo = RRect::new_rect_xy(
+            card.rect.with_outset((4.0, 4.0)),
+            CARD_RADIUS + 4.0,
+            CARD_RADIUS + 4.0,
+        );
+        canvas.draw_rrect(halo, &fill(Color::from_argb(0x30, a.r(), a.g(), a.b())));
+    }
     let mut shadow = fill(Color::from_argb(
         (theme.shadow.a() as f32 * 0.5) as u8,
         theme.shadow.r(),
@@ -869,8 +965,14 @@ fn draw_card(
         } else {
             (color, theme.text_primary)
         };
-        canvas.draw_circle(row.anchor, CONNECTOR_R, &fill(dot));
-        canvas.draw_circle(row.anchor, CONNECTOR_R, &stroke(card_ground(theme), 1.5));
+        // A ring, filled in once something is linked to it.
+        let inside = if linked.contains(&row.key) && !dim {
+            dot
+        } else {
+            card_ground(theme)
+        };
+        canvas.draw_circle(row.anchor, CONNECTOR_R, &fill(inside));
+        canvas.draw_circle(row.anchor, CONNECTOR_R - 1.0, &stroke(dot, 2.2));
         let label = ellipsize(&row_font, &row.label, half);
         let label_w = row_font.measure_str(&label, None).0;
         let x = match row.key.direction {

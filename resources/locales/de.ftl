@@ -2376,7 +2376,6 @@ audio-detail-class = Medienklasse
 audio-detail-state = Status
 # How saved links name this node across plugs and restarts.
 audio-detail-identity = Gespeichert als
-audio-detail-properties = Eigenschaften
 audio-engine-title = Engine
 audio-engine-rate = Abtastrate
 audio-engine-rate-auto = { $rate }, von der Engine gewählt
@@ -2386,8 +2385,5 @@ audio-engine-auto = Auto
 # A sample rate, e.g. "48 kHz" or "44.1 kHz".
 audio-khz = { $value } kHz
 audio-engine-quantum = Puffergröße
-# e.g. "1024 frames, 21.3 ms of latency"
-audio-engine-quantum-now = { $frames } Frames, { $ms } ms Latenz
-audio-engine-quantum-range = Der Standard der Engine ist { $default }, von { $min } bis { $max }. Kleinere Puffer bedeuten weniger Latenz und mehr Arbeit für den Prozessor.
 audio-engine-reset = Zurücksetzen
 audio-engine-note = Änderungen gelten sofort. Der Audiodienst stellt sie wieder her, wenn der Soundserver neu startet.

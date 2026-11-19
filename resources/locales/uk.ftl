@@ -2464,7 +2464,6 @@ audio-detail-class = Клас медіа
 audio-detail-state = Стан
 # How saved links name this node across plugs and restarts.
 audio-detail-identity = Збережено як
-audio-detail-properties = Властивості
 audio-engine-title = Рушій
 audio-engine-rate = Частота дискретизації
 audio-engine-rate-auto = { $rate }, вибрана рушієм
@@ -2474,13 +2473,10 @@ audio-engine-auto = Авто
 # A sample rate, e.g. "48 kHz" or "44.1 kHz".
 audio-khz = { $value } kHz
 audio-engine-quantum = Розмір буфера
-# e.g. "1024 frames, 21.3 ms of latency"
-audio-engine-quantum-now = { $frames ->
     [one] { $frames } фрейм, затримка { $ms } ms
     [few] { $frames } фрейми, затримка { $ms } ms
     [many] { $frames } фреймів, затримка { $ms } ms
    *[other] { $frames } фрейму, затримка { $ms } ms
 }
-audio-engine-quantum-range = Типове значення рушія — { $default }, від { $min } до { $max }. Менший буфер — менша затримка й більше навантаження на процесор.
 audio-engine-reset = Скинути
 audio-engine-note = Зміни застосовуються одразу. Служба аудіо відновлює їх після перезапуску звукового сервера.

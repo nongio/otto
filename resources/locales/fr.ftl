@@ -2400,7 +2400,6 @@ audio-detail-class = Classe de média
 audio-detail-state = État
 # How saved links name this node across plugs and restarts.
 audio-detail-identity = Enregistré sous
-audio-detail-properties = Propriétés
 audio-engine-title = Moteur
 audio-engine-rate = Fréquence d’échantillonnage
 audio-engine-rate-auto = { $rate }, choisie par le moteur
@@ -2410,8 +2409,5 @@ audio-engine-auto = Auto
 # A sample rate, e.g. "48 kHz" or "44.1 kHz".
 audio-khz = { $value } kHz
 audio-engine-quantum = Taille du tampon
-# e.g. "1024 frames, 21.3 ms of latency"
-audio-engine-quantum-now = { $frames } trames, { $ms } ms de latence
-audio-engine-quantum-range = Valeur par défaut du moteur : { $default }, de { $min } à { $max }. Un tampon plus petit réduit la latence et sollicite davantage le processeur.
 audio-engine-reset = Réinitialiser
 audio-engine-note = Les changements s’appliquent immédiatement. Le service audio les rétablit au redémarrage du serveur de son.

@@ -2469,7 +2469,6 @@ audio-detail-class = Класс медиа
 audio-detail-state = Состояние
 # How saved links name this node across plugs and restarts.
 audio-detail-identity = Сохранён как
-audio-detail-properties = Свойства
 audio-engine-title = Движок
 audio-engine-rate = Частота дискретизации
 audio-engine-rate-auto = { $rate }, выбрана движком
@@ -2479,13 +2478,10 @@ audio-engine-auto = Авто
 # A sample rate, e.g. "48 kHz" or "44.1 kHz".
 audio-khz = { $value } kHz
 audio-engine-quantum = Размер буфера
-# e.g. "1024 frames, 21.3 ms of latency"
-audio-engine-quantum-now = { $frames ->
     [one] { $frames } фрейм, задержка { $ms } ms
     [few] { $frames } фрейма, задержка { $ms } ms
     [many] { $frames } фреймов, задержка { $ms } ms
    *[other] { $frames } фрейма, задержка { $ms } ms
 }
-audio-engine-quantum-range = По умолчанию у движка { $default }, от { $min } до { $max }. Меньший буфер — меньше задержка и больше нагрузка на процессор.
 audio-engine-reset = Сбросить
 audio-engine-note = Изменения применяются сразу. Служба аудио восстанавливает их при перезапуске звукового сервера.

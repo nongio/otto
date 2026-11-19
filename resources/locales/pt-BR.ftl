@@ -2399,7 +2399,6 @@ audio-detail-class = Classe de mídia
 audio-detail-state = Estado
 # How saved links name this node across plugs and restarts.
 audio-detail-identity = Salvo como
-audio-detail-properties = Propriedades
 audio-engine-title = Motor
 audio-engine-rate = Taxa de amostragem
 audio-engine-rate-auto = { $rate }, escolhida pelo motor
@@ -2409,8 +2408,5 @@ audio-engine-auto = Automático
 # A sample rate, e.g. "48 kHz" or "44.1 kHz".
 audio-khz = { $value } kHz
 audio-engine-quantum = Tamanho do buffer
-# e.g. "1024 frames, 21.3 ms of latency"
-audio-engine-quantum-now = { $frames } frames, { $ms } ms de latência
-audio-engine-quantum-range = O padrão do motor é { $default }, de { $min } a { $max }. Buffers menores significam menos latência e mais trabalho para o processador.
 audio-engine-reset = Redefinir
 audio-engine-note = As alterações valem na hora. O serviço de áudio as restaura quando o servidor de som reinicia.

@@ -21,14 +21,14 @@ use otto_kit::components::source_list::{self, SourceListItem, SourceListLayout};
 use otto_kit::components::titlebar::{
     DecorationVariant, WindowControl, WindowControlsState, WindowDecoration,
 };
-use otto_kit::components::toggle;
+use otto_kit::controls_side::ControlsSide;
 use otto_kit::events::{Keysym, Modifiers, PointerEvent, PointerEventKind, BTN_LEFT, BTN_MIDDLE};
 use otto_kit::prelude::*;
 use otto_kit::skia::{Contains, PaintStyle, PathBuilder, Point, RRect};
 use otto_kit::typography::ellipsize;
 use otto_kit::{t, t_owned, CursorShape};
 
-use otto_audio::graph_view::{self, GraphView, Hit, LinkDrag, RowKey};
+use otto_audio::graph_view::{self, media_color, GraphView, Hit, LinkDrag, RowKey, Scene};
 
 /// The sidebar's width.
 const SIDEBAR_W: f32 = 196.0;
@@ -40,6 +40,23 @@ const BANNER_H: f32 = 44.0;
 const DETAILS_W: f32 = 300.0;
 /// One line of the details panel's property list.
 const PROP_LINE_H: f32 = 18.0;
+/// The details panel's label column.
+const FACT_LABEL_W: f32 = 92.0;
+/// One fact in the details panel.
+const FACT_H: f32 = 24.0;
+/// One connection in the details panel.
+const CONNECTION_H: f32 = 34.0;
+/// The most connections the details panel lists.
+const MAX_CONNECTIONS: usize = 6;
+/// The toolbar's filter chips.
+const CHIP_H: f32 = 26.0;
+/// The Engine section's cards.
+const ENGINE_CARD_MIN_W: f32 = 280.0;
+const ENGINE_CARD_H: f32 = 180.0;
+const ENGINE_GAP: f32 = 16.0;
+/// The buffer tiles: per row, and their height.
+const TILE_COLUMNS: usize = 4;
+const TILE_H: f32 = 44.0;
 /// The quanta the Engine section offers, in frames; 0 is the engine's choice.
 const QUANTA: [u32; 7] = [0, 64, 128, 256, 512, 1024, 2048];
 /// The rates the Engine section offers, in Hz; 0 is the engine's choice.
@@ -70,6 +87,10 @@ enum Action {
     Rate(u32),
     Quantum(u32),
     ResetEngine,
+    Fit,
+    ToggleProperties,
+    /// Save the wire between two rows, from the details panel.
+    SaveWireOf(RowKey, RowKey),
 }
 
 /// A pointer drag in progress.
@@ -99,8 +120,9 @@ pub struct Ui {
     drag: Option<Drag>,
     pressed: Option<Action>,
     targets: Vec<(Rect, Action)>,
-    /// The details panel's property list.
+    /// The details panel's property list, and whether it is open.
     props_scroll: ScrollView,
+    props_open: bool,
     pinch_zoom: Option<f32>,
     /// Whether the server has said once whether it is there, so the window
     /// does not flash "not running" while it connects.
@@ -134,6 +156,7 @@ impl Ui {
             pressed: None,
             targets: Vec::new(),
             props_scroll: ScrollView::new(Rect::from_xywh(0.0, 0.0, 0.0, 0.0)),
+            props_open: false,
             pinch_zoom: None,
             heard: false,
             dark: false,
@@ -236,7 +259,65 @@ impl Ui {
                 Pane::Engine => self.draw_engine(canvas, theme),
             }
         }
-        self.decoration().draw(canvas);
+        let decoration = self.decoration();
+        decoration.draw(canvas);
+        self.draw_readout(canvas, &decoration, theme);
+    }
+
+    /// What the engine runs at now: rate, quantum, and whether each is forced.
+    fn engine_now(&self) -> EngineNow {
+        let rate = self.graph.setting_u32(SETTING_RATE).unwrap_or(48_000);
+        let force_rate = self
+            .graph
+            .setting_u32(SETTING_FORCE_RATE)
+            .filter(|r| *r != 0);
+        let quantum = self.graph.setting_u32(SETTING_QUANTUM).unwrap_or(1024);
+        let force_quantum = self
+            .graph
+            .setting_u32(SETTING_FORCE_QUANTUM)
+            .filter(|q| *q != 0);
+        EngineNow {
+            rate: force_rate.unwrap_or(rate),
+            frames: force_quantum.unwrap_or(quantum),
+            default_quantum: quantum,
+            min: self.graph.setting_u32(SETTING_MIN_QUANTUM).unwrap_or(32),
+            max: self.graph.setting_u32(SETTING_MAX_QUANTUM).unwrap_or(2048),
+            force_rate,
+            force_quantum,
+        }
+    }
+
+    /// The engine's rate, buffer and latency in the title bar, on the side
+    /// away from the window controls.
+    fn draw_readout(&self, canvas: &Canvas, decoration: &WindowDecoration, theme: &Theme) {
+        if !self.graph.is_connected() || !self.graph.is_synced() {
+            return;
+        }
+        let now = self.engine_now();
+        let text = t_owned!(
+            "audio-readout",
+            rate = khz(now.rate),
+            frames = now.frames,
+            ms = format!("{:.1}", now.latency_ms())
+        );
+        let font = styles::CAPTION_1.font();
+        let w = font.measure_str(&text, None).0 + 16.0;
+        let h = 22.0;
+        let cy = self.titlebar_h() / 2.0;
+        let x = match decoration.controls_side {
+            ControlsSide::Left => self.size.0 - 12.0 - w,
+            ControlsSide::Right => 12.0,
+        };
+        let pill = Rect::from_xywh(x, cy - h / 2.0, w, h);
+        canvas.draw_rrect(
+            RRect::new_rect_xy(pill, 6.0, 6.0),
+            &fill(theme.fill_quaternary),
+        );
+        Label::new(text)
+            .with_style(styles::CAPTION_1)
+            .with_color(theme.text_secondary)
+            .centered_at(pill.center_x(), cy)
+            .render(canvas);
     }
 
     fn draw_sidebar(&mut self, canvas: &Canvas, theme: &Theme) {
@@ -266,6 +347,23 @@ impl Ui {
         );
         for (pane, rect) in PANES.iter().zip(&layout.item_rects) {
             self.targets.push((*rect, Action::Pane(*pane)));
+        }
+
+        // Whether saved routing is being kept, at the foot.
+        if self.graph.is_connected() && self.graph.is_synced() {
+            let (dot, text) = if self.service_down() {
+                (theme.fill_secondary, t!("audio-service-off"))
+            } else {
+                (theme.accent_green, t!("audio-service-on"))
+            };
+            let cy = self.size.1 - 22.0;
+            canvas.draw_circle(Point::new(20.0, cy), 4.0, &fill(dot));
+            let font = styles::CAPTION_1.font();
+            Label::new(ellipsize(&font, text, SIDEBAR_W - 44.0))
+                .with_style(styles::CAPTION_1)
+                .with_color(theme.text_secondary)
+                .centered_on(32.0, cy)
+                .render(canvas);
         }
     }
 
@@ -301,7 +399,29 @@ impl Ui {
         enabled: bool,
         theme: &Theme,
     ) {
-        let button = PushButton::new(ButtonRole::Normal)
+        self.role_button(
+            canvas,
+            rect,
+            label,
+            action,
+            enabled,
+            ButtonRole::Normal,
+            theme,
+        );
+    }
+
+    #[expect(clippy::too_many_arguments, reason = "one call shape for every button")]
+    fn role_button(
+        &mut self,
+        canvas: &Canvas,
+        rect: Rect,
+        label: &str,
+        action: Action,
+        enabled: bool,
+        role: ButtonRole,
+        theme: &Theme,
+    ) {
+        let button = PushButton::new(role)
             .enabled(enabled)
             .pressed(self.pressed == Some(action));
         push_button::draw(canvas, rect, label, button, theme);
@@ -333,56 +453,38 @@ impl Ui {
             self.draw_banner(canvas, theme);
         }
         if let Some(rect) = self.details_rect() {
-            self.draw_details(canvas, rect, theme);
+            self.draw_details(canvas, rect, &scene, theme);
         }
     }
 
-    fn draw_toolbar(&mut self, canvas: &Canvas, scene: &graph_view::Scene, theme: &Theme) {
+    fn draw_toolbar(&mut self, canvas: &Canvas, scene: &Scene, theme: &Theme) {
         let content = self.content();
         let bar = Rect::from_xywh(content.left, content.top, content.width(), TOOLBAR_H);
-        canvas.draw_rect(bar, &fill(ground(theme)));
+        canvas.draw_rect(bar, &fill(panel_ground(theme)));
         canvas.draw_line(
             Point::new(bar.left, bar.bottom),
             Point::new(bar.right, bar.bottom),
             &stroke(theme.hairline, 1.0),
         );
         let cy = bar.center_y();
-        let mut x = bar.left + 16.0;
+        let mut x = bar.left + 12.0;
         let filter = self.view.filter;
         for (media, label, on) in [
             (MediaType::Audio, t!("audio-filter-audio"), filter.audio),
             (MediaType::Midi, t!("audio-filter-midi"), filter.midi),
             (MediaType::Video, t!("audio-filter-video"), filter.video),
         ] {
-            let font = styles::SUBHEADLINE.font();
-            let w = font.measure_str(label, None).0;
-            Label::new(label)
-                .with_style(styles::SUBHEADLINE)
-                .with_color(theme.text_primary)
-                .centered_on(x, cy)
-                .render(canvas);
-            let switch = Rect::from_xywh(x + w + 8.0, cy - 10.0, 34.0, 20.0);
-            toggle::draw(
-                canvas,
-                switch,
-                toggle::knob_fraction_for(on),
-                ToggleInteraction::Normal,
-                theme,
-            );
-            self.targets.push((
-                Rect::from_ltrb(x - 4.0, bar.top + 6.0, switch.right + 4.0, bar.bottom - 6.0),
-                Action::Filter(media),
-            ));
-            x = switch.right + 20.0;
+            let rect = self.chip(canvas, x, cy, label, media, on, theme);
+            x = rect.right + 6.0;
         }
 
-        // The save actions, from the right edge in.
-        let mut right = bar.right - 16.0;
+        // The actions, from the right edge in.
+        let mut right = bar.right - 12.0;
         let top = cy - push_button::HEIGHT / 2.0;
-        let mut put = |ui: &mut Self, label: &str, action: Action, enabled: bool| {
+        let mut put = |ui: &mut Self, label: &str, action: Action, enabled: bool, role| {
             let w = push_button::width(label);
             let rect = Rect::from_xywh(right - w, top, w, push_button::HEIGHT);
-            ui.button(canvas, rect, label, action, enabled, theme);
+            ui.role_button(canvas, rect, label, action, enabled, role, theme);
             right = rect.left - 8.0;
         };
         let any_unsaved = scene.wires.iter().any(|w| !w.saved);
@@ -391,20 +493,121 @@ impl Ui {
             t!("audio-save-routing"),
             Action::SaveRouting,
             any_unsaved,
+            ButtonRole::Default,
         );
+        put(self, t!("audio-fit"), Action::Fit, true, ButtonRole::Normal);
         if let Some(wire) = self
             .view
             .selected_wire
             .and_then(|(from, to)| scene.wire(from, to))
         {
             let saved = wire.saved;
-            put(self, t!("audio-remove-link"), Action::RemoveWire, true);
+            put(
+                self,
+                t!("audio-remove-link"),
+                Action::RemoveWire,
+                true,
+                ButtonRole::Normal,
+            );
             if saved {
-                put(self, t!("audio-forget-link"), Action::ForgetWire, true);
+                put(
+                    self,
+                    t!("audio-forget-link"),
+                    Action::ForgetWire,
+                    true,
+                    ButtonRole::Normal,
+                );
             } else {
-                put(self, t!("audio-save-link"), Action::SaveWire, true);
+                put(
+                    self,
+                    t!("audio-save-link"),
+                    Action::SaveWire,
+                    true,
+                    ButtonRole::Normal,
+                );
             }
         }
+
+        // What solid and dashed wires mean, when there is room for it.
+        let font = styles::CAPTION_1.font();
+        let entries = [
+            (t!("audio-legend-saved"), true),
+            (t!("audio-legend-unsaved"), false),
+        ];
+        let widths: Vec<f32> = entries
+            .iter()
+            .map(|(label, _)| 28.0 + font.measure_str(label, None).0)
+            .collect();
+        let legend_w = widths.iter().sum::<f32>() + 14.0;
+        let mut lx = right - legend_w;
+        if lx > x + 16.0 {
+            let color = media_color(theme, MediaType::Audio);
+            for ((label, saved), w) in entries.iter().zip(&widths) {
+                let mut paint = stroke(color, 2.0);
+                if !saved {
+                    paint.set_path_effect(otto_kit::skia::PathEffect::dash(&[4.0, 3.0], 0.0));
+                }
+                canvas.draw_line(Point::new(lx, cy), Point::new(lx + 20.0, cy), &paint);
+                Label::new(*label)
+                    .with_style(styles::CAPTION_1)
+                    .with_color(theme.text_secondary)
+                    .centered_on(lx + 26.0, cy)
+                    .render(canvas);
+                lx += w + 14.0;
+            }
+        }
+    }
+
+    /// A filter chip: tinted in its media's colour while on.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "a chip is placed, labelled and coloured"
+    )]
+    fn chip(
+        &mut self,
+        canvas: &Canvas,
+        x: f32,
+        cy: f32,
+        label: &str,
+        media: MediaType,
+        on: bool,
+        theme: &Theme,
+    ) -> Rect {
+        let font = styles::FOOTNOTE_EMPHASIZED.font();
+        let w = font.measure_str(label, None).0 + 36.0;
+        let rect = Rect::from_xywh(x, cy - CHIP_H / 2.0, w, CHIP_H);
+        let rr = RRect::new_rect_xy(rect, CHIP_H / 2.0, CHIP_H / 2.0);
+        let color = media_color(theme, media);
+        let action = Action::Filter(media);
+        let pressed = self.pressed == Some(action);
+        let tint = |alpha: u8| Color::from_argb(alpha, color.r(), color.g(), color.b());
+        if on {
+            canvas.draw_rrect(rr, &fill(tint(if pressed { 0x38 } else { 0x22 })));
+            canvas.draw_rrect(rr, &stroke(tint(0x70), 1.0));
+            canvas.draw_circle(Point::new(rect.left + 14.0, cy), 4.0, &fill(color));
+        } else {
+            if pressed {
+                canvas.draw_rrect(rr, &fill(theme.fill_quaternary));
+            }
+            canvas.draw_rrect(rr, &stroke(theme.hairline, 1.0));
+            canvas.draw_circle(
+                Point::new(rect.left + 14.0, cy),
+                3.5,
+                &stroke(theme.text_tertiary, 1.5),
+            );
+        }
+        let text = if on {
+            theme.text_primary
+        } else {
+            theme.text_secondary
+        };
+        Label::new(label)
+            .with_style(styles::FOOTNOTE_EMPHASIZED)
+            .with_color(text)
+            .centered_on(rect.left + 24.0, cy)
+            .render(canvas);
+        self.targets.push((rect, action));
+        rect
     }
 
     fn draw_banner(&mut self, canvas: &Canvas, theme: &Theme) {
@@ -447,11 +650,60 @@ impl Ui {
         self.button(canvas, button, label, Action::StartService, true, theme);
     }
 
-    fn draw_details(&mut self, canvas: &Canvas, rect: Rect, theme: &Theme) {
-        let Some(node) = self.view.selected_node.and_then(|id| self.graph.node(id)) else {
+    fn draw_details(&mut self, canvas: &Canvas, rect: Rect, scene: &Scene, theme: &Theme) {
+        let Some(id) = self.view.selected_node else {
             return;
         };
-        canvas.draw_rect(rect, &fill(sidebar_ground(theme)));
+        let Some(node) = self.graph.node(id) else {
+            return;
+        };
+        // Everything read from the node up front, so drawing can record
+        // targets.
+        let title = node.title().to_string();
+        let subtitle = graph_view::role(node);
+        let (state, state_dot) = match node.state {
+            NodeState::Running => (t!("audio-state-running"), theme.accent_green),
+            NodeState::Idle => (t!("audio-state-idle"), theme.fill_secondary),
+            NodeState::Suspended => (t!("audio-state-suspended"), theme.fill_secondary),
+            NodeState::Error => (t!("audio-state-error"), theme.accent_red),
+            NodeState::Creating => (t!("audio-state-creating"), theme.fill_secondary),
+        };
+        let mut facts: Vec<(&str, String)> = Vec::new();
+        if let Some(app) = node.app() {
+            facts.push((t!("audio-detail-app"), app.to_string()));
+        }
+        if let Some(format) = format_of(node) {
+            facts.push((t!("audio-detail-format"), format));
+        }
+        if let Some(latency) = node.prop("node.latency").and_then(latency_of) {
+            facts.push((t!("audio-detail-latency"), latency));
+        }
+        facts.push((t!("audio-detail-class"), node.media_class().to_string()));
+        if let Some(who) = identity(node) {
+            facts.push((t!("audio-detail-identity"), who.to_string()));
+        }
+        let props: Vec<(String, String)> = node
+            .props
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        let connections: Vec<(String, bool, RowKey, RowKey)> = scene
+            .wires_of(id)
+            .map(|wire| {
+                let (other, arrow) = if wire.from.node == id {
+                    (wire.to.node, "→")
+                } else {
+                    (wire.from.node, "←")
+                };
+                let name = self
+                    .graph
+                    .node(other)
+                    .map_or_else(String::new, |n| n.title().to_string());
+                (format!("{arrow}  {name}"), wire.saved, wire.from, wire.to)
+            })
+            .collect();
+
+        canvas.draw_rect(rect, &fill(panel_ground(theme)));
         canvas.draw_line(
             Point::new(rect.left, rect.top),
             Point::new(rect.left, rect.bottom),
@@ -459,135 +711,343 @@ impl Ui {
         );
         canvas.save();
         canvas.clip_rect(rect, None, Some(true));
-        let left = rect.left + 16.0;
-        let width = rect.width() - 32.0;
-        let title_font = styles::HEADLINE.font();
-        Label::new(ellipsize(&title_font, node.title(), width))
-            .with_style(styles::HEADLINE)
-            .with_color(theme.text_primary)
-            .centered_on(left, rect.top + 24.0)
-            .render(canvas);
+        let left = rect.left + 20.0;
+        let width = rect.width() - 40.0;
+        let right = left + width;
 
-        let state = match node.state {
-            NodeState::Running => t!("audio-state-running"),
-            NodeState::Idle => t!("audio-state-idle"),
-            NodeState::Suspended => t!("audio-state-suspended"),
-            NodeState::Error => t!("audio-state-error"),
-            NodeState::Creating => t!("audio-state-creating"),
-        };
-        let who = identity(node).map(|i| i.to_string()).unwrap_or_default();
-        let facts = [
-            (
-                t!("audio-detail-app"),
-                node.app().unwrap_or("—").to_string(),
-            ),
-            (t!("audio-detail-class"), node.media_class().to_string()),
-            (t!("audio-detail-state"), state.to_string()),
-            (t!("audio-detail-identity"), who),
-        ];
-        let mut y = rect.top + 52.0;
-        let value_font = styles::FOOTNOTE.font();
-        for (label, value) in facts {
-            Label::new(label)
-                .with_style(styles::CAPTION_1)
+        let mut y = rect.top + 24.0;
+        Label::new(t!("audio-detail-selected").to_uppercase())
+            .with_style(styles::CAPTION_2_EMPHASIZED)
+            .with_color(theme.text_tertiary)
+            .centered_on(left, y)
+            .render(canvas);
+        y += 24.0;
+        let title_font = styles::TITLE_3_EMPHASIZED.font();
+        Label::new(ellipsize(&title_font, &title, width))
+            .with_style(styles::TITLE_3_EMPHASIZED)
+            .with_color(theme.text_primary)
+            .centered_on(left, y)
+            .render(canvas);
+        y += 22.0;
+        let body_font = styles::FOOTNOTE.font();
+        Label::new(ellipsize(&body_font, &subtitle, width))
+            .with_style(styles::FOOTNOTE)
+            .with_color(theme.text_secondary)
+            .centered_on(left, y)
+            .render(canvas);
+        y += 30.0;
+
+        // Facts: a label column and its values, the state with its dot.
+        let value_x = left + FACT_LABEL_W;
+        let value_w = width - FACT_LABEL_W;
+        let fact = |label: &str, y: f32| {
+            Label::new(ellipsize(&body_font, label, FACT_LABEL_W - 8.0))
+                .with_style(styles::FOOTNOTE)
                 .with_color(theme.text_secondary)
                 .centered_on(left, y)
                 .render(canvas);
-            Label::new(ellipsize(&value_font, &value, width))
+        };
+        fact(t!("audio-detail-state"), y);
+        canvas.draw_circle(Point::new(value_x + 4.0, y), 4.0, &fill(state_dot));
+        Label::new(state)
+            .with_style(styles::FOOTNOTE)
+            .with_color(theme.text_primary)
+            .centered_on(value_x + 14.0, y)
+            .render(canvas);
+        y += FACT_H;
+        for (label, value) in &facts {
+            fact(label, y);
+            Label::new(ellipsize(&body_font, value, value_w))
                 .with_style(styles::FOOTNOTE)
                 .with_color(theme.text_primary)
-                .centered_on(left, y + 16.0)
+                .centered_on(value_x, y)
                 .render(canvas);
-            y += 38.0;
+            y += FACT_H;
         }
-        Label::new(t!("audio-detail-properties"))
-            .with_style(styles::CAPTION_1_EMPHASIZED)
-            .with_color(theme.text_secondary)
-            .centered_on(left, y + 4.0)
+        y += 14.0;
+
+        // What it is linked to, each with whether it is kept.
+        Label::new(t!("audio-detail-links"))
+            .with_style(styles::FOOTNOTE_EMPHASIZED)
+            .with_color(theme.text_primary)
+            .centered_on(left, y)
             .render(canvas);
-        let list_top = y + 18.0;
-        let list = Rect::from_ltrb(rect.left, list_top, rect.right, rect.bottom);
-        let key_font = styles::CAPTION_2.font();
-        let row_h = 2.0 * PROP_LINE_H;
-        let lines = node.props.len() as f32;
-        self.props_scroll.set_viewport(list);
-        self.props_scroll.set_content_length(lines * row_h + 12.0);
-        self.props_scroll.tick();
-        // Content-local: x from the list's left edge, y from its top.
-        let x = left - rect.left;
-        self.props_scroll.render(canvas, theme, |canvas, band| {
-            let mut y = 8.0;
-            for (key, value) in &node.props {
-                if y > band.bottom {
-                    break;
-                }
-                if y + row_h >= band.top {
-                    Label::new(ellipsize(&key_font, key, width))
-                        .with_style(styles::CAPTION_2)
-                        .with_color(theme.text_secondary)
-                        .centered_on(x, y)
-                        .render(canvas);
-                    Label::new(ellipsize(&value_font, value, width))
-                        .with_style(styles::FOOTNOTE)
-                        .with_color(theme.text_primary)
-                        .centered_on(x, y + 15.0)
-                        .render(canvas);
-                }
-                y += row_h;
+        y += 14.0;
+        if connections.is_empty() {
+            y += CONNECTION_H / 2.0;
+            Label::new(t!("audio-detail-no-links"))
+                .with_style(styles::FOOTNOTE)
+                .with_color(theme.text_secondary)
+                .centered_on(left, y)
+                .render(canvas);
+            y += CONNECTION_H / 2.0;
+        }
+        let shown = connections.len().min(MAX_CONNECTIONS);
+        for (name, saved, from, to) in connections.iter().take(shown) {
+            canvas.draw_line(
+                Point::new(left, y),
+                Point::new(right, y),
+                &stroke(theme.hairline, 1.0),
+            );
+            let cy = y + CONNECTION_H / 2.0;
+            let saved_label = t!("audio-detail-saved");
+            let save_label = t!("audio-save");
+            let tail_w = if *saved {
+                styles::CAPTION_1.font().measure_str(saved_label, None).0
+            } else {
+                push_button::width(save_label)
+            };
+            Label::new(ellipsize(&body_font, name, width - tail_w - 12.0))
+                .with_style(styles::FOOTNOTE)
+                .with_color(theme.text_primary)
+                .centered_on(left, cy)
+                .render(canvas);
+            if *saved {
+                Label::new(saved_label)
+                    .with_style(styles::CAPTION_1)
+                    .with_color(theme.text_secondary)
+                    .centered_on(right - tail_w, cy)
+                    .render(canvas);
+            } else {
+                let button = Rect::from_xywh(
+                    right - tail_w,
+                    cy - push_button::HEIGHT / 2.0,
+                    tail_w,
+                    push_button::HEIGHT,
+                );
+                self.button(
+                    canvas,
+                    button,
+                    save_label,
+                    Action::SaveWireOf(*from, *to),
+                    true,
+                    theme,
+                );
             }
-        });
+            y += CONNECTION_H;
+        }
+        if connections.len() > shown {
+            let more = t_owned!("audio-detail-more-links", count = connections.len() - shown);
+            Label::new(more)
+                .with_style(styles::CAPTION_1)
+                .with_color(theme.text_secondary)
+                .centered_on(left, y + 12.0)
+                .render(canvas);
+            y += 24.0;
+        }
+        y += 12.0;
+
+        // Every property, folded away until asked for.
+        canvas.draw_line(
+            Point::new(left, y),
+            Point::new(right, y),
+            &stroke(theme.hairline, 1.0),
+        );
+        let row = Rect::from_xywh(rect.left, y, rect.width(), 32.0);
+        let cy = row.center_y();
+        draw_disclosure(canvas, Point::new(left + 4.0, cy), self.props_open, theme);
+        Label::new(t_owned!(
+            "audio-detail-properties-count",
+            count = props.len()
+        ))
+        .with_style(styles::FOOTNOTE_EMPHASIZED)
+        .with_color(theme.text_primary)
+        .centered_on(left + 16.0, cy)
+        .render(canvas);
+        self.targets.push((row, Action::ToggleProperties));
+        y = row.bottom;
+        if self.props_open {
+            let list = Rect::from_ltrb(rect.left, y, rect.right, rect.bottom.max(y + 1.0));
+            let key_font = styles::CAPTION_2.font();
+            let row_h = 2.0 * PROP_LINE_H;
+            self.props_scroll.set_viewport(list);
+            self.props_scroll
+                .set_content_length(props.len() as f32 * row_h + 12.0);
+            self.props_scroll.tick();
+            // Content-local: x from the list's left edge, y from its top.
+            let x = left - rect.left;
+            self.props_scroll.render(canvas, theme, |canvas, band| {
+                let mut y = 8.0;
+                for (key, value) in &props {
+                    if y > band.bottom {
+                        break;
+                    }
+                    if y + row_h >= band.top {
+                        Label::new(ellipsize(&key_font, key, width))
+                            .with_style(styles::CAPTION_2)
+                            .with_color(theme.text_secondary)
+                            .centered_on(x, y)
+                            .render(canvas);
+                        Label::new(ellipsize(&body_font, value, width))
+                            .with_style(styles::FOOTNOTE)
+                            .with_color(theme.text_primary)
+                            .centered_on(x, y + 15.0)
+                            .render(canvas);
+                    }
+                    y += row_h;
+                }
+            });
+        }
         canvas.restore();
     }
 
     /// Whether something drawn is still moving and wants another frame.
     pub fn is_animating(&self) -> bool {
-        self.view.selected_node.is_some() && self.props_scroll.is_animating()
+        self.view.selected_node.is_some() && self.props_open && self.props_scroll.is_animating()
     }
 
     fn draw_engine(&mut self, canvas: &Canvas, theme: &Theme) {
         let content = self.content();
-        let left = content.left + 32.0;
-        let width = (content.width() - 64.0).min(560.0);
-        let mut y = content.top + 36.0;
+        canvas.draw_rect(content, &fill(graph_view::canvas_ground(theme)));
+        let left = content.left + 28.0;
+        let right = content.right - 28.0;
+        let width = right - left;
+        let now = self.engine_now();
+
+        // Title, what the section is for, and Reset.
+        let label = t!("audio-engine-reset");
+        let reset_w = push_button::width(label);
+        let top = content.top + 24.0;
+        let forced = now.force_rate.is_some() || now.force_quantum.is_some();
+        self.button(
+            canvas,
+            Rect::from_xywh(right - reset_w, top + 4.0, reset_w, push_button::HEIGHT),
+            label,
+            Action::ResetEngine,
+            forced || !self.routing.engine.is_empty(),
+            theme,
+        );
         Label::new(t!("audio-engine-title"))
             .with_style(styles::TITLE_2_EMPHASIZED)
             .with_color(theme.text_primary)
-            .centered_on(left, y)
+            .centered_on(left, top + 12.0)
             .render(canvas);
-        y += 44.0;
+        let intro_font = styles::SUBHEADLINE.font();
+        Label::new(ellipsize(
+            &intro_font,
+            t!("audio-engine-intro"),
+            width - reset_w - 16.0,
+        ))
+        .with_style(styles::SUBHEADLINE)
+        .with_color(theme.text_secondary)
+        .centered_on(left, top + 38.0)
+        .render(canvas);
 
-        let rate = self.graph.setting_u32(SETTING_RATE).unwrap_or(48_000);
-        let force_rate = self.graph.setting_u32(SETTING_FORCE_RATE);
-        let running_rate = force_rate.unwrap_or(rate);
-        let quantum = self.graph.setting_u32(SETTING_QUANTUM).unwrap_or(1024);
-        let force_quantum = self.graph.setting_u32(SETTING_FORCE_QUANTUM);
-        let min = self.graph.setting_u32(SETTING_MIN_QUANTUM).unwrap_or(32);
-        let max = self.graph.setting_u32(SETTING_MAX_QUANTUM).unwrap_or(2048);
-
-        // Sample rate.
-        heading(canvas, t!("audio-engine-rate"), left, y, theme);
-        let value = if force_rate.is_some() {
-            t_owned!("audio-engine-rate-forced", rate = khz(running_rate))
-        } else {
-            t_owned!("audio-engine-rate-auto", rate = khz(rate))
+        // Three cards, side by side when there is room.
+        let columns = ((width + ENGINE_GAP) / (ENGINE_CARD_MIN_W + ENGINE_GAP))
+            .floor()
+            .clamp(1.0, 3.0) as usize;
+        let card_w = (width - (columns - 1) as f32 * ENGINE_GAP) / columns as f32;
+        let card_at = |index: usize| {
+            let (col, row) = (index % columns, index / columns);
+            Rect::from_xywh(
+                left + col as f32 * (card_w + ENGINE_GAP),
+                top + 72.0 + row as f32 * (ENGINE_CARD_H + ENGINE_GAP),
+                card_w,
+                ENGINE_CARD_H,
+            )
         };
-        caption(canvas, &value, left, y + 20.0, theme);
-        y += 40.0;
+        for index in 0..3 {
+            let rr = RRect::new_rect_xy(card_at(index), 12.0, 12.0);
+            canvas.draw_rrect(rr, &fill(graph_view::card_ground(theme)));
+            canvas.draw_rrect(rr, &stroke(theme.hairline, 1.0));
+        }
+        self.draw_latency_card(canvas, card_at(0), &now, theme);
+        self.draw_rate_card(canvas, card_at(1), &now, theme);
+        self.draw_buffer_card(canvas, card_at(2), &now, theme);
+
+        let below = card_at(2).bottom + 24.0;
+        caption(canvas, t!("audio-engine-note"), left, below, theme);
+    }
+
+    fn draw_latency_card(&self, canvas: &Canvas, card: Rect, now: &EngineNow, theme: &Theme) {
+        let left = card.left + 20.0;
+        card_heading(
+            canvas,
+            t!("audio-engine-latency-now"),
+            left,
+            card.top + 22.0,
+            theme,
+        );
+        let value = format!("{:.1}", now.latency_ms());
+        let big = styles::LARGE_TITLE_EMPHASIZED;
+        let w = big.font().measure_str(&value, None).0;
+        let cy = card.top + 64.0;
+        Label::new(&value)
+            .with_style(big)
+            .with_color(theme.text_primary)
+            .centered_on(left, cy)
+            .render(canvas);
+        Label::new(t!("audio-ms"))
+            .with_style(styles::TITLE_3)
+            .with_color(theme.text_secondary)
+            .centered_on(left + w + 6.0, cy + 3.0)
+            .render(canvas);
+        let detail = t_owned!(
+            "audio-engine-frames-at",
+            frames = now.frames,
+            rate = now.rate
+        );
+        Label::new(detail)
+            .with_style(styles::FOOTNOTE)
+            .with_color(theme.text_secondary)
+            .centered_on(left, card.top + 98.0)
+            .render(canvas);
+
+        // Who chose each: the engine, or this app.
+        let column_w = (card.width() - 40.0) / 2.0;
+        let font = styles::CAPTION_1.font();
+        for (i, (label, forced)) in [
+            (t!("audio-engine-rate"), now.force_rate.is_some()),
+            (t!("audio-engine-quantum"), now.force_quantum.is_some()),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let x = left + i as f32 * column_w;
+            let chosen = if forced {
+                t!("audio-engine-set-here")
+            } else {
+                t!("audio-engine-auto")
+            };
+            Label::new(ellipsize(&font, label, column_w - 8.0))
+                .with_style(styles::CAPTION_1)
+                .with_color(theme.text_secondary)
+                .centered_on(x, card.top + 132.0)
+                .render(canvas);
+            Label::new(chosen)
+                .with_style(styles::FOOTNOTE_EMPHASIZED)
+                .with_color(theme.text_primary)
+                .centered_on(x, card.top + 150.0)
+                .render(canvas);
+        }
+    }
+
+    fn draw_rate_card(&mut self, canvas: &Canvas, card: Rect, now: &EngineNow, theme: &Theme) {
+        let left = card.left + 20.0;
+        let width = card.width() - 40.0;
+        card_heading(
+            canvas,
+            t!("audio-engine-rate"),
+            left,
+            card.top + 22.0,
+            theme,
+        );
         let labels: Vec<String> = RATES
             .iter()
             .map(|r| {
                 if *r == 0 {
                     t!("audio-engine-auto").to_string()
                 } else {
-                    khz(*r)
+                    khz_short(*r)
                 }
             })
             .collect();
         let chosen = RATES
             .iter()
-            .position(|r| Some(*r) == force_rate)
+            .position(|r| Some(*r) == now.force_rate)
             .unwrap_or(0);
-        let track = Rect::from_xywh(left, y, width, segmented::HEIGHT);
+        let track = Rect::from_xywh(left, card.top + 44.0, width, segmented::HEIGHT);
         self.segments(
             canvas,
             track,
@@ -596,65 +1056,101 @@ impl Ui {
             &RATES.map(Action::Rate),
             theme,
         );
-        y += 64.0;
+        let value = if now.force_rate.is_some() {
+            t_owned!("audio-engine-rate-forced", rate = khz(now.rate))
+        } else {
+            t_owned!("audio-engine-rate-auto", rate = khz(now.rate))
+        };
+        let font = styles::FOOTNOTE.font();
+        Label::new(ellipsize(&font, &value, width))
+            .with_style(styles::FOOTNOTE)
+            .with_color(theme.text_primary)
+            .centered_on(left, card.top + 104.0)
+            .render(canvas);
+        let caption_font = styles::CAPTION_1.font();
+        Label::new(ellipsize(
+            &caption_font,
+            t!("audio-engine-rate-note"),
+            width,
+        ))
+        .with_style(styles::CAPTION_1)
+        .with_color(theme.text_secondary)
+        .centered_on(left, card.top + 126.0)
+        .render(canvas);
+    }
 
-        // Quantum.
-        heading(canvas, t!("audio-engine-quantum"), left, y, theme);
-        let frames = force_quantum.unwrap_or(quantum);
-        let ms = f64::from(frames) * 1000.0 / f64::from(running_rate.max(1));
-        let value = t_owned!(
-            "audio-engine-quantum-now",
-            frames = frames,
-            ms = format!("{ms:.1}")
-        );
-        caption(canvas, &value, left, y + 20.0, theme);
-        y += 40.0;
-        let labels: Vec<String> = QUANTA
-            .iter()
-            .map(|q| {
-                if *q == 0 {
-                    t!("audio-engine-auto").to_string()
-                } else {
-                    q.to_string()
-                }
-            })
-            .collect();
-        let chosen = QUANTA
-            .iter()
-            .position(|q| Some(*q) == force_quantum)
-            .unwrap_or(0);
-        let track = Rect::from_xywh(left, y, width, segmented::HEIGHT);
-        self.segments(
+    fn draw_buffer_card(&mut self, canvas: &Canvas, card: Rect, now: &EngineNow, theme: &Theme) {
+        let left = card.left + 20.0;
+        let width = card.width() - 40.0;
+        card_heading(
             canvas,
-            track,
-            &labels,
-            chosen,
-            &QUANTA.map(Action::Quantum),
+            t!("audio-engine-quantum"),
+            left,
+            card.top + 22.0,
             theme,
         );
-        y += 40.0;
+        let gap = 6.0;
+        let tile_w = (width - (TILE_COLUMNS - 1) as f32 * gap) / TILE_COLUMNS as f32;
+        for (index, quantum) in QUANTA.iter().enumerate() {
+            let (col, row) = (index % TILE_COLUMNS, index / TILE_COLUMNS);
+            let tile = Rect::from_xywh(
+                left + col as f32 * (tile_w + gap),
+                card.top + 40.0 + row as f32 * (TILE_H + gap),
+                tile_w,
+                TILE_H,
+            );
+            let action = Action::Quantum(*quantum);
+            let on = now.force_quantum.unwrap_or(0) == *quantum;
+            let pressed = self.pressed == Some(action);
+            let rr = RRect::new_rect_xy(tile, 8.0, 8.0);
+            let (text, sub) = if on {
+                (Color::WHITE, Color::from_argb(0xc0, 0xff, 0xff, 0xff))
+            } else {
+                (theme.text_primary, theme.text_secondary)
+            };
+            let ground = if on {
+                theme.accent
+            } else if pressed {
+                theme.fill_tertiary
+            } else {
+                theme.fill_quaternary
+            };
+            canvas.draw_rrect(rr, &fill(ground));
+            let cx = tile.center_x();
+            let cy = tile.center_y();
+            if *quantum == 0 {
+                Label::new(t!("audio-engine-auto"))
+                    .with_style(styles::FOOTNOTE_EMPHASIZED)
+                    .with_color(text)
+                    .centered_at(cx, cy)
+                    .render(canvas);
+            } else {
+                let ms = f64::from(*quantum) * 1000.0 / f64::from(now.rate.max(1));
+                Label::new(quantum.to_string())
+                    .with_style(styles::FOOTNOTE_EMPHASIZED)
+                    .with_color(text)
+                    .centered_at(cx, cy - 7.0)
+                    .render(canvas);
+                Label::new(t_owned!("audio-ms-value", ms = format!("{ms:.1}")))
+                    .with_style(styles::CAPTION_2)
+                    .with_color(sub)
+                    .centered_at(cx, cy + 9.0)
+                    .render(canvas);
+            }
+            self.targets.push((tile, action));
+        }
         let range = t_owned!(
-            "audio-engine-quantum-range",
-            default = quantum,
-            min = min,
-            max = max
+            "audio-engine-quantum-range-short",
+            default = now.default_quantum,
+            min = now.min,
+            max = now.max
         );
-        caption(canvas, &range, left, y, theme);
-        y += 40.0;
-
-        let label = t!("audio-engine-reset");
-        let w = push_button::width(label);
-        let forced = force_rate.is_some() || force_quantum.is_some();
-        self.button(
-            canvas,
-            Rect::from_xywh(left, y, w, push_button::HEIGHT),
-            label,
-            Action::ResetEngine,
-            forced || !self.routing.engine.is_empty(),
-            theme,
-        );
-        y += push_button::HEIGHT + 24.0;
-        caption(canvas, t!("audio-engine-note"), left, y, theme);
+        let font = styles::CAPTION_1.font();
+        Label::new(ellipsize(&font, &range, width))
+            .with_style(styles::CAPTION_1)
+            .with_color(theme.text_secondary)
+            .centered_on(left, card.top + 158.0)
+            .render(canvas);
     }
 
     fn segments(
@@ -1020,6 +1516,28 @@ impl Ui {
     fn run(&mut self, action: Action) {
         match action {
             Action::Pane(pane) => self.pane = pane,
+            Action::Fit => {
+                let scene = self.view.scene(&self.graph, &self.routing);
+                self.view.fit(&scene, self.viewport());
+            }
+            Action::ToggleProperties => {
+                self.props_open = !self.props_open;
+                self.props_scroll.scroll_to(0.0);
+            }
+            Action::SaveWireOf(from, to) => {
+                let scene = self.view.scene(&self.graph, &self.routing);
+                let links = scene
+                    .wire(from, to)
+                    .map(|w| w.links.clone())
+                    .unwrap_or_default();
+                let mut changed = false;
+                for saved in self.saved_forms(&links) {
+                    changed |= self.routing.add(saved);
+                }
+                if changed {
+                    self.save_routing_file();
+                }
+            }
             Action::Filter(media) => {
                 self.view.filter.toggle(media);
                 self.view.selected_wire = None;
@@ -1134,12 +1652,90 @@ fn khz(rate: u32) -> String {
     }
 }
 
-fn heading(canvas: &Canvas, text: &str, x: f32, cy: f32, theme: &Theme) {
-    Label::new(text)
-        .with_style(styles::HEADLINE)
-        .with_color(theme.text_primary)
+/// A rate in kHz for a tight control: 48k, 44.1k.
+fn khz_short(rate: u32) -> String {
+    let khz = f64::from(rate) / 1000.0;
+    let value = if (khz - khz.round()).abs() < 0.05 {
+        format!("{}", khz.round())
+    } else {
+        format!("{khz:.1}")
+    };
+    t_owned!("audio-khz-short", value = value)
+}
+
+/// What the engine runs at, read once per frame.
+struct EngineNow {
+    rate: u32,
+    frames: u32,
+    default_quantum: u32,
+    min: u32,
+    max: u32,
+    force_rate: Option<u32>,
+    force_quantum: Option<u32>,
+}
+
+impl EngineNow {
+    fn latency_ms(&self) -> f64 {
+        f64::from(self.frames) * 1000.0 / f64::from(self.rate.max(1))
+    }
+}
+
+/// A node's sample format, rate and channels, from what it says of itself.
+fn format_of(node: &otto_audio_graph::Node) -> Option<String> {
+    let mut parts: Vec<String> = Vec::new();
+    if let Some(format) = node.prop("audio.format") {
+        parts.push(format.to_string());
+    }
+    if let Some(rate) = node.prop("audio.rate").and_then(|r| r.parse::<u32>().ok()) {
+        parts.push(khz(rate));
+    }
+    if let Some(channels) = node
+        .prop("audio.channels")
+        .and_then(|c| c.parse::<u32>().ok())
+    {
+        parts.push(t_owned!("audio-detail-channels", count = channels));
+    }
+    (!parts.is_empty()).then(|| parts.join(" · "))
+}
+
+/// `node.latency`, "256/48000", as milliseconds.
+fn latency_of(value: &str) -> Option<String> {
+    let (frames, rate) = value.split_once('/')?;
+    let frames: f64 = frames.trim().parse().ok()?;
+    let rate: f64 = rate.trim().parse().ok()?;
+    (rate > 0.0).then(|| {
+        t_owned!(
+            "audio-ms-value",
+            ms = format!("{:.1}", frames * 1000.0 / rate)
+        )
+    })
+}
+
+/// A card's heading: small capitals over its content.
+fn card_heading(canvas: &Canvas, text: &str, x: f32, cy: f32, theme: &Theme) {
+    Label::new(text.to_uppercase())
+        .with_style(styles::CAPTION_2_EMPHASIZED)
+        .with_color(theme.text_tertiary)
         .centered_on(x, cy)
         .render(canvas);
+}
+
+/// The details panel's disclosure triangle: right when closed, down when open.
+fn draw_disclosure(canvas: &Canvas, c: Point, open: bool, theme: &Theme) {
+    let mut path = PathBuilder::new();
+    if open {
+        path.move_to((c.x - 4.0, c.y - 2.0));
+        path.line_to((c.x, c.y + 2.5));
+        path.line_to((c.x + 4.0, c.y - 2.0));
+    } else {
+        path.move_to((c.x - 2.0, c.y - 4.0));
+        path.line_to((c.x + 2.5, c.y));
+        path.line_to((c.x - 2.0, c.y + 4.0));
+    }
+    let mut paint = stroke(theme.text_secondary, 1.6);
+    paint.set_stroke_cap(otto_kit::skia::paint::Cap::Round);
+    paint.set_stroke_join(otto_kit::skia::paint::Join::Round);
+    canvas.draw_path(&path.detach(), &paint);
 }
 
 fn caption(canvas: &Canvas, text: &str, x: f32, cy: f32, theme: &Theme) {
@@ -1156,6 +1752,15 @@ pub fn ground(theme: &Theme) -> Color {
         Color::from_rgb(0x1c, 0x1c, 0x1e)
     } else {
         Color::from_rgb(0xf5, 0xf5, 0xf7)
+    }
+}
+
+/// The toolbar's and details panel's ground, a step off the canvas.
+fn panel_ground(theme: &Theme) -> Color {
+    if theme.is_dark() {
+        Color::from_rgb(0x26, 0x26, 0x28)
+    } else {
+        Color::WHITE
     }
 }
 

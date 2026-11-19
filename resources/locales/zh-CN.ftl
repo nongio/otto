@@ -2370,7 +2370,6 @@ audio-detail-class = 媒体类别
 audio-detail-state = 状态
 # How saved links name this node across plugs and restarts.
 audio-detail-identity = 存储为
-audio-detail-properties = 属性
 audio-engine-title = 引擎
 audio-engine-rate = 采样率
 audio-engine-rate-auto = { $rate }，由引擎选择
@@ -2380,8 +2379,5 @@ audio-engine-auto = 自动
 # A sample rate, e.g. "48 kHz" or "44.1 kHz".
 audio-khz = { $value } kHz
 audio-engine-quantum = 缓冲区大小
-# e.g. "1024 frames, 21.3 ms of latency"
-audio-engine-quantum-now = { $frames } 帧，延迟 { $ms } ms
-audio-engine-quantum-range = 引擎默认值为 { $default }，范围为 { $min } 至 { $max }。缓冲区越小，延迟越低，处理器负担越重。
 audio-engine-reset = 重置
 audio-engine-note = 更改立即生效。声音服务器重启时，音频服务会恢复这些设置。

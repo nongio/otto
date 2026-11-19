@@ -2366,7 +2366,6 @@ audio-detail-class = メディアクラス
 audio-detail-state = 状態
 # How saved links name this node across plugs and restarts.
 audio-detail-identity = 保存名
-audio-detail-properties = プロパティ
 audio-engine-title = エンジン
 audio-engine-rate = サンプルレート
 audio-engine-rate-auto = { $rate }（エンジンが選択）
@@ -2376,8 +2375,5 @@ audio-engine-auto = 自動
 # A sample rate, e.g. "48 kHz" or "44.1 kHz".
 audio-khz = { $value } kHz
 audio-engine-quantum = バッファサイズ
-# e.g. "1024 frames, 21.3 ms of latency"
-audio-engine-quantum-now = { $frames } フレーム、レイテンシ { $ms } ms
-audio-engine-quantum-range = エンジンのデフォルトは { $default } で、範囲は { $min }〜{ $max } です。バッファを小さくするとレイテンシは減りますが、プロセッサの負荷は増えます。
 audio-engine-reset = リセット
 audio-engine-note = 変更はすぐに適用されます。サウンドサーバが再起動すると、オーディオサービスが設定を戻します。
