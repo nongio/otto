@@ -1,4 +1,4 @@
-//! The window: its chrome, its two sections and everything the pointer and
+//! The window: its chrome, its sections and everything the pointer and
 //! keyboard do in it.
 //!
 //! Every control drawn records its rect and action in `targets` while it is
@@ -7,6 +7,7 @@
 
 // Rust guideline compliant 2026-02-21
 
+mod devices_pane;
 mod engine_pane;
 mod graph_pane;
 
@@ -72,9 +73,10 @@ const SCROLL_ZOOM: f32 = 0.006;
 pub enum Pane {
     Graph,
     Engine,
+    Devices,
 }
 
-const PANES: [Pane; 2] = [Pane::Graph, Pane::Engine];
+const PANES: [Pane; 3] = [Pane::Graph, Pane::Devices, Pane::Engine];
 
 /// What a control does when pressed.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -94,6 +96,33 @@ enum Action {
     ToggleProperties,
     /// Save the wire between two rows, from the details panel.
     SaveWireOf(RowKey, RowKey),
+    /// Switch a device to a profile, by its index.
+    Profile {
+        device: u32,
+        index: u32,
+    },
+    /// Point a device's sink or source `card_device` at a port.
+    Port {
+        device: u32,
+        index: u32,
+        card_device: u32,
+    },
+    /// Open the choices of row `row` of a device's card as a pop-up.
+    DeviceMenu {
+        device: u32,
+        row: usize,
+    },
+}
+
+/// A pop-up the window should open, as the press that asked for it left it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MenuRequest {
+    /// The field it opens from, in window points.
+    pub rect: Rect,
+    /// The press's serial, which the pop-up's grab needs.
+    pub serial: u32,
+    pub options: Vec<String>,
+    pub selected: Option<usize>,
 }
 
 /// A pointer drag in progress.
@@ -132,6 +161,13 @@ pub struct Ui {
     heard: bool,
     /// The colour scheme last drawn in.
     dark: bool,
+    /// The Devices section's cards, which scroll under its title.
+    devices_scroll: ScrollView,
+    /// A pop-up asked for and not yet opened, what each of its rows does,
+    /// and the control it is open for.
+    menu_request: Option<MenuRequest>,
+    menu_choices: Vec<Action>,
+    menu_open: Option<Action>,
 }
 
 impl Ui {
@@ -163,6 +199,10 @@ impl Ui {
             pinch_zoom: None,
             heard: false,
             dark: false,
+            devices_scroll: ScrollView::new(Rect::from_xywh(0.0, 0.0, 0.0, 0.0)),
+            menu_request: None,
+            menu_choices: Vec::new(),
+            menu_open: None,
         }
     }
 
@@ -260,6 +300,7 @@ impl Ui {
             match self.pane {
                 Pane::Graph => self.draw_graph(canvas, theme),
                 Pane::Engine => self.draw_engine(canvas, theme),
+                Pane::Devices => self.draw_devices(canvas, theme),
             }
         }
         let decoration = self.decoration();
@@ -462,7 +503,26 @@ impl Ui {
 
     /// Whether something drawn is still moving and wants another frame.
     pub fn is_animating(&self) -> bool {
-        self.view.selected_node.is_some() && self.props_open && self.props_scroll.is_animating()
+        (self.view.selected_node.is_some() && self.props_open && self.props_scroll.is_animating())
+            || (self.pane == Pane::Devices && self.devices_scroll.is_animating())
+    }
+
+    /// The pop-up a press asked for, to open against the window's surface.
+    pub fn take_menu_request(&mut self) -> Option<MenuRequest> {
+        self.menu_request.take()
+    }
+
+    /// The open pop-up's row `index` was chosen.
+    pub fn choose(&mut self, index: usize) {
+        self.menu_open = None;
+        if let Some(action) = self.menu_choices.get(index).copied() {
+            self.run(action);
+        }
+    }
+
+    /// The open pop-up closed with nothing chosen.
+    pub fn menu_closed(&mut self) {
+        self.menu_open = None;
     }
 
     fn segments(
@@ -496,11 +556,15 @@ impl Ui {
     // -----------------------------------------------------------------------
 
     fn target_at(&self, p: Point) -> Option<Action> {
+        self.target_hit(p).map(|(_, action)| action)
+    }
+
+    fn target_hit(&self, p: Point) -> Option<(Rect, Action)> {
         self.targets
             .iter()
             .rev()
             .find(|(rect, _)| rect.contains(p))
-            .map(|(_, action)| *action)
+            .copied()
     }
 
     /// Handle pointer events; returns whether to redraw.
@@ -600,7 +664,10 @@ impl Ui {
             }
             return false;
         }
-        if let Some(action) = self.target_at(p) {
+        if let Some((rect, action)) = self.target_hit(p) {
+            if self.open_device_menu(action, rect, serial) {
+                return true;
+            }
             self.pressed = Some(action);
             return true;
         }
@@ -720,6 +787,17 @@ impl Ui {
                 self.props_scroll.on_wheel_discrete(dy)
             } else {
                 self.props_scroll.on_wheel(dy)
+            };
+        }
+        if self.pane == Pane::Devices && self.devices_viewport().contains(p) {
+            if stop {
+                self.devices_scroll.on_wheel_end();
+                return true;
+            }
+            return if discrete {
+                self.devices_scroll.on_wheel_discrete(dy)
+            } else {
+                self.devices_scroll.on_wheel(dy)
             };
         }
         if self.pane != Pane::Graph || !self.viewport().contains(p) {
@@ -931,6 +1009,14 @@ impl Ui {
                     .set_setting(SETTING_FORCE_QUANTUM, Some("0"));
                 self.save_routing_file();
             }
+            Action::Profile { device, index } => self.connection.set_profile(device, index),
+            Action::Port {
+                device,
+                index,
+                card_device,
+            } => self.connection.set_route(device, index, card_device),
+            // Opened on the press, by `open_device_menu`.
+            Action::DeviceMenu { .. } => {}
         }
     }
 }
@@ -951,6 +1037,7 @@ fn pane_label(pane: Pane) -> &'static str {
     match pane {
         Pane::Graph => t!("audio-pane-graph"),
         Pane::Engine => t!("audio-pane-engine"),
+        Pane::Devices => t!("audio-pane-devices"),
     }
 }
 
@@ -1098,7 +1185,8 @@ fn stroke(color: Color, width: f32) -> Paint {
     paint
 }
 
-/// The sidebar glyphs: three linked nodes for Graph, a dial for Engine.
+/// The sidebar glyphs: three linked nodes for Graph, a dial for Engine, a
+/// speaker for Devices.
 fn draw_pane_glyph(canvas: &Canvas, pane: Pane, rect: Rect, tint: Color) {
     let mut paint = stroke(tint, 1.5);
     paint.set_stroke_cap(otto_kit::skia::paint::Cap::Round);
@@ -1124,6 +1212,13 @@ fn draw_pane_glyph(canvas: &Canvas, pane: Pane, rect: Rect, tint: Color) {
             canvas.draw_rrect(rr, &paint);
             canvas.draw_line(c, Point::new(c.x + 3.5, c.y - 3.5), &paint);
             canvas.draw_circle(c, 1.5, &fill(tint));
+        }
+        Pane::Devices => {
+            let rr =
+                RRect::new_rect_xy(Rect::from_xywh(c.x - 5.5, c.y - 7.5, 11.0, 15.0), 2.5, 2.5);
+            canvas.draw_rrect(rr, &paint);
+            canvas.draw_circle(Point::new(c.x, c.y + 2.0), 2.6, &paint);
+            canvas.draw_circle(Point::new(c.x, c.y - 4.0), 0.9, &fill(tint));
         }
     }
 }

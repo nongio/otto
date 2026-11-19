@@ -4,15 +4,18 @@
 //! its events land in an inbox the run loop drains in `on_update`, so the
 //! window repaints when the graph changes and never polls.
 //!
-//! `otto-audio --png OUT [--engine]` draws the window offscreen instead.
+//! `otto-audio --png OUT [--engine | --devices]` draws the window offscreen
+//! instead.
 
 mod preview;
 mod ui;
 
+use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
 use otto_audio::WINDOW_APP;
 use otto_audio_graph::{Connection, Event};
+use otto_kit::components::dropdown::DropdownMenu;
 use otto_kit::events::{KeyEvent, KeyState, WindowConfigure};
 use otto_kit::prelude::*;
 use otto_kit::t;
@@ -77,13 +80,19 @@ impl App for AudioApp {
             }
         });
 
+        // Built here, at window setup: a `DropdownMenu` made inside a pointer
+        // handler collides with the kit's callback list.
+        let menu = Rc::new(DropdownMenu::new());
         let pointed = Arc::clone(&ui);
         let handle = window.clone();
         window.on_pointer_event(move |events| {
-            let redraw = pointed
+            let (redraw, request) = pointed
                 .lock()
-                .map(|mut ui| ui.pointer(events, &handle))
-                .unwrap_or(false);
+                .map(|mut ui| (ui.pointer(events, &handle), ui.take_menu_request()))
+                .unwrap_or((false, None));
+            if let Some(request) = request {
+                open_menu(&menu, &pointed, &handle, request);
+            }
             if redraw {
                 handle.request_frame();
             }
@@ -184,6 +193,39 @@ impl App for AudioApp {
     }
 }
 
+/// Open the pop-up a press asked for; what is chosen goes back to the UI.
+fn open_menu(menu: &DropdownMenu, ui: &Arc<Mutex<Ui>>, window: &Window, request: ui::MenuRequest) {
+    let Some(parent) = window.surface().map(|s| s.xdg_surface().clone()) else {
+        return;
+    };
+    let chosen = (Arc::clone(ui), window.clone());
+    let dismissed = (Arc::clone(ui), window.clone());
+    let opened = menu.open(
+        &parent,
+        request.rect,
+        request.serial,
+        &request.options,
+        request.selected,
+        move |index| {
+            if let Ok(mut ui) = chosen.0.lock() {
+                ui.choose(index);
+            }
+            chosen.1.request_frame();
+        },
+        move || {
+            if let Ok(mut ui) = dismissed.0.lock() {
+                ui.menu_closed();
+            }
+            dismissed.1.request_frame();
+        },
+    );
+    if !opened {
+        if let Ok(mut ui) = ui.lock() {
+            ui.menu_closed();
+        }
+    }
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     otto_kit::logging::init("info");
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -195,6 +237,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let out = args.get(at + 1).ok_or("--png needs a file to write")?;
         let pane = if args.iter().any(|a| a == "--engine") {
             ui::Pane::Engine
+        } else if args.iter().any(|a| a == "--devices") {
+            ui::Pane::Devices
         } else {
             ui::Pane::Graph
         };

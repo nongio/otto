@@ -12,11 +12,15 @@
 //! how the service stops fighting another program over a link, and
 //! [`pair_channels`] how two folded ports are linked channel by channel.
 //!
+//! Each [`Device`] comes with its profiles and ports, and
+//! [`Connection::set_profile`] and [`Connection::set_route`] switch them.
+//!
 //! The behaviour is specified in `specs/audio-routing.md`.
 
 #![warn(unreachable_pub)]
 
 mod connection;
+mod devices;
 mod guard;
 mod identity;
 mod model;
@@ -24,6 +28,7 @@ mod pairing;
 mod routing;
 
 pub use connection::{Connection, LinkLifetime};
+pub use devices::{codec_named, Availability, Codec, Device, Profile, Route};
 pub use guard::{LoopGuard, Verdict};
 pub use identity::{identity, NodeIdentity, PortRef, StreamDirection};
 pub use model::{

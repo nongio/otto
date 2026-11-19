@@ -39,7 +39,7 @@ pub enum LinkLifetime {
 }
 
 #[derive(Debug)]
-enum Command {
+pub(crate) enum Command {
     Link {
         output: u32,
         input: u32,
@@ -50,6 +50,7 @@ enum Command {
         key: String,
         value: Option<String>,
     },
+    Device(crate::devices::DeviceCommand),
 }
 
 /// A connection to PipeWire, followed on a thread of its own.
@@ -106,7 +107,7 @@ impl Connection {
         });
     }
 
-    fn send(&self, command: Command) {
+    pub(crate) fn send(&self, command: Command) {
         if let Err(command) = self.commands.send(command) {
             tracing::warn!(?command, "PipeWire thread is gone");
         }
@@ -190,12 +191,19 @@ fn session(
         .add_listener_local()
         .global({
             let registry = registry.downgrade();
+            let core = core.downgrade();
             let state = state.clone();
             let emit = emit.clone();
             move |global| {
                 let Some(registry) = registry.upgrade() else {
                     return;
                 };
+                if global.type_ == ObjectType::Device {
+                    if let Some(core) = core.upgrade() {
+                        crate::devices::bind(&core, &registry, &state, &emit, global);
+                    }
+                    return;
+                }
                 on_global(&registry, &state, &emit, global);
             }
         })
@@ -234,9 +242,9 @@ fn session(
 
 /// What the thread keeps for one connection.
 #[derive(Default)]
-struct State {
+pub(crate) struct State {
     /// Proxies and their listeners, by global id; dropping one unbinds it.
-    bound: RefCell<HashMap<u32, Box<dyn Any>>>,
+    pub(crate) bound: RefCell<HashMap<u32, Box<dyn Any>>>,
     /// The last report of each node, so an update without properties keeps
     /// the ones already known.
     nodes: RefCell<HashMap<u32, Node>>,
@@ -259,7 +267,7 @@ impl State {
     }
 }
 
-fn props_map(dict: Option<&pw::spa::utils::dict::DictRef>) -> BTreeMap<String, String> {
+pub(crate) fn props_map(dict: Option<&pw::spa::utils::dict::DictRef>) -> BTreeMap<String, String> {
     dict.map(|d| {
         d.iter()
             .map(|(k, v)| (k.to_string(), v.to_string()))
@@ -497,5 +505,6 @@ fn run_command(
             Some(metadata) => metadata.set_property(0, &key, None, value.as_deref()),
             None => tracing::warn!(key, "no settings metadata to set"),
         },
+        Command::Device(command) => crate::devices::run(state, command),
     }
 }
