@@ -1102,6 +1102,15 @@ bar-logout-title = Выйти сейчас?
 bar-logout-body = Сначала приложения получат запрос на закрытие, чтобы несохранённое можно было сохранить.
 
 
+## Menus
+##
+## Parts of the menus every app shares.
+
+# Beside a slider in a menu, such as a volume. $percent is a whole number,
+# 0 to 100.
+menu-slider-percent = { $percent } %
+
+
 ## Settings — widgets
 ##
 ## The controls themselves, rather than the settings they edit.
@@ -2265,6 +2274,7 @@ settings-network-wifi-soft-blocked = Выключено режимом полё�
 settings-network-current = Сеть
 settings-network-not-connected = Не подключено
 settings-show-network = Показывать состояние сети на верхней панели
+settings-show-sound = Показывать звук на верхней панели
 settings-group-network-status = Состояние
 settings-group-network-known = Известные сети
 settings-network-kind-wifi = Wi-Fi
@@ -2391,6 +2401,38 @@ bar-network-settings = Настройки сети…
 bar-network-join-other = Подключиться к другой сети…
 bar-network-ethernet-connected-speed = Ethernet — подключено, { $speed }
 bar-network-channel = канал { $channel }
+
+## Top bar — sound
+##
+## The speaker in the top bar and the menu under it.
+
+# Captions over the menu's groups: where sound plays, where it is recorded
+# from, and the apps playing.
+bar-sound-output = Выход
+bar-sound-input = Вход
+bar-sound-apps = Приложения
+# Screen-reader names of the sliders. $app is an app's name, e.g. Firefox.
+bar-sound-output-volume = Громкость выхода
+bar-sound-input-volume = Громкость входа
+bar-sound-app-volume = { $app }: громкость
+# Screen-reader names of the round mute buttons beside the sliders.
+bar-sound-mute-output = Выключить звук выхода
+bar-sound-mute-input = Выключить звук входа
+bar-sound-mute-app = Выключить звук: { $app }
+# Beside each output and input, in the shortcut column: what kind of device
+# it is. Virtual is one made in software, such as a mix or an effect.
+bar-sound-kind-bluetooth = Bluetooth
+bar-sound-kind-usb = USB
+bar-sound-kind-hdmi = HDMI
+bar-sound-kind-virtual = Виртуальное
+bar-sound-kind-built-in = Встроенное
+# The menu's last row, which opens the Audio app.
+bar-sound-open-audio = Аудио…
+# What a screen reader calls the indicator. $percent is a whole number and
+# $device the output's name.
+bar-sound-label = Звук, { $percent } %, { $device }
+bar-sound-label-muted = Звук выключен, { $device }
+bar-sound-label-none = Звук, нет выхода
 bar-join-title = Подключиться к «{ $name }»
 bar-join-body = Введи пароль этой сети Wi-Fi.
 bar-join-body-wep = Введи ключ WEP этой сети Wi-Fi.
@@ -2416,6 +2458,8 @@ bar-network-signal-good = хороший
 bar-network-signal-excellent = отличный
 schema-topbar-show-network-label = Показывать состояние сети
 schema-topbar-show-network-description = Индикатор Wi-Fi и проводной сети на верхней панели, с меню для подключения к сети. Показывается там, где работает NetworkManager.
+schema-topbar-show-sound-label = Показывать звук
+schema-topbar-show-sound-description = Значок динамика на верхней панели, с меню громкости, выхода и входа и приложений, которые воспроизводят звук. Показывается там, где работает PipeWire.
 
 ## otto-audio: the PipeWire graph as a patchbay (Graph), and the sound
 ## server's rate and buffer size (Engine). A card is about 220 px wide; the
@@ -2535,3 +2579,80 @@ audio-ms-value = { $ms } ms
 audio-khz-short = { $value }k
 audio-engine-reset = Сбросить
 audio-engine-note = Изменения применяются сразу. Служба аудио восстанавливает их при перезапуске звукового сервера.
+audio-pane-devices = Устройства
+audio-devices-title = Устройства
+audio-devices-intro = Изменения применяются сразу, и звуковой сервер их запоминает.
+audio-devices-empty = Нет звуковых устройств
+# Row labels on a device's card.
+audio-devices-profile = Профиль
+audio-devices-codec = Кодек
+audio-devices-output-port = Порт выхода
+audio-devices-input-port = Порт входа
+# Where the device's volume is set: on its own hardware mixer, or in software.
+audio-devices-volume = Регулировка громкости
+audio-devices-volume-hardware = Аппаратная
+audio-devices-volume-software = Программная
+# When output and input differ, e.g. "Output: Hardware · Input: Software".
+audio-devices-volume-output = Выход: { $control }
+audio-devices-volume-input = Вход: { $control }
+# A port with nothing plugged in, e.g. "Headphones (unplugged)".
+audio-devices-unplugged = { $port } (не подключено)
+# Under a Bluetooth device's codecs.
+audio-devices-codec-note = При смене кодека звук ненадолго прерывается.
+# Beside a device's name: the channels it records and plays now, e.g. "2 in · 2 out".
+audio-devices-inputs = { $count } вх.
+audio-devices-outputs = { $count } вых.
+# Beside a device's name when its profile is Off.
+audio-devices-off = Выкл.
+# What a device is, under its name.
+audio-devices-kind-bluetooth = Bluetooth-устройство
+audio-devices-kind-bluetooth-headphones = Bluetooth-наушники
+audio-devices-kind-bluetooth-headset = Bluetooth-гарнитура
+audio-devices-kind-bluetooth-speaker = Bluetooth-колонка
+audio-devices-kind-usb = USB-аудио
+audio-devices-kind-built-in = Встроенное аудио
+audio-devices-kind-other = Звуковая карта
+
+## otto-audio — Virtual devices: outputs, inputs and loopbacks the audio
+## service makes. The cards are about 260 px wide; the form's labels sit in a
+## column of about 78 px.
+
+audio-pane-virtual = Виртуальные устройства
+audio-virtual-title = Виртуальные устройства
+audio-virtual-intro = Выходы, входы и петли, которые создаёт служба аудио. Приложения видят их как любые другие устройства.
+audio-virtual-service-down = Виртуальные устройства существуют, только пока работает служба аудио.
+audio-virtual-new-heading = Новое виртуальное устройство
+audio-virtual-name = Название
+# Greyed out in the empty name field.
+audio-virtual-name-placeholder = Микс для стрима, Вход для звонков…
+audio-virtual-kind = Тип
+audio-virtual-channels = Каналы
+audio-virtual-add = Добавить
+audio-virtual-kind-output = Выход
+audio-virtual-kind-input = Вход
+# Plays what reaches its input straight out of its output.
+audio-virtual-kind-loopback = Петля
+audio-virtual-about-output = Приложения воспроизводят в него, как в динамик. Звук выходит через его монитор, чтобы другое приложение могло его записать.
+audio-virtual-about-input = Приложения записывают с него, как с микрофона. На вкладке «Граф» к нему можно подключить что угодно.
+audio-virtual-about-loopback = Передаёт вход прямо на выход. Сначала ни с чем не связана: обе стороны связываются на вкладке «Граф».
+# Channel layouts. 5.1 and 7.1 are surround layouts; keep the numbers.
+audio-virtual-mono = Моно
+audio-virtual-stereo = Стерео
+audio-virtual-quad = Квадро
+audio-virtual-surround-51 = 5.1
+audio-virtual-surround-71 = 7.1
+audio-virtual-made-heading = Устройства
+audio-virtual-none = Виртуальных устройств пока нет
+# Under a device's name, e.g. "Output · Stereo".
+audio-virtual-card-kind = { $kind } · { $channels }
+# The service runs but the device has not appeared yet.
+audio-virtual-state-waiting = Создаётся
+audio-virtual-state-no-service = Будет создано при запуске службы аудио
+audio-virtual-rename = Переименовать
+audio-virtual-remove = Удалить
+audio-virtual-save-name = Сохранить
+audio-virtual-cancel = Отменить
+# Example devices the offscreen preview shows when none are saved.
+audio-virtual-sample-output = Микс для стрима
+audio-virtual-sample-input = Вход для звонков
+audio-virtual-sample-loopback = Монитор микрофона

@@ -1034,6 +1034,15 @@ bar-logout-title = 现在注销?
 bar-logout-body = 会先请各个应用关闭,让未保存的内容有机会保存。
 
 
+## Menus
+##
+## Parts of the menus every app shares.
+
+# Beside a slider in a menu, such as a volume. $percent is a whole number,
+# 0 to 100.
+menu-slider-percent = { $percent }%
+
+
 ## Settings — widgets
 ##
 ## The controls themselves, rather than the settings they edit.
@@ -2171,6 +2180,7 @@ settings-network-wifi-soft-blocked = 已被飞行模式关闭。打开 Wi-Fi 即
 settings-network-current = 网络
 settings-network-not-connected = 未连接
 settings-show-network = 在顶部栏显示网络状态
+settings-show-sound = 在顶部栏显示声音
 settings-group-network-status = 状态
 settings-group-network-known = 已知网络
 settings-network-kind-wifi = Wi-Fi
@@ -2297,6 +2307,38 @@ bar-network-settings = 网络设置…
 bar-network-join-other = 加入其他网络…
 bar-network-ethernet-connected-speed = 以太网 — 已连接，{ $speed }
 bar-network-channel = 信道 { $channel }
+
+## Top bar — sound
+##
+## The speaker in the top bar and the menu under it.
+
+# Captions over the menu's groups: where sound plays, where it is recorded
+# from, and the apps playing.
+bar-sound-output = 输出
+bar-sound-input = 输入
+bar-sound-apps = 应用
+# Screen-reader names of the sliders. $app is an app's name, e.g. Firefox.
+bar-sound-output-volume = 输出音量
+bar-sound-input-volume = 输入音量
+bar-sound-app-volume = { $app } 音量
+# Screen-reader names of the round mute buttons beside the sliders.
+bar-sound-mute-output = 将输出静音
+bar-sound-mute-input = 将输入静音
+bar-sound-mute-app = 将 { $app } 静音
+# Beside each output and input, in the shortcut column: what kind of device
+# it is. Virtual is one made in software, such as a mix or an effect.
+bar-sound-kind-bluetooth = 蓝牙
+bar-sound-kind-usb = USB
+bar-sound-kind-hdmi = HDMI
+bar-sound-kind-virtual = 虚拟
+bar-sound-kind-built-in = 内置
+# The menu's last row, which opens the Audio app.
+bar-sound-open-audio = 音频…
+# What a screen reader calls the indicator. $percent is a whole number and
+# $device the output's name.
+bar-sound-label = 声音，{ $percent }%，{ $device }
+bar-sound-label-muted = 声音已静音，{ $device }
+bar-sound-label-none = 声音，无输出
 bar-join-title = 加入“{ $name }”
 bar-join-body = 输入此 Wi-Fi 网络的密码。
 bar-join-body-wep = 输入此 Wi-Fi 网络的 WEP 密钥。
@@ -2322,6 +2364,8 @@ bar-network-signal-good = 良好
 bar-network-signal-excellent = 极佳
 schema-topbar-show-network-label = 显示网络状态
 schema-topbar-show-network-description = 顶部栏中的 Wi-Fi 和有线网络指示器，附带用于加入网络的菜单。在运行 NetworkManager 的系统上显示。
+schema-topbar-show-sound-label = 显示声音
+schema-topbar-show-sound-description = 顶部栏中的扬声器，附带用于调节音量、输出和输入以及正在播放的应用的菜单。在运行 PipeWire 的系统上显示。
 
 ## otto-audio: the PipeWire graph as a patchbay (Graph), and the sound
 ## server's rate and buffer size (Engine). A card is about 220 px wide; the
@@ -2426,3 +2470,80 @@ audio-ms-value = { $ms } ms
 audio-khz-short = { $value }k
 audio-engine-reset = 重置
 audio-engine-note = 更改立即生效。声音服务器重启时，音频服务会恢复这些设置。
+audio-pane-devices = 设备
+audio-devices-title = 设备
+audio-devices-intro = 更改立即生效，声音服务器会记住它们。
+audio-devices-empty = 没有声音设备
+# Row labels on a device's card.
+audio-devices-profile = 配置
+audio-devices-codec = 编解码器
+audio-devices-output-port = 输出端口
+audio-devices-input-port = 输入端口
+# Where the device's volume is set: on its own hardware mixer, or in software.
+audio-devices-volume = 音量控制
+audio-devices-volume-hardware = 硬件
+audio-devices-volume-software = 软件
+# When output and input differ, e.g. "Output: Hardware · Input: Software".
+audio-devices-volume-output = 输出：{ $control }
+audio-devices-volume-input = 输入：{ $control }
+# A port with nothing plugged in, e.g. "Headphones (unplugged)".
+audio-devices-unplugged = { $port }（未插入）
+# Under a Bluetooth device's codecs.
+audio-devices-codec-note = 切换编解码器会让声音短暂中断。
+# Beside a device's name: the channels it records and plays now, e.g. "2 in · 2 out".
+audio-devices-inputs = 输入 { $count }
+audio-devices-outputs = 输出 { $count }
+# Beside a device's name when its profile is Off.
+audio-devices-off = 关闭
+# What a device is, under its name.
+audio-devices-kind-bluetooth = 蓝牙设备
+audio-devices-kind-bluetooth-headphones = 蓝牙耳机
+audio-devices-kind-bluetooth-headset = 蓝牙耳麦
+audio-devices-kind-bluetooth-speaker = 蓝牙扬声器
+audio-devices-kind-usb = USB 音频
+audio-devices-kind-built-in = 内置音频
+audio-devices-kind-other = 声卡
+
+## otto-audio — Virtual devices: outputs, inputs and loopbacks the audio
+## service makes. The cards are about 260 px wide; the form's labels sit in a
+## column of about 78 px.
+
+audio-pane-virtual = 虚拟设备
+audio-virtual-title = 虚拟设备
+audio-virtual-intro = 音频服务创建的输出、输入和回环。应用看到的它们与其他设备无异。
+audio-virtual-service-down = 虚拟设备只在音频服务运行时存在。
+audio-virtual-new-heading = 新建虚拟设备
+audio-virtual-name = 名称
+# Greyed out in the empty name field.
+audio-virtual-name-placeholder = 直播混音、通话输入…
+audio-virtual-kind = 类型
+audio-virtual-channels = 声道
+audio-virtual-add = 添加
+audio-virtual-kind-output = 输出
+audio-virtual-kind-input = 输入
+# Plays what reaches its input straight out of its output.
+audio-virtual-kind-loopback = 回环
+audio-virtual-about-output = 应用像向扬声器一样向它播放。播放的内容从它的监听端口输出，可供其他应用录制。
+audio-virtual-about-input = 应用像从麦克风一样从它录音。可在连接图中把任何内容连接到它。
+audio-virtual-about-loopback = 把输入直接传到输出。初始时未连接：两端都在连接图中连接。
+# Channel layouts. 5.1 and 7.1 are surround layouts; keep the numbers.
+audio-virtual-mono = 单声道
+audio-virtual-stereo = 立体声
+audio-virtual-quad = 四声道
+audio-virtual-surround-51 = 5.1
+audio-virtual-surround-71 = 7.1
+audio-virtual-made-heading = 设备
+audio-virtual-none = 还没有虚拟设备
+# Under a device's name, e.g. "Output · Stereo".
+audio-virtual-card-kind = { $kind } · { $channels }
+# The service runs but the device has not appeared yet.
+audio-virtual-state-waiting = 正在创建
+audio-virtual-state-no-service = 音频服务启动时创建
+audio-virtual-rename = 重命名
+audio-virtual-remove = 移除
+audio-virtual-save-name = 存储
+audio-virtual-cancel = 取消
+# Example devices the offscreen preview shows when none are saved.
+audio-virtual-sample-output = 直播混音
+audio-virtual-sample-input = 通话输入
+audio-virtual-sample-loopback = 麦克风监听

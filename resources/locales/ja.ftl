@@ -1031,6 +1031,15 @@ bar-logout-title = 今すぐログアウトしますか?
 bar-logout-body = 先にアプリに終了を求めるので、保存していない内容を保存できます。
 
 
+## Menus
+##
+## Parts of the menus every app shares.
+
+# Beside a slider in a menu, such as a volume. $percent is a whole number,
+# 0 to 100.
+menu-slider-percent = { $percent }%
+
+
 ## Settings — widgets
 ##
 ## The controls themselves, rather than the settings they edit.
@@ -2167,6 +2176,7 @@ settings-network-wifi-soft-blocked = 機内モードでオフ。Wi-Fi をオン�
 settings-network-current = ネットワーク
 settings-network-not-connected = 未接続
 settings-show-network = 上部バーにネットワークの状況を表示
+settings-show-sound = 上部バーにサウンドを表示
 settings-group-network-status = 状況
 settings-group-network-known = 既知のネットワーク
 settings-network-kind-wifi = Wi-Fi
@@ -2293,6 +2303,38 @@ bar-network-settings = ネットワーク設定…
 bar-network-join-other = ほかのネットワークに接続…
 bar-network-ethernet-connected-speed = Ethernet — 接続済み、{ $speed }
 bar-network-channel = チャンネル { $channel }
+
+## Top bar — sound
+##
+## The speaker in the top bar and the menu under it.
+
+# Captions over the menu's groups: where sound plays, where it is recorded
+# from, and the apps playing.
+bar-sound-output = 出力
+bar-sound-input = 入力
+bar-sound-apps = アプリ
+# Screen-reader names of the sliders. $app is an app's name, e.g. Firefox.
+bar-sound-output-volume = 出力音量
+bar-sound-input-volume = 入力音量
+bar-sound-app-volume = { $app } の音量
+# Screen-reader names of the round mute buttons beside the sliders.
+bar-sound-mute-output = 出力を消音
+bar-sound-mute-input = 入力を消音
+bar-sound-mute-app = { $app } を消音
+# Beside each output and input, in the shortcut column: what kind of device
+# it is. Virtual is one made in software, such as a mix or an effect.
+bar-sound-kind-bluetooth = Bluetooth
+bar-sound-kind-usb = USB
+bar-sound-kind-hdmi = HDMI
+bar-sound-kind-virtual = 仮想
+bar-sound-kind-built-in = 内蔵
+# The menu's last row, which opens the Audio app.
+bar-sound-open-audio = オーディオ…
+# What a screen reader calls the indicator. $percent is a whole number and
+# $device the output's name.
+bar-sound-label = サウンド、{ $percent }%、{ $device }
+bar-sound-label-muted = サウンド消音中、{ $device }
+bar-sound-label-none = サウンド、出力なし
 bar-join-title = 「{ $name }」に接続
 bar-join-body = この Wi-Fi ネットワークのパスワードを入力します。
 bar-join-body-wep = この Wi-Fi ネットワークの WEP キーを入力します。
@@ -2318,6 +2360,8 @@ bar-network-signal-good = 良好
 bar-network-signal-excellent = 非常に良好
 schema-topbar-show-network-label = ネットワークの状況を表示
 schema-topbar-show-network-description = 上部バーの Wi-Fi と有線のインジケータ。ネットワークに接続するメニュー付き。NetworkManager が動作している場合に表示されます。
+schema-topbar-show-sound-label = サウンドを表示
+schema-topbar-show-sound-description = 上部バーのスピーカー。音量、出力と入力、再生中のアプリを扱うメニュー付き。PipeWire が動作している場合に表示されます。
 
 ## otto-audio: the PipeWire graph as a patchbay (Graph), and the sound
 ## server's rate and buffer size (Engine). A card is about 220 px wide; the
@@ -2422,3 +2466,80 @@ audio-ms-value = { $ms } ms
 audio-khz-short = { $value }k
 audio-engine-reset = リセット
 audio-engine-note = 変更はすぐに適用されます。サウンドサーバが再起動すると、オーディオサービスが設定を戻します。
+audio-pane-devices = 装置
+audio-devices-title = 装置
+audio-devices-intro = 変更はすぐに適用され、サウンドサーバに記憶されます。
+audio-devices-empty = サウンド装置がありません
+# Row labels on a device's card.
+audio-devices-profile = プロファイル
+audio-devices-codec = コーデック
+audio-devices-output-port = 出力ポート
+audio-devices-input-port = 入力ポート
+# Where the device's volume is set: on its own hardware mixer, or in software.
+audio-devices-volume = 音量の調整
+audio-devices-volume-hardware = ハードウェア
+audio-devices-volume-software = ソフトウェア
+# When output and input differ, e.g. "Output: Hardware · Input: Software".
+audio-devices-volume-output = 出力：{ $control }
+audio-devices-volume-input = 入力：{ $control }
+# A port with nothing plugged in, e.g. "Headphones (unplugged)".
+audio-devices-unplugged = { $port }（未接続）
+# Under a Bluetooth device's codecs.
+audio-devices-codec-note = コーデックを切り替えると、サウンドが一瞬途切れます。
+# Beside a device's name: the channels it records and plays now, e.g. "2 in · 2 out".
+audio-devices-inputs = 入力 { $count }
+audio-devices-outputs = 出力 { $count }
+# Beside a device's name when its profile is Off.
+audio-devices-off = オフ
+# What a device is, under its name.
+audio-devices-kind-bluetooth = Bluetooth 装置
+audio-devices-kind-bluetooth-headphones = Bluetooth ヘッドフォン
+audio-devices-kind-bluetooth-headset = Bluetooth ヘッドセット
+audio-devices-kind-bluetooth-speaker = Bluetooth スピーカー
+audio-devices-kind-usb = USB オーディオ
+audio-devices-kind-built-in = 内蔵オーディオ
+audio-devices-kind-other = サウンドカード
+
+## otto-audio — Virtual devices: outputs, inputs and loopbacks the audio
+## service makes. The cards are about 260 px wide; the form's labels sit in a
+## column of about 78 px.
+
+audio-pane-virtual = 仮想装置
+audio-virtual-title = 仮想装置
+audio-virtual-intro = オーディオサービスが作成する出力、入力、ループバック。アプリからはほかの装置と同じように見えます。
+audio-virtual-service-down = 仮想装置はオーディオサービスの動作中にのみ存在します。
+audio-virtual-new-heading = 新しい仮想装置
+audio-virtual-name = 名前
+# Greyed out in the empty name field.
+audio-virtual-name-placeholder = 配信用ミックス、通話用入力…
+audio-virtual-kind = 種類
+audio-virtual-channels = チャンネル
+audio-virtual-add = 追加
+audio-virtual-kind-output = 出力
+audio-virtual-kind-input = 入力
+# Plays what reaches its input straight out of its output.
+audio-virtual-kind-loopback = ループバック
+audio-virtual-about-output = アプリはスピーカーと同じようにここへ再生します。再生された音はモニタから出て、ほかのアプリで録音できます。
+audio-virtual-about-input = アプリはマイクと同じようにここから録音します。グラフで何でもここにリンクできます。
+audio-virtual-about-loopback = 入力をそのまま出力へ渡します。最初はリンクされていないので、グラフで両側をリンクします。
+# Channel layouts. 5.1 and 7.1 are surround layouts; keep the numbers.
+audio-virtual-mono = モノラル
+audio-virtual-stereo = ステレオ
+audio-virtual-quad = クアッド
+audio-virtual-surround-51 = 5.1
+audio-virtual-surround-71 = 7.1
+audio-virtual-made-heading = 装置
+audio-virtual-none = 仮想装置はまだありません
+# Under a device's name, e.g. "Output · Stereo".
+audio-virtual-card-kind = { $kind } · { $channels }
+# The service runs but the device has not appeared yet.
+audio-virtual-state-waiting = 作成中
+audio-virtual-state-no-service = オーディオサービスの起動時に作成されます
+audio-virtual-rename = 名前を変更
+audio-virtual-remove = 削除
+audio-virtual-save-name = 保存
+audio-virtual-cancel = キャンセル
+# Example devices the offscreen preview shows when none are saved.
+audio-virtual-sample-output = 配信用ミックス
+audio-virtual-sample-input = 通話用入力
+audio-virtual-sample-loopback = マイクモニタ

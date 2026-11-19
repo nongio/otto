@@ -1079,6 +1079,15 @@ bar-logout-title = Fermer la session maintenant ?
 bar-logout-body = Vos apps seront d’abord invitées à se fermer, pour que rien de non enregistré ne se perde.
 
 
+## Menus
+##
+## Parts of the menus every app shares.
+
+# Beside a slider in a menu, such as a volume. $percent is a whole number,
+# 0 to 100.
+menu-slider-percent = { $percent } %
+
+
 ## Settings — widgets
 ##
 ## The controls themselves, rather than the settings they edit.
@@ -2201,6 +2210,7 @@ settings-network-wifi-soft-blocked = Désactivé par le mode avion. Activer le W
 settings-network-current = Réseau
 settings-network-not-connected = Non connecté
 settings-show-network = Afficher l’état du réseau dans la barre supérieure
+settings-show-sound = Afficher le son dans la barre supérieure
 settings-group-network-status = État
 settings-group-network-known = Réseaux connus
 settings-network-kind-wifi = Wi-Fi
@@ -2327,6 +2337,38 @@ bar-network-settings = Réglages réseau…
 bar-network-join-other = Rejoindre un autre réseau…
 bar-network-ethernet-connected-speed = Ethernet — connecté, { $speed }
 bar-network-channel = canal { $channel }
+
+## Top bar — sound
+##
+## The speaker in the top bar and the menu under it.
+
+# Captions over the menu's groups: where sound plays, where it is recorded
+# from, and the apps playing.
+bar-sound-output = Sortie
+bar-sound-input = Entrée
+bar-sound-apps = Apps
+# Screen-reader names of the sliders. $app is an app's name, e.g. Firefox.
+bar-sound-output-volume = Volume de sortie
+bar-sound-input-volume = Volume d’entrée
+bar-sound-app-volume = Volume de { $app }
+# Screen-reader names of the round mute buttons beside the sliders.
+bar-sound-mute-output = Couper la sortie
+bar-sound-mute-input = Couper l’entrée
+bar-sound-mute-app = Couper { $app }
+# Beside each output and input, in the shortcut column: what kind of device
+# it is. Virtual is one made in software, such as a mix or an effect.
+bar-sound-kind-bluetooth = Bluetooth
+bar-sound-kind-usb = USB
+bar-sound-kind-hdmi = HDMI
+bar-sound-kind-virtual = Virtuel
+bar-sound-kind-built-in = Intégré
+# The menu's last row, which opens the Audio app.
+bar-sound-open-audio = Audio…
+# What a screen reader calls the indicator. $percent is a whole number and
+# $device the output's name.
+bar-sound-label = Son, { $percent } %, { $device }
+bar-sound-label-muted = Son coupé, { $device }
+bar-sound-label-none = Son, aucune sortie
 bar-join-title = Rejoindre « { $name } »
 bar-join-body = Saisis le mot de passe de ce réseau Wi-Fi.
 bar-join-body-wep = Saisis la clé WEP de ce réseau Wi-Fi.
@@ -2352,6 +2394,8 @@ bar-network-signal-good = bon
 bar-network-signal-excellent = excellent
 schema-topbar-show-network-label = Afficher l’état du réseau
 schema-topbar-show-network-description = L’indicateur Wi-Fi et filaire de la barre supérieure, avec un menu pour rejoindre un réseau. Présent là où NetworkManager est lancé.
+schema-topbar-show-sound-label = Afficher le son
+schema-topbar-show-sound-description = Le haut-parleur de la barre supérieure, avec un menu pour le volume, la sortie et l’entrée, et les apps qui jouent du son. Présent là où PipeWire est lancé.
 
 ## otto-audio: the PipeWire graph as a patchbay (Graph), and the sound
 ## server's rate and buffer size (Engine). A card is about 220 px wide; the
@@ -2460,3 +2504,88 @@ audio-ms-value = { $ms } ms
 audio-khz-short = { $value }k
 audio-engine-reset = Réinitialiser
 audio-engine-note = Les changements s’appliquent immédiatement. Le service audio les rétablit au redémarrage du serveur de son.
+audio-pane-devices = Périphériques
+audio-devices-title = Périphériques
+audio-devices-intro = Les changements s’appliquent immédiatement et le serveur de son les mémorise.
+audio-devices-empty = Aucun périphérique audio
+# Row labels on a device's card.
+audio-devices-profile = Profil
+audio-devices-codec = Codec
+audio-devices-output-port = Port de sortie
+audio-devices-input-port = Port d’entrée
+# Where the device's volume is set: on its own hardware mixer, or in software.
+audio-devices-volume = Contrôle du volume
+audio-devices-volume-hardware = Matériel
+audio-devices-volume-software = Logiciel
+# When output and input differ, e.g. "Output: Hardware · Input: Software".
+audio-devices-volume-output = Sortie : { $control }
+audio-devices-volume-input = Entrée : { $control }
+# A port with nothing plugged in, e.g. "Headphones (unplugged)".
+audio-devices-unplugged = { $port } (débranché)
+# Under a Bluetooth device's codecs.
+audio-devices-codec-note = Changer de codec coupe le son un instant.
+# Beside a device's name: the channels it records and plays now, e.g. "2 in · 2 out".
+audio-devices-inputs = { $count ->
+    [one] { $count } entrée
+    [many] { $count } entrées
+   *[other] { $count } entrées
+}
+audio-devices-outputs = { $count ->
+    [one] { $count } sortie
+    [many] { $count } sorties
+   *[other] { $count } sorties
+}
+# Beside a device's name when its profile is Off.
+audio-devices-off = Désactivé
+# What a device is, under its name.
+audio-devices-kind-bluetooth = Périphérique Bluetooth
+audio-devices-kind-bluetooth-headphones = Casque Bluetooth
+audio-devices-kind-bluetooth-headset = Casque-micro Bluetooth
+audio-devices-kind-bluetooth-speaker = Enceinte Bluetooth
+audio-devices-kind-usb = Audio USB
+audio-devices-kind-built-in = Audio intégré
+audio-devices-kind-other = Carte son
+
+## otto-audio — Virtual devices: outputs, inputs and loopbacks the audio
+## service makes. The cards are about 260 px wide; the form's labels sit in a
+## column of about 78 px.
+
+audio-pane-virtual = Périphériques virtuels
+audio-virtual-title = Périphériques virtuels
+audio-virtual-intro = Sorties, entrées et loopbacks créés par le service audio. Les apps les voient comme n’importe quel autre périphérique.
+audio-virtual-service-down = Les périphériques virtuels n’existent que tant que le service audio est lancé.
+audio-virtual-new-heading = Nouveau périphérique virtuel
+audio-virtual-name = Nom
+# Greyed out in the empty name field.
+audio-virtual-name-placeholder = Mix de stream, Entrée d’appel…
+audio-virtual-kind = Type
+audio-virtual-channels = Canaux
+audio-virtual-add = Ajouter
+audio-virtual-kind-output = Sortie
+audio-virtual-kind-input = Entrée
+# Plays what reaches its input straight out of its output.
+audio-virtual-kind-loopback = Loopback
+audio-virtual-about-output = Les apps y jouent comme dans un haut-parleur. Ce qu’elles jouent sort par son moniteur, pour qu’une autre app l’enregistre.
+audio-virtual-about-input = Les apps y enregistrent comme depuis un micro. Tout peut y être relié dans Graphe.
+audio-virtual-about-loopback = Transmet son entrée directement à sa sortie. Il démarre sans lien : ses deux côtés se relient dans Graphe.
+# Channel layouts. 5.1 and 7.1 are surround layouts; keep the numbers.
+audio-virtual-mono = Mono
+audio-virtual-stereo = Stéréo
+audio-virtual-quad = Quad
+audio-virtual-surround-51 = 5.1
+audio-virtual-surround-71 = 7.1
+audio-virtual-made-heading = Périphériques
+audio-virtual-none = Aucun périphérique virtuel pour l’instant
+# Under a device's name, e.g. "Output · Stereo".
+audio-virtual-card-kind = { $kind } · { $channels }
+# The service runs but the device has not appeared yet.
+audio-virtual-state-waiting = En cours de création
+audio-virtual-state-no-service = Créé au lancement du service audio
+audio-virtual-rename = Renommer
+audio-virtual-remove = Supprimer
+audio-virtual-save-name = Enregistrer
+audio-virtual-cancel = Annuler
+# Example devices the offscreen preview shows when none are saved.
+audio-virtual-sample-output = Mix de stream
+audio-virtual-sample-input = Entrée d’appel
+audio-virtual-sample-loopback = Retour micro
