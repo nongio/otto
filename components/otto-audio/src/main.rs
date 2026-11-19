@@ -4,7 +4,7 @@
 //! its events land in an inbox the run loop drains in `on_update`, so the
 //! window repaints when the graph changes and never polls.
 //!
-//! `otto-audio --png OUT [--engine]` draws the window offscreen instead.
+//! `otto-audio --png OUT [--engine | --virtual]` draws the window offscreen instead.
 
 mod preview;
 mod ui;
@@ -118,7 +118,11 @@ impl App for AudioApp {
         if state != KeyState::Pressed {
             return;
         }
-        if self.with_ui(|ui| ui.key(event.keysym)).unwrap_or(false) {
+        let redraw = self.with_ui(|ui| {
+            ui.text_key(event.keysym, event.utf8.as_deref())
+                .unwrap_or_else(|| ui.key(event.keysym))
+        });
+        if redraw.unwrap_or(false) {
             self.redraw();
         }
     }
@@ -195,6 +199,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let out = args.get(at + 1).ok_or("--png needs a file to write")?;
         let pane = if args.iter().any(|a| a == "--engine") {
             ui::Pane::Engine
+        } else if args.iter().any(|a| a == "--virtual") {
+            ui::Pane::VirtualDevices
         } else {
             ui::Pane::Graph
         };

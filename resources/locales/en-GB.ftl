@@ -2566,3 +2566,47 @@ audio-ms-value = { $ms } ms
 audio-khz-short = { $value }k
 audio-engine-reset = Reset
 audio-engine-note = Changes apply right away. The audio service puts them back when the sound server restarts.
+
+## otto-audio — Virtual devices: outputs, inputs and loopbacks the audio
+## service makes. The cards are about 260 px wide; the form's labels sit in a
+## column of about 78 px.
+
+audio-pane-virtual = Virtual devices
+audio-virtual-title = Virtual devices
+audio-virtual-intro = Outputs, inputs and loopbacks the audio service makes. Apps see them like any other device.
+audio-virtual-service-down = Virtual devices exist only while the audio service runs.
+audio-virtual-new-heading = New virtual device
+audio-virtual-name = Name
+# Greyed out in the empty name field.
+audio-virtual-name-placeholder = Stream mix, Call input…
+audio-virtual-kind = Kind
+audio-virtual-channels = Channels
+audio-virtual-add = Add
+audio-virtual-kind-output = Output
+audio-virtual-kind-input = Input
+# Plays what reaches its input straight out of its output.
+audio-virtual-kind-loopback = Loopback
+audio-virtual-about-output = Apps play into it like a speaker. What they play comes out of its monitor, for another app to record.
+audio-virtual-about-input = Apps record from it like a microphone. Link anything into it on Graph.
+audio-virtual-about-loopback = Passes its input straight to its output. It starts unlinked: link both sides on Graph.
+# Channel layouts. 5.1 and 7.1 are surround layouts; keep the numbers.
+audio-virtual-mono = Mono
+audio-virtual-stereo = Stereo
+audio-virtual-quad = Quad
+audio-virtual-surround-51 = 5.1
+audio-virtual-surround-71 = 7.1
+audio-virtual-made-heading = Devices
+audio-virtual-none = No virtual devices yet
+# Under a device's name, e.g. "Output · Stereo".
+audio-virtual-card-kind = { $kind } · { $channels }
+# The service runs but the device has not appeared yet.
+audio-virtual-state-waiting = Being made
+audio-virtual-state-no-service = Made when the audio service starts
+audio-virtual-rename = Rename
+audio-virtual-remove = Remove
+audio-virtual-save-name = Save
+audio-virtual-cancel = Cancel
+# Example devices the offscreen preview shows when none are saved.
+audio-virtual-sample-output = Stream mix
+audio-virtual-sample-input = Call input
+audio-virtual-sample-loopback = Mic monitor

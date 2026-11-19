@@ -22,6 +22,7 @@ mod identity;
 mod model;
 mod pairing;
 mod routing;
+mod virtual_devices;
 
 pub use connection::{Connection, LinkLifetime};
 pub use guard::{LoopGuard, Verdict};
@@ -32,3 +33,4 @@ pub use model::{
 };
 pub use pairing::pair_channels;
 pub use routing::{EngineSettings, Routing, RoutingError, SavedLink};
+pub use virtual_devices::{positions, VirtualDevice, VirtualKind, MAX_CHANNELS};

@@ -17,6 +17,7 @@ use pipewire as pw;
 use pw::types::ObjectType;
 
 use crate::model::{Client, Direction, Event, Link, MediaType, Node, NodeState, Port};
+use crate::virtual_devices::{Made, VirtualDevice};
 
 /// How long to wait before trying a server that did not answer, or that went
 /// away, again. A restarted PipeWire is listening again within a second or
@@ -50,6 +51,7 @@ enum Command {
         key: String,
         value: Option<String>,
     },
+    VirtualDevices(Vec<VirtualDevice>),
 }
 
 /// A connection to PipeWire, followed on a thread of its own.
@@ -106,6 +108,12 @@ impl Connection {
         });
     }
 
+    /// Keep exactly `devices` made while this connection lasts, making them
+    /// again whenever the server comes back. They go when this program does.
+    pub fn keep_virtual_devices(&self, devices: Vec<VirtualDevice>) {
+        self.send(Command::VirtualDevices(devices));
+    }
+
     fn send(&self, command: Command) {
         if let Err(command) = self.commands.send(command) {
             tracing::warn!(?command, "PipeWire thread is gone");
@@ -121,8 +129,9 @@ fn run(
     pw::init();
     let emit: Rc<dyn Fn(Event)> = Rc::new(on_event);
     let mut was_connected = true;
+    let wanted = Rc::new(RefCell::new(Vec::new()));
     loop {
-        let (receiver, connected) = session(app, &emit, commands);
+        let (receiver, connected) = session(app, &emit, commands, &wanted);
         commands = receiver;
         if connected || was_connected {
             emit(Event::Disconnected);
@@ -138,6 +147,7 @@ fn session(
     app: &str,
     emit: &Rc<dyn Fn(Event)>,
     commands: pw::channel::Receiver<Command>,
+    wanted: &Rc<RefCell<Vec<VirtualDevice>>>,
 ) -> (pw::channel::Receiver<Command>, bool) {
     let Ok(mainloop) = pw::main_loop::MainLoopRc::new(None) else {
         return (commands, false);
@@ -160,6 +170,10 @@ fn session(
     emit(Event::Connected);
 
     let state = Rc::new(State::default());
+    state
+        .virtual_devices
+        .borrow_mut()
+        .sync(&core, &context, &wanted.borrow());
 
     let pending = core.sync(0).ok();
     let _core_listener = core
@@ -222,7 +236,18 @@ fn session(
         let core = core.clone();
         let registry = registry.clone();
         let state = state.clone();
-        move |command| run_command(&core, &registry, &state, command)
+        let context = context.clone();
+        let wanted = wanted.clone();
+        move |command| match command {
+            Command::VirtualDevices(devices) => {
+                *wanted.borrow_mut() = devices;
+                state
+                    .virtual_devices
+                    .borrow_mut()
+                    .sync(&core, &context, &wanted.borrow());
+            }
+            command => run_command(&core, &registry, &state, command),
+        }
     });
 
     mainloop.run();
@@ -249,10 +274,13 @@ struct State {
     owned: RefCell<HashMap<(u32, u32), pw::link::Link>>,
     settings: RefCell<Option<pw::metadata::Metadata>>,
     settings_id: RefCell<Option<u32>>,
+    /// The virtual devices made on this connection.
+    virtual_devices: RefCell<Made>,
 }
 
 impl State {
     fn clear(&self) {
+        self.virtual_devices.borrow_mut().clear();
         self.owned.borrow_mut().clear();
         *self.settings.borrow_mut() = None;
         self.bound.borrow_mut().clear();
@@ -497,5 +525,6 @@ fn run_command(
             Some(metadata) => metadata.set_property(0, &key, None, value.as_deref()),
             None => tracing::warn!(key, "no settings metadata to set"),
         },
+        Command::VirtualDevices(_) => {}
     }
 }

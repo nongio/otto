@@ -63,6 +63,9 @@ pub struct Routing {
     pub engine: EngineSettings,
     #[serde(default, rename = "link")]
     links: Vec<SavedLink>,
+    /// The virtual devices the service makes; see `virtual_devices.rs`.
+    #[serde(default, rename = "virtual", skip_serializing_if = "Vec::is_empty")]
+    pub(crate) virtual_devices: Vec<crate::virtual_devices::VirtualDevice>,
 }
 
 /// Why the routing could not be read or written.

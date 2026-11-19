@@ -4,6 +4,7 @@
 //! whenever they exist and are not linked. The links it makes are its own, so
 //! they last while it runs. It reads the routing file again whenever the file
 //! changes, which is how the otto-audio window tells it about a new save.
+//! It also makes the virtual devices the file lists, which last while it runs.
 //!
 //! `--routing PATH` keeps another routing file instead of the person's, for
 //! trying the service out on throwaway nodes.
@@ -56,7 +57,9 @@ fn main() {
     });
     watch_routing(&path, tx);
 
-    let mut keeper = Keeper::new(load(&path));
+    let routing = load(&path);
+    connection.keep_virtual_devices(routing.virtual_devices().to_vec());
+    let mut keeper = Keeper::new(routing);
     let mut graph = Graph::new();
     let mut due: Option<Instant> = None;
     loop {
@@ -86,7 +89,9 @@ fn main() {
             }
             Some(Message::Reload) => {
                 tracing::info!(path = %path.display(), "routing changed, reading it again");
-                keeper.set_routing(load(&path));
+                let routing = load(&path);
+                connection.keep_virtual_devices(routing.virtual_devices().to_vec());
+                keeper.set_routing(routing);
                 due = Some(Instant::now());
             }
             None => {

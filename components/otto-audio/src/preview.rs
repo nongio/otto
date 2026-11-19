@@ -44,6 +44,9 @@ pub fn render(out: &str, pane: Pane) -> Result<(), Box<dyn std::error::Error>> {
     {
         ui.size = (W, H);
         ui.show(pane);
+        if pane == Pane::VirtualDevices {
+            ui.preview_virtual();
+        }
         canvas.save();
         canvas.scale((SCALE, SCALE));
         canvas.translate((index as f32 * W, 0.0));

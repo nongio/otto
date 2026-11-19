@@ -318,8 +318,8 @@ reads and changes the same graph as the app through `otto-audio-graph`.
 
 ## First version
 
-The first version builds Graph, Engine and the service; Devices, Effects,
-Virtual devices, Rules, Setups and meters come later, and the sidebar shows
+The first version builds Graph, Engine, Virtual devices and the service;
+Devices, Effects, Rules, Setups and meters come later, and the sidebar shows
 only the sections that exist. Where it consciously differs from the above:
 
 - **Saved routing file.** The saved links live in
@@ -346,6 +346,22 @@ only the sections that exist. Where it consciously differs from the above:
   shows the engine's rate, buffer and latency; the sidebar's foot says
   whether the service is keeping saved links.
 - **Top bar.** No sound menu yet (Plan, step 3).
+- **Virtual devices.** Three kinds: an *output* (a null sink, whose monitor
+  carries what apps play into it), an *input* (a virtual source apps record
+  from) and a *loopback* (a recording stream and a playing stream that pass
+  sound through). Each has a name and 1, 2, 4, 6 or 8 channels (mono, stereo,
+  quad, 5.1, 7.1). They are kept in the routing file as `[[virtual]]` and made
+  by the service while it runs, with nodes named `otto-virtual.<id>` (a
+  loopback's sides `.in` and `.out`); the id is made from the first name and
+  never changes, so saved links to a device survive a rename and a service
+  restart. Renaming makes the device again under its new description, so
+  streams on it move for a moment. Removing one forgets every saved link to
+  it. A loopback starts unlinked rather than from the default input to the
+  default output, which could howl; it is linked on Graph like any node.
+  There is no combined output yet, no per-device volume or latency, and the
+  list does not scroll. The section lists each device's state from its node;
+  with the service off it says the devices need it, and they are still
+  added, renamed and removed in the file.
 - **One window.** Running the app again opens a second window.
 
 ## Plan

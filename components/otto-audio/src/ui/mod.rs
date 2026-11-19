@@ -9,6 +9,7 @@
 
 mod engine_pane;
 mod graph_pane;
+mod virtual_pane;
 
 use otto_audio::layout::Layout;
 use otto_audio::SERVICE_APP;
@@ -72,9 +73,10 @@ const SCROLL_ZOOM: f32 = 0.006;
 pub enum Pane {
     Graph,
     Engine,
+    VirtualDevices,
 }
 
-const PANES: [Pane; 2] = [Pane::Graph, Pane::Engine];
+const PANES: [Pane; 3] = [Pane::Graph, Pane::Engine, Pane::VirtualDevices];
 
 /// What a control does when pressed.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -94,6 +96,8 @@ enum Action {
     ToggleProperties,
     /// Save the wire between two rows, from the details panel.
     SaveWireOf(RowKey, RowKey),
+    /// A control of the Virtual devices section.
+    Virtual(virtual_pane::VirtualAction),
 }
 
 /// A pointer drag in progress.
@@ -132,6 +136,8 @@ pub struct Ui {
     heard: bool,
     /// The colour scheme last drawn in.
     dark: bool,
+    /// The Virtual devices section's form and rename.
+    virtual_form: virtual_pane::VirtualForm,
 }
 
 impl Ui {
@@ -163,6 +169,7 @@ impl Ui {
             pinch_zoom: None,
             heard: false,
             dark: false,
+            virtual_form: virtual_pane::VirtualForm::default(),
         }
     }
 
@@ -260,6 +267,7 @@ impl Ui {
             match self.pane {
                 Pane::Graph => self.draw_graph(canvas, theme),
                 Pane::Engine => self.draw_engine(canvas, theme),
+                Pane::VirtualDevices => self.draw_virtual(canvas, theme),
             }
         }
         let decoration = self.decoration();
@@ -931,6 +939,7 @@ impl Ui {
                     .set_setting(SETTING_FORCE_QUANTUM, Some("0"));
                 self.save_routing_file();
             }
+            Action::Virtual(action) => self.run_virtual(action),
         }
     }
 }
@@ -951,6 +960,7 @@ fn pane_label(pane: Pane) -> &'static str {
     match pane {
         Pane::Graph => t!("audio-pane-graph"),
         Pane::Engine => t!("audio-pane-engine"),
+        Pane::VirtualDevices => t!("audio-pane-virtual"),
     }
 }
 
@@ -1124,6 +1134,17 @@ fn draw_pane_glyph(canvas: &Canvas, pane: Pane, rect: Rect, tint: Color) {
             canvas.draw_rrect(rr, &paint);
             canvas.draw_line(c, Point::new(c.x + 3.5, c.y - 3.5), &paint);
             canvas.draw_circle(c, 1.5, &fill(tint));
+        }
+        Pane::VirtualDevices => {
+            // Two stacked outlines: a device and its copy.
+            for (dx, dy) in [(-2.5, -2.5), (2.5, 2.5)] {
+                let rr = RRect::new_rect_xy(
+                    Rect::from_xywh(c.x - 5.0 + dx, c.y - 5.0 + dy, 10.0, 10.0),
+                    2.5,
+                    2.5,
+                );
+                canvas.draw_rrect(rr, &paint);
+            }
         }
     }
 }
