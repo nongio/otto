@@ -2333,6 +2333,18 @@ audio-graph-empty = このフィルタでは表示するものがありません
 audio-filter-audio = オーディオ
 audio-filter-midi = MIDI
 audio-filter-video = ビデオ
+# Zooms the canvas so every card is in view.
+audio-fit = 全体を表示
+# The toolbar's key to the wires: solid ones are kept by the audio service.
+audio-legend-saved = 保存済み
+audio-legend-unsaved = 未保存
+# Headings over the canvas's default columns.
+audio-column-sources = ソース
+audio-column-between = エフェクトと仮想装置
+audio-column-destinations = 出力先
+audio-column-midi-video = MIDI とビデオ
+# The title bar's readout of the engine, e.g. "48 kHz · 256 · 5.3 ms".
+audio-readout = { $rate } · { $frames } · { $ms } ms
 # Saves every link on the canvas so the audio service puts them back.
 audio-save-routing = ルーティングを保存
 # On the selected wire.
@@ -2341,6 +2353,9 @@ audio-forget-link = 保存を解除
 audio-remove-link = 削除
 audio-service-down = オーディオサービスがオフの間は、保存したリンクは保持されません。
 audio-service-start = サービスを起動
+# The sidebar's foot: whether the audio service is keeping saved links.
+audio-service-on = 保存したリンクは保持されます
+audio-service-off = オーディオサービスはオフです
 # What a card stands for, under its name.
 audio-role-playing = サウンドを再生
 audio-role-recording = 録音
@@ -2366,6 +2381,22 @@ audio-detail-class = メディアクラス
 audio-detail-state = 状態
 # How saved links name this node across plugs and restarts.
 audio-detail-identity = 保存名
+# Over the details panel's name.
+audio-detail-selected = 選択中
+audio-detail-format = フォーマット
+audio-detail-latency = レイテンシ
+# A channel count in the format, e.g. "F32 · 48 kHz · 2 ch".
+audio-detail-channels = { $count } ch
+audio-detail-links = リンク
+audio-detail-no-links = リンクなし
+# A connection the audio service keeps.
+audio-detail-saved = 保存済み
+# Saves one connection, from the details panel.
+audio-save = 保存
+# Connections past the ones listed, e.g. "3 more".
+audio-detail-more-links = ほか { $count } 件
+# The node's raw PipeWire properties, folded away, e.g. "Properties (42)".
+audio-detail-properties-count = プロパティ（{ $count }）
 audio-engine-title = エンジン
 audio-engine-rate = サンプルレート
 audio-engine-rate-auto = { $rate }（エンジンが選択）
@@ -2375,5 +2406,19 @@ audio-engine-auto = 自動
 # A sample rate, e.g. "48 kHz" or "44.1 kHz".
 audio-khz = { $value } kHz
 audio-engine-quantum = バッファサイズ
+# Under the buffer tiles, e.g. "Default 1024, from 32 to 2048 frames".
+audio-engine-quantum-range-short = デフォルト { $default }、{ $min }〜{ $max } フレーム
+audio-engine-intro = サウンドサーバが動作する頻度と、1回に処理するサウンドの量です。
+audio-engine-latency-now = 現在のレイテンシ
+# e.g. "256 frames at 48000 Hz"
+audio-engine-frames-at = { $rate } Hz で { $frames } フレーム
+# A value forced in this app rather than left to the engine.
+audio-engine-set-here = ここで設定
+audio-engine-rate-note = ほかのレートのストリームはリサンプリングされます。
+# Milliseconds, alone after a large number, and with one.
+audio-ms = ms
+audio-ms-value = { $ms } ms
+# A rate in a tight control, e.g. "48k" or "44.1k".
+audio-khz-short = { $value }k
 audio-engine-reset = リセット
 audio-engine-note = 変更はすぐに適用されます。サウンドサーバが再起動すると、オーディオサービスが設定を戻します。

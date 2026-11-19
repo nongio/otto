@@ -2356,6 +2356,18 @@ audio-graph-empty = Nada que mostrar con estos filtros
 audio-filter-audio = Audio
 audio-filter-midi = MIDI
 audio-filter-video = Vídeo
+# Zooms the canvas so every card is in view.
+audio-fit = Ajustar
+# The toolbar's key to the wires: solid ones are kept by the audio service.
+audio-legend-saved = Guardados
+audio-legend-unsaved = Sin guardar
+# Headings over the canvas's default columns.
+audio-column-sources = Orígenes
+audio-column-between = Efectos y dispositivos virtuales
+audio-column-destinations = Destinos
+audio-column-midi-video = MIDI y vídeo
+# The title bar's readout of the engine, e.g. "48 kHz · 256 · 5.3 ms".
+audio-readout = { $rate } · { $frames } · { $ms } ms
 # Saves every link on the canvas so the audio service puts them back.
 audio-save-routing = Guardar rutas
 # On the selected wire.
@@ -2364,6 +2376,9 @@ audio-forget-link = Olvidar
 audio-remove-link = Eliminar
 audio-service-down = Los enlaces guardados no se conservan mientras el servicio de audio está desactivado.
 audio-service-start = Iniciar servicio
+# The sidebar's foot: whether the audio service is keeping saved links.
+audio-service-on = Los enlaces guardados se conservan
+audio-service-off = El servicio de audio está desactivado
 # What a card stands for, under its name.
 audio-role-playing = Reproduce sonido
 audio-role-recording = Graba
@@ -2389,6 +2404,26 @@ audio-detail-class = Clase de medio
 audio-detail-state = Estado
 # How saved links name this node across plugs and restarts.
 audio-detail-identity = Guardado como
+# Over the details panel's name.
+audio-detail-selected = Selección
+audio-detail-format = Formato
+audio-detail-latency = Latencia
+# A channel count in the format, e.g. "F32 · 48 kHz · 2 ch".
+audio-detail-channels = { $count ->
+    [one] { $count } canal
+    [many] { $count } canales
+   *[other] { $count } canales
+}
+audio-detail-links = Enlaces
+audio-detail-no-links = Sin enlaces
+# A connection the audio service keeps.
+audio-detail-saved = Guardado
+# Saves one connection, from the details panel.
+audio-save = Guardar
+# Connections past the ones listed, e.g. "3 more".
+audio-detail-more-links = { $count } más
+# The node's raw PipeWire properties, folded away, e.g. "Properties (42)".
+audio-detail-properties-count = Propiedades ({ $count })
 audio-engine-title = Motor
 audio-engine-rate = Frecuencia de muestreo
 audio-engine-rate-auto = { $rate }, elegida por el motor
@@ -2398,5 +2433,19 @@ audio-engine-auto = Auto
 # A sample rate, e.g. "48 kHz" or "44.1 kHz".
 audio-khz = { $value } kHz
 audio-engine-quantum = Tamaño del búfer
+# Under the buffer tiles, e.g. "Default 1024, from 32 to 2048 frames".
+audio-engine-quantum-range-short = Predeterminado { $default }, de { $min } a { $max } frames
+audio-engine-intro = Con qué frecuencia se ejecuta el servidor de sonido y cuánto sonido procesa cada vez.
+audio-engine-latency-now = Latencia actual
+# e.g. "256 frames at 48000 Hz"
+audio-engine-frames-at = { $frames } frames a { $rate } Hz
+# A value forced in this app rather than left to the engine.
+audio-engine-set-here = Fijado aquí
+audio-engine-rate-note = Los flujos con otras frecuencias se remuestrean.
+# Milliseconds, alone after a large number, and with one.
+audio-ms = ms
+audio-ms-value = { $ms } ms
+# A rate in a tight control, e.g. "48k" or "44.1k".
+audio-khz-short = { $value }k
 audio-engine-reset = Restablecer
 audio-engine-note = Los cambios se aplican al instante. El servicio de audio los restaura cuando se reinicia el servidor de sonido.

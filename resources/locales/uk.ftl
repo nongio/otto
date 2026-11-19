@@ -2426,6 +2426,18 @@ audio-graph-empty = Із цими фільтрами немає що показ�
 audio-filter-audio = Аудіо
 audio-filter-midi = MIDI
 audio-filter-video = Відео
+# Zooms the canvas so every card is in view.
+audio-fit = Умістити
+# The toolbar's key to the wires: solid ones are kept by the audio service.
+audio-legend-saved = Збережені
+audio-legend-unsaved = Незбережені
+# Headings over the canvas's default columns.
+audio-column-sources = Джерела
+audio-column-between = Ефекти й віртуальні пристрої
+audio-column-destinations = Призначення
+audio-column-midi-video = MIDI і відео
+# The title bar's readout of the engine, e.g. "48 kHz · 256 · 5.3 ms".
+audio-readout = { $rate } · { $frames } · { $ms } ms
 # Saves every link on the canvas so the audio service puts them back.
 audio-save-routing = Зберегти маршрути
 # On the selected wire.
@@ -2434,6 +2446,9 @@ audio-forget-link = Забути
 audio-remove-link = Вилучити
 audio-service-down = Збережені зв’язки не відновлюються, поки служба аудіо вимкнена.
 audio-service-start = Запустити службу
+# The sidebar's foot: whether the audio service is keeping saved links.
+audio-service-on = Збережені зв’язки відновлюються
+audio-service-off = Служба аудіо вимкнена
 # What a card stands for, under its name.
 audio-role-playing = Відтворює звук
 audio-role-recording = Записує
@@ -2464,6 +2479,27 @@ audio-detail-class = Клас медіа
 audio-detail-state = Стан
 # How saved links name this node across plugs and restarts.
 audio-detail-identity = Збережено як
+# Over the details panel's name.
+audio-detail-selected = Вибрано
+audio-detail-format = Формат
+audio-detail-latency = Затримка
+# A channel count in the format, e.g. "F32 · 48 kHz · 2 ch".
+audio-detail-channels = { $count ->
+    [one] { $count } канал
+    [few] { $count } канали
+    [many] { $count } каналів
+   *[other] { $count } каналу
+}
+audio-detail-links = Зв’язки
+audio-detail-no-links = Немає зв’язків
+# A connection the audio service keeps.
+audio-detail-saved = Збережено
+# Saves one connection, from the details panel.
+audio-save = Зберегти
+# Connections past the ones listed, e.g. "3 more".
+audio-detail-more-links = Ще { $count }
+# The node's raw PipeWire properties, folded away, e.g. "Properties (42)".
+audio-detail-properties-count = Властивості ({ $count })
 audio-engine-title = Рушій
 audio-engine-rate = Частота дискретизації
 audio-engine-rate-auto = { $rate }, вибрана рушієм
@@ -2473,10 +2509,24 @@ audio-engine-auto = Авто
 # A sample rate, e.g. "48 kHz" or "44.1 kHz".
 audio-khz = { $value } kHz
 audio-engine-quantum = Розмір буфера
-    [one] { $frames } фрейм, затримка { $ms } ms
-    [few] { $frames } фрейми, затримка { $ms } ms
-    [many] { $frames } фреймів, затримка { $ms } ms
-   *[other] { $frames } фрейму, затримка { $ms } ms
+# Under the buffer tiles, e.g. "Default 1024, from 32 to 2048 frames".
+audio-engine-quantum-range-short = Типово { $default }, від { $min } до { $max } фреймів
+audio-engine-intro = Як часто працює звуковий сервер і скільки звуку він обробляє за раз.
+audio-engine-latency-now = Поточна затримка
+# e.g. "256 frames at 48000 Hz"
+audio-engine-frames-at = { $frames ->
+    [one] { $frames } фрейм за { $rate } Hz
+    [few] { $frames } фрейми за { $rate } Hz
+    [many] { $frames } фреймів за { $rate } Hz
+   *[other] { $frames } фрейму за { $rate } Hz
 }
+# A value forced in this app rather than left to the engine.
+audio-engine-set-here = Задано тут
+audio-engine-rate-note = Потоки з іншою частотою передискретизуються.
+# Milliseconds, alone after a large number, and with one.
+audio-ms = ms
+audio-ms-value = { $ms } ms
+# A rate in a tight control, e.g. "48k" or "44.1k".
+audio-khz-short = { $value }k
 audio-engine-reset = Скинути
 audio-engine-note = Зміни застосовуються одразу. Служба аудіо відновлює їх після перезапуску звукового сервера.

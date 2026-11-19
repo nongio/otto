@@ -2337,6 +2337,18 @@ audio-graph-empty = 在这些过滤条件下没有可显示的内容
 audio-filter-audio = 音频
 audio-filter-midi = MIDI
 audio-filter-video = 视频
+# Zooms the canvas so every card is in view.
+audio-fit = 适合
+# The toolbar's key to the wires: solid ones are kept by the audio service.
+audio-legend-saved = 已存储
+audio-legend-unsaved = 未存储
+# Headings over the canvas's default columns.
+audio-column-sources = 来源
+audio-column-between = 效果和虚拟设备
+audio-column-destinations = 目标
+audio-column-midi-video = MIDI 和视频
+# The title bar's readout of the engine, e.g. "48 kHz · 256 · 5.3 ms".
+audio-readout = { $rate } · { $frames } · { $ms } ms
 # Saves every link on the canvas so the audio service puts them back.
 audio-save-routing = 存储路由
 # On the selected wire.
@@ -2345,6 +2357,9 @@ audio-forget-link = 忘记
 audio-remove-link = 移除
 audio-service-down = 音频服务关闭时，已存储的连接不会保留。
 audio-service-start = 启动服务
+# The sidebar's foot: whether the audio service is keeping saved links.
+audio-service-on = 已存储的连接会保留
+audio-service-off = 音频服务已关闭
 # What a card stands for, under its name.
 audio-role-playing = 播放声音
 audio-role-recording = 录音
@@ -2370,6 +2385,22 @@ audio-detail-class = 媒体类别
 audio-detail-state = 状态
 # How saved links name this node across plugs and restarts.
 audio-detail-identity = 存储为
+# Over the details panel's name.
+audio-detail-selected = 已选中
+audio-detail-format = 格式
+audio-detail-latency = 延迟
+# A channel count in the format, e.g. "F32 · 48 kHz · 2 ch".
+audio-detail-channels = { $count } 声道
+audio-detail-links = 连接
+audio-detail-no-links = 没有连接
+# A connection the audio service keeps.
+audio-detail-saved = 已存储
+# Saves one connection, from the details panel.
+audio-save = 存储
+# Connections past the ones listed, e.g. "3 more".
+audio-detail-more-links = 还有 { $count } 个
+# The node's raw PipeWire properties, folded away, e.g. "Properties (42)".
+audio-detail-properties-count = 属性（{ $count }）
 audio-engine-title = 引擎
 audio-engine-rate = 采样率
 audio-engine-rate-auto = { $rate }，由引擎选择
@@ -2379,5 +2410,19 @@ audio-engine-auto = 自动
 # A sample rate, e.g. "48 kHz" or "44.1 kHz".
 audio-khz = { $value } kHz
 audio-engine-quantum = 缓冲区大小
+# Under the buffer tiles, e.g. "Default 1024, from 32 to 2048 frames".
+audio-engine-quantum-range-short = 默认 { $default }，范围 { $min } 至 { $max } 帧
+audio-engine-intro = 声音服务器运行的频率，以及每次处理的声音量。
+audio-engine-latency-now = 当前延迟
+# e.g. "256 frames at 48000 Hz"
+audio-engine-frames-at = { $rate } Hz 下 { $frames } 帧
+# A value forced in this app rather than left to the engine.
+audio-engine-set-here = 在此设定
+audio-engine-rate-note = 其他采样率的音频流会被重新采样。
+# Milliseconds, alone after a large number, and with one.
+audio-ms = ms
+audio-ms-value = { $ms } ms
+# A rate in a tight control, e.g. "48k" or "44.1k".
+audio-khz-short = { $value }k
 audio-engine-reset = 重置
 audio-engine-note = 更改立即生效。声音服务器重启时，音频服务会恢复这些设置。
