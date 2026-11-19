@@ -255,12 +255,38 @@ device settings are shared by every setup.
 
 A setup can be exported to a file and imported from one.
 
+### The top bar sound menu
+
+The top bar carries a sound indicator, the everyday control for what the
+app does in depth. It follows the graph live, like the app, and never polls.
+
+- **The indicator.** A speaker glyph showing the default output's volume
+  in three steps, struck through while muted. Scrolling over it changes the
+  volume in steps of 5 %; a middle click mutes and unmutes.
+- **Output.** A slider for the default output's volume, with its mute
+  button, and the output's name. Under it, every output device and virtual
+  output by its name, the default one check-marked; picking one makes it
+  the default, and playing streams move to it unless a rule or a saved link
+  holds them.
+- **Input.** The same for the default input: a slider with mute, and the
+  inputs to pick from. A level meter under the slider moves while the menu
+  is open, so a person can see the microphone hears them.
+- **Apps.** Every stream playing sound, by app, each with its own slider
+  and mute. An app with several streams shows once.
+- **Setup.** When more than one setup exists, the active setup and the
+  others to switch to.
+- **Audio…** The last row opens the app.
+
+Volumes are the session manager's: a change here shows in the app, in
+Settings and in any other mixer, and the server remembers it. The menu
+reads and changes the same graph as the app through `otto-audio-graph`.
+
 ### Interactions with the rest of Otto
 
 - Meters record from nodes, but the app never counts as an app using the
   microphone or camera: no mic-in-use indicator, no portal prompt.
-- The Sound pane and the top bar's volume control keep working as before
-  and show effects and virtual devices like any device, by their names.
+- The Sound pane and the top bar's sound menu show effects and virtual
+  devices like any device, by their names.
 - Default device changes from anywhere are reflected in the app, and the
   graph marks the default sink and source.
 
@@ -314,8 +340,49 @@ only the sections that exist. Where it consciously differs from the above:
   latency; the defaults and range are shown as text.
 - **Graph.** No undo, search, context menus or feedback-loop warnings. A
   wire is removed with Delete or the toolbar's Remove. The details panel
-  shows the name, app, media class, state, identity and every property.
+  shows the name, state, app, format, latency, media class and identity,
+  every connection with whether it is saved (an unsaved one can be saved
+  there), and every property, folded away until opened. The title bar
+  shows the engine's rate, buffer and latency; the sidebar's foot says
+  whether the service is keeping saved links.
+- **Top bar.** No sound menu yet (Plan, step 3).
 - **One window.** Running the app again opens a second window.
+
+## Plan
+
+What is left, in the order it is built. Each step ships on its own and
+updates this spec's First version notes.
+
+1. **Graph polish.** Search over node names, which dims what does not
+   match and pans to the first that does; a context menu on cards and wires
+   (save, forget, remove, fold, show in Devices); undo for links made and
+   removed; a warning on a link that closes a feedback loop; the default
+   output and input marked on their cards; momentum on the canvas pan.
+2. **Meters.** A level bar on every running card and in the details panel,
+   read from a monitor stream per visible node while the window is open,
+   none while it is hidden. Needs a capture path in `otto-audio-graph` that
+   never shows as an app using the microphone.
+3. **Top bar sound menu.** The indicator and menu above, in `otto-bar`:
+   default sink and source from the `default` metadata, volume and mute
+   through the node's Props, per-app streams. The meter reuses step 2.
+4. **Devices.** One card per device: profile, port, sample rates, volume
+   control, and Bluetooth codec and quality, set through the device's
+   params. HDMI and other profile clashes are said before they happen.
+5. **Engine, live.** The DSP load chart, dropouts, the driver, and the
+   table of running nodes from the profiler; the allowed rates and
+   *Follow the content*; a quantum range next to the fixed value.
+6. **Virtual devices.** Null sinks and sources and loopbacks made and
+   owned by the service, kept in the routing file, shown on Graph in
+   column 1.
+7. **Effects.** A parametric equaliser with presets and AutoEQ import, a
+   limiter, a compressor, and noise suppression, hosted by the service as
+   filter chains, each inserted between streams and a device. This covers
+   what JamesDSP does for most people.
+8. **Rules.** Which device an app goes to, as session manager targets,
+   with the app picked from what has played.
+9. **Setups.** Named sets of saved links, rules, effects and engine
+   settings; switching from the title bar and the sound menu; export and
+   import.
 
 ## Rationale
 
@@ -345,7 +412,7 @@ only the sections that exist. Where it consciously differs from the above:
 - The app's name in the launcher: *Audio*, *Sound Studio*, *Patchbay*?
 - Should arbitrary LV2/LADSPA plugins be insertable as effects in a later
   version, and with which plugin UI?
-- Should setups be switchable from the top bar's sound menu, and should a
-  setup switch automatically when a device appears (a headset, a dock)?
+- Should a setup switch automatically when a device appears (a headset, a
+  dock)?
 - Should Engine settings be per setup after all, for a low-latency
   recording setup next to a power-saving everyday one?
