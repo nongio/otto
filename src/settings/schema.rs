@@ -603,6 +603,14 @@ pub static SETTINGS: &[SettingSpec] = &[
         Live,
     ),
     spec(
+        "topbar.show_sound",
+        Bool,
+        "Show sound",
+        "The speaker in the top bar, with a menu for the volume, the output \
+         and input, and the apps playing. Shown where PipeWire runs.",
+        Live,
+    ),
+    spec(
         "topbar.clock_format",
         Str,
         "Clock format",

@@ -217,6 +217,17 @@ pub enum Event {
     Removed(u32),
     /// An engine setting changed; `None` when it was cleared.
     Setting { key: String, value: Option<String> },
+    /// The default output or input is now the node named `name`; `None`
+    /// when the session manager names none.
+    Default {
+        endpoint: crate::mixer::Endpoint,
+        name: Option<String>,
+    },
+    /// A node's volume or mute changed.
+    Volume {
+        node: u32,
+        volume: crate::mixer::Volume,
+    },
 }
 
 /// The graph as last reported, keyed by global id.
@@ -229,6 +240,7 @@ pub struct Graph {
     settings: BTreeMap<String, String>,
     connected: bool,
     synced: bool,
+    pub(crate) mixer: crate::mixer::Mixer,
 }
 
 impl Graph {
@@ -267,6 +279,7 @@ impl Graph {
                 self.ports.remove(&id);
                 self.links.remove(&id);
                 self.clients.remove(&id);
+                self.mixer.remove(id);
             }
             Event::Setting { key, value } => match value {
                 Some(value) => {
@@ -276,6 +289,8 @@ impl Graph {
                     self.settings.remove(&key);
                 }
             },
+            Event::Default { endpoint, name } => self.mixer.set_default(endpoint, name),
+            Event::Volume { node, volume } => self.mixer.set_volume(node, volume),
         }
     }
 
@@ -285,6 +300,7 @@ impl Graph {
         self.links.clear();
         self.clients.clear();
         self.settings.clear();
+        self.mixer = crate::mixer::Mixer::default();
         self.synced = false;
     }
 

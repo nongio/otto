@@ -50,6 +50,7 @@ enum Command {
         key: String,
         value: Option<String>,
     },
+    Mixer(crate::mixer::Command),
 }
 
 /// A connection to PipeWire, followed on a thread of its own.
@@ -104,6 +105,10 @@ impl Connection {
             key: key.to_string(),
             value: value.map(str::to_string),
         });
+    }
+
+    pub(crate) fn send_mixer(&self, command: crate::mixer::Command) {
+        self.send(Command::Mixer(command));
     }
 
     fn send(&self, command: Command) {
@@ -213,6 +218,7 @@ fn session(
                     *state.settings.borrow_mut() = None;
                     *state.settings_id.borrow_mut() = None;
                 }
+                state.mixer.forget(id, &*emit);
                 emit(Event::Removed(id));
             }
         })
@@ -249,12 +255,15 @@ struct State {
     owned: RefCell<HashMap<(u32, u32), pw::link::Link>>,
     settings: RefCell<Option<pw::metadata::Metadata>>,
     settings_id: RefCell<Option<u32>>,
+    /// The defaults, the volumes and the cards' routes.
+    mixer: Rc<crate::mixer::Thread>,
 }
 
 impl State {
     fn clear(&self) {
         self.owned.borrow_mut().clear();
         *self.settings.borrow_mut() = None;
+        self.mixer.clear();
         self.bound.borrow_mut().clear();
     }
 }
@@ -348,11 +357,15 @@ fn on_global(
                 .map(str::to_string);
             emit(Event::Client(Client { id, app }));
         }
-        ObjectType::Metadata => {
-            if global.props.and_then(|p| p.get("metadata.name")) != Some("settings") {
-                return;
+        ObjectType::Metadata => match global.props.and_then(|p| p.get("metadata.name")) {
+            Some("settings") => bind_settings(registry, state, emit, global),
+            Some("default") => {
+                crate::mixer::bind_default(registry, global, &state.bound, &state.mixer, emit);
             }
-            bind_settings(registry, state, emit, global);
+            _ => {}
+        },
+        ObjectType::Device => {
+            crate::mixer::bind_device(registry, global, &state.bound, &state.mixer)
         }
         _ => {}
     }
@@ -404,10 +417,9 @@ fn bind_node(
             }
         })
         .register();
-    state
-        .bound
-        .borrow_mut()
-        .insert(id, Box::new((listener, proxy)));
+    let mixer = crate::mixer::watch_node(&proxy, id, global.props, &state.mixer, emit);
+    let node: crate::mixer::BoundNode = (listener, mixer, proxy);
+    state.bound.borrow_mut().insert(id, Box::new(node));
 }
 
 fn bind_settings(
@@ -497,5 +509,6 @@ fn run_command(
             Some(metadata) => metadata.set_property(0, &key, None, value.as_deref()),
             None => tracing::warn!(key, "no settings metadata to set"),
         },
+        Command::Mixer(command) => crate::mixer::run(&state.bound, &state.mixer, command),
     }
 }

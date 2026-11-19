@@ -527,6 +527,8 @@ another way of typing. The panes are:
   The *Network* group has one toggle, *Show network status in the top bar*
   (`topbar.show_network`, live, on by default). It sits here rather than on
   the Network pane so that it is reachable on a machine without Wi-Fi.
+  The *Sound* group has one toggle too, *Show sound in the top bar*
+  (`topbar.show_sound`, live, on by default).
 - **Keyboard** — repeat delay and rate, the input sources (see below), then
   shortcuts.
 - **Trackpad & Mouse** — the pointer and touchpad settings.

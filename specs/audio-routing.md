@@ -345,7 +345,22 @@ only the sections that exist. Where it consciously differs from the above:
   there), and every property, folded away until opened. The title bar
   shows the engine's rate, buffer and latency; the sidebar's foot says
   whether the service is keeping saved links.
-- **Top bar.** No sound menu yet (Plan, step 3).
+- **Top bar.** The sound indicator and menu are in `otto-bar`, as above,
+  with three differences. The input has no level meter yet: it waits for
+  the meters (step 2). There is no setup row, since there is one implicit
+  setup. Each output and input shows what kind of device it is (Bluetooth,
+  USB, HDMI, Built-in or Virtual) beside its name. The defaults are read
+  from `default.audio.sink` and `.source` in the `default` metadata, and a
+  choice is written to `default.configured.audio.sink` and `.source`, as
+  `wpctl set-default` does. Volume and mute are read from each node's
+  `Props`; a change goes through the card's `Route` (saved with the route)
+  when the node belongs to a card, and through the node's `Props`
+  otherwise, as `wpctl` and the PulseAudio server do. Volumes are cubic on
+  the wire and shown linear. Sliders reach 100 %, never past it. An app is
+  shown by `application.name`; its streams move together, and filters'
+  own streams and level monitors are left out. The sliders, toggles and
+  captions are otto-kit menu rows, so the menu is drawn by the same
+  `ContextMenu` as every other bar menu.
 - **One window.** Running the app again opens a second window.
 
 ## Plan

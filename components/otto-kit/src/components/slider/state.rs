@@ -86,9 +86,62 @@ impl SliderDrag {
     }
 }
 
+/// How far a touchpad travels for one step, in the pointer's units.
+const STEP_DISTANCE: f64 = 15.0;
+
+/// Wheel notches and touchpad travel, counted out in whole steps: one per
+/// notch, one per [`STEP_DISTANCE`] of a two-finger scroll, with what is
+/// left kept for the next event.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct ScrollSteps {
+    /// Wheel travel not yet a step, in 120ths of a notch.
+    wheel: i32,
+    /// Touchpad travel not yet a step.
+    travel: f64,
+}
+
+impl ScrollSteps {
+    /// Nothing counted yet.
+    pub const fn new() -> Self {
+        Self {
+            wheel: 0,
+            travel: 0.0,
+        }
+    }
+
+    /// Add one axis event: `value120` from a wheel (120 a notch), else
+    /// `absolute` travel. Returns the whole steps it completed, positive
+    /// down, as the axis runs.
+    pub fn add(&mut self, value120: i32, absolute: f64) -> i32 {
+        if value120 != 0 {
+            self.travel = 0.0;
+            self.wheel += value120;
+            let steps = self.wheel / 120;
+            self.wheel -= steps * 120;
+            return steps;
+        }
+        self.travel += absolute;
+        let steps = (self.travel / STEP_DISTANCE).trunc();
+        self.travel -= steps * STEP_DISTANCE;
+        steps as i32
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_notch_is_a_step_and_a_swipe_is_counted_out() {
+        let mut steps = ScrollSteps::default();
+        assert_eq!(steps.add(120, 15.0), 1);
+        assert_eq!(steps.add(60, 7.5), 0);
+        assert_eq!(steps.add(60, 7.5), 1);
+        assert_eq!(steps.add(-240, -30.0), -2);
+        assert_eq!(steps.add(0, 10.0), 0);
+        assert_eq!(steps.add(0, 10.0), 1);
+        assert_eq!(steps.add(0, -50.0), -3);
+    }
 
     fn rect() -> Rect {
         Rect::from_xywh(0.0, 0.0, 160.0, 24.0)

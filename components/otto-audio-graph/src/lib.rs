@@ -12,6 +12,10 @@
 //! how the service stops fighting another program over a link, and
 //! [`pair_channels`] how two folded ports are linked channel by channel.
 //!
+//! The mixer is part of the graph too: the default output and input
+//! ([`Graph::default_node`]), each node's [`Volume`], the [`AppStreams`]
+//! playing, and the commands that change them on [`Connection`].
+//!
 //! The behaviour is specified in `specs/audio-routing.md`.
 
 #![warn(unreachable_pub)]
@@ -19,6 +23,7 @@
 mod connection;
 mod guard;
 mod identity;
+mod mixer;
 mod model;
 mod pairing;
 mod routing;
@@ -26,6 +31,7 @@ mod routing;
 pub use connection::{Connection, LinkLifetime};
 pub use guard::{LoopGuard, Verdict};
 pub use identity::{identity, NodeIdentity, PortRef, StreamDirection};
+pub use mixer::{to_cubic, to_linear, AppStreams, Endpoint, Volume};
 pub use model::{
     Client, Direction, Event, Graph, Link, MediaType, Node, NodeState, Port, SETTING_FORCE_QUANTUM,
     SETTING_FORCE_RATE, SETTING_MAX_QUANTUM, SETTING_MIN_QUANTUM, SETTING_QUANTUM, SETTING_RATE,

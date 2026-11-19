@@ -26,6 +26,9 @@ pub struct RightLayout {
     pub network_x: f32,
     /// Zero while the network indicator is hidden.
     pub network_width: f32,
+    pub sound_x: f32,
+    /// Zero while the sound indicator is hidden.
+    pub sound_width: f32,
     pub keyboard_x: f32,
     /// Zero while the keyboard layout indicator is hidden.
     pub keyboard_width: f32,
@@ -46,6 +49,9 @@ pub struct RightPanel {
     /// Whether the network menu is open, which draws the pill behind the
     /// network indicator.
     pub network_active: bool,
+    /// Whether the sound menu is open, which draws the pill behind the
+    /// sound indicator.
+    pub sound_active: bool,
     pub width: f32,
     pub height: f32,
 }
@@ -357,6 +363,7 @@ impl RightPanel {
             battery_active: false,
             keyboard_active: false,
             network_active: false,
+            sound_active: false,
             width: RIGHT_WIDTH as f32,
             height: BAR_HEIGHT as f32,
         }
@@ -387,15 +394,17 @@ impl RightPanel {
     pub fn layout(&self) -> RightLayout {
         let battery_width = crate::battery::width();
         let network_width = crate::network::width();
+        let sound_width = crate::sound::width();
         let keyboard_width = crate::keyboard_layout::width();
         let tray_width = MenuBarRenderer::measure_width(&self.tray_menu_state, &self.tray_style);
 
-        let [_, battery_x, network_x, keyboard_x, tray_x] = pack_right_to_left(
+        let [_, battery_x, network_x, sound_x, keyboard_x, tray_x] = pack_right_to_left(
             self.width - BAR_PADDING_H,
             [
                 self.clock_text_width(),
                 battery_width,
                 network_width,
+                sound_width,
                 keyboard_width,
                 tray_width,
             ],
@@ -406,6 +415,8 @@ impl RightPanel {
             battery_width,
             network_x,
             network_width,
+            sound_x,
+            sound_width,
             keyboard_x,
             keyboard_width,
             tray_x,
@@ -435,6 +446,15 @@ impl RightPanel {
                 theme.text_primary
             };
             crate::network::draw(canvas, layout.network_x, self.height, color);
+        }
+
+        if layout.sound_width > 0.0 {
+            let color = if self.sound_active {
+                self.draw_pill(canvas, self.sound_pill_rect())
+            } else {
+                theme.text_primary
+            };
+            crate::sound::draw(canvas, layout.sound_x, self.height, color);
         }
 
         if layout.keyboard_width > 0.0 {
@@ -483,6 +503,7 @@ impl RightPanel {
             self.clock_text_width(),
             crate::battery::width(),
             crate::network::width(),
+            crate::sound::width(),
             crate::keyboard_layout::width(),
             MenuBarRenderer::measure_width(&self.tray_menu_state, &self.tray_style),
         ]) + BAR_PADDING_H * 2.0;
@@ -582,6 +603,24 @@ impl RightPanel {
     /// from.
     pub fn network_pill_rect(&self) -> Option<(f32, f32, f32, f32)> {
         self.network_rect().map(pill_rect)
+    }
+
+    /// Whether `x` (in panel coords) is on the sound indicator.
+    pub fn sound_at(&self, x: f32) -> bool {
+        let layout = self.layout();
+        slot_at(x, layout.sound_x, layout.sound_width)
+    }
+
+    /// The sound indicator's bounding box in surface-local coords.
+    pub fn sound_rect(&self) -> Option<(f32, f32, f32, f32)> {
+        let layout = self.layout();
+        slot_rect(layout.sound_x, layout.sound_width, self.height)
+    }
+
+    /// The pill an open sound menu draws behind the indicator, and hangs
+    /// from.
+    pub fn sound_pill_rect(&self) -> Option<(f32, f32, f32, f32)> {
+        self.sound_rect().map(pill_rect)
     }
 
     pub fn tray_item_at(&self, x: f32) -> Option<usize> {
@@ -708,7 +747,8 @@ mod tests {
 
     #[test]
     fn a_hidden_clock_leaves_no_gap_at_the_edge() {
-        // Clock, battery, network, keyboard, tray.
+        // Clock, battery, network, keyboard, tray (sound is placed the
+        // same way, between network and keyboard).
         let shown = pack_right_to_left(100.0, [40.0, 20.0, 0.0, 0.0, 10.0]);
         assert_eq!(
             shown,
