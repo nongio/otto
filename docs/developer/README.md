@@ -90,6 +90,7 @@ at the top — check that before trusting the details.
 | [AirPlay Screenshare](airplay-screenshare.md) | Exploration only |
 | [Search Next Plan](search-next-plan.md) | Draft requirements, not built |
 | [Vulkan Renderer Plan](vulkan-renderer-plan.md) | Phases 1–3 built; plane scanout on Vulkan is next |
+| [Share Plan](share-plan.md) | Not built: share destinations as desktop entries, LocalSend first |
 
 ## Specs
 
