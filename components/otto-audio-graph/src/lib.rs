@@ -18,22 +18,33 @@
 //! ([`Graph::default_node`]), each node's [`Volume`], the [`AppStreams`]
 //! playing, and the commands that change them on [`Connection`].
 //!
+//! [`Effect`]s are filter chains a program keeps made with
+//! [`Connection::keep_effects`]; their values change live through
+//! [`Connection::set_effect_controls`].
+//!
 //! The behaviour is specified in `specs/audio-routing.md`.
 
 #![warn(unreachable_pub)]
 
 mod connection;
 mod devices;
+mod effects;
 mod guard;
 mod identity;
 mod mixer;
 mod model;
+mod module;
 mod pairing;
 mod routing;
 mod virtual_devices;
 
 pub use connection::{Connection, LinkLifetime};
 pub use devices::{codec_named, Availability, Codec, Device, Profile, Route};
+pub use effects::{
+    flat_bands, parse_autoeq, response_db, support, AutoEq, AutoEqError, Band, BandType,
+    Coefficients, Effect, EffectKind, EffectSide, ParamSpec, Support, Unit, EFFECT_PREFIX,
+    EFFECT_RATE, MAX_BANDS, MAX_FREQ, MAX_GAIN, MAX_Q, MIN_FREQ, MIN_Q,
+};
 pub use guard::{LoopGuard, Verdict};
 pub use identity::{identity, NodeIdentity, PortRef, StreamDirection};
 pub use mixer::{to_cubic, to_linear, AppStreams, Endpoint, Volume};

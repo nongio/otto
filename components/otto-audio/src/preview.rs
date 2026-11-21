@@ -50,6 +50,9 @@ pub fn render(out: &str, pane: Pane, mode: GraphMode) -> Result<(), Box<dyn std:
         if pane == Pane::VirtualDevices {
             ui.preview_virtual();
         }
+        if pane == Pane::Effects {
+            ui.preview_effects();
+        }
         canvas.save();
         canvas.scale((SCALE, SCALE));
         canvas.translate((index as f32 * W, 0.0));
