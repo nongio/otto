@@ -59,6 +59,8 @@ pub enum Kind {
     Bluetooth,
     Usb,
     Hdmi,
+    /// An AirPlay receiver on the network, which plays about 2 s late.
+    AirPlay,
     /// Made in software: a null sink, a loopback, an effect.
     Virtual,
     /// A card's own speakers, jack or microphone.
@@ -145,6 +147,9 @@ impl Snapshot {
 
 /// What kind of device `node` is, from what the session manager says of it.
 fn kind_of(node: &Node) -> Kind {
+    if node.is_airplay() {
+        return Kind::AirPlay;
+    }
     if !node.is_device() {
         return Kind::Virtual;
     }
@@ -379,6 +384,7 @@ fn kind_label(kind: Kind) -> &'static str {
         Kind::Bluetooth => otto_kit::t!("bar-sound-kind-bluetooth"),
         Kind::Usb => otto_kit::t!("bar-sound-kind-usb"),
         Kind::Hdmi => otto_kit::t!("bar-sound-kind-hdmi"),
+        Kind::AirPlay => otto_kit::t!("bar-sound-kind-airplay"),
         Kind::Virtual => otto_kit::t!("bar-sound-kind-virtual"),
         Kind::BuiltIn => otto_kit::t!("bar-sound-kind-built-in"),
     }
@@ -832,6 +838,21 @@ mod tests {
             .find(|i| i.label() == Some("Scarlett 2i2"))
             .expect("the mic");
         assert_eq!(mic.shortcut(), Some(otto_kit::t!("bar-sound-kind-usb")));
+    }
+
+    #[test]
+    fn an_airplay_speaker_says_so() {
+        let Event::Node(speaker) = node(
+            7,
+            &[
+                ("media.class", "Audio/Sink"),
+                ("node.name", "raop_sink.Kitchen.local.192.168.1.30.7000"),
+                ("node.description", "Kitchen"),
+            ],
+        ) else {
+            unreachable!()
+        };
+        assert_eq!(kind_of(&speaker), Kind::AirPlay);
     }
 
     #[test]

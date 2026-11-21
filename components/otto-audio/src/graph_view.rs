@@ -342,7 +342,7 @@ pub fn column(node: &Node) -> usize {
         2
     } else if class.starts_with("Audio/Source") && node.is_device() {
         0
-    } else if class.starts_with("Audio/Sink") && node.is_device() {
+    } else if class.starts_with("Audio/Sink") && (node.is_device() || node.is_airplay()) {
         2
     } else {
         1
@@ -367,7 +367,9 @@ pub fn role(node: &Node) -> String {
     } else if class.starts_with("Stream/Input") {
         otto_kit::t!("audio-role-recording")
     } else if class.starts_with("Audio/Sink") {
-        if node.is_device() {
+        if node.is_airplay() {
+            otto_kit::t!("audio-role-airplay")
+        } else if node.is_device() {
             otto_kit::t!("audio-role-output-device")
         } else {
             otto_kit::t!("audio-role-virtual-output")
@@ -1350,6 +1352,23 @@ mod tests {
         let graph = graph();
         assert_eq!(column(graph.node(1).unwrap()), 0);
         assert_eq!(column(graph.node(2).unwrap()), 2);
+    }
+
+    #[test]
+    fn an_airplay_speaker_is_a_destination() {
+        let speaker = Node {
+            id: 5,
+            props: [
+                ("media.class".to_string(), "Audio/Sink".to_string()),
+                (
+                    "node.name".to_string(),
+                    "raop_sink.Kitchen.local.192.168.1.30.7000".to_string(),
+                ),
+            ]
+            .into(),
+            state: NodeState::Idle,
+        };
+        assert_eq!(column(&speaker), 2);
     }
 
     #[test]

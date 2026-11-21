@@ -2,12 +2,16 @@
 //! port each of its outputs and inputs uses, and a Bluetooth device's codec.
 //!
 //! Every choice is a device param the server keeps, so nothing here is
-//! written to the routing file.
+//! written to the routing file, except the AirPlay speakers switch under the
+//! cards, which the service follows.
 
 // Rust guideline compliant 2026-02-21
 
-use otto_audio_graph::{codec_named, Availability, Device, Direction, Profile};
+use otto_audio_graph::{
+    codec_named, AirPlayMissing, Availability, Device, Direction, Profile, AIRPLAY_PACKAGE,
+};
 use otto_kit::components::dropdown::{field as dropdown, DropdownInteraction};
+use otto_kit::components::toggle::{self, ToggleInteraction};
 
 use super::*;
 
@@ -32,6 +36,10 @@ const DEVICES_HEADER_H: f32 = 72.0;
 const MAX_SEGMENTS: usize = 5;
 /// A segment's room around its label.
 const SEGMENT_PAD: f32 = 20.0;
+/// A band in the AirPlay card: what it needs, or the service notice.
+const NOTICE_H: f32 = 44.0;
+/// One AirPlay speaker in the AirPlay card.
+const SPEAKER_ROW_H: f32 = 32.0;
 
 /// A choice a card offers.
 #[derive(Debug, Clone, PartialEq)]
@@ -128,16 +136,6 @@ impl Ui {
             .map(|device| (device.id, self.device_card(device)))
             .collect();
         let viewport = self.devices_viewport();
-        if cards.is_empty() {
-            if self.graph.is_synced() {
-                Label::new(t!("audio-devices-empty"))
-                    .with_style(styles::BODY)
-                    .with_color(theme.text_secondary)
-                    .centered_at(viewport.center_x(), viewport.center_y())
-                    .render(canvas);
-            }
-            return;
-        }
 
         // A grid of columns at least `DEVICE_CARD_MIN_W` wide; each row of
         // cards is as tall as its tallest.
@@ -147,6 +145,11 @@ impl Ui {
         let card_w = (width - (columns - 1) as f32 * DEVICE_GAP) / columns as f32;
         let mut placed = Vec::with_capacity(cards.len());
         let mut y = 4.0;
+        // With no device, a line saying so where the cards would be.
+        let empty_at = cards.is_empty().then(|| {
+            y += 48.0;
+            y - 24.0
+        });
         for row in cards.chunks(columns) {
             let row_h = row.iter().map(|(_, c)| c.height()).fold(0.0, f32::max);
             for (col, (_, card)) in row.iter().enumerate() {
@@ -155,6 +158,9 @@ impl Ui {
             }
             y += row_h + DEVICE_GAP;
         }
+        let airplay = self.airplay_card();
+        let airplay_at = Rect::from_xywh(left, y, width, airplay.height());
+        y += airplay.height() + DEVICE_GAP;
         self.devices_scroll.set_viewport(viewport);
         self.devices_scroll.set_content_length(y + 8.0);
         self.devices_scroll.tick();
@@ -168,6 +174,13 @@ impl Ui {
                 continue;
             }
             self.draw_device_card(canvas, rect, card, viewport, theme);
+        }
+        if let Some(at) = empty_at.filter(|_| self.graph.is_synced()) {
+            caption(canvas, t!("audio-devices-empty"), left, at + shift, theme);
+        }
+        let rect = airplay_at.with_offset((0.0, shift));
+        if rect.bottom >= viewport.top && rect.top <= viewport.bottom {
+            self.draw_airplay_card(canvas, rect, &airplay, viewport, theme);
         }
         canvas.restore();
         self.devices_scroll.render(canvas, theme, |_, _| {});
@@ -511,6 +524,197 @@ impl Ui {
             parts.push(t_owned!("audio-devices-outputs", count = outputs));
         }
         (!parts.is_empty()).then(|| parts.join(" · "))
+    }
+
+    /// What the AirPlay card shows: the switch, what discovery lacks, and the
+    /// speakers found.
+    fn airplay_card(&self) -> AirPlayCard {
+        let mut speakers: Vec<(String, bool)> = self
+            .graph
+            .airplay_sinks()
+            .map(|n| (n.title().to_string(), n.state == NodeState::Running))
+            .collect();
+        speakers.sort();
+        AirPlayCard {
+            on: self.routing.airplay,
+            missing: self.airplay_missing,
+            service_down: self.service_down(),
+            speakers,
+        }
+    }
+
+    fn draw_airplay_card(
+        &mut self,
+        canvas: &Canvas,
+        rect: Rect,
+        card: &AirPlayCard,
+        viewport: Rect,
+        theme: &Theme,
+    ) {
+        let first_target = self.targets.len();
+        let rr = RRect::new_rect_xy(rect, 12.0, 12.0);
+        canvas.draw_rrect(rr, &fill(graph_view::card_ground(theme)));
+        canvas.draw_rrect(rr, &stroke(theme.hairline, 1.0));
+        let left = rect.left + DEVICE_PAD;
+        let right = rect.right - DEVICE_PAD;
+        let width = right - left;
+
+        let switch = Rect::from_xywh(
+            right - toggle::WIDTH,
+            rect.top + 28.0 - toggle::HEIGHT / 2.0,
+            toggle::WIDTH,
+            toggle::HEIGHT,
+        );
+        let enabled = card.on || card.missing.is_none();
+        let interaction = if !enabled {
+            ToggleInteraction::Disabled
+        } else if self.pressed == Some(Action::AirPlay) {
+            ToggleInteraction::Pressed
+        } else {
+            ToggleInteraction::Normal
+        };
+        toggle::draw(
+            canvas,
+            switch,
+            toggle::knob_fraction_for(card.on),
+            interaction,
+            theme,
+        );
+        if enabled {
+            self.targets.push((switch, Action::AirPlay));
+        }
+        let title_font = styles::HEADLINE_EMPHASIZED.font();
+        Label::new(ellipsize(
+            &title_font,
+            t!("audio-airplay-title"),
+            switch.left - left - 12.0,
+        ))
+        .with_style(styles::HEADLINE_EMPHASIZED)
+        .with_color(theme.text_primary)
+        .centered_on(left, rect.top + 28.0)
+        .render(canvas);
+        let kind_font = styles::FOOTNOTE.font();
+        Label::new(ellipsize(
+            &kind_font,
+            t!("audio-airplay-intro"),
+            switch.left - left - 12.0,
+        ))
+        .with_style(styles::FOOTNOTE)
+        .with_color(theme.text_secondary)
+        .centered_on(left, rect.top + 48.0)
+        .render(canvas);
+
+        let mut y = rect.top + DEVICE_HEAD_H;
+        if card.service_down {
+            self.draw_service_notice(
+                canvas,
+                Rect::from_xywh(left, y, width, NOTICE_H),
+                t!("audio-airplay-service-down"),
+                theme,
+            );
+            y += NOTICE_H + 12.0;
+        }
+        if let Some(missing) = card.missing {
+            let text = match missing {
+                AirPlayMissing::Module => {
+                    t_owned!("audio-airplay-missing-module", package = AIRPLAY_PACKAGE)
+                }
+                AirPlayMissing::Avahi => t!("audio-airplay-missing-avahi").to_string(),
+            };
+            super::effects_pane::draw_missing(
+                canvas,
+                Rect::from_xywh(left, y, width, NOTICE_H),
+                &text,
+                theme,
+            );
+            y += NOTICE_H + 12.0;
+        }
+        if card.lists_speakers() {
+            let font = styles::CALLOUT.font();
+            if card.speakers.is_empty() {
+                caption(
+                    canvas,
+                    t!("audio-airplay-searching"),
+                    left,
+                    y + SPEAKER_ROW_H / 2.0,
+                    theme,
+                );
+                y += SPEAKER_ROW_H;
+            }
+            for (index, (name, playing)) in card.speakers.iter().enumerate() {
+                if index > 0 {
+                    canvas.draw_line(
+                        Point::new(left, y),
+                        Point::new(right, y),
+                        &stroke(theme.hairline, 1.0),
+                    );
+                }
+                let cy = y + SPEAKER_ROW_H / 2.0;
+                let tag = if *playing {
+                    t!("audio-airplay-playing")
+                } else {
+                    t!("audio-airplay-tag")
+                };
+                let tag_w = styles::FOOTNOTE.font().measure_str(tag, None).0;
+                Label::new(tag)
+                    .with_style(styles::FOOTNOTE)
+                    .with_color(theme.text_secondary)
+                    .centered_on(right - tag_w, cy)
+                    .render(canvas);
+                Label::new(ellipsize(&font, name, width - tag_w - 12.0))
+                    .with_style(styles::CALLOUT)
+                    .with_color(theme.text_primary)
+                    .centered_on(left, cy)
+                    .render(canvas);
+                y += SPEAKER_ROW_H;
+            }
+            let font = styles::FOOTNOTE.font();
+            Label::new(ellipsize(&font, t!("audio-airplay-delay"), width))
+                .with_style(styles::FOOTNOTE)
+                .with_color(theme.text_secondary)
+                .centered_on(left, y + 12.0)
+                .render(canvas);
+        }
+        // The card scrolls: only what of its controls is in view presses.
+        let drawn: Vec<(Rect, Action)> = self.targets.drain(first_target..).collect();
+        for (rect, action) in drawn {
+            self.push_visible_target(rect, action, viewport);
+        }
+    }
+}
+
+/// The AirPlay card under the device cards.
+#[derive(Debug, Clone, PartialEq)]
+struct AirPlayCard {
+    /// Whether the routing file has AirPlay discovery on.
+    on: bool,
+    /// What discovery lacks here, if anything.
+    missing: Option<AirPlayMissing>,
+    /// The audio service, which runs discovery, is not running.
+    service_down: bool,
+    /// The speakers found, by name, and whether each is playing.
+    speakers: Vec<(String, bool)>,
+}
+
+impl AirPlayCard {
+    /// Whether the speakers found are listed: while it is on and able to
+    /// work, or whenever there are some.
+    fn lists_speakers(&self) -> bool {
+        (self.on && self.missing.is_none()) || !self.speakers.is_empty()
+    }
+
+    fn height(&self) -> f32 {
+        let mut h = DEVICE_HEAD_H;
+        if self.service_down {
+            h += NOTICE_H + 12.0;
+        }
+        if self.missing.is_some() {
+            h += NOTICE_H + 12.0;
+        }
+        if self.lists_speakers() {
+            h += self.speakers.len().max(1) as f32 * SPEAKER_ROW_H + DEVICE_NOTE_H;
+        }
+        h + DEVICE_PAD - 6.0
     }
 }
 

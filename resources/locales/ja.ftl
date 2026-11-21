@@ -2328,6 +2328,7 @@ bar-sound-kind-usb = USB
 bar-sound-kind-hdmi = HDMI
 bar-sound-kind-virtual = 仮想
 bar-sound-kind-built-in = 内蔵
+bar-sound-kind-airplay = AirPlay
 # The menu's last row, which opens the Audio app.
 bar-sound-open-audio = オーディオ…
 # What a screen reader calls the indicator. $percent is a whole number and
@@ -2407,6 +2408,7 @@ audio-role-output-device = 出力装置
 audio-role-input-device = 入力装置
 audio-role-virtual-output = 仮想出力
 audio-role-virtual-input = 仮想入力
+audio-role-airplay = AirPlay スピーカー
 audio-role-duplex = 入出力
 audio-role-midi = MIDI
 audio-role-video = ビデオ
@@ -2429,6 +2431,7 @@ audio-detail-identity = 保存名
 audio-detail-selected = 選択中
 audio-detail-format = フォーマット
 audio-detail-latency = レイテンシ
+audio-detail-delay = 遅延
 # A channel count in the format, e.g. "F32 · 48 kHz · 2 ch".
 audio-detail-channels = { $count } ch
 audio-detail-links = リンク
@@ -2499,6 +2502,23 @@ audio-devices-kind-bluetooth-speaker = Bluetooth スピーカー
 audio-devices-kind-usb = USB オーディオ
 audio-devices-kind-built-in = 内蔵オーディオ
 audio-devices-kind-other = サウンドカード
+
+# The AirPlay speakers card under the device cards: a switch that has the
+# audio service look for AirPlay speakers on the network.
+audio-airplay-title = AirPlay スピーカー
+audio-airplay-intro = ネットワーク上の AirPlay スピーカーやレシーバーで再生します。
+audio-airplay-service-down = AirPlay スピーカーはオーディオサービスの動作中にのみ表示されます。
+# { $package } is a package name, such as pipewire-zeroconf.
+audio-airplay-missing-module = AirPlay には { $package } が必要ですが、インストールされていません。
+# The command is typed as is; keep it untranslated.
+audio-airplay-missing-avahi = AirPlay がスピーカーを見つけるには Avahi が必要です。有効にするには: systemctl enable --now avahi-daemon
+audio-airplay-searching = ネットワーク上のスピーカーを検索中…
+# Beside a speaker that's playing now; the others say audio-airplay-tag.
+audio-airplay-playing = 再生中
+audio-airplay-tag = AirPlay
+audio-airplay-delay = AirPlay スピーカーの音は約 2 秒遅れるため、ビデオとは同期しません。
+# The value of the Delay fact in the Graph's details panel.
+audio-airplay-delay-short = 約 2 秒（ネットワーク経由）
 
 ## otto-audio — Virtual devices: outputs, inputs and loopbacks the audio
 ## service makes. The cards are about 260 px wide; the form's labels sit in a

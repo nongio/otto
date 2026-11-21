@@ -275,6 +275,12 @@ impl Ui {
         if let Some(latency) = node.prop("node.latency").and_then(latency_of) {
             facts.push((t!("audio-detail-latency"), latency));
         }
+        if node.is_airplay() {
+            facts.push((
+                t!("audio-detail-delay"),
+                t!("audio-airplay-delay-short").to_string(),
+            ));
+        }
         facts.push((t!("audio-detail-class"), node.media_class().to_string()));
         if let Some(who) = identity(node) {
             facts.push((t!("audio-detail-identity"), who.to_string()));

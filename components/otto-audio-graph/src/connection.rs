@@ -8,7 +8,7 @@
 // Rust guideline compliant 2026-02-21
 
 use std::any::Any;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, HashMap};
 use std::rc::Rc;
 use std::time::Duration;
@@ -54,6 +54,7 @@ pub(crate) enum Command {
     },
     VirtualDevices(Vec<VirtualDevice>),
     Effects(Vec<Effect>),
+    AirPlay(bool),
     EffectControls(Box<Effect>),
     Device(crate::devices::DeviceCommand),
     Mixer(crate::mixer::Command),
@@ -124,6 +125,16 @@ impl Connection {
     /// is made live through its controls. They go when this program does.
     pub fn keep_effects(&self, effects: Vec<Effect>) {
         self.send(Command::Effects(effects));
+    }
+
+    /// Keep AirPlay discovery loaded while this connection lasts, or not.
+    ///
+    /// While it is, PipeWire's RAOP module makes a sink for every AirPlay
+    /// receiver Avahi finds on the network; turning it off removes them, as
+    /// does this program ending. Where it stands is reported as
+    /// [`Event::AirPlay`] once it changes.
+    pub fn keep_airplay(&self, on: bool) {
+        self.send(Command::AirPlay(on));
     }
 
     /// Set `effect`'s controls on its node now, whoever made it, so a change
@@ -200,6 +211,13 @@ fn session(
         .effects
         .borrow_mut()
         .sync(&context, &state, &wanted.effects.borrow());
+    if let Some(status) = state
+        .airplay
+        .borrow_mut()
+        .sync(&context, wanted.airplay.get())
+    {
+        emit(Event::AirPlay(status));
+    }
 
     let pending = core.sync(0).ok();
     let _core_listener = core
@@ -272,6 +290,7 @@ fn session(
         let state = state.clone();
         let context = context.clone();
         let wanted = wanted.clone();
+        let emit = emit.clone();
         move |command| match command {
             Command::VirtualDevices(devices) => {
                 *wanted.devices.borrow_mut() = devices;
@@ -286,6 +305,12 @@ fn session(
                     .effects
                     .borrow_mut()
                     .sync(&context, &state, &wanted.effects.borrow());
+            }
+            Command::AirPlay(on) => {
+                wanted.airplay.set(on);
+                if let Some(status) = state.airplay.borrow_mut().sync(&context, on) {
+                    emit(Event::AirPlay(status));
+                }
             }
             command => run_command(&core, &registry, &state, command),
         }
@@ -303,6 +328,7 @@ fn session(
 struct Wanted {
     devices: RefCell<Vec<VirtualDevice>>,
     effects: RefCell<Vec<Effect>>,
+    airplay: Cell<bool>,
 }
 
 /// What the thread keeps for one connection.
@@ -326,12 +352,15 @@ pub(crate) struct State {
     virtual_devices: RefCell<Made>,
     /// The effects made on this connection.
     effects: RefCell<crate::effects::Made>,
+    /// AirPlay discovery on this connection.
+    airplay: RefCell<crate::airplay::Discovery>,
     /// The defaults, the volumes and the cards' routes.
     pub(crate) mixer: Rc<crate::mixer::Thread>,
 }
 
 impl State {
     fn clear(&self) {
+        self.airplay.borrow_mut().clear();
         self.effects.borrow_mut().clear();
         self.virtual_devices.borrow_mut().clear();
         self.owned.borrow_mut().clear();
@@ -590,7 +619,7 @@ fn run_command(
             Some(metadata) => metadata.set_property(0, &key, None, value.as_deref()),
             None => tracing::warn!(key, "no settings metadata to set"),
         },
-        Command::VirtualDevices(_) | Command::Effects(_) => {}
+        Command::VirtualDevices(_) | Command::Effects(_) | Command::AirPlay(_) => {}
         Command::EffectControls(effect) => {
             if !crate::effects::set_controls(state, &effect) {
                 tracing::debug!(id = effect.id, "the effect's node is not there to set");

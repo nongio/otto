@@ -1876,7 +1876,7 @@ fn param_label(kind: EffectKind, spec: &ParamSpec) -> &'static str {
 }
 
 /// A band saying what is missing, without a button.
-fn draw_missing(canvas: &Canvas, band: Rect, text: &str, theme: &Theme) {
+pub(super) fn draw_missing(canvas: &Canvas, band: Rect, text: &str, theme: &Theme) {
     let tint = theme.accent_red;
     canvas.draw_rrect(
         RRect::new_rect_xy(band, 10.0, 10.0),

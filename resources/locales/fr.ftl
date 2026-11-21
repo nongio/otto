@@ -2362,6 +2362,7 @@ bar-sound-kind-usb = USB
 bar-sound-kind-hdmi = HDMI
 bar-sound-kind-virtual = Virtuel
 bar-sound-kind-built-in = Intégré
+bar-sound-kind-airplay = AirPlay
 # The menu's last row, which opens the Audio app.
 bar-sound-open-audio = Audio…
 # What a screen reader calls the indicator. $percent is a whole number and
@@ -2441,6 +2442,7 @@ audio-role-output-device = Périphérique de sortie
 audio-role-input-device = Périphérique d’entrée
 audio-role-virtual-output = Sortie virtuelle
 audio-role-virtual-input = Entrée virtuelle
+audio-role-airplay = Enceinte AirPlay
 audio-role-duplex = Entrée et sortie
 audio-role-midi = MIDI
 audio-role-video = Vidéo
@@ -2463,6 +2465,7 @@ audio-detail-identity = Enregistré sous
 audio-detail-selected = Sélection
 audio-detail-format = Format
 audio-detail-latency = Latence
+audio-detail-delay = Décalage
 # A channel count in the format, e.g. "F32 · 48 kHz · 2 ch".
 audio-detail-channels = { $count ->
     [one] { $count } canal
@@ -2545,6 +2548,23 @@ audio-devices-kind-bluetooth-speaker = Enceinte Bluetooth
 audio-devices-kind-usb = Audio USB
 audio-devices-kind-built-in = Audio intégré
 audio-devices-kind-other = Carte son
+
+# The AirPlay speakers card under the device cards: a switch that has the
+# audio service look for AirPlay speakers on the network.
+audio-airplay-title = Enceintes AirPlay
+audio-airplay-intro = Lecture sur les enceintes et récepteurs AirPlay du réseau.
+audio-airplay-service-down = Les enceintes AirPlay n’apparaissent que tant que le service audio est lancé.
+# { $package } is a package name, such as pipewire-zeroconf.
+audio-airplay-missing-module = AirPlay nécessite { $package }, qui n’est pas installé.
+# The command is typed as is; keep it untranslated.
+audio-airplay-missing-avahi = AirPlay nécessite Avahi pour trouver les enceintes. Pour l’activer : systemctl enable --now avahi-daemon
+audio-airplay-searching = Recherche d’enceintes sur le réseau…
+# Beside a speaker that's playing now; the others say audio-airplay-tag.
+audio-airplay-playing = Lecture
+audio-airplay-tag = AirPlay
+audio-airplay-delay = Les enceintes AirPlay jouent avec environ 2 secondes de retard et ne restent donc pas synchronisées avec la vidéo.
+# The value of the Delay fact in the Graph's details panel.
+audio-airplay-delay-short = Environ 2 s, via le réseau
 
 ## otto-audio — Virtual devices: outputs, inputs and loopbacks the audio
 ## service makes. The cards are about 260 px wide; the form's labels sit in a

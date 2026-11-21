@@ -2332,6 +2332,7 @@ bar-sound-kind-usb = USB
 bar-sound-kind-hdmi = HDMI
 bar-sound-kind-virtual = 虚拟
 bar-sound-kind-built-in = 内置
+bar-sound-kind-airplay = AirPlay
 # The menu's last row, which opens the Audio app.
 bar-sound-open-audio = 音频…
 # What a screen reader calls the indicator. $percent is a whole number and
@@ -2411,6 +2412,7 @@ audio-role-output-device = 输出设备
 audio-role-input-device = 输入设备
 audio-role-virtual-output = 虚拟输出
 audio-role-virtual-input = 虚拟输入
+audio-role-airplay = AirPlay 扬声器
 audio-role-duplex = 输入和输出
 audio-role-midi = MIDI
 audio-role-video = 视频
@@ -2433,6 +2435,7 @@ audio-detail-identity = 存储为
 audio-detail-selected = 已选中
 audio-detail-format = 格式
 audio-detail-latency = 延迟
+audio-detail-delay = 滞后
 # A channel count in the format, e.g. "F32 · 48 kHz · 2 ch".
 audio-detail-channels = { $count } 声道
 audio-detail-links = 连接
@@ -2503,6 +2506,23 @@ audio-devices-kind-bluetooth-speaker = 蓝牙扬声器
 audio-devices-kind-usb = USB 音频
 audio-devices-kind-built-in = 内置音频
 audio-devices-kind-other = 声卡
+
+# The AirPlay speakers card under the device cards: a switch that has the
+# audio service look for AirPlay speakers on the network.
+audio-airplay-title = AirPlay 扬声器
+audio-airplay-intro = 在网络中的 AirPlay 扬声器和接收器上播放。
+audio-airplay-service-down = AirPlay 扬声器只在音频服务运行时显示。
+# { $package } is a package name, such as pipewire-zeroconf.
+audio-airplay-missing-module = AirPlay 需要 { $package }，但它未安装。
+# The command is typed as is; keep it untranslated.
+audio-airplay-missing-avahi = AirPlay 需要 Avahi 才能找到扬声器。启用命令：systemctl enable --now avahi-daemon
+audio-airplay-searching = 正在网络中查找扬声器…
+# Beside a speaker that's playing now; the others say audio-airplay-tag.
+audio-airplay-playing = 正在播放
+audio-airplay-tag = AirPlay
+audio-airplay-delay = AirPlay 扬声器的声音会滞后约 2 秒，因此无法与视频保持同步。
+# The value of the Delay fact in the Graph's details panel.
+audio-airplay-delay-short = 约 2 秒，经由网络
 
 ## otto-audio — Virtual devices: outputs, inputs and loopbacks the audio
 ## service makes. The cards are about 260 px wide; the form's labels sit in a

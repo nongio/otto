@@ -2421,6 +2421,7 @@ bar-sound-kind-usb = USB
 bar-sound-kind-hdmi = HDMI
 bar-sound-kind-virtual = Віртуальне
 bar-sound-kind-built-in = Вбудоване
+bar-sound-kind-airplay = AirPlay
 # The menu's last row, which opens the Audio app.
 bar-sound-open-audio = Аудіо…
 # What a screen reader calls the indicator. $percent is a whole number and
@@ -2500,6 +2501,7 @@ audio-role-output-device = Пристрій виведення
 audio-role-input-device = Пристрій введення
 audio-role-virtual-output = Віртуальний вихід
 audio-role-virtual-input = Віртуальний вхід
+audio-role-airplay = Колонка AirPlay
 audio-role-duplex = Вхід і вихід
 audio-role-midi = MIDI
 audio-role-video = Відео
@@ -2527,6 +2529,7 @@ audio-detail-identity = Збережено як
 audio-detail-selected = Вибрано
 audio-detail-format = Формат
 audio-detail-latency = Затримка
+audio-detail-delay = Відставання
 # A channel count in the format, e.g. "F32 · 48 kHz · 2 ch".
 audio-detail-channels = { $count ->
     [one] { $count } канал
@@ -2607,6 +2610,23 @@ audio-devices-kind-bluetooth-speaker = Bluetooth-колонка
 audio-devices-kind-usb = USB-аудіо
 audio-devices-kind-built-in = Вбудоване аудіо
 audio-devices-kind-other = Звукова карта
+
+# The AirPlay speakers card under the device cards: a switch that has the
+# audio service look for AirPlay speakers on the network.
+audio-airplay-title = Колонки AirPlay
+audio-airplay-intro = Відтворення на колонках і ресиверах AirPlay у мережі.
+audio-airplay-service-down = Колонки AirPlay з’являються, лише поки працює служба аудіо.
+# { $package } is a package name, such as pipewire-zeroconf.
+audio-airplay-missing-module = Для AirPlay потрібен пакет { $package }, але його не встановлено.
+# The command is typed as is; keep it untranslated.
+audio-airplay-missing-avahi = Щоб знаходити колонки, AirPlay потрібен Avahi. Увімкнути: systemctl enable --now avahi-daemon
+audio-airplay-searching = Пошук колонок у мережі…
+# Beside a speaker that's playing now; the others say audio-airplay-tag.
+audio-airplay-playing = Грає
+audio-airplay-tag = AirPlay
+audio-airplay-delay = Колонки AirPlay відстають приблизно на 2 секунди, тому звук не збігається з відео.
+# The value of the Delay fact in the Graph's details panel.
+audio-airplay-delay-short = Близько 2 с, через мережу
 
 ## otto-audio — Virtual devices: outputs, inputs and loopbacks the audio
 ## service makes. The cards are about 260 px wide; the form's labels sit in a

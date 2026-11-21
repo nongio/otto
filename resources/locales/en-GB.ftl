@@ -1333,6 +1333,7 @@ bar-sound-kind-usb = USB
 bar-sound-kind-hdmi = HDMI
 bar-sound-kind-virtual = Virtual
 bar-sound-kind-built-in = Built-in
+bar-sound-kind-airplay = AirPlay
 # The menu's last row, which opens the Audio app.
 bar-sound-open-audio = Audio…
 # What a screen reader calls the indicator. $percent is a whole number and
@@ -2550,6 +2551,7 @@ audio-role-output-device = Output device
 audio-role-input-device = Input device
 audio-role-virtual-output = Virtual output
 audio-role-virtual-input = Virtual input
+audio-role-airplay = AirPlay speaker
 audio-role-duplex = Input and output
 audio-role-midi = MIDI
 audio-role-video = Video
@@ -2572,6 +2574,7 @@ audio-detail-identity = Saved as
 audio-detail-selected = Selected
 audio-detail-format = Format
 audio-detail-latency = Latency
+audio-detail-delay = Delay
 # A channel count in the format, e.g. "F32 · 48 kHz · 2 ch".
 audio-detail-channels = { $count } ch
 audio-detail-links = Connections
@@ -2642,6 +2645,23 @@ audio-devices-kind-bluetooth-speaker = Bluetooth speaker
 audio-devices-kind-usb = USB audio
 audio-devices-kind-built-in = Built-in audio
 audio-devices-kind-other = Sound card
+
+# The AirPlay speakers card under the device cards: a switch that has the
+# audio service look for AirPlay speakers on the network.
+audio-airplay-title = AirPlay speakers
+audio-airplay-intro = Play on AirPlay speakers and receivers on your network.
+audio-airplay-service-down = AirPlay speakers show up only while the audio service runs.
+# { $package } is a package name, such as pipewire-zeroconf.
+audio-airplay-missing-module = AirPlay needs { $package }, which isn't installed.
+# The command is typed as is; keep it untranslated.
+audio-airplay-missing-avahi = AirPlay needs Avahi to find speakers. Turn it on with: systemctl enable --now avahi-daemon
+audio-airplay-searching = Looking for speakers on your network…
+# Beside a speaker that's playing now; the others say audio-airplay-tag.
+audio-airplay-playing = Playing
+audio-airplay-tag = AirPlay
+audio-airplay-delay = AirPlay speakers play about 2 seconds late, so they won't keep in sync with video.
+# The value of the Delay fact in the Graph's details panel.
+audio-airplay-delay-short = About 2 s, over the network
 
 ## otto-audio — Virtual devices: outputs, inputs and loopbacks the audio
 ## service makes. The cards are about 260 px wide; the form's labels sit in a

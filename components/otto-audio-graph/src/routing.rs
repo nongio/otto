@@ -5,6 +5,7 @@
 //!
 //! ```toml
 //! version = 1
+//! airplay = true
 //!
 //! [[link]]
 //! output = { kind = "stream", app = "mpv", direction = "playback", port = "output_FL" }
@@ -59,6 +60,10 @@ impl EngineSettings {
 pub struct Routing {
     #[serde(default)]
     version: u32,
+    /// Whether the service keeps AirPlay discovery on, which makes a sink
+    /// for every AirPlay receiver on the network. Off unless set.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub airplay: bool,
     #[serde(default, skip_serializing_if = "EngineSettings::is_empty")]
     pub engine: EngineSettings,
     #[serde(default, rename = "link")]
@@ -318,6 +323,42 @@ mod tests {
         assert_eq!(back.links(), routing.links());
         assert_eq!(back.engine.force_quantum, Some(256));
         assert_eq!(back.engine.force_rate, None);
+    }
+
+    #[test]
+    fn airplay_is_off_unless_the_file_says_so() {
+        let routing: Routing = toml::from_str(
+            "version = 1
+",
+        )
+        .unwrap();
+        assert!(!routing.airplay);
+        let routing: Routing = toml::from_str(
+            "version = 1
+airplay = true
+",
+        )
+        .unwrap();
+        assert!(routing.airplay);
+    }
+
+    #[test]
+    fn airplay_round_trips_and_is_left_out_while_off() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("routing.toml");
+        let mut routing = Routing::default();
+        routing.add(saved());
+        routing.save_to(&path).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(!text.contains("airplay"), "{text}");
+        routing.airplay = true;
+        routing.engine.force_rate = Some(48_000);
+        routing.save_to(&path).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("airplay = true"), "{text}");
+        let back = Routing::load_from(&path).unwrap();
+        assert!(back.airplay);
+        assert_eq!(back.links(), routing.links());
     }
 
     #[test]

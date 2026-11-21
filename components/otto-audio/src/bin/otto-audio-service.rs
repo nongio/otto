@@ -6,7 +6,8 @@
 //! changes, which is how the otto-audio window tells it about a new save.
 //! It also makes the virtual devices and effects the file lists, which last
 //! while it runs, and moves the streams on an effect's device onto the
-//! effect.
+//! effect. When the file turns AirPlay on it keeps PipeWire's AirPlay
+//! discovery loaded, which makes a sink for every receiver on the network.
 //!
 //! `--routing PATH` keeps another routing file instead of the person's, for
 //! trying the service out on throwaway nodes.
@@ -18,7 +19,7 @@ use std::time::{Duration, Instant};
 use otto_audio::effect_streams::{Move, StreamMover};
 use otto_audio::keeper::Keeper;
 use otto_audio::SERVICE_APP;
-use otto_audio_graph::{Connection, Event, Graph, LinkLifetime, Routing};
+use otto_audio_graph::{AirPlay, AirPlayMissing, Connection, Event, Graph, LinkLifetime, Routing};
 
 /// How long a burst of graph changes is gathered before the service acts on
 /// it. A node arrives as a node, then its ports one by one; acting on the
@@ -63,6 +64,7 @@ fn main() {
     let routing = load(&path);
     connection.keep_virtual_devices(routing.virtual_devices().to_vec());
     connection.keep_effects(routing.effects().to_vec());
+    connection.keep_airplay(routing.airplay);
     let mut graph = Graph::new();
     let mut mover = StreamMover::default();
     mover.set_effects(routing.effects().to_vec(), &graph);
@@ -89,6 +91,7 @@ fn main() {
                         mover.disconnected();
                     }
                     Event::Connected => tracing::info!("connected to PipeWire"),
+                    Event::AirPlay(airplay) => log_airplay(airplay),
                     _ => {}
                 }
                 graph.apply(event);
@@ -106,6 +109,7 @@ fn main() {
                     mover.set_effects(routing.effects().to_vec(), &graph),
                 );
                 connection.keep_effects(routing.effects().to_vec());
+                connection.keep_airplay(routing.airplay);
                 keeper.set_routing(routing);
                 due = Some(Instant::now());
             }
@@ -130,6 +134,20 @@ fn main() {
                 }
             }
         }
+    }
+}
+
+fn log_airplay(airplay: AirPlay) {
+    match airplay {
+        AirPlay::Off => tracing::info!("AirPlay discovery is off"),
+        AirPlay::On => tracing::info!("AirPlay discovery is on"),
+        AirPlay::Unavailable(AirPlayMissing::Module) => tracing::warn!(
+            package = otto_audio_graph::AIRPLAY_PACKAGE,
+            "AirPlay discovery could not be loaded; PipeWire's RAOP modules may not be installed"
+        ),
+        AirPlay::Unavailable(AirPlayMissing::Avahi) => tracing::warn!(
+            "AirPlay discovery is on, but avahi-daemon is not running, so no receivers are found"
+        ),
     }
 }
 

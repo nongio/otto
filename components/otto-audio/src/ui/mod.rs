@@ -17,9 +17,9 @@ mod virtual_pane;
 use otto_audio::layout::Layout;
 use otto_audio::SERVICE_APP;
 use otto_audio_graph::{
-    identity, Connection, Event, Graph, LinkLifetime, MediaType, NodeState, Routing, SavedLink,
-    SETTING_FORCE_QUANTUM, SETTING_FORCE_RATE, SETTING_MAX_QUANTUM, SETTING_MIN_QUANTUM,
-    SETTING_QUANTUM, SETTING_RATE,
+    airplay_missing, identity, AirPlayMissing, Connection, Event, Graph, LinkLifetime, MediaType,
+    NodeState, Routing, SavedLink, SETTING_FORCE_QUANTUM, SETTING_FORCE_RATE, SETTING_MAX_QUANTUM,
+    SETTING_MIN_QUANTUM, SETTING_QUANTUM, SETTING_RATE,
 };
 use otto_kit::components::push_button::{self, PushButton, Role as ButtonRole};
 use otto_kit::components::scroll::ScrollView;
@@ -102,6 +102,8 @@ enum Action {
     RemoveWire,
     StartService,
     StartPipeWire,
+    /// Turn AirPlay speakers on or off, from the Devices section.
+    AirPlay,
     Rate(u32),
     Quantum(u32),
     ResetEngine,
@@ -199,6 +201,9 @@ pub struct Ui {
     views: views_pane::ViewScrolls,
     /// The Effects section's selection, form, drag and import.
     effects: effects_pane::EffectsState,
+    /// What AirPlay discovery lacks here, read when the Devices section
+    /// opens and when the switch is pressed.
+    airplay_missing: Option<AirPlayMissing>,
 }
 
 impl Ui {
@@ -237,6 +242,7 @@ impl Ui {
             menu_open: None,
             views: views_pane::ViewScrolls::default(),
             effects: effects_pane::EffectsState::default(),
+            airplay_missing: airplay_missing(),
         }
     }
 
@@ -320,6 +326,13 @@ impl Ui {
 
     /// Open on `pane`.
     pub fn show(&mut self, pane: Pane) {
+        self.set_pane(pane);
+    }
+
+    fn set_pane(&mut self, pane: Pane) {
+        if pane == Pane::Devices {
+            self.airplay_missing = airplay_missing();
+        }
         self.pane = pane;
     }
 
@@ -971,7 +984,7 @@ impl Ui {
         match action {
             Action::Pane(pane) => {
                 self.flush_effects();
-                self.pane = pane;
+                self.set_pane(pane);
             }
             Action::Fit => {
                 let scene = self.view.scene(&self.graph, &self.routing);
@@ -1057,6 +1070,11 @@ impl Ui {
                 "pipewire.service",
                 "wireplumber.service",
             ]),
+            Action::AirPlay => {
+                self.airplay_missing = airplay_missing();
+                self.routing.airplay = !self.routing.airplay;
+                self.save_routing_file();
+            }
             Action::Rate(rate) => {
                 self.routing.engine.force_rate = (rate != 0).then_some(rate);
                 self.connection

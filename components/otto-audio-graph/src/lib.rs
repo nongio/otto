@@ -22,10 +22,15 @@
 //! [`Connection::keep_effects`]; their values change live through
 //! [`Connection::set_effect_controls`].
 //!
+//! [`Connection::keep_airplay`] keeps PipeWire's AirPlay (RAOP) discovery
+//! loaded, which makes a sink for every receiver on the network
+//! ([`Node::is_airplay`]); [`airplay_missing`] says what it lacks here.
+//!
 //! The behaviour is specified in `specs/audio-routing.md`.
 
 #![warn(unreachable_pub)]
 
+mod airplay;
 mod connection;
 mod devices;
 mod effects;
@@ -38,6 +43,7 @@ mod pairing;
 mod routing;
 mod virtual_devices;
 
+pub use airplay::{airplay_missing, AirPlay, AirPlayMissing, AIRPLAY_PACKAGE, AIRPLAY_SINK_PREFIX};
 pub use connection::{Connection, LinkLifetime};
 pub use devices::{codec_named, Availability, Codec, Device, Profile, Route};
 pub use effects::{

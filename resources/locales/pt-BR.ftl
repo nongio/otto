@@ -2361,6 +2361,7 @@ bar-sound-kind-usb = USB
 bar-sound-kind-hdmi = HDMI
 bar-sound-kind-virtual = Virtual
 bar-sound-kind-built-in = Integrado
+bar-sound-kind-airplay = AirPlay
 # The menu's last row, which opens the Audio app.
 bar-sound-open-audio = Áudio…
 # What a screen reader calls the indicator. $percent is a whole number and
@@ -2440,6 +2441,7 @@ audio-role-output-device = Dispositivo de saída
 audio-role-input-device = Dispositivo de entrada
 audio-role-virtual-output = Saída virtual
 audio-role-virtual-input = Entrada virtual
+audio-role-airplay = Alto-falante AirPlay
 audio-role-duplex = Entrada e saída
 audio-role-midi = MIDI
 audio-role-video = Vídeo
@@ -2462,6 +2464,7 @@ audio-detail-identity = Salvo como
 audio-detail-selected = Seleção
 audio-detail-format = Formato
 audio-detail-latency = Latência
+audio-detail-delay = Atraso
 # A channel count in the format, e.g. "F32 · 48 kHz · 2 ch".
 audio-detail-channels = { $count ->
     [one] { $count } canal
@@ -2544,6 +2547,23 @@ audio-devices-kind-bluetooth-speaker = Alto-falante Bluetooth
 audio-devices-kind-usb = Áudio USB
 audio-devices-kind-built-in = Áudio integrado
 audio-devices-kind-other = Placa de som
+
+# The AirPlay speakers card under the device cards: a switch that has the
+# audio service look for AirPlay speakers on the network.
+audio-airplay-title = Alto-falantes AirPlay
+audio-airplay-intro = Reproduzir em alto-falantes e receptores AirPlay da rede.
+audio-airplay-service-down = Os alto-falantes AirPlay só aparecem enquanto o serviço de áudio está em execução.
+# { $package } is a package name, such as pipewire-zeroconf.
+audio-airplay-missing-module = O AirPlay precisa de { $package }, que não está instalado.
+# The command is typed as is; keep it untranslated.
+audio-airplay-missing-avahi = O AirPlay precisa do Avahi para encontrar alto-falantes. Para ativá-lo: systemctl enable --now avahi-daemon
+audio-airplay-searching = Procurando alto-falantes na rede…
+# Beside a speaker that's playing now; the others say audio-airplay-tag.
+audio-airplay-playing = Reproduzindo
+audio-airplay-tag = AirPlay
+audio-airplay-delay = Os alto-falantes AirPlay tocam com cerca de 2 segundos de atraso, por isso não ficam sincronizados com vídeos.
+# The value of the Delay fact in the Graph's details panel.
+audio-airplay-delay-short = Cerca de 2 s, pela rede
 
 ## otto-audio — Virtual devices: outputs, inputs and loopbacks the audio
 ## service makes. The cards are about 260 px wide; the form's labels sit in a

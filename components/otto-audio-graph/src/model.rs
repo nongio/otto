@@ -143,6 +143,15 @@ impl Node {
         self.prop("device.id").is_some()
     }
 
+    /// Whether this node is a sink PipeWire's RAOP module made for an
+    /// AirPlay receiver on the network: its `node.name` starts with
+    /// [`AIRPLAY_SINK_PREFIX`](crate::AIRPLAY_SINK_PREFIX), or it carries
+    /// `raop.ip`.
+    #[must_use]
+    pub fn is_airplay(&self) -> bool {
+        crate::airplay::is_airplay(self)
+    }
+
     /// The media type its class names.
     #[must_use]
     pub fn media_type(&self) -> MediaType {
@@ -230,6 +239,10 @@ pub enum Event {
         node: u32,
         volume: crate::mixer::Volume,
     },
+    /// AirPlay discovery on this connection changed: turned on or off with
+    /// [`Connection::keep_airplay`](crate::Connection::keep_airplay), or
+    /// unable to work.
+    AirPlay(crate::airplay::AirPlay),
 }
 
 /// The graph as last reported, keyed by global id.
@@ -244,6 +257,7 @@ pub struct Graph {
     connected: bool,
     synced: bool,
     pub(crate) mixer: crate::mixer::Mixer,
+    airplay: crate::airplay::AirPlay,
 }
 
 impl Graph {
@@ -298,6 +312,7 @@ impl Graph {
             }
             Event::Default { endpoint, name } => self.mixer.set_default(endpoint, name),
             Event::Volume { node, volume } => self.mixer.set_volume(node, volume),
+            Event::AirPlay(airplay) => self.airplay = airplay,
         }
     }
 
@@ -309,7 +324,22 @@ impl Graph {
         self.settings.clear();
         self.devices.clear();
         self.mixer = crate::mixer::Mixer::default();
+        self.airplay = crate::airplay::AirPlay::Off;
         self.synced = false;
+    }
+
+    /// Where AirPlay discovery stands on the connection this graph follows.
+    /// Only a connection that keeps it with
+    /// [`Connection::keep_airplay`](crate::Connection::keep_airplay) reports
+    /// it; any other reads [`AirPlay::Off`](crate::AirPlay::Off).
+    #[must_use]
+    pub fn airplay(&self) -> crate::airplay::AirPlay {
+        self.airplay
+    }
+
+    /// The AirPlay receivers' sinks, by id.
+    pub fn airplay_sinks(&self) -> impl Iterator<Item = &Node> {
+        self.nodes.values().filter(|n| n.is_airplay())
     }
 
     /// Whether a server is connected.

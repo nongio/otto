@@ -46,7 +46,9 @@ restarts of the sound server, so a route made once stays made.
   version. The effects are a fixed, curated set (see Open Questions).
 - Managing JACK or PulseAudio servers that are not PipeWire. With no
   PipeWire server the app explains that and shows nothing else.
-- Network audio (AirPlay, RTP, ROC, AES67) set-up.
+- Network audio set-up beyond finding AirPlay speakers: no RTP, ROC or
+  AES67 senders and receivers, no AirPlay receiving and no AirPlay
+  passwords.
 
 ## Behavior
 
@@ -251,6 +253,23 @@ are part of the current setup.
 Like effects, they exist while the service runs and belong to the current
 setup. Each can be renamed; the name is what apps and the Sound pane show.
 
+### AirPlay speakers
+
+The Devices section ends with an **AirPlay speakers** card: a switch, a
+line saying what it does, and, while it is on, the speakers found on the
+network. Turning it on has the service look for AirPlay receivers through
+Avahi; each one it finds becomes an output, shown on the card, on Graph
+(as an *AirPlay speaker* among the destinations), in the Sound pane and in
+the top bar's sound menu (marked *AirPlay*). Turning it off removes those
+outputs. AirPlay plays about 2 seconds late, which the card and the
+Graph's details panel say, so it suits music rather than video.
+
+The switch is kept in the routing file and follows the service like
+effects do: with the service off the card says the speakers need it.
+When AirPlay cannot work here the card says what is missing, and the switch
+cannot be turned on: PipeWire's RAOP modules not installed (it names the
+package), or Avahi not running (it gives the command that starts it).
+
 ### Rules
 
 A rule matches app streams by identity and, while it is enabled:
@@ -333,7 +352,8 @@ reads and changes the same graph as the app through `otto-audio-graph`.
   and meters cost nothing while the window is hidden.
 - **Feedback loops.** Linking that closes a loop (an output fed back to its
   own input) is allowed but warned about on the wire, since it can be loud.
-- **Service crash.** Effects and virtual devices vanish with the service;
+- **Service crash.** Effects, virtual devices and AirPlay speakers vanish
+  with the service;
   streams on them move to the default device. The service restarts once
   on failure and recreates them.
 - **Video nodes.** Cameras and screencasts appear under the Video filter;
@@ -491,6 +511,22 @@ only the sections that exist. Where it consciously differs from the above:
     presets cannot be saved yet. The other kinds have a slider per
     parameter. With the service off the section says effects need it.
     There is no meter or spectrum under the curve, and no rename.
+- **AirPlay speakers.** Kept in the routing file as `airplay = true` (left
+  out while off). The service loads `libpipewire-module-raop-discover` into
+  its own context, which loads a `libpipewire-module-raop-sink` for each
+  receiver Avahi finds; unloading it, when the switch goes off or the
+  service stops, removes them. An AirPlay output is a sink whose
+  `node.name` starts with `raop_sink.` or that carries `raop.ip`. The
+  window checks for itself what is missing, when the Devices section opens
+  and when the switch is pressed: the module's file, in
+  `PIPEWIRE_MODULE_DIR`, beside the `libpipewire` it runs with or in the
+  usual directories (named package `pipewire-zeroconf`), and Avahi's socket
+  in `/run/avahi-daemon/`. The service reports where discovery stands
+  (on, off, or unable to load or to find Avahi) in its log. The card lists
+  each speaker by name, *Playing* while it plays. There is no volume or
+  latency setting per speaker and no password entry. A saved link to a
+  speaker names its `node.name`, which carries the receiver's address, so
+  it waits if the address changes.
 - **One window.** Running the app again opens a second window.
 
 ## Plan
@@ -529,7 +565,11 @@ updates this spec's First version notes.
    rename, up to 16 bands).
 8. **Rules.** Which device an app goes to, as session manager targets,
    with the app picked from what has played.
-9. **Setups.** Named sets of saved links, rules, effects and engine
+9. **AirPlay speakers.** Discovery through PipeWire's RAOP module, switched
+   from the Devices section and kept by the service; the speakers marked
+   on Graph and in the sound menu. Built; see First version for what is
+   still to come.
+10. **Setups.** Named sets of saved links, rules, effects and engine
    settings; switching from the title bar and the sound menu; export and
    import.
 
