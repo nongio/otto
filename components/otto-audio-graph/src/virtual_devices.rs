@@ -25,13 +25,13 @@
 // Rust guideline compliant 2026-02-21
 
 use std::collections::HashMap;
-use std::ffi::CString;
 
 use pipewire as pw;
 use serde::{Deserialize, Serialize};
 
 use crate::identity::{NodeIdentity, PortRef};
 use crate::model::Node;
+use crate::module::{quoted, LoadedModule};
 use crate::routing::{Routing, SavedLink};
 
 /// What every virtual device's node names start with.
@@ -140,7 +140,7 @@ pub fn positions(channels: u32) -> &'static [&'static str] {
 
 /// An id for a device called `name`: its letters and digits in lower case,
 /// words joined by dashes, and a number after it when `taken` has it.
-fn id_for(name: &str, taken: &[&str]) -> String {
+pub(crate) fn id_for(name: &str, taken: &[&str]) -> String {
     let mut slug = String::new();
     for c in name.chars() {
         if c.is_ascii_alphanumeric() {
@@ -216,24 +216,6 @@ impl Routing {
     }
 }
 
-/// Quote `value` as a SPA JSON string.
-fn quoted(value: &str) -> String {
-    let mut out = String::with_capacity(value.len() + 2);
-    out.push('"');
-    for c in value.chars() {
-        match c {
-            '"' | '\\' => {
-                out.push('\\');
-                out.push(c);
-            }
-            c if c.is_control() => out.push(' '),
-            c => out.push(c),
-        }
-    }
-    out.push('"');
-    out
-}
-
 /// The arguments `libpipewire-module-loopback` takes for `device`.
 fn loopback_args(device: &VirtualDevice) -> String {
     let names = device.node_names();
@@ -257,22 +239,21 @@ fn loopback_args(device: &VirtualDevice) -> String {
     )
 }
 
-/// A loopback module loaded into this program's context.
-struct LoadedModule(std::ptr::NonNull<pw::sys::pw_impl_module>);
-
-impl Drop for LoadedModule {
-    fn drop(&mut self) {
-        // SAFETY: the pointer came from `pw_context_load_module` and is
-        // destroyed only here, once; the context it lives in outlives it
-        // (see `Made`).
-        unsafe { pw::sys::pw_impl_module_destroy(self.0.as_ptr()) };
-    }
-}
-
 /// What makes one device exist; dropping it removes the device.
 enum Handle {
     Node(#[expect(dead_code, reason = "held for its lifetime only")] pw::node::Node),
-    Module(#[expect(dead_code, reason = "held for its lifetime only")] LoadedModule),
+    Module(LoadedModule),
+}
+
+impl Handle {
+    /// Whether the device still exists; a loopback's module destroys itself
+    /// when its streams fail.
+    fn is_alive(&self) -> bool {
+        match self {
+            Self::Node(_) => true,
+            Self::Module(module) => module.is_alive(),
+        }
+    }
 }
 
 /// The virtual devices made on one connection.
@@ -294,7 +275,11 @@ impl Made {
         context: &pw::context::ContextRc,
         wanted: &[VirtualDevice],
     ) {
-        self.made.retain(|id, (device, _)| {
+        self.made.retain(|id, (device, handle)| {
+            if !handle.is_alive() {
+                tracing::info!(id, "a virtual device went away by itself, making it again");
+                return false;
+            }
             let keep = wanted.iter().any(|w| w == device);
             if !keep {
                 tracing::info!(id, "removing a virtual device");
@@ -354,34 +339,7 @@ fn make_node(core: &pw::core::CoreRc, device: &VirtualDevice) -> Option<Handle> 
 }
 
 fn load_loopback(context: &pw::context::ContextRc, device: &VirtualDevice) -> Option<Handle> {
-    let (Ok(name), Ok(args)) = (
-        CString::new(LOOPBACK_MODULE),
-        CString::new(loopback_args(device)),
-    ) else {
-        return None;
-    };
-    // SAFETY: the context is live for the call, both strings are valid and
-    // NUL-terminated for its whole length, and a null properties pointer is
-    // allowed. The module is destroyed before the context (see `Made`).
-    let module = unsafe {
-        pw::sys::pw_context_load_module(
-            context.as_raw_ptr(),
-            name.as_ptr(),
-            args.as_ptr(),
-            std::ptr::null_mut(),
-        )
-    };
-    match std::ptr::NonNull::new(module) {
-        Some(module) => Some(Handle::Module(LoadedModule(module))),
-        None => {
-            tracing::warn!(
-                error = %std::io::Error::last_os_error(),
-                id = device.id,
-                "loading a loopback failed"
-            );
-            None
-        }
-    }
+    crate::module::load(context, LOOPBACK_MODULE, &loopback_args(device)).map(Handle::Module)
 }
 
 #[cfg(test)]

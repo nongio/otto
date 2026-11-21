@@ -16,6 +16,7 @@ use std::time::Duration;
 use pipewire as pw;
 use pw::types::ObjectType;
 
+use crate::effects::Effect;
 use crate::model::{Client, Direction, Event, Link, MediaType, Node, NodeState, Port};
 use crate::virtual_devices::{Made, VirtualDevice};
 
@@ -52,6 +53,8 @@ pub(crate) enum Command {
         value: Option<String>,
     },
     VirtualDevices(Vec<VirtualDevice>),
+    Effects(Vec<Effect>),
+    EffectControls(Box<Effect>),
     Device(crate::devices::DeviceCommand),
     Mixer(crate::mixer::Command),
 }
@@ -116,6 +119,19 @@ impl Connection {
         self.send(Command::VirtualDevices(devices));
     }
 
+    /// Keep exactly `effects` made while this connection lasts, making them
+    /// again whenever the server comes back. A change to an effect's values
+    /// is made live through its controls. They go when this program does.
+    pub fn keep_effects(&self, effects: Vec<Effect>) {
+        self.send(Command::Effects(effects));
+    }
+
+    /// Set `effect`'s controls on its node now, whoever made it, so a change
+    /// is heard while it is being made, before the routing file is saved.
+    pub fn set_effect_controls(&self, effect: &Effect) {
+        self.send(Command::EffectControls(Box::new(effect.clone())));
+    }
+
     pub(crate) fn send_mixer(&self, command: crate::mixer::Command) {
         self.send(Command::Mixer(command));
     }
@@ -135,7 +151,7 @@ fn run(
     pw::init();
     let emit: Rc<dyn Fn(Event)> = Rc::new(on_event);
     let mut was_connected = true;
-    let wanted = Rc::new(RefCell::new(Vec::new()));
+    let wanted = Rc::new(Wanted::default());
     loop {
         let (receiver, connected) = session(app, &emit, commands, &wanted);
         commands = receiver;
@@ -153,7 +169,7 @@ fn session(
     app: &str,
     emit: &Rc<dyn Fn(Event)>,
     commands: pw::channel::Receiver<Command>,
-    wanted: &Rc<RefCell<Vec<VirtualDevice>>>,
+    wanted: &Rc<Wanted>,
 ) -> (pw::channel::Receiver<Command>, bool) {
     let Ok(mainloop) = pw::main_loop::MainLoopRc::new(None) else {
         return (commands, false);
@@ -179,7 +195,11 @@ fn session(
     state
         .virtual_devices
         .borrow_mut()
-        .sync(&core, &context, &wanted.borrow());
+        .sync(&core, &context, &wanted.devices.borrow());
+    state
+        .effects
+        .borrow_mut()
+        .sync(&context, &state, &wanted.effects.borrow());
 
     let pending = core.sync(0).ok();
     let _core_listener = core
@@ -254,11 +274,18 @@ fn session(
         let wanted = wanted.clone();
         move |command| match command {
             Command::VirtualDevices(devices) => {
-                *wanted.borrow_mut() = devices;
+                *wanted.devices.borrow_mut() = devices;
                 state
                     .virtual_devices
                     .borrow_mut()
-                    .sync(&core, &context, &wanted.borrow());
+                    .sync(&core, &context, &wanted.devices.borrow());
+            }
+            Command::Effects(effects) => {
+                *wanted.effects.borrow_mut() = effects;
+                state
+                    .effects
+                    .borrow_mut()
+                    .sync(&context, &state, &wanted.effects.borrow());
             }
             command => run_command(&core, &registry, &state, command),
         }
@@ -271,6 +298,13 @@ fn session(
     (commands, true)
 }
 
+/// What this program asked to have made, kept across reconnects.
+#[derive(Default)]
+struct Wanted {
+    devices: RefCell<Vec<VirtualDevice>>,
+    effects: RefCell<Vec<Effect>>,
+}
+
 /// What the thread keeps for one connection.
 #[derive(Default)]
 pub(crate) struct State {
@@ -278,7 +312,7 @@ pub(crate) struct State {
     pub(crate) bound: RefCell<HashMap<u32, Box<dyn Any>>>,
     /// The last report of each node, so an update without properties keeps
     /// the ones already known.
-    nodes: RefCell<HashMap<u32, Node>>,
+    pub(crate) nodes: RefCell<HashMap<u32, Node>>,
     /// Each port's node, which a new link names.
     port_nodes: RefCell<HashMap<u32, u32>>,
     /// Each link's `(output, input)` ports.
@@ -290,17 +324,31 @@ pub(crate) struct State {
     settings_id: RefCell<Option<u32>>,
     /// The virtual devices made on this connection.
     virtual_devices: RefCell<Made>,
+    /// The effects made on this connection.
+    effects: RefCell<crate::effects::Made>,
     /// The defaults, the volumes and the cards' routes.
     pub(crate) mixer: Rc<crate::mixer::Thread>,
 }
 
 impl State {
     fn clear(&self) {
+        self.effects.borrow_mut().clear();
         self.virtual_devices.borrow_mut().clear();
         self.owned.borrow_mut().clear();
         *self.settings.borrow_mut() = None;
         self.mixer.clear();
         self.bound.borrow_mut().clear();
+    }
+}
+
+impl State {
+    /// The global id of the node called `name`.
+    pub(crate) fn node_named(&self, name: &str) -> Option<u32> {
+        self.nodes
+            .borrow()
+            .values()
+            .find(|n| n.name() == name)
+            .map(|n| n.id)
     }
 }
 
@@ -542,7 +590,12 @@ fn run_command(
             Some(metadata) => metadata.set_property(0, &key, None, value.as_deref()),
             None => tracing::warn!(key, "no settings metadata to set"),
         },
-        Command::VirtualDevices(_) => {}
+        Command::VirtualDevices(_) | Command::Effects(_) => {}
+        Command::EffectControls(effect) => {
+            if !crate::effects::set_controls(state, &effect) {
+                tracing::debug!(id = effect.id, "the effect's node is not there to set");
+            }
+        }
         Command::Device(command) => crate::devices::run(state, command),
         Command::Mixer(command) => crate::mixer::run(&state.bound, &state.mixer, command),
     }

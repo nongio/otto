@@ -98,7 +98,12 @@ impl Ui {
 
         let mut y = top + 64.0;
         if self.service_down() {
-            self.draw_virtual_notice(canvas, Rect::from_xywh(left, y, width, NOTICE_H), theme);
+            self.draw_service_notice(
+                canvas,
+                Rect::from_xywh(left, y, width, NOTICE_H),
+                t!("audio-virtual-service-down"),
+                theme,
+            );
             y += NOTICE_H + 16.0;
         }
         self.draw_virtual_form(canvas, Rect::from_xywh(left, y, width, FORM_H), theme);
@@ -136,9 +141,15 @@ impl Ui {
         }
     }
 
-    /// A band saying the devices need the service, with the button that
+    /// A band saying `text` (what needs the service), with the button that
     /// starts it.
-    fn draw_virtual_notice(&mut self, canvas: &Canvas, band: Rect, theme: &Theme) {
+    pub(super) fn draw_service_notice(
+        &mut self,
+        canvas: &Canvas,
+        band: Rect,
+        text: &str,
+        theme: &Theme,
+    ) {
         let tint = theme.accent_yellow;
         let rr = RRect::new_rect_xy(band, 10.0, 10.0);
         canvas.draw_rrect(
@@ -154,11 +165,7 @@ impl Ui {
             push_button::HEIGHT,
         );
         let font = styles::SUBHEADLINE.font();
-        let text = ellipsize(
-            &font,
-            t!("audio-virtual-service-down"),
-            button.left - band.left - 32.0,
-        );
+        let text = ellipsize(&font, text, button.left - band.left - 32.0);
         Label::new(text)
             .with_style(styles::SUBHEADLINE)
             .with_color(theme.text_primary)
@@ -517,7 +524,7 @@ impl Ui {
 }
 
 /// Draw `input` in `rect`.
-fn draw_field(canvas: &Canvas, input: &TextInput, rect: Rect) {
+pub(super) fn draw_field(canvas: &Canvas, input: &TextInput, rect: Rect) {
     canvas.save();
     canvas.translate((rect.left, rect.top));
     input.render_at(canvas, rect.width(), rect.height());
@@ -561,7 +568,7 @@ fn channels_label(channels: u32) -> String {
 }
 
 /// `text` broken into at most `max` lines of `width`, the last ellipsized.
-fn wrap(font: &otto_kit::skia::Font, text: &str, width: f32, max: usize) -> Vec<String> {
+pub(super) fn wrap(font: &otto_kit::skia::Font, text: &str, width: f32, max: usize) -> Vec<String> {
     let mut lines: Vec<String> = Vec::new();
     let mut line = String::new();
     for word in text.split_whitespace() {

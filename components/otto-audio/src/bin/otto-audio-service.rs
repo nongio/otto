@@ -4,7 +4,9 @@
 //! whenever they exist and are not linked. The links it makes are its own, so
 //! they last while it runs. It reads the routing file again whenever the file
 //! changes, which is how the otto-audio window tells it about a new save.
-//! It also makes the virtual devices the file lists, which last while it runs.
+//! It also makes the virtual devices and effects the file lists, which last
+//! while it runs, and moves the streams on an effect's device onto the
+//! effect.
 //!
 //! `--routing PATH` keeps another routing file instead of the person's, for
 //! trying the service out on throwaway nodes.
@@ -13,6 +15,7 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
+use otto_audio::effect_streams::{Move, StreamMover};
 use otto_audio::keeper::Keeper;
 use otto_audio::SERVICE_APP;
 use otto_audio_graph::{Connection, Event, Graph, LinkLifetime, Routing};
@@ -59,8 +62,11 @@ fn main() {
 
     let routing = load(&path);
     connection.keep_virtual_devices(routing.virtual_devices().to_vec());
-    let mut keeper = Keeper::new(routing);
+    connection.keep_effects(routing.effects().to_vec());
     let mut graph = Graph::new();
+    let mut mover = StreamMover::default();
+    mover.set_effects(routing.effects().to_vec(), &graph);
+    let mut keeper = Keeper::new(routing);
     let mut due: Option<Instant> = None;
     loop {
         let message = match due {
@@ -80,6 +86,7 @@ fn main() {
                     Event::Disconnected => {
                         tracing::info!("PipeWire went away, waiting for it");
                         keeper.disconnected();
+                        mover.disconnected();
                     }
                     Event::Connected => tracing::info!("connected to PipeWire"),
                     _ => {}
@@ -91,6 +98,14 @@ fn main() {
                 tracing::info!(path = %path.display(), "routing changed, reading it again");
                 let routing = load(&path);
                 connection.keep_virtual_devices(routing.virtual_devices().to_vec());
+                // Streams on a removed effect go back to its device before
+                // the effect goes, so the session manager moves them there
+                // rather than to the default.
+                move_streams(
+                    &connection,
+                    mover.set_effects(routing.effects().to_vec(), &graph),
+                );
+                connection.keep_effects(routing.effects().to_vec());
                 keeper.set_routing(routing);
                 due = Some(Instant::now());
             }
@@ -105,6 +120,7 @@ fn main() {
                     tracing::info!(key, value, "putting an engine setting back");
                     connection.set_setting(key, Some(&value));
                 }
+                move_streams(&connection, mover.step(&graph));
                 for (output, input) in plan.given_up {
                     tracing::warn!(
                         output,
@@ -114,6 +130,13 @@ fn main() {
                 }
             }
         }
+    }
+}
+
+fn move_streams(connection: &Connection, moves: Vec<Move>) {
+    for Move { stream, target } in moves {
+        tracing::info!(stream, target, "moving a stream");
+        connection.set_target(stream, Some(&target));
     }
 }
 

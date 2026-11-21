@@ -39,6 +39,9 @@ const DEFAULT_SOURCE: &str = "default.audio.source";
 const CONFIGURED_SINK: &str = "default.configured.audio.sink";
 /// The metadata key a person's choice of input is written to.
 const CONFIGURED_SOURCE: &str = "default.configured.audio.source";
+/// The metadata key, on a stream, naming the node the session manager should
+/// link it to, as `pactl move-sink-input` and `pw-metadata` set it.
+const TARGET_OBJECT: &str = "target.object";
 
 /// The loudest a slider goes: 100 %, the device's or the stream's own full
 /// volume. Louder would amplify in software and clip.
@@ -298,6 +301,16 @@ impl Connection {
     pub fn set_mute(&self, node: u32, mute: bool) {
         self.send_mixer(Command::Mute { node, mute });
     }
+
+    /// Ask the session manager to move stream `stream` onto the node called
+    /// `target` (a `node.name`), or to its own choice with `None`, by setting
+    /// the stream's `target.object` in the `default` metadata.
+    pub fn set_target(&self, stream: u32, target: Option<&str>) {
+        self.send_mixer(Command::Target {
+            stream,
+            target: target.map(str::to_string),
+        });
+    }
 }
 
 /// What the mixer can be asked to do, on the connection's thread.
@@ -306,6 +319,7 @@ pub(crate) enum Command {
     Default { endpoint: Endpoint, name: String },
     Volume { node: u32, linear: f32 },
     Mute { node: u32, mute: bool },
+    Target { stream: u32, target: Option<String> },
 }
 
 /// A node as `connection.rs` keeps it bound: its info listener, the
@@ -543,6 +557,12 @@ pub(crate) fn run(bound: &Bound, mixer: &Thread, command: Command) {
                 Property::new(pw::spa::sys::SPA_PROP_channelVolumes, channels),
             );
         }
+        Command::Target { stream, target } => match mixer.default.borrow().as_ref() {
+            Some((_, metadata)) => {
+                metadata.set_property(stream, TARGET_OBJECT, None, target.as_deref());
+            }
+            None => tracing::warn!(stream, "no default metadata to move a stream with"),
+        },
         Command::Mute { node, mute } => set_props(
             bound,
             mixer,

@@ -55,7 +55,7 @@ impl EngineSettings {
 }
 
 /// Every saved link, and the engine settings to keep.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Routing {
     #[serde(default)]
     version: u32,
@@ -66,6 +66,9 @@ pub struct Routing {
     /// The virtual devices the service makes; see `virtual_devices.rs`.
     #[serde(default, rename = "virtual", skip_serializing_if = "Vec::is_empty")]
     pub(crate) virtual_devices: Vec<crate::virtual_devices::VirtualDevice>,
+    /// The effects the service hosts; see `effects/mod.rs`.
+    #[serde(default, rename = "effect", skip_serializing_if = "Vec::is_empty")]
+    pub(crate) effects: Vec<crate::effects::Effect>,
 }
 
 /// Why the routing could not be read or written.

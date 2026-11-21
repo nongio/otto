@@ -2686,3 +2686,116 @@ audio-virtual-cancel = Cancel
 audio-virtual-sample-output = Stream mix
 audio-virtual-sample-input = Call input
 audio-virtual-sample-loopback = Mic monitor
+
+## otto-audio — Effects: equalisers, limiters, compressors and noise
+## suppression the audio service hosts, each sitting on a device. The list
+## beside the editor is about 230 px wide; band cards are about 130 px wide.
+
+audio-pane-effects = Effects
+audio-effects-service-down = Effects exist only while the audio service runs.
+# List headings, shown in small capitals.
+audio-effects-outputs = Output effects
+audio-effects-inputs = Input effects
+audio-effects-none = None yet
+audio-effects-new = New Effect
+# Under an effect's name in the list, e.g. "Equaliser · Headphones".
+audio-effects-caption = { $kind } · { $place }
+# The list caption of an effect that is switched off.
+audio-effects-caption-off = { $caption } · Off
+# Where an effect that sits on another effect is, e.g. "after Headphone EQ".
+audio-effects-after = after { $name }
+audio-effects-kind-equaliser = Equaliser
+audio-effects-kind-limiter = Limiter
+audio-effects-kind-compressor = Compressor
+audio-effects-kind-noise = Noise suppression
+audio-effects-about-equaliser = Shapes the sound with up to ten bands, or a headphone profile from AutoEQ.
+audio-effects-about-limiter = Keeps peaks under a ceiling, so nothing gets louder than you set.
+audio-effects-about-compressor = Evens out loud and quiet passages, for steady listening.
+audio-effects-about-noise = Takes background noise out of a voice. For microphones.
+# A kind whose plugin is missing, in the new effect form. $package is a
+# distribution package name; keep it as it is.
+audio-effects-missing = Needs { $package }, which isn't installed
+# Over an effect whose plugin is missing.
+audio-effects-missing-made = This effect needs { $package }, which isn't installed, so the audio service can't make it.
+audio-effects-new-heading = New effect
+# Whether the effect is for what plays (output) or what is recorded (input).
+audio-effects-side = For
+audio-effects-side-output = Output
+audio-effects-side-input = Input
+# The device the new effect sits on.
+audio-effects-device = Device
+audio-effects-no-device = No device
+audio-effects-add = Add Effect
+audio-effects-cancel = Cancel
+# Beside the switch that turns the effect on and off.
+audio-effects-on = On
+audio-effects-remove = Remove
+audio-effects-import = Import
+# The equaliser's preset pop-up, showing the preset last applied.
+audio-effects-preset-custom = Custom
+audio-effects-preset-flat = Flat
+audio-effects-preset-import = Import AutoEQ File…
+# A preset imported from an AutoEQ file named after the headphones.
+audio-effects-preset-autoeq = { $name } (AutoEQ)
+audio-effects-import-title = Import an AutoEQ Profile
+# File dialog filters.
+audio-effects-import-filter = AutoEQ profiles (ParametricEQ.txt)
+audio-effects-import-all = All files
+audio-effects-imported =
+    Imported { $count ->
+        [one] one band
+       *[other] { $count } bands
+    }.
+audio-effects-imported-skipped =
+    Imported { $count ->
+        [one] one band
+       *[other] { $count } bands
+    }; { $skipped ->
+        [one] one filter was
+       *[other] { $skipped } filters were
+    } left out.
+audio-effects-import-failed = That file isn't an AutoEQ ParametricEQ profile.
+audio-effects-import-unreadable = That file couldn't be read.
+# The first step of the chain line when nothing plays through the effect.
+audio-effects-chain-no-apps = No apps
+# Heading of the frequency response curve, in small capitals.
+audio-effects-response = Response
+# The gain applied before the bands.
+audio-effects-preamp = Preamp
+audio-effects-band = Band { $number }
+audio-effects-band-low-shelf = Low shelf
+audio-effects-band-peak = Peak
+audio-effects-band-high-shelf = High shelf
+audio-effects-band-low-pass = Low-pass
+audio-effects-band-high-pass = High-pass
+# Band card rows: frequency, gain and Q (the band's width). Keep them short.
+audio-effects-freq = Freq
+audio-effects-gain = Gain
+audio-effects-q = Q
+audio-effects-add-band = Add Band
+audio-effects-hint = Drag a point on the curve to move a band; scroll over it to change its width. Drag a value sideways to change it. Every change is heard right away.
+# Units. $value is already formatted, with its sign.
+audio-effects-db = { $value } dB
+audio-effects-hz = { $value } Hz
+audio-effects-khz = { $value } kHz
+audio-effects-seconds = { $value } s
+# A compression ratio, e.g. "4.0:1".
+audio-effects-ratio = { $value }:1
+audio-effects-percent = { $value } %
+audio-effects-param-input-gain = Input gain
+audio-effects-param-limit = Ceiling
+audio-effects-param-release = Release
+audio-effects-param-threshold = Threshold
+audio-effects-param-ratio = Ratio
+audio-effects-param-attack = Attack
+audio-effects-param-knee = Knee
+audio-effects-param-makeup = Makeup gain
+# How sure noise suppression must be that it hears a voice before it lets
+# sound through.
+audio-effects-param-voice-threshold = Voice threshold
+# How long sound keeps going through after the voice stops.
+audio-effects-param-grace = Hold
+# Example effects the offscreen preview shows when none are saved.
+audio-effects-sample-eq = Headphone EQ
+audio-effects-sample-mic = Mic cleanup
+audio-effects-sample-preset = WH-1000XM5 (AutoEQ)

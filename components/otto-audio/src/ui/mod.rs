@@ -8,6 +8,7 @@
 // Rust guideline compliant 2026-02-21
 
 mod devices_pane;
+mod effects_pane;
 mod engine_pane;
 mod graph_pane;
 mod virtual_pane;
@@ -76,12 +77,14 @@ pub enum Pane {
     Engine,
     Devices,
     VirtualDevices,
+    Effects,
 }
 
-const PANES: [Pane; 4] = [
+const PANES: [Pane; 5] = [
     Pane::Graph,
     Pane::Devices,
     Pane::Engine,
+    Pane::Effects,
     Pane::VirtualDevices,
 ];
 
@@ -105,6 +108,8 @@ enum Action {
     SaveWireOf(RowKey, RowKey),
     /// A control of the Virtual devices section.
     Virtual(virtual_pane::VirtualAction),
+    /// A control of the Effects section.
+    Effect(effects_pane::EffectAction),
     /// Switch a device to a profile, by its index.
     Profile {
         device: u32,
@@ -179,6 +184,8 @@ pub struct Ui {
     menu_request: Option<MenuRequest>,
     menu_choices: Vec<Action>,
     menu_open: Option<Action>,
+    /// The Effects section's selection, form, drag and import.
+    effects: effects_pane::EffectsState,
 }
 
 impl Ui {
@@ -215,6 +222,7 @@ impl Ui {
             menu_request: None,
             menu_choices: Vec::new(),
             menu_open: None,
+            effects: effects_pane::EffectsState::default(),
         }
     }
 
@@ -314,6 +322,7 @@ impl Ui {
                 Pane::Engine => self.draw_engine(canvas, theme),
                 Pane::VirtualDevices => self.draw_virtual(canvas, theme),
                 Pane::Devices => self.draw_devices(canvas, theme),
+                Pane::Effects => self.draw_effects(canvas, theme),
             }
         }
         let decoration = self.decoration();
@@ -621,6 +630,9 @@ impl Ui {
     }
 
     fn motion(&mut self, p: Point) -> bool {
+        if self.drag_effect(p) {
+            return true;
+        }
         let viewport = self.viewport();
         match &mut self.drag {
             Some(Drag::Pan { from, pan }) => {
@@ -678,7 +690,10 @@ impl Ui {
             return false;
         }
         if let Some((rect, action)) = self.target_hit(p) {
-            if self.open_device_menu(action, rect, serial) {
+            if self.open_device_menu(action, rect, serial)
+                || self.open_effect_menu(action, rect, serial)
+                || self.press_effect(action, rect, p)
+            {
                 return true;
             }
             self.pressed = Some(action);
@@ -742,7 +757,7 @@ impl Ui {
     }
 
     fn release(&mut self, p: Point, button: u32, window: &Window) -> bool {
-        let mut redraw = false;
+        let mut redraw = self.release_effect();
         if button == BTN_LEFT {
             let control = self.decoration().control_at(p.x, p.y);
             let armed = self.controls.pressed().is_some();
@@ -812,6 +827,9 @@ impl Ui {
             } else {
                 self.devices_scroll.on_wheel(dy)
             };
+        }
+        if self.pane == Pane::Effects {
+            return self.scroll_effects(p, dy, discrete, stop);
         }
         if self.pane != Pane::Graph || !self.viewport().contains(p) {
             return false;
@@ -918,7 +936,10 @@ impl Ui {
 
     fn run(&mut self, action: Action) {
         match action {
-            Action::Pane(pane) => self.pane = pane,
+            Action::Pane(pane) => {
+                self.flush_effects();
+                self.pane = pane;
+            }
             Action::Fit => {
                 let scene = self.view.scene(&self.graph, &self.routing);
                 self.view.fit(&scene, self.viewport());
@@ -1023,6 +1044,7 @@ impl Ui {
                 self.save_routing_file();
             }
             Action::Virtual(action) => self.run_virtual(action),
+            Action::Effect(action) => self.run_effect(action),
             Action::Profile { device, index } => self.connection.set_profile(device, index),
             Action::Port {
                 device,
@@ -1053,6 +1075,7 @@ fn pane_label(pane: Pane) -> &'static str {
         Pane::Engine => t!("audio-pane-engine"),
         Pane::VirtualDevices => t!("audio-pane-virtual"),
         Pane::Devices => t!("audio-pane-devices"),
+        Pane::Effects => t!("audio-pane-effects"),
     }
 }
 
@@ -1201,7 +1224,7 @@ fn stroke(color: Color, width: f32) -> Paint {
 }
 
 /// The sidebar glyphs: three linked nodes for Graph, a dial for Engine, a
-/// speaker for Devices.
+/// speaker for Devices, three faders for Effects.
 fn draw_pane_glyph(canvas: &Canvas, pane: Pane, rect: Rect, tint: Color) {
     let mut paint = stroke(tint, 1.5);
     paint.set_stroke_cap(otto_kit::skia::paint::Cap::Round);
@@ -1237,6 +1260,16 @@ fn draw_pane_glyph(canvas: &Canvas, pane: Pane, rect: Rect, tint: Color) {
                     2.5,
                 );
                 canvas.draw_rrect(rr, &paint);
+            }
+        }
+        Pane::Effects => {
+            for (dx, knob) in [(-5.0, 2.5), (0.0, -3.0), (5.0, 1.0)] {
+                canvas.draw_line(
+                    Point::new(c.x + dx, c.y - 7.0),
+                    Point::new(c.x + dx, c.y + 7.0),
+                    &paint,
+                );
+                canvas.draw_circle(Point::new(c.x + dx, c.y + knob), 2.0, &fill(tint));
             }
         }
         Pane::Devices => {

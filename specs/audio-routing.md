@@ -198,8 +198,8 @@ either an **output effect** (apps play into it, and it plays on a device)
 or an **input effect** (it records from a device, and apps record from it).
 The kinds are:
 
-- **Equaliser**: parametric, up to 16 bands of peak, shelf, high-pass and
-  low-pass filters, with a frequency response curve the bands are dragged
+- **Equaliser**: parametric, up to 16 bands (10 in the first version) of
+  peak, shelf, high-pass and low-pass filters, with a frequency response curve the bands are dragged
   on, and presets that can be saved and loaded (including AutoEQ headphone
   profiles from a file).
 - **Dynamics**: compressor and limiter, for loudness levelling.
@@ -318,8 +318,8 @@ reads and changes the same graph as the app through `otto-audio-graph`.
 
 ## First version
 
-The first version builds Graph, Devices, Engine, Virtual devices and the
-service; Effects, Rules, Setups and meters come later, and the sidebar shows
+The first version builds Graph, Devices, Engine, Effects, Virtual devices
+and the service; Rules, Setups and meters come later, and the sidebar shows
 only the sections that exist. Where it consciously differs from the above:
 
 - **Saved routing file.** The saved links live in
@@ -402,6 +402,67 @@ only the sections that exist. Where it consciously differs from the above:
   list does not scroll. The section lists each device's state from its node;
   with the service off it says the devices need it, and they are still
   added, renamed and removed in the file.
+- **Effects.** Four kinds: a parametric *equaliser* of up to 10 bands (low
+  shelf, peak, high shelf, low-pass, high-pass) and a preamp, a *limiter*, a
+  *compressor* and *noise suppression*; no convolution yet. Each is a filter
+  chain (`libpipewire-module-filter-chain`) the service loads into its own
+  context, kept in the routing file as `[[effect]]` with its kind, name,
+  side, the `node.name` of the device it sits on, On, and its values
+  (`[[effect.band]]`, `preamp`, `params`). An output effect is a sink named
+  `otto-effect.<id>` whose stream `otto-effect.<id>.play` targets its device;
+  an input effect records from its device on `otto-effect.<id>.rec` and is a
+  source named `otto-effect.<id>`. A device can be another effect of the same
+  side, which chains them; removing an effect moves any effect sitting on it
+  onto its device. The chain runs at 48 kHz, resampled when the engine runs
+  at another rate.
+  - **Live changes.** Every chain has the same shape: an equaliser is always
+    10 PipeWire `bq_raw` biquads per channel whose coefficients the app and
+    service compute (Audio EQ Cookbook), unused ones passing sound
+    unchanged, and every kind ends in a mixer of the processed (wet) and
+    untouched (dry) sound. So moving, adding and removing a band, changing
+    its type, the preamp, any parameter and On are all control changes set
+    through the filter node's `Props`, heard without a gap; On picks wet or
+    dry, so Off passes the sound through unchanged and the effect stays on
+    the graph. While a value is being dragged the window sets the controls
+    on the node itself and writes the file when the drag ends; the service
+    sets them from the file otherwise. Only a new name, kind, side or device
+    makes the chain again, which interrupts the sound on it for a moment.
+  - **Plugins.** The equaliser uses PipeWire's builtins. The limiter is SWH's
+    `fast_lookahead_limiter_1913` and the compressor SWH's `sc4_1882`
+    (`swh-plugins`), noise suppression RNNoise's `librnnoise_ladspa`
+    (`noise-suppression-for-voice`), found on `LADSPA_PATH` or the usual
+    LADSPA directories. PipeWire's builtins have no compressor or limiter. A
+    kind whose plugin is missing is offered dimmed in the New effect form
+    with the package it needs, and an effect of that kind in the file says
+    so and is not made.
+  - **Streams.** The service moves the app streams playing to an output
+    effect's device (or recording from an input effect's device) onto the
+    effect by setting each stream's `target.object` in the `default`
+    metadata, as moving a stream in the Sound pane does, and the session
+    manager relinks it. A stream is moved once per appearance, so one moved
+    back by hand stays where it was put; a filter's or loopback's own
+    streams, level monitors and streams marked `node.dont-move` are left
+    alone. A new stream starts on the device and is moved within a moment,
+    so its first instant is not processed. A stream moved onto an effect
+    stays on it when the default device changes. Removing an effect moves its
+    streams back onto its device first. Because the session manager records
+    moves, an app it remembers on an effect goes to the default when that
+    effect is gone.
+  - **Hot unplug.** While an effect's device is gone, the session manager
+    plays (or records) the effect on the default device, as it does any
+    stream, and moves it back when the device returns. A chain that ends by
+    itself is made again on the service's next change or reconnect.
+  - **The section.** A list of output and input effects with the device each
+    sits on, and a New effect form (kind, output or input, device). The
+    editor has the chain line (apps, the effect, the effects and device it
+    plays on), an On switch and Remove. An equaliser has its response curve
+    with a point per band (drag for frequency and gain, scroll for Q), band
+    cards whose type is a pop-up and whose values scrub sideways, Add band,
+    and the preamp, scrubbed in the curve's header. Presets are *Flat* and
+    an AutoEQ `ParametricEQ.txt` imported through the file chooser portal;
+    presets cannot be saved yet. The other kinds have a slider per
+    parameter. With the service off the section says effects need it.
+    There is no meter or spectrum under the curve, and no rename.
 - **One window.** Running the app again opens a second window.
 
 ## Plan
@@ -435,7 +496,9 @@ updates this spec's First version notes.
 7. **Effects.** A parametric equaliser with presets and AutoEQ import, a
    limiter, a compressor, and noise suppression, hosted by the service as
    filter chains, each inserted between streams and a device. This covers
-   what JamesDSP does for most people.
+   what JamesDSP does for most people. Built; see First version for what is
+   still to come (saved presets, convolution, a spectrum under the curve,
+   rename, up to 16 bands).
 8. **Rules.** Which device an app goes to, as session manager targets,
    with the app picked from what has played.
 9. **Setups.** Named sets of saved links, rules, effects and engine

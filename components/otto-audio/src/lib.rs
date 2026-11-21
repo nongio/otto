@@ -1,10 +1,12 @@
 //! The parts of otto-audio that need no window: what the service decides to
 //! link, where the window remembers its cards, and the Graph canvas's layout,
-//! hit-testing and drawing onto a bare canvas.
+//! hit-testing and drawing onto a bare canvas, and which streams the service
+//! moves onto effects.
 //!
 //! Both binaries link this: `otto-audio` (the patchbay window) and
 //! `otto-audio-service` (the daemon that keeps saved links in force).
 
+pub mod effect_streams;
 pub mod graph_view;
 pub mod keeper;
 pub mod layout;
