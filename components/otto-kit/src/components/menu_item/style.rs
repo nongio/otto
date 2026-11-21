@@ -21,6 +21,9 @@ pub struct MenuItemStyle {
     // === Typography ===
     pub font_size: f32,
     pub shortcut_font_size: f32,
+
+    /// The theme a slider row's track, knob and toggle are drawn in.
+    pub theme: crate::theme::Theme,
 }
 
 impl Default for MenuItemStyle {
@@ -44,6 +47,8 @@ impl Default for MenuItemStyle {
 
             font_size: 13.0,
             shortcut_font_size: 13.0,
+
+            theme: crate::theme::Theme::default(),
         }
     }
 }
@@ -82,6 +87,7 @@ impl MenuItemStyle {
             text_color_disabled: theme.text_tertiary,
             shortcut_color_normal: theme.text_tertiary,
             separator_color: theme.fill_secondary,
+            theme: theme.clone(),
             ..Self::default()
         }
     }

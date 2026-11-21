@@ -109,6 +109,15 @@ package() {
     install -Dm755 target/release/otto-setup "$pkgdir/usr/bin/otto-setup"
     install -Dm755 target/release/otto-search "$pkgdir/usr/bin/otto-search"
     install -Dm755 target/release/otto-agents "$pkgdir/usr/bin/otto-agents"
+    # The audio patchbay and its service; older tarballs predate them.
+    if [ -f target/release/otto-audio ]; then
+        install -Dm755 target/release/otto-audio "$pkgdir/usr/bin/otto-audio"
+        install -Dm755 target/release/otto-audio-service "$pkgdir/usr/bin/otto-audio-service"
+        install -Dm644 resources/otto-audio.desktop \
+            "$pkgdir/usr/share/applications/otto-audio.desktop"
+        install -Dm644 components/otto-audio/otto-audio-service.service \
+            "$pkgdir/usr/lib/systemd/user/otto-audio-service.service"
+    fi
     # Aliases: the launcher opens in ask or agents mode under these names.
     ln -s otto-launcher "$pkgdir/usr/bin/otto-ask"
     # Peek's playback worker: otto-files looks for it beside itself.

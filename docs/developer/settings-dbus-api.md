@@ -30,7 +30,7 @@ and the contract a settings client can build against.
 > relayed to other processes through the Settings portal. The seven that need a restart are `screen_scale`,
 > `font_family`, `gtk_theme`, `locales`, `login.greeter_command`,
 > `login.greeter_args` and `rendering.renderer`.
-> `topbar.show_app_menu`, `topbar.show_clock`, `topbar.show_network` and `topbar.clock_format` are
+> `topbar.show_app_menu`, `topbar.show_clock`, `topbar.show_network`, `topbar.show_sound` and `topbar.clock_format` are
 > live with nothing for the compositor to do: otto-bar reads them over this interface and follows
 > `Changed` itself. `desktop.widget` is live too: the compositor runs ewwii
 > for it and swaps the window it shows, or stops it for `none`

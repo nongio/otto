@@ -1,0 +1,23 @@
+[package]
+name = "otto-audio-graph"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Otto's live model of the PipeWire graph, node identity and the saved routing"
+
+# No toolkit, no Wayland: the graph model, the PipeWire connection behind it
+# and the routing file, shared by the otto-audio window and its service.
+[dependencies]
+otto-foundations = { path = "../otto-foundations" }
+pipewire.workspace = true
+serde = { workspace = true, features = ["derive"] }
+toml = { workspace = true, features = ["std", "serde", "parse", "display"] }
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

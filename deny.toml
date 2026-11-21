@@ -53,13 +53,15 @@ deny = [
     ], reason = "decode through otto-media-kit" },
 
     # Screen capture: the compositor produces streams, otto-kit and the
-    # islands consume them, otto-rdp forwards them.
+    # islands consume them, otto-rdp forwards them. otto-audio-graph follows
+    # the whole graph for the otto-audio patchbay and its service.
     { crate = "pipewire", wrappers = [
         "otto",
         "otto-kit",
         "otto-islands",
         "otto-rdp",
-    ], reason = "consume streams through otto-kit" },
+        "otto-audio-graph",
+    ], reason = "consume streams through otto-kit, the graph through otto-audio-graph" },
 
     # The client side of Wayland and drawing belong to otto-kit: an app gets
     # its window, input and canvas from the toolkit, and Skia as otto_kit::skia.

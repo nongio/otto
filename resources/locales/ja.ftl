@@ -1031,6 +1031,15 @@ bar-logout-title = 今すぐログアウトしますか?
 bar-logout-body = 先にアプリに終了を求めるので、保存していない内容を保存できます。
 
 
+## Menus
+##
+## Parts of the menus every app shares.
+
+# Beside a slider in a menu, such as a volume. $percent is a whole number,
+# 0 to 100.
+menu-slider-percent = { $percent }%
+
+
 ## Settings — widgets
 ##
 ## The controls themselves, rather than the settings they edit.
@@ -2167,6 +2176,7 @@ settings-network-wifi-soft-blocked = 機内モードでオフ。Wi-Fi をオン�
 settings-network-current = ネットワーク
 settings-network-not-connected = 未接続
 settings-show-network = 上部バーにネットワークの状況を表示
+settings-show-sound = 上部バーにサウンドを表示
 settings-group-network-status = 状況
 settings-group-network-known = 既知のネットワーク
 settings-network-kind-wifi = Wi-Fi
@@ -2293,6 +2303,39 @@ bar-network-settings = ネットワーク設定…
 bar-network-join-other = ほかのネットワークに接続…
 bar-network-ethernet-connected-speed = Ethernet — 接続済み、{ $speed }
 bar-network-channel = チャンネル { $channel }
+
+## Top bar — sound
+##
+## The speaker in the top bar and the menu under it.
+
+# Captions over the menu's groups: where sound plays, where it is recorded
+# from, and the apps playing.
+bar-sound-output = 出力
+bar-sound-input = 入力
+bar-sound-apps = アプリ
+# Screen-reader names of the sliders. $app is an app's name, e.g. Firefox.
+bar-sound-output-volume = 出力音量
+bar-sound-input-volume = 入力音量
+bar-sound-app-volume = { $app } の音量
+# Screen-reader names of the round mute buttons beside the sliders.
+bar-sound-mute-output = 出力を消音
+bar-sound-mute-input = 入力を消音
+bar-sound-mute-app = { $app } を消音
+# Beside each output and input, in the shortcut column: what kind of device
+# it is. Virtual is one made in software, such as a mix or an effect.
+bar-sound-kind-bluetooth = Bluetooth
+bar-sound-kind-usb = USB
+bar-sound-kind-hdmi = HDMI
+bar-sound-kind-virtual = 仮想
+bar-sound-kind-built-in = 内蔵
+bar-sound-kind-airplay = AirPlay
+# The menu's last row, which opens the Audio app.
+bar-sound-open-audio = オーディオ…
+# What a screen reader calls the indicator. $percent is a whole number and
+# $device the output's name.
+bar-sound-label = サウンド、{ $percent }%、{ $device }
+bar-sound-label-muted = サウンド消音中、{ $device }
+bar-sound-label-none = サウンド、出力なし
 bar-join-title = 「{ $name }」に接続
 bar-join-body = この Wi-Fi ネットワークのパスワードを入力します。
 bar-join-body-wep = この Wi-Fi ネットワークの WEP キーを入力します。
@@ -2318,3 +2361,318 @@ bar-network-signal-good = 良好
 bar-network-signal-excellent = 非常に良好
 schema-topbar-show-network-label = ネットワークの状況を表示
 schema-topbar-show-network-description = 上部バーの Wi-Fi と有線のインジケータ。ネットワークに接続するメニュー付き。NetworkManager が動作している場合に表示されます。
+schema-topbar-show-sound-label = サウンドを表示
+schema-topbar-show-sound-description = 上部バーのスピーカー。音量、出力と入力、再生中のアプリを扱うメニュー付き。PipeWire が動作している場合に表示されます。
+
+## otto-audio: the PipeWire graph as a patchbay (Graph), and the sound
+## server's rate and buffer size (Engine). A card is about 220 px wide; the
+## toolbar and the banner share one line with their buttons.
+
+audio-title = オーディオ
+audio-pane-graph = グラフ
+audio-pane-engine = エンジン
+audio-no-server-title = サウンドサーバが動作していません
+audio-no-server-body = PipeWire が起動すると、すぐにオーディオが接続されます。
+audio-no-server-start = PipeWire を起動
+audio-graph-empty = このフィルタでは表示するものがありません
+audio-filter-audio = オーディオ
+audio-filter-midi = MIDI
+audio-filter-video = ビデオ
+# Zooms the canvas so every card is in view.
+audio-fit = 全体を表示
+# The toolbar's key to the wires: solid ones are kept by the audio service.
+audio-legend-saved = 保存済み
+audio-legend-unsaved = 未保存
+# Headings over the canvas's default columns.
+audio-column-sources = ソース
+audio-column-between = エフェクトと仮想装置
+audio-column-destinations = 出力先
+audio-column-midi-video = MIDI とビデオ
+# The title bar's readout of the engine, e.g. "48 kHz · 256 · 5.3 ms".
+audio-readout = { $rate } · { $frames } · { $ms } ms
+# Saves every link on the canvas so the audio service puts them back.
+audio-save-routing = ルーティングを保存
+# On the selected wire.
+audio-save-link = リンクを保存
+audio-forget-link = 保存を解除
+audio-remove-link = 削除
+audio-service-down = オーディオサービスがオフの間は、保存したリンクは保持されません。
+audio-service-start = サービスを起動
+# The sidebar's foot: whether the audio service is keeping saved links.
+audio-service-on = 保存したリンクは保持されます
+audio-service-off = オーディオサービスはオフです
+# What a card stands for, under its name.
+audio-role-playing = サウンドを再生
+audio-role-recording = 録音
+audio-role-output-device = 出力装置
+audio-role-input-device = 入力装置
+audio-role-virtual-output = 仮想出力
+audio-role-virtual-input = 仮想入力
+audio-role-airplay = AirPlay スピーカー
+audio-role-duplex = 入出力
+audio-role-midi = MIDI
+audio-role-video = ビデオ
+audio-role-other = その他
+# A folded row with more channels than fit, e.g. "8 channels".
+audio-channels = { $count } チャンネル
+# A sink's monitor ports folded into one row, e.g. "Monitor FL FR".
+audio-monitor = モニタ { $channels }
+audio-state-running = 実行中
+audio-state-idle = アイドル
+audio-state-suspended = サスペンド
+audio-state-error = エラー
+audio-state-creating = 起動中
+audio-detail-app = アプリ
+audio-detail-class = メディアクラス
+audio-detail-state = 状態
+# How saved links name this node across plugs and restarts.
+audio-detail-identity = 保存名
+# Over the details panel's name.
+audio-detail-selected = 選択中
+audio-detail-format = フォーマット
+audio-detail-latency = レイテンシ
+audio-detail-delay = 遅延
+# A channel count in the format, e.g. "F32 · 48 kHz · 2 ch".
+audio-detail-channels = { $count } ch
+audio-detail-links = リンク
+audio-detail-no-links = リンクなし
+# A connection the audio service keeps.
+audio-detail-saved = 保存済み
+# Saves one connection, from the details panel.
+audio-save = 保存
+# Connections past the ones listed, e.g. "3 more".
+audio-detail-more-links = ほか { $count } 件
+# The node's raw PipeWire properties, folded away, e.g. "Properties (42)".
+audio-detail-properties-count = プロパティ（{ $count }）
+audio-engine-title = エンジン
+audio-engine-rate = サンプルレート
+audio-engine-rate-auto = { $rate }（エンジンが選択）
+audio-engine-rate-forced = { $rate }（ここで設定）
+# Lets the engine pick the value itself.
+audio-engine-auto = 自動
+# A sample rate, e.g. "48 kHz" or "44.1 kHz".
+audio-khz = { $value } kHz
+audio-engine-quantum = バッファサイズ
+# Under the buffer tiles, e.g. "Default 1024, from 32 to 2048 frames".
+audio-engine-quantum-range-short = デフォルト { $default }、{ $min }〜{ $max } フレーム
+audio-engine-intro = サウンドサーバが動作する頻度と、1回に処理するサウンドの量です。
+audio-engine-latency-now = 現在のレイテンシ
+# e.g. "256 frames at 48000 Hz"
+audio-engine-frames-at = { $rate } Hz で { $frames } フレーム
+# A value forced in this app rather than left to the engine.
+audio-engine-set-here = ここで設定
+audio-engine-rate-note = ほかのレートのストリームはリサンプリングされます。
+# Milliseconds, alone after a large number, and with one.
+audio-ms = ms
+audio-ms-value = { $ms } ms
+# A rate in a tight control, e.g. "48k" or "44.1k".
+audio-khz-short = { $value }k
+audio-engine-reset = リセット
+audio-engine-note = 変更はすぐに適用されます。サウンドサーバが再起動すると、オーディオサービスが設定を戻します。
+audio-pane-devices = 装置
+audio-devices-title = 装置
+audio-devices-intro = 変更はすぐに適用され、サウンドサーバに記憶されます。
+audio-devices-empty = サウンド装置がありません
+# Row labels on a device's card.
+audio-devices-profile = プロファイル
+audio-devices-codec = コーデック
+audio-devices-output-port = 出力ポート
+audio-devices-input-port = 入力ポート
+# Where the device's volume is set: on its own hardware mixer, or in software.
+audio-devices-volume = 音量の調整
+audio-devices-volume-hardware = ハードウェア
+audio-devices-volume-software = ソフトウェア
+# When output and input differ, e.g. "Output: Hardware · Input: Software".
+audio-devices-volume-output = 出力：{ $control }
+audio-devices-volume-input = 入力：{ $control }
+# A port with nothing plugged in, e.g. "Headphones (unplugged)".
+audio-devices-unplugged = { $port }（未接続）
+# Under a Bluetooth device's codecs.
+audio-devices-codec-note = コーデックを切り替えると、サウンドが一瞬途切れます。
+# Beside a device's name: the channels it records and plays now, e.g. "2 in · 2 out".
+audio-devices-inputs = 入力 { $count }
+audio-devices-outputs = 出力 { $count }
+# Beside a device's name when its profile is Off.
+audio-devices-off = オフ
+# What a device is, under its name.
+audio-devices-kind-bluetooth = Bluetooth 装置
+audio-devices-kind-bluetooth-headphones = Bluetooth ヘッドフォン
+audio-devices-kind-bluetooth-headset = Bluetooth ヘッドセット
+audio-devices-kind-bluetooth-speaker = Bluetooth スピーカー
+audio-devices-kind-usb = USB オーディオ
+audio-devices-kind-built-in = 内蔵オーディオ
+audio-devices-kind-other = サウンドカード
+
+# The AirPlay speakers card under the device cards: a switch that has the
+# audio service look for AirPlay speakers on the network.
+audio-airplay-title = AirPlay スピーカー
+audio-airplay-intro = ネットワーク上の AirPlay スピーカーやレシーバーで再生します。
+audio-airplay-service-down = AirPlay スピーカーはオーディオサービスの動作中にのみ表示されます。
+# { $package } is a package name, such as pipewire-zeroconf.
+audio-airplay-missing-module = AirPlay には { $package } が必要ですが、インストールされていません。
+# The command is typed as is; keep it untranslated.
+audio-airplay-missing-avahi = AirPlay がスピーカーを見つけるには Avahi が必要です。有効にするには: systemctl enable --now avahi-daemon
+audio-airplay-searching = ネットワーク上のスピーカーを検索中…
+# Beside a speaker that's playing now; the others say audio-airplay-tag.
+audio-airplay-playing = 再生中
+audio-airplay-tag = AirPlay
+audio-airplay-delay = AirPlay スピーカーの音は約 2 秒遅れるため、ビデオとは同期しません。
+# The value of the Delay fact in the Graph's details panel.
+audio-airplay-delay-short = 約 2 秒（ネットワーク経由）
+
+## otto-audio — Virtual devices: outputs, inputs and loopbacks the audio
+## service makes. The cards are about 260 px wide; the form's labels sit in a
+## column of about 78 px.
+
+audio-pane-virtual = 仮想装置
+audio-virtual-title = 仮想装置
+audio-virtual-intro = オーディオサービスが作成する出力、入力、ループバック。アプリからはほかの装置と同じように見えます。
+audio-virtual-service-down = 仮想装置はオーディオサービスの動作中にのみ存在します。
+audio-virtual-new-heading = 新しい仮想装置
+audio-virtual-name = 名前
+# Greyed out in the empty name field.
+audio-virtual-name-placeholder = 配信用ミックス、通話用入力…
+audio-virtual-kind = 種類
+audio-virtual-channels = チャンネル
+audio-virtual-add = 追加
+audio-virtual-kind-output = 出力
+audio-virtual-kind-input = 入力
+# Plays what reaches its input straight out of its output.
+audio-virtual-kind-loopback = ループバック
+audio-virtual-about-output = アプリはスピーカーと同じようにここへ再生します。再生された音はモニタから出て、ほかのアプリで録音できます。
+audio-virtual-about-input = アプリはマイクと同じようにここから録音します。グラフで何でもここにリンクできます。
+audio-virtual-about-loopback = 入力をそのまま出力へ渡します。最初はリンクされていないので、グラフで両側をリンクします。
+# Channel layouts. 5.1 and 7.1 are surround layouts; keep the numbers.
+audio-virtual-mono = モノラル
+audio-virtual-stereo = ステレオ
+audio-virtual-quad = クアッド
+audio-virtual-surround-51 = 5.1
+audio-virtual-surround-71 = 7.1
+audio-virtual-made-heading = 装置
+audio-virtual-none = 仮想装置はまだありません
+# Under a device's name, e.g. "Output · Stereo".
+audio-virtual-card-kind = { $kind } · { $channels }
+# The service runs but the device has not appeared yet.
+audio-virtual-state-waiting = 作成中
+audio-virtual-state-no-service = オーディオサービスの起動時に作成されます
+audio-virtual-rename = 名前を変更
+audio-virtual-remove = 削除
+audio-virtual-save-name = 保存
+audio-virtual-cancel = キャンセル
+# Example devices the offscreen preview shows when none are saved.
+audio-virtual-sample-output = 配信用ミックス
+audio-virtual-sample-input = 通話用入力
+audio-virtual-sample-loopback = マイクモニタ
+
+# The Graph section's view switch, in its toolbar: cards and wires, a grid
+# of sources against destinations, or one row per path the sound takes.
+audio-view-patchbay = パッチベイ
+audio-view-matrix = マトリクス
+audio-view-lanes = レーン
+# The matrix's top-left corner: rows are where sound comes from, columns
+# where it goes.
+audio-matrix-corner = 送り元 ↓ · 送り先 →
+# Over the Lanes view, which shows links but does not make them.
+audio-lanes-note = 各レーンは、音が始まる場所から終わる場所までをたどります。リンクはパッチベイかマトリクスで行います。
+audio-lanes-empty = このフィルタではリンクがありません
+## otto-audio — Effects: equalisers, limiters, compressors and noise
+## suppression the audio service hosts, each sitting on a device. The list
+## beside the editor is about 230 px wide; band cards are about 130 px wide.
+
+audio-pane-effects = エフェクト
+audio-effects-service-down = エフェクトはオーディオサービスの動作中にのみ存在します。
+# List headings, shown in small capitals.
+audio-effects-outputs = 出力エフェクト
+audio-effects-inputs = 入力エフェクト
+audio-effects-none = まだありません
+audio-effects-new = 新規エフェクト
+# Under an effect's name in the list, e.g. "Equaliser · Headphones".
+audio-effects-caption = { $kind } · { $place }
+# The list caption of an effect that is switched off.
+audio-effects-caption-off = { $caption } · オフ
+# Where an effect that sits on another effect is, e.g. "after Headphone EQ".
+audio-effects-after = { $name } の後
+audio-effects-kind-equaliser = イコライザ
+audio-effects-kind-limiter = リミッタ
+audio-effects-kind-compressor = コンプレッサ
+audio-effects-kind-noise = ノイズ抑制
+audio-effects-about-equaliser = 最大 10 バンド、または AutoEQ のヘッドフォンプロファイルで音を整えます。
+audio-effects-about-limiter = ピークを上限以下に抑え、設定した音量より大きくならないようにします。
+audio-effects-about-compressor = 大きな部分と小さな部分の差をならし、安定して聴けるようにします。
+audio-effects-about-noise = 声から背景ノイズを取り除きます。マイク用です。
+# A kind whose plugin is missing, in the new effect form. $package is a
+# distribution package name; keep it as it is.
+audio-effects-missing = { $package } が必要ですが、インストールされていません
+# Over an effect whose plugin is missing.
+audio-effects-missing-made = このエフェクトには { $package } が必要ですが、インストールされていないため、オーディオサービスは作成できません。
+audio-effects-new-heading = 新しいエフェクト
+# Whether the effect is for what plays (output) or what is recorded (input).
+audio-effects-side = 対象
+audio-effects-side-output = 出力
+audio-effects-side-input = 入力
+# The device the new effect sits on.
+audio-effects-device = 装置
+audio-effects-no-device = 装置なし
+audio-effects-add = エフェクトを追加
+audio-effects-cancel = キャンセル
+# Beside the switch that turns the effect on and off.
+audio-effects-on = オン
+audio-effects-remove = 削除
+audio-effects-import = 読み込む
+# The equaliser's preset pop-up, showing the preset last applied.
+audio-effects-preset-custom = カスタム
+audio-effects-preset-flat = フラット
+audio-effects-preset-import = AutoEQ ファイルを読み込む…
+# A preset imported from an AutoEQ file named after the headphones.
+audio-effects-preset-autoeq = { $name } (AutoEQ)
+audio-effects-import-title = AutoEQ プロファイルを読み込む
+# File dialog filters.
+audio-effects-import-filter = AutoEQ プロファイル (ParametricEQ.txt)
+audio-effects-import-all = すべてのファイル
+audio-effects-imported = { $count } バンドを読み込みました。
+audio-effects-imported-skipped = { $count } バンドを読み込みました。{ $skipped } 個のフィルタは除外しました。
+audio-effects-import-failed = このファイルは AutoEQ の ParametricEQ プロファイルではありません。
+audio-effects-import-unreadable = このファイルを読み込めませんでした。
+# The first step of the chain line when nothing plays through the effect.
+audio-effects-chain-no-apps = アプリなし
+# Heading of the frequency response curve, in small capitals.
+audio-effects-response = 周波数特性
+# The gain applied before the bands.
+audio-effects-preamp = プリアンプ
+audio-effects-band = バンド { $number }
+audio-effects-band-low-shelf = ローシェルフ
+audio-effects-band-peak = ピーク
+audio-effects-band-high-shelf = ハイシェルフ
+audio-effects-band-low-pass = ローパス
+audio-effects-band-high-pass = ハイパス
+# Band card rows: frequency, gain and Q (the band's width). Keep them short.
+audio-effects-freq = 周波数
+audio-effects-gain = ゲイン
+audio-effects-q = Q
+audio-effects-add-band = バンドを追加
+audio-effects-hint = カーブ上の点をドラッグするとバンドが移動し、点の上でスクロールすると幅が変わります。値を横にドラッグすると値が変わります。変更はすぐに音に反映されます。
+# Units. $value is already formatted, with its sign.
+audio-effects-db = { $value } dB
+audio-effects-hz = { $value } Hz
+audio-effects-khz = { $value } kHz
+audio-effects-seconds = { $value } s
+# A compression ratio, e.g. "4.0:1".
+audio-effects-ratio = { $value }:1
+audio-effects-percent = { $value } %
+audio-effects-param-input-gain = 入力ゲイン
+audio-effects-param-limit = 上限
+audio-effects-param-release = リリース
+audio-effects-param-threshold = スレッショルド
+audio-effects-param-ratio = レシオ
+audio-effects-param-attack = アタック
+audio-effects-param-knee = ニー
+audio-effects-param-makeup = メイクアップゲイン
+# How sure noise suppression must be that it hears a voice before it lets
+# sound through.
+audio-effects-param-voice-threshold = 音声のしきい値
+# How long sound keeps going through after the voice stops.
+audio-effects-param-grace = ホールド
+# Example effects the offscreen preview shows when none are saved.
+audio-effects-sample-eq = ヘッドフォン EQ
+audio-effects-sample-mic = マイクのノイズ除去
+audio-effects-sample-preset = WH-1000XM5 (AutoEQ)

@@ -148,7 +148,7 @@ impl ContextMenuState {
             let found = wanted.and_then(|label| {
                 self.items_at_depth(depth)
                     .iter()
-                    .position(|item| !item.is_separator() && item.label() == Some(label.as_str()))
+                    .position(|item| item.is_selectable() && item.label() == Some(label.as_str()))
             });
             self.select_at_depth(depth, found);
         }
@@ -232,7 +232,7 @@ impl ContextMenuState {
         // Search for next non-separator item
         let mut idx = start;
         for _ in 0..items.len() {
-            if !items[idx].is_separator() {
+            if items[idx].is_selectable() {
                 return Some(idx);
             }
             idx = if forward {
@@ -455,6 +455,12 @@ impl ContextMenuState {
         }
 
         current_items
+    }
+
+    /// The root list's item at `index`, to change in place: a slider row
+    /// being dragged.
+    pub fn root_item_mut(&mut self, index: usize) -> Option<&mut MenuItem> {
+        self.items.get_mut(index)
     }
 
     /// Reset all state

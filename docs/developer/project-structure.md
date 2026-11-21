@@ -84,6 +84,7 @@ applications share:
 | `otto-peek` | Press space on a file and see it: the Peek previewer |
 | `otto-emoji` | Emoji picker that types the pick into the focused window |
 | `otto-settings` | Settings application |
+| `otto-audio` | Audio: the PipeWire graph as a patchbay, the engine's rate and buffer size, and `otto-audio-service`, which keeps saved links |
 | `otto-lock` | Lock screen, backed by PAM |
 | `otto-greeter` | Login screen, backed by greetd |
 | `otto-auth-ui` | The password panel shared by the greeter and the lock screen |
@@ -91,6 +92,7 @@ applications share:
 | `otto-setup` | Sets Otto up the first time from a terminal, starting with the agents |
 | `otto-network` | The network through NetworkManager: a snapshot model and its actions, shared by the top bar's indicator and Settings' Network pane |
 | `otto-search` | File search over the desktop's index: the query language, shared by Files, and the `otto-search` command |
+| `otto-audio-graph` | The PipeWire graph followed live: nodes, ports, links, node identity and the saved routing, shared by Audio and its service |
 | `otto-agents` | Runs ACP agents and serves them over the Agent Host Protocol |
 | `otto-foundations` | Library: the UI-free base, XDG directories, `file://` URIs and name matching; see [otto-foundations.md](otto-foundations.md) |
 | `otto-agents-client` | Library: talking to `otto-agents`, its socket, session URIs and file URIs, and the harness presets |

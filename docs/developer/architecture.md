@@ -64,6 +64,7 @@ flowchart BT
     otto_agents_client[otto-agents-client]
     otto_pdf[otto-pdf]
     otto_network[otto-network]
+    otto_audio_graph[otto-audio-graph]
   end
   subgraph toolkit["toolkit"]
     otto_kit[otto-kit]
@@ -94,6 +95,7 @@ flowchart BT
     otto_setup[otto-setup]
     otto_agents[otto-agents]
     otto_rdp[otto-rdp]
+    otto_audio[otto-audio]
     xdg_desktop_portal_otto[xdg-desktop-portal-otto]
   end
   subgraph compositor-core["compositor-core"]
@@ -111,9 +113,13 @@ flowchart BT
   otto_agents_kit --> otto_agents_client
   otto_agents_kit --> otto_kit
   otto_agents_kit --> otto_md_kit
+  otto_audio --> otto_audio_graph
+  otto_audio --> otto_kit
+  otto_audio_graph --> otto_foundations
   otto_auth_ui --> otto_kit
   otto_authorize --> otto_auth_ui
   otto_authorize --> otto_kit
+  otto_bar --> otto_audio_graph
   otto_bar --> otto_kit
   otto_bar --> otto_network
   otto_canvas --> otto_agents_kit

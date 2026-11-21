@@ -272,6 +272,23 @@ impl A11yTree {
                     }
                 });
             }
+            MenuItemKind::Header { label } => {
+                self.node(id, Role::Label, |node| {
+                    node.set_bounds(bounds_of(bounds));
+                    node.set_value(label.clone());
+                });
+            }
+            MenuItemKind::Slider(slider) => {
+                self.slider(
+                    id,
+                    bounds,
+                    slider.accessible_name.clone(),
+                    f64::from(slider.value) * 100.0,
+                    0.0..=100.0,
+                    5.0,
+                    item.enabled,
+                );
+            }
             MenuItemKind::Submenu { label, .. } => {
                 self.control(id, bounds, Role::MenuItem, item.enabled, |node| {
                     node.set_label(label.clone());

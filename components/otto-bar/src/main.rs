@@ -12,6 +12,7 @@ mod network;
 mod power;
 mod secret_agent;
 mod settings;
+mod sound;
 mod tray;
 mod update;
 
