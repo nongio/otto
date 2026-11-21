@@ -2565,3 +2565,127 @@ audio-virtual-cancel = Abbrechen
 audio-virtual-sample-output = Stream-Mix
 audio-virtual-sample-input = Anrufeingang
 audio-virtual-sample-loopback = Mikrofon-Monitor
+
+# The Graph section's view switch, in its toolbar: cards and wires, a grid
+# of sources against destinations, or one row per path the sound takes.
+audio-view-patchbay = Patchbay
+audio-view-matrix = Matrix
+audio-view-lanes = Bahnen
+# The matrix's top-left corner: rows are where sound comes from, columns
+# where it goes.
+audio-matrix-corner = Von ↓ · Nach →
+# Over the Lanes view, which shows links but does not make them.
+audio-lanes-note = Jede Bahn folgt dem Ton von seinem Anfang bis zu seinem Ende. Verbunden wird in der Patchbay oder der Matrix.
+audio-lanes-empty = Mit diesen Filtern ist nichts verbunden
+## otto-audio — Effects: equalisers, limiters, compressors and noise
+## suppression the audio service hosts, each sitting on a device. The list
+## beside the editor is about 230 px wide; band cards are about 130 px wide.
+
+audio-pane-effects = Effekte
+audio-effects-service-down = Effekte gibt es nur, solange der Audiodienst läuft.
+# List headings, shown in small capitals.
+audio-effects-outputs = Ausgabeeffekte
+audio-effects-inputs = Eingabeeffekte
+audio-effects-none = Noch keine
+audio-effects-new = Neuer Effekt
+# Under an effect's name in the list, e.g. "Equaliser · Headphones".
+audio-effects-caption = { $kind } · { $place }
+# The list caption of an effect that is switched off.
+audio-effects-caption-off = { $caption } · Aus
+# Where an effect that sits on another effect is, e.g. "after Headphone EQ".
+audio-effects-after = nach { $name }
+audio-effects-kind-equaliser = Equalizer
+audio-effects-kind-limiter = Limiter
+audio-effects-kind-compressor = Kompressor
+audio-effects-kind-noise = Rauschunterdrückung
+audio-effects-about-equaliser = Formt den Klang mit bis zu zehn Bändern oder einem Kopfhörerprofil von AutoEQ.
+audio-effects-about-limiter = Hält Spitzen unter einer Obergrenze, damit nichts lauter wird, als du es einstellst.
+audio-effects-about-compressor = Gleicht laute und leise Passagen aus, für gleichmäßiges Hören.
+audio-effects-about-noise = Entfernt Hintergrundgeräusche aus einer Stimme. Für Mikrofone.
+# A kind whose plugin is missing, in the new effect form. $package is a
+# distribution package name; keep it as it is.
+audio-effects-missing = Benötigt { $package }, das nicht installiert ist
+# Over an effect whose plugin is missing.
+audio-effects-missing-made = Dieser Effekt benötigt { $package }, das nicht installiert ist. Der Audiodienst kann ihn daher nicht anlegen.
+audio-effects-new-heading = Neuer Effekt
+# Whether the effect is for what plays (output) or what is recorded (input).
+audio-effects-side = Für
+audio-effects-side-output = Ausgabe
+audio-effects-side-input = Eingabe
+# The device the new effect sits on.
+audio-effects-device = Gerät
+audio-effects-no-device = Kein Gerät
+audio-effects-add = Effekt hinzufügen
+audio-effects-cancel = Abbrechen
+# Beside the switch that turns the effect on and off.
+audio-effects-on = An
+audio-effects-remove = Entfernen
+audio-effects-import = Importieren
+# The equaliser's preset pop-up, showing the preset last applied.
+audio-effects-preset-custom = Eigene
+audio-effects-preset-flat = Linear
+audio-effects-preset-import = AutoEQ-Datei importieren…
+# A preset imported from an AutoEQ file named after the headphones.
+audio-effects-preset-autoeq = { $name } (AutoEQ)
+audio-effects-import-title = AutoEQ-Profil importieren
+# File dialog filters.
+audio-effects-import-filter = AutoEQ-Profile (ParametricEQ.txt)
+audio-effects-import-all = Alle Dateien
+audio-effects-imported =
+    { $count ->
+        [one] Ein Band
+       *[other] { $count } Bänder
+    } importiert.
+audio-effects-imported-skipped =
+    { $count ->
+        [one] Ein Band
+       *[other] { $count } Bänder
+    } importiert; { $skipped ->
+        [one] ein Filter wurde
+       *[other] { $skipped } Filter wurden
+    } ausgelassen.
+audio-effects-import-failed = Diese Datei ist kein AutoEQ-ParametricEQ-Profil.
+audio-effects-import-unreadable = Diese Datei konnte nicht gelesen werden.
+# The first step of the chain line when nothing plays through the effect.
+audio-effects-chain-no-apps = Keine Apps
+# Heading of the frequency response curve, in small capitals.
+audio-effects-response = Frequenzgang
+# The gain applied before the bands.
+audio-effects-preamp = Vorverstärkung
+audio-effects-band = Band { $number }
+audio-effects-band-low-shelf = Low-Shelf
+audio-effects-band-peak = Peak
+audio-effects-band-high-shelf = High-Shelf
+audio-effects-band-low-pass = Tiefpass
+audio-effects-band-high-pass = Hochpass
+# Band card rows: frequency, gain and Q (the band's width). Keep them short.
+audio-effects-freq = Freq.
+audio-effects-gain = Gain
+audio-effects-q = Q
+audio-effects-add-band = Band hinzufügen
+audio-effects-hint = Einen Punkt auf der Kurve ziehen, um ein Band zu verschieben; darüber scrollen, um seine Breite zu ändern. Einen Wert seitwärts ziehen, um ihn zu ändern. Jede Änderung ist sofort zu hören.
+# Units. $value is already formatted, with its sign.
+audio-effects-db = { $value } dB
+audio-effects-hz = { $value } Hz
+audio-effects-khz = { $value } kHz
+audio-effects-seconds = { $value } s
+# A compression ratio, e.g. "4.0:1".
+audio-effects-ratio = { $value }:1
+audio-effects-percent = { $value } %
+audio-effects-param-input-gain = Eingangs-Gain
+audio-effects-param-limit = Obergrenze
+audio-effects-param-release = Release
+audio-effects-param-threshold = Threshold
+audio-effects-param-ratio = Ratio
+audio-effects-param-attack = Attack
+audio-effects-param-knee = Knee
+audio-effects-param-makeup = Make-up-Gain
+# How sure noise suppression must be that it hears a voice before it lets
+# sound through.
+audio-effects-param-voice-threshold = Stimmschwelle
+# How long sound keeps going through after the voice stops.
+audio-effects-param-grace = Hold
+# Example effects the offscreen preview shows when none are saved.
+audio-effects-sample-eq = Kopfhörer-EQ
+audio-effects-sample-mic = Mikrofon-Entrauschung
+audio-effects-sample-preset = WH-1000XM5 (AutoEQ)

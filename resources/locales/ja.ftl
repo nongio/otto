@@ -2543,3 +2543,116 @@ audio-virtual-cancel = キャンセル
 audio-virtual-sample-output = 配信用ミックス
 audio-virtual-sample-input = 通話用入力
 audio-virtual-sample-loopback = マイクモニタ
+
+# The Graph section's view switch, in its toolbar: cards and wires, a grid
+# of sources against destinations, or one row per path the sound takes.
+audio-view-patchbay = パッチベイ
+audio-view-matrix = マトリクス
+audio-view-lanes = レーン
+# The matrix's top-left corner: rows are where sound comes from, columns
+# where it goes.
+audio-matrix-corner = 送り元 ↓ · 送り先 →
+# Over the Lanes view, which shows links but does not make them.
+audio-lanes-note = 各レーンは、音が始まる場所から終わる場所までをたどります。リンクはパッチベイかマトリクスで行います。
+audio-lanes-empty = このフィルタではリンクがありません
+## otto-audio — Effects: equalisers, limiters, compressors and noise
+## suppression the audio service hosts, each sitting on a device. The list
+## beside the editor is about 230 px wide; band cards are about 130 px wide.
+
+audio-pane-effects = エフェクト
+audio-effects-service-down = エフェクトはオーディオサービスの動作中にのみ存在します。
+# List headings, shown in small capitals.
+audio-effects-outputs = 出力エフェクト
+audio-effects-inputs = 入力エフェクト
+audio-effects-none = まだありません
+audio-effects-new = 新規エフェクト
+# Under an effect's name in the list, e.g. "Equaliser · Headphones".
+audio-effects-caption = { $kind } · { $place }
+# The list caption of an effect that is switched off.
+audio-effects-caption-off = { $caption } · オフ
+# Where an effect that sits on another effect is, e.g. "after Headphone EQ".
+audio-effects-after = { $name } の後
+audio-effects-kind-equaliser = イコライザ
+audio-effects-kind-limiter = リミッタ
+audio-effects-kind-compressor = コンプレッサ
+audio-effects-kind-noise = ノイズ抑制
+audio-effects-about-equaliser = 最大 10 バンド、または AutoEQ のヘッドフォンプロファイルで音を整えます。
+audio-effects-about-limiter = ピークを上限以下に抑え、設定した音量より大きくならないようにします。
+audio-effects-about-compressor = 大きな部分と小さな部分の差をならし、安定して聴けるようにします。
+audio-effects-about-noise = 声から背景ノイズを取り除きます。マイク用です。
+# A kind whose plugin is missing, in the new effect form. $package is a
+# distribution package name; keep it as it is.
+audio-effects-missing = { $package } が必要ですが、インストールされていません
+# Over an effect whose plugin is missing.
+audio-effects-missing-made = このエフェクトには { $package } が必要ですが、インストールされていないため、オーディオサービスは作成できません。
+audio-effects-new-heading = 新しいエフェクト
+# Whether the effect is for what plays (output) or what is recorded (input).
+audio-effects-side = 対象
+audio-effects-side-output = 出力
+audio-effects-side-input = 入力
+# The device the new effect sits on.
+audio-effects-device = 装置
+audio-effects-no-device = 装置なし
+audio-effects-add = エフェクトを追加
+audio-effects-cancel = キャンセル
+# Beside the switch that turns the effect on and off.
+audio-effects-on = オン
+audio-effects-remove = 削除
+audio-effects-import = 読み込む
+# The equaliser's preset pop-up, showing the preset last applied.
+audio-effects-preset-custom = カスタム
+audio-effects-preset-flat = フラット
+audio-effects-preset-import = AutoEQ ファイルを読み込む…
+# A preset imported from an AutoEQ file named after the headphones.
+audio-effects-preset-autoeq = { $name } (AutoEQ)
+audio-effects-import-title = AutoEQ プロファイルを読み込む
+# File dialog filters.
+audio-effects-import-filter = AutoEQ プロファイル (ParametricEQ.txt)
+audio-effects-import-all = すべてのファイル
+audio-effects-imported = { $count } バンドを読み込みました。
+audio-effects-imported-skipped = { $count } バンドを読み込みました。{ $skipped } 個のフィルタは除外しました。
+audio-effects-import-failed = このファイルは AutoEQ の ParametricEQ プロファイルではありません。
+audio-effects-import-unreadable = このファイルを読み込めませんでした。
+# The first step of the chain line when nothing plays through the effect.
+audio-effects-chain-no-apps = アプリなし
+# Heading of the frequency response curve, in small capitals.
+audio-effects-response = 周波数特性
+# The gain applied before the bands.
+audio-effects-preamp = プリアンプ
+audio-effects-band = バンド { $number }
+audio-effects-band-low-shelf = ローシェルフ
+audio-effects-band-peak = ピーク
+audio-effects-band-high-shelf = ハイシェルフ
+audio-effects-band-low-pass = ローパス
+audio-effects-band-high-pass = ハイパス
+# Band card rows: frequency, gain and Q (the band's width). Keep them short.
+audio-effects-freq = 周波数
+audio-effects-gain = ゲイン
+audio-effects-q = Q
+audio-effects-add-band = バンドを追加
+audio-effects-hint = カーブ上の点をドラッグするとバンドが移動し、点の上でスクロールすると幅が変わります。値を横にドラッグすると値が変わります。変更はすぐに音に反映されます。
+# Units. $value is already formatted, with its sign.
+audio-effects-db = { $value } dB
+audio-effects-hz = { $value } Hz
+audio-effects-khz = { $value } kHz
+audio-effects-seconds = { $value } s
+# A compression ratio, e.g. "4.0:1".
+audio-effects-ratio = { $value }:1
+audio-effects-percent = { $value } %
+audio-effects-param-input-gain = 入力ゲイン
+audio-effects-param-limit = 上限
+audio-effects-param-release = リリース
+audio-effects-param-threshold = スレッショルド
+audio-effects-param-ratio = レシオ
+audio-effects-param-attack = アタック
+audio-effects-param-knee = ニー
+audio-effects-param-makeup = メイクアップゲイン
+# How sure noise suppression must be that it hears a voice before it lets
+# sound through.
+audio-effects-param-voice-threshold = 音声のしきい値
+# How long sound keeps going through after the voice stops.
+audio-effects-param-grace = ホールド
+# Example effects the offscreen preview shows when none are saved.
+audio-effects-sample-eq = ヘッドフォン EQ
+audio-effects-sample-mic = マイクのノイズ除去
+audio-effects-sample-preset = WH-1000XM5 (AutoEQ)

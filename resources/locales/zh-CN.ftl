@@ -2547,3 +2547,116 @@ audio-virtual-cancel = 取消
 audio-virtual-sample-output = 直播混音
 audio-virtual-sample-input = 通话输入
 audio-virtual-sample-loopback = 麦克风监听
+
+# The Graph section's view switch, in its toolbar: cards and wires, a grid
+# of sources against destinations, or one row per path the sound takes.
+audio-view-patchbay = 跳线盘
+audio-view-matrix = 矩阵
+audio-view-lanes = 泳道
+# The matrix's top-left corner: rows are where sound comes from, columns
+# where it goes.
+audio-matrix-corner = 从 ↓ · 到 →
+# Over the Lanes view, which shows links but does not make them.
+audio-lanes-note = 每条泳道跟随声音从起点走到终点。连接请在跳线盘或矩阵中进行。
+audio-lanes-empty = 在这些过滤条件下没有连接
+## otto-audio — Effects: equalisers, limiters, compressors and noise
+## suppression the audio service hosts, each sitting on a device. The list
+## beside the editor is about 230 px wide; band cards are about 130 px wide.
+
+audio-pane-effects = 效果
+audio-effects-service-down = 效果只在音频服务运行时存在。
+# List headings, shown in small capitals.
+audio-effects-outputs = 输出效果
+audio-effects-inputs = 输入效果
+audio-effects-none = 暂无
+audio-effects-new = 新建效果
+# Under an effect's name in the list, e.g. "Equaliser · Headphones".
+audio-effects-caption = { $kind } · { $place }
+# The list caption of an effect that is switched off.
+audio-effects-caption-off = { $caption } · 关闭
+# Where an effect that sits on another effect is, e.g. "after Headphone EQ".
+audio-effects-after = 位于 { $name } 之后
+audio-effects-kind-equaliser = 均衡器
+audio-effects-kind-limiter = 限制器
+audio-effects-kind-compressor = 压缩器
+audio-effects-kind-noise = 降噪
+audio-effects-about-equaliser = 用最多十个频段，或来自 AutoEQ 的耳机配置文件来塑造声音。
+audio-effects-about-limiter = 把峰值压在上限之下，声音不会超过你设定的响度。
+audio-effects-about-compressor = 平衡响亮与轻柔的段落，让聆听更平稳。
+audio-effects-about-noise = 去除人声中的背景噪音。适用于麦克风。
+# A kind whose plugin is missing, in the new effect form. $package is a
+# distribution package name; keep it as it is.
+audio-effects-missing = 需要 { $package }，但尚未安装
+# Over an effect whose plugin is missing.
+audio-effects-missing-made = 此效果需要 { $package }，但它尚未安装，因此音频服务无法创建此效果。
+audio-effects-new-heading = 新建效果
+# Whether the effect is for what plays (output) or what is recorded (input).
+audio-effects-side = 用于
+audio-effects-side-output = 输出
+audio-effects-side-input = 输入
+# The device the new effect sits on.
+audio-effects-device = 设备
+audio-effects-no-device = 无设备
+audio-effects-add = 添加效果
+audio-effects-cancel = 取消
+# Beside the switch that turns the effect on and off.
+audio-effects-on = 开启
+audio-effects-remove = 移除
+audio-effects-import = 导入
+# The equaliser's preset pop-up, showing the preset last applied.
+audio-effects-preset-custom = 自定义
+audio-effects-preset-flat = 平直
+audio-effects-preset-import = 导入 AutoEQ 文件…
+# A preset imported from an AutoEQ file named after the headphones.
+audio-effects-preset-autoeq = { $name } (AutoEQ)
+audio-effects-import-title = 导入 AutoEQ 配置文件
+# File dialog filters.
+audio-effects-import-filter = AutoEQ 配置文件 (ParametricEQ.txt)
+audio-effects-import-all = 所有文件
+audio-effects-imported = 已导入 { $count } 个频段。
+audio-effects-imported-skipped = 已导入 { $count } 个频段；{ $skipped } 个滤波器未导入。
+audio-effects-import-failed = 该文件不是 AutoEQ ParametricEQ 配置文件。
+audio-effects-import-unreadable = 无法读取该文件。
+# The first step of the chain line when nothing plays through the effect.
+audio-effects-chain-no-apps = 无应用
+# Heading of the frequency response curve, in small capitals.
+audio-effects-response = 频率响应
+# The gain applied before the bands.
+audio-effects-preamp = 前级放大
+audio-effects-band = 频段 { $number }
+audio-effects-band-low-shelf = 低架
+audio-effects-band-peak = 峰值
+audio-effects-band-high-shelf = 高架
+audio-effects-band-low-pass = 低通
+audio-effects-band-high-pass = 高通
+# Band card rows: frequency, gain and Q (the band's width). Keep them short.
+audio-effects-freq = 频率
+audio-effects-gain = 增益
+audio-effects-q = Q
+audio-effects-add-band = 添加频段
+audio-effects-hint = 拖移曲线上的点可移动频段；在点上滚动可更改其宽度。左右拖移数值可更改数值。每次更改都能立即听到。
+# Units. $value is already formatted, with its sign.
+audio-effects-db = { $value } dB
+audio-effects-hz = { $value } Hz
+audio-effects-khz = { $value } kHz
+audio-effects-seconds = { $value } s
+# A compression ratio, e.g. "4.0:1".
+audio-effects-ratio = { $value }:1
+audio-effects-percent = { $value } %
+audio-effects-param-input-gain = 输入增益
+audio-effects-param-limit = 上限
+audio-effects-param-release = 释放
+audio-effects-param-threshold = 阈值
+audio-effects-param-ratio = 比率
+audio-effects-param-attack = 起音
+audio-effects-param-knee = 拐点
+audio-effects-param-makeup = 补偿增益
+# How sure noise suppression must be that it hears a voice before it lets
+# sound through.
+audio-effects-param-voice-threshold = 人声阈值
+# How long sound keeps going through after the voice stops.
+audio-effects-param-grace = 保持
+# Example effects the offscreen preview shows when none are saved.
+audio-effects-sample-eq = 耳机均衡
+audio-effects-sample-mic = 麦克风降噪
+audio-effects-sample-preset = WH-1000XM5 (AutoEQ)

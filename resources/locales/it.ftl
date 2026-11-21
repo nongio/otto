@@ -2584,3 +2584,130 @@ audio-virtual-cancel = Annulla
 audio-virtual-sample-output = Mix per lo stream
 audio-virtual-sample-input = Ingresso chiamate
 audio-virtual-sample-loopback = Monitor microfono
+
+# The Graph section's view switch, in its toolbar: cards and wires, a grid
+# of sources against destinations, or one row per path the sound takes.
+audio-view-patchbay = Patchbay
+audio-view-matrix = Matrice
+audio-view-lanes = Corsie
+# The matrix's top-left corner: rows are where sound comes from, columns
+# where it goes.
+audio-matrix-corner = Da ↓ · A →
+# Over the Lanes view, which shows links but does not make them.
+audio-lanes-note = Ogni corsia segue il suono da dove parte a dove arriva. I link si creano in Patchbay o in Matrice.
+audio-lanes-empty = Nessun link con questi filtri
+## otto-audio — Effects: equalisers, limiters, compressors and noise
+## suppression the audio service hosts, each sitting on a device. The list
+## beside the editor is about 230 px wide; band cards are about 130 px wide.
+
+audio-pane-effects = Effetti
+audio-effects-service-down = Gli effetti esistono solo mentre il servizio audio è attivo.
+# List headings, shown in small capitals.
+audio-effects-outputs = Effetti in uscita
+audio-effects-inputs = Effetti in ingresso
+audio-effects-none = Ancora nessuno
+audio-effects-new = Nuovo effetto
+# Under an effect's name in the list, e.g. "Equaliser · Headphones".
+audio-effects-caption = { $kind } · { $place }
+# The list caption of an effect that is switched off.
+audio-effects-caption-off = { $caption } · Spento
+# Where an effect that sits on another effect is, e.g. "after Headphone EQ".
+audio-effects-after = dopo { $name }
+audio-effects-kind-equaliser = Equalizzatore
+audio-effects-kind-limiter = Limiter
+audio-effects-kind-compressor = Compressore
+audio-effects-kind-noise = Riduzione del rumore
+audio-effects-about-equaliser = Modella il suono con un massimo di dieci bande, o con un profilo per cuffie di AutoEQ.
+audio-effects-about-limiter = Tiene i picchi sotto un tetto, così niente supera il livello che hai impostato.
+audio-effects-about-compressor = Uniforma i passaggi forti e quelli deboli, per un ascolto costante.
+audio-effects-about-noise = Toglie il rumore di fondo da una voce. Per i microfoni.
+# A kind whose plugin is missing, in the new effect form. $package is a
+# distribution package name; keep it as it is.
+audio-effects-missing = Richiede { $package }, che non è installato
+# Over an effect whose plugin is missing.
+audio-effects-missing-made = Questo effetto richiede { $package }, che non è installato, quindi il servizio audio non può crearlo.
+audio-effects-new-heading = Nuovo effetto
+# Whether the effect is for what plays (output) or what is recorded (input).
+audio-effects-side = Per
+audio-effects-side-output = Uscita
+audio-effects-side-input = Ingresso
+# The device the new effect sits on.
+audio-effects-device = Dispositivo
+audio-effects-no-device = Nessun dispositivo
+audio-effects-add = Aggiungi effetto
+audio-effects-cancel = Annulla
+# Beside the switch that turns the effect on and off.
+audio-effects-on = Attivo
+audio-effects-remove = Rimuovi
+audio-effects-import = Importa
+# The equaliser's preset pop-up, showing the preset last applied.
+audio-effects-preset-custom = Personalizzato
+audio-effects-preset-flat = Flat
+audio-effects-preset-import = Importa file AutoEQ…
+# A preset imported from an AutoEQ file named after the headphones.
+audio-effects-preset-autoeq = { $name } (AutoEQ)
+audio-effects-import-title = Importa un profilo AutoEQ
+# File dialog filters.
+audio-effects-import-filter = Profili AutoEQ (ParametricEQ.txt)
+audio-effects-import-all = Tutti i file
+audio-effects-imported =
+    { $count ->
+        [one] Importata una banda.
+        [many] Importate { $count } bande.
+       *[other] Importate { $count } bande.
+    }
+audio-effects-imported-skipped =
+    { $count ->
+        [one] Importata una banda
+        [many] Importate { $count } bande
+       *[other] Importate { $count } bande
+    }; { $skipped ->
+        [one] un filtro è stato escluso.
+        [many] { $skipped } filtri sono stati esclusi.
+       *[other] { $skipped } filtri sono stati esclusi.
+    }
+audio-effects-import-failed = Quel file non è un profilo ParametricEQ di AutoEQ.
+audio-effects-import-unreadable = Non è stato possibile leggere quel file.
+# The first step of the chain line when nothing plays through the effect.
+audio-effects-chain-no-apps = Nessuna app
+# Heading of the frequency response curve, in small capitals.
+audio-effects-response = Risposta
+# The gain applied before the bands.
+audio-effects-preamp = Preamp
+audio-effects-band = Banda { $number }
+audio-effects-band-low-shelf = Low shelf
+audio-effects-band-peak = Campana
+audio-effects-band-high-shelf = High shelf
+audio-effects-band-low-pass = Passa-basso
+audio-effects-band-high-pass = Passa-alto
+# Band card rows: frequency, gain and Q (the band's width). Keep them short.
+audio-effects-freq = Freq.
+audio-effects-gain = Guadagno
+audio-effects-q = Q
+audio-effects-add-band = Aggiungi banda
+audio-effects-hint = Trascina un punto sulla curva per spostare una banda; scorri sopra di esso per cambiarne la larghezza. Trascina un valore di lato per cambiarlo. Ogni modifica si sente subito.
+# Units. $value is already formatted, with its sign.
+audio-effects-db = { $value } dB
+audio-effects-hz = { $value } Hz
+audio-effects-khz = { $value } kHz
+audio-effects-seconds = { $value } s
+# A compression ratio, e.g. "4.0:1".
+audio-effects-ratio = { $value }:1
+audio-effects-percent = { $value } %
+audio-effects-param-input-gain = Guadagno in ingresso
+audio-effects-param-limit = Tetto
+audio-effects-param-release = Rilascio
+audio-effects-param-threshold = Soglia
+audio-effects-param-ratio = Rapporto
+audio-effects-param-attack = Attacco
+audio-effects-param-knee = Knee
+audio-effects-param-makeup = Guadagno make-up
+# How sure noise suppression must be that it hears a voice before it lets
+# sound through.
+audio-effects-param-voice-threshold = Soglia voce
+# How long sound keeps going through after the voice stops.
+audio-effects-param-grace = Hold
+# Example effects the offscreen preview shows when none are saved.
+audio-effects-sample-eq = EQ cuffie
+audio-effects-sample-mic = Pulizia microfono
+audio-effects-sample-preset = WH-1000XM5 (AutoEQ)

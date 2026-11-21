@@ -2651,3 +2651,133 @@ audio-virtual-cancel = Скасувати
 audio-virtual-sample-output = Мікс для стриму
 audio-virtual-sample-input = Вхід для дзвінків
 audio-virtual-sample-loopback = Монітор мікрофона
+
+# The Graph section's view switch, in its toolbar: cards and wires, a grid
+# of sources against destinations, or one row per path the sound takes.
+audio-view-patchbay = Патчбей
+audio-view-matrix = Матриця
+audio-view-lanes = Доріжки
+# The matrix's top-left corner: rows are where sound comes from, columns
+# where it goes.
+audio-matrix-corner = Звідки ↓ · Куди →
+# Over the Lanes view, which shows links but does not make them.
+audio-lanes-note = Кожна доріжка простежує звук від початку шляху до кінця. Зв’язки створюються на вкладках «Патчбей» і «Матриця».
+audio-lanes-empty = Із цими фільтрами нічого не зв’язано
+## otto-audio — Effects: equalisers, limiters, compressors and noise
+## suppression the audio service hosts, each sitting on a device. The list
+## beside the editor is about 230 px wide; band cards are about 130 px wide.
+
+audio-pane-effects = Ефекти
+audio-effects-service-down = Ефекти існують, лише поки працює служба аудіо.
+# List headings, shown in small capitals.
+audio-effects-outputs = Ефекти виходу
+audio-effects-inputs = Ефекти входу
+audio-effects-none = Поки немає
+audio-effects-new = Новий ефект
+# Under an effect's name in the list, e.g. "Equaliser · Headphones".
+audio-effects-caption = { $kind } · { $place }
+# The list caption of an effect that is switched off.
+audio-effects-caption-off = { $caption } · Вимк.
+# Where an effect that sits on another effect is, e.g. "after Headphone EQ".
+audio-effects-after = після { $name }
+audio-effects-kind-equaliser = Еквалайзер
+audio-effects-kind-limiter = Лімітер
+audio-effects-kind-compressor = Компресор
+audio-effects-kind-noise = Шумозаглушення
+audio-effects-about-equaliser = Формує звук за допомогою до десяти смуг або профілю навушників з AutoEQ.
+audio-effects-about-limiter = Тримає піки нижче стелі, щоб ніщо не звучало гучніше за заданий рівень.
+audio-effects-about-compressor = Вирівнює гучні й тихі фрагменти для рівного звучання.
+audio-effects-about-noise = Прибирає фоновий шум із голосу. Для мікрофонів.
+# A kind whose plugin is missing, in the new effect form. $package is a
+# distribution package name; keep it as it is.
+audio-effects-missing = Потрібен пакет { $package }, але його не встановлено
+# Over an effect whose plugin is missing.
+audio-effects-missing-made = Цьому ефекту потрібен пакет { $package }, але його не встановлено, тож служба аудіо не може його створити.
+audio-effects-new-heading = Новий ефект
+# Whether the effect is for what plays (output) or what is recorded (input).
+audio-effects-side = Для
+audio-effects-side-output = Вихід
+audio-effects-side-input = Вхід
+# The device the new effect sits on.
+audio-effects-device = Пристрій
+audio-effects-no-device = Немає пристрою
+audio-effects-add = Додати ефект
+audio-effects-cancel = Скасувати
+# Beside the switch that turns the effect on and off.
+audio-effects-on = Увімк.
+audio-effects-remove = Вилучити
+audio-effects-import = Імпортувати
+# The equaliser's preset pop-up, showing the preset last applied.
+audio-effects-preset-custom = Власний
+audio-effects-preset-flat = Рівний
+audio-effects-preset-import = Імпорт файлу AutoEQ…
+# A preset imported from an AutoEQ file named after the headphones.
+audio-effects-preset-autoeq = { $name } (AutoEQ)
+audio-effects-import-title = Імпорт профілю AutoEQ
+# File dialog filters.
+audio-effects-import-filter = Профілі AutoEQ (ParametricEQ.txt)
+audio-effects-import-all = Усі файли
+audio-effects-imported =
+    { $count ->
+        [one] Імпортовано { $count } смугу.
+        [few] Імпортовано { $count } смуги.
+        [many] Імпортовано { $count } смуг.
+       *[other] Імпортовано { $count } смуги.
+    }
+audio-effects-imported-skipped =
+    { $count ->
+        [one] Імпортовано { $count } смугу
+        [few] Імпортовано { $count } смуги
+        [many] Імпортовано { $count } смуг
+       *[other] Імпортовано { $count } смуги
+    }; { $skipped ->
+        [one] { $skipped } фільтр пропущено.
+        [few] { $skipped } фільтри пропущено.
+        [many] { $skipped } фільтрів пропущено.
+       *[other] { $skipped } фільтра пропущено.
+    }
+audio-effects-import-failed = Цей файл не є профілем AutoEQ ParametricEQ.
+audio-effects-import-unreadable = Не вдалося прочитати цей файл.
+# The first step of the chain line when nothing plays through the effect.
+audio-effects-chain-no-apps = Немає застосунків
+# Heading of the frequency response curve, in small capitals.
+audio-effects-response = АЧХ
+# The gain applied before the bands.
+audio-effects-preamp = Передпідсилювач
+audio-effects-band = Смуга { $number }
+audio-effects-band-low-shelf = Полиця НЧ
+audio-effects-band-peak = Пік
+audio-effects-band-high-shelf = Полиця ВЧ
+audio-effects-band-low-pass = ФНЧ
+audio-effects-band-high-pass = ФВЧ
+# Band card rows: frequency, gain and Q (the band's width). Keep them short.
+audio-effects-freq = Частота
+audio-effects-gain = Підсилення
+audio-effects-q = Q
+audio-effects-add-band = Додати смугу
+audio-effects-hint = Перетягування точки на кривій зсуває смугу, а прокручування над нею змінює ширину. Значення змінюється перетягуванням убік. Кожну зміну чути одразу.
+# Units. $value is already formatted, with its sign.
+audio-effects-db = { $value } dB
+audio-effects-hz = { $value } Hz
+audio-effects-khz = { $value } kHz
+audio-effects-seconds = { $value } s
+# A compression ratio, e.g. "4.0:1".
+audio-effects-ratio = { $value }:1
+audio-effects-percent = { $value } %
+audio-effects-param-input-gain = Вхідне підсилення
+audio-effects-param-limit = Стеля
+audio-effects-param-release = Відновлення
+audio-effects-param-threshold = Поріг
+audio-effects-param-ratio = Ступінь стиснення
+audio-effects-param-attack = Атака
+audio-effects-param-knee = Коліно
+audio-effects-param-makeup = Компенсація підсилення
+# How sure noise suppression must be that it hears a voice before it lets
+# sound through.
+audio-effects-param-voice-threshold = Поріг голосу
+# How long sound keeps going through after the voice stops.
+audio-effects-param-grace = Утримання
+# Example effects the offscreen preview shows when none are saved.
+audio-effects-sample-eq = EQ для навушників
+audio-effects-sample-mic = Очищення мікрофона
+audio-effects-sample-preset = WH-1000XM5 (AutoEQ)
