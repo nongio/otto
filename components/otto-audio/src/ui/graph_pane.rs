@@ -15,6 +15,37 @@ impl Ui {
         );
         let cy = bar.center_y();
         let mut x = bar.left + 12.0;
+
+        // The view switch: patchbay, matrix or lanes.
+        let labels: Vec<String> = GraphMode::ALL
+            .iter()
+            .map(|mode| mode_label(*mode).to_string())
+            .collect();
+        let font = styles::CALLOUT.font();
+        let segment_w = labels
+            .iter()
+            .map(|l| font.measure_str(l, None).0 + 24.0)
+            .fold(0.0, f32::max);
+        let track = Rect::from_xywh(
+            x,
+            cy - segmented::HEIGHT / 2.0,
+            segment_w * labels.len() as f32,
+            segmented::HEIGHT,
+        );
+        let chosen = GraphMode::ALL
+            .iter()
+            .position(|m| *m == self.view.mode)
+            .unwrap_or(0);
+        self.segments(
+            canvas,
+            track,
+            &labels,
+            chosen,
+            &GraphMode::ALL.map(Action::GraphMode),
+            theme,
+        );
+        x = track.right + 14.0;
+
         let filter = self.view.filter;
         for (media, label, on) in [
             (MediaType::Audio, t!("audio-filter-audio"), filter.audio),
@@ -42,7 +73,9 @@ impl Ui {
             any_unsaved,
             ButtonRole::Default,
         );
-        put(self, t!("audio-fit"), Action::Fit, true, ButtonRole::Normal);
+        if self.view.mode == GraphMode::Patchbay {
+            put(self, t!("audio-fit"), Action::Fit, true, ButtonRole::Normal);
+        }
         if let Some(wire) = self
             .view
             .selected_wire
@@ -75,7 +108,8 @@ impl Ui {
             }
         }
 
-        // What solid and dashed wires mean, when there is room for it.
+        // What solid and dashed wires mean, when there is room for it; the
+        // matrix marks a cell with a filled dot or a ring instead.
         let font = styles::CAPTION_1.font();
         let entries = [
             (t!("audio-legend-saved"), true),
@@ -89,12 +123,22 @@ impl Ui {
         let mut lx = right - legend_w;
         if lx > x + 16.0 {
             let color = media_color(theme, MediaType::Audio);
+            let dots = self.view.mode == GraphMode::Matrix;
             for ((label, saved), w) in entries.iter().zip(&widths) {
-                let mut paint = stroke(color, 2.0);
-                if !saved {
-                    paint.set_path_effect(otto_kit::skia::PathEffect::dash(&[4.0, 3.0], 0.0));
+                if dots {
+                    let c = Point::new(lx + 14.0, cy);
+                    if *saved {
+                        canvas.draw_circle(c, 5.0, &fill(color));
+                    } else {
+                        canvas.draw_circle(c, 4.5, &stroke(color, 2.0));
+                    }
+                } else {
+                    let mut paint = stroke(color, 2.0);
+                    if !saved {
+                        paint.set_path_effect(otto_kit::skia::PathEffect::dash(&[4.0, 3.0], 0.0));
+                    }
+                    canvas.draw_line(Point::new(lx, cy), Point::new(lx + 20.0, cy), &paint);
                 }
-                canvas.draw_line(Point::new(lx, cy), Point::new(lx + 20.0, cy), &paint);
                 Label::new(*label)
                     .with_style(styles::CAPTION_1)
                     .with_color(theme.text_secondary)
@@ -442,5 +486,14 @@ impl Ui {
             });
         }
         canvas.restore();
+    }
+}
+
+/// The view switch's label for `mode`.
+fn mode_label(mode: GraphMode) -> &'static str {
+    match mode {
+        GraphMode::Patchbay => t!("audio-view-patchbay"),
+        GraphMode::Matrix => t!("audio-view-matrix"),
+        GraphMode::Lanes => t!("audio-view-lanes"),
     }
 }

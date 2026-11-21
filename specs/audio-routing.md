@@ -113,6 +113,29 @@ and its output ports on the right, and links as wires between them.
   description matches, dimming the others.
 - **Navigation.** The canvas pans with two-finger scroll or a middle-button
   drag and zooms with pinch or Cmd+scroll. Cmd+0 fits every visible card.
+- **Views.** A switch in the toolbar shows the routing three ways:
+  **Patchbay** (the canvas above), **Matrix** and **Lanes**. The view last
+  chosen is remembered across launches. The media filter, the toolbar's
+  Save, Forget and Remove, and the details panel work the same in all three.
+  - **Matrix.** What makes sound down the side, what takes it across the
+    top, each header a node's name and what it is, sources first as the
+    patchbay's columns run. A row or column is one of the patchbay's rows of
+    ports, so it is per channel when the card is unfolded. Each cell marks
+    whether the pair is linked: a filled dot when the link is saved, a ring
+    when it is not, an empty ring when it is not linked; a node's own cell
+    is hatched, and pairs of different media are blank. Pressing an empty
+    ring links the pair with the channels paired as a patchbay drag pairs
+    them; pressing a linked cell selects that wire. Pressing a header
+    selects the node. The grid scrolls both ways when it does not fit, the
+    headers staying in place.
+  - **Lanes.** One lane per path the sound takes, built from the links: from
+    a node nothing links into, through whatever it is linked to, to a node
+    that links nowhere further. Each step is a pill, effects and virtual
+    devices tinted, with arrows between; an arrow is dashed when that hop is
+    not saved, and each lane says whether all of it is saved. A loop ends
+    the lane where it would come back. Pressing a step selects the node.
+    Lanes are read-only for linking: links are made on the Patchbay or the
+    Matrix. The list scrolls when it does not fit.
 
 A link the app did not make, such as one WirePlumber made, is drawn like a
 temporary wire and can be saved like one.
@@ -344,7 +367,12 @@ only the sections that exist. Where it consciously differs from the above:
   every connection with whether it is saved (an unsaved one can be saved
   there), and every property, folded away until opened. The title bar
   shows the engine's rate, buffer and latency; the sidebar's foot says
-  whether the service is keeping saved links.
+  whether the service is keeping saved links. The view (Patchbay, Matrix,
+  Lanes) is kept beside the card positions in `layout.toml`. The matrix
+  has no channel-by-channel expansion of a row, no Shift-click per channel
+  and no reordering of rows and columns; a cell is unlinked by selecting it
+  and pressing Remove or Delete. Lanes have no volume, meters, "Add effect"
+  or dragging an app onto a lane, and list at most 400 paths.
 - **Devices.** One card per sound device (cameras are left out), cards
   first and Bluetooth devices after. Each shows its name, its kind (built-in,
   USB, Bluetooth headphones…), the channels it records and plays now or

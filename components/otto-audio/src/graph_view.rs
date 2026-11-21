@@ -45,6 +45,43 @@ const COLUMN_HEADING: f32 = 22.0;
 const MIN_ZOOM: f32 = 0.3;
 const MAX_ZOOM: f32 = 2.0;
 
+/// The most lanes the Lanes view lists: paths multiply through a busy mixer,
+/// and past a few hundred the list stops being readable anyway.
+const MAX_LANES: usize = 400;
+
+/// How the Graph section shows the routing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum GraphMode {
+    /// Cards and wires on a canvas.
+    #[default]
+    Patchbay,
+    /// What makes sound as rows, what takes it as columns, a cell per pair.
+    Matrix,
+    /// Every path from a source to a destination, one per lane.
+    Lanes,
+}
+
+impl GraphMode {
+    /// Every view, in the order the toolbar's switch shows them.
+    pub const ALL: [Self; 3] = [Self::Patchbay, Self::Matrix, Self::Lanes];
+
+    /// The name it is remembered by in the layout file.
+    #[must_use]
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Patchbay => "patchbay",
+            Self::Matrix => "matrix",
+            Self::Lanes => "lanes",
+        }
+    }
+
+    /// The view remembered as `key`; `None` for anything else.
+    #[must_use]
+    pub fn from_key(key: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|mode| mode.key() == key)
+    }
+}
+
 /// Which media the canvas shows.
 #[derive(Debug, Clone, Copy)]
 pub struct Filter {
@@ -392,11 +429,17 @@ pub struct GraphView {
     pub selected_wire: Option<(RowKey, RowKey)>,
     /// Fit the view to the cards on every draw, until the person moves it.
     pub auto_fit: bool,
+    /// Which view the section shows.
+    pub mode: GraphMode,
 }
 
 impl GraphView {
     pub fn new(layout: Layout) -> Self {
         Self {
+            mode: layout
+                .view()
+                .and_then(GraphMode::from_key)
+                .unwrap_or_default(),
             pan: Point::new(24.0, 24.0),
             zoom: 1.0,
             filter: Filter::default(),
@@ -467,6 +510,20 @@ impl GraphView {
             return;
         };
         self.layout.set(key, (at.x, at.y));
+        self.save_layout();
+    }
+
+    /// Show `mode`, and remember it across launches.
+    pub fn set_mode(&mut self, mode: GraphMode) {
+        if self.mode == mode {
+            return;
+        }
+        self.mode = mode;
+        self.layout.set_view(mode.key());
+        self.save_layout();
+    }
+
+    fn save_layout(&self) {
         if let Some(path) = Layout::path() {
             if let Err(error) = self.layout.save_to(&path) {
                 tracing::warn!(%error, "the card layout could not be saved");
@@ -695,6 +752,238 @@ fn wires(scene: &Scene, graph: &Graph, routing: &Routing) -> Vec<Wire> {
         }
     }
     wires
+}
+
+// ---------------------------------------------------------------------------
+// Matrix
+// ---------------------------------------------------------------------------
+
+/// One row or column of the matrix: one row of ports of a card, folded or
+/// not as the patchbay shows it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MatrixLine {
+    pub key: RowKey,
+    /// The node's name.
+    pub title: String,
+    /// What the node is, with the row's channels when the card has several
+    /// rows on that side.
+    pub kind: String,
+}
+
+/// What one cell of the matrix shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Cell {
+    /// The two cannot be linked: one node, or different media.
+    Unavailable,
+    /// Not linked; a press links it.
+    Open,
+    /// Linked by `links` links, all of them saved or not.
+    Linked { saved: bool, links: usize },
+}
+
+/// The routing as a grid: what makes sound down the side, what takes it
+/// across the top.
+#[derive(Debug, Default)]
+pub struct Matrix {
+    pub rows: Vec<MatrixLine>,
+    pub columns: Vec<MatrixLine>,
+    /// Row by row.
+    cells: Vec<Cell>,
+}
+
+impl Matrix {
+    /// The cell where `row` meets `column`.
+    #[must_use]
+    pub fn cell(&self, row: usize, column: usize) -> Cell {
+        self.cells
+            .get(row * self.columns.len() + column)
+            .copied()
+            .unwrap_or(Cell::Unavailable)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.rows.is_empty() || self.columns.is_empty()
+    }
+}
+
+/// The matrix of `scene`: every output row against every input row, sources
+/// first, as the patchbay's columns run.
+#[must_use]
+pub fn matrix(scene: &Scene, graph: &Graph) -> Matrix {
+    let lines = |direction: Direction| -> Vec<MatrixLine> {
+        let mut lines: Vec<(usize, String, MatrixLine)> = Vec::new();
+        for card in &scene.cards {
+            let rows = match direction {
+                Direction::Output => &card.outputs,
+                Direction::Input => &card.inputs,
+            };
+            let col = graph.node(card.node).map_or(1, column);
+            for row in rows {
+                let kind = if rows.len() > 1 {
+                    format!("{} · {}", card.subtitle, row.label)
+                } else {
+                    card.subtitle.clone()
+                };
+                lines.push((
+                    col,
+                    card.title.to_lowercase(),
+                    MatrixLine {
+                        key: row.key,
+                        title: card.title.clone(),
+                        kind,
+                    },
+                ));
+            }
+        }
+        lines.sort_by(|a, b| (a.0, &a.1, a.2.key).cmp(&(b.0, &b.1, b.2.key)));
+        lines.into_iter().map(|(_, _, line)| line).collect()
+    };
+    let rows = lines(Direction::Output);
+    let columns = lines(Direction::Input);
+    let mut cells = Vec::with_capacity(rows.len() * columns.len());
+    for row in &rows {
+        for col in &columns {
+            let cell = if !compatible(row.key, col.key) {
+                Cell::Unavailable
+            } else {
+                match scene.wire(row.key, col.key) {
+                    Some(wire) => Cell::Linked {
+                        saved: wire.saved,
+                        links: wire.links.len(),
+                    },
+                    None => Cell::Open,
+                }
+            };
+            cells.push(cell);
+        }
+    }
+    Matrix {
+        rows,
+        columns,
+        cells,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Lanes
+// ---------------------------------------------------------------------------
+
+/// One path the sound takes, from where it starts to where it ends.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Lane {
+    /// The nodes along it, source first.
+    pub steps: Vec<u32>,
+    /// Whether each hop, from `steps[i]` to `steps[i + 1]`, is saved: every
+    /// link between the two.
+    pub saved: Vec<bool>,
+    pub media: MediaType,
+}
+
+impl Lane {
+    /// Whether every hop along it is saved.
+    #[must_use]
+    pub fn is_saved(&self) -> bool {
+        self.saved.iter().all(|s| *s)
+    }
+}
+
+/// Every path through the links of `scene`, one media at a time: from each
+/// node nothing links into, through whatever it is linked to, to each node
+/// that links nowhere further. A loop ends a path where it would come back.
+/// Links only on a loop, with no start outside it, get paths of their own.
+#[must_use]
+pub fn lanes(scene: &Scene, graph: &Graph) -> Vec<Lane> {
+    // Every hop between two nodes, per media, saved when all its wires are.
+    let mut hops: BTreeMap<(MediaType, u32, u32), bool> = BTreeMap::new();
+    for wire in &scene.wires {
+        *hops
+            .entry((wire.media, wire.from.node, wire.to.node))
+            .or_insert(true) &= wire.saved;
+    }
+    let mut lanes: Vec<Lane> = Vec::new();
+    let mut covered: HashSet<(MediaType, u32, u32)> = HashSet::new();
+    let medias: Vec<MediaType> = {
+        let mut m: Vec<MediaType> = hops.keys().map(|(m, _, _)| *m).collect();
+        m.dedup();
+        m
+    };
+    for media in medias {
+        let mut next: BTreeMap<u32, Vec<u32>> = BTreeMap::new();
+        let mut fed: HashSet<u32> = HashSet::new();
+        for (_, from, to) in hops.keys().filter(|(m, _, _)| *m == media) {
+            next.entry(*from).or_default().push(*to);
+            fed.insert(*to);
+        }
+        let starts: Vec<u32> = next.keys().copied().filter(|n| !fed.contains(n)).collect();
+        // Hops on a loop with no way in: start where the first of them does.
+        let walk = |start: u32, lanes: &mut Vec<Lane>, covered: &mut HashSet<_>| {
+            let mut stack = vec![vec![start]];
+            while let Some(path) = stack.pop() {
+                if lanes.len() >= MAX_LANES {
+                    return;
+                }
+                let last = *path.last().unwrap_or(&start);
+                let onward: Vec<u32> = next
+                    .get(&last)
+                    .map(|n| n.iter().copied().filter(|n| !path.contains(n)).collect())
+                    .unwrap_or_default();
+                if onward.is_empty() {
+                    if path.len() > 1 {
+                        let saved = path
+                            .windows(2)
+                            .map(|w| {
+                                covered.insert((media, w[0], w[1]));
+                                hops.get(&(media, w[0], w[1])).copied().unwrap_or(false)
+                            })
+                            .collect();
+                        lanes.push(Lane {
+                            steps: path,
+                            saved,
+                            media,
+                        });
+                    }
+                    continue;
+                }
+                // Reversed, so the first way on is walked first.
+                for n in onward.into_iter().rev() {
+                    let mut longer = path.clone();
+                    longer.push(n);
+                    stack.push(longer);
+                }
+            }
+        };
+        for start in starts {
+            walk(start, &mut lanes, &mut covered);
+        }
+        let loose: Vec<u32> = hops
+            .keys()
+            .filter(|(m, _, _)| *m == media)
+            .map(|(_, from, _)| *from)
+            .collect();
+        for from in loose {
+            let uncovered = next
+                .get(&from)
+                .is_some_and(|n| n.iter().any(|to| !covered.contains(&(media, from, *to))));
+            if uncovered {
+                walk(from, &mut lanes, &mut covered);
+            }
+        }
+    }
+    let name = |node: u32| scene.card(node).map(|c| c.title.to_lowercase());
+    let col = |node: u32| graph.node(node).map_or(1, column);
+    lanes.sort_by_cached_key(|lane| {
+        let last = *lane.steps.last().unwrap_or(&0);
+        let names: Vec<Option<String>> = lane.steps.iter().map(|n| name(*n)).collect();
+        (
+            lane.media,
+            col(last),
+            name(last),
+            last,
+            names,
+            lane.steps.clone(),
+        )
+    });
+    lanes
 }
 
 // ---------------------------------------------------------------------------
@@ -1168,5 +1457,180 @@ mod tests {
             scene.hit(Point::new(mid.x, mid.y + 40.0), 1.0),
             Hit::Nothing
         );
+    }
+
+    fn link(graph: &mut Graph, id: u32, output: (u32, u32), input: (u32, u32)) {
+        graph.apply(Event::Link(Link {
+            id,
+            output_node: output.0,
+            output_port: output.1,
+            input_node: input.0,
+            input_port: input.1,
+            client: None,
+        }));
+    }
+
+    /// `graph()` with an effect beside the two: a virtual sink with stereo
+    /// ports on both sides, linked to nothing yet.
+    fn graph_with_effect() -> Graph {
+        let mut graph = graph();
+        graph.apply(Event::Node(Node {
+            id: 3,
+            props: [
+                ("media.class".to_string(), "Audio/Sink".to_string()),
+                ("node.name".to_string(), "equaliser".to_string()),
+            ]
+            .into(),
+            state: NodeState::Idle,
+        }));
+        for (id, direction, channel) in [
+            (41, Direction::Input, "FL"),
+            (42, Direction::Input, "FR"),
+            (43, Direction::Output, "FL"),
+            (44, Direction::Output, "FR"),
+        ] {
+            graph.apply(Event::Port(Port {
+                id,
+                node: 3,
+                direction: Some(direction),
+                name: format!("port_{channel}"),
+                channel: Some(channel.into()),
+                format: Some(MediaType::Audio),
+                ..Port::default()
+            }));
+        }
+        graph
+    }
+
+    /// A routing that keeps the links `ids` of `graph`.
+    fn saving(graph: &Graph, ids: &[u32]) -> Routing {
+        let mut routing = Routing::default();
+        for id in ids {
+            routing.add(SavedLink::of(graph, graph.link(*id).unwrap()).unwrap());
+        }
+        routing
+    }
+
+    #[test]
+    fn the_matrix_crosses_outputs_with_inputs() {
+        let graph = graph();
+        let mut view = GraphView::new(Layout::default());
+        let scene = view.scene(&graph, &Routing::default());
+        let m = matrix(&scene, &graph);
+        assert_eq!(m.rows.len(), 1);
+        assert_eq!(m.columns.len(), 1);
+        assert_eq!(m.rows[0].key.node, 1);
+        assert_eq!(m.columns[0].key.node, 2);
+        assert_eq!(
+            m.cell(0, 0),
+            Cell::Linked {
+                saved: false,
+                links: 2
+            }
+        );
+        let saved = saving(&graph, &[31, 32]);
+        let scene = view.scene(&graph, &saved);
+        assert_eq!(
+            matrix(&scene, &graph).cell(0, 0),
+            Cell::Linked {
+                saved: true,
+                links: 2
+            }
+        );
+    }
+
+    #[test]
+    fn a_matrix_cell_links_like_a_drag() {
+        let graph = graph_with_effect();
+        let mut view = GraphView::new(Layout::default());
+        let scene = view.scene(&graph, &Routing::default());
+        let m = matrix(&scene, &graph);
+        // Sources first, then the effect; the effect, then the speakers.
+        let rows: Vec<u32> = m.rows.iter().map(|l| l.key.node).collect();
+        let columns: Vec<u32> = m.columns.iter().map(|l| l.key.node).collect();
+        assert_eq!(rows, vec![1, 3]);
+        assert_eq!(columns, vec![3, 2]);
+        assert_eq!(m.cell(1, 0), Cell::Unavailable);
+        assert_eq!(m.cell(0, 0), Cell::Open);
+        assert_eq!(m.cell(1, 1), Cell::Open);
+        let (from, to) = (m.rows[0].key, m.columns[0].key);
+        assert_eq!(
+            view.pairs_to_link(&scene, &graph, from, to),
+            vec![(11, 41), (12, 42)]
+        );
+    }
+
+    #[test]
+    fn the_matrix_follows_the_filter() {
+        let graph = graph();
+        let mut view = GraphView::new(Layout::default());
+        view.filter.toggle(MediaType::Audio);
+        let scene = view.scene(&graph, &Routing::default());
+        assert!(matrix(&scene, &graph).is_empty());
+    }
+
+    #[test]
+    fn a_lane_runs_from_source_through_effect_to_destination() {
+        let mut graph = graph_with_effect();
+        graph.apply(Event::Removed(31));
+        graph.apply(Event::Removed(32));
+        link(&mut graph, 51, (1, 11), (3, 41));
+        link(&mut graph, 52, (1, 12), (3, 42));
+        link(&mut graph, 53, (3, 43), (2, 21));
+        link(&mut graph, 54, (3, 44), (2, 22));
+        let mut view = GraphView::new(Layout::default());
+        let routing = saving(&graph, &[51, 52]);
+        let scene = view.scene(&graph, &routing);
+        let lanes = lanes(&scene, &graph);
+        assert_eq!(lanes.len(), 1);
+        assert_eq!(lanes[0].steps, vec![1, 3, 2]);
+        assert_eq!(lanes[0].saved, vec![true, false]);
+        assert!(!lanes[0].is_saved());
+        assert_eq!(lanes[0].media, MediaType::Audio);
+    }
+
+    #[test]
+    fn every_path_to_a_destination_is_a_lane() {
+        let mut graph = graph_with_effect();
+        link(&mut graph, 51, (1, 11), (3, 41));
+        link(&mut graph, 53, (3, 43), (2, 21));
+        let mut view = GraphView::new(Layout::default());
+        let scene = view.scene(&graph, &Routing::default());
+        let mut steps: Vec<Vec<u32>> = lanes(&scene, &graph).into_iter().map(|l| l.steps).collect();
+        steps.sort();
+        assert_eq!(steps, vec![vec![1, 2], vec![1, 3, 2]]);
+    }
+
+    #[test]
+    fn a_loop_ends_its_lane() {
+        let mut graph = graph_with_effect();
+        graph.apply(Event::Removed(31));
+        graph.apply(Event::Removed(32));
+        // The player and the effect feed each other, with no way in from
+        // outside the loop.
+        graph.apply(Event::Port(Port {
+            id: 13,
+            node: 1,
+            direction: Some(Direction::Input),
+            name: "port_in".into(),
+            channel: Some("MONO".into()),
+            format: Some(MediaType::Audio),
+            ..Port::default()
+        }));
+        link(&mut graph, 51, (1, 11), (3, 41));
+        link(&mut graph, 55, (3, 43), (1, 13));
+        let mut view = GraphView::new(Layout::default());
+        let scene = view.scene(&graph, &Routing::default());
+        let mut steps: Vec<Vec<u32>> = lanes(&scene, &graph).into_iter().map(|l| l.steps).collect();
+        steps.sort();
+        assert_eq!(steps, vec![vec![1, 3], vec![3, 1]]);
+    }
+
+    #[test]
+    fn a_graph_mode_keeps_its_name() {
+        for mode in GraphMode::ALL {
+            assert_eq!(GraphMode::from_key(mode.key()), Some(mode));
+        }
+        assert_eq!(GraphMode::from_key("waveform"), None);
     }
 }

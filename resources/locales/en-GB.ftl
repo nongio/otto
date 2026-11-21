@@ -2686,3 +2686,15 @@ audio-virtual-cancel = Cancel
 audio-virtual-sample-output = Stream mix
 audio-virtual-sample-input = Call input
 audio-virtual-sample-loopback = Mic monitor
+
+# The Graph section's view switch, in its toolbar: cards and wires, a grid
+# of sources against destinations, or one row per path the sound takes.
+audio-view-patchbay = Patchbay
+audio-view-matrix = Matrix
+audio-view-lanes = Lanes
+# The matrix's top-left corner: rows are where sound comes from, columns
+# where it goes.
+audio-matrix-corner = From ↓ · To →
+# Over the Lanes view, which shows links but does not make them.
+audio-lanes-note = Each lane follows the sound from where it starts to where it ends. Link on the Patchbay or the Matrix.
+audio-lanes-empty = Nothing is linked with these filters

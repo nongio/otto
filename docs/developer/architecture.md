@@ -119,6 +119,7 @@ flowchart BT
   otto_auth_ui --> otto_kit
   otto_authorize --> otto_auth_ui
   otto_authorize --> otto_kit
+  otto_bar --> otto_audio_graph
   otto_bar --> otto_kit
   otto_bar --> otto_network
   otto_canvas --> otto_agents_kit

@@ -10,6 +10,7 @@
 mod devices_pane;
 mod engine_pane;
 mod graph_pane;
+mod views_pane;
 mod virtual_pane;
 
 use otto_audio::layout::Layout;
@@ -33,7 +34,9 @@ use otto_kit::skia::{Contains, PaintStyle, PathBuilder, Point, RRect};
 use otto_kit::typography::ellipsize;
 use otto_kit::{t, t_owned, CursorShape};
 
-use otto_audio::graph_view::{self, media_color, GraphView, Hit, LinkDrag, RowKey, Scene};
+use otto_audio::graph_view::{
+    self, media_color, GraphMode, GraphView, Hit, LinkDrag, RowKey, Scene,
+};
 
 /// The sidebar's width.
 const SIDEBAR_W: f32 = 196.0;
@@ -121,6 +124,14 @@ enum Action {
         device: u32,
         row: usize,
     },
+    /// Show the Graph section as a patchbay, a matrix or lanes.
+    GraphMode(GraphMode),
+    /// Link two rows with their channels paired, from a matrix cell.
+    LinkCell(RowKey, RowKey),
+    /// Select the wire between two rows, from a matrix cell.
+    SelectWire(RowKey, RowKey),
+    /// Select a node, from a matrix header or a lane's step.
+    SelectNode(u32),
 }
 
 /// A pop-up the window should open, as the press that asked for it left it.
@@ -179,6 +190,8 @@ pub struct Ui {
     menu_request: Option<MenuRequest>,
     menu_choices: Vec<Action>,
     menu_open: Option<Action>,
+    /// Where the Matrix and Lanes views are scrolled to.
+    views: views_pane::ViewScrolls,
 }
 
 impl Ui {
@@ -215,6 +228,7 @@ impl Ui {
             menu_request: None,
             menu_choices: Vec::new(),
             menu_open: None,
+            views: views_pane::ViewScrolls::default(),
         }
     }
 
@@ -490,20 +504,10 @@ impl Ui {
     fn draw_graph(&mut self, canvas: &Canvas, theme: &Theme) {
         let scene = self.view.scene(&self.graph, &self.routing);
         let viewport = self.viewport();
-        if self.view.auto_fit {
-            self.view.fit(&scene, viewport);
-        }
-        let link_drag = match self.drag {
-            Some(Drag::Link(drag)) => Some(drag),
-            _ => None,
-        };
-        graph_view::draw(canvas, &scene, &self.view, viewport, link_drag, theme);
-        if scene.cards.is_empty() && self.graph.is_synced() {
-            Label::new(t!("audio-graph-empty"))
-                .with_style(styles::BODY)
-                .with_color(theme.text_secondary)
-                .centered_at(viewport.center_x(), viewport.center_y())
-                .render(canvas);
+        match self.view.mode {
+            GraphMode::Patchbay => self.draw_patchbay(canvas, &scene, viewport, theme),
+            GraphMode::Matrix => self.draw_matrix(canvas, &scene, viewport, theme),
+            GraphMode::Lanes => self.draw_lanes(canvas, &scene, viewport, theme),
         }
         self.draw_toolbar(canvas, &scene, theme);
         if self.service_down() {
@@ -514,10 +518,29 @@ impl Ui {
         }
     }
 
+    fn draw_patchbay(&mut self, canvas: &Canvas, scene: &Scene, viewport: Rect, theme: &Theme) {
+        if self.view.auto_fit {
+            self.view.fit(scene, viewport);
+        }
+        let link_drag = match self.drag {
+            Some(Drag::Link(drag)) => Some(drag),
+            _ => None,
+        };
+        graph_view::draw(canvas, scene, &self.view, viewport, link_drag, theme);
+        if scene.cards.is_empty() && self.graph.is_synced() {
+            Label::new(t!("audio-graph-empty"))
+                .with_style(styles::BODY)
+                .with_color(theme.text_secondary)
+                .centered_at(viewport.center_x(), viewport.center_y())
+                .render(canvas);
+        }
+    }
+
     /// Whether something drawn is still moving and wants another frame.
     pub fn is_animating(&self) -> bool {
         (self.view.selected_node.is_some() && self.props_open && self.props_scroll.is_animating())
             || (self.pane == Pane::Devices && self.devices_scroll.is_animating())
+            || (self.pane == Pane::Graph && self.views.is_animating(self.view.mode))
     }
 
     /// The pop-up a press asked for, to open against the window's surface.
@@ -644,7 +667,11 @@ impl Ui {
 
     fn press(&mut self, p: Point, button: u32, serial: u32, window: &Window) -> bool {
         let seat = AppContext::seat_state().seats().next();
-        if button == BTN_MIDDLE && self.pane == Pane::Graph && self.viewport().contains(p) {
+        if button == BTN_MIDDLE
+            && self.pane == Pane::Graph
+            && self.view.mode == GraphMode::Patchbay
+            && self.viewport().contains(p)
+        {
             self.drag = Some(Drag::Pan {
                 from: p,
                 pan: self.view.pan,
@@ -691,6 +718,9 @@ impl Ui {
     }
 
     fn press_canvas(&mut self, p: Point) -> bool {
+        if self.view.mode != GraphMode::Patchbay {
+            return self.press_view();
+        }
         let viewport = self.viewport();
         let scene = self.view.scene(&self.graph, &self.routing);
         let world = self.view.to_world(viewport, p);
@@ -816,6 +846,9 @@ impl Ui {
         if self.pane != Pane::Graph || !self.viewport().contains(p) {
             return false;
         }
+        if self.view.mode != GraphMode::Patchbay {
+            return self.scroll_view(dx, dy, discrete, stop);
+        }
         self.view.auto_fit = false;
         if self.modifiers.ctrl || self.modifiers.logo {
             let factor = (-dy * SCROLL_ZOOM).exp();
@@ -834,7 +867,7 @@ impl Ui {
         let (Some(base), Some(p)) = (self.pinch_zoom, self.pointer) else {
             return false;
         };
-        if self.pane != Pane::Graph {
+        if self.pane != Pane::Graph || self.view.mode != GraphMode::Patchbay {
             return false;
         }
         self.view.auto_fit = false;
@@ -1031,6 +1064,10 @@ impl Ui {
             } => self.connection.set_route(device, index, card_device),
             // Opened on the press, by `open_device_menu`.
             Action::DeviceMenu { .. } => {}
+            Action::GraphMode(_)
+            | Action::LinkCell(..)
+            | Action::SelectWire(..)
+            | Action::SelectNode(_) => self.run_view(action),
         }
     }
 }

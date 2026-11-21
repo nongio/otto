@@ -4,8 +4,8 @@
 //! its events land in an inbox the run loop drains in `on_update`, so the
 //! window repaints when the graph changes and never polls.
 //!
-//! `otto-audio --png OUT [--engine | --devices | --virtual]` draws the window
-//! offscreen instead.
+//! `otto-audio --png OUT [--engine | --devices | --virtual | --matrix |
+//! --lanes]` draws the window offscreen instead.
 
 mod preview;
 mod ui;
@@ -13,6 +13,7 @@ mod ui;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
+use otto_audio::graph_view::GraphMode;
 use otto_audio::WINDOW_APP;
 use otto_audio_graph::{Connection, Event};
 use otto_kit::components::dropdown::DropdownMenu;
@@ -248,7 +249,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         } else {
             ui::Pane::Graph
         };
-        return preview::render(out, pane);
+        let mode = if args.iter().any(|a| a == "--matrix") {
+            GraphMode::Matrix
+        } else if args.iter().any(|a| a == "--lanes") {
+            GraphMode::Lanes
+        } else {
+            GraphMode::Patchbay
+        };
+        return preview::render(out, pane, mode);
     }
     tokio::runtime::Runtime::new()?.block_on(async {
         AppRunner::new(AudioApp {

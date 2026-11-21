@@ -3,7 +3,8 @@
 //! Kept in `$XDG_STATE_HOME/otto/audio/layout.toml`: it is the window's own
 //! memory, not something the service needs. A card is keyed by its node's
 //! identity and its place among nodes of the same identity, so two streams of
-//! one app keep two places.
+//! one app keep two places. The file also keeps which view the Graph section
+//! was last left on.
 
 // Rust guideline compliant 2026-02-21
 
@@ -12,9 +13,13 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-/// Every remembered card position, in canvas points.
+/// Every remembered card position, in canvas points, and the Graph view.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Layout {
+    /// The Graph section's view, by name; a file without it opens on the
+    /// patchbay, and a name this version does not know is ignored.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    view: Option<String>,
     #[serde(default)]
     cards: BTreeMap<String, [f32; 2]>,
 }
@@ -58,6 +63,17 @@ impl Layout {
     pub fn set(&mut self, key: String, (x, y): (f32, f32)) {
         self.cards.insert(key, [x, y]);
     }
+
+    /// The Graph view last shown, by name.
+    #[must_use]
+    pub fn view(&self) -> Option<&str> {
+        self.view.as_deref()
+    }
+
+    /// Remember the Graph view by name.
+    pub fn set_view(&mut self, view: &str) {
+        self.view = Some(view.to_string());
+    }
 }
 
 /// The key a card is remembered by: its identity, and which of the nodes
@@ -86,6 +102,21 @@ mod tests {
         let back = Layout::load_from(&path);
         assert_eq!(back, layout);
         assert_eq!(back.get("stream:mpv:playback#1"), Some((-4.0, 8.0)));
+    }
+
+    #[test]
+    fn the_view_is_kept_beside_the_cards() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("layout.toml");
+        std::fs::write(&path, "[cards]\n\"node:headset\" = [1.0, 2.0]\n").unwrap();
+        let mut layout = Layout::load_from(&path);
+        assert_eq!(layout.view(), None);
+        assert_eq!(layout.get("node:headset"), Some((1.0, 2.0)));
+        layout.set_view("matrix");
+        layout.save_to(&path).unwrap();
+        let back = Layout::load_from(&path);
+        assert_eq!(back.view(), Some("matrix"));
+        assert_eq!(back.get("node:headset"), Some((1.0, 2.0)));
     }
 
     #[test]
