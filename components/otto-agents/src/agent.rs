@@ -448,6 +448,24 @@ pub trait Backend: Send + Sync + 'static {
         false
     }
 
+    /// Whether the agent's own session `agent_session` still exists where
+    /// the backend keeps sessions, for backends that own them rather than
+    /// Otto: a stored session it no longer has is dropped. `None`, the
+    /// default, when Otto's store is what keeps sessions, or the backend
+    /// cannot tell right now.
+    fn exists(&self, _provider: &str, _agent_session: &str) -> Option<bool> {
+        None
+    }
+
+    /// Removes the backend's own copy of a session Otto was told to dispose
+    /// of. Nothing, the default, for backends whose sessions live only in Otto.
+    fn forget(&self, _provider: &str, _agent_session: &str) {}
+
+    /// Reports, by agent session id, the sessions removed outside Otto, so
+    /// they leave Otto too. Nothing, the default, for backends whose sessions
+    /// live only in Otto.
+    fn watch_removals(&self, _removed: mpsc::UnboundedSender<String>) {}
+
     /// Starts a session in the background. The session ends when `commands`
     /// is closed; it reports through `events` until then.
     fn start(

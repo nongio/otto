@@ -124,20 +124,45 @@ impl Backend for HerdrBackend {
     }
 
     fn live(&self, _provider: &str, agent_session: &str) -> bool {
-        let filter = format!("otto.session={agent_session}");
-        std::process::Command::new("hc")
-            .env_remove("HC_TERMINAL_ID")
-            .env_remove("HC_SCOPE")
-            .args(["ls", "--json", "--label", &filter])
-            .output()
-            .ok()
-            .and_then(|output| serde_json::from_slice::<Value>(&output.stdout).ok())
-            .and_then(|list| list.get("terminals")?.as_array().cloned())
-            .is_some_and(|terminals| {
-                terminals
-                    .iter()
-                    .any(|terminal| terminal.get("state").and_then(Value::as_str) == Some("live"))
-            })
+        terminals_blocking(agent_session).is_some_and(|terminals| {
+            terminals
+                .iter()
+                .any(|terminal| terminal.get("state").and_then(Value::as_str) == Some("live"))
+        })
+    }
+
+    /// herdr keeps a session as long as it keeps one of its terminals,
+    /// running or finished.
+    fn exists(&self, _provider: &str, agent_session: &str) -> Option<bool> {
+        terminals_blocking(agent_session).map(|terminals| !terminals.is_empty())
+    }
+
+    /// Ends the session's terminals and removes them from herdr.
+    fn forget(&self, _provider: &str, agent_session: &str) {
+        let session = agent_session.to_owned();
+        tokio::spawn(async move {
+            for terminal in terminals(&session).await.unwrap_or_default() {
+                let Some(address) = terminal.get("address").and_then(Value::as_str) else {
+                    continue;
+                };
+                if terminal.get("state").and_then(Value::as_str) == Some("live") {
+                    let _ = hc().args(["kill", address]).output().await;
+                }
+                remove(address).await;
+            }
+        });
+    }
+
+    /// Follows every Otto terminal; when the last terminal of a session is
+    /// removed in herdr, the session is gone.
+    fn watch_removals(&self, removed: mpsc::UnboundedSender<String>) {
+        tokio::spawn(async move {
+            while !removed.is_closed() {
+                follow_removals(&removed).await;
+                // The server restarted, or hc is not there: try again shortly.
+                tokio::time::sleep(Duration::from_secs(2)).await;
+            }
+        });
     }
 
     fn start(
@@ -156,7 +181,12 @@ impl Backend for HerdrBackend {
             let terminal = match find(&session).await {
                 Some(terminal) => terminal,
                 None => match run(&session, &spec.cwd, space, &argv).await {
-                    Ok(terminal) => terminal,
+                    Ok(terminal) => {
+                        // One terminal per session: the finished ones of
+                        // earlier runs go once the new one is there.
+                        prune(&session, &terminal).await;
+                        terminal
+                    }
                     Err(error) => {
                         let _ = events.send(SessionEvent::CreationFailed(error));
                         return;
@@ -199,6 +229,123 @@ fn hc() -> Command {
 async fn hc_json(args: &[&str]) -> Option<Value> {
     let output = hc().args(args).arg("--json").output().await.ok()?;
     serde_json::from_slice(&output.stdout).ok()
+}
+
+/// Every terminal herdr keeps for `session`, running or finished; `None`
+/// when hc cannot be asked.
+async fn terminals(session: &str) -> Option<Vec<Value>> {
+    let filter = format!("otto.session={session}");
+    let list = hc_json(&["ls", "--all", "--label", &filter]).await?;
+    list.get("terminals")?.as_array().cloned()
+}
+
+/// [`terminals`], for the backend's synchronous questions.
+fn terminals_blocking(session: &str) -> Option<Vec<Value>> {
+    let filter = format!("otto.session={session}");
+    let output = std::process::Command::new("hc")
+        .env_remove("HC_TERMINAL_ID")
+        .env_remove("HC_SCOPE")
+        .args(["ls", "--all", "--json", "--label", &filter])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let list: Value = serde_json::from_slice(&output.stdout).ok()?;
+    list.get("terminals")?.as_array().cloned()
+}
+
+/// Removes a terminal, waiting a moment for one just killed to finish.
+async fn remove(address: &str) {
+    for _ in 0..20 {
+        let finished = hc_json(&["get", address])
+            .await
+            .is_none_or(|item| item.get("state").and_then(Value::as_str) != Some("live"));
+        if finished {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(150)).await;
+    }
+    let _ = hc().args(["rm", address]).output().await;
+}
+
+/// Removes `session`'s finished terminals other than `keep`.
+async fn prune(session: &str, keep: &str) {
+    for terminal in terminals(session).await.unwrap_or_default() {
+        let address = terminal.get("address").and_then(Value::as_str);
+        let finished = terminal.get("state").and_then(Value::as_str) == Some("finished");
+        if let Some(address) = address.filter(|address| finished && *address != keep) {
+            let _ = hc().args(["rm", address]).output().await;
+        }
+    }
+}
+
+/// One run of `hc events` over Otto's terminals, reporting each session
+/// whose last terminal is removed. Returns when the stream ends.
+async fn follow_removals(removed: &mpsc::UnboundedSender<String>) {
+    let Ok(mut child) = hc()
+        .args(["events", "--json", "--label", "otto=agent"])
+        .stdout(Stdio::piped())
+        .spawn()
+    else {
+        return;
+    };
+    let Some(stdout) = child.stdout.take() else {
+        return;
+    };
+    let mut lines = BufReader::new(stdout).lines();
+    // Each terminal's session, from the snapshot and the terminals created since.
+    let mut sessions: std::collections::HashMap<String, String> = Default::default();
+    let session_of = |item: &Value| {
+        item.pointer("/labels/otto.session")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+    };
+    while let Ok(Some(line)) = lines.next_line().await {
+        let Ok(event) = serde_json::from_str::<Value>(&line) else {
+            continue;
+        };
+        if let Some(snapshot) = event.get("terminals").and_then(Value::as_array) {
+            for item in snapshot {
+                if let (Some(address), Some(session)) = (
+                    item.get("address").and_then(Value::as_str),
+                    session_of(item),
+                ) {
+                    sessions.insert(address.to_owned(), session);
+                }
+            }
+            continue;
+        }
+        let Some(params) = event.get("params") else {
+            continue;
+        };
+        let Some(address) = params.get("terminal").and_then(Value::as_str) else {
+            continue;
+        };
+        match params.get("type").and_then(Value::as_str) {
+            Some("created") => {
+                let session = match params.get("data").and_then(session_of) {
+                    Some(session) => Some(session),
+                    None => hc_json(&["get", address])
+                        .await
+                        .as_ref()
+                        .and_then(session_of),
+                };
+                if let Some(session) = session {
+                    sessions.insert(address.to_owned(), session);
+                }
+            }
+            Some("removed") => {
+                let Some(session) = sessions.remove(address) else {
+                    continue;
+                };
+                if !sessions.values().any(|other| *other == session) {
+                    let _ = removed.send(session);
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 /// The live terminal already running `session`, as after an otto-agents

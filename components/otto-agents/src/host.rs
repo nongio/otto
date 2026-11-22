@@ -265,7 +265,21 @@ impl Host {
             config: None,
             meta,
         };
-        let records = store.as_ref().map(Store::load).unwrap_or_default();
+        let mut records = store.as_ref().map(Store::load).unwrap_or_default();
+        // A backend that keeps its own sessions is the authority on them: a
+        // stored session it no longer has was removed there.
+        records.retain(|record| {
+            let gone = record.agent_session.as_deref().is_some_and(|agent_session| {
+                backend.exists(&record.session.provider, agent_session) == Some(false)
+            });
+            if gone {
+                tracing::info!(session_uri = %record.resource, "the backend no longer has the session");
+                if let Some(Err(err)) = store.as_ref().map(|store| store.delete(&record.resource)) {
+                    tracing::warn!(session_uri = %record.resource, %err, "could not remove the stored session");
+                }
+            }
+            !gone
+        });
         let unsaved = store.as_ref().map(|_| HashSet::new());
         let host = Arc::new_cyclic(|host| Self {
             prompter,
@@ -288,7 +302,37 @@ impl Host {
             next_conn: AtomicU64::new(1),
         });
         host.lock().restore(records);
+        host.watch_removals();
         host
+    }
+
+    /// Sessions the backend removes on its own side leave Otto too.
+    fn watch_removals(self: &Arc<Self>) {
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        let (removed_tx, mut removed) = mpsc::unbounded_channel::<String>();
+        self.lock().backend.watch_removals(removed_tx);
+        let host = Arc::downgrade(self);
+        runtime.spawn(async move {
+            while let Some(agent_session) = removed.recv().await {
+                let Some(host) = host.upgrade() else {
+                    return;
+                };
+                let mut state = host.lock();
+                let uris: Vec<String> = state
+                    .sessions
+                    .iter()
+                    .filter(|(_, session)| session.agent_session.as_deref() == Some(&agent_session))
+                    .map(|(uri, _)| uri.clone())
+                    .collect();
+                for uri in uris {
+                    tracing::info!(session_uri = %uri, "the backend removed the session");
+                    host.remove_session(&mut state, uri);
+                }
+                host.flush_withdrawals(&mut state);
+            }
+        });
     }
 
     /// Stops a session's agent once it has had nothing to do for `timeout`;
@@ -584,13 +628,26 @@ impl Host {
         params: DisposeSessionParams,
     ) -> Result<Value, RpcError> {
         let uri = params.channel;
-        let Some(session) = state.sessions.remove(&uri) else {
+        let Some(session) = state.sessions.get(&uri) else {
             return Err(RpcError::new(
                 ahp_error_codes::SESSION_NOT_FOUND,
                 format!("no such session: {uri}"),
             ));
         };
         tracing::info!(session_uri = %uri, "disposing of the session");
+        if let Some(agent_session) = session.agent_session.as_deref() {
+            state.backend.forget(&session.state.provider, agent_session);
+        }
+        self.remove_session(state, uri);
+        Ok(Value::Null)
+    }
+
+    /// Takes `uri` out of the service: its agent, chat, subscriptions and
+    /// stored record, telling every client.
+    fn remove_session(&self, state: &mut HostState, uri: String) {
+        let Some(session) = state.sessions.remove(&uri) else {
+            return;
+        };
         // Dropping the commands ends the agent's session and its process.
         drop(session.commands);
         state.chats.remove(&session.chat);
@@ -620,7 +677,6 @@ impl Host {
             session: uri,
         };
         state.broadcast(ROOT_RESOURCE_URI, "root/sessionRemoved", &removed);
-        Ok(Value::Null)
     }
 
     fn dispatch_client_action(&self, conn: &Connection, params: DispatchActionParams) {
