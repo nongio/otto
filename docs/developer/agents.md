@@ -381,6 +381,19 @@ without it the terminal is still not opened twice, but cannot be raised.
 `{title}` is filled in by the launcher with what the window is called (*Ask:
 @Claude: will it rain today?*), which is what the dock shows.
 
+`otto.terminal` can also carry `window`, the app id of a window that already
+shows the session, such as `herdr-app` under `serve --herdr` (plan 0016).
+Then Ctrl+O runs `command`, which brings the session to the front in that
+app, and focuses the window, without releasing the session: its agent goes on
+in the same terminal.
+
+**Running or kept.** A backend whose sessions outlive the agent, such as the
+herdr one, says in each session summary's `_meta` whether it runs right now:
+`otto.running`, `false` for a session only kept to be started again. The
+launcher shows such a session with the dormant dot (`Activity::Dormant` in
+`otto-agents-kit`); opening it starts its agent. Backends that do not report
+it leave the key out, and their sessions are idle when not working.
+
 Entering the terminal hands the session over. The launcher asks the service to
 `releaseSession`: otto-agents cancels a turn under way, withdraws its
 questions, and stops its own agent, so the terminal's agent is the only one
