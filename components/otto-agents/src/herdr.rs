@@ -82,7 +82,13 @@ pub struct HerdrBackend {
     /// Claude's `--permission-mode`, such as `manual`; unset keeps the
     /// person's own default.
     permission_mode: Option<String>,
+    /// The sessions this service started: Otto has them already, so the
+    /// watcher does not take them up again.
+    started: Started,
 }
+
+/// Agent session ids, shared between [`HerdrBackend::start`] and the watcher.
+type Started = std::sync::Arc<std::sync::Mutex<HashSet<String>>>;
 
 impl HerdrBackend {
     /// The agents are `agents.toml`'s that name a herdr `space`, after the
@@ -147,6 +153,7 @@ impl HerdrBackend {
             ask_mcp,
             permission_hook: var("OTTO_HERDR_PERMISSION_HOOK"),
             permission_mode: var("OTTO_HERDR_PERMISSION_MODE"),
+            started: Started::default(),
         }
     }
 
@@ -303,9 +310,10 @@ impl Backend for HerdrBackend {
     /// when the last terminal of one is removed, the session is gone.
     fn watch_sessions(&self, changes: mpsc::UnboundedSender<SessionChange>) {
         let adopt_as = self.adopt_as();
+        let started = self.started.clone();
         tokio::spawn(async move {
             while !changes.is_closed() {
-                follow_sessions(&changes, &adopt_as).await;
+                follow_sessions(&changes, &adopt_as, &started).await;
                 // The server restarted, or hc is not there: try again shortly.
                 tokio::time::sleep(Duration::from_secs(2)).await;
             }
@@ -322,6 +330,10 @@ impl Backend for HerdrBackend {
         let session = resume
             .clone()
             .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+        self.started
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(session.clone());
         let agent = self.agent(&spec.provider);
         let argv = self.argv(agent, &session, resume.is_some());
         let space = agent.space.clone();
@@ -614,6 +626,7 @@ async fn prune(session: &str, keep: &str) {
 async fn follow_sessions(
     changes: &mpsc::UnboundedSender<SessionChange>,
     adopt_as: &[(String, Option<PathBuf>)],
+    started: &Started,
 ) {
     let Ok(mut child) = hc()
         .args(["events", "--json"])
@@ -634,7 +647,7 @@ async fn follow_sessions(
         };
         if let Some(snapshot) = event.get("terminals").and_then(Value::as_array) {
             for item in snapshot {
-                consider(item, &mut sessions, changes, adopt_as).await;
+                consider(item, &mut sessions, changes, adopt_as, started).await;
             }
             continue;
         }
@@ -661,7 +674,7 @@ async fn follow_sessions(
                 if !sessions.contains_key(address) =>
             {
                 if let Some(item) = hc_json(&["get", address]).await {
-                    consider(&item, &mut sessions, changes, adopt_as).await;
+                    consider(&item, &mut sessions, changes, adopt_as, started).await;
                 }
             }
             _ => {}
@@ -676,6 +689,7 @@ async fn consider(
     sessions: &mut std::collections::HashMap<String, String>,
     changes: &mpsc::UnboundedSender<SessionChange>,
     adopt_as: &[(String, Option<PathBuf>)],
+    started: &Started,
 ) {
     let Some(address) = item.get("address").and_then(Value::as_str) else {
         return;
@@ -705,6 +719,13 @@ async fn consider(
         None => return,
     };
     sessions.insert(address.to_owned(), session.clone());
+    let ours = started
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .contains(&session);
+    if ours {
+        return;
+    }
     let transcript = match text("/labels/otto.harness") {
         Some("pi") => Transcript::Pi(session.clone()),
         _ if provider_is_pi(item) => Transcript::Pi(session.clone()),

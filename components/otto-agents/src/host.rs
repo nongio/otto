@@ -280,14 +280,22 @@ impl Host {
             meta,
         };
         let mut records = store.as_ref().map(Store::load).unwrap_or_default();
+        // One Otto session per agent session: the first made stays.
+        records.sort_by(|a, b| a.created_at.cmp(&b.created_at));
+        let mut seen = HashSet::new();
         // A backend that keeps its own sessions is the authority on them: a
         // stored session it no longer has was removed there.
         records.retain(|record| {
-            let gone = record.agent_session.as_deref().is_some_and(|agent_session| {
-                backend.exists(&record.session.provider, agent_session) == Some(false)
-            });
+            let twin = record
+                .agent_session
+                .as_deref()
+                .is_some_and(|agent_session| !seen.insert(agent_session.to_owned()));
+            let gone = twin
+                || record.agent_session.as_deref().is_some_and(|agent_session| {
+                    backend.exists(&record.session.provider, agent_session) == Some(false)
+                });
             if gone {
-                tracing::info!(session_uri = %record.resource, "the backend no longer has the session");
+                tracing::info!(session_uri = %record.resource, twin, "the session is gone or listed twice");
                 if let Some(Err(err)) = store.as_ref().map(|store| store.delete(&record.resource)) {
                     tracing::warn!(session_uri = %record.resource, %err, "could not remove the stored session");
                 }
