@@ -289,6 +289,7 @@ async fn drive(
             }
             Some(item) = seen.recv() => match item {
                 Seen::State(state) => {
+                    tracing::debug!(%terminal, %state, ready, worked, turn = ?turn, asked = ?asked, "herdr state");
                     if !ready && matches!(state.as_str(), "idle" | "done") {
                         ready = true;
                         for prompt in held.drain(..) {
@@ -397,12 +398,17 @@ async fn follow_events(terminal: String, seen: mpsc::UnboundedSender<Seen>) {
         let Ok(event) = serde_json::from_str::<Value>(&line) else {
             continue;
         };
-        for item in event
-            .get("terminals")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-        {
+        // The first line is a snapshot of the terminal; later ones are
+        // notifications carrying only the fact that changed. Each is a cue to
+        // read the terminal whole, so no event type needs its own parsing.
+        let items = match event.get("terminals").and_then(Value::as_array) {
+            Some(terminals) => terminals.clone(),
+            None => match hc_json(&["get", &terminal]).await {
+                Some(item) => vec![item],
+                None => continue,
+            },
+        };
+        for item in &items {
             if item.get("address").and_then(Value::as_str) != Some(terminal.as_str()) {
                 continue;
             }
