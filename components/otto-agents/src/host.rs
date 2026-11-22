@@ -1403,7 +1403,7 @@ impl HostState {
         let live: Vec<String> = self
             .sessions
             .iter()
-            .filter(|(_, session)| session.commands.is_none())
+            .filter(|(_, session)| !agent_running(session))
             .filter(|(_, session)| {
                 session
                     .agent_session
@@ -2599,7 +2599,7 @@ impl HostState {
         let Some(session) = self.sessions.get(&session_uri) else {
             return;
         };
-        if session.commands.is_some() || session.agent_session.is_none() {
+        if agent_running(session) || session.agent_session.is_none() {
             return;
         }
         tracing::info!(session_uri, "starting the agent to load its history");
@@ -3486,6 +3486,16 @@ fn terminal_meta(
         // that a terminal already has it open.
         "session": agent_session,
     }))
+}
+
+/// Whether the session's agent is running: started, and still taking
+/// commands. One that ended on its own, such as a terminal closed outside
+/// Otto, has let go of them.
+fn agent_running(session: &Session) -> bool {
+    session
+        .commands
+        .as_ref()
+        .is_some_and(|commands| !commands.is_closed())
 }
 
 /// `meta` with `otto.<key>` set to `value`, or taken out for `None`. The
