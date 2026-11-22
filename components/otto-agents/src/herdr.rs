@@ -346,6 +346,7 @@ async fn drive(
                         None if turn.is_none() => {
                             outside = true;
                             rebuild(&transcript, &events).await;
+                            let _ = events.send(SessionEvent::Active);
                         }
                         None => {}
                     }
@@ -353,6 +354,7 @@ async fn drive(
                 Seen::Ended if outside && turn.is_none() => {
                     outside = false;
                     rebuild(&transcript, &events).await;
+                    let _ = events.send(SessionEvent::Active);
                 }
                 Seen::Text(_) if outside && turn.is_none() => {
                     rebuild(&transcript, &events).await;

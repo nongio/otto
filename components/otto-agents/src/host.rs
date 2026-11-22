@@ -727,6 +727,11 @@ impl Host {
                 state.rebuild_chat(&chat_uri, turns);
                 state.set_loading(session_uri, false);
             }
+            SessionEvent::Active => {
+                if let Some(chat) = state.chats.get_mut(&chat_uri) {
+                    chat.modified_at = now();
+                }
+            }
             SessionEvent::ModesChanged { current, available } => {
                 state.set_modes(session_uri, &current, &available)
             }

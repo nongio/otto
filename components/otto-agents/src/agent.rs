@@ -228,6 +228,10 @@ pub enum SessionEvent {
     HistoryLoaded {
         turns: Vec<HistoryTurn>,
     },
+    /// Someone used the session outside Otto, such as by typing in its
+    /// terminal: it counts as the latest change, for the order sessions are
+    /// listed in.
+    Active,
     CreationFailed(String),
     /// The agent's modes — its own permission and sandboxing presets, such as
     /// Claude's "Accept edits" or Codex's "read-only" — and which one it is
