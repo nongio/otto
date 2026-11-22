@@ -1,190 +1,158 @@
-# 0016: Sessions in herdr
+# 0016: herdr as the session manager
 
-**Status:** Draft
+**Status:** Draft. Would supersede the ACP backend and AHP service
+([0002](0002-core-protocol-loop.md), [0003](0003-acp-agent-backend.md)) and
+change [0011](0011-launcher-ask-v2.md) and [0015](0015-chat-bridges.md).
 
 ## Goal
 
 herdr is the session manager. Every agent session lives in a herdr terminal,
-in the agent's own interface. Otto renders what herdr knows about it and sends
-your actions back to herdr: a prompt from Ask, an answer to a question, a
-cancel. You can work in the terminal or in Otto, on the same session, and
-closing every Otto window or restarting otto-agents leaves the agent running.
+in the agent's own interface. Otto's surfaces render what herdr knows about
+it and send your actions back to herdr: a prompt from Ask, an answer to a
+question, a Stop. You can work in the terminal or in Otto, on the same session,
+and closing every Otto window leaves the agent running.
 
 [herdr](https://herdr.dev) is a terminal workspace manager for coding agents.
 Its runtime, herdr-core (`hc`), keeps terminals alive with no window attached,
 tells which agent runs in each and what it is doing, and streams those facts as
 events.
 
-## Why not ACP
+## Why drop ACP and AHP
 
 ACP and a real terminal interface can't share one live agent. The ACP adapter
 for Claude Code runs Claude through its SDK, with no screen, and starts its own
-`claude`; a running TUI accepts no second client. Tried on 2026-11-22: the
-adapter answers `initialize` through `hc exec`, but a terminal session and an
-ACP session can only take turns on one transcript. Keeping ACP would mean two
-kinds of session, one of them without its terminal. With herdr as the manager
-there is one kind:
+`claude`; a running TUI accepts no second client. Keeping ACP would mean two
+kinds of session, one of them without its terminal.
 
-| | Today (ACP) | herdr |
+AHP exists to give many clients one view of a session otto-agents owns. With
+herdr owning the session, herdr-core already is that shared view: every client
+reads the same terminals, states and labels, and its events reach them all.
+A service in between would only copy herdr's state.
+
+| | Today | With herdr |
 |---|---|---|
-| Owner | otto-agents, a child process | herdr-core, a terminal |
+| Owner | otto-agents, a child process over ACP | herdr-core, a terminal |
+| Clients see it through | AHP, from otto-agents | herdr-core, directly |
 | Interface | Otto's chat | the agent's own TUI, and Otto's chat |
 | Conversation | ACP updates | the agent's transcript file |
 | State | ACP turns | herdr events |
 | Questions | ACP elicitation | the `ask` MCP tool |
 | Permissions | ACP permission requests | a `PermissionRequest` hook |
-| Otto → agent | ACP requests | `hc send`, `hc keys`, `hc interrupt` |
-| Survives an otto-agents restart | no | yes |
+| Otto → agent | ACP requests | `hc send`, `hc interrupt`, `hc kill` |
+| Survives restarts | no | yes |
 
 ## Two directions
 
 ```
-          herdr-core ── hc events, transcript ──▶ otto-agents ── AHP ──▶ Ask, Sessions,
-  (agent TUI in a tab) ◀── hc send / keys / run ──           ◀── AHP ──  canvas, Studio
+                       hc events, labels, transcript
+  herdr-core  ──────────────────────────────────────────▶  Ask, Sessions,
+  (agent TUI in a tab) ◀──────────────────────────────────  canvas, Studio, islands
+                       hc run / send / interrupt / label
 ```
 
 - **herdr → Otto: render.** What Otto shows comes from herdr: which sessions
-  exist (`hc ls`), their state (`hc events`), and their conversation (the
-  transcript of the session herdr runs). Otto keeps no state of its own about
-  a session beyond what it needs to map it to AHP.
+  exist (`hc ls`), their state (`hc events`), what they are waiting for
+  (labels, below) and their conversation (the transcript of the session).
 - **Otto → herdr: events.** What you do in Otto becomes an action on the
   terminal: starting a session is `hc run`, a prompt is `hc send`, Stop is
-  `hc interrupt`, closing is `hc kill`. Answers to questions and permissions
-  go back to the waiting tool call or hook, not through the screen.
+  `hc interrupt`, closing is `hc kill`, and an answer is a label write.
 
 ## Decisions
 
-- **otto-agents becomes a projection of herdr.** It stops running agents
-  itself. A `herdr` backend (`src/agent.rs` `Backend`) emits the same
-  `SessionEvent`s from herdr's data, so the host, the store and every client
-  stay as they are. The ACP backend stays only as long as an agent has no
-  terminal interface.
-- **herdr owns the process.** otto-agents starts the agent with
-  `hc run --bg --keep`, never as its own child, and finds it again after a
-  restart by label (`otto.session=<id>`). Killing or closing a session goes
-  through `hc kill`.
-- **herdr shows it where you work.** The terminal carries `herdr.space` and
-  `herdr.tab` labels, which is how herdr-app places a terminal in a workspace
-  tab. Without them it runs but is listed nowhere.
-- **State comes from herdr, not the screen.** `hc events --json --label
-  otto.session=<id>` gives `status {app, state, kind, msg}`: `working`, `idle`,
-  `done`, `blocked`, `error`, and for `blocked` whether it is a `question`,
-  `permission` or `auth`. otto-agents maps these onto the session status
-  (`working` → in progress, `blocked` → needs input, `done` → turn ended). It
-  does not read the screen itself.
+- **One client crate.** `otto-herdr` (service layer, replacing
+  `otto-agents-client`) talks to herdr-core and gives Otto's surfaces sessions,
+  states, pending questions and turns as plain types. It is the only place that
+  knows herdr's API and the agents' transcript formats. The launcher, the
+  canvas, Studio and otto-islands use it; none of them runs `hc` by hand.
+- **No service.** otto-agents stops being a daemon. What remains are commands
+  the agent's side runs: `otto-agents mcp` (the `ask` tool),
+  `otto-agents hook permission`, and `otto-agents plugins install`.
+- **herdr owns the process.** Sessions start with `hc run --bg --keep`, carry
+  `otto.session=<id>` and are found again by that label.
+- **herdr shows it where you work.** A session started from Otto carries
+  `herdr.space` and `herdr.tab` labels, which is how herdr-app places a
+  terminal in a workspace tab. Without them it runs but is listed nowhere.
+- **State comes from herdr, not the screen.** `hc events` gives
+  `status {app, state, kind, msg}`: `working`, `idle`, `done`, `blocked`,
+  `error`. Otto shows these as they are; it never reads the screen.
 - **The conversation comes from the transcript.** Claude is started with
   `--session-id <uuid>`, so its transcript is a known file,
-  `~/.claude/projects/<cwd>/<uuid>.jsonl`. The backend follows it and turns user
-  messages, assistant text and tool calls into chat turns. This is per agent:
-  Claude first, others when there is a reason.
-- **Questions go through an MCP tool, not the screen.** herdr's `blocked` only
-  carries a one-line summary of what is on screen, and answering it means
-  pressing keys. Instead the Otto plugin gives the agent an `ask` tool
-  (below) and the built-in `AskUserQuestion` is removed with
-  `--disallowedTools AskUserQuestion`. The question reaches Otto as structured
-  input, through the same `InputRequested` path ACP elicitations take today
-  (`src/elicitation.rs`).
-- **Permissions go through a hook.** `--permission-prompt-tool` only works in
-  print mode, not in the TUI. Claude Code's `PermissionRequest` hook does run
-  in the TUI, gets the tool name and input as JSON, and can return allow or
-  deny. The hook asks otto-agents, which shows the same permission card it
-  shows for ACP sessions.
-- **Prompts from Otto are typed in.** A prompt sent from Ask goes to the
-  terminal with `hc send`. It is the one place this design drives the screen.
+  `~/.claude/projects/<cwd>/<uuid>.jsonl`, and `otto-herdr` follows it into
+  turns: your messages, the agent's text, tool calls. Per agent: Claude first.
+- **Questions and permissions wait in herdr labels.** The `ask` tool and the
+  permission hook run inside the session's terminal (`HC_TERMINAL_ID` is set).
+  Each writes its request as a file under
+  `$XDG_RUNTIME_DIR/otto/sessions/<id>/` and sets `otto.pending=<request id>`
+  on its terminal. Every Otto surface sees the label change through
+  `hc events`, reads the request and can answer it: the answer is written
+  beside the request and `otto.pending` is cleared. The waiting tool call or
+  hook picks it up. The first answer wins, whether from Ask, a notification
+  or otto-islands.
+- **Who asks you when no Otto window is open.** otto-islands follows
+  `otto.pending` like any client and shows the dialog when no other surface
+  is watching that session.
+- **Prompts are typed in.** A prompt from Ask goes to the terminal with
+  `hc send`. It is the one place this design drives the screen.
 
 ## The `ask` tool
 
-`otto-agents mcp --session <id>` is a stdio MCP server the Otto plugin
-declares. Like the gateway in [0014](0014-mcp-gateway.md), it is written by hand
-on `serde_json`: `initialize`, `tools/list`, `tools/call`. It has one tool:
+`otto-agents mcp` is a stdio MCP server the Otto plugin declares. Like the
+gateway in [0014](0014-mcp-gateway.md), it is written by hand on `serde_json`:
+`initialize`, `tools/list`, `tools/call`. It has one tool, `ask`, with
+`AskUserQuestion`'s input shape (`questions[]` of `question`, `header`,
+`options[] {label, description}`, `multiSelect`), so the agent's habits carry
+over. Sessions run with `--disallowedTools AskUserQuestion`, and the Otto
+agent's instructions name `ask`.
 
-```json
-{
-  "name": "ask",
-  "description": "Ask the person a question and wait for the answer.",
-  "inputSchema": {
-    "type": "object",
-    "required": ["questions"],
-    "properties": {
-      "questions": {
-        "type": "array",
-        "items": {
-          "type": "object",
-          "required": ["question"],
-          "properties": {
-            "question": { "type": "string" },
-            "header": { "type": "string" },
-            "options": {
-              "type": "array",
-              "items": {
-                "type": "object",
-                "required": ["label"],
-                "properties": {
-                  "label": { "type": "string" },
-                  "description": { "type": "string" }
-                }
-              }
-            },
-            "multiSelect": { "type": "boolean" }
-          }
-        }
-      }
-    }
-  }
-}
-```
+While the call waits, the TUI shows a running tool and herdr reports
+`working`. Otto shows "needs input" from `otto.pending`, not from herdr's
+state. Outside herdr, or with no Otto session, the tool fails at once with a
+message the agent can act on: "ask in the terminal instead".
 
-The shape is `AskUserQuestion`'s, so the agent's habits carry over and the
-existing mapping to AHP input requests applies. The call connects to the
-service socket, raises the input request on the session's chat, and returns
-the answers as the tool result. With no session, or no service, it fails at
-once with a message the agent can act on ("ask in the terminal instead").
+Any agent with MCP can use it, which is how agents other than Claude get
+structured questions too.
 
-While the call waits, the TUI shows a running tool. The answer comes from Otto:
-the chat card when a client is watching, otto-islands otherwise.
+## What changes elsewhere
 
-The `ask` tool is not Claude-specific. Any agent with MCP can use it, which is
-also how a herdr session of another agent gets structured questions.
+- **Ask and Sessions** render from `otto-herdr` instead of AHP. Starting a
+  request starts a terminal; the chat card is a view of it.
+- **Studio** starts its `studio` agent the same way; its preview MCP is
+  unchanged.
+- **Chat bridges** ([0015](0015-chat-bridges.md)) lose `otto-agents acp`.
+  They would need a herdr-aware bridge, or `hc` on the bridge's side.
+- **Agents without a terminal interface** have no place. Today that is none of
+  the configured ones (Claude, opencode, pi, codex all have one).
+- **Stored sessions** reopen in herdr with the agent's resume command
+  (`claude --resume <id>`); the AHP store is read once and retired.
 
 ## Steps
 
-1. **Session in herdr, state in Otto.** Ask starts sessions with `hc run`,
-   labels and `--session-id`; the backend follows `hc events` and publishes the
-   session and its status. Sessions lists every agent terminal herdr has, Ask
-   shows each as working or waiting. Reattach after an otto-agents restart.
-2. **Conversation.** Follow Claude's transcript into chat turns; `session/load`
-   style history on first open.
-3. **`ask` tool.** `otto-agents mcp`, the plugin's `.mcp.json`, removal of
-   `AskUserQuestion` for herdr sessions, and an end-to-end test with a fake MCP
-   client.
-4. **Permission hook.** `otto-agents hook permission` as the hook command,
-   installed by `otto-agents plugins install` for herdr sessions.
-5. **Prompts from Otto.** `hc send`, then whatever step 1 learnt about turns.
-6. **Taking over a terminal you started.** A Claude session you started in
-   herdr yourself shows up in Sessions; needs the session id, which herdr's
-   Claude integration reports on `SessionStart`.
-
-Steps 1 and 3 are useful on their own and come first.
+1. **`otto-herdr` and Sessions.** List herdr's agent terminals and their
+   states; open one in herdr. No conversation yet.
+2. **Start from Ask.** `hc run` with labels and `--session-id`; prompts with
+   `hc send`; Stop with `hc interrupt`.
+3. **`ask` tool and pending labels.** `otto-agents mcp`, the request files,
+   answering from Ask and otto-islands.
+4. **Conversation.** Follow Claude's transcript into turns.
+5. **Permission hook.** `otto-agents hook permission` through the same
+   pending mechanism.
+6. **Retire the service.** Remove AHP, ACP, the store and the facade once
+   Ask, Sessions and Studio no longer use them.
 
 ## Open questions
 
-- Should Otto's surfaces read herdr directly instead of through otto-agents?
-  Keeping AHP in between means no client changes and one place that knows
-  transcript formats; going direct removes a process. This plan keeps AHP.
-- What happens to existing ACP sessions in the store: shown read-only, or
-  reopened in herdr with `claude --resume`?
+- herdr-core's socket API: documented and stable enough to build on, or does
+  `otto-herdr` run `hc --json` and parse its output?
 - `hc send` wraps text sent from inside another hc terminal in
-  `<hc from="tN">…</hc>`. Does a send from a process outside hc (the service)
-  arrive plain?
+  `<hc from="tN">…</hc>`. Does a send from outside hc arrive plain?
+- Label size and write rate limits, and whether a label write from inside the
+  terminal is allowed for its own terminal only.
 - Can `PreToolUse` answer `AskUserQuestion` directly? If it can, the built-in
-  could stay and the `ask` tool would only be needed for other agents.
-- Is herdr's `blocked` reported for a waiting `ask` call? It should not be: the
-  agent is in a tool call, so herdr reports `working`. Otto must show
-  "needs input" from its own input request, not from herdr's state.
-- The transcript format is Claude's and undocumented. How much of it to read,
-  and how to fail when it changes.
-- herdr-core is a separate install. Is it a hard dependency of otto-agents, or
-  does it fall back to ACP when `hc` is missing?
+  could stay for Claude.
+- The transcript format is Claude's and undocumented: how much to read, and how
+  to fail when it changes.
+- herdr-core becomes a hard dependency of Otto's agent features. Packaging:
+  depend on it, or bundle a pinned build as Sheprd does.
 
 ## Verified on 2026-11-22
 
