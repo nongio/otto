@@ -62,8 +62,8 @@ struct HerdrAgent {
     id: String,
     name: String,
     description: String,
-    /// The herdr-app space (`herdr.space`) its sessions open in, each in a
-    /// tab of its own: a space's name or id.
+    /// The name a herdr-app space made for its sessions gets; a session opens
+    /// in the space of its folder, each in a tab of its own.
     space: Option<String>,
     model: Option<String>,
     /// The plugin agent its sessions run as: its prompt, tools and skills.
@@ -458,18 +458,14 @@ struct Placement {
     first_tab: Option<String>,
 }
 
-/// The herdr-app space named `space`, by its id, its name, or for a space
-/// without one, the name of its folder, as herdr-app shows it. The spaces are
-/// in herdr-app's layout, a document herdr-core keeps. Without one by that
-/// name, the space made here under it, then the space whose terminals start
-/// in `folder` (named after the agent's space if it has no name); failing
-/// those, a name is made into a space starting in `folder`. With no space
-/// set, or one gone by its id, the first space.
-async fn place(space: Option<String>, folder: &Path) -> Placement {
-    // One session at a time, so two sessions of one agent make one space.
+/// The herdr-app space for a session in `folder`: the one whose terminals
+/// start there. The spaces are in herdr-app's layout, a document herdr-core
+/// keeps. With none, one is made there, called `name` (an agent's `space`)
+/// or else after the folder. When herdr-app cannot make it, the first space.
+async fn place(name: Option<String>, folder: &Path) -> Placement {
+    // One session at a time, so two sessions in one folder make one space.
     static PLACING: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
     let _placing = PLACING.lock().await;
-    let wanted = space.unwrap_or_default();
     let layout = doc("herdr-app").await;
     let spaces = layout
         .as_ref()
@@ -477,37 +473,26 @@ async fn place(space: Option<String>, folder: &Path) -> Placement {
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default();
-    // The spaces made here, by name: found again by id should a name go.
-    static MADE: std::sync::Mutex<Vec<(String, String)>> = std::sync::Mutex::new(Vec::new());
-    let made_before = MADE
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .iter()
-        .find(|(name, _)| *name == wanted)
-        .map(|(_, id)| id.clone());
-    let found = find_space(&spaces, &wanted)
-        .or_else(|| made_before.filter(|id| spaces.iter().any(|space| space_has_id(space, id))))
-        .or_else(|| space_in(&spaces, folder));
-    if let Some(space) = found {
-        name_space(&spaces, &space, &wanted).await;
+    if let Some(space) = space_in(&spaces, folder) {
         return Placement {
             space: Some(space),
             first_tab: None,
         };
     }
-    if !wanted.is_empty() && !is_space_id(&wanted) {
-        if let Some(made) = new_space(&wanted, folder).await {
-            if let Some(id) = &made.space {
-                MADE.lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .push((wanted.clone(), id.clone()));
-            }
-            return made;
-        }
+    let name = name
+        .filter(|name| !name.is_empty() && !is_space_id(name))
+        .or_else(|| {
+            folder
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+        })
+        .unwrap_or_else(|| folder.to_string_lossy().into_owned());
+    if let Some(made) = new_space(&name, folder).await {
+        return made;
     }
     // A terminal in no space has no tab to be seen in: the first space
     // takes it.
-    tracing::warn!(space = %wanted, "no herdr space by that name; using the first");
+    tracing::warn!(folder = %folder.display(), "could not make a herdr space; using the first");
     Placement {
         space: spaces
             .first()
@@ -516,10 +501,6 @@ async fn place(space: Option<String>, folder: &Path) -> Placement {
             .map(str::to_owned),
         first_tab: None,
     }
-}
-
-fn space_has_id(space: &Value, id: &str) -> bool {
-    space.get("id").and_then(Value::as_str) == Some(id)
 }
 
 /// The space whose terminals start in `folder`.
@@ -535,30 +516,6 @@ fn space_in(spaces: &[Value], folder: &Path) -> Option<String> {
         .get("id")?
         .as_str()
         .map(str::to_owned)
-}
-
-/// Gives the space `id` the agent's name for it when it has none, so it is
-/// found by that name from then on and shows it.
-async fn name_space(spaces: &[Value], id: &str, name: &str) {
-    if name.is_empty() || is_space_id(name) {
-        return;
-    }
-    let unnamed = spaces.iter().any(|space| {
-        space_has_id(space, id)
-            && space
-                .get("name")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .is_empty()
-    });
-    if unnamed {
-        let _ = Command::new("herdr-app")
-            .args(["do", "space.rename", "--id", id, "--name", name])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .await;
-    }
 }
 
 /// Whether `space` is a space's id, such as `sp5321…`, rather than a name.
@@ -607,32 +564,6 @@ async fn close_tab(tab: &str) {
         .stderr(Stdio::null())
         .status()
         .await;
-}
-
-fn find_space(spaces: &[Value], wanted: &str) -> Option<String> {
-    let text = |space: &Value, key: &str| {
-        space
-            .get(key)
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_owned()
-    };
-    let shown = |space: &Value| match text(space, "name") {
-        name if !name.is_empty() => name,
-        _ => Path::new(&text(space, "folder"))
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_default(),
-    };
-    let by = |matches: &dyn Fn(&Value) -> bool| {
-        spaces
-            .iter()
-            .find(|space| matches(space))
-            .map(|space| text(space, "id"))
-    };
-    by(&|space| text(space, "id") == wanted)
-        .or_else(|| by(&|space| shown(space) == wanted))
-        .or_else(|| by(&|space| shown(space).eq_ignore_ascii_case(wanted)))
 }
 
 /// A document herdr-core keeps, read through its API: `hc connect` takes
@@ -1972,22 +1903,6 @@ mod tests {
         assert_eq!(definition["skills"], json!(["otto-help"]));
         let plain = agent_definition(&profile, false);
         assert_eq!(plain["tools"], json!(["Read", "AskUserQuestion"]));
-    }
-
-    #[test]
-    fn spaces_answer_to_their_id_name_or_folder() {
-        let spaces = vec![
-            json!({ "id": "sp1", "name": "Otto", "folder": "/home/me" }),
-            json!({ "id": "sp2", "name": "", "folder": "/home/me/dev/speaker-studio" }),
-        ];
-        assert_eq!(find_space(&spaces, "sp2").as_deref(), Some("sp2"));
-        assert_eq!(find_space(&spaces, "Otto").as_deref(), Some("sp1"));
-        assert_eq!(find_space(&spaces, "otto").as_deref(), Some("sp1"));
-        assert_eq!(
-            find_space(&spaces, "speaker-studio").as_deref(),
-            Some("sp2")
-        );
-        assert_eq!(find_space(&spaces, "elsewhere"), None);
     }
 
     #[test]
