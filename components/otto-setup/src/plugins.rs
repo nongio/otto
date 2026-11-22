@@ -176,7 +176,7 @@ marketing 1.0.0  /home/u/.local/share/otto/plugins/marketing
   agent: nora — Otto's product marketing lead
 otto 1.0.0  /usr/share/otto/plugins/otto
   otto-help                in the way  ~/.agents/skills/otto-help
-  send-to-phone            not linked  ~/.agents/skills/send-to-phone
+  desk-tips                not linked  ~/.agents/skills/desk-tips
   agent: otto — Otto's own helper
 Run `otto-agents plugins install` to link the rest.
 Claude reads nora, otto from the plugin; the other harnesses get a rendering:
@@ -200,7 +200,7 @@ Run `otto-agents plugins install` to write them.
             .collect();
         assert_eq!(
             skills,
-            [("otto-help", "in the way"), ("send-to-phone", "not linked")]
+            [("otto-help", "in the way"), ("desk-tips", "not linked")]
         );
         assert!(status.skills[0].in_the_way());
     }

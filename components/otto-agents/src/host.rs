@@ -3591,8 +3591,8 @@ fn error_info(error_type: &str, message: String) -> ErrorInfo {
     }
 }
 
-/// The chat app a message was written in away from the desktop, as a chat
-/// bridge marks it in the message's `_meta`: `otto.remote.via`.
+/// The chat app a message was written in away from the desktop, as the
+/// `acp` facade marks it in the message's `_meta`: `otto.remote.via`.
 fn remote_origin(message: &Message) -> Option<String> {
     let via = message
         .meta
@@ -3629,7 +3629,7 @@ fn attachments(message: &Message) -> Vec<Attachment> {
 
 /// What a prompt shares with the agent, which may read it without asking:
 /// its attachments, except from a chat app. A message marked as written there
-/// shares nothing, so whoever can reach a bridge cannot point the agent at a
+/// shares nothing, so whoever can reach that chat cannot point the agent at a
 /// file and have it read without the person at the desk being asked.
 fn shared(message: &Message) -> Vec<Attachment> {
     if remote_origin(message).is_some() {

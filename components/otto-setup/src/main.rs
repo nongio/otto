@@ -2,10 +2,10 @@
 //!
 //! Starts with the agents: finds what is installed, adds agents for the
 //! harnesses the user ticks with the instructions they pick, gives the
-//! services the PATH their programs live on, links Otto's skills, and turns
-//! the agent service and the chat bridge on, previewing each step before it
-//! runs. What it does not do itself (install Node.js, a harness, an ACP
-//! adapter or cc-connect, sign in) it explains. The user guide is
+//! service the PATH its programs live on, links Otto's skills, and turns
+//! the agent service on, previewing each step before it runs. What it does
+//! not do itself (install Node.js, a harness, an ACP adapter, sign in) it
+//! explains. The user guide is
 //! `docs/user/agents.md`.
 
 // Rust guideline compliant 2026-02-21
@@ -19,7 +19,7 @@ mod tui;
 
 use std::process::ExitCode;
 
-use crate::plan::{Bridge, Choices, State};
+use crate::plan::{Choices, State};
 use crate::probe::Facts;
 
 const USAGE: &str = "\
@@ -28,9 +28,9 @@ Usage: otto-setup [agents] [options]
 Sets Otto up the first time. For now there is one topic, `agents`
 (the default): the AI agents that answer in Ask and run your Sessions.
 It adds the agents you pick to agents.toml, makes sure Otto's agent
-service can find them, and starts it; it can also turn on the Telegram
-chat bridge. It installs nothing itself: for anything missing (Node.js,
-an agent, an adapter, cc-connect) it shows the commands to run.
+service can find them, and starts it. It installs nothing itself: for
+anything missing (Node.js, an agent, an adapter) it shows the commands
+to run.
 Nothing changes until you apply. Settings › Agents has the rest.
 
 Options:
@@ -186,20 +186,6 @@ fn check(facts: &Facts) -> ExitCode {
         profiles.join(", ")
     };
     println!("  {:<16}{profiles}", "Agent profiles");
-    println!("\nOptional");
-    let cc = facts
-        .found
-        .get("cc-connect")
-        .map_or_else(|| "not installed".to_owned(), |p| facts.shown(p));
-    println!("  {:<16}{cc}", "cc-connect");
-    let bridge = match plan::bridge(facts) {
-        Bridge::Running => "running".to_owned(),
-        Bridge::Off => "set up, off".to_owned(),
-        Bridge::Ready => "ready to turn on".to_owned(),
-        Bridge::Missing(missing) => format!("needs {}", missing.join(", ")),
-        Bridge::Unavailable(why) => why.to_owned(),
-    };
-    println!("  {:<16}{bridge}", "Chat bridge");
     println!("\nSteps");
     let steps = plan::steps(facts, &choices);
     for step in &steps {

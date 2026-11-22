@@ -1,6 +1,6 @@
 //! The interactive setup: a welcome that says what it is for, then three
-//! pages: the agents to add and who they are, what they require (Node.js, the ACP adapters) and the optional chat bridge, and the
-//! steps that follow with Apply. Every row opens its instructions, or a
+//! pages: the agents to add and who they are, what they require (Node.js,
+//! the ACP adapters), and the steps that follow with Apply. Every row opens its instructions, or a
 //! preview of exactly what it will write or run.
 //!
 //! The look and the terminal are `otto-term-kit`'s, shared with
@@ -16,7 +16,7 @@ use otto_term_kit::{printable, Key, Spans, Terminal};
 
 use crate::apply::{self, Outcome};
 use crate::guide;
-use crate::plan::{self, Bridge, Choices, Readiness, State, Step, Studio, HARNESSES};
+use crate::plan::{self, Choices, Readiness, State, Step, Studio, HARNESSES};
 use crate::probe::Facts;
 
 /// How often the loop wakes without input to notice a resize.
@@ -74,8 +74,6 @@ enum Row {
     Studio,
     Node,
     Adapters,
-    Bridge,
-    CcConnect,
     Skills,
     Profiles,
     Step(usize),
@@ -166,18 +164,12 @@ impl App {
                 .map(Row::Harness)
                 .chain([Row::Otto, Row::Studio])
                 .collect(),
-            Page::Requirements => vec![Row::Node, Row::Adapters, Row::Bridge],
-            Page::Review => [
-                Row::Node,
-                Row::Adapters,
-                Row::CcConnect,
-                Row::Skills,
-                Row::Profiles,
-            ]
-            .into_iter()
-            .chain((0..self.steps.len()).map(Row::Step))
-            .chain([Row::Apply])
-            .collect(),
+            Page::Requirements => vec![Row::Node, Row::Adapters],
+            Page::Review => [Row::Node, Row::Adapters, Row::Skills, Row::Profiles]
+                .into_iter()
+                .chain((0..self.steps.len()).map(Row::Step))
+                .chain([Row::Apply])
+                .collect(),
         }
     }
 
@@ -189,7 +181,7 @@ impl App {
             .iter()
             .filter(|(_, state)| *state == plan::Adapter::Missing)
             .count();
-        let skills = plan::needed_skills(&self.facts, &self.choices)
+        let skills = plan::skills(&self.facts)
             .iter()
             .filter(|s| s.in_the_way())
             .count();
@@ -209,7 +201,6 @@ impl App {
         self.facts = Facts::read();
         let facts = &self.facts;
         self.choices.picks.retain(|h| !facts.configured.contains(h));
-        self.choices.bridge = false;
         self.replan();
         let failed = self.outcomes.iter().any(|o| !o.ok);
         self.status = if failed {
@@ -367,20 +358,7 @@ impl App {
                 }
             }
             Row::Studio => self.toggle_studio(),
-            Row::Bridge => match plan::bridge(&self.facts) {
-                Bridge::Ready | Bridge::Off => {
-                    self.choices.bridge = !self.choices.bridge;
-                    self.replan();
-                }
-                Bridge::Running => {
-                    self.status =
-                        "Already running. Settings › Agents › Chat bridge turns it off.".into();
-                }
-                Bridge::Missing(_) | Bridge::Unavailable(_) => {
-                    self.status = "Not set up yet. Enter shows the steps.".into();
-                }
-            },
-            Row::Node | Row::Adapters | Row::CcConnect => {
+            Row::Node | Row::Adapters => {
                 self.status = "Setup does not install programs. Enter shows the commands.".into();
             }
             Row::Skills | Row::Profiles => {
@@ -434,8 +412,7 @@ impl App {
             Row::Studio => guide::studio(&self.facts, &self.choices),
             Row::Node => guide::node(&self.facts),
             Row::Adapters => guide::adapters(&self.facts),
-            Row::Bridge | Row::CcConnect => guide::bridge(&self.facts),
-            Row::Skills => guide::skills(&self.facts, &self.choices),
+            Row::Skills => guide::skills(&self.facts),
             Row::Profiles => guide::profiles(&self.facts, &self.choices),
             Row::Step(index) => {
                 let step = &self.steps[index];
@@ -456,8 +433,6 @@ impl App {
             Row::Studio => "Studio".into(),
             Row::Node => "Node.js".into(),
             Row::Adapters => "Agent adapters".into(),
-            Row::Bridge => "Chat bridge".into(),
-            Row::CcConnect => "cc-connect".into(),
             Row::Skills => "Otto's skills".into(),
             Row::Profiles => "Agent profiles".into(),
             Row::Step(index) => self.steps[index].title.into(),
@@ -564,7 +539,6 @@ impl App {
             let heading = match (self.page, row) {
                 (_, Row::Otto) => Some(" Also set up"),
                 (Page::Requirements, Row::Node) => Some(" Required"),
-                (Page::Requirements, Row::Bridge) => Some(" Optional"),
                 (Page::Review, Row::Node) => Some(" Found"),
                 (Page::Review, Row::Step(0)) => Some(" Apply will"),
                 _ => None,
@@ -706,46 +680,8 @@ impl App {
                     (" ✓ ", GREEN, parts.join(" · "), DIM)
                 }
             }
-            Row::Bridge => match plan::bridge(&self.facts) {
-                Bridge::Running => (
-                    "[x]",
-                    GREEN,
-                    "message your agents from Telegram · running".into(),
-                    DIM,
-                ),
-                Bridge::Off | Bridge::Ready => {
-                    let mark = if self.choices.bridge { "[x]" } else { "[ ]" };
-                    let note = if plan::bridge(&self.facts) == Bridge::Off {
-                        "message your agents from Telegram · set up, turned off"
-                    } else {
-                        "message your agents from Telegram · ready to turn on"
-                    };
-                    (mark, GREEN, note.into(), DIM)
-                }
-                Bridge::Missing(_) => (
-                    "[ ]",
-                    DIM,
-                    "message your agents from Telegram · Enter to set it up".into(),
-                    DIM,
-                ),
-                Bridge::Unavailable(why) => ("[ ]", DIM, why.into(), DIM),
-            },
-            Row::CcConnect => match self.facts.found.get("cc-connect") {
-                Some(_) => (
-                    " ✓ ",
-                    GREEN,
-                    "installed · for the chat bridge".to_owned(),
-                    DIM,
-                ),
-                None => (
-                    " · ",
-                    DIM,
-                    "not installed · optional, for the chat bridge".into(),
-                    DIM,
-                ),
-            },
             Row::Skills => {
-                let skills = plan::needed_skills(&self.facts, &self.choices);
+                let skills = plan::skills(&self.facts);
                 let names = |pick: fn(&crate::plugins::Skill) -> bool| -> String {
                     skills
                         .iter()

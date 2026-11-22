@@ -20,13 +20,10 @@ use toml_edit::{DocumentMut, Item};
 /// The systemd user unit that runs the agents.
 pub const SERVICE: &str = "otto-agents.service";
 
-/// The systemd user unit that runs the chat bridge.
-pub const BRIDGE_SERVICE: &str = "otto-agents-bridge.service";
-
 /// The programs setup always looks for: Node, every harness's own program
-/// and adapter, cc-connect and otto-agents. The commands the agent list
-/// names are looked for too.
-pub const PROGRAMS: [&str; 13] = [
+/// and adapter, and otto-agents. The commands the agent list names are
+/// looked for too.
+pub const PROGRAMS: [&str; 12] = [
     "node",
     "npm",
     "npx",
@@ -38,7 +35,6 @@ pub const PROGRAMS: [&str; 13] = [
     "hermes",
     "pi",
     "pi-acp",
-    "cc-connect",
     "otto-agents",
 ];
 
@@ -87,8 +83,6 @@ pub struct Facts {
     pub configured: Vec<Harness>,
     /// The program each listed agent starts, as written.
     pub commands: Vec<String>,
-    /// The chat bridge's command, when `[bridge]` names one.
-    pub bridge_command: Option<String>,
     /// Where each program setup looks for is on the shell's PATH.
     pub found: BTreeMap<String, PathBuf>,
     /// `node --version`, when Node is installed.
@@ -99,21 +93,12 @@ pub struct Facts {
     pub instructions: Vec<String>,
     /// The agent service.
     pub agents_unit: UnitFacts,
-    /// The chat bridge.
-    pub bridge_unit: UnitFacts,
     /// The Hermes profiles there are. Hermes runs an agent in the profile
     /// named after its instructions.
     pub hermes_profiles: Vec<String>,
     /// What `otto-agents plugins status` says of Otto's skills and each
     /// harness's rendering of the plugin agents; `None` when it cannot run.
     pub plugins: Option<plugins::Status>,
-    /// cc-connect's configuration.
-    pub cc_config: PathBuf,
-    /// Whether it exists.
-    pub cc_config_exists: bool,
-    /// Whether the cc-connect found is a Node script, installed with npm,
-    /// and so needs Node on the bridge's PATH.
-    pub cc_connect_node: bool,
 }
 
 impl Facts {
@@ -163,13 +148,7 @@ impl Facts {
                 dropin,
             }
         };
-        let cc_config = home.join(".cc-connect/config.toml");
-        let cc_connect_node = found
-            .get("cc-connect")
-            .and_then(|path| std::fs::canonicalize(path).ok())
-            .is_some_and(|path| path.components().any(|c| c.as_os_str() == "node_modules"));
         let agents_unit = unit_facts(SERVICE);
-        let bridge_unit = unit_facts(BRIDGE_SERVICE);
         Self {
             config_path,
             user_config,
@@ -177,7 +156,6 @@ impl Facts {
             config_error: lists.error,
             configured,
             commands,
-            bridge_command: lists.bridge,
             found,
             node_version,
             package_manager,
@@ -186,7 +164,6 @@ impl Facts {
                 .map(|set| set.name)
                 .collect(),
             agents_unit,
-            bridge_unit,
             hermes_profiles: std::fs::read_dir(home.join(".hermes/profiles"))
                 .into_iter()
                 .flatten()
@@ -195,9 +172,6 @@ impl Facts {
                 .filter_map(|entry| entry.file_name().into_string().ok())
                 .collect(),
             plugins: plugins::Status::read(),
-            cc_config_exists: cc_config.is_file(),
-            cc_config,
-            cc_connect_node,
             home,
         }
     }
@@ -213,15 +187,12 @@ impl Facts {
 struct Lists {
     /// Each listed agent's harness and program.
     agents: Vec<(Harness, String)>,
-    /// The chat bridge's command.
-    bridge: Option<String>,
     /// A file that would not parse.
     error: Option<String>,
 }
 
-/// The agents and the bridge, read the way the service reads them: the
-/// agent list from the user's file when it has one, else the system's; the
-/// bridge from the last file that sets it. With no list at all the service
+/// The agents, read the way the service reads them: the list from the user's
+/// file when it has one, else the system's. With no list at all the service
 /// runs Claude Code, but nothing is configured.
 fn configured(user: &str, system: Option<&str>) -> Lists {
     let mut lists = Lists::default();
@@ -260,13 +231,6 @@ fn configured(user: &str, system: Option<&str>) -> Lists {
             .collect();
         if !agents.is_empty() {
             lists.agents = agents;
-        }
-        if let Some(command) = doc
-            .get("bridge")
-            .and_then(|bridge| bridge.get("command"))
-            .and_then(Item::as_str)
-        {
-            lists.bridge = Some(command.to_owned());
         }
     }
     lists
@@ -389,9 +353,6 @@ command = "opencode"
 args = ["acp"]
 "#;
         let system = r#"
-[bridge]
-command = "/usr/bin/cc-connect"
-
 [[agents]]
 id = "c"
 name = "Claude"
@@ -400,7 +361,6 @@ args = ["-y", "@agentclientprotocol/claude-agent-acp@latest"]
 "#;
         let lists = configured(user, Some(system));
         assert_eq!(lists.agents, [(Harness::OpenCode, "opencode".to_owned())]);
-        assert_eq!(lists.bridge.as_deref(), Some("/usr/bin/cc-connect"));
         assert_eq!(
             configured("", Some(system)).agents,
             [(Harness::Claude, "npx".to_owned())]

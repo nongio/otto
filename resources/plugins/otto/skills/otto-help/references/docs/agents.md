@@ -14,10 +14,9 @@ installed and logged in, and answers as **Otto** whichever one is underneath.
 The quickest way is `otto-setup`, in a terminal. It finds what you have
 installed, lets you tick the agents Otto should run and pick who they are
 (Otto, or the harness itself), and does steps 2 and 3 below for you, plus the
-PATH fix under [When something is wrong](#when-something-is-wrong). It can turn
-on the chat bridge (cc-connect) too. It installs nothing itself: for what is
-missing (Node.js, a harness, an ACP adapter, cc-connect) it shows the command
-to run. Each step shows exactly what it will write or run, and nothing changes
+PATH fix under [When something is wrong](#when-something-is-wrong). It
+installs nothing itself: for what is missing (Node.js, a harness, an ACP
+adapter) it shows the command to run. Each step shows exactly what it will write or run, and nothing changes
 until you apply. `otto-setup --check` only reports what is left. By hand:
 
 1. **Install an agent** and log it in: Claude Code, OpenCode, Codex, Hermes or

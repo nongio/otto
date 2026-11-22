@@ -8,6 +8,7 @@ Each plan starts with a status line:
 - **In progress**: being implemented
 - **Done**: implemented; kept as a record of the decisions
 - **Superseded by NNNN**: replaced by a later plan
+- **Dropped**: stopped; kept as a record of what was tried and why
 
 Update the status as work lands. A plan records intent and the reasons for decisions;
 the code and the tests remain the source of truth for behaviour.
@@ -32,5 +33,5 @@ otto-agents is the agents service: it runs ACP agents and serves them over AHP. 
 | 0012 | [Voice](0012-voice.md) | Draft | 0004, 0011 |
 | 0013 | [Stash and ask](0013-stash.md) | Idea | 0011, 0012 |
 | 0014 | [MCP gateway](0014-mcp-gateway.md) | Idea | 0003, 0013 |
-| 0015 | [Chat bridges](0015-chat-bridges.md) | In progress | 0005, 0010 |
+| 0015 | [Chat bridges](0015-chat-bridges.md) | Dropped | 0005, 0010 |
 | 0016 | [herdr as the session manager](0016-herdr-sessions.md) | In progress | 0007 |

@@ -37,15 +37,13 @@ pub struct Choices {
     pub otto: bool,
     /// Whether Studio's chat should work: it needs a Claude Code agent.
     pub studio: bool,
-    /// Whether to turn the chat bridge on.
-    pub bridge: bool,
 }
 
 impl Choices {
     /// What is ticked to begin with: every ready harness when the agent
     /// list is empty, since Otto has nothing of the user's yet, and none
     /// otherwise, since the user has already chosen; Otto, and Studio when
-    /// it can work; the bridge off.
+    /// it can work.
     pub fn initial(facts: &Facts) -> Self {
         let picks = if facts.configured.is_empty() {
             HARNESSES
@@ -59,7 +57,6 @@ impl Choices {
             picks,
             otto: facts.instructions.iter().any(|n| n == harness::OTTO),
             studio: false,
-            bridge: false,
         };
         choices.studio = studio(facts, &choices) == Studio::Ready;
         choices
@@ -199,30 +196,6 @@ pub fn skills(facts: &Facts) -> &[Skill] {
     facts.plugins.as_ref().map_or(&[], |status| &status.skills)
 }
 
-/// Skills only the chat bridge uses: sending to the phone goes through
-/// cc-connect.
-pub const BRIDGE_SKILLS: [&str; 1] = ["send-to-phone"];
-
-/// Whether `skill` matters with these choices: every skill, but the
-/// bridge's only when the bridge runs or is being turned on.
-pub fn skill_needed(facts: &Facts, choices: &Choices, skill: &Skill) -> bool {
-    !BRIDGE_SKILLS.contains(&skill.name.as_str()) || bridge_on(facts, choices)
-}
-
-/// The skills that matter with these choices.
-pub fn needed_skills<'a>(facts: &'a Facts, choices: &Choices) -> Vec<&'a Skill> {
-    skills(facts)
-        .iter()
-        .filter(|s| skill_needed(facts, choices, s))
-        .collect()
-}
-
-/// Whether the chat bridge runs, or will once applied.
-pub fn bridge_on(facts: &Facts, choices: &Choices) -> bool {
-    let state = bridge(facts);
-    state == Bridge::Running || choices.bridge && matches!(state, Bridge::Ready | Bridge::Off)
-}
-
 /// The renderings of Otto's agent for the selected harnesses. Claude Code
 /// reads the plugin itself and has none. Empty when the agents are plain.
 pub fn profiles<'a>(facts: &'a Facts, choices: &Choices) -> Vec<&'a Render> {
@@ -243,9 +216,7 @@ pub fn profiles<'a>(facts: &'a Facts, choices: &Choices) -> Vec<&'a Render> {
 /// choices: a skill to link, or a rendering to write. A skill something
 /// else is in the way of is left to the user.
 pub fn plugins_behind(facts: &Facts, choices: &Choices) -> bool {
-    needed_skills(facts, choices)
-        .iter()
-        .any(|s| !s.linked() && !s.in_the_way())
+    skills(facts).iter().any(|s| !s.linked() && !s.in_the_way())
         || profiles(facts, choices)
             .iter()
             .any(|r| !r.current() && r.state != "skipped")
@@ -280,45 +251,6 @@ pub fn node(facts: &Facts) -> Node {
     match major {
         Some(major) if major < NODE_MIN => Node::TooOld(major),
         _ => Node::Ok,
-    }
-}
-
-/// Where the chat bridge stands.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Bridge {
-    /// No bridge unit to run it with.
-    Unavailable(&'static str),
-    /// `[bridge]` is set and its unit runs.
-    Running,
-    /// `[bridge]` is set but its unit is off.
-    Off,
-    /// cc-connect and its configuration are there; setup can turn it on.
-    Ready,
-    /// Something the user sets up is missing; the guide says how.
-    Missing(Vec<&'static str>),
-}
-
-/// Where the chat bridge stands on this machine.
-pub fn bridge(facts: &Facts) -> Bridge {
-    match facts.bridge_unit.state {
-        Unit::Unmanaged => return Bridge::Unavailable("no systemd user manager"),
-        Unit::Missing => return Bridge::Unavailable("otto-agents-bridge.service is not installed"),
-        Unit::Loaded { active, .. } if facts.bridge_command.is_some() => {
-            return if active { Bridge::Running } else { Bridge::Off };
-        }
-        Unit::Loaded { .. } => {}
-    }
-    let mut missing = Vec::new();
-    if !facts.found.contains_key("cc-connect") {
-        missing.push("cc-connect");
-    }
-    if !facts.cc_config_exists {
-        missing.push("its configuration");
-    }
-    if missing.is_empty() {
-        Bridge::Ready
-    } else {
-        Bridge::Missing(missing)
     }
 }
 
@@ -392,11 +324,7 @@ pub fn steps(facts: &Facts, choices: &Choices) -> Vec<Step> {
         .copied()
         .filter(|h| matches!(readiness(facts, *h), Readiness::Ready(_)))
         .collect();
-    let bridge_state = bridge(facts);
-    let set_bridge = choices.bridge && bridge_state == Bridge::Ready;
-    let bridge_on = bridge_on(facts, choices);
-
-    let mut steps = vec![config_step(facts, choices, &adding, set_bridge)];
+    let mut steps = vec![config_step(facts, choices, &adding)];
 
     // What the agent service starts: each agent's command, as listed and as
     // about to be added. A harness's own CLI (`claude --resume`) runs in the
@@ -426,18 +354,6 @@ pub fn steps(facts: &Facts, choices: &Choices) -> Vec<Step> {
         &facts.agents_unit,
         programs,
     ));
-    if bridge_on {
-        let mut programs = Vec::new();
-        if facts.cc_connect_node {
-            programs.push("node");
-        }
-        steps.push(path_step(
-            "Bridge paths",
-            facts,
-            &facts.bridge_unit,
-            programs,
-        ));
-    }
 
     // Hermes runs an agent in the profile named after its instructions; one
     // that runs as itself uses its default profile.
@@ -457,9 +373,6 @@ pub fn steps(facts: &Facts, choices: &Choices) -> Vec<Step> {
         true,
         changed,
     ));
-    if bridge_on {
-        steps.push(unit_step("Chat bridge", &facts.bridge_unit, true, changed));
-    }
     steps
 }
 
@@ -472,7 +385,7 @@ fn is_node_script(program: &str) -> bool {
     name == "npx" || name.ends_with("-acp")
 }
 
-fn config_step(facts: &Facts, choices: &Choices, adding: &[Harness], set_bridge: bool) -> Step {
+fn config_step(facts: &Facts, choices: &Choices, adding: &[Harness]) -> Step {
     let title = "Agents";
     let shown = facts.shown(&facts.config_path);
     if let Some(error) = &facts.config_error {
@@ -481,25 +394,18 @@ fn config_step(facts: &Facts, choices: &Choices, adding: &[Harness], set_bridge:
             ..Step::blocked(title, format!("{shown} cannot be read: fix it first"))
         };
     }
-    if adding.is_empty() && !set_bridge {
+    if adding.is_empty() {
         return match facts.configured.len() {
             0 => Step::blocked(title, "no agent ticked: tick one on the Agents page"),
             1 => Step::done(title, "1 agent added".to_owned()),
             n => Step::done(title, format!("{n} agents added")),
         };
     }
-    let mut what = Vec::new();
-    if !adding.is_empty() {
-        what.push(format!("add {}", names(adding)));
-    }
-    if set_bridge {
-        what.push("turn on the chat bridge".to_owned());
-    }
-    match render_config(facts, choices, adding, set_bridge) {
+    match render_config(facts, choices, adding) {
         Ok(text) => Step {
             title,
             state: State::Todo,
-            summary: what.join(", "),
+            summary: format!("add {}", names(adding)),
             detail: format!(
                 "Writes {shown}:\n{}",
                 text.lines()
@@ -519,8 +425,7 @@ fn config_step(facts: &Facts, choices: &Choices, adding: &[Harness], set_bridge:
     }
 }
 
-/// The user's `agents.toml` with an agent for each of `adding` appended,
-/// and the bridge set when `set_bridge`.
+/// The user's `agents.toml` with an agent for each of `adding` appended.
 ///
 /// Edited with `toml_edit`, so comments and keys setup does not know stay as
 /// they were. When the agents came from the system file, its list is copied
@@ -529,7 +434,6 @@ pub fn render_config(
     facts: &Facts,
     choices: &Choices,
     adding: &[Harness],
-    set_bridge: bool,
 ) -> Result<String, String> {
     let mut doc = facts
         .user_config
@@ -540,21 +444,6 @@ pub fn render_config(
             "# The agents Otto runs, one [[agents]] block each. Settings › Agents\n\
              # edits them too; docs/user/agents.md has every key.\n\n",
         );
-    }
-    if set_bridge {
-        let cc_connect = facts
-            .found
-            .get("cc-connect")
-            .ok_or("cc-connect is not installed")?;
-        let mut bridge = Table::new();
-        // Full paths: the unit does not get the shell's PATH.
-        bridge.insert("command", value(cc_connect.display().to_string()));
-        harness::set_list(
-            &mut bridge,
-            "args",
-            &["--config".to_owned(), facts.cc_config.display().to_string()],
-        );
-        doc.insert("bridge", Item::Table(bridge));
     }
     if adding.is_empty() {
         return Ok(doc.to_string());
@@ -628,11 +517,6 @@ fn path_step(
     unit: &UnitFacts,
     mut programs: Vec<&str>,
 ) -> Step {
-    let noun = if unit.name == crate::probe::BRIDGE_SERVICE {
-        "bridge"
-    } else {
-        "service"
-    };
     let Some(service_path) = &unit.path else {
         return Step::done(title, "no systemd user session: uses your session's paths");
     };
@@ -655,7 +539,7 @@ fn path_step(
         }
     }
     if missing_dirs.is_empty() {
-        return Step::done(title, format!("the {noun} finds every program"));
+        return Step::done(title, "the service finds every program");
     }
     let full: Vec<PathBuf> = missing_dirs.iter().chain(service_path).cloned().collect();
     let joined = std::env::join_paths(&full)
@@ -672,7 +556,7 @@ fn path_step(
         title,
         state: State::Todo,
         summary: format!(
-            "{noun} cannot find {}: add {}",
+            "service cannot find {}: add {}",
             missing_programs.join(", "),
             shown_dirs.join(", ")
         ),
@@ -836,18 +720,13 @@ pub(crate) mod tests {
             config_error: None,
             configured: Vec::new(),
             commands: Vec::new(),
-            bridge_command: None,
             found,
             node_version: Some("v24.7.0".into()),
             package_manager: Some("pacman"),
             instructions: vec!["otto".into(), "reviewer".into()],
             agents_unit: unit("otto-agents.service"),
-            bridge_unit: unit("otto-agents-bridge.service"),
             hermes_profiles: Vec::new(),
             plugins: Some(plugins::Status::default()),
-            cc_config: PathBuf::from("/home/u/.cc-connect/config.toml"),
-            cc_config_exists: false,
-            cc_connect_node: false,
         }
     }
 
@@ -895,24 +774,6 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn send_to_phone_matters_only_with_the_bridge() {
-        let mut facts = facts();
-        facts.plugins = Some(plugins::parse(
-            "otto 1.0.0  /usr/share/otto/plugins/otto\n  \
-             otto-help                linked      ~/.agents/skills/otto-help\n  \
-             send-to-phone            not linked  ~/.agents/skills/send-to-phone\n",
-        ));
-        let mut choices = Choices::initial(&facts);
-        assert!(!plugins_behind(&facts, &choices));
-        facts
-            .found
-            .insert("cc-connect".into(), PathBuf::from("/usr/bin/cc-connect"));
-        facts.cc_config_exists = true;
-        choices.bridge = true;
-        assert!(plugins_behind(&facts, &choices));
-    }
-
-    #[test]
     fn an_old_node_is_flagged() {
         let mut facts = facts();
         assert_eq!(node(&facts), Node::Ok);
@@ -955,7 +816,7 @@ pub(crate) mod tests {
         let mut facts = facts();
         facts.user_config = "# mine\nidle_timeout = 0\n".into();
         let choices = Choices::initial(&facts);
-        let text = render_config(&facts, &choices, &[Harness::Claude], false).unwrap();
+        let text = render_config(&facts, &choices, &[Harness::Claude]).unwrap();
         assert!(text.starts_with("# mine\nidle_timeout = 0\n"));
         let doc: DocumentMut = text.parse().unwrap();
         let agent = &doc["agents"][0];
@@ -972,7 +833,7 @@ pub(crate) mod tests {
             otto: false,
             ..Choices::initial(&facts)
         };
-        let text = render_config(&facts, &choices, &[Harness::Claude], false).unwrap();
+        let text = render_config(&facts, &choices, &[Harness::Claude]).unwrap();
         let doc: DocumentMut = text.parse().unwrap();
         assert!(doc["agents"][0].get("agent").is_none());
     }
@@ -984,7 +845,7 @@ pub(crate) mod tests {
             "[[agents]]\nid = \"claude\"\nname = \"Work\"\ncommand = \"/opt/claude-acp\"\n".into(),
         );
         let choices = Choices::initial(&facts);
-        let text = render_config(&facts, &choices, &[Harness::Claude], false).unwrap();
+        let text = render_config(&facts, &choices, &[Harness::Claude]).unwrap();
         let doc: DocumentMut = text.parse().unwrap();
         let ids: Vec<_> = doc["agents"]
             .as_array_of_tables()
@@ -1016,7 +877,6 @@ pub(crate) mod tests {
                 "otto-agents.service"
             ])]
         );
-        assert!(steps.iter().all(|s| s.title != "Chat bridge"));
     }
 
     #[test]
@@ -1031,37 +891,5 @@ pub(crate) mod tests {
         };
         let steps = steps(&facts, &Choices::initial(&facts));
         assert!(steps.iter().all(|s| s.state != State::Todo), "{steps:#?}");
-    }
-
-    #[test]
-    fn the_bridge_is_turned_on_only_when_its_parts_are_there() {
-        let mut facts = facts();
-        assert_eq!(
-            bridge(&facts),
-            Bridge::Missing(vec!["cc-connect", "its configuration"])
-        );
-        facts.found.insert(
-            "cc-connect".into(),
-            PathBuf::from("/home/u/.local/bin/cc-connect"),
-        );
-        facts.cc_config_exists = true;
-        facts.cc_connect_node = true;
-        assert_eq!(bridge(&facts), Bridge::Ready);
-        let choices = Choices {
-            bridge: true,
-            picks: Vec::new(),
-            ..Choices::initial(&facts)
-        };
-        let steps = steps(&facts, &choices);
-        let config = &steps[0];
-        let Action::Write { text, .. } = &config.actions[0] else {
-            panic!("expected a write");
-        };
-        assert!(text.contains("command = \"/home/u/.local/bin/cc-connect\""));
-        assert!(text.contains("\"--config\", \"/home/u/.cc-connect/config.toml\""));
-        let path = steps.iter().find(|s| s.title == "Bridge paths").unwrap();
-        assert_eq!(path.state, State::Todo);
-        let service = steps.iter().find(|s| s.title == "Chat bridge").unwrap();
-        assert_eq!(service.state, State::Todo);
     }
 }

@@ -1198,7 +1198,7 @@ const REMOTE_NOTE: &str = "[Otto: written on the person's phone";
 fn remote_note(via: &str) -> String {
     let via: String = via.chars().filter(|c| !matches!(c, '[' | ']')).collect();
     format!(
-        "{REMOTE_NOTE}, in {via}, through Otto's chat bridge. \
+        "{REMOTE_NOTE}, in {via}. \
          They are away from the computer and read the reply there.]"
     )
 }

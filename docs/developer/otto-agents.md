@@ -10,8 +10,7 @@ session. It is in the **app** layer of `architecture.toml`: nothing links it,
 and clients reach it over the socket through
 [otto-agents-client](otto-agents-client.md). It runs as one long-lived
 process, `otto-agents serve`, usually from the `otto-agents.service` systemd
-user unit. The same binary also carries terminal commands, an ACP facade and
-the chat bridge.
+user unit. The same binary also carries terminal commands and an ACP facade.
 
 ![otto-agents serves AHP clients on a Unix socket and runs one ACP agent per session](diagrams/otto-agents.svg)
 
@@ -28,7 +27,7 @@ on [Agents](agents.md). This page is the map of the crate.
 | `host` | The authoritative state: sessions, chats, subscriptions and open questions. Every change goes through one lock, is reduced with `ahp::reducers` and stamped with the next `serverSeq` |
 | `agent` | The `Backend` trait the host drives through a command and an event channel, and the echo backend for tests and `serve --echo` |
 | `acp` | The real backend: one ACP agent per session, as a child process on stdio |
-| `config` | `[[agents]]` and `[bridge]` from `/etc/otto/agents.toml`, then `$XDG_CONFIG_HOME/otto/agents.toml` |
+| `config` | `[[agents]]` from `/etc/otto/agents.toml`, then `$XDG_CONFIG_HOME/otto/agents.toml` |
 | `store` | One JSON file per session in `$XDG_STATE_HOME/otto-agents/sessions/`, so sessions outlive a restart |
 | `dialog` | Permission and question prompts, escalated to otto-islands over `org.otto.Dialog1` when no client answers |
 | `elicitation` | ACP form elicitations turned into AHP input requests |
@@ -37,7 +36,7 @@ on [Agents](agents.md). This page is the map of the crate.
 | `i18n` | The service's own dialog sentences, from the shared Fluent catalogues |
 | `skills`, `vendors` | Otto's plugins and skills, and the plugin's agent written in each harness's own dialect, for `plugins install` |
 | `facade` | `otto-agents acp`: the service presented as one ACP agent on stdin and stdout |
-| `cli` | The terminal commands and `bridge` |
+| `cli` | The terminal commands |
 | `client`, `uri`, `xdg` | Thin re-exports of `otto-agents-client` and `otto-foundations` |
 
 ## Commands
@@ -53,8 +52,7 @@ socket:
 | `new`, `enter` | Start or take up a session in the agent's own terminal interface. `enter` sends `releaseSession` and then replaces itself with the agent's command |
 | `forget` | Remove stored sessions |
 | `doctor` | Check what stops Ask working, such as a missing dialog renderer |
-| `acp` | The ACP facade, for chat bridges and editors |
-| `bridge` | Replace itself with the command `[bridge]` in `agents.toml` names |
+| `acp` | The ACP facade, for editors and other ACP clients |
 | `plugins install` | Link the desktop's skills into `~/.agents/skills` and write the plugin's agent for each harness |
 
 ## How it runs
@@ -71,8 +69,6 @@ socket:
   proxy to ask the person, and a request nobody can be asked is denied.
 - **systemd units.** `otto-agents.service` (off by default) runs `serve`,
   hardened with `ProtectSystem=strict` and `ReadWritePaths=%h %t`.
-  `otto-agents-bridge.service` runs `bridge`, wants the service, and is turned
-  on and off from Settings.
 
 ## Dependencies
 
@@ -89,7 +85,7 @@ socket:
 - [otto-agents-client](otto-agents-client.md) and
   [otto-agents-kit](otto-agents-kit.md): the client side.
 - [`components/otto-agents/README.md`](../../components/otto-agents/README.md):
-  commands, `agents.toml`, the chat bridge.
+  commands, `agents.toml`, the ACP front.
 - [`docs/plans/`](../../components/otto-agents/docs/plans/README.md),
   [spec coverage](../../components/otto-agents/docs/spec-coverage.md) and
   [testing](../../components/otto-agents/docs/testing.md).

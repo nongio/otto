@@ -76,8 +76,9 @@ is idle or stopped (a failed session included — the subtitle says it failed).
 The colours come from the theme, so the dot follows the user's accent and the
 colour scheme.
 
-**Sessions from the phone, and from Studio.** A session written to through a
-chat bridge carries a pill at the end of its row naming the chat app,
+**Sessions from the phone, and from Studio.** A session written to from a
+chat app, through `otto-agents acp --remote`, carries a pill at the end of its
+row naming the chat app,
 "Telegram", from the session's `otto.remote`, shaped and filled as the mode's
 pill in the log. A session Preview started about a file (one that opens in
 Preview, below) carries "Studio" instead, even after it was written to from

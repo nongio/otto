@@ -8,7 +8,7 @@ Otto's Settings app: a window with a sidebar of panes, each row bound to a setti
 - **Internal:** `otto-kit` (window, drawing, widgets, the `org.otto.Settings` proxy in `otto_kit::dbus::settings`, the item list for sidebar search), `otto-search` (the Search pane's view of LocalSearch).
 - **External:**
   - D-Bus: `org.otto.Settings` (the compositor), `org.freedesktop.Accounts` (Account pane; passwords hashed with `sha-crypt`), the portal's `FileChooser` and `PermissionStore`, LocalSearch.
-  - Commands: `pactl` for Sound (PipeWire through `pipewire-pulse`, or PulseAudio); `systemctl --user` for `localsearch-3.service`, the `otto-stt-<engine>` dictation units, and the `otto-agents` and `otto-agents-bridge` units.
+  - Commands: `pactl` for Sound (PipeWire through `pipewire-pulse`, or PulseAudio); `systemctl --user` for `localsearch-3.service`, the `otto-stt-<engine>` dictation units, and the `otto-agents` unit.
   - Files: XKB's `evdev.xml` for keyboard layouts, installed cursor themes (`xcursor`). `toml_edit` writes `agents.toml`, `dictation.toml`, `files.toml` and the `[[exec_once]]` list in `config.toml` keeping their comments.
 
 ## Develop

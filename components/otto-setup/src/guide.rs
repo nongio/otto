@@ -18,7 +18,7 @@
 
 use otto_agents_client::harness::{self, Harness};
 
-use crate::plan::{self, Bridge, Readiness};
+use crate::plan::{self, Readiness};
 use crate::plugins::Skill;
 use crate::probe::Facts;
 
@@ -313,13 +313,12 @@ pub fn adapters(facts: &Facts) -> String {
 }
 
 /// Otto's skills: linked where agents look for them, or a name taken.
-/// The chat bridge's own are optional while the bridge is off.
-pub fn skills(facts: &Facts, choices: &plan::Choices) -> String {
+pub fn skills(facts: &Facts) -> String {
     let mut out = vec![
         "# Otto's skills".to_owned(),
         String::new(),
         "Skills are short guides that teach the agents your desktop: how to".to_owned(),
-        "change a setting, send a file to your phone, and so on. Setup links".to_owned(),
+        "change a setting, find a file, and so on. Setup links".to_owned(),
         "them into ~/.agents/skills, where the agents look for them.".to_owned(),
         String::new(),
     ];
@@ -327,27 +326,17 @@ pub fn skills(facts: &Facts, choices: &plan::Choices) -> String {
         out.push("  ✗ otto-agents did not answer: is it installed?".to_owned());
     }
     for skill in plan::skills(facts) {
-        let needed = plan::skill_needed(facts, choices, skill);
-        let mark = match (skill.linked(), needed) {
-            (true, _) => "✓",
-            (false, true) => "✗",
-            (false, false) => "·",
-        };
-        let note = if needed {
-            ""
-        } else {
-            "  optional, for the chat bridge"
-        };
+        let mark = if skill.linked() { "✓" } else { "✗" };
         out.push(format!(
-            "  {mark} {:<18}{:<12}{}{note}",
+            "  {mark} {:<18}{:<12}{}",
             skill.name,
             skill_state(skill),
             skill.path
         ));
     }
     out.push(String::new());
-    let skills = plan::needed_skills(facts, choices);
-    let taken: Vec<&&Skill> = skills.iter().filter(|s| s.in_the_way()).collect();
+    let skills = plan::skills(facts);
+    let taken: Vec<&Skill> = skills.iter().filter(|s| s.in_the_way()).collect();
     let mut n = 0;
     for skill in &taken {
         n += 1;
@@ -439,99 +428,3 @@ pub fn vendor_name(id: &str) -> &str {
         .and_then(|h| h.name())
         .unwrap_or(id)
 }
-
-/// The chat bridge: what is there, and every step, those done marked so.
-pub fn bridge(facts: &Facts) -> String {
-    let mut out = vec![
-        "# Chat bridge".to_owned(),
-        String::new(),
-        "Optional. Message your agents from Telegram, through cc-connect.".to_owned(),
-        "When an agent asks for permission, you still answer at the computer.".to_owned(),
-        String::new(),
-        found(facts, "cc-connect"),
-    ];
-    let config = facts.shown(&facts.cc_config);
-    out.push(if facts.cc_config_exists {
-        format!("  ✓ {:<18}{config}", "configuration")
-    } else {
-        format!("  ✗ {:<18}{config} not found", "configuration")
-    });
-    if let Some(command) = &facts.bridge_command {
-        out.push(format!("  ✓ {:<18}{command}", "in agents.toml"));
-    }
-    if let Bridge::Unavailable(why) = plan::bridge(facts) {
-        out.push(format!("  ✗ {:<18}{why}", "bridge service"));
-    }
-    out.push(String::new());
-
-    let has_cc = facts.found.contains_key("cc-connect");
-    out.push(step(1, "Install cc-connect", Who::You, has_cc));
-    out.push(cmd("npm install -g cc-connect"));
-    out.push(String::new());
-
-    out.push(step(
-        2,
-        "Make a Telegram bot",
-        Who::You,
-        facts.cc_config_exists,
-    ));
-    out.push("In Telegram, send /newbot to @BotFather and keep the token it gives".into());
-    out.push("you. Ask @userinfobot for your numeric user ID.".into());
-    out.push(String::new());
-
-    out.push(step(
-        3,
-        &format!("Create {config}"),
-        Who::You,
-        facts.cc_config_exists,
-    ));
-    out.push("Paste this, replacing the two <…> with your token and user ID:".into());
-    let otto_agents = facts.found.get("otto-agents").map_or_else(
-        || "/usr/bin/otto-agents".to_owned(),
-        |p| p.display().to_string(),
-    );
-    let text = CC_CONFIG
-        .replace("<home>", &facts.home.display().to_string())
-        .replace("<the path of otto-agents>", &otto_agents);
-    out.extend(text.lines().map(|line| format!("│ {line}")));
-    out.push("The file holds your bot token, so make it readable only by you.".into());
-    out.push("Then create the folder the bridge works in:".into());
-    out.push(cmd("chmod 700 ~/.cc-connect"));
-    out.push(cmd(format!("chmod 600 {config}")));
-    out.push(cmd("mkdir -p ~/.local/state/otto/remote"));
-    out.push(String::new());
-
-    let on = matches!(plan::bridge(facts), Bridge::Running);
-    out.push(step(4, "Turn it on", Who::Setup, on));
-    out.push("Tick Chat bridge on the Requirements page and press Apply. Setup".into());
-    out.push("adds cc-connect to agents.toml and starts the bridge. Turn it on or".into());
-    out.push("off later in Settings › Agents › Chat bridge.".into());
-    out.push(String::new());
-    out.push("Who can message the agents, and what they can do from a phone:".into());
-    out.push("components/otto-agents/docs/cc-connect.md in Otto's source code.".into());
-    out.join("\n")
-}
-
-/// cc-connect's configuration with Otto's agents behind a Telegram bot, as
-/// `docs/cc-connect.md` gives it.
-const CC_CONFIG: &str = r#"language = "en"
-
-[[projects]]
-name = "otto"
-disabled_commands = ["shell", "dir", "cd", "restart", "upgrade", "cron", "commands"]
-
-[projects.agent]
-type = "acp"
-
-[projects.agent.options]
-work_dir = "<home>/.local/state/otto/remote"
-cmd = "<the path of otto-agents>"
-args = ["acp"]
-display_name = "Otto"
-
-[[projects.platforms]]
-type = "telegram"
-
-[projects.platforms.options]
-token = "<the bot token>"
-allow_from = "<your user ID>""#;

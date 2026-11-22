@@ -337,7 +337,7 @@ attached; after a restart of the service it starts with nothing attached until
 a prompt attaches it again. A message written in a chat app (marked
 `otto.remote`) attaches nothing: `otto-agents acp --remote` drops its resource
 links, and the host ignores the attachments of any message so marked, so
-whoever can write to a chat bridge cannot have files read unasked. The code is
+whoever can write in that chat cannot have files read unasked. The code is
 `attached.rs`.
 
 **Entering a terminal.** When the agent has an `enter` command, otto-agents

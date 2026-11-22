@@ -89,25 +89,13 @@ What it needs:
   client is watching. Without it, a permission request is denied and a question
   waits in the chat.
 
-## A chat bridge
+## An ACP front
 
-A chat bridge lets chat apps reach the agents: a program that starts
-`otto-agents acp` as its agent. Otto's is
-[cc-connect](https://github.com/chenhg5/cc-connect). Name it in `agents.toml`:
-
-```toml
-[bridge]
-command = "/home/you/.local/bin/cc-connect"   # a full path: the unit has its own PATH
-args = ["--config", "/home/you/.cc-connect/config.toml"]
-```
-
-and turn it on under **Chat bridge** in Settings › Agents, which enables the
-`otto-agents-bridge` user unit (off by default). The unit runs
-`otto-agents bridge`, which execs the command, and starts the agent service too.
-Its log is `journalctl --user -u otto-agents-bridge`. [docs/cc-connect.md](docs/cc-connect.md)
-walks through it with a Telegram bot, and says who can reach the agents through
-it. `otto-agents acp` leaves permission requests to the desktop unless started
-with `--permissions client`.
+`otto-agents acp` speaks ACP on stdin and stdout as one agent whose sessions
+are the desktop's, so a tool that drives ACP agents can start it in place of an
+agent command. It leaves permission requests to the desktop unless started
+with `--permissions client`, and `--remote <app>` marks each prompt as written
+in that chat app, away from the desktop.
 
 ## Repository layout
 

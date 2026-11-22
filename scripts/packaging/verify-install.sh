@@ -78,7 +78,6 @@ done
 
 echo "== agent service =="
 check /usr/lib/systemd/user/otto-agents.service
-check /usr/lib/systemd/user/otto-agents-bridge.service
 
 echo "== audio routing service =="
 check /usr/lib/systemd/user/otto-mixer-service.service

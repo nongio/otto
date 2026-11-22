@@ -1,8 +1,11 @@
 # 0015: Chat bridges
 
-**Status:** In progress. The ACP facade and the Settings switch have landed, and
-chats reach the agents through cc-connect. The native `otto-bridge` below is
-deferred while cc-connect covers it.
+**Status:** Dropped. cc-connect support was removed on 2026-11-22: the
+`otto-agents bridge` command, the `otto-agents-bridge` unit, the Chat bridge
+group in Settings and the setup step are gone, and herdr sessions
+([0016](0016-herdr-sessions.md)) are the direction. The `otto-agents acp`
+facade stays, as an ACP front for any client. The rest of this page records
+what was built and tried.
 
 ## First step: `otto-agents acp` and cc-connect
 
@@ -15,13 +18,13 @@ The bridge is [cc-connect](https://github.com/chenhg5/cc-connect): thirteen chat
 platforms including Telegram and Matrix, most without a public address, one ACP
 session per chat, and permission requests asked in the chat. Tried on
 2026-09-27 with a Telegram bot: a message became a desktop session, and a file
-edit was approved from the phone. [docs/cc-connect.md](../cc-connect.md) sets it
-up. It is used as a tool, not built on: its repository carries no licence.
+edit was approved from the phone. A setup guide, `docs/cc-connect.md`, was
+removed with the feature. It is used as a tool, not built on: its repository carries no licence.
 
 | ACP | What the facade does |
 |---|---|
 | `session/new` | `createSession` with `--agent` (else the default agent) in the given folder |
-| `session/load` | takes up an existing session by its id or the start of it, replaying its turns. Any desktop session, with the grants its agent already has: not limited to the bridge's own (see [cc-connect.md](../cc-connect.md#who-can-reach-the-agents)) |
+| `session/load` | takes up an existing session by its id or the start of it, replaying its turns. Any desktop session, with the grants its agent already has: not limited to the bridge's own |
 | `session/resume` | the same, without the replay |
 | `session/prompt` | queues the prompt on the chat, streams the turn back as `session/update`, returns when it ends. With `--remote`, resource links are dropped rather than attached, since an attachment is read without asking |
 | `session/request_permission` | only with `--permissions client`: sent for each tool call awaiting confirmation, with each option's kind as the agent gave it (once or always); the desktop is asked too, and the first answer wins. The default, `--permissions desktop`, keeps them on the desktop, so whoever can write to the bridge cannot approve tool calls |

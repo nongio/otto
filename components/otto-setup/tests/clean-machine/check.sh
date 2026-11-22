@@ -63,7 +63,6 @@ fresh)
     expect "OpenCode missing"     "OpenCode        needs opencode" <<<"$out"
     expect "Hermes missing"       "Hermes          needs hermes" <<<"$out"
     expect "pi missing"           "pi              needs pi" <<<"$out"
-    expect "cc-connect missing"   "cc-connect      not installed" <<<"$out"
 
     echo "== fresh: screens =="
     expect "welcome names the topic" "Otto Agents" < <(screen)

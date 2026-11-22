@@ -41,7 +41,7 @@
   <text class="t" x="28" y="217">otto-agents CLI</text>
   <text class="tm" x="28" y="232">sessions, show, new, enter</text>
   <rect class="box" x="16" y="252" width="190" height="40" rx="6"/>
-  <text class="t" x="28" y="269">chat bridge</text>
+  <text class="t" x="28" y="269">ACP clients</text>
   <text class="tm" x="28" y="284">via otto-agents acp</text>
 
   <rect class="acc" x="240" y="56" width="150" height="56" rx="6"/>

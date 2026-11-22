@@ -245,8 +245,6 @@ pub struct Config {
     /// stopped, as `agents.toml` sets it. Read it through
     /// [`Config::idle_timeout`].
     pub idle_timeout: Option<u64>,
-    /// The chat bridge `otto-agents bridge` runs, when one is configured.
-    pub bridge: Option<BridgeConfig>,
 }
 
 /// How long an agent stays up with nothing to do when `idle_timeout` is unset.
@@ -430,22 +428,6 @@ impl AgentConfig {
     }
 }
 
-/// A chat bridge: a program that brings chat apps to the desktop's agents,
-/// usually by starting `otto-agents acp` as its agent. `otto-agents bridge`
-/// runs it, under the `otto-agents-bridge` user unit that Settings turns on
-/// and off.
-#[derive(Debug, Clone, PartialEq, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct BridgeConfig {
-    pub command: String,
-    #[serde(default)]
-    pub args: Vec<String>,
-    /// Non-secret only, as for agents: tokens belong in the bridge's own
-    /// configuration.
-    #[serde(default)]
-    pub env: BTreeMap<String, String>,
-}
-
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ConfigFile {
@@ -455,8 +437,10 @@ struct ConfigFile {
     default_agent: Option<String>,
     #[serde(default)]
     idle_timeout: Option<u64>,
-    #[serde(default)]
-    bridge: Option<BridgeConfig>,
+    /// A `[bridge]` table is accepted and ignored, so a configuration that
+    /// still has one loads.
+    #[serde(default, rename = "bridge")]
+    _bridge: Option<toml::Value>,
     #[serde(default)]
     agents: Vec<AgentConfig>,
 }
@@ -482,9 +466,6 @@ pub fn load(explicit: Option<&Path>) -> anyhow::Result<Config> {
                 }
                 if file.idle_timeout.is_some() {
                     config.idle_timeout = file.idle_timeout;
-                }
-                if file.bridge.is_some() {
-                    config.bridge = file.bridge;
                 }
             }
         }
@@ -523,7 +504,6 @@ fn parse(text: &str) -> anyhow::Result<Config> {
         terminal: file.terminal,
         default_agent: file.default_agent,
         idle_timeout: file.idle_timeout,
-        bridge: file.bridge,
     })
 }
 
@@ -538,25 +518,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_chat_bridge_is_read_with_its_arguments() {
+    fn an_old_bridge_table_is_ignored() {
         let config = parse(
             r#"
             [bridge]
-            command = "cc-connect"
-            args = ["--config", "~/.cc-connect/config.toml"]
-            env = { CC_MAX_ATTACHMENT_SIZE_MB = "100" }
+            command = "relay"
+            args = ["--config", "~/.relay.toml"]
             "#,
         )
         .unwrap();
-        let bridge = config.bridge.expect("a bridge");
-        assert_eq!(bridge.command, "cc-connect");
-        assert_eq!(bridge.args, ["--config", "~/.cc-connect/config.toml"]);
-        assert_eq!(bridge.env["CC_MAX_ATTACHMENT_SIZE_MB"], "100");
-        assert_eq!(parse("").unwrap().bridge, None);
-        assert!(
-            parse("[bridge]\nargs = []").is_err(),
-            "a bridge needs a command"
-        );
+        assert!(config.agents.is_empty());
     }
 
     #[test]

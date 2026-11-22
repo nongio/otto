@@ -133,8 +133,7 @@ While the call waits, the TUI shows a running tool and herdr reports
 ## Left to do
 
 - Retire nothing yet: ACP stays the default backend until herdr covers Studio
-  and the chat bridges ([0015](0015-chat-bridges.md)), which use
-  `otto-agents acp`.
+  and the clients of `otto-agents acp`.
 - The `ask` server and the permission hook as `otto-agents` commands, in
   place of the external scripts.
 - The harnesses below.
