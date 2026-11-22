@@ -191,6 +191,9 @@ struct Session {
     runs_as: Option<String>,
     /// The files the creating client shows beside the chat.
     subject: Vec<PathBuf>,
+    /// What the agent is doing outside the turns started here, as
+    /// `SessionStatus` bits the backend reports: shown on top of the chat's.
+    outside: u32,
 }
 
 /// The `setMode` request: switch `session`'s agent to the mode `mode_id`, one
@@ -519,6 +522,7 @@ impl Host {
             instructions,
             runs_as,
             subject,
+            outside: 0,
         };
         state.sessions.insert(uri.clone(), session);
         state
@@ -726,6 +730,14 @@ impl Host {
             SessionEvent::HistoryLoaded { turns } => {
                 state.rebuild_chat(&chat_uri, turns);
                 state.set_loading(session_uri, false);
+            }
+            SessionEvent::Outside(bits) => {
+                if let Some(session) = state.sessions.get_mut(session_uri) {
+                    session.outside = bits;
+                }
+            }
+            SessionEvent::TurnStarted { turn_id, prompt } => {
+                state.start_outside_turn(session_uri, &chat_uri, turn_id, prompt);
             }
             SessionEvent::Active => {
                 if let Some(chat) = state.chats.get_mut(&chat_uri) {
@@ -1178,6 +1190,7 @@ impl HostState {
                 instructions: None,
                 runs_as: None,
                 subject: Vec::new(),
+                outside: 0,
             };
             self.sessions.insert(resource.clone(), session);
             self.chats.insert(chat_uri.clone(), chat);
@@ -1203,6 +1216,26 @@ impl HostState {
             }
             self.start_next_queued(&session_uri);
             self.sync_summaries(&session_uri);
+        }
+        // Agents still running without the service, in terminals that
+        // outlived it, are taken up again now rather than when first opened.
+        let live: Vec<String> = self
+            .sessions
+            .iter()
+            .filter(|(_, session)| session.commands.is_none())
+            .filter(|(_, session)| {
+                session
+                    .agent_session
+                    .as_deref()
+                    .is_some_and(|agent_session| {
+                        self.backend.live(&session.state.provider, agent_session)
+                    })
+            })
+            .map(|(uri, _)| uri.clone())
+            .collect();
+        for session_uri in live {
+            tracing::info!(session_uri, "taking up a session still running outside");
+            self.launch(&session_uri);
         }
     }
 
@@ -1807,6 +1840,48 @@ impl HostState {
     /// Opens `request` in the chat's active turn and in the session's
     /// `inputNeeded`. Returns whether it was opened: a request from outside
     /// the active turn is declined at once.
+    /// Opens a turn the agent started on a prompt Otto did not send, such as
+    /// one typed in its terminal, unless a turn is already under way.
+    fn start_outside_turn(
+        &mut self,
+        session_uri: &str,
+        chat_uri: &str,
+        turn_id: String,
+        prompt: String,
+    ) {
+        let busy = self
+            .chats
+            .get(chat_uri)
+            .is_some_and(|chat| chat.active_turn.is_some());
+        if busy {
+            return;
+        }
+        self.mark_written(session_uri);
+        if let Some(session) = self.sessions.get_mut(session_uri) {
+            session.open_part = None;
+        }
+        self.apply(
+            chat_uri,
+            StateAction::ChatTurnStarted(ChatTurnStartedAction {
+                turn_id,
+                started_at: now(),
+                message: Message {
+                    text: prompt,
+                    origin: MessageOrigin {
+                        kind: MessageKind::User,
+                    },
+                    attachments: None,
+                    model: None,
+                    agent: None,
+                    meta: None,
+                },
+                queued_message_id: None,
+                meta: None,
+            }),
+            None,
+        );
+    }
+
     fn open_input(
         &mut self,
         session_uri: &str,
@@ -2490,7 +2565,7 @@ impl HostState {
         SessionSummary {
             provider: session.state.provider.clone(),
             title: session.state.title.clone(),
-            status: chat.map_or(session.state.status, |chat| chat.status),
+            status: chat.map_or(session.state.status, |chat| chat.status) | session.outside,
             activity: None,
             origin: None,
             project: None,
@@ -2770,7 +2845,7 @@ impl HostState {
             return;
         };
         let chat_uri = session.chat.clone();
-        let (status, modified_at) = (chat.status, chat.modified_at.clone());
+        let (status, modified_at) = (chat.status | session.outside, chat.modified_at.clone());
         let title = session.state.title.clone();
         let catalogue_stale = session.state.chats.iter().any(|c| {
             c.resource == chat_uri && (c.status != status || c.modified_at != modified_at)

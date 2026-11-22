@@ -232,6 +232,17 @@ pub enum SessionEvent {
     /// terminal: it counts as the latest change, for the order sessions are
     /// listed in.
     Active,
+    /// The agent started a turn Otto did not ask for, on `prompt` typed in
+    /// its terminal. The turn shows in the chat like one started here, and
+    /// ends with `TurnEnded`.
+    TurnStarted {
+        turn_id: String,
+        prompt: String,
+    },
+    /// What the agent is doing outside the turns Otto started, such as
+    /// working on a prompt typed in its terminal, as `SessionStatus` bits
+    /// shown on top of the chat's own. `0` when it is doing nothing.
+    Outside(u32),
     CreationFailed(String),
     /// The agent's modes — its own permission and sandboxing presets, such as
     /// Claude's "Accept edits" or Codex's "read-only" — and which one it is
@@ -416,6 +427,15 @@ pub trait Backend: Send + Sync + 'static {
     /// each dialog the icon for the kind of thing it asks about.
     fn icon(&self, _provider: &str) -> Option<&'static str> {
         None
+    }
+
+    /// Whether the agent's own session `agent_session` of `provider` is
+    /// running right now without Otto, as a terminal that outlived the
+    /// service. Such sessions are taken up again as soon as the service
+    /// starts, so the list shows what they are doing. `false`, the default,
+    /// for agents that only run while Otto runs them.
+    fn live(&self, _provider: &str, _agent_session: &str) -> bool {
+        false
     }
 
     /// Starts a session in the background. The session ends when `commands`

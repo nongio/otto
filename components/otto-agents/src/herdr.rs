@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
 
-use ahp_types::state::{AgentInfo, ChatInputResponseKind};
+use ahp_types::state::{AgentInfo, ChatInputResponseKind, SessionStatus};
 use elicitation_content::to_labels;
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -98,6 +98,23 @@ impl Backend for HerdrBackend {
             "Otto",
             "Claude Code in a herdr terminal",
         )]
+    }
+
+    fn live(&self, _provider: &str, agent_session: &str) -> bool {
+        let filter = format!("otto.session={agent_session}");
+        std::process::Command::new("hc")
+            .env_remove("HC_TERMINAL_ID")
+            .env_remove("HC_SCOPE")
+            .args(["ls", "--json", "--label", &filter])
+            .output()
+            .ok()
+            .and_then(|output| serde_json::from_slice::<Value>(&output.stdout).ok())
+            .and_then(|list| list.get("terminals")?.as_array().cloned())
+            .is_some_and(|terminals| {
+                terminals
+                    .iter()
+                    .any(|terminal| terminal.get("state").and_then(Value::as_str) == Some("live"))
+            })
     }
 
     fn start(
@@ -274,15 +291,21 @@ async fn drive(
     // herdr says `done` a little before the transcript has the last words:
     // the transcript ends the turn, herdr's word only after a grace period.
     let mut fallback: Option<tokio::time::Instant> = None;
-    // Prompts Otto typed in and has not yet seen in the transcript, and
-    // whether the agent is answering one typed in the terminal instead. Those
-    // turns have no turn in Ask, so the chat is rebuilt from the transcript.
+    // Prompts Otto typed in and has not yet seen in the transcript: any
+    // other prompt there was typed in the terminal.
     let mut sent: Vec<String> = Vec::new();
-    let mut outside = false;
+    // herdr's latest word on the agent, and the status last reported from it.
+    let mut herdr_state = String::new();
+    let mut reported: u32 = 0;
     let (answer_tx, mut answers) =
         mpsc::unbounded_channel::<(String, Option<InputAnswer>, Value)>();
 
     loop {
+        let now = status_bits(&herdr_state, asked.is_some());
+        if now != reported {
+            reported = now;
+            let _ = events.send(SessionEvent::Outside(now));
+        }
         tokio::select! {
             command = commands.recv() => match command {
                 Some(SessionCommand::Prompt { turn_id, text, attachments, .. }) => {
@@ -323,6 +346,7 @@ async fn drive(
             }
             Some(item) = seen.recv() => match item {
                 Seen::State(state) => {
+                    herdr_state = state.clone();
                     tracing::debug!(%terminal, %state, ready, worked, turn = ?turn, asked = ?asked, "herdr state");
                     if !ready && matches!(state.as_str(), "idle" | "done") {
                         ready = true;
@@ -343,21 +367,20 @@ async fn drive(
                         Some(index) => {
                             sent.remove(index);
                         }
+                        // Typed in the terminal: it gets a turn in the chat
+                        // like one sent from Otto.
                         None if turn.is_none() => {
-                            outside = true;
-                            rebuild(&transcript, &events).await;
+                            let turn_id = uuid::Uuid::new_v4().to_string();
+                            let _ = events.send(SessionEvent::TurnStarted {
+                                turn_id: turn_id.clone(),
+                                prompt,
+                            });
                             let _ = events.send(SessionEvent::Active);
+                            turn = Some(turn_id);
+                            worked = false;
                         }
                         None => {}
                     }
-                }
-                Seen::Ended if outside && turn.is_none() => {
-                    outside = false;
-                    rebuild(&transcript, &events).await;
-                    let _ = events.send(SessionEvent::Active);
-                }
-                Seen::Text(_) if outside && turn.is_none() => {
-                    rebuild(&transcript, &events).await;
                 }
                 Seen::Ended => {
                     if asked.is_none() {
@@ -427,8 +450,22 @@ async fn drive(
             }
         }
     }
+    if reported != 0 {
+        let _ = events.send(SessionEvent::Outside(0));
+    }
     watch_events.abort();
     watch_transcript.abort();
+}
+
+/// What herdr says the agent is doing, as session status bits.
+fn status_bits(state: &str, asking: bool) -> u32 {
+    if asking || state == "blocked" {
+        SessionStatus::InputNeeded.bits()
+    } else if state == "working" {
+        SessionStatus::InProgress.bits()
+    } else {
+        0
+    }
 }
 
 fn end(turn: &mut Option<String>, events: &mpsc::UnboundedSender<SessionEvent>) {
@@ -438,16 +475,6 @@ fn end(turn: &mut Option<String>, events: &mpsc::UnboundedSender<SessionEvent>) 
             outcome: TurnOutcome::Complete,
         });
     }
-}
-
-/// The chat rebuilt from the transcript, for turns Ask did not start.
-async fn rebuild(transcript: &Path, events: &mpsc::UnboundedSender<SessionEvent>) {
-    let text = tokio::fs::read_to_string(transcript)
-        .await
-        .unwrap_or_default();
-    let _ = events.send(SessionEvent::HistoryLoaded {
-        turns: history(&text),
-    });
 }
 
 /// The prompt a transcript line holds, when it is one you wrote: not a tool's
