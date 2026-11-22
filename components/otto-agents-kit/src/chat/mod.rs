@@ -114,6 +114,9 @@ enum Update {
     /// The frosted material each coloured agent wears, by provider id, as the
     /// root state's `_meta` says under `otto.colours`.
     Colours(HashMap<String, String>),
+    /// The folder each agent starts its sessions in, by provider id, as the
+    /// root state's `_meta` says under `otto.folders`.
+    Folders(HashMap<String, PathBuf>),
     /// The agent of the followed session, by provider id.
     Provider(String),
     /// The URI of the followed session, once it is open or created.
@@ -736,6 +739,17 @@ impl Terminal {
 }
 
 /// The material each coloured agent wears, from the root state's `_meta`:
+/// An agent's row under its name: what it is, then where it works, so two
+/// agents of one name tell apart by their folders.
+fn agent_subtitle(agent: &AgentInfo, folder: Option<&PathBuf>) -> Option<String> {
+    let folder = folder.map(|folder| otto_kit::xdg::tilde(folder));
+    match (agent.description.as_str(), folder) {
+        ("", folder) => folder,
+        (description, None) => Some(description.to_owned()),
+        (description, Some(folder)) => Some(format!("{description} · {folder}")),
+    }
+}
+
 /// `otto.colours` maps provider ids to the names otto-kit's `Frosted` takes.
 fn colours_from_meta(meta: Option<&serde_json::Map<String, Value>>) -> HashMap<String, String> {
     meta.and_then(|meta| meta.get("otto")?.get("colours")?.as_object())
@@ -783,6 +797,8 @@ pub struct Ask {
     agents: Vec<AgentInfo>,
     /// The material each coloured agent wears, by provider id.
     colours: HashMap<String, String>,
+    /// The folder each agent starts its sessions in, by provider id.
+    folders: HashMap<String, PathBuf>,
     /// The service's sessions, as they stood when the launcher connected.
     sessions: Vec<SessionSummary>,
     sessions_listed: bool,
@@ -844,6 +860,7 @@ impl Ask {
             link,
             agents: Vec::new(),
             colours: HashMap::new(),
+            folders: HashMap::new(),
             sessions: Vec::new(),
             sessions_listed: false,
             attachments: Vec::new(),
@@ -1063,6 +1080,7 @@ impl Ask {
         match update {
             Update::Agents(agents) => self.agents = agents,
             Update::Colours(colours) => self.colours = colours,
+            Update::Folders(folders) => self.folders = folders,
             Update::Session(session) => {
                 if let Some(run) = self.run.as_mut() {
                     run.session = Some(session);
@@ -1165,7 +1183,7 @@ impl Ask {
             .enumerate()
             .map(|(index, agent)| Item {
                 title: agent.display_name.clone(),
-                subtitle: (!agent.description.is_empty()).then(|| agent.description.clone()),
+                subtitle: agent_subtitle(agent, self.folders.get(&agent.provider)),
                 icon: None,
                 activity: None,
                 checked: None,
@@ -2192,6 +2210,7 @@ async fn serve(
                 folders = folders_from_meta(root.meta.as_ref());
                 reporter.send(Update::Agents(root.agents));
                 reporter.send(Update::Colours(colours_from_meta(root.meta.as_ref())));
+                reporter.send(Update::Folders(folders.clone()));
             }
         }
         Err(err) => tracing::warn!(%err, "could not list the agents"),

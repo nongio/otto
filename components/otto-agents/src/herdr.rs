@@ -81,7 +81,7 @@ impl HerdrBackend {
         let mut agents = vec![HerdrAgent {
             id: PROVIDER.to_owned(),
             name: "Otto".to_owned(),
-            description: "Claude Code in a herdr terminal".to_owned(),
+            description: String::new(),
             space: var("OTTO_HERDR_SPACE"),
             model: var("OTTO_HERDR_MODEL"),
             profile: profile(&var("OTTO_HERDR_AGENT").unwrap_or_else(|| "otto".to_owned())),
@@ -103,6 +103,13 @@ impl HerdrBackend {
             match agents.iter_mut().find(|known| known.id == herdr.id) {
                 Some(known) => *known = herdr,
                 None => agents.push(herdr),
+            }
+        }
+        // Without a description of its own, an agent is described by the
+        // model it runs: agents of one name differ in model and folder.
+        for agent in &mut agents {
+            if agent.description.is_empty() {
+                agent.description = model_name(agent.model.as_deref());
             }
         }
         let ask_mcp = var("OTTO_HERDR_ASK_MCP")
@@ -298,6 +305,19 @@ fn hc() -> Command {
 async fn hc_json(args: &[&str]) -> Option<Value> {
     let output = hc().args(args).arg("--json").output().await.ok()?;
     serde_json::from_slice(&output.stdout).ok()
+}
+
+/// A model as a person reads it: `opus` as "Opus"; Claude's own default
+/// when none is set.
+fn model_name(model: Option<&str>) -> String {
+    let Some(model) = model.filter(|model| !model.is_empty()) else {
+        return "Claude Code's default model".to_owned();
+    };
+    let mut chars = model.chars();
+    chars
+        .next()
+        .map(|first| first.to_uppercase().chain(chars).collect())
+        .unwrap_or_default()
 }
 
 /// A plugin agent as Claude's `--agents` takes one. The plugin's own copy
