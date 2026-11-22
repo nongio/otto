@@ -246,6 +246,8 @@ enum Seen {
     Text(String),
     /// The transcript says the agent finished its turn.
     Ended,
+    /// A prompt in the transcript: Otto's own, or typed in the terminal.
+    Prompt(String),
     Gone,
 }
 
@@ -257,7 +259,7 @@ async fn drive(
 ) {
     let (seen_tx, mut seen) = mpsc::unbounded_channel();
     let watch_events = tokio::spawn(follow_events(terminal.clone(), seen_tx.clone()));
-    let watch_transcript = tokio::spawn(follow_transcript(transcript, seen_tx));
+    let watch_transcript = tokio::spawn(follow_transcript(transcript.clone(), seen_tx));
 
     // The turn Ask started, and whether herdr has seen the agent work on it.
     let mut turn: Option<String> = None;
@@ -272,6 +274,11 @@ async fn drive(
     // herdr says `done` a little before the transcript has the last words:
     // the transcript ends the turn, herdr's word only after a grace period.
     let mut fallback: Option<tokio::time::Instant> = None;
+    // Prompts Otto typed in and has not yet seen in the transcript, and
+    // whether the agent is answering one typed in the terminal instead. Those
+    // turns have no turn in Ask, so the chat is rebuilt from the transcript.
+    let mut sent: Vec<String> = Vec::new();
+    let mut outside = false;
     let (answer_tx, mut answers) =
         mpsc::unbounded_channel::<(String, Option<InputAnswer>, Value)>();
 
@@ -286,6 +293,7 @@ async fn drive(
                         }
                     }
                     prompt.push_str(&text);
+                    sent.push(prompt.trim().to_owned());
                     turn = Some(turn_id);
                     worked = false;
                     if ready {
@@ -329,6 +337,25 @@ async fn drive(
                         fallback = Some(tokio::time::Instant::now() + Duration::from_secs(3));
                         worked = false;
                     }
+                }
+                Seen::Prompt(prompt) => {
+                    match sent.iter().position(|ours| *ours == prompt.trim()) {
+                        Some(index) => {
+                            sent.remove(index);
+                        }
+                        None if turn.is_none() => {
+                            outside = true;
+                            rebuild(&transcript, &events).await;
+                        }
+                        None => {}
+                    }
+                }
+                Seen::Ended if outside && turn.is_none() => {
+                    outside = false;
+                    rebuild(&transcript, &events).await;
+                }
+                Seen::Text(_) if outside && turn.is_none() => {
+                    rebuild(&transcript, &events).await;
                 }
                 Seen::Ended => {
                     if asked.is_none() {
@@ -409,6 +436,41 @@ fn end(turn: &mut Option<String>, events: &mpsc::UnboundedSender<SessionEvent>) 
             outcome: TurnOutcome::Complete,
         });
     }
+}
+
+/// The chat rebuilt from the transcript, for turns Ask did not start.
+async fn rebuild(transcript: &Path, events: &mpsc::UnboundedSender<SessionEvent>) {
+    let text = tokio::fs::read_to_string(transcript)
+        .await
+        .unwrap_or_default();
+    let _ = events.send(SessionEvent::HistoryLoaded {
+        turns: history(&text),
+    });
+}
+
+/// The prompt a transcript line holds, when it is one you wrote: not a tool's
+/// result, a slash command or the harness's own note.
+fn prompt_of(line: &str) -> Option<String> {
+    let entry = serde_json::from_str::<Value>(line).ok()?;
+    let flag = |name: &str| entry.get(name).and_then(Value::as_bool) == Some(true);
+    if entry.get("type").and_then(Value::as_str) != Some("user")
+        || flag("isMeta")
+        || flag("isSidechain")
+    {
+        return None;
+    }
+    let text = match entry.pointer("/message/content")? {
+        Value::String(text) => text.clone(),
+        Value::Array(blocks) => blocks
+            .iter()
+            .filter(|block| block.get("type").and_then(Value::as_str) == Some("text"))
+            .filter_map(|block| block.get("text").and_then(Value::as_str))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        _ => return None,
+    };
+    let text = text.trim();
+    (!text.is_empty() && !text.starts_with('<')).then(|| text.to_owned())
 }
 
 /// Whether a transcript line is the assistant finishing its turn.
@@ -515,6 +577,11 @@ async fn follow_transcript(path: PathBuf, seen: mpsc::UnboundedSender<Seen>) {
             }
             for text in assistant_text(line) {
                 if seen.send(Seen::Text(text)).is_err() {
+                    return;
+                }
+            }
+            if let Some(prompt) = prompt_of(line) {
+                if seen.send(Seen::Prompt(prompt)).is_err() {
                     return;
                 }
             }
@@ -773,6 +840,37 @@ mod tests {
         );
         assert_eq!(turns[1].prompt, "thanks");
         assert!(turns[1].parts.is_empty());
+    }
+
+    #[test]
+    fn prompts_are_what_you_wrote() {
+        assert_eq!(
+            prompt_of(r#"{"type":"user","message":{"content":" hi "}}"#).as_deref(),
+            Some("hi")
+        );
+        assert_eq!(
+            prompt_of(r#"{"type":"user","message":{"content":[{"type":"text","text":"yo"}]}}"#)
+                .as_deref(),
+            Some("yo")
+        );
+        assert_eq!(
+            prompt_of(
+                r#"{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t"}]}}"#
+            ),
+            None
+        );
+        assert_eq!(
+            prompt_of(r#"{"type":"user","isMeta":true,"message":{"content":"x"}}"#),
+            None
+        );
+        assert_eq!(
+            prompt_of(r#"{"type":"user","message":{"content":"<command-name>/x</command-name>"}}"#),
+            None
+        );
+        assert_eq!(
+            prompt_of(r#"{"type":"assistant","message":{"content":"x"}}"#),
+            None
+        );
     }
 
     #[test]
