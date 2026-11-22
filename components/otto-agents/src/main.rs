@@ -117,6 +117,14 @@ enum Command {
         #[arg(long, env = "OTTO_AGENTS_URL", default_value_t = client::default_url())]
         url: String,
     },
+    /// The `ask` MCP server a herdr session's Claude Code runs: its
+    /// questions wait in the terminal's labels for Otto's answer.
+    #[command(hide = true)]
+    HerdrAsk,
+    /// Claude Code's `PermissionRequest` hook in a herdr session, answered
+    /// from Otto.
+    #[command(hide = true)]
+    HerdrPermission,
     /// Put the desktop's skills and its agent where each harness looks for them.
     #[command(alias = "skills")]
     Plugins {
@@ -212,6 +220,8 @@ async fn main() -> anyhow::Result<()> {
         Command::Enter { session, url } => cli::enter(&url, session.as_deref()).await,
         Command::Doctor { config, url } => cli::doctor(&url, config.as_deref()).await,
         Command::HerdrShow { session, url } => otto_agents::herdr::show(&session, &url).await,
+        Command::HerdrAsk => otto_agents::herdr_tools::serve_ask().await,
+        Command::HerdrPermission => otto_agents::herdr_tools::permission_hook().await,
         Command::Show {
             session,
             follow,

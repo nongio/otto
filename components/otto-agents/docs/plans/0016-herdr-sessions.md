@@ -119,12 +119,12 @@ while this is a prototype:
 | `OTTO_HERDR_MODEL` | its model |
 | `OTTO_HERDR_AGENT` | the plugin agent it runs as: `otto` unless set, `none` for plain Claude Code |
 | `OTTO_HERDR_PERMISSION_MODE` | Claude's `--permission-mode` for every session, such as `auto` or `manual` |
-| `OTTO_HERDR_ASK_MCP` | the command line of the `ask` MCP server |
-| `OTTO_HERDR_PERMISSION_HOOK` | the command line of the `PermissionRequest` hook |
+| `OTTO_HERDR_ASK_MCP` | the command line of the `ask` MCP server, in place of `otto-agents herdr-ask` |
+| `OTTO_HERDR_PERMISSION_HOOK` | the command line of the `PermissionRequest` hook, in place of `otto-agents herdr-permission` |
 
-The `ask` server and the permission hook are external commands for now (the
-test rig's are Python scripts); without them sessions ask and approve in the
-terminal.
+The `ask` server and the permission hook are this binary's hidden
+`herdr-ask` and `herdr-permission` commands (`src/herdr_tools.rs`), which
+Claude sessions are started with.
 
 ## The `ask` tool
 
@@ -141,8 +141,6 @@ While the call waits, the TUI shows a running tool and herdr reports
 
 - Retire the ACP backend once herdr covers Studio and the clients of
   `otto-agents acp`, and herdr-core is packaged.
-- The `ask` server and the permission hook as `otto-agents` commands, in
-  place of the external scripts.
 - The harnesses below.
 
 ## Open questions
@@ -152,8 +150,8 @@ While the call waits, the TUI shows a running tool and herdr reports
   tool (`otto.permission.answer`), or raise a fake `otto.permission` or
   `otto.ask` that Otto shows. Acceptable on one person's machine; a nonce only
   Otto knows would close it.
-- `OTTO_HERDR_ASK_MCP` and `OTTO_HERDR_PERMISSION_HOOK` are split on
-  whitespace: a path with a space breaks them.
+- `OTTO_HERDR_ASK_MCP` and `OTTO_HERDR_PERMISSION_HOOK`, when set, are split
+  on whitespace: a path with a space breaks them.
 - Startup asks `hc` synchronously, once per stored session, whether herdr
   still has it and whether it runs.
 - `otto-agents new` and `otto-agents enter` under `--herdr` focus herdr-app

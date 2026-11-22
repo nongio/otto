@@ -199,13 +199,26 @@ impl HerdrBackend {
                 agent.description = model_name(agent.model.as_deref(), agent.harness);
             }
         }
-        let ask_mcp = var("OTTO_HERDR_ASK_MCP")
-            .map(|line| line.split_whitespace().map(str::to_owned).collect())
-            .unwrap_or_default();
+        // This binary's own `herdr-ask` and `herdr-permission` unless the
+        // environment names others.
+        let exe = std::env::current_exe()
+            .ok()
+            .map(|exe| exe.to_string_lossy().into_owned());
+        let ask_mcp = match var("OTTO_HERDR_ASK_MCP") {
+            Some(line) => line.split_whitespace().map(str::to_owned).collect(),
+            None => exe
+                .iter()
+                .flat_map(|exe| [exe.clone(), "herdr-ask".to_owned()])
+                .collect(),
+        };
+        let permission_hook = var("OTTO_HERDR_PERMISSION_HOOK").or_else(|| {
+            exe.as_deref()
+                .map(|exe| format!("{} herdr-permission", shell_quote(exe)))
+        });
         Self {
             agents,
             ask_mcp,
-            permission_hook: var("OTTO_HERDR_PERMISSION_HOOK"),
+            permission_hook,
             permission_mode: var("OTTO_HERDR_PERMISSION_MODE"),
             started: Started::default(),
             placing: Default::default(),
@@ -471,6 +484,12 @@ impl Backend for HerdrBackend {
 
 /// `hc`, with this process's own hc identity removed: sends from inside an hc
 /// terminal are wrapped in `<hc from=…>` tags, sends from outside arrive plain.
+/// `word` as a POSIX shell reads it back: in single quotes, a quote inside
+/// closed and escaped. Claude runs a hook's command through the shell.
+fn shell_quote(word: &str) -> String {
+    format!("'{}'", word.replace('\'', r"'\''"))
+}
+
 /// Whether herdr is installed: `hc`, herdr-core's command, is on `PATH`.
 pub fn installed() -> bool {
     crate::cli::which("hc").is_some()
@@ -2386,6 +2405,15 @@ mod tests {
             Harness::of("/home/me/.local/bin/opencode"),
             Some(Harness::OpenCode)
         );
+    }
+
+    #[test]
+    fn a_hook_path_survives_the_shell() {
+        assert_eq!(
+            shell_quote("/usr/bin/otto-agents"),
+            "'/usr/bin/otto-agents'"
+        );
+        assert_eq!(shell_quote("/home/a b/it's"), r"'/home/a b/it'\''s'");
     }
 
     #[test]
