@@ -9,7 +9,10 @@
 //! | Request | Answer |
 //! |---|---|
 //! | `otto.ask` `{id, questions}` | `otto.answer` `{id, answers}` |
-//! | `otto.permission` `{id, tool_name, tool_input, cwd}` | `otto.permission.answer` `{id, allow}` |
+//! | `otto.permission` `{id, tool_name, tool_input, cwd, suggestions}` | `otto.permission.answer` `{id, allow, always}` |
+//!
+//! `suggestions` are Claude's `permission_suggestions`, the "don't ask again"
+//! choices its own prompt offers; `always` is the index of the one picked.
 //!
 //! Both labels are cleared once the wait ends, answered or not.
 
@@ -306,10 +309,14 @@ pub async fn serve_ask() -> anyhow::Result<()> {
 }
 
 /// What the hook prints for Otto's answer: Claude's `PermissionRequest`
-/// decision.
-fn decision(allow: bool) -> Value {
+/// decision. `always` is the suggestion picked with it, which Claude applies
+/// as its own "don't ask again" choice.
+fn decision(allow: bool, always: Option<&Value>) -> Value {
     let decision = if allow {
-        json!({ "behavior": "allow" })
+        match always {
+            Some(update) => json!({ "behavior": "allow", "updatedPermissions": [update] }),
+            None => json!({ "behavior": "allow" }),
+        }
     } else {
         json!({ "behavior": "deny", "message": "The person declined this in Otto." })
     };
@@ -334,6 +341,7 @@ pub async fn permission_hook() -> anyhow::Result<()> {
         "tool_name": event.get("tool_name").cloned().unwrap_or_else(|| json!("")),
         "tool_input": event.get("tool_input").cloned().unwrap_or_else(|| json!({})),
         "cwd": event.get("cwd").cloned().unwrap_or_else(|| json!("")),
+        "suggestions": event.get("permission_suggestions").cloned().unwrap_or_else(|| json!([])),
     });
     let waited = tokio::time::timeout(
         PERMISSION_PATIENCE,
@@ -356,7 +364,11 @@ pub async fn permission_hook() -> anyhow::Result<()> {
     };
     if let Some(answer) = answer {
         let allow = answer.get("allow").and_then(Value::as_bool) == Some(true);
-        println!("{}", decision(allow));
+        let always = answer
+            .get("always")
+            .and_then(Value::as_u64)
+            .and_then(|index| request["suggestions"].get(index as usize));
+        println!("{}", decision(allow, always));
     }
     Ok(())
 }
@@ -378,11 +390,17 @@ mod tests {
     #[test]
     fn the_hook_decides_as_claude_reads_it() {
         assert_eq!(
-            decision(true),
+            decision(true, None),
             json!({ "hookSpecificOutput": { "hookEventName": "PermissionRequest", "decision": { "behavior": "allow" } } })
         );
+        let rule = json!({ "type": "addRules", "rules": [{ "toolName": "Bash", "ruleContent": "ls" }], "behavior": "allow", "destination": "localSettings" });
         assert_eq!(
-            decision(false).pointer("/hookSpecificOutput/decision/behavior"),
+            decision(true, Some(&rule))
+                .pointer("/hookSpecificOutput/decision/updatedPermissions/0"),
+            Some(&rule)
+        );
+        assert_eq!(
+            decision(false, Some(&rule)).pointer("/hookSpecificOutput/decision/behavior"),
             Some(&json!("deny"))
         );
     }

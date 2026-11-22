@@ -1563,7 +1563,9 @@ async fn drive(
     let mut worked = false;
     let mut asked: Option<String> = None;
     let mut permitting: Option<String> = None;
-    let (decided_tx, mut decided) = mpsc::unbounded_channel::<(String, bool)>();
+    // Each permission answered: its id, whether it is allowed, and the
+    // suggestion picked to stop asking.
+    let (decided_tx, mut decided) = mpsc::unbounded_channel::<(String, bool, Option<usize>)>();
     // A prompt typed into an agent still starting up is dropped: hold prompts
     // until herdr has seen it ready, or long enough has passed.
     let mut ready = false;
@@ -1732,8 +1734,14 @@ async fn drive(
                     });
                     let decided_tx = decided_tx.clone();
                     tokio::spawn(async move {
-                        let allow = wait.await.is_ok_and(|decision| decision.approved());
-                        let _ = decided_tx.send((id, allow));
+                        let decision = wait.await.ok();
+                        let allow = decision.as_ref().is_some_and(|decision| decision.approved());
+                        let always = decision
+                            .as_ref()
+                            .and_then(|decision| decision.option_id())
+                            .and_then(|option| option.strip_prefix(ALWAYS))
+                            .and_then(|index| index.parse().ok());
+                        let _ = decided_tx.send((id, allow, always));
                     });
                 }
                 Seen::Permission(None) => permitting = None,
@@ -1748,8 +1756,8 @@ async fn drive(
                     break;
                 }
             },
-            Some((id, allow)) = decided.recv() => {
-                let reply = json!({ "id": id, "allow": allow });
+            Some((id, allow, always)) = decided.recv() => {
+                let reply = json!({ "id": id, "allow": allow, "always": always });
                 let label = format!("otto.permission.answer={reply}");
                 let _ = hc().args(["label", &terminal, &label]).output().await;
             }
@@ -1813,16 +1821,90 @@ fn permission_question(id: &str, request: &Value, cwd: &Path) -> crate::agent::Q
         }
     }
     fields.raw_input = Some(input);
-    let options = vec![
-        PermissionOption::new("allow", "Allow", PermissionOptionKind::AllowOnce),
-        PermissionOption::new("reject", "Reject", PermissionOptionKind::RejectOnce),
-    ];
+    // Allow, then each of Claude's "don't ask again" suggestions, then Reject:
+    // the choices Claude's own prompt offers.
+    let suggestions = request
+        .get("suggestions")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .enumerate()
+        .filter_map(|(index, suggestion)| {
+            let label = suggestion_label(suggestion)?;
+            Some(PermissionOption::new(
+                format!("{ALWAYS}{index}"),
+                label,
+                PermissionOptionKind::AllowAlways,
+            ))
+        });
+    let options = std::iter::once(PermissionOption::new(
+        "allow",
+        "Allow",
+        PermissionOptionKind::AllowOnce,
+    ))
+    .chain(suggestions)
+    .chain([PermissionOption::new(
+        "reject",
+        "Reject",
+        PermissionOptionKind::RejectOnce,
+    )])
+    .collect();
     let request = RequestPermissionRequest::new(
         id.to_owned(),
         ToolCallUpdate::new(id.to_owned(), fields),
         options,
     );
     crate::dialog::question_for("Claude", None, cwd, &request)
+}
+
+/// A permission option's id for Claude's suggestion at the index after it.
+const ALWAYS: &str = "always-";
+
+/// One of Claude's `permission_suggestions` as an option reads: "Always allow
+/// Bash(npm test) in this project". `None` for one this does not offer: a
+/// rule that denies or asks, or a change it cannot name.
+fn suggestion_label(suggestion: &Value) -> Option<String> {
+    let text = |key: &str| suggestion.get(key).and_then(Value::as_str);
+    let place = match text("destination") {
+        Some("session") => " for this session",
+        Some("localSettings") => " in this project",
+        Some("projectSettings") => " in this project, for everyone",
+        Some("userSettings") => " everywhere",
+        _ => "",
+    };
+    let list = |key: &str| {
+        suggestion
+            .get(key)
+            .and_then(Value::as_array)
+            .filter(|items| !items.is_empty())
+    };
+    match text("type")? {
+        "addRules" if text("behavior") == Some("allow") => {
+            let rules: Vec<String> = list("rules")?
+                .iter()
+                .filter_map(|rule| {
+                    let tool = rule.get("toolName")?.as_str()?;
+                    Some(match rule.get("ruleContent").and_then(Value::as_str) {
+                        Some(content) => format!("{tool}({content})"),
+                        None => tool.to_owned(),
+                    })
+                })
+                .collect();
+            (!rules.is_empty()).then(|| format!("Always allow {}{place}", rules.join(", ")))
+        }
+        "setMode" => Some(match text("mode")? {
+            "acceptEdits" => format!("Allow all edits{place}"),
+            mode => format!("Switch to {mode} mode{place}"),
+        }),
+        "addDirectories" => {
+            let folders: Vec<&str> = list("directories")?
+                .iter()
+                .filter_map(Value::as_str)
+                .collect();
+            Some(format!("Always allow {}{place}", folders.join(", ")))
+        }
+        _ => None,
+    }
 }
 
 /// What herdr says the agent is doing, as session status bits.
@@ -2405,6 +2487,31 @@ mod tests {
             Harness::of("/home/me/.local/bin/opencode"),
             Some(Harness::OpenCode)
         );
+    }
+
+    #[test]
+    fn claude_suggestions_read_as_options() {
+        let rule = json!({ "type": "addRules", "rules": [{ "toolName": "Bash", "ruleContent": "npm test" }], "behavior": "allow", "destination": "localSettings" });
+        assert_eq!(
+            suggestion_label(&rule).as_deref(),
+            Some("Always allow Bash(npm test) in this project")
+        );
+        let edits = json!({ "type": "setMode", "mode": "acceptEdits", "destination": "session" });
+        assert_eq!(
+            suggestion_label(&edits).as_deref(),
+            Some("Allow all edits for this session")
+        );
+        let deny = json!({ "type": "addRules", "rules": [{ "toolName": "Bash" }], "behavior": "deny", "destination": "session" });
+        assert_eq!(suggestion_label(&deny), None);
+
+        let request = json!({ "tool_name": "Bash", "tool_input": { "command": "npm test" }, "suggestions": [rule, deny, edits] });
+        let question = permission_question("p1", &request, Path::new("/tmp"));
+        let ids: Vec<&str> = question
+            .options
+            .iter()
+            .map(|option| option.id.as_str())
+            .collect();
+        assert_eq!(ids, ["allow", "always-0", "always-2", "reject"]);
     }
 
     #[test]
