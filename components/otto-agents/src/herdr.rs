@@ -613,13 +613,29 @@ fn prompt_of(line: &str) -> Option<String> {
 }
 
 /// Whether a transcript line is the assistant finishing its turn.
+///
+/// Claude writes each block of its last message as an entry of its own, all
+/// marked `end_turn`, thinking first: only a block that is not thinking ends
+/// the turn, or the text written after it would be lost.
 fn ends_turn(line: &str) -> bool {
     serde_json::from_str::<Value>(line).is_ok_and(|entry| {
+        let said = entry
+            .pointer("/message/content")
+            .and_then(Value::as_array)
+            .is_some_and(|blocks| {
+                blocks.iter().any(|block| {
+                    !matches!(
+                        block.get("type").and_then(Value::as_str),
+                        Some("thinking" | "redacted_thinking")
+                    )
+                })
+            });
         entry.get("type").and_then(Value::as_str) == Some("assistant")
             && entry
                 .pointer("/message/stop_reason")
                 .and_then(Value::as_str)
                 == Some("end_turn")
+            && said
     })
 }
 
@@ -1040,7 +1056,12 @@ mod tests {
     #[test]
     fn the_transcript_says_when_a_turn_ends() {
         assert!(ends_turn(
-            r#"{"type":"assistant","message":{"stop_reason":"end_turn","content":[]}}"#
+            r#"{"type":"assistant","message":{"stop_reason":"end_turn","content":[{"type":"text","text":"Done."}]}}"#
+        ));
+        // The thinking comes first, as an entry of its own, already marked
+        // as the end: the text is still to come.
+        assert!(!ends_turn(
+            r#"{"type":"assistant","message":{"stop_reason":"end_turn","content":[{"type":"thinking","thinking":""}]}}"#
         ));
         assert!(!ends_turn(
             r#"{"type":"assistant","message":{"stop_reason":"tool_use","content":[]}}"#
