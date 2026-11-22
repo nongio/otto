@@ -373,9 +373,12 @@ impl Backend for HerdrBackend {
                         }
                     }
                     let placement = place(space, &spec.cwd).await;
-                    let started = run(&session, &labels, &spec.cwd, placement.space, &argv).await;
-                    if let (Ok(_), Some(tab)) = (&started, &placement.first_tab) {
-                        close_tab(tab).await;
+                    let started =
+                        run(&session, &labels, &spec.cwd, placement.space.clone(), &argv).await;
+                    if let (Ok(_), Some(space), Some(tab)) =
+                        (&started, &placement.space, &placement.first_tab)
+                    {
+                        close_first_tab(space, tab).await;
                     }
                     match started {
                         Ok(terminal) => {
@@ -577,8 +580,35 @@ async fn new_space(name: &str, folder: &Path) -> Option<Placement> {
     })
 }
 
-/// Closes the shell tab a new space opened with.
-async fn close_tab(tab: &str) {
+/// Closes the shell tab the new space `space` opened with, once the session's
+/// own tab is in it: a space whose only tab closes, even for a moment, loses
+/// its name.
+async fn close_first_tab(space: &str, tab: &str) {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+    loop {
+        let layout = doc("herdr-app").await;
+        let tabs = layout
+            .as_ref()
+            .and_then(|layout| layout.pointer("/value/spaces"))
+            .and_then(Value::as_array)
+            .and_then(|spaces| {
+                spaces
+                    .iter()
+                    .find(|each| each.get("id").and_then(Value::as_str) == Some(space))
+            })
+            .and_then(|space| space.get("tabs"))
+            .and_then(Value::as_array)
+            .map_or(0, Vec::len);
+        if tabs > 1 {
+            break;
+        }
+        if tokio::time::Instant::now() >= deadline {
+            // The shell tab stays rather than the space losing its name.
+            tracing::warn!(%space, "the session's tab did not show up; keeping the shell tab");
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
     let _ = Command::new("herdr-app")
         .args(["do", "tab.close", "--id", tab, "--confirmed", "true"])
         .stdout(Stdio::null())
@@ -624,9 +654,25 @@ async fn doc(name: &str) -> Option<Value> {
 }
 
 /// Shows `session`'s running terminal in herdr-app, in its space and tab.
-pub async fn show(session: &str) -> anyhow::Result<()> {
-    let Some(terminal) = find(session).await else {
-        anyhow::bail!("no running herdr terminal has the session {session}");
+/// A session not running, its space closed say, is opened through the
+/// service at `url` first, which starts it again.
+pub async fn show(session: &str, url: &str) -> anyhow::Result<()> {
+    let terminal = match find(session).await {
+        Some(terminal) => terminal,
+        None => {
+            let _open = crate::cli::open_by_agent_session(url, session).await?;
+            let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+            loop {
+                if let Some(terminal) = find(session).await {
+                    break terminal;
+                }
+                anyhow::ensure!(
+                    tokio::time::Instant::now() < deadline,
+                    "the session {session} did not start again"
+                );
+                tokio::time::sleep(Duration::from_millis(250)).await;
+            }
+        }
     };
     // With its window closed, herdr-app is opened first: it takes commands
     // once its window is up.

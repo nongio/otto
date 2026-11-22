@@ -127,6 +127,35 @@ pub async fn show_session(url: &str, session: Option<&str>, follow: bool) -> any
     Ok(())
 }
 
+/// Opens the chat of the session whose agent session is `agent_session`, as
+/// Ask does, so the service starts its agent if it is not running. The
+/// returned client holds the chat open until it is dropped.
+pub async fn open_by_agent_session(url: &str, agent_session: &str) -> anyhow::Result<Client> {
+    let client = connect(url).await?;
+    for summary in fetch_sessions(&client).await? {
+        let resource = summary.resource.clone();
+        let (subscribed, _events) = client.subscribe(resource.clone()).await?;
+        let Some(SnapshotState::Session(state)) = subscribed.snapshot.map(|s| s.state) else {
+            continue;
+        };
+        let theirs = state
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.get("otto"))
+            .and_then(|otto| otto.pointer("/terminal/session"))
+            .and_then(|session| session.as_str())
+            == Some(agent_session);
+        if !theirs {
+            let _ = client.unsubscribe(resource).await;
+            continue;
+        }
+        let chat_uri = state.default_chat.context("the session has no chat")?;
+        client.subscribe(chat_uri).await?;
+        return Ok(client);
+    }
+    bail!("no session has the agent session {agent_session}")
+}
+
 /// `otto-agents new`: creates a session with `agent` in `cwd` and enters it
 /// in this terminal, in the agent's own interface. The session is the
 /// desktop's — it shows up in Ask and in the session list — and the terminal
