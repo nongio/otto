@@ -1,7 +1,7 @@
 # 0016: herdr as the session manager
 
-**Status:** In progress. A prototype runs behind `otto-agents serve --herdr`:
-a herdr backend inside the AHP service, beside the ACP backend
+**Status:** In progress. herdr runs the sessions when it is installed: a
+herdr backend inside the AHP service, beside the ACP backend
 ([0003](0003-acp-agent-backend.md)). Ask, the launcher and every other AHP
 client work with it unchanged.
 
@@ -58,7 +58,7 @@ The backend is `src/herdr.rs`. It runs Claude Code, pi and opencode
   started by hand in herdr is taken up as well: its session id and folder come
   from `~/.claude/sessions/<pid>.json`, and its terminal is labelled as Otto's
   from then on. When that Claude quits and leaves its shell, the labels go.
-- **Its own store.** `serve --herdr` keeps its sessions in
+- **Its own store.** Under herdr the service keeps its sessions in
   `$XDG_STATE_HOME/otto-agents/herdr-sessions` unless `--state-dir` says
   otherwise, apart from the ACP service's. A stored session herdr no longer
   has is hidden, not deleted.
@@ -101,10 +101,17 @@ The backend is `src/herdr.rs`. It runs Claude Code, pi and opencode
 
 ## Configuration
 
-An agent in `agents.toml` with a `space` is offered under `--herdr`;
-`space = ""` offers it with spaces named after their folders. The default
-agent, which an agent with `id = "claude"` replaces, comes from the
-environment while this is a prototype:
+`backend` in `agents.toml` picks what runs the sessions: `"herdr"` or
+`"acp"`. Unset, it is herdr when `hc` is on `PATH`, else ACP. Settings ›
+Agents › Sessions run in sets it; `serve --herdr` and `serve --acp` override
+it.
+
+Under herdr, every agent whose command runs Claude Code, pi or opencode
+(directly, or as the ACP adapter `npx` starts) is offered; others, such as
+Gemini or Codex, are left out. `space` names the herdr-app space made for an
+agent's sessions; unset, it is named after the folder. The default agent,
+which an agent with `id = "claude"` replaces, comes from the environment
+while this is a prototype:
 
 | Variable | What it sets |
 |---|---|
@@ -132,8 +139,8 @@ While the call waits, the TUI shows a running tool and herdr reports
 
 ## Left to do
 
-- Retire nothing yet: ACP stays the default backend until herdr covers Studio
-  and the clients of `otto-agents acp`.
+- Retire the ACP backend once herdr covers Studio and the clients of
+  `otto-agents acp`, and herdr-core is packaged.
 - The `ask` server and the permission hook as `otto-agents` commands, in
   place of the external scripts.
 - The harnesses below.
@@ -145,8 +152,6 @@ While the call waits, the TUI shows a running tool and herdr reports
   tool (`otto.permission.answer`), or raise a fake `otto.permission` or
   `otto.ask` that Otto shows. Acceptable on one person's machine; a nonce only
   Otto knows would close it.
-- `space` doubles as the switch that offers an agent under `--herdr`, so
-  `space = ""` exists only to turn an agent on.
 - `OTTO_HERDR_ASK_MCP` and `OTTO_HERDR_PERMISSION_HOOK` are split on
   whitespace: a path with a space breaks them.
 - Startup asks `hc` synchronously, once per stored session, whether herdr

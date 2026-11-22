@@ -41,21 +41,44 @@ enum Harness {
 }
 
 impl Harness {
-    /// From an agent's `command` in `agents.toml`: `pi` (or `pi-acp`, the
-    /// same agent over ACP) is pi, `opencode` opencode, anything else Claude
-    /// Code.
-    fn of(command: &str) -> Self {
-        let name = Path::new(command)
+    /// From a program: `pi` (or `pi-acp`, the same agent over ACP) is pi,
+    /// `opencode` opencode, `claude` (or its ACP adapter, such as
+    /// `@agentclientprotocol/claude-agent-acp@latest`) Claude Code. `None`
+    /// for any other program.
+    fn of(program: &str) -> Option<Self> {
+        let name = Path::new(program)
             .file_name()
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_default();
+        let name = name.split('@').next().unwrap_or_default();
         if name == "pi" || name.starts_with("pi-") {
-            Self::Pi
+            Some(Self::Pi)
         } else if name == "opencode" {
-            Self::OpenCode
+            Some(Self::OpenCode)
+        } else if name == "claude"
+            || name.starts_with("claude-agent")
+            || name.starts_with("claude-code")
+        {
+            Some(Self::Claude)
         } else {
-            Self::Claude
+            None
         }
+    }
+
+    /// An `agents.toml` agent's harness, from its command, or the package a
+    /// runner such as `npx` starts. `None` for an agent herdr does not run,
+    /// such as Gemini.
+    fn of_agent(command: &str, args: &[String]) -> Option<Self> {
+        const RUNNERS: [&str; 4] = ["npx", "bunx", "pnpx", "uvx"];
+        let program = Path::new(command)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default();
+        if RUNNERS.contains(&program) {
+            let package = args.iter().find(|arg| !arg.starts_with('-'))?;
+            return Self::of(package);
+        }
+        Self::of(command)
     }
 
     /// Its `otto.harness` label.
@@ -118,8 +141,8 @@ fn not_started(started: &Started, session: &str) {
 }
 
 impl HerdrBackend {
-    /// The agents are `agents.toml`'s that name a herdr `space`, after the
-    /// environment's own (while this is a prototype): `OTTO_HERDR_SPACE` (the
+    /// The agents are `agents.toml`'s that run Claude Code, pi or opencode,
+    /// after the environment's own (while this is a prototype): `OTTO_HERDR_SPACE` (the
     /// name of a space made for it), `OTTO_HERDR_MODEL` and `OTTO_HERDR_AGENT`, the plugin agent it runs
     /// as (`otto` unless set, `none` for plain Claude). An agent of the file with
     /// that one's id, `claude`, takes its place. Also from the environment:
@@ -147,9 +170,13 @@ impl HerdrBackend {
             folder: None,
             colour: None,
         }];
-        for agent in config.agents.iter().filter(|agent| agent.space.is_some()) {
+        for agent in &config.agents {
+            let Some(harness) = Harness::of_agent(&agent.command, &agent.args) else {
+                tracing::info!(id = %agent.id, "not offered: herdr runs Claude Code, pi and opencode");
+                continue;
+            };
             let herdr = HerdrAgent {
-                harness: Harness::of(&agent.command),
+                harness,
                 id: agent.id.clone(),
                 name: agent.name.clone(),
                 description: agent.description.clone(),
@@ -444,6 +471,11 @@ impl Backend for HerdrBackend {
 
 /// `hc`, with this process's own hc identity removed: sends from inside an hc
 /// terminal are wrapped in `<hc from=…>` tags, sends from outside arrive plain.
+/// Whether herdr is installed: `hc`, herdr-core's command, is on `PATH`.
+pub fn installed() -> bool {
+    crate::cli::which("hc").is_some()
+}
+
 fn hc() -> Command {
     let mut command = Command::new("hc");
     command
@@ -963,7 +995,7 @@ fn provider_is_pi(item: &Value) -> bool {
         || item
             .pointer("/argv/0")
             .and_then(Value::as_str)
-            .is_some_and(|program| Harness::of(program) == Harness::Pi)
+            .is_some_and(|program| Harness::of(program) == Some(Harness::Pi))
 }
 
 /// The session of the Claude Code in front in a terminal, and its folder:
@@ -2346,13 +2378,42 @@ mod tests {
 
     #[test]
     fn pi_is_told_by_its_command() {
-        assert_eq!(Harness::of("pi"), Harness::Pi);
-        assert_eq!(Harness::of("/usr/bin/pi-acp"), Harness::Pi);
-        assert_eq!(Harness::of("claude"), Harness::Claude);
-        assert_eq!(Harness::of("pipx"), Harness::Claude);
+        assert_eq!(Harness::of("pi"), Some(Harness::Pi));
+        assert_eq!(Harness::of("/usr/bin/pi-acp"), Some(Harness::Pi));
+        assert_eq!(Harness::of("claude"), Some(Harness::Claude));
+        assert_eq!(Harness::of("pipx"), None);
         assert_eq!(
             Harness::of("/home/me/.local/bin/opencode"),
-            Harness::OpenCode
+            Some(Harness::OpenCode)
+        );
+    }
+
+    #[test]
+    fn an_agent_herdr_cannot_run_is_left_out() {
+        let args = |words: &[&str]| {
+            words
+                .iter()
+                .map(|word| word.to_string())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            Harness::of_agent(
+                "npx",
+                &args(&["-y", "@agentclientprotocol/claude-agent-acp@latest"])
+            ),
+            Some(Harness::Claude)
+        );
+        assert_eq!(
+            Harness::of_agent("opencode", &args(&["acp"])),
+            Some(Harness::OpenCode)
+        );
+        assert_eq!(Harness::of_agent("gemini", &args(&["--acp"])), None);
+        assert_eq!(
+            Harness::of_agent(
+                "npx",
+                &args(&["-y", "@agentclientprotocol/codex-acp@latest"])
+            ),
+            None
         );
     }
 

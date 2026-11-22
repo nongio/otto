@@ -97,11 +97,10 @@ pub struct AgentConfig {
     /// leaves the client to choose; Ask then uses a scratch folder of its own.
     #[serde(default, deserialize_with = "tilde_path")]
     pub folder: Option<PathBuf>,
-    /// When the service runs sessions in herdr (`serve --herdr`, plan 0016),
-    /// the name a herdr space gets when one is made for this agent's sessions;
-    /// empty names it after the folder.
-    /// A session opens in the space whose folder is its own, made when there
-    /// is none. There, every agent with a space is offered.
+    /// When the service runs sessions in herdr (`backend`, plan 0016), the
+    /// name a herdr space gets when one is made for this agent's sessions;
+    /// unset or empty names it after the folder. A session opens in the space
+    /// whose folder is its own, made when there is none.
     #[serde(default)]
     pub space: Option<String>,
 }
@@ -245,12 +244,35 @@ pub struct Config {
     /// stopped, as `agents.toml` sets it. Read it through
     /// [`Config::idle_timeout`].
     pub idle_timeout: Option<u64>,
+    /// What runs the sessions, as `agents.toml` sets it. Unset, herdr when it
+    /// is installed, else ACP: read it through [`Config::backend`].
+    pub backend: Option<Backend>,
+}
+
+/// What runs the sessions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Backend {
+    /// Each session is the agent's own interface in a herdr terminal
+    /// (plan 0016): Claude Code, pi and opencode.
+    Herdr,
+    /// The service runs each agent over ACP itself.
+    Acp,
 }
 
 /// How long an agent stays up with nothing to do when `idle_timeout` is unset.
 pub const DEFAULT_IDLE_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
 impl Config {
+    /// What runs the sessions: the one set, else herdr when `installed`.
+    pub fn backend(&self, installed: bool) -> Backend {
+        match self.backend {
+            Some(backend) => backend,
+            None if installed => Backend::Herdr,
+            None => Backend::Acp,
+        }
+    }
+
     /// How long a session's agent may sit with nothing to do before it is
     /// stopped. `None` keeps agents running, which `idle_timeout = 0` asks for.
     pub fn idle_timeout(&self) -> Option<Duration> {
@@ -437,6 +459,8 @@ struct ConfigFile {
     default_agent: Option<String>,
     #[serde(default)]
     idle_timeout: Option<u64>,
+    #[serde(default)]
+    backend: Option<Backend>,
     /// A `[bridge]` table is accepted and ignored, so a configuration that
     /// still has one loads.
     #[serde(default, rename = "bridge")]
@@ -466,6 +490,9 @@ pub fn load(explicit: Option<&Path>) -> anyhow::Result<Config> {
                 }
                 if file.idle_timeout.is_some() {
                     config.idle_timeout = file.idle_timeout;
+                }
+                if file.backend.is_some() {
+                    config.backend = file.backend;
                 }
             }
         }
@@ -504,6 +531,7 @@ fn parse(text: &str) -> anyhow::Result<Config> {
         terminal: file.terminal,
         default_agent: file.default_agent,
         idle_timeout: file.idle_timeout,
+        backend: file.backend,
     })
 }
 
@@ -516,6 +544,16 @@ fn default_paths() -> Vec<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn herdr_runs_the_sessions_when_installed_unless_set() {
+        let backend = |text: &str, installed| parse(text).unwrap().backend(installed);
+        assert_eq!(backend("", true), Backend::Herdr);
+        assert_eq!(backend("", false), Backend::Acp);
+        assert_eq!(backend("backend = \"acp\"", true), Backend::Acp);
+        assert_eq!(backend("backend = \"herdr\"", false), Backend::Herdr);
+        assert!(parse("backend = \"tmux\"").is_err());
+    }
 
     #[test]
     fn an_old_bridge_table_is_ignored() {

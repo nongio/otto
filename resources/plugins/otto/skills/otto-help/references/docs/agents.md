@@ -163,6 +163,14 @@ is not, and shows as its name instead.
 Whichever you pick, `default_agent` in `agents.toml` says which one a request
 goes to when you do not choose.
 
+## Where sessions run
+
+When [herdr](https://herdr.dev) is installed, each session runs in it as the
+agent's own terminal: Ask shows the conversation, and Ctrl+O opens the
+terminal in herdr. herdr runs Claude Code, pi and opencode, so other agents
+are not offered there. Settings › Agents › Sessions run in picks herdr or Otto
+by hand; in `agents.toml` that is `backend = "herdr"` or `backend = "acp"`.
+
 ## Add an agent of your own
 
 The four agents above are the ones Otto is set up with, not the only ones it

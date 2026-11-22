@@ -175,9 +175,13 @@ struct ServeArgs {
     #[arg(long)]
     echo: bool,
     /// Run sessions as agents' own terminals in herdr: Claude Code, pi or
-    /// opencode (plan 0016 prototype).
-    #[arg(long, conflicts_with = "echo")]
+    /// opencode (plan 0016). The default when herdr is installed, unless
+    /// `agents.toml` sets `backend`.
+    #[arg(long, conflicts_with_all = ["echo", "acp"])]
     herdr: bool,
+    /// Run agents over ACP in the service, whatever `agents.toml` says.
+    #[arg(long, conflicts_with = "echo")]
+    acp: bool,
     /// Where sessions are kept between runs. Defaults to
     /// `$XDG_STATE_HOME/otto-agents/sessions`; with `--echo`, sessions are only
     /// kept when this is given.
@@ -229,16 +233,26 @@ async fn main() -> anyhow::Result<()> {
 }
 
 async fn serve(args: ServeArgs) -> anyhow::Result<()> {
+    let config = match args.echo {
+        true => None,
+        false => Some(config::load(args.config.as_deref())?),
+    };
+    let herdr = config.as_ref().is_some_and(|config| {
+        args.herdr
+            || !args.acp
+                && config.backend(otto_agents::herdr::installed()) == config::Backend::Herdr
+    });
     let (backend, idle_timeout): (Arc<dyn Backend>, _) = if args.echo {
         (Arc::new(EchoBackend), Some(config::DEFAULT_IDLE_TIMEOUT))
-    } else if args.herdr {
-        let config = config::load(args.config.as_deref())?;
+    } else if herdr {
+        tracing::info!("sessions run in herdr");
+        let config = config.expect("a configuration");
         (
             Arc::new(otto_agents::herdr::HerdrBackend::new(&config)),
             None,
         )
     } else {
-        let config = config::load(args.config.as_deref())?;
+        let config = config.expect("a configuration");
         for agent in &config.agents {
             tracing::info!(id = %agent.id, command = %agent.command, permissions = ?agent.permissions, "agent configured");
         }
@@ -255,7 +269,7 @@ async fn serve(args: ServeArgs) -> anyhow::Result<()> {
         None if args.echo => None,
         // herdr sessions are herdr's: they are kept apart from the ACP
         // service's, which the herdr backend does not have.
-        None if args.herdr => Store::herdr_dir(),
+        None if herdr => Store::herdr_dir(),
         None => Store::default_dir(),
     };
     let store = state_dir.map(|dir| {

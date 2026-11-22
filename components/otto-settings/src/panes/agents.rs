@@ -46,6 +46,13 @@ const COLOURS: [&str; 12] = [
 /// The pop-up identifier of the default-agent row.
 const DEFAULT_ID: &str = "agents.default";
 
+/// The pop-up identifier of the row that picks what runs the sessions.
+const BACKEND_ID: &str = "agents.backend";
+
+/// What `backend` in `agents.toml` takes, in the order the pop-up offers
+/// them; empty leaves it unset, which is herdr when it is installed.
+const BACKENDS: [&str; 3] = ["", "herdr", "acp"];
+
 /// The unit Apply restarts.
 const SERVICE: &str = "otto-agents.service";
 
@@ -140,6 +147,8 @@ struct Config {
     agents: Vec<Agent>,
     /// An agent id, empty when unset — the service then takes the first.
     default_agent: String,
+    /// `backend`: one of [`BACKENDS`].
+    backend: String,
 }
 
 /// What was read, and from where.
@@ -161,6 +170,8 @@ struct State {
     rename_request: Option<usize>,
     /// The agent files the plugins hold, found when the files are read.
     instructions: Vec<Instructions>,
+    /// Whether herdr is installed, which Automatic runs the sessions in.
+    herdr_installed: bool,
 }
 
 fn state() -> &'static RwLock<State> {
@@ -203,7 +214,14 @@ fn load() -> State {
     state.draft = config;
     state.source = source;
     state.instructions = instructions::discover();
+    state.herdr_installed = herdr_installed();
     state
+}
+
+/// Whether `hc`, herdr's command, is on `PATH`: what the service checks.
+fn herdr_installed() -> bool {
+    std::env::var_os("PATH")
+        .is_some_and(|paths| std::env::split_paths(&paths).any(|dir| dir.join("hc").is_file()))
 }
 
 /// The configuration a list of files adds up to, and which of them the agent
@@ -223,6 +241,9 @@ fn merge(files: &[(PathBuf, DocumentMut)]) -> (Config, Option<PathBuf>) {
         }
         if let Some(default) = doc.get("default_agent").and_then(Item::as_str) {
             config.default_agent = default.to_string();
+        }
+        if let Some(backend) = doc.get("backend").and_then(Item::as_str) {
+            config.backend = backend.to_string();
         }
     }
     (config, source)
@@ -245,6 +266,9 @@ fn render(
 
     if draft.default_agent != saved.default_agent {
         set_or_remove(doc.as_table_mut(), "default_agent", &draft.default_agent);
+    }
+    if draft.backend != saved.backend {
+        set_or_remove(doc.as_table_mut(), "backend", &draft.backend);
     }
 
     if draft.agents != saved.agents {
@@ -682,7 +706,7 @@ fn parse_id(id: &str) -> Option<(usize, Field)> {
 /// Whether a row identifier belongs to this pane, whose rows `main.rs` routes
 /// here rather than onto the bus.
 pub fn owns(id: &str) -> bool {
-    id == DEFAULT_ID || parse_id(id).is_some()
+    id == DEFAULT_ID || id == BACKEND_ID || parse_id(id).is_some()
 }
 
 /// The instructions Otto ships, listed straight after Default.
@@ -704,6 +728,31 @@ fn instructions_label(name: &str) -> String {
     } else {
         name.to_string()
     }
+}
+
+/// What runs the sessions, as the pop-up names it.
+fn backend_label(backend: &str) -> &'static str {
+    match backend {
+        "herdr" => otto_kit::t!("settings-agents-backend-herdr"),
+        "acp" => otto_kit::t!("settings-agents-backend-acp"),
+        _ => otto_kit::t!("settings-agents-backend-auto"),
+    }
+}
+
+/// The row that picks what runs the sessions.
+fn backend_row(draft: &Config, herdr_installed: bool) -> Row {
+    let detail = match (draft.backend.as_str(), herdr_installed) {
+        ("herdr", _) => otto_kit::t!("settings-agents-backend-herdr-detail"),
+        ("acp", _) => otto_kit::t!("settings-agents-backend-acp-detail"),
+        (_, true) => otto_kit::t!("settings-agents-backend-auto-herdr"),
+        (_, false) => otto_kit::t!("settings-agents-backend-auto-acp"),
+    };
+    row(
+        otto_kit::t!("settings-agents-backend"),
+        Control::Select(backend_label(&draft.backend).to_string()),
+        BACKEND_ID,
+    )
+    .detail(detail)
 }
 
 fn permission_label(policy: &str) -> &'static str {
@@ -742,6 +791,14 @@ pub fn menu_choices(id: &str) -> Option<Vec<String>> {
     if id == DEFAULT_ID {
         let state = state().read().unwrap();
         return Some(state.draft.agents.iter().map(|a| a.name.clone()).collect());
+    }
+    if id == BACKEND_ID {
+        return Some(
+            BACKENDS
+                .iter()
+                .map(|b| backend_label(b).to_string())
+                .collect(),
+        );
     }
     match parse_id(id)? {
         (_, Field::Permissions) => Some(
@@ -784,6 +841,12 @@ pub fn choose(id: &str, label: &str) {
     if id == DEFAULT_ID {
         if let Some(agent) = state.draft.agents.iter().find(|a| a.name == label) {
             state.draft.default_agent = agent.id.clone();
+        }
+        return;
+    }
+    if id == BACKEND_ID {
+        if let Some(backend) = BACKENDS.iter().find(|b| backend_label(b) == label) {
+            state.draft.backend = backend.to_string();
         }
         return;
     }
@@ -909,7 +972,8 @@ pub const MAX_AGENTS: usize = 32;
 
 /// Every pop-up identifier the pane can ever show, for the menu pool.
 pub fn slot_ids() -> Vec<&'static str> {
-    std::iter::once(DEFAULT_ID)
+    [DEFAULT_ID, BACKEND_ID]
+        .into_iter()
         .chain((0..MAX_AGENTS).flat_map(|index| {
             [
                 Field::Harness,
@@ -1258,10 +1322,16 @@ pub fn build() -> Pane {
             icon: "agent",
             intro,
             groups: vec![untitled(
-                [service_row(), none, changes_row, file_row]
-                    .into_iter()
-                    .chain(add_row)
-                    .collect(),
+                [
+                    service_row(),
+                    backend_row(draft, state.herdr_installed),
+                    none,
+                    changes_row,
+                    file_row,
+                ]
+                .into_iter()
+                .chain(add_row)
+                .collect(),
             )],
         };
     }
@@ -1275,6 +1345,7 @@ pub fn build() -> Pane {
         .unwrap_or_default();
     let mut groups = vec![untitled(vec![
         service_row(),
+        backend_row(draft, state.herdr_installed),
         row(
             otto_kit::t!("settings-agents-default"),
             Control::Select(default_name),
@@ -1439,6 +1510,7 @@ color = "teal"
         let saved = parsed(USER);
         let mut draft = saved.clone();
         draft.default_agent = "pi".into();
+        draft.backend = "acp".into();
         draft.agents[0].model = String::new();
         draft.agents[0].name = "Helper".into();
         draft.agents[1].folder = "~/dev".into();
@@ -1447,6 +1519,7 @@ color = "teal"
         let text = render(USER, None, &saved, &draft, "/home/u").unwrap();
         assert!(text.contains("# Agents that otto-agents runs."));
         assert!(text.contains("default_agent = \"pi\""));
+        assert!(text.contains("backend = \"acp\""));
         assert!(!text.contains("model = \"haiku\""));
         assert!(text.contains("name = \"Helper\""));
         assert!(text.contains("folder = \"~/dev\""));

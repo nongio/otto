@@ -599,6 +599,14 @@ settings-search-reindex-failed = Couldn't reach the indexer. Is it running?
 settings-agents-intro = The agents Ask can hand a request to. Permissions decide what happens when one asks to do something, and its folder is everything it can read.
 settings-agents-default = Default agent
 settings-agents-default-detail = Who a request goes to when you don't pick one
+settings-agents-backend = Sessions run in
+settings-agents-backend-auto-herdr = In herdr, since it's installed
+settings-agents-backend-auto-acp = In Otto, since herdr isn't installed
+settings-agents-backend-herdr-detail = Each agent in its own terminal. Claude Code, pi and opencode only
+settings-agents-backend-acp-detail = Otto runs every agent itself
+settings-agents-backend-auto = Automatic
+settings-agents-backend-herdr = herdr
+settings-agents-backend-acp = Otto
 # The row holding the Revert and Apply buttons.
 settings-agents-changes = Changes
 settings-agents-revert = Revert
