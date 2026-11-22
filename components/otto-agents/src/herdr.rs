@@ -229,6 +229,8 @@ enum Seen {
     State(String),
     Ask(Option<Value>),
     Text(String),
+    /// The transcript says the agent finished its turn.
+    Ended,
     Gone,
 }
 
@@ -252,6 +254,9 @@ async fn drive(
     let mut held: Vec<String> = Vec::new();
     let patience = tokio::time::sleep(Duration::from_secs(20));
     tokio::pin!(patience);
+    // herdr says `done` a little before the transcript has the last words:
+    // the transcript ends the turn, herdr's word only after a grace period.
+    let mut fallback: Option<tokio::time::Instant> = None;
     let (answer_tx, mut answers) =
         mpsc::unbounded_channel::<(String, Option<InputAnswer>, Value)>();
 
@@ -281,6 +286,12 @@ async fn drive(
                 // The session is closed in Otto; herdr keeps the terminal.
                 None => break,
             },
+            () = async { tokio::time::sleep_until(fallback.unwrap_or_else(tokio::time::Instant::now)).await }, if fallback.is_some() => {
+                fallback = None;
+                if asked.is_none() {
+                    end(&mut turn, &events);
+                }
+            }
             () = &mut patience, if !ready => {
                 ready = true;
                 for prompt in held.drain(..) {
@@ -300,13 +311,15 @@ async fn drive(
                     if state == "working" {
                         worked = true;
                     } else if worked && matches!(state.as_str(), "done" | "idle") && asked.is_none() {
-                        if let Some(turn_id) = turn.take() {
-                            let _ = events.send(SessionEvent::TurnEnded {
-                                turn_id,
-                                outcome: TurnOutcome::Complete,
-                            });
-                        }
+                        fallback = Some(tokio::time::Instant::now() + Duration::from_secs(3));
                         worked = false;
+                    }
+                }
+                Seen::Ended => {
+                    if asked.is_none() {
+                        fallback = None;
+                        worked = false;
+                        end(&mut turn, &events);
                     }
                 }
                 Seen::Text(text) => {
@@ -372,6 +385,26 @@ async fn drive(
     }
     watch_events.abort();
     watch_transcript.abort();
+}
+
+fn end(turn: &mut Option<String>, events: &mpsc::UnboundedSender<SessionEvent>) {
+    if let Some(turn_id) = turn.take() {
+        let _ = events.send(SessionEvent::TurnEnded {
+            turn_id,
+            outcome: TurnOutcome::Complete,
+        });
+    }
+}
+
+/// Whether a transcript line is the assistant finishing its turn.
+fn ends_turn(line: &str) -> bool {
+    serde_json::from_str::<Value>(line).is_ok_and(|entry| {
+        entry.get("type").and_then(Value::as_str) == Some("assistant")
+            && entry
+                .pointer("/message/stop_reason")
+                .and_then(Value::as_str)
+                == Some("end_turn")
+    })
 }
 
 async fn send(terminal: &str, prompt: &str) {
@@ -474,6 +507,9 @@ async fn follow_transcript(path: PathBuf, seen: mpsc::UnboundedSender<Seen>) {
                 if seen.send(Seen::Text(text)).is_err() {
                     return;
                 }
+            }
+            if ends_turn(&line) && seen.send(Seen::Ended).is_err() {
+                return;
             }
         }
     }
@@ -587,6 +623,17 @@ mod tests {
     fn transcripts_live_under_the_folder_with_dashes() {
         let path = transcript_path(Path::new("/home/me/dev/otto/.claude/x"), "abc");
         assert!(path.ends_with("projects/-home-me-dev-otto--claude-x/abc.jsonl"));
+    }
+
+    #[test]
+    fn the_transcript_says_when_a_turn_ends() {
+        assert!(ends_turn(
+            r#"{"type":"assistant","message":{"stop_reason":"end_turn","content":[]}}"#
+        ));
+        assert!(!ends_turn(
+            r#"{"type":"assistant","message":{"stop_reason":"tool_use","content":[]}}"#
+        ));
+        assert!(!ends_turn(r#"{"type":"user","message":{"content":"hi"}}"#));
     }
 
     #[test]
