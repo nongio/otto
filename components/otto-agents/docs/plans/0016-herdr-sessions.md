@@ -93,6 +93,12 @@ A service in between would only copy herdr's state.
   is watching that session.
 - **Prompts are typed in.** A prompt from Ask goes to the terminal with
   `hc send`. It is the one place this design drives the screen.
+- **Files travel as paths.** Attachments become `@/path` mentions in the
+  prompt, and the agent reads them itself, pictures included. Something with
+  no path (a pasted picture, a screenshot) is saved under
+  `$XDG_RUNTIME_DIR/otto/sessions/<id>/` first, a folder the session is allowed
+  to read without asking. A session on another machine gets the file with
+  `hc put`, which says where it landed. Unlike ACP, nothing is sent inline.
 
 ## The `ask` tool
 
