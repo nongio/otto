@@ -41,8 +41,8 @@ struct HerdrAgent {
     /// tab of its own: a space's name or id.
     space: Option<String>,
     model: Option<String>,
-    /// Claude's `--agent`, such as `otto:otto`.
-    run_as: Option<String>,
+    /// The plugin agent its sessions run as: its prompt, tools and skills.
+    profile: Option<skills::AgentFile>,
     folder: Option<PathBuf>,
     colour: Option<&'static str>,
 }
@@ -62,36 +62,40 @@ pub struct HerdrBackend {
 impl HerdrBackend {
     /// The agents are `agents.toml`'s that name a herdr `space`, after the
     /// environment's own (while this is a prototype): `OTTO_HERDR_SPACE`,
-    /// `OTTO_HERDR_MODEL` and `OTTO_HERDR_AGENT`. An agent of the file with
+    /// `OTTO_HERDR_MODEL` and `OTTO_HERDR_AGENT`, the plugin agent it runs
+    /// as (`otto` unless set, `none` for plain Claude). An agent of the file with
     /// that one's id, `claude`, takes its place. Also from the environment:
     /// `OTTO_HERDR_ASK_MCP` and `OTTO_HERDR_PERMISSION_HOOK` (command lines),
     /// and `OTTO_HERDR_PERMISSION_MODE`.
     pub fn new(config: &crate::config::Config) -> Self {
         let var = |name: &str| std::env::var(name).ok().filter(|value| !value.is_empty());
         let plugins = skills::discover();
+        let profile = |name: &str| {
+            let name = name.rsplit(':').next().unwrap_or(name);
+            let found = skills::agent_file(&plugins, name).map(|(_, agent)| agent.clone());
+            if found.is_none() && name != "none" {
+                tracing::warn!(agent = name, "no plugin agent by that name");
+            }
+            found
+        };
         let mut agents = vec![HerdrAgent {
             id: PROVIDER.to_owned(),
             name: "Otto".to_owned(),
             description: "Claude Code in a herdr terminal".to_owned(),
             space: var("OTTO_HERDR_SPACE"),
             model: var("OTTO_HERDR_MODEL"),
-            run_as: var("OTTO_HERDR_AGENT"),
+            profile: profile(&var("OTTO_HERDR_AGENT").unwrap_or_else(|| "otto".to_owned())),
             folder: None,
             colour: None,
         }];
         for agent in config.agents.iter().filter(|agent| agent.space.is_some()) {
-            let run_as = agent
-                .agent
-                .as_deref()
-                .and_then(|name| skills::agent_file(&plugins, name))
-                .map(|(run_as, _)| run_as);
             let herdr = HerdrAgent {
                 id: agent.id.clone(),
                 name: agent.name.clone(),
                 description: agent.description.clone(),
                 space: agent.space.clone(),
                 model: agent.model.clone(),
-                run_as,
+                profile: agent.agent.as_deref().and_then(profile),
                 folder: agent.folder.clone(),
                 colour: agent.colour.map(|colour| colour.name()),
             };
@@ -153,10 +157,16 @@ impl HerdrBackend {
             ] } });
             argv.extend(["--settings".to_owned(), settings.to_string()]);
         }
-        argv.extend(skills::claude_cli_args(
-            &skills::discover(),
-            agent.run_as.as_deref(),
-        ));
+        argv.extend(skills::claude_cli_args(&skills::discover(), None));
+        if let Some(profile) = &agent.profile {
+            let definition = agent_definition(profile, !self.ask_mcp.is_empty());
+            argv.extend([
+                "--agents".to_owned(),
+                json!({ profile.name.clone(): definition }).to_string(),
+                "--agent".to_owned(),
+                profile.name.clone(),
+            ]);
+        }
         argv
     }
 }
@@ -288,6 +298,32 @@ fn hc() -> Command {
 async fn hc_json(args: &[&str]) -> Option<Value> {
     let output = hc().args(args).arg("--json").output().await.ok()?;
     serde_json::from_slice(&output.stdout).ok()
+}
+
+/// A plugin agent as Claude's `--agents` takes one. The plugin's own copy
+/// would do, but for its tools: with the `ask` server, its questions go
+/// through `mcp__otto__ask`, which an agent limited to its own list of tools
+/// could not call.
+fn agent_definition(profile: &skills::AgentFile, ask: bool) -> Value {
+    let mut definition = json!({
+        "description": profile.description,
+        "prompt": profile.body,
+    });
+    if !profile.tools.is_empty() {
+        let mut tools: Vec<&str> = profile.tools.iter().map(String::as_str).collect();
+        if ask {
+            tools.retain(|tool| *tool != "AskUserQuestion");
+            tools.push("mcp__otto__ask");
+        }
+        definition["tools"] = json!(tools);
+    }
+    if !profile.skills.is_empty() {
+        definition["skills"] = json!(profile.skills);
+    }
+    if let Some(model) = &profile.model {
+        definition["model"] = json!(model);
+    }
+    definition
 }
 
 /// The id of the herdr-app space named `space`, by its id, its name, or for
@@ -1292,6 +1328,26 @@ mod tests {
         );
         assert_eq!(turns[1].prompt, "thanks");
         assert!(turns[1].parts.is_empty());
+    }
+
+    #[test]
+    fn a_profile_asks_through_otto() {
+        let profile = skills::AgentFile {
+            name: "otto".into(),
+            description: "Otto's own helper".into(),
+            tools: vec!["Read".into(), "AskUserQuestion".into()],
+            model: None,
+            skills: vec!["otto-help".into()],
+            session_only: false,
+            body: "You are Otto.".into(),
+            path: PathBuf::new(),
+        };
+        let definition = agent_definition(&profile, true);
+        assert_eq!(definition["tools"], json!(["Read", "mcp__otto__ask"]));
+        assert_eq!(definition["prompt"], "You are Otto.");
+        assert_eq!(definition["skills"], json!(["otto-help"]));
+        let plain = agent_definition(&profile, false);
+        assert_eq!(plain["tools"], json!(["Read", "AskUserQuestion"]));
     }
 
     #[test]
