@@ -72,6 +72,10 @@ A service in between would only copy herdr's state.
 - **herdr shows it where you work.** A session started from Otto carries
   `herdr.space` and `herdr.tab` labels, which is how herdr-app places a
   terminal in a workspace tab. Without them it runs but is listed nowhere.
+  The space is the agent's `space`: a name no space has is made
+  (`herdr-app do space.new`, its first shell tab closed), and with none set
+  or one gone by its id, the first space takes it. Ctrl+O gives a terminal
+  without a pane a tab (`terminal.keep`) before showing it.
 - **State comes from herdr, not the screen.** `hc events` gives
   `status {app, state, kind, msg}`: `working`, `idle`, `done`, `blocked`,
   `error`. Otto shows these as they are; it never reads the screen.

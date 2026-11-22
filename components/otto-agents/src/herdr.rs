@@ -351,19 +351,25 @@ impl Backend for HerdrBackend {
         tokio::spawn(async move {
             let terminal = match find(&session).await {
                 Some(terminal) => terminal,
-                None => match run(&session, &labels, &spec.cwd, space_id(space).await, &argv).await
-                {
-                    Ok(terminal) => {
-                        // One terminal per session: the finished ones of
-                        // earlier runs go once the new one is there.
-                        prune(&session, &terminal).await;
-                        terminal
+                None => {
+                    let placement = place(space, &spec.cwd).await;
+                    let started = run(&session, &labels, &spec.cwd, placement.space, &argv).await;
+                    if let (Ok(_), Some(tab)) = (&started, &placement.first_tab) {
+                        close_tab(tab).await;
                     }
-                    Err(error) => {
-                        let _ = events.send(SessionEvent::CreationFailed(error));
-                        return;
+                    match started {
+                        Ok(terminal) => {
+                            // One terminal per session: the finished ones of
+                            // earlier runs go once the new one is there.
+                            prune(&session, &terminal).await;
+                            terminal
+                        }
+                        Err(error) => {
+                            let _ = events.send(SessionEvent::CreationFailed(error));
+                            return;
+                        }
                     }
-                },
+                }
             };
             tracing::info!(%session, %terminal, "herdr session");
             let transcript = match harness {
@@ -442,25 +448,103 @@ fn agent_definition(profile: &skills::AgentFile, ask: bool) -> Value {
     definition
 }
 
-/// The id of the herdr-app space named `space`, by its id, its name, or for
-/// a space without one, the name of its folder, as herdr-app shows it. The
-/// spaces are in herdr-app's layout, a document herdr-core keeps. With no
-/// space set, or none answering to it, the first space. `None` only when
-/// herdr-app has no spaces.
-async fn space_id(space: Option<String>) -> Option<String> {
+/// Where a new terminal goes in herdr-app.
+#[derive(Debug, Default)]
+struct Placement {
+    /// The space's id; `None` only when herdr-app has no spaces to name.
+    space: Option<String>,
+    /// The shell tab herdr-app opens in a space it has just made, closed once
+    /// the session's own tab is there.
+    first_tab: Option<String>,
+}
+
+/// The herdr-app space named `space`, by its id, its name, or for a space
+/// without one, the name of its folder, as herdr-app shows it. The spaces are
+/// in herdr-app's layout, a document herdr-core keeps. A name no space has
+/// is made, starting in `folder`. With no space set, or one gone by its id,
+/// the first space.
+async fn place(space: Option<String>, folder: &Path) -> Placement {
+    // One session at a time, so two sessions of one agent make one space.
+    static PLACING: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+    let _placing = PLACING.lock().await;
     let wanted = space.unwrap_or_default();
     let layout = doc("herdr-app").await;
     let spaces = layout
         .as_ref()
         .and_then(|layout| layout.pointer("/value/spaces"))
-        .and_then(Value::as_array);
-    let spaces = spaces?;
-    find_space(spaces, &wanted).or_else(|| {
-        // A terminal in no space has no tab to be seen in: the first space
-        // takes it.
-        tracing::warn!(space = %wanted, "no herdr space by that name; using the first");
-        spaces.first()?.get("id")?.as_str().map(str::to_owned)
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    if let Some(space) = find_space(&spaces, &wanted) {
+        return Placement {
+            space: Some(space),
+            first_tab: None,
+        };
+    }
+    if !wanted.is_empty() && !is_space_id(&wanted) {
+        if let Some(made) = new_space(&wanted, folder).await {
+            return made;
+        }
+    }
+    // A terminal in no space has no tab to be seen in: the first space
+    // takes it.
+    tracing::warn!(space = %wanted, "no herdr space by that name; using the first");
+    Placement {
+        space: spaces
+            .first()
+            .and_then(|space| space.get("id"))
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+        first_tab: None,
+    }
+}
+
+/// Whether `space` is a space's id, such as `sp5321…`, rather than a name.
+fn is_space_id(space: &str) -> bool {
+    space.len() > 20
+        && space
+            .strip_prefix("sp")
+            .is_some_and(|rest| rest.chars().all(|c| c.is_ascii_hexdigit()))
+}
+
+/// Makes a space called `name`, without showing it. herdr-app makes spaces,
+/// so it has to be running.
+async fn new_space(name: &str, folder: &Path) -> Option<Placement> {
+    let output = Command::new("herdr-app")
+        .args([
+            "do",
+            "space.new",
+            "--name",
+            name,
+            "--focus",
+            "false",
+            "--folder",
+        ])
+        .arg(folder)
+        .stderr(Stdio::null())
+        .output()
+        .await
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let made: Value = serde_json::from_slice(&output.stdout).ok()?;
+    let text = |key: &str| made.get(key).and_then(Value::as_str).map(str::to_owned);
+    tracing::info!(space = %name, "made a herdr space");
+    Some(Placement {
+        space: Some(text("space")?),
+        first_tab: text("tab"),
     })
+}
+
+/// Closes the shell tab a new space opened with.
+async fn close_tab(tab: &str) {
+    let _ = Command::new("herdr-app")
+        .args(["do", "tab.close", "--id", tab, "--confirmed", "true"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .await;
 }
 
 fn find_space(spaces: &[Value], wanted: &str) -> Option<String> {
@@ -561,11 +645,21 @@ pub async fn show(session: &str) -> anyhow::Result<()> {
     // A terminal started in no space, or whose tab was closed, has no pane
     // to show: it gets a tab of its own. One with a pane keeps it.
     let status = Command::new("herdr-app")
-        .args(["do", "terminal.keep", "--terminal", &terminal, "--place", "tab"])
+        .args([
+            "do",
+            "terminal.keep",
+            "--terminal",
+            &terminal,
+            "--place",
+            "tab",
+        ])
         .stdout(Stdio::null())
         .status()
         .await?;
-    anyhow::ensure!(status.success(), "herdr-app could not give {terminal} a tab");
+    anyhow::ensure!(
+        status.success(),
+        "herdr-app could not give {terminal} a tab"
+    );
     let status = Command::new("herdr-app")
         .args(["do", "agent.focus", "--terminal", &terminal])
         .stdout(Stdio::null())
@@ -1781,6 +1875,13 @@ mod tests {
         assert_eq!(adopted_agent(&agents, Path::new("/home/me/dev/x")), "dev");
         assert_eq!(adopted_agent(&agents, Path::new("/tmp")), "claude");
         assert_eq!(adopted_agent(&[], Path::new("/tmp")), PROVIDER);
+    }
+
+    #[test]
+    fn a_space_id_is_not_a_name() {
+        assert!(is_space_id("speca9fea29607a6c98182a4d76bb22054"));
+        assert!(!is_space_id("Speaker-Studio"));
+        assert!(!is_space_id("spaces"));
     }
 
     #[test]
