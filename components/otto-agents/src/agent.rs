@@ -88,6 +88,57 @@ pub fn instructions_from_meta(
         .map(str::to_owned)
 }
 
+/// What a session's client asked for, as the `_meta` it created the session
+/// with: what [`McpStdio::from_meta`], [`instructions_from_meta`],
+/// [`runs_as_from_meta`] and [`subject_from_meta`] read. `None` when it asked
+/// for nothing.
+pub fn client_meta(
+    servers: &[McpStdio],
+    instructions: Option<&str>,
+    runs_as: Option<&str>,
+    subject: &[PathBuf],
+) -> Option<serde_json::Map<String, serde_json::Value>> {
+    let mut otto = serde_json::Map::new();
+    if !servers.is_empty() {
+        let servers: Vec<serde_json::Value> = servers
+            .iter()
+            .map(|server| {
+                let env: serde_json::Map<String, serde_json::Value> = server
+                    .env
+                    .iter()
+                    .map(|(key, value)| (key.clone(), value.clone().into()))
+                    .collect();
+                serde_json::json!({
+                    "name": server.name,
+                    "command": server.command,
+                    "args": server.args,
+                    "env": env,
+                })
+            })
+            .collect();
+        otto.insert("mcpServers".to_owned(), servers.into());
+    }
+    if let Some(instructions) = instructions {
+        otto.insert("instructions".to_owned(), instructions.into());
+    }
+    if let Some(runs_as) = runs_as {
+        otto.insert("agent".to_owned(), runs_as.into());
+    }
+    if !subject.is_empty() {
+        let subject: Vec<serde_json::Value> = subject
+            .iter()
+            .map(|path| crate::uri::from_path(path).into())
+            .collect();
+        otto.insert("subject".to_owned(), subject.into());
+    }
+    if otto.is_empty() {
+        return None;
+    }
+    let mut meta = serde_json::Map::new();
+    meta.insert("otto".to_owned(), otto.into());
+    Some(meta)
+}
+
 /// An MCP server the agent starts and talks to over its stdin and stdout.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct McpStdio {
@@ -593,6 +644,24 @@ impl Backend for EchoBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn what_a_client_asked_for_reads_back_the_same() {
+        let servers = vec![McpStdio {
+            name: "preview".to_owned(),
+            command: PathBuf::from("/usr/bin/otto-preview"),
+            args: vec!["--mcp".to_owned()],
+            env: vec![("OTTO_PREVIEW_DOC".to_owned(), "/tmp/a.pdf".to_owned())],
+        }];
+        let subject = vec![PathBuf::from("/tmp/a.pdf")];
+        let meta = client_meta(&servers, Some("Edit it."), Some("studio"), &subject);
+        let meta = meta.as_ref();
+        assert_eq!(McpStdio::from_meta(meta), servers);
+        assert_eq!(instructions_from_meta(meta).as_deref(), Some("Edit it."));
+        assert_eq!(runs_as_from_meta(meta).as_deref(), Some("studio"));
+        assert_eq!(subject_from_meta(meta), subject);
+        assert_eq!(client_meta(&[], None, None, &[]), None);
+    }
 
     fn meta(servers: serde_json::Value) -> serde_json::Map<String, serde_json::Value> {
         serde_json::json!({ "otto": { "mcpServers": servers } })

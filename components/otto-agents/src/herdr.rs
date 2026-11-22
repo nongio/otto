@@ -126,6 +126,9 @@ pub struct HerdrBackend {
     placing: std::sync::Arc<tokio::sync::Mutex<()>>,
     /// Claude's flags for the desktop's plugins, found once.
     plugin_args: Vec<String>,
+    /// The desktop's plugins, whose agents a client may ask a session to run
+    /// as (`_meta.otto.agent`, such as Studio's `studio`).
+    plugins: Vec<skills::Plugin>,
 }
 
 /// Agent session ids, shared between [`HerdrBackend::start`] and the watcher.
@@ -223,6 +226,7 @@ impl HerdrBackend {
             started: Started::default(),
             placing: Default::default(),
             plugin_args: skills::claude_cli_args(&plugins, None),
+            plugins,
         }
     }
 
@@ -243,9 +247,39 @@ impl HerdrBackend {
             .unwrap_or(&self.agents[0])
     }
 
-    fn argv(&self, agent: &HerdrAgent, session: &str, resume: bool) -> Vec<String> {
+    /// The plugin agent a session runs as: the one its client asked for,
+    /// else its agent's own.
+    fn profile<'a>(
+        &'a self,
+        agent: &'a HerdrAgent,
+        spec: &SessionSpec,
+    ) -> Option<&'a skills::AgentFile> {
+        let asked = spec.runs_as.as_deref().and_then(|name| {
+            let found = skills::agent_file(&self.plugins, name).map(|(_, file)| file);
+            if found.is_none() {
+                tracing::warn!(
+                    agent = name,
+                    "no plugin agent by that name; running as the configured one"
+                );
+            }
+            found
+        });
+        asked.or(agent.profile.as_ref())
+    }
+
+    /// The command line that starts or resumes `session`. What the client
+    /// asked for goes in: its MCP servers (Studio's document tools), its
+    /// instructions, and the plugin agent to run as.
+    fn argv(
+        &self,
+        agent: &HerdrAgent,
+        session: &str,
+        resume: bool,
+        spec: &SessionSpec,
+    ) -> Vec<String> {
+        let profile = self.profile(agent, spec);
         match agent.harness {
-            Harness::Pi => return pi_argv(agent, session),
+            Harness::Pi => return pi_argv(agent, session, profile, spec.instructions.as_deref()),
             Harness::OpenCode => {
                 return opencode_argv(agent, session, self.permission_mode.as_deref());
             }
@@ -262,19 +296,43 @@ impl HerdrBackend {
         if let Some(model) = &agent.model {
             argv.extend(["--model".to_owned(), model.clone()]);
         }
+        let mut servers = serde_json::Map::new();
+        let mut prompt = Vec::new();
         if let Some((command, args)) = self.ask_mcp.split_first() {
-            let config = json!({ "mcpServers": { "otto": { "command": command, "args": args } } });
+            servers.insert(
+                "otto".to_owned(),
+                json!({ "command": command, "args": args }),
+            );
             argv.extend([
-                "--mcp-config".to_owned(),
-                config.to_string(),
                 "--disallowedTools".to_owned(),
                 "AskUserQuestion".to_owned(),
                 "--allowedTools".to_owned(),
                 "mcp__otto__ask".to_owned(),
-                "--append-system-prompt".to_owned(),
-                "To ask the person anything, use the mcp__otto__ask tool, never a plain text question."
-                    .to_owned(),
             ]);
+            prompt.push(
+                "To ask the person anything, use the mcp__otto__ask tool, never a plain text question.",
+            );
+        }
+        for server in &spec.mcp_servers {
+            let env: serde_json::Map<String, Value> = server
+                .env
+                .iter()
+                .map(|(key, value)| (key.clone(), json!(value)))
+                .collect();
+            servers.insert(
+                server.name.clone(),
+                json!({ "command": server.command, "args": server.args, "env": env }),
+            );
+        }
+        if !servers.is_empty() {
+            argv.extend([
+                "--mcp-config".to_owned(),
+                json!({ "mcpServers": servers }).to_string(),
+            ]);
+        }
+        prompt.extend(spec.instructions.as_deref());
+        if !prompt.is_empty() {
+            argv.extend(["--append-system-prompt".to_owned(), prompt.join("\n\n")]);
         }
         if let Some(hook) = &self.permission_hook {
             // Long enough for a person to answer: the hook gives up first,
@@ -285,7 +343,7 @@ impl HerdrBackend {
             argv.extend(["--settings".to_owned(), settings.to_string()]);
         }
         argv.extend(self.plugin_args.iter().cloned());
-        if let Some(profile) = &agent.profile {
+        if let Some(profile) = profile {
             let definition = agent_definition(profile, !self.ask_mcp.is_empty());
             argv.extend([
                 "--agents".to_owned(),
@@ -415,7 +473,7 @@ impl Backend for HerdrBackend {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .insert(session.clone());
-        let argv = self.argv(agent, &session, resume.is_some());
+        let argv = self.argv(agent, &session, resume.is_some(), &spec);
         let space = agent.space.clone();
         let harness = agent.harness;
         let labels = vec![
@@ -1415,7 +1473,13 @@ fn opencode_as_claude(rows: &[Value]) -> String {
 
 /// pi in a herdr terminal: the session by its id, made when it is new, with
 /// the agent's model and the profile's prompt.
-fn pi_argv(agent: &HerdrAgent, session: &str) -> Vec<String> {
+/// pi has no MCP: a client's tools are left out, its instructions kept.
+fn pi_argv(
+    agent: &HerdrAgent,
+    session: &str,
+    profile: Option<&skills::AgentFile>,
+    instructions: Option<&str>,
+) -> Vec<String> {
     let mut argv = vec![
         "pi".to_owned(),
         "--session-id".to_owned(),
@@ -1424,8 +1488,13 @@ fn pi_argv(agent: &HerdrAgent, session: &str) -> Vec<String> {
     if let Some(model) = &agent.model {
         argv.extend(["--model".to_owned(), model.clone()]);
     }
-    if let Some(profile) = &agent.profile {
-        argv.extend(["--append-system-prompt".to_owned(), profile.body.clone()]);
+    let prompt: Vec<&str> = profile
+        .map(|profile| profile.body.as_str())
+        .into_iter()
+        .chain(instructions)
+        .collect();
+    if !prompt.is_empty() {
+        argv.extend(["--append-system-prompt".to_owned(), prompt.join("\n\n")]);
     }
     argv
 }
@@ -2354,6 +2423,48 @@ mod elicitation_content {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_studio_session_gets_its_tools_and_instructions() {
+        let backend = HerdrBackend::new(&crate::config::Config::default());
+        let spec = SessionSpec {
+            provider: PROVIDER.to_owned(),
+            cwd: PathBuf::from("/tmp"),
+            resume: None,
+            attached: Vec::new(),
+            mcp_servers: vec![crate::agent::McpStdio {
+                name: "preview".to_owned(),
+                command: PathBuf::from("/usr/bin/otto-preview"),
+                args: vec!["--mcp".to_owned()],
+                env: vec![("OTTO_PREVIEW_DOC".to_owned(), "/tmp/a.pdf".to_owned())],
+            }],
+            instructions: Some("You are editing /tmp/a.pdf.".to_owned()),
+            runs_as: None,
+            subject: Vec::new(),
+        };
+        let argv = backend.argv(backend.agent(PROVIDER), "s1", false, &spec);
+        let after = |flag: &str| {
+            let at = argv.iter().position(|word| word == flag)?;
+            argv.get(at + 1).cloned()
+        };
+        let config: Value = serde_json::from_str(&after("--mcp-config").unwrap()).unwrap();
+        let preview = &config["mcpServers"]["preview"];
+        assert_eq!(preview["command"], "/usr/bin/otto-preview");
+        assert_eq!(preview["args"], json!(["--mcp"]));
+        assert_eq!(preview["env"]["OTTO_PREVIEW_DOC"], "/tmp/a.pdf");
+        assert!(
+            after("--append-system-prompt")
+                .unwrap()
+                .ends_with("You are editing /tmp/a.pdf.")
+        );
+        assert_eq!(
+            argv.iter()
+                .filter(|word| *word == "--append-system-prompt")
+                .count(),
+            1,
+            "one system prompt"
+        );
+    }
 
     #[test]
     fn transcripts_live_under_the_folder_with_dashes() {

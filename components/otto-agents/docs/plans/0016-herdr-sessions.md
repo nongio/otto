@@ -96,6 +96,12 @@ The backend is `src/herdr.rs`. It runs Claude Code, pi and opencode
 - **Prompts are typed in.** A prompt from Ask goes to the terminal with
   `hc send`, only while the agent is the program in front. It is the one place
   this design drives the screen.
+- **A client's own tools come along.** What a session was created with in
+  `_meta.otto` (Studio's document tools as `mcpServers`, its `instructions`,
+  the plugin `agent` to run as) goes on Claude's command line: the servers in
+  `--mcp-config` beside `ask`, the instructions in `--append-system-prompt`,
+  the agent in `--agents`. The service stores it with the session, so a
+  session started again after a restart has it too.
 - **Files travel as paths.** Attachments become `@/path` mentions in the
   prompt, and the agent reads them itself.
 
@@ -139,8 +145,12 @@ While the call waits, the TUI shows a running tool and herdr reports
 
 ## Left to do
 
-- Retire the ACP backend once herdr covers Studio and the clients of
-  `otto-agents acp`, and herdr-core is packaged.
+- Retire the ACP backend once herdr covers the clients of `otto-agents acp`
+  and herdr-core is packaged.
+- Studio's sessions on pi and opencode: pi has no MCP, so it gets Studio's
+  instructions and plugin agent but not its document tools; opencode gets
+  neither yet (its MCP servers and instructions go in its config, not on its
+  command line).
 - The harnesses below.
 
 ## Open questions

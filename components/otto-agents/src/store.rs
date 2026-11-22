@@ -42,6 +42,12 @@ pub struct SessionRecord {
     /// is entered in a terminal.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub written: bool,
+    /// What the client that created the session asked for in `_meta.otto`:
+    /// its MCP servers, instructions, plugin agent and subject. Read back
+    /// through the same checks as when it was sent, so the session's agent
+    /// gets them again after a restart.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client: Option<serde_json::Map<String, serde_json::Value>>,
 }
 
 impl SessionRecord {
@@ -61,6 +67,7 @@ impl SessionRecord {
             session,
             chat,
             written,
+            client: None,
         }
     }
 }

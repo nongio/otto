@@ -1318,8 +1318,10 @@ impl HostState {
                 session: mut state,
                 chat,
                 written: record_written,
+                client,
                 ..
             } = record;
+            let client = client.as_ref();
             if self.sessions.contains_key(&resource) || self.chats.contains_key(&chat.resource) {
                 continue;
             }
@@ -1371,12 +1373,10 @@ impl HostState {
                 activity: 0,
                 releasing: false,
                 attached: Vec::new(),
-                // Not kept in the store: a client that wants its tools back
-                // opens a new session. TODO: persist with the session.
-                mcp_servers: Vec::new(),
-                instructions: None,
-                runs_as: None,
-                subject: Vec::new(),
+                mcp_servers: McpStdio::from_meta(client),
+                instructions: crate::agent::instructions_from_meta(client),
+                runs_as: crate::agent::runs_as_from_meta(client),
+                subject: crate::agent::subject_from_meta(client),
                 outside: 0,
                 running: false,
             };
@@ -1443,14 +1443,21 @@ impl HostState {
                 chat.turns = Vec::new();
                 chat.turns_next_cursor = None;
                 let written = session.written;
-                Some(SessionRecord::new(
+                let mut record = SessionRecord::new(
                     uri,
                     session.created_at.clone(),
                     session.agent_session.clone(),
                     session.state.clone(),
                     chat,
                     written,
-                ))
+                );
+                record.client = crate::agent::client_meta(
+                    &session.mcp_servers,
+                    session.instructions.as_deref(),
+                    session.runs_as.as_deref(),
+                    &session.subject,
+                );
+                Some(record)
             })
             .collect()
     }
