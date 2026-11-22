@@ -154,6 +154,15 @@ structured questions too.
   could stay for Claude.
 - The transcript format is Claude's and undocumented: how much to read, and how
   to fail when it changes.
+- Background Claude jobs (`claude --bg`, watched with `claude agents`) are not
+  herdr terminals: each is its own process with a note in
+  `~/.claude/sessions/<pid>.json` (`kind: "bg"`). Show them in Ask as
+  read-only rows read from the transcript, or keep Ask to herdr's terminals?
+  A prompt from Ask has no reliable way in: `claude agents` takes typing for
+  whichever job is selected.
+- Deleting a session Otto took up from a shell tab (Claude started by hand)
+  kills the shell and closes the tab. Stop following it, or end only Claude,
+  instead?
 - herdr-core becomes a hard dependency of Otto's agent features. Packaging:
   depend on it, or bundle a pinned build as Sheprd does.
 
@@ -179,3 +188,78 @@ structured questions too.
   plain text.
 - Claude Code 2.1.330 has `PermissionRequest`, `Elicitation` and
   `ElicitationResult` hook events.
+
+## More harnesses (deferred)
+
+Researched on 2026-11-22 and set aside: there is no budget for these models
+now. Claude Code and pi run in herdr today. Each harness below needs the same
+four things: start or resume a session by an id Otto knows, find its
+transcript, read it as Claude's (prompts, text, tool calls and results, the
+end of a turn), and take a pasted prompt. Suggested order: Gemini, Codex,
+opencode.
+
+### Gemini CLI (`gemini` 0.61)
+
+- **Id:** `--session-id <uuid>` makes a session, and refuses an id that
+  exists; `--resume <uuid>` takes it up again. The backend picks by whether
+  the session is new. `--skip-trust` avoids the folder trust dialog.
+- **Transcript:** `~/.gemini/tmp/<project>/chats/session-<time>-<id8>.jsonl`
+  (`~/.gemini/projects.json` maps folders to project names). Match on the
+  first line's `sessionId`, not the name: two sessions made in one minute with
+  the same id prefix overwrote each other. Appended, but a record is written
+  again under the same `id` as it grows, so readers keep the last version.
+  Records: header `{sessionId, projectHash, startTime, kind}`; `{"$set": …}`
+  metadata (skip); prompts `{id, type: "user", content: [{text}]}`; replies
+  `{id, type: "gemini", content, thoughts, toolCalls: [{id, name, args,
+  result, status, resultDisplay}]}`; a `user` record holding a
+  `functionResponse` repeats a tool's result (skip).
+- **End of turn:** no marker. Infer it (a `gemini` record with every tool call
+  settled and no prompt after it), or have an `AfterAgent` hook write one.
+- **Model:** `-m`. The default was overloaded (503) and `gemini-2.5-flash` is
+  closed to new users; `gemini-3.5-flash-lite` answered on the API key in
+  `~/.gemini/settings.json`.
+- **Instructions:** no append flag. `GEMINI_SYSTEM_MD` replaces the whole
+  prompt; a `GEMINI.md` adds context. **Approval:** `--approval-mode
+  default|auto_edit|yolo|plan`.
+- **Paste:** Enter within 40 ms of a bracketed paste becomes a newline, so
+  `hc send` must wait before Enter.
+
+### Codex CLI (`codex` 0.156)
+
+- **Id:** none to choose; Codex makes a UUIDv7. Find it in the new
+  `~/.codex/sessions/YYYY/MM/DD/rollout-<time>-<uuid>.jsonl` (first line
+  `session_meta.payload.id`) or `~/.codex/session_index.jsonl`; the file may
+  appear only with the first prompt. `codex resume <uuid>` takes it up again.
+  `--no-daemon` keeps the TUI off the shared app server.
+- **Transcript:** `{timestamp, type, payload}` per line. Prompts are
+  `event_msg/user_message`, not `response_item` user messages (those carry
+  injected context). Replies: `response_item message role:assistant
+  content[{type: output_text}]`. Tools: `function_call` / `custom_tool_call`
+  and their `*_output` by `call_id`. Reasoning has a readable `summary` only.
+- **End of turn:** `event_msg/task_complete {turn_id, last_agent_message}`,
+  opened by `task_started`. An interrupted turn's record is unconfirmed.
+- **Model and auth:** `-m`; logged in with ChatGPT (`gpt-5.6-terra` in
+  `~/.codex/config.toml`), so it spends the plan's limits. No free model but
+  `--oss` with ollama. **Approval:** `-a`, `-s`. **Instructions:** `-c
+  developer_instructions=…` (unconfirmed).
+- **Paste:** an Enter right after a paste may become a newline: wait first.
+- herdr reports Codex's status, as it does Claude's and pi's.
+
+### opencode (1.18)
+
+- **Id:** `-s <id>` only resumes; an unknown id fails. Make the session first
+  by importing an empty export with Otto's id (`ses_` and 26 characters):
+  `opencode import`, then `opencode -s <id> -m … --agent …`. Or read the
+  newest id after launch with `opencode db "select id from session where
+  directory='<cwd>' order by time_created desc limit 1"`.
+- **Transcript:** SQLite, `~/.local/share/opencode/opencode.db` (WAL):
+  `session`, `message`, `part`, JSON in `data`, rows updated in place (poll by
+  `time_updated`, or tail the `event` table). Messages `{role, finish}`;
+  parts `text`, `reasoning`, `tool {tool, callID, state {status, input,
+  output}}`, `step-start`, `step-finish {reason}`.
+- **End of turn:** an assistant message with `finish: "stop"`. A provider
+  error leaves the message unfinished for good: the reader needs a timeout.
+- **Model:** `-m opencode/<model>`; the free models share one quota, which
+  ran out after a single run ("subscribe to OpenCode Go"). **Instructions:**
+  an agent in `OPENCODE_CONFIG_CONTENT` with its own `prompt`. **Approval:**
+  `--auto`.
