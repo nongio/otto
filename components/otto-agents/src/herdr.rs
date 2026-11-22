@@ -645,9 +645,13 @@ async fn follow_sessions(
                     let _ = changes.send(SessionChange::Removed(session));
                 }
             }
-            // A terminal new, or with another program in front: it may hold
-            // a session now.
-            Some("created" | "foreground" | "labels") if !sessions.contains_key(address) => {
+            // A terminal new, with another program in front, or reporting
+            // an agent's status: it may hold a session now. Claude notes its
+            // session a moment after it starts, so its status is the cue
+            // that finds it.
+            Some("created" | "foreground" | "labels" | "status")
+                if !sessions.contains_key(address) =>
+            {
                 if let Some(item) = hc_json(&["get", address]).await {
                     consider(&item, &mut sessions, changes, adopt_as).await;
                 }
