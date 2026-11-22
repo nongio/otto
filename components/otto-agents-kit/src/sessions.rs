@@ -146,6 +146,14 @@ pub fn session_activity(session: &SessionSummary) -> Activity {
         Activity::Waiting
     } else if status.contains(SessionStatus::InProgress) {
         Activity::Working
+    } else if session
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.get("otto")?.get("running")?.as_bool())
+        == Some(false)
+    {
+        // Kept, but nothing runs it: a session the service would start again.
+        Activity::Dormant
     } else {
         Activity::Idle
     }

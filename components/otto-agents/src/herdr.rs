@@ -100,6 +100,10 @@ impl Backend for HerdrBackend {
         )]
     }
 
+    fn reports_running(&self) -> bool {
+        true
+    }
+
     fn live(&self, _provider: &str, agent_session: &str) -> bool {
         let filter = format!("otto.session={agent_session}");
         std::process::Command::new("hc")
@@ -155,6 +159,7 @@ impl Backend for HerdrBackend {
             let _ = events.send(SessionEvent::Ready {
                 agent_session: Some(session.clone()),
             });
+            let _ = events.send(SessionEvent::Running(true));
             drive(terminal, transcript, commands, events).await;
         });
     }
@@ -429,6 +434,7 @@ async fn drive(
                 }
                 Seen::Ask(None) => asked = None,
                 Seen::Gone => {
+                    let _ = events.send(SessionEvent::Running(false));
                     if let Some(turn_id) = turn.take() {
                         let _ = events.send(SessionEvent::TurnEnded {
                             turn_id,

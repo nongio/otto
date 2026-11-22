@@ -232,6 +232,10 @@ pub enum SessionEvent {
     /// terminal: it counts as the latest change, for the order sessions are
     /// listed in.
     Active,
+    /// Whether the agent's process is running: `false` once it has gone,
+    /// such as when its terminal was closed. Only from backends whose
+    /// sessions outlive the service (see [`Backend::live`]).
+    Running(bool),
     /// The agent started a turn Otto did not ask for, on `prompt` typed in
     /// its terminal. The turn shows in the chat like one started here, and
     /// ends with `TurnEnded`.
@@ -435,6 +439,12 @@ pub trait Backend: Send + Sync + 'static {
     /// starts, so the list shows what they are doing. `false`, the default,
     /// for agents that only run while Otto runs them.
     fn live(&self, _provider: &str, _agent_session: &str) -> bool {
+        false
+    }
+
+    /// Whether this backend reports [`SessionEvent::Running`], so the
+    /// session list can tell running sessions from dormant ones.
+    fn reports_running(&self) -> bool {
         false
     }
 

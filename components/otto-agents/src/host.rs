@@ -194,6 +194,8 @@ struct Session {
     /// What the agent is doing outside the turns started here, as
     /// `SessionStatus` bits the backend reports: shown on top of the chat's.
     outside: u32,
+    /// Whether the agent's process runs, as the backend last said.
+    running: bool,
 }
 
 /// The `setMode` request: switch `session`'s agent to the mode `mode_id`, one
@@ -523,6 +525,7 @@ impl Host {
             runs_as,
             subject,
             outside: 0,
+            running: false,
         };
         state.sessions.insert(uri.clone(), session);
         state
@@ -738,6 +741,19 @@ impl Host {
             }
             SessionEvent::TurnStarted { turn_id, prompt } => {
                 state.start_outside_turn(session_uri, &chat_uri, turn_id, prompt);
+            }
+            SessionEvent::Running(running) => {
+                let changed = state.sessions.get_mut(session_uri).is_some_and(|session| {
+                    std::mem::replace(&mut session.running, running) != running
+                });
+                if changed {
+                    let changed = json!({
+                        "channel": ROOT_RESOURCE_URI,
+                        "session": session_uri,
+                        "changes": {},
+                    });
+                    state.broadcast(ROOT_RESOURCE_URI, "root/sessionSummaryChanged", &changed);
+                }
             }
             SessionEvent::Active => {
                 if let Some(chat) = state.chats.get_mut(&chat_uri) {
@@ -1191,6 +1207,7 @@ impl HostState {
                 runs_as: None,
                 subject: Vec::new(),
                 outside: 0,
+                running: false,
             };
             self.sessions.insert(resource.clone(), session);
             self.chats.insert(chat_uri.clone(), chat);
@@ -2578,8 +2595,25 @@ impl HostState {
                 |chat| chat.modified_at.clone(),
             ),
             changes: None,
-            meta: session.state.meta.clone(),
+            meta: self.summary_meta(session),
         }
+    }
+
+    /// The session's own `_meta`, with `otto.running` added when the backend
+    /// says whether sessions run: `false` for one only kept to be taken up
+    /// again.
+    fn summary_meta(&self, session: &Session) -> Option<serde_json::Map<String, Value>> {
+        if !self.backend.reports_running() {
+            return session.state.meta.clone();
+        }
+        let mut meta = session.state.meta.clone().unwrap_or_default();
+        let otto = meta
+            .entry("otto")
+            .or_insert_with(|| Value::Object(serde_json::Map::new()));
+        if let Value::Object(otto) = otto {
+            otto.insert("running".into(), Value::Bool(session.running));
+        }
+        Some(meta)
     }
 
     fn check_turn_start(&self, session_uri: &str, chat_uri: &str) -> Result<(), &'static str> {
