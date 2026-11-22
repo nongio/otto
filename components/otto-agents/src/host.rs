@@ -55,8 +55,9 @@ use tokio::sync::{mpsc, oneshot};
 use otto_agents_client::session::SESSION_SCHEME;
 
 use crate::agent::{
-    Attachment, Backend, Decision, HistoryPart, HistoryTurn, InputAnswer, McpStdio, Mode, Question,
-    QuestionOption, SessionCommand, SessionEvent, SessionSpec, TurnOutcome,
+    Attachment, Backend, Decision, FoundSession, HistoryPart, HistoryTurn, InputAnswer, McpStdio,
+    Mode, Question, QuestionOption, SessionChange, SessionCommand, SessionEvent, SessionSpec,
+    TurnOutcome,
 };
 use crate::dialog::{self, Choice, Prompt, Prompter, Reply};
 use crate::elicitation;
@@ -73,6 +74,19 @@ use crate::uri;
 pub const SUPPORTED_PROTOCOL_VERSIONS: &[&str] = &[PROTOCOL_VERSION];
 
 const TITLE_MAX_CHARS: usize = 80;
+
+/// A session's title from a prompt: its first line that says something, cut
+/// to [`TITLE_MAX_CHARS`].
+fn title_of(prompt: &str) -> String {
+    prompt
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .unwrap_or_default()
+        .chars()
+        .take(TITLE_MAX_CHARS)
+        .collect()
+}
 
 pub type ConnId = u64;
 
@@ -302,24 +316,32 @@ impl Host {
             next_conn: AtomicU64::new(1),
         });
         host.lock().restore(records);
-        host.watch_removals();
+        host.watch_sessions();
         host
     }
 
-    /// Sessions the backend removes on its own side leave Otto too.
-    fn watch_removals(self: &Arc<Self>) {
+    /// For a backend that keeps its own sessions: the ones it has that Otto
+    /// does not are taken up, and the ones it removes leave Otto too.
+    fn watch_sessions(self: &Arc<Self>) {
         let Ok(runtime) = tokio::runtime::Handle::try_current() else {
             return;
         };
-        let (removed_tx, mut removed) = mpsc::unbounded_channel::<String>();
-        self.lock().backend.watch_removals(removed_tx);
+        let (changes_tx, mut changes) = mpsc::unbounded_channel::<SessionChange>();
+        self.lock().backend.watch_sessions(changes_tx);
         let host = Arc::downgrade(self);
         runtime.spawn(async move {
-            while let Some(agent_session) = removed.recv().await {
+            while let Some(change) = changes.recv().await {
                 let Some(host) = host.upgrade() else {
                     return;
                 };
                 let mut state = host.lock();
+                let agent_session = match change {
+                    SessionChange::Found(found) => {
+                        host.adopt_session(&mut state, found);
+                        continue;
+                    }
+                    SessionChange::Removed(agent_session) => agent_session,
+                };
                 let uris: Vec<String> = state
                     .sessions
                     .iter()
@@ -571,6 +593,84 @@ impl Host {
             outside: 0,
             running: false,
         };
+        self.add_session(state, uri, session, true);
+        Ok(Value::Null)
+    }
+
+    /// A session the backend has and Otto does not, as one Otto made: it is
+    /// listed, and taken up when its agent is running.
+    fn adopt_session(self: &Arc<Self>, state: &mut HostState, found: FoundSession) {
+        let known = state
+            .sessions
+            .values()
+            .any(|session| session.agent_session.as_deref() == Some(&found.agent_session));
+        if known {
+            return;
+        }
+        let provider = match state
+            .root
+            .agents
+            .iter()
+            .find(|agent| agent.provider == found.provider)
+            .or_else(|| state.root.agents.first())
+        {
+            Some(agent) => agent.provider.clone(),
+            None => return,
+        };
+        let customizations = state
+            .root
+            .agents
+            .iter()
+            .find(|agent| agent.provider == provider)
+            .and_then(|agent| agent.customizations.clone());
+        let uri = format!("{SESSION_SCHEME}{}", uuid::Uuid::new_v4());
+        tracing::info!(session_uri = %uri, agent_session = %found.agent_session, "taking up a session the backend has");
+        let mut session_state = SessionState {
+            customizations,
+            ..new_session_state(&provider, &uri::from_path(&found.cwd))
+        };
+        if let Some(title) = found.title.as_deref() {
+            session_state.title = title_of(title);
+        }
+        let session = Session {
+            state: session_state,
+            created_at: now(),
+            chat: format!("ahp-chat:/{}", uuid::Uuid::new_v4()),
+            commands: None,
+            agent_session: Some(found.agent_session),
+            open_part: None,
+            announced: (SessionStatus::Idle.bits(), String::new()),
+            questions: HashMap::new(),
+            inputs: HashMap::new(),
+            tools: HashMap::new(),
+            activity: 0,
+            written: true,
+            releasing: false,
+            attached: Vec::new(),
+            mcp_servers: Vec::new(),
+            instructions: None,
+            runs_as: None,
+            subject: Vec::new(),
+            outside: 0,
+            running: false,
+        };
+        self.add_session(state, uri.clone(), session, found.running);
+        state.mark_unsaved(&uri);
+        self.flush_withdrawals(state);
+    }
+
+    /// Puts a new session in the service and tells every client; `launch`
+    /// starts its agent.
+    fn add_session(
+        self: &Arc<Self>,
+        state: &mut HostState,
+        uri: String,
+        session: Session,
+        launch: bool,
+    ) {
+        let chat_uri = session.chat.clone();
+        let now = now();
+        let title = session.state.title.clone();
         state.sessions.insert(uri.clone(), session);
         state
             .chats
@@ -579,7 +679,7 @@ impl Host {
 
         let summary = ChatSummary {
             resource: chat_uri.clone(),
-            title: String::new(),
+            title,
             status: SessionStatus::Idle.bits(),
             activity: None,
             modified_at: now,
@@ -614,9 +714,9 @@ impl Host {
             };
             state.broadcast(ROOT_RESOURCE_URI, "root/sessionAdded", &added);
         }
-
-        state.launch(&uri);
-        Ok(Value::Null)
+        if launch {
+            state.launch(&uri);
+        }
     }
 
     /// Removes a session for good: its agent stops, its state goes, and so
@@ -2712,14 +2812,7 @@ impl HostState {
         {
             return;
         }
-        let title: String = prompt
-            .lines()
-            .map(str::trim)
-            .find(|line| !line.is_empty())
-            .unwrap_or_default()
-            .chars()
-            .take(TITLE_MAX_CHARS)
-            .collect();
+        let title = title_of(prompt);
         if !title.is_empty() {
             let action = StateAction::SessionTitleChanged(SessionTitleChangedAction { title });
             self.apply(session_uri, action, None);

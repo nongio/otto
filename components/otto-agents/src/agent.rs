@@ -461,10 +461,11 @@ pub trait Backend: Send + Sync + 'static {
     /// of. Nothing, the default, for backends whose sessions live only in Otto.
     fn forget(&self, _provider: &str, _agent_session: &str) {}
 
-    /// Reports, by agent session id, the sessions removed outside Otto, so
-    /// they leave Otto too. Nothing, the default, for backends whose sessions
-    /// live only in Otto.
-    fn watch_removals(&self, _removed: mpsc::UnboundedSender<String>) {}
+    /// Reports the sessions the backend keeps as they come and go, for
+    /// backends that own sessions rather than Otto: every one it has is in
+    /// Otto, and one removed there leaves Otto too. Nothing, the default,
+    /// for backends whose sessions live only in Otto.
+    fn watch_sessions(&self, _changes: mpsc::UnboundedSender<SessionChange>) {}
 
     /// Starts a session in the background. The session ends when `commands`
     /// is closed; it reports through `events` until then.
@@ -510,6 +511,28 @@ pub trait Backend: Send + Sync + 'static {
     ) -> Option<Vec<String>> {
         None
     }
+}
+
+/// A session coming or going where a backend keeps its sessions.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SessionChange {
+    /// A session the backend has, which Otto shows if it does not yet.
+    Found(FoundSession),
+    /// The agent's own id for a session the backend no longer has.
+    Removed(String),
+}
+
+/// A session found where the backend keeps them.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FoundSession {
+    pub provider: String,
+    /// The agent's own id for it.
+    pub agent_session: String,
+    pub cwd: PathBuf,
+    /// What it is called: its first prompt, when there is one.
+    pub title: Option<String>,
+    /// Whether the agent runs it right now.
+    pub running: bool,
 }
 
 pub fn agent_info(provider: &str, display_name: &str, description: &str) -> AgentInfo {

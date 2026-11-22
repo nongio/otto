@@ -22,8 +22,8 @@ use tokio::process::Command;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::agent::{
-    Backend, HistoryPart, HistoryTurn, InputAnswer, SessionCommand, SessionEvent, SessionSpec,
-    TurnOutcome, agent_info,
+    Backend, FoundSession, HistoryPart, HistoryTurn, InputAnswer, SessionChange, SessionCommand,
+    SessionEvent, SessionSpec, TurnOutcome, agent_info,
 };
 use crate::elicitation;
 use crate::skills;
@@ -148,6 +148,16 @@ impl HerdrBackend {
             permission_hook: var("OTTO_HERDR_PERMISSION_HOOK"),
             permission_mode: var("OTTO_HERDR_PERMISSION_MODE"),
         }
+    }
+
+    /// The agent a Claude Code session started by hand is taken up as: plain
+    /// Claude, the one whose folder holds the session's, else the first.
+    fn adopt_as(&self) -> Vec<(String, Option<PathBuf>)> {
+        self.agents
+            .iter()
+            .filter(|agent| agent.harness == Harness::Claude && agent.profile.is_none())
+            .map(|agent| (agent.id.clone(), agent.folder.clone()))
+            .collect()
     }
 
     fn agent(&self, provider: &str) -> &HerdrAgent {
@@ -288,12 +298,14 @@ impl Backend for HerdrBackend {
         });
     }
 
-    /// Follows every Otto terminal; when the last terminal of a session is
-    /// removed in herdr, the session is gone.
-    fn watch_removals(&self, removed: mpsc::UnboundedSender<String>) {
+    /// Follows every herdr terminal: each Otto session in one, running or
+    /// finished, and each Claude Code started in herdr by hand, is a session;
+    /// when the last terminal of one is removed, the session is gone.
+    fn watch_sessions(&self, changes: mpsc::UnboundedSender<SessionChange>) {
+        let adopt_as = self.adopt_as();
         tokio::spawn(async move {
-            while !removed.is_closed() {
-                follow_removals(&removed).await;
+            while !changes.is_closed() {
+                follow_sessions(&changes, &adopt_as).await;
                 // The server restarted, or hc is not there: try again shortly.
                 tokio::time::sleep(Duration::from_secs(2)).await;
             }
@@ -314,10 +326,21 @@ impl Backend for HerdrBackend {
         let argv = self.argv(agent, &session, resume.is_some());
         let space = agent.space.clone();
         let harness = agent.harness;
+        let labels = vec![
+            format!("otto.agent={}", agent.id),
+            format!(
+                "otto.harness={}",
+                match harness {
+                    Harness::Claude => "claude",
+                    Harness::Pi => "pi",
+                }
+            ),
+        ];
         tokio::spawn(async move {
             let terminal = match find(&session).await {
                 Some(terminal) => terminal,
-                None => match run(&session, &spec.cwd, space_id(space).await, &argv).await {
+                None => match run(&session, &labels, &spec.cwd, space_id(space).await, &argv).await
+                {
                     Ok(terminal) => {
                         // One terminal per session: the finished ones of
                         // earlier runs go once the new one is there.
@@ -578,11 +601,14 @@ async fn prune(session: &str, keep: &str) {
     }
 }
 
-/// One run of `hc events` over Otto's terminals, reporting each session
-/// whose last terminal is removed. Returns when the stream ends.
-async fn follow_removals(removed: &mpsc::UnboundedSender<String>) {
+/// One run of `hc events` over every terminal, reporting the sessions in
+/// them as they are found and removed. Returns when the stream ends.
+async fn follow_sessions(
+    changes: &mpsc::UnboundedSender<SessionChange>,
+    adopt_as: &[(String, Option<PathBuf>)],
+) {
     let Ok(mut child) = hc()
-        .args(["events", "--json", "--label", "otto=agent"])
+        .args(["events", "--json"])
         .stdout(Stdio::piped())
         .spawn()
     else {
@@ -592,25 +618,15 @@ async fn follow_removals(removed: &mpsc::UnboundedSender<String>) {
         return;
     };
     let mut lines = BufReader::new(stdout).lines();
-    // Each terminal's session, from the snapshot and the terminals created since.
+    // Each terminal's session, from the snapshot and the terminals seen since.
     let mut sessions: std::collections::HashMap<String, String> = Default::default();
-    let session_of = |item: &Value| {
-        item.pointer("/labels/otto.session")
-            .and_then(Value::as_str)
-            .map(str::to_owned)
-    };
     while let Ok(Some(line)) = lines.next_line().await {
         let Ok(event) = serde_json::from_str::<Value>(&line) else {
             continue;
         };
         if let Some(snapshot) = event.get("terminals").and_then(Value::as_array) {
             for item in snapshot {
-                if let (Some(address), Some(session)) = (
-                    item.get("address").and_then(Value::as_str),
-                    session_of(item),
-                ) {
-                    sessions.insert(address.to_owned(), session);
-                }
+                consider(item, &mut sessions, changes, adopt_as).await;
             }
             continue;
         }
@@ -621,29 +637,127 @@ async fn follow_removals(removed: &mpsc::UnboundedSender<String>) {
             continue;
         };
         match params.get("type").and_then(Value::as_str) {
-            Some("created") => {
-                let session = match params.get("data").and_then(session_of) {
-                    Some(session) => Some(session),
-                    None => hc_json(&["get", address])
-                        .await
-                        .as_ref()
-                        .and_then(session_of),
-                };
-                if let Some(session) = session {
-                    sessions.insert(address.to_owned(), session);
-                }
-            }
             Some("removed") => {
                 let Some(session) = sessions.remove(address) else {
                     continue;
                 };
                 if !sessions.values().any(|other| *other == session) {
-                    let _ = removed.send(session);
+                    let _ = changes.send(SessionChange::Removed(session));
+                }
+            }
+            // A terminal new, or with another program in front: it may hold
+            // a session now.
+            Some("created" | "foreground" | "labels") if !sessions.contains_key(address) => {
+                if let Some(item) = hc_json(&["get", address]).await {
+                    consider(&item, &mut sessions, changes, adopt_as).await;
                 }
             }
             _ => {}
         }
     }
+}
+
+/// Reports the session a terminal holds: an Otto session by its label, or a
+/// Claude Code started by hand, which is labelled as Otto's from then on.
+async fn consider(
+    item: &Value,
+    sessions: &mut std::collections::HashMap<String, String>,
+    changes: &mpsc::UnboundedSender<SessionChange>,
+    adopt_as: &[(String, Option<PathBuf>)],
+) {
+    let Some(address) = item.get("address").and_then(Value::as_str) else {
+        return;
+    };
+    let text = |pointer: &str| item.pointer(pointer).and_then(Value::as_str);
+    let running = text("/state") == Some("live");
+    let cwd = PathBuf::from(text("/cwd").unwrap_or_default());
+    let (session, provider, cwd) = match text("/labels/otto.session") {
+        Some(session) => {
+            let provider = text("/labels/otto.agent").unwrap_or(PROVIDER).to_owned();
+            (session.to_owned(), provider, cwd)
+        }
+        None if running => {
+            let Some((session, cwd)) = claude_in(item).await else {
+                return;
+            };
+            let provider = adopted_agent(adopt_as, &cwd);
+            let labels = [
+                "otto=agent".to_owned(),
+                format!("otto.session={session}"),
+                format!("otto.agent={provider}"),
+            ];
+            let _ = hc().arg("label").arg(address).args(&labels).output().await;
+            tracing::info!(%address, %session, "a Claude Code started in herdr");
+            (session, provider, cwd)
+        }
+        None => return,
+    };
+    sessions.insert(address.to_owned(), session.clone());
+    let transcript = match text("/labels/otto.harness") {
+        Some("pi") => Transcript::Pi(session.clone()),
+        _ if provider_is_pi(item) => Transcript::Pi(session.clone()),
+        _ => Transcript::Claude(transcript_path(&cwd, &session)),
+    };
+    let title = history(&transcript.read().await)
+        .into_iter()
+        .next()
+        .map(|turn| turn.prompt);
+    let _ = changes.send(SessionChange::Found(FoundSession {
+        provider,
+        agent_session: session,
+        cwd,
+        title,
+        running,
+    }));
+}
+
+/// Whether the terminal runs pi, as herdr names its agent or its command.
+fn provider_is_pi(item: &Value) -> bool {
+    item.get("agent").and_then(Value::as_str) == Some("pi")
+        || item
+            .pointer("/argv/0")
+            .and_then(Value::as_str)
+            .is_some_and(|program| Harness::of(program) == Harness::Pi)
+}
+
+/// The session of the Claude Code in front in a terminal, and its folder:
+/// Claude notes both in `~/.claude/sessions/<pid>.json`.
+async fn claude_in(item: &Value) -> Option<(String, PathBuf)> {
+    let foreground = item.get("foreground")?;
+    if foreground.get("name").and_then(Value::as_str) != Some("claude") {
+        return None;
+    }
+    let pid = foreground.get("pid")?.as_u64()?;
+    let base = std::env::var_os("CLAUDE_CONFIG_DIR")
+        .map(PathBuf::from)
+        .or_else(|| crate::xdg::home().map(|home| home.join(".claude")))?;
+    let note = tokio::fs::read_to_string(base.join(format!("sessions/{pid}.json")))
+        .await
+        .ok()?;
+    let note: Value = serde_json::from_str(&note).ok()?;
+    let session = note.get("sessionId")?.as_str()?.to_owned();
+    let cwd = note
+        .get("cwd")
+        .and_then(Value::as_str)
+        .map(PathBuf::from)
+        .or_else(|| foreground.get("cwd")?.as_str().map(PathBuf::from))?;
+    Some((session, cwd))
+}
+
+/// The agent a session in `cwd` started by hand is taken up as: the one whose
+/// folder holds `cwd` most closely, else the first, else the default.
+fn adopted_agent(adopt_as: &[(String, Option<PathBuf>)], cwd: &Path) -> String {
+    adopt_as
+        .iter()
+        .filter_map(|(id, folder)| {
+            let folder = folder.as_deref()?;
+            cwd.starts_with(folder)
+                .then(|| (folder.components().count(), id))
+        })
+        .max()
+        .map(|(_, id)| id.clone())
+        .or_else(|| adopt_as.first().map(|(id, _)| id.clone()))
+        .unwrap_or_else(|| PROVIDER.to_owned())
 }
 
 /// The live terminal already running `session`, as after an otto-agents
@@ -662,6 +776,7 @@ async fn find(session: &str) -> Option<String> {
 
 async fn run(
     session: &str,
+    labels: &[String],
     cwd: &Path,
     space: Option<String>,
     argv: &[String],
@@ -686,6 +801,9 @@ async fn run(
         "--label",
         &format!("otto.session={session}"),
     ]);
+    for label in labels {
+        command.args(["--label", label]);
+    }
     // herdr-app opens a terminal whose tab id it has not seen in a new tab.
     if let Some(space) = space {
         let tab = format!("tb{}", uuid::Uuid::new_v4().simple());
@@ -890,7 +1008,11 @@ async fn drive(
     // until herdr has seen it ready, or long enough has passed.
     let mut ready = false;
     let mut held: Vec<String> = Vec::new();
-    let patience = tokio::time::sleep(Duration::from_secs(20));
+    // herdr reports no state for pi: there, a short wait for it to start.
+    let patience = tokio::time::sleep(match transcript {
+        Transcript::Claude(_) => Duration::from_secs(20),
+        Transcript::Pi(_) => Duration::from_secs(3),
+    });
     tokio::pin!(patience);
     // herdr says `done` a little before the transcript has the last words:
     // the transcript ends the turn, herdr's word only after a grace period.
@@ -1607,6 +1729,22 @@ mod tests {
         assert_eq!(turns.len(), 1);
         assert_eq!(turns[0].prompt, "Run echo hi");
         assert_eq!(turns[0].parts.len(), 2, "the tool call and the answer");
+    }
+
+    #[test]
+    fn a_session_started_by_hand_goes_to_the_agent_of_its_folder() {
+        let agents = vec![
+            ("claude".to_owned(), None),
+            ("dev".to_owned(), Some(PathBuf::from("/home/me/dev"))),
+            ("otto".to_owned(), Some(PathBuf::from("/home/me/dev/otto"))),
+        ];
+        assert_eq!(
+            adopted_agent(&agents, Path::new("/home/me/dev/otto/src")),
+            "otto"
+        );
+        assert_eq!(adopted_agent(&agents, Path::new("/home/me/dev/x")), "dev");
+        assert_eq!(adopted_agent(&agents, Path::new("/tmp")), "claude");
+        assert_eq!(adopted_agent(&[], Path::new("/tmp")), PROVIDER);
     }
 
     #[test]
