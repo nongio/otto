@@ -9,6 +9,7 @@
 //!   `otto.ask` label; the answer goes back as `otto.answer`.
 //! - Prompts are typed in with `hc send`, Stop is `hc interrupt`.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
@@ -16,12 +17,13 @@ use std::time::Duration;
 use ahp_types::state::{AgentInfo, ChatInputResponseKind};
 use elicitation_content::to_labels;
 use serde_json::{Value, json};
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncSeekExt, BufReader};
+use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::agent::{
-    Backend, InputAnswer, SessionCommand, SessionEvent, SessionSpec, TurnOutcome, agent_info,
+    Backend, HistoryPart, HistoryTurn, InputAnswer, SessionCommand, SessionEvent, SessionSpec,
+    TurnOutcome, agent_info,
 };
 use crate::elicitation;
 use crate::skills;
@@ -121,10 +123,20 @@ impl Backend for HerdrBackend {
                 },
             };
             tracing::info!(%session, %terminal, "herdr session");
+            let transcript = transcript_path(&spec.cwd, &session);
+            // Before the session is ready, so a queued turn starts against a
+            // chat that already holds what was said, here or in the terminal.
+            if resume.is_some() {
+                let turns = match tokio::fs::read_to_string(&transcript).await {
+                    Ok(text) => history(&text),
+                    Err(_) => Vec::new(),
+                };
+                tracing::info!(turns = turns.len(), "history read from the transcript");
+                let _ = events.send(SessionEvent::HistoryLoaded { turns });
+            }
             let _ = events.send(SessionEvent::Ready {
                 agent_session: Some(session.clone()),
             });
-            let transcript = transcript_path(&spec.cwd, &session);
             drive(terminal, transcript, commands, events).await;
         });
     }
@@ -473,46 +485,151 @@ async fn follow_events(terminal: String, seen: mpsc::UnboundedSender<Seen>) {
     let _ = seen.send(Seen::Gone);
 }
 
-/// The agent's text, as Claude appends it to the transcript. Only what is
-/// written after the session is opened here: earlier turns are history.
+/// The agent's text, as Claude writes it to the transcript. Only entries
+/// written after the session is opened here: earlier ones are history.
+/// Entries are told apart by their `uuid`, not their place in the file, as a
+/// resumed Claude rewrites the file rather than only appending to it.
 async fn follow_transcript(path: PathBuf, seen: mpsc::UnboundedSender<Seen>) {
-    let mut offset = tokio::fs::metadata(&path)
-        .await
-        .map(|m| m.len())
-        .unwrap_or(0);
-    let mut pending = String::new();
+    let read =
+        |path: PathBuf| async move { tokio::fs::read_to_string(path).await.unwrap_or_default() };
+    let mut known: HashSet<String> = entries(&read(path.clone()).await)
+        .map(|(key, _)| key)
+        .collect();
+    let mut last_len = None;
     loop {
         tokio::time::sleep(Duration::from_millis(250)).await;
-        let Ok(mut file) = tokio::fs::File::open(&path).await else {
+        let Ok(len) = tokio::fs::metadata(&path).await.map(|m| m.len()) else {
             continue;
         };
-        let Ok(len) = file.metadata().await.map(|m| m.len()) else {
-            continue;
-        };
-        if len <= offset {
+        if last_len == Some(len) {
             continue;
         }
-        if file.seek(std::io::SeekFrom::Start(offset)).await.is_err() {
-            continue;
-        }
-        let mut added = String::new();
-        if file.read_to_string(&mut added).await.is_err() {
-            continue;
-        }
-        offset = len;
-        pending.push_str(&added);
-        while let Some(end) = pending.find('\n') {
-            let line: String = pending.drain(..=end).collect();
-            for text in assistant_text(&line) {
+        last_len = Some(len);
+        let text = read(path.clone()).await;
+        for (key, line) in entries(&text) {
+            if !known.insert(key) {
+                continue;
+            }
+            for text in assistant_text(line) {
                 if seen.send(Seen::Text(text)).is_err() {
                     return;
                 }
             }
-            if ends_turn(&line) && seen.send(Seen::Ended).is_err() {
+            if ends_turn(line) && seen.send(Seen::Ended).is_err() {
                 return;
             }
         }
     }
+}
+
+/// The complete lines of a transcript, each with what identifies it: its
+/// `uuid`, or the line itself for the few entries without one.
+fn entries(text: &str) -> impl Iterator<Item = (String, &str)> {
+    let complete = text.rfind('\n').map_or("", |end| &text[..end]);
+    complete
+        .lines()
+        .filter(|line| !line.is_empty())
+        .map(|line| {
+            let key = serde_json::from_str::<Value>(line)
+                .ok()
+                .and_then(|entry| entry.get("uuid")?.as_str().map(str::to_owned))
+                .unwrap_or_else(|| line.to_owned());
+            (key, line)
+        })
+}
+
+/// The conversation in a transcript, as turns: each prompt you wrote, and
+/// what the agent said and which tools it ran in answer.
+fn history(transcript: &str) -> Vec<HistoryTurn> {
+    let mut turns: Vec<HistoryTurn> = Vec::new();
+    for line in transcript.lines() {
+        let Ok(entry) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        let flag = |name: &str| entry.get(name).and_then(Value::as_bool) == Some(true);
+        if flag("isMeta") || flag("isSidechain") {
+            continue;
+        }
+        let content = entry.pointer("/message/content");
+        match entry.get("type").and_then(Value::as_str) {
+            Some("user") => {
+                let prompt = match content {
+                    Some(Value::String(text)) => Some(text.clone()),
+                    Some(Value::Array(blocks)) => {
+                        // A tool's result comes back as a user entry: it
+                        // settles the call, it is not a prompt.
+                        for block in blocks {
+                            if block.get("type").and_then(Value::as_str) != Some("tool_result") {
+                                continue;
+                            }
+                            let id = block.get("tool_use_id").and_then(Value::as_str);
+                            let failed =
+                                block.get("is_error").and_then(Value::as_bool) == Some(true);
+                            if let (Some(id), Some(turn)) = (id, turns.last_mut()) {
+                                for part in &mut turn.parts {
+                                    if let HistoryPart::ToolCall {
+                                        tool_call_id,
+                                        success,
+                                        ..
+                                    } = part
+                                    {
+                                        if tool_call_id == id {
+                                            *success = !failed;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        let text: Vec<&str> = blocks
+                            .iter()
+                            .filter(|block| {
+                                block.get("type").and_then(Value::as_str) == Some("text")
+                            })
+                            .filter_map(|block| block.get("text").and_then(Value::as_str))
+                            .collect();
+                        (!text.is_empty()).then(|| text.join("\n"))
+                    }
+                    _ => None,
+                };
+                // Slash commands and the harness's own notes are not prompts.
+                if let Some(prompt) = prompt.filter(|text| !text.trim_start().starts_with('<')) {
+                    turns.push(HistoryTurn {
+                        prompt,
+                        ..HistoryTurn::default()
+                    });
+                }
+            }
+            Some("assistant") => {
+                let Some(turn) = turns.last_mut() else {
+                    continue;
+                };
+                for block in content.and_then(Value::as_array).into_iter().flatten() {
+                    match block.get("type").and_then(Value::as_str) {
+                        Some("text") => {
+                            if let Some(text) = block.get("text").and_then(Value::as_str) {
+                                turn.parts.push(HistoryPart::Message(format!("{text}\n\n")));
+                            }
+                        }
+                        Some("tool_use") => {
+                            let id = block.get("id").and_then(Value::as_str).unwrap_or_default();
+                            let name = block
+                                .get("name")
+                                .and_then(Value::as_str)
+                                .unwrap_or_default();
+                            turn.parts.push(HistoryPart::ToolCall {
+                                tool_call_id: id.to_owned(),
+                                title: name.to_owned(),
+                                success: true,
+                            });
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    turns
 }
 
 /// The text blocks of one transcript line, when it is the assistant's.
@@ -623,6 +740,36 @@ mod tests {
     fn transcripts_live_under_the_folder_with_dashes() {
         let path = transcript_path(Path::new("/home/me/dev/otto/.claude/x"), "abc");
         assert!(path.ends_with("projects/-home-me-dev-otto--claude-x/abc.jsonl"));
+    }
+
+    #[test]
+    fn history_is_prompts_and_what_answered_them() {
+        let transcript = [
+            r#"{"type":"user","message":{"content":"what time is it?"}}"#,
+            r#"{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"Bash"}]}}"#,
+            r#"{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","is_error":true}]}}"#,
+            r#"{"type":"assistant","message":{"content":[{"type":"text","text":"11:15"}]}}"#,
+            r#"{"type":"user","isMeta":true,"message":{"content":"caveat"}}"#,
+            r#"{"type":"user","message":{"content":"<command-name>/model</command-name>"}}"#,
+            r#"{"type":"user","message":{"content":[{"type":"text","text":"thanks"}]}}"#,
+        ]
+        .join("\n");
+        let turns = history(&transcript);
+        assert_eq!(turns.len(), 2);
+        assert_eq!(turns[0].prompt, "what time is it?");
+        assert_eq!(
+            turns[0].parts,
+            vec![
+                HistoryPart::ToolCall {
+                    tool_call_id: "t1".into(),
+                    title: "Bash".into(),
+                    success: false,
+                },
+                HistoryPart::Message("11:15\n\n".into()),
+            ]
+        );
+        assert_eq!(turns[1].prompt, "thanks");
+        assert!(turns[1].parts.is_empty());
     }
 
     #[test]
