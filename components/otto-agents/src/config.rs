@@ -98,7 +98,8 @@ pub struct AgentConfig {
     #[serde(default, deserialize_with = "tilde_path")]
     pub folder: Option<PathBuf>,
     /// When the service runs sessions in herdr (`serve --herdr`, plan 0016),
-    /// the name a herdr space gets when one is made for this agent's sessions.
+    /// the name a herdr space gets when one is made for this agent's sessions;
+    /// empty names it after the folder.
     /// A session opens in the space whose folder is its own, made when there
     /// is none. There, every agent with a space is offered.
     #[serde(default)]

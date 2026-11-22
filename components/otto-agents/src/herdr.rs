@@ -106,7 +106,7 @@ type Started = std::sync::Arc<std::sync::Mutex<HashSet<String>>>;
 impl HerdrBackend {
     /// The agents are `agents.toml`'s that name a herdr `space`, after the
     /// environment's own (while this is a prototype): `OTTO_HERDR_SPACE` (the
-    /// name of a space made for it, `Ask` unless set), `OTTO_HERDR_MODEL` and `OTTO_HERDR_AGENT`, the plugin agent it runs
+    /// name of a space made for it), `OTTO_HERDR_MODEL` and `OTTO_HERDR_AGENT`, the plugin agent it runs
     /// as (`otto` unless set, `none` for plain Claude). An agent of the file with
     /// that one's id, `claude`, takes its place. Also from the environment:
     /// `OTTO_HERDR_ASK_MCP` and `OTTO_HERDR_PERMISSION_HOOK` (command lines),
@@ -127,7 +127,7 @@ impl HerdrBackend {
             id: PROVIDER.to_owned(),
             name: "Otto".to_owned(),
             description: String::new(),
-            space: var("OTTO_HERDR_SPACE").or_else(|| Some("Ask".to_owned())),
+            space: var("OTTO_HERDR_SPACE"),
             model: var("OTTO_HERDR_MODEL"),
             profile: profile(&var("OTTO_HERDR_AGENT").unwrap_or_else(|| "otto".to_owned())),
             folder: None,
@@ -505,12 +505,7 @@ async fn place(name: Option<String>, folder: &Path) -> Placement {
     }
     let name = name
         .filter(|name| !name.is_empty() && !is_space_id(name))
-        .or_else(|| {
-            folder
-                .file_name()
-                .map(|name| name.to_string_lossy().into_owned())
-        })
-        .unwrap_or_else(|| folder.to_string_lossy().into_owned());
+        .unwrap_or_else(|| folder_name(folder));
     if let Some(made) = new_space(&name, folder).await {
         return made;
     }
@@ -525,6 +520,19 @@ async fn place(name: Option<String>, folder: &Path) -> Placement {
             .map(str::to_owned),
         first_tab: None,
     }
+}
+
+/// A space's name after its folder, as a name reads: `ask` is `Ask`.
+fn folder_name(folder: &Path) -> String {
+    let name = folder
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| folder.to_string_lossy().into_owned());
+    let mut chars = name.chars();
+    chars
+        .next()
+        .map(|first| first.to_uppercase().chain(chars).collect())
+        .unwrap_or_default()
 }
 
 /// The space whose terminals start in `folder`.
@@ -2164,6 +2172,16 @@ mod tests {
             Some("sp2")
         );
         assert_eq!(space_in(&spaces, Path::new("/home/me/dev")), None);
+    }
+
+    #[test]
+    fn a_space_is_named_after_its_folder() {
+        assert_eq!(
+            folder_name(Path::new("/home/me/.local/state/otto/ask")),
+            "Ask"
+        );
+        assert_eq!(folder_name(Path::new("/home/me/dev/otto")), "Otto");
+        assert_eq!(folder_name(Path::new("/")), "/");
     }
 
     #[test]
