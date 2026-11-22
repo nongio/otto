@@ -171,6 +171,9 @@ struct ServeArgs {
     /// Serve a built-in echo agent instead of real agents, for trying out clients.
     #[arg(long)]
     echo: bool,
+    /// Run sessions as Claude Code terminals in herdr (plan 0016 prototype).
+    #[arg(long, conflicts_with = "echo")]
+    herdr: bool,
     /// Where sessions are kept between runs. Defaults to
     /// `$XDG_STATE_HOME/otto-agents/sessions`; with `--echo`, sessions are only
     /// kept when this is given.
@@ -227,6 +230,8 @@ async fn main() -> anyhow::Result<()> {
 async fn serve(args: ServeArgs) -> anyhow::Result<()> {
     let (backend, idle_timeout): (Arc<dyn Backend>, _) = if args.echo {
         (Arc::new(EchoBackend), Some(config::DEFAULT_IDLE_TIMEOUT))
+    } else if args.herdr {
+        (Arc::new(otto_agents::herdr::HerdrBackend::from_env()), None)
     } else {
         let config = config::load(args.config.as_deref())?;
         for agent in &config.agents {

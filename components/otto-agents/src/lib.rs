@@ -13,6 +13,7 @@ pub mod config;
 pub mod dialog;
 pub mod elicitation;
 pub mod facade;
+pub mod herdr;
 pub mod host;
 pub mod i18n;
 pub mod images;
