@@ -37,6 +37,11 @@ pub struct HerdrBackend {
     space: Option<String>,
     /// The `ask` MCP server's command line.
     ask_mcp: Vec<String>,
+    /// The `PermissionRequest` hook's command line.
+    permission_hook: Option<String>,
+    /// Claude's `--permission-mode`, such as `manual`; unset keeps the
+    /// person's own default.
+    permission_mode: Option<String>,
     model: Option<String>,
     /// Claude's `--agent`, such as `otto:otto`.
     run_as: Option<String>,
@@ -44,8 +49,9 @@ pub struct HerdrBackend {
 
 impl HerdrBackend {
     /// Configured from the environment while this is a prototype:
-    /// `OTTO_HERDR_SPACE`, `OTTO_HERDR_ASK_MCP` (a command
-    /// line), `OTTO_HERDR_MODEL` and `OTTO_HERDR_AGENT`.
+    /// `OTTO_HERDR_SPACE`, `OTTO_HERDR_ASK_MCP` and
+    /// `OTTO_HERDR_PERMISSION_HOOK` (command lines), `OTTO_HERDR_MODEL` and
+    /// `OTTO_HERDR_AGENT`, and `OTTO_HERDR_PERMISSION_MODE`.
     pub fn from_env() -> Self {
         let var = |name: &str| std::env::var(name).ok().filter(|value| !value.is_empty());
         let space = var("OTTO_HERDR_SPACE");
@@ -55,6 +61,8 @@ impl HerdrBackend {
         Self {
             space,
             ask_mcp,
+            permission_hook: var("OTTO_HERDR_PERMISSION_HOOK"),
+            permission_mode: var("OTTO_HERDR_PERMISSION_MODE"),
             model: var("OTTO_HERDR_MODEL"),
             run_as: var("OTTO_HERDR_AGENT"),
         }
@@ -66,6 +74,9 @@ impl HerdrBackend {
             if resume { "--resume" } else { "--session-id" }.to_owned(),
             session.to_owned(),
         ]);
+        if let Some(mode) = &self.permission_mode {
+            argv.extend(["--permission-mode".to_owned(), mode.clone()]);
+        }
         if let Some(model) = &self.model {
             argv.extend(["--model".to_owned(), model.clone()]);
         }
@@ -82,6 +93,14 @@ impl HerdrBackend {
                 "To ask the person anything, use the mcp__otto__ask tool, never a plain text question."
                     .to_owned(),
             ]);
+        }
+        if let Some(hook) = &self.permission_hook {
+            // Long enough for a person to answer: the hook gives up first,
+            // and Claude then asks in the terminal.
+            let settings = json!({ "hooks": { "PermissionRequest": [
+                { "matcher": "*", "hooks": [{ "type": "command", "command": hook, "timeout": 600 }] }
+            ] } });
+            argv.extend(["--settings".to_owned(), settings.to_string()]);
         }
         argv.extend(skills::claude_cli_args(
             &skills::discover(),
@@ -160,7 +179,7 @@ impl Backend for HerdrBackend {
                 agent_session: Some(session.clone()),
             });
             let _ = events.send(SessionEvent::Running(true));
-            drive(terminal, transcript, commands, events).await;
+            drive(terminal, transcript, spec.cwd.clone(), commands, events).await;
         });
     }
 }
@@ -265,6 +284,8 @@ fn transcript_path(cwd: &Path, session: &str) -> PathBuf {
 enum Seen {
     State(String),
     Ask(Option<Value>),
+    /// The `PermissionRequest` hook's request, or `None` once it is settled.
+    Permission(Option<Value>),
     Text(String),
     /// The transcript says the agent finished its turn.
     Ended,
@@ -276,6 +297,7 @@ enum Seen {
 async fn drive(
     terminal: String,
     transcript: PathBuf,
+    cwd: PathBuf,
     mut commands: mpsc::UnboundedReceiver<SessionCommand>,
     events: mpsc::UnboundedSender<SessionEvent>,
 ) {
@@ -287,6 +309,8 @@ async fn drive(
     let mut turn: Option<String> = None;
     let mut worked = false;
     let mut asked: Option<String> = None;
+    let mut permitting: Option<String> = None;
+    let (decided_tx, mut decided) = mpsc::unbounded_channel::<(String, bool)>();
     // A prompt typed into an agent still starting up is dropped: hold prompts
     // until herdr has seen it ready, or long enough has passed.
     let mut ready = false;
@@ -306,7 +330,7 @@ async fn drive(
         mpsc::unbounded_channel::<(String, Option<InputAnswer>, Value)>();
 
     loop {
-        let now = status_bits(&herdr_state, asked.is_some());
+        let now = status_bits(&herdr_state, asked.is_some() || permitting.is_some());
         if now != reported {
             reported = now;
             let _ = events.send(SessionEvent::Outside(now));
@@ -339,7 +363,7 @@ async fn drive(
             },
             () = async { tokio::time::sleep_until(fallback.unwrap_or_else(tokio::time::Instant::now)).await }, if fallback.is_some() => {
                 fallback = None;
-                if asked.is_none() {
+                if asked.is_none() && permitting.is_none() {
                     end(&mut turn, &events);
                 }
             }
@@ -362,7 +386,7 @@ async fn drive(
                     }
                     if state == "working" {
                         worked = true;
-                    } else if worked && matches!(state.as_str(), "done" | "idle") && asked.is_none() {
+                    } else if worked && matches!(state.as_str(), "done" | "idle") && (asked.is_none() && permitting.is_none()) {
                         fallback = Some(tokio::time::Instant::now() + Duration::from_secs(3));
                         worked = false;
                     }
@@ -388,7 +412,7 @@ async fn drive(
                     }
                 }
                 Seen::Ended => {
-                    if asked.is_none() {
+                    if asked.is_none() && permitting.is_none() {
                         fallback = None;
                         worked = false;
                         end(&mut turn, &events);
@@ -433,6 +457,28 @@ async fn drive(
                     });
                 }
                 Seen::Ask(None) => asked = None,
+                Seen::Permission(Some(request)) => {
+                    let Some(id) = request.get("id").and_then(Value::as_str).map(str::to_owned) else {
+                        continue;
+                    };
+                    if permitting.as_deref() == Some(&id) {
+                        continue;
+                    }
+                    permitting = Some(id.clone());
+                    let question = permission_question(&id, &request, &cwd);
+                    let (reply, wait) = oneshot::channel();
+                    let _ = events.send(SessionEvent::PermissionRequested {
+                        turn_id: turn.clone().unwrap_or_default(),
+                        question: Box::new(question),
+                        reply,
+                    });
+                    let decided_tx = decided_tx.clone();
+                    tokio::spawn(async move {
+                        let allow = wait.await.is_ok_and(|decision| decision.approved());
+                        let _ = decided_tx.send((id, allow));
+                    });
+                }
+                Seen::Permission(None) => permitting = None,
                 Seen::Gone => {
                     let _ = events.send(SessionEvent::Running(false));
                     if let Some(turn_id) = turn.take() {
@@ -444,6 +490,11 @@ async fn drive(
                     break;
                 }
             },
+            Some((id, allow)) = decided.recv() => {
+                let reply = json!({ "id": id, "allow": allow });
+                let label = format!("otto.permission.answer={reply}");
+                let _ = hc().args(["label", &terminal, &label]).output().await;
+            }
             Some((id, answer, labels)) = answers.recv() => {
                 let answered = matches!(&answer, Some(InputAnswer { response: ChatInputResponseKind::Accept, .. }));
                 let reply = if answered {
@@ -461,6 +512,59 @@ async fn drive(
     }
     watch_events.abort();
     watch_transcript.abort();
+}
+
+/// The hook's request, `{tool_name, tool_input}`, as a permission question:
+/// built as the ACP request Claude's adapter would send, so the card shows
+/// the command, or the file with its diff, as it does for ACP sessions.
+fn permission_question(id: &str, request: &Value, cwd: &Path) -> crate::agent::Question {
+    use agent_client_protocol::schema::v1::{
+        Diff, PermissionOption, PermissionOptionKind, RequestPermissionRequest, ToolCallContent,
+        ToolCallLocation, ToolCallUpdate, ToolCallUpdateFields, ToolKind,
+    };
+    let tool = request
+        .get("tool_name")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let input = request.get("tool_input").cloned().unwrap_or(Value::Null);
+    let text = |key: &str| input.get(key).and_then(Value::as_str);
+    let mut fields = ToolCallUpdateFields::new();
+    fields.kind = Some(match tool {
+        "Bash" => ToolKind::Execute,
+        "Write" | "Edit" | "MultiEdit" | "NotebookEdit" => ToolKind::Edit,
+        "Read" | "Glob" | "Grep" => ToolKind::Read,
+        "WebFetch" | "WebSearch" => ToolKind::Fetch,
+        _ => ToolKind::Other,
+    });
+    let path = text("file_path").or_else(|| text("notebook_path"));
+    fields.title = Some(match (tool, text("command"), path) {
+        (_, Some(command), _) => command.to_owned(),
+        (_, None, Some(path)) => format!("{tool} {path}"),
+        _ => tool.to_owned(),
+    });
+    if let Some(path) = path {
+        fields.locations = Some(vec![ToolCallLocation::new(path)]);
+        let diff = match tool {
+            "Write" => text("content").map(|new| Diff::new(path, new)),
+            "Edit" => text("new_string")
+                .map(|new| Diff::new(path, new).old_text(text("old_string").map(str::to_owned))),
+            _ => None,
+        };
+        if let Some(diff) = diff {
+            fields.content = Some(vec![ToolCallContent::from(diff)]);
+        }
+    }
+    fields.raw_input = Some(input);
+    let options = vec![
+        PermissionOption::new("allow", "Allow", PermissionOptionKind::AllowOnce),
+        PermissionOption::new("reject", "Reject", PermissionOptionKind::RejectOnce),
+    ];
+    let request = RequestPermissionRequest::new(
+        id.to_owned(),
+        ToolCallUpdate::new(id.to_owned(), fields),
+        options,
+    );
+    crate::dialog::question_for("Claude", None, cwd, &request)
 }
 
 /// What herdr says the agent is doing, as session status bits.
@@ -539,6 +643,7 @@ async fn follow_events(terminal: String, seen: mpsc::UnboundedSender<Seen>) {
     let mut lines = BufReader::new(stdout).lines();
     let mut state = String::new();
     let mut ask: Option<String> = None;
+    let mut permission: Option<String> = None;
     while let Ok(Some(line)) = lines.next_line().await {
         let Ok(event) = serde_json::from_str::<Value>(&line) else {
             continue;
@@ -579,6 +684,16 @@ async fn follow_events(terminal: String, seen: mpsc::UnboundedSender<Seen>) {
                 ask = label.clone();
                 let request = label.and_then(|raw| serde_json::from_str(&raw).ok());
                 let _ = seen.send(Seen::Ask(request));
+            }
+            let label = item
+                .pointer("/labels/otto.permission")
+                .and_then(Value::as_str)
+                .filter(|raw| !raw.is_empty())
+                .map(str::to_owned);
+            if label != permission {
+                permission = label.clone();
+                let request = label.and_then(|raw| serde_json::from_str(&raw).ok());
+                let _ = seen.send(Seen::Permission(request));
             }
         }
     }
@@ -875,6 +990,20 @@ mod tests {
         );
         assert_eq!(turns[1].prompt, "thanks");
         assert!(turns[1].parts.is_empty());
+    }
+
+    #[test]
+    fn a_write_asks_with_its_diff() {
+        let request = json!({
+            "id": "p1",
+            "tool_name": "Write",
+            "tool_input": { "file_path": "/tmp/test.txt", "content": "test" }
+        });
+        let question = permission_question("p1", &request, Path::new("/home/me"));
+        assert_eq!(question.edits.len(), 1);
+        assert_eq!(question.edits[0]["newText"], "test");
+        assert!(question.options.iter().any(|option| option.allow()));
+        assert!(question.options.iter().any(|option| !option.allow()));
     }
 
     #[test]
