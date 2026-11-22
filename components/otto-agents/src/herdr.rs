@@ -36,11 +36,13 @@ pub const PROVIDER: &str = "claude";
 enum Harness {
     Claude,
     Pi,
+    OpenCode,
 }
 
 impl Harness {
     /// From an agent's `command` in `agents.toml`: `pi` (or `pi-acp`, the
-    /// same agent over ACP) is pi, anything else Claude Code.
+    /// same agent over ACP) is pi, `opencode` opencode, anything else Claude
+    /// Code.
     fn of(command: &str) -> Self {
         let name = Path::new(command)
             .file_name()
@@ -48,14 +50,25 @@ impl Harness {
             .unwrap_or_default();
         if name == "pi" || name.starts_with("pi-") {
             Self::Pi
+        } else if name == "opencode" {
+            Self::OpenCode
         } else {
             Self::Claude
         }
     }
+
+    /// Its `otto.harness` label.
+    fn label(self) -> &'static str {
+        match self {
+            Self::Claude => "claude",
+            Self::Pi => "pi",
+            Self::OpenCode => "opencode",
+        }
+    }
 }
 
-/// An agent Ask offers: Claude Code or pi, opening its sessions in a herdr
-/// space.
+/// An agent Ask offers: Claude Code, pi or opencode, opening its sessions in
+/// a herdr space.
 #[derive(Debug, Clone)]
 struct HerdrAgent {
     harness: Harness,
@@ -175,8 +188,12 @@ impl HerdrBackend {
     }
 
     fn argv(&self, agent: &HerdrAgent, session: &str, resume: bool) -> Vec<String> {
-        if agent.harness == Harness::Pi {
-            return pi_argv(agent, session);
+        match agent.harness {
+            Harness::Pi => return pi_argv(agent, session),
+            Harness::OpenCode => {
+                return opencode_argv(agent, session, self.permission_mode.as_deref());
+            }
+            Harness::Claude => {}
         }
         let mut argv = vec!["claude".to_owned()];
         argv.extend([
@@ -327,31 +344,34 @@ impl Backend for HerdrBackend {
         events: mpsc::UnboundedSender<SessionEvent>,
     ) {
         let resume = spec.resume.clone();
-        let session = resume
-            .clone()
-            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+        let agent = self.agent(&spec.provider);
+        let session = resume.clone().unwrap_or_else(|| match agent.harness {
+            Harness::OpenCode => opencode_session_id(),
+            _ => uuid::Uuid::new_v4().to_string(),
+        });
         self.started
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .insert(session.clone());
-        let agent = self.agent(&spec.provider);
         let argv = self.argv(agent, &session, resume.is_some());
         let space = agent.space.clone();
         let harness = agent.harness;
         let labels = vec![
             format!("otto.agent={}", agent.id),
-            format!(
-                "otto.harness={}",
-                match harness {
-                    Harness::Claude => "claude",
-                    Harness::Pi => "pi",
-                }
-            ),
+            format!("otto.harness={}", harness.label()),
         ];
         tokio::spawn(async move {
             let terminal = match find(&session).await {
                 Some(terminal) => terminal,
                 None => {
+                    // opencode takes up only a session it has: a new one is
+                    // made first, under Otto's id.
+                    if harness == Harness::OpenCode && resume.is_none() {
+                        if let Err(error) = opencode_new(&session, &spec.cwd).await {
+                            let _ = events.send(SessionEvent::CreationFailed(error));
+                            return;
+                        }
+                    }
                     let placement = place(space, &spec.cwd).await;
                     let started = run(&session, &labels, &spec.cwd, placement.space, &argv).await;
                     if let (Ok(_), Some(tab)) = (&started, &placement.first_tab) {
@@ -375,6 +395,7 @@ impl Backend for HerdrBackend {
             let transcript = match harness {
                 Harness::Claude => Transcript::Claude(transcript_path(&spec.cwd, &session)),
                 Harness::Pi => Transcript::Pi(session.clone()),
+                Harness::OpenCode => Transcript::OpenCode(session.clone()),
             };
             // Before the session is ready, so a queued turn starts against a
             // chat that already holds what was said, here or in the terminal.
@@ -818,6 +839,7 @@ async fn consider(
     }
     let transcript = match text("/labels/otto.harness") {
         Some("pi") => Transcript::Pi(session.clone()),
+        Some("opencode") => Transcript::OpenCode(session.clone()),
         _ if provider_is_pi(item) => Transcript::Pi(session.clone()),
         _ => Transcript::Claude(transcript_path(&cwd, &session)),
     };
@@ -957,28 +979,238 @@ enum Transcript {
     /// pi's session id: its file, named for the time it was made, is found
     /// once pi has written it.
     Pi(String),
+    /// opencode's session id: its messages are rows in opencode's database.
+    OpenCode(String),
 }
 
 impl Transcript {
+    /// The file that changes as the session grows: for opencode, its
+    /// database's write-ahead log, which every session shares.
     async fn path(&self) -> Option<PathBuf> {
         match self {
             Self::Claude(path) => Some(path.clone()),
             Self::Pi(session) => pi_transcript(session).await,
+            Self::OpenCode(_) => Some(opencode_db()?.with_extension("db-wal")),
         }
     }
 
     /// The transcript's lines, in Claude's shape whatever the harness: what
     /// the rest of the backend reads.
     async fn read(&self) -> String {
+        if let Self::OpenCode(session) = self {
+            return opencode_as_claude(&opencode_rows(session).await);
+        }
         let Some(path) = self.path().await else {
             return String::new();
         };
         let text = tokio::fs::read_to_string(path).await.unwrap_or_default();
         match self {
-            Self::Claude(_) => text,
             Self::Pi(_) => pi_as_claude(&text),
+            _ => text,
         }
     }
+}
+
+/// opencode in a herdr terminal: the session by its id, with the agent's
+/// model; with Otto's permission mode `auto`, it approves what it may.
+fn opencode_argv(agent: &HerdrAgent, session: &str, permission_mode: Option<&str>) -> Vec<String> {
+    let mut argv = vec!["opencode".to_owned(), "-s".to_owned(), session.to_owned()];
+    if let Some(model) = &agent.model {
+        argv.extend(["-m".to_owned(), model.clone()]);
+    }
+    if permission_mode == Some("auto") {
+        argv.push("--auto".to_owned());
+    }
+    argv
+}
+
+/// A new opencode session id: `ses_` and 26 letters or digits, as opencode
+/// makes them.
+fn opencode_session_id() -> String {
+    let hex = uuid::Uuid::new_v4().simple().to_string();
+    format!("ses_{}", &hex[..26])
+}
+
+/// Whether `session` is safe to quote in SQL: an opencode id is only
+/// letters, digits and underscores.
+fn is_opencode_id(session: &str) -> bool {
+    session.starts_with("ses_")
+        && session
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+fn opencode_db() -> Option<PathBuf> {
+    Some(crate::xdg::data_home()?.join("opencode/opencode.db"))
+}
+
+/// Makes an empty opencode session under `session`, in `cwd`: opencode takes
+/// the folder and project of a session it imports from where it is run.
+async fn opencode_new(session: &str, cwd: &Path) -> Result<(), String> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| since.as_millis() as u64);
+    let export = json!({
+        "info": {
+            "id": session,
+            "slug": session,
+            "projectID": "global",
+            "directory": cwd,
+            "title": "",
+            // Required, and only recorded: any version will do.
+            "version": "otto",
+            "time": { "created": now, "updated": now },
+        },
+        "messages": [],
+    });
+    let file = std::env::temp_dir().join(format!("otto-{session}.json"));
+    tokio::fs::write(&file, export.to_string())
+        .await
+        .map_err(|error| format!("could not write {}: {error}", file.display()))?;
+    let output = Command::new("opencode")
+        .arg("import")
+        .arg(&file)
+        .current_dir(cwd)
+        .stdin(Stdio::null())
+        .output()
+        .await;
+    let _ = tokio::fs::remove_file(&file).await;
+    let output = output.map_err(|error| format!("could not run opencode: {error}"))?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_owned());
+    }
+    Ok(())
+}
+
+/// The session's messages and their parts, oldest first, as
+/// `{message, message_data, part, part_data}` rows; the data is opencode's
+/// JSON text. Read with `sqlite3`: `opencode export` takes seconds.
+async fn opencode_rows(session: &str) -> Vec<Value> {
+    let Some(db) = opencode_db().filter(|_| is_opencode_id(session)) else {
+        return Vec::new();
+    };
+    let query = format!(
+        "select m.id as message, m.data as message_data, p.id as part, p.data as part_data \
+         from message m left join part p on p.message_id = m.id \
+         where m.session_id = '{session}' order by m.time_created, m.id, p.id"
+    );
+    let Ok(output) = Command::new("sqlite3")
+        .arg("-json")
+        .arg(db)
+        .arg(query)
+        .stdin(Stdio::null())
+        .output()
+        .await
+    else {
+        return Vec::new();
+    };
+    serde_json::from_slice(&output.stdout).unwrap_or_default()
+}
+
+/// opencode's rows as Claude's transcript. Its messages are rewritten as
+/// they grow, so every entry is a settled piece with an id of its own: a
+/// prompt, a finished text part, a tool call and its result, and the end of
+/// a turn once the message is complete and stopped for good.
+fn opencode_as_claude(rows: &[Value]) -> String {
+    let data = |row: &Value, key: &str| -> Value {
+        row.get(key)
+            .and_then(Value::as_str)
+            .and_then(|text| serde_json::from_str(text).ok())
+            .unwrap_or(Value::Null)
+    };
+    let mut out = Vec::new();
+    let mut index = 0;
+    while index < rows.len() {
+        let Some(id) = rows[index].get("message").and_then(Value::as_str) else {
+            index += 1;
+            continue;
+        };
+        let message = data(&rows[index], "message_data");
+        let mut parts = Vec::new();
+        while index < rows.len() && rows[index].get("message").and_then(Value::as_str) == Some(id) {
+            if let Some(part) = rows[index].get("part").and_then(Value::as_str) {
+                parts.push((part.to_owned(), data(&rows[index], "part_data")));
+            }
+            index += 1;
+        }
+        match message.get("role").and_then(Value::as_str) {
+            Some("user") => {
+                let text: Vec<&str> = parts
+                    .iter()
+                    .filter(|(_, part)| part.get("type").and_then(Value::as_str) == Some("text"))
+                    .filter(|(_, part)| {
+                        part.get("synthetic").and_then(Value::as_bool) != Some(true)
+                    })
+                    .filter_map(|(_, part)| part.get("text").and_then(Value::as_str))
+                    .collect();
+                if !text.is_empty() {
+                    out.push(json!({ "type": "user", "uuid": id, "message": {
+                        "content": [{ "type": "text", "text": text.join("\n") }],
+                    } }));
+                }
+            }
+            Some("assistant") => {
+                for (part_id, part) in &parts {
+                    match part.get("type").and_then(Value::as_str) {
+                        Some("text") if part.pointer("/time/end").is_some() => {
+                            out.push(json!({ "type": "assistant", "uuid": part_id, "message": {
+                                "content": [{ "type": "text", "text": part.get("text") }],
+                                "stop_reason": "tool_use",
+                            } }));
+                        }
+                        Some("tool") => {
+                            let call = part.get("callID");
+                            out.push(json!({ "type": "assistant", "uuid": part_id, "message": {
+                                "content": [{
+                                    "type": "tool_use",
+                                    "id": call,
+                                    "name": part.get("tool"),
+                                    "input": part.pointer("/state/input"),
+                                }],
+                                "stop_reason": "tool_use",
+                            } }));
+                            let status = part.pointer("/state/status").and_then(Value::as_str);
+                            if matches!(status, Some("completed" | "error")) {
+                                out.push(json!({ "type": "user", "uuid": format!("{part_id}:result"), "message": {
+                                    "content": [{
+                                        "type": "tool_result",
+                                        "tool_use_id": call,
+                                        "is_error": status == Some("error"),
+                                    }],
+                                } }));
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                // A failed request ends the turn with what went wrong.
+                if let Some(error) = message.get("error") {
+                    let text = error
+                        .pointer("/data/message")
+                        .or_else(|| error.get("name"))
+                        .and_then(Value::as_str)
+                        .unwrap_or("opencode stopped with an error");
+                    out.push(
+                        json!({ "type": "assistant", "uuid": format!("{id}:error"), "message": {
+                        "content": [{ "type": "text", "text": text }],
+                        "stop_reason": "end_turn",
+                    } }),
+                    );
+                } else if message.pointer("/time/completed").is_some()
+                    && message.get("finish").and_then(Value::as_str) != Some("tool-calls")
+                {
+                    out.push(
+                        json!({ "type": "assistant", "uuid": format!("{id}:end"), "message": {
+                        "content": [{ "type": "end" }],
+                        "stop_reason": "end_turn",
+                    } }),
+                    );
+                }
+            }
+            _ => {}
+        }
+    }
+    out.iter().map(|entry| format!("{entry}\n")).collect()
 }
 
 /// pi in a herdr terminal: the session by its id, made when it is new, with
@@ -1135,6 +1367,7 @@ async fn drive(
     let patience = tokio::time::sleep(match transcript {
         Transcript::Claude(_) => Duration::from_secs(20),
         Transcript::Pi(_) => Duration::from_secs(3),
+        Transcript::OpenCode(_) => Duration::from_secs(5),
     });
     tokio::pin!(patience);
     // herdr says `done` a little before the transcript has the last words:
@@ -1544,19 +1777,23 @@ async fn follow_transcript(transcript: Transcript, seen: mpsc::UnboundedSender<S
     let mut known: HashSet<String> = entries(&transcript.read().await)
         .map(|(key, _)| key)
         .collect();
-    let mut last_len = None;
+    let mut last = None;
     loop {
         tokio::time::sleep(Duration::from_millis(250)).await;
         let Some(path) = transcript.path().await else {
             continue;
         };
-        let Ok(len) = tokio::fs::metadata(&path).await.map(|m| m.len()) else {
+        // Its size and time: a write-ahead log is rewritten at one size.
+        let Ok(now) = tokio::fs::metadata(&path)
+            .await
+            .map(|m| (m.len(), m.modified().ok()))
+        else {
             continue;
         };
-        if last_len == Some(len) {
+        if last == Some(now) {
             continue;
         }
-        last_len = Some(len);
+        last = Some(now);
         let text = transcript.read().await;
         for (key, line) in entries(&text) {
             if !known.insert(key) {
@@ -1871,6 +2108,19 @@ mod tests {
     }
 
     #[test]
+    fn a_space_is_found_by_its_folder() {
+        let spaces = vec![
+            json!({"id": "sp1", "name": "Home", "folder": "/home/me"}),
+            json!({"id": "sp2", "name": "", "folder": "/home/me/dev/otto"}),
+        ];
+        assert_eq!(
+            space_in(&spaces, Path::new("/home/me/dev/otto")).as_deref(),
+            Some("sp2")
+        );
+        assert_eq!(space_in(&spaces, Path::new("/home/me/dev")), None);
+    }
+
+    #[test]
     fn a_space_id_is_not_a_name() {
         assert!(is_space_id("speca9fea29607a6c98182a4d76bb22054"));
         assert!(!is_space_id("Speaker-Studio"));
@@ -1883,6 +2133,86 @@ mod tests {
         assert_eq!(Harness::of("/usr/bin/pi-acp"), Harness::Pi);
         assert_eq!(Harness::of("claude"), Harness::Claude);
         assert_eq!(Harness::of("pipx"), Harness::Claude);
+        assert_eq!(
+            Harness::of("/home/me/.local/bin/opencode"),
+            Harness::OpenCode
+        );
+    }
+
+    #[test]
+    fn an_opencode_id_is_safe_in_sql() {
+        let id = opencode_session_id();
+        assert_eq!(id.len(), 30);
+        assert!(is_opencode_id(&id));
+        assert!(!is_opencode_id("ses_x' or 1=1 --"));
+        assert!(!is_opencode_id("44522e32-3005-4ee1-a108-3757ae35bed2"));
+    }
+
+    #[test]
+    fn an_opencode_turn_reads_as_claude() {
+        let row = |message: &str, message_data: Value, part: &str, part_data: Value| {
+            json!({
+                "message": message,
+                "message_data": message_data.to_string(),
+                "part": part,
+                "part_data": part_data.to_string(),
+            })
+        };
+        let user = json!({ "role": "user" });
+        let working = json!({ "role": "assistant", "time": { "created": 1 } });
+        let called =
+            json!({ "role": "assistant", "time": { "completed": 2 }, "finish": "tool-calls" });
+        let stopped = json!({ "role": "assistant", "time": { "completed": 3 }, "finish": "stop" });
+        let text =
+            |text: &str| json!({ "type": "text", "text": text, "time": { "start": 1, "end": 2 } });
+        let tool = |status: &str| {
+            json!({
+                "type": "tool", "tool": "bash", "callID": "c1",
+                "state": { "status": status, "input": { "command": "echo hi" } },
+            })
+        };
+        let mut rows = vec![
+            row("m1", user.clone(), "p1", text("Run echo hi")),
+            row("m2", called, "p2", json!({ "type": "step-start" })),
+            row(
+                "m2",
+                json!({ "role": "assistant", "time": { "completed": 2 }, "finish": "tool-calls" }),
+                "p3",
+                tool("completed"),
+            ),
+            row(
+                "m3",
+                working,
+                "p4",
+                json!({ "type": "text", "text": "do", "time": { "start": 1 } }),
+            ),
+        ];
+        let claude = opencode_as_claude(&rows);
+        let lines: Vec<&str> = claude.lines().collect();
+        assert_eq!(
+            lines.len(),
+            3,
+            "the prompt, the call and its result: {claude}"
+        );
+        assert_eq!(prompt_of(lines[0]).as_deref(), Some("Run echo hi"));
+        assert!(!ends_turn(lines[1]));
+        assert_eq!(prompt_of(lines[2]), None, "a tool's result is not a prompt");
+
+        rows.pop();
+        rows.push(row("m3", stopped, "p4", text("done")));
+        let claude = opencode_as_claude(&rows);
+        let lines: Vec<&str> = claude.lines().collect();
+        assert_eq!(lines.len(), 5);
+        assert!(
+            !ends_turn(lines[3]),
+            "text is not the end until the message is"
+        );
+        assert_eq!(assistant_text(lines[3]), vec!["done\n\n".to_owned()]);
+        assert!(ends_turn(lines[4]));
+        assert!(assistant_text(lines[4]).is_empty());
+        let turns = history(&claude);
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0].parts.len(), 2, "the tool call and the answer");
     }
 
     #[test]
@@ -1971,19 +2301,6 @@ mod tests {
         let line = r#"{"type":"assistant","message":{"content":[{"type":"text","text":"Hi"},{"type":"tool_use","name":"x"}]}}"#;
         assert_eq!(assistant_text(line), vec!["Hi\n\n".to_owned()]);
         assert!(assistant_text(r#"{"type":"user","message":{"content":"hey"}}"#).is_empty());
-    }
-
-    #[test]
-    fn a_space_is_found_by_its_folder() {
-        let spaces = vec![
-            json!({"id": "sp1", "name": "Home", "folder": "/home/me"}),
-            json!({"id": "sp2", "name": "", "folder": "/home/me/dev/otto"}),
-        ];
-        assert_eq!(
-            space_in(&spaces, Path::new("/home/me/dev/otto")).as_deref(),
-            Some("sp2")
-        );
-        assert_eq!(space_in(&spaces, Path::new("/home/me/dev")), None);
     }
 
     #[test]

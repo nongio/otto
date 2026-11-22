@@ -197,7 +197,7 @@ structured questions too.
 ## More harnesses (deferred)
 
 Researched on 2026-11-22 and set aside: there is no budget for these models
-now. Claude Code and pi run in herdr today. Each harness below needs the same
+now. Claude Code, pi and opencode run in herdr today. Each harness below needs the same
 four things: start or resume a session by an id Otto knows, find its
 transcript, read it as Claude's (prompts, text, tool calls and results, the
 end of a turn), and take a pasted prompt. Suggested order: Gemini, Codex,
@@ -250,21 +250,27 @@ opencode.
 - **Paste:** an Enter right after a paste may become a newline: wait first.
 - herdr reports Codex's status, as it does Claude's and pi's.
 
-### opencode (1.18)
+### opencode (1.19): done
 
-- **Id:** `-s <id>` only resumes; an unknown id fails. Make the session first
-  by importing an empty export with Otto's id (`ses_` and 26 characters):
-  `opencode import`, then `opencode -s <id> -m … --agent …`. Or read the
-  newest id after launch with `opencode db "select id from session where
-  directory='<cwd>' order by time_created desc limit 1"`.
-- **Transcript:** SQLite, `~/.local/share/opencode/opencode.db` (WAL):
-  `session`, `message`, `part`, JSON in `data`, rows updated in place (poll by
-  `time_updated`, or tail the `event` table). Messages `{role, finish}`;
-  parts `text`, `reasoning`, `tool {tool, callID, state {status, input,
-  output}}`, `step-start`, `step-finish {reason}`.
-- **End of turn:** an assistant message with `finish: "stop"`. A provider
-  error leaves the message unfinished for good: the reader needs a timeout.
-- **Model:** `-m opencode/<model>`; the free models share one quota, which
-  ran out after a single run ("subscribe to OpenCode Go"). **Instructions:**
-  an agent in `OPENCODE_CONFIG_CONTENT` with its own `prompt`. **Approval:**
-  `--auto`.
+An agent with `command = "opencode"` runs it in herdr (`Harness::OpenCode`).
+
+- **Id:** Otto makes the id (`ses_` and 26 hex characters) and the session,
+  by `opencode import` of an empty export run in the session's folder
+  (opencode takes the folder and project from where import runs; `slug`,
+  `projectID`, `version` and `time` are required). Then `opencode -s <id> -m
+  <model>`, with `--auto` when Otto's permission mode is `auto`.
+- **Transcript:** read with the `sqlite3` CLI from
+  `~/.local/share/opencode/opencode.db` (messages joined with their parts);
+  `opencode export` takes two seconds of CPU a call, too much to poll. The
+  write-ahead log's size and time say when to read again. Each settled piece
+  is an entry of its own: a prompt, a finished text part, a tool call and its
+  result, and the end of the turn.
+- **End of turn:** an assistant message completed with any `finish` but
+  `tool-calls`, or with an `error`.
+- **Left:** the agent profile's prompt (an agent in
+  `OPENCODE_CONFIG_CONTENT`); herdr reports no status for opencode, so there
+  is no working dot and only the 5 s wait before the first prompt; a request
+  opencode keeps retrying (the free quota's "retrying in 11h") leaves the turn
+  open in Ask; opencode updates itself and exits on a launch now and then
+  (1.18 to 1.19 ended one session at start); hand-started opencode is not
+  taken up. The free models share one quota, spent again today.
