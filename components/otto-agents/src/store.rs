@@ -83,6 +83,16 @@ impl Store {
         )
     }
 
+    /// Where `serve --herdr` keeps its sessions, apart from the ACP
+    /// service's.
+    pub fn herdr_dir() -> Option<PathBuf> {
+        Some(
+            crate::xdg::state_home()?
+                .join("otto-agents")
+                .join("herdr-sessions"),
+        )
+    }
+
     pub fn dir(&self) -> &Path {
         &self.dir
     }

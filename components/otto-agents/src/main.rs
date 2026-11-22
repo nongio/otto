@@ -181,7 +181,8 @@ struct ServeArgs {
     /// Serve a built-in echo agent instead of real agents, for trying out clients.
     #[arg(long)]
     echo: bool,
-    /// Run sessions as Claude Code terminals in herdr (plan 0016 prototype).
+    /// Run sessions as agents' own terminals in herdr: Claude Code, pi or
+    /// opencode (plan 0016 prototype).
     #[arg(long, conflicts_with = "echo")]
     herdr: bool,
     /// Where sessions are kept between runs. Defaults to
@@ -263,6 +264,9 @@ async fn serve(args: ServeArgs) -> anyhow::Result<()> {
     let state_dir = match args.state_dir {
         Some(dir) => Some(dir),
         None if args.echo => None,
+        // herdr sessions are herdr's: they are kept apart from the ACP
+        // service's, which the herdr backend does not have.
+        None if args.herdr => Store::herdr_dir(),
         None => Store::default_dir(),
     };
     let store = state_dir.map(|dir| {
