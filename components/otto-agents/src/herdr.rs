@@ -543,6 +543,14 @@ pub async fn show(session: &str) -> anyhow::Result<()> {
             tokio::time::sleep(Duration::from_millis(250)).await;
         }
     }
+    // A terminal started in no space, or whose tab was closed, has no pane
+    // to show: it gets a tab of its own. One with a pane keeps it.
+    let status = Command::new("herdr-app")
+        .args(["do", "terminal.keep", "--terminal", &terminal, "--place", "tab"])
+        .stdout(Stdio::null())
+        .status()
+        .await?;
+    anyhow::ensure!(status.success(), "herdr-app could not give {terminal} a tab");
     let status = Command::new("herdr-app")
         .args(["do", "agent.focus", "--terminal", &terminal])
         .stdout(Stdio::null())
