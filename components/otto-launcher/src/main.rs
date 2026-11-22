@@ -1937,6 +1937,17 @@ impl App for Launcher {
         // The session being followed, or the one highlighted in the list.
         if control == Some('o') {
             if let Some(terminal) = self.selected_terminal() {
+                // A session that lives in a window of its own app (herdr):
+                // the command shows it there, the window comes forward, and
+                // the service keeps running it.
+                if let Some(window) = terminal.window.as_deref() {
+                    if let Err(err) = terminal.open() {
+                        tracing::warn!(%err, "could not show the session");
+                    }
+                    windows::focus_matching(window);
+                    self.close();
+                    return;
+                }
                 // One terminal per session: a second would be a second agent
                 // writing the same history. The one that is open comes to the
                 // front instead.

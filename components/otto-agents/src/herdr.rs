@@ -206,6 +206,36 @@ impl Backend for HerdrBackend {
         })
     }
 
+    /// `otto-agents herdr-show`: herdr-app shows the session's tab.
+    fn terminal(
+        &self,
+        _provider: &str,
+        agent_session: &str,
+        _cwd: &Path,
+        _written: bool,
+    ) -> Option<Vec<String>> {
+        let exe = std::env::current_exe().ok()?;
+        Some(vec![
+            exe.to_string_lossy().into_owned(),
+            "herdr-show".to_owned(),
+            agent_session.to_owned(),
+        ])
+    }
+
+    fn enter(
+        &self,
+        provider: &str,
+        agent_session: &str,
+        cwd: &Path,
+        written: bool,
+    ) -> Option<Vec<String>> {
+        self.terminal(provider, agent_session, cwd, written)
+    }
+
+    fn window(&self, _provider: &str) -> Option<String> {
+        Some("herdr-app".to_owned())
+    }
+
     /// herdr keeps a session as long as it keeps one of its terminals,
     /// running or finished.
     fn exists(&self, _provider: &str, agent_session: &str) -> Option<bool> {
@@ -424,6 +454,20 @@ async fn doc(name: &str) -> Option<Value> {
     .flatten();
     drop(stdin);
     reply
+}
+
+/// Shows `session`'s running terminal in herdr-app, in its space and tab.
+pub async fn show(session: &str) -> anyhow::Result<()> {
+    let Some(terminal) = find(session).await else {
+        anyhow::bail!("no running herdr terminal has the session {session}");
+    };
+    let status = Command::new("herdr-app")
+        .args(["do", "agent.focus", "--terminal", &terminal])
+        .stdout(Stdio::null())
+        .status()
+        .await?;
+    anyhow::ensure!(status.success(), "herdr-app could not show {terminal}");
+    Ok(())
 }
 
 /// Every terminal herdr keeps for `session`, running or finished; `None`

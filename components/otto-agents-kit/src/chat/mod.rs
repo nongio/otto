@@ -647,6 +647,10 @@ pub struct Terminal {
     pub session: Option<String>,
     /// What the window is called, standing in for `{title}` in the command.
     pub title: String,
+    /// The app id of the window that already shows the session, when the
+    /// service runs it in one (herdr-app): the command shows it there, and
+    /// the window is brought forward in place of a new terminal.
+    pub window: Option<String>,
 }
 
 impl Terminal {
@@ -666,11 +670,16 @@ impl Terminal {
             .get("session")
             .and_then(Value::as_str)
             .map(str::to_owned);
+        let window = terminal
+            .get("window")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
         Some(Self {
             command,
             cwd,
             session,
             title: String::new(),
+            window,
         })
     }
 
@@ -738,7 +747,6 @@ impl Terminal {
     }
 }
 
-/// The material each coloured agent wears, from the root state's `_meta`:
 /// An agent's row under its name: what it is, then where it works, so two
 /// agents of one name tell apart by their folders.
 fn agent_subtitle(agent: &AgentInfo, folder: Option<&PathBuf>) -> Option<String> {
@@ -750,6 +758,7 @@ fn agent_subtitle(agent: &AgentInfo, folder: Option<&PathBuf>) -> Option<String>
     }
 }
 
+/// The material each coloured agent wears, from the root state's `_meta`:
 /// `otto.colours` maps provider ids to the names otto-kit's `Frosted` takes.
 fn colours_from_meta(meta: Option<&serde_json::Map<String, Value>>) -> HashMap<String, String> {
     meta.and_then(|meta| meta.get("otto")?.get("colours")?.as_object())
@@ -3452,6 +3461,7 @@ mod tests {
             cwd: PathBuf::from("/"),
             session: session.map(str::to_owned),
             title: String::new(),
+            window: None,
         };
         assert!(
             !terminal(Some("no-process-names-this-0f3c1e")).already_open(),
@@ -3483,6 +3493,7 @@ mod tests {
                 cwd: PathBuf::from("/home/me"),
                 session: Some("abc".into()),
                 title: String::new(),
+                window: None,
             })
         );
 
@@ -3673,6 +3684,7 @@ mod tests {
                 // A service that says no id still opens the session.
                 session: None,
                 title: "Ask: Fix the build".into(),
+                window: None,
             })
         );
         // A session the service has said nothing about opens nowhere.

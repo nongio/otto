@@ -3380,6 +3380,7 @@ fn terminal_meta(
         // already in one: `otto-agents new`.
         "enter": enter,
         "cwd": cwd.to_string_lossy(),
+        "window": backend.window(&state.provider),
         // The agent's id for the session, which is how a client tells
         // that a terminal already has it open.
         "session": agent_session,

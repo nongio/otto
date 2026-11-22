@@ -490,6 +490,15 @@ pub trait Backend: Send + Sync + 'static {
         None
     }
 
+    /// The window that already shows the backend's sessions, by app id, when
+    /// they live in one: there, the [`Backend::terminal`] command shows the
+    /// session in that window rather than opening a terminal, and the
+    /// service goes on running it. `None`, the default, for a terminal of
+    /// its own per session.
+    fn window(&self, _provider: &str) -> Option<String> {
+        None
+    }
+
     /// The same command without a terminal around it: what `otto-agents new`
     /// and `otto-agents enter` run in the terminal they are already in.
     fn enter(

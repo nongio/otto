@@ -114,6 +114,13 @@ enum Command {
         #[arg(long, env = "OTTO_AGENTS_CONFIG")]
         config: Option<PathBuf>,
     },
+    /// Show a herdr session in herdr-app: its terminal's tab, in front.
+    /// What Ctrl+O runs for a session of `serve --herdr`.
+    #[command(hide = true)]
+    HerdrShow {
+        /// Claude's id for the session.
+        session: String,
+    },
     /// Put the desktop's skills and its agent where each harness looks for them.
     #[command(alias = "skills")]
     Plugins {
@@ -203,6 +210,7 @@ async fn main() -> anyhow::Result<()> {
         }
         Command::Enter { session, url } => cli::enter(&url, session.as_deref()).await,
         Command::Doctor { config, url } => cli::doctor(&url, config.as_deref()).await,
+        Command::HerdrShow { session } => otto_agents::herdr::show(&session).await,
         Command::Show {
             session,
             follow,
