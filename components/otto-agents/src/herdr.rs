@@ -444,20 +444,23 @@ fn agent_definition(profile: &skills::AgentFile, ask: bool) -> Value {
 
 /// The id of the herdr-app space named `space`, by its id, its name, or for
 /// a space without one, the name of its folder, as herdr-app shows it. The
-/// spaces are in herdr-app's layout, a document herdr-core keeps. `None`,
-/// leaving the placement to herdr-app, when no space answers to it.
+/// spaces are in herdr-app's layout, a document herdr-core keeps. With no
+/// space set, or none answering to it, the first space. `None` only when
+/// herdr-app has no spaces.
 async fn space_id(space: Option<String>) -> Option<String> {
-    let wanted = space?;
+    let wanted = space.unwrap_or_default();
     let layout = doc("herdr-app").await;
     let spaces = layout
         .as_ref()
         .and_then(|layout| layout.pointer("/value/spaces"))
         .and_then(Value::as_array);
-    let found = spaces.and_then(|spaces| find_space(spaces, &wanted));
-    if found.is_none() {
-        tracing::warn!(space = %wanted, "no herdr space by that name");
-    }
-    found
+    let spaces = spaces?;
+    find_space(spaces, &wanted).or_else(|| {
+        // A terminal in no space has no tab to be seen in: the first space
+        // takes it.
+        tracing::warn!(space = %wanted, "no herdr space by that name; using the first");
+        spaces.first()?.get("id")?.as_str().map(str::to_owned)
+    })
 }
 
 fn find_space(spaces: &[Value], wanted: &str) -> Option<String> {
