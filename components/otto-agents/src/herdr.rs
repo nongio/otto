@@ -32,8 +32,9 @@ use crate::skills;
 pub const PROVIDER: &str = "claude";
 
 pub struct HerdrBackend {
-    /// Where new terminals open in herdr-app: `herdr.space` and `herdr.tab`.
-    place: Option<(String, String)>,
+    /// The herdr-app workspace (`herdr.space`) sessions open in, each in a
+    /// tab of its own.
+    space: Option<String>,
     /// The `ask` MCP server's command line.
     ask_mcp: Vec<String>,
     model: Option<String>,
@@ -43,16 +44,16 @@ pub struct HerdrBackend {
 
 impl HerdrBackend {
     /// Configured from the environment while this is a prototype:
-    /// `OTTO_HERDR_SPACE`/`OTTO_HERDR_TAB`, `OTTO_HERDR_ASK_MCP` (a command
+    /// `OTTO_HERDR_SPACE`, `OTTO_HERDR_ASK_MCP` (a command
     /// line), `OTTO_HERDR_MODEL` and `OTTO_HERDR_AGENT`.
     pub fn from_env() -> Self {
         let var = |name: &str| std::env::var(name).ok().filter(|value| !value.is_empty());
-        let place = var("OTTO_HERDR_SPACE").zip(var("OTTO_HERDR_TAB"));
+        let space = var("OTTO_HERDR_SPACE");
         let ask_mcp = var("OTTO_HERDR_ASK_MCP")
             .map(|line| line.split_whitespace().map(str::to_owned).collect())
             .unwrap_or_default();
         Self {
-            place,
+            space,
             ask_mcp,
             model: var("OTTO_HERDR_MODEL"),
             run_as: var("OTTO_HERDR_AGENT"),
@@ -110,11 +111,11 @@ impl Backend for HerdrBackend {
             .clone()
             .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
         let argv = self.argv(&session, resume.is_some());
-        let place = self.place.clone();
+        let space = self.space.clone();
         tokio::spawn(async move {
             let terminal = match find(&session).await {
                 Some(terminal) => terminal,
-                None => match run(&session, &spec.cwd, place, &argv).await {
+                None => match run(&session, &spec.cwd, space, &argv).await {
                     Ok(terminal) => terminal,
                     Err(error) => {
                         let _ = events.send(SessionEvent::CreationFailed(error));
@@ -176,7 +177,7 @@ async fn find(session: &str) -> Option<String> {
 async fn run(
     session: &str,
     cwd: &Path,
-    place: Option<(String, String)>,
+    space: Option<String>,
     argv: &[String],
 ) -> Result<String, String> {
     let mut command = hc();
@@ -199,7 +200,9 @@ async fn run(
         "--label",
         &format!("otto.session={session}"),
     ]);
-    if let Some((space, tab)) = place {
+    // herdr-app opens a terminal whose tab id it has not seen in a new tab.
+    if let Some(space) = space {
+        let tab = format!("tb{}", uuid::Uuid::new_v4().simple());
         command.args(["--label", &format!("herdr.space={space}")]);
         command.args(["--label", &format!("herdr.tab={tab}")]);
     }
