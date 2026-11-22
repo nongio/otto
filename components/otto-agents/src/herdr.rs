@@ -31,9 +31,34 @@ use crate::skills;
 /// The provider id Ask sees.
 pub const PROVIDER: &str = "claude";
 
-/// An agent Ask offers: Claude Code, opening its sessions in a herdr space.
+/// The agent program a herdr session runs, in its own interface.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Harness {
+    Claude,
+    Pi,
+}
+
+impl Harness {
+    /// From an agent's `command` in `agents.toml`: `pi` (or `pi-acp`, the
+    /// same agent over ACP) is pi, anything else Claude Code.
+    fn of(command: &str) -> Self {
+        let name = Path::new(command)
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        if name == "pi" || name.starts_with("pi-") {
+            Self::Pi
+        } else {
+            Self::Claude
+        }
+    }
+}
+
+/// An agent Ask offers: Claude Code or pi, opening its sessions in a herdr
+/// space.
 #[derive(Debug, Clone)]
 struct HerdrAgent {
+    harness: Harness,
     id: String,
     name: String,
     description: String,
@@ -79,6 +104,7 @@ impl HerdrBackend {
             found
         };
         let mut agents = vec![HerdrAgent {
+            harness: Harness::Claude,
             id: PROVIDER.to_owned(),
             name: "Otto".to_owned(),
             description: String::new(),
@@ -90,6 +116,7 @@ impl HerdrBackend {
         }];
         for agent in config.agents.iter().filter(|agent| agent.space.is_some()) {
             let herdr = HerdrAgent {
+                harness: Harness::of(&agent.command),
                 id: agent.id.clone(),
                 name: agent.name.clone(),
                 description: agent.description.clone(),
@@ -131,6 +158,9 @@ impl HerdrBackend {
     }
 
     fn argv(&self, agent: &HerdrAgent, session: &str, resume: bool) -> Vec<String> {
+        if agent.harness == Harness::Pi {
+            return pi_argv(agent, session);
+        }
         let mut argv = vec!["claude".to_owned()];
         argv.extend([
             if resume { "--resume" } else { "--session-id" }.to_owned(),
@@ -283,6 +313,7 @@ impl Backend for HerdrBackend {
         let agent = self.agent(&spec.provider);
         let argv = self.argv(agent, &session, resume.is_some());
         let space = agent.space.clone();
+        let harness = agent.harness;
         tokio::spawn(async move {
             let terminal = match find(&session).await {
                 Some(terminal) => terminal,
@@ -300,14 +331,14 @@ impl Backend for HerdrBackend {
                 },
             };
             tracing::info!(%session, %terminal, "herdr session");
-            let transcript = transcript_path(&spec.cwd, &session);
+            let transcript = match harness {
+                Harness::Claude => Transcript::Claude(transcript_path(&spec.cwd, &session)),
+                Harness::Pi => Transcript::Pi(session.clone()),
+            };
             // Before the session is ready, so a queued turn starts against a
             // chat that already holds what was said, here or in the terminal.
             if resume.is_some() {
-                let turns = match tokio::fs::read_to_string(&transcript).await {
-                    Ok(text) => history(&text),
-                    Err(_) => Vec::new(),
-                };
+                let turns = history(&transcript.read().await);
                 tracing::info!(turns = turns.len(), "history read from the transcript");
                 let _ = events.send(SessionEvent::HistoryLoaded { turns });
             }
@@ -461,6 +492,34 @@ pub async fn show(session: &str) -> anyhow::Result<()> {
     let Some(terminal) = find(session).await else {
         anyhow::bail!("no running herdr terminal has the session {session}");
     };
+    // With its window closed, herdr-app is opened first: it takes commands
+    // once its window is up.
+    let running = || async {
+        Command::new("herdr-app")
+            .arg("status")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .await
+            .is_ok_and(|status| status.success())
+    };
+    if !running().await {
+        use std::os::unix::process::CommandExt;
+        std::process::Command::new("herdr-app")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .process_group(0)
+            .spawn()?;
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+        while !running().await {
+            anyhow::ensure!(
+                tokio::time::Instant::now() < deadline,
+                "herdr-app did not open"
+            );
+            tokio::time::sleep(Duration::from_millis(250)).await;
+        }
+    }
     let status = Command::new("herdr-app")
         .args(["do", "agent.focus", "--terminal", &terminal])
         .stdout(Stdio::null())
@@ -649,6 +708,136 @@ async fn run(
         .ok_or_else(|| started.to_string())
 }
 
+/// Where a session's transcript is, by harness.
+#[derive(Debug, Clone)]
+enum Transcript {
+    /// Claude's file, which is known from the start.
+    Claude(PathBuf),
+    /// pi's session id: its file, named for the time it was made, is found
+    /// once pi has written it.
+    Pi(String),
+}
+
+impl Transcript {
+    async fn path(&self) -> Option<PathBuf> {
+        match self {
+            Self::Claude(path) => Some(path.clone()),
+            Self::Pi(session) => pi_transcript(session).await,
+        }
+    }
+
+    /// The transcript's lines, in Claude's shape whatever the harness: what
+    /// the rest of the backend reads.
+    async fn read(&self) -> String {
+        let Some(path) = self.path().await else {
+            return String::new();
+        };
+        let text = tokio::fs::read_to_string(path).await.unwrap_or_default();
+        match self {
+            Self::Claude(_) => text,
+            Self::Pi(_) => pi_as_claude(&text),
+        }
+    }
+}
+
+/// pi in a herdr terminal: the session by its id, made when it is new, with
+/// the agent's model and the profile's prompt.
+fn pi_argv(agent: &HerdrAgent, session: &str) -> Vec<String> {
+    let mut argv = vec![
+        "pi".to_owned(),
+        "--session-id".to_owned(),
+        session.to_owned(),
+    ];
+    if let Some(model) = &agent.model {
+        argv.extend(["--model".to_owned(), model.clone()]);
+    }
+    if let Some(profile) = &agent.profile {
+        argv.extend(["--append-system-prompt".to_owned(), profile.body.clone()]);
+    }
+    argv
+}
+
+/// pi keeps each session as `<time>_<id>.jsonl` in a folder per working
+/// folder, under `~/.pi/agent/sessions`.
+async fn pi_transcript(session: &str) -> Option<PathBuf> {
+    let root = crate::xdg::home()?.join(".pi/agent/sessions");
+    let suffix = format!("_{session}.jsonl");
+    let mut folders = tokio::fs::read_dir(root).await.ok()?;
+    while let Ok(Some(folder)) = folders.next_entry().await {
+        let Ok(mut files) = tokio::fs::read_dir(folder.path()).await else {
+            continue;
+        };
+        while let Ok(Some(file)) = files.next_entry().await {
+            if file.file_name().to_string_lossy().ends_with(&suffix) {
+                return Some(file.path());
+            }
+        }
+    }
+    None
+}
+
+/// A pi transcript as Claude's: each message a `user` or `assistant` entry
+/// keyed by `uuid`, a tool's result a `tool_result` block, a tool call a
+/// `tool_use` block, and the end of a turn `end_turn`. Lines that are not
+/// messages go. An unfinished last line stays unfinished.
+fn pi_as_claude(text: &str) -> String {
+    let complete = text.rfind('\n').map_or("", |end| &text[..end]);
+    let mut out = String::new();
+    for line in complete.lines() {
+        if let Some(entry) = pi_entry(line) {
+            out.push_str(&entry.to_string());
+            out.push('\n');
+        }
+    }
+    out
+}
+
+fn pi_entry(line: &str) -> Option<Value> {
+    let entry: Value = serde_json::from_str(line).ok()?;
+    if entry.get("type")?.as_str()? != "message" {
+        return None;
+    }
+    let id = entry.get("id")?.as_str()?;
+    let message = entry.get("message")?;
+    let blocks = message
+        .get("content")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    Some(match message.get("role")?.as_str()? {
+        "user" => json!({ "type": "user", "uuid": id, "message": { "content": blocks } }),
+        "toolResult" => json!({ "type": "user", "uuid": id, "message": { "content": [{
+            "type": "tool_result",
+            "tool_use_id": message.get("toolCallId"),
+            "is_error": message.get("isError"),
+        }] } }),
+        "assistant" => {
+            let mut content: Vec<Value> = blocks
+                .iter()
+                .map(|block| match block.get("type").and_then(Value::as_str) {
+                    Some("toolCall") => json!({
+                        "type": "tool_use",
+                        "id": block.get("id"),
+                        "name": block.get("name"),
+                        "input": block.get("arguments"),
+                    }),
+                    _ => block.clone(),
+                })
+                .collect();
+            // A failed request ends the turn with what went wrong.
+            if let Some(error) = message.get("errorMessage").and_then(Value::as_str) {
+                content.push(json!({ "type": "text", "text": error }));
+            }
+            let stop = match message.get("stopReason").and_then(Value::as_str) {
+                Some("toolUse") | None => "tool_use",
+                Some(_) => "end_turn",
+            };
+            json!({ "type": "assistant", "uuid": id, "message": { "content": content, "stop_reason": stop } })
+        }
+        _ => return None,
+    })
+}
+
 /// Claude keeps a session's transcript under its folder's path with every
 /// character that is not a letter or digit made a dash.
 fn transcript_path(cwd: &Path, session: &str) -> PathBuf {
@@ -682,7 +871,7 @@ enum Seen {
 
 async fn drive(
     terminal: String,
-    transcript: PathBuf,
+    transcript: Transcript,
     cwd: PathBuf,
     mut commands: mpsc::UnboundedReceiver<SessionCommand>,
     events: mpsc::UnboundedSender<SessionEvent>,
@@ -1106,15 +1295,16 @@ async fn follow_events(terminal: String, seen: mpsc::UnboundedSender<Seen>) {
 /// written after the session is opened here: earlier ones are history.
 /// Entries are told apart by their `uuid`, not their place in the file, as a
 /// resumed Claude rewrites the file rather than only appending to it.
-async fn follow_transcript(path: PathBuf, seen: mpsc::UnboundedSender<Seen>) {
-    let read =
-        |path: PathBuf| async move { tokio::fs::read_to_string(path).await.unwrap_or_default() };
-    let mut known: HashSet<String> = entries(&read(path.clone()).await)
+async fn follow_transcript(transcript: Transcript, seen: mpsc::UnboundedSender<Seen>) {
+    let mut known: HashSet<String> = entries(&transcript.read().await)
         .map(|(key, _)| key)
         .collect();
     let mut last_len = None;
     loop {
         tokio::time::sleep(Duration::from_millis(250)).await;
+        let Some(path) = transcript.path().await else {
+            continue;
+        };
         let Ok(len) = tokio::fs::metadata(&path).await.map(|m| m.len()) else {
             continue;
         };
@@ -1122,7 +1312,7 @@ async fn follow_transcript(path: PathBuf, seen: mpsc::UnboundedSender<Seen>) {
             continue;
         }
         last_len = Some(len);
-        let text = read(path.clone()).await;
+        let text = transcript.read().await;
         for (key, line) in entries(&text) {
             if !known.insert(key) {
                 continue;
@@ -1392,6 +1582,39 @@ mod tests {
         );
         assert_eq!(turns[1].prompt, "thanks");
         assert!(turns[1].parts.is_empty());
+    }
+
+    #[test]
+    fn a_pi_turn_reads_as_claude() {
+        let pi = [
+            r#"{"type":"session","id":"s1"}"#,
+            r#"{"type":"message","id":"a","message":{"role":"user","content":[{"type":"text","text":"Run echo hi"}]}}"#,
+            r#"{"type":"message","id":"b","message":{"role":"assistant","content":[{"type":"thinking","thinking":"ok"},{"type":"toolCall","id":"c1","name":"bash","arguments":{"command":"echo hi"}}],"stopReason":"toolUse"}}"#,
+            r#"{"type":"message","id":"c","message":{"role":"toolResult","toolCallId":"c1","toolName":"bash","content":[{"type":"text","text":"hi"}],"isError":false}}"#,
+            r#"{"type":"message","id":"d","message":{"role":"assistant","content":[{"type":"text","text":"done"}],"stopReason":"stop"}}"#,
+            "",
+        ]
+        .join("\n");
+        let claude = pi_as_claude(&pi);
+        let lines: Vec<&str> = claude.lines().collect();
+        assert_eq!(lines.len(), 4);
+        assert_eq!(prompt_of(lines[0]).as_deref(), Some("Run echo hi"));
+        assert!(!ends_turn(lines[1]));
+        assert_eq!(prompt_of(lines[2]), None, "a tool's result is not a prompt");
+        assert!(ends_turn(lines[3]));
+        assert_eq!(assistant_text(lines[3]), vec!["done\n\n".to_owned()]);
+        let turns = history(&claude);
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0].prompt, "Run echo hi");
+        assert_eq!(turns[0].parts.len(), 2, "the tool call and the answer");
+    }
+
+    #[test]
+    fn pi_is_told_by_its_command() {
+        assert_eq!(Harness::of("pi"), Harness::Pi);
+        assert_eq!(Harness::of("/usr/bin/pi-acp"), Harness::Pi);
+        assert_eq!(Harness::of("claude"), Harness::Claude);
+        assert_eq!(Harness::of("pipx"), Harness::Claude);
     }
 
     #[test]
