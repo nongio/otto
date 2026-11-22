@@ -81,15 +81,13 @@ A service in between would only copy herdr's state.
   turns: your messages, the agent's text, tool calls. Per agent: Claude first.
 - **Questions and permissions wait in herdr labels.** The `ask` tool and the
   permission hook run inside the session's terminal (`HC_TERMINAL_ID` is set).
-  Each writes its request as a file under
-  `$XDG_RUNTIME_DIR/otto/sessions/<id>/` and sets `otto.pending=<request id>`
-  on its terminal. Every Otto surface sees the label change through
-  `hc events`, reads the request and can answer it: the answer is written
-  beside the request and `otto.pending` is cleared. The waiting tool call or
-  hook picks it up. The first answer wins, whether from Ask, a notification
-  or otto-islands.
+  Each writes its request as JSON in an `otto.ask` label on its own terminal.
+  Every Otto surface sees it through `hc events` and can answer by writing
+  `otto.answer` with the request's id; the waiting tool call or hook picks it
+  up and clears both labels. The first answer wins, whether from Ask, a
+  notification or otto-islands.
 - **Who asks you when no Otto window is open.** otto-islands follows
-  `otto.pending` like any client and shows the dialog when no other surface
+  `otto.ask` like any client and shows the dialog when no other surface
   is watching that session.
 - **Prompts are typed in.** A prompt from Ask goes to the terminal with
   `hc send`. It is the one place this design drives the screen.
@@ -111,7 +109,7 @@ over. Sessions run with `--disallowedTools AskUserQuestion`, and the Otto
 agent's instructions name `ask`.
 
 While the call waits, the TUI shows a running tool and herdr reports
-`working`. Otto shows "needs input" from `otto.pending`, not from herdr's
+`working`. Otto shows "needs input" from `otto.ask`, not from herdr's
 state. Outside herdr, or with no Otto session, the tool fails at once with a
 message the agent can act on: "ask in the terminal instead".
 
@@ -137,7 +135,7 @@ structured questions too.
    states; open one in herdr. No conversation yet.
 2. **Start from Ask.** `hc run` with labels and `--session-id`; prompts with
    `hc send`; Stop with `hc interrupt`.
-3. **`ask` tool and pending labels.** `otto-agents mcp`, the request files,
+3. **`ask` tool and pending labels.** `otto-agents mcp`, the `otto.ask` and `otto.answer` labels,
    answering from Ask and otto-islands.
 4. **Conversation.** Follow Claude's transcript into turns.
 5. **Permission hook.** `otto-agents hook permission` through the same
@@ -149,10 +147,9 @@ structured questions too.
 
 - herdr-core's socket API: documented and stable enough to build on, or does
   `otto-herdr` run `hc --json` and parse its output?
-- `hc send` wraps text sent from inside another hc terminal in
-  `<hc from="tN">…</hc>`. Does a send from outside hc arrive plain?
-- Label size and write rate limits, and whether a label write from inside the
-  terminal is allowed for its own terminal only.
+- Any terminal can write any other terminal's labels, so a session can
+  answer another session's question. Acceptable on one person's machine; worth
+  a check per request (a nonce only Otto knows) if it matters.
 - Can `PreToolUse` answer `AskUserQuestion` directly? If it can, the built-in
   could stay for Claude.
 - The transcript format is Claude's and undocumented: how much to read, and how
@@ -169,5 +166,16 @@ structured questions too.
   `{state: "blocked", kind: "question", msg: "answer: <question> (<options>)"}`.
 - Programs report their own status with OSC 7501:
   `ESC ] 7501 ; state=working:app=otto BEL`.
+- The `ask` round trip works: a Claude session in herdr with `ask-mcp.py`
+  (`--mcp-config`, `--disallowedTools AskUserQuestion`) called `ask`, the
+  question appeared as `otto.ask` JSON, an `otto.answer` label written from
+  outside answered it, and the agent went on with the answer.
+- Labels hold at least 4 KB, a terminal can label itself, and an empty value
+  removes a label.
+- `hc send` from a process outside hc arrives plain; only sends from inside an
+  hc terminal get the `<hc from="tN">` wrapper.
+- The Otto agent's `tools` list (`plugins/otto/agents/otto.md`) filters out MCP
+  tools: it needs `mcp__otto__ask` added, or the agent falls back to asking in
+  plain text.
 - Claude Code 2.1.330 has `PermissionRequest`, `Elicitation` and
   `ElicitationResult` hook events.
