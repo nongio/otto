@@ -105,8 +105,8 @@ type Started = std::sync::Arc<std::sync::Mutex<HashSet<String>>>;
 
 impl HerdrBackend {
     /// The agents are `agents.toml`'s that name a herdr `space`, after the
-    /// environment's own (while this is a prototype): `OTTO_HERDR_SPACE`,
-    /// `OTTO_HERDR_MODEL` and `OTTO_HERDR_AGENT`, the plugin agent it runs
+    /// environment's own (while this is a prototype): `OTTO_HERDR_SPACE` (the
+    /// name of a space made for it, `Ask` unless set), `OTTO_HERDR_MODEL` and `OTTO_HERDR_AGENT`, the plugin agent it runs
     /// as (`otto` unless set, `none` for plain Claude). An agent of the file with
     /// that one's id, `claude`, takes its place. Also from the environment:
     /// `OTTO_HERDR_ASK_MCP` and `OTTO_HERDR_PERMISSION_HOOK` (command lines),
@@ -127,7 +127,7 @@ impl HerdrBackend {
             id: PROVIDER.to_owned(),
             name: "Otto".to_owned(),
             description: String::new(),
-            space: var("OTTO_HERDR_SPACE"),
+            space: var("OTTO_HERDR_SPACE").or_else(|| Some("Ask".to_owned())),
             model: var("OTTO_HERDR_MODEL"),
             profile: profile(&var("OTTO_HERDR_AGENT").unwrap_or_else(|| "otto".to_owned())),
             folder: None,
