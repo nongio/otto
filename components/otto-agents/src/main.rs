@@ -231,7 +231,11 @@ async fn serve(args: ServeArgs) -> anyhow::Result<()> {
     let (backend, idle_timeout): (Arc<dyn Backend>, _) = if args.echo {
         (Arc::new(EchoBackend), Some(config::DEFAULT_IDLE_TIMEOUT))
     } else if args.herdr {
-        (Arc::new(otto_agents::herdr::HerdrBackend::from_env()), None)
+        let config = config::load(args.config.as_deref())?;
+        (
+            Arc::new(otto_agents::herdr::HerdrBackend::new(&config)),
+            None,
+        )
     } else {
         let config = config::load(args.config.as_deref())?;
         for agent in &config.agents {

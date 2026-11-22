@@ -31,10 +31,25 @@ use crate::skills;
 /// The provider id Ask sees.
 pub const PROVIDER: &str = "claude";
 
-pub struct HerdrBackend {
-    /// The herdr-app workspace (`herdr.space`) sessions open in, each in a
-    /// tab of its own.
+/// An agent Ask offers: Claude Code, opening its sessions in a herdr space.
+#[derive(Debug, Clone)]
+struct HerdrAgent {
+    id: String,
+    name: String,
+    description: String,
+    /// The herdr-app space (`herdr.space`) its sessions open in, each in a
+    /// tab of its own: a space's name or id.
     space: Option<String>,
+    model: Option<String>,
+    /// Claude's `--agent`, such as `otto:otto`.
+    run_as: Option<String>,
+    folder: Option<PathBuf>,
+    colour: Option<&'static str>,
+}
+
+pub struct HerdrBackend {
+    /// The first is the one a session of an unknown provider runs as.
+    agents: Vec<HerdrAgent>,
     /// The `ask` MCP server's command line.
     ask_mcp: Vec<String>,
     /// The `PermissionRequest` hook's command line.
@@ -42,33 +57,69 @@ pub struct HerdrBackend {
     /// Claude's `--permission-mode`, such as `manual`; unset keeps the
     /// person's own default.
     permission_mode: Option<String>,
-    model: Option<String>,
-    /// Claude's `--agent`, such as `otto:otto`.
-    run_as: Option<String>,
 }
 
 impl HerdrBackend {
-    /// Configured from the environment while this is a prototype:
-    /// `OTTO_HERDR_SPACE`, `OTTO_HERDR_ASK_MCP` and
-    /// `OTTO_HERDR_PERMISSION_HOOK` (command lines), `OTTO_HERDR_MODEL` and
-    /// `OTTO_HERDR_AGENT`, and `OTTO_HERDR_PERMISSION_MODE`.
-    pub fn from_env() -> Self {
+    /// The agents are `agents.toml`'s that name a herdr `space`, after the
+    /// environment's own (while this is a prototype): `OTTO_HERDR_SPACE`,
+    /// `OTTO_HERDR_MODEL` and `OTTO_HERDR_AGENT`. An agent of the file with
+    /// that one's id, `claude`, takes its place. Also from the environment:
+    /// `OTTO_HERDR_ASK_MCP` and `OTTO_HERDR_PERMISSION_HOOK` (command lines),
+    /// and `OTTO_HERDR_PERMISSION_MODE`.
+    pub fn new(config: &crate::config::Config) -> Self {
         let var = |name: &str| std::env::var(name).ok().filter(|value| !value.is_empty());
-        let space = var("OTTO_HERDR_SPACE");
+        let plugins = skills::discover();
+        let mut agents = vec![HerdrAgent {
+            id: PROVIDER.to_owned(),
+            name: "Otto".to_owned(),
+            description: "Claude Code in a herdr terminal".to_owned(),
+            space: var("OTTO_HERDR_SPACE"),
+            model: var("OTTO_HERDR_MODEL"),
+            run_as: var("OTTO_HERDR_AGENT"),
+            folder: None,
+            colour: None,
+        }];
+        for agent in config.agents.iter().filter(|agent| agent.space.is_some()) {
+            let run_as = agent
+                .agent
+                .as_deref()
+                .and_then(|name| skills::agent_file(&plugins, name))
+                .map(|(run_as, _)| run_as);
+            let herdr = HerdrAgent {
+                id: agent.id.clone(),
+                name: agent.name.clone(),
+                description: agent.description.clone(),
+                space: agent.space.clone(),
+                model: agent.model.clone(),
+                run_as,
+                folder: agent.folder.clone(),
+                colour: agent.colour.map(|colour| colour.name()),
+            };
+            tracing::info!(id = %herdr.id, space = ?herdr.space, "herdr agent configured");
+            match agents.iter_mut().find(|known| known.id == herdr.id) {
+                Some(known) => *known = herdr,
+                None => agents.push(herdr),
+            }
+        }
         let ask_mcp = var("OTTO_HERDR_ASK_MCP")
             .map(|line| line.split_whitespace().map(str::to_owned).collect())
             .unwrap_or_default();
         Self {
-            space,
+            agents,
             ask_mcp,
             permission_hook: var("OTTO_HERDR_PERMISSION_HOOK"),
             permission_mode: var("OTTO_HERDR_PERMISSION_MODE"),
-            model: var("OTTO_HERDR_MODEL"),
-            run_as: var("OTTO_HERDR_AGENT"),
         }
     }
 
-    fn argv(&self, session: &str, resume: bool) -> Vec<String> {
+    fn agent(&self, provider: &str) -> &HerdrAgent {
+        self.agents
+            .iter()
+            .find(|agent| agent.id == provider)
+            .unwrap_or(&self.agents[0])
+    }
+
+    fn argv(&self, agent: &HerdrAgent, session: &str, resume: bool) -> Vec<String> {
         let mut argv = vec!["claude".to_owned()];
         argv.extend([
             if resume { "--resume" } else { "--session-id" }.to_owned(),
@@ -77,7 +128,7 @@ impl HerdrBackend {
         if let Some(mode) = &self.permission_mode {
             argv.extend(["--permission-mode".to_owned(), mode.clone()]);
         }
-        if let Some(model) = &self.model {
+        if let Some(model) = &agent.model {
             argv.extend(["--model".to_owned(), model.clone()]);
         }
         if let Some((command, args)) = self.ask_mcp.split_first() {
@@ -104,7 +155,7 @@ impl HerdrBackend {
         }
         argv.extend(skills::claude_cli_args(
             &skills::discover(),
-            self.run_as.as_deref(),
+            agent.run_as.as_deref(),
         ));
         argv
     }
@@ -112,11 +163,18 @@ impl HerdrBackend {
 
 impl Backend for HerdrBackend {
     fn agents(&self) -> Vec<AgentInfo> {
-        vec![agent_info(
-            PROVIDER,
-            "Otto",
-            "Claude Code in a herdr terminal",
-        )]
+        self.agents
+            .iter()
+            .map(|agent| agent_info(&agent.id, &agent.name, &agent.description))
+            .collect()
+    }
+
+    fn colour(&self, provider: &str) -> Option<&'static str> {
+        self.agent(provider).colour
+    }
+
+    fn folder(&self, provider: &str) -> Option<&Path> {
+        self.agent(provider).folder.as_deref()
     }
 
     fn reports_running(&self) -> bool {
@@ -175,12 +233,13 @@ impl Backend for HerdrBackend {
         let session = resume
             .clone()
             .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-        let argv = self.argv(&session, resume.is_some());
-        let space = self.space.clone();
+        let agent = self.agent(&spec.provider);
+        let argv = self.argv(agent, &session, resume.is_some());
+        let space = agent.space.clone();
         tokio::spawn(async move {
             let terminal = match find(&session).await {
                 Some(terminal) => terminal,
-                None => match run(&session, &spec.cwd, space, &argv).await {
+                None => match run(&session, &spec.cwd, space_id(space).await, &argv).await {
                     Ok(terminal) => {
                         // One terminal per session: the finished ones of
                         // earlier runs go once the new one is there.
@@ -229,6 +288,86 @@ fn hc() -> Command {
 async fn hc_json(args: &[&str]) -> Option<Value> {
     let output = hc().args(args).arg("--json").output().await.ok()?;
     serde_json::from_slice(&output.stdout).ok()
+}
+
+/// The id of the herdr-app space named `space`, by its id, its name, or for
+/// a space without one, the name of its folder, as herdr-app shows it. The
+/// spaces are in herdr-app's layout, a document herdr-core keeps. `None`,
+/// leaving the placement to herdr-app, when no space answers to it.
+async fn space_id(space: Option<String>) -> Option<String> {
+    let wanted = space?;
+    let layout = doc("herdr-app").await;
+    let spaces = layout
+        .as_ref()
+        .and_then(|layout| layout.pointer("/value/spaces"))
+        .and_then(Value::as_array);
+    let found = spaces.and_then(|spaces| find_space(spaces, &wanted));
+    if found.is_none() {
+        tracing::warn!(space = %wanted, "no herdr space by that name");
+    }
+    found
+}
+
+fn find_space(spaces: &[Value], wanted: &str) -> Option<String> {
+    let text = |space: &Value, key: &str| {
+        space
+            .get(key)
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned()
+    };
+    let shown = |space: &Value| match text(space, "name") {
+        name if !name.is_empty() => name,
+        _ => Path::new(&text(space, "folder"))
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default(),
+    };
+    let by = |matches: &dyn Fn(&Value) -> bool| {
+        spaces
+            .iter()
+            .find(|space| matches(space))
+            .map(|space| text(space, "id"))
+    };
+    by(&|space| text(space, "id") == wanted)
+        .or_else(|| by(&|space| shown(space) == wanted))
+        .or_else(|| by(&|space| shown(space).eq_ignore_ascii_case(wanted)))
+}
+
+/// A document herdr-core keeps, read through its API: `hc connect` takes
+/// JSON-RPC on stdin.
+async fn doc(name: &str) -> Option<Value> {
+    use tokio::io::AsyncWriteExt;
+    let mut child = hc()
+        .arg("connect")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .ok()?;
+    let request =
+        json!({ "jsonrpc": "2.0", "id": 1, "method": "doc.get", "params": { "name": name } });
+    let mut stdin = child.stdin.take()?;
+    stdin
+        .write_all(format!("{request}\n").as_bytes())
+        .await
+        .ok()?;
+    let mut lines = BufReader::new(child.stdout.take()?).lines();
+    let reply = tokio::time::timeout(Duration::from_secs(5), async {
+        while let Ok(Some(line)) = lines.next_line().await {
+            let Ok(reply) = serde_json::from_str::<Value>(&line) else {
+                continue;
+            };
+            if reply.get("id") == Some(&json!(1)) {
+                return reply.get("result").cloned();
+            }
+        }
+        None
+    })
+    .await
+    .ok()
+    .flatten();
+    drop(stdin);
+    reply
 }
 
 /// Every terminal herdr keeps for `session`, running or finished; `None`
@@ -1153,6 +1292,22 @@ mod tests {
         );
         assert_eq!(turns[1].prompt, "thanks");
         assert!(turns[1].parts.is_empty());
+    }
+
+    #[test]
+    fn spaces_answer_to_their_id_name_or_folder() {
+        let spaces = vec![
+            json!({ "id": "sp1", "name": "Otto", "folder": "/home/me" }),
+            json!({ "id": "sp2", "name": "", "folder": "/home/me/dev/speaker-studio" }),
+        ];
+        assert_eq!(find_space(&spaces, "sp2").as_deref(), Some("sp2"));
+        assert_eq!(find_space(&spaces, "Otto").as_deref(), Some("sp1"));
+        assert_eq!(find_space(&spaces, "otto").as_deref(), Some("sp1"));
+        assert_eq!(
+            find_space(&spaces, "speaker-studio").as_deref(),
+            Some("sp2")
+        );
+        assert_eq!(find_space(&spaces, "elsewhere"), None);
     }
 
     #[test]

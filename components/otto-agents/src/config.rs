@@ -97,6 +97,12 @@ pub struct AgentConfig {
     /// leaves the client to choose; Ask then uses a scratch folder of its own.
     #[serde(default, deserialize_with = "tilde_path")]
     pub folder: Option<PathBuf>,
+    /// The herdr space this agent's sessions open in, by its name as
+    /// herdr-app shows it or by its id, when the service runs sessions in
+    /// herdr (`serve --herdr`, plan 0016). There, every agent with a space is
+    /// offered, as Claude Code in a terminal of that space.
+    #[serde(default)]
+    pub space: Option<String>,
 }
 
 /// A frosted material's name, as an agent's `colour` takes it. The names are
@@ -418,6 +424,7 @@ impl AgentConfig {
             skills: SkillDelivery::Claude,
             colour: None,
             folder: None,
+            space: None,
         }
     }
 }
