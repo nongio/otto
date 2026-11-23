@@ -5257,7 +5257,7 @@ dependencies = [
 
 [[package]]
 name = "otto-audio"
-version = "1.9.0"
+version = "1.10.0"
 dependencies = [
  "libc",
  "otto-audio-graph",
@@ -5271,7 +5271,7 @@ dependencies = [
 
 [[package]]
 name = "otto-audio-graph"
-version = "1.9.0"
+version = "1.10.0"
 dependencies = [
  "otto-foundations",
  "pipewire",
