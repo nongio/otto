@@ -21,9 +21,10 @@ use toml_edit::{DocumentMut, Item};
 pub const SERVICE: &str = "otto-agents.service";
 
 /// The programs setup always looks for: Node, every harness's own program
-/// and adapter, and otto-agents. The commands the agent list names are
-/// looked for too.
-pub const PROGRAMS: [&str; 12] = [
+/// and adapter, herdr's two (`hc`, herdr-core's command, and `herdr-app`),
+/// `sqlite3`, which reads OpenCode's sessions in herdr, and otto-agents. The
+/// commands the agent list names are looked for too.
+pub const PROGRAMS: [&str; 15] = [
     "node",
     "npm",
     "npx",
@@ -35,8 +36,47 @@ pub const PROGRAMS: [&str; 12] = [
     "hermes",
     "pi",
     "pi-acp",
+    "hc",
+    "herdr-app",
+    "sqlite3",
     "otto-agents",
 ];
+
+/// What runs the agents' sessions, as `backend` in `agents.toml` names it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Backend {
+    /// herdr: each session is the agent's own program in a herdr terminal.
+    /// It runs Claude Code, pi and OpenCode.
+    Herdr,
+    /// Otto: the service runs each agent over ACP itself.
+    Acp,
+}
+
+impl Backend {
+    /// The value `backend` takes in `agents.toml`.
+    pub fn key(self) -> &'static str {
+        match self {
+            Backend::Herdr => "herdr",
+            Backend::Acp => "acp",
+        }
+    }
+
+    /// What it is called on screen, as Settings › Agents names it.
+    pub fn label(self) -> &'static str {
+        match self {
+            Backend::Herdr => "herdr",
+            Backend::Acp => "Otto",
+        }
+    }
+
+    fn parse(key: &str) -> Option<Self> {
+        match key {
+            "herdr" => Some(Backend::Herdr),
+            "acp" => Some(Backend::Acp),
+            _ => None,
+        }
+    }
+}
 
 /// A unit as systemd reports it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -83,6 +123,9 @@ pub struct Facts {
     pub configured: Vec<Harness>,
     /// The program each listed agent starts, as written.
     pub commands: Vec<String>,
+    /// `backend` as the agent files set it, the user's over the system's;
+    /// `None` when neither does.
+    pub backend: Option<Backend>,
     /// Where each program setup looks for is on the shell's PATH.
     pub found: BTreeMap<String, PathBuf>,
     /// `node --version`, when Node is installed.
@@ -156,6 +199,7 @@ impl Facts {
             config_error: lists.error,
             configured,
             commands,
+            backend: lists.backend,
             found,
             node_version,
             package_manager,
@@ -187,13 +231,16 @@ impl Facts {
 struct Lists {
     /// Each listed agent's harness and program.
     agents: Vec<(Harness, String)>,
-    /// A file that would not parse.
+    /// `backend`, from the last file that sets it.
+    backend: Option<Backend>,
+    /// A file that would not parse, or a `backend` the service refuses.
     error: Option<String>,
 }
 
 /// The agents, read the way the service reads them: the list from the user's
 /// file when it has one, else the system's. With no list at all the service
-/// runs Claude Code, but nothing is configured.
+/// runs Claude Code, but nothing is configured. `backend` likewise comes from
+/// the last file that sets it.
 fn configured(user: &str, system: Option<&str>) -> Lists {
     let mut lists = Lists::default();
     let mut docs = Vec::new();
@@ -203,13 +250,23 @@ fn configured(user: &str, system: Option<&str>) -> Lists {
     ] {
         let Some(text) = text else { continue };
         match text.parse::<DocumentMut>() {
-            Ok(doc) => docs.push(doc),
+            Ok(doc) => docs.push((doc, name)),
             Err(err) => {
                 lists.error.get_or_insert_with(|| format!("{name}: {err}"));
             }
         }
     }
-    for doc in &docs {
+    for (doc, name) in &docs {
+        if let Some(item) = doc.get("backend") {
+            match item.as_str().and_then(Backend::parse) {
+                Some(backend) => lists.backend = Some(backend),
+                None => {
+                    lists.error.get_or_insert_with(|| {
+                        format!("{name}: backend has to be \"herdr\" or \"acp\"")
+                    });
+                }
+            }
+        }
         let agents: Vec<(Harness, String)> = doc
             .get("agents")
             .and_then(Item::as_array_of_tables)
@@ -366,6 +423,33 @@ args = ["-y", "@agentclientprotocol/claude-agent-acp@latest"]
             [(Harness::Claude, "npx".to_owned())]
         );
         assert_eq!(configured("idle_timeout = 0", None).agents, []);
+    }
+
+    #[test]
+    fn the_backend_is_read_from_the_last_file_that_sets_it() {
+        assert_eq!(configured("", None).backend, None);
+        let system = "backend = \"acp\"\n";
+        assert_eq!(configured("", Some(system)).backend, Some(Backend::Acp));
+        assert_eq!(
+            configured("backend = \"herdr\"\n", Some(system)).backend,
+            Some(Backend::Herdr)
+        );
+        assert_eq!(
+            configured("idle_timeout = 0\n", Some(system)).backend,
+            Some(Backend::Acp)
+        );
+        let wrong = configured("backend = \"tmux\"\n", None);
+        assert_eq!(wrong.backend, None);
+        assert!(wrong.error.is_some_and(|e| e.contains("backend")));
+    }
+
+    #[test]
+    fn a_herdr_agent_is_recognised_by_its_program() {
+        let user = "[[agents]]\nid = \"c\"\nname = \"C\"\ncommand = \"claude\"\n";
+        assert_eq!(
+            configured(user, None).agents,
+            [(Harness::Claude, "claude".to_owned())]
+        );
     }
 
     #[test]

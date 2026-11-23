@@ -16,7 +16,7 @@ use toml_edit::{value, DocumentMut, Item, Table};
 #[cfg(test)]
 use crate::plugins;
 use crate::plugins::{Render, Skill};
-use crate::probe::{Facts, Unit, UnitFacts};
+use crate::probe::{Backend, Facts, Unit, UnitFacts};
 
 /// The harnesses setup offers, in the order it lists them.
 pub const HARNESSES: [Harness; 5] = [
@@ -27,9 +27,15 @@ pub const HARNESSES: [Harness; 5] = [
     Harness::Pi,
 ];
 
+/// herdr's programs: `hc`, herdr-core's command, which runs the sessions,
+/// and `herdr-app`, which shows them.
+pub const HERDR_PROGRAMS: [&str; 2] = ["hc", "herdr-app"];
+
 /// What the user picked.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Choices {
+    /// What runs the sessions.
+    pub backend: Backend,
     /// Harnesses to add an agent for.
     pub picks: Vec<Harness>,
     /// Whether the agents added answer as Otto, rather than as the plain
@@ -40,26 +46,47 @@ pub struct Choices {
 }
 
 impl Choices {
-    /// What is ticked to begin with: every ready harness when the agent
-    /// list is empty, since Otto has nothing of the user's yet, and none
-    /// otherwise, since the user has already chosen; Otto, and Studio when
-    /// it can work.
+    /// What is ticked to begin with: the backend the service would use;
+    /// every ready harness when the agent list is empty, since Otto has
+    /// nothing of the user's yet, and none otherwise, since the user has
+    /// already chosen; Otto, and Studio when it can work.
     pub fn initial(facts: &Facts) -> Self {
-        let picks = if facts.configured.is_empty() {
-            HARNESSES
-                .into_iter()
-                .filter(|h| matches!(readiness(facts, *h), Readiness::Ready(_)))
-                .collect()
-        } else {
-            Vec::new()
-        };
         let mut choices = Self {
-            picks,
+            backend: effective(facts),
+            picks: Vec::new(),
             otto: facts.instructions.iter().any(|n| n == harness::OTTO),
             studio: false,
         };
+        choices.picks = choices.initial_picks(facts);
         choices.studio = studio(facts, &choices) == Studio::Ready;
         choices
+    }
+
+    fn initial_picks(&self, facts: &Facts) -> Vec<Harness> {
+        if !facts.configured.is_empty() {
+            return Vec::new();
+        }
+        HARNESSES
+            .into_iter()
+            .filter(|h| matches!(readiness(facts, self.backend, *h), Readiness::Ready(_)))
+            .collect()
+    }
+
+    /// Switches what runs the sessions. The ticks follow: a harness the new
+    /// backend cannot run is unticked, and with no agent list every ready
+    /// harness is ticked, as at the start.
+    pub fn set_backend(&mut self, facts: &Facts, backend: Backend) {
+        self.backend = backend;
+        if facts.configured.is_empty() {
+            self.picks = self.initial_picks(facts);
+        } else {
+            let backend = self.backend;
+            self.picks
+                .retain(|h| matches!(readiness(facts, backend, *h), Readiness::Ready(_)));
+        }
+        if self.studio && studio(facts, self) != Studio::Ready {
+            self.studio = false;
+        }
     }
 
     /// The plugin agent new agents run as: Otto's, or none for the plain
@@ -101,6 +128,29 @@ pub fn studio(facts: &Facts, choices: &Choices) -> Studio {
     }
 }
 
+/// What runs the sessions when `agents.toml` does not say: herdr when `hc`
+/// is installed, else Otto, as `otto-agents` decides.
+pub fn automatic(facts: &Facts) -> Backend {
+    if facts.found.contains_key("hc") {
+        Backend::Herdr
+    } else {
+        Backend::Acp
+    }
+}
+
+/// What runs the sessions now: `backend` in `agents.toml`, else
+/// [`automatic`].
+pub fn effective(facts: &Facts) -> Backend {
+    facts.backend.unwrap_or_else(|| automatic(facts))
+}
+
+/// The `backend` setup writes: the one chosen, when the files set none and
+/// it differs from what [`automatic`] gives. A key the user set is theirs,
+/// and is never changed.
+pub fn writes_backend(facts: &Facts, choices: &Choices) -> Option<Backend> {
+    (facts.backend.is_none() && choices.backend != automatic(facts)).then_some(choices.backend)
+}
+
 /// Where a harness stands.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Readiness {
@@ -110,12 +160,23 @@ pub enum Readiness {
     Ready(PathBuf),
     /// These programs are missing; the guide says how to get them.
     Missing(Vec<&'static str>),
+    /// herdr runs the sessions, and does not run this harness: it runs only
+    /// when Otto runs the sessions.
+    OttoOnly,
 }
 
-/// The programs `harness` is missing on the user's PATH: its own, and the
-/// adapter or `npx` to run the adapter with.
-pub fn missing(facts: &Facts, harness: Harness) -> Vec<&'static str> {
+/// The programs `harness` is missing on the user's PATH. In herdr: its own
+/// program, which herdr starts. In Otto: its own, and the adapter or `npx`
+/// to run the adapter with.
+pub fn missing(facts: &Facts, backend: Backend, harness: Harness) -> Vec<&'static str> {
     let has = |name: &str| facts.found.contains_key(name);
+    if backend == Backend::Herdr {
+        return harness
+            .herdr_program()
+            .filter(|p| !has(p))
+            .into_iter()
+            .collect();
+    }
     let mut missing: Vec<&'static str> =
         harness.program().filter(|p| !has(p)).into_iter().collect();
     match (harness, harness.adapter()) {
@@ -127,12 +188,16 @@ pub fn missing(facts: &Facts, harness: Harness) -> Vec<&'static str> {
     missing
 }
 
-/// Where `harness` stands on this machine.
-pub fn readiness(facts: &Facts, harness: Harness) -> Readiness {
+/// Where `harness` stands on this machine, with `backend` running the
+/// sessions.
+pub fn readiness(facts: &Facts, backend: Backend, harness: Harness) -> Readiness {
     if facts.configured.contains(&harness) {
         return Readiness::Configured;
     }
-    let missing = missing(facts, harness);
+    if backend == Backend::Herdr && harness.herdr_program().is_none() {
+        return Readiness::OttoOnly;
+    }
+    let missing = missing(facts, backend, harness);
     if !missing.is_empty() {
         return Readiness::Missing(missing);
     }
@@ -144,13 +209,46 @@ pub fn readiness(facts: &Facts, harness: Harness) -> Readiness {
     Readiness::Ready(own)
 }
 
-/// The command a new agent on `harness` starts: its installed adapter when
-/// there is one, so nothing is fetched at every start, else the preset.
-pub fn command(facts: &Facts, harness: Harness, persona: &str) -> Vec<String> {
+/// The command a new agent on `harness` starts. In herdr: the harness's own
+/// program, which herdr runs in its own interface. In Otto: its installed
+/// adapter when there is one, so nothing is fetched at every start, else the
+/// preset.
+pub fn command(facts: &Facts, backend: Backend, harness: Harness, persona: &str) -> Vec<String> {
+    if backend == Backend::Herdr {
+        return harness
+            .herdr_program()
+            .map(str::to_owned)
+            .into_iter()
+            .collect();
+    }
     match harness.adapter() {
         Some(adapter) if facts.found.contains_key(adapter.bin) => vec![adapter.bin.to_owned()],
         _ => harness.command(persona),
     }
+}
+
+/// herdr's programs missing on the user's PATH.
+pub fn herdr_missing(facts: &Facts) -> Vec<&'static str> {
+    HERDR_PROGRAMS
+        .into_iter()
+        .filter(|p| !facts.found.contains_key(*p))
+        .collect()
+}
+
+/// The programs the agents there are or are being added need in herdr, in
+/// the list's order: each one's own program, and `sqlite3` for OpenCode,
+/// whose sessions the service reads with it. Empty in Otto.
+pub fn agent_programs(facts: &Facts, choices: &Choices) -> Vec<&'static str> {
+    if choices.backend != Backend::Herdr {
+        return Vec::new();
+    }
+    let selected = selected(facts, choices);
+    let mut programs: Vec<&'static str> =
+        selected.iter().filter_map(|h| h.herdr_program()).collect();
+    if selected.contains(&Harness::OpenCode) {
+        programs.push("sqlite3");
+    }
+    programs
 }
 
 /// How an agent reaches its ACP adapter.
@@ -165,8 +263,12 @@ pub enum Adapter {
 }
 
 /// The ACP adapter of each agent there is or is being added, for the
-/// harnesses that need one, in the list's order.
+/// harnesses that need one, in the list's order. None in herdr, which runs
+/// the harnesses' own programs.
 pub fn adapters(facts: &Facts, choices: &Choices) -> Vec<(Harness, Adapter)> {
+    if choices.backend == Backend::Herdr {
+        return Vec::new();
+    }
     selected(facts, choices)
         .into_iter()
         .filter_map(|harness| {
@@ -197,12 +299,14 @@ pub fn skills(facts: &Facts) -> &[Skill] {
 }
 
 /// The renderings of Otto's agent for the selected harnesses. Claude Code
-/// reads the plugin itself and has none. Empty when the agents are plain.
+/// reads the plugin itself and has none. Empty when the agents are plain,
+/// and in herdr, where the service hands Claude Code and pi the agent on
+/// their command line and OpenCode does not take one yet.
 pub fn profiles<'a>(facts: &'a Facts, choices: &Choices) -> Vec<&'a Render> {
     let Some(status) = &facts.plugins else {
         return Vec::new();
     };
-    if !choices.otto {
+    if !choices.otto || choices.backend == Backend::Herdr {
         return Vec::new();
     }
     selected(facts, choices)
@@ -322,42 +426,19 @@ pub fn steps(facts: &Facts, choices: &Choices) -> Vec<Step> {
         .picks
         .iter()
         .copied()
-        .filter(|h| matches!(readiness(facts, *h), Readiness::Ready(_)))
+        .filter(|h| matches!(readiness(facts, choices.backend, *h), Readiness::Ready(_)))
         .collect();
     let mut steps = vec![config_step(facts, choices, &adding)];
-
-    // What the agent service starts: each agent's command, as listed and as
-    // about to be added. A harness's own CLI (`claude --resume`) runs in the
-    // user's terminal, not here.
-    let new_commands: Vec<String> = adding
-        .iter()
-        .filter_map(|h| command(facts, *h, choices.persona()).into_iter().next())
-        .collect();
-    let commands: Vec<&str> = facts
-        .commands
-        .iter()
-        .chain(&new_commands)
-        .map(String::as_str)
-        .collect();
-    let mut programs: Vec<&str> = commands
-        .iter()
-        .copied()
-        .filter(|p| !p.contains('/'))
-        .collect();
-    // npx and the ACP adapters are Node scripts: `#!/usr/bin/env node`.
-    if commands.iter().any(|p| is_node_script(p)) {
-        programs.push("node");
-    }
     steps.push(path_step(
         "Program paths",
         facts,
         &facts.agents_unit,
-        programs,
+        service_programs(facts, choices, &adding),
     ));
 
     // Hermes runs an agent in the profile named after its instructions; one
     // that runs as itself uses its default profile.
-    if adding.contains(&Harness::Hermes) && choices.otto {
+    if choices.backend == Backend::Acp && adding.contains(&Harness::Hermes) && choices.otto {
         steps.push(hermes_step(facts, choices.persona()));
     }
     // A change the services read at startup; the plugins are read by the
@@ -374,6 +455,41 @@ pub fn steps(facts: &Facts, choices: &Choices) -> Vec<Step> {
         changed,
     ));
     steps
+}
+
+/// The programs the agent service runs itself, by name.
+///
+/// In Otto: each agent's command, as listed and as about to be added, and
+/// Node for the Node scripts. A harness's own CLI (`claude --resume`) runs in
+/// the user's terminal, not here.
+///
+/// In herdr: `hc` and `herdr-app`, and for OpenCode `opencode` (the service
+/// makes each session with `opencode import`) and `sqlite3` (it reads them).
+/// herdr starts the agents' own programs, with its own PATH.
+fn service_programs(facts: &Facts, choices: &Choices, adding: &[Harness]) -> Vec<String> {
+    if choices.backend == Backend::Herdr {
+        let mut programs: Vec<String> = HERDR_PROGRAMS.map(str::to_owned).to_vec();
+        if selected(facts, choices).contains(&Harness::OpenCode) {
+            programs.extend(["opencode".to_owned(), "sqlite3".to_owned()]);
+        }
+        return programs;
+    }
+    let new_commands = adding.iter().filter_map(|h| {
+        command(facts, choices.backend, *h, choices.persona())
+            .into_iter()
+            .next()
+    });
+    let commands: Vec<String> = facts.commands.iter().cloned().chain(new_commands).collect();
+    let mut programs: Vec<String> = commands
+        .iter()
+        .filter(|p| !p.contains('/'))
+        .cloned()
+        .collect();
+    // npx and the ACP adapters are Node scripts: `#!/usr/bin/env node`.
+    if commands.iter().any(|p| is_node_script(p)) {
+        programs.push("node".to_owned());
+    }
+    programs
 }
 
 /// Whether `program` is one of the Node scripts agents run through.
@@ -394,18 +510,26 @@ fn config_step(facts: &Facts, choices: &Choices, adding: &[Harness]) -> Step {
             ..Step::blocked(title, format!("{shown} cannot be read: fix it first"))
         };
     }
-    if adding.is_empty() {
+    let backend = writes_backend(facts, choices);
+    if adding.is_empty() && backend.is_none() {
         return match facts.configured.len() {
             0 => Step::blocked(title, "no agent ticked: tick one on the Agents page"),
             1 => Step::done(title, "1 agent added".to_owned()),
             n => Step::done(title, format!("{n} agents added")),
         };
     }
+    let mut summary = Vec::new();
+    if !adding.is_empty() {
+        summary.push(format!("add {}", names(adding)));
+    }
+    if let Some(backend) = backend {
+        summary.push(format!("run the sessions in {}", backend.label()));
+    }
     match render_config(facts, choices, adding) {
         Ok(text) => Step {
             title,
             state: State::Todo,
-            summary: format!("add {}", names(adding)),
+            summary: summary.join(", "),
             detail: format!(
                 "Writes {shown}:\n{}",
                 text.lines()
@@ -425,7 +549,8 @@ fn config_step(facts: &Facts, choices: &Choices, adding: &[Harness]) -> Step {
     }
 }
 
-/// The user's `agents.toml` with an agent for each of `adding` appended.
+/// The user's `agents.toml` with an agent for each of `adding` appended, and
+/// `backend` when setup writes it ([`writes_backend`]).
 ///
 /// Edited with `toml_edit`, so comments and keys setup does not know stay as
 /// they were. When the agents came from the system file, its list is copied
@@ -444,6 +569,9 @@ pub fn render_config(
             "# The agents Otto runs, one [[agents]] block each. Settings › Agents\n\
              # edits them too; docs/user/agents.md has every key.\n\n",
         );
+    }
+    if let Some(backend) = writes_backend(facts, choices) {
+        doc.insert("backend", value(backend.key()));
     }
     if adding.is_empty() {
         return Ok(doc.to_string());
@@ -480,7 +608,7 @@ pub fn render_config(
         let mut table = Table::new();
         table.insert("id", value(&id));
         table.insert("name", value(harness.name().unwrap_or(harness.id())));
-        let command = command(facts, harness, choices.persona());
+        let command = command(facts, choices.backend, harness, choices.persona());
         if let Some((program, args)) = command.split_first() {
             table.insert("command", value(program));
             harness::set_list(&mut table, "args", args);
@@ -488,7 +616,10 @@ pub fn render_config(
         // The same as an agent added in Settings: one the user is about to
         // try should ask rather than refuse.
         table.insert("permissions", value("ask"));
-        harness.write(&mut table, choices.persona(), &home);
+        match choices.backend {
+            Backend::Herdr => harness.write_herdr(&mut table, choices.persona()),
+            Backend::Acp => harness.write(&mut table, choices.persona(), &home),
+        }
         list.push(table);
     }
     Ok(doc.to_string())
@@ -515,7 +646,7 @@ fn path_step(
     title: &'static str,
     facts: &Facts,
     unit: &UnitFacts,
-    mut programs: Vec<&str>,
+    mut programs: Vec<String>,
 ) -> Step {
     let Some(service_path) = &unit.path else {
         return Step::done(title, "no systemd user session: uses your session's paths");
@@ -523,12 +654,12 @@ fn path_step(
     programs.sort_unstable();
     programs.dedup();
     let mut missing_dirs: Vec<PathBuf> = Vec::new();
-    let mut missing_programs: Vec<&str> = Vec::new();
+    let mut missing_programs: Vec<String> = Vec::new();
     for program in programs {
-        let Some(found) = facts.found.get(program) else {
+        let Some(found) = facts.found.get(&program) else {
             continue;
         };
-        if unit.found.contains_key(program) {
+        if unit.found.contains_key(&program) {
             continue;
         }
         missing_programs.push(program);
@@ -720,6 +851,7 @@ pub(crate) mod tests {
             config_error: None,
             configured: Vec::new(),
             commands: Vec::new(),
+            backend: None,
             found,
             node_version: Some("v24.7.0".into()),
             package_manager: Some("pacman"),
@@ -738,7 +870,7 @@ pub(crate) mod tests {
         assert_eq!(choices.persona(), "otto");
         assert!(!choices.studio, "no Studio in the made-up plugin");
         assert_eq!(
-            readiness(&facts, Harness::Pi),
+            readiness(&facts, Backend::Acp, Harness::Pi),
             Readiness::Missing(vec!["pi", "pi-acp"])
         );
         let mut configured = facts.clone();
@@ -799,14 +931,14 @@ pub(crate) mod tests {
     fn npx_is_only_needed_without_the_adapter() {
         let mut facts = facts();
         facts.found.remove("npx");
-        assert_eq!(missing(&facts, Harness::Claude), ["npx"]);
+        assert_eq!(missing(&facts, Backend::Acp, Harness::Claude), ["npx"]);
         facts.found.insert(
             "claude-agent-acp".into(),
             PathBuf::from("/home/u/.local/bin/claude-agent-acp"),
         );
-        assert!(missing(&facts, Harness::Claude).is_empty());
+        assert!(missing(&facts, Backend::Acp, Harness::Claude).is_empty());
         assert_eq!(
-            command(&facts, Harness::Claude, "otto"),
+            command(&facts, Backend::Acp, Harness::Claude, "otto"),
             ["claude-agent-acp"]
         );
     }
@@ -891,5 +1023,150 @@ pub(crate) mod tests {
         };
         let steps = steps(&facts, &Choices::initial(&facts));
         assert!(steps.iter().all(|s| s.state != State::Todo), "{steps:#?}");
+    }
+
+    /// The same machine with herdr installed system-wide, where the unit
+    /// finds it.
+    fn herdr_facts() -> Facts {
+        let mut facts = facts();
+        for program in ["hc", "herdr-app", "sqlite3"] {
+            let path = PathBuf::from("/usr/bin").join(program);
+            facts.found.insert(program.into(), path.clone());
+            facts.agents_unit.found.insert(program.into(), path);
+        }
+        facts
+    }
+
+    #[test]
+    fn herdr_installed_runs_the_harnesses_own_programs() {
+        let facts = herdr_facts();
+        let choices = Choices::initial(&facts);
+        assert_eq!(choices.backend, Backend::Herdr);
+        assert_eq!(writes_backend(&facts, &choices), None);
+        assert_eq!(choices.picks, [Harness::Claude, Harness::OpenCode]);
+        assert_eq!(
+            readiness(&facts, Backend::Herdr, Harness::Codex),
+            Readiness::OttoOnly
+        );
+        assert_eq!(
+            readiness(&facts, Backend::Herdr, Harness::Pi),
+            Readiness::Missing(vec!["pi"])
+        );
+        assert!(adapters(&facts, &choices).is_empty());
+        assert!(herdr_missing(&facts).is_empty());
+        assert_eq!(
+            agent_programs(&facts, &choices),
+            ["claude", "opencode", "sqlite3"]
+        );
+
+        let text = render_config(&facts, &choices, &choices.picks).unwrap();
+        let doc: DocumentMut = text.parse().unwrap();
+        assert!(doc.get("backend").is_none());
+        let claude = &doc["agents"][0];
+        assert_eq!(claude["command"].as_str(), Some("claude"));
+        assert!(claude.get("args").is_none());
+        assert!(claude.get("enter").is_none());
+        assert_eq!(claude["agent"].as_str(), Some("otto"));
+        assert_eq!(claude["permissions"].as_str(), Some("ask"));
+        assert_eq!(doc["agents"][1]["command"].as_str(), Some("opencode"));
+
+        // The unit finds herdr; OpenCode lives in ~/.local/bin, which it
+        // needs for `opencode import`. Node is not needed.
+        let steps = steps(&facts, &choices);
+        let path = steps.iter().find(|s| s.title == "Program paths").unwrap();
+        let Action::Write { text, .. } = &path.actions[0] else {
+            panic!("expected a write: {path:#?}");
+        };
+        assert!(
+            text.contains("Environment=\"PATH=/home/u/.local/bin:/usr/bin\""),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn hc_the_unit_cannot_see_is_added_to_its_path() {
+        let mut facts = herdr_facts();
+        let local = PathBuf::from("/home/u/.local/bin/hc");
+        facts.found.insert("hc".into(), local);
+        facts.agents_unit.found.remove("hc");
+        let choices = Choices {
+            picks: vec![Harness::Claude],
+            ..Choices::initial(&facts)
+        };
+        let steps = steps(&facts, &choices);
+        let path = steps.iter().find(|s| s.title == "Program paths").unwrap();
+        assert_eq!(path.state, State::Todo);
+        assert!(path.summary.contains("cannot find hc"), "{}", path.summary);
+    }
+
+    #[test]
+    fn herdr_chosen_without_hc_is_written_and_required() {
+        let facts = facts();
+        let mut choices = Choices::initial(&facts);
+        assert_eq!(choices.backend, Backend::Acp);
+        choices.set_backend(&facts, Backend::Herdr);
+        assert_eq!(writes_backend(&facts, &choices), Some(Backend::Herdr));
+        assert_eq!(herdr_missing(&facts), ["hc", "herdr-app"]);
+        let text = render_config(&facts, &choices, &choices.picks).unwrap();
+        let doc: DocumentMut = text.parse().unwrap();
+        assert_eq!(doc["backend"].as_str(), Some("herdr"));
+        assert_eq!(doc["agents"][0]["command"].as_str(), Some("claude"));
+        let config = steps(&facts, &choices).remove(0);
+        assert!(
+            config.summary.ends_with("run the sessions in herdr"),
+            "{}",
+            config.summary
+        );
+    }
+
+    #[test]
+    fn otto_chosen_over_herdr_is_written() {
+        let facts = herdr_facts();
+        let mut choices = Choices::initial(&facts);
+        choices.set_backend(&facts, Backend::Acp);
+        assert_eq!(writes_backend(&facts, &choices), Some(Backend::Acp));
+        assert_eq!(
+            choices.picks,
+            [Harness::Claude, Harness::OpenCode],
+            "Codex and Hermes are not installed"
+        );
+        let text = render_config(&facts, &choices, &choices.picks).unwrap();
+        let doc: DocumentMut = text.parse().unwrap();
+        assert_eq!(doc["backend"].as_str(), Some("acp"));
+        assert_eq!(doc["agents"][0]["command"].as_str(), Some("npx"));
+    }
+
+    #[test]
+    fn a_backend_the_user_set_wins_and_is_kept() {
+        let mut facts = herdr_facts();
+        facts.backend = Some(Backend::Acp);
+        facts.user_config = "backend = \"acp\"\n".into();
+        let choices = Choices::initial(&facts);
+        assert_eq!(choices.backend, Backend::Acp);
+        assert_eq!(writes_backend(&facts, &choices), None);
+        assert_eq!(
+            readiness(&facts, choices.backend, Harness::Claude),
+            Readiness::Ready(PathBuf::from("/home/u/.local/bin/claude"))
+        );
+        let text = render_config(&facts, &choices, &[Harness::Claude]).unwrap();
+        assert!(text.starts_with("backend = \"acp\"\n"), "{text}");
+        let doc: DocumentMut = text.parse().unwrap();
+        assert_eq!(doc["agents"][0]["command"].as_str(), Some("npx"));
+    }
+
+    #[test]
+    fn switching_to_herdr_unticks_what_it_cannot_run() {
+        let mut facts = herdr_facts();
+        facts
+            .found
+            .insert("codex".into(), PathBuf::from("/usr/bin/codex"));
+        facts.configured = vec![Harness::Pi];
+        let mut choices = Choices {
+            backend: Backend::Acp,
+            picks: vec![Harness::Claude, Harness::Codex],
+            ..Choices::initial(&facts)
+        };
+        choices.set_backend(&facts, Backend::Herdr);
+        assert_eq!(choices.picks, [Harness::Claude]);
     }
 }

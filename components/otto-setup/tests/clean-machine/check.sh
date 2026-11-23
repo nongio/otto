@@ -9,11 +9,14 @@
 #                       distribution ships is too old for the adapters
 #   check.sh apply      with a stand-in `claude` on PATH: Claude Code is ready,
 #                       --apply writes agents.toml, --check then knows it
+#   check.sh herdr      in a home of its own, stand-ins for herdr (`hc`,
+#                       `herdr-app`) and `claude`: sessions run in herdr,
+#                       Codex is not offered, --apply writes the plain program
 #
 # A scenario fails on any missing line, printing the output it looked in.
 set -uo pipefail
 
-scenario="${1:?usage: check.sh fresh|old-node|apply}"
+scenario="${1:?usage: check.sh fresh|old-node|apply|herdr}"
 here="$(dirname "$0")"
 fail=0
 
@@ -111,6 +114,41 @@ apply)
         expect "Claude Code agent" "claude-agent-acp" < "$config"
     else
         echo "MISSING: $config"; fail=1
+    fi
+    out=$(otto-setup --check 2>&1)
+    expect "Claude Code added" "Claude Code     already added" <<<"$out"
+    ;;
+
+herdr)
+    echo "== herdr installed: stand-ins for hc, herdr-app and claude =="
+    export HOME="$(mktemp -d)"
+    export PATH="$HOME/.local/bin:$PATH"
+    mkdir -p "$HOME/.local/bin"
+    for program in hc herdr-app claude; do
+        printf '#!/bin/sh\necho "%s stand-in"\n' "$program" > "$HOME/.local/bin/$program"
+        chmod +x "$HOME/.local/bin/$program"
+    done
+    out=$(otto-setup --check 2>&1)
+    expect "herdr runs the sessions" "Sessions run in herdr (herdr is installed)" <<<"$out"
+    expect "Claude Code ready"       "Claude Code     ready to add" <<<"$out"
+    expect "Codex not offered"       "Codex           runs only in Otto, not in herdr" <<<"$out"
+    expect "pi needs only pi"        "pi              needs pi" <<<"$out"
+    expect "herdr found"             "herdr           hc ~/.local/bin/hc" <<<"$out"
+    page=$(screen enter tab)
+    expect "herdr row"               "herdr             hc, herdr-app found" <<<"$page"
+    page=$(screen enter tab down enter)
+    expect "sign-in command"         '$ claude auth login' <<<"$page"
+
+    out=$(otto-setup --apply 2>&1); status=$?
+    echo "  (--apply exited $status; there is no systemd here, so the service steps cannot pass)"
+    sed 's/^/      │ /' <<<"$out"
+    expect "wrote the agents" "[ok  ] Agents" <<<"$out"
+    config="$HOME/.config/otto/agents.toml"
+    expect "the plain program" 'command = "claude"' < "$config"
+    if grep -q -e claude-agent-acp -e '^backend' -e '^enter' "$config"; then
+        echo "WRONG: $config has an adapter, a backend or an enter line"; fail=1
+    else
+        echo "  ok  no adapter, no backend key, no enter lines"
     fi
     out=$(otto-setup --check 2>&1)
     expect "Claude Code added" "Claude Code     already added" <<<"$out"

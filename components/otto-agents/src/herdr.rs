@@ -548,6 +548,13 @@ fn shell_quote(word: &str) -> String {
     format!("'{}'", word.replace('\'', r"'\''"))
 }
 
+/// The program herdr runs for an `agents.toml` agent: `claude`, `pi` or
+/// `opencode`, told by its command the way [`HerdrBackend::new`] tells it.
+/// `None` for an agent herdr does not run, such as Codex or Gemini.
+pub fn agent_program(command: &str, args: &[String]) -> Option<&'static str> {
+    Harness::of_agent(command, args).map(Harness::label)
+}
+
 /// Whether herdr is installed: `hc`, herdr-core's command, is on `PATH`.
 pub fn installed() -> bool {
     crate::cli::which("hc").is_some()

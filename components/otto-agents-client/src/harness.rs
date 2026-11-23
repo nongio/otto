@@ -8,7 +8,8 @@
 //! `docs/developer/agents.md` lists under "One agent, every harness", and the
 //! renderings they point at are what `otto-agents plugins install` writes.
 //! Picking a harness writes all of it; typing a command writes the command
-//! alone.
+//! alone. When herdr runs the sessions, an agent is the harness's own
+//! program instead ([`Harness::herdr_program`], [`Harness::write_herdr`]).
 
 use toml_edit::{Array, InlineTable, Item, Table, Value, value};
 
@@ -123,7 +124,20 @@ impl Harness {
         }
     }
 
-    /// The harness a command line runs, recognised by its adapter.
+    /// The program herdr starts for this harness, in its own interface, when
+    /// `otto-agents` runs the sessions in herdr. herdr runs Claude Code, pi and
+    /// OpenCode; `None` for the others.
+    pub fn herdr_program(self) -> Option<&'static str> {
+        match self {
+            Harness::Claude => Some("claude"),
+            Harness::Pi => Some("pi"),
+            Harness::OpenCode => Some("opencode"),
+            Harness::Codex | Harness::Hermes | Harness::Custom => None,
+        }
+    }
+
+    /// The harness a command line runs, recognised by its adapter, or by the
+    /// harness's own program as an agent run in herdr names it.
     pub fn detect(command: &[String]) -> Harness {
         let names = |needle: &str| command.iter().any(|word| word.contains(needle));
         let program = command
@@ -136,9 +150,10 @@ impl Harness {
             Harness::Codex
         } else {
             match program {
+                "claude" => Harness::Claude,
                 "opencode" => Harness::OpenCode,
                 "hermes" => Harness::Hermes,
-                "pi-acp" => Harness::Pi,
+                "pi" | "pi-acp" => Harness::Pi,
                 _ => Harness::Custom,
             }
         }
@@ -239,6 +254,44 @@ impl Harness {
                 }
             }
             Harness::Custom => {}
+        }
+    }
+
+    /// Write what an agent run in herdr needs besides its command, which is
+    /// the program alone ([`Harness::herdr_program`]), clearing what another
+    /// harness left there.
+    ///
+    /// herdr starts the program itself and resumes sessions by their id, so
+    /// no enter lines are written. Claude Code and pi take the persona from
+    /// `agent`. OpenCode gets the same `OPENCODE_CONFIG_CONTENT` as over
+    /// ACP, which `otto-agents` does not pass on in herdr yet. Nothing for a
+    /// harness herdr does not run.
+    pub fn write_herdr(self, table: &mut Table, persona: &str) {
+        if self.herdr_program().is_none() {
+            return;
+        }
+        for key in HARNESS_KEYS {
+            table.remove(key);
+        }
+        for key in HARNESS_ENV {
+            set_entry(table, "env", key, None);
+        }
+        set_entry(table, "config", "collaboration_mode", None);
+        if self == Harness::Claude {
+            table.insert("skills", value("claude"));
+        }
+        if persona.is_empty() {
+            return;
+        }
+        match self {
+            Harness::Claude | Harness::Pi => {
+                table.insert("agent", value(persona));
+            }
+            Harness::OpenCode => {
+                let config = format!(r#"{{"default_agent":"{persona}"}}"#);
+                set_entry(table, "env", "OPENCODE_CONFIG_CONTENT", Some(&config));
+            }
+            Harness::Codex | Harness::Hermes | Harness::Custom => {}
         }
     }
 }
@@ -420,7 +473,25 @@ mod tests {
             Harness::Hermes
         );
         assert_eq!(Harness::detect(&words("pi-acp")), Harness::Pi);
+        assert_eq!(Harness::detect(&words("claude")), Harness::Claude);
+        assert_eq!(Harness::detect(&words("/usr/bin/pi")), Harness::Pi);
         assert_eq!(Harness::detect(&words("copilot --acp")), Harness::Custom);
+    }
+
+    #[test]
+    fn a_herdr_agent_has_no_enter_lines_and_keeps_its_persona() {
+        for harness in [Harness::Claude, Harness::Pi, Harness::OpenCode] {
+            let mut table = Table::new();
+            let program = harness.herdr_program().unwrap();
+            table.insert("command", value(program));
+            harness.write_herdr(&mut table, OTTO);
+            assert_eq!(Harness::detect(&[program.to_owned()]), harness);
+            assert_eq!(persona(&table), OTTO, "{harness:?}");
+            assert!(table.get("enter").is_none(), "{harness:?}");
+            assert!(table.get("enter_new").is_none(), "{harness:?}");
+        }
+        assert_eq!(Harness::Codex.herdr_program(), None);
+        assert_eq!(Harness::Hermes.herdr_program(), None);
     }
 
     #[test]

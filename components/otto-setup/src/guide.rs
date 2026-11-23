@@ -20,7 +20,11 @@ use otto_agents_client::harness::{self, Harness};
 
 use crate::plan::{self, Readiness};
 use crate::plugins::Skill;
-use crate::probe::Facts;
+use crate::probe::{Backend, Facts};
+
+/// Where herdr's own instructions are. Setup installs nothing, herdr
+/// included.
+const HERDR_SITE: &str = "https://herdr.dev";
 
 /// Who does a step.
 #[derive(Clone, Copy)]
@@ -75,21 +79,114 @@ fn node_install(facts: &Facts) -> Option<&'static str> {
     })
 }
 
-/// How to install and sign in to `harness`.
-pub fn harness(facts: &Facts, harness: Harness) -> String {
+/// The command that installs `sqlite3` here.
+fn sqlite_install(facts: &Facts) -> Option<&'static str> {
+    Some(match facts.package_manager? {
+        "pacman" => "sudo pacman -S --needed sqlite",
+        "apt" => "sudo apt install sqlite3",
+        "dnf" => "sudo dnf install sqlite",
+        "zypper" => "sudo zypper install sqlite3",
+        _ => return None,
+    })
+}
+
+/// How to sign in to `harness`, after the line saying it keeps its own.
+fn sign_in(harness: Harness) -> Vec<String> {
     let name = harness.name().unwrap_or_default();
-    let mut out = vec![format!("# {name}"), String::new()];
-    out.push(match plan::readiness(facts, harness) {
-        Readiness::Configured => {
-            "Already added. Settings › Agents changes or removes it.".to_owned()
+    let mut out = vec![format!(
+        "{name} keeps its own sign-in; Otto never sees your keys."
+    )];
+    match harness {
+        Harness::Claude => out.push(cmd("claude auth login")),
+        Harness::Codex => out.push(cmd("codex login")),
+        Harness::OpenCode => out.push(cmd("opencode auth login")),
+        Harness::Hermes => out.push(cmd("hermes setup")),
+        Harness::Pi => {
+            out.push(cmd("pi"));
+            out.push("then type /login and follow the prompts.".into());
         }
-        Readiness::Ready(_) => "Installed. Tick it to add it to Otto.".to_owned(),
-        Readiness::Missing(missing) => format!(
+        Harness::Custom => {}
+    }
+    out
+}
+
+/// The way to install `harness`'s own program, without the step heading.
+/// Node.js is on the Requirements page only when Otto runs the sessions.
+fn install(facts: &Facts, backend: Backend, harness: Harness) -> Vec<String> {
+    match (harness, harness.package()) {
+        (Harness::Hermes, _) => vec![
+            "Hermes is a Python program from Nous Research. Install it with".into(),
+            "its own guide (github.com/NousResearch/hermes-agent), then check".into(),
+            "that the hermes command runs in a terminal.".into(),
+        ],
+        (_, Some(package)) => {
+            let mut out = vec![cmd(format!("npm install -g {}", package.npm))];
+            match (facts.found.contains_key("npm"), backend) {
+                (true, _) => {}
+                (false, Backend::Acp) => {
+                    out.push("npm comes with Node.js: see Node.js on the Requirements page.".into())
+                }
+                (false, Backend::Herdr) => {
+                    out.push("npm comes with Node.js: nodejs.org, or your distribution's".into());
+                    out.push("nodejs and npm packages.".into());
+                }
+            }
+            out
+        }
+        (_, None) => Vec::new(),
+    }
+}
+
+/// How to install and sign in to `harness`.
+pub fn harness(facts: &Facts, choices: &plan::Choices, harness: Harness) -> String {
+    let name = harness.name().unwrap_or_default();
+    let herdr = choices.backend == Backend::Herdr;
+    let mut out = vec![format!("# {name}"), String::new()];
+    match plan::readiness(facts, choices.backend, harness) {
+        Readiness::Configured if herdr && harness.herdr_program().is_none() => {
+            out.push("Already added, but herdr doesn't run it: it runs only while".into());
+            out.push("sessions run in Otto. Settings › Agents › Sessions run in".into());
+            out.push("switches.".into());
+        }
+        Readiness::Configured => {
+            out.push("Already added. Settings › Agents changes or removes it.".into())
+        }
+        Readiness::Ready(_) => out.push("Installed. Tick it to add it to Otto.".into()),
+        Readiness::Missing(missing) => out.push(format!(
             "Needs {}: do the steps below, then run otto-setup again.",
             missing.join(", ")
-        ),
-    });
+        )),
+        Readiness::OttoOnly => {
+            out.push(format!(
+                "herdr runs Claude Code, pi and OpenCode, not {name}. To add {name},"
+            ));
+            out.push("switch Sessions run in to Otto at the top of this page.".into());
+        }
+    }
     out.push(String::new());
+    if herdr && harness.herdr_program().is_some() {
+        out.push(found(facts, harness.program().unwrap_or_default()));
+        out.push(String::new());
+        out.push(step(
+            1,
+            &format!("Install {name}"),
+            Who::You,
+            harness
+                .program()
+                .is_some_and(|p| facts.found.contains_key(p)),
+        ));
+        out.extend(install(facts, choices.backend, harness));
+        out.push("herdr starts it with a login shell's PATH, so check that it".into());
+        out.push("runs in a new terminal:".into());
+        out.push(cmd(format!(
+            "command -v {}",
+            harness.program().unwrap_or_default()
+        )));
+        out.push(String::new());
+        out.push(step(2, "Sign in", Who::You, false));
+        out.extend(sign_in(harness));
+        return out.join("\n");
+    }
     let mut programs: Vec<&str> = harness.program().into_iter().collect();
     if let Some(adapter) = harness.adapter() {
         programs.push(adapter.bin);
@@ -102,20 +199,7 @@ pub fn harness(facts: &Facts, harness: Harness) -> String {
     let own = harness.program().is_some_and(has);
     let mut n = 1;
     out.push(step(n, &format!("Install {name}"), Who::You, own));
-    match (harness, harness.package()) {
-        (Harness::Hermes, _) => {
-            out.push("Hermes is a Python program from Nous Research. Install it with".into());
-            out.push("its own guide (github.com/NousResearch/hermes-agent), then check".into());
-            out.push("that the hermes command runs in a terminal.".into());
-        }
-        (_, Some(package)) => {
-            out.push(cmd(format!("npm install -g {}", package.npm)));
-            if !has("npm") {
-                out.push("npm comes with Node.js: see Node.js on the Requirements page.".into());
-            }
-        }
-        (_, None) => {}
-    }
+    out.extend(install(facts, choices.backend, harness));
     out.push(String::new());
 
     if let Some(adapter) = harness.adapter() {
@@ -133,20 +217,7 @@ pub fn harness(facts: &Facts, harness: Harness) -> String {
 
     n += 1;
     out.push(step(n, "Sign in", Who::You, false));
-    out.push(format!(
-        "{name} keeps its own sign-in; Otto never sees your keys."
-    ));
-    match harness {
-        Harness::Claude => out.push(cmd("claude auth login")),
-        Harness::Codex => out.push(cmd("codex login")),
-        Harness::OpenCode => out.push(cmd("opencode auth login")),
-        Harness::Hermes => out.push(cmd("hermes setup")),
-        Harness::Pi => {
-            out.push(cmd("pi"));
-            out.push("then type /login and follow the prompts.".into());
-        }
-        Harness::Custom => {}
-    }
+    out.extend(sign_in(harness));
     if harness == Harness::Hermes {
         out.push(String::new());
         n += 1;
@@ -222,6 +293,172 @@ pub fn studio(facts: &Facts, choices: &plan::Choices) -> String {
     ));
     out.push("Apply runs:".into());
     out.push(cmd("otto-agents plugins install"));
+    out.join("\n")
+}
+
+/// What runs the sessions, the two choices, and which one setup uses.
+pub fn sessions(facts: &Facts, choices: &plan::Choices) -> String {
+    let mut out = vec![
+        "# Sessions run in".to_owned(),
+        String::new(),
+        "herdr runs each session as the agent's own program, in a terminal".to_owned(),
+        "of its own: Ask shows the conversation, Ctrl+O opens the terminal".to_owned(),
+        "in herdr-app, and the session keeps going when Otto's windows".to_owned(),
+        "close. It runs Claude Code, pi and OpenCode.".to_owned(),
+        String::new(),
+        "Otto runs every agent itself, over ACP (Agent Client Protocol), with".to_owned(),
+        "an adapter in between for those that need one. Codex and Hermes".to_owned(),
+        "run only this way.".to_owned(),
+        String::new(),
+        "Unless agents.toml says which, sessions run in herdr when it is".to_owned(),
+        "installed, and in Otto when it is not.".to_owned(),
+        String::new(),
+    ];
+    for program in plan::HERDR_PROGRAMS {
+        out.push(found(facts, program));
+    }
+    out.push(String::new());
+    let label = choices.backend.label();
+    match (facts.backend, plan::writes_backend(facts, choices)) {
+        (Some(backend), _) => {
+            out.push(format!(
+                "agents.toml has backend = \"{}\", so sessions run in {label}.",
+                backend.key()
+            ));
+            out.push("Setup keeps that. Settings › Agents › Sessions run in changes it.".into());
+        }
+        (None, Some(backend)) => {
+            out.push(format!(
+                "Sessions run in {label}, as picked here. Apply writes"
+            ));
+            out.push(format!("backend = \"{}\" to agents.toml.", backend.key()));
+        }
+        (None, None) => {
+            let why = match choices.backend {
+                Backend::Herdr => "since herdr is installed",
+                Backend::Acp => "since herdr isn't installed",
+            };
+            out.push(format!("Sessions run in {label}, {why}. Space switches;"));
+            out.push("Apply then writes the choice to agents.toml.".into());
+        }
+    }
+    if choices.backend == Backend::Herdr {
+        out.push(String::new());
+        let installed = plan::herdr_missing(facts).is_empty();
+        out.push(step(1, "Install herdr", Who::You, installed));
+        out.push(format!(
+            "Setup installs nothing. herdr's own guide is at {HERDR_SITE};"
+        ));
+        out.push("then check that both commands are found:".into());
+        out.push(cmd("command -v hc herdr-app"));
+    }
+    out.join("\n")
+}
+
+/// herdr, while it runs the sessions: where it is, and how to have it.
+pub fn herdr(facts: &Facts) -> String {
+    let mut out = vec![
+        "# herdr".to_owned(),
+        String::new(),
+        "Required while sessions run in herdr. hc, herdr-core's command,".to_owned(),
+        "runs each session in a terminal of its own; herdr-app shows them,".to_owned(),
+        "and is where Ctrl+O opens a session.".to_owned(),
+        String::new(),
+    ];
+    for program in plan::HERDR_PROGRAMS {
+        out.push(found(facts, program));
+    }
+    out.push(String::new());
+    out.push(step(
+        1,
+        "Install herdr",
+        Who::You,
+        plan::herdr_missing(facts).is_empty(),
+    ));
+    out.push("Setup installs nothing. Follow herdr's own guide at".into());
+    out.push(format!(
+        "{HERDR_SITE}, then check that both commands are found:"
+    ));
+    out.push(cmd("command -v hc herdr-app"));
+    out.push(String::new());
+    let unit = &facts.agents_unit;
+    let seen = unit.path.is_none()
+        || plan::HERDR_PROGRAMS
+            .iter()
+            .all(|p| unit.found.contains_key(*p));
+    out.push(step(2, "Let the agent service find them", Who::Setup, seen));
+    out.push("Otto's agent service doesn't get your login shell's PATH. When".into());
+    out.push("hc or herdr-app is in a folder it doesn't look in, Apply adds".into());
+    out.push(format!("the folder in {}.", facts.shown(&unit.dropin)));
+    out.join("\n")
+}
+
+/// The agents' own programs, which herdr starts.
+pub fn programs(facts: &Facts, choices: &plan::Choices) -> String {
+    let mut out = vec![
+        "# Agent programs".to_owned(),
+        String::new(),
+        "In herdr each session runs the agent's own program: claude, pi or".to_owned(),
+        "opencode. herdr starts it with a login shell's PATH, so a program".to_owned(),
+        "that runs in a new terminal runs there too. Node.js and the ACP".to_owned(),
+        "adapters aren't needed.".to_owned(),
+        String::new(),
+    ];
+    let programs = plan::agent_programs(facts, choices);
+    if programs.is_empty() {
+        out.push("  · no agent ticked yet: tick one on the Agents page".into());
+        return out.join("\n");
+    }
+    out.extend(programs.iter().map(|p| found(facts, p)));
+    let mut n = 0;
+    for harness in plan::selected(facts, choices) {
+        let Some(program) = harness.herdr_program() else {
+            continue;
+        };
+        let name = harness.name().unwrap_or_default();
+        out.push(String::new());
+        n += 1;
+        out.push(step(
+            n,
+            &format!("Install {name}"),
+            Who::You,
+            facts.found.contains_key(program),
+        ));
+        out.extend(install(facts, choices.backend, harness));
+        out.push(String::new());
+        n += 1;
+        out.push(step(n, &format!("Sign in to {name}"), Who::You, false));
+        out.extend(sign_in(harness));
+    }
+    if programs.contains(&"sqlite3") {
+        out.push(String::new());
+        n += 1;
+        out.push(step(
+            n,
+            "Install sqlite3",
+            Who::You,
+            facts.found.contains_key("sqlite3"),
+        ));
+        out.push("Otto reads OpenCode's sessions from its database with it.".into());
+        match sqlite_install(facts) {
+            Some(command) => out.push(cmd(command)),
+            None => out.push("Install it from your distribution's packages.".into()),
+        }
+        out.push(String::new());
+        n += 1;
+        let unit = &facts.agents_unit;
+        let seen = unit.path.is_none()
+            || ["opencode", "sqlite3"]
+                .iter()
+                .all(|p| unit.found.contains_key(*p));
+        out.push(step(n, "Let the agent service find them", Who::Setup, seen));
+        out.push("The service itself runs opencode to make each session, and".into());
+        out.push("sqlite3 to read it. When either is in a folder it doesn't look".into());
+        out.push(format!(
+            "in, Apply adds the folder in {}.",
+            facts.shown(&unit.dropin)
+        ));
+    }
     out.join("\n")
 }
 
@@ -376,6 +613,10 @@ pub fn profiles(facts: &Facts, choices: &plan::Choices) -> String {
     let profiles = plan::profiles(facts, choices);
     if !choices.otto {
         out.push("  ✓ none: Otto is unticked".to_owned());
+    } else if choices.backend == Backend::Herdr {
+        out.push("  ✓ none needed in herdr: Claude Code and pi get Otto's".to_owned());
+        out.push("    instructions on their command line. OpenCode doesn't take".to_owned());
+        out.push("    them in herdr yet, so it answers as itself there.".to_owned());
     } else if profiles.is_empty() {
         out.push("  ✓ none needed for the agents you chose".to_owned());
     }

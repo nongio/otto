@@ -14,10 +14,13 @@ installed and logged in, and answers as **Otto** whichever one is underneath.
 The quickest way is `otto-setup`, in a terminal. It finds what you have
 installed, lets you tick the agents Otto should run and pick who they are
 (Otto, or the harness itself), and does steps 2 and 3 below for you, plus the
-PATH fix under [When something is wrong](#when-something-is-wrong). It
-installs nothing itself: for what is missing (Node.js, a harness, an ACP
-adapter) it shows the command to run. Each step shows exactly what it will write or run, and nothing changes
-until you apply. `otto-setup --check` only reports what is left. By hand:
+PATH fix under [When something is wrong](#when-something-is-wrong). Its first
+row says where sessions run (see [Where sessions run](#where-sessions-run)),
+and what it asks for follows: herdr and the agents' own programs, or Node.js
+and the ACP adapters. It installs nothing itself: for what is missing it
+shows the command to run. Each step shows exactly what it will write or run,
+and nothing changes until you apply. `otto-setup --check` only reports what
+is left. By hand:
 
 1. **Install an agent** and log it in: Claude Code, OpenCode, Codex, Hermes or
    pi. Otto runs the command you name; it does not manage accounts or keys.
@@ -170,6 +173,12 @@ agent's own terminal: Ask shows the conversation, and Ctrl+O opens the
 terminal in herdr. herdr runs Claude Code, pi and opencode, so other agents
 are not offered there. Settings › Agents › Sessions run in picks herdr or Otto
 by hand; in `agents.toml` that is `backend = "herdr"` or `backend = "acp"`.
+`otto-setup` offers the same choice, and writes it only when it differs from
+what would happen anyway.
+
+In herdr an agent's `command` is the agent's own program, `claude`, `pi` or
+`opencode`, with no `args`: herdr starts it with the PATH a login shell gets,
+so a program that runs in a new terminal runs there too.
 
 ## Add an agent of your own
 

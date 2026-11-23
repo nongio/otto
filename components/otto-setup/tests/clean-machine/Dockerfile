@@ -46,3 +46,6 @@ RUN bash /usr/local/lib/otto-setup-test/check.sh old-node
 
 # 3. An agent that is ready: --apply has to write it down.
 RUN bash /usr/local/lib/otto-setup-test/check.sh apply
+
+# 4. herdr installed, in a home of its own: the sessions run there.
+RUN bash /usr/local/lib/otto-setup-test/check.sh herdr

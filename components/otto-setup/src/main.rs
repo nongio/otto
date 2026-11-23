@@ -20,7 +20,7 @@ mod tui;
 use std::process::ExitCode;
 
 use crate::plan::{Choices, State};
-use crate::probe::Facts;
+use crate::probe::{Backend, Facts};
 
 const USAGE: &str = "\
 Usage: otto-setup [agents] [options]
@@ -28,9 +28,9 @@ Usage: otto-setup [agents] [options]
 Sets Otto up the first time. For now there is one topic, `agents`
 (the default): the AI agents that answer in Ask and run your Sessions.
 It adds the agents you pick to agents.toml, makes sure Otto's agent
-service can find them, and starts it. It installs nothing itself: for
-anything missing (Node.js, an agent, an adapter) it shows the commands
-to run.
+service can find them, and starts it. Sessions run in herdr when it is
+installed, else in Otto. It installs nothing itself: for anything missing
+(herdr, an agent, Node.js, an adapter) it shows the commands to run.
 Nothing changes until you apply. Settings › Agents has the rest.
 
 Options:
@@ -109,11 +109,26 @@ fn main() -> ExitCode {
 /// Prints what is there and the plan for the agents that are ready.
 fn check(facts: &Facts) -> ExitCode {
     let choices = Choices::initial(facts);
+    let herdr = choices.backend == Backend::Herdr;
     println!("Agents");
+    let why = match facts.backend {
+        Some(_) => "set in agents.toml",
+        None if herdr => "herdr is installed",
+        None => "herdr isn't installed",
+    };
+    println!(
+        "  {:<16}{} ({why})",
+        "Sessions run in",
+        choices.backend.label()
+    );
     for harness in plan::HARNESSES {
         let name = harness.name().unwrap_or_default();
-        let line = match plan::readiness(facts, harness) {
+        let line = match plan::readiness(facts, choices.backend, harness) {
+            plan::Readiness::Configured if herdr && harness.herdr_program().is_none() => {
+                "already added, runs only in Otto".to_owned()
+            }
             plan::Readiness::Configured => "already added".to_owned(),
+            plan::Readiness::OttoOnly => "runs only in Otto, not in herdr".to_owned(),
             plan::Readiness::Ready(path) if choices.picks.contains(&harness) => {
                 format!("ready to add ({})", facts.shown(&path))
             }
@@ -131,31 +146,11 @@ fn check(facts: &Facts) -> ExitCode {
     };
     println!("  {:<16}{studio}", "Studio");
     println!("\nRequirements");
-    let node = match plan::node(facts) {
-        plan::Node::Missing => "not installed".to_owned(),
-        plan::Node::TooOld(major) => {
-            format!("v{major} is too old: needs {} or newer", plan::NODE_MIN)
-        }
-        plan::Node::Ok => facts.node_version.clone().unwrap_or_default(),
-    };
-    println!("  {:<16}{node}", "Node.js");
-    let adapters: Vec<String> = plan::adapters(facts, &choices)
-        .into_iter()
-        .filter_map(|(harness, state)| {
-            let bin = harness.adapter()?.bin;
-            Some(match state {
-                plan::Adapter::Installed => format!("{bin} installed"),
-                plan::Adapter::Npx => format!("{} downloads its own", harness.name()?),
-                plan::Adapter::Missing => format!("{bin} missing"),
-            })
-        })
-        .collect();
-    let adapters = if adapters.is_empty() {
-        "none needed".to_owned()
+    if herdr {
+        print_herdr_requirements(facts, &choices);
     } else {
-        adapters.join(", ")
-    };
-    println!("  {:<16}{adapters}", "Adapters");
+        print_acp_requirements(facts, &choices);
+    }
     let skills = plan::skills(facts);
     let skills = if facts.plugins.is_none() {
         "otto-agents cannot say".to_owned()
@@ -202,6 +197,63 @@ fn check(facts: &Facts) -> ExitCode {
     } else {
         ExitCode::SUCCESS
     }
+}
+
+/// Where each of `programs` is, or that it is missing, joined for one line.
+fn found_line(facts: &Facts, programs: &[&str]) -> String {
+    programs
+        .iter()
+        .map(|p| match facts.found.get(*p) {
+            Some(path) => format!("{p} {}", facts.shown(path)),
+            None => format!("{p} missing"),
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// What herdr needs: herdr itself, and each agent's own program.
+fn print_herdr_requirements(facts: &Facts, choices: &Choices) {
+    println!(
+        "  {:<16}{}",
+        "herdr",
+        found_line(facts, &plan::HERDR_PROGRAMS)
+    );
+    let programs = plan::agent_programs(facts, choices);
+    let programs = if programs.is_empty() {
+        "no agent ticked".to_owned()
+    } else {
+        found_line(facts, &programs)
+    };
+    println!("  {:<16}{programs}", "Agent programs");
+}
+
+/// What Otto needs to run the agents over ACP: Node.js and the adapters.
+fn print_acp_requirements(facts: &Facts, choices: &Choices) {
+    let node = match plan::node(facts) {
+        plan::Node::Missing => "not installed".to_owned(),
+        plan::Node::TooOld(major) => {
+            format!("v{major} is too old: needs {} or newer", plan::NODE_MIN)
+        }
+        plan::Node::Ok => facts.node_version.clone().unwrap_or_default(),
+    };
+    println!("  {:<16}{node}", "Node.js");
+    let adapters: Vec<String> = plan::adapters(facts, choices)
+        .into_iter()
+        .filter_map(|(harness, state)| {
+            let bin = harness.adapter()?.bin;
+            Some(match state {
+                plan::Adapter::Installed => format!("{bin} installed"),
+                plan::Adapter::Npx => format!("{} downloads its own", harness.name()?),
+                plan::Adapter::Missing => format!("{bin} missing"),
+            })
+        })
+        .collect();
+    let adapters = if adapters.is_empty() {
+        "none needed".to_owned()
+    } else {
+        adapters.join(", ")
+    };
+    println!("  {:<16}{adapters}", "Adapters");
 }
 
 /// Applies the plan for the agents that are ready, saying how it went.

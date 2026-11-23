@@ -771,17 +771,31 @@ pub async fn doctor(url: &str, config_path: Option<&Path>) -> anyhow::Result<()>
         Err(err) => check(false, "config", format!("{err:#}")),
     }
 
+    let mut herdr = false;
     if let Ok(config) = &config {
-        for agent in &config.agents {
-            let found = which(&agent.command);
-            let detail = match &found {
-                Some(path) => format!("{} → {}", agent.command, path.display()),
-                None => format!(
-                    "{} is not on PATH. The service does not get a login shell's PATH, so name the full path in agents.toml",
-                    agent.command
-                ),
-            };
-            check(found.is_some(), &format!("agent {}", agent.id), detail);
+        let backend = config.backend(crate::herdr::installed());
+        herdr = backend == crate::config::Backend::Herdr;
+        let why = match (config.backend, herdr) {
+            (Some(_), _) => "set in agents.toml",
+            (None, true) => "hc is on PATH",
+            (None, false) => "hc is not on PATH",
+        };
+        let name = if herdr { "herdr" } else { "acp" };
+        check(true, "backend", format!("{name} ({why})"));
+        if herdr {
+            doctor_herdr(config, &mut check);
+        } else {
+            for agent in &config.agents {
+                let found = which(&agent.command);
+                let detail = match &found {
+                    Some(path) => format!("{} → {}", agent.command, path.display()),
+                    None => format!(
+                        "{} is not on PATH. The service does not get a login shell's PATH, so name the full path in agents.toml",
+                        agent.command
+                    ),
+                };
+                check(found.is_some(), &format!("agent {}", agent.id), detail);
+            }
         }
     }
 
@@ -796,14 +810,79 @@ pub async fn doctor(url: &str, config_path: Option<&Path>) -> anyhow::Result<()>
     );
 
     if sound {
-        println!(
-            "\nNothing wrong here. Note that the commands were looked up on this \n\
-             shell's PATH; the service runs under systemd with its own, so a command \n\
-             found here can still be missing there — the journal says which."
-        );
+        if herdr {
+            println!(
+                "\nNothing wrong here. herdr starts each agent with a login shell's PATH, \n\
+                 close to this shell's. The service runs hc, herdr-app, opencode and \n\
+                 sqlite3 itself, with its own PATH under systemd, so one found here can \n\
+                 still be missing there: the journal says which."
+            );
+        } else {
+            println!(
+                "\nNothing wrong here. Note that the commands were looked up on this \n\
+                 shell's PATH; the service runs under systemd with its own, so a command \n\
+                 found here can still be missing there — the journal says which."
+            );
+        }
         return Ok(());
     }
     bail!("some checks did not pass")
+}
+
+/// The checks under herdr: herdr's own programs, and the program herdr runs
+/// for each agent (`claude`, `pi` or `opencode`) rather than its ACP command.
+/// An agent herdr does not run is noted, not counted as a problem: it runs
+/// with `backend = "acp"`.
+fn doctor_herdr(config: &crate::config::Config, check: &mut dyn FnMut(bool, &str, String)) {
+    fn program(check: &mut dyn FnMut(bool, &str, String), label: &str, name: &str, missing: &str) {
+        let found = which(name);
+        let detail = match &found {
+            Some(path) => format!("{name} → {}", path.display()),
+            None => format!("{name} is not on PATH. {missing}"),
+        };
+        check(found.is_some(), label, detail);
+    }
+    program(
+        check,
+        "herdr",
+        "hc",
+        "Install herdr (https://herdr.dev), or set backend = \"acp\" in agents.toml",
+    );
+    program(
+        check,
+        "herdr-app",
+        "herdr-app",
+        "It comes with herdr, and shows the sessions",
+    );
+    let login = "herdr starts it with a login shell's PATH: check `command -v` in a new terminal";
+    // The service's own agent, which one with its id replaces.
+    if !config
+        .agents
+        .iter()
+        .any(|agent| agent.id == crate::herdr::PROVIDER)
+    {
+        program(check, "agent claude (built in)", "claude", login);
+    }
+    let mut opencode = false;
+    for agent in &config.agents {
+        let Some(name) = crate::herdr::agent_program(&agent.command, &agent.args) else {
+            println!(
+                "[note] agent {}: not offered, herdr runs Claude Code, pi and opencode; it runs with backend = \"acp\"",
+                agent.id
+            );
+            continue;
+        };
+        opencode |= name == "opencode";
+        program(check, &format!("agent {}", agent.id), name, login);
+    }
+    if opencode {
+        program(
+            check,
+            "sqlite3",
+            "sqlite3",
+            "The service reads opencode's sessions with it: install it from your distribution",
+        );
+    }
 }
 
 /// Where `command` is found on `PATH`, if anywhere. An absolute command is
