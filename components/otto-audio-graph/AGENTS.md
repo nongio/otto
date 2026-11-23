@@ -15,7 +15,7 @@ The crate also has what saving a routing needs:
 - `NodeIdentity`: a device by `node.name`, an app's stream by app, direction and media role
 - `Routing`: the saved links, forced engine settings, virtual devices, effects and the AirPlay switch (`airplay`), in `$XDG_CONFIG_HOME/otto/audio/routing.toml`
 - `VirtualDevice`: an output (null sink), input (`Audio/Source/Virtual`) or loopback (`libpipewire-module-loopback`, loaded into the connection's own context), named `otto-virtual.<id>` (a loopback's sides `.in` and `.out`) after an id that never changes, so saved links survive renames and restarts
-- `Effect`: an equaliser, limiter, compressor or noise suppressor sitting on a device by `node.name`, made with `libpipewire-module-filter-chain` in the connection's own context and named `otto-effect.<id>` (its stream `.play` or `.rec`). Every value is a control of the chain, so edits are live through the node's `Props`; `support` says whether a kind's LADSPA plugin is installed, `response_db` and `Coefficients` are the equaliser's biquads, `parse_autoeq` reads an AutoEQ `ParametricEQ.txt`
+- `Effect`: an equaliser, limiter, compressor, noise suppressor or speaker correction (an impulse response through PipeWire's `convolver` builtin) sitting on a device by `node.name`, made with `libpipewire-module-filter-chain` in the connection's own context and named `otto-effect.<id>` (its stream `.play` or `.rec`). Every value is a control of the chain, so edits are live through the node's `Props`; `support` says whether a kind's LADSPA plugin is installed, `response_db` and `Coefficients` are the equaliser's biquads, `parse_autoeq` reads an AutoEQ `ParametricEQ.txt`, `parse_easyeffects` and `find_kernel` an EasyEffects output preset and its impulse response, and `import_impulse` copies an impulse response into `$XDG_DATA_HOME/otto/audio/impulses/`, which `Effect::impulse_path` reads it from
 - AirPlay: `Node::is_airplay` tells a RAOP sink (`node.name` starting `raop_sink.`, or `raop.ip`), `airplay_missing` whether the RAOP module is installed and `avahi-daemon` runs (file checks only), and the connection that keeps it loads `libpipewire-module-raop-discover` into its own context, which makes a sink per receiver and removes them when unloaded
 - `pair_channels`: how two folded ports are linked channel by channel
 - `LoopGuard`: when to stop putting back a link another program keeps removing
@@ -23,8 +23,8 @@ The crate also has what saving a routing needs:
 - **Layer:** service. Used by `otto-audio` (the window and `otto-audio-service`) and `otto-bar` (the sound menu).
 
 ## Dependencies
-- **Internal:** `otto-foundations` (the config directory, `write_atomically`).
-- **External:** `pipewire` 0.9 (`deny.toml` lists this crate among its wrappers), `serde` and `toml` for the routing file.
+- **Internal:** `otto-foundations` (the config and data directories, `write_atomically`).
+- **External:** `pipewire` 0.9 (`deny.toml` lists this crate among its wrappers), `serde` and `toml` for the routing file, `serde_json` for EasyEffects presets.
 
 ## Develop
 - `cargo test -p otto-audio-graph` runs the model, identity, pairing, routing and guard tests, which need no server.
@@ -32,7 +32,7 @@ The crate also has what saving a routing needs:
 - `cargo test -p otto-audio-graph --test live_link -- --ignored` links and unlinks two null sinks it makes with `pactl` and removes afterwards. Needs a running server.
 - `cargo run -p otto-audio-graph --example mixer` prints the defaults, every output and input with its volume, and the apps playing. It only listens.
 - `cargo test -p otto-audio-graph --test live_mixer -- --ignored` sets the volume and mute of a null sink it makes and removes.
-- `cargo test -p otto-audio-graph --test live_effects -- --ignored` puts an equaliser on a null sink it makes, turns it off through its controls from a second connection, and removes both. Needs `pw-dump` and `pw-play`.
+- `cargo test -p otto-audio-graph --test live_effects -- --ignored` puts an equaliser on a null sink it makes, turns it off through its controls from a second connection, and removes both; then a speaker correction with a mono and a stereo impulse response it writes to a temp dir. Needs `pw-dump` and `pw-play`.
 - `pw-cli ls Node`, `pw-link -l` and `pw-metadata -n settings` show what the events describe.
 
 ## Where things are
@@ -42,7 +42,7 @@ The crate also has what saving a routing needs:
 - `src/mixer.rs`: the defaults, volumes and app streams: their events, the `Graph` queries, the `Connection` commands and the thread side (the `default` metadata, cards' `Route`s, nodes' `Props`).
 - `src/identity.rs`, `src/routing.rs`, `src/pairing.rs`, `src/guard.rs`: the parts above.
 - `src/virtual_devices.rs`: `VirtualDevice`, the `Routing` methods that add, rename and remove one, and `Made`, which makes them on the PipeWire thread and makes them again after a reconnect.
-- `src/effects/`: `mod.rs` (`Effect`, its kinds and values, the `Routing` methods), `chain.rs` (the plugins, the filter graph and its controls), `biquad.rs`, `autoeq.rs`, and `made.rs` (making them on the thread and setting their `Props`).
+- `src/effects/`: `mod.rs` (`Effect`, its kinds and values, the `Routing` methods), `chain.rs` (the plugins, the convolver check, the filter graph and its controls), `biquad.rs`, `autoeq.rs`, `easyeffects.rs`, `impulse.rs` (the impulses folder) and `made.rs` (making them on the thread and setting their `Props`).
 - `src/airplay.rs`: `AirPlay`, `airplay_missing`, the RAOP sink test and `Discovery`, which keeps the discovery module loaded on the thread.
 - `src/module.rs`: loading a module into the connection's context, the crate's only direct `libpipewire` FFI. It listens for the module's `destroy`, since a filter chain or loopback destroys itself when its streams fail.
 
@@ -52,7 +52,7 @@ The crate also has what saving a routing needs:
 - A link the window makes is `Lingering`, so it outlives the window. A link the service restores is `Owned`: it lasts while the service runs. Virtual devices are owned too (`object.linger = false`, or a module in the connection's context).
 - A loopback's, effect's or AirPlay discovery's module must be destroyed before its context: `State::clear` drops discovery, the effects and `Made` first.
 - Never load AirPlay discovery from a test: it finds and makes the person's speakers. Test `is_airplay` and the routing field without a server.
-- An effect's chain keeps one shape (10 `bq_raw` biquads per channel, a wet/dry mixer), so a change to its values is a `Props` change, never a new chain. A `bq_raw` cannot start without a `config` of coefficients. A filter chain that has never run reports the controls it was first given; it applies later ones when it runs.
+- An effect's chain keeps one shape per kind (an equaliser's 10 `bq_raw` biquads per channel, a speaker correction's 2 high-pass `bq_raw`s and a convolver per channel, a wet/dry mixer), so a change to its values is a `Props` change, never a new chain. A speaker correction's impulse response is the convolver's `config`, read once: a new file makes the chain again, and a file that is not there is not made. A `bq_raw` cannot start without a `config` of coefficients. A filter chain that has never run reports the controls it was first given; it applies later ones when it runs.
 - The routing file is replaced whole with `write_atomically`; the service follows it by watching its directory. Keep the format readable by hand, and bump `VERSION` only with a migration.
 - Never link or unlink the person's own nodes from a test. Make throwaway nodes, as `tests/live_link.rs` does.
 - Never switch the person's devices' profiles or ports from a test either; the param pods are unit-tested by reading them back.

@@ -2391,7 +2391,8 @@ schema-topbar-show-sound-description = El altavoz de la barra superior, con un m
 ## server's rate and buffer size (Engine). A card is about 220 px wide; the
 ## toolbar and the banner share one line with their buttons.
 
-audio-title = Audio
+audio-title = Configuración de audio
+audio-window-title = Configuración de audio de Otto — { $pane }
 audio-pane-graph = Grafo
 audio-pane-engine = Motor
 audio-no-server-title = El servidor de sonido no está en ejecución
@@ -2422,7 +2423,7 @@ audio-remove-link = Eliminar
 audio-service-down = Los enlaces guardados no se conservan mientras el servicio de audio está desactivado.
 audio-service-start = Iniciar servicio
 # The sidebar's foot: whether the audio service is keeping saved links.
-audio-service-on = Los enlaces guardados se conservan
+audio-service-on = El servicio de audio está activo
 audio-service-off = El servicio de audio está desactivado
 # What a card stands for, under its name.
 audio-role-playing = Reproduce sonido
@@ -2635,6 +2636,8 @@ audio-effects-about-equaliser = Moldea el sonido con hasta diez bandas o con un 
 audio-effects-about-limiter = Mantiene los picos bajo un techo, para que nada suene más fuerte de lo que hayas fijado.
 audio-effects-about-compressor = Iguala los pasajes fuertes y suaves, para una escucha estable.
 audio-effects-about-noise = Quita el ruido de fondo de una voz. Para micrófonos.
+audio-effects-kind-speaker = Corrección de altavoces
+audio-effects-about-speaker = Ajusta los altavoces con un archivo de respuesta al impulso, como el ajuste que trae de fábrica un portátil. Puede recortar antes los graves.
 # A kind whose plugin is missing, in the new effect form. $package is a
 # distribution package name; keep it as it is.
 audio-effects-missing = Necesita { $package }, que no está instalado
@@ -2725,3 +2728,36 @@ audio-effects-param-grace = Retención
 audio-effects-sample-eq = EQ de auriculares
 audio-effects-sample-mic = Limpieza del micro
 audio-effects-sample-preset = WH-1000XM5 (AutoEQ)
+# Speaker correction: the impulse response file it plays through, and
+# Choose File… to pick one.
+audio-effects-impulse = Respuesta al impulso
+audio-effects-impulse-none = Ninguna aún, el sonido pasa tal cual
+audio-effects-choose-file = Elegir archivo…
+audio-effects-impulse-title = Elegir una respuesta al impulso
+# File dialog filter.
+audio-effects-impulse-filter = Respuestas al impulso (.irs, .wav, .flac)
+audio-effects-impulse-failed = No se pudo copiar esa respuesta al impulso.
+# $file is the impulse response's file name.
+audio-effects-impulse-gone = Falta { $file } en la carpeta de datos de Otto, así que el servicio de audio no puede crear este efecto. Vuelve a elegir el archivo.
+# A switch and a frequency slider: sound below the frequency is cut.
+audio-effects-param-highpass = Cortar graves bajo
+audio-effects-param-output-gain = Ganancia de salida
+# Importing an EasyEffects output preset into a speaker correction.
+audio-effects-import-easyeffects = Importar preajuste de EasyEffects…
+audio-effects-easyeffects-title = Importar un preajuste de EasyEffects
+# File dialog filter.
+audio-effects-easyeffects-filter = Preajustes de EasyEffects (.json)
+audio-effects-easyeffects-failed = Ese archivo no es un preajuste de salida de EasyEffects con convolucionador.
+# $file is the impulse response the preset names.
+audio-effects-easyeffects-find-kernel = La respuesta al impulso del preajuste, { $file }, no está junto a él. Elígela para terminar la importación.
+audio-effects-easyeffects-stopped = Importación detenida: el preajuste necesita su respuesta al impulso.
+audio-effects-easyeffects-imported = Se importó el preajuste con { $file }.
+audio-effects-easyeffects-imported-limiter = Se importó el preajuste con { $file } y se añadió un limitador detrás.
+# $imported is one of the two lines above; $skipped lists the preset's
+# effects this one doesn't do, from the names below.
+audio-effects-easyeffects-skipped = { $imported } Omitido: { $skipped }.
+audio-effects-ee-bass-enhancer = potenciador de graves
+audio-effects-ee-multiband-compressor = compresor multibanda
+audio-effects-ee-stereo-tools = herramientas estéreo
+audio-effects-ee-limiter = limitador
+audio-effects-ee-filter = filtro

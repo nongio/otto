@@ -2473,7 +2473,8 @@ schema-topbar-show-sound-description = Ikona głośnika na górnym pasku, z menu
 ## server's rate and buffer size (Engine). A card is about 220 px wide; the
 ## toolbar and the banner share one line with their buttons.
 
-audio-title = Audio
+audio-title = Ustawienia dźwięku
+audio-window-title = Ustawienia dźwięku Otto — { $pane }
 audio-pane-graph = Graf
 audio-pane-engine = Silnik
 audio-no-server-title = Serwer dźwięku nie działa
@@ -2504,7 +2505,7 @@ audio-remove-link = Usuń
 audio-service-down = Zapisane połączenia nie są utrzymywane, gdy usługa audio jest wyłączona.
 audio-service-start = Uruchom usługę
 # The sidebar's foot: whether the audio service is keeping saved links.
-audio-service-on = Zapisane połączenia są utrzymywane
+audio-service-on = Usługa audio działa
 audio-service-off = Usługa audio jest wyłączona
 # What a card stands for, under its name.
 audio-role-playing = Odtwarza dźwięk
@@ -2720,6 +2721,8 @@ audio-effects-about-equaliser = Kształtuje dźwięk za pomocą maksymalnie dzie
 audio-effects-about-limiter = Utrzymuje szczyty poniżej pułapu, aby nic nie było głośniejsze niż ustawiony poziom.
 audio-effects-about-compressor = Wyrównuje głośne i ciche fragmenty, dla równego odsłuchu.
 audio-effects-about-noise = Usuwa szum tła z głosu. Do mikrofonów.
+audio-effects-kind-speaker = Korekcja głośników
+audio-effects-about-speaker = Dostraja głośniki plikiem odpowiedzi impulsowej, jak strojenie dostarczane przez producenta laptopa. Może najpierw obciąć niskie tony.
 # A kind whose plugin is missing, in the new effect form. $package is a
 # distribution package name; keep it as it is.
 audio-effects-missing = Wymaga pakietu { $package }, który nie jest zainstalowany
@@ -2813,3 +2816,36 @@ audio-effects-param-grace = Podtrzymanie
 audio-effects-sample-eq = EQ słuchawek
 audio-effects-sample-mic = Czyszczenie mikrofonu
 audio-effects-sample-preset = WH-1000XM5 (AutoEQ)
+# Speaker correction: the impulse response file it plays through, and
+# Choose File… to pick one.
+audio-effects-impulse = Odpowiedź impulsowa
+audio-effects-impulse-none = Jeszcze brak, dźwięk przechodzi bez zmian
+audio-effects-choose-file = Wybierz plik…
+audio-effects-impulse-title = Wybierz odpowiedź impulsową
+# File dialog filter.
+audio-effects-impulse-filter = Odpowiedzi impulsowe (.irs, .wav, .flac)
+audio-effects-impulse-failed = Nie udało się skopiować tej odpowiedzi impulsowej.
+# $file is the impulse response's file name.
+audio-effects-impulse-gone = Brak pliku { $file } w folderze danych Otto, więc usługa audio nie może utworzyć tego efektu. Wybierz plik ponownie.
+# A switch and a frequency slider: sound below the frequency is cut.
+audio-effects-param-highpass = Obetnij niskie poniżej
+audio-effects-param-output-gain = Wzmocnienie wyjścia
+# Importing an EasyEffects output preset into a speaker correction.
+audio-effects-import-easyeffects = Importuj preset EasyEffects…
+audio-effects-easyeffects-title = Importuj preset EasyEffects
+# File dialog filter.
+audio-effects-easyeffects-filter = Presety EasyEffects (.json)
+audio-effects-easyeffects-failed = Ten plik nie jest presetem wyjścia EasyEffects ze splotem.
+# $file is the impulse response the preset names.
+audio-effects-easyeffects-find-kernel = Odpowiedzi impulsowej presetu, { $file }, nie ma obok niego. Wybierz ją, aby dokończyć import.
+audio-effects-easyeffects-stopped = Import przerwany: preset potrzebuje swojej odpowiedzi impulsowej.
+audio-effects-easyeffects-imported = Zaimportowano preset z plikiem { $file }.
+audio-effects-easyeffects-imported-limiter = Zaimportowano preset z plikiem { $file } i dodano za nim limiter.
+# $imported is one of the two lines above; $skipped lists the preset's
+# effects this one doesn't do, from the names below.
+audio-effects-easyeffects-skipped = { $imported } Pominięto: { $skipped }.
+audio-effects-ee-bass-enhancer = wzmacniacz basu
+audio-effects-ee-multiband-compressor = kompresor wielopasmowy
+audio-effects-ee-stereo-tools = narzędzia stereo
+audio-effects-ee-limiter = limiter
+audio-effects-ee-filter = filtr

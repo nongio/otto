@@ -16,6 +16,19 @@
 //! compressor are the SWH LADSPA plugins, noise suppression the RNNoise one;
 //! they are found on the LADSPA path, and an effect whose plugin is missing
 //! is not made.
+//!
+//! A speaker correction is PipeWire's builtins only:
+//!
+//! ```text
+//! in ──► hp0 ──► hp1 ──► convolver ──► mix "In 1" (wet, × output gain)
+//! ```
+//!
+//! `hp0` and `hp1` are `bq_raw` biquads making a 24 dB/octave Butterworth
+//! high-pass, or passing sound unchanged while the high-pass is off. The
+//! convolver reads the impulse response file once, when the chain is made,
+//! resampling it to the chain's rate; channel `n` of the chain uses channel
+//! `n` of the file (a mono file's one channel for every channel). With no
+//! file chosen it is PipeWire's `/dirac`, which passes sound unchanged.
 
 // Rust guideline compliant 2026-02-21
 
@@ -23,8 +36,38 @@ use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 use super::biquad::Coefficients;
-use super::{Effect, EffectKind, EffectSide, ParamSpec, Unit, EFFECT_RATE, MAX_BANDS};
+use super::{
+    Band, BandType, Effect, EffectKind, EffectSide, ParamSpec, Unit, EFFECT_RATE, MAX_BANDS,
+};
 use crate::module::quoted;
+
+/// Where SPA plugins are looked for when `SPA_PLUGIN_DIR` is not set.
+const SPA_DIRS: [&str; 4] = [
+    "/usr/lib/spa-0.2",
+    "/usr/lib64/spa-0.2",
+    "/usr/local/lib/spa-0.2",
+    "/usr/lib/x86_64-linux-gnu/spa-0.2",
+];
+
+/// Where PipeWire modules are looked for when `PIPEWIRE_MODULE_DIR` is not
+/// set.
+const MODULE_DIRS: [&str; 4] = [
+    "/usr/lib/pipewire-0.3",
+    "/usr/lib64/pipewire-0.3",
+    "/usr/local/lib/pipewire-0.3",
+    "/usr/lib/x86_64-linux-gnu/pipewire-0.3",
+];
+
+/// The library holding the filter chain's builtins, convolver included:
+/// its own plugin since PipeWire 1.4, inside the module before that.
+const BUILTIN_PLUGIN: &str = "filter-graph/libspa-filter-graph-plugin-builtin.so";
+const FILTER_CHAIN_LIB: &str = "libpipewire-module-filter-chain.so";
+
+/// The file the convolver passes sound unchanged with, a PipeWire builtin.
+const DIRAC: &str = "/dirac";
+
+/// The Qs of the two biquads of a 4th-order Butterworth high-pass.
+const HIGHPASS_QS: [f32; 2] = [0.541_196_1, 1.306_563];
 
 /// Where LADSPA plugins are looked for when `LADSPA_PATH` is not set: the
 /// directories distributions install them to, the ones PipeWire searches too.
@@ -173,6 +216,25 @@ pub(super) const NOISE_PARAMS: [ParamSpec; 2] = [
     },
 ];
 
+pub(super) const SPEAKER_PARAMS: [ParamSpec; 2] = [
+    ParamSpec {
+        key: "gain",
+        port: "",
+        min: -12.0,
+        max: 12.0,
+        default: 0.0,
+        unit: Unit::Decibels,
+    },
+    ParamSpec {
+        key: "highpass-freq",
+        port: "",
+        min: 20.0,
+        max: 300.0,
+        default: 80.0,
+        unit: Unit::Hertz,
+    },
+];
+
 /// Whether an effect kind can be made here.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Support {
@@ -187,7 +249,7 @@ pub enum Support {
 
 fn plugin_of(kind: EffectKind) -> Option<&'static Plugin> {
     match kind {
-        EffectKind::Equaliser => None,
+        EffectKind::Equaliser | EffectKind::SpeakerCorrection => None,
         EffectKind::Limiter => Some(&LIMITER),
         EffectKind::Compressor => Some(&COMPRESSOR),
         EffectKind::NoiseSuppression => Some(&NOISE),
@@ -208,10 +270,21 @@ fn find(plugin: &Plugin, dirs: &[PathBuf]) -> Option<PathBuf> {
         .find(|path| path.is_file())
 }
 
-/// Whether `kind` can be made here: an equaliser always can, the others
+/// Whether `kind` can be made here: an equaliser always can, a speaker
+/// correction when the filter chain's builtins have a convolver, the others
 /// when their plugin is installed.
 #[must_use]
 pub fn support(kind: EffectKind) -> Support {
+    if kind == EffectKind::SpeakerCorrection {
+        return if has_convolver() {
+            Support::Ready
+        } else {
+            Support::Missing {
+                file: "convolver",
+                package: "pipewire",
+            }
+        };
+    }
     match plugin_of(kind) {
         None => Support::Ready,
         Some(plugin) => match find(plugin, &ladspa_dirs()) {
@@ -224,6 +297,41 @@ pub fn support(kind: EffectKind) -> Support {
     }
 }
 
+/// The directories `var` lists, or `fallback` when it is unset.
+fn dirs_from(var: &str, fallback: &[&str]) -> Vec<PathBuf> {
+    match std::env::var_os(var) {
+        Some(path) if !path.is_empty() => std::env::split_paths(&path).collect(),
+        _ => fallback.iter().map(PathBuf::from).collect(),
+    }
+}
+
+/// Whether the installed filter chain has the `convolver` builtin. Read
+/// once per process: the library is a few hundred KiB, the editor asks on
+/// every draw, and it changes only with a PipeWire upgrade.
+fn has_convolver() -> bool {
+    static FOUND: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *FOUND.get_or_init(|| {
+        let builtin = dirs_from("SPA_PLUGIN_DIR", &SPA_DIRS)
+            .into_iter()
+            .map(|dir| dir.join(BUILTIN_PLUGIN));
+        let module = dirs_from("PIPEWIRE_MODULE_DIR", &MODULE_DIRS)
+            .into_iter()
+            .map(|dir| dir.join(FILTER_CHAIN_LIB));
+        builtin
+            .chain(module)
+            .filter(|path| path.is_file())
+            .any(|path| names_convolver(&path))
+    })
+}
+
+/// Whether the library at `path` has the convolver's instantiate function.
+fn names_convolver(path: &Path) -> bool {
+    const NEEDLE: &[u8] = b"convolver_instantiate";
+    std::fs::read(path)
+        .map(|bytes| bytes.windows(NEEDLE.len()).any(|w| w == NEEDLE))
+        .unwrap_or(false)
+}
+
 /// The node names inside the chain.
 fn input_node(channel: u32) -> String {
     format!("in_{channel}")
@@ -233,6 +341,12 @@ fn mix_node(channel: u32) -> String {
 }
 fn band_node(slot: usize, channel: u32) -> String {
     format!("eq{slot}_{channel}")
+}
+fn highpass_node(slot: usize, channel: u32) -> String {
+    format!("hp{slot}_{channel}")
+}
+fn convolver_node(channel: u32) -> String {
+    format!("conv_{channel}")
 }
 /// A stereo plugin's single node, or a mono plugin's node for `channel`.
 fn plugin_node(plugin: &Plugin, channel: u32) -> String {
@@ -247,10 +361,10 @@ fn plugin_node(plugin: &Plugin, channel: u32) -> String {
 pub(crate) fn controls(effect: &Effect) -> Vec<(String, f32)> {
     let mut out = Vec::new();
     let channels = effect.channels();
-    let wet = if effect.kind == EffectKind::Equaliser {
-        10f32.powf(effect.preamp / 20.0)
-    } else {
-        1.0
+    let wet = match effect.kind {
+        EffectKind::Equaliser => 10f32.powf(effect.preamp / 20.0),
+        EffectKind::SpeakerCorrection => 10f32.powf(effect.param(&SPEAKER_PARAMS[0]) / 20.0),
+        _ => 1.0,
     };
     for channel in 0..channels {
         let mix = mix_node(channel);
@@ -263,27 +377,49 @@ pub(crate) fn controls(effect: &Effect) -> Vec<(String, f32)> {
             if effect.enabled { 0.0 } else { 1.0 },
         ));
     }
+    let rate = f64::from(EFFECT_RATE);
+    let biquad = |out: &mut Vec<(String, f32)>, node: &str, c: Coefficients| {
+        let values = [
+            ("b0", c.b0),
+            ("b1", c.b1),
+            ("b2", c.b2),
+            ("a0", 1.0),
+            ("a1", c.a1),
+            ("a2", c.a2),
+        ];
+        for (port, value) in values {
+            out.push((format!("{node}:{port}"), value as f32));
+        }
+    };
+    if effect.kind == EffectKind::SpeakerCorrection {
+        let freq = effect.param(&SPEAKER_PARAMS[1]);
+        for (slot, q) in HIGHPASS_QS.iter().enumerate() {
+            let c = if effect.highpass {
+                let band = Band {
+                    kind: BandType::HighPass,
+                    freq,
+                    gain: 0.0,
+                    q: *q,
+                };
+                Coefficients::of(&band, rate)
+            } else {
+                Coefficients::IDENTITY
+            };
+            for channel in 0..channels {
+                biquad(&mut out, &highpass_node(slot, channel), c);
+            }
+        }
+        return out;
+    }
     match plugin_of(effect.kind) {
         None => {
-            let rate = f64::from(EFFECT_RATE);
             for slot in 0..MAX_BANDS {
                 let c = effect
                     .bands
                     .get(slot)
                     .map_or(Coefficients::IDENTITY, |b| Coefficients::of(b, rate));
-                let values = [
-                    ("b0", c.b0),
-                    ("b1", c.b1),
-                    ("b2", c.b2),
-                    ("a0", 1.0),
-                    ("a1", c.a1),
-                    ("a2", c.a2),
-                ];
                 for channel in 0..channels {
-                    let node = band_node(slot, channel);
-                    for (port, value) in values {
-                        out.push((format!("{node}:{port}"), value as f32));
-                    }
+                    biquad(&mut out, &band_node(slot, channel), c);
                 }
             }
         }
@@ -305,20 +441,45 @@ fn split_control(name: &str) -> (&str, &str) {
     name.split_once(':').unwrap_or((name, ""))
 }
 
-/// The arguments `libpipewire-module-filter-chain` takes for `effect`, or
-/// `None` when its plugin is not installed.
-pub(crate) fn args(effect: &Effect) -> Option<String> {
-    let plugin = match plugin_of(effect.kind) {
-        None => None,
-        Some(plugin) => Some((plugin, find(plugin, &ladspa_dirs())?)),
-    };
-    Some(args_with(
-        effect,
-        plugin.as_ref().map(|(p, path)| (*p, path.as_path())),
-    ))
+/// What processes the sound between a chain's input and its mixer.
+enum Body<'a> {
+    /// [`MAX_BANDS`] `bq_raw` biquads per channel.
+    Equaliser,
+    /// A LADSPA plugin, at its path.
+    Plugin(&'static Plugin, &'a Path),
+    /// Two high-pass biquads and a convolver reading this file.
+    Convolver(&'a str),
 }
 
-fn args_with(effect: &Effect, plugin: Option<(&Plugin, &Path)>) -> String {
+/// Why an effect cannot be made.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Unmade {
+    /// Its LADSPA plugin is not installed.
+    NoPlugin,
+    /// Its impulse response file is not there.
+    NoImpulse(PathBuf),
+}
+
+/// The arguments `libpipewire-module-filter-chain` takes for `effect`.
+pub(crate) fn args(effect: &Effect) -> Result<String, Unmade> {
+    if effect.kind == EffectKind::SpeakerCorrection {
+        return match effect.impulse_path() {
+            None => Ok(args_with(effect, &Body::Convolver(DIRAC))),
+            // A missing file would fail the chain each time it is made.
+            Some(path) if !path.is_file() => Err(Unmade::NoImpulse(path)),
+            Some(path) => Ok(args_with(effect, &Body::Convolver(&path.to_string_lossy()))),
+        };
+    }
+    match plugin_of(effect.kind) {
+        None => Ok(args_with(effect, &Body::Equaliser)),
+        Some(plugin) => {
+            let path = find(plugin, &ladspa_dirs()).ok_or(Unmade::NoPlugin)?;
+            Ok(args_with(effect, &Body::Plugin(plugin, &path)))
+        }
+    }
+}
+
+fn args_with(effect: &Effect, body: &Body<'_>) -> String {
     let channels = effect.channels();
     let controls = controls(effect);
     let control_block = |node: &str| -> String {
@@ -357,8 +518,35 @@ fn args_with(effect: &Effect, plugin: Option<(&Plugin, &Path)>) -> String {
             format!("{mix}:In 2"),
         );
     }
-    match plugin {
-        None => {
+    match *body {
+        Body::Convolver(file) => {
+            for channel in 0..channels {
+                let mut from = format!("{}:Out", input_node(channel));
+                for slot in 0..HIGHPASS_QS.len() {
+                    let node = highpass_node(slot, channel);
+                    nodes.push(format!(
+                        "{{ type = builtin name = {node} label = bq_raw {} {} }}",
+                        raw_config(&controls, &node),
+                        control_block(&node)
+                    ));
+                    link(&mut links, from, format!("{node}:In"));
+                    from = format!("{node}:Out");
+                }
+                let conv = convolver_node(channel);
+                nodes.push(format!(
+                    "{{ type = builtin name = {conv} label = convolver \
+                     config = {{ filename = {} channel = {channel} }} }}",
+                    quoted(file)
+                ));
+                link(&mut links, from, format!("{conv}:In"));
+                link(
+                    &mut links,
+                    format!("{conv}:Out"),
+                    format!("{}:In 1", mix_node(channel)),
+                );
+            }
+        }
+        Body::Equaliser => {
             for channel in 0..channels {
                 let mut from = format!("{}:Out", input_node(channel));
                 for slot in 0..MAX_BANDS {
@@ -374,7 +562,7 @@ fn args_with(effect: &Effect, plugin: Option<(&Plugin, &Path)>) -> String {
                 link(&mut links, from, format!("{}:In 1", mix_node(channel)));
             }
         }
-        Some((plugin, path)) => {
+        Body::Plugin(plugin, path) => {
             let mut made: Vec<String> = Vec::new();
             for channel in 0..channels {
                 let node = plugin_node(plugin, channel);
@@ -503,7 +691,7 @@ mod tests {
     #[test]
     fn an_equaliser_is_a_row_of_raw_biquads_per_channel() {
         let eq = effect(EffectKind::Equaliser, EffectSide::Output);
-        let args = args_with(&eq, None);
+        let args = args_with(&eq, &Body::Equaliser);
         assert_eq!(args.matches("label = bq_raw").count(), MAX_BANDS * 2);
         assert!(
             args.contains("config = { coefficients = [ { rate = 48000 b0 = 1 b1 = 0"),
@@ -550,7 +738,7 @@ mod tests {
     #[test]
     fn a_stereo_plugin_takes_both_channels_and_a_mono_one_is_doubled() {
         let lim = effect(EffectKind::Limiter, EffectSide::Output);
-        let args = args_with(&lim, Some((&LIMITER, Path::new("/x/limiter.so"))));
+        let args = args_with(&lim, &Body::Plugin(&LIMITER, Path::new("/x/limiter.so")));
         assert_eq!(args.matches("type = ladspa").count(), 1);
         assert!(
             args.contains(r#"{ output = "in_1:Out" input = "fx:Input 2" }"#),
@@ -564,19 +752,82 @@ mod tests {
 
         let mut ns = effect(EffectKind::NoiseSuppression, EffectSide::Input);
         ns.side = EffectSide::Input;
-        let args = args_with(&ns, Some((&NOISE, Path::new("/x/rnnoise.so"))));
+        let args = args_with(&ns, &Body::Plugin(&NOISE, Path::new("/x/rnnoise.so")));
         assert_eq!(args.matches("type = ladspa").count(), 1);
         assert!(args.contains("audio.position = [ MONO ]"), "{args}");
         assert!(args.contains(r#"node.name = "otto-effect.test-fx.rec" target.object = "dev""#));
         assert!(args.contains(r#"node.name = "otto-effect.test-fx" media.class = Audio/Source"#));
 
         let comp = effect(EffectKind::Compressor, EffectSide::Input);
-        let args = args_with(&comp, Some((&COMPRESSOR, Path::new("/x/sc4.so"))));
+        let args = args_with(&comp, &Body::Plugin(&COMPRESSOR, Path::new("/x/sc4.so")));
         // Mono into a stereo plugin: both its inputs take the one channel.
         assert!(
             args.contains(r#"{ output = "in_0:Out" input = "fx:Right input" }"#),
             "{args}"
         );
+    }
+
+    fn value(effect: &Effect, name: &str) -> f32 {
+        controls(effect)
+            .into_iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, v)| v)
+            .unwrap()
+    }
+
+    #[test]
+    fn a_speaker_correction_is_a_high_pass_then_a_convolver_per_channel() {
+        let sc = effect(EffectKind::SpeakerCorrection, EffectSide::Output);
+        let made = args_with(&sc, &Body::Convolver("/data/fw13.irs"));
+        assert_eq!(made.matches("label = bq_raw").count(), 4);
+        assert_eq!(made.matches("label = convolver").count(), 2);
+        assert!(
+            made.contains(r#"config = { filename = "/data/fw13.irs" channel = 1 }"#),
+            "{made}"
+        );
+        for link in [
+            r#"{ output = "in_0:Out" input = "hp0_0:In" }"#,
+            r#"{ output = "hp0_0:Out" input = "hp1_0:In" }"#,
+            r#"{ output = "hp1_1:Out" input = "conv_1:In" }"#,
+            r#"{ output = "conv_1:Out" input = "mix_1:In 1" }"#,
+            r#"{ output = "in_1:Out" input = "mix_1:In 2" }"#,
+        ] {
+            assert!(made.contains(link), "{link} in {made}");
+        }
+        // No file yet: the convolver passes sound unchanged.
+        assert_eq!(args(&sc), Ok(args_with(&sc, &Body::Convolver(DIRAC))));
+    }
+
+    #[test]
+    fn a_speaker_correction_changes_its_gain_and_high_pass_live() {
+        let mut sc = effect(EffectKind::SpeakerCorrection, EffectSide::Output);
+        let before = sc.clone();
+        // Off: the high-pass biquads pass sound unchanged.
+        assert_eq!(value(&sc, "hp0_0:b0"), 1.0);
+        assert_eq!(value(&sc, "hp1_1:a2"), 0.0);
+        assert_eq!(value(&sc, "mix_0:Gain 1"), 1.0);
+        sc.highpass = true;
+        sc.params.insert("gain".into(), 6.0);
+        sc.params.insert("highpass-freq".into(), 60.0);
+        assert!((value(&sc, "mix_1:Gain 1") - 1.995).abs() < 0.001);
+        assert!(value(&sc, "hp0_0:b0") < 1.0);
+        assert!(value(&sc, "hp1_0:b1") < 0.0);
+        // The shape stays the same, so these are control changes.
+        let names = |e: &Effect| controls(e).into_iter().map(|(n, _)| n).collect::<Vec<_>>();
+        assert_eq!(names(&before), names(&sc));
+        assert!(sc.same_chain(&before));
+    }
+
+    #[test]
+    fn a_missing_impulse_is_not_made() {
+        let mut sc = effect(EffectKind::SpeakerCorrection, EffectSide::Output);
+        let before = sc.clone();
+        sc.impulse = Some("/nonexistent/otto/ir.wav".into());
+        assert_eq!(
+            args(&sc),
+            Err(Unmade::NoImpulse(PathBuf::from("/nonexistent/otto/ir.wav")))
+        );
+        assert!(!sc.same_chain(&before), "a new file makes the chain again");
     }
 
     #[test]

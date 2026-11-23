@@ -2378,7 +2378,8 @@ schema-topbar-show-sound-description = Der Lautsprecher in der oberen Leiste, mi
 ## server's rate and buffer size (Engine). A card is about 220 px wide; the
 ## toolbar and the banner share one line with their buttons.
 
-audio-title = Audio
+audio-title = Audioeinstellungen
+audio-window-title = Otto-Audioeinstellungen — { $pane }
 audio-pane-graph = Graph
 audio-pane-engine = Engine
 audio-no-server-title = Der Soundserver läuft nicht
@@ -2409,7 +2410,7 @@ audio-remove-link = Entfernen
 audio-service-down = Gespeicherte Links bleiben nicht erhalten, solange der Audiodienst aus ist.
 audio-service-start = Dienst starten
 # The sidebar's foot: whether the audio service is keeping saved links.
-audio-service-on = Gespeicherte Links bleiben erhalten
+audio-service-on = Der Audiodienst läuft
 audio-service-off = Der Audiodienst ist aus
 # What a card stands for, under its name.
 audio-role-playing = Spielt Ton ab
@@ -2622,6 +2623,8 @@ audio-effects-about-equaliser = Formt den Klang mit bis zu zehn Bändern oder ei
 audio-effects-about-limiter = Hält Spitzen unter einer Obergrenze, damit nichts lauter wird, als du es einstellst.
 audio-effects-about-compressor = Gleicht laute und leise Passagen aus, für gleichmäßiges Hören.
 audio-effects-about-noise = Entfernt Hintergrundgeräusche aus einer Stimme. Für Mikrofone.
+audio-effects-kind-speaker = Lautsprecherkorrektur
+audio-effects-about-speaker = Stimmt Lautsprecher mit einer Impulsantwort-Datei ab, wie das Lautsprecher-Tuning eines Laptopherstellers. Kann vorher die Tiefen beschneiden.
 # A kind whose plugin is missing, in the new effect form. $package is a
 # distribution package name; keep it as it is.
 audio-effects-missing = Benötigt { $package }, das nicht installiert ist
@@ -2709,3 +2712,36 @@ audio-effects-param-grace = Hold
 audio-effects-sample-eq = Kopfhörer-EQ
 audio-effects-sample-mic = Mikrofon-Entrauschung
 audio-effects-sample-preset = WH-1000XM5 (AutoEQ)
+# Speaker correction: the impulse response file it plays through, and
+# Choose File… to pick one.
+audio-effects-impulse = Impulsantwort
+audio-effects-impulse-none = Noch keine, der Ton bleibt unverändert
+audio-effects-choose-file = Datei wählen…
+audio-effects-impulse-title = Impulsantwort auswählen
+# File dialog filter.
+audio-effects-impulse-filter = Impulsantworten (.irs, .wav, .flac)
+audio-effects-impulse-failed = Diese Impulsantwort konnte nicht kopiert werden.
+# $file is the impulse response's file name.
+audio-effects-impulse-gone = { $file } fehlt in Ottos Datenordner, daher kann der Audiodienst diesen Effekt nicht anlegen. Wähle die Datei erneut.
+# A switch and a frequency slider: sound below the frequency is cut.
+audio-effects-param-highpass = Tiefen kappen unter
+audio-effects-param-output-gain = Ausgangs-Gain
+# Importing an EasyEffects output preset into a speaker correction.
+audio-effects-import-easyeffects = EasyEffects-Preset importieren…
+audio-effects-easyeffects-title = EasyEffects-Preset importieren
+# File dialog filter.
+audio-effects-easyeffects-filter = EasyEffects-Presets (.json)
+audio-effects-easyeffects-failed = Diese Datei ist kein EasyEffects-Ausgabe-Preset mit Convolver.
+# $file is the impulse response the preset names.
+audio-effects-easyeffects-find-kernel = Die Impulsantwort des Presets, { $file }, liegt nicht daneben. Wähle sie aus, um den Import abzuschließen.
+audio-effects-easyeffects-stopped = Import abgebrochen: Das Preset braucht seine Impulsantwort.
+audio-effects-easyeffects-imported = Preset mit { $file } importiert.
+audio-effects-easyeffects-imported-limiter = Preset mit { $file } importiert und einen Limiter dahinter gesetzt.
+# $imported is one of the two lines above; $skipped lists the preset's
+# effects this one doesn't do, from the names below.
+audio-effects-easyeffects-skipped = { $imported } Übersprungen: { $skipped }.
+audio-effects-ee-bass-enhancer = Bass-Enhancer
+audio-effects-ee-multiband-compressor = Multiband-Kompressor
+audio-effects-ee-stereo-tools = Stereowerkzeuge
+audio-effects-ee-limiter = Limiter
+audio-effects-ee-filter = Filter

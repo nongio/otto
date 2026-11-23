@@ -2402,7 +2402,8 @@ schema-topbar-show-sound-description = Le haut-parleur de la barre supérieure, 
 ## server's rate and buffer size (Engine). A card is about 220 px wide; the
 ## toolbar and the banner share one line with their buttons.
 
-audio-title = Audio
+audio-title = Réglages audio
+audio-window-title = Réglages audio d’Otto — { $pane }
 audio-pane-graph = Graphe
 audio-pane-engine = Moteur
 audio-no-server-title = Le serveur de son n’est pas lancé
@@ -2433,7 +2434,7 @@ audio-remove-link = Supprimer
 audio-service-down = Les liens enregistrés ne sont pas conservés tant que le service audio est arrêté.
 audio-service-start = Lancer le service
 # The sidebar's foot: whether the audio service is keeping saved links.
-audio-service-on = Les liens enregistrés sont conservés
+audio-service-on = Le service audio est actif
 audio-service-off = Le service audio est arrêté
 # What a card stands for, under its name.
 audio-role-playing = Lit du son
@@ -2646,6 +2647,8 @@ audio-effects-about-equaliser = Façonne le son avec jusqu’à dix bandes, ou u
 audio-effects-about-limiter = Maintient les crêtes sous un plafond, pour que rien ne dépasse le niveau que tu as fixé.
 audio-effects-about-compressor = Équilibre les passages forts et faibles, pour une écoute régulière.
 audio-effects-about-noise = Retire le bruit de fond d’une voix. Pour les micros.
+audio-effects-kind-speaker = Correction des haut-parleurs
+audio-effects-about-speaker = Règle les haut-parleurs avec un fichier de réponse impulsionnelle, comme le réglage que livre le fabricant d’un portable. Peut d’abord couper les graves.
 # A kind whose plugin is missing, in the new effect form. $package is a
 # distribution package name; keep it as it is.
 audio-effects-missing = Nécessite { $package }, qui n’est pas installé
@@ -2736,3 +2739,36 @@ audio-effects-param-grace = Maintien
 audio-effects-sample-eq = EQ casque
 audio-effects-sample-mic = Nettoyage micro
 audio-effects-sample-preset = WH-1000XM5 (AutoEQ)
+# Speaker correction: the impulse response file it plays through, and
+# Choose File… to pick one.
+audio-effects-impulse = Réponse impulsionnelle
+audio-effects-impulse-none = Aucune pour l’instant, le son passe tel quel
+audio-effects-choose-file = Choisir un fichier…
+audio-effects-impulse-title = Choisir une réponse impulsionnelle
+# File dialog filter.
+audio-effects-impulse-filter = Réponses impulsionnelles (.irs, .wav, .flac)
+audio-effects-impulse-failed = Cette réponse impulsionnelle n’a pas pu être copiée.
+# $file is the impulse response's file name.
+audio-effects-impulse-gone = { $file } manque dans le dossier de données d’Otto : le service audio ne peut donc pas créer cet effet. Choisis à nouveau le fichier.
+# A switch and a frequency slider: sound below the frequency is cut.
+audio-effects-param-highpass = Couper les graves sous
+audio-effects-param-output-gain = Gain de sortie
+# Importing an EasyEffects output preset into a speaker correction.
+audio-effects-import-easyeffects = Importer un préréglage EasyEffects…
+audio-effects-easyeffects-title = Importer un préréglage EasyEffects
+# File dialog filter.
+audio-effects-easyeffects-filter = Préréglages EasyEffects (.json)
+audio-effects-easyeffects-failed = Ce fichier n’est pas un préréglage de sortie EasyEffects avec convolveur.
+# $file is the impulse response the preset names.
+audio-effects-easyeffects-find-kernel = La réponse impulsionnelle du préréglage, { $file }, n’est pas à côté. Choisis-la pour terminer l’importation.
+audio-effects-easyeffects-stopped = Importation interrompue : le préréglage a besoin de sa réponse impulsionnelle.
+audio-effects-easyeffects-imported = Préréglage importé avec { $file }.
+audio-effects-easyeffects-imported-limiter = Préréglage importé avec { $file }, suivi d’un limiteur.
+# $imported is one of the two lines above; $skipped lists the preset's
+# effects this one doesn't do, from the names below.
+audio-effects-easyeffects-skipped = { $imported } Ignoré : { $skipped }.
+audio-effects-ee-bass-enhancer = amplificateur de basses
+audio-effects-ee-multiband-compressor = compresseur multibande
+audio-effects-ee-stereo-tools = outils stéréo
+audio-effects-ee-limiter = limiteur
+audio-effects-ee-filter = filtre

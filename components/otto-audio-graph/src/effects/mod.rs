@@ -1,5 +1,5 @@
-//! Effects: equalisers, limiters, compressors and noise suppression the
-//! service hosts as PipeWire filter chains.
+//! Effects: equalisers, limiters, compressors, noise suppression and speaker
+//! correction the service hosts as PipeWire filter chains.
 //!
 //! An effect sits on a device. An **output** effect is a sink apps play into,
 //! whose processed sound plays on its device; an **input** effect records
@@ -29,13 +29,33 @@
 //! its own context (see `chain.rs` for the graph and `made.rs` for the
 //! thread). Every value a person edits, On included, is a control of the
 //! chain and is changed live through the filter node's `Props`; only a new
-//! kind, side, device or name makes the chain again.
+//! kind, side, device, name or impulse response makes the chain again.
+//!
+//! A speaker correction keeps its impulse response by file name, in
+//! `$XDG_DATA_HOME/otto/audio/impulses/` (see `impulse.rs`):
+//!
+//! ```toml
+//! [[effect]]
+//! id = "speaker-correction"
+//! name = "Speaker correction"
+//! kind = "speaker-correction"
+//! side = "output"
+//! device = "alsa_output.pci-0000_00_1f.3.analog-stereo"
+//! impulse = "IR_22ms_27dB_5t_15s_0c.irs"
+//! highpass = true
+//!
+//! [effect.params]
+//! gain = 6.0
+//! highpass-freq = 60.0
+//! ```
 
 // Rust guideline compliant 2026-02-21
 
 mod autoeq;
 mod biquad;
 mod chain;
+mod easyeffects;
+mod impulse;
 mod made;
 
 use std::collections::BTreeMap;
@@ -48,6 +68,10 @@ use crate::routing::Routing;
 pub use autoeq::{parse_autoeq, AutoEq, AutoEqError};
 pub use biquad::{response_db, Coefficients};
 pub use chain::{support, Support};
+pub use easyeffects::{
+    find_kernel, parse_easyeffects, EasyEffects, EasyEffectsError, EasyEffectsLimiter,
+};
+pub use impulse::{import_impulse, impulses_dir, ImpulseError, MAX_IMPULSE_BYTES};
 pub(crate) use made::{set_controls, Made};
 
 /// What every effect's node names start with.
@@ -84,15 +108,20 @@ pub enum EffectKind {
     Compressor,
     /// Takes background noise out of a voice.
     NoiseSuppression,
+    /// An impulse response convolved with the sound, after an optional
+    /// high-pass: the tuning a laptop's maker ships for its speakers, or a
+    /// room correction.
+    SpeakerCorrection,
 }
 
 impl EffectKind {
     /// Every kind, in the order they are offered.
-    pub const ALL: [Self; 4] = [
+    pub const ALL: [Self; 5] = [
         Self::Equaliser,
         Self::Limiter,
         Self::Compressor,
         Self::NoiseSuppression,
+        Self::SpeakerCorrection,
     ];
 
     /// The parameters this kind has besides On; an equaliser's are its
@@ -104,6 +133,7 @@ impl EffectKind {
             Self::Limiter => &chain::LIMITER_PARAMS,
             Self::Compressor => &chain::COMPRESSOR_PARAMS,
             Self::NoiseSuppression => &chain::NOISE_PARAMS,
+            Self::SpeakerCorrection => &chain::SPEAKER_PARAMS,
         }
     }
 }
@@ -127,6 +157,7 @@ pub enum Unit {
     /// A ratio, `1:n`.
     Ratio,
     Percent,
+    Hertz,
 }
 
 /// One parameter of a limiter, compressor or noise suppressor.
@@ -134,7 +165,8 @@ pub enum Unit {
 pub struct ParamSpec {
     /// What the routing file calls it.
     pub key: &'static str,
-    /// The plugin's control port it sets.
+    /// The plugin's control port it sets; empty for a value the chain
+    /// applies elsewhere (a speaker correction's gain and high-pass).
     pub(crate) port: &'static str,
     pub min: f32,
     pub max: f32,
@@ -255,6 +287,15 @@ pub struct Effect {
     /// its default.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub params: BTreeMap<String, f32>,
+    /// A speaker correction's impulse response: a file name in
+    /// [`impulses_dir`], or an absolute path written by hand. None passes
+    /// the sound through the convolver unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub impulse: Option<String>,
+    /// Whether a speaker correction cuts the lows below its `highpass-freq`
+    /// before the impulse response.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub highpass: bool,
 }
 
 #[expect(
@@ -318,6 +359,13 @@ impl Effect {
             && self.kind == other.kind
             && self.side == other.side
             && self.device == other.device
+            && self.impulse == other.impulse
+    }
+
+    /// Where its impulse response is read from, whether it exists or not.
+    #[must_use]
+    pub fn impulse_path(&self) -> Option<std::path::PathBuf> {
+        impulse::resolve(self.impulse.as_deref()?)
     }
 }
 
@@ -377,8 +425,24 @@ impl Routing {
             bands,
             preset: None,
             params: BTreeMap::new(),
+            impulse: None,
+            highpass: false,
         });
         id
+    }
+
+    /// Add an effect of `kind`, called `name`, after the effect `id` as the
+    /// sound flows: it sits on `id`'s device and `id` moves onto it. Returns
+    /// its id, or `None` when there is no effect `id`.
+    pub fn add_effect_after(&mut self, id: &str, name: &str, kind: EffectKind) -> Option<String> {
+        let (side, device) = {
+            let effect = self.effect(id)?;
+            (effect.side, effect.device.clone())
+        };
+        let added = self.add_effect(name, kind, side, &device);
+        let node = self.effect(&added)?.node_name();
+        self.update_effect(id, |e| e.device = node);
+        Some(added)
     }
 
     /// Remove the effect `id`. An effect that sat on it moves onto the
@@ -500,5 +564,84 @@ mod tests {
         )
         .unwrap();
         assert!(bare.effects()[0].enabled);
+    }
+
+    #[test]
+    fn a_speaker_correction_keeps_its_impulse_and_high_pass() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("routing.toml");
+        let mut routing = Routing::default();
+        let id = routing.add_effect(
+            "Speakers",
+            EffectKind::SpeakerCorrection,
+            EffectSide::Output,
+            "spk",
+        );
+        assert!(routing.effect(&id).unwrap().impulse.is_none());
+        routing.update_effect(&id, |e| {
+            e.impulse = Some("fw13.irs".into());
+            e.highpass = true;
+            e.params.insert("gain".into(), 6.0);
+            e.params.insert("highpass-freq".into(), 60.0);
+        });
+        routing.save_to(&path).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("kind = \"speaker-correction\""), "{text}");
+        assert!(text.contains("impulse = \"fw13.irs\""), "{text}");
+        assert!(text.contains("highpass = true"), "{text}");
+        assert_eq!(
+            Routing::load_from(&path).unwrap().effects(),
+            routing.effects()
+        );
+
+        // Neither field is written for other kinds, and a file without them
+        // reads with no impulse and the high-pass off.
+        let eq = routing.add_effect("EQ", EffectKind::Equaliser, EffectSide::Output, "hp");
+        let text = toml::to_string(&routing).unwrap();
+        assert_eq!(text.matches("impulse").count(), 1, "{text}");
+        assert!(!routing.effect(&eq).unwrap().highpass);
+        let bare: Routing = toml::from_str(
+            "[[effect]]\nid = \"s\"\nname = \"S\"\nkind = \"speaker-correction\"\nside = \"output\"\ndevice = \"spk\"\n",
+        )
+        .unwrap();
+        assert_eq!(bare.effects()[0].impulse, None);
+        assert!(!bare.effects()[0].highpass);
+    }
+
+    #[test]
+    fn an_absolute_impulse_is_read_where_it_is() {
+        let mut routing = Routing::default();
+        let id = routing.add_effect(
+            "S",
+            EffectKind::SpeakerCorrection,
+            EffectSide::Output,
+            "spk",
+        );
+        routing.update_effect(&id, |e| e.impulse = Some("/srv/ir/room.wav".into()));
+        assert_eq!(
+            routing.effect(&id).unwrap().impulse_path(),
+            Some(std::path::PathBuf::from("/srv/ir/room.wav"))
+        );
+    }
+
+    #[test]
+    fn an_effect_added_after_another_takes_its_place_before_the_device() {
+        let mut routing = Routing::default();
+        let sc = routing.add_effect(
+            "S",
+            EffectKind::SpeakerCorrection,
+            EffectSide::Output,
+            "spk",
+        );
+        let lim = routing
+            .add_effect_after(&sc, "Limiter", EffectKind::Limiter)
+            .unwrap();
+        let lim = routing.effect(&lim).unwrap().clone();
+        assert_eq!(lim.device, "spk");
+        assert_eq!(routing.effect(&sc).unwrap().device, lim.node_name());
+        assert_eq!(
+            routing.add_effect_after("none", "L", EffectKind::Limiter),
+            None
+        );
     }
 }

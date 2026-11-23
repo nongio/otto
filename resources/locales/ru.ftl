@@ -2466,7 +2466,8 @@ schema-topbar-show-sound-description = Значок динамика на вер
 ## server's rate and buffer size (Engine). A card is about 220 px wide; the
 ## toolbar and the banner share one line with their buttons.
 
-audio-title = Аудио
+audio-title = Настройки звука
+audio-window-title = Настройки звука Otto — { $pane }
 audio-pane-graph = Граф
 audio-pane-engine = Движок
 audio-no-server-title = Звуковой сервер не запущен
@@ -2497,7 +2498,7 @@ audio-remove-link = Удалить
 audio-service-down = Сохранённые связи не восстанавливаются, пока служба аудио выключена.
 audio-service-start = Запустить службу
 # The sidebar's foot: whether the audio service is keeping saved links.
-audio-service-on = Сохранённые связи восстанавливаются
+audio-service-on = Служба аудио работает
 audio-service-off = Служба аудио выключена
 # What a card stands for, under its name.
 audio-role-playing = Воспроизводит звук
@@ -2713,6 +2714,8 @@ audio-effects-about-equaliser = Формирует звук с помощью д
 audio-effects-about-limiter = Держит пики ниже потолка, чтобы ничто не звучало громче заданного уровня.
 audio-effects-about-compressor = Выравнивает громкие и тихие фрагменты для ровного звучания.
 audio-effects-about-noise = Убирает фоновый шум из голоса. Для микрофонов.
+audio-effects-kind-speaker = Коррекция динамиков
+audio-effects-about-speaker = Настраивает динамики по файлу импульсной характеристики, как это делает производитель ноутбука. Может сначала срезать низкие частоты.
 # A kind whose plugin is missing, in the new effect form. $package is a
 # distribution package name; keep it as it is.
 audio-effects-missing = Нужен пакет { $package }, но он не установлен
@@ -2806,3 +2809,36 @@ audio-effects-param-grace = Удержание
 audio-effects-sample-eq = EQ для наушников
 audio-effects-sample-mic = Очистка микрофона
 audio-effects-sample-preset = WH-1000XM5 (AutoEQ)
+# Speaker correction: the impulse response file it plays through, and
+# Choose File… to pick one.
+audio-effects-impulse = Импульсная характеристика
+audio-effects-impulse-none = Пока нет, звук проходит без изменений
+audio-effects-choose-file = Выбрать файл…
+audio-effects-impulse-title = Выбор импульсной характеристики
+# File dialog filter.
+audio-effects-impulse-filter = Импульсные характеристики (.irs, .wav, .flac)
+audio-effects-impulse-failed = Не удалось скопировать эту импульсную характеристику.
+# $file is the impulse response's file name.
+audio-effects-impulse-gone = Файла { $file } нет в папке данных Otto, поэтому служба аудио не может создать этот эффект. Выбери файл ещё раз.
+# A switch and a frequency slider: sound below the frequency is cut.
+audio-effects-param-highpass = Срез НЧ ниже
+audio-effects-param-output-gain = Выходное усиление
+# Importing an EasyEffects output preset into a speaker correction.
+audio-effects-import-easyeffects = Импорт пресета EasyEffects…
+audio-effects-easyeffects-title = Импорт пресета EasyEffects
+# File dialog filter.
+audio-effects-easyeffects-filter = Пресеты EasyEffects (.json)
+audio-effects-easyeffects-failed = Этот файл не является выходным пресетом EasyEffects со свёрткой.
+# $file is the impulse response the preset names.
+audio-effects-easyeffects-find-kernel = Импульсной характеристики пресета, { $file }, нет рядом с ним. Выбери её, чтобы завершить импорт.
+audio-effects-easyeffects-stopped = Импорт остановлен: пресету нужна его импульсная характеристика.
+audio-effects-easyeffects-imported = Пресет импортирован с файлом { $file }.
+audio-effects-easyeffects-imported-limiter = Пресет импортирован с файлом { $file }, после него добавлен лимитер.
+# $imported is one of the two lines above; $skipped lists the preset's
+# effects this one doesn't do, from the names below.
+audio-effects-easyeffects-skipped = { $imported } Пропущено: { $skipped }.
+audio-effects-ee-bass-enhancer = усилитель баса
+audio-effects-ee-multiband-compressor = многополосный компрессор
+audio-effects-ee-stereo-tools = стереоинструменты
+audio-effects-ee-limiter = лимитер
+audio-effects-ee-filter = фильтр

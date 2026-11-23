@@ -2372,7 +2372,8 @@ schema-topbar-show-sound-description = 顶部栏中的扬声器，附带用于�
 ## server's rate and buffer size (Engine). A card is about 220 px wide; the
 ## toolbar and the banner share one line with their buttons.
 
-audio-title = 音频
+audio-title = 音频设置
+audio-window-title = Otto 音频设置 —— { $pane }
 audio-pane-graph = 连接图
 audio-pane-engine = 引擎
 audio-no-server-title = 声音服务器未运行
@@ -2403,7 +2404,7 @@ audio-remove-link = 移除
 audio-service-down = 音频服务关闭时，已存储的连接不会保留。
 audio-service-start = 启动服务
 # The sidebar's foot: whether the audio service is keeping saved links.
-audio-service-on = 已存储的连接会保留
+audio-service-on = 音频服务正在运行
 audio-service-off = 音频服务已关闭
 # What a card stands for, under its name.
 audio-role-playing = 播放声音
@@ -2604,6 +2605,8 @@ audio-effects-about-equaliser = 用最多十个频段，或来自 AutoEQ 的耳�
 audio-effects-about-limiter = 把峰值压在上限之下，声音不会超过你设定的响度。
 audio-effects-about-compressor = 平衡响亮与轻柔的段落，让聆听更平稳。
 audio-effects-about-noise = 去除人声中的背景噪音。适用于麦克风。
+audio-effects-kind-speaker = 扬声器校正
+audio-effects-about-speaker = 用脉冲响应文件调校扬声器，就像笔记本厂商自带的扬声器调校。也可以先切除低频。
 # A kind whose plugin is missing, in the new effect form. $package is a
 # distribution package name; keep it as it is.
 audio-effects-missing = 需要 { $package }，但尚未安装
@@ -2680,3 +2683,36 @@ audio-effects-param-grace = 保持
 audio-effects-sample-eq = 耳机均衡
 audio-effects-sample-mic = 麦克风降噪
 audio-effects-sample-preset = WH-1000XM5 (AutoEQ)
+# Speaker correction: the impulse response file it plays through, and
+# Choose File… to pick one.
+audio-effects-impulse = 脉冲响应
+audio-effects-impulse-none = 暂无，声音原样通过
+audio-effects-choose-file = 选取文件…
+audio-effects-impulse-title = 选择脉冲响应
+# File dialog filter.
+audio-effects-impulse-filter = 脉冲响应 (.irs, .wav, .flac)
+audio-effects-impulse-failed = 无法复制该脉冲响应。
+# $file is the impulse response's file name.
+audio-effects-impulse-gone = Otto 的数据文件夹中缺少 { $file }，因此音频服务无法创建此效果。请重新选择该文件。
+# A switch and a frequency slider: sound below the frequency is cut.
+audio-effects-param-highpass = 低切
+audio-effects-param-output-gain = 输出增益
+# Importing an EasyEffects output preset into a speaker correction.
+audio-effects-import-easyeffects = 导入 EasyEffects 预设…
+audio-effects-easyeffects-title = 导入 EasyEffects 预设
+# File dialog filter.
+audio-effects-easyeffects-filter = EasyEffects 预设 (.json)
+audio-effects-easyeffects-failed = 该文件不是带卷积器的 EasyEffects 输出预设。
+# $file is the impulse response the preset names.
+audio-effects-easyeffects-find-kernel = 预设所需的脉冲响应 { $file } 不在同一位置。选择它即可完成导入。
+audio-effects-easyeffects-stopped = 导入已停止：预设需要其脉冲响应。
+audio-effects-easyeffects-imported = 已导入预设（使用 { $file }）。
+audio-effects-easyeffects-imported-limiter = 已导入预设（使用 { $file }），并在其后添加了限制器。
+# $imported is one of the two lines above; $skipped lists the preset's
+# effects this one doesn't do, from the names below.
+audio-effects-easyeffects-skipped = { $imported }已跳过：{ $skipped }。
+audio-effects-ee-bass-enhancer = 低音增强
+audio-effects-ee-multiband-compressor = 多段压缩器
+audio-effects-ee-stereo-tools = 立体声工具
+audio-effects-ee-limiter = 限制器
+audio-effects-ee-filter = 滤波器

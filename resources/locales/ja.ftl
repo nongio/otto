@@ -2368,7 +2368,8 @@ schema-topbar-show-sound-description = 上部バーのスピーカー。音量�
 ## server's rate and buffer size (Engine). A card is about 220 px wide; the
 ## toolbar and the banner share one line with their buttons.
 
-audio-title = オーディオ
+audio-title = オーディオ設定
+audio-window-title = Otto オーディオ設定 — { $pane }
 audio-pane-graph = グラフ
 audio-pane-engine = エンジン
 audio-no-server-title = サウンドサーバが動作していません
@@ -2399,7 +2400,7 @@ audio-remove-link = 削除
 audio-service-down = オーディオサービスがオフの間は、保存したリンクは保持されません。
 audio-service-start = サービスを起動
 # The sidebar's foot: whether the audio service is keeping saved links.
-audio-service-on = 保存したリンクは保持されます
+audio-service-on = オーディオサービスは実行中です
 audio-service-off = オーディオサービスはオフです
 # What a card stands for, under its name.
 audio-role-playing = サウンドを再生
@@ -2600,6 +2601,8 @@ audio-effects-about-equaliser = 最大 10 バンド、または AutoEQ のヘッ
 audio-effects-about-limiter = ピークを上限以下に抑え、設定した音量より大きくならないようにします。
 audio-effects-about-compressor = 大きな部分と小さな部分の差をならし、安定して聴けるようにします。
 audio-effects-about-noise = 声から背景ノイズを取り除きます。マイク用です。
+audio-effects-kind-speaker = スピーカー補正
+audio-effects-about-speaker = インパルス応答ファイルでスピーカーを調整します。ノートパソコンのメーカーが行うスピーカーチューニングと同じものです。先に低音をカットすることもできます。
 # A kind whose plugin is missing, in the new effect form. $package is a
 # distribution package name; keep it as it is.
 audio-effects-missing = { $package } が必要ですが、インストールされていません
@@ -2676,3 +2679,36 @@ audio-effects-param-grace = ホールド
 audio-effects-sample-eq = ヘッドフォン EQ
 audio-effects-sample-mic = マイクのノイズ除去
 audio-effects-sample-preset = WH-1000XM5 (AutoEQ)
+# Speaker correction: the impulse response file it plays through, and
+# Choose File… to pick one.
+audio-effects-impulse = インパルス応答
+audio-effects-impulse-none = まだありません。音はそのまま通ります
+audio-effects-choose-file = ファイルを選択…
+audio-effects-impulse-title = インパルス応答を選択
+# File dialog filter.
+audio-effects-impulse-filter = インパルス応答 (.irs, .wav, .flac)
+audio-effects-impulse-failed = このインパルス応答をコピーできませんでした。
+# $file is the impulse response's file name.
+audio-effects-impulse-gone = { $file } が Otto のデータフォルダにないため、オーディオサービスはこのエフェクトを作成できません。ファイルをもう一度選択してください。
+# A switch and a frequency slider: sound below the frequency is cut.
+audio-effects-param-highpass = 低音カット
+audio-effects-param-output-gain = 出力ゲイン
+# Importing an EasyEffects output preset into a speaker correction.
+audio-effects-import-easyeffects = EasyEffects プリセットを読み込む…
+audio-effects-easyeffects-title = EasyEffects プリセットを読み込む
+# File dialog filter.
+audio-effects-easyeffects-filter = EasyEffects プリセット (.json)
+audio-effects-easyeffects-failed = このファイルはコンボルバーを含む EasyEffects の出力プリセットではありません。
+# $file is the impulse response the preset names.
+audio-effects-easyeffects-find-kernel = プリセットのインパルス応答 { $file } が同じ場所にありません。選択すると読み込みが完了します。
+audio-effects-easyeffects-stopped = 読み込みを中止しました。プリセットにはインパルス応答が必要です。
+audio-effects-easyeffects-imported = { $file } でプリセットを読み込みました。
+audio-effects-easyeffects-imported-limiter = { $file } でプリセットを読み込み、後ろにリミッタを追加しました。
+# $imported is one of the two lines above; $skipped lists the preset's
+# effects this one doesn't do, from the names below.
+audio-effects-easyeffects-skipped = { $imported }{ $skipped } は読み込みませんでした。
+audio-effects-ee-bass-enhancer = ベースエンハンサー
+audio-effects-ee-multiband-compressor = マルチバンドコンプレッサ
+audio-effects-ee-stereo-tools = ステレオツール
+audio-effects-ee-limiter = リミッタ
+audio-effects-ee-filter = フィルタ

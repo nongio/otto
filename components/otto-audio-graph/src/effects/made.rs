@@ -63,13 +63,24 @@ impl Made {
                 // again with the new values instead.
                 self.made.remove(&effect.id);
             }
-            let Some(args) = chain::args(effect) else {
-                tracing::warn!(
-                    id = effect.id,
-                    kind = ?effect.kind,
-                    "the effect's plugin is not installed, not making it"
-                );
-                continue;
+            let args = match chain::args(effect) {
+                Ok(args) => args,
+                Err(chain::Unmade::NoPlugin) => {
+                    tracing::warn!(
+                        id = effect.id,
+                        kind = ?effect.kind,
+                        "the effect's plugin is not installed, not making it"
+                    );
+                    continue;
+                }
+                Err(chain::Unmade::NoImpulse(path)) => {
+                    tracing::warn!(
+                        id = effect.id,
+                        path = %path.display(),
+                        "the effect's impulse response is missing, not making it"
+                    );
+                    continue;
+                }
             };
             tracing::info!(id = effect.id, name = effect.name, "making an effect");
             tracing::trace!(id = effect.id, args, "the effect's filter chain");

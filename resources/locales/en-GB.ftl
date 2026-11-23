@@ -2511,7 +2511,8 @@ settings-dictation-autostart-detail = Runs otto-dictate from ~/.config/autostart
 ## server's rate and buffer size (Engine). A card is about 220 px wide; the
 ## toolbar and the banner share one line with their buttons.
 
-audio-title = Audio
+audio-title = Audio Settings
+audio-window-title = Otto Audio Settings — { $pane }
 audio-pane-graph = Graph
 audio-pane-engine = Engine
 audio-no-server-title = The sound server isn't running
@@ -2542,7 +2543,7 @@ audio-remove-link = Remove
 audio-service-down = Saved links aren't kept while the audio service is off.
 audio-service-start = Start Service
 # The sidebar's foot: whether the audio service is keeping saved links.
-audio-service-on = Saved links are kept
+audio-service-on = Audio service running
 audio-service-off = Audio service is off
 # What a card stands for, under its name.
 audio-role-playing = Plays sound
@@ -2743,6 +2744,8 @@ audio-effects-about-equaliser = Shapes the sound with up to ten bands, or a head
 audio-effects-about-limiter = Keeps peaks under a ceiling, so nothing gets louder than you set.
 audio-effects-about-compressor = Evens out loud and quiet passages, for steady listening.
 audio-effects-about-noise = Takes background noise out of a voice. For microphones.
+audio-effects-kind-speaker = Speaker correction
+audio-effects-about-speaker = Tunes speakers with an impulse response file, like the speaker tuning a laptop maker ships. It can cut the lows first.
 # A kind whose plugin is missing, in the new effect form. $package is a
 # distribution package name; keep it as it is.
 audio-effects-missing = Needs { $package }, which isn't installed
@@ -2830,3 +2833,36 @@ audio-effects-param-grace = Hold
 audio-effects-sample-eq = Headphone EQ
 audio-effects-sample-mic = Mic cleanup
 audio-effects-sample-preset = WH-1000XM5 (AutoEQ)
+# Speaker correction: the impulse response file it plays through, and
+# Choose File… to pick one.
+audio-effects-impulse = Impulse response
+audio-effects-impulse-none = None yet, sound passes through as is
+audio-effects-choose-file = Choose File…
+audio-effects-impulse-title = Choose an Impulse Response
+# File dialog filter.
+audio-effects-impulse-filter = Impulse responses (.irs, .wav, .flac)
+audio-effects-impulse-failed = That impulse response couldn't be copied.
+# $file is the impulse response's file name.
+audio-effects-impulse-gone = { $file } is missing from Otto's data folder, so the audio service can't make this effect. Choose the file again.
+# A switch and a frequency slider: sound below the frequency is cut.
+audio-effects-param-highpass = Cut lows below
+audio-effects-param-output-gain = Output gain
+# Importing an EasyEffects output preset into a speaker correction.
+audio-effects-import-easyeffects = Import EasyEffects Preset…
+audio-effects-easyeffects-title = Import an EasyEffects Preset
+# File dialog filter.
+audio-effects-easyeffects-filter = EasyEffects presets (.json)
+audio-effects-easyeffects-failed = That file isn't an EasyEffects output preset with a convolver.
+# $file is the impulse response the preset names.
+audio-effects-easyeffects-find-kernel = The preset's impulse response, { $file }, isn't next to it. Choose it to finish the import.
+audio-effects-easyeffects-stopped = Import stopped: the preset needs its impulse response.
+audio-effects-easyeffects-imported = Imported the preset with { $file }.
+audio-effects-easyeffects-imported-limiter = Imported the preset with { $file }, and put a limiter after it.
+# $imported is one of the two lines above; $skipped lists the preset's
+# effects this one doesn't do, from the names below.
+audio-effects-easyeffects-skipped = { $imported } Skipped { $skipped }.
+audio-effects-ee-bass-enhancer = bass enhancer
+audio-effects-ee-multiband-compressor = multiband compressor
+audio-effects-ee-stereo-tools = stereo tools
+audio-effects-ee-limiter = limiter
+audio-effects-ee-filter = filter

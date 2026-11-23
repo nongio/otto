@@ -47,9 +47,11 @@ pub use airplay::{airplay_missing, AirPlay, AirPlayMissing, AIRPLAY_PACKAGE, AIR
 pub use connection::{Connection, LinkLifetime};
 pub use devices::{codec_named, Availability, Codec, Device, Profile, Route};
 pub use effects::{
-    flat_bands, parse_autoeq, response_db, support, AutoEq, AutoEqError, Band, BandType,
-    Coefficients, Effect, EffectKind, EffectSide, ParamSpec, Support, Unit, EFFECT_PREFIX,
-    EFFECT_RATE, MAX_BANDS, MAX_FREQ, MAX_GAIN, MAX_Q, MIN_FREQ, MIN_Q,
+    find_kernel, flat_bands, import_impulse, impulses_dir, parse_autoeq, parse_easyeffects,
+    response_db, support, AutoEq, AutoEqError, Band, BandType, Coefficients, EasyEffects,
+    EasyEffectsError, EasyEffectsLimiter, Effect, EffectKind, EffectSide, ImpulseError, ParamSpec,
+    Support, Unit, EFFECT_PREFIX, EFFECT_RATE, MAX_BANDS, MAX_FREQ, MAX_GAIN, MAX_IMPULSE_BYTES,
+    MAX_Q, MIN_FREQ, MIN_Q,
 };
 pub use guard::{LoopGuard, Verdict};
 pub use identity::{identity, NodeIdentity, PortRef, StreamDirection};

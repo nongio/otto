@@ -182,3 +182,105 @@ fn an_equaliser_is_made_changed_live_and_removed() {
         "the effect goes"
     );
 }
+
+/// A 16-bit PCM WAV of `channels` channels at 44.1 kHz, each a unit impulse
+/// followed by silence, as a speaker correction's impulse response.
+fn impulse_wav(path: &std::path::Path, channels: u16) {
+    let rate: u32 = 44_100;
+    let frames: u32 = 64;
+    let block = u32::from(channels) * 2;
+    let bytes = frames * block;
+    let mut wav = Vec::new();
+    wav.extend_from_slice(b"RIFF");
+    wav.extend_from_slice(&(36 + bytes).to_le_bytes());
+    wav.extend_from_slice(b"WAVEfmt ");
+    wav.extend_from_slice(&16u32.to_le_bytes());
+    wav.extend_from_slice(&1u16.to_le_bytes());
+    wav.extend_from_slice(&channels.to_le_bytes());
+    wav.extend_from_slice(&rate.to_le_bytes());
+    wav.extend_from_slice(&(rate * block).to_le_bytes());
+    wav.extend_from_slice(&(channels * 2).to_le_bytes());
+    wav.extend_from_slice(&16u16.to_le_bytes());
+    wav.extend_from_slice(b"data");
+    wav.extend_from_slice(&bytes.to_le_bytes());
+    for frame in 0..frames {
+        for _ in 0..channels {
+            let sample: i16 = if frame == 0 { i16::MAX } else { 0 };
+            wav.extend_from_slice(&sample.to_le_bytes());
+        }
+    }
+    std::fs::write(path, wav).expect("write the impulse");
+}
+
+#[test]
+#[ignore = "needs a running PipeWire server, pactl, pw-dump and pw-play"]
+fn a_speaker_correction_reads_its_impulse_and_changes_live() {
+    let device = "otto-effects-test-speakers";
+    let _sink = NullSink::new(device);
+    let dir = tempfile::tempdir().expect("a temp dir");
+    // A mono file on a stereo chain: both channels read its one channel.
+    let mono = dir.path().join("mono.wav");
+    impulse_wav(&mono, 1);
+    let mut routing = Routing::default();
+    let id = routing.add_effect(
+        "Live test speakers",
+        EffectKind::SpeakerCorrection,
+        EffectSide::Output,
+        device,
+    );
+    routing.update_effect(&id, |e| {
+        e.impulse = Some(mono.to_string_lossy().into_owned());
+        e.highpass = true;
+    });
+    let effect = routing.effect(&id).expect("the effect").clone();
+
+    let (tx, rx) = mpsc::channel();
+    let host = Connection::start("otto-effects-test", move |event| {
+        let _ = tx.send(event);
+    });
+    host.keep_effects(vec![effect.clone()]);
+    let mut graph = Graph::new();
+    let (sink, stream) = (effect.node_name(), effect.stream_name());
+    let made = |g: &Graph| {
+        let (Some(stream), Some(device)) = (node_id(g, &stream), node_id(g, device)) else {
+            return None;
+        };
+        let linked = g
+            .links()
+            .any(|l| l.output_node == stream && l.input_node == device);
+        node_id(g, &sink).filter(|_| linked)
+    };
+    assert!(
+        wait(&rx, &mut graph, |g| made(g).is_some()),
+        "the speaker correction appears and plays on its device"
+    );
+    let node = made(&graph).expect("the effect's sink");
+
+    let mut louder = effect.clone();
+    louder.params.insert("gain".into(), 6.0);
+    host.set_effect_controls(&louder);
+    play_silence(&sink);
+    assert!(
+        shows(node, r#""mix_1:Gain1",1.99"#),
+        "the output gain is a control: {}",
+        dumped(node)
+    );
+    assert_eq!(node_id(&graph, &sink), Some(node), "not made again");
+
+    // A stereo file makes the chain again, with a channel each.
+    let stereo = dir.path().join("stereo.wav");
+    impulse_wav(&stereo, 2);
+    louder.impulse = Some(stereo.to_string_lossy().into_owned());
+    host.keep_effects(vec![louder]);
+    assert!(
+        wait(&rx, &mut graph, |g| made(g).is_some_and(|n| n != node)),
+        "a new file makes the chain again"
+    );
+
+    host.keep_effects(Vec::new());
+    assert!(
+        wait(&rx, &mut graph, |g| node_id(g, &sink).is_none()
+            && node_id(g, &stream).is_none()),
+        "the effect goes"
+    );
+}
