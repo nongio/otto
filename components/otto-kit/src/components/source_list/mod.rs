@@ -12,6 +12,6 @@
 mod source_list;
 
 pub use source_list::{
-    draw, icon_rect, icon_tint, item_tint, GlyphSlot, SourceListItem, SourceListLayout, SourceListMetrics,
-    SourceListSize,
+    draw, icon_rect, icon_tint, item_tint, GlyphSlot, SourceListItem, SourceListLayout,
+    SourceListMetrics, SourceListSize,
 };

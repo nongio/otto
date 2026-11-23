@@ -2,11 +2,11 @@
 
 use otto_kit::components::color_picker::{self, WellInteraction};
 use otto_kit::components::dropdown::{self, DropdownInteraction};
+use otto_kit::components::scroll::ScrollView;
 use otto_kit::components::selection_list::{self, SelectionListHit, SelectionListLayout};
 use otto_kit::components::source_list::{
     self, GlyphSlot, SourceListItem, SourceListLayout, SourceListSize,
 };
-use otto_kit::components::scroll::ScrollView;
 use otto_kit::components::text_input::TextInput;
 use otto_kit::components::titlebar::{
     DecorationVariant, Titlebar, TitlebarGroup, WindowControls, WindowControlsState,
@@ -300,7 +300,10 @@ pub fn sidebar_wheel(delta: f32, discrete: bool, stop: bool, count: usize, heigh
 pub fn sidebar_scroll_animating() -> bool {
     SIDEBAR_SCROLLER
         .lock()
-        .map(|s| s.as_ref().is_some_and(|s| s.velocity() != 0.0 || s.is_animating()))
+        .map(|s| {
+            s.as_ref()
+                .is_some_and(|s| s.velocity() != 0.0 || s.is_animating())
+        })
         .unwrap_or(false)
 }
 
