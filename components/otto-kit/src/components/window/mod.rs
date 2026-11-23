@@ -1326,6 +1326,10 @@ impl Window {
     /// already interior-mutable, so nothing is lost by it.
     pub fn set_title(&self, title: &str) {
         if let Ok(mut title_guard) = self.title.write() {
+            // Unchanged: nothing to tell the compositor.
+            if *title_guard == title {
+                return;
+            }
             *title_guard = title.to_string();
         }
         // Without this the new title never leaves the process: the app

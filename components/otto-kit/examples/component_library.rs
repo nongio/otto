@@ -630,7 +630,7 @@ fn draw_source_list(canvas: &Canvas, theme: &Theme) {
         &items,
         Some(1),
         theme,
-        |canvas, index, rect, tint| {
+        |canvas, index, _slot, rect, tint| {
             draw_glyph(canvas, entries[index].1, rect, tint);
         },
     );

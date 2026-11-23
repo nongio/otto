@@ -65,6 +65,18 @@ pub struct Theme {
     pub fill_tertiary: Color,
     pub fill_quaternary: Color,
 
+    /// The recessed track a segmented control's choices sit in.
+    pub control_track: Color,
+    /// A control part raised off its track, such as a segmented control's
+    /// chosen segment: lighter than the track in both schemes, so the raised
+    /// part reads as nearer.
+    pub control_raised: Color,
+    /// The hairline around a control — a dropdown field, a segmented
+    /// control's chosen segment. Firmer than [`Theme::hairline`], which edges
+    /// whole surfaces and stays faint: a control is small, and its edge is
+    /// what tells it apart from the card it sits on.
+    pub control_edge: Color,
+
     // Text colors
     pub text_primary: Color,
     pub text_secondary: Color,
@@ -216,6 +228,10 @@ impl Theme {
             fill_tertiary: Color::from_argb(0x0D, 0x00, 0x00, 0x00),
             fill_quaternary: Color::from_argb(0x08, 0x00, 0x00, 0x00),
 
+            control_track: Color::from_argb(0x17, 0x00, 0x00, 0x00),
+            control_raised: Color::WHITE,
+            control_edge: Color::from_argb(0x2E, 0x00, 0x00, 0x00),
+
             text_primary: Color::from_argb(0xD9, 0x00, 0x00, 0x00),
             text_secondary: Color::from_argb(0x80, 0x00, 0x00, 0x00),
             text_tertiary: Color::from_argb(0x40, 0x00, 0x00, 0x00),
@@ -266,6 +282,10 @@ impl Theme {
             fill_secondary: Color::from_argb(0x1A, 0xFF, 0xFF, 0xFF),
             fill_tertiary: Color::from_argb(0x0F, 0xFF, 0xFF, 0xFF),
             fill_quaternary: Color::from_argb(0x08, 0xFF, 0xFF, 0xFF),
+
+            control_track: Color::from_argb(0x14, 0xFF, 0xFF, 0xFF),
+            control_raised: Color::from_argb(0xFF, 0x5A, 0x5A, 0x5E),
+            control_edge: Color::from_argb(0x26, 0xFF, 0xFF, 0xFF),
 
             text_primary: Color::from_argb(0xF2, 0xFF, 0xFF, 0xFF),
             text_secondary: Color::from_argb(0x80, 0xFF, 0xFF, 0xFF),

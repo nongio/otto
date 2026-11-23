@@ -10,7 +10,9 @@
 
 use otto_kit::components::list::{self, ListLayout, ListRow};
 use otto_kit::components::slider::{self, SliderInteraction};
-use otto_kit::components::source_list::{self, SourceListItem, SourceListLayout};
+use otto_kit::components::source_list::{
+    self, GlyphSlot, SourceListItem, SourceListLayout, SourceListSize,
+};
 use otto_kit::components::toggle::{self, ToggleInteraction};
 use otto_kit::prelude::*;
 use skia_safe::{surfaces, EncodedImageFormat, PaintStyle, Point, RRect};
@@ -137,24 +139,42 @@ fn draw_sidebar(canvas: &Canvas, theme: &Theme) {
         SourceListItem::new("Sound"),
     ];
     let layout = SourceListLayout::compute(items.len(), 0.0, 16.0, SIDEBAR_W);
+    source_list::draw(canvas, &layout, &items, Some(1), theme, stand_in_glyph);
 
-    source_list::draw(
-        canvas,
-        &layout,
-        &items,
-        Some(1),
-        theme,
-        |canvas, index, rect, tint| {
-            // Stand-in glyph: a filled circle, since the real icon set lives in
-            // otto-settings' own `glyphs` module and this gallery has no
-            // business depending on it.
-            let mut paint = Paint::default();
-            paint.set_anti_alias(true);
-            paint.set_color(tint);
+    // The large size, with a two-line row and trailing glyphs.
+    let items = [
+        SourceListItem::new("Graph"),
+        SourceListItem::new("Built-in Audio")
+            .with_subtitle("2 in · 2 out")
+            .with_trailing(2),
+        SourceListItem::new("USB Mic")
+            .with_subtitle("1 in")
+            .with_trailing(1),
+        SourceListItem::new("Effects"),
+    ];
+    let top = layout.height() + 24.0;
+    let layout = SourceListLayout::for_items(SourceListSize::Large, &items, 0.0, top, SIDEBAR_W);
+    source_list::draw(canvas, &layout, &items, Some(1), theme, stand_in_glyph);
+}
+
+/// Stand-in glyphs: a filled circle leading, a small ring trailing, since the
+/// real icon sets live in the apps and this gallery has no business depending
+/// on them.
+fn stand_in_glyph(canvas: &Canvas, index: usize, slot: GlyphSlot, rect: Rect, tint: Color) {
+    let mut paint = Paint::default();
+    paint.set_anti_alias(true);
+    paint.set_color(tint);
+    match slot {
+        GlyphSlot::Leading => {
             let r = rect.width() / 2.0 - (index as f32 * 0.6).min(3.0);
             canvas.draw_circle(rect.center(), r.max(4.0), &paint);
-        },
-    );
+        }
+        GlyphSlot::Trailing(_) => {
+            paint.set_style(PaintStyle::Stroke);
+            paint.set_stroke_width(1.5);
+            canvas.draw_circle(rect.center(), rect.width() / 2.0 - 1.5, &paint);
+        }
+    }
 }
 
 /// Vertically-centred sub-rect of `height` inside `rect` — controls that

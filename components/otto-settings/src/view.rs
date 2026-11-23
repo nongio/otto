@@ -3,6 +3,10 @@
 use otto_kit::components::color_picker::{self, WellInteraction};
 use otto_kit::components::dropdown::{self, DropdownInteraction};
 use otto_kit::components::selection_list::{self, SelectionListHit, SelectionListLayout};
+use otto_kit::components::source_list::{
+    self, GlyphSlot, SourceListItem, SourceListLayout, SourceListSize,
+};
+use otto_kit::components::scroll::ScrollView;
 use otto_kit::components::text_input::TextInput;
 use otto_kit::components::titlebar::{
     DecorationVariant, Titlebar, TitlebarGroup, WindowControls, WindowControlsState,
@@ -18,7 +22,7 @@ use crate::panes::keyboard;
 use crate::settings_client::{self, Value};
 use crate::widgets;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU8, Ordering};
 
 /// The size the window asks for on first map. After that the compositor is in
 /// charge, and everything draws against [`Settings::width`]/`height` instead —
@@ -38,7 +42,7 @@ pub fn corner() -> f32 {
     WindowDecoration::corner_radius_for(decoration_variant(), CORNER)
 }
 /// The window's own titlebar, while it floats.
-pub const TITLEBAR_H: f32 = 38.0;
+pub const TITLEBAR_H: f32 = WindowDecoration::SIDEBAR_HEIGHT;
 
 /// The decoration this window is currently drawing.
 ///
@@ -75,15 +79,9 @@ fn decoration_variant() -> DecorationVariant {
 /// it is tiled — so the app's chrome is exactly as tall as a
 /// compositor-decorated window's beside it.
 pub fn titlebar_h() -> f32 {
-    match decoration_variant() {
-        // A tile under `decoration = "normal"` wears the full bar, and this
-        // window's full bar is its own — taller than the shared component's,
-        // and what every rectangle below it is measured from either way.
-        DecorationVariant::Floating | DecorationVariant::Normal => TITLEBAR_H,
-        variant => WindowDecoration::height_for(variant),
-    }
+    WindowDecoration::sidebar_height_for(decoration_variant())
 }
-pub const SIDEBAR_W: f32 = 214.0;
+pub const SIDEBAR_W: f32 = 232.0;
 const CONTENT_PAD: f32 = 26.0;
 const ROW_H: f32 = 42.0;
 const ROW_H_DETAIL: f32 = 56.0;
@@ -200,19 +198,149 @@ pub fn titlebar_material(dark: bool) -> Color {
     }
 }
 
-/// Sidebar row geometry. Drawing, hit-testing, the keyboard and what a screen
-/// reader is told all go through this, so none of them can drift away from the
-/// painted row.
+/// The sidebar's row size.
+const SIDEBAR_SIZE: SourceListSize = SourceListSize::Large;
+/// How much of the icon square a sidebar glyph fills.
+const SIDEBAR_GLYPH_SHARE: f32 = 0.9;
+/// Space under the last sidebar row when the list is scrolled to its end.
+const SIDEBAR_BOTTOM_PAD: f32 = 10.0;
+
+/// How far the sidebar's list is scrolled, as `f32` bits. Process-wide like
+/// [`decoration_variant`]: there is one settings window, and every rectangle
+/// below reads it so drawing, hit-testing, the keyboard and assistive
+/// technologies agree on where a row is.
+static SIDEBAR_SCROLL: AtomicU32 = AtomicU32::new(0);
+
+/// How many panes the sidebar lists, counted once: building every pane to
+/// count them is not something to do per wheel event.
+pub fn pane_count() -> usize {
+    static COUNT: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *COUNT.get_or_init(|| model::panes().len())
+}
+
+/// Where the first sidebar row starts before any scroll: under the search
+/// field, which heads the sidebar.
+fn sidebar_list_top() -> f32 {
+    crate::sidebar_search::field_rect().bottom + 10.0
+}
+
+/// The part of the sidebar the list scrolls in, for a window `height` tall.
+pub fn sidebar_list_clip(height: f32) -> Rect {
+    Rect::from_ltrb(
+        0.0,
+        crate::sidebar_search::field_rect().bottom + 4.0,
+        SIDEBAR_W,
+        height,
+    )
+}
+
+/// How far the sidebar's list is scrolled.
+pub fn sidebar_scroll() -> f32 {
+    f32::from_bits(SIDEBAR_SCROLL.load(Ordering::Relaxed))
+}
+
+/// The furthest the list of `count` rows scrolls in a window `height` tall.
+fn sidebar_max_scroll(count: usize, height: f32) -> f32 {
+    let m = SIDEBAR_SIZE.metrics();
+    let rows = count as f32 * (m.item_height + m.item_gap) - m.item_gap;
+    (sidebar_list_top() + rows + SIDEBAR_BOTTOM_PAD - height).max(0.0)
+}
+
+/// Sets the sidebar's scroll, kept within the list of `count` rows in a
+/// window `height` tall. Returns whether it moved. Stops any fling: this is
+/// the list being put somewhere, not thrown.
+pub fn set_sidebar_scroll(offset: f32, count: usize, height: f32) -> bool {
+    let clamped = offset.clamp(0.0, sidebar_max_scroll(count, height));
+    with_sidebar_scroller(count, height, |scroller| {
+        scroller.scroll_to(clamped);
+    });
+    let old = SIDEBAR_SCROLL.swap(clamped.to_bits(), Ordering::Relaxed);
+    old != clamped.to_bits()
+}
+
+/// The sidebar list's scroll physics: momentum, rubber banding and wheel
+/// stepping, the kit's, as the pane has. [`SIDEBAR_SCROLL`] stays what every
+/// rectangle reads; this drives it.
+static SIDEBAR_SCROLLER: std::sync::Mutex<Option<ScrollView>> = std::sync::Mutex::new(None);
+
+/// Run `f` on the sidebar's scroller, fitted to the list of `count` rows in a
+/// window `height` tall, and copy where it left the list into
+/// [`SIDEBAR_SCROLL`].
+fn with_sidebar_scroller<R>(count: usize, height: f32, f: impl FnOnce(&mut ScrollView) -> R) -> R {
+    let clip = sidebar_list_clip(height);
+    let m = SIDEBAR_SIZE.metrics();
+    let rows = count as f32 * (m.item_height + m.item_gap) - m.item_gap;
+    let content = sidebar_list_top() - clip.top + rows + SIDEBAR_BOTTOM_PAD;
+    let mut guard = SIDEBAR_SCROLLER.lock().unwrap_or_else(|e| e.into_inner());
+    let scroller = guard.get_or_insert_with(|| ScrollView::new(clip));
+    scroller.set_viewport(clip);
+    scroller.set_content_length(content);
+    let result = f(scroller);
+    SIDEBAR_SCROLL.store(scroller.offset().to_bits(), Ordering::Relaxed);
+    result
+}
+
+/// A wheel or touchpad event over the sidebar. A notched wheel steps; a
+/// touchpad stream drives momentum, which lifting the fingers (`stop`)
+/// throws. Returns whether the list needs repainting.
+pub fn sidebar_wheel(delta: f32, discrete: bool, stop: bool, count: usize, height: f32) -> bool {
+    with_sidebar_scroller(count, height, |scroller| {
+        if stop {
+            scroller.on_wheel_end();
+            true
+        } else if discrete {
+            scroller.on_wheel_discrete(delta)
+        } else {
+            scroller.on_wheel(delta)
+        }
+    })
+}
+
+/// Whether the sidebar list is still coasting or bouncing back.
+pub fn sidebar_scroll_animating() -> bool {
+    SIDEBAR_SCROLLER
+        .lock()
+        .map(|s| s.as_ref().is_some_and(|s| s.velocity() != 0.0 || s.is_animating()))
+        .unwrap_or(false)
+}
+
+/// Advance the sidebar's momentum on the wall clock. Returns whether the list
+/// moved and needs repainting.
+pub fn sidebar_tick(count: usize, height: f32) -> bool {
+    if !sidebar_scroll_animating() {
+        return false;
+    }
+    let before = sidebar_scroll();
+    with_sidebar_scroller(count, height, |scroller| scroller.tick());
+    sidebar_scroll() != before
+}
+
+/// Scrolls the sidebar just enough to show row `index` whole. Returns whether
+/// it moved.
+pub fn reveal_sidebar_row(index: usize, count: usize, height: f32) -> bool {
+    let row = sidebar_item_rect(index);
+    let clip = sidebar_list_clip(height);
+    let scroll = sidebar_scroll();
+    let target = if row.top < clip.top {
+        scroll - (clip.top - row.top)
+    } else if row.bottom > clip.bottom - SIDEBAR_BOTTOM_PAD {
+        scroll + (row.bottom - (clip.bottom - SIDEBAR_BOTTOM_PAD))
+    } else {
+        return false;
+    };
+    set_sidebar_scroll(target, count, height)
+}
+
+/// Sidebar row geometry, at the list's current scroll. Drawing, hit-testing,
+/// the keyboard and what a screen reader is told all go through this, so none
+/// of them can drift away from the painted row.
 pub fn sidebar_item_rect(index: usize) -> Rect {
-    // Under the search field, which heads the sidebar.
-    let first_item_y = crate::sidebar_search::field_rect().bottom + 10.0;
-    const ITEM_H: f32 = 30.0;
-    const ITEM_STEP: f32 = 32.0;
+    let m = SIDEBAR_SIZE.metrics();
     Rect::from_xywh(
-        8.0,
-        first_item_y + index as f32 * ITEM_STEP,
-        SIDEBAR_W - 16.0,
-        ITEM_H,
+        m.item_inset,
+        sidebar_list_top() - sidebar_scroll() + index as f32 * (m.item_height + m.item_gap),
+        SIDEBAR_W - m.item_inset * 2.0,
+        m.item_height,
     )
 }
 
@@ -366,9 +494,13 @@ pub fn row_button_rects(row: &Row, rect: Rect) -> Vec<Rect> {
     }
 }
 
-/// The pane whose sidebar row contains `(x, y)`, if any.
+/// The pane whose sidebar row contains `(x, y)`, if any. A row scrolled
+/// under the search field is not there to press.
 pub fn pane_at(x: f32, y: f32) -> Option<usize> {
-    (0..model::panes().len()).find(|&i| sidebar_item_rect(i).contains(Point::new(x, y)))
+    if y < sidebar_list_clip(f32::MAX).top {
+        return None;
+    }
+    (0..pane_count()).find(|&i| sidebar_item_rect(i).contains(Point::new(x, y)))
 }
 
 /// The pop-up button's rect within a row, given the row's trailing edge and
@@ -2103,46 +2235,44 @@ impl Settings {
             });
         crate::sidebar_search::paint_field(canvas, &field, &self.theme, self.dark);
 
-        for (i, pane) in self.panes.iter().enumerate() {
-            let item = sidebar_item_rect(i);
-            let selected = i == self.selected;
-            if selected && focused == Some(SIDEBAR_FOCUS) {
-                otto_kit::focus::draw_focus_ring(canvas, item, 7.0);
-            }
-            if selected {
-                canvas.draw_rrect(
-                    RRect::new_rect_xy(item, 7.0, 7.0),
-                    &self.fill(self.theme.material_selection_focused),
-                );
-            }
-            let tint = if selected {
-                Color::WHITE
-            } else {
-                self.theme.text_primary
-            };
+        let items: Vec<SourceListItem> = self
+            .panes
+            .iter()
+            .map(|pane| SourceListItem::new(pane.name))
+            .collect();
+        let layout = SourceListLayout::for_items(
+            SIDEBAR_SIZE,
+            &items,
+            0.0,
+            sidebar_item_rect(0).top,
+            SIDEBAR_W,
+        );
 
-            glyphs::draw(
-                canvas,
-                pane.icon,
-                item.left + 17.0,
-                item.center_y(),
-                15.0,
-                tint,
-            );
-
-            widgets::text_centered_y(
-                canvas,
-                pane.name,
-                item.left + 33.0,
-                item.center_y(),
-                if selected {
-                    styles::BODY_EMPHASIZED
-                } else {
-                    styles::BODY_MEDIUM
-                },
-                tint,
-            );
+        canvas.save();
+        canvas.clip_rect(sidebar_list_clip(self.height), ClipOp::Intersect, true);
+        if focused == Some(SIDEBAR_FOCUS) {
+            layout.draw_focus_ring(canvas, self.selected);
         }
+        source_list::draw(
+            canvas,
+            &layout,
+            &items,
+            Some(self.selected),
+            &self.theme,
+            |canvas, index, slot, rect, tint| {
+                if slot == GlyphSlot::Leading {
+                    glyphs::draw(
+                        canvas,
+                        self.panes[index].icon,
+                        rect.center_x(),
+                        rect.center_y(),
+                        SIDEBAR_GLYPH_SHARE * rect.width(),
+                        tint,
+                    );
+                }
+            },
+        );
+        canvas.restore();
     }
 
     /// Draws in content-local coordinates: `(0, 0)` is the pane viewport's
